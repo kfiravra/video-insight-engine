@@ -1,0 +1,25 @@
+# Public entrypoint for the single-host AWS deploy (docker-compose.aws.yml).
+# Automatic HTTPS for {$DOMAIN}. vie-api and vie-web are reachable only through here.
+{
+	# While iterating on a fresh host, uncomment to avoid Let's Encrypt rate limits:
+	# acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
+}
+
+{$DOMAIN} {
+	# route keeps the directives in the order written: block, then API, then web.
+	route {
+		# Operator and service-to-service endpoints never leave the private network.
+		@blocked path /internal/* /api/admin/* /ready /stats.html
+		respond @blocked 404
+
+		# /health is a root route on vie-api, not under /api.
+		@api path /api/* /ws /health
+		reverse_proxy @api vie-api:3000 {
+			# Stream SSE (pipeline progress, chat) without buffering
+			flush_interval -1
+		}
+
+		# Everything else is the SPA served by vie-web's nginx
+		reverse_proxy vie-web:5173
+	}
+}

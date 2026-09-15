@@ -1,0 +1,83 @@
+# ============================================
+# Video Insight Engine - single-host AWS overlay (portfolio demo)
+# ============================================
+#
+# Layered on docker-compose.prod.yml. Run on the EC2 host next to a chmod-600 .env:
+#   docker compose -f docker-compose.prod.yml -f docker-compose.aws.yml config -q
+#   docker compose -f docker-compose.prod.yml -f docker-compose.aws.yml up -d
+#
+# Caddy is the only public listener (80/443) and terminates TLS for ${DOMAIN}
+# with automatic Let's Encrypt certificates. vie-web publishes nothing and
+# vie-api listens on loopback only, so all traffic passes the Caddyfile rules.
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  vie-caddy:
+    image: caddy:2.10-alpine
+    container_name: vie-caddy
+    restart: unless-stopped
+    logging: *default-logging
+    mem_limit: 128m
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN:?DOMAIN is required (public hostname, e.g. example.com)}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - vie-network
+    depends_on:
+      vie-api:
+        condition: service_healthy
+      vie-web:
+        condition: service_healthy
+
+  # Reachable only through Caddy on the compose network
+  vie-web:
+    ports: !reset []
+    restart: unless-stopped
+
+  # Loopback only: on-box curl/debugging, never the internet
+  vie-api:
+    ports: !override
+      - "127.0.0.1:3000:3000"
+    restart: unless-stopped
+    environment:
+      # Exactly one trusted hop: Caddy replaces any client-sent X-Forwarded-For
+      TRUST_PROXY: "1"
+
+  # Long-running services survive daemon restarts and instance stop/start.
+  # vie-langfuse-init is a one-shot and keeps restart: "no".
+  vie-mongodb:
+    restart: unless-stopped
+  vie-qdrant:
+    restart: unless-stopped
+  vie-redis:
+    restart: unless-stopped
+  vie-rabbitmq:
+    restart: unless-stopped
+  vie-summarizer:
+    restart: unless-stopped
+  vie-summarizer-worker:
+    restart: unless-stopped
+  vie-assistant:
+    restart: unless-stopped
+  vie-admin:
+    restart: unless-stopped
+  vie-backup-cron:
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+    name: vie_caddy_data
+  caddy_config:
+    name: vie_caddy_config
