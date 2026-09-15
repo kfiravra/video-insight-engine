@@ -80,6 +80,13 @@ export class InvalidCredentialsError extends AppError {
   }
 }
 
+export class RegistrationClosedError extends AppError {
+  constructor() {
+    super('REGISTRATION_CLOSED', 403, 'Registration is closed');
+    this.name = 'RegistrationClosedError';
+  }
+}
+
 export class UserNotFoundError extends AppError {
   constructor() {
     super('USER_NOT_FOUND', 404, 'User not found');

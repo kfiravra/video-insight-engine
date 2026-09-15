@@ -26,6 +26,12 @@ export const queryKeys = {
       [...queryKeys.playlists.all, "videos", playlistId] as const,
   },
 
+  // Auth
+  auth: {
+    all: ["auth"] as const,
+    registration: () => [...queryKeys.auth.all, "registration"] as const,
+  },
+
   // User
   user: {
     current: ["user", "current"] as const,

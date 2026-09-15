@@ -93,6 +93,28 @@ describe('config env validation', () => {
     });
   });
 
+  describe('ALLOW_REGISTRATION', () => {
+    it('should default to open when unset', async () => {
+      const { config } = await loadConfig({});
+      expect(config.ALLOW_REGISTRATION).toBe(true);
+    });
+
+    it('should close registration when set to false', async () => {
+      const { config } = await loadConfig({ ALLOW_REGISTRATION: 'false' });
+      expect(config.ALLOW_REGISTRATION).toBe(false);
+    });
+
+    it('should treat FALSE with surrounding whitespace as closed', async () => {
+      const { config } = await loadConfig({ ALLOW_REGISTRATION: ' FALSE ' });
+      expect(config.ALLOW_REGISTRATION).toBe(false);
+    });
+
+    it('should keep registration open for any value other than false', async () => {
+      const { config } = await loadConfig({ ALLOW_REGISTRATION: 'true' });
+      expect(config.ALLOW_REGISTRATION).toBe(true);
+    });
+  });
+
   describe('PIPELINE_VERSION single source (project-score-9 4.3)', () => {
     it('should read the canonical version from packages/shared pipeline-version.json', async () => {
       const { readFileSync } = await import('node:fs');

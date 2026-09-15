@@ -2,7 +2,7 @@ import { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { registerSchema, loginSchema } from '../schemas/auth.schema.js';
 import { config } from '../config.js';
-import { RefreshExpiredError } from '../utils/errors.js';
+import { RefreshExpiredError, RegistrationClosedError } from '../utils/errors.js';
 
 const ACCESS_TOKEN_EXPIRY_SECONDS = 900;
 const REFRESH_COOKIE_MAX_AGE = 7 * 24 * 60 * 60; // 7 days
@@ -57,11 +57,19 @@ export async function authRoutes(fastify: FastifyInstance) {
       rateLimit: { max: 5, timeWindow: '1 hour' },
     },
   }, async (req, reply) => {
+    if (!config.ALLOW_REGISTRATION) {
+      throw new RegistrationClosedError();
+    }
     const input = registerSchema.parse(req.body);
     const user = await authService.register(input);
     const tokens = generateAuthTokens(fastify, reply, user);
     return reply.code(201).send({ ...tokens, user });
   });
+
+  // GET /api/auth/registration
+  // Public: lets the prebuilt web bundle hide signup at runtime instead of
+  // baking the flag in at image build time.
+  fastify.get('/registration', async () => ({ open: config.ALLOW_REGISTRATION }));
 
   // POST /api/auth/login
   fastify.post<{

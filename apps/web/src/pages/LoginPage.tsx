@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { AuthShell } from "@/components/auth/AuthShell";
 import { PasswordInput } from "@/components/auth/PasswordInput";
+import { useRegistrationOpen } from "@/hooks/use-registration-open";
 import {
   loginSchema,
   fieldErrorsFrom,
@@ -26,6 +27,7 @@ export function LoginPage() {
 
   const login = useAuthStore((s) => s.login);
   const navigate = useNavigate();
+  const registrationOpen = useRegistrationOpen();
 
   const errors: LoginErrors = useMemo(() => {
     const result = loginSchema.safeParse(values);
@@ -62,12 +64,14 @@ export function LoginPage() {
       title="Welcome back"
       subtitle="Sign in to keep building your video knowledge base."
       footer={
-        <>
-          Don&apos;t have an account?{" "}
-          <Link to="/register" className="font-medium text-primary hover:underline">
-            Sign up
-          </Link>
-        </>
+        registrationOpen ? (
+          <>
+            Don&apos;t have an account?{" "}
+            <Link to="/register" className="font-medium text-primary hover:underline">
+              Sign up
+            </Link>
+          </>
+        ) : null
       }
     >
       <form onSubmit={handleSubmit} className="space-y-4" noValidate>

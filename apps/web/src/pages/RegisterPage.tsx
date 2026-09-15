@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { AuthShell } from "@/components/auth/AuthShell";
 import { PasswordInput } from "@/components/auth/PasswordInput";
+import { useRegistrationOpen } from "@/hooks/use-registration-open";
 import { cn } from "@/lib/utils";
 import {
   registerSchema,
@@ -56,6 +57,7 @@ export function RegisterPage() {
 
   const register = useAuthStore((s) => s.register);
   const navigate = useNavigate();
+  const registrationOpen = useRegistrationOpen();
 
   const errors: RegisterErrors = useMemo(() => {
     const result = registerSchema.safeParse(values);
@@ -88,6 +90,20 @@ export function RegisterPage() {
       setLoading(false);
     }
   };
+
+  if (registrationOpen === false) {
+    return (
+      <AuthShell
+        variant="signup"
+        title="Registration is closed"
+        subtitle="This deployment is invite-only. Ask the owner for an account."
+      >
+        <Button asChild className="w-full">
+          <Link to="/login">Sign in</Link>
+        </Button>
+      </AuthShell>
+    );
+  }
 
   return (
     <AuthShell
