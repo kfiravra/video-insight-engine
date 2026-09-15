@@ -43,8 +43,9 @@ x-summarizer-env: &summarizer-env
   LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-60.0}
   LLM_NUM_RETRIES: ${LLM_NUM_RETRIES:-2}
   LLM_EXTRACTION_MODEL: ${LLM_EXTRACTION_MODEL:-}
-  LLM_ENRICHMENT_MODEL: ${LLM_ENRICHMENT_MODEL:-}
-  LLM_VISION_MODEL: ${LLM_VISION_MODEL:-}
+  # Default to the code's Haiku pins — a blank value silently fell back to Sonnet (vision) / the fast tier (enrichment)
+  LLM_ENRICHMENT_MODEL: ${LLM_ENRICHMENT_MODEL:-anthropic/claude-haiku-4-5-20251001}
+  LLM_VISION_MODEL: ${LLM_VISION_MODEL:-anthropic/claude-haiku-4-5-20251001}
   LLM_DESCRIPTION_MODEL: ${LLM_DESCRIPTION_MODEL:-}
   LLM_SYNTHESIS_MODEL: ${LLM_SYNTHESIS_MODEL:-}
   LLM_TRANSLATION_MODEL: ${LLM_TRANSLATION_MODEL:-}
@@ -53,6 +54,14 @@ x-summarizer-env: &summarizer-env
   OPENAI_API_KEY: ${OPENAI_API_KEY:-}
   GEMINI_API_KEY: ${GEMINI_API_KEY:-}
   LOG_LEVEL: ${LOG_LEVEL:-info}
+  # production arms the default-INTERNAL_SECRET refusal and SSE soft-fail; json = CloudWatch-parseable logs
+  ENVIRONMENT: ${ENVIRONMENT:-production}
+  LOG_FORMAT: ${LOG_FORMAT:-json}
+  # Target for /internal/status callbacks
+  API_URL: ${API_URL:-http://vie-api:3000}
+  # Hard caps on accepted video length and on the paid audio-transcription fallback
+  MAX_VIDEO_DURATION_MINUTES: ${MAX_VIDEO_DURATION_MINUTES:-600}
+  WHISPER_MAX_DURATION_MINUTES: ${WHISPER_MAX_DURATION_MINUTES:-600}
   INTERNAL_SECRET: ${INTERNAL_SECRET:?INTERNAL_SECRET is required (openssl rand -base64 32)}
   WEBSHARE_PROXY_USERNAME: ${WEBSHARE_PROXY_USERNAME:-}
   WEBSHARE_PROXY_PASSWORD: ${WEBSHARE_PROXY_PASSWORD:-}
@@ -61,7 +70,7 @@ x-summarizer-env: &summarizer-env
   HF_TOKEN: ${HF_TOKEN:-}
   S3_BUCKET: ${S3_BUCKET:-vie-transcripts}
   S3_PRESIGNED_URL_EXPIRY: ${S3_PRESIGNED_URL_EXPIRY:-21600}
-  AWS_REGION: ${AWS_REGION:-us-east-1}
+  AWS_REGION: ${AWS_REGION:?AWS_REGION is required (region of S3_BUCKET)}
   AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
   AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
   AWS_ENDPOINT_URL: ${AWS_ENDPOINT_URL:-}
@@ -108,6 +117,8 @@ x-assistant-env: &assistant-env
   OPENAI_API_KEY: ${OPENAI_API_KEY:-}
   GEMINI_API_KEY: ${GEMINI_API_KEY:-}
   LOG_LEVEL: ${LOG_LEVEL:-info}
+  ENVIRONMENT: ${ENVIRONMENT:-production}
+  LOG_FORMAT: ${LOG_FORMAT:-json}
   INTERNAL_SECRET: ${INTERNAL_SECRET:?INTERNAL_SECRET is required (openssl rand -base64 32)}
   LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
   LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
@@ -270,12 +281,16 @@ services:
       DISPATCH_GUARD_TTL_SECONDS: ${DISPATCH_GUARD_TTL_SECONDS:-900}
       # Behind the TLS reverse proxy: derive req.ip from X-Forwarded-For
       TRUST_PROXY: ${TRUST_PROXY:-1}
+      # Spend guards (defaults mirror api/src/config.ts; the demo .env tightens them)
+      VIDEO_DAILY_LIMIT: ${VIDEO_DAILY_LIMIT:-100}
+      USER_COST_LIMIT_FREE: ${USER_COST_LIMIT_FREE:-2}
+      ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-true}
       SENTRY_DSN: ${SENTRY_DSN:-}
       SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-production}
       SENTRY_RELEASE: ${SENTRY_RELEASE:-}
       SENTRY_TRACES_SAMPLE_RATE: ${SENTRY_TRACES_SAMPLE_RATE:-0.1}
       S3_BUCKET: ${S3_BUCKET:-vie-transcripts}
-      AWS_REGION: ${AWS_REGION:-us-east-1}
+      AWS_REGION: ${AWS_REGION:?AWS_REGION is required (region of S3_BUCKET)}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
       AWS_ENDPOINT_URL: ${AWS_ENDPOINT_URL:-}
