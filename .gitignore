@@ -83,3 +83,6 @@ dev/diagnostics/
 
 # Deployment task docs (security-sensitive; repo is public)
 dev/active/aws-go-live/
+
+# Demo preload exports (scripts/demo-export.sh) — local copies of cached videos
+demo-data/

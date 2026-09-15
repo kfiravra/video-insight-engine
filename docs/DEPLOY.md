@@ -240,6 +240,31 @@ aws ec2 start-instances --region eu-north-1 --instance-ids i-XXXX
 
 Docker is enabled at boot and every long-running service has `restart: unless-stopped`, so the stack comes back on its own. After a boot the services start in parallel, and any that need a dependency restart until it is ready. A container you stopped by hand stays stopped across reboots; bring it back with `dc up -d`.
 
+## Preload demo videos
+
+Use this when YouTube blocks the instance (section b), or to have finished videos ready before an interview. `scripts/demo-export.sh` runs on your machine against the local stack and needs `jq`. It exports the completed videos at the current pipeline version, plus the vector index that video chat uses. `scripts/demo-import.sh` loads that export on the server. Frames and transcripts need no copy, because both machines use the same S3 bucket.
+
+On your machine:
+
+```bash
+scripts/demo-export.sh    # writes demo-data/<timestamp>/ and prints the copy commands
+ssh ec2-user@EIP mkdir -p video-insight-engine/demo-data
+scp -r demo-data/<timestamp> ec2-user@EIP:video-insight-engine/demo-data/
+```
+
+On the server, with the stack up:
+
+```bash
+cd ~/video-insight-engine
+scripts/demo-import.sh demo-data/<timestamp>
+```
+
+Then log in as the demo user and submit each URL from `demo-data/<timestamp>/urls.txt`. Each one attaches to the imported summary immediately, with no pipeline run, no LLM cost and no YouTube request.
+
+- The import refuses an export made at a different pipeline version, because those docs would regenerate on submission.
+- A Qdrant snapshot replaces the whole collection, so the import refuses when the server already has vectors. Pass `--replace-vectors` to accept; chat then loses transcript context for videos processed on the server.
+- Imported docs lose their free-tier expiry date, so the preload stays until you delete it.
+
 ## Appendix: GitHub Actions deploy role
 
 `.github/workflows/deploy.yml` deploys on every push to `main` and on manual runs. The security group only admits SSH from your IP, so the workflow assumes an AWS role through GitHub OIDC. That role can do one thing: add and remove inbound rules on this one security group. The job opens tcp/22 for the runner's IP, deploys over SSH, and always removes the rule at the end.
