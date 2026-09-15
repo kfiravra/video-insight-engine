@@ -15,8 +15,8 @@ audit/
 reports/
 # Environment
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
 
 # Dependencies
 node_modules/
@@ -76,3 +76,10 @@ docker-compose.override.yml
 
 # Data backups (scripts/backup.sh output)
 backups/
+
+# Local diagnostics dumps (contain presigned URLs) — untracked, keep on disk only
+respone.json
+dev/diagnostics/
+
+# Deployment task docs (security-sensitive; repo is public)
+dev/active/aws-go-live/
