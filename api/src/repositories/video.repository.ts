@@ -82,8 +82,6 @@ export interface VideoSummaryCacheDocument {
   sharedAt?: Date;
   viewsCount?: number;
   likesCount?: number;
-  // Expiration (V1.4)
-  expiresAt?: Date | null;
   // Pipeline output fields
   // Canonical version stamp written by the summarizer at pipeline write time
   // (packages/shared/src/config/pipeline-version.json). Absent on docs that
@@ -138,7 +136,6 @@ export interface CreateVideoSummaryData {
   version: number;
   isLatest: boolean;
   retryCount: number;
-  expiresAt?: Date;
   /** Optional on the input shape so legacy callers compile during migration.
    *  Required for `upsertCacheByDedupKey` (enforced at the method signature). */
   dedupKey?: string;
@@ -238,21 +235,6 @@ export class VideoRepository {
       throw new DatabaseError('upsertCacheByDedupKey: driver returned no document despite upsert');
     }
     return { doc: result.value, wasInsert };
-  }
-
-  /**
-   * Force-unset the TTL on a cache row. Called when a pro/team user attaches
-   * to a row originally created by a free-tier user — without this, MongoDB's
-   * TTL index would hard-delete the row 30 days later and break the paid
-   * user's video. Pre-cross-user-dedup, each user owned their own row so the
-   * inserter's tier was the only voice; now the most-privileged attacher
-   * upgrades the row for everyone.
-   */
-  async clearExpiresAt(id: string): Promise<void> {
-    await this.cacheCollection.updateOne(
-      { _id: new ObjectId(id) },
-      { $unset: { expiresAt: '' }, $set: { updatedAt: new Date() } },
-    );
   }
 
   async updateCacheEntry(id: string, updates: Partial<VideoSummaryCacheDocument>): Promise<void> {
@@ -503,57 +485,6 @@ export class VideoRepository {
       { _id: new ObjectId(videoId) },
       { $set: { playlistInfo, updatedAt: new Date() } }
     );
-  }
-
-  /** Clear expiresAt for all videos owned by a user (tier upgrade to pro/team) */
-  async clearExpirationForUser(userId: string): Promise<number> {
-    // Find all videoSummaryIds for user, then clear expiresAt on cache entries
-    const userVideos = await this.userVideosCollection
-      .find({ userId: new ObjectId(userId) })
-      .project({ videoSummaryId: 1 })
-      .toArray();
-
-    if (userVideos.length === 0) return 0;
-
-    const summaryIds = userVideos.map(v => v.videoSummaryId);
-    const result = await this.cacheCollection.updateMany(
-      { _id: { $in: summaryIds } },
-      { $unset: { expiresAt: '' }, $set: { updatedAt: new Date() } }
-    );
-    return result.modifiedCount;
-  }
-
-  /** Set expiresAt for non-shared, post-downgrade videos owned by a user (tier downgrade to free).
-   *
-   * Grandfathering: only outputs created AFTER `afterDate` get a TTL.
-   * Pre-downgrade outputs keep no expiration — the user earned them while on a paid plan.
-   * Shared outputs never expire — growth driver (SEO, viral loops).
-   */
-  async setExpirationForUser(userId: string, expiresAt: Date, afterDate?: Date): Promise<number> {
-    const userVideos = await this.userVideosCollection
-      .find({ userId: new ObjectId(userId) })
-      .project({ videoSummaryId: 1 })
-      .toArray();
-
-    if (userVideos.length === 0) return 0;
-
-    const summaryIds = userVideos.map(v => v.videoSummaryId);
-    const filter: Record<string, unknown> = {
-      _id: { $in: summaryIds },
-      // Shared outputs never expire — growth driver (SEO, viral loops)
-      shareSlug: { $exists: false },
-    };
-
-    // Grandfather existing outputs: only expire those created after the downgrade date
-    if (afterDate) {
-      filter.createdAt = { $gte: afterDate };
-    }
-
-    const result = await this.cacheCollection.updateMany(
-      filter,
-      { $set: { expiresAt, updatedAt: new Date() } }
-    );
-    return result.modifiedCount;
   }
 
   async getPlaylistVideos(userId: string, playlistId: string): Promise<UserVideoDocument[]> {

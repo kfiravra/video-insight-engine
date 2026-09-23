@@ -117,11 +117,20 @@ export function createContainer(
   const playlistService = new PlaylistService(videoService, folderService, summarizerClient, logger, costMonitorService);
   const shareService = new ShareService(shareRepository, videoRepository, logger);
   const ogImageService = new OgImageService(logger);
-  const paymentService = new PaymentService(userRepository, videoRepository, logger);
+  const paymentService = new PaymentService(userRepository, logger);
   const userDeletionService = new UserDeletionService(
     db,
     userRepository,
     userDeletionRepository,
+    logger,
+  );
+  const videoCascadeService = new VideoCascadeService(
+    db,
+    videoRepository,
+    idempotencyService,
+    dispatchGuardService,
+    summarizerClient,
+    videoDeletionRepository,
     logger,
   );
 

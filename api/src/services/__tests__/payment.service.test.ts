@@ -4,7 +4,6 @@ import type { FastifyBaseLogger } from 'fastify';
 import { getTestDb, mockLogger } from '../../test/setup.js';
 import { PaymentService } from '../payment.service.js';
 import { UserRepository } from '../../repositories/user.repository.js';
-import { VideoRepository } from '../../repositories/video.repository.js';
 import { PaymentError } from '../../utils/errors.js';
 
 // Mock config - must be before PaymentService import uses it
@@ -22,7 +21,6 @@ import { config } from '../../config.js';
 describe('PaymentService', () => {
   let paymentService: PaymentService;
   let userRepository: UserRepository;
-  let videoRepository: VideoRepository;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -31,8 +29,7 @@ describe('PaymentService', () => {
 
     const db = getTestDb();
     userRepository = new UserRepository(db);
-    videoRepository = new VideoRepository(db);
-    paymentService = new PaymentService(userRepository, videoRepository, mockLogger as unknown as FastifyBaseLogger);
+    paymentService = new PaymentService(userRepository, mockLogger as unknown as FastifyBaseLogger);
   });
 
   describe('verifyWebhook', () => {

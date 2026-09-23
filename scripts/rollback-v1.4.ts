@@ -5,7 +5,6 @@
  * Does NOT delete data — only drops indexes.
  *
  * Indexes removed:
- *   - videoSummaryCache: expiresAt TTL index
  *   - videoSummaryCache: shareSlug unique sparse index
  *
  * Usage:
@@ -35,7 +34,6 @@ const DATABASE_NAME = process.env.MONGODB_DATABASE || 'vie';
 const DRY_RUN = process.argv.includes('--dry-run');
 
 const INDEXES_TO_DROP = [
-  { collection: 'videoSummaryCache', name: 'expiresAt_1' },
   { collection: 'videoSummaryCache', name: 'shareSlug_1' },
 ];
 

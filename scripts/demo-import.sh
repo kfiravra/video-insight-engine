@@ -2,9 +2,8 @@
 # Import a demo export (scripts/demo-export.sh) into the running stack on the
 # server. Run from the repo checkout once the stack is up and healthy.
 #
-#   MongoDB  The archive is restored into a staging collection, expiresAt is
-#            removed so the free-tier TTL index never reaps demo content, and
-#            the docs are merged into videoSummaryCache. Docs whose _id
+#   MongoDB  The archive is restored into a staging collection and the docs
+#            are merged into videoSummaryCache. Docs whose _id
 #            already exists are left untouched.
 #   Qdrant   A snapshot upload REPLACES the whole transcript_chunks collection,
 #            so the import refuses when the server collection already has
@@ -99,21 +98,17 @@ mongo_tool mongosh --quiet "$MONGO_DB" --eval "db.getCollection('$STAGING').drop
 mongo_tool mongorestore --archive --gzip --noIndexRestore \
   --nsInclude "$MONGO_DB.videoSummaryCache" \
   --nsFrom "$MONGO_DB.videoSummaryCache" --nsTo "$MONGO_DB.$STAGING" < "$ARCHIVE"
-# The staging collection has no TTL index, so nothing expires before the $unset.
 MERGE_RESULT="$(mongo_tool mongosh --quiet "$MONGO_DB" --eval "
   const staging = db.getCollection('$STAGING');
   const ids = staging.distinct('_id');
   staging.aggregate([
-    { \$unset: 'expiresAt' },
     { \$merge: { into: 'videoSummaryCache', on: '_id', whenMatched: 'keepExisting', whenNotMatched: 'insert' } },
   ]);
   const present = db.videoSummaryCache.countDocuments({ _id: { \$in: ids } });
-  const expiring = db.videoSummaryCache.countDocuments({ _id: { \$in: ids }, expiresAt: { \$ne: null } });
   staging.drop();
-  print(JSON.stringify({ archive: ids.length, present: present, expiring: expiring }));
+  print(JSON.stringify({ archive: ids.length, present: present }));
 " < /dev/null)"
 PRESENT="$(jq -r '.present' <<< "$MERGE_RESULT")"
-EXPIRING="$(jq -r '.expiring' <<< "$MERGE_RESULT")"
 
 echo "--- Qdrant: $SNAPSHOT → $COLLECTION (replaces the collection) ---"
 qdrant_api -f -X POST "http://$QDRANT_HOST/collections/$COLLECTION/snapshots/upload?priority=snapshot&wait=true" \
@@ -121,7 +116,7 @@ qdrant_api -f -X POST "http://$QDRANT_HOST/collections/$COLLECTION/snapshots/upl
 IMPORTED_POINTS="$(qdrant_api "http://$QDRANT_HOST/collections/$COLLECTION" | jq -r '.result.points_count // 0')"
 
 echo ""
-echo "videoSummaryCache: $PRESENT of $EXPORT_DOCS docs present, $EXPIRING still carry an expiry (pre-existing docs keep theirs)"
+echo "videoSummaryCache: $PRESENT of $EXPORT_DOCS docs present"
 echo "$COLLECTION: $IMPORTED_POINTS points (export had $EXPORT_POINTS)"
 if [[ "$PRESENT" -ne "$EXPORT_DOCS" || "$IMPORTED_POINTS" -ne "$EXPORT_POINTS" ]]; then
   echo "ERROR: counts do not match the export manifest" >&2
