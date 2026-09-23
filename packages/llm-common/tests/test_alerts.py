@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from llm_common.alerts import deliver_alert
+from llm_common.alerts import build_webhook_body, deliver_alert
 from llm_common.callback import MongoDBUsageCallback
 
 WEBHOOK_URL = "http://alert-catcher.local/hook"
@@ -106,3 +106,21 @@ class TestCallbackWebhookWiring:
 
         cb._alerts_col.insert_one.assert_awaited_once()
         deliver.assert_called_once()
+
+
+class TestTelegramReceiver:
+    TELEGRAM_URL = "https://api.telegram.org/bot123:abc/sendMessage?chat_id=4242"
+
+    def test_should_send_chat_id_and_text_when_url_is_telegram(self, monkeypatch):
+        monkeypatch.setenv("ALERT_WEBHOOK_URL", self.TELEGRAM_URL)
+        with patch("llm_common.alerts.urllib.request.urlopen", _mock_urlopen()) as opener:
+            alert = {"type": "backup_stale", "severity": "critical", "age_hours": 30}
+            assert deliver_alert(alert) is True
+        sent = json.loads(opener.call_args[0][0].data)
+        assert sent["chat_id"] == "4242"
+        assert sent["text"].startswith("VIE critical: backup_stale")
+        assert "age_hours: 30" in sent["text"]
+
+    def test_should_keep_raw_document_for_other_receivers(self):
+        body = json.loads(build_webhook_body("https://hooks.example/x", {"type": "x", "cost": 1.5}))
+        assert body == {"type": "x", "cost": 1.5}
