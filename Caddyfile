@@ -12,6 +12,22 @@
 		@blocked path /internal/* /api/admin/* /ready /stats.html
 		respond @blocked 404
 
+		# Browser-facing security headers for the SPA. API responses keep helmet's own
+		# set (api/src/plugins/helmet.ts); the values here match it. `defer` applies them
+		# after nginx answers so nothing upstream can drop them.
+		@web not path /api/* /ws /health
+		header @web {
+			Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+			X-Content-Type-Options "nosniff"
+			Referrer-Policy "strict-origin-when-cross-origin"
+			X-Frame-Options "SAMEORIGIN"
+			# Clickjacking guard only; a full resource CSP needs the SPA's inline theme script hashed first.
+			Content-Security-Policy "frame-ancestors 'self'"
+			Permissions-Policy "camera=(), microphone=(), geolocation=()"
+			-Server
+			defer
+		}
+
 		# /health is a root route on vie-api, not under /api.
 		@api path /api/* /ws /health
 		reverse_proxy @api vie-api:3000 {
