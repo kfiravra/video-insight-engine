@@ -8,7 +8,7 @@ Work through sections a to g in order. Placeholders:
 |---|---|
 | `DOMAIN` | your apex domain, for example `example.com` |
 | `EIP` | the instance's Elastic IP |
-| `BUCKET` | the S3 bucket (`vie-transcripts`) |
+| `BUCKET` | the production S3 bucket (`vie-transcripts-prod`); the dev stack keeps `vie-transcripts` |
 | `ACCOUNT_ID` | your 12-digit AWS account ID |
 | `MY_IP` | your public IP (`curl https://checkip.amazonaws.com`) |
 | `i-XXXX`, `SG_ID` | the instance ID and the security group ID |
@@ -24,13 +24,13 @@ Create everything in **eu-north-1**, the bucket's region.
      "Version": "2012-10-17",
      "Statement": [
        { "Sid": "Bucket", "Effect": "Allow", "Action": "s3:ListBucket", "Resource": "arn:aws:s3:::BUCKET" },
-       { "Sid": "Videos", "Effect": "Allow", "Action": ["s3:GetObject", "s3:PutObject"], "Resource": "arn:aws:s3:::BUCKET/videos/*" },
+       { "Sid": "Videos", "Effect": "Allow", "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"], "Resource": "arn:aws:s3:::BUCKET/videos/*" },
        { "Sid": "Backups", "Effect": "Allow", "Action": ["s3:GetObject", "s3:PutObject"], "Resource": "arn:aws:s3:::BUCKET/backups/*" }
      ]
    }
    ```
 
-   `s3:ListBucket` is required even though nothing lists keys. Health checks call HeadBucket, and without it a HeadObject on a missing key returns 403 instead of 404.
+   `s3:ListBucket` covers the health check's HeadBucket (without it a HeadObject on a missing key returns 403 instead of 404) and the global video delete, which lists `videos/<id>/` before removing it. `s3:DeleteObject` exists for that delete only; backups are pruned by the lifecycle rule.
 
 2. **Security group** `vie-demo`, inbound rules:
 
@@ -125,12 +125,12 @@ echo "alias dc='docker compose -f docker-compose.prod.yml -f docker-compose.aws.
 source ~/.bashrc
 ```
 
-Clone and configure. The OIDC trust policy in the appendix uses the same `owner/repo` name, so check it against the repository URL on GitHub.
+Clone and configure. The server template is `.env.production.example`; `.env.example` is the local development template and is not used here. The OIDC trust policy in the appendix uses the same `owner/repo` name, so check it against the repository URL on GitHub.
 
 ```bash
 git clone https://github.com/kfiravra/video-insight-engine.git ~/video-insight-engine
 cd ~/video-insight-engine
-cp .env.example .env && chmod 600 .env
+cp .env.production.example .env && chmod 600 .env
 
 # Random hex secrets (hex is safe inside connection URIs)
 for key in MONGO_ROOT_PASS REDIS_PASSWORD RABBITMQ_PASS JWT_SECRET JWT_REFRESH_SECRET \
@@ -189,31 +189,37 @@ The script creates the user with role `admin`, so the same login also works for 
 
 ## f. Nightly backup and disk space
 
-A cron job dumps MongoDB to the bucket's `backups/` prefix at 03:30 UTC. The host's AWS CLI uses the instance role, and the Mongo credentials never leave the container. Replace `BUCKET` before running this:
+`COMPOSE_PROFILES=backup` in `.env` starts the `vie-backup-cron` sidecar with the stack. Every night at 03:30 UTC it runs `scripts/backup.sh`: a MongoDB archive plus a Qdrant snapshot per collection into `backups/<UTC-timestamp>/`, with a `manifest.json` that vie-admin's `backup_stale` alert reads. The sidecar keeps the last `BACKUP_KEEP` (14) backups on disk. A host cron copies the folder to the bucket's `backups/` prefix at 04:00 UTC through the instance role. Replace `BUCKET` before running this:
 
 ```bash
 sudo systemctl enable --now crond
-sudo tee /etc/cron.d/vie-mongo-backup > /dev/null <<'EOF'
-30 3 * * * ec2-user { docker exec vie-mongodb sh -c 'mongodump --db video-insight-engine --archive --gzip --username "$MONGO_INITDB_ROOT_USERNAME" --password "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin' | aws s3 cp --region eu-north-1 - "s3://BUCKET/backups/mongo-$(date -u +\%Y\%m\%d).archive.gz"; } 2>&1 | logger -t vie-backup
+sudo tee /etc/cron.d/vie-backup-sync > /dev/null <<'EOF'
+0 4 * * * ec2-user aws s3 sync --region eu-north-1 --only-show-errors /home/ec2-user/video-insight-engine/backups s3://BUCKET/backups/ 2>&1 | logger -t vie-backup
 EOF
 ```
 
-Run the same dump once by hand and confirm the object exists. Cron runs log to the journal (`journalctl -t vie-backup`).
+Run one backup and one sync by hand, then confirm the manifest and the object exist:
 
 ```bash
-docker exec vie-mongodb sh -c 'mongodump --db video-insight-engine --archive --gzip --username "$MONGO_INITDB_ROOT_USERNAME" --password "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin' \
-  | aws s3 cp --region eu-north-1 - s3://BUCKET/backups/mongo-manual.archive.gz
-aws s3 ls --region eu-north-1 s3://BUCKET/backups/
+dc ps vie-backup-cron                      # Up
+docker exec vie-backup-cron sh -c 'cd /repo && QDRANT_URL=http://vie-qdrant:6333 ./scripts/backup.sh'
+ls backups/*/manifest.json
+aws s3 sync --region eu-north-1 backups s3://BUCKET/backups/
+aws s3 ls --region eu-north-1 s3://BUCKET/backups/ --recursive | tail -5
 ```
 
-The instance role cannot delete objects, so add an S3 lifecycle rule that expires `backups/` objects after, for example, 14 days.
+Sync runs log to the journal (`journalctl -t vie-backup`). The instance role cannot delete under `backups/` (only `videos/*`, for the global video delete), so the S3 lifecycle rule that expires `backups/` after 14 days is what prunes the bucket.
 
-To restore a dump (this replaces the database):
+**Restore rehearsal.** Do this once after the first backup, so the restore path is known to work before it is needed. `scripts/restore.sh` asks nothing: it drops and replaces the database (`mongorestore --drop`) and every Qdrant collection as soon as it starts, so stop the app services first. It runs inside the backup sidecar, which has the tools, the Docker socket and the `backups/` mount, and can reach Qdrant (no host port in prod):
 
 ```bash
-aws s3 cp --region eu-north-1 s3://BUCKET/backups/mongo-YYYYMMDD.archive.gz - \
-  | docker exec -i vie-mongodb sh -c 'mongorestore --archive --gzip --drop --username "$MONGO_INITDB_ROOT_USERNAME" --password "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin'
+dc stop vie-api vie-summarizer vie-summarizer-worker vie-assistant vie-admin
+docker exec -i vie-backup-cron sh -c 'cd /repo && QDRANT_URL=http://vie-qdrant:6333 ./scripts/restore.sh backups/<timestamp>'
+dc up -d
+docker exec vie-mongodb sh -c 'mongosh --quiet -u "$MONGO_INITDB_ROOT_USERNAME" -p "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin video-insight-engine --eval "db.videoSummaryCache.countDocuments()"'
 ```
+
+For a Mongo-only drill, move the `qdrant-*.snapshot` files out of the backup folder first (`restore.sh` has no skip flag). To fetch an older backup from S3 first: `aws s3 sync --region eu-north-1 s3://BUCKET/backups/<timestamp> backups/<timestamp>`.
 
 Rebuilds leave old images behind. After every deploy (the CI workflow does this for you):
 
@@ -263,11 +269,10 @@ Then log in as the demo user and submit each URL from `demo-data/<timestamp>/url
 
 - The import refuses an export made at a different pipeline version, because those docs would regenerate on submission.
 - A Qdrant snapshot replaces the whole collection, so the import refuses when the server already has vectors. Pass `--replace-vectors` to accept; chat then loses transcript context for videos processed on the server.
-- Imported docs lose their free-tier expiry date, so the preload stays until you delete it.
 
 ## Appendix: GitHub Actions deploy role
 
-`.github/workflows/deploy.yml` deploys on every push to `main` and on manual runs. The security group only admits SSH from your IP, so the workflow assumes an AWS role through GitHub OIDC. That role can do one thing: add and remove inbound rules on this one security group. The job opens tcp/22 for the runner's IP, deploys over SSH, and always removes the rule at the end.
+`.github/workflows/deploy.yml` runs after the CI workflow succeeds for a push to this repository's `main` (never in parallel with CI; fork pull requests cannot trigger it) and on manual runs, which skip the gate. The security group only admits SSH from your IP, so the workflow assumes an AWS role through GitHub OIDC. That role can do one thing: add and remove inbound rules on this one security group. The job opens tcp/22 for the runner's IP, deploys over SSH, and always removes the rule at the end.
 
 1. **OIDC provider**, once per AWS account: IAM → Identity providers → Add provider → OpenID Connect. Provider URL `https://token.actions.githubusercontent.com`, audience `sts.amazonaws.com`.
 
@@ -319,4 +324,4 @@ Then log in as the demo user and submit each URL from `demo-data/<timestamp>/url
 
    Without `EC2_KNOWN_HOSTS`, the workflow trusts the host key it sees on first contact.
 
-On the instance, the workflow runs `git pull --ff-only` in `~/video-insight-engine`, then rebuilds with both compose files, prunes dangling images and waits for `https://DOMAIN/health`. Keep the checkout on `main` with no local edits; `.env` is untracked and never touched. Until the variables and secrets exist, every push to `main` fails this workflow, so disable it under Actions if you don't use it.
+On the instance, the workflow runs `git pull --ff-only` in `~/video-insight-engine`, then rebuilds with both compose files, prunes dangling images and waits for `https://DOMAIN/health`. Keep the checkout on `main` with no local edits; `.env` is untracked and never touched. Until the variables and secrets exist, every green CI run on `main` fails this workflow, so disable it under Actions if you don't use it.

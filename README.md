@@ -350,9 +350,11 @@ Per-phase model routing (`LLM_<STAGE>_MODEL` overrides): fast models for classif
 
 ## Quick Start
 
+> Production on a single EC2 host: [docs/DEPLOY.md](./docs/DEPLOY.md).
+
 ```bash
 # Clone
-git clone https://github.com/kfirkfir89/video-insight-engine.git
+git clone https://github.com/kfiravra/video-insight-engine.git
 cd video-insight-engine
 
 # Configure
