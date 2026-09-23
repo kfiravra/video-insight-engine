@@ -1,7 +1,7 @@
 name: Deploy
 
 # Single-host demo deploy (docs/DEPLOY.md, "Appendix: GitHub Actions deploy
-# role"). The instance's security group only admits SSH from the owner's IP,
+# role"). Gated on a green CI run for main; manual runs skip the gate. The instance's security group only admits SSH from the owner's IP,
 # so the job opens tcp/22 for this runner's IP through an OIDC role scoped to
 # that one security group, deploys, and always closes the rule again.
 #
@@ -9,7 +9,10 @@ name: Deploy
 # Repository secrets:   EC2_HOST, EC2_USER, EC2_SSH_KEY, EC2_KNOWN_HOSTS (optional)
 
 on:
-  push:
+  # Runs only after the CI workflow succeeded for a push to main (never in parallel with it).
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main]
   workflow_dispatch:
 
@@ -25,6 +28,14 @@ concurrency:
 jobs:
   deploy:
     name: Deploy to EC2
+    # workflow_run also fires for CI runs of fork pull requests; only a push to
+    # this repository's own main may deploy.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
