@@ -57,6 +57,7 @@ DELETE /api/admin/users/:id?immediate=true ──────────┘  �
 | `DELETE /api/admin/users/:id?immediate=true` | `x-admin-key` header | Run the cascade now (compliance escape hatch). |
 | `DELETE /api/admin/users/:id` (no `immediate`) | `x-admin-key` header | Schedule the same soft delete as the user-initiated flow. |
 | `POST /internal/run-deletions` | `x-internal-secret` header | Cron entrypoint — sweeps `hardDeleteAt <= now` and runs the cascade for each. |
+| `DELETE /api/admin/videos/:youtubeId` | `x-admin-key` header | Not GDPR: the **video** cascade (`VideoCascadeService`), which removes one video from every store for every user. Listed here because it is the only path that deletes the shared rows the user cascade keeps. |
 
 ## Key files
 
@@ -96,9 +97,9 @@ Each step is wrapped in `runStep`, which catches and records the error as a `war
 
 | Store | Why we don't delete |
 |---|---|
-| `videoSummaryCache` | Shared cache, keyed by YouTube ID, not user. Deletion would break other users with the same video. |
-| Qdrant `transcript_chunks` | Same — video-scoped, not user-scoped. `user_id` payload is reserved but always `null` today (see `services/summarizer/src/services/vector/qdrant_service.py:153`). When that payload starts being populated for user-generated content, the cascade step is ready to flip from no-op to real delete. |
-| S3 `videos/{youtubeId}/...` | Same — video-scoped. No user-keyed S3 prefixes today; placeholder hook is wired for the future. |
+| `videoSummaryCache` | Shared cache, keyed by YouTube ID, not user. Deletion would break other users with the same video. Removed only by the video cascade (`DELETE /api/admin/videos/:youtubeId`). |
+| Qdrant `transcript_chunks` | Same — video-scoped, not user-scoped. `user_id` payload is reserved but always `null` today (see `services/summarizer/src/services/vector/qdrant_service.py:153`). When that payload starts being populated for user-generated content, the cascade step is ready to flip from no-op to real delete. The video cascade deletes them by `video_id` through the summarizer's `POST /internal/videos/{id}/purge`. |
+| S3 `videos/{youtubeId}/...` | Same — video-scoped. No user-keyed S3 prefixes today; placeholder hook is wired for the future. The video cascade deletes the whole prefix. |
 | `llm_usage` | Anonymized cost telemetry with 90-day TTL. Eagerly deleting would distort daily cost reports. If legal needs shorter retention, hash the `user_id` field instead. |
 | `shareLikes` / `shareViews` | Already anonymous (IP hashed). |
 | Paddle records | Out of our system — directed at Paddle's own GDPR portal in [`PRIVACY.md`](./PRIVACY.md). |

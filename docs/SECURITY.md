@@ -385,7 +385,7 @@ new WebSocket(`${WS_URL}/ws`, ["vie-auth", accessToken]);
 
 ### Admin API Key
 
-`x-admin-key` guarded routes (`DELETE /api/users/:id`, `/api/admin/queue/*`)
+`x-admin-key` guarded routes (`DELETE /api/users/:id`, `/api/admin/queue/*`, `DELETE /api/admin/videos/:youtubeId`)
 compare the header against `ADMIN_API_KEY` with `crypto.timingSafeEqual`
 (`api/src/utils/admin-auth.ts`) — same constant-time pattern as
 `isValidInternalSecret`.

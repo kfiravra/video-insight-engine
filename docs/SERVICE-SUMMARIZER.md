@@ -40,14 +40,17 @@ services/summarizer/
     ├── middleware.py             # Request ID middleware
     │
     ├── routes/
+    │   ├── deps.py               # require_internal_secret (X-Internal-Secret, constant-time)
     │   ├── stream.py             # SSE streaming endpoint
-    │   └── override.py           # Detection override endpoint
+    │   ├── override.py           # Detection override endpoint
+    │   └── purge.py              # POST /internal/videos/{id}/purge (global video delete)
     │
     ├── services/
     │   ├── llm.py                # LLMService (call_llm + call_llm_fast)
     │   ├── llm_provider.py       # LiteLLM multi-provider abstraction
     │   ├── usage_tracker.py      # LLM usage tracking
     │   ├── override_state.py     # In-memory override state
+    │   ├── video_purge.py        # Qdrant + S3 prefix + Redis purge for one video (per-store warnings)
     │   ├── status_callback.py    # Status callback
     │   │
     │   ├── pipeline/             # Plan-based summarization pipeline

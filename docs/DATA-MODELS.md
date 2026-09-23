@@ -333,13 +333,11 @@ One entry per YouTube video. Shared across all users.
   // partial so they coexist until backfilled.
   dedupKey: string | undefined,
 
-  // Expiration (v1.4) — TTL index fires on non-null Date
-  // Tier-driven: free = createdAt + 30d, pro/team = null (never).
-  // Cross-user attach: when a pro/team user attaches to a row originally
-  // created by a free-tier user, `clearExpiresAt()` unsets this field so
-  // the row isn't hard-deleted under the paid user. Most-privileged
-  // attacher upgrades the row for everyone.
-  expiresAt: Date | null,           // null = never expires (pro/team), Date = will be removed
+  // Summaries never expire on any tier. The v1.4 free-tier `expiresAt` TTL
+  // was removed on 2026-09-17: MongoDB's TTL monitor hard-deleted shared rows
+  // with no cascade (orphaned userVideos rows + Qdrant vectors). Legacy docs
+  // are cleaned by scripts/migrate-remove-video-expiry.ts; the API drops a
+  // surviving TTL index at boot (mongodb.ts hasVideoExpiryTtlIndex).
 
   // Cache metadata
   version: number,
@@ -384,11 +382,11 @@ One entry per YouTube video. Shared across all users.
 
 **Indexes:**
 ```javascript
-{ youtubeId: 1 }    // unique
+{ youtubeId: 1, isLatest: 1 }
+{ youtubeId: 1, version: -1 }
 { status: 1 }
 { outputType: 1 }                   // v1.4 — filter by output type
 { shareSlug: 1 }                    // v1.4 — unique sparse (only indexed when non-null)
-{ expiresAt: 1 }                    // v1.4 — TTL index (expireAfterSeconds: 0)
 { dedupKey: 1 }                     // dev-1-ux — unique partial { $exists: true }; powers upsertCacheByDedupKey
 ```
 
@@ -659,6 +657,34 @@ Audit log for admin grant-credit and manual-charge actions.
 
 | Action | Result |
 |--------|--------|
-| User removes video from library | userVideos deleted. Cache stays. |
+| User removes video from library | The user's userVideos row, its idempotency keys and (if no other folder still holds the video) the user's own agentNotes are deleted. Cache stays. |
+| Admin deletes video everywhere | Summarizer purge (Qdrant, S3 `videos/<id>/`, Redis), then userVideos, shareLikes, shareViews, agentNotes, idempotencyKeys, videoSummaryCache (all versions); `videoDeletions` audit row. |
 | User deletes folder | Move contents to "Unfiled" or delete with contents |
 | User account deleted | Delete all user data. Caches stay (shared). |
+
+### videoDeletions
+
+Audit row written by `VideoCascadeService` for every **global** video delete (`DELETE /api/admin/videos/:youtubeId`). User-scope deletes write no row.
+
+```typescript
+{
+  _id: ObjectId,
+  youtubeId: string,
+  summaryIds: string[],            // every videoSummaryCache version that existed
+  scope: 'global',
+  initiatedBy: 'admin' | 'script',
+  adminId: string | null,          // x-admin-id header, self-attested
+  reason: string | null,
+  counts: {                        // rows/objects removed per store
+    videoSummaryCache, userVideos, shareLikes, shareViews, agentNotes,
+    idempotencyKeys, dispatchGuards, qdrantPoints, s3Objects, redisKeys: number
+  },
+  startedAt: Date, completedAt: Date, durationMs: number,
+  warnings?: string[],             // per-step failures that did not abort
+}
+```
+
+Indexes: `{ youtubeId: 1 }`, `{ completedAt: -1 }`.
+
+Note on `agentNotes.videoId` (assistant collection): video chat stores the **summary ObjectId string**, library tools store the **youtube id**; both cascades filter on both forms.
+

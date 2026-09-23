@@ -110,6 +110,22 @@ The UI's "Replay all" uses the real DLQ depth from `/queue/stats` (not the 20-ro
 peek), capped at 500 per click, and refreshes stats + peek on **settle** (success
 or failure), since a timeout can arrive after part of the batch was re-published.
 
+### Videos (`/videos/`)
+
+Thin authenticated proxy over vie-api's `DELETE /api/admin/videos/:youtubeId`
+(`X-Admin-Key` from `ADMIN_API_KEY`), backing the "Delete everywhere" button on
+the video detail page.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| DELETE | `/videos/{youtubeId}` | Body `{reason?, adminId?}` (`adminId` is forwarded as `x-admin-id` for the audit row, self-attested). Runs vie-api's global cascade: summarizer purge (Qdrant points, S3 `videos/<id>/`, Redis keys) then Mongo (`userVideos`, `shareLikes`, `shareViews`, `agentNotes`, `idempotencyKeys`, `videoSummaryCache`) and a `videoDeletions` audit row. Returns vie-api's `{youtubeId, summaryIds, counts, warnings}`. |
+
+Same upstream translation as the queue proxy (vie-api `401` → `500`, `≥500` →
+`502` with the JSON envelope as `detail`, other `4xx` forwarded). A failed
+summarizer purge surfaces as `502 SUMMARIZER_PURGE_FAILED` with nothing deleted
+in Mongo, so the operator simply retries. `llm_usage` rows are kept by design,
+so the detail page still shows the cost breakdown afterwards with `video: null`.
+
 ### Alerts (`/alerts/`)
 
 | Method | Path | Description |
