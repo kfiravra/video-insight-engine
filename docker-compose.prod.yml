@@ -43,9 +43,10 @@ x-summarizer-env: &summarizer-env
   LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-60.0}
   LLM_NUM_RETRIES: ${LLM_NUM_RETRIES:-2}
   LLM_EXTRACTION_MODEL: ${LLM_EXTRACTION_MODEL:-}
-  # Default to the code's Haiku pins — a blank value silently fell back to Sonnet (vision) / the fast tier (enrichment)
-  LLM_ENRICHMENT_MODEL: ${LLM_ENRICHMENT_MODEL:-anthropic/claude-haiku-4-5-20251001}
-  LLM_VISION_MODEL: ${LLM_VISION_MODEL:-anthropic/claude-haiku-4-5-20251001}
+  # Enrichment: blank = the fast tier of LLM_PROVIDER. Vision: Sonnet on purpose (frame descriptions
+  # drive the moment gallery; owner rejected Haiku for it 2026-09-16). config.py keeps the Haiku dev pins.
+  LLM_ENRICHMENT_MODEL: ${LLM_ENRICHMENT_MODEL:-}
+  LLM_VISION_MODEL: ${LLM_VISION_MODEL:-anthropic/claude-sonnet-4-6}
   LLM_DESCRIPTION_MODEL: ${LLM_DESCRIPTION_MODEL:-}
   LLM_SYNTHESIS_MODEL: ${LLM_SYNTHESIS_MODEL:-}
   LLM_TRANSLATION_MODEL: ${LLM_TRANSLATION_MODEL:-}
@@ -283,6 +284,10 @@ services:
       TRUST_PROXY: ${TRUST_PROXY:-1}
       # Spend guards (defaults mirror api/src/config.ts; the demo .env tightens them)
       VIDEO_DAILY_LIMIT: ${VIDEO_DAILY_LIMIT:-100}
+      # Requests per minute per IP on the public api
+      RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-120}
+      # Daily LLM spend ceiling in USD, read by the cost monitor
+      COST_DAILY_LIMIT: ${COST_DAILY_LIMIT:-20}
       USER_COST_LIMIT_FREE: ${USER_COST_LIMIT_FREE:-2}
       ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-true}
       SENTRY_DSN: ${SENTRY_DSN:-}

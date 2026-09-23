@@ -17,6 +17,7 @@ reports/
 .env
 .env.*
 !.env.example
+!.env.production.example
 
 # Dependencies
 node_modules/
@@ -80,9 +81,6 @@ backups/
 # Local diagnostics dumps (contain presigned URLs) — untracked, keep on disk only
 respone.json
 dev/diagnostics/
-
-# Deployment task docs (security-sensitive; repo is public)
-dev/active/aws-go-live/
 
 # Demo preload exports (scripts/demo-export.sh) — local copies of cached videos
 demo-data/
