@@ -319,3 +319,14 @@ export class AccountAlreadyDeletedError extends AppError {
     this.name = 'AccountAlreadyDeletedError';
   }
 }
+
+/**
+ * The summarizer could not purge a video's artifacts (Qdrant, S3, Redis).
+ * The Mongo half of the cascade is skipped so the admin can simply retry.
+ */
+export class SummarizerPurgeError extends AppError {
+  constructor(detail: string) {
+    super('SUMMARIZER_PURGE_FAILED', 502, `Video purge failed: ${detail}`);
+    this.name = 'SummarizerPurgeError';
+  }
+}

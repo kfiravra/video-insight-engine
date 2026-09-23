@@ -1,6 +1,6 @@
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { idParamSchema, objectIdSchema } from '../utils/validation.js';
+import { idParamSchema, objectIdSchema, youtubeIdSchema } from '../utils/validation.js';
 import { config } from '../config.js';
 import { VideoSubmissionService } from '../services/video-submission.service.js';
 
@@ -34,9 +34,6 @@ const videosQuerySchema = z.object({
   offset: z.coerce.number().int().min(0).optional().default(0),
 });
 
-// YouTube ID validation: 11 characters, alphanumeric plus dash/underscore
-const youtubeIdSchema = z.string().regex(/^[a-zA-Z0-9_-]{11}$/, 'Invalid YouTube ID format');
-
 const versionsParamSchema = z.object({
   youtubeId: youtubeIdSchema,
 });
@@ -46,7 +43,7 @@ const versionsQuerySchema = z.object({
 });
 
 export async function videosRoutes(fastify: FastifyInstance) {
-  const { videoService, costMonitorService, idempotencyService, videoRepository } = fastify.container;
+  const { videoService, videoCascadeService, costMonitorService, idempotencyService, videoRepository } = fastify.container;
   // Constructed here (not in the container) so route tests that override
   // container services via `buildTestApp` keep full control over its deps.
   const videoSubmissionService = new VideoSubmissionService(
@@ -147,7 +144,9 @@ export async function videosRoutes(fastify: FastifyInstance) {
     preHandler: [fastify.authenticate],
   }, async (req, reply) => {
     const { id } = idParamSchema.parse(req.params);
-    await videoService.deleteVideo(req.user.userId, id);
+    // User scope: only this user's row, idempotency key and notes go; the
+    // shared summary stays for everyone else.
+    await videoCascadeService.deleteVideo({ scope: 'user', userId: req.user.userId, userVideoId: id });
     return reply.code(204).send();
   });
 

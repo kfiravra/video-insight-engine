@@ -23,6 +23,9 @@ export function toObjectId(id: string): ObjectId | null {
  */
 export const objectIdSchema = z.string().regex(/^[a-f\d]{24}$/i, 'Invalid ID format');
 
+/** YouTube video id: 11 characters, alphanumeric plus dash/underscore. */
+export const youtubeIdSchema = z.string().regex(/^[a-zA-Z0-9_-]{11}$/, 'Invalid YouTube ID format');
+
 /**
  * Common route param schemas
  */

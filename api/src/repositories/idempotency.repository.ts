@@ -147,4 +147,19 @@ export class IdempotencyRepository {
   async invalidateByVideoSummaryId(videoSummaryId: string): Promise<void> {
     await this.collection.deleteMany({ videoSummaryId: new ObjectId(videoSummaryId) });
   }
+
+  /**
+   * Drop the keys that completed against one library row. Without this a
+   * deleted row could be re-served from its completed key until the TTL.
+   */
+  async invalidateByUserVideoId(userVideoId: string): Promise<number> {
+    const result = await this.collection.deleteMany({ userVideoId: new ObjectId(userVideoId) });
+    return result.deletedCount;
+  }
+
+  /** Drop every key for a video, all users and versions (global purge). */
+  async invalidateByYoutubeId(youtubeId: string): Promise<number> {
+    const result = await this.collection.deleteMany({ youtubeId });
+    return result.deletedCount;
+  }
 }

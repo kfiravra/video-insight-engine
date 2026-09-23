@@ -1,5 +1,7 @@
 import type { FastifyBaseLogger } from 'fastify';
+import { z } from 'zod';
 import { config } from '../config.js';
+import { SummarizerPurgeError } from '../utils/errors.js';
 
 export type Provider = 'anthropic' | 'openai' | 'gemini';
 
@@ -23,7 +25,29 @@ export interface SummarizeRequest {
   requestId?: string;
 }
 
+export interface PurgeVideoRequest {
+  youtubeId: string;
+  /** Every `videoSummaryCache` version of the video; their per-run Redis keys go too. */
+  videoSummaryIds: string[];
+}
+
+export interface PurgeVideoResult {
+  qdrantPoints: number;
+  s3Objects: number;
+  redisKeys: number;
+  warnings: string[];
+}
+
+const purgeResultSchema = z.object({
+  qdrantPoints: z.number().int().nonnegative(),
+  s3Objects: z.number().int().nonnegative(),
+  redisKeys: z.number().int().nonnegative(),
+  warnings: z.array(z.string()).default([]),
+});
+
 const SUMMARIZER_TIMEOUT_MS = 10000; // 10 seconds
+// S3 listing + batched deletes for a long video can take a while.
+const PURGE_TIMEOUT_MS = 60000;
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 1000;
 
@@ -103,5 +127,47 @@ export class SummarizerClient {
     })().catch((err) => {
       this.logger.error({ error: err }, 'Unexpected error in triggerSummarization');
     });
+  }
+
+  /**
+   * Remove every artifact the summarizer owns for a video (Qdrant points, S3
+   * objects, Redis keys). The endpoint is idempotent, so a failure is thrown
+   * for the caller to retry instead of being retried blindly here.
+   */
+  async purgeVideo(request: PurgeVideoRequest): Promise<PurgeVideoResult> {
+    const url = `${config.SUMMARIZER_URL}/internal/videos/${encodeURIComponent(request.youtubeId)}/purge`;
+    let response: Response;
+    try {
+      response = await fetchWithTimeout(
+        url,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Internal-Secret': config.INTERNAL_SECRET,
+          },
+          body: JSON.stringify({ videoSummaryIds: request.videoSummaryIds }),
+        },
+        PURGE_TIMEOUT_MS,
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new SummarizerPurgeError(`summarizer unreachable (${message})`);
+    }
+    if (!response.ok) {
+      throw new SummarizerPurgeError(`summarizer returned ${response.status}`);
+    }
+    let payload: unknown;
+    try {
+      payload = await response.json();
+    } catch {
+      throw new SummarizerPurgeError('summarizer returned a non-JSON body');
+    }
+    const parsed = purgeResultSchema.safeParse(payload);
+    if (!parsed.success) {
+      throw new SummarizerPurgeError('summarizer returned an unexpected payload');
+    }
+    this.logger.info({ youtubeId: request.youtubeId, ...parsed.data }, 'video_purge_completed');
+    return parsed.data;
   }
 }

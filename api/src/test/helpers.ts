@@ -147,6 +147,9 @@ export interface MockContainer {
     executeHardDelete: ReturnType<typeof vi.fn>;
     runScheduledDeletions: ReturnType<typeof vi.fn>;
   };
+  videoCascadeService: {
+    deleteVideo: ReturnType<typeof vi.fn>;
+  };
 }
 
 export function createMockContainer(): MockContainer {
@@ -328,6 +331,9 @@ export function createMockContainer(): MockContainer {
       cancelDeletion: vi.fn(),
       executeHardDelete: vi.fn(),
       runScheduledDeletions: vi.fn().mockResolvedValue({ processed: 0, succeeded: 0, failed: 0, failures: [] }),
+    },
+    videoCascadeService: {
+      deleteVideo: vi.fn(),
     },
   };
 }

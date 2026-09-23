@@ -10,6 +10,7 @@ import { ShareRepository } from './repositories/share.repository.js';
 import { UserCostRepository } from './repositories/user-cost.repository.js';
 import { IdempotencyRepository } from './repositories/idempotency.repository.js';
 import { UserDeletionRepository } from './repositories/user-deletion.repository.js';
+import { VideoDeletionRepository } from './repositories/video-deletion.repository.js';
 
 // Services
 import { AuthService } from './services/auth.service.js';
@@ -26,6 +27,7 @@ import { QueuePublisher, type ChannelSupplier } from './services/queue-publisher
 import { IdempotencyService } from './services/idempotency.service.js';
 import { DispatchGuardService, noOpDispatchGuard, type IDispatchGuard } from './services/dispatch-guard.service.js';
 import { UserDeletionService } from './services/user-deletion.service.js';
+import { VideoCascadeService } from './services/video-cascade.service.js';
 import { config } from './config.js';
 
 export interface Container {
@@ -37,6 +39,7 @@ export interface Container {
   userCostRepository: UserCostRepository;
   idempotencyRepository: IdempotencyRepository;
   userDeletionRepository: UserDeletionRepository;
+  videoDeletionRepository: VideoDeletionRepository;
 
   // Services
   authService: AuthService;
@@ -53,6 +56,7 @@ export interface Container {
   idempotencyService: IdempotencyService;
   dispatchGuardService: IDispatchGuard;
   userDeletionService: UserDeletionService;
+  videoCascadeService: VideoCascadeService;
 }
 
 export interface CreateContainerOptions {
@@ -76,6 +80,7 @@ export function createContainer(
   const userCostRepository = new UserCostRepository(db);
   const idempotencyRepository = new IdempotencyRepository(db);
   const userDeletionRepository = new UserDeletionRepository(db);
+  const videoDeletionRepository = new VideoDeletionRepository(db);
 
   // Create external clients
   const summarizerClient = new SummarizerClient(logger);
@@ -143,6 +148,7 @@ export function createContainer(
     userCostRepository,
     idempotencyRepository,
     userDeletionRepository,
+    videoDeletionRepository,
 
     // Services
     authService,
@@ -159,6 +165,7 @@ export function createContainer(
     idempotencyService,
     dispatchGuardService,
     userDeletionService,
+    videoCascadeService,
   };
 }
 

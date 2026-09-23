@@ -419,7 +419,7 @@ describe('videos routes', () => {
 
   describe('DELETE /api/videos/:id', () => {
     it('should delete a video', async () => {
-      mockContainer.videoService.deleteVideo.mockResolvedValue(undefined);
+      mockContainer.videoCascadeService.deleteVideo.mockResolvedValue(undefined);
 
       const response = await app.inject({
         method: 'DELETE',
@@ -428,15 +428,17 @@ describe('videos routes', () => {
       });
 
       expect(response.statusCode).toBe(204);
-      expect(mockContainer.videoService.deleteVideo).toHaveBeenCalledWith(
-        'test-user-id',
-        '507f1f77bcf86cd799439011'
-      );
+      // User scope only: the shared summary is never part of this call.
+      expect(mockContainer.videoCascadeService.deleteVideo).toHaveBeenCalledWith({
+        scope: 'user',
+        userId: 'test-user-id',
+        userVideoId: '507f1f77bcf86cd799439011',
+      });
     });
 
     it('should return 404 when video not found', async () => {
       const { VideoNotFoundError } = await import('../utils/errors.js');
-      mockContainer.videoService.deleteVideo.mockRejectedValue(new VideoNotFoundError());
+      mockContainer.videoCascadeService.deleteVideo.mockRejectedValue(new VideoNotFoundError());
 
       const response = await app.inject({
         method: 'DELETE',

@@ -354,6 +354,14 @@ export class VideoRepository {
     }
   }
 
+  /** Every version's id and share slug for a video — the global purge's work list. */
+  async findCacheKeysByYoutubeId(youtubeId: string): Promise<Array<{ _id: ObjectId; shareSlug?: string }>> {
+    return this.cacheCollection
+      .find({ youtubeId })
+      .project<{ _id: ObjectId; shareSlug?: string }>({ _id: 1, shareSlug: 1 })
+      .toArray();
+  }
+
   // User Videos methods
 
   async findUserVideo(userId: string, videoId: string): Promise<UserVideoDocument | null> {

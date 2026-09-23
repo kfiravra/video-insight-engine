@@ -187,6 +187,8 @@ async function mongodb(fastify: FastifyInstance) {
         { key: { userId: 1, youtubeId: 1, folderId: 1 } },
         { key: { userId: 1, createdAt: -1 } },
         { key: { userId: 1, 'playlistInfo.playlistId': 1 } },
+        // Global video purge deletes every user's rows for one video
+        { key: { youtubeId: 1 } },
       ]);
 
       // folders indexes
@@ -202,6 +204,12 @@ async function mongodb(fastify: FastifyInstance) {
         // GDPR scheduler scans for `hardDeleteAt <= now` among soft-deleted
         // accounts. Sparse on hardDeleteAt keeps the index tiny.
         { key: { hardDeleteAt: 1 }, sparse: true },
+      ]);
+
+      // videoDeletions audit — one row per global video purge
+      await db.collection('videoDeletions').createIndexes([
+        { key: { youtubeId: 1 } },
+        { key: { completedAt: -1 } },
       ]);
 
       // userDeletions audit — read by email-hash lookup and by original user
@@ -251,6 +259,9 @@ async function mongodb(fastify: FastifyInstance) {
         { key: { hash: 1 }, unique: true },
         { key: { expiresAt: 1 }, expireAfterSeconds: 0 },
         { key: { videoSummaryId: 1 }, sparse: true },
+        // User-scope delete invalidates by library row; global purge by video
+        { key: { userVideoId: 1 }, sparse: true },
+        { key: { youtubeId: 1 } },
         { key: { userId: 1, createdAt: -1 } },
       ]);
 
