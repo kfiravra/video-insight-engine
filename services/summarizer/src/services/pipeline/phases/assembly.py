@@ -176,7 +176,15 @@ async def run_phase_assembly(ctx: PipelineContext) -> AsyncGenerator[str, None]:
         # (or pre-feature doc).
         result["degraded"] = True
 
-    await asyncio.to_thread(ctx.repository.save_structured_result, ctx.video_summary_id, result)
+    saved = await asyncio.to_thread(
+        ctx.repository.save_structured_result, ctx.video_summary_id, result
+    )
+    if not saved:
+        # A global purge deleted the row mid-run; re-creating its Redis, Qdrant
+        # and S3 artifacts would orphan them again. Drop the result.
+        ctx.row_deleted = True
+        logger.warning("pipeline_row_deleted_mid_run video_summary_id=%s", ctx.video_summary_id)
+        return
     # Mirror onto userVideos + WS fan-out (best-effort). Non-English videos
     # stay "processing" here — the translation phase owns their "completed".
     # Fire-and-forget: a slow API gateway must not stall the SSE stream.

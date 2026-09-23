@@ -98,7 +98,10 @@ class PipelineEventStream:
         in tests) so the Script objects always target the live connection.
         """
         client = self._get_client()
-        if self._release_script is None or getattr(self._release_script, "registered_client", None) is not client:
+        if (
+            self._release_script is None
+            or getattr(self._release_script, "registered_client", None) is not client
+        ):
             self._release_script = client.register_script(_RELEASE_LOCK_LUA)
             self._refresh_script = client.register_script(_REFRESH_LOCK_LUA)
 
@@ -121,13 +124,27 @@ class PipelineEventStream:
         )
         return bool(result)
 
+    async def purge(self, video_summary_id: str) -> int:
+        """Delete the event stream and the producer lock for one run.
+
+        Used by the global video purge: after the row is gone nothing may
+        replay or resume its run. Returns the number of keys removed (0-2).
+        """
+        client = self._get_client()
+        removed = await client.delete(
+            self.stream_key(video_summary_id),
+            self.lock_key(video_summary_id),
+        )
+        return int(removed)
+
     async def release_lock(self, video_summary_id: str, owner: str) -> None:
         """Release the lock only if we still own it (compare-and-delete)."""
         self._ensure_scripts()
         assert self._release_script is not None  # set by _ensure_scripts
         try:
             await self._release_script(
-                keys=[self.lock_key(video_summary_id)], args=[owner],
+                keys=[self.lock_key(video_summary_id)],
+                args=[owner],
             )
         except (aioredis.ConnectionError, aioredis.TimeoutError) as e:
             logger.debug("Lock release failed for %s: %s", video_summary_id, e)

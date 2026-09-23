@@ -118,3 +118,6 @@ class PipelineContext:
 
     # Per-phase timing (phase_name → seconds)
     phase_times: dict[str, float] = field(default_factory=dict)
+    # Set when a save finds no row: a global purge deleted the video mid-run.
+    # Later phases and the runner must not re-create artifacts or emit `done`.
+    row_deleted: bool = False

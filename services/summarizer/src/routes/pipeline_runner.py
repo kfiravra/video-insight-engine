@@ -283,7 +283,8 @@ async def _run_pipeline_phases(
 
         # Translation step — translate the English output into the source
         # language and attach it as ``sourceLanguage`` for the FE toggle.
-        if ctx.source_language_code:
+        # A row purged mid-run gets no translation (paid LLM calls) and no `done`.
+        if ctx.source_language_code and not ctx.row_deleted:
             phase_start = time.monotonic()
             try:
                 from src.services.pipeline.phases.translation import run_phase_translation

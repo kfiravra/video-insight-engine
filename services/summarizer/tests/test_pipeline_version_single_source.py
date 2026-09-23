@@ -89,7 +89,7 @@ class TestMongoDocStamping:
 def _build_assembly_ctx() -> SimpleNamespace:
     """Minimal PipelineContext stand-in (mirrors test_phase_assembly_cache)."""
     repo = MagicMock()
-    repo.save_structured_result = MagicMock(return_value=None)
+    repo.save_structured_result = MagicMock(return_value=True)
     timer = MagicMock()
     timer.elapsed = MagicMock(return_value=1.0)
     return SimpleNamespace(

@@ -41,7 +41,7 @@ def _build_ctx(source_language_code: str | None = None) -> SimpleNamespace:
         thumbnail_url="https://example/thumb.jpg",
     )
     repo = MagicMock()
-    repo.save_structured_result = MagicMock(return_value=None)
+    repo.save_structured_result = MagicMock(return_value=True)
     timer = MagicMock()
     timer.elapsed = MagicMock(return_value=1.0)
     return SimpleNamespace(
@@ -103,6 +103,33 @@ async def test_redis_cache_set_for_english_videos() -> None:
         mock_cache.set_response = AsyncMock(return_value=True)
         await _drain(phase.run_phase_assembly(ctx))  # type: ignore[arg-type]
         mock_cache.set_response.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_redis_cache_skipped_when_row_deleted_mid_run() -> None:
+    """A global purge removed the row while the run was in flight: the phase
+    must not repopulate Redis (or any other store) for a video that is gone."""
+    from src.services.pipeline.phases import assembly as phase
+
+    ctx = _build_ctx()
+    ctx.repository.save_structured_result = MagicMock(return_value=False)
+    with (
+        patch.object(phase, "assemble_response", return_value={"tabs": [], "meta": {}}),
+        patch.object(
+            phase,
+            "settings",
+            SimpleNamespace(REDIS_ENABLED=True, QDRANT_ENABLED=False, PIPELINE_VERSION="vtest"),
+        ),
+        patch.object(phase, "response_cache") as mock_cache,
+        patch(
+            "src.routes.cached_response.build_frontend_response",
+            return_value={"meta": {}, "tabs": []},
+        ),
+    ):
+        mock_cache.set_response = AsyncMock(return_value=True)
+        events = await _collect(phase.run_phase_assembly(ctx))  # type: ignore[arg-type]
+        mock_cache.set_response.assert_not_called()
+        assert not any("done" in event for event in events)
 
 
 @pytest.mark.asyncio

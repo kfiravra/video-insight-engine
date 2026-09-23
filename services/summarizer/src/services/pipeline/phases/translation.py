@@ -93,7 +93,7 @@ async def run_phase_translation(
     # under the source block, so the title swaps with the toggle too.
     await _translate_title(ctx)
 
-    await asyncio.to_thread(
+    saved = await asyncio.to_thread(
         repository.save_structured_result,
         video_summary_id,
         {
@@ -107,6 +107,11 @@ async def run_phase_translation(
             "status": "completed",
         },
     )
+    if not saved:
+        # A global purge deleted the row mid-run; do not repopulate Redis for it.
+        ctx.row_deleted = True
+        logger.warning("pipeline_row_deleted_mid_run video_summary_id=%s", video_summary_id)
+        return
     send_video_status_background(video_summary_id, None, "completed")
 
     logger.info(
