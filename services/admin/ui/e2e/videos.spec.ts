@@ -117,3 +117,15 @@ test.describe('Video Detail Page', () => {
     await expect(adminPage.getByRole('heading', { name: 'Videos' })).toBeVisible();
   });
 });
+
+test.describe('Video Detail Page — delete everywhere', () => {
+  test('should confirm and then show what was removed', async ({ adminPage }) => {
+    await adminPage.goto('/videos/abc123');
+
+    await adminPage.getByRole('button', { name: 'Delete everywhere…' }).click();
+    await adminPage.getByRole('button', { name: 'Confirm delete' }).click();
+
+    await expect(adminPage.getByTestId('purge-result')).toContainText('userVideos 2');
+    await expect(adminPage.getByRole('button', { name: 'Deleted everywhere' })).toBeDisabled();
+  });
+});

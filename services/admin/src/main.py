@@ -22,6 +22,7 @@ from src.routes.shares import router as shares_router
 from src.routes.tiers import router as tiers_router
 from src.routes.usage import router as usage_router
 from src.routes.users import router as users_router
+from src.routes.videos import router as videos_router
 from src.services.alert_evaluator import alert_evaluator_loop
 from src.services.health_checker import health_poller_loop
 
@@ -141,7 +142,7 @@ app.add_middleware(
         "http://localhost:5173",
         "http://localhost:8002",
     ],
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["Authorization", "Content-Type"],
 )
 
@@ -157,6 +158,7 @@ app.include_router(shares_router)
 app.include_router(tiers_router)
 app.include_router(users_router)
 app.include_router(queue_router)
+app.include_router(videos_router)
 
 
 @app.get("/health")

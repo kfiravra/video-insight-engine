@@ -215,3 +215,11 @@ export const mockTierDistribution = [
   { tier: 'pro', count: 280, percentage: 23.9 },
   { tier: 'team', count: 41, percentage: 3.5 },
 ];
+
+export const mockVideoPurge = {
+  scope: 'global',
+  youtubeId: 'abc123',
+  summaryIds: ['6a8ebbbfe517dd6fad90fb1d'],
+  counts: { videoSummaryCache: 1, userVideos: 2, qdrantPoints: 58, s3Objects: 41, redisKeys: 1 },
+  warnings: [],
+};

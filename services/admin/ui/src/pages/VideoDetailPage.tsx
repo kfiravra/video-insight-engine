@@ -7,6 +7,7 @@ import { Panel } from '../components/Panel';
 import { StatCard } from '../components/StatCard';
 import { SkeletonPanel } from '../components/SkeletonPanel';
 import { ErrorState } from '../components/ErrorState';
+import { PurgeVideoControls } from '../components/PurgeVideoControls';
 
 function BackLink() {
   return (
@@ -94,6 +95,7 @@ export function VideoDetailPage() {
               )}
             </div>
           </div>
+          {videoId && <PurgeVideoControls videoId={videoId} />}
         </div>
       </Panel>
 

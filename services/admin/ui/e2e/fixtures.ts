@@ -18,6 +18,7 @@ import {
   mockSharesTop,
   mockSharesStats,
   mockTierDistribution,
+  mockVideoPurge,
 } from './mock-data';
 
 // Re-export mock data for tests that reference it directly
@@ -49,6 +50,12 @@ function fulfill(route: { fulfill: (opts: { status: number; contentType: string;
 }
 
 export async function setupAdminApiMocks(page: Page) {
+  // Global delete: only the DELETE verb is mocked — the same path is the SPA's
+  // own detail page for document navigations.
+  await page.route('**/videos/*', (route) => {
+    if (route.request().method() === 'DELETE') return fulfill(route, mockVideoPurge);
+    return route.continue();
+  });
   // Video detail must be registered before by-video to avoid pattern collision
   await page.route('**/usage/video/*', (route) => fulfill(route, mockVideoDetail));
   await page.route('**/usage/by-video*', (route) => fulfill(route, mockUsageByVideo));
