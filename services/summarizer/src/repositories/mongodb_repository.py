@@ -151,20 +151,23 @@ class MongoDBVideoRepository:
         }
     )
 
-    def save_structured_result(self, video_summary_id: str, result: dict) -> None:
+    def save_structured_result(self, video_summary_id: str, result: dict) -> bool:
         """Save structured pipeline result (triage-driven pipeline).
 
         Stores allowlisted fields from result — prevents injection of
-        arbitrary fields like _id or userId.
+        arbitrary fields like _id or userId. Returns False when no row
+        matched: the row was deleted while the run was in flight (global
+        purge), so callers must not re-create its artifacts.
         """
         filtered = {k: v for k, v in result.items() if k in self._ALLOWED_RESULT_KEYS}
         filtered["updatedAt"] = _utc_now()
         # A completed run consumes the API's bypassCache marker — clearing it
         # keeps future serves of this row on the normal cache path.
-        self._collection.update_one(
+        outcome = self._collection.update_one(
             {"_id": ObjectId(video_summary_id)},
             {"$set": filtered, "$unset": {"forceRefresh": ""}},
         )
+        return outcome.matched_count == 1
 
     def set_transcript_meta(self, video_summary_id: str, meta: dict[str, Any]) -> None:
         """Persist the per-run transcript provenance block.

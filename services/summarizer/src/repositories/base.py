@@ -1,7 +1,8 @@
 """Repository protocol definitions for video summarization."""
 
-from typing import Protocol, Optional
-from src.models.schemas import ProcessingStatus, ErrorCode
+from typing import Optional, Protocol
+
+from src.models.schemas import ErrorCode, ProcessingStatus
 
 
 class VideoRepository(Protocol):
@@ -21,7 +22,7 @@ class VideoRepository(Protocol):
         """Update processing status."""
         ...
 
-    def save_structured_result(self, video_summary_id: str, result: dict) -> None:
+    def save_structured_result(self, video_summary_id: str, result: dict) -> bool:
         """Save structured pipeline result."""
         ...
 

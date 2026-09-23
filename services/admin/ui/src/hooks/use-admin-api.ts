@@ -105,6 +105,22 @@ export function useReplayDlq() {
   });
 }
 
+/**
+ * Global video delete (every store, every user). The detail query is
+ * invalidated so the page reflects the purge; llm_usage rows are kept by
+ * design, so the cost breakdown stays with `video: null`.
+ */
+export function usePurgeVideo(videoId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (reason?: string) => api.videos.purge(videoId, reason),
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ['video-detail', videoId] });
+      void queryClient.invalidateQueries({ queryKey: ['usage-by-video'] });
+    },
+  });
+}
+
 export function useAlertsRecent(limit = 20) {
   return useQuery({ queryKey: ['alerts-recent', limit], queryFn: () => api.alerts.recent(limit), refetchInterval: 30_000 });
 }

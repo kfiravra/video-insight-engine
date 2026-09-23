@@ -117,7 +117,7 @@ mongodb_repository.save_result()
 ## Quick Reference
 
 ### Test Accounts
-- Admin: `admin@admin.com` / `Admin123`
+- Admin: local dev account only — credentials removed (they were public in git history; treat them as burned). Create your own with `scripts/create-admin.ts`.
 
 ### Service URLs
 - Frontend: http://localhost:5173

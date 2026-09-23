@@ -322,7 +322,8 @@ jobs:
       # supply dummy values for the required vars and run `config -q`.
       - name: Validate prod compose interpolation
         run: |
-          cp .env.example /tmp/prod-validate.env
+          # Seed from the template the server actually copies (docs/DEPLOY.md, clone and configure)
+          cp .env.production.example /tmp/prod-validate.env
           cat >> /tmp/prod-validate.env <<'EOF'
           MONGO_ROOT_USER=ci
           MONGO_ROOT_PASS=ci
@@ -335,5 +336,14 @@ jobs:
           PADDLE_WEBHOOK_SECRET=ci
           FRONTEND_URL=https://ci.invalid
           VITE_WS_URL=wss://ci.invalid/ws
+          DOMAIN=ci.invalid
           EOF
           docker compose --env-file /tmp/prod-validate.env -f docker-compose.prod.yml config -q
+
+      # The AWS overlay and the Caddyfile only ever ran on the deploy host before;
+      # a typo there must fail here, not mid-deploy with the old containers stopped.
+      - name: Validate aws overlay and Caddyfile
+        run: |
+          docker compose --env-file /tmp/prod-validate.env -f docker-compose.prod.yml -f docker-compose.aws.yml config -q
+          docker run --rm -v "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" -e DOMAIN=ci.invalid \
+            caddy:2.10-alpine caddy validate --config /etc/caddy/Caddyfile

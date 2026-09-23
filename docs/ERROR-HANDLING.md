@@ -98,6 +98,7 @@ See [docs/SECURITY.md](./SECURITY.md#rate-limiting) for implementation.
 | --------------------- | ------------------------------- | --------------------- |
 | `INTERNAL_ERROR`      | Something went wrong            | Unexpected error      |
 | `SERVICE_UNAVAILABLE` | Service temporarily unavailable | Dependency down       |
+| `SUMMARIZER_PURGE_FAILED` | Video purge failed | Summarizer could not purge Qdrant/S3/Redis; nothing deleted in Mongo — retry the admin delete |
 | `LLM_ERROR`           | AI service error                | Claude API failed     |
 | `DATABASE_ERROR`      | Database error                  | MongoDB failed        |
 | `SUMMARIZER_ERROR`    | Summarizer service error        | Summarizer unreachable |

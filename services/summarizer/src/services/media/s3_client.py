@@ -9,6 +9,7 @@ Note: aioboto3 is imported lazily to allow graceful degradation if not installed
 
 import json
 import logging
+import re
 from typing import Any
 
 from tenacity import (
@@ -31,7 +32,8 @@ def _is_retryable_s3_error(exc: BaseException) -> bool:
     if isinstance(exc, (ConnectionError, TimeoutError, OSError)):
         return True
     try:
-        from botocore.exceptions import ClientError, BotoCoreError
+        from botocore.exceptions import BotoCoreError, ClientError
+
         return isinstance(exc, (ClientError, BotoCoreError))
     except ImportError:
         return False
@@ -43,11 +45,19 @@ def _check_aioboto3() -> bool:
     if _aioboto3_available is None:
         try:
             import aioboto3  # noqa: F401
+
             _aioboto3_available = True
         except ImportError:
             logger.warning("aioboto3 not installed - S3 storage will be disabled")
             _aioboto3_available = False
     return _aioboto3_available
+
+
+# Only one video's own prefix may be bulk-deleted. A caller bug must fail
+# loudly here instead of listing (and deleting) the whole bucket.
+_DELETABLE_PREFIX = re.compile(r"^videos/[A-Za-z0-9_-]{1,64}/$")
+# S3 accepts at most 1000 keys per delete_objects call.
+_DELETE_BATCH_SIZE = 1000
 
 
 class S3Client:
@@ -64,6 +74,7 @@ class S3Client:
             if not _check_aioboto3():
                 raise RuntimeError("aioboto3 not available - cannot use S3 storage")
             import aioboto3
+
             self._session = aioboto3.Session()
         return self._session
 
@@ -87,6 +98,7 @@ class S3Client:
     async def ensure_bucket_exists(self) -> None:
         """Create the bucket if it doesn't exist (for LocalStack)."""
         from botocore.exceptions import ClientError
+
         session = self._ensure_session()
         async with session.client("s3", **self._get_client_config()) as s3:
             try:
@@ -111,7 +123,9 @@ class S3Client:
         wait=wait_exponential(multiplier=1, min=1, max=10),
         retry=retry_if_exception(_is_retryable_s3_error),
         before_sleep=lambda retry_state: logger.warning(
-            "S3 put_json retry %d/3: %s", retry_state.attempt_number, retry_state.outcome.exception()
+            "S3 put_json retry %d/3: %s",
+            retry_state.attempt_number,
+            retry_state.outcome.exception(),
         ),
         reraise=True,
     )
@@ -142,7 +156,9 @@ class S3Client:
         wait=wait_exponential(multiplier=1, min=1, max=10),
         retry=retry_if_exception(_is_retryable_s3_error),
         before_sleep=lambda retry_state: logger.warning(
-            "S3 put_bytes retry %d/3: %s", retry_state.attempt_number, retry_state.outcome.exception()
+            "S3 put_bytes retry %d/3: %s",
+            retry_state.attempt_number,
+            retry_state.outcome.exception(),
         ),
         reraise=True,
     )
@@ -213,6 +229,7 @@ class S3Client:
             Direct URL string
         """
         from urllib.parse import quote
+
         encoded_key = quote(key, safe="/")
         endpoint = settings.AWS_ENDPOINT_URL
         if not endpoint:
@@ -225,7 +242,9 @@ class S3Client:
         wait=wait_exponential(multiplier=1, min=1, max=10),
         retry=retry_if_exception(_is_retryable_s3_error),
         before_sleep=lambda retry_state: logger.warning(
-            "S3 get_json retry %d/3: %s", retry_state.attempt_number, retry_state.outcome.exception()
+            "S3 get_json retry %d/3: %s",
+            retry_state.attempt_number,
+            retry_state.outcome.exception(),
         ),
         reraise=True,
     )
@@ -243,6 +262,7 @@ class S3Client:
             ClientError: If download fails after retries (except for NoSuchKey)
         """
         from botocore.exceptions import ClientError
+
         session = self._ensure_session()
         async with session.client("s3", **self._get_client_config()) as s3:
             try:
@@ -268,6 +288,7 @@ class S3Client:
             True if object exists, False otherwise
         """
         from botocore.exceptions import ClientError
+
         session = self._ensure_session()
         async with session.client("s3", **self._get_client_config()) as s3:
             try:
@@ -294,6 +315,70 @@ class S3Client:
             await s3.delete_object(Bucket=self._bucket, Key=key)
             logger.debug("Deleted from S3: %s", key)
 
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception(_is_retryable_s3_error),
+        before_sleep=lambda retry_state: logger.warning(
+            "S3 delete_prefix retry %d/3: %s",
+            retry_state.attempt_number,
+            retry_state.outcome.exception(),
+        ),
+        reraise=True,
+    )
+    async def delete_prefix(self, prefix: str) -> int:
+        """Delete every object under one video's prefix. Returns the deleted count.
+
+        Pages through ``list_objects_v2`` by hand (no paginator) so each page
+        turns into ``delete_objects`` batches of at most 1000 keys.
+
+        Raises:
+            ValueError: If ``prefix`` is not a single ``videos/<id>/`` prefix.
+            RuntimeError: If S3 reports per-key delete errors.
+        """
+        if not _DELETABLE_PREFIX.match(prefix):
+            raise ValueError(f"Refusing to delete outside a single video prefix: {prefix!r}")
+        deleted = 0
+        session = self._ensure_session()
+        async with session.client("s3", **self._get_client_config()) as s3:
+            token: str | None = None
+            while True:
+                page = await s3.list_objects_v2(**self._list_args(prefix, token))
+                keys = [obj["Key"] for obj in page.get("Contents", [])]
+                if keys:
+                    deleted += await self._delete_keys(s3, keys)
+                token = page.get("NextContinuationToken")
+                if not page.get("IsTruncated") or not token:
+                    break
+        logger.info("Deleted %d object(s) under %s", deleted, prefix)
+        return deleted
+
+    def _list_args(self, prefix: str, token: str | None) -> dict[str, Any]:
+        args: dict[str, Any] = {
+            "Bucket": self._bucket,
+            "Prefix": prefix,
+            "MaxKeys": _DELETE_BATCH_SIZE,
+        }
+        if token:
+            args["ContinuationToken"] = token
+        return args
+
+    async def _delete_keys(self, s3: Any, keys: list[str]) -> int:
+        deleted = 0
+        for start in range(0, len(keys), _DELETE_BATCH_SIZE):
+            batch = keys[start : start + _DELETE_BATCH_SIZE]
+            response = await s3.delete_objects(
+                Bucket=self._bucket,
+                Delete={"Objects": [{"Key": key} for key in batch], "Quiet": True},
+            )
+            errors = response.get("Errors") or []
+            if errors:
+                raise RuntimeError(
+                    f"S3 delete_objects reported {len(errors)} error(s); first: {errors[0]}"
+                )
+            deleted += len(batch)
+        return deleted
+
     async def health_check(self) -> dict[str, Any]:
         """
         Check S3 connectivity and bucket access.
@@ -309,6 +394,7 @@ class S3Client:
             }
 
         from botocore.exceptions import ClientError
+
         try:
             session = self._ensure_session()
             async with session.client("s3", **self._get_client_config()) as s3:

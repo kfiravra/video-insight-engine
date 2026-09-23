@@ -33,7 +33,7 @@ export default defineConfig({
     // is how the dev UI used to be unable to log in (/auth) or load the
     // Users / Shares / Tiers / Queue panels.
     proxy: Object.fromEntries(
-      ['/auth', '/usage', '/health', '/alerts', '/shares', '/tiers', '/users', '/queue', '/admin'].map(
+      ['/auth', '/usage', '/health', '/alerts', '/shares', '/tiers', '/users', '/videos', '/queue', '/admin'].map(
         (prefix) => [prefix, proxyRule],
       ),
     ),

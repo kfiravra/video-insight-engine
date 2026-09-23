@@ -117,3 +117,86 @@ class TestGetDevUrl:
             url = s3_client_instance.get_dev_url("key/path")
 
         assert url == "http://localhost:4566/vie-transcripts/key/path"
+
+
+def _paged_session(pages: list[dict]) -> tuple[MagicMock, AsyncMock]:
+    """Session whose s3 client answers list_objects_v2 with the given pages."""
+    mock_s3 = AsyncMock()
+    mock_s3.list_objects_v2 = AsyncMock(side_effect=pages)
+    mock_s3.delete_objects = AsyncMock(return_value={})
+    mock_session = MagicMock()
+    mock_session.client.return_value.__aenter__ = AsyncMock(return_value=mock_s3)
+    mock_session.client.return_value.__aexit__ = AsyncMock(return_value=False)
+    return mock_session, mock_s3
+
+
+class TestDeletePrefix:
+    """Tests for delete_prefix — the S3 half of a global video purge."""
+
+    @pytest.mark.asyncio
+    async def test_should_delete_every_page_when_listing_is_truncated(self, s3_client_instance):
+        pages = [
+            {
+                "Contents": [{"Key": f"videos/abc/frames/{i}.jpg"} for i in range(1000)],
+                "IsTruncated": True,
+                "NextContinuationToken": "t1",
+            },
+            {
+                "Contents": [{"Key": f"videos/abc/scenes-v3/{i}.jpg"} for i in range(500)],
+                "IsTruncated": False,
+            },
+        ]
+        session, mock_s3 = _paged_session(pages)
+        s3_client_instance._session = session
+
+        deleted = await s3_client_instance.delete_prefix("videos/abc/")
+
+        assert deleted == 1500
+        assert mock_s3.delete_objects.await_count == 2
+        second_list = mock_s3.list_objects_v2.await_args_list[1].kwargs
+        assert second_list["ContinuationToken"] == "t1"
+
+    @pytest.mark.asyncio
+    async def test_should_delete_nothing_when_prefix_has_no_objects(self, s3_client_instance):
+        session, mock_s3 = _paged_session([{"IsTruncated": False}])
+        s3_client_instance._session = session
+
+        deleted = await s3_client_instance.delete_prefix("videos/abc/")
+
+        assert deleted == 0
+        mock_s3.delete_objects.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_should_split_one_page_into_batches_of_1000(self, s3_client_instance):
+        keys = [{"Key": f"videos/abc/frames/{i}.jpg"} for i in range(1001)]
+        session, mock_s3 = _paged_session([{"Contents": keys, "IsTruncated": False}])
+        s3_client_instance._session = session
+
+        deleted = await s3_client_instance.delete_prefix("videos/abc/")
+
+        assert deleted == 1001
+        assert mock_s3.delete_objects.await_count == 2
+        first_batch = mock_s3.delete_objects.await_args_list[0].kwargs["Delete"]["Objects"]
+        assert len(first_batch) == 1000
+
+    @pytest.mark.asyncio
+    async def test_should_raise_when_s3_reports_per_key_errors(self, s3_client_instance):
+        session, mock_s3 = _paged_session(
+            [{"Contents": [{"Key": "videos/abc/frames/1.jpg"}], "IsTruncated": False}]
+        )
+        mock_s3.delete_objects = AsyncMock(
+            return_value={"Errors": [{"Key": "videos/abc/frames/1.jpg", "Code": "AccessDenied"}]}
+        )
+        s3_client_instance._session = session
+
+        with pytest.raises(RuntimeError, match="AccessDenied"):
+            await s3_client_instance.delete_prefix("videos/abc/")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "prefix",
+        ["", "videos/", "backups/x/", "videos/../", "videos/abc", "videos/abc/frames/"],
+    )
+    async def test_should_refuse_prefixes_outside_one_video(self, s3_client_instance, prefix):
+        with pytest.raises(ValueError):
+            await s3_client_instance.delete_prefix(prefix)

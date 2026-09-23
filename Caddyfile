@@ -1,0 +1,41 @@
+# Public entrypoint for the single-host AWS deploy (docker-compose.aws.yml).
+# Automatic HTTPS for {$DOMAIN}. vie-api and vie-web are reachable only through here.
+{
+	# While iterating on a fresh host, uncomment to avoid Let's Encrypt rate limits:
+	# acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
+}
+
+{$DOMAIN} {
+	# route keeps the directives in the order written: block, then API, then web.
+	route {
+		# Operator and service-to-service endpoints never leave the private network.
+		@blocked path /internal/* /api/admin/* /ready /stats.html
+		respond @blocked 404
+
+		# Browser-facing security headers for the SPA. API responses keep helmet's own
+		# set (api/src/plugins/helmet.ts); the values here match it. `defer` applies them
+		# after nginx answers so nothing upstream can drop them.
+		@web not path /api/* /ws /health
+		header @web {
+			Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+			X-Content-Type-Options "nosniff"
+			Referrer-Policy "strict-origin-when-cross-origin"
+			X-Frame-Options "SAMEORIGIN"
+			# Clickjacking guard only; a full resource CSP needs the SPA's inline theme script hashed first.
+			Content-Security-Policy "frame-ancestors 'self'"
+			Permissions-Policy "camera=(), microphone=(), geolocation=()"
+			-Server
+			defer
+		}
+
+		# /health is a root route on vie-api, not under /api.
+		@api path /api/* /ws /health
+		reverse_proxy @api vie-api:3000 {
+			# Stream SSE (pipeline progress, chat) without buffering
+			flush_interval -1
+		}
+
+		# Everything else is the SPA served by vie-web's nginx
+		reverse_proxy vie-web:5173
+	}
+}

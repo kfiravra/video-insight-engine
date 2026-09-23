@@ -43,7 +43,6 @@ describe('VideoService', () => {
     deleteOldVersions: ReturnType<typeof vi.fn>;
     userOwnsVideo: ReturnType<typeof vi.fn>;
     updateCacheEntry: ReturnType<typeof vi.fn>;
-    clearExpiresAt: ReturnType<typeof vi.fn>;
   };
   let mockSummarizerClient: {
     triggerSummarization: ReturnType<typeof vi.fn>;
@@ -80,7 +79,6 @@ describe('VideoService', () => {
       deleteOldVersions: vi.fn(),
       userOwnsVideo: vi.fn(),
       updateCacheEntry: vi.fn(),
-      clearExpiresAt: vi.fn().mockResolvedValue(undefined),
     };
     mockSummarizerClient = {
       triggerSummarization: vi.fn(),
@@ -601,132 +599,6 @@ describe('VideoService', () => {
         );
 
         expect(mockSummarizerClient.triggerSummarization).not.toHaveBeenCalled();
-      });
-    });
-
-    describe('tier upgrade on attach', () => {
-      // Without this protection, a pro/team user attaching to a free-tier-
-      // created row would inherit the free 30-day TTL — Mongo's expiresAt
-      // TTL index would hard-delete the row out from under the paid user.
-      // The most-privileged attacher must upgrade the row for everyone.
-
-      const upsertWithExpiry = (status: string, expiresAt: Date | null) => {
-        const base = upsertResult(false, {
-          _id: 'shared-row',
-          youtubeId: 'dQw4w9WgXcQ',
-          status,
-        });
-        return { ...base, doc: { ...base.doc, expiresAt } };
-      };
-
-      it('clears expiresAt when a pro user attaches to a row with a TTL', async () => {
-        const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
-        mockVideoRepository.findUserVideoByYoutubeId.mockResolvedValue(null);
-        mockVideoRepository.upsertCacheByDedupKey.mockResolvedValue(
-          upsertWithExpiry('completed', expiresAt),
-        );
-        mockVideoRepository.createUserVideo.mockResolvedValue({
-          _id: { toString: () => 'uv-pro' },
-          videoSummaryId: { toString: () => 'shared-row' },
-          youtubeId: 'dQw4w9WgXcQ',
-          status: 'completed',
-        });
-
-        await videoService.createVideo(
-          'pro-user',
-          'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
-          { tier: 'pro' },
-        );
-
-        expect(mockVideoRepository.clearExpiresAt).toHaveBeenCalledWith('shared-row');
-      });
-
-      it('clears expiresAt when a team user attaches to a pending row with a TTL', async () => {
-        const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
-        mockVideoRepository.findUserVideoByYoutubeId.mockResolvedValue(null);
-        mockVideoRepository.upsertCacheByDedupKey.mockResolvedValue(
-          upsertWithExpiry('pending', expiresAt),
-        );
-        mockVideoRepository.createUserVideo.mockResolvedValue({
-          _id: { toString: () => 'uv-team' },
-          videoSummaryId: { toString: () => 'shared-row' },
-          youtubeId: 'dQw4w9WgXcQ',
-          status: 'pending',
-        });
-
-        await videoService.createVideo(
-          'team-user',
-          'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
-          { tier: 'team' },
-        );
-
-        expect(mockVideoRepository.clearExpiresAt).toHaveBeenCalledWith('shared-row');
-      });
-
-      it('does NOT clear expiresAt when a free user attaches (their TTL is the same)', async () => {
-        const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
-        mockVideoRepository.findUserVideoByYoutubeId.mockResolvedValue(null);
-        mockVideoRepository.upsertCacheByDedupKey.mockResolvedValue(
-          upsertWithExpiry('completed', expiresAt),
-        );
-        mockVideoRepository.createUserVideo.mockResolvedValue({
-          _id: { toString: () => 'uv-free' },
-          videoSummaryId: { toString: () => 'shared-row' },
-          youtubeId: 'dQw4w9WgXcQ',
-          status: 'completed',
-        });
-
-        await videoService.createVideo(
-          'free-user',
-          'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
-          { tier: 'free' },
-        );
-
-        expect(mockVideoRepository.clearExpiresAt).not.toHaveBeenCalled();
-      });
-
-      it('does NOT clear expiresAt when the row already has none (pro attaching to pro row)', async () => {
-        mockVideoRepository.findUserVideoByYoutubeId.mockResolvedValue(null);
-        mockVideoRepository.upsertCacheByDedupKey.mockResolvedValue(
-          upsertWithExpiry('completed', null),
-        );
-        mockVideoRepository.createUserVideo.mockResolvedValue({
-          _id: { toString: () => 'uv-pro-2' },
-          videoSummaryId: { toString: () => 'shared-row' },
-          youtubeId: 'dQw4w9WgXcQ',
-          status: 'completed',
-        });
-
-        await videoService.createVideo(
-          'pro-user-2',
-          'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
-          { tier: 'pro' },
-        );
-
-        expect(mockVideoRepository.clearExpiresAt).not.toHaveBeenCalled();
-      });
-
-      it('does NOT clear expiresAt on the wasInsert path (fresh row already matches inserter tier)', async () => {
-        // The inserting user's tier already decided expiresAt at upsert time —
-        // the upgrade logic only applies to the attach path.
-        mockVideoRepository.findUserVideoByYoutubeId.mockResolvedValue(null);
-        mockVideoRepository.upsertCacheByDedupKey.mockResolvedValue(
-          upsertResult(true, { _id: 'fresh-row', youtubeId: 'dQw4w9WgXcQ', status: 'pending' }),
-        );
-        mockVideoRepository.createUserVideo.mockResolvedValue({
-          _id: { toString: () => 'uv-fresh' },
-          videoSummaryId: { toString: () => 'fresh-row' },
-          youtubeId: 'dQw4w9WgXcQ',
-          status: 'pending',
-        });
-
-        await videoService.createVideo(
-          'pro-fresh',
-          'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
-          { tier: 'pro' },
-        );
-
-        expect(mockVideoRepository.clearExpiresAt).not.toHaveBeenCalled();
       });
     });
 

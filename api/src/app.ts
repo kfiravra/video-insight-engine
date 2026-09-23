@@ -35,6 +35,7 @@ import { paymentRoutes } from './routes/payment.routes.js';
 import { preferencesRoutes, userUsageRoutes } from './routes/preferences.routes.js';
 import { adminQueueRoutes } from './routes/admin/queue.routes.js';
 import { userMeRoutes, adminUsersRoutes } from './routes/users.routes.js';
+import { adminVideosRoutes } from './routes/admin/videos.routes.js';
 import { healthRoutes } from './routes/health.routes.js';
 
 /** The object form of Fastify's `logger` option (pino options + Fastify extras). */
@@ -227,6 +228,7 @@ export async function buildApp(options?: BuildAppOptions): Promise<FastifyInstan
   await fastify.register(internalAssistantRoutes, { prefix: '/internal/assistant' });
   await fastify.register(adminQueueRoutes, { prefix: '/api/admin/queue' });
   await fastify.register(adminUsersRoutes, { prefix: '/api/admin/users' });
+  await fastify.register(adminVideosRoutes, { prefix: '/api/admin/videos' });
 
   // SSR routes (top-level, no /api prefix — for social media crawlers)
   await fastify.register(ssrRoutes);

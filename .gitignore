@@ -15,8 +15,9 @@ audit/
 reports/
 # Environment
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
+!.env.production.example
 
 # Dependencies
 node_modules/
@@ -76,3 +77,10 @@ docker-compose.override.yml
 
 # Data backups (scripts/backup.sh output)
 backups/
+
+# Local diagnostics dumps (contain presigned URLs) — untracked, keep on disk only
+respone.json
+dev/diagnostics/
+
+# Demo preload exports (scripts/demo-export.sh) — local copies of cached videos
+demo-data/

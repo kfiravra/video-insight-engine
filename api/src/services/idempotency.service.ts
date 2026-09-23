@@ -187,4 +187,14 @@ export class IdempotencyService {
       this.logger.warn({ err, videoSummaryId }, 'idempotency invalidate on failure failed');
     }
   }
+
+  /** Drop the keys that completed against one library row (user-scope delete). */
+  async invalidateByUserVideoId(userVideoId: string): Promise<number> {
+    return this.repo.invalidateByUserVideoId(userVideoId);
+  }
+
+  /** Drop every key for a video, all users and versions (global purge). */
+  async invalidateByYoutubeId(youtubeId: string): Promise<number> {
+    return this.repo.invalidateByYoutubeId(youtubeId);
+  }
 }

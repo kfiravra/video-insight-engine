@@ -1,5 +1,6 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
 import { FastifyInstance } from 'fastify';
+import { config } from '../config.js';
 import { buildTestApp, createMockContainer, getAuthHeader, type MockContainer } from '../test/helpers.js';
 
 describe('auth routes', () => {
@@ -234,6 +235,45 @@ describe('auth routes', () => {
       });
 
       expect(response.statusCode).toBe(401);
+    });
+  });
+
+  describe('registration toggle (ALLOW_REGISTRATION)', () => {
+    const originalAllowRegistration = config.ALLOW_REGISTRATION;
+
+    afterEach(() => {
+      config.ALLOW_REGISTRATION = originalAllowRegistration;
+    });
+
+    it('should report registration as open by default', async () => {
+      const response = await app.inject({ method: 'GET', url: '/api/auth/registration' });
+
+      expect(response.json()).toEqual({ open: true });
+    });
+
+    it('should report registration as closed when ALLOW_REGISTRATION is false', async () => {
+      config.ALLOW_REGISTRATION = false;
+
+      const response = await app.inject({ method: 'GET', url: '/api/auth/registration' });
+
+      expect(response.json()).toEqual({ open: false });
+    });
+
+    it('should return 403 REGISTRATION_CLOSED without creating a user when registration is closed', async () => {
+      config.ALLOW_REGISTRATION = false;
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/auth/register',
+        // Own IP so this call does not share the register route's 5/hour counter
+        remoteAddress: '203.0.113.10',
+        headers: { 'content-type': 'application/json' },
+        payload: { email: 'closed@example.com', password: 'SecurePass123', name: 'Closed' },
+      });
+
+      expect(response.statusCode).toBe(403);
+      expect(response.json()).toMatchObject({ error: 'REGISTRATION_CLOSED' });
+      expect(mockContainer.authService.register).not.toHaveBeenCalled();
     });
   });
 

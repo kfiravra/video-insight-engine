@@ -203,6 +203,44 @@ describe('MongoDB plugin', () => {
     });
   });
 
+  describe('videoSummaryCache retired expiry TTL index', () => {
+    it('should flag only a TTL expiresAt index when deciding what to drop', async () => {
+      const { hasVideoExpiryTtlIndex } = await import('./mongodb.js');
+
+      // Pre-2026-09-17 deploys: TTL index that hard-deleted shared rows.
+      expect(hasVideoExpiryTtlIndex([{ name: 'expiresAt_1', expireAfterSeconds: 0 }])).toBe(true);
+
+      // A plain index of the same name must not be rebuilt on every boot.
+      expect(hasVideoExpiryTtlIndex([{ name: 'expiresAt_1' }])).toBe(false);
+
+      // Unrelated indexes / fresh collection → nothing to drop.
+      expect(hasVideoExpiryTtlIndex([{ name: '_id_' }])).toBe(false);
+      expect(hasVideoExpiryTtlIndex([])).toBe(false);
+    });
+
+    it('should drop the retired expiresAt TTL index on startup and not recreate it', async () => {
+      const { mongodbPlugin } = await import('./mongodb.js');
+
+      // Pre-seed the pre-2026-09-17 state: a TTL index on expiresAt.
+      const raw = new MongoClient(process.env.MONGODB_URI as string);
+      await raw.connect();
+      const cache = raw.db().collection('videoSummaryCache');
+      await cache.dropIndex('expiresAt_1').catch(() => undefined);
+      await cache.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+
+      const app = Fastify({ logger: false });
+      await app.register(mongodbPlugin);
+      await app.ready();
+
+      const indexes = await app.mongo.db.collection('videoSummaryCache').indexes();
+      // Summaries never expire: no TTL index may survive startup.
+      expect(indexes.find((idx) => idx.name === 'expiresAt_1')).toBeUndefined();
+
+      await app.close();
+      await raw.close();
+    });
+  });
+
   describe('dedupKey backfill (Step 1a)', () => {
     let app: FastifyInstance;
 

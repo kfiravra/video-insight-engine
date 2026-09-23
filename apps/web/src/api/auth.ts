@@ -1,6 +1,11 @@
 import { request } from "./client";
 import type { AuthResponse, User } from "@/types";
 
+/** Whether self-service signup is enabled on this deployment. */
+export interface RegistrationStatus {
+  open: boolean;
+}
+
 // API layer - pure HTTP calls, no side effects
 // Callers are responsible for token management via setAccessToken
 export const authApi = {
@@ -28,5 +33,9 @@ export const authApi = {
 
   async getMe(): Promise<User> {
     return request<User>("/auth/me");
+  },
+
+  async getRegistrationStatus(): Promise<RegistrationStatus> {
+    return request<RegistrationStatus>("/auth/registration");
   },
 };

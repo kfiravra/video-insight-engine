@@ -413,7 +413,7 @@ Cache hits refund the reservation immediately. Real spend is reconciled from
 
 Remove video from user's library.
 
-**Note:** Only removes `userVideo` reference. Cache unaffected.
+**Note:** Removes the caller's `userVideos` row, the idempotency keys that completed against it and, unless the caller still holds the video in another folder, their own assistant notes for it. The shared summary, vectors and frames stay (see `DELETE /api/admin/videos/:youtubeId`). `404 VIDEO_NOT_FOUND` when the row is not the caller's.
 
 **Response:** `204 No Content`
 
@@ -1075,6 +1075,32 @@ export async function websocketPlugin(fastify: FastifyInstance) {
 ```
 
 ---
+
+## Admin (x-admin-key)
+
+Static-key endpoints for operators; the admin panel proxies to them. `x-admin-id` is optional operator metadata written to the audit row (not auth).
+
+### DELETE /api/admin/videos/:youtubeId
+
+Removes a video from every store for every user, in this order: summarizer purge (Qdrant `transcript_chunks` by `video_id`, S3 `videos/<id>/` prefix, Redis response + pipeline keys) → Mongo `userVideos`, `shareLikes`, `shareViews`, `agentNotes`, `idempotencyKeys`, then `videoSummaryCache` (all versions) → dispatch-guard keys → `videoDeletions` audit row. A failed purge aborts before any Mongo row is touched (idempotent; retry).
+
+Headers: `x-admin-key` (required), `x-admin-id` (optional, `[A-Za-z0-9._-]{1,64}`). Body (optional): `{ "reason": "..." }`.
+
+Response `200`:
+
+```json
+{
+  "scope": "global",
+  "youtubeId": "dQw4w9WgXcQ",
+  "summaryIds": ["6a7b2f6abacdb32871507996"],
+  "counts": { "videoSummaryCache": 1, "userVideos": 3, "shareLikes": 0, "shareViews": 0, "agentNotes": 2, "idempotencyKeys": 1, "dispatchGuards": 1, "qdrantPoints": 58, "s3Objects": 41, "redisKeys": 2 },
+  "warnings": []
+}
+```
+
+Errors: `401 UNAUTHORIZED`, `400 VALIDATION_ERROR` (bad id or `x-admin-id`), `429 RATE_LIMITED` (300/hour with a valid key, 30/hour otherwise, plus the global per-IP limit), `502 SUMMARIZER_PURGE_FAILED`. A `200` with `partial: true` means a Mongo step failed after the purge; `warnings` names it.
+
+User-scope deletion (`DELETE /api/videos/:id`, JWT) is different: it removes only the caller's library row, their idempotency key and their own assistant notes for the video; the shared summary stays. User-account deletion is documented in [GDPR.md](./GDPR.md).
 
 ## HTTP Callback Integration
 

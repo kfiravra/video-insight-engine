@@ -1,6 +1,6 @@
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { isValidAdminKey } from '../utils/admin-auth.js';
+import { isValidAdminKey, parseAdminIdHeader } from '../utils/admin-auth.js';
 
 /**
  * Self-service GDPR Article 17 endpoints.
@@ -82,9 +82,6 @@ const adminDeleteQuerySchema = z.object({
 const adminDeleteBodySchema = z
   .object({ reason: z.string().min(1).max(500).optional() })
   .optional();
-// `x-admin-id` is operator metadata for the audit row, not auth. Constrain it
-// so a multi-valued or oversized header can't pollute the audit log.
-const adminIdSchema = z.string().min(1).max(64).regex(/^[A-Za-z0-9._-]+$/);
 
 export async function adminUsersRoutes(fastify: FastifyInstance): Promise<void> {
   const { userDeletionService } = fastify.container;
@@ -107,22 +104,14 @@ export async function adminUsersRoutes(fastify: FastifyInstance): Promise<void> 
 
     const immediate = query.immediate === 'true' || query.immediate === '1';
 
-    // `req.headers[name]` is `string | string[] | undefined` — collapse the
-    // array form (duplicate headers) to the first value before validating so
-    // the schema sees a clean string.
-    const rawAdminIdHeader = req.headers['x-admin-id'];
-    const rawAdminId = Array.isArray(rawAdminIdHeader) ? rawAdminIdHeader[0] : rawAdminIdHeader;
-    let adminId: string | null = null;
-    if (rawAdminId !== undefined) {
-      const parsed = adminIdSchema.safeParse(rawAdminId);
-      if (!parsed.success) {
-        return reply.code(400).send({
-          error: 'VALIDATION_ERROR',
-          message: 'Invalid x-admin-id header',
-        });
-      }
-      adminId = parsed.data;
+    const adminIdHeader = parseAdminIdHeader(req.headers['x-admin-id']);
+    if (!adminIdHeader.ok) {
+      return reply.code(400).send({
+        error: 'VALIDATION_ERROR',
+        message: 'Invalid x-admin-id header',
+      });
     }
+    const adminId = adminIdHeader.adminId;
 
     if (immediate) {
       const audit = await userDeletionService.executeHardDelete(params.id, {

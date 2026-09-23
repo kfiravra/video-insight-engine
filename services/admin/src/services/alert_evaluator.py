@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import urllib.parse
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -235,13 +236,41 @@ async def _in_cooldown(db: AsyncIOMotorDatabase, alert_type: str, now: datetime)
 # ─── Delivery ───
 
 
+TELEGRAM_HOST = "api.telegram.org"
+TELEGRAM_TEXT_LIMIT = 3500  # Telegram rejects messages over 4096 characters
+_TEXT_SKIP_FIELDS = frozenset({"type", "severity", "_id", "delivered"})
+
+
+def _format_alert_text(alert: dict) -> str:
+    """Readable multi-line summary for chat receivers (Telegram)."""
+    head = f"VIE {alert.get('severity', 'alert')}: {alert.get('type', 'unknown')}"
+    lines = [f"{k}: {v}" for k, v in alert.items() if k not in _TEXT_SKIP_FIELDS]
+    return "\n".join([head, *lines])[:TELEGRAM_TEXT_LIMIT]
+
+
+def _webhook_body(url: str, alert: dict) -> bytes:
+    """Telegram's sendMessage needs {chat_id, text}; other receivers get the raw alert.
+
+    Same rule as llm_common.alerts.build_webhook_body (admin has no llm-common dependency).
+    """
+    parsed = urllib.parse.urlparse(url)
+    if parsed.hostname == TELEGRAM_HOST:
+        chat_id = urllib.parse.parse_qs(parsed.query).get("chat_id", [""])[0]
+        if not chat_id:
+            # Never log the URL itself: it carries the bot token.
+            logger.warning("alert_webhook_telegram_missing_chat_id")
+        payload = {"chat_id": chat_id, "text": _format_alert_text(alert)}
+        return json.dumps(payload, default=str).encode("utf-8")
+    # default=str keeps datetimes/ObjectIds from crashing serialization.
+    return json.dumps(alert, default=str).encode("utf-8")
+
+
 async def _deliver_webhook(alert: dict) -> bool:
     """POST the alert to ALERT_WEBHOOK_URL. Best-effort; False when disabled."""
     url = settings.ALERT_WEBHOOK_URL.strip()
     if not url:
         return False
-    # default=str keeps datetimes/ObjectIds from crashing serialization.
-    content = json.dumps(alert, default=str).encode("utf-8")
+    content = _webhook_body(url, alert)
     async with httpx.AsyncClient(timeout=WEBHOOK_TIMEOUT_SECONDS) as client:
         response = await client.post(
             url, content=content, headers={"Content-Type": "application/json"}

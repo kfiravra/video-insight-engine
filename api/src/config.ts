@@ -81,6 +81,10 @@ const envSchema = z.object({
   PLAYLIST_IMPORT_RATE_LIMIT: z.string().default('5').transform(Number),
   // Video creation daily limit (0 = unlimited for admins/dev)
   VIDEO_DAILY_LIMIT: z.string().default('100').transform(Number),
+  // Self-service signup. 'false' closes POST /api/auth/register (403) and the
+  // web app hides its signup links; accounts are then created out-of-band
+  // (scripts/create-admin.ts). Any other value keeps registration open.
+  ALLOW_REGISTRATION: z.string().default('true').transform(v => v.trim().toLowerCase() !== 'false'),
   // Payment (Paddle)
   PADDLE_WEBHOOK_SECRET: z.string().default(''),
   PADDLE_PRO_PRICE_ID: z.string().default(''),

@@ -7,7 +7,7 @@
  * Operations:
  *   - videoSummaryCache: set outputType='summary', viewsCount=0, likesCount=0, totalTokens=0
  *   - users: set tier='free'
- *   - Create new indexes (outputType, shareSlug unique sparse, expiresAt TTL)
+ *   - Create new indexes (outputType, shareSlug unique sparse)
  *
  * Usage:
  *   npx tsx scripts/backfill-v1.4.ts              # Run for real
@@ -108,11 +108,10 @@ async function main() {
       await cacheCollection.createIndexes([
         { key: { outputType: 1 } },
         { key: { shareSlug: 1 }, unique: true, sparse: true },
-        { key: { expiresAt: 1 }, expireAfterSeconds: 0 },
       ]);
-      console.log('   ✅ videoSummaryCache indexes created (outputType, shareSlug, expiresAt)');
+      console.log('   ✅ videoSummaryCache indexes created (outputType, shareSlug)');
     } else {
-      console.log('   🔍 Would create: outputType_1, shareSlug_1 (unique sparse), expiresAt_1 (TTL)');
+      console.log('   🔍 Would create: outputType_1, shareSlug_1 (unique sparse)');
     }
 
     // ── Summary ─────────────────────────────────────────────────

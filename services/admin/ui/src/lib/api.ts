@@ -364,6 +364,15 @@ export interface HealthOverviewResponse {
 }
 
 // Usage endpoints
+/** Result of vie-api's global video delete (every store, every user). */
+export interface VideoPurgeResponse {
+  scope: 'global';
+  youtubeId: string;
+  summaryIds: string[];
+  counts: Record<string, number>;
+  warnings: string[];
+}
+
 export const api = {
   usage: {
     stats: (days = 30) => apiFetch<Record<string, number>>(`/usage/stats${qs({ days })}`),
@@ -425,6 +434,15 @@ export const api = {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ max }),
+      }),
+  },
+  videos: {
+    /** Delete a video from every store for every user — vie-api runs the cascade. */
+    purge: (videoId: string, reason?: string) =>
+      apiFetch<VideoPurgeResponse>(`/videos/${encodeURIComponent(videoId)}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(reason ? { reason } : {}),
       }),
   },
 };

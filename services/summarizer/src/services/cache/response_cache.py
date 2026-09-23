@@ -57,7 +57,9 @@ class ResponseCache:
             logger.warning("Redis get unexpected error for %s: %s", video_id, e)
             return None
 
-    async def set_response(self, video_id: str, response: dict, *, safe_keys: frozenset[str] | None = None) -> bool:
+    async def set_response(
+        self, video_id: str, response: dict, *, safe_keys: frozenset[str] | None = None
+    ) -> bool:
         """Cache a response. Only stores safe_keys to prevent pipeline internals from leaking.
 
         Args:
@@ -67,14 +69,25 @@ class ResponseCache:
 
         Returns True on success.
         """
-        _SAFE_KEYS = safe_keys or frozenset({
-            "youtubeId", "title", "creator", "channel", "duration",
-            "thumbnailUrl", "status", "meta", "tabs",
-            # Language metadata — non-English videos rely on these for the
-            # FE toggle. Dropping them here silently breaks the source-language
-            # view on every cache hit.
-            "language", "isRTL", "sourceLanguage",
-        })
+        _SAFE_KEYS = safe_keys or frozenset(
+            {
+                "youtubeId",
+                "title",
+                "creator",
+                "channel",
+                "duration",
+                "thumbnailUrl",
+                "status",
+                "meta",
+                "tabs",
+                # Language metadata — non-English videos rely on these for the
+                # FE toggle. Dropping them here silently breaks the source-language
+                # view on every cache hit.
+                "language",
+                "isRTL",
+                "sourceLanguage",
+            }
+        )
         try:
             filtered = {k: v for k, v in response.items() if k in _SAFE_KEYS}
             serialized = json.dumps(filtered, default=str)
@@ -91,6 +104,20 @@ class ResponseCache:
         except (aioredis.RedisError, json.JSONDecodeError, TypeError) as e:
             logger.warning("Redis set unexpected error for %s: %s", video_id, e)
             return False
+
+    async def purge_all_versions(self, video_id: str) -> int:
+        """Delete the response key of every pipeline version for one video.
+
+        A global purge must not leave an older version's payload behind for
+        the rest of its TTL. Returns the number of keys removed; raises on a
+        Redis failure so the caller can record the store as failed.
+        """
+        client = self._get_client()
+        removed = 0
+        pattern = f"vie:response:*:{video_id}"
+        async for key in client.scan_iter(match=pattern, count=100):
+            removed += int(await client.delete(key))
+        return removed
 
     async def invalidate(self, video_id: str) -> bool:
         """Remove cached response. Returns True on success."""

@@ -74,6 +74,7 @@ video-insight-engine/
 | Service docs | [docs/SERVICE-API.md](./docs/SERVICE-API.md), [SERVICE-SUMMARIZER.md](./docs/SERVICE-SUMMARIZER.md), [SERVICE-ASSISTANT.md](./docs/SERVICE-ASSISTANT.md), [SERVICE-ADMIN.md](./docs/SERVICE-ADMIN.md) |
 | Pipeline call-order walkthrough | [docs/summarizer-workflow.md](./docs/summarizer-workflow.md) |
 | Compose, env vars, backup/restore, prod deploy | [docs/INFRASTRUCTURE.md](./docs/INFRASTRUCTURE.md) |
+| Single-host AWS deploy runbook (EC2, Caddy, backups, CI deploy role) | [docs/DEPLOY.md](./docs/DEPLOY.md) |
 | July 2026 audit scorecard (historical) | [docs/AUDIT-2026-07.md](./docs/AUDIT-2026-07.md) |
 | Frontend patterns | [docs/FRONTEND.md](./docs/FRONTEND.md) |
 | LLM cost & cache crediting | [docs/llm-cost-model.md](./docs/llm-cost-model.md) |

@@ -15,11 +15,12 @@ Redis server. We verify the contract that matters in production:
 from __future__ import annotations
 
 import asyncio
+
 import pytest
 
 from src.services.cache.pipeline_event_stream import (
-    PipelineEventStream,
     SENTINEL_DONE,
+    PipelineEventStream,
 )
 
 
@@ -37,7 +38,11 @@ class FakeScript:
 
     async def __call__(self, *, keys: list, args: list):
         return await self.registered_client.execute_command(
-            "EVAL", self.source, len(keys), *keys, *args,
+            "EVAL",
+            self.source,
+            len(keys),
+            *keys,
+            *args,
         )
 
 
@@ -53,7 +58,9 @@ class FakeRedis:
         # SYNC method (matches redis-py); the returned Script's __call__ is async.
         return FakeScript(source, self)
 
-    async def set(self, key: str, value: str, *, nx: bool = False, ex: int | None = None) -> bool | None:
+    async def set(
+        self, key: str, value: str, *, nx: bool = False, ex: int | None = None
+    ) -> bool | None:
         if nx and key in self.kv:
             return None
         self.kv[key] = value
@@ -65,8 +72,8 @@ class FakeRedis:
             # Args layout: EVAL script numkeys key1 ... keyN arg1 ... argN
             script = args[1]
             numkeys = int(args[2])
-            keys = list(args[3:3 + numkeys])
-            extra = list(args[3 + numkeys:])
+            keys = list(args[3 : 3 + numkeys])
+            extra = list(args[3 + numkeys :])
             key, owner = keys[0], extra[0]
             # Distinguish scripts by their body — the broker only uses two.
             if "expire" in script:  # refresh_lock: compare-and-extend
@@ -82,6 +89,13 @@ class FakeRedis:
 
     async def exists(self, key: str) -> int:
         return 1 if key in self.kv else 0
+
+    async def delete(self, *keys: str) -> int:
+        removed = 0
+        for key in keys:
+            removed += int(self.kv.pop(key, None) is not None)
+            removed += int(self.streams.pop(key, None) is not None)
+        return removed
 
     async def xadd(
         self,
@@ -267,3 +281,20 @@ class TestPublishSubscribe:
         a, b = await asyncio.gather(collect(), collect())
         assert a == ["e1", "e2"]
         assert b == ["e1", "e2"]
+
+
+class TestPurge:
+    @pytest.mark.asyncio
+    async def test_should_remove_lock_and_stream_when_purging_a_run(self, broker):
+        assert await broker.acquire_lock("vs-1", "owner-a")
+        broker._client.streams[broker.stream_key("vs-1")] = [("1-0", {"data": "{}"})]
+
+        removed = await broker.purge("vs-1")
+
+        assert removed == 2
+        assert await broker._client.exists(broker.lock_key("vs-1")) == 0
+        assert broker.stream_key("vs-1") not in broker._client.streams
+
+    @pytest.mark.asyncio
+    async def test_should_return_zero_when_nothing_exists_for_the_run(self, broker):
+        assert await broker.purge("vs-missing") == 0

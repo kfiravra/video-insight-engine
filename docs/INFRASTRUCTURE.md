@@ -698,8 +698,8 @@ Browser ──► reverse proxy ──► /s/:slug rewrite ──► vie-api
 - Route `/s/*` at the reverse proxy to `vie-api:3000/api/share/:slug/ssr`
 - The SSR response sets `s-maxage=60` + stale-while-revalidate for any caching proxy
 - This enables rich link previews on social platforms (Twitter, Discord, Slack)
-- (A `vercel.json` with equivalent rewrites remains in the repo from the
-  abandoned Vercel plan; it is unused by the self-host deployment.)
+- (The `vercel.json` left over from the abandoned Vercel plan was removed on
+  2026-09-17; the single-host deploy is documented in `DEPLOY.md`.)
 
 ### CI/CD
 

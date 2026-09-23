@@ -80,6 +80,13 @@ export class InvalidCredentialsError extends AppError {
   }
 }
 
+export class RegistrationClosedError extends AppError {
+  constructor() {
+    super('REGISTRATION_CLOSED', 403, 'Registration is closed');
+    this.name = 'RegistrationClosedError';
+  }
+}
+
 export class UserNotFoundError extends AppError {
   constructor() {
     super('USER_NOT_FOUND', 404, 'User not found');
@@ -310,5 +317,16 @@ export class AccountAlreadyDeletedError extends AppError {
   constructor() {
     super('ACCOUNT_ALREADY_DELETED', 409, 'Account is already scheduled for deletion');
     this.name = 'AccountAlreadyDeletedError';
+  }
+}
+
+/**
+ * The summarizer could not purge a video's artifacts (Qdrant, S3, Redis).
+ * The Mongo half of the cascade is skipped so the admin can simply retry.
+ */
+export class SummarizerPurgeError extends AppError {
+  constructor(detail: string) {
+    super('SUMMARIZER_PURGE_FAILED', 502, `Video purge failed: ${detail}`);
+    this.name = 'SummarizerPurgeError';
   }
 }

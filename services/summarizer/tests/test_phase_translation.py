@@ -115,3 +115,31 @@ async def test_status_callback_completed_on_both_paths(_stub_status_callback) ->
 
     _stub_status_callback.assert_called_once()
     assert _stub_status_callback.call_args.args[2] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_should_skip_status_and_cache_when_row_deleted_mid_run(_stub_status_callback) -> None:
+    """A global purge removed the row while translating: nothing may be
+    mirrored to the API or written to Redis, and the runner is told."""
+    from src.services.pipeline.phases import translation as phase
+
+    ctx = _build_ctx()
+    repo = MagicMock()
+    repo.save_structured_result = MagicMock(return_value=False)
+    translated = {
+        "tabs": [],
+        "meta": {},
+        "sourceLanguage": {"code": "he", "name": "עברית", "isRTL": True, "tabs": [], "meta": {}},
+    }
+    with (
+        patch.object(phase, "translate_to_source", AsyncMock(return_value=translated)),
+        patch.object(phase, "translate_text", AsyncMock(return_value="English title")),
+        patch.object(phase, "settings", SimpleNamespace(REDIS_ENABLED=True)),
+        patch.object(phase, "response_cache") as mock_cache,
+    ):
+        mock_cache.set_response = AsyncMock(return_value=True)
+        await _drain(phase.run_phase_translation(ctx, repo, "vsid"))  # type: ignore[arg-type]
+
+    _stub_status_callback.assert_not_called()
+    mock_cache.set_response.assert_not_called()
+    assert ctx.row_deleted is True

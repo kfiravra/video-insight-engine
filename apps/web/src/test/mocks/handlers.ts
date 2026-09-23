@@ -81,6 +81,10 @@ export const handlers = [
     return HttpResponse.json(createMockUser());
   }),
 
+  http.get(`${API_URL}/auth/registration`, () => {
+    return HttpResponse.json({ open: true });
+  }),
+
   // Video endpoints
   http.get(`${API_URL}/videos`, ({ request }) => {
     const url = new URL(request.url);

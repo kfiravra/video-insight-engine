@@ -1,6 +1,8 @@
 import { FastifyInstance } from 'fastify';
+import type { FastifyBaseLogger } from 'fastify';
 import fp from 'fastify-plugin';
 import { MongoClient, Db, ObjectId } from 'mongodb';
+import type { Collection, Document } from 'mongodb';
 import { config } from '../config.js';
 import { computeContentKey } from '../services/idempotency.service.js';
 
@@ -27,6 +29,45 @@ export function hasLegacyLlmUsageTtlIndex(indexes: IndexInfoForMigration[]): boo
   return indexes.some(
     (idx) => idx.name === 'createdAt_1' && idx.expireAfterSeconds !== undefined,
   );
+}
+
+/**
+ * True when the retired free-tier expiry TTL index (`expiresAt_1`) is still
+ * present on `videoSummaryCache` (deploys before 2026-09-17). MongoDB's TTL
+ * monitor hard-deleted shared cache rows with no cascade, orphaning library
+ * rows and vectors. Summaries never expire now, so the index must go — but
+ * only when it is really a TTL index, so a boot never rebuilds anything.
+ */
+export function hasVideoExpiryTtlIndex(indexes: IndexInfoForMigration[]): boolean {
+  return indexes.some(
+    (idx) => idx.name === 'expiresAt_1' && idx.expireAfterSeconds !== undefined,
+  );
+}
+
+/**
+ * Drop a retired TTL index, but only while it is still a TTL index (an
+ * unconditional drop would rebuild the index on every boot). A failure is
+ * logged at error level and never disguised as success: a surviving TTL
+ * keeps deleting rows silently.
+ */
+async function dropRetiredTtlIndex(
+  collection: Collection<Document>,
+  indexName: string,
+  isRetired: (indexes: IndexInfoForMigration[]) => boolean,
+  log: FastifyBaseLogger,
+): Promise<void> {
+  // The collection may not exist yet on a fresh database.
+  const indexes = await collection.listIndexes().toArray().catch(() => []);
+  if (!isRetired(indexes)) return;
+  try {
+    await collection.dropIndex(indexName);
+    log.info({ collection: collection.collectionName, indexName }, 'retired_ttl_index_dropped');
+  } catch (err) {
+    log.error(
+      { err, collection: collection.collectionName, indexName },
+      'retired_ttl_index_drop_failed',
+    );
+  }
 }
 
 /**
@@ -115,14 +156,18 @@ async function mongodb(fastify: FastifyInstance) {
   // Create indexes on app ready
   fastify.addHook('onReady', async () => {
     try {
+      // Retired free-tier expiry: drop the TTL index if it survives from an
+      // older deploy (conditional, so a boot never triggers an index rebuild).
+      const videoSummaryCache = db.collection('videoSummaryCache');
+      await dropRetiredTtlIndex(videoSummaryCache, 'expiresAt_1', hasVideoExpiryTtlIndex, fastify.log);
+
       // videoSummaryCache indexes
-      await db.collection('videoSummaryCache').createIndexes([
+      await videoSummaryCache.createIndexes([
         { key: { youtubeId: 1, isLatest: 1 } },
         { key: { youtubeId: 1, version: -1 } },
         { key: { status: 1 } },
         { key: { outputType: 1 } },
         { key: { shareSlug: 1 }, unique: true, sparse: true },
-        { key: { expiresAt: 1 }, expireAfterSeconds: 0 },
         { key: { language: 1 }, sparse: true },
         // Content-addressed dedup key — partial-on-$exists so legacy rows
         // without the field don't trip the unique constraint. The cross-user
@@ -142,6 +187,8 @@ async function mongodb(fastify: FastifyInstance) {
         { key: { userId: 1, youtubeId: 1, folderId: 1 } },
         { key: { userId: 1, createdAt: -1 } },
         { key: { userId: 1, 'playlistInfo.playlistId': 1 } },
+        // Global video purge deletes every user's rows for one video
+        { key: { youtubeId: 1 } },
       ]);
 
       // folders indexes
@@ -157,6 +204,12 @@ async function mongodb(fastify: FastifyInstance) {
         // GDPR scheduler scans for `hardDeleteAt <= now` among soft-deleted
         // accounts. Sparse on hardDeleteAt keeps the index tiny.
         { key: { hardDeleteAt: 1 }, sparse: true },
+      ]);
+
+      // videoDeletions audit — one row per global video purge
+      await db.collection('videoDeletions').createIndexes([
+        { key: { youtubeId: 1 } },
+        { key: { completedAt: -1 } },
       ]);
 
       // userDeletions audit — read by email-hash lookup and by original user
@@ -179,13 +232,7 @@ async function mongodb(fastify: FastifyInstance) {
       // drop would rebuild the ledger index on every boot (expensive as the
       // collection grows, and cost queries scan unindexed in the gap).
       const llmUsage = db.collection('llm_usage');
-      const llmUsageIndexes = await llmUsage
-        .listIndexes()
-        .toArray()
-        .catch(() => []); // collection may not exist yet on fresh databases
-      if (hasLegacyLlmUsageTtlIndex(llmUsageIndexes)) {
-        await llmUsage.dropIndex('createdAt_1').catch(() => undefined);
-      }
+      await dropRetiredTtlIndex(llmUsage, 'createdAt_1', hasLegacyLlmUsageTtlIndex, fastify.log);
       await llmUsage.createIndexes([
         { key: { createdAt: 1 } },
       ]);
@@ -212,6 +259,9 @@ async function mongodb(fastify: FastifyInstance) {
         { key: { hash: 1 }, unique: true },
         { key: { expiresAt: 1 }, expireAfterSeconds: 0 },
         { key: { videoSummaryId: 1 }, sparse: true },
+        // User-scope delete invalidates by library row; global purge by video
+        { key: { userVideoId: 1 }, sparse: true },
+        { key: { youtubeId: 1 } },
         { key: { userId: 1, createdAt: -1 } },
       ]);
 

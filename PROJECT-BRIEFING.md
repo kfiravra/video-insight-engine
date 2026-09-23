@@ -271,7 +271,7 @@ Legacy v1 events (still emitted): `detection_result`, `chapter_ready`, `concepts
 `ws://localhost:3000/ws?token=<jwt>` (auth via query param; invalid → close 4001). Events: `video.status`, `expansion.status`, `chat.message`. Fed by the summarizer's `POST /internal/status` callback.
 
 ### Tiers
-`free` (cache expires 30d, 3 videos/day, 5 chats/output), `pro`/`team` (`expiresAt: null` = never expires). Cost gate: `429 DAILY_LIMIT_REACHED` (per-user daily cap) vs `503 COST_LIMIT_EXCEEDED` (global aggregate cap).
+`free` (3 videos/day, 5 chats/output), `pro`/`team` (unlimited). Summaries never expire on any tier (the 30-day free-tier TTL was removed 2026-09-17). Cost gate: `429 DAILY_LIMIT_REACHED` (per-user daily cap) vs `503 COST_LIMIT_EXCEEDED` (global aggregate cap).
 
 ---
 
@@ -288,8 +288,8 @@ Legacy v1 events (still emitted): `detection_result`, `chapter_ready`, `concepts
   - `assembledMeta{videoId, videoTitle, creator, contentTags[], modifiers[], primaryTag, userGoal, tldr, keyTakeaways[], masterSummary, seoDescription, language, isRTL}`
   - `assembledTabs[{id, label, emoji, component, props, crossTabLinks?[{targetTab,label}], attachments?, degradedFrom?}]` — `component` maps to the frontend `COMPONENT_REGISTRY`.
 - **Multi-language:** `sourceLanguage{code, name, isRTL, tabs, meta}` — **OMITTED entirely (not null)** for English-source and sound-only videos. (Legacy `tabs_en/meta_en/synthesis_en/forceEnglishReason` were **removed** in `dev-1-ux`; use the nested block.)
-- **Share/expiry/dedup:** `shareSlug` (nanoid-10, unique-sparse), `viewsCount`, `likesCount`, `likedIps[]` (hashed), `dedupKey` (unique partial index `{$exists:true}`), `expiresAt` (TTL; free=+30d, pro/team=null), `version`, `processingTimeMs`, `tokenUsage{input,output,cost}`, `rawTranscriptRef` (S3 key), `generation{model,promptVersion,generatedAt}`.
-- **Indexes:** `{youtubeId:1}` unique, `{status:1}`, `{shareSlug:1}` unique sparse, `{expiresAt:1}` TTL, `{dedupKey:1}` unique partial.
+- **Share/dedup:** `shareSlug` (nanoid-10, unique-sparse), `viewsCount`, `likesCount`, `likedIps[]` (hashed), `dedupKey` (unique partial index `{$exists:true}`), `version`, `processingTimeMs`, `tokenUsage{input,output,cost}`, `rawTranscriptRef` (S3 key), `generation{model,promptVersion,generatedAt}`.
+- **Indexes:** `{youtubeId:1,isLatest:1}`, `{youtubeId:1,version:-1}`, `{status:1}`, `{shareSlug:1}` unique sparse, `{dedupKey:1}` unique partial.
 
 > **Frontend resolution order:** `doc.meta` → `doc.assembledMeta + synthesis` → `doc.triage + synthesis`. Both v1 and v2 are written side-by-side for backward compat.
 

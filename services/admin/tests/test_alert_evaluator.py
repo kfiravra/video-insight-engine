@@ -288,6 +288,30 @@ class TestDeliverWebhook:
         assert client.post.call_args[0][0] == "http://catcher.local/hook"
         assert b"daily_spend_spike" in client.post.call_args.kwargs["content"]
 
+    @pytest.mark.anyio
+    async def test_should_send_chat_id_and_text_when_url_is_telegram(self, monkeypatch) -> None:
+        monkeypatch.setattr(
+            ev.settings,
+            "ALERT_WEBHOOK_URL",
+            "https://api.telegram.org/bot1:x/sendMessage?chat_id=77",
+        )
+        response = MagicMock(status_code=200)
+        client = MagicMock()
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=False)
+        client.post = AsyncMock(return_value=response)
+        with patch(
+            "src.services.alert_evaluator.httpx.AsyncClient", MagicMock(return_value=client)
+        ):
+            alert = {"type": "backup_stale", "severity": "critical", "age_hours": 30}
+            ok = await ev._deliver_webhook(alert)
+
+        assert ok is True
+        sent = json.loads(client.post.call_args.kwargs["content"])
+        assert sent["chat_id"] == "77"
+        assert sent["text"].startswith("VIE critical: backup_stale")
+        assert "age_hours: 30" in sent["text"]
+
 
 class TestAlertSeverity:
     """Every evaluator alert carries an explicit severity (admin UI files by it)."""

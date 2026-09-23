@@ -58,7 +58,7 @@ def _build_ctx(transcript_data: TranscriptData) -> SimpleNamespace:
         thumbnail_url="https://example/thumb.jpg",
     )
     repo = MagicMock()
-    repo.save_structured_result = MagicMock(return_value=None)
+    repo.save_structured_result = MagicMock(return_value=True)
     timer = MagicMock()
     timer.elapsed = MagicMock(return_value=1.0)
     return SimpleNamespace(

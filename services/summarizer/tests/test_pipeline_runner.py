@@ -42,6 +42,7 @@ def _non_english_ctx() -> SimpleNamespace:
         transcript_data=None,
         extraction_data={},  # skip the faithfulness spawn
         source_language_code="he",
+        row_deleted=False,
         phase_times={},
         plan_result=object(),
         enrichment_data={"a": 1},
@@ -77,6 +78,7 @@ def _english_ctx(extraction_data: dict) -> SimpleNamespace:
         transcript_data=None,
         extraction_data=extraction_data,
         source_language_code=None,
+        row_deleted=False,
         phase_times={},
         plan_result=object(),
         enrichment_data={"a": 1},

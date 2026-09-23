@@ -37,22 +37,6 @@ const MAX_VERSIONS_PER_VIDEO = 5;
 // stuck row doesn't trap attachers indefinitely.
 const PIPELINE_STALL_THRESHOLD_MS = 30 * 60 * 1000;
 
-// Expiration TTLs by tier
-const EXPIRATION_DAYS: Record<UserTier, number | null> = {
-  free: 30,    // 30 days
-  pro: null,   // Never expires
-  team: null,  // Never expires
-};
-
-/** Calculate expiresAt date based on user tier. null = never. */
-function calculateExpiresAt(tier: UserTier): Date | null {
-  const days = EXPIRATION_DAYS[tier];
-  if (days === null) return null;
-  const date = new Date();
-  date.setDate(date.getDate() + days);
-  return date;
-}
-
 export class VideoService {
   constructor(
     private readonly videoRepository: VideoRepository,
@@ -181,24 +165,6 @@ export class VideoService {
   }
 
   /**
-   * Pro/team users attaching to a row originally created by a free-tier user
-   * inherit the free TTL — the row would be hard-deleted by Mongo's
-   * `expiresAt` TTL index even though the paid user expects forever. Clear
-   * the TTL when a no-expiration tier attaches.
-   *
-   * Idempotent: a no-op if the row already has no `expiresAt` or if the
-   * attacher's own tier also expires.
-   */
-  private async upgradeExpiresAtIfNeeded(
-    cached: VideoSummaryCacheDocument,
-    tier: UserTier,
-  ): Promise<void> {
-    if (cached.expiresAt && calculateExpiresAt(tier) === null) {
-      await this.videoRepository.clearExpiresAt(cached._id.toString());
-    }
-  }
-
-  /**
    * A completed doc is stale when it carries a `pipelineVersion` stamp that
    * differs from the canonical version (packages/shared/src/config/
    * pipeline-version.json). Docs WITHOUT the field predate stamping and are
@@ -252,7 +218,6 @@ export class VideoService {
           //    Retry clicks that compute the same newVersion collide on the
           //    partial unique index, triggering the E11000 → VersionCreationError
           //    path below instead of silently producing two duplicate rows.
-          const expiresAt = calculateExpiresAt(tier);
           const dedupKey = this.idempotencyService.computeContentKey({
             youtubeId,
             providers,
@@ -267,7 +232,6 @@ export class VideoService {
             retryCount: 0,
             dedupKey,
             forceRefresh: true,
-            ...(expiresAt && { expiresAt }),
           });
 
           // 3. Delete user's old video entry so they get the new version
@@ -397,7 +361,6 @@ export class VideoService {
     // cross-user submissions for the same (youtubeId, providers, version=1)
     // onto a single cache row. Exactly one caller sees wasInsert=true and
     // is responsible for dispatching the pipeline; the rest attach.
-    const expiresAtForNew = calculateExpiresAt(tier);
     const dedupKey = this.idempotencyService.computeContentKey({
       youtubeId,
       providers,
@@ -416,7 +379,6 @@ export class VideoService {
       // response cache is keyed by youtubeId and can outlive the Mongo rows,
       // so the bypass intent must still ride on the fresh row.
       ...(bypassCache && { forceRefresh: true }),
-      ...(expiresAtForNew && { expiresAt: expiresAtForNew }),
     });
 
     if (wasInsert) {
@@ -455,10 +417,7 @@ export class VideoService {
     }
 
     // wasInsert === false: we attached to a row another caller (or a prior
-    // pipeline run) already created. Pro/team attaching → clear any inherited
-    // free-tier TTL on the cache row before we proceed. Then branch on
-    // current status.
-    await this.upgradeExpiresAtIfNeeded(cached, tier);
+    // pipeline run) already created. Branch on current status.
 
     if (cached.status === 'completed') {
       // Stale version stamp → regen on the same row (mirrors the failed-row
@@ -709,13 +668,6 @@ export class VideoService {
     };
   }
 
-  async deleteVideo(userId: string, videoId: string) {
-    const deleted = await this.videoRepository.deleteUserVideo(userId, videoId);
-
-    if (!deleted) {
-      throw new VideoNotFoundError();
-    }
-  }
 
   async moveToFolder(userId: string, videoId: string, folderId: string | null) {
     const updated = await this.videoRepository.updateUserVideoFolder(userId, videoId, folderId);

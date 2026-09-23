@@ -2,6 +2,7 @@ import { useEffect, useRef, useCallback, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAuthStore } from "@/stores/auth-store";
 import { queryKeys } from "@/lib/query-keys";
+import { buildWebSocketUrl } from "@/lib/websocket-url";
 
 const WS_URL = import.meta.env.VITE_WS_URL || "ws://localhost:3000";
 
@@ -122,7 +123,7 @@ export function useWebSocket() {
     setConnectionState("connecting");
     // Token travels in the Sec-WebSocket-Protocol header (not the query string,
     // which leaks into access logs). Server validates it and selects "vie-auth".
-    const ws = new WebSocket(`${WS_URL}/ws`, ["vie-auth", token]);
+    const ws = new WebSocket(buildWebSocketUrl(WS_URL), ["vie-auth", token]);
 
     ws.onopen = () => {
       debugLog("Connected");

@@ -1,0 +1,110 @@
+name: Deploy
+
+# Single-host demo deploy (docs/DEPLOY.md, "Appendix: GitHub Actions deploy
+# role"). Gated on a green CI run for main; manual runs skip the gate. The instance's security group only admits SSH from the owner's IP,
+# so the job opens tcp/22 for this runner's IP through an OIDC role scoped to
+# that one security group, deploys, and always closes the rule again.
+#
+# Repository variables: AWS_DEPLOY_ROLE_ARN, AWS_REGION, EC2_SECURITY_GROUP_ID
+# Repository secrets:   EC2_HOST, EC2_USER, EC2_SSH_KEY, EC2_KNOWN_HOSTS (optional)
+
+on:
+  # Runs only after the CI workflow succeeded for a push to main (never in parallel with it).
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+# Never run two deploys against the box at once, and never cancel one midway.
+concurrency:
+  group: deploy-ec2
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to EC2
+    # workflow_run also fires for CI runs of fork pull requests; only a push to
+    # this repository's own main may deploy.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Open SSH for this runner
+        id: ingress
+        env:
+          SG_ID: ${{ vars.EC2_SECURITY_GROUP_ID }}
+        run: |
+          ip="$(curl -fsS --retry 3 https://checkip.amazonaws.com | tr -d '[:space:]')"
+          aws ec2 authorize-security-group-ingress \
+            --group-id "$SG_ID" \
+            --ip-permissions "IpProtocol=tcp,FromPort=22,ToPort=22,IpRanges=[{CidrIp=${ip}/32,Description=github-actions-deploy}]"
+          # Written only after the rule exists, so the close step never
+          # tries to revoke a rule this run did not add.
+          echo "cidr=${ip}/32" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy over SSH
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          EC2_KNOWN_HOSTS: ${{ secrets.EC2_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$EC2_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          if [[ -n "$EC2_KNOWN_HOSTS" ]]; then
+            printf '%s\n' "$EC2_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          else
+            echo "::warning::EC2_KNOWN_HOSTS is not set; trusting the host key on first contact"
+            ssh-keyscan -T 30 -H "$EC2_HOST" > ~/.ssh/known_hosts
+          fi
+
+          ssh -i ~/.ssh/deploy_key \
+            -o BatchMode=yes -o ConnectTimeout=30 -o ServerAliveInterval=30 \
+            "$EC2_USER@$EC2_HOST" bash -s <<'REMOTE'
+          set -euo pipefail
+          cd ~/video-insight-engine
+          git pull --ff-only
+          docker compose -f docker-compose.prod.yml -f docker-compose.aws.yml up -d --build
+          docker image prune -f
+
+          # .env is not sourced: values are not guaranteed to be shell-safe.
+          domain="$(grep -E '^DOMAIN=' .env | cut -d= -f2-)"
+          for attempt in $(seq 1 30); do
+            if curl -fsS -o /dev/null "https://${domain}/health"; then
+              echo "https://${domain}/health is healthy (attempt ${attempt})"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "https://${domain}/health did not become healthy in 5 minutes" >&2
+          docker compose -f docker-compose.prod.yml -f docker-compose.aws.yml ps >&2
+          exit 1
+          REMOTE
+
+      - name: Close SSH for this runner
+        if: always() && steps.ingress.outputs.cidr != ''
+        env:
+          SG_ID: ${{ vars.EC2_SECURITY_GROUP_ID }}
+          CIDR: ${{ steps.ingress.outputs.cidr }}
+        run: |
+          aws ec2 revoke-security-group-ingress \
+            --group-id "$SG_ID" \
+            --ip-permissions "IpProtocol=tcp,FromPort=22,ToPort=22,IpRanges=[{CidrIp=${CIDR}}]"
+          rm -f ~/.ssh/deploy_key

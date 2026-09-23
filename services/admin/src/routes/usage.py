@@ -62,6 +62,12 @@ def _unpack_latency(row: dict) -> dict:
 # 30-second cache for expensive aggregations
 _cache = TTLCache(maxsize=64, ttl=30)
 
+
+def invalidate_video_cache(video_id: str) -> None:
+    """Drop the cached detail for one video (after a global purge)."""
+    _cache.pop(f"video:{video_id}", None)
+
+
 MAX_DAYS = 90
 
 # ─── Response models ───

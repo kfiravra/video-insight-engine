@@ -5,7 +5,6 @@ import { PaymentError } from '../utils/errors.js';
 import type { UserTier, TierLimits } from '@vie/types';
 import { config } from '../config.js';
 import { UserRepository } from '../repositories/user.repository.js';
-import { VideoRepository } from '../repositories/video.repository.js';
 
 interface PaddleEvent {
   event_type: string;
@@ -18,8 +17,6 @@ const TIER_LIMITS_MAP: Record<UserTier, TierLimits> = {
   team: { videosPerDay: -1, chatPerOutput: -1, shareEnabled: true, exportEnabled: true },
 };
 
-const EXPIRATION_DAYS = 30;
-
 // Paddle signs `${ts}:${rawBody}` where `ts` is a unix-seconds timestamp.
 // Rejecting stale timestamps bounds the replay window of a captured webhook
 // to 5 minutes (Paddle's own recommended tolerance).
@@ -28,7 +25,6 @@ const WEBHOOK_MAX_AGE_SECONDS = 300;
 export class PaymentService {
   constructor(
     private readonly userRepository: UserRepository,
-    private readonly videoRepository: VideoRepository,
     private readonly logger: FastifyBaseLogger
   ) {}
 
@@ -159,25 +155,6 @@ export class PaymentService {
     const previousTier: UserTier = previousUser?.tier === 'pro' || previousUser?.tier === 'team'
       ? previousUser.tier
       : 'free';
-
-    // Handle expiration transitions
-    if (previousTier === 'free' && (tier === 'pro' || tier === 'team')) {
-      // Upgrade: clear expiration on all user videos
-      const count = await this.videoRepository.clearExpirationForUser(userIdStr);
-      this.logger.info({ userId: userIdStr, count }, 'Cleared video expiration on upgrade');
-    } else if ((previousTier === 'pro' || previousTier === 'team') && tier === 'free') {
-      // Grandfathering: only set TTL on outputs created AFTER the downgrade date.
-      // Pre-downgrade outputs keep no expiration — the user earned them while on a paid plan.
-      // Shared outputs never expire — growth driver (SEO, viral loops).
-      const downgradeDate = new Date();
-      const expiresAt = new Date();
-      expiresAt.setDate(expiresAt.getDate() + EXPIRATION_DAYS);
-      const count = await this.videoRepository.setExpirationForUser(userIdStr, expiresAt, downgradeDate);
-      this.logger.info({ userId: userIdStr, count, downgradeDate: downgradeDate.toISOString() }, 'Set video expiration on downgrade (grandfathered pre-existing)');
-    }
-
-    // TODO: v1.5 Phase 2 — SES email warning at day 25 before expiry
-    // For now: frontend checks expiresAt on VideoResponse and shows in-app banner
 
     this.logger.info({ userId: userIdStr, tier, previousTier }, 'User tier updated');
   }

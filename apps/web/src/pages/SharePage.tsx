@@ -4,6 +4,7 @@ import { ArrowRight, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { VieLogotype } from "@/components/brand/VieMark";
 import { useShareOutput } from "@/hooks/use-share";
+import { useRegistrationOpen } from "@/hooks/use-registration-open";
 import { OutputRouter } from "@/features/video-output/components/OutputRouter";
 import { buildSynthesisFromMeta } from "@/features/video-output/lib/synthesis-utils";
 import type { TabEntry } from "@vie/types";
@@ -40,6 +41,7 @@ class ShareContentBoundary extends Component<
 export function SharePage() {
   const { slug } = useParams<{ slug: string }>();
   const { data: shareData, isLoading, error } = useShareOutput(slug ?? "");
+  const registrationOpen = useRegistrationOpen();
 
   // Set document title for social sharing / SEO
   useEffect(() => {
@@ -98,9 +100,11 @@ export function SharePage() {
               See a sample video <ArrowRight className="h-4 w-4 ms-1 rtl:rotate-180" />
             </Link>
           </Button>
-          <Button variant="outline" asChild>
-            <Link to="/register">Create a free account</Link>
-          </Button>
+          {registrationOpen && (
+            <Button variant="outline" asChild>
+              <Link to="/register">Create a free account</Link>
+            </Button>
+          )}
         </div>
       </div>
     );
@@ -128,11 +132,13 @@ export function SharePage() {
               · shared with you
             </span>
           </Link>
-          <Button size="sm" asChild>
-            <Link to="/register">
-              Try VIE free <ArrowRight className="h-3 w-3 ms-1 rtl:rotate-180" />
-            </Link>
-          </Button>
+          {registrationOpen && (
+            <Button size="sm" asChild>
+              <Link to="/register">
+                Try VIE free <ArrowRight className="h-3 w-3 ms-1 rtl:rotate-180" />
+              </Link>
+            </Button>
+          )}
         </div>
       </header>
 
