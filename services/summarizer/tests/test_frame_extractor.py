@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.services.media import download_utils
 from src.services.media.frame_extractor import (
     _MAX_TIMESTAMP_SECONDS,
     _MIN_FRAME_BYTES,
@@ -57,13 +58,29 @@ class TestGetVideoStreamUrl:
     """Tests for get_video_stream_url."""
 
     @pytest.mark.asyncio
+    async def test_proxy_travels_in_env_never_on_the_command_line(self, monkeypatch):
+        proxy_url = "http://user:pass@203.0.113.7:8080"
+        monkeypatch.setattr(download_utils.settings, "YOUTUBE_PROXY_URL", proxy_url)
+        proc = _mock_process(returncode=0, stdout=b"https://stream.example.com/video\n")
+        spawn = AsyncMock(return_value=proc)
+
+        with patch("src.services.media.stream_url.asyncio.create_subprocess_exec", spawn):
+            await get_video_stream_url("dQw4w9WgXcQ")
+
+        assert all(proxy_url not in call.args for call in spawn.await_args_list)
+        assert all(call.kwargs["env"]["HTTPS_PROXY"] == proxy_url for call in spawn.await_args_list)
+
+    @pytest.mark.asyncio
     async def test_returns_stream_url_on_success(self):
         proc = _mock_process(returncode=0, stdout=b"https://stream.example.com/video\n")
 
         async def _create_subprocess(*args, **kwargs):
             return proc
 
-        with patch("src.services.media.stream_url.asyncio.create_subprocess_exec", side_effect=_create_subprocess):
+        with patch(
+            "src.services.media.stream_url.asyncio.create_subprocess_exec",
+            side_effect=_create_subprocess,
+        ):
             result = await get_video_stream_url("dQw4w9WgXcQ")
 
         assert result == "https://stream.example.com/video"
@@ -87,7 +104,10 @@ class TestGetVideoStreamUrl:
         async def _create_subprocess(*args, **kwargs):
             return proc
 
-        with patch("src.services.media.stream_url.asyncio.create_subprocess_exec", side_effect=_create_subprocess):
+        with patch(
+            "src.services.media.stream_url.asyncio.create_subprocess_exec",
+            side_effect=_create_subprocess,
+        ):
             result = await get_video_stream_url("abc12345678")
 
         assert result == "https://new.url/video"
@@ -109,7 +129,10 @@ class TestGetVideoStreamUrl:
         async def _create_subprocess(*args, **kwargs):
             return proc
 
-        with patch("src.services.media.stream_url.asyncio.create_subprocess_exec", side_effect=_create_subprocess):
+        with patch(
+            "src.services.media.stream_url.asyncio.create_subprocess_exec",
+            side_effect=_create_subprocess,
+        ):
             result = await get_video_stream_url("dQw4w9WgXcQ")
 
         assert result is None
@@ -121,7 +144,10 @@ class TestGetVideoStreamUrl:
         async def _create_subprocess(*args, **kwargs):
             return proc
 
-        with patch("src.services.media.stream_url.asyncio.create_subprocess_exec", side_effect=_create_subprocess):
+        with patch(
+            "src.services.media.stream_url.asyncio.create_subprocess_exec",
+            side_effect=_create_subprocess,
+        ):
             with patch(
                 "src.services.media.stream_url.asyncio.wait_for",
                 side_effect=asyncio.TimeoutError,
@@ -145,7 +171,10 @@ class TestGetVideoStreamUrl:
         async def _create_subprocess(*args, **kwargs):
             return proc
 
-        with patch("src.services.media.stream_url.asyncio.create_subprocess_exec", side_effect=_create_subprocess):
+        with patch(
+            "src.services.media.stream_url.asyncio.create_subprocess_exec",
+            side_effect=_create_subprocess,
+        ):
             await get_video_stream_url("newvideo1234"[:11])
 
         # Oldest entry should have been evicted, not all
@@ -185,7 +214,10 @@ class TestExtractFrame:
                 f.write(fake_jpeg)
             return proc
 
-        with patch("src.services.media.frame_extractor.asyncio.create_subprocess_exec", side_effect=_create_subprocess):
+        with patch(
+            "src.services.media.frame_extractor.asyncio.create_subprocess_exec",
+            side_effect=_create_subprocess,
+        ):
             result = await extract_frame("https://url", 30)
 
         assert result == fake_jpeg
@@ -197,7 +229,10 @@ class TestExtractFrame:
         async def _create_subprocess(*args, **kwargs):
             return proc
 
-        with patch("src.services.media.frame_extractor.asyncio.create_subprocess_exec", side_effect=_create_subprocess):
+        with patch(
+            "src.services.media.frame_extractor.asyncio.create_subprocess_exec",
+            side_effect=_create_subprocess,
+        ):
             result = await extract_frame("https://url", 30)
 
         assert result is None
@@ -209,7 +244,10 @@ class TestExtractFrame:
         async def _create_subprocess(*args, **kwargs):
             return proc
 
-        with patch("src.services.media.frame_extractor.asyncio.create_subprocess_exec", side_effect=_create_subprocess):
+        with patch(
+            "src.services.media.frame_extractor.asyncio.create_subprocess_exec",
+            side_effect=_create_subprocess,
+        ):
             with patch(
                 "src.services.media.frame_extractor.asyncio.wait_for",
                 side_effect=asyncio.TimeoutError,
@@ -244,7 +282,10 @@ class TestExtractFrame:
                 f.write(fake_jpeg)
             return proc
 
-        with patch("src.services.media.frame_extractor.asyncio.create_subprocess_exec", side_effect=_create_subprocess):
+        with patch(
+            "src.services.media.frame_extractor.asyncio.create_subprocess_exec",
+            side_effect=_create_subprocess,
+        ):
             result = await extract_frame("https://url", 30)
 
         assert result == fake_jpeg
@@ -262,7 +303,10 @@ class TestExtractFrame:
             temp_files_created.append(output_path)
             return proc
 
-        with patch("src.services.media.frame_extractor.asyncio.create_subprocess_exec", side_effect=_create_subprocess):
+        with patch(
+            "src.services.media.frame_extractor.asyncio.create_subprocess_exec",
+            side_effect=_create_subprocess,
+        ):
             result = await extract_frame("https://url", 30)
 
         assert result is None
@@ -401,8 +445,10 @@ class TestExtractFramesForBlocks:
                         mock_s3.put_bytes = AsyncMock()
                         mock_s3.generate_presigned_url.return_value = "https://signed/url"
                         result = await extract_frames_for_blocks(
-                            "dQw4w9WgXcQ", content,
-                            chapter_start=100, chapter_end=200,
+                            "dQw4w9WgXcQ",
+                            content,
+                            chapter_start=100,
+                            chapter_end=200,
                         )
 
         # Should use midpoint (150) as timestamp
@@ -433,7 +479,9 @@ class TestExtractFramesForBlocks:
                     with patch("src.services.media.frame_extractor.s3_client") as mock_s3:
                         mock_s3.exists = AsyncMock(return_value=False)
                         mock_s3.put_bytes = AsyncMock()
-                        mock_s3.generate_presigned_url.return_value = "https://s3.amazonaws.com/signed/url"
+                        mock_s3.generate_presigned_url.return_value = (
+                            "https://s3.amazonaws.com/signed/url"
+                        )
                         result = await extract_frames_for_blocks("dQw4w9WgXcQ", content)
 
         assert result[0] == content[0]  # paragraph unchanged
@@ -576,21 +624,30 @@ class TestResolveTimestamp:
     def test_clamps_to_chapter_end(self):
         """Timestamp past chapter end should be clamped to chapter_end."""
         result = _resolve_timestamp(
-            {"timestamp": 532}, video_duration=600, chapter_start=209, chapter_end=448,
+            {"timestamp": 532},
+            video_duration=600,
+            chapter_start=209,
+            chapter_end=448,
         )
         assert result == 448
 
     def test_clamps_to_chapter_start(self):
         """Timestamp before chapter start should be clamped to chapter_start."""
         result = _resolve_timestamp(
-            {"timestamp": 50}, video_duration=600, chapter_start=100, chapter_end=200,
+            {"timestamp": 50},
+            video_duration=600,
+            chapter_start=100,
+            chapter_end=200,
         )
         assert result == 100
 
     def test_within_range_unchanged(self):
         """Timestamp within chapter range should pass through unchanged."""
         result = _resolve_timestamp(
-            {"timestamp": 150}, video_duration=600, chapter_start=100, chapter_end=200,
+            {"timestamp": 150},
+            video_duration=600,
+            chapter_start=100,
+            chapter_end=200,
         )
         assert result == 150
 
@@ -600,42 +657,60 @@ class TestResolveTimestamp:
         # Chapter clamp should fire first: 600 → 400
         # Then video_duration check: 400 < 500 → no change
         result = _resolve_timestamp(
-            {"timestamp": 600}, video_duration=500, chapter_start=100, chapter_end=400,
+            {"timestamp": 600},
+            video_duration=500,
+            chapter_start=100,
+            chapter_end=400,
         )
         assert result == 400
 
     def test_no_chapter_range_falls_through_to_video_duration(self):
         """Without chapter range, only video_duration clamping applies."""
         result = _resolve_timestamp(
-            {"timestamp": 600}, video_duration=500, chapter_start=None, chapter_end=None,
+            {"timestamp": 600},
+            video_duration=500,
+            chapter_start=None,
+            chapter_end=None,
         )
         assert result == 495  # max(500 - 5, 0)
 
     def test_missing_timestamp_with_chapter_range_uses_midpoint(self):
         """Missing timestamp with chapter range should use midpoint."""
         result = _resolve_timestamp(
-            {}, video_duration=600, chapter_start=100, chapter_end=200,
+            {},
+            video_duration=600,
+            chapter_start=100,
+            chapter_end=200,
         )
         assert result == 150
 
     def test_missing_timestamp_without_chapter_range_returns_none(self):
         """Missing timestamp without chapter range should return None."""
         result = _resolve_timestamp(
-            {}, video_duration=600, chapter_start=None, chapter_end=None,
+            {},
+            video_duration=600,
+            chapter_start=None,
+            chapter_end=None,
         )
         assert result is None
 
     def test_at_chapter_boundary_start(self):
         """Timestamp exactly at chapter_start should be unchanged."""
         result = _resolve_timestamp(
-            {"timestamp": 100}, video_duration=600, chapter_start=100, chapter_end=200,
+            {"timestamp": 100},
+            video_duration=600,
+            chapter_start=100,
+            chapter_end=200,
         )
         assert result == 100
 
     def test_at_chapter_boundary_end(self):
         """Timestamp exactly at chapter_end should be unchanged."""
         result = _resolve_timestamp(
-            {"timestamp": 200}, video_duration=600, chapter_start=100, chapter_end=200,
+            {"timestamp": 200},
+            video_duration=600,
+            chapter_start=100,
+            chapter_end=200,
         )
         assert result == 200
 
@@ -658,7 +733,10 @@ class TestExtractFrameMinSize:
                 f.write(tiny_data)
             return proc
 
-        with patch("src.services.media.frame_extractor.asyncio.create_subprocess_exec", side_effect=_create_subprocess):
+        with patch(
+            "src.services.media.frame_extractor.asyncio.create_subprocess_exec",
+            side_effect=_create_subprocess,
+        ):
             result = await extract_frame("https://url", 30)
 
         assert result is None
@@ -678,7 +756,10 @@ class TestExtractFrameMinSize:
                 f.write(normal_data)
             return proc
 
-        with patch("src.services.media.frame_extractor.asyncio.create_subprocess_exec", side_effect=_create_subprocess):
+        with patch(
+            "src.services.media.frame_extractor.asyncio.create_subprocess_exec",
+            side_effect=_create_subprocess,
+        ):
             result = await extract_frame("https://url", 30)
 
         assert result == normal_data
@@ -702,55 +783,69 @@ class TestSpreadClusteredTimestamps:
     def test_single_frame_blocks_pass_through(self):
         """Single-frame jobs (frame_idx=None) should not be modified."""
         jobs = [(0, None, 100), (1, None, 105), (2, None, 110)]
-        result = _spread_clustered_timestamps(jobs, chapter_start=0, chapter_end=300, min_spacing=20)
+        result = _spread_clustered_timestamps(
+            jobs, chapter_start=0, chapter_end=300, min_spacing=20
+        )
         assert result == jobs
 
     def test_well_spaced_multi_frame_not_modified(self):
         """Multi-frame block with timestamps already spaced beyond min_spacing should pass through."""
         jobs = [(0, 0, 100), (0, 1, 150), (0, 2, 200)]
-        result = _spread_clustered_timestamps(jobs, chapter_start=0, chapter_end=300, min_spacing=20)
+        result = _spread_clustered_timestamps(
+            jobs, chapter_start=0, chapter_end=300, min_spacing=20
+        )
         assert result == jobs
 
     def test_clustered_timestamps_get_spread(self):
         """Multi-frame block with clustered timestamps should be redistributed."""
         # 3 frames at 100, 103, 106 — spread is 6, required is 40 (20*2)
         jobs = [(0, 0, 100), (0, 1, 103), (0, 2, 106)]
-        result = _spread_clustered_timestamps(jobs, chapter_start=0, chapter_end=300, min_spacing=20)
+        result = _spread_clustered_timestamps(
+            jobs, chapter_start=0, chapter_end=300, min_spacing=20
+        )
 
         # Timestamps should be spread across chapter range with 10% inset (30-270)
         new_ts = [r[2] for r in result]
-        assert new_ts[0] == 30   # range_start = 0 + 30
+        assert new_ts[0] == 30  # range_start = 0 + 30
         assert new_ts[1] == 150  # midpoint
         assert new_ts[2] == 270  # range_end = 300 - 30
 
     def test_no_chapter_range_returns_unchanged(self):
         """Without chapter start/end, jobs should pass through unchanged."""
         jobs = [(0, 0, 100), (0, 1, 103)]
-        result = _spread_clustered_timestamps(jobs, chapter_start=None, chapter_end=None, min_spacing=20)
+        result = _spread_clustered_timestamps(
+            jobs, chapter_start=None, chapter_end=None, min_spacing=20
+        )
         assert result == jobs
 
     def test_mixed_single_and_multi_frame(self):
         """Single-frame jobs should be untouched while multi-frame gets spread."""
         jobs = [
-            (0, None, 50),   # single-frame block 0
-            (1, 0, 100),     # multi-frame block 1, frame 0
-            (1, 1, 103),     # multi-frame block 1, frame 1
+            (0, None, 50),  # single-frame block 0
+            (1, 0, 100),  # multi-frame block 1, frame 0
+            (1, 1, 103),  # multi-frame block 1, frame 1
         ]
-        result = _spread_clustered_timestamps(jobs, chapter_start=0, chapter_end=200, min_spacing=20)
+        result = _spread_clustered_timestamps(
+            jobs, chapter_start=0, chapter_end=200, min_spacing=20
+        )
 
         # Single-frame untouched
         assert result[0] == (0, None, 50)
         # Multi-frame should be spread (inset: 20, range: 20-180)
-        assert result[1][2] == 20   # range_start
+        assert result[1][2] == 20  # range_start
         assert result[2][2] == 180  # range_end
 
     def test_multiple_multi_frame_blocks(self):
         """Each multi-frame block should be spread independently."""
         jobs = [
-            (0, 0, 100), (0, 1, 102),  # block 0: clustered
-            (1, 0, 200), (1, 1, 250),  # block 1: well-spaced (50 >= 20)
+            (0, 0, 100),
+            (0, 1, 102),  # block 0: clustered
+            (1, 0, 200),
+            (1, 1, 250),  # block 1: well-spaced (50 >= 20)
         ]
-        result = _spread_clustered_timestamps(jobs, chapter_start=0, chapter_end=300, min_spacing=20)
+        result = _spread_clustered_timestamps(
+            jobs, chapter_start=0, chapter_end=300, min_spacing=20
+        )
 
         # Block 0 should be spread
         assert result[0][2] != 100 or result[1][2] != 102
@@ -824,8 +919,10 @@ class TestGalleryCollapse:
                         mock_s3.put_bytes = AsyncMock()
                         mock_s3.generate_presigned_url.return_value = "https://signed/url"
                         result = await extract_frames_for_blocks(
-                            "dQw4w9WgXcQ", content,
-                            chapter_start=0, chapter_end=300,
+                            "dQw4w9WgXcQ",
+                            content,
+                            chapter_start=0,
+                            chapter_end=300,
                         )
 
         block = result[0]
@@ -867,8 +964,10 @@ class TestGalleryCollapse:
                         mock_s3.exists = AsyncMock(return_value=False)
                         mock_s3.put_bytes = AsyncMock()
                         result = await extract_frames_for_blocks(
-                            "dQw4w9WgXcQ", content,
-                            chapter_start=0, chapter_end=300,
+                            "dQw4w9WgXcQ",
+                            content,
+                            chapter_start=0,
+                            chapter_end=300,
                         )
 
         block = result[0]
@@ -915,10 +1014,15 @@ class TestGalleryCollapse:
                         mock_s3.put_bytes = AsyncMock()
                         mock_s3.generate_presigned_url.return_value = "https://signed/url"
                         # Disable image dedup to let both frames pass through
-                        with patch("src.services.media.frame_extractor._compute_frame_hash", return_value=None):
+                        with patch(
+                            "src.services.media.frame_extractor._compute_frame_hash",
+                            return_value=None,
+                        ):
                             result = await extract_frames_for_blocks(
-                                "dQw4w9WgXcQ", content,
-                                chapter_start=0, chapter_end=300,
+                                "dQw4w9WgXcQ",
+                                content,
+                                chapter_start=0,
+                                chapter_end=300,
                             )
 
         block = result[0]
@@ -932,7 +1036,9 @@ class TestComputeFrameHash:
 
     def test_returns_int_for_valid_jpeg(self):
         from io import BytesIO
+
         from PIL import Image
+
         img = Image.new("RGB", (64, 64), (128, 128, 128))
         buf = BytesIO()
         img.save(buf, format="JPEG")

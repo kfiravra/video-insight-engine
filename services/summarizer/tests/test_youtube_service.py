@@ -9,15 +9,18 @@ import pytest
 
 from src.exceptions import TranscriptError
 from src.models.schemas import ErrorCode
+from src.services.media import download_utils
 from src.services.video.youtube import (
     VALID_CATEGORIES,
     Chapter,
     SubtitleSegment,
     VideoData,
     _build_display_tags,
+    _build_yt_dlp_opts,
     _clean_subtitle_text,
     _detect_category,
     _extract_hashtags,
+    _fetch_subtitle_data_sync,
     _parse_chapters,
     extract_video_context,
     extract_video_data,
@@ -517,6 +520,41 @@ class TestSubtitleFetchErrorCode:
         mock_fetch.return_value = {"wireMagic": "pb3"}
 
         assert _fetch_subtitles_from_url_sync("http://example/timedtext") == ([], None)
+
+
+class TestYoutubeProxy:
+    """YOUTUBE_PROXY_URL reaches both YouTube calls of the metadata phase:
+    the yt-dlp extraction and the timedtext fetch of the URL it returns."""
+
+    PROXY = "http://user:pass@proxy.example:8080"
+
+    def test_should_route_metadata_extraction_through_proxy_when_set(self, monkeypatch):
+        monkeypatch.setattr(download_utils.settings, "YOUTUBE_PROXY_URL", self.PROXY)
+
+        assert _build_yt_dlp_opts()["proxy"] == self.PROXY
+
+    def test_should_extract_metadata_directly_when_proxy_blank(self, monkeypatch):
+        monkeypatch.setattr(download_utils.settings, "YOUTUBE_PROXY_URL", "   ")
+
+        assert "proxy" not in _build_yt_dlp_opts()
+
+    @patch("src.services.video.youtube.requests.get")
+    def test_should_fetch_timedtext_through_proxy_when_set(self, mock_get, monkeypatch):
+        monkeypatch.setattr(download_utils.settings, "YOUTUBE_PROXY_URL", self.PROXY)
+        mock_get.return_value.iter_content.return_value = [b'{"events": []}']
+
+        _fetch_subtitle_data_sync("http://example/timedtext")
+
+        assert mock_get.call_args.kwargs["proxies"] == {"http": self.PROXY, "https": self.PROXY}
+
+    @patch("src.services.video.youtube.requests.get")
+    def test_should_fetch_timedtext_directly_when_proxy_blank(self, mock_get, monkeypatch):
+        monkeypatch.setattr(download_utils.settings, "YOUTUBE_PROXY_URL", None)
+        mock_get.return_value.iter_content.return_value = [b'{"events": []}']
+
+        _fetch_subtitle_data_sync("http://example/timedtext")
+
+        assert mock_get.call_args.kwargs["proxies"] is None
 
 
 class TestCaptionTrackFields:

@@ -1,22 +1,24 @@
-import re
 import asyncio
 import logging
+import re
+
+import tenacity
 from youtube_transcript_api import Transcript, TranscriptList, YouTubeTranscriptApi
-from youtube_transcript_api.proxies import WebshareProxyConfig
 from youtube_transcript_api._errors import (
-    TranscriptsDisabled,
     NoTranscriptFound,
+    TranscriptsDisabled,
     VideoUnavailable,
 )
-import tenacity
+from youtube_transcript_api.proxies import GenericProxyConfig, WebshareProxyConfig
 
 from src.config import settings
+from src.exceptions import TranscriptError
 from src.models.schemas import (
     ErrorCode,
     TranscriptSegment,
     TranscriptSource,
 )
-from src.exceptions import TranscriptError
+from src.services.media.download_utils import ytdlp_proxy_url
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +65,20 @@ def _select_track(transcript_list: TranscriptList) -> tuple[Transcript | None, s
     return None, "auto-generated"
 
 
+def _proxy_config() -> GenericProxyConfig | None:
+    """Caption-fetch proxy: YOUTUBE_PROXY_URL (one exit for every YouTube call) wins;
+    otherwise the Webshare rotating pool; otherwise direct."""
+    proxy_url = ytdlp_proxy_url()
+    if proxy_url:
+        return GenericProxyConfig(http_url=proxy_url, https_url=proxy_url)
+    if settings.WEBSHARE_PROXY_USERNAME and settings.WEBSHARE_PROXY_PASSWORD:
+        return WebshareProxyConfig(
+            proxy_username=settings.WEBSHARE_PROXY_USERNAME,
+            proxy_password=settings.WEBSHARE_PROXY_PASSWORD,
+        )
+    return None
+
+
 @tenacity.retry(
     stop=tenacity.stop_after_attempt(3),
     wait=tenacity.wait_exponential(multiplier=2, min=4, max=30),
@@ -83,16 +99,7 @@ def _fetch_transcript_sync(video_id: str) -> tuple[list[dict], str, str, str | N
     Returns:
         (segments, full_text, transcript_type, language_code)
     """
-    # Configure proxy if credentials are available
-    proxy_config = None
-    if settings.WEBSHARE_PROXY_USERNAME and settings.WEBSHARE_PROXY_PASSWORD:
-        proxy_config = WebshareProxyConfig(
-            proxy_username=settings.WEBSHARE_PROXY_USERNAME,
-            proxy_password=settings.WEBSHARE_PROXY_PASSWORD,
-        )
-
-    # Create API instance with optional proxy
-    ytt_api = YouTubeTranscriptApi(proxy_config=proxy_config)
+    ytt_api = YouTubeTranscriptApi(proxy_config=_proxy_config())
 
     try:
         # New API: use instance method .list() instead of class method .list_transcripts()

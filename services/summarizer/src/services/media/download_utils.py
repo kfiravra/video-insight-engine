@@ -5,6 +5,7 @@ Gemini and Whisper transcription services.
 """
 
 import logging
+import os
 import time
 from pathlib import Path
 from typing import Any
@@ -20,10 +21,37 @@ __all__ = [
     "download_youtube_audio",
     "ytdlp_client_api_opts",
     "ytdlp_client_cli_args",
+    "ytdlp_proxy_url",
+    "ytdlp_subprocess_env",
     "MAX_DOWNLOAD_ATTEMPTS",
 ]
 
 logger = logging.getLogger(__name__)
+
+# urllib (and so yt-dlp) prefers the lowercase names, so both spellings are
+# set — an inherited lowercase value would otherwise beat ours.
+_PROXY_ENV_VARS = ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy")
+
+
+def ytdlp_proxy_url() -> str | None:
+    """YOUTUBE_PROXY_URL with whitespace stripped, or None for a direct connection."""
+    url = (settings.YOUTUBE_PROXY_URL or "").strip()
+    return url or None
+
+
+def ytdlp_subprocess_env() -> dict[str, str] | None:
+    """Child env that sends a subprocess yt-dlp through YOUTUBE_PROXY_URL.
+
+    The URL carries credentials, so it travels in the environment and never
+    on the command line: Sentry records every subprocess argv as a breadcrumb
+    and span name, and argv is readable through ``ps``. None (inherit the
+    parent env) when no proxy is configured. Pass as ``env=`` next to
+    ytdlp_client_cli_args().
+    """
+    proxy_url = ytdlp_proxy_url()
+    if not proxy_url:
+        return None
+    return {**os.environ, **dict.fromkeys(_PROXY_ENV_VARS, proxy_url)}
 
 
 def ytdlp_client_cli_args() -> list[str]:
@@ -32,6 +60,7 @@ def ytdlp_client_cli_args() -> list[str]:
     YouTube 403s some player clients' download URLs per environment
     (2026-08: web blocked here, android fine) — YTDLP_PLAYER_CLIENTS picks
     the client order without a code change when YouTube shifts again.
+    The proxy is deliberately not a flag here — see ytdlp_subprocess_env().
     """
     clients = settings.YTDLP_PLAYER_CLIENTS.strip()
     if not clients:
@@ -40,11 +69,15 @@ def ytdlp_client_cli_args() -> list[str]:
 
 
 def ytdlp_client_api_opts() -> dict[str, Any]:
-    """Python-API form of ytdlp_client_cli_args for YoutubeDL opts dicts."""
+    """Python-API form of ytdlp_client_cli_args plus the proxy, for YoutubeDL opts dicts."""
+    opts: dict[str, Any] = {}
     clients = [c.strip() for c in settings.YTDLP_PLAYER_CLIENTS.split(",") if c.strip()]
-    if not clients:
-        return {}
-    return {"extractor_args": {"youtube": {"player_client": clients}}}
+    if clients:
+        opts["extractor_args"] = {"youtube": {"player_client": clients}}
+    proxy_url = ytdlp_proxy_url()
+    if proxy_url:
+        opts["proxy"] = proxy_url
+    return opts
 
 
 _UNAVAILABLE_PATTERNS = (
@@ -99,10 +132,9 @@ def download_youtube_audio(
         TranscriptError: If download fails after all retries
     """
     url = f"https://www.youtube.com/watch?v={video_id}"
-    # Route the download through the configured player clients unless the
-    # caller already chose its own.
-    if "extractor_args" not in ydl_opts:
-        ydl_opts = {**ydl_opts, **ytdlp_client_api_opts()}
+    # Route the download through the configured player clients and proxy;
+    # a caller's own value for either key wins.
+    ydl_opts = {**ytdlp_client_api_opts(), **ydl_opts}
     last_error: Exception | None = None
 
     for attempt in range(1, max_attempts + 1):

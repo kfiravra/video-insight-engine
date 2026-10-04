@@ -3,6 +3,7 @@
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from src.services.media import download_utils
 from src.services.media.scene_extractor import (
     _check_existing_frames,
     _dedupe_refined_frames,
@@ -57,6 +58,30 @@ class TestExtractSceneKeyframes:
         result = await extract_scene_keyframes("dQw4w9WgXcQ")
 
         assert result == EMPTY_RESULT
+
+    @patch(
+        "src.services.media.scene_extractor._check_existing_frames",
+        new_callable=AsyncMock,
+        return_value=None,
+    )
+    @patch("src.services.media.scene_extractor.s3_client")
+    @patch("src.services.media.scene_extractor.settings")
+    @patch("asyncio.create_subprocess_exec")
+    async def test_proxy_travels_in_env_never_on_the_command_line(
+        self, mock_exec, mock_settings, mock_s3, mock_check, monkeypatch
+    ):
+        proxy_url = "http://user:pass@203.0.113.7:8080"
+        monkeypatch.setattr(download_utils.settings, "YOUTUBE_PROXY_URL", proxy_url)
+        mock_settings.SCENE_EXTRACTION_ENABLED = True
+        mock_settings.SCENE_THRESHOLD = 0.3
+        mock_proc = AsyncMock()
+        mock_proc.communicate = AsyncMock(side_effect=asyncio.TimeoutError())
+        mock_exec.return_value = mock_proc
+
+        await extract_scene_keyframes("dQw4w9WgXcQ")
+
+        assert proxy_url not in mock_exec.call_args.args
+        assert mock_exec.call_args.kwargs["env"]["HTTPS_PROXY"] == proxy_url
 
     @patch(
         "src.services.media.scene_extractor._check_existing_frames",
