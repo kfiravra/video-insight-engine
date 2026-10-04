@@ -110,7 +110,9 @@ def test_init_from_settings_honors_explicit_default_environment(monkeypatch):
         SENTRY_TRACES_SAMPLE_RATE=0.0,
     )
     sentry_init.init_sentry_from_settings(
-        settings, service="vie-test", default_environment="ci",
+        settings,
+        service="vie-test",
+        default_environment="ci",
     )
 
     assert captured["environment"] == "ci"
@@ -129,7 +131,9 @@ def test_init_from_settings_propagates_integrate_fastapi_false(monkeypatch):
         SENTRY_TRACES_SAMPLE_RATE=0.0,
     )
     sentry_init.init_sentry_from_settings(
-        settings, service="vie-test-worker", integrate_fastapi=False,
+        settings,
+        service="vie-test-worker",
+        integrate_fastapi=False,
     )
 
     assert captured["integrate_fastapi"] is False
@@ -304,6 +308,59 @@ def test_scrub_redacts_emails_and_tokens_in_exception_messages():
     out = sentry_init.scrub_event_payload(event, None)
     assert out is not None
     assert (
-        out["exception"]["values"][0]["value"]
-        == "auth failed at /ws?token=[Filtered] for [email]"
+        out["exception"]["values"][0]["value"] == "auth failed at /ws?token=[Filtered] for [email]"
     )
+
+
+def test_scrub_strips_url_credentials_from_subprocess_breadcrumbs():
+    """Sentry records a subprocess's full argv as the breadcrumb message; a
+    proxy URL with an IP host slips past the email pattern entirely."""
+    _clear_contextvars()
+    event = {
+        "breadcrumbs": {
+            "values": [
+                {
+                    "category": "subprocess",
+                    "message": "yt-dlp --proxy http://user:pass@203.0.113.7:8080 https://youtu.be/x",
+                },
+            ],
+        },
+    }
+    out = sentry_init.scrub_event_payload(event, None)
+    assert out is not None
+    assert (
+        out["breadcrumbs"]["values"][0]["message"]
+        == "yt-dlp --proxy http://[Filtered]@203.0.113.7:8080 https://youtu.be/x"
+    )
+
+
+def test_scrub_strips_url_username_when_host_is_a_domain():
+    """The email pattern alone would redact `pass@host.tld` and keep `user`."""
+    _clear_contextvars()
+    event = {"extra": {"cmd": "--proxy http://user:pass@proxy.example.com:8080"}}
+    out = sentry_init.scrub_event_payload(event, None)
+    assert out is not None
+    assert out["extra"]["cmd"] == "--proxy http://[Filtered]@proxy.example.com:8080"
+
+
+def test_scrub_strips_url_credentials_in_exception_messages():
+    _clear_contextvars()
+    event = {
+        "exception": {
+            "values": [{"value": "connect failed: amqp://vie:s3cret@rabbit:5672/ for job 7"}],
+        },
+    }
+    out = sentry_init.scrub_event_payload(event, None)
+    assert out is not None
+    assert (
+        out["exception"]["values"][0]["value"]
+        == "connect failed: amqp://[Filtered]@rabbit:5672/ for job 7"
+    )
+
+
+def test_scrub_keeps_urls_without_credentials():
+    _clear_contextvars()
+    note = "see https://example.com/watch?v=abc&t=10 at 10:30"
+    out = sentry_init.scrub_event_payload({"extra": {"note": note}}, None)
+    assert out is not None
+    assert out["extra"]["note"] == note

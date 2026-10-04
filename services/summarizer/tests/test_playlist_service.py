@@ -1,11 +1,13 @@
 """Tests for playlist service."""
 
-import pytest
 from unittest.mock import MagicMock, patch
 
+import pytest
+
+from src.services.media import download_utils
 from src.services.video.playlist import (
-    PlaylistVideoInfo,
     PlaylistData,
+    PlaylistVideoInfo,
     _build_playlist_opts,
     _extract_playlist_sync,
     extract_playlist_data,
@@ -51,9 +53,15 @@ class TestPlaylistData:
     def test_total_videos_property(self):
         """Test total_videos property."""
         videos = [
-            PlaylistVideoInfo(video_id="1", title="Video 1", position=0, duration=None, thumbnail_url=None),
-            PlaylistVideoInfo(video_id="2", title="Video 2", position=1, duration=None, thumbnail_url=None),
-            PlaylistVideoInfo(video_id="3", title="Video 3", position=2, duration=None, thumbnail_url=None),
+            PlaylistVideoInfo(
+                video_id="1", title="Video 1", position=0, duration=None, thumbnail_url=None
+            ),
+            PlaylistVideoInfo(
+                video_id="2", title="Video 2", position=1, duration=None, thumbnail_url=None
+            ),
+            PlaylistVideoInfo(
+                video_id="3", title="Video 3", position=2, duration=None, thumbnail_url=None
+            ),
         ]
 
         playlist = PlaylistData(
@@ -82,9 +90,13 @@ class TestPlaylistData:
 class TestBuildPlaylistOpts:
     """Tests for _build_playlist_opts function."""
 
-    def test_default_opts(self):
+    PROXY = "http://user123:pass456@proxy.example:8080"
+
+    def test_default_opts(self, monkeypatch):
         """Test default options without proxy."""
-        opts = _build_playlist_opts(use_proxy=False)
+        monkeypatch.setattr(download_utils.settings, "YOUTUBE_PROXY_URL", None)
+
+        opts = _build_playlist_opts()
 
         assert opts["quiet"] is True
         assert opts["no_warnings"] is True
@@ -93,26 +105,17 @@ class TestBuildPlaylistOpts:
         assert opts["skip_download"] is True
         assert "proxy" not in opts
 
-    @patch("src.services.video.playlist.settings")
-    def test_opts_with_proxy(self, mock_settings):
-        """Test options with proxy enabled."""
-        mock_settings.WEBSHARE_PROXY_USERNAME = "user123"
-        mock_settings.WEBSHARE_PROXY_PASSWORD = "pass456"
+    def test_should_route_through_youtube_proxy_url_when_set(self, monkeypatch):
+        monkeypatch.setattr(download_utils.settings, "YOUTUBE_PROXY_URL", self.PROXY)
 
-        opts = _build_playlist_opts(use_proxy=True)
+        opts = _build_playlist_opts()
 
-        assert "proxy" in opts
-        assert "user123" in opts["proxy"]
-        assert "pass456" in opts["proxy"]
-        assert "p.webshare.io" in opts["proxy"]
+        assert opts["proxy"] == self.PROXY
 
-    @patch("src.services.video.playlist.settings")
-    def test_opts_proxy_requested_but_no_credentials(self, mock_settings):
-        """Test proxy requested but no credentials available."""
-        mock_settings.WEBSHARE_PROXY_USERNAME = None
-        mock_settings.WEBSHARE_PROXY_PASSWORD = None
+    def test_should_stay_direct_when_proxy_url_blank(self, monkeypatch):
+        monkeypatch.setattr(download_utils.settings, "YOUTUBE_PROXY_URL", "   ")
 
-        opts = _build_playlist_opts(use_proxy=True)
+        opts = _build_playlist_opts()
 
         assert "proxy" not in opts
 
@@ -212,8 +215,7 @@ class TestExtractPlaylistSync:
             "uploader": "Test Channel",
             "thumbnails": [],
             "entries": [
-                {"id": f"video{i}", "title": f"Video {i}", "duration": 60}
-                for i in range(20)
+                {"id": f"video{i}", "title": f"Video {i}", "duration": 60} for i in range(20)
             ],
         }
 

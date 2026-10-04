@@ -3,19 +3,20 @@
 Tests transcript fetching, parsing, segmentation, and timestamp handling.
 """
 
-import pytest
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import MagicMock, patch
 
+import pytest
+
+from src.exceptions import TranscriptError
+from src.models.schemas import ErrorCode
 from src.services.transcription.transcript import (
-    get_transcript,
+    _fetch_transcript_sync,
+    _is_rate_limit_error,
     clean_transcript,
     format_transcript_with_timestamps,
+    get_transcript,
     normalize_segments,
-    _is_rate_limit_error,
-    _fetch_transcript_sync,
 )
-from src.models.schemas import ErrorCode, TranscriptSource, TranscriptSegment
-from src.exceptions import TranscriptError
 
 
 class TestCleanTranscript:
@@ -369,6 +370,13 @@ class TestFetchTranscriptSync:
 
         assert exc_info.value.code == ErrorCode.VIDEO_UNAVAILABLE
 
+    @pytest.fixture
+    def no_retry_wait(self):
+        """Skip tenacity's 4s + 8s backoff sleeps without disabling the retries."""
+        with patch.object(_fetch_transcript_sync.retry, "sleep"):
+            yield
+
+    @pytest.mark.usefixtures("no_retry_wait")
     @patch("src.services.transcription.transcript.YouTubeTranscriptApi")
     def test_raises_rate_limit_error(self, mock_api_class):
         """Test rate limit error handling."""
@@ -380,6 +388,32 @@ class TestFetchTranscriptSync:
             _fetch_transcript_sync("test_video_id")
 
         assert exc_info.value.code == ErrorCode.RATE_LIMITED
+
+    @pytest.mark.usefixtures("no_retry_wait")
+    @patch("src.services.transcription.transcript.YouTubeTranscriptApi")
+    def test_should_retry_three_times_when_rate_limited(self, mock_api_class):
+        """Guards the tenacity decorator staying on _fetch_transcript_sync —
+        it once slid onto a helper inserted directly above, silently."""
+        mock_api = MagicMock()
+        mock_api_class.return_value = mock_api
+        mock_api.list.side_effect = Exception("429 Too Many Requests")
+
+        with pytest.raises(TranscriptError):
+            _fetch_transcript_sync("test_video_id")
+
+        assert mock_api.list.call_count == 3
+
+    @pytest.mark.usefixtures("no_retry_wait")
+    @patch("src.services.transcription.transcript.YouTubeTranscriptApi")
+    def test_should_not_retry_when_error_is_not_a_rate_limit(self, mock_api_class):
+        mock_api = MagicMock()
+        mock_api_class.return_value = mock_api
+        mock_api.list.side_effect = Exception("connection reset")
+
+        with pytest.raises(TranscriptError):
+            _fetch_transcript_sync("test_video_id")
+
+        assert mock_api.list.call_count == 1
 
 
 class TestGetTranscriptAsync:

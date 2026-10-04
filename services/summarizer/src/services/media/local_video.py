@@ -56,7 +56,10 @@ async def download_video_720p(
     video_path = Path(temp_dir) / f"{youtube_id}.mp4"
     proc: asyncio.subprocess.Process | None = None
     try:
-        from src.services.media.download_utils import ytdlp_client_cli_args
+        from src.services.media.download_utils import (
+            ytdlp_client_cli_args,
+            ytdlp_subprocess_env,
+        )
 
         proc = await asyncio.create_subprocess_exec(
             "yt-dlp",
@@ -70,6 +73,7 @@ async def download_video_720p(
             f"https://www.youtube.com/watch?v={youtube_id}",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=ytdlp_subprocess_env(),
         )
         _, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
     except asyncio.TimeoutError:

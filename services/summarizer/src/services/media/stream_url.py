@@ -121,7 +121,10 @@ async def get_video_stream_url(youtube_id: str) -> str | None:
 
     async def _try_format(fmt: str) -> str | None:
         try:
-            from src.services.media.download_utils import ytdlp_client_cli_args
+            from src.services.media.download_utils import (
+                ytdlp_client_cli_args,
+                ytdlp_subprocess_env,
+            )
 
             proc = await asyncio.create_subprocess_exec(
                 "yt-dlp",
@@ -134,6 +137,7 @@ async def get_video_stream_url(youtube_id: str) -> str | None:
                 url,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                env=ytdlp_subprocess_env(),
             )
         except Exception as e:
             logger.warning("yt-dlp --get-url failed for %s (format: %s): %s", youtube_id, fmt, e)

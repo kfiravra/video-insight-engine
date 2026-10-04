@@ -11,7 +11,7 @@ from dataclasses import dataclass
 import yt_dlp  # type: ignore[import-untyped]
 from yt_dlp.utils import DownloadError, ExtractorError  # type: ignore[import-untyped]
 
-from src.config import settings
+from src.services.media.download_utils import ytdlp_proxy_url
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class PlaylistVideoInfo:
     """Information about a single video in a playlist."""
+
     video_id: str
     title: str
     position: int
@@ -29,6 +30,7 @@ class PlaylistVideoInfo:
 @dataclass
 class PlaylistData:
     """Complete playlist data extracted from yt-dlp."""
+
     playlist_id: str
     title: str
     channel: str | None
@@ -40,24 +42,19 @@ class PlaylistData:
         return len(self.videos)
 
 
-def _build_playlist_opts(use_proxy: bool = False) -> dict:
-    """Build yt-dlp options for fast playlist extraction."""
+def _build_playlist_opts() -> dict:
+    """Build yt-dlp options for fast playlist extraction; YOUTUBE_PROXY_URL applies when set."""
     opts = {
-        'quiet': True,
-        'no_warnings': True,
-        'extract_flat': 'in_playlist',  # Fast mode: metadata only, no download
-        'ignoreerrors': True,            # Skip unavailable videos
-        'skip_download': True,
+        "quiet": True,
+        "no_warnings": True,
+        "extract_flat": "in_playlist",  # Fast mode: metadata only, no download
+        "ignoreerrors": True,  # Skip unavailable videos
+        "skip_download": True,
     }
 
-    # Configure Webshare proxy only if requested and credentials available
-    if use_proxy and settings.WEBSHARE_PROXY_USERNAME and settings.WEBSHARE_PROXY_PASSWORD:
-        proxy_url = (
-            f"http://{settings.WEBSHARE_PROXY_USERNAME}:"
-            f"{settings.WEBSHARE_PROXY_PASSWORD}@p.webshare.io:80"
-        )
-        opts['proxy'] = proxy_url
-        logger.debug("Using Webshare proxy for playlist extraction")
+    proxy_url = ytdlp_proxy_url()
+    if proxy_url:
+        opts["proxy"] = proxy_url
 
     return opts
 
@@ -81,8 +78,7 @@ def _extract_playlist_sync(playlist_id: str, max_videos: int = 100) -> PlaylistD
     """
     url = f"https://www.youtube.com/playlist?list={playlist_id}"
 
-    # yt-dlp works directly without proxy
-    opts = _build_playlist_opts(use_proxy=False)
+    opts = _build_playlist_opts()
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=False)
@@ -93,20 +89,20 @@ def _extract_playlist_sync(playlist_id: str, max_videos: int = 100) -> PlaylistD
         raise ValueError("Playlist not found or unavailable")
 
     # Extract playlist metadata
-    playlist_title = info.get('title', 'Unknown Playlist')
-    channel = info.get('uploader') or info.get('channel')
+    playlist_title = info.get("title", "Unknown Playlist")
+    channel = info.get("uploader") or info.get("channel")
 
     # Get playlist thumbnail (first video's thumbnail or playlist image)
     thumbnail_url = None
-    thumbnails = info.get('thumbnails', [])
+    thumbnails = info.get("thumbnails", [])
     if thumbnails:
         for thumb in reversed(thumbnails):
-            if thumb.get('url'):
-                thumbnail_url = thumb['url']
+            if thumb.get("url"):
+                thumbnail_url = thumb["url"]
                 break
 
     # Extract video entries
-    entries = info.get('entries', [])
+    entries = info.get("entries", [])
     videos: list[PlaylistVideoInfo] = []
 
     for idx, entry in enumerate(entries):
@@ -115,29 +111,34 @@ def _extract_playlist_sync(playlist_id: str, max_videos: int = 100) -> PlaylistD
         if idx >= max_videos:
             break
 
-        video_id = entry.get('id')
+        video_id = entry.get("id")
         if not video_id:
             continue
 
-        title = entry.get('title', 'Unknown Title')
-        duration = entry.get('duration')
+        title = entry.get("title", "Unknown Title")
+        duration = entry.get("duration")
 
         # Get video thumbnail
         video_thumb = None
         if video_id:
             video_thumb = f"https://img.youtube.com/vi/{video_id}/mqdefault.jpg"
 
-        videos.append(PlaylistVideoInfo(
-            video_id=video_id,
-            title=title,
-            position=len(videos),  # 0-indexed position
-            duration=int(duration) if duration else None,
-            thumbnail_url=video_thumb,
-        ))
+        videos.append(
+            PlaylistVideoInfo(
+                video_id=video_id,
+                title=title,
+                position=len(videos),  # 0-indexed position
+                duration=int(duration) if duration else None,
+                thumbnail_url=video_thumb,
+            )
+        )
 
     logger.info(
         "Playlist %s: extracted %d videos (title=%s, channel=%s)",
-        playlist_id, len(videos), playlist_title, channel,
+        playlist_id,
+        len(videos),
+        playlist_title,
+        channel,
     )
 
     # Use first video's thumbnail if no playlist thumbnail

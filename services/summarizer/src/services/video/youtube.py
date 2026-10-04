@@ -27,9 +27,9 @@ import requests
 import tenacity
 import yt_dlp  # type: ignore[import-untyped]
 
-from src.config import settings
 from src.exceptions import TranscriptError
 from src.models.schemas import ErrorCode
+from src.services.media.download_utils import ytdlp_proxy_url
 from src.utils.language_utils import (
     detect_language_by_script,
     normalize_language_code,
@@ -502,12 +502,8 @@ class VideoData:
         return " ".join(seg.text for seg in segments)
 
 
-def _build_yt_dlp_opts(use_proxy: bool = False) -> dict[str, Any]:
-    """Build yt-dlp options with optional proxy configuration.
-
-    Args:
-        use_proxy: Whether to use Webshare proxy (default False for direct connection)
-    """
+def _build_yt_dlp_opts() -> dict[str, Any]:
+    """Build yt-dlp metadata/subtitle options; YOUTUBE_PROXY_URL applies when set."""
     opts: dict[str, Any] = {
         "skip_download": True,
         "quiet": True,
@@ -551,14 +547,9 @@ def _build_yt_dlp_opts(use_proxy: bool = False) -> dict[str, Any]:
         "subtitlesformat": "json3",  # Best format for parsing
     }
 
-    # Configure Webshare proxy only if requested and credentials available
-    if use_proxy and settings.WEBSHARE_PROXY_USERNAME and settings.WEBSHARE_PROXY_PASSWORD:
-        proxy_url = (
-            f"http://{settings.WEBSHARE_PROXY_USERNAME}:"
-            f"{settings.WEBSHARE_PROXY_PASSWORD}@p.webshare.io:80"
-        )
+    proxy_url = ytdlp_proxy_url()
+    if proxy_url:
         opts["proxy"] = proxy_url
-        logger.debug("Using Webshare proxy for yt-dlp")
 
     return opts
 
@@ -603,11 +594,15 @@ def _fetch_subtitle_data_sync(url: str, max_bytes: int = 10 * 1024 * 1024) -> di
         url: Subtitle URL to fetch.
         max_bytes: Maximum response body size (default 10 MB).
     """
+    # Same exit as the yt-dlp call that produced this URL — a direct fetch
+    # would hit timedtext from the host IP the proxy exists to hide.
+    proxy_url = ytdlp_proxy_url()
     response = requests.get(
         url,
         headers={"User-Agent": "Mozilla/5.0"},
         timeout=30,
         stream=True,
+        proxies={"http": proxy_url, "https": proxy_url} if proxy_url else None,
     )
     response.raise_for_status()
     # Read with size limit to prevent memory exhaustion from oversized responses
@@ -747,8 +742,7 @@ def _extract_video_data_sync(video_id: str) -> VideoData:
     """
     url = f"https://www.youtube.com/watch?v={video_id}"
 
-    # yt-dlp works directly without proxy — no need for proxy fallback
-    opts = _build_yt_dlp_opts(use_proxy=False)
+    opts = _build_yt_dlp_opts()
     try:
         info = _extract_with_retry(url, opts)
     except Exception as e:

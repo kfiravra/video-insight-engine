@@ -461,7 +461,10 @@ async def _do_extraction(
         # Step 1: Download lowest quality video via yt-dlp
         dl_proc = None
         try:
-            from src.services.media.download_utils import ytdlp_client_cli_args
+            from src.services.media.download_utils import (
+                ytdlp_client_cli_args,
+                ytdlp_subprocess_env,
+            )
 
             dl_proc = await asyncio.create_subprocess_exec(
                 "yt-dlp",
@@ -475,6 +478,7 @@ async def _do_extraction(
                 youtube_url,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                env=ytdlp_subprocess_env(),
             )
             _, dl_stderr = await asyncio.wait_for(dl_proc.communicate(), timeout=120)
         except asyncio.TimeoutError:

@@ -93,6 +93,22 @@ async def test_player_client_args_are_injected():
     assert argv[argv.index("--extractor-args") + 1] == "youtube:player_client=android"
 
 
+async def test_proxy_travels_in_env_never_on_the_command_line():
+    proxy_url = "http://user:pass@203.0.113.7:8080"
+    proc = _fake_proc(returncode=1)
+    with (
+        patch.object(
+            local_video.asyncio, "create_subprocess_exec", AsyncMock(return_value=proc)
+        ) as spawn,
+        patch("src.services.media.download_utils.settings") as settings,
+    ):
+        settings.YTDLP_PLAYER_CLIENTS = "android"
+        settings.YOUTUBE_PROXY_URL = proxy_url
+        await local_video.download_video_720p(VIDEO_ID)
+    assert proxy_url not in spawn.await_args.args
+    assert spawn.await_args.kwargs["env"]["HTTPS_PROXY"] == proxy_url
+
+
 async def test_nonzero_exit_cleans_temp_dir(monkeypatch, tmp_path):
     created = _capture_temp_dirs(monkeypatch, tmp_path)
     proc = _fake_proc(returncode=1, stderr=b"HTTP Error 403")

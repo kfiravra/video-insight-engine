@@ -38,35 +38,39 @@ except ImportError:
     _SDK_AVAILABLE = False
 
 
-_SENSITIVE_HEADERS = frozenset({
-    "authorization",
-    "cookie",
-    "set-cookie",
-    "x-internal-secret",
-    "x-admin-key",
-    "x-csrf-token",
-    "x-api-key",
-    "proxy-authorization",
-})
+_SENSITIVE_HEADERS = frozenset(
+    {
+        "authorization",
+        "cookie",
+        "set-cookie",
+        "x-internal-secret",
+        "x-admin-key",
+        "x-csrf-token",
+        "x-api-key",
+        "proxy-authorization",
+    }
+)
 
 _EMAIL_PATTERN = re.compile(r"[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}", re.IGNORECASE)
 
 # Query-string parameter names that may carry credentials. The WebSocket auth
 # endpoint accepts `?token=<JWT>` so any captured event from that path would
 # otherwise mirror a live JWT to Sentry SaaS.
-_SENSITIVE_QUERY_KEYS = frozenset({
-    "token",
-    "access_token",
-    "refresh_token",
-    "id_token",
-    "code",
-    "state",
-    "api_key",
-    "apikey",
-    "key",
-    "password",
-    "secret",
-})
+_SENSITIVE_QUERY_KEYS = frozenset(
+    {
+        "token",
+        "access_token",
+        "refresh_token",
+        "id_token",
+        "code",
+        "state",
+        "api_key",
+        "apikey",
+        "key",
+        "password",
+        "secret",
+    }
+)
 
 _QUERY_REDACT_PATTERN = re.compile(
     # Value runs until `&`, `#`, whitespace, or quote. Without the whitespace
@@ -77,8 +81,23 @@ _QUERY_REDACT_PATTERN = re.compile(
 )
 
 
+# `scheme://user:pass@host` — proxy, broker and database URLs carry their
+# credentials in the userinfo part. Subprocess breadcrumbs (full argv) and
+# exception text can embed such a URL; the email pattern only catches it by
+# accident, and not at all when the host is an IP.
+_URL_USERINFO_PATTERN = re.compile(
+    r"(?P<scheme>\b[a-z][a-z0-9+.\-]*://)[^/\s@\"'?#]+@",
+    re.IGNORECASE,
+)
+
+
 def _redact_emails(text: str) -> str:
     return _EMAIL_PATTERN.sub("[email]", text)
+
+
+def _redact_url_userinfo(text: str) -> str:
+    """Strip `user:pass@` from any URL embedded in the text."""
+    return _URL_USERINFO_PATTERN.sub(lambda m: f"{m.group('scheme')}[Filtered]@", text)
 
 
 def _redact_url(url: str) -> str:
@@ -88,7 +107,9 @@ def _redact_url(url: str) -> str:
 
 def _scrub_value(value: Any) -> Any:
     if isinstance(value, str):
-        return _redact_emails(value)
+        # Userinfo FIRST: the email pattern would otherwise eat `pass@host.tld`
+        # and leave the username behind.
+        return _redact_emails(_redact_url_userinfo(value))
     if isinstance(value, list):
         return [_scrub_value(item) for item in value]
     if isinstance(value, dict):
@@ -167,7 +188,9 @@ def scrub_event_payload(
                         # URL-redact FIRST: the token-redaction regex consumes
                         # until `&` or `#`, so a preceding `[email]` token
                         # would be swallowed by the URL match.
-                        entry["value"] = _redact_emails(_redact_url(entry["value"]))
+                        entry["value"] = _redact_emails(
+                            _redact_url(_redact_url_userinfo(entry["value"]))
+                        )
 
         # Promote the structlog request_id contextvar to a Sentry tag so all
         # events tied to a worker job share the cross-system correlation id.
