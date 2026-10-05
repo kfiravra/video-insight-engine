@@ -260,6 +260,9 @@ services:
       # Extra allowed origins (e.g. the :5273 Playwright e2e webServer) — without
       # the passthrough, browser e2e API calls are CORS-blocked at login.
       CORS_ADDITIONAL_ORIGINS: ${CORS_ADDITIONAL_ORIGINS:-}
+      # Demo mode — both set = POST /api/auth/login accepts { demo: true }; blank = off
+      DEMO_USER_EMAIL: ${DEMO_USER_EMAIL:-}
+      DEMO_USER_PASSWORD: ${DEMO_USER_PASSWORD:-}
       INTERNAL_SECRET: ${INTERNAL_SECRET:-dev-internal-secret-change-me}
       # RabbitMQ — see docs/INFRASTRUCTURE.md
       RABBITMQ_URL: amqp://${RABBITMQ_DEFAULT_USER:-vie}:${RABBITMQ_DEFAULT_PASS:-vie-dev}@vie-rabbitmq:5672/

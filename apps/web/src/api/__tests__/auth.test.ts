@@ -171,6 +171,47 @@ describe("authApi", () => {
     });
   });
 
+  describe("loginDemo", () => {
+    it("should send only the demo flag, never credentials", async () => {
+      let capturedBody: unknown = null;
+      server.use(
+        http.post(`${API_URL}/auth/login`, async ({ request }) => {
+          capturedBody = await request.json();
+          return HttpResponse.json({
+            user: createMockUser({ email: "demo@example.com" }),
+            accessToken: "demo-token",
+          });
+        })
+      );
+
+      await authApi.loginDemo();
+
+      expect(capturedBody).toEqual({ demo: true });
+    });
+
+    it("should return the demo user and access token on success", async () => {
+      const result = await authApi.loginDemo();
+
+      expect(result).toMatchObject({
+        user: { email: "demo@example.com" },
+        accessToken: "test-access-token",
+      });
+    });
+
+    it("should throw DEMO_DISABLED when the deployment has no demo account", async () => {
+      server.use(
+        http.post(`${API_URL}/auth/login`, () =>
+          HttpResponse.json(
+            { error: "DEMO_DISABLED", message: "The demo is not available", statusCode: 403 },
+            { status: 403 }
+          )
+        )
+      );
+
+      await expect(authApi.loginDemo()).rejects.toMatchObject({ status: 403, code: "DEMO_DISABLED" });
+    });
+  });
+
   describe("logout", () => {
     it("should send logout request", async () => {
       let logoutCalled = false;

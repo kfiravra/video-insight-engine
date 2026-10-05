@@ -1,9 +1,10 @@
 import { request } from "./client";
 import type { AuthResponse, User } from "@/types";
 
-/** Whether self-service signup is enabled on this deployment. */
+/** Public auth switches for this deployment: self-service signup and demo mode. */
 export interface RegistrationStatus {
   open: boolean;
+  demoEnabled?: boolean;
 }
 
 // API layer - pure HTTP calls, no side effects
@@ -24,6 +25,14 @@ export const authApi = {
     return request<AuthResponse>("/auth/login", {
       method: "POST",
       body: JSON.stringify({ email, password }),
+    });
+  },
+
+  /** Signs in the shared demo account; the API holds its credentials. */
+  async loginDemo(): Promise<AuthResponse> {
+    return request<AuthResponse>("/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ demo: true }),
     });
   },
 

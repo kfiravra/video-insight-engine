@@ -85,6 +85,11 @@ const envSchema = z.object({
   // web app hides its signup links; accounts are then created out-of-band
   // (scripts/create-admin.ts). Any other value keeps registration open.
   ALLOW_REGISTRATION: z.string().default('true').transform(v => v.trim().toLowerCase() !== 'false'),
+  // Demo mode. With both set, POST /api/auth/login accepts { demo: true } and
+  // signs in this account server-side; either one blank keeps demo off. The
+  // email is normalized like a login email because the lookup is exact-match.
+  DEMO_USER_EMAIL: z.string().default('').transform(v => v.trim().toLowerCase()),
+  DEMO_USER_PASSWORD: z.string().default(''),
   // Payment (Paddle)
   PADDLE_WEBHOOK_SECRET: z.string().default(''),
   PADDLE_PRO_PRICE_ID: z.string().default(''),

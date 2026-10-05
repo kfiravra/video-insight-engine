@@ -90,6 +90,36 @@ Set-Cookie: refreshToken=xxx; HttpOnly; Secure; SameSite=Strict; Path=/api/auth/
 Set-Cookie: refreshToken=xxx; HttpOnly; Secure; SameSite=Strict; Path=/api/auth/refresh; Max-Age=604800
 ```
 
+**Demo login:** when the deployment sets `DEMO_USER_EMAIL` and `DEMO_USER_PASSWORD`, the same route accepts this body instead of credentials and signs in the demo account server-side. The response, cookie and rate limit are identical to a normal login.
+
+```json
+{
+  "demo": true
+}
+```
+
+Returns `403 DEMO_DISABLED` when demo mode is not configured.
+
+---
+
+### GET /auth/registration
+
+Public. Tells the web app which entry points to show.
+
+**Response (200):**
+
+```json
+{
+  "open": false,
+  "demoEnabled": true
+}
+```
+
+| Field         | Meaning                                                                     |
+| ------------- | --------------------------------------------------------------------------- |
+| `open`        | Self-service signup is allowed (`ALLOW_REGISTRATION`)                       |
+| `demoEnabled` | `POST /auth/login` accepts `{ "demo": true }` (both `DEMO_USER_*` vars set) |
+
 ---
 
 ### POST /auth/refresh

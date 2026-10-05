@@ -80,3 +80,19 @@ export function translateAuthError(
     ? "Registration failed. Please try again."
     : "Sign-in failed. Please try again.";
 }
+
+/**
+ * Message for a failed demo sign-in. The visitor typed no credentials, so
+ * the credential wording of `translateAuthError` would mislead; only rate
+ * limiting and connectivity get their own message.
+ */
+export function translateDemoError(err: unknown): string {
+  if (err instanceof ApiError && (err.status === 429 || err.code === "RATE_LIMITED")) {
+    return "Too many attempts. Wait a minute and try again.";
+  }
+  const isTimeout = err instanceof ApiError && (err.status === 408 || err.code === "TIMEOUT");
+  if (isTimeout || err instanceof TypeError) {
+    return "Couldn't reach the server. Check your connection and try again.";
+  }
+  return "The demo isn't available right now. Please try again later.";
+}
