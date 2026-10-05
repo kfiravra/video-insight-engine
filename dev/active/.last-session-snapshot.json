@@ -1,33 +1,18 @@
 {
-  "session_id": "7a479119-2e48-44e7-94d0-4cc1b3eea396",
-  "saved_at": "2026-10-05T10:22:47Z",
-  "affected_repos": [
-    "root",
-    "services"
-  ],
+  "session_id": "b7e879cb-a552-49ff-8811-a06b9355ad16",
+  "saved_at": "2026-10-05T13:24:24Z",
+  "affected_repos": [],
   "files_edited": [
-    ".env.example",
-    ".env.production.example",
-    "/home/kfir/.claude/plans/pasted-content-id-fac3-billing-auto-rel-peppy-ritchie.md",
-    "/home/kfir/.claude/projects/-home-kfir-projects-video-insight-engine/memory/MEMORY.md",
-    "/home/kfir/.claude/projects/-home-kfir-projects-video-insight-engine/memory/project_aws_go_live_demo_deploy.md",
-    "/home/kfir/.claude/projects/-home-kfir-projects-video-insight-engine/memory/project_youtube_block_aws_20261004.md",
-    "dev/active/aws-go-live/aws-go-live-context.md",
-    "dev/active/aws-go-live/aws-go-live-owner-tasks.md",
-    "dev/active/aws-go-live/aws-go-live-tasks.md",
-    "docker-compose.prod.yml",
-    "docker-compose.yml",
-    "docs/DEPLOY.md",
-    "docs/INFRASTRUCTURE.md",
-    "docs/summarizer-workflow.md",
-    "services/summarizer/src/config.py",
-    "services/summarizer/src/services/pipeline/pipeline_helpers.py",
-    "services/summarizer/src/services/transcription/transcript.py",
-    "services/summarizer/src/services/transcription/transcript_fetcher.py",
-    "services/summarizer/tests/test_transcript_proxy.py",
-    "services/summarizer/tests/test_transcript_trail.py"
+    "/home/kfir/.claude/plans/the-terminal-collapesed-we-crystalline-nest.md",
+    "/home/kfir/.claude/projects/-home-kfir-projects-video-insight-engine/memory/project_open_followups_20261005.md",
+    "/home/kfir/projects/vie-readme-rebuild/README.md",
+    "/home/kfir/projects/vie-readme-rebuild/docs/INFRASTRUCTURE.md",
+    "PROJECT-BRIEFING-TLDR.md",
+    "PROJECT-BRIEFING.md",
+    "README.md",
+    "docs/ARCHITECTURE.md"
   ],
-  "file_count": 20,
-  "edit_count": 87,
-  "resume_hint": "Session edited 20 unique files across root, services."
+  "file_count": 8,
+  "edit_count": 11,
+  "resume_hint": "Session edited 8 unique files across ."
 }
