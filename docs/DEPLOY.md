@@ -202,6 +202,34 @@ docker run --rm --network vie-network \
 
 The script creates the user with role `admin`, so the same login also works for the vie-admin panel. Running it again with the same email resets that user's password.
 
+### Demo mode
+
+Demo mode lets a visitor use the app without an account. The login page gets a "Try the demo" button, and the landing page's Summarize signs the visitor in as one shared demo user before submitting the URL. vie-api holds that user's credentials; the browser only ever sends `{ "demo": true }`.
+
+1. In `.env`, set both variables. Use an email that is not an admin account, and a password nobody needs to remember:
+
+   ```bash
+   DEMO_USER_EMAIL=demo@your-domain
+   DEMO_USER_PASSWORD=<openssl rand -base64 24>
+   ```
+
+2. Recreate vie-api so it reads them, then create the user from the container's own environment:
+
+   ```bash
+   dc up -d vie-api
+   dc exec -T vie-api node --input-type=module < scripts/create-demo-user.mjs
+   ```
+
+3. Check it: `curl -fsS https://DOMAIN/api/auth/registration` returns `"demoEnabled":true`, and `https://DOMAIN/login` shows "Try the demo".
+
+Only vie-api needs recreating when these variables change (`dc restart` does not re-read `.env`). vie-web reads the flag at runtime, so it needs no rebuild.
+
+- **Turn it off:** blank both variables and run `dc up -d vie-api`. The button disappears and `{ "demo": true }` returns 403 `DEMO_DISABLED`. Demo sessions that are already open keep working until their refresh cookie expires, up to 7 days; to end them now, also rotate `JWT_REFRESH_SECRET`, which signs every user out. The user and its videos stay in the database.
+- **Change the password, or repair the account:** edit `DEMO_USER_PASSWORD`, run `dc up -d vie-api`, then run the script again. It resets the password and cancels a pending account deletion (the API picks that up within 30 seconds).
+- **Limits:** the demo user is an ordinary free-tier user, and every visitor shares it. Its allowance is whatever `.env` gives free users: `USER_COST_LIMIT_FREE` (USD per UTC day) and `VIDEO_DAILY_LIMIT` (submissions per 24 hours). When either runs out, visitors see the normal limit message and can still browse the videos already in the demo library. The admin panel can top up one day's budget (Users → the user → Adjustments → Grant credit); it cannot change the tier or the limits.
+- **Rate limit:** demo sign-ins count against the login limit of 10 per 15 minutes per IP address.
+- **Account deletion:** while `DEMO_USER_EMAIL` is set, `DELETE /api/users/me` returns 403 `DEMO_RESTRICTED` for the demo user, so a visitor cannot lock the demo for everyone. The admin immediate delete still works.
+
 ## f. Nightly backup and disk space
 
 `COMPOSE_PROFILES=backup` in `.env` starts the `vie-backup-cron` sidecar with the stack. Every night at 03:30 UTC it runs `scripts/backup.sh`: a MongoDB archive plus a Qdrant snapshot per collection into `backups/<UTC-timestamp>/`, with a `manifest.json` that vie-admin's `backup_stale` alert reads. The sidecar keeps the last `BACKUP_KEEP` (14) backups on disk. A host cron copies the folder to the bucket's `backups/` prefix at 04:00 UTC through the instance role. Replace `BUCKET` before running this:

@@ -40,6 +40,10 @@ function detectMode(trimmed: string, fallback: Mode): Mode {
 
 interface VideoIntakeFormProps {
   className?: string;
+  /** URL handed over from another page (the landing form). Prefills the
+   *  input and is submitted once on mount, as if the user had pressed
+   *  Summarize here. */
+  initialUrl?: string;
 }
 
 /**
@@ -47,9 +51,9 @@ interface VideoIntakeFormProps {
  * Distinct from the sidebar's compact AddVideoInput: glass surface, focus-glow,
  * larger controls, prominent Summarize CTA. Shares tokens, not markup.
  */
-export function VideoIntakeForm({ className }: VideoIntakeFormProps) {
-  const [url, setUrl] = useState('');
-  const [mode, setMode] = useState<Mode>('video');
+export function VideoIntakeForm({ className, initialUrl }: VideoIntakeFormProps) {
+  const [url, setUrl] = useState(initialUrl ?? '');
+  const [mode, setMode] = useState<Mode>(() => detectMode((initialUrl ?? '').trim(), 'video'));
   const [error, setError] = useState<string | null>(null);
   const [dailyLimit, setDailyLimit] = useState<{ resetAt: string | null; limitUsd: number | null } | null>(null);
   const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
@@ -72,13 +76,14 @@ export function VideoIntakeForm({ className }: VideoIntakeFormProps) {
   const trimmed = url.trim();
   const isInvalidUrl = trimmed.length > 0 && !isYouTubeUrl(trimmed);
 
-  // Auto-detect mode from URL as user pastes. This is purely for UI feedback —
-  // submission derives mode fresh from the URL to avoid a paste-then-click race.
+  // Submit a handed-over URL once the form has mounted. Deferred a tick with
+  // cleanup so StrictMode's mount → unmount → mount fires a single submit from
+  // the surviving mount, keeping the mutation observer attached to it.
   useEffect(() => {
-    const trimmed = url.trim();
-    if (!trimmed) return;
-    setMode((prev) => detectMode(trimmed, prev));
-  }, [url]);
+    if (!initialUrl) return;
+    const timer = setTimeout(() => formRef.current?.requestSubmit(), 0);
+    return () => clearTimeout(timer);
+  }, [initialUrl]);
 
   const handleSubmit = async (e: FormEvent): Promise<void> => {
     e.preventDefault();
@@ -206,7 +211,11 @@ export function VideoIntakeForm({ className }: VideoIntakeFormProps) {
               type="url"
               value={url}
               onChange={(e) => {
-                setUrl(e.target.value);
+                const next = e.target.value;
+                setUrl(next);
+                // Auto-detect mode as the user pastes. Purely UI feedback —
+                // submission derives mode fresh from the URL at submit time.
+                if (next.trim()) setMode((prev) => detectMode(next.trim(), prev));
                 if (error) setError(null);
               }}
               placeholder="Paste a YouTube video or playlist URL…"

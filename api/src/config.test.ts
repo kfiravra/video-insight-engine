@@ -115,6 +115,23 @@ describe('config env validation', () => {
     });
   });
 
+  describe('demo mode vars', () => {
+    it('should leave demo mode unconfigured when the vars are blank', async () => {
+      const { config } = await loadConfig({ DEMO_USER_EMAIL: '', DEMO_USER_PASSWORD: '' });
+      expect([config.DEMO_USER_EMAIL, config.DEMO_USER_PASSWORD]).toEqual(['', '']);
+    });
+
+    it('should trim and lowercase DEMO_USER_EMAIL so it matches the stored email', async () => {
+      const { config } = await loadConfig({ DEMO_USER_EMAIL: '  Demo@Example.COM ' });
+      expect(config.DEMO_USER_EMAIL).toBe('demo@example.com');
+    });
+
+    it('should keep DEMO_USER_PASSWORD exactly as given', async () => {
+      const { config } = await loadConfig({ DEMO_USER_PASSWORD: ' MixedCase 123 ' });
+      expect(config.DEMO_USER_PASSWORD).toBe(' MixedCase 123 ');
+    });
+  });
+
   describe('PIPELINE_VERSION single source (project-score-9 4.3)', () => {
     it('should read the canonical version from packages/shared pipeline-version.json', async () => {
       const { readFileSync } = await import('node:fs');

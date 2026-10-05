@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, beforeAll, afterAll, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll, vi } from 'vitest';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 import { MongoClient, Db, ObjectId } from 'mongodb';
 import type { FastifyBaseLogger } from 'fastify';
@@ -9,8 +9,10 @@ import {
   UserDeletionService,
   hashEmail,
 } from '../user-deletion.service.js';
+import { config } from '../../config.js';
 import {
   AccountAlreadyDeletedError,
+  DemoRestrictedError,
   UserNotFoundError,
 } from '../../utils/errors.js';
 
@@ -117,6 +119,55 @@ describe('UserDeletionService (integration with in-memory MongoDB)', () => {
       await expect(
         service.requestDeletion(user._id.toString()),
       ).rejects.toBeInstanceOf(AccountAlreadyDeletedError);
+    });
+  });
+
+  describe('requestDeletion for the demo account', () => {
+    const DEMO_EMAIL = 'demo@example.com';
+    const originalEmail = config.DEMO_USER_EMAIL;
+
+    beforeEach(() => {
+      config.DEMO_USER_EMAIL = DEMO_EMAIL;
+    });
+
+    afterEach(() => {
+      config.DEMO_USER_EMAIL = originalEmail;
+    });
+
+    it('should throw DemoRestrictedError when the demo account requests deletion', async () => {
+      const user = await insertUser({ email: DEMO_EMAIL });
+
+      await expect(
+        service.requestDeletion(user._id.toString()),
+      ).rejects.toBeInstanceOf(DemoRestrictedError);
+    });
+
+    it('should leave the demo account active when its deletion is refused', async () => {
+      const user = await insertUser({ email: DEMO_EMAIL });
+
+      await service.requestDeletion(user._id.toString()).catch(() => undefined);
+
+      const fresh = await userRepo.findById(user._id.toString());
+      expect(fresh?.deletedAt ?? null).toBeNull();
+    });
+
+    it('should still delete other accounts when demo mode is on', async () => {
+      const user = await insertUser({ email: 'someone@example.com' });
+
+      await service.requestDeletion(user._id.toString());
+
+      const fresh = await userRepo.findById(user._id.toString());
+      expect(fresh?.deletedAt).toEqual(frozenNow);
+    });
+
+    it('should delete an account with the same email when demo mode is off', async () => {
+      config.DEMO_USER_EMAIL = '';
+      const user = await insertUser({ email: DEMO_EMAIL });
+
+      await service.requestDeletion(user._id.toString());
+
+      const fresh = await userRepo.findById(user._id.toString());
+      expect(fresh?.deletedAt).toEqual(frozenNow);
     });
   });
 

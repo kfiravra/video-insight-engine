@@ -10,8 +10,10 @@ import type {
   DeletionCounts,
   DeletionInitiator,
 } from '../repositories/user-deletion.repository.js';
+import { config } from '../config.js';
 import {
   AccountAlreadyDeletedError,
+  DemoRestrictedError,
   UserNotFoundError,
 } from '../utils/errors.js';
 import * as softDeleteCache from '../utils/soft-delete-cache.js';
@@ -109,6 +111,12 @@ export class UserDeletionService {
     }
     if (user.deletedAt) {
       throw new AccountAlreadyDeletedError();
+    }
+    // Every demo visitor holds a token for this one account, so a soft delete
+    // by any of them would lock the demo for all. Admin immediate deletion
+    // (`executeHardDelete`) stays available.
+    if (config.DEMO_USER_EMAIL && user.email === config.DEMO_USER_EMAIL) {
+      throw new DemoRestrictedError();
     }
 
     const now = this.clock();

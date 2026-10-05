@@ -87,6 +87,21 @@ export class RegistrationClosedError extends AppError {
   }
 }
 
+export class DemoDisabledError extends AppError {
+  constructor() {
+    super('DEMO_DISABLED', 403, 'The demo is not available');
+    this.name = 'DemoDisabledError';
+  }
+}
+
+/** The shared demo account refuses an action that would break it for every visitor. */
+export class DemoRestrictedError extends AppError {
+  constructor() {
+    super('DEMO_RESTRICTED', 403, 'This action is not available on the demo account');
+    this.name = 'DemoRestrictedError';
+  }
+}
+
 export class UserNotFoundError extends AppError {
   constructor() {
     super('USER_NOT_FOUND', 404, 'User not found');

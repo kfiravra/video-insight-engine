@@ -16,5 +16,9 @@ export const loginSchema = z.object({
   password: z.string(),
 });
 
+export const demoLoginSchema = z.object({
+  demo: z.literal(true),
+});
+
 export type RegisterInput = z.infer<typeof registerSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;

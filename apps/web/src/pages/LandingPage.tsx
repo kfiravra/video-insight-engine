@@ -1,11 +1,14 @@
 import { useState } from "react";
 import type { CSSProperties, FormEvent, ReactElement } from "react";
 import { useNavigate, Navigate } from "react-router-dom";
-import { ArrowRight, Play } from "lucide-react";
+import { ArrowRight, Loader2, Play } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { useAuthStore } from "@/stores/auth-store";
+import { useDemoEnabled } from "@/hooks/use-demo-enabled";
+import { translateDemoError } from "@/lib/validation";
 import { isYouTubeUrl } from "@/lib/youtube-utils";
+import type { SubmitUrlState } from "@/lib/submit-url";
 import { cn } from "@/lib/utils";
 
 import { LandingHeader } from "@/components/landing/LandingHeader";
@@ -23,31 +26,58 @@ const SAMPLE_VIDEO_URL =
 
 export function LandingPage(): ReactElement {
   const [url, setUrl] = useState<string>("");
+  const [starting, setStarting] = useState<boolean>(false);
+  const [startError, setStartError] = useState<string>("");
   const navigate = useNavigate();
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const loginDemo = useAuthStore((s) => s.loginDemo);
+  const demoEnabled = useDemoEnabled();
 
-  // Authenticated users skip the funnel — straight to board.
-  if (isAuthenticated) {
+  // Authenticated users skip the funnel — straight to board. Held back while a
+  // submit is in flight: the demo sign-in flips `isAuthenticated` before the
+  // hand-off to /generate has navigated, and redirecting then drops the URL.
+  if (isAuthenticated && !starting) {
     return <Navigate to="/board" replace />;
   }
 
   const trimmed = url.trim();
   const isInvalid = trimmed.length > 0 && !isYouTubeUrl(trimmed);
 
+  /** Sends `targetUrl` to the intake form, signing in as the demo account
+   *  first when the visitor has no session and the deployment offers one. */
+  async function start(targetUrl: string): Promise<void> {
+    // A stored token means a returning user whose auth check is still running;
+    // never replace their session with the demo account.
+    const hasSession = useAuthStore.getState().accessToken !== null;
+    if (!hasSession && !demoEnabled) {
+      // The login page forwards this to /generate once the visitor signs in.
+      navigate("/login", { state: { submitUrl: targetUrl } satisfies SubmitUrlState });
+      return;
+    }
+
+    setStartError("");
+    // Stays true on success: this page remains mounted until /generate has
+    // loaded, and clearing it would trigger the /board redirect above.
+    setStarting(true);
+    try {
+      if (!hasSession) await loginDemo();
+    } catch (err) {
+      setStartError(translateDemoError(err));
+      setStarting(false);
+      return;
+    }
+    navigate("/generate", { state: { submitUrl: targetUrl } satisfies SubmitUrlState });
+  }
+
   function handleSubmit(e: FormEvent): void {
     e.preventDefault();
-    if (!trimmed || isInvalid) return;
-    navigate("/login", {
-      state: { returnUrl: `/generate?url=${encodeURIComponent(trimmed)}` },
-    });
+    if (!trimmed || isInvalid || starting) return;
+    void start(trimmed);
   }
 
   function handleSample(): void {
-    navigate("/login", {
-      state: {
-        returnUrl: `/generate?url=${encodeURIComponent(SAMPLE_VIDEO_URL)}`,
-      },
-    });
+    if (starting) return;
+    void start(SAMPLE_VIDEO_URL);
   }
 
   return (
@@ -126,10 +156,14 @@ export function LandingPage(): ReactElement {
                       "cta-magnetic rounded-[10px] px-5 font-semibold shrink-0 scale-pulse-once",
                     )}
                     style={{ animationDelay: "1.2s" }}
-                    disabled={!trimmed || isInvalid}
+                    disabled={!trimmed || isInvalid || starting}
                   >
                     Summarize
-                    <ArrowRight className="h-4 w-4 ms-1" aria-hidden="true" />
+                    {starting ? (
+                      <Loader2 className="h-4 w-4 ms-1 animate-spin" aria-hidden="true" />
+                    ) : (
+                      <ArrowRight className="h-4 w-4 ms-1" aria-hidden="true" />
+                    )}
                   </Button>
                 </div>
 
@@ -144,11 +178,18 @@ export function LandingPage(): ReactElement {
                   </p>
                 )}
 
+                {startError && !isInvalid && (
+                  <p className="text-xs text-destructive" role="alert">
+                    {startError}
+                  </p>
+                )}
+
                 <div className="flex items-center gap-3 text-sm">
                   <span className="text-muted-foreground">No URL handy?</span>
                   <button
                     type="button"
                     onClick={handleSample}
+                    disabled={starting}
                     className="inline-flex items-center gap-1.5 rounded-full bg-muted/70 hover:bg-muted px-3 py-1 text-foreground font-medium transition-colors"
                   >
                     <Play
@@ -224,14 +265,16 @@ export function LandingPage(): ReactElement {
                 Paste a link. Get the app.
               </h2>
               <p className="text-muted-foreground mt-1.5">
-                Free to try. Sign in takes a keystroke.
+                {demoEnabled
+                  ? "Free to try. No account needed."
+                  : "Free to try. Sign in takes a keystroke."}
               </p>
               <p className="mt-2 text-xs text-muted-foreground">
                 No card needed · About a minute from paste to playable summary
               </p>
             </div>
             <div className="flex items-center gap-2">
-              <Button size="lg" variant="ghost" onClick={handleSample}>
+              <Button size="lg" variant="ghost" onClick={handleSample} disabled={starting}>
                 <Play className="h-4 w-4 me-1 text-primary" aria-hidden="true" />
                 Try sample
               </Button>

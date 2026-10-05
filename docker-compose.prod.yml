@@ -289,6 +289,9 @@ services:
       COST_DAILY_LIMIT: ${COST_DAILY_LIMIT:-20}
       USER_COST_LIMIT_FREE: ${USER_COST_LIMIT_FREE:-2}
       ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-true}
+      # Demo mode — both set = POST /api/auth/login accepts { demo: true }; blank = off
+      DEMO_USER_EMAIL: ${DEMO_USER_EMAIL:-}
+      DEMO_USER_PASSWORD: ${DEMO_USER_PASSWORD:-}
       SENTRY_DSN: ${SENTRY_DSN:-}
       SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-production}
       SENTRY_RELEASE: ${SENTRY_RELEASE:-}

@@ -62,11 +62,15 @@ export const handlers = [
   }),
 
   http.post(`${API_URL}/auth/login`, async ({ request }) => {
-    const body = (await request.json()) as { email: string; password: string };
-    return HttpResponse.json({
-      user: createMockUser({ email: body.email }),
-      accessToken: "test-access-token",
-    });
+    const body = (await request.json()) as {
+      email?: string;
+      password?: string;
+      demo?: boolean;
+    };
+    const user = body.demo
+      ? createMockUser({ id: "demo-user", email: "demo@example.com", name: "Demo" })
+      : createMockUser({ email: body.email });
+    return HttpResponse.json({ user, accessToken: "test-access-token" });
   }),
 
   http.post(`${API_URL}/auth/logout`, () => {
