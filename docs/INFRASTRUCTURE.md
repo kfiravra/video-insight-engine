@@ -705,10 +705,11 @@ Browser ──► reverse proxy ──► /s/:slug rewrite ──► vie-api
 
 ### CI/CD
 
-- **GitHub Actions** runs tests on push to `main` / `dev-*` branches and on PRs to `main`
-- Four parallel jobs: api, web, summarizer, assistant
-- All jobs must pass before merge (fail-fast)
-- See `.github/workflows/ci.yml` for configuration
+- **GitHub Actions** runs the `CI` workflow (`.github/workflows/ci.yml`) on push to `main` / `dev-*` branches and on PRs to `main`
+- Eleven parallel jobs, none depending on another: `ts-quality` (typecheck + lint), `design-guards`, `python-lint` (ruff), seven test suites (`api`, `web`, `summarizer`, `assistant`, `admin-backend`, `admin-ui`, `llm-common`; the summarizer and assistant jobs also run pyright) and `docker-build`
+- `e2e.yml` runs the Playwright smoke project against the Compose API stack on PRs to `main`. It seeds a completed video into MongoDB, so no LLM call is made
+- `eval.yml` runs on PRs that touch prompts, the pipeline, vector code or the golden dataset: a zero-spend dry-run of the golden-dataset harness and a retrieval gate (recall@k + MRR floors against a real Qdrant). A weekly scheduled job runs the golden dataset through the live pipeline and publishes to Langfuse
+- `deploy.yml` deploys to the EC2 host after a successful `CI` run on `main` (see [DEPLOY.md](./DEPLOY.md))
 - The `docker-build` job also validates `docker-compose.prod.yml` interpolation (`config -q` with dummy values for the required vars — proves the `${VAR:?}` guards without booting)
 - The e2e workflow (`e2e.yml`) appends `CORS_ADDITIONAL_ORIGINS=http://localhost:5273` to its generated `.env` so the Playwright webServer origin passes CORS
 
