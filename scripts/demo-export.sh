@@ -10,7 +10,9 @@
 #   manifest.json                 pipeline version and counts, checked on import
 #
 # Not exported: users, userVideos, llm_usage (local accounts are not demo
-# accounts). Frames and transcripts already live in the shared S3 bucket.
+# accounts), and frames/transcripts, which live in S3. A server with its own
+# bucket also needs each video's videos/<id>/ prefix copied from the dev bucket
+# (docs/DEPLOY.md, "Preload demo videos").
 # After scripts/demo-import.sh, the demo user submits the URLs in urls.txt and
 # the API attaches the cached docs without a pipeline run or a YouTube call.
 #

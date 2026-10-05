@@ -642,7 +642,9 @@ Key differences from the dev compose:
 - **No published datastore ports** — Mongo/Redis/Qdrant/RabbitMQ are reachable
   only on `vie-network`. Published surface: vie-web (`80`), vie-api (`3000`),
   and vie-admin on **loopback only** (`127.0.0.1:8002` — reach via
-  `ssh -L 8002:127.0.0.1:8002 <host>`).
+  `ssh -L 9002:127.0.0.1:8002 <host>`, then `http://localhost:9002`; any
+  free local port works, but local 8002 is taken when the dev stack runs on
+  the same machine).
 - **No source bind-mounts** — images are immutable; only the shared config
   JSONs (`pipeline-version.json`, `domains.json`) are mounted read-only
   because the prod images don't bake them.
