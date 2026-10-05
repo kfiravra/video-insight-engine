@@ -128,7 +128,7 @@ connection at its 300s body timeout.
 - Then `clean_transcript()` → `clean_transcript_advanced()` (spaCy + TF-IDF in a process pool, 30s cap) → **SponsorBlock** filtering (`sponsorblock.get_sponsor_segments` + `filter_transcript_segments`).
 - **Language detection:** from the source's own metadata, or `detect_language_from_text` / `detect_language_by_script`. Sets `ctx.source_language_code` (non-English only; **dropped** for sound-only/instrumental music whose "transcript" is hallucinated). **This single field decides whether Phase 8 runs.**
 - **Out:** `ctx.transcript_data` (segments + raw_text + source), `ctx.clean_text`, `ctx.source_language_code`.
-- **Provenance:** the fetcher fills a `TranscriptTrail` (layers that ran and failed — the youtube-transcript-api attempt is labelled `api` or `proxy` by whether Webshare was configured — the caption-429 skip flag, the S3 blob's origin) and attaches it to the yielded `TranscriptData`; the phase times the fetch and stamps `fetch_wall_ms` / `error_code` in a `finally`, so `ctx.transcript_trail` exists even when the chain raises.
+- **Provenance:** the fetcher fills a `TranscriptTrail` (layers that ran and failed — the youtube-transcript-api attempt is labelled `api` or `proxy` by whether `YOUTUBE_PROXY_URL` is set — the caption-429 skip flag, the S3 blob's origin) and attaches it to the yielded `TranscriptData`; the phase times the fetch and stamps `fetch_wall_ms` / `error_code` in a `finally`, so `ctx.transcript_trail` exists even when the chain raises.
 - **SSE:** `transcript_ready` (+ `phase` events for each fallback hop).
 
 ### Phase 2b — Frames · `phases/frames.py`

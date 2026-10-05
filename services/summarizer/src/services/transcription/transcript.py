@@ -9,9 +9,8 @@ from youtube_transcript_api._errors import (
     TranscriptsDisabled,
     VideoUnavailable,
 )
-from youtube_transcript_api.proxies import GenericProxyConfig, WebshareProxyConfig
+from youtube_transcript_api.proxies import GenericProxyConfig
 
-from src.config import settings
 from src.exceptions import TranscriptError
 from src.models.schemas import (
     ErrorCode,
@@ -66,16 +65,11 @@ def _select_track(transcript_list: TranscriptList) -> tuple[Transcript | None, s
 
 
 def _proxy_config() -> GenericProxyConfig | None:
-    """Caption-fetch proxy: YOUTUBE_PROXY_URL (one exit for every YouTube call) wins;
-    otherwise the Webshare rotating pool; otherwise direct."""
+    """Caption-fetch proxy: YOUTUBE_PROXY_URL, the one exit for every YouTube call;
+    blank = direct."""
     proxy_url = ytdlp_proxy_url()
     if proxy_url:
         return GenericProxyConfig(http_url=proxy_url, https_url=proxy_url)
-    if settings.WEBSHARE_PROXY_USERNAME and settings.WEBSHARE_PROXY_PASSWORD:
-        return WebshareProxyConfig(
-            proxy_username=settings.WEBSHARE_PROXY_USERNAME,
-            proxy_password=settings.WEBSHARE_PROXY_PASSWORD,
-        )
     return None
 
 
