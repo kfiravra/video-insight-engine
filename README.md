@@ -1,513 +1,169 @@
-# 🎬 VIE — Video Insight Engine
+# Video Insight Engine (VIE)
 
-> **Stop losing knowledge from videos you watch.**
+Turns any YouTube URL into an interactive app built from the video's own content — a cooking video becomes a timed recipe player; a coding tutorial becomes a code explorer with a quiz.
 
-You watch a 2-hour tutorial, learn amazing things, and a week later... it's gone. You can't remember the exact steps, you can't find that one explanation that clicked, and you definitely can't explain it to someone else.
-**Video Insight Engine fixes this.**
+A video is a poor format for using what it teaches: you cannot search it, check items off, copy the code, or find one step without scrubbing. VIE extracts the content into components that fit it, such as checklists, step flows, code blocks and quizzes, and links them back to the moments in the video they came from.
 
----
+[![CI](https://github.com/kfiravra/video-insight-engine/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/kfiravra/video-insight-engine/actions/workflows/ci.yml)
 
-## The Problem
+<!-- LIVE-DEMO PLACEHOLDER — after demo mode is deployed, replace this comment with:
+**Live demo:** https://vie.ad — one click, no sign-up.
+-->
 
-📺 You watch educational YouTube videos all the time.
+![Paste a URL, tabs stream in, ask the chat a question, jump to a moment](docs/images/demo.gif)
 
-😤 But videos are **terrible for knowledge retention**:
+*A real run on a 5-minute video. The processing wait (about 3 minutes) is sped up 55×.*
 
-- Can't search inside them
-- Can't highlight or save key parts
-- Can't quickly review what you learned
-- Rewatching wastes hours
+[Full walkthrough video (64 s, processing sped up 6×)](docs/images/walkthrough.mp4)
 
-**Result:** 90% of video knowledge evaporates within a week.
+## Screenshots
 
-## The Solution
+<p>
+  <img src="docs/images/app-cooking.png" width="49%" alt="Generated app for a cooking video" />
+  <img src="docs/images/app-coding.png" width="49%" alt="Generated app for a coding tutorial" />
+</p>
 
-> **Turn any YouTube video into an interactive app.**
+*Same pipeline, two videos. The cooking video gets an ingredient checklist and a recipe step flow; the coding tutorial gets copyable code snippets and a quiz. Classification decides which components are generated.*
 
-You paste a URL. VIE analyzes the video — transcript, frames, structure — and generates a custom interactive experience with the right components for that content. A cooking video becomes a recipe with timed steps and ingredient checklist. A tech tutorial becomes a code explorer with runnable snippets. A travel vlog becomes a spot explorer with a visual timeline.
+![RAG chat answering a question about the open video](docs/images/rag-chat.png)
 
-Not a summary. Not a transcript. An **app built from the video's content.**
+*Chat over the video's indexed content, scoped to the open video or the whole library.*
 
----
+## What you get
 
-## What VIE Produces
+Each video gets its own set of tabs, chosen by the planner from 29 registered components. These are the tabs generated for the two videos above.
 
-Every video gets a unique set of **interactive tabs** — chosen automatically based on what the video is about.
+A cooking video (Chicken Piccata, 5 minutes):
 
-```
-📺 YouTube URL
-      ↓
-🤖 AI Pipeline (classify + plan → extract → assemble)
-      ↓
-🎯 Knowledge Base Interactive Tabs (tailored to content type)
-```
+| Tab | Component | What it does |
+| --- | --- | --- |
+| 10 Ingredients | `checklist` | Checkable ingredient list with quantities and prep notes |
+| 8 Steps to Piccata | `step_flow_canvas` | The recipe laid out as a step-by-step flow |
+| Key Techniques | `moment_track` | Gallery of key moments; Jump seeks the video to each one |
+| Visual Moments | `video_filmstrip` | Frame scrubber across the whole video |
 
-### A cooking video might get:
+A coding tutorial (a 15-minute tooling walkthrough):
 
-| Tab               | Component  | What it does                                          |
-| ----------------- | ---------- | ----------------------------------------------------- |
-| 🛒 Ingredients    | checklist   | Checkable shopping list with quantities               |
-| 👨‍🍳 Steps          | step_player | Timed cooking steps with "Watch this step" video seek |
-| 🔪 Tips           | flash_deck  | Swipeable chef tips and storage advice                |
-| ⏰ Moments        | moment_track | Value gallery of key moments — click opens a frame lightbox, an explicit Jump button seeks the video |
-| 🎞️ Filmstrip      | video_filmstrip | Enriched frame scrubber with captions (suppressed when Moments already covers the frames) |
+| Tab | Component | What it does |
+| --- | --- | --- |
+| 6-Step Wayfinder Workflow | `step_player` | The workflow as steps you play through and mark done |
+| 5 Commands & Patterns | `code_playground` | Code snippets with copy |
+| 6 Core Concepts | `concept_canvas` | Concepts and how they connect |
+| Test Yourself | `quiz_arena` | Timed quiz on the content |
 
-### A tech tutorial might get:
+## How it works
 
-| Tab         | Component    | What it does                             |
-| ----------- | ------------ | ---------------------------------------- |
-| 💻 Code     | code_playground | Syntax-highlighted code blocks with copy |
-| 📋 Steps    | step_player  | Setup instructions with timestamps       |
-| 🔧 Tools    | checklist    | Required tools and dependencies          |
-| 📚 Concepts | flash_deck   | Key concept flashcards                   |
-| 🧠 Quiz     | quiz_arena   | Knowledge check (educational domains only) |
-
-### 29 registered components available:
-
-moment_track, step_player, spot_explorer, flash_deck, checklist, info_grid, overview, comparison, comparison_radar, budget, code_playground, quiz_arena, packing_mission, workout_room, lyrics_karaoke, video_filmstrip, claims_tracker, tier_list, formation_diagram, concept_canvas, step_flow_canvas, connect_canvas, display_section + secondary attachments (stat_banner, tip_callout, summary_header, diagram_card, frame_strip, quick_quiz)
-
-The AI picks which components to use based on the video's content — not a template.
-
----
-
-## How It Works
-
-### The Pipeline
-
-```
-URL → Metadata → [Transcript ∥ Frames] → Classify + Plan → Extraction → Synthesis → Enrichment → Assembly → SSE Stream → React UI
+```mermaid
+flowchart LR
+  URL([YouTube URL]) --> META[Metadata]
+  META --> TR["Transcript<br/>captions, audio fallback"]
+  META --> FR["Frames<br/>FFmpeg scene detect → OpenCV scoring → OCR + vision"]
+  TR --> CP["Classify + plan<br/>domain, tabs, components"]
+  FR -->|timestamped visual context| CP
+  CP --> EX["Extraction<br/>chunked by chapter"]
+  EX --> SY[Synthesis]
+  EX --> AS["Assembly<br/>pure code, no LLM"]
+  SY --> EN[Enrichment]
+  AS --> EN
+  AS -. "tab_ready × N" .-> UI([SSE → React tabs])
+  EN -.-> UI
 ```
 
-Each stage is a separate async phase. The pipeline streams results to the frontend via Server-Sent Events — the user sees tabs appearing progressively as they're assembled.
+- **Classify + plan.** A fast classifier and one planning call decide the video's domain (14 domains, e.g. food, tech, travel) and design its tabs from 29 registered components. The plan determines what extraction looks for.
+- **Chunked extraction.** Long videos are split by chapter (creator chapters, then detected chapters, then time splits) and batched into calls up to the context limit, so a multi-hour video takes a handful of calls.
+- **Assembly.** Deterministic code turns extraction output into validated component props. The frontend renders each tab with one registry lookup.
+- **Frames.** FFmpeg scene detection yields about 200 candidates. OpenCV scores them locally on six signals, and only the roughly 25 winners are re-extracted at 720p and sent to OCR and vision.
+- **Streaming.** Each assembled tab is sent as an SSE event with its position, so tabs appear in place while the rest of the pipeline runs.
 
-### Key Architecture Decisions
-
-**Plan-driven:** A fast classifier plus a single Sonnet plan call classify the video (content tags like "food", "tech", "travel") and design the tab layout. This means a 10-min recipe and a 10-min code tutorial produce completely different output — same pipeline, different components.
-
-**Domain-specific extraction:** 14 domain schemas (learning, tech, fitness, food, music, travel, review, project, language, science, gaming, news, podcast, sport + narrative, finance modifiers) define exactly what data to extract per content type. A food video extracts ingredients, steps, tips. A tech video extracts code snippets, tools, concepts.
-
-**Component-addressed assembly:** Extraction output is transformed into props for specific React components. The frontend just does `INTERACTIVE_REGISTRY[tab.component]` — one lookup, one render.
-
-**Frame extraction with smart scoring:** Two-pass. Pass 1: FFmpeg scene detection on a fast worst-quality download produces ~200 candidates, scored locally on six signals (color saturation, face, skin fraction, center detail, text density, uniqueness); ~25 winners are selected. Pass 2: only the winners are re-extracted at 720p (stream-URL seek, with a local-download fallback for CDN-403 environments) before S3 upload, so vision, OCR, and the UI all get hi-res frames. A versioned S3 manifest (`scenes-v3`) caches the result — including the vision descriptions — for instant re-serves.
-
-**Chunked extraction for long videos:** Videos over 30 minutes are split by YouTube chapters (or AI-detected chapters, or 5-minute time splits). Chapters are batched into LLM calls up to the context window limit. A 9-hour video needs ~10 LLM calls total, not 100+.
-
-**Inline video player with seekTo:** Click any timestamp in any tab → the inline YouTube player (hosted in the video hero) opens, scrolls into view, and seeks to that moment. Step instructions, filmstrip frames, moment Jump buttons — everything is clickable and connected to the video. Moment cards themselves open a frame lightbox instead of seeking; jumping is always an explicit action.
-
-### Response Shape
-
-```json
-{
-  "meta": {
-    "contentTags": ["food", "learning"],
-    "primaryTag": "food",
-    "userGoal": "Cook a chicken stir fry",
-    "tldr": "...",
-    "masterSummary": "...",
-    "keyTakeaways": ["..."]
-  },
-  "tabs": [
-    {
-      "id": "ingredients",
-      "label": "🛒 11 Ingredients",
-      "emoji": "🛒",
-      "component": "checklist",
-      "props": { "items": [...] },
-      "goal": "Checkable shopping list",
-      "crossTabLinks": []
-    }
-  ]
-}
-```
-
----
+Stage-by-stage detail: [docs/summarizer-workflow.md](./docs/summarizer-workflow.md).
 
 ## Architecture
 
-```
-┌───────────────────────────────────────────────────────────────────┐
-│                         vie-web (React 19)                         │
-│  Tailwind v4 · shadcn/ui · 29 registered interactive renderers    │
-│  ComposableOutput → COMPONENT_REGISTRY[tab.component] → render     │
-│  VideoPlayerContext (seekTo) · SSE stream consumer                 │
-└──────────────────────────┬────────────────────────────────────────┘
-                           │ SSE (Server-Sent Events)
-                           ↓
-┌───────────────────────────────────────────────────────────────────┐
-│                        vie-api (Node.js · Fastify)                 │
-│  Routes · Auth · MongoDB CRUD · Orchestration                      │
-└──────────────────────────┬────────────────────────────────────────┘
-                           │ HTTP
-                           ↓
-┌───────────────────────────────────────────────────────────────────┐
-│                    vie-summarizer (Python · FastAPI)                │
-│                                                                    │
-│  Pipeline Phases:                                                  │
-│  metadata → [transcript + frames] parallel                         │
-│           → classify + plan → extraction                           │
-│           → [synthesis + assembly] parallel → enrichment           │
-│           → translation (non-English)                              │
-│                                                                    │
-│  Services:                                                         │
-│  ├── LiteLLM (multi-provider: Anthropic, OpenAI, Google)          │
-│  ├── FFmpeg + OpenCV + Tesseract (frame extraction + OCR)         │
-│  ├── yt-dlp (video download + subtitles)                          │
-│  ├── SponsorBlock (ad filtering)                                  │
-│  ├── spaCy (transcript cleaning)                                  │
-│  └── S3 (frame + transcript storage)                              │
-│                                                                    │
-│  Storage:                                                          │
-│  ├── MongoDB (video records, structured results)                  │
-│  ├── Redis (response cache — same video = instant serve)          │
-│  └── S3 (frames, transcripts, audio)                              │
-└───────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+  WEB["React 19 SPA<br/>Vite, TypeScript"] -->|REST + SSE| API["API gateway<br/>Fastify, TypeScript"]
+  API -->|HTTP| SUM["Summarizer<br/>FastAPI, LiteLLM"]
+  API -->|AMQP| MQ[(RabbitMQ)]
+  MQ --> WK["Summarizer worker<br/>retry, DLQ"]
+  API -->|HTTP| AST["Assistant<br/>FastAPI, RAG chat"]
+  ADM["Admin<br/>FastAPI + React"] --> MONGO
+  API --> MONGO[(MongoDB)]
+  API --> REDIS[(Redis)]
+  SUM --> MONGO
+  SUM --> REDIS
+  SUM --> S3[("S3<br/>frames, transcripts")]
+  SUM --> QD[(Qdrant)]
+  WK --> MONGO
+  AST --> QD
+  AST --> MONGO
+  SUM --> LLM{{LLM providers}}
+  WK --> LLM
+  AST --> LLM
 ```
 
-### SSE Event Flow
+The gateway owns auth, rate limits and idempotency. The Python services own every LLM call. Full data flows and the service contract table: [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md).
 
-```
-metadata → triage_complete → frames → meta → tab_ready × N → synthesis_complete → complete → done
-```
+## Engineering highlights
 
-Each `tab_ready` event carries one assembled tab plus its `position` in the final tab order. The frontend slots tabs by position as they arrive — moment tabs are held back while exact-timestamp frames are extracted and stream last, so the user sees results appearing in real-time without reordering jumps.
+### Cost
 
----
+About $0.29 for a ~20-minute video with captions (measured, v8 ledger); the Whisper fallback adds roughly $0.14 when captions are unavailable.
 
-## Pipeline Phases (Detail)
+Models are chosen per stage through LiteLLM (`LLM_<STAGE>_MODEL`): a stronger model plans, fast models classify, synthesize and enrich. Work that does not need a model does not get one: frame scoring is local OpenCV, assembly is pure code, and prompt caching covers the plan and extraction prompts. Every call is written to an `llm_usage` ledger with its stage, model, tokens and cost. See [docs/llm-cost-model.md](./docs/llm-cost-model.md).
 
-### 1. Metadata
+### Caching and idempotency
 
-Fetch video info via yt-dlp: title, duration, creator, chapters, description, thumbnails, category.
+Summaries are stored under a content-addressed key that includes the pipeline version, so the same video submitted by another user is served from cache with no LLM calls. Bumping one shared version file invalidates the API's idempotency keys, the dedup key and the Redis response cache together. A Redis dispatch guard stops concurrent submissions from starting the pipeline twice. See [docs/IDEMPOTENCY.md](./docs/IDEMPOTENCY.md).
 
-### 2. Transcript (parallel with frames)
+### RAG chat
 
-Fetch YouTube captions (yt-dlp subtitles → S3 cache → youtube-transcript-api fallback). Clean with spaCy (filler removal, TF-IDF repetition collapse). Filter sponsor segments via SponsorBlock API.
+The assistant retrieves from Qdrant over chunks built per component, scoped to one video or the whole library. It runs a tool-calling loop on LiteLLM: tools generate a new video app, organize the library into folders, and move videos. See [docs/RAG.md](./docs/RAG.md).
 
-### 3. Frame Extraction (parallel with transcript)
+### Evaluation and observability
 
-Two-pass. Pass 1: download worst-quality video via yt-dlp (~15-20s; player client set by `YTDLP_PLAYER_CLIENTS`, default `android`). FFmpeg scene detection at threshold 0.3 (~200 candidates). Score each frame locally with OpenCV on six signals: color saturation, face detection (Haar cascades), skin fraction, center detail, text density (Canny edges), visual uniqueness (perceptual hashing). Select ~25 evenly distributed across video duration. Pass 2: re-extract only the winners at 720p (stream-URL seek; local-download fallback when the CDN 403s seeks), then upload to S3 under a versioned prefix with a manifest that also persists the vision descriptions. OCR on text-heavy frames (Tesseract).
+A retrieval gate in CI runs a golden query set against a real Qdrant and fails below recall@3 0.85 or MRR 0.7. A 20-video golden dataset runs through the live pipeline weekly and publishes to Langfuse; pull requests run the same harness as a zero-spend dry run. A sampled LLM judge scores faithfulness; it is informational, not a gate. Each pipeline run is one Langfuse trace, a request id follows a request across services, and Sentry is wired into the API, the web app and the Python services. See [docs/OBSERVABILITY.md](./docs/OBSERVABILITY.md).
 
-### 4. Classify + Plan
+### CI and deploy
 
-A fast classifier (domain + format + traits) runs concurrently with a single Sonnet plan call. Input: video metadata + chapter titles + transcript sample (+ domain playbook if one matches, e.g. unboxing). Output: contentTags, primaryTag, userGoal, tab definitions with component names and goals — with forbidden components stripped before extraction. This decides what the entire extraction phase will look for.
+The main CI workflow runs 11 parallel jobs on GitHub Actions: TypeScript typecheck and lint, design guards, ruff, seven test suites (with pyright on the Python services), and a Docker Compose image build that also validates the production config. Separate workflows on pull requests run a Playwright smoke suite against the Compose stack and the eval gates above.
 
-### 5. Extraction
+Deploy is CI-gated: after a green CI run on `main`, a workflow deploys to a single EC2 host. It assumes an AWS role over OIDC, so no long-lived AWS keys are stored, and opens SSH ingress for the runner only for the duration of the deploy. See [docs/DEPLOY.md](./docs/DEPLOY.md).
 
-Domain-specific LLM call using schemas from `domains.json`. For short videos: single call with full transcript. For long videos: split by chapters, batch into calls, merge results. Output: structured data per domain (ingredients, steps, code snippets, locations, etc.).
+## Run locally
 
-### 6. Synthesis (parallel with assembly)
-
-Fast LLM call. Produces: TLDR, masterSummary, keyTakeaways, seoDescription. For long videos: uses chapter summaries instead of full transcript (hierarchical).
-
-### 7. Enrichment
-
-LLM call for domains with an enrichment mapping. Produces: quiz questions, flashcards, scenario explorations (recall-only domains like podcast/gaming get flashcards only).
-
-### 8. Assembly
-
-No LLM calls. Transforms extraction output into component props for each tab via 29 assemblers, enforcing domain forbidden/max policy and a degrade-never-drop demote ladder. Injects frame thumbnails (nearest-timestamp matching, ±15s backfill), and extracts exact-timestamp frames for still-frameless moments (with SSE heartbeats). Validates all props against component schemas.
-
----
-
-## Domain Configuration
-
-Single source of truth: `packages/shared/src/config/domains.json`
-
-```json
-{
-  "food": {
-    "label": "Food & Cooking",
-    "schemas": ["food"],
-    "components": ["checklist", "step_player", "flash_deck", "moment_track"],
-    "enrichment": true
-  },
-  "tech": {
-    "label": "Tech & Coding",
-    "schemas": ["tech"],
-    "components": ["code_playground", "step_player", "checklist", "flash_deck"],
-    "enrichment": true
-  }
-}
-```
-
-14 domains: learning, tech, fitness, food, music, travel, review, project, language, science, gaming, news, podcast, sport (+ narrative, finance modifiers). Each domain defines which extraction schemas to use, which components the planner may pick, per-domain required/max/**forbidden** component policy, format-specific playbooks (e.g. `gaming:unboxing`), and visual-criticality tiers for the frame pipeline.
-
-Python reads this via `domain_config.py`. TypeScript reads via `@vie/shared/config`. One config, two runtimes.
-
----
-
-## Long Video Support
-
-Videos over ~15 minutes (`CHUNKED_EXTRACTION_THRESHOLD` = 900s) use chunked extraction:
-
-```
-SHORT (<15 min):   Full transcript → single extraction call
-MEDIUM (15-120 min): Chapters → 1-2 batch extraction calls → merge
-LONG (2+ hours):   Chapters → 3-5 batch calls → hierarchical synthesis → merge
-```
-
-Chapter detection fallback chain: YouTube creator chapters → AI-detected chapters (fast model) → time-based splits (~5 min each) → single chunk.
-
-Multiple chapters are batched into a single LLM call up to the context limit (~50K tokens per batch). A 9-hour video needs ~10 LLM calls total, processing in ~8 minutes.
-
----
-
-## Frame Pipeline
-
-```
-Pass 1 — detect + score (worst-quality download, YTDLP_PLAYER_CLIENTS=android):
-  yt-dlp → FFmpeg scene detect (0.3) → ~200 candidates on disk
-    ↓
-  Score locally (OpenCV, no network, 6 signals):
-    - Color saturation (HSV) → catches final dishes, landscapes
-    - Face detection (Haar cascade) + skin fraction → penalizes presenter shots
-    - Center detail (Laplacian) → catches the subject in frame
-    - Text density (Canny edges) → catches slides, code
-    - Visual uniqueness (perceptual hash) → catches real scene changes
-    ↓
-  Adaptive visual tier (domains.json visualCriticality):
-    HIGH domains over-select 40 + vision reselect · LOW skips vision · else top-8
-    ↓
-  Select ~25 evenly distributed across video duration
-    ↓
-Pass 2 — hi-res refine (SCENE_HIRES_ENABLED):
-  re-extract only the winners at 720p via stream-URL seek
-  (local ≤720p download fallback when the CDN 403s seeks)
-    ↓
-Upload winners to S3 under scenes-v3/ + manifest.json (v2 — timestamps,
-hiresCount, persisted vision descriptions; hiresCount == 0 counts as a
-cache miss so low-res runs self-heal)
-    ↓
-Thumbnail injection: nearest-timestamp matching (+ ±15s backfill,
-exact-timestamp moment frame fill as last resort)
-```
-
----
-
-## Smart Caching
-
-Redis caches the full VIEResponse keyed by `youtube_id` + `PIPELINE_VERSION`. Same video = instant serve from cache ($0.00). No re-processing, no LLM calls. `?bypassCache=true` forces a fresh run.
-
-S3 stores frames and transcripts per video. Frame reuse is manifest-gated: if a valid `scenes-v3/manifest.json` exists (with hi-res frames), frame extraction is skipped entirely — including the vision descriptions, which are restored from the manifest.
-
-| Scenario                    | LLM Calls            | Cost       |
-| --------------------------- | -------------------- | ---------- |
-| First processing of a video | 5-10                 | $0.02-0.12 |
-| Same video, any user        | 0 (cache hit)        | $0.00      |
-| Same video, cache expired   | 0 (S3 frames reused) | $0.01      |
-
----
-
-## Cost Per Video
-
-| Component                                                | Cost           |
-| -------------------------------------------------------- | -------------- |
-| Transcript (YouTube captions)                            | $0.00 (free)   |
-| Frame extraction (FFmpeg + OpenCV)                       | ~$0.001        |
-| OCR on ~22% of frames (Tesseract)                        | ~$0.001        |
-| S3 storage (~25 frames × 28KB)                           | ~$0.002        |
-| LLM calls (classify + plan + extraction + synthesis + enrichment) | $0.02-0.10 |
-| **Total**                                                | **$0.02-0.10** |
-
-Scales with video length: 15 min = ~$0.02, 2 hours = ~$0.05, 9 hours = ~$0.12.
-
----
-
-## Tech Stack
-
-| Layer                | Technology                                               |
-| -------------------- | -------------------------------------------------------- |
-| **Frontend**         | React 19 · TypeScript · Tailwind v4 · shadcn/ui          |
-| **Backend API**      | Node.js · Fastify                                        |
-| **AI Pipeline**      | Python · FastAPI · LiteLLM (Anthropic / OpenAI / Google) |
-| **Frame Processing** | FFmpeg · OpenCV · Tesseract · yt-dlp                     |
-| **NLP**              | spaCy (transcript cleaning) · SponsorBlock API           |
-| **Database**         | MongoDB (records) · Redis (cache)                        |
-| **Storage**          | AWS S3 (frames, transcripts, audio)                      |
-| **Shared Config**    | `domains.json` → Python + TypeScript                     |
-
----
-
-## LLM Provider Support
-
-VIE uses LiteLLM for multi-provider support with automatic fallback:
-
-```
-Primary: configurable (Anthropic / OpenAI / Google)
-Fast model: configurable (used for classifier, synthesis, enrichment, vision)
-Fallback: automatic on rate limit or error
-```
-
-| Provider  | Default Model     | Fast Model            | Context Window |
-| --------- | ----------------- | --------------------- | -------------- |
-| Anthropic | Claude Sonnet 4.6 | Claude Haiku 4.5      | 200K tokens    |
-| OpenAI    | GPT-4o            | GPT-4o-mini           | 128K tokens    |
-| Google    | Gemini 2.5 Flash  | Gemini 2.5 Flash Lite | 1M tokens      |
-
-Per-phase model routing (`LLM_<STAGE>_MODEL` overrides): fast models for classifier/synthesis/enrichment/vision, default models for quality-sensitive stages (plan, extraction).
-
----
-
-## Quick Start
-
-> Production on a single EC2 host: [docs/DEPLOY.md](./docs/DEPLOY.md).
+Requires Docker and one LLM API key.
 
 ```bash
-# Clone
 git clone https://github.com/kfiravra/video-insight-engine.git
 cd video-insight-engine
 
-# Configure
-cp .env.example .env
-# Add at least one LLM API key:
-#   ANTHROPIC_API_KEY=sk-ant-...
-#   OPENAI_API_KEY=sk-...
-#   GEMINI_API_KEY=AIza...
+cp .env.example .env        # set ANTHROPIC_API_KEY (or OPENAI_API_KEY / GEMINI_API_KEY)
+docker compose up -d
 
-# Launch
-docker-compose up -d
-
-# Open
+curl http://localhost:3000/health    # API gateway
+curl http://localhost:8000/health    # summarizer
 open http://localhost:5173
 ```
 
-Paste a YouTube URL and watch tabs appear in real-time as the pipeline processes.
-
----
-
-## Project Structure
-
-```
-video-insight-engine/
-├── apps/
-│   └── web/                          # React 19 frontend
-│       └── src/
-│           ├── components/           # Shared components (ui/, vie/, layout/, …)
-│           ├── features/
-│           │   └── video-output/     # Output rendering
-│           │       ├── components/output/
-│           │       │   ├── component-registry.tsx  # 29 interactive renderers
-│           │       │   └── interactive/            # The renderers themselves
-│           │       ├── contexts/     # VideoPlayerContext (seekTo)
-│           │       └── lib/streaming/ # SSE stream processor
-│           └── pages/
-├── packages/
-│   └── shared/
-│       └── src/config/
-│           ├── domains.json          # Single source of truth
-│           └── pipeline-version.json # PIPELINE_VERSION (currently v8)
-├── api/                              # Node.js API gateway (Fastify) — repo root, not services/
-├── services/
-│   ├── summarizer/                   # Python AI pipeline
-│   │   └── src/
-│   │       ├── prompts/              # LLM prompts (plan, classify, extraction, etc.)
-│   │       │   ├── schemas/          # 14 domain + 2 modifier extraction schemas
-│   │       │   └── enrich/           # Per-domain enrichment prompts
-│   │       ├── services/
-│   │       │   ├── pipeline/         # Phase orchestration (phases/, assembly/)
-│   │       │   ├── media/            # FFmpeg, frame scoring, hires refine, OCR, S3
-│   │       │   └── transcription/    # Transcript fetch, clean, chunk
-│   │       └── config.py             # Model map, thresholds, settings
-│   ├── assistant/                    # RAG chat service (Python)
-│   └── admin/                        # Usage/observability panel (Python)
-└── docker-compose.yml
-```
-
----
-
-## Use Cases
-
-**Cooking** — Ingredient checklists, timed step-by-step instructions, chef tips as flashcards, frame thumbnails on each cooking step.
-
-**Tech tutorials** — Code blocks with syntax highlighting, tool/dependency checklists, concept flashcards, moment track with code-on-screen frame detection.
-
-**Travel vlogs** — Spot explorer with locations and frame images, budget calculators, itinerary timelines, tips as flashcards.
-
-**Lectures & courses** — Quiz challenges, concept flashcards, scenario explorations, chapter-based navigation, hierarchical summaries for long content.
-
-**Music** — Lyrics player with synced timestamps, song structure as a moment track with replayable section highlights.
-
-**Product reviews** — Pro/con lists, rating breakdowns, comparison tables, gear lists.
-
-**Fitness** — Exercise step players with timers, equipment checklists, workout timelines.
-
-### Who Uses VIE
-
-**Students** — Process a 3-hour lecture into quiz challenges, concept flashcards, and chapter-based navigation. Review before exams with scenario explorations instead of rewatching. Every timestamp is clickable — jump to exactly the explanation you need.
-
-**Developers** — Turn conference talks and tutorials into code explorers with syntax-highlighted snippets, tool/dependency checklists, and concept flashcards. Frame intelligence detects code-on-screen moments and links them to the moment track.
-
-**Home Cooks** — Cooking mode with timed step-by-step instructions, checkable ingredient lists, and chef tip flashcards. Click any step to seek the video to that exact moment. Never pause-and-scroll again.
-
-**Researchers & Creators** — Organize processed videos into folders. Memorize key sections into a personal collection. Ask questions about saved content via RAG chat. Share interactive summaries with a public link.
-
-**Teams** — Share processed training videos as interactive knowledge bases. New hires get quiz challenges and scenario explorations instead of "watch these 40 hours of recordings."
-
----
-
-## What Makes This Different
-
-| Feature                           | YouTube       | Notion | ChatGPT           | VIE                           |
-| --------------------------------- | ------------- | ------ | ----------------- | ----------------------------- |
-| Interactive components from video | ❌            | ❌     | ❌                | 16 domain-aware components    |
-| Click timestamp → video seeks     | Chapters only | ❌     | ❌                | Every element is clickable    |
-| Domain-specific extraction        | ❌            | Manual | Generic summary   | 14 domain schemas             |
-| Quiz / flashcards / scenarios     | ❌            | Manual | On request        | Auto-generated per domain     |
-| Frame intelligence (OCR + vision) | ❌            | ❌     | ❌                | Scored frames with thumbnails |
-| Progressive streaming UI          | ❌            | ❌     | Token stream      | Tabs appear as assembled      |
-| Multi-language + RTL support      | Captions only | Manual | English-only      | Auto-detect, translate, RTL   |
-| Same video = instant ($0.00)      | N/A           | N/A    | Costs per request | Redis + S3 cache              |
-| Organize & share                  | Playlists     | Pages  | Chat history      | Folders + public links        |
-
----
+`.env.example` documents every variable. Compose services, ports, backups and environment detail: [docs/INFRASTRUCTURE.md](./docs/INFRASTRUCTURE.md).
 
 ## Documentation
 
-📖 **[Full Documentation →](./CLAUDE.md)**
+| Topic | Doc |
+| --- | --- |
+| System architecture and data flows | [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) |
+| Pipeline walkthrough | [docs/summarizer-workflow.md](./docs/summarizer-workflow.md) |
+| API contracts | [docs/API-REFERENCE.md](./docs/API-REFERENCE.md) |
+| Data models | [docs/DATA-MODELS.md](./docs/DATA-MODELS.md) |
+| Security | [docs/SECURITY.md](./docs/SECURITY.md) |
+| Error handling, retry, DLQ | [docs/ERROR-HANDLING.md](./docs/ERROR-HANDLING.md) |
+| Frontend patterns | [docs/FRONTEND.md](./docs/FRONTEND.md) |
+| GDPR deletion | [docs/GDPR.md](./docs/GDPR.md) |
 
-🧠 **LLM onboarding briefing:** paste **[PROJECT-BRIEFING.md](./PROJECT-BRIEFING.md)** (full) or **[PROJECT-BRIEFING-TLDR.md](./PROJECT-BRIEFING-TLDR.md)** (quick) into any LLM chat to give it full project context in one shot.
+## Built with Claude Code
 
----
-
-## Roadmap
-
-- [x] Plan-driven pipeline with 29 registered interactive components
-- [x] Domain-specific extraction (14 domains)
-- [x] Two-pass frame extraction with smart scoring + 720p hi-res refinement
-- [x] Inline video player with seekTo wiring
-- [x] SSE streaming with progressive tab rendering
-- [x] Redis caching (same video = instant)
-- [x] Multi-provider LLM support (Anthropic / OpenAI / Google)
-- [x] SponsorBlock filtering
-- [x] Chunked extraction for long videos
-- [x] Multi-language support with RTL and translation
-- [x] Whisper + Gemini audio fallback for videos without captions
-- [ ] Playlist processing with cross-video connections
-- [x] Assistant chat with RAG (Qdrant vector search) — single-video + library scope, action channel
-- [ ] Collections with drag-and-drop organization
-- [ ] Speaker diarization
-- [ ] Browser extension
-- [ ] Mobile app
-
----
-
-## Contributing
-
-This project uses **Claude Code** for AI-assisted development.
-
-1. Read [CLAUDE.md](./CLAUDE.md) for project context
-2. Follow patterns in existing pipeline phases
-3. Domain additions: update `domains.json` + add schema in `prompts/schemas/` + add enrichment prompt in `prompts/enrich/`
-4. Follow patterns in `.claude/skills/`
-
----
+The repo carries its Claude Code harness in [`.claude/`](./.claude): rule-based skill activation (keyword, intent and path triggers load the matching skill before an edit), six task-specific subagents, MCP integrations, and hooks that guard destructive git commands and warn on source edits without a test change.
 
 ## License
 
-MIT
-
----
-
-<p align="center">
-  <b>Stop losing knowledge from videos. Turn them into apps.</b>
-</p>
+[MIT](./LICENSE)
