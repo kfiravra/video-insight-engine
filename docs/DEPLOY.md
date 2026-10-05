@@ -8,7 +8,7 @@ Work through sections a to g in order. Placeholders:
 |---|---|
 | `DOMAIN` | your apex domain, for example `example.com` |
 | `EIP` | the instance's Elastic IP |
-| `BUCKET` | the production S3 bucket (`vie-transcripts-prod`); the dev stack keeps `vie-transcripts` |
+| `BUCKET` | the production S3 bucket (`vie-transcripts-prod-eu`); the dev stack keeps `vie-transcripts` |
 | `ACCOUNT_ID` | your 12-digit AWS account ID |
 | `MY_IP` | your public IP (`curl https://checkip.amazonaws.com`) |
 | `i-XXXX`, `SG_ID` | the instance ID and the security group ID |
@@ -17,7 +17,16 @@ Work through sections a to g in order. Placeholders:
 
 Create everything in **eu-north-1**, the bucket's region.
 
-1. **IAM role** `vie-demo-ec2`, trusted entity EC2, with the inline policy below. The role replaces AWS access keys: the SDKs inside the containers read its credentials from instance metadata, so `.env` holds no AWS keys.
+1. **S3 bucket** `BUCKET`, created in eu-north-1 with public access blocked (the default), plus a lifecycle rule that expires the `backups/` prefix after 14 days. Confirm the region before going on:
+
+   ```bash
+   curl -sI https://BUCKET.s3.amazonaws.com | grep -i x-amz-bucket-region
+   # expected: x-amz-bucket-region: eu-north-1   (needs no credentials; the 403 status is normal)
+   ```
+
+   The value must equal `AWS_REGION` in `.env`. Frame URLs are presigned for `AWS_REGION`, so with the bucket in another region videos can still complete while their frames never load. A bucket cannot change region: create a new one in eu-north-1, copy the data with `aws s3 sync`, recreate the lifecycle rule, and point `S3_BUCKET` and the role policy at it.
+
+2. **IAM role** `vie-demo-ec2`, trusted entity EC2, with the inline policy below. The role replaces AWS access keys: the SDKs inside the containers read its credentials from instance metadata, so `.env` holds no AWS keys.
 
    ```json
    {
@@ -32,7 +41,7 @@ Create everything in **eu-north-1**, the bucket's region.
 
    `s3:ListBucket` covers the health check's HeadBucket (without it a HeadObject on a missing key returns 403 instead of 404) and the global video delete, which lists `videos/<id>/` before removing it. `s3:DeleteObject` exists for that delete only; backups are pruned by the lifecycle rule.
 
-2. **Security group** `vie-demo`, inbound rules:
+3. **Security group** `vie-demo`, inbound rules:
 
    | Port | Source | Purpose |
    |---|---|---|
@@ -41,9 +50,9 @@ Create everything in **eu-north-1**, the bucket's region.
    | 443/udp | `0.0.0.0/0`, `::/0` | HTTP/3 (optional) |
    | 22/tcp | `MY_IP/32` | SSH, from your IP only |
 
-3. **Instance**: Amazon Linux 2023 (x86_64), `t3.xlarge`, 60 GB gp3 root volume, your key pair, the `vie-demo` security group, and `vie-demo-ec2` as the IAM instance profile. Under Advanced details, set "Metadata version" to **V2 only** and "Metadata response hop limit" to **2**. Containers reach instance metadata through the Docker bridge, which adds a hop; with a limit of 1 they get no credentials.
+4. **Instance**: Amazon Linux 2023 (x86_64), `t3.xlarge`, 60 GB gp3 root volume, your key pair, the `vie-demo` security group, and `vie-demo-ec2` as the IAM instance profile. Under Advanced details, set "Metadata version" to **V2 only** and "Metadata response hop limit" to **2**. Containers reach instance metadata through the Docker bridge, which adds a hop; with a limit of 1 they get no credentials.
 
-4. **Elastic IP**: allocate one and associate it with the instance.
+5. **Elastic IP**: allocate one and associate it with the instance.
 
 Confirm the metadata settings:
 
@@ -146,7 +155,7 @@ done
 sed -i 's|your-domain.example|DOMAIN|g' .env
 ```
 
-Then edit `.env` and set `ANTHROPIC_API_KEY` plus any optional provider keys. Check that `AWS_REGION` and `S3_BUCKET` match the bucket. Leave `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` unset, because the instance role supplies credentials.
+Then edit `.env` and set `ANTHROPIC_API_KEY` plus any optional provider keys. Check that `S3_BUCKET` names the bucket and `AWS_REGION` is the region the check in section a printed. Leave `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` unset, because the instance role supplies credentials.
 
 Validate and start:
 
@@ -254,7 +263,7 @@ Docker is enabled at boot and every long-running service has `restart: unless-st
 
 ## Preload demo videos
 
-Use this when YouTube blocks the instance (section b), or to have finished videos ready before an interview. `scripts/demo-export.sh` runs on your machine against the local stack and needs `jq`. It exports the completed videos at the current pipeline version, plus the vector index that video chat uses. `scripts/demo-import.sh` loads that export on the server. Frames and transcripts need no copy, because both machines use the same S3 bucket.
+Use this when YouTube blocks the instance (section b), or to have finished videos ready before an interview. `scripts/demo-export.sh` runs on your machine against the local stack and needs `jq`. It exports the completed videos at the current pipeline version, plus the vector index that video chat uses. `scripts/demo-import.sh` loads that export on the server. Frames and transcripts are not in the export: they live in S3, and the server has its own bucket, so each exported video's `videos/<id>/` prefix is copied from the dev bucket to `BUCKET` as well. Without that copy the imported videos have no frames.
 
 On your machine:
 
@@ -262,6 +271,12 @@ On your machine:
 scripts/demo-export.sh    # writes demo-data/<timestamp>/ and prints the copy commands
 ssh ec2-user@EIP mkdir -p video-insight-engine/demo-data
 scp -r demo-data/<timestamp> ec2-user@EIP:video-insight-engine/demo-data/
+
+# Frames and transcripts: dev bucket -> production bucket, one prefix per exported video
+# (needs credentials that can read the dev bucket and write BUCKET)
+cut -f1 demo-data/<timestamp>/urls.txt | sed 's/.*v=//' | while read -r id; do
+  aws s3 sync --region eu-north-1 "s3://vie-transcripts/videos/$id/" "s3://BUCKET/videos/$id/"
+done
 ```
 
 On the server, with the stack up:
@@ -300,6 +315,17 @@ Then log in as the demo user and submit each URL from `demo-data/<timestamp>/url
      }]
    }
    ```
+
+   **Option: any branch of this repository.** With the default above, a manual "Run workflow" from a branch other than `main` fails at the credentials step. To allow it, match `sub` with a wildcard under `StringLike` and keep `aud` under `StringEquals`:
+
+   ```json
+   "Condition": {
+     "StringEquals": { "token.actions.githubusercontent.com:aud": "sts.amazonaws.com" },
+     "StringLike": { "token.actions.githubusercontent.com:sub": "repo:kfiravra/video-insight-engine:ref:refs/heads/*" }
+   }
+   ```
+
+   The trade-off: any workflow on any branch of the repository can then assume the role, so everyone with push access can add and remove inbound rules on this security group. Fork pull requests still cannot, because their `sub` is not a branch ref. Automatic deploys stay `main`-only (that gate is in `deploy.yml`). A manual run from another branch uses that branch's copy of `deploy.yml` and still pulls whatever branch the instance has checked out.
 
 3. **Permissions policy** on the role:
 

@@ -105,8 +105,8 @@ class TranscriptTrail:
     # Layers that RAN and FAILED before the winning source, in order. Values:
     # "s3" (lookup raised — a miss is not an attempt), "ytdlp" (a caption
     # track was picked but the timedtext fetch yielded nothing), "api" /
-    # "proxy" (youtube-transcript-api, labelled by whether Webshare proxying
-    # was actually configured), "whisper", "gemini".
+    # "proxy" (youtube-transcript-api, labelled by whether YOUTUBE_PROXY_URL
+    # is set), "whisper", "gemini".
     attempted: list[str] = field(default_factory=list)
     # youtube-transcript-api was skipped by the Redis caption-429 marker.
     caption_api_skipped: bool = False

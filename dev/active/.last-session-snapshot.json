@@ -1,11 +1,33 @@
 {
-  "session_id": "17dd10e5-0574-4072-957f-14901e6db218",
-  "saved_at": "2026-08-25T17:14:00Z",
-  "affected_repos": [],
-  "files_edited": [
-    "/home/kfir/.claude/plans/check-out-how-do-scalable-creek.md"
+  "session_id": "7a479119-2e48-44e7-94d0-4cc1b3eea396",
+  "saved_at": "2026-10-05T10:22:47Z",
+  "affected_repos": [
+    "root",
+    "services"
   ],
-  "file_count": 1,
-  "edit_count": 1,
-  "resume_hint": "Session edited 1 unique files across ."
+  "files_edited": [
+    ".env.example",
+    ".env.production.example",
+    "/home/kfir/.claude/plans/pasted-content-id-fac3-billing-auto-rel-peppy-ritchie.md",
+    "/home/kfir/.claude/projects/-home-kfir-projects-video-insight-engine/memory/MEMORY.md",
+    "/home/kfir/.claude/projects/-home-kfir-projects-video-insight-engine/memory/project_aws_go_live_demo_deploy.md",
+    "/home/kfir/.claude/projects/-home-kfir-projects-video-insight-engine/memory/project_youtube_block_aws_20261004.md",
+    "dev/active/aws-go-live/aws-go-live-context.md",
+    "dev/active/aws-go-live/aws-go-live-owner-tasks.md",
+    "dev/active/aws-go-live/aws-go-live-tasks.md",
+    "docker-compose.prod.yml",
+    "docker-compose.yml",
+    "docs/DEPLOY.md",
+    "docs/INFRASTRUCTURE.md",
+    "docs/summarizer-workflow.md",
+    "services/summarizer/src/config.py",
+    "services/summarizer/src/services/pipeline/pipeline_helpers.py",
+    "services/summarizer/src/services/transcription/transcript.py",
+    "services/summarizer/src/services/transcription/transcript_fetcher.py",
+    "services/summarizer/tests/test_transcript_proxy.py",
+    "services/summarizer/tests/test_transcript_trail.py"
+  ],
+  "file_count": 20,
+  "edit_count": 87,
+  "resume_hint": "Session edited 20 unique files across root, services."
 }

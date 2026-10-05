@@ -67,15 +67,11 @@ def _audio_fallback_gates(duration: int) -> tuple[bool, bool]:
 def _api_label() -> str:
     """Source label for the youtube-transcript-api layer: "proxy" or "api".
 
-    ``get_transcript`` routes through YOUTUBE_PROXY_URL when set, else through
-    Webshare only when BOTH credentials are set — the label uses the same
-    predicate, so ``source``/``attempted`` never claim a proxy that never ran.
+    ``get_transcript`` routes through YOUTUBE_PROXY_URL when it is set — the
+    label uses the same predicate, so ``source``/``attempted`` never claim a
+    proxy that never ran.
     """
-    if ytdlp_proxy_url():
-        return "proxy"
-    if settings.WEBSHARE_PROXY_USERNAME and settings.WEBSHARE_PROXY_PASSWORD:
-        return "proxy"
-    return "api"
+    return "proxy" if ytdlp_proxy_url() else "api"
 
 
 def _cached_transcript_data(cached: RawTranscript) -> TranscriptData:

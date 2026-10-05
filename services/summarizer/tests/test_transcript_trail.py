@@ -100,8 +100,7 @@ class TestTranscriptTrail:
         gemini: AsyncMock | None = None,
         video_data: MagicMock | None = None,
         is_music: bool = False,
-        proxy_username: str = "",
-        proxy_password: str = "",
+        proxy_url: str | None = None,
         s3_available: bool = False,
     ) -> list:
         """Drain the chain with every layer patched; caption API and Gemini fail by default."""
@@ -112,8 +111,7 @@ class TestTranscriptTrail:
             patch.object(transcript_fetcher.settings, "WHISPER_ENABLED", True),
             patch.object(transcript_fetcher.settings, "WHISPER_MAX_DURATION_MINUTES", 600),
             patch.object(transcript_fetcher.settings, "GEMINI_API_KEY", "fake-key"),
-            patch.object(transcript_fetcher.settings, "WEBSHARE_PROXY_USERNAME", proxy_username),
-            patch.object(transcript_fetcher.settings, "WEBSHARE_PROXY_PASSWORD", proxy_password),
+            patch.object(transcript_fetcher.settings, "YOUTUBE_PROXY_URL", proxy_url),
             patch.object(transcript_fetcher, "get_transcript", new=caption),
             patch.object(transcript_fetcher, "_try_whisper_transcription", new=whisper),
             patch.object(transcript_fetcher, "_try_gemini_transcription", new=gemini),
@@ -171,17 +169,19 @@ class TestTranscriptTrail:
         assert trail.caption_api_skipped is True
         assert trail.attempted == []
 
-    async def test_should_label_api_attempt_as_proxy_when_both_credentials_set(self):
-        """With a full Webshare credential pair the API layer is labelled 'proxy'."""
+    async def test_should_label_api_attempt_as_proxy_when_proxy_url_set(self):
+        """With YOUTUBE_PROXY_URL set the API layer is labelled 'proxy'."""
         trail = TranscriptTrail()
-        await self._run(trail, whisper=_whisper_success(), proxy_username="u", proxy_password="p")
+        await self._run(
+            trail, whisper=_whisper_success(), proxy_url="http://user:pass@proxy.example:8080"
+        )
 
         assert trail.attempted == ["proxy"]
 
-    async def test_should_label_api_attempt_as_api_when_proxy_password_missing(self):
-        """A username alone never proxies (get_transcript needs both), so the label stays 'api'."""
+    async def test_should_label_api_attempt_as_api_when_proxy_url_blank(self):
+        """A blank YOUTUBE_PROXY_URL never proxies, so the label stays 'api'."""
         trail = TranscriptTrail()
-        await self._run(trail, whisper=_whisper_success(), proxy_username="u", proxy_password="")
+        await self._run(trail, whisper=_whisper_success(), proxy_url="")
 
         assert trail.attempted == ["api"]
 

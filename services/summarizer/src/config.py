@@ -136,18 +136,14 @@ class Settings(BaseSettings):
     # SponsorBlock API timeout
     SPONSORBLOCK_TIMEOUT: float = 5.0
 
-    # Webshare proxy (optional - for bypassing YouTube IP blocks)
-    WEBSHARE_PROXY_USERNAME: str | None = None
-    WEBSHARE_PROXY_PASSWORD: str | None = None
-    # One exit for every YouTube-facing request: yt-dlp downloads (scene
-    # detection, local 720p fallback, stream-URL lookup, whisper/gemini audio),
-    # metadata, playlists and caption fetches (timedtext + caption API). Full
-    # URL with credentials, e.g. http://user:pass@host:port. Blank = direct.
-    # Set on the EC2 box, whose datacenter IP is bot-checked (2026-09); the
-    # exit must be a residential/ISP IP — datacenter proxies (incl. the
-    # 10-proxy Webshare list) are blocked the same way. Wins over the Webshare
-    # pair for captions. NOT proxied: ffmpeg seeks on the looked-up stream URL
-    # leave from the host IP, 403, and the proxied local download takes over.
+    # The only proxy setting. One exit for every YouTube-facing request: yt-dlp
+    # downloads (scene detection, local 720p fallback, stream-URL lookup,
+    # whisper/gemini audio), metadata, playlists and caption fetches (timedtext
+    # + caption API). Full URL with credentials, e.g. http://user:pass@host:port.
+    # Blank = direct. Needed on the EC2 box, whose datacenter IP is bot-checked
+    # (2026-09); the exit must be a residential/ISP IP — datacenter proxies are
+    # blocked the same way. NOT proxied: ffmpeg seeks on the looked-up stream
+    # URL leave from the host IP, 403, and the proxied local download takes over.
     YOUTUBE_PROXY_URL: str | None = None
 
     # Whisper fallback (Phase 4 - for videos without captions)
