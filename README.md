@@ -14,7 +14,7 @@ A video is a poor format for using what it teaches: you cannot search it, check 
 
 *Recorded from the running app: a real generation, Cooking Mode, the coding app's quiz, and the assistant filing the library. The processing wait is a labelled time-lapse.*
 
-[Full walkthrough video (92 s): generate, cooking and coding apps, moments, chat, library, search](docs/images/walkthrough.mp4)
+[Full walkthrough video (95 s): generate, cooking and coding apps, five more domains, moments, chat, library, search](docs/images/walkthrough.mp4)
 
 ## Screenshots
 
@@ -24,6 +24,16 @@ A video is a poor format for using what it teaches: you cannot search it, check 
 </p>
 
 *Same pipeline, two videos. The cooking video gets an ingredient checklist and a recipe step flow; the coding tutorial gets copyable code snippets and a quiz. Classification decides which components are generated.*
+
+<p>
+  <img src="docs/images/domain-learning.png" width="19%" alt="Learning video: self-audit quiz" />
+  <img src="docs/images/domain-fitness.png" width="19%" alt="Fitness video: workout room" />
+  <img src="docs/images/domain-travel.png" width="19%" alt="Travel video: spot explorer" />
+  <img src="docs/images/domain-gaming.png" width="19%" alt="Gaming video: key moments" />
+  <img src="docs/images/domain-sport.png" width="19%" alt="Sport video: formation diagram" />
+</p>
+
+*Same pipeline; the planner picks from 29 registered components by domain.*
 
 ![RAG chat answering a question about the open video](docs/images/rag-chat.png)
 
@@ -50,6 +60,18 @@ A coding tutorial (a 15-minute tooling walkthrough):
 | 5 Commands & Patterns | `code_playground` | Code snippets with copy |
 | 6 Core Concepts | `concept_canvas` | Concepts and how they connect |
 | Test Yourself | `quiz_arena` | Timed quiz on the content |
+
+Across domains, from the videos in the screenshots above:
+
+| Domain | The video becomes | Components |
+| --- | --- | --- |
+| Cooking (a rice recipe) | Ingredient checklist and a step player with Cooking Mode | `checklist`, `step_player`, `spot_explorer`, `moment_track` |
+| Tech (a tooling walkthrough) | Copyable commands, a concept map, a setup workflow, a quiz | `code_playground`, `concept_canvas`, `step_player`, `quiz_arena` |
+| Learning (a resume review) | Mistakes and fixes, a skills list, a self-audit quiz | `spot_explorer`, `moment_track`, `quiz_arena` |
+| Fitness (push-up form) | Form checkpoints, common mistakes, an exercise card with sets and reps | `step_player`, `info_grid`, `workout_room`, `moment_track` |
+| Travel (a Lisbon guide) | Spots grouped by day with Explore Mode, a chapter guide, visitor tips | `spot_explorer`, `moment_track`, `video_filmstrip`, `checklist` |
+| Gaming (a trading-card market video) | Key moments with frames | `moment_track`, `video_filmstrip` |
+| Sport (a tactics explainer) | A formation diagram, a tactical breakdown, an early-vs-evolved radar | `formation_diagram`, `moment_track`, `spot_explorer`, `comparison_radar` |
 
 ## How it works
 
