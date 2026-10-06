@@ -16,7 +16,7 @@ from src.config import settings
 from src.exceptions import TranscriptError
 from src.models.schemas import ErrorCode
 from src.services.cache.caption_negative_cache import caption_negative_cache
-from src.services.media.download_utils import ytdlp_proxy_exit_urls, ytdlp_proxy_url
+from src.services.media.download_utils import ytdlp_proxy_url
 from src.services.media.s3_client import S3Client
 from src.services.pipeline.pipeline_helpers import (
     TranscriptData,
@@ -74,21 +74,15 @@ def _api_label() -> str:
     return "proxy" if ytdlp_proxy_url() else "api"
 
 
-async def _handle_timedtext_429(video_data: VideoData) -> bool:
-    """React to a metadata-phase timedtext 429; True = retry captions on the next exit.
+async def _mark_timedtext_429(video_data: VideoData) -> None:
+    """Record a metadata-phase timedtext 429 in the caption negative cache.
 
-    A 429 is IP-scoped. With more than one proxy exit configured the caption
-    API layer gets its retry on the next exit (the marker is written only if
-    that 429s too); with a single exit the marker is set right away so this
-    run and the next ones go straight to audio.
+    The timedtext fetch already rotated through the spare proxy exits
+    (YOUTUBE_PROXY_EXIT_COUNT), so the flag means every exit it tried was
+    rate-limited — the caption API on those same exits is doomed too.
     """
-    if not getattr(video_data, "captions_rate_limited", False):
-        return False
-    if len(ytdlp_proxy_exit_urls()) > 1:
-        logger.info("Timedtext 429 on the primary proxy exit — retrying captions on the next exit")
-        return True
-    await caption_negative_cache.mark()
-    return False
+    if getattr(video_data, "captions_rate_limited", False):
+        await caption_negative_cache.mark()
 
 
 def _cached_transcript_data(cached: RawTranscript) -> TranscriptData:
@@ -212,10 +206,10 @@ async def fetch_transcript(
     if isinstance(getattr(video_data, "caption_track", None), str):
         trail.attempted.append("ytdlp")
 
-    # The metadata phase's timedtext fetch just 429'd. With spare proxy exits
-    # the caption API below retries on the next one; otherwise record the 429
-    # so this run and the next ones stop hammering the throttled endpoints.
-    skip_primary_exit = await _handle_timedtext_429(video_data)
+    # The metadata phase's timedtext fetch just 429'd on every exit it tried:
+    # record it so this run and the next ones stop hammering the throttled
+    # endpoints.
+    await _mark_timedtext_429(video_data)
 
     # Recent caption 429 on record (IP-scoped): the caption API below is
     # doomed, so skip its 30-60s of retries and go straight to audio.
@@ -238,7 +232,7 @@ async def fetch_transcript(
         api_label = _api_label()
         try:
             segments, raw_text, transcript_type, api_language = await asyncio.wait_for(
-                get_transcript(youtube_id, skip_primary_exit=skip_primary_exit),
+                get_transcript(youtube_id),
                 timeout=settings.TRANSCRIPT_FETCH_TIMEOUT,
             )
             data = TranscriptData(

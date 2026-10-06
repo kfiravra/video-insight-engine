@@ -266,7 +266,7 @@ A caption 429 is IP-scoped, so the retry strategy depends on how many proxy exit
       return _fetch_once(video_id, ytdlp_proxy_url())
   ```
 
-- **`YOUTUBE_PROXY_EXIT_COUNT` > 1** (sticky Webshare exits `USERNAME-1…N`) — `_fetch_rotating_sync` tries the next exit on each 429 instead of waiting (`download_utils.ytdlp_proxy_exit_urls`, at most 3 exits). A timedtext 429 seen during the metadata phase skips the primary exit for this retry; the 15-minute `vie:captions:429` marker is written only when the rotated exits 429 too.
+- **`YOUTUBE_PROXY_EXIT_COUNT` > 1** (sticky Webshare exits `USERNAME-1…N`) — `_fetch_rotating_sync` tries the next exit on each 429 instead of waiting (`download_utils.ytdlp_proxy_exit_urls`, at most 3 exits, one shared loop `download_utils.try_proxy_exits`). The metadata-phase timedtext fetch (`youtube._fetch_subtitle_data_sync`) rotates the same way, since its URL is not bound to the exit that produced it. When every exit it tried returned 429, the 15-minute `vie:captions:429` marker is written and the caption API (same exits) is skipped for audio. The marker is also written when the caption API's own rotation ends in 429 on every exit.
 
 Rate limit detection matches the library's `RequestBlocked` by type — the parent of `IpBlocked` (429 / reCAPTCHA), also raised for the "confirm you're not a bot" check. Both lose their "429" / "too many requests" text once a proxy config is attached, so a proxied bot check still rotates exits and writes the marker. Anything else falls back to a text match:
 ```python

@@ -10,8 +10,9 @@ import logging
 import os
 import re
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 import yt_dlp
 
@@ -28,18 +29,22 @@ __all__ = [
     "ytdlp_proxy_exit_urls",
     "ytdlp_proxy_url",
     "ytdlp_subprocess_env",
+    "try_proxy_exits",
     "MAX_DOWNLOAD_ATTEMPTS",
 ]
 
 logger = logging.getLogger(__name__)
 
+_T = TypeVar("_T")
+
 # urllib (and so yt-dlp) prefers the lowercase names, so both spellings are
 # set — an inherited lowercase value would otherwise beat ours.
 _PROXY_ENV_VARS = ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy")
 
-# A caption retry visits at most this many exits (primary included) — the
-# whole caption layer runs under TRANSCRIPT_FETCH_TIMEOUT, so more attempts
-# would only time out.
+# A caption retry (metadata-phase timedtext or the caption API) visits at most
+# this many exits, primary included — the caption API layer runs under
+# TRANSCRIPT_FETCH_TIMEOUT and every timedtext attempt delays the metadata
+# phase, so more attempts would only cost time.
 _MAX_ROTATED_EXITS = 3
 _STICKY_SUFFIX_RE = re.compile(r"^(?P<base>.*)-(?P<n>\d+)$")
 
@@ -77,6 +82,33 @@ def ytdlp_proxy_exit_urls() -> list[str]:
         exit_no = (current - 1 + step) % count + 1
         urls.append(f"{scheme_sep}://{base}-{exit_no}{colon}{password}@{host}")
     return urls
+
+
+def try_proxy_exits(
+    exit_urls: list[str],
+    attempt: Callable[[str], _T],
+    is_rate_limited: Callable[[Exception], bool],
+    label: str,
+) -> _T:
+    """Run ``attempt`` on each exit of ytdlp_proxy_exit_urls() in turn.
+
+    A 429 is scoped to the exit IP, so a rate-limited attempt moves straight
+    on to the next exit instead of waiting on the same one. Any other error
+    ends the rotation at once; when every exit is rate limited the last error
+    is re-raised. ``label`` is logged — never put a proxy URL in it.
+    """
+    last_error: Exception | None = None
+    for n, proxy_url in enumerate(exit_urls, 1):
+        try:
+            return attempt(proxy_url)
+        except Exception as e:
+            if not is_rate_limited(e):
+                raise
+            last_error = e
+            logger.warning("%s rate limited on proxy exit %d/%d", label, n, len(exit_urls))
+    if last_error is None:
+        raise ValueError("try_proxy_exits needs at least one exit")
+    raise last_error
 
 
 def ytdlp_subprocess_env() -> dict[str, str] | None:
