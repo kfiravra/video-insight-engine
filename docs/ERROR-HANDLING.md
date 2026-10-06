@@ -251,24 +251,28 @@ recover it:
 
 ### YouTube Transcript Rate Limit Retry
 
-YouTube transcript fetching uses tenacity for automatic retry with exponential backoff:
+A caption 429 is IP-scoped, so the retry strategy depends on how many proxy exits are available (`services/summarizer/src/services/transcription/transcript.py`):
 
-```python
-# services/summarizer/src/services/transcript.py
-@tenacity.retry(
-    stop=tenacity.stop_after_attempt(3),
-    wait=tenacity.wait_exponential(multiplier=2, min=4, max=30),
-    retry=tenacity.retry_if_exception(_is_rate_limit_error),
-)
-def _fetch_transcript_sync(video_id: str) -> tuple[list[dict], str, str]:
-    """Fetch transcript with rate limit retry."""
-    ...
-```
+- **Direct connection or one exit** — tenacity retries on the same IP with exponential backoff:
 
-Rate limit detection:
+  ```python
+  @tenacity.retry(
+      stop=tenacity.stop_after_attempt(3),
+      wait=tenacity.wait_exponential(multiplier=2, min=4, max=30),
+      retry=tenacity.retry_if_exception(_is_rate_limit_error),
+      reraise=True,
+  )
+  def _fetch_transcript_sync(video_id: str) -> tuple[list[dict], str, str, str | None]:
+      return _fetch_once(video_id, ytdlp_proxy_url())
+  ```
+
+- **`YOUTUBE_PROXY_EXIT_COUNT` > 1** (sticky Webshare exits `USERNAME-1…N`) — `_fetch_rotating_sync` tries the next exit on each 429 instead of waiting (`download_utils.ytdlp_proxy_exit_urls`, at most 3 exits). A timedtext 429 seen during the metadata phase skips the primary exit for this retry; the 15-minute `vie:captions:429` marker is written only when the rotated exits 429 too.
+
+Rate limit detection matches the library's `RequestBlocked` by type — the parent of `IpBlocked` (429 / reCAPTCHA), also raised for the "confirm you're not a bot" check. Both lose their "429" / "too many requests" text once a proxy config is attached, so a proxied bot check still rotates exits and writes the marker. Anything else falls back to a text match:
 ```python
 def _is_rate_limit_error(exception: BaseException) -> bool:
-    """Check if exception is a YouTube rate limit error."""
+    if isinstance(exception, RequestBlocked):
+        return True
     error_str = str(exception).lower()
     return any(x in error_str for x in ["429", "too many", "rate limit"])
 ```

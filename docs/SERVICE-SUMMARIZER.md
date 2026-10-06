@@ -199,6 +199,7 @@ SCENE_S3_PREFIX=scenes-v3              # Versioned frame/manifest prefix — bum
 SCENE_HIRES_ENABLED=true               # Pass-2 720p refinement of the selected frames
 SCENE_HIRES_TIMEOUT=90.0               # Stream-URL refinement budget; 0/N upgraded → local-download fallback
 SCENE_HIRES_FALLBACK_TIMEOUT=180.0     # Local 720p download + local seeks budget (media/local_video.py)
+YOUTUBE_PROXY_EXIT_COUNT=1             # Sticky exits (USERNAME-1…N) a caption 429 may rotate through; 1 = no rotation
 YTDLP_PLAYER_CLIENTS=android           # yt-dlp player clients for ALL video/audio downloads; empty = yt-dlp defaults
 FRAME_TIER_ENABLED=true                # Adaptive visual tiers (HIGH: overselect + vision reselect before hires)
 
@@ -843,6 +844,21 @@ caption API still attempts audio — the audio download is a separate, un-thrott
 endpoint. Audio fallback is additionally gated by `WHISPER_ENABLED` and
 `WHISPER_MAX_DURATION_MINUTES` (the gate lives in
 `transcript_fetcher.py`, constant `_NO_AUDIO_FALLBACK`).
+
+**Caption 429 handling.** A 429 is IP-scoped, so the response depends on the
+proxy setup (`services/cache/caption_negative_cache.py`, Redis key
+`vie:captions:429`, TTL `CAPTION_429_NEG_TTL_SECONDS` = 900s):
+
+- *Direct or a single proxy exit* — the caption API retries 3× with backoff on
+  the same IP; a persisting 429 (or a timedtext 429 from the metadata phase)
+  writes the marker, and until it expires every run skips the caption API and
+  goes straight to audio.
+- *`YOUTUBE_PROXY_EXIT_COUNT` > 1* (Webshare sticky `USERNAME-N` exits) — a
+  timedtext 429 does **not** mark; the caption API retries on the next exit(s)
+  (`download_utils.ytdlp_proxy_exit_urls`, at most 3 exits, no backoff). Only
+  when those 429 too is the marker written. The library's `RequestBlocked`
+  (its 429 subclass `IpBlocked` plus the "not a bot" check) is recognised by
+  type, since its message carries no "429" once a proxy config is attached.
 
 **Language detection.** Both the Gemini and Whisper paths keep the transcript
 **verbatim in its source language** (no internal translation), which is what

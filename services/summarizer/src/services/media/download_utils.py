@@ -4,8 +4,11 @@ Common retry logic and error classification used by both
 Gemini and Whisper transcription services.
 """
 
+from __future__ import annotations
+
 import logging
 import os
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -21,6 +24,7 @@ __all__ = [
     "download_youtube_audio",
     "ytdlp_client_api_opts",
     "ytdlp_client_cli_args",
+    "ytdlp_proxy_exit_urls",
     "ytdlp_proxy_url",
     "ytdlp_subprocess_env",
     "MAX_DOWNLOAD_ATTEMPTS",
@@ -32,11 +36,46 @@ logger = logging.getLogger(__name__)
 # set — an inherited lowercase value would otherwise beat ours.
 _PROXY_ENV_VARS = ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy")
 
+# A caption retry visits at most this many exits (primary included) — the
+# whole caption layer runs under TRANSCRIPT_FETCH_TIMEOUT, so more attempts
+# would only time out.
+_MAX_ROTATED_EXITS = 3
+_STICKY_SUFFIX_RE = re.compile(r"^(?P<base>.*)-(?P<n>\d+)$")
+
 
 def ytdlp_proxy_url() -> str | None:
     """YOUTUBE_PROXY_URL with whitespace stripped, or None for a direct connection."""
     url = (settings.YOUTUBE_PROXY_URL or "").strip()
     return url or None
+
+
+def ytdlp_proxy_exit_urls() -> list[str]:
+    """Proxy URLs to try in order for an IP-scoped failure (caption 429).
+
+    Empty without a proxy. The configured URL comes first; when
+    YOUTUBE_PROXY_EXIT_COUNT > 1 and its username carries a sticky ``-N``
+    suffix, the following exits (wrapping within 1..count, capped) follow.
+    Only the username is rewritten, in the raw netloc, so the password is
+    never re-encoded. Never log the returned URLs — they carry credentials.
+    """
+    primary = ytdlp_proxy_url()
+    if not primary:
+        return []
+    count = settings.YOUTUBE_PROXY_EXIT_COUNT
+    scheme_sep, _, rest = primary.partition("://")
+    if not rest or count <= 1 or "@" not in rest:
+        return [primary]
+    userinfo, _, host = rest.rpartition("@")
+    username, colon, password = userinfo.partition(":")
+    match = _STICKY_SUFFIX_RE.match(username)
+    if match is None:
+        return [primary]
+    base, current = match.group("base"), int(match.group("n"))
+    urls = [primary]
+    for step in range(1, min(count, _MAX_ROTATED_EXITS)):
+        exit_no = (current - 1 + step) % count + 1
+        urls.append(f"{scheme_sep}://{base}-{exit_no}{colon}{password}@{host}")
+    return urls
 
 
 def ytdlp_subprocess_env() -> dict[str, str] | None:

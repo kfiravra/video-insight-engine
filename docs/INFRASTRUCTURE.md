@@ -316,6 +316,7 @@ New/changed vars introduced by the yt-dlp-403 fix and the two-pass frame pipelin
 | `SCENE_S3_PREFIX` | `scenes-v3` | Versioned frame-cache prefix — bump to invalidate the S3 frame cache |
 | `SCENE_HIRES_TIMEOUT` | `90` | Stream-URL refinement budget (s) |
 | `SCENE_HIRES_FALLBACK_TIMEOUT` | `180` | Local ≤720p download fallback budget (s) |
+| `YOUTUBE_PROXY_EXIT_COUNT` | `1` | Sticky exits behind the proxy gateway (Webshare `USERNAME-1…N`). >1 lets a caption 429 retry on the next exit before the 15-min caption marker is written |
 | `FRAME_TIER_ENABLED` | `true` | Adaptive visual tiers (high/standard/low from `domains.json` `visualCriticality`) |
 | `TRANSCRIPT_CLEANING_TIMEOUT` | `30` | Transcript-cleaning LLM call timeout (was hardcoded) |
 | `HF_TOKEN` | empty | Optional Hugging Face Hub token for SentenceTransformer pulls |

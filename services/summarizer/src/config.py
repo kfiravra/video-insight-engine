@@ -145,6 +145,11 @@ class Settings(BaseSettings):
     # blocked the same way. NOT proxied: ffmpeg seeks on the looked-up stream
     # URL leave from the host IP, 403, and the proxied local download takes over.
     YOUTUBE_PROXY_URL: str | None = None
+    # Sticky exits behind the proxy gateway, addressed by the username suffix
+    # (Webshare: USERNAME-1 … USERNAME-N). A caption 429 is IP-scoped, so the
+    # caption fetch retries on the NEXT exit before giving up on captions.
+    # 1 (or a username without a -N suffix) = no rotation, retry on the same exit.
+    YOUTUBE_PROXY_EXIT_COUNT: int = 1
 
     # Whisper fallback (Phase 4 - for videos without captions)
     # Max duration set to 600 min (10 hours) to support ultra-long content.

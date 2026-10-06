@@ -88,7 +88,7 @@ ls -lh /tmp/yt-*.mp4 && rm -f /tmp/yt-*.mp4
 ```
 
 - **Pass**: the verbose output shows `JS runtimes: deno-2.9.5` and both files download. The app uses the android client (`YTDLP_PLAYER_CLIENTS=android`), so the second download matters most. Only a real download proves access; `--simulate` can succeed on a blocked IP.
-- **Blocked** ("Sign in to confirm you're not a bot", HTTP 403): the instance IP is bot-checked. Set `YOUTUBE_PROXY_URL` in `.env` to a residential/ISP proxy (`http://user:pass@host:port`); the summarizer then sends every YouTube request (downloads, metadata, playlists, captions) through it. Prove the proxy with a real download first — datacenter proxies fail the same check:
+- **Blocked** ("Sign in to confirm you're not a bot", HTTP 403): the instance IP is bot-checked. Set `YOUTUBE_PROXY_URL` in `.env` to a residential/ISP proxy (`http://user:pass@host:port`); the summarizer then sends every YouTube request (downloads, metadata, playlists, captions) through it. With a Webshare list of sticky exits (`USERNAME-1` … `USERNAME-N`), also set `YOUTUBE_PROXY_EXIT_COUNT=N` so a caption 429 retries on the next exit instead of falling straight to Whisper. Prove the proxy with a real download first — datacenter proxies fail the same check:
 
   ```bash
   yt-dlp --proxy "$YOUTUBE_PROXY_URL" --extractor-args 'youtube:player_client=android' -f 18 -o /tmp/yt-proxy.mp4 "$URL" && rm -f /tmp/yt-proxy.mp4
