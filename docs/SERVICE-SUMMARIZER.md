@@ -92,8 +92,9 @@ services/summarizer/
     │   │   ├── frame_scorer.py       # Frame scoring (visual, face, skin, center-detail, text, uniqueness)
     │   │   ├── frame_analyzer.py     # Vision LLM analysis (scene type, visual_subject, content)
     │   │   ├── visual_tier.py        # Adaptive visual tier (high/standard/low from metadata)
-    │   │   ├── hires_refiner.py      # Pass-2 720p re-extraction of selected frames (stream-URL seek)
-    │   │   ├── local_video.py        # Local ≤720p download fallback when hi-res seeks 403
+    │   │   ├── hires_refiner.py      # Pass-2 720p re-extraction of selected frames (seek or local file)
+    │   │   ├── hires_prefetch.py     # Proxied runs: 720p download started alongside scene detection
+    │   │   ├── local_video.py        # One-shot ≤720p download (proxyless fallback / proxied primary)
     │   │   ├── frame_ocr.py          # OCR on text-heavy frames (Tesseract)
     │   │   ├── frame_extractor.py    # Video frame extraction + S3 upload
     │   │   ├── image_dedup.py        # Perceptual hashing for dedup
@@ -197,10 +198,12 @@ WHISPER_CHUNK_CONCURRENCY=3            # Concurrent chunk transcription (respect
 SCENE_EXTRACTION_ENABLED=true
 SCENE_S3_PREFIX=scenes-v3              # Versioned frame/manifest prefix — bump to invalidate the frame cache
 SCENE_HIRES_ENABLED=true               # Pass-2 720p refinement of the selected frames
-SCENE_HIRES_TIMEOUT=90.0               # Stream-URL refinement budget; 0/N upgraded → local-download fallback
-SCENE_HIRES_FALLBACK_TIMEOUT=180.0     # Local 720p download + local seeks budget (media/local_video.py)
+SCENE_HIRES_TIMEOUT=90.0               # Stream-URL refinement budget (proxyless); 0/N upgraded → local-download fallback
+SCENE_HIRES_FALLBACK_TIMEOUT=180.0     # Local-file seek budget after the 720p download (media/local_video.py)
+YOUTUBE_PROXY_URL=                     # One proxy for every YouTube request; when set, frames skip stream-URL seeks
 YOUTUBE_PROXY_EXIT_COUNT=1             # Sticky exits (USERNAME-1…N) a caption 429 may rotate through; 1 = no rotation
-YTDLP_PLAYER_CLIENTS=android           # yt-dlp player clients for ALL video/audio downloads; empty = yt-dlp defaults
+YTDLP_PLAYER_CLIENTS=android           # yt-dlp player clients for pass 1 + audio downloads; empty = yt-dlp defaults
+YTDLP_HIRES_PLAYER_CLIENTS=web_embedded,android  # 720p download only (android caps at 360p); retries with the line above
 FRAME_TIER_ENABLED=true                # Adaptive visual tiers (HIGH: overselect + vision reselect before hires)
 
 # SSE streaming
@@ -319,6 +322,10 @@ The pipeline uses 3-6 LLM calls with a plan-first architecture:
         │   0/N upgraded (or timeout with 0) = the CDN 403s plain-ffmpeg seeks (client-bound
         │   googlevideo URLs) → local-download fallback: media/local_video.py downloads one
         │   ≤720p rendition via yt-dlp and seeks the local file (SCENE_HIRES_FALLBACK_TIMEOUT).
+        │   With YOUTUBE_PROXY_URL set the stream URL is never looked up (the seeks would leave
+        │   from the blocked host IP): media/hires_prefetch.py starts the proxied 720p download
+        │   right after pass 1, so it overlaps scene detection + scoring, and the refiner seeks
+        │   that local file (a pass-1 file already ≥720p is reused instead).
         │   Swaps frame paths in place → S3 upload, vision, and OCR all get the best available.
         └─▶ Batch parallel S3 upload (only selected frames — not all detected) + manifest write
         └─▶ OCR + Vision LLM analysis run in parallel:
@@ -439,7 +446,8 @@ The pipeline uses 3-6 LLM calls with a plan-first architecture:
     └─▶ SSE: tab_ready events (progressive rendering), each with `position` = index in the
     │   persisted tab order. moment_track tabs are HELD BACK: assembly/moment_frame_fill.py
     │   extracts a frame AT each still-frameless moment's timestamp (stream-URL seek, then the
-    │   same local-download fallback as hires; cap 12 frames, 60s + 150s budgets), heartbeats
+    │   same local-download fallback as hires — with a proxy the seek pass is skipped and the
+    │   local download is the only pass; cap 12 frames, 60s + 150s budgets), heartbeats
     │   keep the SSE hop alive meanwhile, then the moment tabs stream WITH their images and the
     │   client slots them by `position` so streamed order == persisted order
     └─▶ Store result to MongoDB + Redis cache (if enabled). Redis response-cache keys are

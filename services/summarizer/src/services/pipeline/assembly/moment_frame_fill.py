@@ -10,6 +10,10 @@ image by definition — no vision filler-check applies.
 Best-effort by design: any failure (no stream URL, extraction timeout, S3
 down) leaves the item on its glyph-plate fallback. Budgeted so a worst-case
 video adds tens of seconds, never minutes.
+
+With ``YOUTUBE_PROXY_URL`` set the stream-URL pass is skipped outright: the
+seeks would leave from the blocked host IP and 403, so the local 720p
+download is the only pass.
 """
 
 from __future__ import annotations
@@ -17,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
+from src.services.media.download_utils import ytdlp_proxy_url
 from src.services.media.frame_extractor import _frame_s3_key as frame_s3_key
 from src.services.media.frame_extractor import extract_frame
 from src.services.media.s3_client import s3_client
@@ -31,8 +36,8 @@ logger = logging.getLogger(__name__)
 _FILL_MAX_FRAMES = 12
 # Fast-path budget, including the stream-URL fetch. Partial fills stand.
 _FILL_TOTAL_TIMEOUT = 60.0
-# Local-download fallback budget (one yt-dlp 720p download + local seeks) —
-# used when the CDN 403s the direct stream-URL extractions.
+# Local-download budget (one yt-dlp 720p download + local seeks) — the
+# fallback when the CDN 403s the direct seeks, the only pass with a proxy.
 _FILL_FALLBACK_TIMEOUT = 150.0
 # The download gets the fallback budget minus this seek reserve, so a slow
 # download is abandoned by yt-dlp itself (clean) rather than cancelled at the
@@ -122,7 +127,7 @@ async def _url_pass(youtube_id: str, batch: list[FillTarget]) -> int:
 
 
 async def _fallback_pass(youtube_id: str, batch: list[FillTarget]) -> int:
-    """Local-download path for when the CDN 403'd the direct seeks.
+    """Local-download pass: fallback proxyless, the primary pass with a proxy.
 
     Client-bound googlevideo URLs 403 plain ffmpeg, but yt-dlp still downloads
     fine — grab a 720p rendition once and extract from the local file.
@@ -146,17 +151,27 @@ def _count_filled(targets: list[FillTarget]) -> int:
 
 
 async def _run_passes(youtube_id: str, capped: list[FillTarget]) -> int:
-    """URL pass, then the local-download fallback for whatever is still frameless."""
-    try:
-        filled = await asyncio.wait_for(_url_pass(youtube_id, capped), timeout=_FILL_TOTAL_TIMEOUT)
-    except asyncio.TimeoutError:
-        filled = _count_filled(capped)
-        logger.warning(
-            "moment_frame_fill: URL pass timed out after %.0fs — %d/%d filled",
-            _FILL_TOTAL_TIMEOUT,
-            filled,
-            len(capped),
-        )
+    """URL pass, then the local-download fallback for whatever is still frameless.
+
+    Proxied runs skip the URL pass (unproxied seeks from the blocked IP) and
+    go straight to the local download.
+    """
+    filled = 0
+    if ytdlp_proxy_url():
+        logger.info("moment_frame_fill: proxy set — skipping stream-URL pass for %s", youtube_id)
+    else:
+        try:
+            filled = await asyncio.wait_for(
+                _url_pass(youtube_id, capped), timeout=_FILL_TOTAL_TIMEOUT
+            )
+        except asyncio.TimeoutError:
+            filled = _count_filled(capped)
+            logger.warning(
+                "moment_frame_fill: URL pass timed out after %.0fs — %d/%d filled",
+                _FILL_TOTAL_TIMEOUT,
+                filled,
+                len(capped),
+            )
 
     remaining = [(item, sec) for item, sec in capped if not item.get("thumbnailUrl")]
     if len(remaining) < _FILL_FALLBACK_MIN_TARGETS:

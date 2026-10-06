@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.services.media import download_utils
 from src.services.pipeline.assembly import moment_frame_fill as mff
 
 
@@ -207,3 +208,50 @@ async def test_fewer_than_three_failures_skip_the_download_fallback():
     assert filled == 0
     mock_download.assert_not_awaited()
     assert not any(it.get("thumbnailUrl") for it in items)
+
+
+@pytest.mark.asyncio
+async def test_proxy_skips_the_stream_url_pass_and_fills_locally(tmp_path, monkeypatch):
+    monkeypatch.setattr(download_utils.settings, "YOUTUBE_PROXY_URL", "http://u-1:p@h:80")
+    items = [{"label": f"m{i}", "seconds": 100 + i * 60} for i in range(3)]
+    tabs = [_moment_tab(items)]
+    local_dir = tmp_path / "dl"
+    local_dir.mkdir()
+    local_video = local_dir / "yt123.mp4"
+    local_video.write_bytes(b"720p")
+
+    with (
+        patch.object(mff, "s3_client", _patched_s3()),
+        patch.object(mff, "get_video_stream_url", AsyncMock()) as mock_stream,
+        patch.object(mff, "extract_frame", AsyncMock(return_value=b"jpeg")) as mock_extract,
+        patch(
+            "src.services.media.local_video.download_video_720p",
+            AsyncMock(return_value=(local_video, str(local_dir))),
+        ) as mock_download,
+    ):
+        filled = await mff.fill_moment_frames(tabs, "yt123")
+
+    assert filled == 3
+    mock_stream.assert_not_awaited()
+    mock_download.assert_awaited_once()
+    assert all(call.args[0] == str(local_video) for call in mock_extract.await_args_list)
+    assert not local_dir.exists()
+
+
+@pytest.mark.asyncio
+async def test_proxy_with_too_few_targets_downloads_nothing(monkeypatch):
+    monkeypatch.setattr(download_utils.settings, "YOUTUBE_PROXY_URL", "http://u-1:p@h:80")
+    items = [{"label": "a", "seconds": 100}, {"label": "b", "seconds": 200}]
+    tabs = [_moment_tab(items)]
+    with (
+        patch.object(mff, "s3_client", _patched_s3()),
+        patch.object(mff, "get_video_stream_url", AsyncMock()) as mock_stream,
+        patch.object(mff, "extract_frame", AsyncMock()) as mock_extract,
+        patch("src.services.media.local_video.download_video_720p", AsyncMock()) as mock_download,
+    ):
+        filled = await mff.fill_moment_frames(tabs, "yt123")
+
+    assert filled == 0
+    mock_stream.assert_not_awaited()
+    mock_extract.assert_not_awaited()
+    mock_download.assert_not_awaited()

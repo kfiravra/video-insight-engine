@@ -24,6 +24,7 @@ __all__ = [
     "download_youtube_audio",
     "ytdlp_client_api_opts",
     "ytdlp_client_cli_args",
+    "ytdlp_hires_client_attempts",
     "ytdlp_proxy_exit_urls",
     "ytdlp_proxy_url",
     "ytdlp_subprocess_env",
@@ -93,18 +94,34 @@ def ytdlp_subprocess_env() -> dict[str, str] | None:
     return {**os.environ, **dict.fromkeys(_PROXY_ENV_VARS, proxy_url)}
 
 
-def ytdlp_client_cli_args() -> list[str]:
+def ytdlp_client_cli_args(clients: str | None = None) -> list[str]:
     """--extractor-args flags for subprocess yt-dlp DOWNLOAD invocations.
 
     YouTube 403s some player clients' download URLs per environment
     (2026-08: web blocked here, android fine) — YTDLP_PLAYER_CLIENTS picks
     the client order without a code change when YouTube shifts again.
-    The proxy is deliberately not a flag here — see ytdlp_subprocess_env().
+    ``clients`` overrides it (the hi-res download passes
+    YTDLP_HIRES_PLAYER_CLIENTS). The proxy is deliberately not a flag
+    here — see ytdlp_subprocess_env().
     """
-    clients = settings.YTDLP_PLAYER_CLIENTS.strip()
+    if clients is None:
+        clients = settings.YTDLP_PLAYER_CLIENTS
+    clients = clients.strip()
     if not clients:
         return []
     return ["--extractor-args", f"youtube:player_client={clients}"]
+
+
+def ytdlp_hires_client_attempts() -> list[str]:
+    """Player-client lists for the hi-res 720p download, in order.
+
+    YTDLP_HIRES_PLAYER_CLIENTS first (android alone caps at 360p); if that
+    differs from YTDLP_PLAYER_CLIENTS, the latter is the one retry — the
+    clients pass 1 just proved working for this video.
+    """
+    base = settings.YTDLP_PLAYER_CLIENTS.strip()
+    hires = settings.YTDLP_HIRES_PLAYER_CLIENTS.strip() or base
+    return [hires] if hires == base else [hires, base]
 
 
 def ytdlp_client_api_opts() -> dict[str, Any]:

@@ -263,3 +263,40 @@ class TestProxyExitUrls:
         from src.config import Settings
 
         assert Settings.model_fields["YOUTUBE_PROXY_EXIT_COUNT"].default == 1
+
+
+class TestHiresClientAttempts:
+    """Client lists for the hi-res 720p download (pass 1 and audio keep YTDLP_PLAYER_CLIENTS)."""
+
+    @pytest.fixture
+    def clients(self, monkeypatch):
+        def _set(base: str, hires: str) -> None:
+            monkeypatch.setattr(download_utils.settings, "YTDLP_PLAYER_CLIENTS", base)
+            monkeypatch.setattr(download_utils.settings, "YTDLP_HIRES_PLAYER_CLIENTS", hires)
+
+        return _set
+
+    def test_should_try_hires_clients_then_pass1_clients(self, clients):
+        clients("android", "web_embedded,android")
+        assert download_utils.ytdlp_hires_client_attempts() == ["web_embedded,android", "android"]
+
+    def test_should_make_one_attempt_when_lists_match(self, clients):
+        clients("android", " android ")
+        assert download_utils.ytdlp_hires_client_attempts() == ["android"]
+
+    def test_should_fall_back_to_pass1_clients_when_hires_is_blank(self, clients):
+        clients("android", "")
+        assert download_utils.ytdlp_hires_client_attempts() == ["android"]
+
+    def test_should_build_cli_args_for_an_explicit_client_list(self, clients):
+        clients("android", "web_embedded,android")
+        assert download_utils.ytdlp_client_cli_args("web_embedded,android") == [
+            "--extractor-args",
+            "youtube:player_client=web_embedded,android",
+        ]
+
+    def test_should_default_to_the_measured_720p_clients(self):
+        from src.config import Settings
+
+        field = Settings.model_fields["YTDLP_HIRES_PLAYER_CLIENTS"]
+        assert field.default == "web_embedded,android"

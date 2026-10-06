@@ -133,7 +133,7 @@ connection at its 300s body timeout.
 
 ### Phase 2b — Frames · `phases/frames.py`
 
-- **Calls:** `scene_extractor.extract_scene_keyframes()` — manifest-v2 S3 cache check first (`scenes-v3/manifest.json`; `hiresCount == 0` counts as a miss so 403-era low-res runs self-heal); on miss: yt-dlp worst-quality download + FFmpeg scene detection + local frame scoring (pass 1), adaptive visual tier (`visual_tier.py`), then a 720p hi-res re-extraction of the selected frames (`hires_refiner.py`, with `local_video.py` download fallback) — then **in parallel**:
+- **Calls:** `scene_extractor.extract_scene_keyframes()` — manifest-v2 S3 cache check first (`scenes-v3/manifest.json`; `hiresCount == 0` counts as a miss so 403-era low-res runs self-heal); on miss: yt-dlp worst-quality download + FFmpeg scene detection + local frame scoring (pass 1), adaptive visual tier (`visual_tier.py`), then a 720p hi-res re-extraction of the selected frames (`hires_refiner.py`: stream-URL seeks with a `local_video.py` download fallback; with `YOUTUBE_PROXY_URL` set, `hires_prefetch.py` instead starts the 720p download right after pass 1 and the refiner seeks that local file) — then **in parallel**:
   - `scene_frames.process_scene_frames()` — OCR + S3 presigned URLs,
   - `_run_vision_analysis()` → `frame_analyzer.analyze_frames_with_vision()` (descriptions persisted back into the manifest).
 - **Prompt:** vision prompt inside `frame_analyzer` (vision model — Haiku-4.5), gated by `FRAME_VISION_ENABLED`.
