@@ -74,6 +74,8 @@ docker-compose.override.yml
 # Claude Code
 .claude/tdd-state.json
 .claude/tsc-cache/
+# git-safety-guard single-use override — a committed one disarms the guard in every clone
+.claude/hooks/.git-safety-override
 
 # Data backups (scripts/backup.sh output)
 backups/
