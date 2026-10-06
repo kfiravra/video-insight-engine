@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import re
+from functools import partial
 
 import tenacity
 from youtube_transcript_api import Transcript, TranscriptList, YouTubeTranscriptApi
@@ -18,7 +19,11 @@ from src.models.schemas import (
     TranscriptSegment,
     TranscriptSource,
 )
-from src.services.media.download_utils import ytdlp_proxy_exit_urls, ytdlp_proxy_url
+from src.services.media.download_utils import (
+    try_proxy_exits,
+    ytdlp_proxy_exit_urls,
+    ytdlp_proxy_url,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +46,11 @@ def _is_rate_limit_error(exception: BaseException) -> bool:
         return True
     error_str = str(exception).lower()
     return any(x in error_str for x in ["429", "too many", "rate limit"])
+
+
+def _is_rate_limited_code(exception: Exception) -> bool:
+    """True for a TranscriptError that _fetch_once classified as RATE_LIMITED."""
+    return isinstance(exception, TranscriptError) and exception.code is ErrorCode.RATE_LIMITED
 
 
 def _log_retry(retry_state: tenacity.RetryCallState) -> None:
@@ -99,22 +109,12 @@ def _fetch_rotating_sync(
 ) -> tuple[list[dict], str, str, str | None]:
     """Multi-exit fetch: a 429 is IP-scoped, so move to the next exit instead of
     waiting on the same one. Any other error ends the attempt immediately."""
-    last_error: TranscriptError | None = None
-    for attempt, proxy_url in enumerate(exit_urls, 1):
-        try:
-            return _fetch_once(video_id, proxy_url)
-        except TranscriptError as e:
-            if e.code is not ErrorCode.RATE_LIMITED:
-                raise
-            last_error = e
-            logger.warning(
-                "Transcript fetch rate limited on proxy exit %d/%d for %s",
-                attempt,
-                len(exit_urls),
-                video_id,
-            )
-    assert last_error is not None  # exit_urls is never empty here
-    raise last_error
+    return try_proxy_exits(
+        exit_urls,
+        partial(_fetch_once, video_id),
+        _is_rate_limited_code,
+        f"Transcript fetch for {video_id}",
+    )
 
 
 def _fetch_once(video_id: str, proxy_url: str | None) -> tuple[list[dict], str, str, str | None]:

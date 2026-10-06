@@ -265,6 +265,63 @@ class TestProxyExitUrls:
         assert Settings.model_fields["YOUTUBE_PROXY_EXIT_COUNT"].default == 1
 
 
+class _RateLimited(Exception):
+    pass
+
+
+class TestTryProxyExits:
+    """The one exit-rotation loop shared by the timedtext and caption-API fetches."""
+
+    EXITS = ["http://u-1:p@h:80", "http://u-2:p@h:80", "http://u-3:p@h:80"]
+
+    @staticmethod
+    def _run(attempt) -> str:
+        return download_utils.try_proxy_exits(
+            TestTryProxyExits.EXITS,
+            attempt,
+            lambda e: isinstance(e, _RateLimited),
+            "Test fetch",
+        )
+
+    def test_should_return_the_first_exit_that_is_not_rate_limited(self):
+        tried: list[str] = []
+
+        def attempt(proxy_url: str) -> str:
+            tried.append(proxy_url)
+            if proxy_url == self.EXITS[0]:
+                raise _RateLimited
+            return "ok"
+
+        assert self._run(attempt) == "ok"
+        assert tried == self.EXITS[:2]
+
+    def test_should_stop_at_the_exit_that_raised_another_error(self):
+        attempt = MagicMock(side_effect=ValueError("boom"))
+
+        with pytest.raises(ValueError):
+            self._run(attempt)
+
+        assert attempt.call_count == 1
+
+    def test_should_raise_the_last_error_when_every_exit_is_rate_limited(self):
+        errors = [_RateLimited(url) for url in self.EXITS]
+        attempt = MagicMock(side_effect=errors)
+
+        with pytest.raises(_RateLimited) as exc_info:
+            self._run(attempt)
+
+        assert exc_info.value is errors[-1]
+
+    def test_should_never_log_a_proxy_url(self, caplog):
+        attempt = MagicMock(side_effect=[_RateLimited(), "ok"])
+
+        with caplog.at_level("WARNING"):
+            self._run(attempt)
+
+        assert "Test fetch rate limited on proxy exit 1/3" in caplog.text
+        assert "u-1:p@" not in caplog.text
+
+
 class TestHiresClientAttempts:
     """Client lists for the hi-res 720p download (pass 1 and audio keep YTDLP_PLAYER_CLIENTS)."""
 
