@@ -17,7 +17,7 @@
 
 Stores: MongoDB 7 (records), Redis 7 (cache + locks), Qdrant (RAG vectors), RabbitMQ (optional queue), S3 (frames/transcripts). Shared config: `packages/shared/src/config/domains.json` (one config, read by Python + TS). **API gateway lives at top-level `api/`** (not `services/api`).
 
-## The pipeline (3–6 LLM calls, ~$0.09, ~20–50s, streamed over SSE)
+## The pipeline (7 LLM calls, ~$0.29 and ~4 min for a ~20-min captioned video, streamed over SSE)
 ```
 metadata → [transcript ‖ frames] → visual injection
 → classifier(fast) ‖ plan(Sonnet)   ← "Plan" stage (replaced Manifest+Triage; SSE event still triage_complete)

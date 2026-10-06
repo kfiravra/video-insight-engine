@@ -424,11 +424,11 @@ Canonical `{error, message, details, statusCode}` envelope, one shared code set.
 
 | Scenario | LLM calls | Cost |
 |----------|-----------|------|
-| First processing | 5–10 | $0.02–0.12 |
+| First processing (~20 min, captions) | 7 | ~$0.29 |
 | Same video, any user (cache hit) | 0 | **$0.00** |
 | Cache expired, S3 frames reused | 0 | ~$0.01 |
 
-Scales with length: 15min ≈ $0.02, 2h ≈ $0.05, 9h ≈ $0.12. Typical ~$0.09 (4–6 calls, ~20–50s).
+Measured on v8 from the `llm_usage` ledger: 7 LLM calls and about $0.29 for a ~20-minute video with captions, about 4 minutes end to end. The sampled faithfulness judge adds up to 6 small calls. The Whisper fallback adds roughly $0.14 when captions are unavailable.
 
 **Per-user daily cost cap:** `llm_usage` aggregates into `userCosts`; `POST /videos` calls `reserveUserCost` (increment-then-check) → `429 DailyLimitReachedError` past the tier cap. Refunds happen **only** on the terminal-status callback (don't double-credit).
 

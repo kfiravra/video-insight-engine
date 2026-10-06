@@ -85,6 +85,28 @@ describe('WorkoutRoom', () => {
     expect(screen.getByText('Exercise 2 of 2')).toBeInTheDocument();
   });
 
+  it("should restart the timer from the next exercise's duration after auto-advance", () => {
+    const timed: FitnessExercise[] = [
+      { name: 'Jumping jacks', emoji: '⚡', sets: 1, duration: '30 seconds', formCues: [], modifications: [] },
+      { name: 'Wall sit', emoji: '🪑', sets: 1, duration: '45 seconds', formCues: [], modifications: [] },
+    ];
+    render(<WorkoutRoom exercises={timed} />);
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: 'Start' }));
+    });
+    act(() => {
+      vi.advanceTimersByTime(10000);
+    });
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: /complete set/i }));
+    });
+    act(() => {
+      vi.advanceTimersByTime(3500);
+    });
+    expect(screen.getByText('Wall sit')).toBeInTheDocument();
+    expect(screen.getByText('0:45')).toBeInTheDocument();
+  });
+
   it('should NOT construct AudioContext when sound is disabled', () => {
     const audioSpy = vi.fn();
     const original = window.AudioContext;

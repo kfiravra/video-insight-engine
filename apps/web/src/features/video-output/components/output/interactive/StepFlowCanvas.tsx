@@ -14,10 +14,12 @@ import { Clock, Workflow } from 'lucide-react';
 import { VieCanvas } from '@/components/vie/canvas/CanvasShell';
 import { GlassCard, VisualEvidence } from '@/components/vie';
 import { EmptyTabState } from './EmptyTabState';
+import { zigzagLayout } from './step-flow-layout';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import { useTabState } from '@/features/video-output/contexts/TabStateContext';
+import { parseStepDurationSeconds } from '@/features/video-output/lib/step-duration';
 import type { StepItem } from '@vie/types';
 
 // ─── Props ───
@@ -30,31 +32,8 @@ interface StepFlowCanvasProps {
 
 // ─── Helpers ───
 
-const COLUMN_OFFSET = 180;
-const ROW_SPACING = 160;
-
 function stepNodeId(index: number): string {
   return `step-${index}`;
-}
-
-/** Vertical zigzag layout — alternates between left and right of center. */
-export function zigzagLayout(count: number): Array<{ x: number; y: number }> {
-  return Array.from({ length: count }, (_, index) => ({
-    x: index % 2 === 0 ? -COLUMN_OFFSET : COLUMN_OFFSET,
-    y: index * ROW_SPACING,
-  }));
-}
-
-function parseDurationSeconds(duration?: string | number): number {
-  if (duration == null) return 0;
-  if (typeof duration === 'number') return duration;
-  const match = duration.match(/(\d+)\s*(min|minute|m|sec|second|s|hr|hour|h)/i);
-  if (!match) return 0;
-  const val = parseInt(match[1], 10);
-  const unit = match[2].toLowerCase();
-  if (unit.startsWith('h')) return val * 3600;
-  if (unit.startsWith('m')) return val * 60;
-  return val;
 }
 
 /** Compact human label for the step-duration chip — "5 min" / "45s" / "1h 10m". */
@@ -209,7 +188,7 @@ export const StepFlowCanvas = memo(function StepFlowCanvas({
         step,
         index,
         completed: false,
-        durationSeconds: parseDurationSeconds(step.duration),
+        durationSeconds: parseStepDurationSeconds(step.duration),
         onToggle: toggleComplete,
         onSeek,
       },

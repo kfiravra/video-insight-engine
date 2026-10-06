@@ -32,6 +32,53 @@ describe('AssistantClient', () => {
     client = new AssistantClient(mockLogger);
   });
 
+  describe('conversation history forwarding', () => {
+    const sseResponse = () =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode('data: {}\n\n'));
+            controller.close();
+          },
+        }),
+        { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
+      );
+    const history: Array<{ role: 'user' | 'assistant'; content: string }> = [
+      { role: 'user', content: 'Generate an app from this URL' },
+      { role: 'assistant', content: '' },
+      { role: 'assistant', content: '   ' },
+      { role: 'user', content: 'Yes, do it' },
+    ];
+    const expected = [
+      { role: 'user', content: 'Generate an app from this URL' },
+      { role: 'user', content: 'Yes, do it' },
+    ];
+
+    it('should drop blank turns from the library chat history when confirming an action', async () => {
+      mockFetch.mockResolvedValueOnce(sseResponse());
+
+      await client.libraryChat({
+        userId: 'user-1',
+        youtubeIds: [],
+        message: 'Yes, do it',
+        conversationHistory: history,
+        confirmToken: 'tok_abcdefghijklmnop',
+      });
+
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(body.conversation_history).toEqual(expected);
+    });
+
+    it('should drop blank turns from the single-video chat history', async () => {
+      mockFetch.mockResolvedValueOnce(sseResponse());
+
+      await client.chat({ videoId: 'vid-1', message: 'hi', conversationHistory: history });
+
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(body.conversation_history).toEqual(expected);
+    });
+  });
+
   describe('chat — request-id propagation', () => {
     it('should forward X-Request-ID header when supplied', async () => {
       const stream = new ReadableStream({

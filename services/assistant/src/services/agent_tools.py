@@ -13,6 +13,7 @@ field, NOT the YouTube id.
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING, Any
 
 from llm_common.context import llm_feature_var
@@ -236,6 +237,26 @@ async def execute_tool(
         llm_feature_var.reset(token)
 
 
+_OBJECT_ID = re.compile(r"[0-9a-f]{24}")
+
+
+async def _resolve_folder_id(folder_ref: str, user_id: str, api_client: ApiClient) -> str:
+    """Folder id for a model-supplied folder reference.
+
+    The model sometimes passes the folder's NAME — e.g. when it creates a folder and
+    generates into it in the same round, before the create result can give it the id.
+    A name that matches one of the user's folders resolves to that folder's id;
+    anything else is passed through for the API to accept or reject as before.
+    """
+    if not folder_ref or _OBJECT_ID.fullmatch(folder_ref):
+        return folder_ref
+    wanted = folder_ref.strip().casefold()
+    for folder in await api_client.list_folders(user_id) or []:
+        if isinstance(folder, dict) and str(folder.get("name", "")).strip().casefold() == wanted:
+            return str(folder["id"])
+    return folder_ref
+
+
 async def _dispatch(
     name: str,
     args: dict[str, Any],
@@ -270,10 +291,17 @@ async def _dispatch(
         )
         return {"ok": True, "result": result}
     if name == "move_video":
-        result = await api_client.move_video(user_id, args["video_id"], args["folder_id"])
+        folder_id = await _resolve_folder_id(args["folder_id"], user_id, api_client)
+        result = await api_client.move_video(user_id, args["video_id"], folder_id)
         return {"ok": True, "result": result}
     if name == "generate_video":
-        result = await api_client.generate_video(user_id, args["url"], args.get("folder_id"))
+        folder_ref = args.get("folder_id")
+        folder_id = (
+            await _resolve_folder_id(folder_ref, user_id, api_client)
+            if folder_ref is not None
+            else None
+        )
+        result = await api_client.generate_video(user_id, args["url"], folder_id)
         return {"ok": True, "result": result}
     if name == "organize_library":
         result = await LibraryOrganizerTool(api_client, llm).execute({}, {"user_id": user_id})

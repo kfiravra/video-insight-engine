@@ -321,7 +321,7 @@ For a typical video (< 30 min):
 | Enrichment | Fast (Haiku/mini/flash-lite) | 0-1 | 90s |
 | Assembly | None (code only) | 0 | instant, unless moment frame fill runs (60s + 150s budgets) |
 
-**Total: 4-6 LLM calls, ~20-50 seconds, ~$0.09/video**
+**Total: 7 LLM calls and about $0.29 for a ~20-minute video with captions** (measured on v8 from the `llm_usage` ledger; about 4 minutes end to end). The seven are the five LLM stages above plus one metadata call and one frame-vision call; the sampled faithfulness judge adds up to 6 small calls. The Whisper fallback adds roughly $0.14 when captions are unavailable.
 
 Classifier and Plan run concurrently. Plan produces `PlanResult` (identity, tabs, contentTags, extractionGuidance) which flows to all downstream phases for creator-aware, context-rich output.
 

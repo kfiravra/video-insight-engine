@@ -500,12 +500,12 @@ def assemble_checklist(
                 )
             elif "name" in item:
                 items.append({"label": str(item["name"]), "note": item.get("notes")})
-            else:
-                items.append({"label": str(item)})
+            # A dict with no text field (e.g. an itinerary day a fallback routed here) has no
+            # checklist label; str() of it leaked a Python repr into the UI, so it is dropped.
         else:
             items.append({"label": str(item)})
 
-    return {"items": items}
+    return {"items": items} if items else None
 
 
 def assemble_step_player(
