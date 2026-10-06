@@ -407,6 +407,15 @@ class TestFlexChecklist:
         assert len(result["items"]) == 2
         assert result["items"][0]["label"] == "item1"
 
+    def test_should_drop_dict_without_text_field_instead_of_printing_its_repr(self):
+        day = {"day": 1, "city": "Lisbon", "spots": [{"name": "Torre de Belém"}]}
+        result = assemble_checklist({"id": "tips"}, [day, "Buy a Viva Viagem card"], {}, None)
+        assert result == {"items": [{"label": "Buy a Viva Viagem card"}]}
+
+    def test_should_return_none_when_no_item_has_a_label(self):
+        days = [{"day": 1, "city": "Lisbon"}, {"day": 2, "city": "Lisbon"}]
+        assert assemble_checklist({"id": "tips"}, days, {}, None) is None
+
 
 class TestFlexComparison:
     """Tests for cross-domain comparison input shapes."""
