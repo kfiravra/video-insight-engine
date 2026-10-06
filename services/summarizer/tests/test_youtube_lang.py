@@ -204,3 +204,64 @@ class TestPickSubtitleUrl:
         track = _pick_subtitle_url("ar", manual, auto)
         assert track is not None
         assert (track.kind, track.lang) == ("auto-generated", "en")
+
+
+class TestPickOriginalOverTranslation:
+    """Within a language, an original track beats YouTube's machine translation
+    (``tlang`` on the URL) into that language."""
+
+    ORIGINAL_EN = "https://www.youtube.com/api/timedtext?lang=en&kind=asr&fmt=json3"
+    AR_TO_EN = "https://www.youtube.com/api/timedtext?lang=ar&kind=asr&tlang=en&fmt=json3"
+
+    @staticmethod
+    def _json3(*urls: str) -> list[dict]:
+        return [{"ext": "json3", "url": url} for url in urls]
+
+    def test_should_pick_the_original_when_a_translation_is_listed_first(self):
+        """Auto-dubbed video shape (prod T1dQhQAm8Tc): one ASR track per dub, so
+        yt-dlp's ``en`` key lists the ar→en translation before the English ASR."""
+        auto = {
+            "ar-orig": self._json3("ar-orig"),
+            "ar": self._json3("ar-asr"),
+            "en": self._json3(self.AR_TO_EN, self.ORIGINAL_EN),
+            "en-orig": self._json3(self.ORIGINAL_EN),
+        }
+
+        track = _pick_subtitle_url("en", {}, auto)
+
+        assert track is not None
+        assert (track.url, track.kind, track.lang) == (self.ORIGINAL_EN, "auto-generated", "en")
+
+    def test_should_not_let_a_translated_regional_key_beat_the_original(self):
+        """A prefix-matched translation key (``en-ar``: English from Arabic
+        manual subs) listed first must not win over the original ``en``."""
+        auto = {
+            "en-ar": self._json3(self.AR_TO_EN),
+            "en": self._json3(self.ORIGINAL_EN),
+        }
+
+        track = _pick_subtitle_url("en", {}, auto)
+
+        assert track is not None
+        assert (track.url, track.lang) == (self.ORIGINAL_EN, "en")
+
+    def test_should_fall_back_to_the_translation_without_an_original(self):
+        """No original track in the language: the translation is still used
+        (the documented Latin-script tradeoff in TestResolveVideoLanguage)."""
+        auto = {"es": self._json3("es-asr"), "en": self._json3(self.AR_TO_EN)}
+
+        track = _pick_subtitle_url("en", {}, auto)
+
+        assert track is not None
+        assert track.url == self.AR_TO_EN
+
+    def test_should_keep_the_detected_language_over_an_english_original(self):
+        """Original-first applies within a language only — a Hebrew video keeps
+        its he translation rather than switching to English text."""
+        en_to_he = "https://www.youtube.com/api/timedtext?lang=en&kind=asr&tlang=he&fmt=json3"
+        auto = {"en": self._json3(self.ORIGINAL_EN), "he": self._json3(en_to_he)}
+
+        track = _pick_subtitle_url("he", {}, auto)
+
+        assert track is not None
+        assert track.url == en_to_he

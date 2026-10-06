@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from functools import lru_cache, partial
 from pathlib import Path
 from typing import Any, TypedDict
+from urllib.parse import parse_qs, urlsplit
 
 import requests
 import tenacity
@@ -958,11 +959,38 @@ def resolve_video_language(
     return None
 
 
-def _json3_url(fmts: list[dict[str, Any]]) -> str | None:
-    """URL of the json3 variant in a caption format list, if any."""
+def _is_machine_translation(url: str) -> bool:
+    """True for YouTube's on-demand machine translation of another track.
+
+    yt-dlp files those under the target language's key, marked only by a
+    ``tlang`` query parameter on the URL.
+    """
+    return "tlang" in parse_qs(urlsplit(url).query)
+
+
+def _json3_url(fmts: list[dict[str, Any]], *, translated: bool) -> str | None:
+    """URL of the first json3 variant that is (or is not) a machine translation."""
     for fmt in fmts:
-        if fmt.get("ext") == "json3" and fmt.get("url"):
-            return fmt["url"]
+        url = fmt.get("url")
+        if fmt.get("ext") == "json3" and url and _is_machine_translation(url) == translated:
+            return url
+    return None
+
+
+def _find_track(
+    lang_code: str,
+    sources: tuple[tuple[str, dict[str, Any]], ...],
+    *,
+    translated: bool,
+) -> SubtitleTrack | None:
+    """First json3 track keyed ``lang_code`` or a regional variant (``ar-SA``)."""
+    for kind, captions in sources:
+        for key, fmts in captions.items():
+            if key != lang_code and not key.startswith(lang_code + "-"):
+                continue
+            url = _json3_url(fmts, translated=translated)
+            if url:
+                return SubtitleTrack(url=url, kind=kind, lang=key)
     return None
 
 
@@ -973,10 +1001,14 @@ def _pick_subtitle_url(
 ) -> SubtitleTrack | None:
     """Pick a json3 subtitle track preferring the detected language.
 
-    Order: manual[detected] → auto[detected] → manual[en] → auto[en].
-    YouTube auto-translates every foreign video to English on demand; without
-    this preference the pipeline would grab the auto-EN track and pretend
-    the audio was English.
+    Order: detected language, then English. Within a language an original
+    track (manual, then auto) beats a machine translation into it, which is
+    only the last resort. YouTube auto-translates every foreign video to
+    English on demand; without the language preference the pipeline would grab
+    the auto-EN track and pretend the audio was English. Without the
+    original-first rule an auto-dubbed video (one ASR track per dub) would get
+    whichever translation yt-dlp lists first under ``en`` (ar→en, seen in prod)
+    instead of the English ASR track listed after it.
 
     The returned track records which bucket it came from and the exact caption
     key that matched (``"ar-SA"`` for detected ``"ar"``), so a later fallback
@@ -990,13 +1022,10 @@ def _pick_subtitle_url(
 
     sources = (("manual", manual_captions), ("auto-generated", auto_captions))
     for lang_code in pref_langs:
-        for kind, captions in sources:
-            for key, fmts in captions.items():
-                if key != lang_code and not key.startswith(lang_code + "-"):
-                    continue
-                url = _json3_url(fmts)
-                if url:
-                    return SubtitleTrack(url=url, kind=kind, lang=key)
+        for translated in (False, True):
+            track = _find_track(lang_code, sources, translated=translated)
+            if track:
+                return track
     return None
 
 
