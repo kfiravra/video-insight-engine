@@ -3,7 +3,8 @@ import { render, fireEvent } from '@testing-library/react';
 import type { ReactElement } from 'react';
 import type { StepItem } from '@vie/types';
 
-import { StepFlowCanvas, zigzagLayout } from '../StepFlowCanvas';
+import { StepFlowCanvas } from '../StepFlowCanvas';
+import { zigzagLayout } from '../step-flow-layout';
 import { TabStateProvider } from '@/features/video-output/contexts/TabStateContext';
 
 const steps: StepItem[] = [

@@ -9,6 +9,7 @@ import { useLabels } from '@/lib/i18n';
 
 import { useTabState } from '@/features/video-output/contexts/TabStateContext';
 import { useTabCoordination } from '../TabCoordinationContext';
+import { parseStepDurationSeconds } from '@/features/video-output/lib/step-duration';
 import type { StepItem } from '@vie/types';
 
 interface StepByStepInteractiveProps {
@@ -29,18 +30,6 @@ function stepBadgeClass(isActive: boolean): string {
   return isActive
     ? 'border-[var(--vie-accent)] bg-[var(--vie-accent)] text-[var(--vie-accent-foreground)]'
     : 'border-border bg-muted text-muted-foreground';
-}
-
-function parseDurationSeconds(duration?: string | number): number {
-  if (duration == null) return 0;
-  if (typeof duration === 'number') return duration;
-  const match = duration.match(/(\d+)\s*(min|minute|m|sec|second|s|hr|hour|h)/i);
-  if (!match) return 0;
-  const val = parseInt(match[1], 10);
-  const unit = match[2].toLowerCase();
-  if (unit.startsWith('h')) return val * 3600;
-  if (unit.startsWith('m')) return val * 60;
-  return val;
 }
 
 export const StepByStepInteractive = memo(function StepByStepInteractive({
@@ -156,7 +145,7 @@ export const StepByStepInteractive = memo(function StepByStepInteractive({
           if (!step) return null;
           const isActive = index === currentStep;
           const isDone = completedSteps.has(index);
-          const durationSecs = parseDurationSeconds(step.duration);
+          const durationSecs = parseStepDurationSeconds(step.duration);
 
           return (
             <FadeIn key={index} index={fadeIdx}>

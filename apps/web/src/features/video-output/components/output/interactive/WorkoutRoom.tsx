@@ -394,7 +394,8 @@ export const WorkoutRoom = memo(function WorkoutRoom({
 
         {durationSeconds !== null ? (
           <div className="flex justify-center">
-            <Timer duration={durationSeconds} />
+            {/* Timer seeds its countdown once; a per-exercise key restarts it for the next exercise. */}
+            <Timer key={activeIndex} duration={durationSeconds} />
           </div>
         ) : repsKnown ? (
           <div className="flex items-center justify-center gap-3">

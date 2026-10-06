@@ -6,6 +6,7 @@ import { Timer, Badge } from '@/components/vie';
 import { useLabels } from '@/lib/i18n';
 import { useTabState } from '@/features/video-output/contexts/TabStateContext';
 import { buildStepIngredientMap } from '@/features/video-output/components/output/lib/ingredient-step-matcher';
+import { parseStepDurationSeconds } from '@/features/video-output/lib/step-duration';
 import type { StepItem } from '@vie/types';
 
 interface RecipeStepViewProps {
@@ -15,18 +16,6 @@ interface RecipeStepViewProps {
   onComplete: (index: number) => void;
   onSeek?: (seconds: number) => void;
   ingredients?: Array<{ label: string }>;
-}
-
-function parseDurationSeconds(duration?: string | number): number {
-  if (duration == null) return 0;
-  if (typeof duration === 'number') return duration;
-  const match = duration.match(/(\d+)\s*(min|minute|m|sec|second|s|hr|hour|h)/i);
-  if (!match) return 0;
-  const val = parseInt(match[1], 10);
-  const unit = match[2].toLowerCase();
-  if (unit.startsWith('h')) return val * 3600;
-  if (unit.startsWith('m')) return val * 60;
-  return val;
 }
 
 export const RecipeStepView = memo(function RecipeStepView({
@@ -58,7 +47,7 @@ export const RecipeStepView = memo(function RecipeStepView({
   if (!step) return null;
 
   const isDone = tabState.isStepCompleted(currentStep);
-  const durationSecs = parseDurationSeconds(step.duration);
+  const durationSecs = parseStepDurationSeconds(step.duration);
 
   return (
     <div className="flex flex-col h-full">
@@ -121,6 +110,8 @@ export const RecipeStepView = memo(function RecipeStepView({
         {/* Timer */}
         {durationSecs > 0 && !isDone && (
           <Timer
+            // Timer seeds its countdown once; a per-step key restarts it from this step's duration.
+            key={currentStep}
             duration={durationSecs}
             onComplete={() => onComplete(currentStep)}
             className="mt-2"
