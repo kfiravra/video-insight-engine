@@ -1,52 +1,47 @@
 # Video Insight Engine (VIE)
 
+[![Try it live](https://img.shields.io/badge/Try_it_live-vie.ad-8b5cf6?style=for-the-badge)](https://vie.ad)
+
+One click, no sign-up — paste any YouTube URL.
+
 Turns any YouTube URL into an interactive app built from the video's own content — a cooking video becomes a timed recipe player; a coding tutorial becomes a code explorer with a quiz.
 
 A video is a poor format for using what it teaches: you cannot search it, check items off, copy the code, or find one step without scrubbing. VIE extracts the content into components that fit it, such as checklists, step flows, code blocks and quizzes, and links them back to the moments in the video they came from.
 
 [![CI](https://github.com/kfiravra/video-insight-engine/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/kfiravra/video-insight-engine/actions/workflows/ci.yml)
 
-<!-- LIVE-DEMO PLACEHOLDER — after demo mode is deployed, replace this comment with:
-**Live demo:** https://vie.ad — one click, no sign-up.
--->
+![Paste a YouTube URL, four videos generate at once, then a recipe timer, a quiz, a moment gallery and a code snippet in use](docs/images/hero.gif)
 
-![Paste a URL, four videos generate at once, then the cooking and learning apps they became](docs/images/demo.gif)
+*Recorded from the running app: four real pipeline runs side by side, then four of the apps they produced in use. Processing is sped up (time-lapse ×89: about four and a half minutes shown in three seconds); any other sped-up wait carries its own time-lapse label.*
 
-*Recorded from the running app: four real pipeline runs side by side, then two of the apps they produced. Processing is sped up (time-lapse ×52: about five minutes shown in six seconds).*
+<!-- REEL_ATTACHMENT_URL — upload docs/images/reel.mp4 to a GitHub comment and replace this comment with the attachment URL on its own line; GitHub renders it as an inline 30-second player. -->
 
-<!-- WALKTHROUGH_URL PLACEHOLDER — after the reel is uploaded (YouTube, unlisted), replace the link target below with WALKTHROUGH_URL
-and keep the repo file as the fallback:
-[30-second reel](WALKTHROUGH_URL) · [MP4 in this repo](docs/images/walkthrough.mp4)
--->
+## See it on different videos
 
-[30-second reel (MP4): paste, four videos generating at once, seven domains, jump to a moment, chat with sources](docs/images/walkthrough.mp4)
+<table>
+  <tr>
+    <td width="50%"><img src="docs/images/reel-cooking.gif" alt="Cooking video: starting a step timer, marking the step done, the next step loading" /><br /><sub><b>Cooking</b> · start the step timer, mark the step done, the next step loads</sub></td>
+    <td width="50%"><img src="docs/images/reel-learning.gif" alt="Learning video: a wrong quiz answer reveals the right one and why, then the next question is answered correctly" /><br /><sub><b>Learning</b> · a wrong answer shows the right one and why; the next one lands</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/images/reel-fitness.gif" alt="Fitness video: exercise timer, complete the set, rest countdown, next exercise" /><br /><sub><b>Fitness</b> · run the exercise timer, complete the set, rest, next exercise</sub></td>
+    <td width="50%"><img src="docs/images/reel-travel.gif" alt="Travel video: switching an itinerary between days" /><br /><sub><b>Travel</b> · switch the itinerary between days</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/images/reel-tech.gif" alt="Tech video: stepping through code snippets and copying one" /><br /><sub><b>Tech</b> · step through the code snippets, copy one</sub></td>
+    <td width="50%"><img src="docs/images/reel-gaming.gif" alt="Gaming video: opening a key moment, then jumping the video to it" /><br /><sub><b>Gaming</b> · open a key moment, then jump the video to it</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/images/reel-sport.gif" alt="Sport video: zooming and panning a team formation" /><br /><sub><b>Sport</b> · zoom and pan the team's formation</sub></td>
+    <td width="50%"><img src="docs/images/reel-assistant.gif" alt="Assistant: asking about the open video and getting an answer that cites its source" /><br /><sub><b>Assistant</b> · ask about the video; the answer cites its source</sub></td>
+  </tr>
+</table>
 
-## Screenshots
-
-<p>
-  <img src="docs/images/app-cooking.png" width="49%" alt="Generated app for a cooking video" />
-  <img src="docs/images/app-coding.png" width="49%" alt="Generated app for a coding tutorial" />
-</p>
-
-*Same pipeline, two videos. The cooking video gets an ingredient checklist and a recipe step flow; the coding tutorial gets copyable code snippets and a quiz. Classification decides which components are generated.*
-
-<p>
-  <img src="docs/images/domain-learning.png" width="19%" alt="Learning video: self-audit quiz" />
-  <img src="docs/images/domain-fitness.png" width="19%" alt="Fitness video: workout room" />
-  <img src="docs/images/domain-travel.png" width="19%" alt="Travel video: spot explorer" />
-  <img src="docs/images/domain-gaming.png" width="19%" alt="Gaming video: key moments" />
-  <img src="docs/images/domain-sport.png" width="19%" alt="Sport video: formation diagram" />
-</p>
-
-*Same pipeline; the planner picks from 29 registered components by domain.*
-
-![RAG chat answering a question about the open video](docs/images/rag-chat.png)
-
-*Chat over the video's indexed content, scoped to the open video or the whole library.*
+*Same pipeline on seven videos, plus the chat assistant; the planner picks from 29 registered components by domain.*
 
 ## What you get
 
-Each video gets its own set of tabs, chosen by the planner from 29 registered components. These are the tabs generated for the two videos above.
+Each video gets its own set of tabs, chosen by the planner from 29 registered components. Two examples:
 
 A cooking video (Chicken Piccata, 5 minutes):
 
@@ -66,14 +61,14 @@ A coding tutorial (a 15-minute tooling walkthrough):
 | 6 Core Concepts | `concept_canvas` | Concepts and how they connect |
 | Test Yourself | `quiz_arena` | Timed quiz on the content |
 
-Across domains, from the videos in the screenshots above:
+Across domains, from the videos in the loops above:
 
 | Domain | The video becomes | Components |
 | --- | --- | --- |
 | Cooking (a rice recipe) | Ingredient checklist and a step player with Cooking Mode | `checklist`, `step_player`, `spot_explorer`, `moment_track` |
-| Tech (a tooling walkthrough) | Copyable commands, a concept map, a setup workflow, a quiz | `code_playground`, `concept_canvas`, `step_player`, `quiz_arena` |
+| Tech (a LangChain and LangGraph explainer, in Hebrew) | A concept map, key moments, a framework decision guide, a quiz, code snippets | `concept_canvas`, `moment_track`, `info_grid`, `quiz_arena`, `code_playground` |
 | Learning (a resume review) | Mistakes and fixes, a skills list, a self-audit quiz | `spot_explorer`, `moment_track`, `quiz_arena` |
-| Fitness (push-up form) | Form checkpoints, common mistakes, an exercise card with sets and reps | `step_player`, `info_grid`, `workout_room`, `moment_track` |
+| Fitness (a 7-minute workout) | A workout room with timers and rest, exercise demos, form tips, a before-and-after checklist | `workout_room`, `moment_track`, `spot_explorer`, `checklist` |
 | Travel (a Lisbon guide) | Spots grouped by day with Explore Mode, a chapter guide, visitor tips | `spot_explorer`, `moment_track`, `video_filmstrip`, `checklist` |
 | Gaming (a trading-card market video) | Key moments with frames | `moment_track`, `video_filmstrip` |
 | Sport (a tactics explainer) | A formation diagram, a tactical breakdown, an early-vs-evolved radar | `formation_diagram`, `moment_track`, `spot_explorer`, `comparison_radar` |
@@ -154,7 +149,7 @@ A retrieval gate in CI runs a golden query set against a real Qdrant and fails b
 
 The main CI workflow runs 11 parallel jobs on GitHub Actions: TypeScript typecheck and lint, design guards, ruff, seven test suites (with pyright on the Python services), and a Docker Compose image build that also validates the production config. Separate workflows on pull requests run a Playwright smoke suite against the Compose stack and the eval gates above.
 
-Deploy is CI-gated: after a green CI run on `main`, a workflow deploys to a single EC2 host. It assumes an AWS role over OIDC, so no long-lived AWS keys are stored, and opens SSH ingress for the runner only for the duration of the deploy. See [docs/DEPLOY.md](./docs/DEPLOY.md).
+Deploy is CI-gated: after a green CI run on `main`, a workflow deploys to a single EC2 host. It assumes an AWS role over OIDC, so no long-lived AWS keys are stored, and opens SSH ingress for the runner only for the duration of the deploy. See [docs/DEPLOY.md](./docs/DEPLOY.md). Live at [vie.ad](https://vie.ad).
 
 ## Run locally
 
