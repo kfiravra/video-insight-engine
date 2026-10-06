@@ -456,6 +456,7 @@ async def _do_extraction(
     temp_video = Path(temp_dir) / f"{video_id}.mp4"
     frames_dir = Path(temp_dir) / "frames"
     frames_dir.mkdir()
+    hires_source = None
 
     try:
         # Step 1: Download lowest quality video via yt-dlp
@@ -506,6 +507,12 @@ async def _do_extraction(
 
         file_size_mb = temp_video.stat().st_size / 1_048_576
         logger.info("Downloaded temp video for %s: %.1fMB", video_id, file_size_mb)
+
+        # Step 1b (proxied runs only): start the 720p download now so it
+        # overlaps scene detection + scoring instead of following them.
+        from src.services.media.hires_prefetch import start_local_hires
+
+        hires_source = await start_local_hires(video_id, temp_video)
 
         # Step 2: FFmpeg scene detection on LOCAL file
         output_pattern = str(frames_dir / "scene_%04d.jpg")
@@ -661,7 +668,9 @@ async def _do_extraction(
         # per-frame fallback to the low-res detection JPEG on failure)
         from src.services.media.hires_refiner import refine_selected_frames
 
-        hires_count = await refine_selected_frames(video_id, selected_frames)
+        hires_count = await refine_selected_frames(
+            video_id, selected_frames, local_source=hires_source
+        )
 
         # Step 7b: Dedup AFTER refinement — CDN seeks by int(timestamp) can
         # collapse distinct low-res picks into near-identical 720p frames.
@@ -718,14 +727,21 @@ async def _do_extraction(
         logger.warning("Scene extraction failed for %s: %s", video_id, e)
         return empty_result
     finally:
-        # Delete temp VIDEO file immediately (large, ~5-15MB)
+        # Cancel/remove the prefetched 720p download on every exit path. The
+        # nested finally keeps the temp-video unlink when close() re-raises a
+        # cancel aimed at this task.
         try:
-            if temp_video.exists():
-                temp_video.unlink()
-        except Exception as cleanup_err:
-            logger.debug("Failed to delete temp video: %s", cleanup_err)
-        # NOTE: Don't delete frames_dir — OCR needs the frame JPEGs.
-        # Cleanup via cleanup_temp_dir() after process_scene_frames().
+            if hires_source is not None:
+                await hires_source.close()
+        finally:
+            # Delete temp VIDEO file immediately (large, ~5-15MB)
+            try:
+                if temp_video.exists():
+                    temp_video.unlink()
+            except Exception as cleanup_err:
+                logger.debug("Failed to delete temp video: %s", cleanup_err)
+            # NOTE: Don't delete frames_dir — OCR needs the frame JPEGs.
+            # Cleanup via cleanup_temp_dir() after process_scene_frames().
 
 
 async def cleanup_temp_dir(temp_dir: str) -> None:

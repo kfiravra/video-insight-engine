@@ -142,9 +142,17 @@ class Settings(BaseSettings):
     # + caption API). Full URL with credentials, e.g. http://user:pass@host:port.
     # Blank = direct. Needed on the EC2 box, whose datacenter IP is bot-checked
     # (2026-09); the exit must be a residential/ISP IP — datacenter proxies are
-    # blocked the same way. NOT proxied: ffmpeg seeks on the looked-up stream
-    # URL leave from the host IP, 403, and the proxied local download takes over.
+    # blocked the same way. ffmpeg seeks on a looked-up stream URL would leave
+    # from the host IP unproxied and 403, so with a proxy set the frame pipeline
+    # never looks one up: hi-res frames come from a proxied local 720p download
+    # started alongside scene detection, and moment fills (>=3 frameless moments)
+    # download it again during assembly — two downloads through the proxy.
     YOUTUBE_PROXY_URL: str | None = None
+    # Sticky exits behind the proxy gateway, addressed by the username suffix
+    # (Webshare: USERNAME-1 … USERNAME-N). A caption 429 is IP-scoped, so the
+    # caption fetch retries on the NEXT exit before giving up on captions.
+    # 1 (or a username without a -N suffix) = no rotation, retry on the same exit.
+    YOUTUBE_PROXY_EXIT_COUNT: int = 1
 
     # Whisper fallback (Phase 4 - for videos without captions)
     # Max duration set to 600 min (10 hours) to support ultra-long content.
@@ -263,14 +271,16 @@ class Settings(BaseSettings):
     SCENE_DETECT_SCALE_WIDTH: int = 1024
     SCENE_JPEG_QUALITY: int = 4  # ffmpeg -q:v (2 = near-lossless, 31 = worst)
 
-    # Hi-res refinement: re-extract the ~25 SELECTED frames at 720p via a
-    # stream-URL seek (no full download) before S3 upload + vision analysis.
+    # Hi-res refinement: re-extract the ~25 SELECTED frames at 720p before S3
+    # upload + vision analysis. Proxyless: stream-URL seeks (no full download).
+    # Proxied: one local 720p download, prefetched during scene detection.
     # Disable to fall back to single-pass low-res frames.
     SCENE_HIRES_ENABLED: bool = True
-    SCENE_HIRES_CONCURRENCY: int = 4  # parallel ffmpeg seeks against the CDN
-    SCENE_HIRES_TIMEOUT: float = 90.0  # total budget; on expiry keep low-res
-    # Budget for the local-download fallback (one yt-dlp 720p download + local
-    # seeks) used when the CDN 403s every direct stream-URL extraction.
+    SCENE_HIRES_CONCURRENCY: int = 4  # parallel ffmpeg seeks (CDN or local file)
+    SCENE_HIRES_TIMEOUT: float = 90.0  # stream-URL budget; on expiry keep low-res
+    # Budget for the local-file seeks (after the one yt-dlp 720p download):
+    # the proxyless fallback when the CDN 403s every direct stream-URL
+    # extraction, and the only path when a proxy is set.
     SCENE_HIRES_FALLBACK_TIMEOUT: float = 180.0
     # yt-dlp player clients for VIDEO/AUDIO downloads (comma-separated).
     # 2026-08-19: YouTube 403s the web client's download URLs from this
@@ -288,6 +298,15 @@ class Settings(BaseSettings):
     # defaults. Metadata/subtitle extraction deliberately does NOT use this
     # (android clients can lack subtitle/chapter data).
     YTDLP_PLAYER_CLIENTS: str = "android"
+    # Player clients for the hi-res 720p download ONLY (hires prefetch, the
+    # refiner's local fallback, moment fill). android tops out at format 18
+    # (640x360), so with it the "720p" file was the same 360p file as pass 1.
+    # Measured 2026-10-06 with real downloads, proxied and direct: web_embedded
+    # and tv_embedded get 720p; ios/tv/web/web_safari/android_vr/web_creator
+    # fail; android/tv_simply/mweb cap at 360p. "web_embedded,android" =
+    # 720p, with android's formats in the list for non-embeddable videos.
+    # If the download still fails, it retries once with YTDLP_PLAYER_CLIENTS.
+    YTDLP_HIRES_PLAYER_CLIENTS: str = "web_embedded,android"
     # Versioned S3 prefix — bumping it defeats the frames-already-exist cache
     # so quality changes take effect for reprocessed videos ("scenes" = pre-hires).
     # v3: subject-aware scoring (skin/center-detail) + adaptive vision tiers.

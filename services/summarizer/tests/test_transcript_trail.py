@@ -129,7 +129,7 @@ class TestTranscriptTrail:
     async def test_should_record_api_attempt_when_caption_api_times_out(self):
         """Caption API timeout -> Whisper wins: only the API layer is an attempt."""
 
-        async def _hang(_youtube_id):
+        async def _hang(_youtube_id, **_kwargs):
             await asyncio.sleep(5)
 
         trail = TranscriptTrail()

@@ -65,6 +65,7 @@ x-summarizer-env: &summarizer-env
   WHISPER_MAX_DURATION_MINUTES: ${WHISPER_MAX_DURATION_MINUTES:-600}
   INTERNAL_SECRET: ${INTERNAL_SECRET:?INTERNAL_SECRET is required (openssl rand -base64 32)}
   YOUTUBE_PROXY_URL: ${YOUTUBE_PROXY_URL:-}
+  YOUTUBE_PROXY_EXIT_COUNT: ${YOUTUBE_PROXY_EXIT_COUNT:-1}
   TRANSCRIPT_CLEANING_ENABLED: ${TRANSCRIPT_CLEANING_ENABLED:-true}
   TRANSCRIPT_CLEANING_TIMEOUT: ${TRANSCRIPT_CLEANING_TIMEOUT:-30.0}
   HF_TOKEN: ${HF_TOKEN:-}
@@ -83,6 +84,8 @@ x-summarizer-env: &summarizer-env
   # yt-dlp player clients for video/audio downloads — the knob to turn when
   # YouTube shifts which clients' download URLs 403 (2026-08: android only)
   YTDLP_PLAYER_CLIENTS: ${YTDLP_PLAYER_CLIENTS:-android}
+  # Hi-res 720p download only — android alone caps at 360p
+  YTDLP_HIRES_PLAYER_CLIENTS: ${YTDLP_HIRES_PLAYER_CLIENTS:-web_embedded,android}
   LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
   LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
   LANGFUSE_BASE_URL: ${LANGFUSE_BASE_URL:-https://cloud.langfuse.com}

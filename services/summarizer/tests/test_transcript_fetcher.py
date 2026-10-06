@@ -424,7 +424,7 @@ class TestDecoupledAudioGates:
     async def test_timeout_branch_falls_to_gemini_when_whisper_disabled(self):
         """A caption-API timeout still reaches Gemini when Whisper is off."""
 
-        async def _hang(_youtube_id):
+        async def _hang(_youtube_id, **_kwargs):
 
             await asyncio.sleep(5)
 
@@ -455,3 +455,69 @@ class TestDecoupledAudioGates:
         whisper.assert_not_awaited()
         gemini.assert_awaited_once()
         assert any(isinstance(i, TranscriptData) and i.source == "gemini" for i in items)
+
+
+class TestTimedtext429Rotation:
+    """A metadata-phase timedtext 429 retries captions on the next proxy exit
+    when one exists; the marker is written only once that also fails."""
+
+    EXITS = ["http://u-1:p@h:80", "http://u-2:p@h:80"]
+
+    @staticmethod
+    def _whisper() -> AsyncMock:
+        return AsyncMock(
+            return_value=(
+                TranscriptData(
+                    segments=[], raw_text="hi", transcript_type="whisper", source="whisper"
+                ),
+                None,
+            )
+        )
+
+    async def _run(self, exits: list[str], get_transcript: AsyncMock) -> list:
+        video_data = _video_data_without_captions()
+        video_data.captions_rate_limited = True
+        with (
+            patch.object(transcript_fetcher, "ytdlp_proxy_exit_urls", return_value=exits),
+            patch.object(transcript_fetcher.S3Client, "is_available", return_value=False),
+            patch.object(transcript_fetcher.settings, "WHISPER_ENABLED", True),
+            patch.object(transcript_fetcher.settings, "WHISPER_MAX_DURATION_MINUTES", 600),
+            patch.object(transcript_fetcher, "get_transcript", new=get_transcript),
+            patch.object(transcript_fetcher, "_try_whisper_transcription", new=self._whisper()),
+        ):
+            return await _drain(fetch_transcript("vid123", video_data, duration=300))
+
+    async def test_should_retry_captions_on_the_next_exit_without_marking(
+        self, _stub_caption_negative_cache
+    ):
+        get_transcript = AsyncMock(return_value=([{"text": "hi"}], "hi", "manual", "en"))
+
+        items = await self._run(self.EXITS, get_transcript)
+
+        get_transcript.assert_awaited_once_with("vid123", skip_primary_exit=True)
+        _stub_caption_negative_cache.mark.assert_not_awaited()
+        assert items[-1].transcript_type == "manual"
+
+    async def test_should_mark_and_fall_to_audio_when_the_rotated_exit_also_429s(
+        self, _stub_caption_negative_cache
+    ):
+        get_transcript = AsyncMock(side_effect=TranscriptError("429", ErrorCode.RATE_LIMITED))
+
+        items = await self._run(self.EXITS, get_transcript)
+
+        get_transcript.assert_awaited_once_with("vid123", skip_primary_exit=True)
+        _stub_caption_negative_cache.mark.assert_awaited_once()
+        assert items[-1].source == "whisper"
+
+    async def test_should_mark_and_skip_captions_without_spare_exits(
+        self, _stub_caption_negative_cache
+    ):
+        """Single exit (or direct): the 429 marks the cache and captions are skipped."""
+        _stub_caption_negative_cache.is_marked = AsyncMock(return_value=True)
+        get_transcript = AsyncMock()
+
+        items = await self._run(self.EXITS[:1], get_transcript)
+
+        _stub_caption_negative_cache.mark.assert_awaited_once()
+        get_transcript.assert_not_awaited()
+        assert items[-1].source == "whisper"

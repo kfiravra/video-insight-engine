@@ -6,6 +6,7 @@ import tenacity
 from youtube_transcript_api import Transcript, TranscriptList, YouTubeTranscriptApi
 from youtube_transcript_api._errors import (
     NoTranscriptFound,
+    RequestBlocked,
     TranscriptsDisabled,
     VideoUnavailable,
 )
@@ -17,7 +18,7 @@ from src.models.schemas import (
     TranscriptSegment,
     TranscriptSource,
 )
-from src.services.media.download_utils import ytdlp_proxy_url
+from src.services.media.download_utils import ytdlp_proxy_exit_urls, ytdlp_proxy_url
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +29,16 @@ logger = logging.getLogger(__name__)
 
 
 def _is_rate_limit_error(exception: BaseException) -> bool:
-    """Check if exception is a rate limit (429) error."""
+    """Check if exception is a rate limit (429) error.
+
+    ``RequestBlocked`` covers the library's IP-scoped blocks: its ``IpBlocked``
+    subclass (429 / reCAPTCHA) and the "confirm you're not a bot" check. Once
+    a proxy config is attached their message is a generic proxy hint with no
+    "429" or "too many" in it, so the type check is what catches them in
+    proxied runs.
+    """
+    if isinstance(exception, RequestBlocked):
+        return True
     error_str = str(exception).lower()
     return any(x in error_str for x in ["429", "too many", "rate limit"])
 
@@ -64,10 +74,9 @@ def _select_track(transcript_list: TranscriptList) -> tuple[Transcript | None, s
     return None, "auto-generated"
 
 
-def _proxy_config() -> GenericProxyConfig | None:
-    """Caption-fetch proxy: YOUTUBE_PROXY_URL, the one exit for every YouTube call;
-    blank = direct."""
-    proxy_url = ytdlp_proxy_url()
+def _proxy_config(proxy_url: str | None) -> GenericProxyConfig | None:
+    """Caption-fetch proxy for one exit URL (YOUTUBE_PROXY_URL or a rotated
+    sibling); None = direct."""
     if proxy_url:
         return GenericProxyConfig(http_url=proxy_url, https_url=proxy_url)
     return None
@@ -81,6 +90,34 @@ def _proxy_config() -> GenericProxyConfig | None:
     reraise=True,
 )
 def _fetch_transcript_sync(video_id: str) -> tuple[list[dict], str, str, str | None]:
+    """Single-exit fetch: same-IP backoff retry on a 429 (direct or one proxy)."""
+    return _fetch_once(video_id, ytdlp_proxy_url())
+
+
+def _fetch_rotating_sync(
+    video_id: str, exit_urls: list[str]
+) -> tuple[list[dict], str, str, str | None]:
+    """Multi-exit fetch: a 429 is IP-scoped, so move to the next exit instead of
+    waiting on the same one. Any other error ends the attempt immediately."""
+    last_error: TranscriptError | None = None
+    for attempt, proxy_url in enumerate(exit_urls, 1):
+        try:
+            return _fetch_once(video_id, proxy_url)
+        except TranscriptError as e:
+            if e.code is not ErrorCode.RATE_LIMITED:
+                raise
+            last_error = e
+            logger.warning(
+                "Transcript fetch rate limited on proxy exit %d/%d for %s",
+                attempt,
+                len(exit_urls),
+                video_id,
+            )
+    assert last_error is not None  # exit_urls is never empty here
+    raise last_error
+
+
+def _fetch_once(video_id: str, proxy_url: str | None) -> tuple[list[dict], str, str, str | None]:
     """
     Fetch transcript from YouTube (synchronous internal function).
 
@@ -93,7 +130,7 @@ def _fetch_transcript_sync(video_id: str) -> tuple[list[dict], str, str, str | N
     Returns:
         (segments, full_text, transcript_type, language_code)
     """
-    ytt_api = YouTubeTranscriptApi(proxy_config=_proxy_config())
+    ytt_api = YouTubeTranscriptApi(proxy_config=_proxy_config(proxy_url))
 
     try:
         # New API: use instance method .list() instead of class method .list_transcripts()
@@ -259,15 +296,21 @@ def normalize_segments(
     return normalized
 
 
-async def get_transcript(video_id: str) -> tuple[list[dict], str, str, str | None]:
+async def get_transcript(
+    video_id: str, *, skip_primary_exit: bool = False
+) -> tuple[list[dict], str, str, str | None]:
     """
     Fetch transcript from YouTube (async wrapper).
 
     Runs the blocking YouTube API call in a thread pool to avoid
-    blocking the event loop.
+    blocking the event loop. With several proxy exits configured
+    (YOUTUBE_PROXY_EXIT_COUNT) a 429 rotates to the next exit instead of
+    backing off on the same IP; ``skip_primary_exit`` drops the configured
+    exit when the caller already saw it 429 (metadata-phase timedtext fetch).
 
     Args:
         video_id: YouTube video ID
+        skip_primary_exit: Start from the second exit.
 
     Returns:
         (segments, full_text, transcript_type, language_code)
@@ -275,4 +318,9 @@ async def get_transcript(video_id: str) -> tuple[list[dict], str, str, str | Non
     Raises:
         TranscriptError: If transcript cannot be fetched
     """
+    exit_urls = ytdlp_proxy_exit_urls()
+    if len(exit_urls) > 1:
+        if skip_primary_exit:
+            exit_urls = exit_urls[1:]
+        return await asyncio.to_thread(_fetch_rotating_sync, video_id, exit_urls)
     return await asyncio.to_thread(_fetch_transcript_sync, video_id)

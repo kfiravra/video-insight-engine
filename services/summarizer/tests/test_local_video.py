@@ -78,6 +78,25 @@ async def test_success_returns_path_and_temp_dir(monkeypatch, tmp_path):
     local_video.cleanup_local_video(temp_dir)
 
 
+def _client_arg(call) -> str:
+    argv = call.args
+    return argv[argv.index("--extractor-args") + 1]
+
+
+def _spawn_writing_output(outcomes: list[int]):
+    """create_subprocess_exec stand-in: one proc per call, rc from ``outcomes``;
+    a zero rc writes the "-o" file like yt-dlp would."""
+    calls = iter(outcomes)
+
+    async def _spawn(*args, **_kwargs):
+        rc = next(calls)
+        if rc == 0:
+            Path(args[args.index("-o") + 1]).write_bytes(b"mp4")
+        return _fake_proc(returncode=rc)
+
+    return _spawn
+
+
 async def test_player_client_args_are_injected():
     proc = _fake_proc(returncode=1)
     with (
@@ -87,10 +106,78 @@ async def test_player_client_args_are_injected():
         patch("src.services.media.download_utils.settings") as settings,
     ):
         settings.YTDLP_PLAYER_CLIENTS = "android"
+        settings.YTDLP_HIRES_PLAYER_CLIENTS = "android"
         await local_video.download_video_720p(VIDEO_ID)
-    argv = spawn.await_args.args
-    assert "--extractor-args" in argv
-    assert argv[argv.index("--extractor-args") + 1] == "youtube:player_client=android"
+    assert _client_arg(spawn.await_args) == "youtube:player_client=android"
+
+
+class TestHiresClients:
+    """The 720p download uses the hi-res clients (android alone caps at 360p),
+    falling back once to the pass-1 clients."""
+
+    @pytest.fixture
+    def clients(self):
+        with patch("src.services.media.download_utils.settings") as settings:
+            settings.YOUTUBE_PROXY_URL = None
+            settings.YTDLP_PLAYER_CLIENTS = "android"
+            settings.YTDLP_HIRES_PLAYER_CLIENTS = "web_embedded,android"
+            yield settings
+
+    async def test_should_download_with_hires_clients_first(self, clients, tmp_path, monkeypatch):
+        _capture_temp_dirs(monkeypatch, tmp_path)
+        spawn = AsyncMock(side_effect=_spawn_writing_output([0]))
+        with patch.object(local_video.asyncio, "create_subprocess_exec", spawn):
+            result = await local_video.download_video_720p(VIDEO_ID)
+        assert result is not None
+        assert [_client_arg(c) for c in spawn.await_args_list] == [
+            "youtube:player_client=web_embedded,android"
+        ]
+
+    async def test_should_retry_with_pass1_clients_when_hires_fails(
+        self, clients, tmp_path, monkeypatch
+    ):
+        _capture_temp_dirs(monkeypatch, tmp_path)
+        spawn = AsyncMock(side_effect=_spawn_writing_output([1, 0]))
+        with patch.object(local_video.asyncio, "create_subprocess_exec", spawn):
+            result = await local_video.download_video_720p(VIDEO_ID)
+        assert result is not None
+        assert [_client_arg(c) for c in spawn.await_args_list] == [
+            "youtube:player_client=web_embedded,android",
+            "youtube:player_client=android",
+        ]
+
+    async def test_should_make_one_attempt_when_both_lists_match(
+        self, clients, tmp_path, monkeypatch
+    ):
+        clients.YTDLP_HIRES_PLAYER_CLIENTS = "android"
+        _capture_temp_dirs(monkeypatch, tmp_path)
+        spawn = AsyncMock(side_effect=_spawn_writing_output([1]))
+        with patch.object(local_video.asyncio, "create_subprocess_exec", spawn):
+            assert await local_video.download_video_720p(VIDEO_ID) is None
+        assert spawn.await_count == 1
+
+    async def test_should_clear_a_partial_file_before_the_retry(
+        self, clients, tmp_path, monkeypatch
+    ):
+        created = _capture_temp_dirs(monkeypatch, tmp_path)
+        seen_on_retry: list[list[str]] = []
+        calls = iter([1, 0])
+
+        async def _spawn(*args, **_kwargs):
+            out = Path(args[args.index("-o") + 1])
+            rc = next(calls)
+            if rc == 1:
+                out.with_suffix(".mp4.part").write_bytes(b"half")
+            else:
+                seen_on_retry.append(sorted(p.name for p in out.parent.iterdir()))
+                out.write_bytes(b"mp4")
+            return _fake_proc(returncode=rc)
+
+        with patch.object(local_video.asyncio, "create_subprocess_exec", side_effect=_spawn):
+            result = await local_video.download_video_720p(VIDEO_ID)
+        assert result is not None
+        assert seen_on_retry == [[]]
+        local_video.cleanup_local_video(created[0])
 
 
 async def test_proxy_travels_in_env_never_on_the_command_line():

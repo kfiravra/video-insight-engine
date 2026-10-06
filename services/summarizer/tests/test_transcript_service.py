@@ -507,3 +507,152 @@ class TestTranscriptSegmentationEdgeCases:
         third_idx = result.find("Third")
 
         assert first_idx < second_idx < third_idx
+
+
+class TestBlockedDetection:
+    """The library's IP-scoped blocks — the 429 (IpBlocked) and its parent, the
+    bot check (RequestBlocked) — must read as a rate limit even once a proxy
+    config has replaced their message with a generic proxy hint."""
+
+    def test_should_detect_ip_blocked_with_proxy_message(self):
+        from youtube_transcript_api._errors import IpBlocked
+        from youtube_transcript_api.proxies import GenericProxyConfig
+
+        error = IpBlocked("vid").with_proxy_config(
+            GenericProxyConfig(http_url="http://u-1:p@h:80", https_url="http://u-1:p@h:80")
+        )
+        assert "429" not in str(error)  # the reason the text match alone was not enough
+
+        assert _is_rate_limit_error(error) is True
+
+    def test_should_detect_request_blocked_with_proxy_message(self):
+        """The bot check matches the text ("too many requests") only when direct."""
+        from youtube_transcript_api._errors import RequestBlocked
+        from youtube_transcript_api.proxies import GenericProxyConfig
+
+        error = RequestBlocked("vid").with_proxy_config(
+            GenericProxyConfig(http_url="http://u-1:p@h:80", https_url="http://u-1:p@h:80")
+        )
+        assert "too many" not in str(error).lower()  # proxied: the text match misses it
+
+        assert _is_rate_limit_error(error) is True
+
+    @patch("src.services.transcription.transcript.YouTubeTranscriptApi")
+    def test_should_map_ip_blocked_to_rate_limited(self, mock_api_class):
+        from youtube_transcript_api._errors import IpBlocked
+
+        mock_api = MagicMock()
+        mock_api_class.return_value = mock_api
+        mock_api.list.side_effect = IpBlocked("vid")
+
+        with (
+            patch.object(_fetch_transcript_sync.retry, "sleep"),
+            pytest.raises(TranscriptError) as exc_info,
+        ):
+            _fetch_transcript_sync("test_video_id")
+
+        assert exc_info.value.code == ErrorCode.RATE_LIMITED
+
+
+class TestExitRotation:
+    """With several proxy exits a 429 moves to the next exit instead of backing off."""
+
+    EXITS = [
+        "http://u-1:p@h:80",
+        "http://u-2:p@h:80",
+        "http://u-3:p@h:80",
+    ]
+
+    @pytest.fixture
+    def exits(self):
+        with patch(
+            "src.services.transcription.transcript.ytdlp_proxy_exit_urls",
+            return_value=list(self.EXITS),
+        ):
+            yield
+
+    @staticmethod
+    def _proxied_urls(mock_api_class) -> list[str | None]:
+        urls = []
+        for call in mock_api_class.call_args_list:
+            config = call.kwargs["proxy_config"]
+            urls.append(config.to_requests_dict()["https"] if config else None)
+        return urls
+
+    @staticmethod
+    def _api_that_429s_on(blocked_urls: set[str], mock_api_class) -> None:
+        def build(proxy_config=None):
+            api = MagicMock()
+            url = proxy_config.to_requests_dict()["https"] if proxy_config else None
+            if url in blocked_urls:
+                api.list.side_effect = Exception("429 Too Many Requests")
+            else:
+                track = MagicMock(language_code="en")
+                track.fetch.return_value = [{"text": "hi", "start": 0.0, "duration": 1.0}]
+                transcript_list = MagicMock()
+                transcript_list.find_manually_created_transcript.return_value = track
+                api.list.return_value = transcript_list
+            return api
+
+        mock_api_class.side_effect = build
+
+    @pytest.mark.usefixtures("exits")
+    @patch("src.services.transcription.transcript.YouTubeTranscriptApi")
+    async def test_should_succeed_on_the_next_exit_after_a_429(self, mock_api_class):
+        self._api_that_429s_on({self.EXITS[0]}, mock_api_class)
+
+        segments, _, _, _ = await get_transcript("vid")
+
+        assert segments[0]["text"] == "hi"
+        assert self._proxied_urls(mock_api_class) == self.EXITS[:2]
+
+    @pytest.mark.usefixtures("exits")
+    @patch("src.services.transcription.transcript.YouTubeTranscriptApi")
+    async def test_should_raise_rate_limited_when_every_exit_429s(self, mock_api_class):
+        self._api_that_429s_on(set(self.EXITS), mock_api_class)
+
+        with pytest.raises(TranscriptError) as exc_info:
+            await get_transcript("vid")
+
+        assert exc_info.value.code == ErrorCode.RATE_LIMITED
+        assert self._proxied_urls(mock_api_class) == self.EXITS
+
+    @pytest.mark.usefixtures("exits")
+    @patch("src.services.transcription.transcript.YouTubeTranscriptApi")
+    async def test_should_stop_rotating_on_a_non_rate_limit_error(self, mock_api_class):
+        from youtube_transcript_api._errors import VideoUnavailable
+
+        api = MagicMock()
+        api.list.side_effect = VideoUnavailable("vid")
+        mock_api_class.return_value = api
+
+        with pytest.raises(TranscriptError) as exc_info:
+            await get_transcript("vid")
+
+        assert exc_info.value.code == ErrorCode.VIDEO_UNAVAILABLE
+        assert mock_api_class.call_count == 1
+
+    @pytest.mark.usefixtures("exits")
+    @patch("src.services.transcription.transcript.YouTubeTranscriptApi")
+    async def test_should_skip_the_primary_exit_when_asked(self, mock_api_class):
+        self._api_that_429s_on(set(), mock_api_class)
+
+        await get_transcript("vid", skip_primary_exit=True)
+
+        assert self._proxied_urls(mock_api_class) == [self.EXITS[1]]
+
+    @patch("src.services.transcription.transcript.ytdlp_proxy_exit_urls", return_value=[])
+    @patch("src.services.transcription.transcript.YouTubeTranscriptApi")
+    async def test_should_use_same_exit_backoff_without_rotation(self, mock_api_class, _exits):
+        """Single exit (or direct): the tenacity path with its 3 attempts stays."""
+        mock_api = MagicMock()
+        mock_api_class.return_value = mock_api
+        mock_api.list.side_effect = Exception("429 Too Many Requests")
+
+        with (
+            patch.object(_fetch_transcript_sync.retry, "sleep"),
+            pytest.raises(TranscriptError),
+        ):
+            await get_transcript("vid")
+
+        assert mock_api.list.call_count == 3
