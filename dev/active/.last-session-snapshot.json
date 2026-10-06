@@ -1,12 +1,20 @@
 {
   "session_id": "339762f6-7faa-4e83-9707-1b69c7173e96",
-  "saved_at": "2026-10-06T09:59:13Z",
-  "affected_repos": [],
-  "files_edited": [
-    "/home/kfir/.claude/projects/-home-kfir-projects-video-insight-engine/memory/reference_readme_reel_capture_kit.md",
-    "README.md"
+  "saved_at": "2026-10-06T12:09:25Z",
+  "affected_repos": [
+    "apps/web",
+    "services"
   ],
-  "file_count": 2,
-  "edit_count": 4,
-  "resume_hint": "Session edited 2 unique files across ."
+  "files_edited": [
+    "/home/kfir/.claude/plans/we-need-some-fixes-sequential-clover.md",
+    "/home/kfir/.claude/projects/-home-kfir-projects-video-insight-engine/memory/reference_readme_reel_capture_kit.md",
+    "README.md",
+    "apps/web/src/features/video-output/lib/__tests__/step-duration.test.ts",
+    "apps/web/src/features/video-output/lib/step-duration.ts",
+    "services/summarizer/src/services/pipeline/assembly/assemblers_primary.py",
+    "services/summarizer/tests/test_assemblers_primary.py"
+  ],
+  "file_count": 7,
+  "edit_count": 10,
+  "resume_hint": "Session edited 7 unique files across apps/web, services."
 }
