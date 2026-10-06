@@ -10,11 +10,11 @@ A video is a poor format for using what it teaches: you cannot search it, check 
 **Live demo:** https://vie.ad — one click, no sign-up.
 -->
 
-![Paste a URL, tabs stream in, ask the chat a question, jump to a moment](docs/images/demo.gif)
+![Paste a URL, tabs stream in, cook from the recipe, take the quiz, let the assistant file the library](docs/images/demo.gif)
 
-*A real run on a 5-minute video. The processing wait (about 3 minutes) is sped up 55×.*
+*Recorded from the running app: a real generation, Cooking Mode, the coding app's quiz, and the assistant filing the library. The processing wait is a labelled time-lapse.*
 
-[Full walkthrough video (64 s, processing sped up 6×)](docs/images/walkthrough.mp4)
+[Full walkthrough video (92 s): generate, cooking and coding apps, moments, chat, library, search](docs/images/walkthrough.mp4)
 
 ## Screenshots
 
