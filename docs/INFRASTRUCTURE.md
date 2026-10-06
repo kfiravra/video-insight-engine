@@ -311,11 +311,14 @@ New/changed vars introduced by the yt-dlp-403 fix and the two-pass frame pipelin
 
 | Var | Default | Purpose |
 |-----|---------|---------|
-| `YTDLP_PLAYER_CLIENTS` | `android` | yt-dlp player clients for all video/audio downloads. YouTube 403s the web client's URLs from some environments. **Never mix in `default`** — a merged format list lets bestvideo pick a 403ing web DASH format. Metadata/subtitle extraction deliberately doesn't use it. |
+| `YTDLP_PLAYER_CLIENTS` | `android` | yt-dlp player clients for pass-1 video and all audio downloads (the 720p download uses `YTDLP_HIRES_PLAYER_CLIENTS`). YouTube 403s the web client's URLs from some environments. **Never mix in `default`** — a merged format list lets bestvideo pick a 403ing web DASH format. Metadata/subtitle extraction deliberately doesn't use it. |
 | `SCENE_HIRES_ENABLED` | `true` | Pass-2 720p refinement of selected frames |
+| `YTDLP_HIRES_PLAYER_CLIENTS` | `web_embedded,android` | Player clients for the local 720p download only (hi-res prefetch, refiner fallback, moment fill). `android` alone caps at 640×360; measured 2026-10-06 with real downloads, `web_embedded`/`tv_embedded` get 720p. A failed download retries once with `YTDLP_PLAYER_CLIENTS` |
 | `SCENE_S3_PREFIX` | `scenes-v3` | Versioned frame-cache prefix — bump to invalidate the S3 frame cache |
-| `SCENE_HIRES_TIMEOUT` | `90` | Stream-URL refinement budget (s) |
-| `SCENE_HIRES_FALLBACK_TIMEOUT` | `180` | Local ≤720p download fallback budget (s) |
+| `SCENE_HIRES_TIMEOUT` | `90` | Stream-URL refinement budget (s), proxyless runs only |
+| `SCENE_HIRES_FALLBACK_TIMEOUT` | `180` | Local-file seek budget (s) after the one ≤720p download — the proxyless fallback, the only path with a proxy |
+| `YOUTUBE_PROXY_URL` | — | Proxy for every YouTube request (`http://user:pass@host:port`). When set, the frame pipeline never seeks stream URLs; hi-res frames and moment fills come from a proxied local 720p download |
+| `YOUTUBE_PROXY_EXIT_COUNT` | `1` | Sticky exits behind the proxy gateway (Webshare `USERNAME-1…N`). >1 lets a caption 429 retry on the next exit before the 15-min caption marker is written |
 | `FRAME_TIER_ENABLED` | `true` | Adaptive visual tiers (high/standard/low from `domains.json` `visualCriticality`) |
 | `TRANSCRIPT_CLEANING_TIMEOUT` | `30` | Transcript-cleaning LLM call timeout (was hardcoded) |
 | `HF_TOKEN` | empty | Optional Hugging Face Hub token for SentenceTransformer pulls |

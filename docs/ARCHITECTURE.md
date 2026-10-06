@@ -173,7 +173,7 @@ Content type is determined by a **plan phase** that runs a classifier (fast mode
 │  2. TRANSCRIPT + FRAMES (parallel, ~10-30s)                                │
 │     ├── Transcript: S3 cache → yt-dlp → API → Gemini → Whisper           │
 │     └── Frames: two-pass — worst-quality detect/score → select ~25 →      │
-│         720p hi-res refine (local-download fallback) → S3 (scenes-v3      │
+│         720p hi-res refine (seek; local 720p when proxied) → S3 (scenes-v3│
 │         manifest-v2 cache); adaptive visual tier (high/standard/low)      │
 │                                                                             │
 │  2.5 VISUAL CONTEXT INJECTION (~0-1s)                                      │

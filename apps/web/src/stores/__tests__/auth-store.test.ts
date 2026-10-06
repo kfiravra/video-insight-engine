@@ -79,6 +79,39 @@ describe("authStore", () => {
     });
   });
 
+  describe("loginDemo", () => {
+    it("should authenticate as the demo user", async () => {
+      await useAuthStore.getState().loginDemo();
+
+      const state = useAuthStore.getState();
+      expect(state).toMatchObject({
+        user: { email: "demo@example.com" },
+        accessToken: mockAccessToken,
+        isAuthenticated: true,
+      });
+    });
+
+    it("should store the demo token for API requests", async () => {
+      await useAuthStore.getState().loginDemo();
+
+      expect(getAccessToken()).toBe(mockAccessToken);
+    });
+
+    it("should stay logged out when the demo login is rejected", async () => {
+      server.use(
+        http.post(`${API_URL}/auth/login`, () =>
+          HttpResponse.json(
+            { error: "DEMO_DISABLED", message: "The demo is not available", statusCode: 403 },
+            { status: 403 }
+          )
+        )
+      );
+
+      await expect(useAuthStore.getState().loginDemo()).rejects.toThrow();
+      expect(useAuthStore.getState().isAuthenticated).toBe(false);
+    });
+  });
+
   describe("register", () => {
     it("should set user and token on successful registration", async () => {
       const { register } = useAuthStore.getState();

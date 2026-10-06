@@ -11,6 +11,7 @@ import pytest
 from youtube_transcript_api.proxies import GenericProxyConfig
 
 from src.config import settings
+from src.services.media.download_utils import ytdlp_proxy_url
 from src.services.transcription import transcript, transcript_fetcher
 
 URL = "http://user:pass@proxy.example:8080"
@@ -28,7 +29,7 @@ class TestProxyConfig:
     def test_should_use_youtube_proxy_url_when_set(self, env):
         env(URL)
 
-        config = transcript._proxy_config()
+        config = transcript._proxy_config(ytdlp_proxy_url())
 
         assert type(config) is GenericProxyConfig
         assert config.to_requests_dict() == {"http": URL, "https": URL}
@@ -36,12 +37,12 @@ class TestProxyConfig:
     def test_should_be_direct_when_url_is_whitespace(self, env):
         env("  ")
 
-        assert transcript._proxy_config() is None
+        assert transcript._proxy_config(ytdlp_proxy_url()) is None
 
     def test_should_be_direct_when_nothing_configured(self, env):
         env(None)
 
-        assert transcript._proxy_config() is None
+        assert transcript._proxy_config(ytdlp_proxy_url()) is None
 
 
 class TestApiLabel:

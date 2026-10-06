@@ -14,6 +14,7 @@ interface AuthState {
   anonymousOutputCount: number;
   // Actions
   login: (email: string, password: string) => Promise<void>;
+  loginDemo: () => Promise<void>;
   register: (email: string, password: string, name: string) => Promise<void>;
   logout: () => void;
   forceLogout: (reason?: string) => void;
@@ -36,6 +37,12 @@ export const useAuthStore = create<AuthState>()(
       anonymousOutputCount: 0,
       login: async (email, password) => {
         const { user, accessToken } = await authApi.login(email, password);
+        setAccessToken(accessToken);
+        set({ user, accessToken, isAuthenticated: true, anonymousOutputCount: 0 });
+      },
+
+      loginDemo: async () => {
+        const { user, accessToken } = await authApi.loginDemo();
         setAccessToken(accessToken);
         set({ user, accessToken, isAuthenticated: true, anonymousOutputCount: 0 });
       },

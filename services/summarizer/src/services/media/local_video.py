@@ -1,4 +1,4 @@
-"""One-shot local 720p download for frame-extraction fallback.
+"""One-shot local 720p download for hi-res frames (fallback proxyless, primary proxied).
 
 YouTube increasingly binds googlevideo stream URLs to the requesting client
 (PO tokens / headers), so a URL resolved by ``yt-dlp --get-url`` can 403 when
@@ -43,6 +43,8 @@ async def download_video_720p(
 ) -> tuple[Path, str] | None:
     """Download a ≤720p rendition; returns (video_path, temp_dir) or None.
 
+    Tries YTDLP_HIRES_PLAYER_CLIENTS first (android alone caps at 360p), then
+    once more with YTDLP_PLAYER_CLIENTS if that fails, both within ``timeout``.
     The CALLER owns cleanup of temp_dir (``cleanup_local_video``). Best-effort:
     every failure logs and returns None. Cancellation (an outer budget expiring
     mid-download) kills the subprocess and removes the partial file before
@@ -52,22 +54,46 @@ async def download_video_720p(
         logger.warning("Invalid youtube_id for local 720p download: %s", youtube_id)
         return None
 
+    from src.services.media.download_utils import ytdlp_hires_client_attempts
+
     temp_dir = tempfile.mkdtemp(prefix=f"vie-hires-{youtube_id}-")
     video_path = Path(temp_dir) / f"{youtube_id}.mp4"
+    deadline = asyncio.get_running_loop().time() + timeout
+    try:
+        for clients in ytdlp_hires_client_attempts():
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                break
+            if await _run_ytdlp(youtube_id, video_path, clients, remaining):
+                size_mb = video_path.stat().st_size / 1_048_576
+                logger.info(
+                    "Local 720p download for %s: %.1fMB (clients=%s)", youtube_id, size_mb, clients
+                )
+                return video_path, temp_dir
+    except asyncio.CancelledError:
+        cleanup_local_video(temp_dir)
+        raise
+    cleanup_local_video(temp_dir)
+    return None
+
+
+async def _run_ytdlp(youtube_id: str, video_path: Path, clients: str, timeout: float) -> bool:
+    """One yt-dlp attempt with the given player clients; True when the file landed."""
+    from src.services.media.download_utils import ytdlp_client_cli_args, ytdlp_subprocess_env
+
+    # A failed earlier attempt can leave a .part file (another client's
+    # format) that yt-dlp would resume or treat as already downloaded.
+    for leftover in video_path.parent.iterdir():
+        leftover.unlink(missing_ok=True)
     proc: asyncio.subprocess.Process | None = None
     try:
-        from src.services.media.download_utils import (
-            ytdlp_client_cli_args,
-            ytdlp_subprocess_env,
-        )
-
         proc = await asyncio.create_subprocess_exec(
             "yt-dlp",
             "-f",
             _FORMAT_SPEC,
             "--no-playlist",
             "--no-warnings",
-            *ytdlp_client_cli_args(),
+            *ytdlp_client_cli_args(clients),
             "-o",
             str(video_path),
             f"https://www.youtube.com/watch?v={youtube_id}",
@@ -79,28 +105,25 @@ async def download_video_720p(
     except asyncio.TimeoutError:
         logger.warning("Local 720p download timed out for %s (%.0fs)", youtube_id, timeout)
         await _kill_quietly(proc)
-        cleanup_local_video(temp_dir)
-        return None
+        return False
     except FileNotFoundError:
         logger.warning("yt-dlp not found — local 720p fallback unavailable")
-        cleanup_local_video(temp_dir)
-        return None
+        return False
     except asyncio.CancelledError:
         await _kill_quietly(proc)
-        cleanup_local_video(temp_dir)
         raise
 
     if proc.returncode != 0 or not video_path.exists():
         tail = stderr.decode("utf-8", errors="replace")[:300] if stderr else ""
         logger.warning(
-            "Local 720p download failed for %s (rc=%s): %s", youtube_id, proc.returncode, tail
+            "Local 720p download failed for %s (clients=%s, rc=%s): %s",
+            youtube_id,
+            clients,
+            proc.returncode,
+            tail,
         )
-        cleanup_local_video(temp_dir)
-        return None
-
-    size_mb = video_path.stat().st_size / 1_048_576
-    logger.info("Local 720p download for %s: %.1fMB", youtube_id, size_mb)
-    return video_path, temp_dir
+        return False
+    return True
 
 
 def cleanup_local_video(temp_dir: str) -> None:

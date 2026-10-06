@@ -188,3 +188,115 @@ class TestDownloadYoutubeAudioClientOpts:
         proxy(TestProxy.URL)
         received = self._run({"proxy": "http://caller.example:1"}, tmp_path)
         assert received["proxy"] == "http://caller.example:1"
+
+
+class TestProxyExitUrls:
+    """Sticky-exit rotation list for IP-scoped failures (caption 429)."""
+
+    @pytest.fixture
+    def exits(self, monkeypatch):
+        def _set(count: int) -> None:
+            monkeypatch.setattr(download_utils.settings, "YOUTUBE_PROXY_EXIT_COUNT", count)
+
+        return _set
+
+    def test_should_be_empty_without_a_proxy(self, proxy, exits):
+        proxy(None)
+        exits(5)
+
+        assert download_utils.ytdlp_proxy_exit_urls() == []
+
+    def test_should_be_primary_only_when_count_is_one(self, proxy, exits):
+        proxy("http://user-2:pass@p.webshare.io:80")
+        exits(1)
+
+        assert download_utils.ytdlp_proxy_exit_urls() == ["http://user-2:pass@p.webshare.io:80"]
+
+    def test_should_be_primary_only_without_a_sticky_suffix(self, proxy, exits):
+        proxy("http://user:pass@p.webshare.io:80")
+        exits(5)
+
+        assert download_utils.ytdlp_proxy_exit_urls() == ["http://user:pass@p.webshare.io:80"]
+
+    def test_should_be_primary_only_without_credentials(self, proxy, exits):
+        proxy("http://p.webshare.io:80")
+        exits(5)
+
+        assert download_utils.ytdlp_proxy_exit_urls() == ["http://p.webshare.io:80"]
+
+    def test_should_rotate_to_following_exits_and_wrap(self, proxy, exits):
+        proxy("http://user-4:pass@p.webshare.io:80")
+        exits(5)
+
+        assert download_utils.ytdlp_proxy_exit_urls() == [
+            "http://user-4:pass@p.webshare.io:80",
+            "http://user-5:pass@p.webshare.io:80",
+            "http://user-1:pass@p.webshare.io:80",
+        ]
+
+    def test_should_cap_the_number_of_exits(self, proxy, exits):
+        proxy("http://user-1:pass@p.webshare.io:80")
+        exits(50)
+
+        assert len(download_utils.ytdlp_proxy_exit_urls()) == download_utils._MAX_ROTATED_EXITS
+
+    def test_should_not_exceed_the_pool_when_it_is_small(self, proxy, exits):
+        proxy("http://user-1:pass@p.webshare.io:80")
+        exits(2)
+
+        assert download_utils.ytdlp_proxy_exit_urls() == [
+            "http://user-1:pass@p.webshare.io:80",
+            "http://user-2:pass@p.webshare.io:80",
+        ]
+
+    def test_should_keep_the_password_verbatim(self, proxy, exits):
+        """Only the username is rewritten — special characters in the password survive."""
+        proxy("http://user-1:p%40ss:w@rd@p.webshare.io:80")
+        exits(2)
+
+        assert (
+            download_utils.ytdlp_proxy_exit_urls()[1]
+            == "http://user-2:p%40ss:w@rd@p.webshare.io:80"
+        )
+
+    def test_should_default_to_a_single_exit(self):
+        from src.config import Settings
+
+        assert Settings.model_fields["YOUTUBE_PROXY_EXIT_COUNT"].default == 1
+
+
+class TestHiresClientAttempts:
+    """Client lists for the hi-res 720p download (pass 1 and audio keep YTDLP_PLAYER_CLIENTS)."""
+
+    @pytest.fixture
+    def clients(self, monkeypatch):
+        def _set(base: str, hires: str) -> None:
+            monkeypatch.setattr(download_utils.settings, "YTDLP_PLAYER_CLIENTS", base)
+            monkeypatch.setattr(download_utils.settings, "YTDLP_HIRES_PLAYER_CLIENTS", hires)
+
+        return _set
+
+    def test_should_try_hires_clients_then_pass1_clients(self, clients):
+        clients("android", "web_embedded,android")
+        assert download_utils.ytdlp_hires_client_attempts() == ["web_embedded,android", "android"]
+
+    def test_should_make_one_attempt_when_lists_match(self, clients):
+        clients("android", " android ")
+        assert download_utils.ytdlp_hires_client_attempts() == ["android"]
+
+    def test_should_fall_back_to_pass1_clients_when_hires_is_blank(self, clients):
+        clients("android", "")
+        assert download_utils.ytdlp_hires_client_attempts() == ["android"]
+
+    def test_should_build_cli_args_for_an_explicit_client_list(self, clients):
+        clients("android", "web_embedded,android")
+        assert download_utils.ytdlp_client_cli_args("web_embedded,android") == [
+            "--extractor-args",
+            "youtube:player_client=web_embedded,android",
+        ]
+
+    def test_should_default_to_the_measured_720p_clients(self):
+        from src.config import Settings
+
+        field = Settings.model_fields["YTDLP_HIRES_PLAYER_CLIENTS"]
+        assert field.default == "web_embedded,android"

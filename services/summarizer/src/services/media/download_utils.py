@@ -4,8 +4,11 @@ Common retry logic and error classification used by both
 Gemini and Whisper transcription services.
 """
 
+from __future__ import annotations
+
 import logging
 import os
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -21,6 +24,8 @@ __all__ = [
     "download_youtube_audio",
     "ytdlp_client_api_opts",
     "ytdlp_client_cli_args",
+    "ytdlp_hires_client_attempts",
+    "ytdlp_proxy_exit_urls",
     "ytdlp_proxy_url",
     "ytdlp_subprocess_env",
     "MAX_DOWNLOAD_ATTEMPTS",
@@ -32,11 +37,46 @@ logger = logging.getLogger(__name__)
 # set — an inherited lowercase value would otherwise beat ours.
 _PROXY_ENV_VARS = ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy")
 
+# A caption retry visits at most this many exits (primary included) — the
+# whole caption layer runs under TRANSCRIPT_FETCH_TIMEOUT, so more attempts
+# would only time out.
+_MAX_ROTATED_EXITS = 3
+_STICKY_SUFFIX_RE = re.compile(r"^(?P<base>.*)-(?P<n>\d+)$")
+
 
 def ytdlp_proxy_url() -> str | None:
     """YOUTUBE_PROXY_URL with whitespace stripped, or None for a direct connection."""
     url = (settings.YOUTUBE_PROXY_URL or "").strip()
     return url or None
+
+
+def ytdlp_proxy_exit_urls() -> list[str]:
+    """Proxy URLs to try in order for an IP-scoped failure (caption 429).
+
+    Empty without a proxy. The configured URL comes first; when
+    YOUTUBE_PROXY_EXIT_COUNT > 1 and its username carries a sticky ``-N``
+    suffix, the following exits (wrapping within 1..count, capped) follow.
+    Only the username is rewritten, in the raw netloc, so the password is
+    never re-encoded. Never log the returned URLs — they carry credentials.
+    """
+    primary = ytdlp_proxy_url()
+    if not primary:
+        return []
+    count = settings.YOUTUBE_PROXY_EXIT_COUNT
+    scheme_sep, _, rest = primary.partition("://")
+    if not rest or count <= 1 or "@" not in rest:
+        return [primary]
+    userinfo, _, host = rest.rpartition("@")
+    username, colon, password = userinfo.partition(":")
+    match = _STICKY_SUFFIX_RE.match(username)
+    if match is None:
+        return [primary]
+    base, current = match.group("base"), int(match.group("n"))
+    urls = [primary]
+    for step in range(1, min(count, _MAX_ROTATED_EXITS)):
+        exit_no = (current - 1 + step) % count + 1
+        urls.append(f"{scheme_sep}://{base}-{exit_no}{colon}{password}@{host}")
+    return urls
 
 
 def ytdlp_subprocess_env() -> dict[str, str] | None:
@@ -54,18 +94,34 @@ def ytdlp_subprocess_env() -> dict[str, str] | None:
     return {**os.environ, **dict.fromkeys(_PROXY_ENV_VARS, proxy_url)}
 
 
-def ytdlp_client_cli_args() -> list[str]:
+def ytdlp_client_cli_args(clients: str | None = None) -> list[str]:
     """--extractor-args flags for subprocess yt-dlp DOWNLOAD invocations.
 
     YouTube 403s some player clients' download URLs per environment
     (2026-08: web blocked here, android fine) — YTDLP_PLAYER_CLIENTS picks
     the client order without a code change when YouTube shifts again.
-    The proxy is deliberately not a flag here — see ytdlp_subprocess_env().
+    ``clients`` overrides it (the hi-res download passes
+    YTDLP_HIRES_PLAYER_CLIENTS). The proxy is deliberately not a flag
+    here — see ytdlp_subprocess_env().
     """
-    clients = settings.YTDLP_PLAYER_CLIENTS.strip()
+    if clients is None:
+        clients = settings.YTDLP_PLAYER_CLIENTS
+    clients = clients.strip()
     if not clients:
         return []
     return ["--extractor-args", f"youtube:player_client={clients}"]
+
+
+def ytdlp_hires_client_attempts() -> list[str]:
+    """Player-client lists for the hi-res 720p download, in order.
+
+    YTDLP_HIRES_PLAYER_CLIENTS first (android alone caps at 360p); if that
+    differs from YTDLP_PLAYER_CLIENTS, the latter is the one retry — the
+    clients pass 1 just proved working for this video.
+    """
+    base = settings.YTDLP_PLAYER_CLIENTS.strip()
+    hires = settings.YTDLP_HIRES_PLAYER_CLIENTS.strip() or base
+    return [hires] if hires == base else [hires, base]
 
 
 def ytdlp_client_api_opts() -> dict[str, Any]:

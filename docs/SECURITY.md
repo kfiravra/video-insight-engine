@@ -193,6 +193,8 @@ fastify.post("/logout", async (req, reply) => {
 | `GET /payments/tier`  | 60    | 1 min    | User  |
 | `* (default)`         | 100   | 1 min    | User  |
 
+Demo logins (`POST /auth/login` with `{ "demo": true }`, see [DEPLOY.md](./DEPLOY.md#demo-mode)) are ordinary requests to the login route and share its 10 / 15 min per-IP limit. The demo account's credentials stay in vie-api's environment and are never sent to the browser. Because every visitor holds a token for that one account, it cannot schedule its own deletion: `DELETE /users/me` returns 403 `DEMO_RESTRICTED`.
+
 ### Implementation
 
 ```typescript

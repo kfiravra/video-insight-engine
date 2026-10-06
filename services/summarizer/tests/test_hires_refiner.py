@@ -4,6 +4,8 @@ import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
+from src.services.media import download_utils
+from src.services.media.hires_prefetch import LocalHiresSource
 from src.services.media.hires_refiner import refine_selected_frames
 
 
@@ -293,3 +295,78 @@ class TestLocalDownloadFallback:
         mock_download.assert_awaited_once()
         assert frames[0]["path"].endswith("scene_0001.jpg")
         assert Path(frames[0]["path"]).read_bytes() == b"lowres"
+
+
+class TestProxiedLocalSource:
+    """With a proxy the stream URL is never looked up — frames come from a local file."""
+
+    @patch("src.services.media.local_video.download_video_720p", new_callable=AsyncMock)
+    @patch("src.services.media.hires_refiner.get_video_stream_url", new_callable=AsyncMock)
+    @patch("src.services.media.hires_refiner.settings")
+    async def test_prefetched_source_refines_without_stream_lookup(
+        self, mock_settings, mock_stream, mock_download, tmp_path
+    ):
+        _configure(mock_settings)
+        frames = [_frame(tmp_path, 1, 5.0), _frame(tmp_path, 2, 12.0)]
+        local_video = tmp_path / "dQw4w9WgXcQ.mp4"
+        local_video.write_bytes(b"720p-video")
+        source = LocalHiresSource("dQw4w9WgXcQ", reuse_path=local_video)
+
+        async def fake_extract(src: str, ts: int) -> bytes | None:
+            return b"hiresbytes" if src == str(local_video) else None
+
+        with patch("src.services.media.hires_refiner.extract_frame", side_effect=fake_extract):
+            result = await refine_selected_frames("dQw4w9WgXcQ", frames, local_source=source)
+
+        assert result == 2
+        mock_stream.assert_not_awaited()
+        mock_download.assert_not_awaited()
+        for frame in frames:
+            assert Path(frame["path"]).read_bytes() == b"hiresbytes"
+        # The refiner does not own the source's file.
+        assert local_video.exists()
+
+    @patch("src.services.media.hires_refiner.get_video_stream_url", new_callable=AsyncMock)
+    @patch("src.services.media.hires_refiner.settings")
+    async def test_unavailable_prefetch_keeps_lowres_without_seeking(
+        self, mock_settings, mock_stream, tmp_path
+    ):
+        _configure(mock_settings)
+        frames = [_frame(tmp_path, 1, 5.0)]
+
+        async def failed_download() -> None:
+            return None
+
+        source = LocalHiresSource("dQw4w9WgXcQ", task=asyncio.create_task(failed_download()))
+
+        result = await refine_selected_frames("dQw4w9WgXcQ", frames, local_source=source)
+
+        assert result == 0
+        mock_stream.assert_not_awaited()
+        assert frames[0]["path"].endswith("scene_0001.jpg")
+
+    @patch("src.services.media.local_video.download_video_720p", new_callable=AsyncMock)
+    @patch("src.services.media.hires_refiner.get_video_stream_url", new_callable=AsyncMock)
+    @patch("src.services.media.hires_refiner.settings")
+    async def test_proxy_without_prefetch_downloads_instead_of_seeking(
+        self, mock_settings, mock_stream, mock_download, tmp_path, monkeypatch
+    ):
+        _configure(mock_settings)
+        monkeypatch.setattr(download_utils.settings, "YOUTUBE_PROXY_URL", "http://u-1:p@h:80")
+        frames = [_frame(tmp_path, 1, 5.0)]
+        local_dir = tmp_path / "vie-hires-download"
+        local_dir.mkdir()
+        local_video = local_dir / "dQw4w9WgXcQ.mp4"
+        local_video.write_bytes(b"720p-video")
+        mock_download.return_value = (local_video, str(local_dir))
+
+        with patch(
+            "src.services.media.hires_refiner.extract_frame",
+            AsyncMock(return_value=b"hiresbytes"),
+        ):
+            result = await refine_selected_frames("dQw4w9WgXcQ", frames)
+
+        assert result == 1
+        mock_stream.assert_not_awaited()
+        mock_download.assert_awaited_once_with("dQw4w9WgXcQ")
+        assert not local_dir.exists()

@@ -88,7 +88,7 @@ ls -lh /tmp/yt-*.mp4 && rm -f /tmp/yt-*.mp4
 ```
 
 - **Pass**: the verbose output shows `JS runtimes: deno-2.9.5` and both files download. The app uses the android client (`YTDLP_PLAYER_CLIENTS=android`), so the second download matters most. Only a real download proves access; `--simulate` can succeed on a blocked IP.
-- **Blocked** ("Sign in to confirm you're not a bot", HTTP 403): the instance IP is bot-checked. Set `YOUTUBE_PROXY_URL` in `.env` to a residential/ISP proxy (`http://user:pass@host:port`); the summarizer then sends every YouTube request (downloads, metadata, playlists, captions) through it. Prove the proxy with a real download first — datacenter proxies fail the same check:
+- **Blocked** ("Sign in to confirm you're not a bot", HTTP 403): the instance IP is bot-checked. Set `YOUTUBE_PROXY_URL` in `.env` to a residential/ISP proxy (`http://user:pass@host:port`); the summarizer then sends every YouTube request (downloads, metadata, playlists, captions) through it, and the frame pipeline switches from stream-URL seeks (which would leave from the blocked instance IP) to one proxied 720p download. With a Webshare list of sticky exits (`USERNAME-1` … `USERNAME-N`), also set `YOUTUBE_PROXY_EXIT_COUNT=N` so a caption 429 retries on the next exit instead of falling straight to Whisper. Prove the proxy with a real download first — datacenter proxies fail the same check:
 
   ```bash
   yt-dlp --proxy "$YOUTUBE_PROXY_URL" --extractor-args 'youtube:player_client=android' -f 18 -o /tmp/yt-proxy.mp4 "$URL" && rm -f /tmp/yt-proxy.mp4
@@ -201,6 +201,34 @@ docker run --rm --network vie-network \
 ```
 
 The script creates the user with role `admin`, so the same login also works for the vie-admin panel. Running it again with the same email resets that user's password.
+
+### Demo mode
+
+Demo mode lets a visitor use the app without an account. The login page gets a "Try the demo" button, and the landing page's Summarize signs the visitor in as one shared demo user before submitting the URL. vie-api holds that user's credentials; the browser only ever sends `{ "demo": true }`.
+
+1. In `.env`, set both variables. Use an email that is not an admin account, and a password nobody needs to remember:
+
+   ```bash
+   DEMO_USER_EMAIL=demo@your-domain
+   DEMO_USER_PASSWORD=<openssl rand -base64 24>
+   ```
+
+2. Recreate vie-api so it reads them, then create the user from the container's own environment:
+
+   ```bash
+   dc up -d vie-api
+   dc exec -T vie-api node --input-type=module < scripts/create-demo-user.mjs
+   ```
+
+3. Check it: `curl -fsS https://DOMAIN/api/auth/registration` returns `"demoEnabled":true`, and `https://DOMAIN/login` shows "Try the demo".
+
+Only vie-api needs recreating when these variables change (`dc restart` does not re-read `.env`). vie-web reads the flag at runtime, so it needs no rebuild.
+
+- **Turn it off:** blank both variables and run `dc up -d vie-api`. The button disappears and `{ "demo": true }` returns 403 `DEMO_DISABLED`. Demo sessions that are already open keep working until their refresh cookie expires, up to 7 days; to end them now, also rotate `JWT_REFRESH_SECRET`, which signs every user out. The user and its videos stay in the database.
+- **Change the password, or repair the account:** edit `DEMO_USER_PASSWORD`, run `dc up -d vie-api`, then run the script again. It resets the password and cancels a pending account deletion (the API picks that up within 30 seconds).
+- **Limits:** the demo user is an ordinary free-tier user, and every visitor shares it. Its allowance is whatever `.env` gives free users: `USER_COST_LIMIT_FREE` (USD per UTC day) and `VIDEO_DAILY_LIMIT` (submissions per 24 hours). When either runs out, visitors see the normal limit message and can still browse the videos already in the demo library. The admin panel can top up one day's budget (Users → the user → Adjustments → Grant credit); it cannot change the tier or the limits.
+- **Rate limit:** demo sign-ins count against the login limit of 10 per 15 minutes per IP address.
+- **Account deletion:** while `DEMO_USER_EMAIL` is set, `DELETE /api/users/me` returns 403 `DEMO_RESTRICTED` for the demo user, so a visitor cannot lock the demo for everyone. The admin immediate delete still works.
 
 ## f. Nightly backup and disk space
 

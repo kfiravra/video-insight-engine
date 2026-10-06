@@ -1,14 +1,27 @@
-import { Link } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
 import { Layout } from "@/components/layout/Layout";
 import { useAllVideos } from "@/hooks/use-videos";
 import { useIsAuthenticated } from "@/stores/auth-store";
 import { VideoIntakeForm } from "@/features/video-output/components/VideoIntakeForm";
+import { readSubmitUrl } from "@/lib/submit-url";
 import { OnboardingValueProps } from "@/features/video-output/components/onboarding/OnboardingValueProps";
 import { ExampleDisclosure } from "@/features/video-output/components/onboarding/ExampleDisclosure";
 
 export function GeneratePage() {
   const isAuthenticated = useIsAuthenticated();
+  const location = useLocation();
+  const navigate = useNavigate();
+  // Captured once: the effect below wipes the router state so Back or a
+  // reload lands on an empty form instead of submitting the same URL again.
+  const [submitUrl] = useState<string | undefined>(() => readSubmitUrl(location.state));
+
+  useEffect(() => {
+    if (!submitUrl || location.state === null) return;
+    navigate(location.pathname, { replace: true, state: null });
+  }, [submitUrl, location.state, location.pathname, navigate]);
+
   // Read cached video count to decide whether to render the full onboarding.
   // While the query is in-flight we mark the variant as "unknown" so we can
   // skip onboarding-only blocks — returning users would otherwise see chips
@@ -57,7 +70,7 @@ export function GeneratePage() {
             </p>
           </div>
 
-          <VideoIntakeForm />
+          <VideoIntakeForm initialUrl={submitUrl} />
 
           {queryUnsettled ? (
             // Suppress both branches while the query is in flight to avoid CLS

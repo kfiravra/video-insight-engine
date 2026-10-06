@@ -39,6 +39,7 @@ x-summarizer-env: &summarizer-env
   INTERNAL_SECRET: ${INTERNAL_SECRET:-dev-internal-secret-change-me}
   # Transcript / proxy
   YOUTUBE_PROXY_URL: ${YOUTUBE_PROXY_URL:-}
+  YOUTUBE_PROXY_EXIT_COUNT: ${YOUTUBE_PROXY_EXIT_COUNT:-1}
   TRANSCRIPT_CLEANING_ENABLED: ${TRANSCRIPT_CLEANING_ENABLED:-true}
   TRANSCRIPT_CLEANING_TIMEOUT: ${TRANSCRIPT_CLEANING_TIMEOUT:-30.0}
   # Optional HF Hub token — blank = unauthenticated (rate-limited) model pulls
@@ -60,6 +61,8 @@ x-summarizer-env: &summarizer-env
   # yt-dlp player clients for video/audio downloads — the knob to turn when
   # YouTube shifts which clients' download URLs 403 (2026-08: android only)
   YTDLP_PLAYER_CLIENTS: ${YTDLP_PLAYER_CLIENTS:-android}
+  # Hi-res 720p download only — android alone caps at 360p
+  YTDLP_HIRES_PLAYER_CLIENTS: ${YTDLP_HIRES_PLAYER_CLIENTS:-web_embedded,android}
   # Langfuse — keys blank → SDK no-ops
   LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
   LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
@@ -260,6 +263,9 @@ services:
       # Extra allowed origins (e.g. the :5273 Playwright e2e webServer) — without
       # the passthrough, browser e2e API calls are CORS-blocked at login.
       CORS_ADDITIONAL_ORIGINS: ${CORS_ADDITIONAL_ORIGINS:-}
+      # Demo mode — both set = POST /api/auth/login accepts { demo: true }; blank = off
+      DEMO_USER_EMAIL: ${DEMO_USER_EMAIL:-}
+      DEMO_USER_PASSWORD: ${DEMO_USER_PASSWORD:-}
       INTERNAL_SECRET: ${INTERNAL_SECRET:-dev-internal-secret-change-me}
       # RabbitMQ — see docs/INFRASTRUCTURE.md
       RABBITMQ_URL: amqp://${RABBITMQ_DEFAULT_USER:-vie}:${RABBITMQ_DEFAULT_PASS:-vie-dev}@vie-rabbitmq:5672/
