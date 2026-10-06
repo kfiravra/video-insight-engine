@@ -91,6 +91,20 @@ export interface AssistantLibrarySearchOptions {
   requestId?: string;
 }
 
+/**
+ * History as the assistant service accepts it. A turn whose reply was only a
+ * tool step or a confirmation prompt has no text, and the assistant's
+ * ChatMessage requires non-empty content, so one blank turn made it reject the
+ * whole request with 422 (e.g. the Confirm click on a pending action).
+ */
+function toAssistantHistory(
+  history: Array<{ role: 'user' | 'assistant'; content: string }> | undefined,
+): Array<{ role: 'user' | 'assistant'; content: string }> {
+  return (history ?? [])
+    .filter(m => m.content.trim().length > 0)
+    .map(m => ({ role: m.role, content: m.content }));
+}
+
 export class AssistantClient {
   constructor(private readonly logger: FastifyBaseLogger) {}
 
@@ -138,10 +152,7 @@ export class AssistantClient {
         body: JSON.stringify({
           video_id: options.videoId,
           message: options.message,
-          conversation_history: (options.conversationHistory ?? []).map(m => ({
-            role: m.role,
-            content: m.content,
-          })),
+          conversation_history: toAssistantHistory(options.conversationHistory),
           // undefined is dropped by JSON.stringify — only sent when present.
           confirm_token: options.confirmToken,
         }),
@@ -270,10 +281,7 @@ export class AssistantClient {
         body: JSON.stringify({
           video_ids: options.youtubeIds,
           message: options.message,
-          conversation_history: (options.conversationHistory ?? []).map(m => ({
-            role: m.role,
-            content: m.content,
-          })),
+          conversation_history: toAssistantHistory(options.conversationHistory),
           library: options.library ?? [],
           // undefined is dropped by JSON.stringify — only sent when present.
           confirm_token: options.confirmToken,
