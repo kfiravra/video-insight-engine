@@ -10,11 +10,16 @@ A video is a poor format for using what it teaches: you cannot search it, check 
 **Live demo:** https://vie.ad — one click, no sign-up.
 -->
 
-![Paste a URL, tabs stream in, cook from the recipe, take the quiz, let the assistant file the library](docs/images/demo.gif)
+![Paste a URL, four videos generate at once, then the cooking and learning apps they became](docs/images/demo.gif)
 
-*Recorded from the running app: a real generation, Cooking Mode, the coding app's quiz, and the assistant filing the library. The processing wait is a labelled time-lapse.*
+*Recorded from the running app: four real pipeline runs side by side, then two of the apps they produced. Processing is sped up (time-lapse ×52: about five minutes shown in six seconds).*
 
-[Full walkthrough video (95 s): generate, cooking and coding apps, five more domains, moments, chat, library, search](docs/images/walkthrough.mp4)
+<!-- WALKTHROUGH_URL PLACEHOLDER — after the reel is uploaded (YouTube, unlisted), replace the link target below with WALKTHROUGH_URL
+and keep the repo file as the fallback:
+[30-second reel](WALKTHROUGH_URL) · [MP4 in this repo](docs/images/walkthrough.mp4)
+-->
+
+[30-second reel (MP4): paste, four videos generating at once, seven domains, jump to a moment, chat with sources](docs/images/walkthrough.mp4)
 
 ## Screenshots
 
