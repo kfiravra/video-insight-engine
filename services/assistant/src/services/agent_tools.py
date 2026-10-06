@@ -240,9 +240,7 @@ async def execute_tool(
 _OBJECT_ID = re.compile(r"[0-9a-f]{24}")
 
 
-async def _resolve_folder_id(
-    folder_ref: str | None, user_id: str, api_client: ApiClient
-) -> str | None:
+async def _resolve_folder_id(folder_ref: str, user_id: str, api_client: ApiClient) -> str:
     """Folder id for a model-supplied folder reference.
 
     The model sometimes passes the folder's NAME — e.g. when it creates a folder and
@@ -297,7 +295,12 @@ async def _dispatch(
         result = await api_client.move_video(user_id, args["video_id"], folder_id)
         return {"ok": True, "result": result}
     if name == "generate_video":
-        folder_id = await _resolve_folder_id(args.get("folder_id"), user_id, api_client)
+        folder_ref = args.get("folder_id")
+        folder_id = (
+            await _resolve_folder_id(folder_ref, user_id, api_client)
+            if folder_ref is not None
+            else None
+        )
         result = await api_client.generate_video(user_id, args["url"], folder_id)
         return {"ok": True, "result": result}
     if name == "organize_library":

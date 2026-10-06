@@ -172,6 +172,19 @@ class TestExecuteToolRouting:
             "u1", "https://youtu.be/x", folder_id
         )
 
+    async def test_should_generate_without_a_folder_when_none_is_given(
+        self, mock_api_client, mock_llm
+    ) -> None:
+        await execute_tool(
+            "generate_video",
+            {"url": "https://youtu.be/x"},
+            user_id="u1",
+            api_client=mock_api_client,
+            llm=mock_llm,
+        )
+
+        mock_api_client.generate_video.assert_awaited_once_with("u1", "https://youtu.be/x", None)
+
     async def test_should_not_look_up_folders_when_given_an_object_id(
         self, mock_api_client, mock_llm
     ) -> None:
