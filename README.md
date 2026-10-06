@@ -10,32 +10,47 @@ A video is a poor format for using what it teaches: you cannot search it, check 
 
 [![CI](https://github.com/kfiravra/video-insight-engine/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/kfiravra/video-insight-engine/actions/workflows/ci.yml)
 
-![Paste a YouTube URL, four videos generate at once, then a recipe timer, a quiz, a moment gallery and a code snippet in use](docs/images/hero.gif)
+![Paste a YouTube URL, four videos generate at once, then the assistant builds an app, Cooking Mode, a tier list being re-ranked and Explore Mode](docs/images/hero.gif)
 
-*Recorded from the running app: four real pipeline runs side by side, then four of the apps they produced in use. Processing is sped up (time-lapse ×89: about four and a half minutes shown in three seconds); any other sped-up wait carries its own time-lapse label.*
+*Recorded from the running app, start to finish in one window: paste a URL, four real pipeline runs side by side, then the apps they became in use. Processing is sped up (time-lapse ×110: about five minutes shown in under three seconds); any other sped-up wait carries its own time-lapse label.*
 
 <!-- REEL_ATTACHMENT_URL — upload docs/images/reel.mp4 to a GitHub comment and replace this comment with the attachment URL on its own line; GitHub renders it as an inline 30-second player. -->
 
 ## See it on different videos
 
-<table>
-  <tr>
-    <td width="50%"><img src="docs/images/reel-cooking.gif" alt="Cooking video: starting a step timer, marking the step done, the next step loading" /><br /><sub><b>Cooking</b> · start the step timer, mark the step done, the next step loads</sub></td>
-    <td width="50%"><img src="docs/images/reel-learning.gif" alt="Learning video: a wrong quiz answer reveals the right one and why, then the next question is answered correctly" /><br /><sub><b>Learning</b> · a wrong answer shows the right one and why; the next one lands</sub></td>
-  </tr>
-  <tr>
-    <td width="50%"><img src="docs/images/reel-fitness.gif" alt="Fitness video: exercise timer, complete the set, rest countdown, next exercise" /><br /><sub><b>Fitness</b> · run the exercise timer, complete the set, rest, next exercise</sub></td>
-    <td width="50%"><img src="docs/images/reel-travel.gif" alt="Travel video: switching an itinerary between days" /><br /><sub><b>Travel</b> · switch the itinerary between days</sub></td>
-  </tr>
-  <tr>
-    <td width="50%"><img src="docs/images/reel-tech.gif" alt="Tech video: stepping through code snippets and copying one" /><br /><sub><b>Tech</b> · step through the code snippets, copy one</sub></td>
-    <td width="50%"><img src="docs/images/reel-gaming.gif" alt="Gaming video: opening a key moment, then jumping the video to it" /><br /><sub><b>Gaming</b> · open a key moment, then jump the video to it</sub></td>
-  </tr>
-  <tr>
-    <td width="50%"><img src="docs/images/reel-sport.gif" alt="Sport video: zooming and panning a team formation" /><br /><sub><b>Sport</b> · zoom and pan the team's formation</sub></td>
-    <td width="50%"><img src="docs/images/reel-assistant.gif" alt="Assistant: asking about the open video and getting an answer that cites its source" /><br /><sub><b>Assistant</b> · ask about the video; the answer cites its source</sub></td>
-  </tr>
-</table>
+One app in every loop: open the video, pick a tab, enter the mode that fits the content.
+
+**Assistant · it does the work**: Asked to file a new video under a new folder, it creates the folder, stops at a Confirm bar because generating costs money, then builds the app, which opens on its tier list.
+
+![The assistant creating a folder, asking for confirmation, then generating an app from a card-opening video](docs/images/reel-assistant.gif)
+
+**Cooking · ingredients, then Cooking Mode**: Tick ingredients off the list, enter Cooking Mode, run the step timer, mark the step done.
+
+![Ticking ingredients, entering Cooking Mode and running a step timer](docs/images/reel-cooking.gif)
+
+**Fitness · Workout Mode, then the exercise demos**: Enter Workout Mode, start the interval timer, finish the exercise, then browse the frame for every exercise.
+
+![Entering Workout Mode, running the timer, then the exercise demo frames](docs/images/reel-fitness.gif)
+
+**Learning · the quiz, then Study Mode**: A wrong answer shows the right one and why; the next one lands; then Study Mode walks the material.
+
+![Answering quiz questions and entering Study Mode](docs/images/reel-learning.gif)
+
+**Travel · the day plan, then Explore Mode**: Filter the spots by day, then Explore Mode walks the itinerary stop by stop.
+
+![Filtering a Lisbon itinerary by day and entering Explore Mode](docs/images/reel-travel.gif)
+
+**Tech · code snippets, then the concept map**: Step through the snippets taken from the video, copy one, then open the concept map.
+
+![Stepping through code snippets, copying one, then the concept map](docs/images/reel-tech.gif)
+
+**Gaming · re-rank the pulls, then the pull moments**: Every notable card pulled, ranked S to D: drag one to another tier, then open the frame of a pull.
+
+![Dragging a card between tiers of a tier list, then opening a frame of a pulled card](docs/images/reel-gaming.gif)
+
+**Sport · formation, moments, concepts, stats**: Tab to tab through one tactics video: the formation, the key moments, the concepts, the comparison.
+
+![Switching between the formation, moments, concepts and stats tabs](docs/images/reel-sport.gif)
 
 *Same pipeline on seven videos, plus the chat assistant; the planner picks from 29 registered components by domain.*
 
@@ -65,13 +80,13 @@ Across domains, from the videos in the loops above:
 
 | Domain | The video becomes | Components |
 | --- | --- | --- |
-| Cooking (a rice recipe) | Ingredient checklist and a step player with Cooking Mode | `checklist`, `step_player`, `spot_explorer`, `moment_track` |
+| Cooking (a rice recipe) | Ingredient checklist and a step player, with Cooking Mode | `checklist`, `step_player`, `spot_explorer`, `moment_track` |
 | Tech (a LangChain and LangGraph explainer, in Hebrew) | A concept map, key moments, a framework decision guide, a quiz, code snippets | `concept_canvas`, `moment_track`, `info_grid`, `quiz_arena`, `code_playground` |
-| Learning (a resume review) | Mistakes and fixes, a skills list, a self-audit quiz | `spot_explorer`, `moment_track`, `quiz_arena` |
-| Fitness (a 7-minute workout) | A workout room with timers and rest, exercise demos, form tips, a before-and-after checklist | `workout_room`, `moment_track`, `spot_explorer`, `checklist` |
-| Travel (a Lisbon guide) | Spots grouped by day with Explore Mode, a chapter guide, visitor tips | `spot_explorer`, `moment_track`, `video_filmstrip`, `checklist` |
-| Gaming (a trading-card market video) | Key moments with frames | `moment_track`, `video_filmstrip` |
-| Sport (a tactics explainer) | A formation diagram, a tactical breakdown, an early-vs-evolved radar | `formation_diagram`, `moment_track`, `spot_explorer`, `comparison_radar` |
+| Learning (a note-taking lesson) | The four note-taking systems as a concept map, key moments, study tips, a quiz, with Study Mode | `concept_canvas`, `moment_track`, `spot_explorer`, `quiz_arena` |
+| Fitness (a 7-minute workout) | A workout room with timers and rest, exercise demos, form tips, a before-and-after checklist, with Workout Mode | `workout_room`, `moment_track`, `spot_explorer`, `checklist` |
+| Travel (a Lisbon guide) | Spots grouped by day, a chapter guide, scenes, visitor tips, with Explore Mode | `spot_explorer`, `moment_track`, `video_filmstrip`, `display_section` |
+| Gaming (a card-pack opening) | Every notable pull ranked S to D, the pull moments with frames, set facts | `tier_list`, `moment_track`, `spot_explorer` |
+| Sport (a tactics explainer) | A formation diagram, key tactical moments, the tactical concepts, a comparison radar | `formation_diagram`, `moment_track`, `concept_canvas`, `comparison_radar` |
 
 ## How it works
 
