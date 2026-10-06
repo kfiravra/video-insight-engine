@@ -296,21 +296,17 @@ def normalize_segments(
     return normalized
 
 
-async def get_transcript(
-    video_id: str, *, skip_primary_exit: bool = False
-) -> tuple[list[dict], str, str, str | None]:
+async def get_transcript(video_id: str) -> tuple[list[dict], str, str, str | None]:
     """
     Fetch transcript from YouTube (async wrapper).
 
     Runs the blocking YouTube API call in a thread pool to avoid
     blocking the event loop. With several proxy exits configured
     (YOUTUBE_PROXY_EXIT_COUNT) a 429 rotates to the next exit instead of
-    backing off on the same IP; ``skip_primary_exit`` drops the configured
-    exit when the caller already saw it 429 (metadata-phase timedtext fetch).
+    backing off on the same IP.
 
     Args:
         video_id: YouTube video ID
-        skip_primary_exit: Start from the second exit.
 
     Returns:
         (segments, full_text, transcript_type, language_code)
@@ -320,7 +316,5 @@ async def get_transcript(
     """
     exit_urls = ytdlp_proxy_exit_urls()
     if len(exit_urls) > 1:
-        if skip_primary_exit:
-            exit_urls = exit_urls[1:]
         return await asyncio.to_thread(_fetch_rotating_sync, video_id, exit_urls)
     return await asyncio.to_thread(_fetch_transcript_sync, video_id)

@@ -41,9 +41,10 @@ _T = TypeVar("_T")
 # set — an inherited lowercase value would otherwise beat ours.
 _PROXY_ENV_VARS = ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy")
 
-# A caption retry visits at most this many exits (primary included) — the
-# whole caption layer runs under TRANSCRIPT_FETCH_TIMEOUT, so more attempts
-# would only time out.
+# A caption retry (metadata-phase timedtext or the caption API) visits at most
+# this many exits, primary included — the caption API layer runs under
+# TRANSCRIPT_FETCH_TIMEOUT and every timedtext attempt delays the metadata
+# phase, so more attempts would only cost time.
 _MAX_ROTATED_EXITS = 3
 _STICKY_SUFFIX_RE = re.compile(r"^(?P<base>.*)-(?P<n>\d+)$")
 

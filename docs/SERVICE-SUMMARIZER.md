@@ -201,7 +201,7 @@ SCENE_HIRES_ENABLED=true               # Pass-2 720p refinement of the selected 
 SCENE_HIRES_TIMEOUT=90.0               # Stream-URL refinement budget (proxyless); 0/N upgraded → local-download fallback
 SCENE_HIRES_FALLBACK_TIMEOUT=180.0     # Local-file seek budget after the 720p download (media/local_video.py)
 YOUTUBE_PROXY_URL=                     # One proxy for every YouTube request; when set, frames skip stream-URL seeks
-YOUTUBE_PROXY_EXIT_COUNT=1             # Sticky exits (USERNAME-1…N) a caption 429 may rotate through; 1 = no rotation
+YOUTUBE_PROXY_EXIT_COUNT=1             # Sticky exits (USERNAME-1…N) a caption/timedtext 429 may rotate through; 1 = no rotation
 YTDLP_PLAYER_CLIENTS=android           # yt-dlp player clients for pass 1 + audio downloads; empty = yt-dlp defaults
 YTDLP_HIRES_PLAYER_CLIENTS=web_embedded,android  # 720p download only (android caps at 360p); retries with the line above
 FRAME_TIER_ENABLED=true                # Adaptive visual tiers (HIGH: overselect + vision reselect before hires)
@@ -861,12 +861,14 @@ proxy setup (`services/cache/caption_negative_cache.py`, Redis key
   the same IP; a persisting 429 (or a timedtext 429 from the metadata phase)
   writes the marker, and until it expires every run skips the caption API and
   goes straight to audio.
-- *`YOUTUBE_PROXY_EXIT_COUNT` > 1* (Webshare sticky `USERNAME-N` exits) — a
-  timedtext 429 does **not** mark; the caption API retries on the next exit(s)
-  (`download_utils.ytdlp_proxy_exit_urls`, at most 3 exits, no backoff). Only
-  when those 429 too is the marker written. The library's `RequestBlocked`
-  (its 429 subclass `IpBlocked` plus the "not a bot" check) is recognised by
-  type, since its message carries no "429" once a proxy config is attached.
+- *`YOUTUBE_PROXY_EXIT_COUNT` > 1* (Webshare sticky `USERNAME-N` exits) — the
+  metadata-phase timedtext fetch and the caption API both move to the next
+  exit on a 429 (`download_utils.ytdlp_proxy_exit_urls`, at most 3 exits, no
+  backoff, one shared loop `download_utils.try_proxy_exits`). Only a 429 on
+  every exit tried writes the marker; any other error ends the rotation
+  without marking. The library's `RequestBlocked` (its 429 subclass
+  `IpBlocked` plus the "not a bot" check) is recognised by type, since its
+  message carries no "429" once a proxy config is attached.
 
 **Language detection.** Both the Gemini and Whisper paths keep the transcript
 **verbatim in its source language** (no internal translation), which is what

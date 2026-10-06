@@ -632,15 +632,6 @@ class TestExitRotation:
         assert exc_info.value.code == ErrorCode.VIDEO_UNAVAILABLE
         assert mock_api_class.call_count == 1
 
-    @pytest.mark.usefixtures("exits")
-    @patch("src.services.transcription.transcript.YouTubeTranscriptApi")
-    async def test_should_skip_the_primary_exit_when_asked(self, mock_api_class):
-        self._api_that_429s_on(set(), mock_api_class)
-
-        await get_transcript("vid", skip_primary_exit=True)
-
-        assert self._proxied_urls(mock_api_class) == [self.EXITS[1]]
-
     @patch("src.services.transcription.transcript.ytdlp_proxy_exit_urls", return_value=[])
     @patch("src.services.transcription.transcript.YouTubeTranscriptApi")
     async def test_should_use_same_exit_backoff_without_rotation(self, mock_api_class, _exits):

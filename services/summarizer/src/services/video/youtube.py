@@ -19,7 +19,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass, field
-from functools import lru_cache
+from functools import lru_cache, partial
 from pathlib import Path
 from typing import Any, TypedDict
 
@@ -29,7 +29,11 @@ import yt_dlp  # type: ignore[import-untyped]
 
 from src.exceptions import TranscriptError
 from src.models.schemas import ErrorCode
-from src.services.media.download_utils import ytdlp_proxy_url
+from src.services.media.download_utils import (
+    try_proxy_exits,
+    ytdlp_proxy_exit_urls,
+    ytdlp_proxy_url,
+)
 from src.utils.language_utils import (
     detect_language_by_script,
     normalize_language_code,
@@ -575,28 +579,15 @@ def _parse_chapters(info: dict[str, Any]) -> list[Chapter]:
     return chapters
 
 
-@tenacity.retry(
-    stop=tenacity.stop_after_attempt(2),
-    wait=tenacity.wait_fixed(2),
-    retry=tenacity.retry_if_exception_type(requests.exceptions.HTTPError),
-    before_sleep=lambda retry_state: logger.warning(
-        "Subtitle fetch retry %d after error: %s",
-        retry_state.attempt_number,
-        retry_state.outcome.exception(),
-    ),
-)
-def _fetch_subtitle_data_sync(url: str, max_bytes: int = 10 * 1024 * 1024) -> dict:
-    """Fetch subtitle JSON data from URL with retry on HTTP errors.
+_SUBTITLE_MAX_BYTES = 10 * 1024 * 1024
 
-    SYNC — must be called from asyncio.to_thread (via _extract_video_data_sync).
 
-    Args:
-        url: Subtitle URL to fetch.
-        max_bytes: Maximum response body size (default 10 MB).
+def _get_subtitle_json_sync(url: str, proxy_url: str | None) -> dict:
+    """One timedtext GET through one exit (None = direct), size-capped.
+
+    Raises requests' HTTPError on a non-2xx status and ValueError on an
+    oversized or undecodable body.
     """
-    # Same exit as the yt-dlp call that produced this URL — a direct fetch
-    # would hit timedtext from the host IP the proxy exists to hide.
-    proxy_url = ytdlp_proxy_url()
     response = requests.get(
         url,
         headers={"User-Agent": "Mozilla/5.0"},
@@ -610,13 +601,26 @@ def _fetch_subtitle_data_sync(url: str, max_bytes: int = 10 * 1024 * 1024) -> di
     total = 0
     for chunk in response.iter_content(chunk_size=65536):
         total += len(chunk)
-        if total > max_bytes:
+        if total > _SUBTITLE_MAX_BYTES:
             response.close()
-            raise ValueError(f"Subtitle response exceeds {max_bytes} bytes limit")
+            raise ValueError(f"Subtitle response exceeds {_SUBTITLE_MAX_BYTES} bytes limit")
         chunks.append(chunk)
-    import json as _json
+    return json.loads(b"".join(chunks))
 
-    return _json.loads(b"".join(chunks))
+
+@tenacity.retry(
+    stop=tenacity.stop_after_attempt(2),
+    wait=tenacity.wait_fixed(2),
+    retry=tenacity.retry_if_exception_type(requests.exceptions.HTTPError),
+    before_sleep=lambda retry_state: logger.warning(
+        "Subtitle fetch retry %d after error: %s",
+        retry_state.attempt_number,
+        retry_state.outcome.exception(),
+    ),
+)
+def _fetch_subtitle_single_exit_sync(url: str) -> dict:
+    """Direct or single-exit fetch: one same-IP retry after 2 s on an HTTP error."""
+    return _get_subtitle_json_sync(url, ytdlp_proxy_url())
 
 
 def _http_status_of(exc: BaseException | None) -> int | None:
@@ -629,6 +633,31 @@ def _http_status_of(exc: BaseException | None) -> int | None:
     if isinstance(exc, requests.exceptions.HTTPError) and exc.response is not None:
         return exc.response.status_code
     return None
+
+
+def _is_http_429(exc: Exception) -> bool:
+    """True for a timedtext rate limit, the IP-scoped failure worth another exit."""
+    return _http_status_of(exc) == 429
+
+
+def _fetch_subtitle_data_sync(url: str) -> dict:
+    """Fetch a timedtext json3 body through YOUTUBE_PROXY_URL's exits.
+
+    SYNC — must be called from asyncio.to_thread (via _extract_video_data_sync).
+
+    Never direct when a proxy is set — that would hit timedtext from the host
+    IP the proxy exists to hide. With several sticky exits
+    (YOUTUBE_PROXY_EXIT_COUNT) a 429 moves on to the next exit at once — the
+    URL is not bound to the exit that produced it (``ip=0.0.0.0``) — so a 429
+    reaches the caller only when every tried exit returned one. Direct
+    connections and a single exit keep the same-IP retry.
+    """
+    exit_urls = ytdlp_proxy_exit_urls()
+    if len(exit_urls) > 1:
+        return try_proxy_exits(
+            exit_urls, partial(_get_subtitle_json_sync, url), _is_http_429, "Timedtext fetch"
+        )
+    return _fetch_subtitle_single_exit_sync(url)
 
 
 def _parse_json3_events(data: dict) -> list[SubtitleSegment]:
@@ -672,7 +701,7 @@ def _fetch_subtitles_from_url_sync(url: str) -> tuple[list[SubtitleSegment], str
         return [], code
     except ValueError as e:
         # json.JSONDecodeError is a ValueError; the size guard in
-        # _fetch_subtitle_data_sync raises a plain one.
+        # _get_subtitle_json_sync raises a plain one.
         logger.warning("Subtitle fetch parse error: %s", e)
         return [], "parse"
     except Exception as e:

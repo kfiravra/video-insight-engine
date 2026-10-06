@@ -149,8 +149,9 @@ class Settings(BaseSettings):
     # download it again during assembly — two downloads through the proxy.
     YOUTUBE_PROXY_URL: str | None = None
     # Sticky exits behind the proxy gateway, addressed by the username suffix
-    # (Webshare: USERNAME-1 … USERNAME-N). A caption 429 is IP-scoped, so the
-    # caption fetch retries on the NEXT exit before giving up on captions.
+    # (Webshare: USERNAME-1 … USERNAME-N). A caption 429 is IP-scoped, so both
+    # caption fetches (timedtext + caption API) retry on the NEXT exit before
+    # giving up on captions.
     # 1 (or a username without a -N suffix) = no rotation, retry on the same exit.
     YOUTUBE_PROXY_EXIT_COUNT: int = 1
 
