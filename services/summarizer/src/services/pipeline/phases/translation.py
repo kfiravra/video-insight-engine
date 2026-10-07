@@ -123,7 +123,8 @@ async def run_phase_translation(
     # intentionally skipped the cache for non-English videos so the
     # source-language tabs never become the cached shape; this write owns
     # the cache for the full TTL and ensures FE cache hits see the toggle.
-    if settings.REDIS_ENABLED:
+    # An eval-user run (D25) never becomes the shared cached response.
+    if settings.REDIS_ENABLED and not getattr(ctx, "eval_run", False):
         from src.routes.cached_response import build_frontend_response
 
         frontend_response = build_frontend_response(

@@ -132,6 +132,10 @@ async def stream_summarization(
         if request_id:
             trace_tags.append(f"requestId:{request_id}")
             trace_metadata["requestId"] = request_id
+        # D25: the API stamps eval-user rows; their results stay private.
+        eval_run = bool(entry.get("evalRun"))
+        if eval_run:
+            trace_metadata["evalRun"] = True
         async with pipeline_trace(
             video_summary_id,
             tags=trace_tags,
@@ -210,6 +214,7 @@ async def stream_summarization(
                 timer=timer,
                 lowres_video=LocalLowresSource(youtube_id),
                 hires_video=LocalHiresSource(youtube_id),
+                eval_run=eval_run,
             )
 
             async for event in run_pipeline_phases(ctx, repository, video_summary_id, timer):

@@ -210,7 +210,12 @@ async def run_phase_assembly(ctx: PipelineContext) -> AsyncGenerator[str, None]:
     # payload (English primary + sourceLanguage) to Redis. Caching here for
     # non-English would freeze a sourceLanguage-less payload into Redis for the
     # whole TTL and hide the FE language toggle on every cache hit.
-    if settings.REDIS_ENABLED and not ctx.source_language_code:
+    # An eval-user run (D25) is a private version: the shared Redis copy and
+    # the Qdrant collection keep serving the users' own result.
+    eval_run = getattr(ctx, "eval_run", False)
+    if eval_run:
+        logger.info("Eval run %s: no Redis response cache, no Qdrant", ctx.video_summary_id)
+    if settings.REDIS_ENABLED and not ctx.source_language_code and not eval_run:
         from src.routes.cached_response import build_frontend_response
 
         frontend_response = build_frontend_response(result)
@@ -220,7 +225,7 @@ async def run_phase_assembly(ctx: PipelineContext) -> AsyncGenerator[str, None]:
             logger.debug("Redis cache failed (non-critical): %s", e)
 
     # Store transcript chunks in Qdrant (background, non-blocking)
-    if settings.QDRANT_ENABLED:
+    if settings.QDRANT_ENABLED and not eval_run:
 
         def _log_qdrant_error(t: asyncio.Task) -> None:
             if t.cancelled():
