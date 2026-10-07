@@ -7,7 +7,7 @@ for all LLM interactions.
 
 import asyncio
 import logging
-from typing import Any, AsyncGenerator
+from typing import Any
 
 from src.config import settings
 from src.services.llm_messages import UserContent
@@ -40,6 +40,11 @@ class LLMService:
     def model(self) -> str:
         """Get the configured default model name."""
         return self._provider.model
+
+    @property
+    def fallback_model(self) -> str | None:
+        """Cross-provider fallback ``call_llm_with_retry`` may route to, if any."""
+        return self._provider.fallback_model
 
     async def call_llm_fast(
         self,
@@ -128,22 +133,3 @@ class LLMService:
                 temperature=temperature,
                 system_prompt=system_prompt,
             )
-
-    async def stream_llm(self, prompt: str, max_tokens: int = 2000) -> AsyncGenerator[str, None]:
-        """Stream LLM response tokens.
-
-        Args:
-            prompt: The prompt to send to the LLM
-            max_tokens: Maximum tokens in response
-
-        Yields:
-            String tokens as they are generated
-        """
-        try:
-            async for token in self._provider.stream(prompt, max_tokens=max_tokens):
-                yield token
-        except asyncio.CancelledError:
-            logger.debug("LLM streaming cancelled")
-        except Exception as e:
-            logger.error("Error during streaming: %s", e)
-            raise

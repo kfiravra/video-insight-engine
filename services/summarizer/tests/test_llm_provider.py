@@ -32,7 +32,6 @@ class TestLLMProvider:
             mock_settings.llm_model = "anthropic/claude-sonnet-4-6"
             mock_settings.llm_fallback_models = None
             mock_settings.LLM_TIMEOUT_SECONDS = 60.0
-            mock_settings.LLM_NUM_RETRIES = 2
 
             provider = LLMProvider()
             assert provider.model == "anthropic/claude-sonnet-4-6"
@@ -43,7 +42,6 @@ class TestLLMProvider:
             mock_settings.llm_model = "anthropic/claude-sonnet-4-6"
             mock_settings.llm_fallback_models = None
             mock_settings.LLM_TIMEOUT_SECONDS = 60.0
-            mock_settings.LLM_NUM_RETRIES = 2
 
             provider = LLMProvider(model="openai/gpt-4o")
             assert provider.model == "openai/gpt-4o"
@@ -54,7 +52,6 @@ class TestLLMProvider:
             mock_settings.llm_model = "anthropic/claude-sonnet-4-6"
             mock_settings.llm_fallback_models = None
             mock_settings.LLM_TIMEOUT_SECONDS = 60.0
-            mock_settings.LLM_NUM_RETRIES = 2
 
             provider = LLMProvider()
             assert provider._extract_provider("anthropic/claude-sonnet-4-6") == "anthropic"
@@ -75,7 +72,6 @@ class TestLLMProvider:
                 mock_settings.llm_model = "anthropic/claude-sonnet-4-6"
                 mock_settings.llm_fallback_models = None
                 mock_settings.LLM_TIMEOUT_SECONDS = 60.0
-                mock_settings.LLM_NUM_RETRIES = 2
 
                 provider = LLMProvider()
                 result = await provider.complete("Test prompt")
@@ -96,7 +92,6 @@ class TestLLMProvider:
                 mock_settings.llm_model = "anthropic/claude-sonnet-4-6"
                 mock_settings.llm_fallback_models = None
                 mock_settings.LLM_TIMEOUT_SECONDS = 60.0
-                mock_settings.LLM_NUM_RETRIES = 2
 
                 provider = LLMProvider()
                 messages = [
@@ -120,7 +115,6 @@ class TestLLMProvider:
                 mock_settings.llm_model = "anthropic/claude-sonnet-4-6"
                 mock_settings.llm_fallback_models = None
                 mock_settings.LLM_TIMEOUT_SECONDS = 60.0
-                mock_settings.LLM_NUM_RETRIES = 2
 
                 provider = LLMProvider()
                 messages = [
@@ -132,37 +126,12 @@ class TestLLMProvider:
                 assert result == "Response"
 
     @pytest.mark.asyncio
-    async def test_stream(self):
-        """Test streaming completion."""
-        with patch("src.services.llm_provider.acompletion") as mock_acompletion:
-            # Create async generator mock
-            async def mock_stream():
-                chunks = [
-                    MagicMock(choices=[MagicMock(delta=MagicMock(content="Hello"))]),
-                    MagicMock(choices=[MagicMock(delta=MagicMock(content=" "))]),
-                    MagicMock(choices=[MagicMock(delta=MagicMock(content="world"))]),
-                ]
-                for chunk in chunks:
-                    yield chunk
-
-            mock_acompletion.return_value = mock_stream()
-
-            with patch("src.services.llm_provider.settings") as mock_settings:
-                mock_settings.llm_model = "anthropic/claude-sonnet-4-6"
-                mock_settings.llm_fallback_models = None
-                mock_settings.LLM_TIMEOUT_SECONDS = 60.0
-                mock_settings.LLM_NUM_RETRIES = 2
-
-                provider = LLMProvider()
-                tokens = []
-                async for token in provider.stream("Test"):
-                    tokens.append(token)
-
-                assert tokens == ["Hello", " ", "world"]
-
-    @pytest.mark.asyncio
-    async def test_fallback_models_passed(self):
-        """Test that fallback models are passed to acompletion."""
+    @pytest.mark.parametrize("use_fast_model", [False, True])
+    async def test_should_never_send_litellm_fallbacks_when_fallback_configured(
+        self, use_fast_model
+    ):
+        """D4: the cross-provider fallback lives in call_llm_with_retry, so
+        LiteLLM never swaps models inside one request."""
         with patch("src.services.llm_provider.acompletion") as mock_acompletion:
             mock_response = MagicMock()
             mock_response.choices = [MagicMock()]
@@ -171,16 +140,23 @@ class TestLLMProvider:
 
             with patch("src.services.llm_provider.settings") as mock_settings:
                 mock_settings.llm_model = "anthropic/claude-sonnet-4-6"
+                mock_settings.llm_fast_model = "anthropic/claude-haiku-4-5-20251001"
                 mock_settings.llm_fallback_models = ["openai/gpt-4o"]
                 mock_settings.LLM_TIMEOUT_SECONDS = 60.0
-                mock_settings.LLM_NUM_RETRIES = 2
 
                 provider = LLMProvider()
-                await provider.complete("Test")
+                await provider.complete_with_messages(
+                    [{"role": "user", "content": "hi"}], use_fast_model=use_fast_model
+                )
 
-                # Check that fallbacks were passed
-                call_kwargs = mock_acompletion.call_args.kwargs
-                assert call_kwargs.get("fallbacks") == ["openai/gpt-4o"]
+                assert "fallbacks" not in mock_acompletion.call_args.kwargs
+
+    def test_should_expose_first_fallback_model_for_the_retry_wrapper(self):
+        provider = LLMProvider(
+            model="anthropic/claude-sonnet-4-6", fallback_models=["openai/gpt-4o", "gemini/x"]
+        )
+
+        assert provider.fallback_model == "openai/gpt-4o"
 
 
 class TestUseFastModel:
@@ -201,7 +177,6 @@ class TestUseFastModel:
                 mock_settings.llm_fast_model = "anthropic/claude-haiku-4-5-20251001"
                 mock_settings.llm_fallback_models = None
                 mock_settings.LLM_TIMEOUT_SECONDS = 60.0
-                mock_settings.LLM_NUM_RETRIES = 2
 
                 provider = LLMProvider()
                 messages = [{"role": "user", "content": "hi"}]
@@ -225,7 +200,6 @@ class TestUseFastModel:
                 mock_settings.llm_fast_model = "anthropic/claude-haiku-4-5-20251001"
                 mock_settings.llm_fallback_models = None
                 mock_settings.LLM_TIMEOUT_SECONDS = 60.0
-                mock_settings.LLM_NUM_RETRIES = 2
 
                 provider = LLMProvider()
                 messages = [{"role": "user", "content": "hi"}]
@@ -233,30 +207,6 @@ class TestUseFastModel:
 
                 call_kwargs = mock_acompletion.call_args.kwargs
                 assert call_kwargs["model"] == "anthropic/claude-sonnet-4-6"
-
-    @pytest.mark.asyncio
-    async def test_use_fast_model_skips_fallbacks(self):
-        """Fallbacks are configured for the primary model — sending them
-        with a fast call would defeat the cost saving."""
-        with patch("src.services.llm_provider.acompletion") as mock_acompletion:
-            mock_response = MagicMock()
-            mock_response.choices = [MagicMock()]
-            mock_response.choices[0].message.content = "ok"
-            mock_acompletion.return_value = mock_response
-
-            with patch("src.services.llm_provider.settings") as mock_settings:
-                mock_settings.llm_model = "anthropic/claude-sonnet-4-6"
-                mock_settings.llm_fast_model = "anthropic/claude-haiku-4-5-20251001"
-                mock_settings.llm_fallback_models = ["openai/gpt-4o"]
-                mock_settings.LLM_TIMEOUT_SECONDS = 60.0
-                mock_settings.LLM_NUM_RETRIES = 2
-
-                provider = LLMProvider()
-                messages = [{"role": "user", "content": "hi"}]
-                await provider.complete_with_messages(messages, use_fast_model=True)
-
-                call_kwargs = mock_acompletion.call_args.kwargs
-                assert "fallbacks" not in call_kwargs
 
 
 class TestGetLLMProvider:
@@ -273,7 +223,6 @@ class TestGetLLMProvider:
             mock_settings.llm_model = "anthropic/claude-sonnet-4-6"
             mock_settings.llm_fallback_models = None
             mock_settings.LLM_TIMEOUT_SECONDS = 60.0
-            mock_settings.LLM_NUM_RETRIES = 2
 
             provider1 = get_llm_provider()
             provider2 = get_llm_provider()
@@ -304,7 +253,6 @@ class TestPromptCaching:
                 mock_settings.llm_fast_model = "anthropic/claude-haiku-4-5-20251001"
                 mock_settings.llm_fallback_models = None
                 mock_settings.LLM_TIMEOUT_SECONDS = 60.0
-                mock_settings.LLM_NUM_RETRIES = 2
 
                 provider = LLMProvider()
                 await provider.complete(
@@ -345,7 +293,6 @@ class TestPromptCaching:
                 mock_settings.llm_fast_model = "openai/gpt-4o-mini"
                 mock_settings.llm_fallback_models = None
                 mock_settings.LLM_TIMEOUT_SECONDS = 60.0
-                mock_settings.LLM_NUM_RETRIES = 2
 
                 provider = LLMProvider()
                 await provider.complete("dyn", cache_static="STATIC PREFIX")

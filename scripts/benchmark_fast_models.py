@@ -196,7 +196,6 @@ def make_provider(model: str) -> LLMProvider:
         fast_model=model,
         fallback_models=None,
         timeout=120.0,
-        num_retries=0,
     )
 
 

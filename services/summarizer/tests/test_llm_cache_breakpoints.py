@@ -3,9 +3,10 @@
 What reaches ``acompletion``: on Anthropic a caller-placed user-block
 breakpoint survives (with or without the system breakpoint); for OpenAI —
 primary, fast model or a fast-routed call — every ``cache_control`` is gone.
-Also pins what LiteLLM itself does with a user-block breakpoint (the in-LiteLLM
-``fallbacks`` path still hands Anthropic-shaped messages to OpenAI), and that
-cache read/write tokens keep landing in ``pipeline.timing`` and Langfuse.
+Also pins what LiteLLM itself puts on the wire for a user-block breakpoint
+(Anthropic keeps it, OpenAI drops it — a second guard behind
+``prepare_for_model``), and that cache read/write tokens keep landing in
+``pipeline.timing`` and Langfuse.
 """
 
 from __future__ import annotations

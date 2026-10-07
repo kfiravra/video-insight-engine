@@ -55,9 +55,10 @@ def _model_tail(model: str | None) -> str:
 def is_fallback_response(requested_model: str, response_model: str | None) -> bool:
     """True when the provider answered with a different model than requested.
 
-    LiteLLM's ``fallbacks`` swap providers silently; the response's ``model``
-    is the only trace of it. Providers echo the bare name (``claude-sonnet-4-6``)
-    or a dated variant, so the comparison is prefix-based on the bare name.
+    A safety net for a silent swap below us (our own cross-provider fallback is
+    tagged explicitly by ``call_llm_with_retry``). Providers echo the bare name
+    (``claude-sonnet-4-6``) or a dated variant, so the comparison is
+    prefix-based on the bare name.
     """
     if not response_model or not isinstance(response_model, str):
         return False
@@ -199,8 +200,13 @@ def record_llm_call(
     start_monotonic: float,
     latency_ms: int,
     attempt: int = 1,
+    fallback_used: bool = False,
 ) -> None:
-    """Record one successful completion. Never raises."""
+    """Record one successful completion. Never raises.
+
+    ``fallback_used`` marks an answer from the cross-provider fallback model
+    (``model`` is then the fallback — the model that actually answered).
+    """
     recorder = _recorder_var.get()
     if recorder is None:
         return
@@ -222,7 +228,7 @@ def record_llm_call(
                 "cacheWriteTokens": _usage_int(usage, "cache_creation_input_tokens"),
                 "costUsd": _call_cost(response),
                 "attempt": attempt,
-                "fallbackUsed": is_fallback_response(model, response_model),
+                "fallbackUsed": fallback_used or is_fallback_response(model, response_model),
                 "finishReason": getattr(choices[0], "finish_reason", None),
             }
         )

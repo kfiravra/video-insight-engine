@@ -1,12 +1,14 @@
 """LiteLLM-based multi-provider LLM abstraction.
 
 Provides unified API for calling LLMs across Anthropic, OpenAI, and Gemini
-with built-in fallbacks, retries, and cost tracking.
+with cost tracking. One request = one model: retries and the cross-provider
+fallback live in ``call_llm_with_retry``, never inside LiteLLM, so every
+attempt is recorded under the model that actually answered.
 """
 
 import logging
 import time
-from collections.abc import AsyncGenerator, Sequence
+from collections.abc import Sequence
 from typing import Any
 
 from litellm import acompletion
@@ -34,8 +36,8 @@ from src.services.pipeline.pipeline_timing import record_llm_call, record_llm_fa
 logger = logging.getLogger(__name__)
 
 # LiteLLM num_retries is disabled because retries are handled by
-# call_llm_with_retry() which adds structured logging, per-stage
-# timeouts, and linear backoff.
+# call_llm_with_retry(), which adds structured logging, per-stage timeouts,
+# retry-after-aware backoff and the cross-provider fallback.
 _LITELLM_NUM_RETRIES = 0
 
 
@@ -43,6 +45,11 @@ def _attempt_of(span_metadata: dict[str, Any] | None) -> int:
     """Retry attempt number stamped by ``call_llm_with_retry`` (1 when absent)."""
     attempt = (span_metadata or {}).get("attempt", 1)
     return attempt if isinstance(attempt, int) else 1
+
+
+def _is_fallback_attempt(span_metadata: dict[str, Any] | None) -> bool:
+    """True when ``call_llm_with_retry`` routed this attempt to the fallback model."""
+    return bool((span_metadata or {}).get("fallbackFrom"))
 
 
 def _rejects_temperature(model: str, temperature: float) -> bool:
@@ -80,7 +87,7 @@ def _model_parameters(kwargs: dict[str, Any]) -> dict[str, Any] | None:
 class LLMProvider:
     """Multi-provider LLM abstraction using LiteLLM.
 
-    Supports Anthropic, OpenAI, and Gemini with automatic fallbacks.
+    Supports Anthropic, OpenAI, and Gemini; one request goes to one model.
     """
 
     def __init__(
@@ -89,22 +96,21 @@ class LLMProvider:
         fast_model: str | None = None,
         fallback_models: list[str] | None = None,
         timeout: float | None = None,
-        num_retries: int | None = None,
     ):
         """Initialize LLM provider.
 
         Args:
             model: Model to use (e.g., "anthropic/claude-sonnet-4-6")
             fast_model: Fast model for quick tasks (e.g., "anthropic/claude-haiku-4-5-20251001")
-            fallback_models: List of fallback models if primary fails
+            fallback_models: Fallback chain for primary-model calls. Never sent
+                to LiteLLM — ``call_llm_with_retry`` reads ``fallback_model``
+                and makes the fallback attempt itself.
             timeout: Request timeout in seconds
-            num_retries: Number of retries on failure
         """
         self._model = model or settings.llm_model
         self._fast_model = fast_model or settings.llm_fast_model
         self._fallback_models = fallback_models or settings.llm_fallback_models
         self._timeout = timeout if timeout is not None else settings.LLM_TIMEOUT_SECONDS
-        self._num_retries = num_retries if num_retries is not None else settings.LLM_NUM_RETRIES
 
     @property
     def model(self) -> str:
@@ -115,6 +121,11 @@ class LLMProvider:
     def fast_model(self) -> str:
         """Get the configured fast model for quick tasks."""
         return self._fast_model
+
+    @property
+    def fallback_model(self) -> str | None:
+        """First model of the fallback chain, or None when none is configured."""
+        return self._fallback_models[0] if self._fallback_models else None
 
     def _extract_provider(self, model: str) -> str:
         """Extract provider from model string."""
@@ -209,6 +220,7 @@ class LLMProvider:
             start_monotonic=start_monotonic,
             latency_ms=latency_ms,
             attempt=attempt,
+            fallback_used=_is_fallback_attempt(span_metadata),
         )
         choice = response.choices[0]
         if choice.finish_reason == "length":
@@ -375,11 +387,6 @@ class LLMProvider:
         }
         if json_mode:
             kwargs["response_format"] = {"type": "json_object"}
-        # Fallbacks are configured for the primary model only — they may
-        # not be appropriate for the fast model (e.g., a Sonnet fallback
-        # behind a Haiku call defeats the cost savings).
-        if self._fallback_models and not use_fast_model:
-            kwargs["fallbacks"] = self._fallback_models
         if metadata:
             kwargs["metadata"] = metadata
         return await self._run_completion(
@@ -387,86 +394,6 @@ class LLMProvider:
             span_name=span_name,
             span_metadata=span_metadata,
         )
-
-    async def stream(
-        self,
-        prompt: str,
-        max_tokens: int = 2000,
-        system_prompt: str | None = None,
-        metadata: dict[str, Any] | None = None,
-    ) -> AsyncGenerator[str, None]:
-        """Stream completion tokens from prompt.
-
-        Args:
-            prompt: User prompt
-            max_tokens: Maximum tokens in response
-            system_prompt: Optional system prompt
-            metadata: Optional metadata for tracking
-
-        Yields:
-            String tokens as generated
-        """
-        messages = []
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
-        messages.append({"role": "user", "content": prompt})
-
-        async for token in self.stream_with_messages(messages, max_tokens, metadata):
-            yield token
-
-    async def stream_with_messages(
-        self,
-        messages: list[dict | Message],
-        max_tokens: int = 2000,
-        metadata: dict[str, Any] | None = None,
-    ) -> AsyncGenerator[str, None]:
-        """Stream completion tokens from message list.
-
-        Args:
-            messages: List of messages
-            max_tokens: Maximum tokens in response
-            metadata: Optional metadata for tracking
-
-        Yields:
-            String tokens as generated
-        """
-        # Convert Message objects to dicts
-        msg_dicts = [m.model_dump() if isinstance(m, Message) else m for m in messages]
-
-        try:
-            # Build kwargs, only including optional params if set
-            kwargs: dict[str, Any] = {
-                "model": self._model,
-                "messages": msg_dicts,
-                "max_tokens": max_tokens,
-                "timeout": self._timeout,
-                "num_retries": _LITELLM_NUM_RETRIES,
-                "stream": True,
-            }
-            if self._fallback_models:
-                kwargs["fallbacks"] = self._fallback_models
-            if metadata:
-                kwargs["metadata"] = metadata
-
-            response = await acompletion(**kwargs)
-
-            async for chunk in response:
-                content = chunk.choices[0].delta.content
-                if content:
-                    yield content
-
-        except RateLimitError as e:
-            logger.warning("Rate limited during stream: %s", e)
-            raise
-        except AuthenticationError as e:
-            logger.error("Auth error during stream: %s", e)
-            raise
-        except Timeout as e:
-            logger.warning("Stream timeout: %s", e)
-            raise
-        except APIError as e:
-            logger.error("API error during stream: %s", e)
-            raise
 
 
 # Default provider instance (can be overridden via DI)

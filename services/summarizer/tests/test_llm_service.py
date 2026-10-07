@@ -61,20 +61,3 @@ class TestLLMService:
             temperature=None,
             system_prompt=None,
         )
-
-    @pytest.mark.asyncio
-    async def test_stream_llm_yields_tokens(self, mock_llm_provider):
-        """Test streaming LLM response yields tokens."""
-
-        async def mock_stream(*args, **kwargs):
-            for token in ["Hello", " ", "world"]:
-                yield token
-
-        mock_llm_provider.stream = mock_stream
-        service = LLMService(mock_llm_provider)
-
-        tokens = []
-        async for token in service.stream_llm("test prompt"):
-            tokens.append(token)
-
-        assert tokens == ["Hello", " ", "world"]
