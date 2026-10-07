@@ -70,8 +70,22 @@ def test_high_tier_should_time_vision_reselect(replays: dict) -> None:
     assert "frames.vision_reselect" in replays[_HIGH_VIDEO].phase_walls()
 
 
-def test_zero_frame_run_should_upload_no_manifest(replays: dict) -> None:
-    assert replays[_ZERO_FRAMES_VIDEO].frame_manifest is None
+def test_zero_candidate_run_should_upload_ladder_frames(replays: dict) -> None:
+    """C21/D17: the static-camera benchmark gets frames from the 1a.3 ladder."""
+    manifest = replays[_ZERO_FRAMES_VIDEO].frame_manifest or {}
+    assert len(manifest.get("frames", [])) > 0
+
+
+def test_zero_candidate_run_should_time_the_ladder(replays: dict) -> None:
+    assert "frames.scene_ladder" in replays[_ZERO_FRAMES_VIDEO].phase_walls()
+
+
+def test_zero_candidate_run_should_show_moment_images(replays: dict) -> None:
+    tabs = (replays[_ZERO_FRAMES_VIDEO].saved_result or {}).get("tabs", [])
+    moments = [t for t in tabs if t.get("component") == "moment_track"]
+    assert moments and all(
+        any(item.get("thumbnailUrl") for item in t["props"]["items"]) for t in moments
+    )
 
 
 def test_hires_should_upgrade_every_selected_frame(replays: dict, cassettes: dict) -> None:

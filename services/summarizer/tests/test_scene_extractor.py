@@ -1,6 +1,7 @@
 """Tests for scene-based frame extraction."""
 
 import asyncio
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -596,62 +597,61 @@ class TestReselectHook:
         assert len(result["selected_frames"]) == 3
 
 
-class TestStaticCameraFallback:
-    async def test_interval_frames_shaped_like_scene_frames(self, tmp_path):
-        from unittest.mock import patch
+class TestZeroCandidatePath:
+    """A static camera with no cut above the threshold still yields uploaded frames."""
 
-        from PIL import Image
+    VIDEO_ID = "dQw4w9WgXcQ"
 
-        from src.services.media.scene_extractor import _sample_interval_frames
+    async def test_should_upload_uniform_frames_when_scene_detection_finds_none(self, tmp_path):
+        def fake_exec(*args, **kwargs):
+            proc = MagicMock()
+            proc.returncode = None
 
-        frames_dir = tmp_path / "frames"
-        frames_dir.mkdir()
+            async def communicate():
+                if args[0] == "yt-dlp":
+                    (tmp_path / f"{self.VIDEO_ID}.mp4").write_bytes(b"x" * 2048)
+                    proc.returncode = 0
+                    return (b"", b"")
+                if "-ss" in args:
+                    Path(args[-1]).write_bytes(b"jpg")
+                    proc.returncode = 0
+                    return (b"", b"")
+                # ffmpeg >= 7 exits 234 when the scene pass writes no frame
+                proc.returncode = 234
+                return (b"", b"Nothing was written into output file, because ...")
 
-        async def fake_exec(*args, **kwargs):
-            # Simulate ffmpeg writing interval frames
-            for i in range(1, 5):
-                Image.new("RGB", (16, 16), (i * 40, 0, 0)).save(
-                    frames_dir / f"interval_{i:04d}.jpg", "JPEG"
-                )
-            proc = AsyncMock()
-            proc.communicate = AsyncMock(return_value=(b"", b""))
-            proc.returncode = 0
+            proc.communicate = communicate
             return proc
 
-        with patch("asyncio.create_subprocess_exec", side_effect=fake_exec):
-            frames = await _sample_interval_frames(
-                tmp_path / "v.mp4", frames_dir, 600, str(tmp_path), index_offset=6
-            )
+        with (
+            patch(
+                "src.services.media.scene_extractor._check_existing_frames",
+                AsyncMock(return_value=None),
+            ),
+            patch(
+                "src.services.media.scene_extractor._upload_frames_batch",
+                AsyncMock(side_effect=lambda f: f),
+            ),
+            patch("src.services.media.hires_prefetch.start_local_hires", AsyncMock()),
+            patch("src.services.media.hires_refiner.refine_selected_frames", AsyncMock()),
+            patch("src.services.media.frame_scorer.score_all_frames", side_effect=lambda f: f),
+            patch(
+                "src.services.media.frame_scorer.select_frames",
+                side_effect=lambda frames, duration: ([], []),
+            ),
+            patch("src.services.media.scene_extractor.s3_client") as s3,
+            patch("src.services.media.scene_extractor.tempfile") as tempfile_mod,
+            patch("src.services.media.scene_extractor.settings") as mock_settings,
+            patch("asyncio.create_subprocess_exec", side_effect=fake_exec),
+        ):
+            mock_settings.SCENE_EXTRACTION_ENABLED = True
+            mock_settings.SCENE_THRESHOLD = 0.3
+            mock_settings.SCENE_S3_PREFIX = "scenes-v3"
+            tempfile_mod.mkdtemp.return_value = str(tmp_path)
+            s3.put_json = AsyncMock()
+            result = await extract_scene_keyframes(self.VIDEO_ID, duration_seconds=1127)
 
-        assert len(frames) == 4
-        assert frames[0]["index"] == 6
-        # Regression: fps=1/step samples window STARTS (frame i at i*step) —
-        # a +step/2 offset here made the hires refiner seek the wrong content.
-        from src.services.media.scene_extractor import _INTERVAL_SAMPLE_COUNT
-
-        step = max(15, 600 // _INTERVAL_SAMPLE_COUNT)
-        assert [f["timestamp"] for f in frames] == [
-            0.0,
-            float(step),
-            float(2 * step),
-            float(3 * step),
-        ]
-        assert all(f["path"].endswith(".jpg") for f in frames)
-
-    async def test_ffmpeg_failure_returns_empty(self, tmp_path):
-        from unittest.mock import patch
-
-        from src.services.media.scene_extractor import _sample_interval_frames
-
-        frames_dir = tmp_path / "frames"
-        frames_dir.mkdir()
-
-        with patch("asyncio.create_subprocess_exec", side_effect=FileNotFoundError):
-            frames = await _sample_interval_frames(
-                tmp_path / "v.mp4", frames_dir, 600, str(tmp_path), index_offset=0
-            )
-
-        assert frames == []
+        assert len(result["selected_frames"]) == 25
 
 
 class TestManifestQualityGate:

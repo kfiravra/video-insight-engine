@@ -14,7 +14,7 @@ import pytest
 
 from src.services.pipeline import prompt_builder
 from src.services.transcription import transcript_chunker
-from tests.replay.cassette import available_cassettes
+from tests.replay.cassette import Cassette, available_cassettes
 from tests.replay.driver import run_replay
 from tests.replay.report import out_of_tolerance, phase_rows
 
@@ -33,6 +33,14 @@ _FRAMES_SUBSTEPS = ("frames.scene_detect", "frames.score_select", "frames.hires"
 _MILESTONES = ("metadataMs", "synthesisCompleteMs", "firstTabReadyMs", "completeMs", "doneMs")
 _DONE_COUNTS = re.compile(r"tabs planned=(\d+) assembled=(\d+) emitted=(\d+)")
 _VIDEOS = available_cassettes()
+# Tabs the code under test adds on top of a recording: uC45_4nnEAI was recorded
+# with zero scene frames; since the 1a.3 ladder it has captioned frames, so
+# assembly appends its "Visual Moments" filmstrip.
+_TABS_ADDED_SINCE_RECORDING: dict[str, list[str]] = {"uC45_4nnEAI": ["frames-gallery"]}
+
+
+def _expected_tab_ids(cassette: Cassette) -> list[str]:
+    return [*cassette.recorded.tab_ids, *_TABS_ADDED_SINCE_RECORDING.get(cassette.video_id, [])]
 
 
 @pytest.mark.parametrize("video_id", _VIDEOS)
@@ -56,7 +64,7 @@ class TestReplayAtSpeedZero:
         self, replays: dict, cassettes: dict, video_id: str
     ) -> None:
         saved = replays[video_id].saved_result or {}
-        assert [t["id"] for t in saved.get("tabs", [])] == cassettes[video_id].recorded.tab_ids
+        assert [t["id"] for t in saved.get("tabs", [])] == _expected_tab_ids(cassettes[video_id])
 
     def test_should_mark_row_completed(self, replays: dict, video_id: str) -> None:
         assert (replays[video_id].saved_result or {}).get("status") == "completed"
@@ -92,7 +100,7 @@ class TestPipelineTimingRecord:
         self, replays: dict, cassettes: dict, video_id: str
     ) -> None:
         counts = (replays[video_id].timing or {}).get("counts", {})
-        expected = len(cassettes[video_id].recorded.tab_ids)
+        expected = len(_expected_tab_ids(cassettes[video_id]))
         assert (counts.get("tabsAssembled"), counts.get("tabsEmitted")) == (expected, expected)
 
 
@@ -101,7 +109,7 @@ def test_done_line_should_carry_planned_assembled_emitted(
     replays: dict, cassettes: dict, video_id: str
 ) -> None:
     match = _DONE_COUNTS.search(replays[video_id].done_line or "")
-    expected = len(cassettes[video_id].recorded.tab_ids)
+    expected = len(_expected_tab_ids(cassettes[video_id]))
     assert match is not None and (int(match[2]), int(match[3])) == (expected, expected)
 
 

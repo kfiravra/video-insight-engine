@@ -15,7 +15,6 @@ Key principle: detect cheap, refine selectively, upload selectively.
 
 import asyncio
 import logging
-import re
 import shutil
 import tempfile
 import time
@@ -26,6 +25,7 @@ from typing import Awaitable, Callable
 from src.config import settings
 from src.services.media.image_dedup import compute_ahash, is_duplicate
 from src.services.media.s3_client import s3_client
+from src.services.media.scene_detect import detect_candidate_frames
 from src.services.pipeline.pipeline_timing import mark_step, record_download
 from src.utils.constants import YOUTUBE_ID_RE
 
@@ -52,12 +52,6 @@ _MANIFEST_MIN_FRAMES = 10
 # Imported from the writer so the dedup revert can never drift from the
 # filename the refiner actually produces.
 from src.services.media.hires_refiner import HIRES_SUFFIX as _HIRES_SUFFIX
-
-# Below this many scene-detect hits, supplement with interval sampling —
-# static-camera videos (unboxings on a table) barely trigger scene cuts.
-_MIN_DETECTED_FRAMES = 12
-# Interval-sampled frames target: roughly one every 30-60s, capped.
-_INTERVAL_SAMPLE_COUNT = 30
 
 
 def _manifest_key(video_id: str) -> str:
@@ -258,71 +252,6 @@ def _sample_by_time(frames: list[dict], count: int) -> list[dict]:
                 sampled.append(ordered[cursor])
             cursor += 1
     return sampled
-
-
-async def _sample_interval_frames(
-    temp_video: Path,
-    frames_dir: Path,
-    duration_seconds: int,
-    temp_dir: str,
-    index_offset: int,
-) -> list[dict]:
-    """Extract frames at fixed intervals — the static-camera supplement.
-
-    Returns frame dicts shaped like the scene-detect ones (index continues
-    after the detected set so S3 keys stay unique). Best-effort: any failure
-    returns [] and the caller proceeds with whatever scene detection found.
-    """
-    step = max(15, duration_seconds // _INTERVAL_SAMPLE_COUNT)
-    pattern = str(frames_dir / "interval_%04d.jpg")
-    cmd = [
-        "ffmpeg",
-        "-i",
-        str(temp_video),
-        "-vf",
-        f"fps=1/{step},scale={settings.SCENE_DETECT_SCALE_WIDTH}:-2",
-        "-q:v",
-        str(settings.SCENE_JPEG_QUALITY),
-        pattern,
-        "-loglevel",
-        "error",
-        "-y",
-    ]
-    proc = None
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-        await asyncio.wait_for(proc.communicate(), timeout=120)
-    except (asyncio.TimeoutError, FileNotFoundError, OSError) as e:
-        logger.warning("Interval sampling failed (non-critical): %s", e)
-        if proc:
-            try:
-                proc.kill()
-                await proc.wait()
-            except ProcessLookupError:
-                pass
-        return []
-
-    frames: list[dict] = []
-    for i, path in enumerate(sorted(frames_dir.glob("interval_*.jpg"))[:_INTERVAL_SAMPLE_COUNT]):
-        frames.append(
-            {
-                "index": index_offset + i,
-                "filename": path.name,
-                "path": str(path),
-                # fps=1/step (round=near) emits the input frame nearest each
-                # sample instant i*step — NOT step/2 into the window. Offset
-                # timestamps here would make the hires refiner seek different
-                # content than what was scored, and skew vision labels +
-                # frame→item matching by up to step/2 (30s at the 60s cap).
-                "timestamp": float(i * step),
-                "temp_dir": temp_dir,
-            }
-        )
-    return frames
 
 
 def _dedupe_refined_frames(frames: list[dict]) -> list[dict]:
@@ -532,107 +461,19 @@ async def _do_extraction(
 
         hires_source = await start_local_hires(video_id, temp_video)
 
-        # Step 2: FFmpeg scene detection on LOCAL file
-        output_pattern = str(frames_dir / "scene_%04d.jpg")
-        ffmpeg_cmd = [
-            "ffmpeg",
-            "-i",
-            str(temp_video),
-            "-vf",
-            # -2 (not -1) keeps the auto height even, which mjpeg requires
-            f"select='gt(scene,{threshold:.4f})',showinfo,scale={settings.SCENE_DETECT_SCALE_WIDTH}:-2",
-            "-vsync",
-            "vfr",
-            "-q:v",
-            str(settings.SCENE_JPEG_QUALITY),
-            output_pattern,
-            "-loglevel",
-            "info",
-            "-y",
-        ]
-
-        ff_proc = None
-        detect_started = time.monotonic()
-        try:
-            ff_proc = await asyncio.create_subprocess_exec(
-                *ffmpeg_cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            dur = duration_seconds or 300
-            ffmpeg_timeout = min(300, max(60, int(dur * 0.3) + 30))
-            _, stderr_bytes = await asyncio.wait_for(ff_proc.communicate(), timeout=ffmpeg_timeout)
-        except asyncio.TimeoutError:
-            ffmpeg_timeout = min(300, max(60, int((duration_seconds or 300) * 0.3) + 30))
-            logger.warning(
-                "FFmpeg scene detection timed out for %s (%ds)", video_id, ffmpeg_timeout
-            )
-            if ff_proc:
-                try:
-                    ff_proc.kill()
-                    await ff_proc.wait()
-                except ProcessLookupError:
-                    pass
-            return empty_result
-        except FileNotFoundError:
-            logger.warning("ffmpeg not found, scene extraction unavailable")
-            return empty_result
-
-        mark_step("frames.scene_detect", detect_started)
-
-        # Step 3: Parse pts_time from showinfo filter output
-        timestamps: list[float] = []
-        if stderr_bytes:
-            stderr_text = stderr_bytes.decode("utf-8", errors="replace")
-            for match in re.finditer(r"pts_time:\s*([\d.]+)", stderr_text):
-                try:
-                    timestamps.append(float(match.group(1)))
-                except ValueError:
-                    continue
-
-        # Step 4: Collect frames (hard cap at 500 for resource safety)
-        frame_paths = sorted(frames_dir.glob("scene_*.jpg"))[:500]
-        if not frame_paths:
-            logger.info("No scene keyframes extracted for %s", video_id)
-            return empty_result
-
-        all_frames: list[dict] = []
-        for i, path in enumerate(frame_paths):
-            all_frames.append(
-                {
-                    "index": i,
-                    "filename": path.name,
-                    "path": str(path),
-                    "timestamp": timestamps[i] if i < len(timestamps) else 0.0,
-                    "temp_dir": temp_dir,
-                }
-            )
-
-        logger.info(
-            "FFmpeg detected %d scene frames for %s (%d timestamps parsed)",
-            len(all_frames),
-            video_id,
-            len(timestamps),
+        # Steps 2-4: scene detection on the LOCAL file, with the zero-candidate
+        # ladder (floor threshold, then uniform seeks) and the static-camera
+        # supplement for sparse results.
+        all_frames = await detect_candidate_frames(
+            temp_video,
+            frames_dir,
+            duration_seconds=duration_seconds,
+            temp_dir=temp_dir,
+            threshold=threshold,
         )
-
-        # Step 4b: static-camera fallback. Scene detection needs CUTS; a
-        # fixed-camera video (box openings on a table, lectures) can yield a
-        # handful of frames for 20+ minutes, starving every downstream
-        # consumer. Supplement with interval-sampled frames so selection has
-        # real coverage to choose from.
-        if len(all_frames) < _MIN_DETECTED_FRAMES and (duration_seconds or 0) > 120:
-            interval_frames = await _sample_interval_frames(
-                temp_video, frames_dir, duration_seconds or 300, temp_dir, len(all_frames)
-            )
-            if interval_frames:
-                logger.info(
-                    "Static-camera fallback for %s: +%d interval frames (had %d)",
-                    video_id,
-                    len(interval_frames),
-                    len(all_frames),
-                )
-                all_frames.extend(interval_frames)
-                all_frames.sort(key=lambda f: f.get("timestamp", 0.0))
+        if not all_frames:
+            logger.info("No candidate frames for %s (every ladder rung failed)", video_id)
+            return empty_result
 
         # Step 5: Score all frames locally (CPU only, ~2-3s)
         from src.services.media.frame_scorer import score_all_frames, select_frames
