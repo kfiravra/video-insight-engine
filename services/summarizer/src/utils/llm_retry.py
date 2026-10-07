@@ -92,6 +92,7 @@ async def call_llm_with_retry(
     cache_static: str | None = None,
     propagate_rate_limit: bool = False,
     model_override: str | None = None,
+    temperature: float | None = None,
 ) -> str | None:
     """Call LLM with timeout and retry. Returns raw string or None.
 
@@ -115,6 +116,9 @@ async def call_llm_with_retry(
             it here explicitly. Default ``None`` means "use the service as
             given" — keeps tests that pass a ``MagicMock`` for ``llm_service``
             working with no extra setup.
+        temperature: Sampling temperature forwarded on every attempt (also on
+            the ``model_override`` path); ``None`` sends none, i.e. the
+            provider default.
 
     Returns:
         Raw LLM response string, or None if all attempts failed.
@@ -145,6 +149,7 @@ async def call_llm_with_retry(
                     json_mode=json_mode,
                     span_name=stage_name,
                     span_metadata=span_metadata,
+                    temperature=temperature,
                 )
             else:
                 raw = await llm_service.call_llm(
@@ -155,6 +160,7 @@ async def call_llm_with_retry(
                     cache_static=cache_static,
                     span_name=stage_name,
                     span_metadata=span_metadata,
+                    temperature=temperature,
                 )
             duration = time.monotonic() - start
 

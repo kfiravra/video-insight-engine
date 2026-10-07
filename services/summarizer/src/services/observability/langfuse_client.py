@@ -322,11 +322,14 @@ def log_generation(
     metadata: dict[str, Any] | None = None,
     level: str = "DEFAULT",
     status_message: str | None = None,
+    model_parameters: dict[str, Any] | None = None,
 ) -> None:
     """Record a generation span on the current pipeline trace.
 
     No-op when no trace is bound to the current context (e.g., the call
-    site is invoked outside a :func:`pipeline_trace`).
+    site is invoked outside a :func:`pipeline_trace`). ``model_parameters``
+    (sampling params actually sent, e.g. ``temperature``) lands in the
+    generation's ``modelParameters``; omitted when ``None``.
     """
     trace = _current_trace.get()
     if trace is None:
@@ -359,6 +362,8 @@ def log_generation(
         "level": level,
         "status_message": status_message,
     }
+    if model_parameters:
+        generation_kwargs["model_parameters"] = model_parameters
     prompt_obj = _latest_prompt_obj.get()
     if prompt_obj is not None:
         generation_kwargs["prompt"] = prompt_obj

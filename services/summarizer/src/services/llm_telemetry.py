@@ -33,9 +33,12 @@ def record_generation(
     latency_ms: int,
     finish_reason: str | None,
     extra_metadata: dict[str, Any] | None,
+    model_parameters: dict[str, Any] | None = None,
 ) -> None:
     """Best-effort Langfuse generation log.
 
+    ``model_parameters`` carries the sampling parameters the request actually
+    sent (e.g. ``temperature``) into the generation's ``modelParameters``.
     Wrapped in a broad try/except — observability outages must never
     bubble out of an LLM call.
     """
@@ -68,6 +71,7 @@ def record_generation(
             output_tokens=output_tokens,
             cost_usd=cost,
             latency_ms=latency_ms,
+            model_parameters=model_parameters,
             metadata={
                 "finishReason": finish_reason,
                 **cache_metadata,

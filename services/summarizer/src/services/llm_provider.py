@@ -38,6 +38,24 @@ def _attempt_of(span_metadata: dict[str, Any] | None) -> int:
     return attempt if isinstance(attempt, int) else 1
 
 
+def _with_sampling(kwargs: dict[str, Any], temperature: float | None) -> dict[str, Any]:
+    """Add ``temperature`` to the request only when the caller set one.
+
+    ``None`` leaves the key out so the provider default applies and the
+    request stays byte-identical to calls that never passed it.
+    """
+    if temperature is not None:
+        kwargs["temperature"] = temperature
+    return kwargs
+
+
+def _model_parameters(kwargs: dict[str, Any]) -> dict[str, Any] | None:
+    """Sampling parameters actually sent, for Langfuse ``modelParameters``."""
+    if "temperature" not in kwargs:
+        return None
+    return {"temperature": kwargs["temperature"]}
+
+
 class Message(BaseModel):
     """Chat message for LLM conversation."""
 
@@ -160,6 +178,57 @@ class LLMProvider:
         else:
             logger.error("LLM call failed%s (%s): %s", ctx, type(e).__name__, e)
 
+    async def _run_completion(
+        self,
+        kwargs: dict[str, Any],
+        *,
+        span_name: str | None,
+        span_metadata: dict[str, Any] | None,
+        context: str = "",
+    ) -> str:
+        """Send one ``acompletion`` request; record timing and the Langfuse generation."""
+        model = kwargs["model"]
+        attempt = _attempt_of(span_metadata)
+        start_monotonic = time.monotonic()
+        response = await self._call_with_error_logging(
+            acompletion(**kwargs),
+            model=model,
+            timeout_value=kwargs["timeout"],
+            context=context,
+            span_name=span_name,
+            attempt=attempt,
+        )
+        latency_ms = stopwatch_ms_since(start_monotonic)
+        record_llm_call(
+            span=span_name,
+            model=model,
+            response=response,
+            start_monotonic=start_monotonic,
+            latency_ms=latency_ms,
+            attempt=attempt,
+        )
+        choice = response.choices[0]
+        if choice.finish_reason == "length":
+            logger.warning(
+                "LLM response truncated (finish_reason=length), model=%s, max_tokens=%d",
+                model,
+                kwargs["max_tokens"],
+            )
+        content = choice.message.content or ""
+        if span_name:
+            record_generation(
+                span_name=span_name,
+                model=model,
+                msg_dicts=kwargs["messages"],
+                content=content,
+                response=response,
+                latency_ms=latency_ms,
+                finish_reason=choice.finish_reason,
+                extra_metadata=span_metadata,
+                model_parameters=_model_parameters(kwargs),
+            )
+        return content
+
     async def complete(
         self,
         prompt: str,
@@ -171,6 +240,7 @@ class LLMProvider:
         cache_static: str | None = None,
         span_name: str | None = None,
         span_metadata: dict[str, Any] | None = None,
+        temperature: float | None = None,
     ) -> str:
         """Generate completion from prompt.
 
@@ -183,6 +253,7 @@ class LLMProvider:
             cache_static: Static prompt content to cache (Anthropic prompt caching).
                 When provided, the static part is sent as a system message with
                 cache_control, and the dynamic prompt as the user message.
+            temperature: Sampling temperature; ``None`` sends none (provider default).
 
         Returns:
             Generated text content
@@ -221,6 +292,7 @@ class LLMProvider:
             json_mode=json_mode,
             span_name=span_name,
             span_metadata=span_metadata,
+            temperature=temperature,
         )
 
     async def complete_fast(
@@ -231,6 +303,7 @@ class LLMProvider:
         json_mode: bool = False,
         span_name: str | None = None,
         span_metadata: dict[str, Any] | None = None,
+        temperature: float | None = None,
     ) -> str:
         """Generate quick completion using fast model.
 
@@ -241,6 +314,7 @@ class LLMProvider:
             prompt: User prompt
             max_tokens: Maximum tokens in response (default 50)
             timeout: Request timeout in seconds (default 5.0)
+            temperature: Sampling temperature; ``None`` sends none (provider default).
 
         Returns:
             Generated text content
@@ -250,55 +324,21 @@ class LLMProvider:
             Timeout: Request timed out
             APIError: General API error
         """
-        msg_dicts = [{"role": "user", "content": prompt}]
         kwargs: dict[str, Any] = {
             "model": self._fast_model,
-            "messages": msg_dicts,
+            "messages": [{"role": "user", "content": prompt}],
             "max_tokens": max_tokens,
             "timeout": timeout,
             "num_retries": _LITELLM_NUM_RETRIES,
         }
         if json_mode:
             kwargs["response_format"] = {"type": "json_object"}
-
-        start_monotonic = time.monotonic()
-        response = await self._call_with_error_logging(
-            acompletion(**kwargs),
-            model=self._fast_model,
-            timeout_value=timeout,
-            context="fast model",
+        return await self._run_completion(
+            _with_sampling(kwargs, temperature),
             span_name=span_name,
-            attempt=_attempt_of(span_metadata),
+            span_metadata=span_metadata,
+            context="fast model",
         )
-        latency_ms = stopwatch_ms_since(start_monotonic)
-        record_llm_call(
-            span=span_name,
-            model=self._fast_model,
-            response=response,
-            start_monotonic=start_monotonic,
-            latency_ms=latency_ms,
-            attempt=_attempt_of(span_metadata),
-        )
-        choice = response.choices[0]
-        if choice.finish_reason == "length":
-            logger.warning(
-                "LLM response truncated (finish_reason=length), model=%s, max_tokens=%d",
-                self._fast_model,
-                max_tokens,
-            )
-        content = choice.message.content or ""
-        if span_name:
-            record_generation(
-                span_name=span_name,
-                model=self._fast_model,
-                msg_dicts=msg_dicts,
-                content=content,
-                response=response,
-                latency_ms=latency_ms,
-                finish_reason=choice.finish_reason,
-                extra_metadata=span_metadata,
-            )
-        return content
 
     async def complete_with_messages(
         self,
@@ -310,6 +350,7 @@ class LLMProvider:
         use_fast_model: bool = False,
         span_name: str | None = None,
         span_metadata: dict[str, Any] | None = None,
+        temperature: float | None = None,
     ) -> str:
         """Generate completion from message list.
 
@@ -324,22 +365,18 @@ class LLMProvider:
                 generation span under this name. Best-effort — observability
                 failures are swallowed.
             span_metadata: Extra metadata merged into the generation span.
+            temperature: Sampling temperature; ``None`` sends none (provider default).
 
         Returns:
             Generated text content
         """
-        # Convert Message objects to dicts
         msg_dicts = [m.model_dump() if isinstance(m, Message) else m for m in messages]
-
         effective_model = self._fast_model if use_fast_model else self._model
-
-        # Build kwargs, only including optional params if set
-        effective_timeout = timeout if timeout is not None else self._timeout
         kwargs: dict[str, Any] = {
             "model": effective_model,
             "messages": msg_dicts,
             "max_tokens": max_tokens,
-            "timeout": effective_timeout,
+            "timeout": timeout if timeout is not None else self._timeout,
             "num_retries": _LITELLM_NUM_RETRIES,
         }
         if json_mode:
@@ -351,45 +388,11 @@ class LLMProvider:
             kwargs["fallbacks"] = self._fallback_models
         if metadata:
             kwargs["metadata"] = metadata
-
-        start_monotonic = time.monotonic()
-        response = await self._call_with_error_logging(
-            acompletion(**kwargs),
-            model=effective_model,
-            timeout_value=effective_timeout,
+        return await self._run_completion(
+            _with_sampling(kwargs, temperature),
             span_name=span_name,
-            attempt=_attempt_of(span_metadata),
+            span_metadata=span_metadata,
         )
-        latency_ms = stopwatch_ms_since(start_monotonic)
-        record_llm_call(
-            span=span_name,
-            model=effective_model,
-            response=response,
-            start_monotonic=start_monotonic,
-            latency_ms=latency_ms,
-            attempt=_attempt_of(span_metadata),
-        )
-        choice = response.choices[0]
-        if choice.finish_reason == "length":
-            logger.warning(
-                "LLM response truncated (finish_reason=length), model=%s, max_tokens=%d",
-                effective_model,
-                max_tokens,
-            )
-
-        content = choice.message.content or ""
-        if span_name:
-            record_generation(
-                span_name=span_name,
-                model=effective_model,
-                msg_dicts=msg_dicts,
-                content=content,
-                response=response,
-                latency_ms=latency_ms,
-                finish_reason=choice.finish_reason,
-                extra_metadata=span_metadata,
-            )
-        return content
 
     async def complete_with_tracking(
         self,

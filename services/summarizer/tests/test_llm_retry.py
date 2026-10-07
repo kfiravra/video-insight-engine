@@ -157,6 +157,7 @@ class TestCallLlmWithRetry:
                 "useFastModel": False,
                 "modelOverride": None,
             },
+            temperature=None,
         )
 
     @pytest.mark.asyncio
