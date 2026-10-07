@@ -56,10 +56,12 @@ class Settings(BaseSettings):
     # (reports/fast-model-bench-20260519-074647.md). Override via env to test
     # alternatives without rebuilding.
     # Only the two stages with material wins (enrichment quality +35%,
-    # vision -67% cost) are pinned. Classifier/translation stay on the
-    # default fast tier (gpt-4o-mini); the Gemini Flash-Lite savings were
-    # fractions of a cent — not worth adding a third provider dependency.
-    LLM_CLASSIFIER_MODEL: str | None = None
+    # vision -67% cost) are pinned, plus the tier probe: the 2026-10-07 A/B
+    # (pipeline-1min gate 0, D21) picked Haiku 4.5 at temperature 0.
+    # Translation stays on the default fast tier (gpt-4o-mini); the Gemini
+    # Flash-Lite savings were fractions of a cent — not worth adding a third
+    # provider dependency.
+    LLM_CLASSIFIER_MODEL: str | None = "anthropic/claude-haiku-4-5-20251001"
     LLM_CHAPTER_DETECT_MODEL: str | None = None
     LLM_DESCRIPTION_MODEL: str | None = None
     LLM_SYNTHESIS_MODEL: str | None = None
@@ -405,6 +407,7 @@ class Settings(BaseSettings):
     # configurable field, which would silently break depending on version.
     _STAGE_TO_SETTING: ClassVar[dict[str, str]] = {
         "classifier": "LLM_CLASSIFIER_MODEL",
+        "tier_probe": "LLM_CLASSIFIER_MODEL",
         "chapter_detect": "LLM_CHAPTER_DETECT_MODEL",
         "description_analysis": "LLM_DESCRIPTION_MODEL",
         "synthesis": "LLM_SYNTHESIS_MODEL",

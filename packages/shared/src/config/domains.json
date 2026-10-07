@@ -106,7 +106,7 @@
     "gaming": { "required": ["tier_list"], "max": { "flash_deck": 1 }, "forbidden": ["quiz_arena"] },
     "sport": { "required": ["formation_diagram"], "max": { "flash_deck": 1 }, "forbidden": ["quiz_arena"] }
   },
-  "playbooksNote": "Video-subtype layout playbooks keyed '<domain>:<format>' (format from the classifier). Semantics: `forbidden` is a UNION with the domain's forbidden list; `required` OVERRIDES the domain's required list when present; `preferred` and `planGuidance` are rendered into the plan prompt's dynamic block so the LLM designs within the contract it will be held to. Enforcement lives in effective_requirements() (summarizer shared_config/domain_config.py) — consumed by plan post-validation and the assembly backstop.",
+  "playbooksNote": "Video-subtype layout playbooks keyed '<domain>:<format>' (format from the tier probe). Semantics: `forbidden` is a UNION with the domain's forbidden list; `required` OVERRIDES the domain's required list when present; `preferred` and `planGuidance` are rendered into the plan prompt's dynamic block so the LLM designs within the contract it will be held to. Enforcement lives in effective_requirements() (summarizer shared_config/domain_config.py) — consumed by plan post-validation and the assembly backstop.",
   "playbooks": {
     "gaming:unboxing": {
       "required": ["tier_list"],
@@ -121,7 +121,7 @@
       "planGuidance": "Product unboxing: lead with what was revealed and first impressions. Specs and contents as info_grid, reveal moments as moment_track. Never quiz the viewer on an unboxing."
     }
   },
-  "visualCriticalityNote": "Adaptive frame-pipeline effort (derive_tier in media/visual_tier.py). HIGH: the visuals are the content (unboxings, travel, food) — over-select candidates and vision-describe them all so subject-matter frames win over presenter shots. LOW: talky formats where frames are decoration — skip vision. Everything else STANDARD. Derived from metadata (category/title keywords) because classification runs after the frames phase.",
+  "visualCriticalityNote": "Adaptive frame-pipeline effort (derive_tier in media/visual_tier.py). HIGH: the visuals are the content (unboxings, travel, food) — over-select candidates and vision-describe them all so subject-matter frames win over presenter shots. LOW: talky formats where frames are decoration — skip vision. Everything else STANDARD. Derived from the tier probe (domain, format, has_visual_demo — derive_tier(probe, title)) which runs at transcript-ready; the frames branch waits for it at most 3 s before Step 6b, then falls back to the metadata rule (category/title keywords). highFormats: a probe format that alone makes a video HIGH.",
   "visualCriticality": {
     "tiers": {
       "high": { "overselect": 40, "visionMax": 40, "keep": 25 },
@@ -130,7 +130,8 @@
     },
     "highDomains": ["travel", "food", "fitness", "project", "sport"],
     "lowDomains": ["podcast", "news"],
-    "highTitleKeywords": ["unboxing", "opening", "pulls", "box break", "haul", "asmr", "makeup", "grwm"]
+    "highTitleKeywords": ["unboxing", "opening", "pulls", "box break", "haul", "asmr", "makeup", "grwm"],
+    "highFormats": ["unboxing"]
   },
   "domains": {
     "learning": {

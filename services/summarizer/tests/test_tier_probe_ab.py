@@ -1,7 +1,8 @@
 """Unit tests for the offline tier-probe A/B (``scripts/tier_probe_ab.py``, task 0.8).
 
-Covers the pure parts — annotation stripping, transcript windows, prompt
-rendering, response parsing, scoring — and the offline ``--rescore`` path.
+Covers the pure parts — prompt rendering through the pipeline's renderer,
+response parsing, scoring — and the offline ``--rescore`` path. Annotation
+stripping and transcript windows live in the pipeline (``test_tier_probe.py``).
 No Docker, Mongo, network or LLM (external boundaries are patched to fail).
 """
 
@@ -13,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from src.services.pipeline.classifier import VALID_DOMAINS, VALID_FORMATS
+from src.services.pipeline.tier_probe import render_tier_probe_prompt
 
 _SCRIPTS_DIR = Path(__file__).resolve().parents[3] / "scripts"
 sys.path.insert(0, str(_SCRIPTS_DIR))
@@ -60,70 +61,20 @@ def _raw(domain: str = "food", fmt: str = "tutorial", visual: bool = True) -> st
     )
 
 
-class TestStripVisualAnnotations:
-    def test_should_drop_inline_visual_span_when_speech_follows(self) -> None:
-        text = "add salt\n[VISUAL at 1:05: hand pours salt]then stir"
-        assert inputs_mod.strip_visual_annotations(text) == "add salt then stir"
-
-    def test_should_drop_whole_annotation_when_it_contains_brackets(self) -> None:
-        text = "loop here\n[VISUAL at 2:00: code arr[i] = x]\nnext line"
-        assert inputs_mod.strip_visual_annotations(text) == "loop here next line"
-
-    def test_should_drop_on_screen_text_annotations(self) -> None:
-        text = "intro [ON-SCREEN TEXT at 0:03: SUBSCRIBE] outro"
-        assert inputs_mod.strip_visual_annotations(text) == "intro outro"
-
-    def test_should_stop_at_line_end_when_annotation_is_unbalanced(self) -> None:
-        text = "a\n[VISUAL at 0:01: broken [bracket\nspeech survives"
-        assert inputs_mod.strip_visual_annotations(text) == "a speech survives"
-
-    def test_should_keep_text_unchanged_when_no_annotation(self) -> None:
-        assert inputs_mod.strip_visual_annotations("plain  speech\ntext") == "plain speech text"
-
-
-class TestTranscriptWindows:
-    def test_should_split_short_transcript_without_duplication(self) -> None:
-        text = " ".join(f"w{i}" for i in range(100))
-        start, mid, end = inputs_mod.transcript_windows(text, size=700)
-        assert len(start) + len(mid) + len(end) <= len(text)
-
-    def test_should_cap_each_window_when_transcript_is_long(self) -> None:
-        text = " ".join(f"word{i}" for i in range(3000))
-        windows = inputs_mod.transcript_windows(text, size=700)
-        assert all(0 < len(w) <= 700 for w in windows)
-
-    def test_should_anchor_windows_at_start_and_end(self) -> None:
-        text = " ".join(f"word{i}" for i in range(3000))
-        start, _mid, end = inputs_mod.transcript_windows(text, size=700)
-        assert start.startswith("word0 ") and end.endswith("word2999")
-
-    def test_should_exclude_annotation_text_from_windows(self) -> None:
-        speech = " ".join(f"word{i}" for i in range(3000))
-        text = speech[:5000] + "\n[VISUAL at 9:00: SECRET-FRAME]" + speech[5000:]
-        assert "SECRET-FRAME" not in " ".join(inputs_mod.transcript_windows(text))
-
-
 class TestRenderPrompt:
     def test_should_fill_every_placeholder(self) -> None:
         template = probe.PROMPT_PATH.read_text(encoding="utf-8")
         prompt = inputs_mod.render_prompt(template, _input("hello world " * 400))
         assert "{" + "window_mid}" not in prompt and "{title}" not in prompt
 
-    def test_should_cap_description_at_500_chars(self) -> None:
-        prompt = inputs_mod.render_prompt("D:{description}|", _input(description="x" * 2000))
-        assert prompt == "D:" + "x" * 500 + "|"
-
-    def test_should_sanitize_braces_and_tags_in_metadata(self) -> None:
-        prompt = inputs_mod.render_prompt("T:{title}", _input(title="<b>{window_start}</b>"))
-        assert prompt == "T:‹b›window_start‹/b›"
-
-    def test_should_mark_missing_transcript(self) -> None:
-        prompt = inputs_mod.render_prompt("{window_start}", _input(""))
-        assert prompt == "(no transcript)"
-
-    def test_template_should_carry_output_language_line(self) -> None:
+    def test_should_render_exactly_like_the_pipeline(self) -> None:
         template = probe.PROMPT_PATH.read_text(encoding="utf-8")
-        assert "<output_language>" in template and "English" in template
+        item = _input("hello world " * 400, youtube_category="")
+        expected = render_tier_probe_prompt(template, inputs_mod.to_probe_input(item))
+        assert inputs_mod.render_prompt(template, item) == expected
+
+    def test_should_render_the_shipped_pipeline_prompt(self) -> None:
+        assert probe.PROMPT_PATH.parts[-3:] == ("src", "prompts", "tier_probe.txt")
 
 
 class TestParseProbe:
@@ -135,7 +86,7 @@ class TestParseProbe:
         raw = "```json\n" + _raw() + "\n```\n\n**Reasoning:** the video shows"
         assert probe.parse_probe(raw)[1:] == (None, [])
 
-    def test_should_normalise_enums_like_the_classifier(self) -> None:
+    def test_should_normalise_enums_like_the_pipeline(self) -> None:
         parsed, _error, _issues = probe.parse_probe(_raw(domain=" Food ", fmt="TUTORIAL"))
         assert parsed is not None and (parsed["domain"], parsed["format"]) == ("food", "tutorial")
 
@@ -244,9 +195,6 @@ class TestScoring:
 
 
 class TestContracts:
-    def test_valid_sets_should_match_the_classifier(self) -> None:
-        assert (probe.VALID_DOMAINS, probe.VALID_FORMATS) == (VALID_DOMAINS, VALID_FORMATS)
-
     def test_every_live_golden_video_should_have_a_visual_label(self) -> None:
         live_ids = {video.golden_id for video in load_live_golden()}
         assert live_ids == set(probe.VISUAL_DEMO_LABELS)

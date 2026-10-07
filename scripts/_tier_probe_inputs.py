@@ -4,12 +4,14 @@ Sources, all read-only, cached as one JSON file per video under ``--cache-dir``:
     * dev MongoDB (``docker exec vie-mongodb mongosh``) — title, channel,
       duration and stored frame captions where the golden video exists;
     * the summarizer's own code path inside ``vie-summarizer`` (dev proxy).
+
+Rendering is the pipeline's own (``src/services/pipeline/tier_probe.py``), so
+an A/B re-run measures the prompt and transcript windows that ship.
 """
 
 from __future__ import annotations
 
 import json
-import re
 import subprocess
 import sys
 from dataclasses import asdict, dataclass, field
@@ -17,13 +19,17 @@ from pathlib import Path
 
 import yaml
 
-GOLDEN_PATH = Path(__file__).resolve().parent.parent / "dev" / "golden-dataset" / "videos.yaml"
-WINDOW_CHARS = 700
-DESCRIPTION_CHARS = 500
-MAX_TAGS = 15
-# Frame annotations the pipeline splices into the transcript:
-# "[VISUAL at 3:42: ...]" and "[ON-SCREEN TEXT at 3:42: ...]" (scene_frames.py).
-_ANNOTATION_START = re.compile(r"\[(?:VISUAL|ON-SCREEN TEXT)\b")
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_SUMMARIZER_DIR = _REPO_ROOT / "services" / "summarizer"
+if str(_SUMMARIZER_DIR) not in sys.path:
+    sys.path.insert(0, str(_SUMMARIZER_DIR))
+
+from src.services.pipeline.tier_probe import (  # noqa: E402
+    TierProbeInput,
+    render_tier_probe_prompt,
+)
+
+GOLDEN_PATH = _REPO_ROOT / "dev" / "golden-dataset" / "videos.yaml"
 _FETCH_MARKER = "@@PROBE@@"  # prefixes the one result line the snippets print
 
 
@@ -79,84 +85,22 @@ def load_live_golden(path: Path = GOLDEN_PATH) -> list[GoldenVideo]:
 # ─── Prompt input (B.1) ──────────────────────────────────────────────────────
 
 
-def _annotation_end(text: str, start: int) -> int:
-    """Index after the bracket closing the annotation at ``start`` (one line max)."""
-    line_end = text.find("\n", start)
-    line_end = len(text) if line_end < 0 else line_end
-    depth = 0
-    for index in range(start, line_end):
-        if text[index] == "[":
-            depth += 1
-        elif text[index] == "]":
-            depth -= 1
-            if depth == 0:
-                return index + 1
-    last = text.rfind("]", start, line_end)
-    return last + 1 if last > start else line_end
-
-
-def strip_visual_annotations(text: str) -> str:
-    """Drop ``[VISUAL ...]`` / ``[ON-SCREEN TEXT ...]`` spans; collapse whitespace."""
-    kept: list[str] = []
-    position = 0
-    for match in _ANNOTATION_START.finditer(text):
-        if match.start() < position:
-            continue
-        kept.append(text[position : match.start()])
-        position = _annotation_end(text, match.start())
-    kept.append(text[position:])
-    return " ".join("".join(kept).split())
-
-
-def _window(text: str, start: int, size: int) -> str:
-    """Slice ``size`` chars from ``start`` and trim partial words at both edges."""
-    start = max(0, min(start, len(text) - size))
-    chunk = text[start : start + size]
-    if start > 0 and " " in chunk:
-        chunk = chunk.split(" ", 1)[1]
-    if start + size < len(text) and " " in chunk:
-        chunk = chunk.rsplit(" ", 1)[0]
-    return chunk.strip()
-
-
-def transcript_windows(transcript: str, size: int = WINDOW_CHARS) -> tuple[str, str, str]:
-    """Clean start/middle/end windows; a short transcript is not duplicated."""
-    clean = strip_visual_annotations(transcript)
-    if len(clean) <= 3 * size:
-        thirds = [clean[i * len(clean) // 3 : (i + 1) * len(clean) // 3] for i in range(3)]
-        return thirds[0].strip(), thirds[1].strip(), thirds[2].strip()
-    mid_start = len(clean) // 2 - size // 2
-    return (
-        _window(clean, 0, size),
-        _window(clean, mid_start, size),
-        _window(clean, len(clean), size),
+def to_probe_input(item: ProbeInput) -> TierProbeInput:
+    """The pipeline's probe input for one cached video (provenance dropped)."""
+    return TierProbeInput(
+        title=item.title,
+        channel=item.channel,
+        duration=item.duration,
+        youtube_category=item.youtube_category or None,
+        description=item.description,
+        transcript=item.transcript,
+        tags=list(item.tags),
     )
 
 
-def _sanitize(text: str, max_len: int) -> str:
-    """Same rule as ``pipeline_helpers.sanitize_for_prompt``: no braces, no tags."""
-    return text.replace("{", "").replace("}", "").replace("<", "‹").replace(">", "›")[:max_len]
-
-
 def render_prompt(template: str, item: ProbeInput) -> str:
-    """Fill the B.1 template for one video."""
-    start, mid, end = transcript_windows(item.transcript)
-    duration = str(round(item.duration / 60)) if item.duration > 0 else "unknown"
-    values = {
-        "{title}": _sanitize(item.title, 200),
-        "{channel}": _sanitize(item.channel or "Unknown", 100),
-        "{duration_minutes}": duration,
-        "{youtube_category}": _sanitize(item.youtube_category or "unknown", 60),
-        "{tags}": _sanitize(", ".join(item.tags[:MAX_TAGS]) or "none", 500),
-        "{description}": _sanitize(item.description.strip(), DESCRIPTION_CHARS) or "none",
-        "{window_start}": _sanitize(start, WINDOW_CHARS) or "(no transcript)",
-        "{window_mid}": _sanitize(mid, WINDOW_CHARS) or "(no transcript)",
-        "{window_end}": _sanitize(end, WINDOW_CHARS) or "(no transcript)",
-    }
-    prompt = template
-    for key, value in values.items():
-        prompt = prompt.replace(key, value)
-    return prompt
+    """Fill the B.1 template for one video with the pipeline's renderer."""
+    return render_tier_probe_prompt(template, to_probe_input(item))
 
 
 # ─── Gathering (read-only, cached) ───────────────────────────────────────────

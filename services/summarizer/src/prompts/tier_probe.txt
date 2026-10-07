@@ -51,20 +51,19 @@ Pick exactly one — this decides presentation style:
 - "news" reports on real-world EVENTS and makes verifiable CLAIMS. Choose "news" over "learning" when the content is about what happened and who is accountable, not about teaching a concept.
 - "gaming" is about PLAYING a video game — gameplay, playthroughs, builds, tier lists, esports. A video teaching game development is "tech", not "gaming".
 - TCG / collectible card box openings are "gaming" + "unboxing". Consumer product unboxings (gadgets, fashion) are "review" + "unboxing". Either way the format is "unboxing" — the reveals are the content.
+- TCG / collectible card set, market or price commentary with no opening on camera is "gaming" + "commentary", not "review".
 - "sport" covers real-world sport — match recaps, highlights, tactical/lineup analysis, player/team stats. A fitness workout routine is "fitness", not "sport".
 </classification_guidance>
 
 <has_visual_demo>
 true when the video's value depends on WATCHING something demonstrated on screen: cooking or food preparation, code or commands typed on screen, exercises or body form, builds and crafts, products or cards being handled and revealed, places being toured.
-false when the value is in what is SAID: talking heads, interviews, lectures, opinion, narration over generic footage or slides.
+false when the value is in what is SAID: talking heads, interviews, lectures, opinion, narration over generic footage, slides, or animations and diagrams that illustrate the narration.
 Speech that describes actions ("now add the salt", "watch my elbows", "look at this pull") is strong evidence for true.
 </has_visual_demo>
 
 <output_language>
 Write every JSON value in English, whatever the language of the video, title or transcript. Enum values are the exact lowercase ids listed above.
 </output_language>
-
-Return only JSON: {"domain": "<domain id>", "format": "<format id>", "has_visual_demo": true, "confidence": 0.0-1.0}
 
 <video>
 Title: {title}
@@ -83,3 +82,8 @@ Description: {description}
 [end]
 {window_end}
 </transcript_windows>
+
+<output_format>
+Reply with exactly one bare JSON object and nothing else: no code fences, no markdown, no reasoning, no text before or after it. The reply starts with { and ends with }.
+{"domain": "<domain id>", "format": "<format id>", "has_visual_demo": <true or false>, "confidence": <number from 0.0 to 1.0>}
+</output_format>

@@ -85,6 +85,7 @@ _COVERED_TEMPLATES: set[str] = {
     "chapter_detect.txt",
     "description_analysis.txt",
     "memory.txt",
+    "tier_probe.txt",
     *(f"schemas/{p.name}" for p in (PROMPTS_DIR / "schemas").glob("*.txt")),
     *(f"examples/{p.name}" for p in (PROMPTS_DIR / "examples").glob("*.txt")),
     *(f"enrich/{p.name}" for p in (PROMPTS_DIR / "enrich").glob("*.txt")),
@@ -391,3 +392,25 @@ async def test_memory_prompt_renders_without_placeholders():
     rendered = _captured_prompt_text(mock_call)
     assert rendered, "memory never reached the LLM call"
     _assert_no_unreplaced(rendered, "memory.txt")
+
+
+# ─── Tier probe (tier_probe.txt) ────────────────────────────────────────
+@pytest.mark.asyncio
+async def test_tier_probe_prompt_renders_without_placeholders():
+    from src.services.pipeline import tier_probe as tier_probe_mod
+
+    llm, mock_call = _capture_llm()
+    request = tier_probe_mod.TierProbeInput(
+        title="Test Video",
+        channel="Test Channel",
+        duration=600,
+        youtube_category="Education",
+        description="Description text",
+        transcript="intro text " * 400,
+        tags=["tag-a", "tag-b"],
+    )
+    with patch.object(tier_probe_mod, "call_llm_with_retry", mock_call):
+        await tier_probe_mod.run_tier_probe(request, llm)
+    rendered = _captured_prompt_text(mock_call)
+    assert rendered, "tier probe never reached the LLM call"
+    _assert_no_unreplaced(rendered, "tier_probe.txt")
