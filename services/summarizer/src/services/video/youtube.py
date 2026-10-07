@@ -152,14 +152,12 @@ class VideoContext:
         category: Detected content category (e.g., "cooking", "coding", "standard")
         tags: Raw tags from video metadata
         display_tags: Cleaned, deduplicated tags for UI display (max 6)
-        category_confidence: Confidence score from detection (0.0-1.0)
     """
 
     youtube_category: str | None
     category: str  # "cooking", "coding", "travel", etc.
     tags: list[str]
     display_tags: list[str]
-    category_confidence: float = 1.0
 
 
 def _extract_hashtags(description: str) -> list[str]:
@@ -395,7 +393,6 @@ def extract_video_context(
         category=category,
         tags=tags,
         display_tags=display_tags,
-        category_confidence=confidence,
     )
 
 

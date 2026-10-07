@@ -15,7 +15,7 @@
  "settings": {
   "LLM_MODEL": "anthropic/claude-sonnet-4-6",
   "LLM_FAST_MODEL": "openai/gpt-4o-mini",
-  "LLM_CLASSIFIER_MODEL": null,
+  "LLM_CLASSIFIER_MODEL": "anthropic/claude-haiku-4-5-20251001",
   "LLM_CHAPTER_DETECT_MODEL": null,
   "LLM_DESCRIPTION_MODEL": null,
   "LLM_SYNTHESIS_MODEL": null,
@@ -4640,19 +4640,20 @@
    "ordinal": 0
   },
   {
-   "feature": "summarize:classifier",
-   "span": "classifier",
-   "model": "openai/gpt-4o-mini",
-   "latencyMs": 2223,
-   "output": "{\"domain\": \"tech\", \"format\": \"tutorial\", \"confidence\": 0.92, \"reasoning\": \"The video is focused on specific development tools and technologies, providing guidance on their use. It features actual code and software demonstrations, indicating a tutorial format where viewers may follow along with the instructions.\", \"traits\": {\"has_steps\": true, \"has_code\": true, \"has_drills\": false, \"has_comparison\": false, \"has_narrative\": false, \"has_visual_demo\": false, \"is_opinionated\": false, \"is_list\": false}}",
+   "feature": "summarize:tier_probe",
+   "span": "tier_probe",
+   "model": "anthropic/claude-haiku-4-5-20251001",
+   "latencyMs": 1000,
+   "output": "{\"domain\": \"tech\", \"format\": \"tutorial\", \"has_visual_demo\": true, \"confidence\": 0.92}",
    "finishReason": "stop",
    "usage": {
-    "input": 1633,
-    "output": 105,
+    "input": 1800,
+    "output": 40,
     "cacheRead": 0,
     "cacheWrite": 0
    },
-   "ordinal": 0
+   "ordinal": 0,
+   "synthetic": true
   },
   {
    "feature": "summarize:plan",
@@ -4741,7 +4742,8 @@
   "notes": [
    "prod request 725d2eb2, the 240 s run (A-DIGEST 'Numbers to reuse'); frames sub-steps from its worker log",
    "visual_inject is not separable in the recording (folded into transcript_frames); the 6 sampled faithfulness calls are omitted (off the critical path)",
-   "momentFill = whole assembly wall (720p re-download 11.7 s logged + ffmpeg/S3/residual)"
+   "momentFill = whole assembly wall (720p re-download 11.7 s logged + ffmpeg/S3/residual)",
+   "tier_probe#0 is SYNTHETIC (task 1b.1): the recorded run called the retired classifier instead; its domain/format/confidence are kept, has_visual_demo is judged from the video, and wall/tokens are the gate-0 A/B Haiku numbers (1000 ms, 1800 in / 40 out). See tests/replay/synthetic.py."
   ]
  }
 }

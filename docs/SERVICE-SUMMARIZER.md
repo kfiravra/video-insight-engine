@@ -54,7 +54,7 @@ services/summarizer/
     │   ├── status_callback.py    # Status callback
     │   │
     │   ├── pipeline/             # Plan-based summarization pipeline
-    │   │   ├── classifier.py         # LLM domain+format+traits classifier (fast model, concurrent)
+    │   │   ├── tier_probe.py         # Tier probe: domain+format+has_visual_demo at transcript-ready (Haiku, temp 0)
     │   │   ├── plan.py               # Plan stage → merged manifest+triage in single Sonnet call
     │   │   │                         #   (+ _render_playbook, _enforce_domain_policy)
     │   │   ├── triage.py             # Triage validation/fallback (TriageResult model + tab validation)
@@ -117,7 +117,7 @@ services/summarizer/
     │   ├── triage.txt            # Triage prompt (fallback only, injects component_toolkit.txt)
     │   ├── component_toolkit.txt # Component descriptions + datasource paths (injected into plan/triage). Density table is generated from domains.json `densityGates` via `{density_gates}` placeholder
     │   ├── base_extraction.txt   # Schema-injection extraction template + video_context + prompt caching
-    │   ├── classify.txt          # Domain+format classifier prompt (fast model, 14 domains + 18 formats incl. unboxing — domains.json is the source)
+    │   ├── tier_probe.txt        # Tier-probe prompt (14 domains + 18 formats incl. unboxing, has_visual_demo — domains.json is the source)
     │   ├── chapter_detect.txt    # AI chapter detection prompt (fast model)
     │   ├── quality_rules.txt     # JSON extraction quality rules
     │   ├── enrich/               # Per-domain enrichment prompts (+ video_context + tab_goals)
@@ -161,7 +161,7 @@ MONGODB_URI=mongodb://vie-mongodb:27017/video-insight-engine
 # LLM Provider Configuration
 LLM_PROVIDER=anthropic          # anthropic, openai, or gemini
 LLM_FAST_PROVIDER=              # Optional: separate provider for fast model
-LLM_FALLBACK_PROVIDER=          # Optional: fallback if primary fails
+LLM_FALLBACK_PROVIDER=          # Optional: cross-provider fallback after one same-provider retry (primary-model calls)
 LLM_MODEL=                      # Optional: override default model
 LLM_FAST_MODEL=                 # Optional: override fast model
 LLM_MAX_TOKENS=4096

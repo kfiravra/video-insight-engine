@@ -11,6 +11,7 @@ import json
 
 import pytest
 
+from src.models.probe_types import TierProbe
 from src.services.media.visual_tier import derive_tier
 from src.services.pipeline.phases.frames import _is_presenter_frame
 from tests.replay.cassette import Cassette, available_cassettes
@@ -35,10 +36,23 @@ def _vision_kept(cassette: Cassette) -> set[int]:
     }
 
 
+def _probe(cassette: Cassette) -> TierProbe:
+    entry = next(e for e in cassette.llm if e.key.span == "tier_probe")
+    return TierProbe.model_validate(json.loads(entry.output))
+
+
 @pytest.mark.parametrize("video_id", available_cassettes())
-def test_tier_should_be_derived_by_production_code(cassettes: dict, video_id: str) -> None:
-    video = cassettes[video_id].video
-    assert derive_tier(video.category, video.title, video.tags[:6]) == cassettes[video_id].tier
+def test_tier_should_be_derived_from_the_probe_by_production_code(
+    cassettes: dict, video_id: str
+) -> None:
+    cassette = cassettes[video_id]
+    assert derive_tier(_probe(cassette), cassette.video.title) == cassette.tier
+
+
+@pytest.mark.parametrize("video_id", available_cassettes())
+def test_frames_should_wait_for_the_tier_at_step_6b(replays: dict, video_id: str) -> None:
+    """1b.1: the tier is decided at Step 6b (probe ≤ 3 s, else metadata), not at frames start."""
+    assert "frames.tier_wait" in replays[video_id].phase_walls()
 
 
 @pytest.mark.parametrize("video_id", available_cassettes())

@@ -15,7 +15,7 @@
  "settings": {
   "LLM_MODEL": "anthropic/claude-sonnet-4-6",
   "LLM_FAST_MODEL": "openai/gpt-4o-mini",
-  "LLM_CLASSIFIER_MODEL": null,
+  "LLM_CLASSIFIER_MODEL": "anthropic/claude-haiku-4-5-20251001",
   "LLM_CHAPTER_DETECT_MODEL": null,
   "LLM_DESCRIPTION_MODEL": null,
   "LLM_SYNTHESIS_MODEL": null,
@@ -2822,19 +2822,20 @@
    "synthetic": true
   },
   {
-   "feature": "summarize:classifier",
-   "span": "classifier",
-   "model": "openai/gpt-4o-mini",
-   "latencyMs": 2066,
-   "output": "{\"domain\": \"gaming\", \"format\": \"unboxing\", \"confidence\": 0.95, \"reasoning\": \"The video features the host opening a One Piece trading card game booster box, which is a typical format for gameplay-related content as it showcases the excitement and anticipation of revealing card contents. The discussion surrounding the cards and the game's meta further emphasizes the gaming aspect.\", \"traits\": {\"has_steps\": false, \"has_code\": false, \"has_drills\": false, \"has_comparison\": false, \"has_narrative\": false, \"has_visual_demo\": false, \"is_opinionated\": false, \"is_list\": false}}",
+   "feature": "summarize:tier_probe",
+   "span": "tier_probe",
+   "model": "anthropic/claude-haiku-4-5-20251001",
+   "latencyMs": 1000,
+   "output": "{\"domain\": \"gaming\", \"format\": \"unboxing\", \"has_visual_demo\": true, \"confidence\": 0.95}",
    "finishReason": "stop",
    "usage": {
-    "input": 1653,
-    "output": 135,
+    "input": 1800,
+    "output": 40,
     "cacheRead": 0,
     "cacheWrite": 0
    },
-   "ordinal": 0
+   "ordinal": 0,
+   "synthetic": true
   },
   {
    "feature": "summarize:plan",
@@ -2922,7 +2923,8 @@
   "notes": [
    "prod request 19562400 (171 s); zero scene frames (HIGH via title keyword 'opening', vision never ran); sub-steps from its worker log",
    "momentFill = whole assembly wall (720p re-download 21.7 s logged)",
-   "frame_vision#0 is SYNTHETIC (task 1a.3): the recorded run found zero scene frames so vision never ran; the zero-candidate ladder now seeks 30 uniform frames and the HIGH reselect describes them in one call. Latency/tokens estimated from the jMq8lEu-of0 HIGH call (87 output tokens and ~800 input tokens per frame; wall 6.6 s + 16.2 s per 1k output tokens). Re-add it if this cassette is rebuilt."
+   "frame_vision#0 is SYNTHETIC (task 1a.3): the recorded run found zero scene frames so vision never ran; the zero-candidate ladder now seeks 30 uniform frames and the HIGH reselect describes them in one call. Latency/tokens estimated from the jMq8lEu-of0 HIGH call (87 output tokens and ~800 input tokens per frame; wall 6.6 s + 16.2 s per 1k output tokens). Re-add it if this cassette is rebuilt.",
+   "tier_probe#0 is SYNTHETIC (task 1b.1): the recorded run called the retired classifier instead; its domain/format/confidence are kept, has_visual_demo is judged from the video, and wall/tokens are the gate-0 A/B Haiku numbers (1000 ms, 1800 in / 40 out). See tests/replay/synthetic.py."
   ]
  }
 }

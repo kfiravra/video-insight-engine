@@ -109,9 +109,6 @@ class TestDeriveTierWithoutProbe:
     def test_should_count_tag_keywords_in_the_fallback(self) -> None:
         assert derive_tier(None, "Ep 12", ["pack opening"]) == "high"
 
-    def test_should_keep_the_pre_probe_call_shape_working(self) -> None:
-        assert derive_tier("podcast", "Long chat") == "low"
-
 
 async def _answer_after(seconds: float, probe: TierProbe | None) -> TierProbe | None:
     await asyncio.sleep(seconds)

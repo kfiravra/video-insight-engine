@@ -127,8 +127,10 @@ async def _release_run_media(ctx: PipelineContext) -> None:
     in the timing, so this runs before it is persisted).
     """
     from src.services.pipeline.phases.metadata import release_background_work
+    from src.services.pipeline.phases.probe import cancel_tier_probe
 
     release_background_work(ctx)
+    cancel_tier_probe(ctx)
     lowres_video = getattr(ctx, "lowres_video", None)
     hires_video = getattr(ctx, "hires_video", None)
     try:
@@ -167,16 +169,24 @@ async def _run_phases_in_order(
 
         # Phase 2: Transcript + Frames + description (parallel). Transcript
         # waits for the caption fetch, frames for the low-res download, the
-        # description member emits its SSE once the analysis lands.
+        # description member emits its SSE once the analysis lands. The tier
+        # probe starts with the group and calls the LLM once the transcript
+        # is ready; frames reads it at Step 6b, the plan after.
         # ``finally`` so transcriptMeta is recorded whether the phases succeed
         # or raise (cancellation included): a TranscriptError from the
         # fallback chain must still leave outcome="failed" + attempted +
         # errorCode on the row (the phase's own finally already stamped
         # ctx.transcript_trail by the time it propagates here).
         from src.services.pipeline.phases.metadata import after_captions, run_phase_description
+        from src.services.pipeline.phases.probe import marks_transcript_ready, start_tier_probe
 
         phase_start = time.monotonic()
-        group = [after_captions(run_phase_transcript), run_phase_frames, run_phase_description]
+        start_tier_probe(ctx)
+        group = [
+            after_captions(marks_transcript_ready(run_phase_transcript)),
+            run_phase_frames,
+            run_phase_description,
+        ]
         try:
             async for event in run_parallel_phases(group, ctx):
                 yield event

@@ -1,7 +1,7 @@
 """Tests for the golden-dataset schema, per-video assertions and trace metrics.
 
 Covers ``scripts/_eval_schema.py`` (incl. the committed ``videos.yaml``
-against the live component registry and classifier formats),
+against the live component registry and tier-probe formats),
 ``scripts/_eval_assertions.py`` and the trace readers in
 ``scripts/_eval_metrics.py``.
 """
@@ -17,7 +17,7 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
-from src.services.pipeline.classifier import VALID_FORMATS
+from src.models.probe_types import VALID_FORMATS
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_REPO_ROOT / "scripts"))
@@ -98,7 +98,7 @@ class TestCommittedDataset:
     def test_should_never_name_retired_components(self, dataset: GoldenDataset) -> None:
         assert not any(_component_names(v) & _RETIRED for v in dataset.videos)
 
-    def test_should_only_use_classifier_formats(self, dataset: GoldenDataset) -> None:
+    def test_should_only_use_tier_probe_formats(self, dataset: GoldenDataset) -> None:
         formats = {v.format for v in dataset.videos}
         for v in dataset.videos:
             formats.update(*(a.values for a in v.assertions if a.type == "expectedFormat"))

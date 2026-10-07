@@ -341,7 +341,6 @@ async def run_phase_extraction(ctx: PipelineContext) -> AsyncGenerator[str, None
             count_warnings,
             content_tags=ctx.plan_result.content_tags,
             content_format=ctx.content_format,
-            content_traits=ctx.content_traits,
         )
 
         logger.info(

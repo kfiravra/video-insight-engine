@@ -47,7 +47,10 @@ class Settings(BaseSettings):
     # LLM Provider Configuration
     LLM_PROVIDER: str = "anthropic"  # anthropic, openai, gemini
     LLM_FAST_PROVIDER: str | None = None  # Optional separate provider for fast model
-    LLM_FALLBACK_PROVIDER: str | None = None  # Optional fallback provider
+    # Cross-provider fallback for primary-model calls (call_llm_with_retry): the
+    # first try and one same-provider retry, then this provider's default model
+    # for the remaining retries. Fast-model calls never fall back. None = none.
+    LLM_FALLBACK_PROVIDER: str | None = None
     LLM_MODEL: str | None = None  # Override default model (e.g., "anthropic/claude-sonnet-4-6")
     LLM_FAST_MODEL: str | None = None  # Override fast model
 
@@ -95,7 +98,6 @@ class Settings(BaseSettings):
     MAX_VIDEO_DURATION_MINUTES: int = 600
     MIN_VIDEO_DURATION_SECONDS: int = 60
     LLM_TIMEOUT_SECONDS: float = 60.0
-    LLM_NUM_RETRIES: int = 2
     LLM_MAX_TOKENS: int = 4096
     LLM_FAST_MAX_TOKENS: int = 4096
 
@@ -331,9 +333,6 @@ class Settings(BaseSettings):
     # frames (cards, dishes, places) win over presenter shots.
     FRAME_TIER_ENABLED: bool = True
     FRAME_OVERSELECT_COUNT: int = 40
-    # Reserved: refine the metadata-derived tier with an early classifier call
-    # launched at frames-phase start (classification normally runs later).
-    FRAME_TIER_EARLY_CLASSIFIER: bool = False
     # HIGH-tier floor: vision-informed reselection never keeps fewer than this
     # many frames (backfilled by local score when vision over-refuses).
     FRAME_RESELECT_FLOOR: int = 20
@@ -392,7 +391,6 @@ class Settings(BaseSettings):
     # constant — without it, Pydantic v2 might try to interpret it as a
     # configurable field, which would silently break depending on version.
     _STAGE_TO_SETTING: ClassVar[dict[str, str]] = {
-        "classifier": "LLM_CLASSIFIER_MODEL",
         "tier_probe": "LLM_CLASSIFIER_MODEL",
         "chapter_detect": "LLM_CHAPTER_DETECT_MODEL",
         "description_analysis": "LLM_DESCRIPTION_MODEL",

@@ -39,6 +39,7 @@ _FEATURE_BY_SPAN = {
     "description_analysis": "summarize:metadata",
     "frame_vision": "summarize:frames",
     "classifier": "summarize:classifier",
+    "tier_probe": "summarize:tier_probe",
     "plan": "summarize:plan",
     "chapter_detect": "summarize:chapter_detect",
     "synthesis": "summarize:synthesis",
@@ -52,7 +53,8 @@ _MINI = "openai/gpt-4o-mini"
 _RUN_SETTINGS: dict[str, Any] = {
     "LLM_MODEL": _SONNET,
     "LLM_FAST_MODEL": _MINI,
-    "LLM_CLASSIFIER_MODEL": None,
+    # The tier probe's pin (D21, config default since 1b.1); prod never sets it.
+    "LLM_CLASSIFIER_MODEL": _HAIKU,
     "LLM_CHAPTER_DETECT_MODEL": None,
     "LLM_DESCRIPTION_MODEL": None,
     "LLM_SYNTHESIS_MODEL": None,

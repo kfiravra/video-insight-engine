@@ -89,6 +89,7 @@ async def run_phase_transcript(ctx: PipelineContext) -> AsyncGenerator[str, None
     assert transcript_data is not None
 
     ctx.transcript_data = transcript_data
+    ctx.prompt_segments = list(transcript_data.segments or [])
 
     # English-canonical pipeline: ALL generation runs in English, so ctx.language
     # stays "en" (its default). We only record the DETECTED original language —
@@ -171,6 +172,8 @@ async def run_phase_transcript(ctx: PipelineContext) -> AsyncGenerator[str, None
                 ctx.clean_text = clean_transcript(
                     " ".join(s["text"] for s in filtered), source_language=ctx.source_language_code
                 )
+                # Prompt renders must drop the sponsor read too, not just clean_text.
+                ctx.prompt_segments = filtered
                 logger.info("SponsorBlock: filtered %d sponsor segments", len(sponsor_segments))
     except (TypeError, ValueError, KeyError) as e:
         logger.warning("SponsorBlock filtering failed (non-critical): %s - %s", type(e).__name__, e)

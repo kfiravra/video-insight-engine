@@ -76,7 +76,7 @@ def _probe_tier(probe: TierProbe, title: str) -> VisualTier:
 
 
 def derive_tier(
-    probe: TierProbe | str | None,
+    probe: TierProbe | None,
     title: str,
     tags: list[str] | None = None,
     *,
@@ -85,12 +85,8 @@ def derive_tier(
     """Pick the frame-effort tier: from the probe when there is one, else metadata.
 
     ``tags`` and ``category`` feed only the metadata fallback (the probe has
-    already read them). A ``str`` first argument is the pre-probe call shape
-    ``(category, title, tags)``, kept until frames.py and the replay test move
-    to ``resolve_tier`` / ``metadata_tier`` (pipeline-1min 1b.1 wiring).
+    already read them).
     """
-    if isinstance(probe, str):
-        return metadata_tier(probe, title, tags)
     if probe is None:
         return metadata_tier(category, title, tags)
     return _probe_tier(probe, title)

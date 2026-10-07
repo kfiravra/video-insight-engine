@@ -135,6 +135,8 @@ class TestRunnerPersistence:
             enrichment_data={"a": 1},
             triage=SimpleNamespace(tabs=[1, 2, 3]),
             assembled_tabs=[1, 2],
+            transcript_ready=asyncio.Event(),
+            tier_probe_task=None,
         )
 
     def _patches(self, assembly_events: list[str], plan: object | None = None) -> list:

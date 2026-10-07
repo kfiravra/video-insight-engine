@@ -58,6 +58,11 @@ _MANIFEST_MIN_FRAMES = 10
 # filename the refiner actually produces.
 from src.services.media.hires_refiner import HIRES_SUFFIX as _HIRES_SUFFIX
 
+ReselectHook = Callable[[list[dict]], Awaitable[list[dict]]]
+# Awaited just before Step 6b → (overselect_count, reselect_hook), (None, None)
+# = no reselect. The visual tier may still be pending when extraction starts.
+ReselectResolver = Callable[[], Awaitable[tuple[int | None, ReselectHook | None]]]
+
 
 def _manifest_key(video_id: str) -> str:
     return f"videos/{video_id}/{settings.SCENE_S3_PREFIX}/{_MANIFEST_FILENAME}"
@@ -329,9 +334,10 @@ async def extract_scene_keyframes(
     max_frames: int | None = None,
     duration_seconds: int | None = None,
     overselect_count: int | None = None,
-    reselect_hook: Callable[[list[dict]], Awaitable[list[dict]]] | None = None,
+    reselect_hook: ReselectHook | None = None,
     hires_video: LocalHiresSource | None = None,
     lowres_video: LocalLowresSource | None = None,
+    resolve_reselect: ReselectResolver | None = None,
 ) -> dict:
     """Extract keyframes at scene change boundaries with smart selection.
 
@@ -347,6 +353,8 @@ async def extract_scene_keyframes(
             moment fill (the run closes it). Started here if nothing has.
         lowres_video: The run's pass-1 file (started by the metadata phase);
             closed here once detection is done. None = download one here.
+        resolve_reselect: Awaited just before Step 6b; its answer replaces
+            ``overselect_count`` + ``reselect_hook`` (the tier is decided late).
 
     Returns:
         Dict with 'all_frames', 'selected_frames', 'gallery_frames' keys.
@@ -382,6 +390,7 @@ async def extract_scene_keyframes(
                 reselect_hook=reselect_hook,
                 hires_video=hires_video,
                 lowres_video=lowres_video or LocalLowresSource(video_id),
+                resolve_reselect=resolve_reselect,
             )
         finally:
             # Prune lock after use to prevent unbounded dict growth
@@ -394,9 +403,10 @@ async def _do_extraction(
     duration_seconds: int | None,
     *,
     overselect_count: int | None,
-    reselect_hook: Callable[[list[dict]], Awaitable[list[dict]]] | None,
+    reselect_hook: ReselectHook | None,
     hires_video: LocalHiresSource | None,
     lowres_video: LocalLowresSource,
+    resolve_reselect: ReselectResolver | None = None,
 ) -> dict:
     """Core extraction logic — FFmpeg + scoring + selective upload."""
     empty_result: dict = {"all_frames": [], "selected_frames": [], "gallery_frames": []}
@@ -464,6 +474,8 @@ async def _do_extraction(
         # module stays LLM-free) drop presenter-dominated frames BEFORE the
         # expensive hires refinement and upload. Hook failure or an
         # over-aggressive cull falls back to the local-score selection.
+        if resolve_reselect is not None:
+            overselect_count, reselect_hook = await resolve_reselect()
         if overselect_count and reselect_hook is not None:
             keep_count = len(selected_frames) or 25
             # Same zero-score exclusion the normal selection path applies —

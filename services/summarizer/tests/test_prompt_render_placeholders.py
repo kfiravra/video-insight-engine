@@ -78,7 +78,6 @@ _COVERED_TEMPLATES: set[str] = {
     "quality_rules.txt",
     "plan.txt",
     "component_toolkit.txt",
-    "classify.txt",
     "synthesis.txt",
     "translate_flat.txt",
     "chapter_detect.txt",
@@ -215,26 +214,6 @@ async def test_plan_prompt_renders_with_optional_fields_absent():
         "plan.txt",
         "component_toolkit.txt",
     )
-
-
-# ─── Classifier (classify.txt) ──────────────────────────────────────────
-@pytest.mark.asyncio
-async def test_classify_prompt_renders_without_placeholders():
-    from src.services.pipeline import classifier as classifier_mod
-
-    llm, mock_call = _capture_llm()
-    with patch.object(classifier_mod, "call_llm_with_retry", mock_call):
-        await classifier_mod.classify_domain_format(
-            title="Test Video",
-            channel="Chan",
-            duration=300,
-            tags=["python", "tutorial"],
-            transcript_preview="preview",
-            llm_service=llm,
-        )
-    rendered = _captured_prompt_text(mock_call)
-    assert rendered, "classifier never reached the LLM call"
-    _assert_no_unreplaced(rendered, "classify.txt")
 
 
 # ─── Synthesis (synthesis.txt) ──────────────────────────────────────────

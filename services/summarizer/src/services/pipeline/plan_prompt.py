@@ -67,9 +67,10 @@ def _render_playbook(category_hint: str | None, content_format: str | None) -> s
     """Render the {domain_playbook} block for the plan prompt's dynamic part.
 
     Empty string when no playbook matches — the placeholder simply vanishes.
-    Uses the CATEGORY-derived domain (the classifier's domain isn't final until
-    the plan itself runs); the code-level policy in plan._enforce_domain_policy
-    uses the plan's own primaryTag, so a category/plan disagreement is still safe.
+    Uses the hint domain (a confident tier probe's, else the metadata category —
+    neither is final until the plan itself runs); the code-level policy in
+    plan._enforce_domain_policy uses the plan's own primaryTag, so a hint/plan
+    disagreement is still safe.
     """
     domain = map_category_to_tag(category_hint) if category_hint else None
     if not domain or not content_format:

@@ -1,4 +1,4 @@
-"""Run-level ``pipeline.timing`` plumbing for :mod:`src.routes.pipeline_runner`.
+"""Run-level ``pipeline.timing`` plumbing for :mod:`src.routes.pipeline_orchestration`.
 
 The recorder itself (and the deep-call-site helpers) live in
 :mod:`src.services.pipeline.pipeline_timing`. This module holds the
@@ -47,8 +47,9 @@ def log_run_summary(
 ) -> None:
     """One-line pipeline summary with ALL phase timings and tab counts.
 
-    Emitted on the caller's ``log`` (the runner's logger): the replay driver
-    and log searches key on ``src.routes.pipeline_runner`` + ``[pipeline] DONE``.
+    Emitted on the caller's ``log`` (the orchestrator's logger): the replay
+    driver and log searches key on ``src.routes.pipeline_orchestration`` +
+    ``[pipeline] DONE``.
     """
     pt = ctx.phase_times
     planned, assembled = _tab_counts(ctx)

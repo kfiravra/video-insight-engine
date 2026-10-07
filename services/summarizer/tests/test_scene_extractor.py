@@ -610,6 +610,80 @@ class TestReselectHook:
         assert len(result["selected_frames"]) == 3
 
 
+class TestLateReselectDecision:
+    """``resolve_reselect`` is asked just before Step 6b (the tier may wait for the probe)."""
+
+    VIDEO_ID = "dQw4w9WgXcQ"
+
+    async def _extract(self, tmp_path, resolve_reselect, order: list[str]) -> dict:
+        def fake_exec(*args, **kwargs):
+            proc = AsyncMock()
+            proc.returncode = 0
+
+            async def communicate():
+                for i in (1, 2, 3):
+                    (tmp_path / "frames" / f"scene_{i:04d}.jpg").write_bytes(b"jpg")
+                return (b"", b"pts_time: 1.5\npts_time: 3.0\npts_time: 4.5\n")
+
+            proc.communicate = communicate
+            return proc
+
+        def fake_select(frames, duration):
+            order.append("select")
+            return frames, frames[:1]
+
+        with (
+            patch(
+                "src.services.media.scene_extractor._check_existing_frames",
+                AsyncMock(return_value=None),
+            ),
+            patch(
+                "src.services.media.scene_extractor._upload_frames_batch",
+                AsyncMock(side_effect=lambda f: f),
+            ),
+            patch("src.services.media.hires_refiner.refine_selected_frames", AsyncMock()),
+            patch("src.services.media.frame_scorer.score_all_frames", side_effect=lambda f: f),
+            patch("src.services.media.frame_scorer.select_frames", side_effect=fake_select),
+            patch("src.services.media.scene_extractor.s3_client") as s3,
+            patch("src.services.media.scene_extractor.tempfile") as tempfile_mod,
+            patch("src.services.media.scene_extractor.settings") as mock_settings,
+            patch("asyncio.create_subprocess_exec", side_effect=fake_exec),
+        ):
+            mock_settings.SCENE_EXTRACTION_ENABLED = True
+            mock_settings.SCENE_THRESHOLD = 0.3
+            mock_settings.SCENE_S3_PREFIX = "scenes-v3"
+            tempfile_mod.mkdtemp.return_value = str(tmp_path)
+            s3.put_json = AsyncMock()
+            return await extract_scene_keyframes(
+                self.VIDEO_ID,
+                duration_seconds=120,
+                lowres_video=_ready_lowres(tmp_path),
+                resolve_reselect=resolve_reselect,
+            )
+
+    async def test_should_ask_after_selection_and_use_the_returned_hook(self, tmp_path):
+        order: list[str] = []
+
+        async def keep_first(frames):
+            return frames[:1]
+
+        async def resolve():
+            order.append("resolve")
+            return 40, keep_first
+
+        result = await self._extract(tmp_path, resolve, order)
+
+        assert (order, len(result["selected_frames"])) == (["select", "resolve"], 1)
+
+    async def test_should_keep_the_local_selection_when_the_answer_is_no_reselect(self, tmp_path):
+        async def resolve():
+            return None, None
+
+        result = await self._extract(tmp_path, resolve, [])
+
+        assert len(result["selected_frames"]) == 3
+
+
 class TestZeroCandidatePath:
     """A static camera with no cut above the threshold still yields uploaded frames."""
 

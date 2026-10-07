@@ -1,24 +1,28 @@
 """Phase 2b: Frames — scene extraction, scoring, OCR, vision analysis, presigned URLs.
 
 Runs in parallel with the transcript phase. Both only need youtube_id
-and video_data from metadata. Neither depends on the other.
+and video_data from metadata; the one link is the visual tier, which waits
+(at most 3 s, at Step 6b) for the tier probe the transcript's arrival starts.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import TYPE_CHECKING, AsyncGenerator, Awaitable, Callable
 
 from llm_common.context import llm_feature_var
 
 from src.config import settings
 from src.services.media.scene_extractor import (
+    ReselectHook,
     cleanup_temp_dir,
     extract_scene_keyframes,
     persist_vision_descriptions,
 )
-from src.services.media.visual_tier import derive_tier, tier_settings
+from src.services.media.visual_tier import VisualTier, resolve_tier, tier_settings
+from src.services.pipeline.pipeline_timing import mark_step
 from src.services.pipeline.scene_frames import process_scene_frames
 
 if TYPE_CHECKING:
@@ -118,6 +122,44 @@ def _make_reselect_hook(
     return _reselect
 
 
+class _TierGate:
+    """The run's visual tier, decided once at Step 6b of scene extraction.
+
+    That is the latest moment the tier is needed and so the longest the tier
+    probe (``ctx.tier_probe_task``) has had to land; ``resolve_tier`` waits for
+    it at most 3 s, then the metadata rule decides. Until then (cache hit,
+    zero frames) the tier stays "standard".
+    """
+
+    def __init__(self, ctx: PipelineContext) -> None:
+        self._ctx = ctx
+        self.tier: VisualTier = "standard"
+
+    async def _resolve(self) -> VisualTier:
+        video_data = self._ctx.video_data
+        assert video_data is not None
+        video_context = video_data.context
+        return await resolve_tier(
+            getattr(self._ctx, "tier_probe_task", None),
+            video_data.title or "",
+            category=video_context.category if video_context else None,
+            tags=list(video_context.display_tags) if video_context else None,
+        )
+
+    async def reselect(self) -> tuple[int | None, ReselectHook | None]:
+        """Step 6b's (overselect_count, hook): HIGH tier with vision on, else none."""
+        started = time.monotonic()
+        try:
+            self.tier = await self._resolve()
+        finally:
+            mark_step("frames.tier_wait", started)
+        if self.tier != "high" or not settings.FRAME_VISION_ENABLED:
+            return None, None
+        knobs = tier_settings("high")
+        overselect = int(knobs.get("overselect", settings.FRAME_OVERSELECT_COUNT))
+        return overselect, _make_reselect_hook(self._ctx, int(knobs.get("visionMax", overselect)))
+
+
 async def run_phase_frames(ctx: PipelineContext) -> AsyncGenerator[str, None]:
     """Extract scene keyframes, score, select, run OCR + vision, and prepare for assembly.
 
@@ -135,32 +177,17 @@ async def run_phase_frames(ctx: PipelineContext) -> AsyncGenerator[str, None]:
     try:
         # Adaptive frame effort: HIGH tier over-selects + vision-reselects
         # (the visuals ARE the content), LOW skips vision (frames are
-        # decoration), STANDARD keeps the classic top-8 vision pass.
-        video_context = ctx.video_data.context
-        tier = "standard"
-        if settings.FRAME_TIER_ENABLED:
-            tier = derive_tier(
-                video_context.category if video_context else None,
-                ctx.video_data.title or "",
-                list(video_context.display_tags) if video_context else None,
-            )
-            logger.info("Visual tier for %s: %s", ctx.youtube_id, tier)
-
-        overselect_count = None
-        reselect_hook = None
-        if tier == "high" and settings.FRAME_VISION_ENABLED:
-            knobs = tier_settings("high")
-            overselect_count = int(knobs.get("overselect", settings.FRAME_OVERSELECT_COUNT))
-            reselect_hook = _make_reselect_hook(ctx, int(knobs.get("visionMax", overselect_count)))
-
+        # decoration), STANDARD keeps the classic top-8 vision pass. The
+        # tier is decided at Step 6b, not here (it waits for the tier probe).
+        gate = _TierGate(ctx) if settings.FRAME_TIER_ENABLED else None
         extraction_result = await extract_scene_keyframes(
             ctx.youtube_id,
             duration_seconds=ctx.video_data.duration,
-            overselect_count=overselect_count,
-            reselect_hook=reselect_hook,
             hires_video=ctx.hires_video,
             lowres_video=ctx.lowres_video,
+            resolve_reselect=gate.reselect if gate is not None else None,
         )
+        tier = gate.tier if gate is not None else "standard"
 
         all_frames = extraction_result.get("all_frames", [])
         selected_frames = extraction_result.get("selected_frames", [])

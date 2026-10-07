@@ -48,6 +48,8 @@ def _non_english_ctx() -> SimpleNamespace:
         plan_result=object(),
         enrichment_data={"a": 1},
         triage=SimpleNamespace(tabs=[]),
+        transcript_ready=asyncio.Event(),
+        tier_probe_task=None,
     )
 
 
@@ -84,6 +86,8 @@ def _english_ctx(extraction_data: dict) -> SimpleNamespace:
         plan_result=object(),
         enrichment_data={"a": 1},
         triage=SimpleNamespace(tabs=[]),
+        transcript_ready=asyncio.Event(),
+        tier_probe_task=None,
     )
 
 
@@ -827,3 +831,74 @@ async def test_phase_two_runs_transcript_after_captions_with_frames_and_descript
         ]
 
     assert groups[0] == ["run_phase_transcript", "run_phase_frames", "run_phase_description"]
+
+
+@pytest.mark.asyncio
+async def test_should_start_the_tier_probe_with_phase_two() -> None:
+    """1b.1: the probe task exists from phase 2 on (it waits for transcript-ready)."""
+    ctx = _english_ctx({"key_points": [{"text": "a claim long enough"}]})
+    started: list[object] = []
+
+    async def _capture_parallel(_phases, run_ctx):
+        started.append(run_ctx.tier_probe_task)
+        yield "data: parallel\n\n"
+
+    with ExitStack() as stack:
+        for p in _patched_phases():
+            stack.enter_context(p)
+        stack.enter_context(
+            patch.object(pipeline_orchestration, "run_parallel_phases", _capture_parallel)
+        )
+        _ = [
+            ev
+            async for ev in pipeline_orchestration.run_pipeline_phases(
+                ctx, MagicMock(), "vsid", _timer()
+            )
+        ]
+
+    assert started[0] is not None
+
+
+@pytest.mark.asyncio
+async def test_run_end_should_cancel_a_probe_still_waiting_for_the_transcript() -> None:
+    ctx = _english_ctx({})
+
+    await _drain_phases(ctx, MagicMock())
+    await asyncio.gather(ctx.tier_probe_task, return_exceptions=True)
+
+    assert ctx.tier_probe_task.cancelled()
+
+
+@pytest.mark.asyncio
+async def test_phase_two_should_mark_the_transcript_ready_after_the_transcript_phase() -> None:
+    ctx = _english_ctx({})
+    groups: list[list] = []
+
+    async def _capture_parallel(phases, _ctx):
+        groups.append(list(phases))
+        yield "data: parallel\n\n"
+
+    async def _transcript(_ctx):
+        yield "data: transcript\n\n"
+
+    with ExitStack() as stack:
+        for p in _patched_phases():
+            stack.enter_context(p)
+        stack.enter_context(
+            patch.object(pipeline_orchestration, "run_parallel_phases", _capture_parallel)
+        )
+        stack.enter_context(
+            patch.object(pipeline_orchestration, "run_phase_transcript", _transcript)
+        )
+        stack.enter_context(
+            patch("src.services.pipeline.phases.metadata.await_captions", AsyncMock())
+        )
+        _ = [
+            ev
+            async for ev in pipeline_orchestration.run_pipeline_phases(
+                ctx, MagicMock(), "vsid", _timer()
+            )
+        ]
+        _ = [ev async for ev in groups[0][0](ctx)]
+
+    assert ctx.transcript_ready.is_set()

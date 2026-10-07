@@ -34,7 +34,8 @@ def _ctx(segments: list[dict]) -> SimpleNamespace:
         override=None,
         category_hint=None,
         content_format=None,
-        content_traits=None,
+        tier_probe_task=None,
+        probe=None,
         language="en",
         is_rtl=False,
     )
@@ -44,7 +45,6 @@ async def _planned_transcript(segments: list[dict]) -> str:
     run_plan = AsyncMock(return_value=PlanResult.model_validate({"confidence": 0.9}))
     with (
         patch.object(phase, "check_override", return_value=None),
-        patch.object(phase, "classify_domain_format", AsyncMock(return_value=None)),
         patch.object(phase, "run_plan", run_plan),
     ):
         _ = [event async for event in phase.run_phase_plan(_ctx(segments))]  # type: ignore[arg-type]

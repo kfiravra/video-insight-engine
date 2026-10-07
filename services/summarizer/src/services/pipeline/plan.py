@@ -283,7 +283,7 @@ async def run_plan(
         channel: Channel name.
         description: Video description (first 1,000 chars reach the prompt).
         duration: Video duration in seconds.
-        category_hint: Domain from the classifier or metadata (playbook + fallback).
+        category_hint: Domain from the tier probe or metadata (playbook + fallback).
         content_format: Presentation format (playbook + forbidden-component policy).
         transcript: The FULL transcript with ``[m:ss]`` markers
             (``render_transcript``) — never a preview.

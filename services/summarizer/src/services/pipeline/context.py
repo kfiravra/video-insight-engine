@@ -12,11 +12,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from src.models.memory_types import MemoryResult
     from src.models.pipeline_types import PlanResult
+    from src.models.probe_types import TierProbe
     from src.repositories.mongodb_repository import MongoDBVideoRepository
     from src.services.llm import LLMService
     from src.services.media.hires_prefetch import LocalHiresSource, LocalLowresSource
-    from src.services.pipeline.classifier import ContentTraits
     from src.services.pipeline.pipeline_helpers import (
         PipelineTimer,
         TranscriptData,
@@ -51,6 +52,18 @@ class PipelineContext:
     # as ``transcriptMeta``.
     transcript_trail: TranscriptTrail | None = None
     clean_text: str = ""
+    # The segments every prompt render reads (``render_transcript``): the
+    # SponsorBlock-filtered list when sponsor reads were cut (``clean_text``
+    # drops the same reads), else the raw ``transcript_data.segments``.
+    prompt_segments: list[dict[str, Any]] = field(default_factory=list)
+
+    # Tier probe (pipeline-1min 1b.1). The task starts with phase 2 and makes
+    # its call once ``transcript_ready`` is set (clean_text final); the frames
+    # branch waits for it at most 3 s before Step 6b, the plan reads it as
+    # ``probe`` (None = no answer — every reader falls back to metadata).
+    transcript_ready: asyncio.Event = field(default_factory=asyncio.Event)
+    tier_probe_task: asyncio.Task[TierProbe | None] | None = None
+    probe: TierProbe | None = None
 
     # t=0 background work, started by the metadata phase once the video is
     # accepted: the caption fetch (the transcript phase awaits it) and the
@@ -75,18 +88,25 @@ class PipelineContext:
 
     # Vision LLM frame descriptions (from frame_analyzer)
     frame_descriptions: list[dict] = field(default_factory=list)
+    # Rendered <visual_annotations> block (descriptions + OCR), set at frames-done (1c.2).
+    visual_annotations: str = ""
 
     # Video DNA (formatted plan for downstream injection)
     video_dna_text: str = ""  # Full formatted for logging
     video_dna_compact: str = ""  # Compact ~300 chars for extraction/synthesis/enrichment
 
+    # Memory stage (1b.3; None = failed or not run) and the <video_memory>
+    # block rendered once from plan + memory (1b.4) for every writer's
+    # ``{video_context}`` slot.
+    memory: MemoryResult | None = None
+    video_memory: str = ""
+
     # Plan inputs
     override: dict | None = None
     category_hint: str | None = None
     content_format: str | None = (
-        None  # Presentation format from classifier (tutorial, commentary, etc.)
+        None  # Presentation format from the tier probe (tutorial, commentary, etc.)
     )
-    content_traits: ContentTraits | None = None  # Structural traits from classifier
     plan_result: PlanResult | None = None  # Merged plan result (replaces manifest + triage)
     description_analysis: DescriptionAnalysis | None = None
 
@@ -135,3 +155,6 @@ class PipelineContext:
     # Set when a save finds no row: a global purge deleted the video mid-run.
     # Later phases and the runner must not re-create artifacts or emit `done`.
     row_deleted: bool = False
+    # Eval-user run (D25): its result is a private eval version, so it never
+    # reaches the shared Redis response cache or the Qdrant collection.
+    eval_run: bool = False

@@ -15,7 +15,7 @@
  "settings": {
   "LLM_MODEL": "anthropic/claude-sonnet-4-6",
   "LLM_FAST_MODEL": "openai/gpt-4o-mini",
-  "LLM_CLASSIFIER_MODEL": null,
+  "LLM_CLASSIFIER_MODEL": "anthropic/claude-haiku-4-5-20251001",
   "LLM_CHAPTER_DETECT_MODEL": null,
   "LLM_DESCRIPTION_MODEL": null,
   "LLM_SYNTHESIS_MODEL": null,
@@ -2258,19 +2258,20 @@
    "ordinal": 0
   },
   {
-   "feature": "summarize:classifier",
-   "span": "classifier",
-   "model": "openai/gpt-4o-mini",
-   "latencyMs": 2320,
-   "output": "{\"domain\": \"food\", \"format\": \"tutorial\", \"confidence\": 0.95, \"reasoning\": \"The video features a step-by-step cooking guide for making lasagna, demonstrating the preparation and cooking process, which aligns with the characteristics of a tutorial format. It focuses on food content, specifically a cooking recipe, making it fit squarely within the food domain.\", \"traits\": {\"has_steps\": true, \"has_drills\": false, \"has_comparison\": false, \"has_narrative\": false, \"has_code\": false, \"has_visual_demo\": true, \"is_opinionated\": false, \"is_list\": false}}",
+   "feature": "summarize:tier_probe",
+   "span": "tier_probe",
+   "model": "anthropic/claude-haiku-4-5-20251001",
+   "latencyMs": 1000,
+   "output": "{\"domain\": \"food\", \"format\": \"tutorial\", \"has_visual_demo\": true, \"confidence\": 0.95}",
    "finishReason": "stop",
    "usage": {
-    "input": 1695,
-    "output": 153,
+    "input": 1800,
+    "output": 40,
     "cacheRead": 0,
     "cacheWrite": 0
    },
-   "ordinal": 0
+   "ordinal": 0,
+   "synthetic": true
   },
   {
    "feature": "summarize:plan",
@@ -2359,7 +2360,8 @@
   "estimated": true,
   "notes": [
    "DEV run 2026-10-05 (no prod run yet); frames sub-steps ESTIMATED from T1dQhQAm8Tc's prod split, no worker log survives",
-   "chapters rebuilt from the stored moment_track chapter items (YouTube chapters: the run made no chapter_detect call)"
+   "chapters rebuilt from the stored moment_track chapter items (YouTube chapters: the run made no chapter_detect call)",
+   "tier_probe#0 is SYNTHETIC (task 1b.1): the recorded run called the retired classifier instead; its domain/format/confidence are kept, has_visual_demo is judged from the video, and wall/tokens are the gate-0 A/B Haiku numbers (1000 ms, 1800 in / 40 out). See tests/replay/synthetic.py."
   ]
  }
 }

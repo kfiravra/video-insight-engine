@@ -12,32 +12,6 @@ from __future__ import annotations
 import re
 from typing import Any
 
-# ─── classifier ─────────────────────────────────────────────────────────────
-
-
-def score_classifier(baseline: Any, candidate: Any) -> float:
-    """Score classifier output against Sonnet baseline.
-
-    Weights: domain 0.4, format 0.3, trait Jaccard 0.3.
-    Returns 0.0 if either side is None or unparseable.
-    """
-    if baseline is None or candidate is None:
-        return 0.0
-
-    domain_match = 1.0 if baseline.domain == candidate.domain else 0.0
-    format_match = 1.0 if baseline.format == candidate.format else 0.0
-
-    base_traits = set(baseline.traits.active_traits()) if baseline.traits else set()
-    cand_traits = set(candidate.traits.active_traits()) if candidate.traits else set()
-    if not base_traits and not cand_traits:
-        trait_jaccard = 1.0
-    else:
-        union = base_traits | cand_traits
-        trait_jaccard = len(base_traits & cand_traits) / len(union) if union else 1.0
-
-    return round(0.4 * domain_match + 0.3 * format_match + 0.3 * trait_jaccard, 4)
-
-
 # ─── chapter_detect ─────────────────────────────────────────────────────────
 
 
