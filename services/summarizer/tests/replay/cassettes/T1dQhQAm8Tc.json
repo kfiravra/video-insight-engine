@@ -1,0 +1,4745 @@
+{
+ "schema": 1,
+ "videoId": "T1dQhQAm8Tc",
+ "provenance": {
+  "environment": "prod",
+  "langfuseTrace": "3357d5aa-2e83-4dc5-ae34-67718c35fb39",
+  "requestId": "725d2eb2-aaa3-4114-a763-069a07a64a7f",
+  "videoSummaryId": "6ac4c410d8075a18bed124a1",
+  "recordedAt": "2026-10-06T09:49:04.736Z",
+  "pipelineVersion": "v8",
+  "transcript": "s3 videos/T1dQhQAm8Tc/transcript.json",
+  "frames": "s3 scenes-v3/manifest.json",
+  "descriptionAnalysis": "llm_usage row + meta.descriptionAnalysis (no generation pre-0.2)"
+ },
+ "settings": {
+  "LLM_MODEL": "anthropic/claude-sonnet-4-6",
+  "LLM_FAST_MODEL": "openai/gpt-4o-mini",
+  "LLM_CLASSIFIER_MODEL": null,
+  "LLM_CHAPTER_DETECT_MODEL": null,
+  "LLM_DESCRIPTION_MODEL": null,
+  "LLM_SYNTHESIS_MODEL": null,
+  "LLM_ENRICHMENT_MODEL": "openai/gpt-4o-mini",
+  "LLM_EXTRACTION_MODEL": "anthropic/claude-haiku-4-5-20251001",
+  "LLM_TRANSLATION_MODEL": null,
+  "LLM_VISION_MODEL": "anthropic/claude-sonnet-4-6",
+  "EXTRACTION_PARALLEL_BATCHES": 2,
+  "EXTRACTION_USE_FAST_FIRST": false,
+  "CHUNKED_EXTRACTION_THRESHOLD": 900,
+  "TRANSCRIPT_CLEANING_ENABLED": false,
+  "FRAME_VISION_ENABLED": true,
+  "FRAME_TIER_ENABLED": true,
+  "SSE_HEARTBEAT_SECONDS": 12.0
+ },
+ "tier": "standard",
+ "video": {
+  "title": "My Agentic Development Stack",
+  "channel": "Ras Mic",
+  "duration": 1143,
+  "thumbnailUrl": "https://i.ytimg.com/vi_webp/T1dQhQAm8Tc/maxresdefault.webp",
+  "description": "My tech and tool stack keeps evolving as AI keeps getting better and better, here's an update.\n\nThank you SpaceXAI for sponsoring the video, check them out: https://rasmic.link/grokbot\n\nConnect with me:\nMy Site: https://rasmic.link/site\nFollow me on X: http://rasmic.link/x\nFollow me on Instagram: https://rasmic.link/instagram\nFollow me on Tiktok: https://rasmic.link/tiktok\nJoin my Discord: https://rasmic.link/discord\nSubscribe to my second channel: https://rasmic.link/more-micky",
+  "chapters": [],
+  "category": "coding",
+  "youtubeCategory": null,
+  "tags": [
+   "OpenAI Dev Day",
+   "Codex Tutorial",
+   "Claude Code Tutorual",
+   "Cursor Tutorial",
+   "Codex",
+   "Claude Code",
+   "Cursor",
+   "Cloudflare",
+   "Agentic Development",
+   "Cloudflare AI tutorial",
+   "Opus 5.5",
+   "Sonnet 5.5",
+   "GPT 6.1 Sol",
+   "Greptile",
+   "Convex"
+  ],
+  "language": "en",
+  "captionTrack": "auto-generated",
+  "captionLang": "en"
+ },
+ "transcript": {
+  "source": "ytdlp",
+  "segments": [
+   [
+    100,
+    2094,
+    "The technologies and"
+   ],
+   [
+    1123,
+    3176,
+    "tools I use"
+   ],
+   [
+    2206,
+    4317,
+    "to build AI applications are"
+   ],
+   [
+    4224,
+    6373,
+    "constantly changing. We get"
+   ],
+   [
+    6476,
+    8601,
+    "new model releases. And we get"
+   ],
+   [
+    7641,
+    9908,
+    "new tools. That's"
+   ],
+   [
+    8938,
+    10934,
+    "why in today's video I'm going to give you an"
+   ],
+   [
+    9964,
+    12051,
+    "update on"
+   ],
+   [
+    11081,
+    13338,
+    "everything I use. I am talking"
+   ],
+   [
+    12374,
+    14473,
+    "about programming environments ("
+   ],
+   [
+    13473,
+    15560,
+    "Harnesses). I'm talking about"
+   ],
+   [
+    14600,
+    16945,
+    "models. I'm talking about"
+   ],
+   [
+    15989,
+    18339,
+    "tools. I'm talking about"
+   ],
+   [
+    17380,
+    19700,
+    "technology. I will"
+   ],
+   [
+    18728,
+    20614,
+    "even tell you what type of diapers I use for my baby"
+   ],
+   [
+    19642,
+    21666,
+    "."
+   ],
+   [
+    20767,
+    22988,
+    "This might be"
+   ],
+   [
+    22019,
+    24247,
+    "too much information. But"
+   ],
+   [
+    23294,
+    26035,
+    "anyway, we'll cover all of that today"
+   ],
+   [
+    25082,
+    27671,
+    ". You will know everything I use"
+   ],
+   [
+    26717,
+    28846,
+    "to build the"
+   ],
+   [
+    27892,
+    30520,
+    "software."
+   ],
+   [
+    29620,
+    32368,
+    "I will share that with"
+   ],
+   [
+    31417,
+    34068,
+    "you and explain the how, the reason, and"
+   ],
+   [
+    33117,
+    35800,
+    "all the details. Let's begin"
+   ],
+   [
+    34843,
+    37433,
+    "today's video. First, let's"
+   ],
+   [
+    36480,
+    38806,
+    "talk about"
+   ],
+   [
+    37854,
+    40556,
+    "programming environments. I will be"
+   ],
+   [
+    39594,
+    41726,
+    "completely honest with you. I"
+   ],
+   [
+    40756,
+    42682,
+    "use them all, don't I"
+   ],
+   [
+    41712,
+    44205,
+    "? I use T3"
+   ],
+   [
+    43260,
+    45698,
+    "code. I use Cloud code."
+   ],
+   [
+    44798,
+    47585,
+    "I use Cursor. I use"
+   ],
+   [
+    46644,
+    49155,
+    "OpenAI. I use Devin."
+   ],
+   [
+    48255,
+    50045,
+    "I use"
+   ],
+   [
+    49076,
+    51218,
+    "command-line interfaces (CLIs). I use"
+   ],
+   [
+    50247,
+    52316,
+    "applications and"
+   ],
+   [
+    51345,
+    53525,
+    "graphical user interfaces (GUIs). Part of the"
+   ],
+   [
+    52561,
+    54653,
+    "reason I do this is to"
+   ],
+   [
+    53688,
+    55745,
+    "stay informed,"
+   ],
+   [
+    54780,
+    57048,
+    "and when I create my content,"
+   ],
+   [
+    56083,
+    57929,
+    "I give you the best"
+   ],
+   [
+    56964,
+    59312,
+    "recommendations. Part of it is"
+   ],
+   [
+    58344,
+    60577,
+    "also that I find this"
+   ],
+   [
+    59610,
+    61811,
+    "amusing, which is"
+   ],
+   [
+    60843,
+    63141,
+    "actually a little sad. But"
+   ],
+   [
+    62172,
+    64000,
+    "apart from that,"
+   ],
+   [
+    63032,
+    64988,
+    "I'll just share with you how I"
+   ],
+   [
+    64019,
+    66134,
+    "use these tools."
+   ],
+   [
+    65235,
+    67440,
+    "T3 code was my"
+   ],
+   [
+    66480,
+    68887,
+    "primary tool for"
+   ],
+   [
+    67927,
+    70368,
+    "daily use. T3 code is"
+   ],
+   [
+    69413,
+    72096,
+    "unique because it is not just a"
+   ],
+   [
+    71141,
+    73551,
+    "programming environment, but a"
+   ],
+   [
+    72597,
+    75051,
+    "comprehensive environment for"
+   ],
+   [
+    74097,
+    76945,
+    "other environments. This means that when"
+   ],
+   [
+    75993,
+    78714,
+    "I use Cloud over T3 code,"
+   ],
+   [
+    77761,
+    80291,
+    "it actually uses the"
+   ],
+   [
+    79339,
+    82060,
+    "actual Cloud code environment."
+   ],
+   [
+    81160,
+    83502,
+    "When I use Cursor,"
+   ],
+   [
+    82542,
+    84924,
+    "it uses the actual Cursor environment"
+   ],
+   [
+    83963,
+    86030,
+    ". When"
+   ],
+   [
+    85062,
+    87092,
+    "I use Opencode, whatever"
+   ],
+   [
+    86123,
+    88060,
+    "environment I"
+   ],
+   [
+    87092,
+    88872,
+    "use, it"
+   ],
+   [
+    87904,
+    90304,
+    "actually uses it. Therefore, it is"
+   ],
+   [
+    89350,
+    92033,
+    "more like a comprehensive environment ("
+   ],
+   [
+    91034,
+    93773,
+    "Meta harness). But the reason"
+   ],
+   [
+    92819,
+    95506,
+    "T3 code is special is that it allows"
+   ],
+   [
+    94551,
+    97147,
+    "me to work on"
+   ],
+   [
+    96192,
+    98963,
+    "different devices in my network. I have a"
+   ],
+   [
+    98021,
+    101109,
+    "Linux machine, and I have a"
+   ],
+   [
+    100167,
+    102817,
+    "Mac. By the way,"
+   ],
+   [
+    101857,
+    104225,
+    "stay with us. Make sure you"
+   ],
+   [
+    103252,
+    105252,
+    "subscribe to the channel,"
+   ],
+   [
+    104280,
+    106225,
+    "because one of the videos I'm"
+   ],
+   [
+    105252,
+    107169,
+    "working on is"
+   ],
+   [
+    106197,
+    108086,
+    "explaining how I built a"
+   ],
+   [
+    107113,
+    109141,
+    "mini data center in"
+   ],
+   [
+    108169,
+    110172,
+    "my home. I will share with you"
+   ],
+   [
+    109209,
+    111591,
+    "the details of my network and all that"
+   ],
+   [
+    110628,
+    113142,
+    "stuff. As you can see in"
+   ],
+   [
+    112185,
+    114705,
+    "my network, I have a Linux machine, a"
+   ],
+   [
+    113747,
+    116394,
+    "Mac machine, and a MacBook Pro"
+   ],
+   [
+    115436,
+    117787,
+    "which I am currently using"
+   ],
+   [
+    116829,
+    119074,
+    "to record. These are the"
+   ],
+   [
+    118121,
+    120190,
+    "devices"
+   ],
+   [
+    119237,
+    121493,
+    "I use to build"
+   ],
+   [
+    120540,
+    123261,
+    "applications, and with T3 Code, it has"
+   ],
+   [
+    122308,
+    124843,
+    "become very easy"
+   ],
+   [
+    123889,
+    126704,
+    "to connect different devices in my"
+   ],
+   [
+    125750,
+    128518,
+    "network and distribute agents across"
+   ],
+   [
+    127564,
+    130007,
+    "various devices. The"
+   ],
+   [
+    130279,
+    132648,
+    "graphical user interface is very good."
+   ],
+   [
+    131748,
+    134123,
+    "Another thing I really like"
+   ],
+   [
+    133163,
+    135342,
+    "about T3 Code is the"
+   ],
+   [
+    134381,
+    136797,
+    "sidebar, isn't it? The"
+   ],
+   [
+    135897,
+    137936,
+    "sidebar, in"
+   ],
+   [
+    136968,
+    138977,
+    "my opinion, if you are working"
+   ],
+   [
+    138009,
+    139988,
+    "on multiple projects and"
+   ],
+   [
+    139019,
+    141121,
+    "have many conversation threads"
+   ],
+   [
+    140152,
+    142131,
+    ", I like how it"
+   ],
+   [
+    141162,
+    143080,
+    "looks almost like an"
+   ],
+   [
+    142111,
+    144353,
+    "inbox. In other words,"
+   ],
+   [
+    143388,
+    145512,
+    "first and foremost,"
+   ],
+   [
+    144546,
+    146840,
+    "I know if the work is"
+   ],
+   [
+    145874,
+    147964,
+    "not completed, and I can"
+   ],
+   [
+    146998,
+    149256,
+    "end the chain, i.e., the"
+   ],
+   [
+    148292,
+    150517,
+    "work is completed or ends"
+   ],
+   [
+    149551,
+    151810,
+    "automatically when the withdrawal request is merged"
+   ],
+   [
+    150845,
+    153137,
+    ", right? I can"
+   ],
+   [
+    152171,
+    154364,
+    "see what has been accomplished, ca"
+   ],
+   [
+    153398,
+    155460,
+    "n't I? Therefore, I don't"
+   ],
+   [
+    154484,
+    156162,
+    "need to click"
+   ],
+   [
+    155186,
+    157130,
+    "and check to see if the"
+   ],
+   [
+    156155,
+    157978,
+    "work has been completed. He"
+   ],
+   [
+    157078,
+    159655,
+    "tells me that it has been done."
+   ],
+   [
+    158755,
+    160790,
+    "So, I really like the"
+   ],
+   [
+    159823,
+    161992,
+    "user experience in T3"
+   ],
+   [
+    161025,
+    163060,
+    "Code because it is"
+   ],
+   [
+    162093,
+    164295,
+    "actually built by people who"
+   ],
+   [
+    163329,
+    165597,
+    "use it as heavily as you and I do"
+   ],
+   [
+    164631,
+    167047,
+    ". So, a"
+   ],
+   [
+    166107,
+    169095,
+    "big shout-out to T3 Code."
+   ],
+   [
+    168195,
+    170892,
+    "Now that we have finished with"
+   ],
+   [
+    169935,
+    172502,
+    "T3 Code, let's talk about the"
+   ],
+   [
+    171545,
+    174226,
+    "ChatGPT or Codex application. I"
+   ],
+   [
+    173273,
+    176036,
+    "already use Codex. It is"
+   ],
+   [
+    175068,
+    176949,
+    "more for"
+   ],
+   [
+    175980,
+    178082,
+    "computer use,"
+   ],
+   [
+    177113,
+    178994,
+    "research, and all that"
+   ],
+   [
+    178026,
+    179970,
+    "stuff, or whenever you"
+   ],
+   [
+    179001,
+    181166,
+    "need to do anything in"
+   ],
+   [
+    180197,
+    182304,
+    "three dimensions. For"
+   ],
+   [
+    181336,
+    183280,
+    "example, one of"
+   ],
+   [
+    182311,
+    184224,
+    "the videos I will be releasing"
+   ],
+   [
+    183256,
+    185420,
+    "soon is about"
+   ],
+   [
+    184452,
+    186522,
+    "this"
+   ],
+   [
+    185553,
+    187403,
+    "cartoon startup that I am"
+   ],
+   [
+    186434,
+    188918,
+    "building. You can see that"
+   ],
+   [
+    187959,
+    190462,
+    "I have all the technologies here,"
+   ],
+   [
+    189503,
+    191640,
+    "ordered and ready"
+   ],
+   [
+    190680,
+    193145,
+    "to be built. I'm just waiting for a"
+   ],
+   [
+    192179,
+    194538,
+    "secondary table to arrive so"
+   ],
+   [
+    193573,
+    195862,
+    "I can build it with"
+   ],
+   [
+    194897,
+    197260,
+    "all of you. However, when I"
+   ],
+   [
+    196302,
+    198965,
+    "was initially exploring this startup"
+   ],
+   [
+    198008,
+    200544,
+    ", it was"
+   ],
+   [
+    199586,
+    202122,
+    "through the"
+   ],
+   [
+    201164,
+    203785,
+    "computer-based"
+   ],
+   [
+    202827,
+    205448,
+    "Codex feature via Blender and then"
+   ],
+   [
+    204491,
+    206969,
+    "the exchange with Astra. So,"
+   ],
+   [
+    206002,
+    208181,
+    "if you have an"
+   ],
+   [
+    207214,
+    209359,
+    "OpenAI subscription, honestly, Codex is"
+   ],
+   [
+    208393,
+    210335,
+    "great, especially for those"
+   ],
+   [
+    209369,
+    211514,
+    "kinds of things"
+   ],
+   [
+    210547,
+    212793,
+    "where you're building a"
+   ],
+   [
+    211827,
+    213938,
+    "hardware project or need to"
+   ],
+   [
+    212971,
+    214981,
+    "do some"
+   ],
+   [
+    214015,
+    216160,
+    "computer-use tasks."
+   ],
+   [
+    215260,
+    218256,
+    "Codex is great. There is no reason why I shouldn't"
+   ],
+   [
+    217297,
+    219921,
+    "use Codex."
+   ],
+   [
+    219021,
+    221202,
+    "When I'm not using Codex"
+   ],
+   [
+    220237,
+    222315,
+    "to build apps, it's"
+   ],
+   [
+    221350,
+    223566,
+    "usually"
+   ],
+   [
+    222601,
+    224748,
+    "as you see in the"
+   ],
+   [
+    223783,
+    225929,
+    "sidebar. I use it, you"
+   ],
+   [
+    224965,
+    227286,
+    "know, for budget,"
+   ],
+   [
+    226321,
+    228678,
+    "right? I use it"
+   ],
+   [
+    227721,
+    230280,
+    "to improve my settings. For"
+   ],
+   [
+    229310,
+    231214,
+    "example, I"
+   ],
+   [
+    230245,
+    232269,
+    "built my room in Blender"
+   ],
+   [
+    231299,
+    233324,
+    "and asked it, \"Okay, how"
+   ],
+   [
+    232354,
+    234047,
+    "can we improve"
+   ],
+   [
+    233077,
+    235071,
+    "my settings, lighting and"
+   ],
+   [
+    234101,
+    236036,
+    "all that stuff?\""
+   ],
+   [
+    235136,
+    238046,
+    "correct? So, Codex holds that"
+   ],
+   [
+    237091,
+    239705,
+    "place in my heart."
+   ],
+   [
+    238805,
+    240916,
+    "Do you want to know what is"
+   ],
+   [
+    239945,
+    242057,
+    "used most often?"
+   ],
+   [
+    241157,
+    243160,
+    "These are expensive diapers"
+   ],
+   [
+    242189,
+    244251,
+    "that"
+   ],
+   [
+    243281,
+    245280,
+    "my child uses. So, let's"
+   ],
+   [
+    244313,
+    246547,
+    "listen to a quick word"
+   ],
+   [
+    245581,
+    248156,
+    "from today's sponsor. please"
+   ],
+   [
+    247157,
+    249249,
+    ". There are a few people"
+   ],
+   [
+    248274,
+    250166,
+    "in this world"
+   ],
+   [
+    249191,
+    251185,
+    "with whom I can talk about"
+   ],
+   [
+    250210,
+    252178,
+    "my child, and also explore"
+   ],
+   [
+    251204,
+    252840,
+    "different designs for"
+   ],
+   [
+    252579,
+    254420,
+    "my web and mobile applications."
+   ],
+   [
+    253520,
+    255895,
+    "No, I'm not talking about"
+   ],
+   [
+    254933,
+    257271,
+    "my wife, but yes, I'm"
+   ],
+   [
+    256309,
+    258303,
+    "talking about \"GrokBot\"."
+   ],
+   [
+    257403,
+    259518,
+    "Honestly, I think showing you is"
+   ],
+   [
+    258552,
+    260737,
+    "better than"
+   ],
+   [
+    259772,
+    262452,
+    "telling you. This is my \"GrokBot\""
+   ],
+   [
+    261500,
+    263972,
+    ". I have six"
+   ],
+   [
+    263018,
+    265481,
+    "robots. There are three"
+   ],
+   [
+    264517,
+    266805,
+    "I want you to focus on: the"
+   ],
+   [
+    265840,
+    268020,
+    "engineer, the designer,"
+   ],
+   [
+    267057,
+    269239,
+    "and the child. The baby robot helps me"
+   ],
+   [
+    268264,
+    270227,
+    "by answering"
+   ],
+   [
+    269252,
+    271116,
+    "all the questions I have"
+   ],
+   [
+    270141,
+    271956,
+    "about dealing with the"
+   ],
+   [
+    270981,
+    273197,
+    "newborn. As a"
+   ],
+   [
+    272240,
+    274769,
+    "first-time father, \"GrokBot\""
+   ],
+   [
+    273811,
+    276066,
+    "is the savior. But with the"
+   ],
+   [
+    275102,
+    277203,
+    "designer and engineer, let me show"
+   ],
+   [
+    276239,
+    278518,
+    "you my workflow."
+   ],
+   [
+    277619,
+    279744,
+    "What I would do is, let's say I"
+   ],
+   [
+    278775,
+    280688,
+    "found a"
+   ],
+   [
+    279718,
+    281722,
+    "website that I really liked"
+   ],
+   [
+    280753,
+    283128,
+    ". I will send a screenshot"
+   ],
+   [
+    282165,
+    284310,
+    "to the designer robot,"
+   ],
+   [
+    283346,
+    285528,
+    "and I will simply say to it: \""
+   ],
+   [
+    284528,
+    286781,
+    "Hello, I like this."
+   ],
+   [
+    285881,
+    288342,
+    "Create a similar design"
+   ],
+   [
+    287382,
+    289815,
+    "on Paper.\" The \"Paper\" app is"
+   ],
+   [
+    288849,
+    291195,
+    "essentially an alternative to \"Figma\""
+   ],
+   [
+    290196,
+    292302,
+    ", but it works very well with"
+   ],
+   [
+    291336,
+    293131,
+    "AI agents"
+   ],
+   [
+    292165,
+    294409,
+    "like \"GrokBot\"."
+   ],
+   [
+    293509,
+    296692,
+    "\"GrokBot\" started working, and after a"
+   ],
+   [
+    295749,
+    298933,
+    "short while, he prepared the design for me."
+   ],
+   [
+    298033,
+    300548,
+    "Now, here's the"
+   ],
+   [
+    299586,
+    302508,
+    "great workflow. I haven't left \"GrokBot\""
+   ],
+   [
+    301560,
+    304081,
+    "yet. What I will do"
+   ],
+   [
+    303115,
+    305102,
+    "next is create a"
+   ],
+   [
+    304136,
+    306158,
+    "group chat between"
+   ],
+   [
+    305192,
+    307247,
+    "the designer and the engineer, my two"
+   ],
+   [
+    306281,
+    308609,
+    "robots."
+   ],
+   [
+    307709,
+    309872,
+    "I would say to the designer: \"Hello"
+   ],
+   [
+    308903,
+    311097,
+    "designer, can you"
+   ],
+   [
+    310128,
+    311955,
+    "deliver the designs to"
+   ],
+   [
+    310986,
+    313027,
+    "the robot engineer so that"
+   ],
+   [
+    312058,
+    314007,
+    "we can start"
+   ],
+   [
+    313038,
+    315257,
+    "implementing the site? Give me a"
+   ],
+   [
+    314292,
+    316280,
+    "copy uploaded to the"
+   ],
+   [
+    315317,
+    317471,
+    "internet.\" So, the"
+   ],
+   [
+    316513,
+    319106,
+    "designer tells the engineer, the"
+   ],
+   [
+    318147,
+    320656,
+    "engineer starts working, the"
+   ],
+   [
+    319698,
+    321955,
+    "designer reviews the"
+   ],
+   [
+    320997,
+    323253,
+    "engineer's work, and then I"
+   ],
+   [
+    322295,
+    324469,
+    "finally get a link to"
+   ],
+   [
+    323510,
+    326138,
+    "the website after it has been uploaded. What's"
+   ],
+   [
+    325173,
+    327528,
+    "also great is that every \"GrokBot\""
+   ],
+   [
+    326562,
+    328917,
+    "has its own computer"
+   ],
+   [
+    327952,
+    329994,
+    ". So, I can"
+   ],
+   [
+    329023,
+    330791,
+    "ask him to download"
+   ],
+   [
+    329821,
+    331737,
+    "the apps and log"
+   ],
+   [
+    330766,
+    332845,
+    "in. He can access"
+   ],
+   [
+    331871,
+    333878,
+    "all the information I"
+   ],
+   [
+    332905,
+    335024,
+    "want to give him. Now"
+   ],
+   [
+    334024,
+    336302,
+    ", finally, I just want to make it"
+   ],
+   [
+    335336,
+    337581,
+    "clear to you that \"GrokBot\" is not"
+   ],
+   [
+    336615,
+    338733,
+    "just a game. You can"
+   ],
+   [
+    337774,
+    340220,
+    "accomplish real work. In"
+   ],
+   [
+    339258,
+    341575,
+    "this case, I had"
+   ],
+   [
+    340614,
+    342931,
+    "six developer pull requests (PRs) that"
+   ],
+   [
+    341970,
+    344138,
+    "needed to be removed."
+   ],
+   [
+    343238,
+    345643,
+    "I asked \"GrokBot\" to use"
+   ],
+   [
+    344680,
+    346864,
+    "\"Cursor Cloud Agents\", and I"
+   ],
+   [
+    345901,
+    348159,
+    "merged the six requests"
+   ],
+   [
+    347196,
+    349343,
+    "without leaving \"GrokBot\","
+   ],
+   [
+    348380,
+    350601,
+    "and I was using my phone."
+   ],
+   [
+    349701,
+    351527,
+    "You can see that all"
+   ],
+   [
+    350551,
+    352472,
+    "my withdrawal requests"
+   ],
+   [
+    351496,
+    353323,
+    "have been approved."
+   ],
+   [
+    352423,
+    354549,
+    "Some of them had inconsistencies"
+   ],
+   [
+    353579,
+    355697,
+    "in the integration. After fixing the"
+   ],
+   [
+    354728,
+    356790,
+    "merge conflicts, I merged them"
+   ],
+   [
+    355821,
+    357926,
+    "all. He even"
+   ],
+   [
+    356958,
+    358827,
+    "waited for \"Gremtaw\""
+   ],
+   [
+    357860,
+    359793,
+    "to give me a"
+   ],
+   [
+    358826,
+    361081,
+    "five out of five rating. All this"
+   ],
+   [
+    360113,
+    362262,
+    "engineering work,"
+   ],
+   [
+    361294,
+    363506,
+    "design work, and child work"
+   ],
+   [
+    362538,
+    364751,
+    "happened entirely on \"GrokBot\""
+   ],
+   [
+    363783,
+    366165,
+    "without him ever leaving it. This is"
+   ],
+   [
+    365204,
+    367559,
+    "only possible with a \"GrokBot\" or a wife who"
+   ],
+   [
+    366597,
+    368835,
+    "works as an engineer, but"
+   ],
+   [
+    367875,
+    369959,
+    "let's stick with a \"GrokBot\"."
+   ],
+   [
+    369059,
+    371296,
+    "Make sure you try it."
+   ],
+   [
+    370396,
+    372754,
+    "The link is in the description"
+   ],
+   [
+    371754,
+    373672,
+    ". Let's get back to the"
+   ],
+   [
+    372702,
+    374942,
+    "video. Now, let's talk"
+   ],
+   [
+    373972,
+    375928,
+    "about Cloud Code, the application and"
+   ],
+   [
+    374958,
+    377005,
+    "command-line interface. I hardly ever"
+   ],
+   [
+    376105,
+    377997,
+    "used the app"
+   ],
+   [
+    377024,
+    378982,
+    ". I'm sure"
+   ],
+   [
+    378007,
+    379679,
+    "they've made some"
+   ],
+   [
+    378705,
+    380812,
+    "changes. I have almost never used"
+   ],
+   [
+    379843,
+    381907,
+    "the app. The"
+   ],
+   [
+    381007,
+    383272,
+    "last time I used it"
+   ],
+   [
+    382272,
+    384375,
+    ", it was very bad."
+   ],
+   [
+    383475,
+    385684,
+    "Now, I will use the"
+   ],
+   [
+    384718,
+    386928,
+    "command-line interface, and the reason"
+   ],
+   [
+    385961,
+    388104,
+    "for this is that I may be"
+   ],
+   [
+    387137,
+    389213,
+    "connected via SSH to a"
+   ],
+   [
+    388246,
+    390322,
+    "different device, a"
+   ],
+   [
+    389355,
+    391565,
+    "new device, and I need to set up"
+   ],
+   [
+    390599,
+    393134,
+    "some network configurations. Cloud is"
+   ],
+   [
+    392200,
+    395618,
+    "great, especially Opus 5.5, it's"
+   ],
+   [
+    394684,
+    397272,
+    "excellent. So, when"
+   ],
+   [
+    396312,
+    398486,
+    "I use Cloud, I am"
+   ],
+   [
+    397526,
+    399984,
+    "literally using a"
+   ],
+   [
+    399024,
+    401404,
+    "command-line interface. I never"
+   ],
+   [
+    400439,
+    402395,
+    "use the"
+   ],
+   [
+    401430,
+    404115,
+    "graphical interface. You have"
+   ],
+   [
+    403174,
+    405755,
+    "Cursor and Devin. For"
+   ],
+   [
+    404788,
+    407050,
+    "both Cursor and Devin, I"
+   ],
+   [
+    406084,
+    407981,
+    "use the"
+   ],
+   [
+    407014,
+    408956,
+    "graphical interface. You can"
+   ],
+   [
+    407983,
+    409787,
+    "use"
+   ],
+   [
+    408815,
+    410674,
+    "their web applications. I"
+   ],
+   [
+    409774,
+    411616,
+    "usually use"
+   ],
+   [
+    410646,
+    412728,
+    "web applications. And what"
+   ],
+   [
+    411761,
+    413857,
+    "I use Cursor and Devin"
+   ],
+   [
+    412890,
+    414818,
+    "for is"
+   ],
+   [
+    413853,
+    416114,
+    "cloud proxies, right"
+   ],
+   [
+    415114,
+    417159,
+    "? If you need to"
+   ],
+   [
+    416196,
+    418296,
+    "run a lot of"
+   ],
+   [
+    417332,
+    419578,
+    "work in the cloud,"
+   ],
+   [
+    418615,
+    420604,
+    "like having my"
+   ],
+   [
+    419641,
+    421960,
+    "own cloud, but"
+   ],
+   [
+    420996,
+    423132,
+    "let's say I have things that are"
+   ],
+   [
+    422169,
+    424268,
+    "already running here, and"
+   ],
+   [
+    423305,
+    425550,
+    "I need to run them in a"
+   ],
+   [
+    424587,
+    426869,
+    "cloud proxy, then that's what"
+   ],
+   [
+    425906,
+    428115,
+    "I use Cursor and Devin"
+   ],
+   [
+    427152,
+    429515,
+    "for. Cursor, I"
+   ],
+   [
+    429649,
+    431949,
+    "also use its command-line interface, but its"
+   ],
+   [
+    430982,
+    433183,
+    "cloud proxy product is"
+   ],
+   [
+    432216,
+    434317,
+    "truly impressive."
+   ],
+   [
+    433417,
+    436010,
+    "And how my workflow actually works is that I connected it"
+   ],
+   [
+    436603,
+    439438,
+    "to Linear"
+   ],
+   [
+    438486,
+    440972,
+    "via MCP. So, if I want a"
+   ],
+   [
+    440007,
+    442253,
+    "cloud agent to work"
+   ],
+   [
+    441289,
+    443606,
+    "on something, all I have to"
+   ],
+   [
+    442642,
+    444567,
+    "do is literally"
+   ],
+   [
+    443603,
+    445991,
+    "point to Cursor or Devin"
+   ],
+   [
+    444991,
+    447236,
+    ", and it will start working on it"
+   ],
+   [
+    446273,
+    448479,
+    "immediately. So, for"
+   ],
+   [
+    447507,
+    449262,
+    "some of our"
+   ],
+   [
+    448290,
+    450185,
+    "live,"
+   ],
+   [
+    449213,
+    450968,
+    "production-stage applications that"
+   ],
+   [
+    449996,
+    452058,
+    "people are using, and an"
+   ],
+   [
+    451087,
+    453176,
+    "error is reported, I will get the"
+   ],
+   [
+    452205,
+    454212,
+    "cloud agent working"
+   ],
+   [
+    453240,
+    455303,
+    "on it as quickly as possible, even before I"
+   ],
+   [
+    454331,
+    456422,
+    "read the error."
+   ],
+   [
+    455522,
+    457904,
+    "So, by the time"
+   ],
+   [
+    456940,
+    459039,
+    "I'm ready to understand what's"
+   ],
+   [
+    458074,
+    460457,
+    "going on, I already have a"
+   ],
+   [
+    459493,
+    461876,
+    "pull request (PR) ready to be merged."
+   ],
+   [
+    460976,
+    463162,
+    "Therefore, all the"
+   ],
+   [
+    462199,
+    464645,
+    "different platforms have"
+   ],
+   [
+    463682,
+    466286,
+    "different strengths. If you asked me, \"Which"
+   ],
+   [
+    465327,
+    467799,
+    "one should I choose?\""
+   ],
+   [
+    466899,
+    469637,
+    "I will choose the best in terms of"
+   ],
+   [
+    468684,
+    471376,
+    "cost, won't I?"
+   ],
+   [
+    470476,
+    472920,
+    "Where do you get the most"
+   ],
+   [
+    471958,
+    474481,
+    "support? Well, it was"
+   ],
+   [
+    473518,
+    475811,
+    "OpenAI for a while because we were"
+   ],
+   [
+    474849,
+    477032,
+    "getting compensation,"
+   ],
+   [
+    476069,
+    478289,
+    "but with the new Opus 5.5 model"
+   ],
+   [
+    477326,
+    479583,
+    ", it has"
+   ],
+   [
+    478620,
+    480793,
+    "unofficially become Anthropic. In"
+   ],
+   [
+    479821,
+    481884,
+    "both cases, I believe you shouldn't"
+   ],
+   [
+    480912,
+    482974,
+    "be"
+   ],
+   [
+    482003,
+    483870,
+    "loyal and shouldn't have to"
+   ],
+   [
+    482898,
+    484765,
+    "commit to a"
+   ],
+   [
+    483793,
+    485577,
+    "single subscription. Keep"
+   ],
+   [
+    484605,
+    486527,
+    "switching between them, do"
+   ],
+   [
+    485556,
+    487654,
+    "you understand what I mean? Get the"
+   ],
+   [
+    486685,
+    488777,
+    "best value for your money"
+   ],
+   [
+    487808,
+    490069,
+    ". Okay, that"
+   ],
+   [
+    489104,
+    491462,
+    "was all about the platforms. Let's"
+   ],
+   [
+    490562,
+    492961,
+    "talk about models."
+   ],
+   [
+    492061,
+    494154,
+    "Well, as far as"
+   ],
+   [
+    493188,
+    495521,
+    "models are concerned, there are only two"
+   ],
+   [
+    494555,
+    496683,
+    "models to use"
+   ],
+   [
+    495717,
+    497914,
+    "when building applications."
+   ],
+   [
+    497014,
+    499693,
+    "For me, it is"
+   ],
+   [
+    498753,
+    501699,
+    "literally Opus 5.5. Opus"
+   ],
+   [
+    500740,
+    502996,
+    "5.5 is undoubtedly one of the best"
+   ],
+   [
+    502036,
+    504333,
+    "models, not because it"
+   ],
+   [
+    503373,
+    505710,
+    "represents a huge leap in"
+   ],
+   [
+    504751,
+    507210,
+    "intelligence compared to Astra"
+   ],
+   [
+    506250,
+    508668,
+    "or Fable, although it is better than"
+   ],
+   [
+    507709,
+    510130,
+    "both. It is simply a"
+   ],
+   [
+    509176,
+    511608,
+    "complete model. He"
+   ],
+   [
+    510646,
+    512815,
+    "responds"
+   ],
+   [
+    511853,
+    514081,
+    "well to instructions. He is"
+   ],
+   [
+    513116,
+    515025,
+    "very skilled at"
+   ],
+   [
+    514061,
+    516606,
+    "long tasks. In other words, it's"
+   ],
+   [
+    515655,
+    518544,
+    "simply a great and comprehensive model"
+   ],
+   [
+    517544,
+    520316,
+    ". Since the release of Opus 5.5, I have not"
+   ],
+   [
+    519369,
+    522306,
+    "found the need to use any"
+   ],
+   [
+    521359,
+    524206,
+    "other model. Well, Astra is"
+   ],
+   [
+    523250,
+    525993,
+    "very good for deep work"
+   ],
+   [
+    524993,
+    527645,
+    ", for research, and perhaps for understanding"
+   ],
+   [
+    526690,
+    529209,
+    "the rules of code"
+   ],
+   [
+    528254,
+    530504,
+    "accurately, but to be"
+   ],
+   [
+    529549,
+    532290,
+    "honest with you, I am"
+   ],
+   [
+    531336,
+    533780,
+    "very happy with Opus 5.5. Now,"
+   ],
+   [
+    532806,
+    534649,
+    "when it comes to"
+   ],
+   [
+    533675,
+    535675,
+    "models, this is likely"
+   ],
+   [
+    534702,
+    536519,
+    "to change in the"
+   ],
+   [
+    536467,
+    538363,
+    "next two or three months, isn't"
+   ],
+   [
+    537389,
+    539418,
+    "it? Because a"
+   ],
+   [
+    538449,
+    540652,
+    "new model will emerge, and it will be"
+   ],
+   [
+    539685,
+    541540,
+    "better, and it will take us to"
+   ],
+   [
+    540572,
+    542712,
+    "another level, and we will move on to"
+   ],
+   [
+    541744,
+    544389,
+    "using it. As of today"
+   ],
+   [
+    543444,
+    545997,
+    ", September 2026, the"
+   ],
+   [
+    545054,
+    548050,
+    "Opus 5.5 and GPT-6 Astra are considered the"
+   ],
+   [
+    547107,
+    549858,
+    "best models. I"
+   ],
+   [
+    548913,
+    551880,
+    "use Opus 5.5 more often. Number"
+   ],
+   [
+    550915,
+    553245,
+    "three, the"
+   ],
+   [
+    552280,
+    554339,
+    "Tech Stack. Previously,"
+   ],
+   [
+    553366,
+    555348,
+    "this was a discussion we had a"
+   ],
+   [
+    554375,
+    556410,
+    "lot of times when we were writing"
+   ],
+   [
+    555437,
+    557531,
+    "code manually. What"
+   ],
+   [
+    556559,
+    558338,
+    "framework are you"
+   ],
+   [
+    557365,
+    559351,
+    "using? What technology package do"
+   ],
+   [
+    559012,
+    561327,
+    "you use? Do you use"
+   ],
+   [
+    560373,
+    562869,
+    "React JS? Do you use...we've been"
+   ],
+   [
+    561905,
+    564026,
+    "talking about this all along"
+   ],
+   [
+    563063,
+    565016,
+    ". Now,"
+   ],
+   [
+    564043,
+    565873,
+    "artificial intelligence has come along and"
+   ],
+   [
+    564900,
+    566917,
+    "changed everything, but I still"
+   ],
+   [
+    565944,
+    567828,
+    "believe there are"
+   ],
+   [
+    566855,
+    568605,
+    "smart decisions to be"
+   ],
+   [
+    567632,
+    569247,
+    "made about"
+   ],
+   [
+    568274,
+    570212,
+    "the technologies used"
+   ],
+   [
+    569239,
+    570989,
+    "to build your applications. I"
+   ],
+   [
+    570089,
+    572274,
+    "will share with you step by step"
+   ],
+   [
+    571314,
+    573539,
+    "what I use."
+   ],
+   [
+    572639,
+    575491,
+    "My preferred framework"
+   ],
+   [
+    574539,
+    577145,
+    "is SvelteKit. I use"
+   ],
+   [
+    576186,
+    578647,
+    "Svelte more than I use"
+   ],
+   [
+    577689,
+    579985,
+    "React. Honestly, it's"
+   ],
+   [
+    579023,
+    581045,
+    "limited to SvelteKit"
+   ],
+   [
+    580083,
+    582521,
+    "and sometimes I use Next.js."
+   ],
+   [
+    581558,
+    583958,
+    "Both work well"
+   ],
+   [
+    582996,
+    585093,
+    "with Vercel, where I publish my"
+   ],
+   [
+    584131,
+    586494,
+    "applications, but the reason"
+   ],
+   [
+    585531,
+    587968,
+    "I use Svelte is,"
+   ],
+   [
+    587007,
+    589141,
+    "firstly, that"
+   ],
+   [
+    588180,
+    590202,
+    "artificial intelligence is good at"
+   ],
+   [
+    589240,
+    591715,
+    "handling Svelte and SvelteKit"
+   ],
+   [
+    590715,
+    593077,
+    ", and secondly, I find that any"
+   ],
+   [
+    592115,
+    594440,
+    "application I build with Svelte"
+   ],
+   [
+    593477,
+    595915,
+    "is automatically fast"
+   ],
+   [
+    594953,
+    596899,
+    "without me having to ask the"
+   ],
+   [
+    595937,
+    598413,
+    "model to improve performance."
+   ],
+   [
+    597513,
+    599985,
+    "It is more responsive,"
+   ],
+   [
+    599031,
+    601825,
+    "faster, and a high-performing application"
+   ],
+   [
+    600872,
+    603298,
+    ", and because Svelte is, in"
+   ],
+   [
+    602344,
+    605001,
+    "my opinion, a superior framework."
+   ],
+   [
+    604101,
+    606622,
+    "So, when I build"
+   ],
+   [
+    605661,
+    607909,
+    "web applications, I"
+   ],
+   [
+    606948,
+    609007,
+    "use Svelte. As"
+   ],
+   [
+    608038,
+    610214,
+    "for the back-end,"
+   ],
+   [
+    609214,
+    611208,
+    "I will be criticized"
+   ],
+   [
+    610238,
+    612172,
+    "because I work for this"
+   ],
+   [
+    611202,
+    613347,
+    "company, but I use"
+   ],
+   [
+    612378,
+    614233,
+    "Convex. The reason I"
+   ],
+   [
+    613259,
+    615218,
+    "use Convex is"
+   ],
+   [
+    614244,
+    616177,
+    "that the artificial intelligence"
+   ],
+   [
+    615203,
+    617189,
+    "works wonderfully with it."
+   ],
+   [
+    616289,
+    618414,
+    "It's completely"
+   ],
+   [
+    617443,
+    619480,
+    "type-safe, and"
+   ],
+   [
+    618509,
+    620427,
+    "everything works in"
+   ],
+   [
+    619457,
+    621698,
+    "real time, right? I don't"
+   ],
+   [
+    620731,
+    622971,
+    "need to manage Web Sockets,"
+   ],
+   [
+    622004,
+    624143,
+    "it's fast, responsive,"
+   ],
+   [
+    623177,
+    625484,
+    "and works well with Svelte."
+   ],
+   [
+    624584,
+    626685,
+    "There is a library that works"
+   ],
+   [
+    625716,
+    627849,
+    "perfectly with Svelte, but that's"
+   ],
+   [
+    626879,
+    629041,
+    "not the only reason I"
+   ],
+   [
+    628071,
+    630269,
+    "love Convex."
+   ],
+   [
+    629318,
+    632028,
+    "Convex has something called"
+   ],
+   [
+    631076,
+    633261,
+    "Convex components. You can think of"
+   ],
+   [
+    632293,
+    634326,
+    "Convex components as"
+   ],
+   [
+    633358,
+    635520,
+    "building blocks for"
+   ],
+   [
+    634552,
+    636585,
+    "third-party integrations, which is"
+   ],
+   [
+    635617,
+    637617,
+    "code that can be"
+   ],
+   [
+    636650,
+    638843,
+    "easily integrated into"
+   ],
+   [
+    637876,
+    640131,
+    "your Convex application. A"
+   ],
+   [
+    639173,
+    641577,
+    "simple example of this is what"
+   ],
+   [
+    640618,
+    643188,
+    "I built, the Stripe component."
+   ],
+   [
+    642288,
+    644245,
+    "I could literally give"
+   ],
+   [
+    643272,
+    645123,
+    "this link to"
+   ],
+   [
+    644150,
+    645975,
+    "my proxy, if I were"
+   ],
+   [
+    645002,
+    647012,
+    "building my application using"
+   ],
+   [
+    646039,
+    647864,
+    "Convex, and tell it: \""
+   ],
+   [
+    646891,
+    648848,
+    "Set up Stripe using the"
+   ],
+   [
+    647875,
+    650547,
+    "Stripe component.\" And he will."
+   ],
+   [
+    649647,
+    651973,
+    "Let's say I need a"
+   ],
+   [
+    651009,
+    653264,
+    "sandbox environment; he"
+   ],
+   [
+    652300,
+    654699,
+    "will set that up as well. Let"
+   ],
+   [
+    653799,
+    656135,
+    "'s say I need"
+   ],
+   [
+    655173,
+    657548,
+    "Gmail, or PostHog, or let's say I"
+   ],
+   [
+    656586,
+    658999,
+    "need a"
+   ],
+   [
+    658037,
+    660106,
+    "browser base, whatever"
+   ],
+   [
+    659145,
+    661634,
+    "component they have, like WorkOS"
+   ],
+   [
+    660672,
+    663161,
+    "which is"
+   ],
+   [
+    662200,
+    664269,
+    "my preferred authentication provider, it's for"
+   ],
+   [
+    663307,
+    665654,
+    "professionals. I just"
+   ],
+   [
+    664694,
+    667257,
+    "give it the component and it sets it up"
+   ],
+   [
+    666297,
+    668380,
+    ", and it works"
+   ],
+   [
+    667420,
+    669904,
+    "immediately once it's installed. I did"
+   ],
+   [
+    669004,
+    671356,
+    "n't have to read any code"
+   ],
+   [
+    670391,
+    672530,
+    "when it came to"
+   ],
+   [
+    671566,
+    673954,
+    "setting up Convex components because the"
+   ],
+   [
+    672989,
+    675093,
+    "AI"
+   ],
+   [
+    674128,
+    676374,
+    "simply works with Convex,"
+   ],
+   [
+    675409,
+    677819,
+    "right? Therefore, Convex is a very"
+   ],
+   [
+    676861,
+    679085,
+    "large part of my"
+   ],
+   [
+    678127,
+    680851,
+    "software architecture. A"
+   ],
+   [
+    679895,
+    682619,
+    "new addition, well, it's not"
+   ],
+   [
+    681663,
+    684386,
+    "entirely new but I haven't"
+   ],
+   [
+    683430,
+    685976,
+    "talked about it, is that"
+   ],
+   [
+    685020,
+    687257,
+    "whenever I build a service,"
+   ],
+   [
+    686302,
+    688804,
+    "I will always"
+   ],
+   [
+    687848,
+    690334,
+    "and forever use Effect. I've always"
+   ],
+   [
+    689376,
+    691757,
+    "wanted to learn Effect, but the"
+   ],
+   [
+    690800,
+    693224,
+    "syntax and"
+   ],
+   [
+    692266,
+    694690,
+    "learning curve seemed"
+   ],
+   [
+    693733,
+    696281,
+    "too long, but then"
+   ],
+   [
+    695324,
+    697915,
+    "artificial intelligence came along"
+   ],
+   [
+    696958,
+    699382,
+    "and made learning and writing it"
+   ],
+   [
+    698424,
+    701140,
+    "very easy. So,"
+   ],
+   [
+    700187,
+    702783,
+    "whenever I have a service, in"
+   ],
+   [
+    701830,
+    704568,
+    "fact, a great example is"
+   ],
+   [
+    703615,
+    706457,
+    "Bezalo. My application"
+   ],
+   [
+    705504,
+    708295,
+    "is essentially a single giant MCP server. An"
+   ],
+   [
+    707395,
+    709983,
+    "MCP server built entirely"
+   ],
+   [
+    709027,
+    711701,
+    "using Effect. It's"
+   ],
+   [
+    710741,
+    713246,
+    "all Effect code, and the"
+   ],
+   [
+    712285,
+    714632,
+    "website is Svelte,"
+   ],
+   [
+    713671,
+    716137,
+    "right? Therefore, for any"
+   ],
+   [
+    715177,
+    717322,
+    "type of"
+   ],
+   [
+    716363,
+    718834,
+    "backend, or"
+   ],
+   [
+    717875,
+    720468,
+    "external service, whatever I"
+   ],
+   [
+    719509,
+    721572,
+    "build in terms of"
+   ],
+   [
+    720613,
+    722961,
+    "backend, I"
+   ],
+   [
+    722002,
+    724433,
+    "will always use Effect. The"
+   ],
+   [
+    723533,
+    726005,
+    "main reason is that"
+   ],
+   [
+    725047,
+    727519,
+    "Effect is great at handling"
+   ],
+   [
+    726561,
+    728823,
+    "errors, and this gives"
+   ],
+   [
+    727865,
+    730212,
+    "me and the AI ​​agent an"
+   ],
+   [
+    730600,
+    732904,
+    "advantage in ensuring that we"
+   ],
+   [
+    731946,
+    734292,
+    "build"
+   ],
+   [
+    733334,
+    735680,
+    "error-free applications,"
+   ],
+   [
+    734722,
+    736999,
+    "right? For"
+   ],
+   [
+    736024,
+    738007,
+    "example, let's say you're building"
+   ],
+   [
+    737032,
+    738989,
+    "something using JavaScript"
+   ],
+   [
+    737989,
+    739719,
+    ", there are a lot of"
+   ],
+   [
+    738745,
+    740677,
+    "places where"
+   ],
+   [
+    739702,
+    741508,
+    "things can go wrong,"
+   ],
+   [
+    740533,
+    742477,
+    "right? That's"
+   ],
+   [
+    741505,
+    743349,
+    "why we use"
+   ],
+   [
+    742377,
+    744277,
+    "TypeScript, isn't it?"
+   ],
+   [
+    743378,
+    745495,
+    "Type safety is"
+   ],
+   [
+    744527,
+    746816,
+    "essential. It is"
+   ],
+   [
+    745845,
+    747767,
+    "simply the language in which"
+   ],
+   [
+    746795,
+    748660,
+    "we define the function,"
+   ],
+   [
+    747689,
+    749524,
+    "and know whether"
+   ],
+   [
+    748553,
+    750648,
+    "the code is written in the"
+   ],
+   [
+    749676,
+    751898,
+    "correct way. But the problem"
+   ],
+   [
+    750931,
+    753213,
+    "is that this did not apply to"
+   ],
+   [
+    752245,
+    754527,
+    "errors in the world of TypeScript"
+   ],
+   [
+    753527,
+    756259,
+    ". Effect makes it easier to deal with"
+   ],
+   [
+    755305,
+    757944,
+    "errors. I don't build"
+   ],
+   [
+    756986,
+    759394,
+    "any app that doesn't use"
+   ],
+   [
+    758437,
+    760794,
+    "Effect. Now suppose I am"
+   ],
+   [
+    759826,
+    762009,
+    "building a service and I am not using"
+   ],
+   [
+    761041,
+    763256,
+    "Convex for the backend;"
+   ],
+   [
+    762288,
+    764438,
+    "there are two databases that I am"
+   ],
+   [
+    763470,
+    765919,
+    "using. In fact, there is"
+   ],
+   [
+    764958,
+    767169,
+    "only one, and that is"
+   ],
+   [
+    766208,
+    768483,
+    "PlanetScale. PlanetScale is the"
+   ],
+   [
+    767523,
+    770015,
+    "largest provider of"
+   ],
+   [
+    769054,
+    771141,
+    "Postgres services. You can also"
+   ],
+   [
+    770171,
+    772167,
+    "use PlanetScale via"
+   ],
+   [
+    771198,
+    773314,
+    "Cloudflare's Hyperdrive service,"
+   ],
+   [
+    772344,
+    774522,
+    "I think that's its name."
+   ],
+   [
+    773622,
+    775695,
+    "But yes, whenever"
+   ],
+   [
+    774727,
+    776833,
+    "I need a"
+   ],
+   [
+    775864,
+    777875,
+    "Postgres database, I"
+   ],
+   [
+    776907,
+    779154,
+    "use PlanetScale. It works extremely well"
+   ],
+   [
+    778199,
+    780675,
+    "with"
+   ],
+   [
+    779719,
+    781920,
+    "Effect. Now, when it comes to"
+   ],
+   [
+    780957,
+    783307,
+    "publishing,"
+   ],
+   [
+    782344,
+    784544,
+    "there are two places I publish:"
+   ],
+   [
+    783581,
+    785856,
+    "Vercel and Cloudflare."
+   ],
+   [
+    784956,
+    786835,
+    "What's"
+   ],
+   [
+    785873,
+    788212,
+    "interesting is that if I'm"
+   ],
+   [
+    787250,
+    789741,
+    "using Cloudflare, I'm"
+   ],
+   [
+    788780,
+    791156,
+    "probably using the"
+   ],
+   [
+    790195,
+    792495,
+    "whole package, meaning"
+   ],
+   [
+    791533,
+    793719,
+    "I'm using Workers, I'm using"
+   ],
+   [
+    792757,
+    795056,
+    "R2 for storage,"
+   ],
+   [
+    794095,
+    796357,
+    "like an R2 storage container,"
+   ],
+   [
+    795395,
+    797428,
+    "I'm using Hyperdrive, I'm using"
+   ],
+   [
+    796466,
+    798958,
+    "Durable Objects, I'm"
+   ],
+   [
+    797996,
+    800220,
+    "using the entire Cloudflare package"
+   ],
+   [
+    799258,
+    801857,
+    ". However, if I am not"
+   ],
+   [
+    800903,
+    803384,
+    "using Cloudflare, the"
+   ],
+   [
+    802430,
+    805233,
+    "application will be published on"
+   ],
+   [
+    804281,
+    806840,
+    "Vercel. One of the applications I"
+   ],
+   [
+    805886,
+    808658,
+    "published on Cloudflare"
+   ],
+   [
+    807704,
+    810281,
+    "is Gosha email. I'll be making it"
+   ],
+   [
+    809316,
+    811592,
+    "open source soon,"
+   ],
+   [
+    810626,
+    812735,
+    "but this is basically an"
+   ],
+   [
+    811768,
+    813910,
+    "email provider for"
+   ],
+   [
+    812944,
+    815154,
+    "your agents, isn't it? You"
+   ],
+   [
+    814254,
+    816960,
+    "were using this for"
+   ],
+   [
+    816005,
+    818643,
+    "Bez and Pluto. What makes Gosha"
+   ],
+   [
+    817689,
+    819871,
+    "email unique is that it runs"
+   ],
+   [
+    818917,
+    821418,
+    "entirely on Cloudflare."
+   ],
+   [
+    820518,
+    823463,
+    "It uses Cloudflare"
+   ],
+   [
+    822513,
+    825359,
+    "email, and it uses"
+   ],
+   [
+    824409,
+    827006,
+    "Workers, Hyperdrive, and R2. The"
+   ],
+   [
+    826106,
+    828856,
+    "entire application runs"
+   ],
+   [
+    827905,
+    830764,
+    "on Cloudflare. Cloudflare is an"
+   ],
+   [
+    831324,
+    834040,
+    "amazing infrastructure product, as is Vercel."
+   ],
+   [
+    833140,
+    835341,
+    "Depending on what I'm building,"
+   ],
+   [
+    834372,
+    836541,
+    "if I'm using anything"
+   ],
+   [
+    835573,
+    837651,
+    "related to Cloudflare, I'll probably"
+   ],
+   [
+    836682,
+    838760,
+    "stick with"
+   ],
+   [
+    837791,
+    840034,
+    "Cloudflare. If that's not the case,"
+   ],
+   [
+    839075,
+    841604,
+    "I'll use"
+   ],
+   [
+    840644,
+    843341,
+    "Vercel. Svelte, Effect,"
+   ],
+   [
+    842399,
+    845630,
+    "Cloudflare, Vercel, PlanetScale"
+   ],
+   [
+    844630,
+    847461,
+    ", and I forgot Convex Components."
+   ],
+   [
+    846561,
+    848369,
+    "Basically, all of these"
+   ],
+   [
+    847400,
+    849271,
+    "things, I don't"
+   ],
+   [
+    848303,
+    850485,
+    "use all of them all the"
+   ],
+   [
+    849516,
+    851636,
+    "time, but I use"
+   ],
+   [
+    850667,
+    852880,
+    "at least one of them"
+   ],
+   [
+    851911,
+    854128,
+    "to build my application. This is the"
+   ],
+   [
+    853163,
+    855108,
+    "package I like to"
+   ],
+   [
+    854142,
+    856423,
+    "use. And now,"
+   ],
+   [
+    855468,
+    857814,
+    "the tools. Tools, what"
+   ],
+   [
+    856842,
+    858471,
+    "tools do I"
+   ],
+   [
+    857498,
+    859694,
+    "use? I will review each"
+   ],
+   [
+    858726,
+    860809,
+    "one separately."
+   ],
+   [
+    859909,
+    861841,
+    "First and foremost,"
+   ],
+   [
+    860869,
+    862971,
+    "you need code references"
+   ],
+   [
+    861971,
+    864817,
+    ". I use Greptile. I"
+   ],
+   [
+    863870,
+    866295,
+    "love Greptile. Greptile's confidence score"
+   ],
+   [
+    865326,
+    867369,
+    "and their \"grep loop\" skill"
+   ],
+   [
+    866401,
+    868633,
+    ", which is"
+   ],
+   [
+    867665,
+    869550,
+    "part of"
+   ],
+   [
+    868582,
+    870656,
+    "my skill repository,"
+   ],
+   [
+    869688,
+    871763,
+    "if you haven't looked at it"
+   ],
+   [
+    870794,
+    872901,
+    ", make sure you do,"
+   ],
+   [
+    871932,
+    873944,
+    "is Greptile's \"grep loop\" skill"
+   ],
+   [
+    872975,
+    875276,
+    ", right? This"
+   ],
+   [
+    874308,
+    876383,
+    "essentially does, based"
+   ],
+   [
+    875414,
+    877425,
+    "on Greptile's observations,"
+   ],
+   [
+    876458,
+    878468,
+    "replicate the agent's work to"
+   ],
+   [
+    877501,
+    879670,
+    "achieve a five out"
+   ],
+   [
+    878702,
+    881151,
+    "of five score. Basically,"
+   ],
+   [
+    880194,
+    882834,
+    "but let me show you an example."
+   ],
+   [
+    881935,
+    884313,
+    "Let me open"
+   ],
+   [
+    883313,
+    885617,
+    "this pull request, and you can"
+   ],
+   [
+    884654,
+    886771,
+    "see here that a"
+   ],
+   [
+    885809,
+    888112,
+    "PR has been created, and Greptile is given a"
+   ],
+   [
+    887150,
+    889635,
+    "trust rating. The \"grep loop\" skill"
+   ],
+   [
+    888671,
+    890747,
+    "makes the agent repeat the"
+   ],
+   [
+    889783,
+    891787,
+    "action based on"
+   ],
+   [
+    890823,
+    893222,
+    "Greptile feedback until we get a"
+   ],
+   [
+    892258,
+    894657,
+    "score of five out of five."
+   ],
+   [
+    893757,
+    896540,
+    "This is simply excellent. I love the"
+   ],
+   [
+    895570,
+    897686,
+    "feedback that"
+   ],
+   [
+    896716,
+    898803,
+    "Greptile and the"
+   ],
+   [
+    897832,
+    899978,
+    "programming client I use provide me."
+   ],
+   [
+    899078,
+    901100,
+    "It's one of my"
+   ],
+   [
+    900139,
+    902509,
+    "favorite tools. Another tool"
+   ],
+   [
+    901550,
+    903992,
+    "I used was Oracle."
+   ],
+   [
+    903092,
+    905446,
+    "For Pluto, each"
+   ],
+   [
+    904488,
+    906589,
+    "version of Pluto has its"
+   ],
+   [
+    905631,
+    907732,
+    "own computer."
+   ],
+   [
+    906832,
+    909460,
+    "The computer we are using"
+   ],
+   [
+    908502,
+    910857,
+    "is Oracle. Now, just to clarify"
+   ],
+   [
+    909886,
+    911863,
+    ", I am an investor in"
+   ],
+   [
+    910893,
+    912811,
+    "Oracle, but the reason I"
+   ],
+   [
+    911841,
+    913729,
+    "invested is that I"
+   ],
+   [
+    912759,
+    914558,
+    "used their product"
+   ],
+   [
+    913588,
+    915594,
+    "a lot, so I contacted the"
+   ],
+   [
+    914624,
+    916453,
+    "team and said, \""
+   ],
+   [
+    915483,
+    917371,
+    "Can I write an"
+   ],
+   [
+    916401,
+    918900,
+    "investment check?\" And they accepted"
+   ],
+   [
+    917950,
+    920844,
+    "that. So, keep this in"
+   ],
+   [
+    919891,
+    922242,
+    "mind, but I"
+   ],
+   [
+    921289,
+    924107,
+    "actually use it in Pluto."
+   ],
+   [
+    923207,
+    926023,
+    "Whenever I want to give my client a"
+   ],
+   [
+    925072,
+    927594,
+    "separate computer,"
+   ],
+   [
+    926643,
+    929334,
+    "I use Orgo. Another tool I've been"
+   ],
+   [
+    928376,
+    930874,
+    "using a lot"
+   ],
+   [
+    929916,
+    932417,
+    "lately is Paper. Paper is"
+   ],
+   [
+    931457,
+    933947,
+    "essentially an alternative to Figma"
+   ],
+   [
+    932987,
+    935315,
+    "and works great with"
+   ],
+   [
+    934356,
+    936999,
+    "savvy customers. I"
+   ],
+   [
+    936042,
+    938572,
+    "used it to design my"
+   ],
+   [
+    937614,
+    939932,
+    "portfolio website."
+   ],
+   [
+    939032,
+    941171,
+    "I"
+   ],
+   [
+    940210,
+    942736,
+    "also used it to design Pluto. Pluto underwent a"
+   ],
+   [
+    943012,
+    945578,
+    "complete redesign, and to be honest"
+   ],
+   [
+    944619,
+    946978,
+    "with you, it wouldn't have looked"
+   ],
+   [
+    946019,
+    948626,
+    "so pristine if it weren't for"
+   ],
+   [
+    947667,
+    950228,
+    "something like Paper. Paper simply takes me"
+   ],
+   [
+    949264,
+    951326,
+    ", as someone who is not a"
+   ],
+   [
+    950362,
+    952708,
+    "designer, and makes me feel like one"
+   ],
+   [
+    951743,
+    954054,
+    ", and allows me"
+   ],
+   [
+    953090,
+    955436,
+    "to build and explore"
+   ],
+   [
+    954471,
+    956782,
+    "different design styles, all"
+   ],
+   [
+    955818,
+    957845,
+    "using"
+   ],
+   [
+    956880,
+    959227,
+    "artificial intelligence, by the way."
+   ],
+   [
+    958327,
+    960573,
+    "They have a great MCP protocol"
+   ],
+   [
+    959614,
+    961941,
+    "where you can connect"
+   ],
+   [
+    960981,
+    963429,
+    "your client to Paper, and it can"
+   ],
+   [
+    962469,
+    964917,
+    "literally create designs"
+   ],
+   [
+    963957,
+    966600,
+    "on the board. Another"
+   ],
+   [
+    965644,
+    968121,
+    "design-related tool is"
+   ],
+   [
+    967164,
+    969734,
+    "Mobbin. Mobbin is essentially a"
+   ],
+   [
+    968774,
+    970819,
+    "collection of the most beautiful"
+   ],
+   [
+    969859,
+    972185,
+    "websites available,"
+   ],
+   [
+    971225,
+    973551,
+    "presented to you in"
+   ],
+   [
+    972591,
+    974842,
+    "one link. They"
+   ],
+   [
+    973885,
+    976338,
+    "also have an MCP server that you can"
+   ],
+   [
+    975381,
+    978069,
+    "connect your client to. This is my"
+   ],
+   [
+    977108,
+    979368,
+    "favorite place to gather"
+   ],
+   [
+    978408,
+    980393,
+    "inspiration and build"
+   ],
+   [
+    979433,
+    981968,
+    "beautiful-looking apps"
+   ],
+   [
+    980969,
+    983711,
+    ". I'm not as beautiful as you, but I'm"
+   ],
+   [
+    982758,
+    985069,
+    "trying. I use Whisper"
+   ],
+   [
+    984104,
+    986351,
+    "as an application to convert speech"
+   ],
+   [
+    985386,
+    987714,
+    "to text. It's"
+   ],
+   [
+    986758,
+    988916,
+    "self-evident. Very cool,"
+   ],
+   [
+    987947,
+    989811,
+    "especially when you want to"
+   ],
+   [
+    988842,
+    990830,
+    "chat a lot with"
+   ],
+   [
+    989861,
+    991846,
+    "your client. I prefer to shout it out"
+   ],
+   [
+    990872,
+    992883,
+    "rather than write it down,"
+   ],
+   [
+    991910,
+    993844,
+    "unless I am trying to"
+   ],
+   [
+    992871,
+    994752,
+    "be precise, then I will write it down"
+   ],
+   [
+    993779,
+    995978,
+    ". But Whisper Flow"
+   ],
+   [
+    995016,
+    997472,
+    "was great for me"
+   ],
+   [
+    996472,
+    998564,
+    ". Now, this might seem like a lot"
+   ],
+   [
+    997595,
+    999734,
+    "if you're"
+   ],
+   [
+    998765,
+    1000689,
+    "working alone,"
+   ],
+   [
+    999720,
+    1001767,
+    "but I manage a team,"
+   ],
+   [
+    1000797,
+    1002937,
+    "so we use Linear to track"
+   ],
+   [
+    1001968,
+    1004137,
+    "problems, work to be done, and the"
+   ],
+   [
+    1003169,
+    1005246,
+    "status of"
+   ],
+   [
+    1004277,
+    1006164,
+    "that work. There are"
+   ],
+   [
+    1005193,
+    1007122,
+    "many"
+   ],
+   [
+    1006152,
+    1007965,
+    "other paintings. These are the"
+   ],
+   [
+    1006996,
+    1009155,
+    "only things I"
+   ],
+   [
+    1008185,
+    1010396,
+    "can show you. What"
+   ],
+   [
+    1009435,
+    1011762,
+    "'s great about Linear is that"
+   ],
+   [
+    1010800,
+    1013165,
+    "they also have an MCP that you can"
+   ],
+   [
+    1012203,
+    1014682,
+    "connect your clients to, especially"
+   ],
+   [
+    1013720,
+    1016047,
+    "cloud clients, and"
+   ],
+   [
+    1015085,
+    1017526,
+    "I can launch Cursor Devin"
+   ],
+   [
+    1016564,
+    1018853,
+    "just by selecting them here and"
+   ],
+   [
+    1017891,
+    1020488,
+    "assigning a ticket to them. It's a"
+   ],
+   [
+    1019543,
+    1022491,
+    "great workflow. Finally"
+   ],
+   [
+    1021491,
+    1024018,
+    ", I will share my skills with you."
+   ],
+   [
+    1023118,
+    1025203,
+    "Again, I have already provided a"
+   ],
+   [
+    1024230,
+    1026260,
+    "full video on"
+   ],
+   [
+    1025288,
+    1027317,
+    "this topic, but for those"
+   ],
+   [
+    1026345,
+    1028347,
+    "watching me now for the first"
+   ],
+   [
+    1027375,
+    1029320,
+    "time, my skills are available as"
+   ],
+   [
+    1028348,
+    1030367,
+    "open source. My"
+   ],
+   [
+    1029406,
+    1031673,
+    "entire software factory,"
+   ],
+   [
+    1030711,
+    1033170,
+    "and workflow, is located here."
+   ],
+   [
+    1032270,
+    1034810,
+    "Basically, I will explain to you"
+   ],
+   [
+    1033851,
+    1035998,
+    "in detail and very quickly"
+   ],
+   [
+    1035037,
+    1037540,
+    "how it works. The"
+   ],
+   [
+    1036640,
+    1038863,
+    "first step, when"
+   ],
+   [
+    1037896,
+    1039894,
+    "I ask an agent who has"
+   ],
+   [
+    1038925,
+    1040956,
+    "access to my"
+   ],
+   [
+    1039989,
+    1042148,
+    "skills repository and"
+   ],
+   [
+    1041180,
+    1043404,
+    "agents.md file, when I ask him to"
+   ],
+   [
+    1042435,
+    1044692,
+    "build a feature, he first"
+   ],
+   [
+    1043724,
+    1045915,
+    "isolates and creates a separate work tree"
+   ],
+   [
+    1044948,
+    1046915,
+    "from the"
+   ],
+   [
+    1045946,
+    1048041,
+    "main path, so that my"
+   ],
+   [
+    1047074,
+    1048976,
+    "agents can work in"
+   ],
+   [
+    1048008,
+    1050038,
+    "parallel. Thus, I"
+   ],
+   [
+    1049069,
+    1051120,
+    "can work on 15"
+   ],
+   [
+    1050152,
+    1052108,
+    "different features, and the"
+   ],
+   [
+    1051139,
+    1053285,
+    "agents' tasks will not conflict"
+   ],
+   [
+    1052318,
+    1054497,
+    "with each other."
+   ],
+   [
+    1053534,
+    1055817,
+    "Next, he will begin writing"
+   ],
+   [
+    1054854,
+    1056917,
+    "code, and he will use"
+   ],
+   [
+    1055954,
+    1058090,
+    "a skill called \""
+   ],
+   [
+    1057127,
+    1059337,
+    "code structuring,\" which organizes"
+   ],
+   [
+    1058373,
+    1060693,
+    "the code in the way I"
+   ],
+   [
+    1059730,
+    1062080,
+    "prefer. And then, what"
+   ],
+   [
+    1061115,
+    1063450,
+    "will happen is that he will prove that the"
+   ],
+   [
+    1062485,
+    1064715,
+    "solution he presented"
+   ],
+   [
+    1063750,
+    1066051,
+    "actually works by recording a"
+   ],
+   [
+    1065086,
+    1067245,
+    "video of the solution if it is"
+   ],
+   [
+    1067194,
+    1069537,
+    "user-facing. If that's not the case,"
+   ],
+   [
+    1068569,
+    1070731,
+    "it will run"
+   ],
+   [
+    1069764,
+    1071635,
+    "some tests"
+   ],
+   [
+    1070668,
+    1072699,
+    "to prove that the"
+   ],
+   [
+    1071733,
+    1073572,
+    "required function has been"
+   ],
+   [
+    1072604,
+    1074778,
+    "completed. But assuming"
+   ],
+   [
+    1073809,
+    1075709,
+    "your device does not have"
+   ],
+   [
+    1074740,
+    1076671,
+    "the ability to record"
+   ],
+   [
+    1075702,
+    1077602,
+    "video, it will"
+   ],
+   [
+    1076633,
+    1078843,
+    "take a screenshot before and"
+   ],
+   [
+    1077874,
+    1079992,
+    "after the change and put it"
+   ],
+   [
+    1079023,
+    1081452,
+    "into the pull request (PR). Once the"
+   ],
+   [
+    1080498,
+    1082881,
+    "pull request is created,"
+   ],
+   [
+    1081927,
+    1084630,
+    "Greptile, my"
+   ],
+   [
+    1083677,
+    1086428,
+    "favorite code review tool"
+   ],
+   [
+    1085474,
+    1088271,
+    ", will work inside the request and award a"
+   ],
+   [
+    1087317,
+    1089888,
+    "confidence score. If the"
+   ],
+   [
+    1088928,
+    1091272,
+    "confidence score is not five out of"
+   ],
+   [
+    1090313,
+    1092616,
+    "five, the"
+   ],
+   [
+    1091657,
+    1094082,
+    "\"Grep Loop\" skill will be activated, which is"
+   ],
+   [
+    1093123,
+    1095345,
+    "simply a loop that takes"
+   ],
+   [
+    1094386,
+    1096404,
+    "Greptile feedback,"
+   ],
+   [
+    1095445,
+    1097667,
+    "returns it to"
+   ],
+   [
+    1096708,
+    1099011,
+    "my programming agent,"
+   ],
+   [
+    1098052,
+    1100436,
+    "and asks it to process"
+   ],
+   [
+    1099477,
+    1101982,
+    "and fix it. The process will not stop"
+   ],
+   [
+    1101024,
+    1103491,
+    "until it reaches a"
+   ],
+   [
+    1102533,
+    1105141,
+    "score of five out of five."
+   ],
+   [
+    1104184,
+    1106606,
+    "Ultimately, you will receive a"
+   ],
+   [
+    1105648,
+    1107944,
+    "withdrawal request with a confidence rating of"
+   ],
+   [
+    1106986,
+    1109366,
+    "five out of five, ready for"
+   ],
+   [
+    1108408,
+    1110871,
+    "your review and then"
+   ],
+   [
+    1109914,
+    1111894,
+    "integration. Now you"
+   ],
+   [
+    1110920,
+    1112768,
+    "know how I use"
+   ],
+   [
+    1111794,
+    1113457,
+    "various"
+   ],
+   [
+    1112483,
+    1114357,
+    "utilities, you know my"
+   ],
+   [
+    1113384,
+    1115152,
+    "preferred models,"
+   ],
+   [
+    1114178,
+    1115787,
+    "you know the technology package"
+   ],
+   [
+    1115503,
+    1117377,
+    "I choose, the tools I"
+   ],
+   [
+    1116403,
+    1118304,
+    "use, and I have"
+   ],
+   [
+    1117330,
+    1119283,
+    "even given you the skills I use"
+   ],
+   [
+    1118310,
+    1120264,
+    "to build"
+   ],
+   [
+    1119290,
+    1121418,
+    "software. There should be no"
+   ],
+   [
+    1120455,
+    1122647,
+    "reason to"
+   ],
+   [
+    1121682,
+    1123769,
+    "stop you from starting to"
+   ],
+   [
+    1122804,
+    1124821,
+    "work and innovate on"
+   ],
+   [
+    1123856,
+    1126263,
+    "your own. So, make sure you take"
+   ],
+   [
+    1125305,
+    1127687,
+    "advantage of everything I've told you"
+   ],
+   [
+    1126729,
+    1128918,
+    ". Links to"
+   ],
+   [
+    1127951,
+    1130023,
+    "my skills are in the"
+   ],
+   [
+    1129057,
+    1131040,
+    "description. As for the"
+   ],
+   [
+    1130065,
+    1131775,
+    "other tools, you"
+   ],
+   [
+    1130800,
+    1132633,
+    "will have to search"
+   ],
+   [
+    1131657,
+    1133706,
+    "for them via Google. I will not"
+   ],
+   [
+    1132732,
+    1134405,
+    "copy and paste all"
+   ],
+   [
+    1133430,
+    1135330,
+    "the links. You were all"
+   ],
+   [
+    1134357,
+    1136415,
+    "amazing. My name is Ross."
+   ],
+   [
+    1135515,
+    1137304,
+    "Thank you very much for"
+   ],
+   [
+    1136325,
+    1138072,
+    "watching this video."
+   ],
+   [
+    1137172,
+    1138934,
+    "Make sure to like"
+   ],
+   [
+    1137958,
+    1139791,
+    "the video, comment"
+   ],
+   [
+    1138815,
+    1140625,
+    "on it, and subscribe with"
+   ],
+   [
+    1139649,
+    1141531,
+    "notifications enabled."
+   ],
+   [
+    1140631,
+    1142418,
+    "Tell me what else you would like"
+   ],
+   [
+    1141442,
+    1143577,
+    "to see. peace."
+   ]
+  ]
+ },
+ "frames": {
+  "mode": "standard",
+  "selected": [
+   {
+    "index": 1,
+    "timestamp": 36.767,
+    "totalScore": 0.422
+   },
+   {
+    "index": 3,
+    "timestamp": 62.2,
+    "totalScore": 0.362
+   },
+   {
+    "index": 5,
+    "timestamp": 110.767,
+    "totalScore": 0.451
+   },
+   {
+    "index": 7,
+    "timestamp": 121.733,
+    "totalScore": 0.438
+   },
+   {
+    "index": 9,
+    "timestamp": 185.833,
+    "totalScore": 0.417
+   },
+   {
+    "index": 11,
+    "timestamp": 203.633,
+    "totalScore": 0.43
+   },
+   {
+    "index": 15,
+    "timestamp": 239.2,
+    "totalScore": 0.442
+   },
+   {
+    "index": 19,
+    "timestamp": 301.333,
+    "totalScore": 0.424
+   },
+   {
+    "index": 22,
+    "timestamp": 325.4,
+    "totalScore": 0.465
+   },
+   {
+    "index": 25,
+    "timestamp": 350.433,
+    "totalScore": 0.416
+   },
+   {
+    "index": 28,
+    "timestamp": 414.667,
+    "totalScore": 0.382
+   },
+   {
+    "index": 36,
+    "timestamp": 493.0,
+    "totalScore": 0.342
+   },
+   {
+    "index": 40,
+    "timestamp": 570.567,
+    "totalScore": 0.43
+   },
+   {
+    "index": 42,
+    "timestamp": 575.167,
+    "totalScore": 0.474
+   },
+   {
+    "index": 44,
+    "timestamp": 631.333,
+    "totalScore": 0.42
+   },
+   {
+    "index": 46,
+    "timestamp": 678.967,
+    "totalScore": 0.441
+   },
+   {
+    "index": 48,
+    "timestamp": 688.833,
+    "totalScore": 0.443
+   },
+   {
+    "index": 56,
+    "timestamp": 804.933,
+    "totalScore": 0.401
+   },
+   {
+    "index": 63,
+    "timestamp": 900.7,
+    "totalScore": 0.476
+   },
+   {
+    "index": 72,
+    "timestamp": 930.567,
+    "totalScore": 0.502
+   },
+   {
+    "index": 79,
+    "timestamp": 983.6,
+    "totalScore": 0.447
+   },
+   {
+    "index": 80,
+    "timestamp": 996.433,
+    "totalScore": 0.37
+   },
+   {
+    "index": 81,
+    "timestamp": 1110.633,
+    "totalScore": 0.353
+   }
+  ],
+  "galleryIndices": [
+   5,
+   7,
+   11,
+   15,
+   22,
+   42,
+   46,
+   48,
+   63,
+   72,
+   79
+  ]
+ },
+ "sleeps": {
+  "metadata": 12.162,
+  "transcript": 0.268,
+  "lowresDownload": 11.1,
+  "sceneDetect": 21.2,
+  "scoreSelect": 8.3,
+  "hires": 6.7,
+  "upload": 1.9,
+  "manifestCheck": 0.48,
+  "persistVision": 0.386,
+  "momentFill": 14.292,
+  "qdrantStore": 0.0
+ },
+ "llm": [
+  {
+   "feature": "summarize:metadata",
+   "span": "description_analysis",
+   "model": "openai/gpt-4o-mini",
+   "latencyMs": 4930,
+   "output": "{\"links\": [{\"url\": \"https://rasmic.link/grokbot\", \"type\": \"other\", \"label\": \"Sponsored by SpaceXAI\"}, {\"url\": \"https://rasmic.link/site\", \"type\": \"other\", \"label\": \"My Site\"}, {\"url\": \"http://rasmic.link/x\", \"type\": \"other\", \"label\": \"Follow on X\"}, {\"url\": \"https://rasmic.link/instagram\", \"type\": \"other\", \"label\": \"Follow on Instagram\"}, {\"url\": \"https://rasmic.link/tiktok\", \"type\": \"other\", \"label\": \"Follow on TikTok\"}, {\"url\": \"https://rasmic.link/discord\", \"type\": \"other\", \"label\": \"Join my Discord\"}, {\"url\": \"https://rasmic.link/more-micky\", \"type\": \"other\", \"label\": \"Subscribe to second channel\"}], \"resources\": [], \"relatedVideos\": [], \"socialLinks\": [], \"timestamps\": []}",
+   "finishReason": "stop",
+   "usage": {
+    "input": 441,
+    "output": 228
+   },
+   "ordinal": 0
+  },
+  {
+   "feature": "summarize:frames",
+   "span": "frame_vision",
+   "model": "anthropic/claude-sonnet-4-6",
+   "latencyMs": 35815,
+   "output": "[{\"frame_index\": 0, \"scene_type\": \"screen_recording\", \"content\": \"Figma design tool showing Goshen Labs landing page design with page layers panel on the left and design properties on the right\", \"text_visible\": \"Goshen Labs, We help organizations put AI to work., Start a conversation, See our work, Document intelligence for a public-sector agency, 85%, 40k+, 99.2%, Abnormal, keep, Whop, What we do, Goshen — Landing, Goshen — Case study (Pluto)\", \"educational_value\": \"Shows the Figma file structure and landing page design for Goshen Labs, an AI consulting firm, demonstrating how the design system is organized\", \"visual_subject\": \"content\"}, {\"frame_index\": 1, \"scene_type\": \"screen_recording\", \"content\": \"Orgo.ai website homepage showing 'Computers for Agents' — a YC-backed service providing persistent cloud computers for AI agents\", \"text_visible\": \"Orgo, Computers for Agents, Backed by Y Combinator, Launch persistent cloud computers for your AI agents. Get a full desktop, terminal, and filesystem, all managed through one API., Start building, Read docs\", \"educational_value\": \"Introduces Orgo.ai as a tool providing cloud-based computer environments for AI agents, relevant to the video's AI tooling theme\", \"visual_subject\": \"mixed\"}, {\"frame_index\": 2, \"scene_type\": \"screen_recording\", \"content\": \"SvelteKit official documentation introduction page explaining what SvelteKit and Svelte are\", \"text_visible\": \"SVELTE, Getting started, Introduction, Creating a project, Project types, Project structure, Web standards, Core concepts, Routing, Loading data, Form actions, Page options, State management, Remote functions, Environment variables, Build and deploy, Introduction, Before we begin, What is SvelteKit?, What is Svelte?, SvelteKit vs Svelte\", \"educational_value\": \"Shows the SvelteKit documentation, indicating the presenter is exploring or building with SvelteKit as part of the project stack\", \"visual_subject\": \"mixed\"}, {\"frame_index\": 3, \"scene_type\": \"screen_recording\", \"content\": \"Clouds browser agent landing page showing a benchmark chart where Clouds scores 94% vs competitors Orbit Agent (71%), BrowsePilot (63%), and TabForge (52%)\", \"text_visible\": \"BENCHMARK, The 90%+ browser agent, Clouds leads on agentic browsing tasks — measured against fictional peers on a shared eval suite., Clouds 94%, Orbit Agent 71%, BrowsePilot 63%, TabForge 52%, MEMORY, Memory that knows what you're working on, CONTEXT HISTORY\", \"educational_value\": \"Demonstrates the Clouds browser agent's claimed performance benchmarks versus competitors, useful for evaluating AI browsing tools\", \"visual_subject\": \"mixed\"}, {\"frame_index\": 4, \"scene_type\": \"screen_recording\", \"content\": \"Linux.machine network topology dashboard showing multiple connected devices including MacBook Pro, Samsung TV, Synology NAS, Linux host, GL.iNet KVM, and Espressif device\", \"text_visible\": \"Nokia gateway, LIVE, Latency 0.3 ms, Room switch, UNAVAILABLE, MacBook Pro, LIVE, OS macOS, Samsung TV, LIVE, Linux host, LIVE, 16 threads, CPU 7.3%, RAM 51%, Temp 44.3°C, Disk 89.7%, Docker 12 running, LAN 7 neighbors, Synology NAS, LIVE, Mac machine, GL.iNet KVM, Espressif device 4c:ec, STALE\", \"educational_value\": \"Shows the presenter's home network topology with various devices, relevant to network monitoring or homelab setup content\", \"visual_subject\": \"mixed\"}, {\"frame_index\": 5, \"scene_type\": \"talking_head\", \"content\": \"Presenter speaking directly to camera with an expressive face\", \"text_visible\": \"\", \"educational_value\": null, \"visual_subject\": \"presenter\"}, {\"frame_index\": 6, \"scene_type\": \"screen_recording\", \"content\": \"Effect.website homepage for Effect 4.0 Release Candidate, a TypeScript library for building production-ready AI-era systems, showing concurrency API examples\", \"text_visible\": \"Effect, EFFECT 4.0 - RELEASE CANDIDATE, Reliable TypeScript for the AI era, Build production-ready systems your team can ship, customers can depend on, and AI agents can work with., npm install effect@rc, IN PRODUCTION AT, Cloudflare, OpenCode, MasterClass, T3.chat, X, CONCURRENCY, SCHEDULE, ERROR HANDLING, CONSTRUCTORS, SCOPE, Effect.all, Effect.race, Effect.raceAll, Effect.forEach, Effect Days 2026, Dec 9-11, Get your ticket\", \"educational_value\": \"Introduces Effect 4.0, a TypeScript library for reliable production systems and AI agent integration, with live concurrency API demos\", \"visual_subject\": \"mixed\"}, {\"frame_index\": 7, \"scene_type\": \"screen_recording\", \"content\": \"Codex AI coding assistant conversation showing an AI agent iteratively updating a Blender 3D room model by adding a door and repositioning a server rack\", \"text_visible\": \"improving setup, 45 previous messages, I rebuilt and opened the corrected Blender file, preserving your original session., Fixed the two-bay window, left column, ceiling beams and vent, and floorboard direction., yes now u missed the door, where the current rack is, is where the door is, Added the door where the rack was and moved the rack beside the desk, clear of its swing., Door size and swing remain adjustable estimates., Edited update-room-door.py, can you find my standing desk its a primecables black standing desk, i just want to get measurements perfect, manufacturer's instructions, 12 done\", \"educational_value\": \"Demonstrates an AI agent (Codex) autonomously editing a Blender 3D model through iterative feedback, showing agentic coding capabilities in a real workflow\", \"visual_subject\": \"mixed\"}]",
+   "finishReason": "stop",
+   "usage": {
+    "input": 8483,
+    "output": 1467,
+    "cacheRead": 0,
+    "cacheWrite": 0
+   },
+   "ordinal": 0
+  },
+  {
+   "feature": "summarize:classifier",
+   "span": "classifier",
+   "model": "openai/gpt-4o-mini",
+   "latencyMs": 2223,
+   "output": "{\"domain\": \"tech\", \"format\": \"tutorial\", \"confidence\": 0.92, \"reasoning\": \"The video is focused on specific development tools and technologies, providing guidance on their use. It features actual code and software demonstrations, indicating a tutorial format where viewers may follow along with the instructions.\", \"traits\": {\"has_steps\": true, \"has_code\": true, \"has_drills\": false, \"has_comparison\": false, \"has_narrative\": false, \"has_visual_demo\": false, \"is_opinionated\": false, \"is_list\": false}}",
+   "finishReason": "stop",
+   "usage": {
+    "input": 1633,
+    "output": 105,
+    "cacheRead": 0,
+    "cacheWrite": 0
+   },
+   "ordinal": 0
+  },
+  {
+   "feature": "summarize:plan",
+   "span": "plan",
+   "model": "anthropic/claude-sonnet-4-6",
+   "latencyMs": 27844,
+   "output": "```json\n{\n  \"reasoning\": \"Ras Mic is a practical AI/dev vlogger sharing his evolving personal tech stack for building agentic AI applications. This is a 'what I use and why' tour — not a deep tutorial but a curated opinion piece on tools, models, frameworks, and services. The unique value is the opinionated, real-world practitioner perspective: he's actually shipping AI products and shares what's working NOW. The content traits are has_steps and has_code, and visuals show specific tools (SvelteKit, Effect.ts, Codex, Orgo.ai, Clouds browser agent, Linux.machine). The primary value is a browsable breakdown of each stack layer. Since this is a 'what I use' tour rather than a side-by-side comparison, the right spine is spot_explorer (stack layers as browsable cards) + moment_track (jump to each tool demo) + info_grid (quick reference of the stack) + quiz_arena (test understanding of when to use each tool). There's code visible (Effect 4.0 npm install, Codex interaction) so a code_playground is warranted. No comparison is set up (no A vs B explicit weighing), no food/fitness/travel domain. Tags: tech, learning.\",\n\n  \"identity\": {\n    \"creatorType\": \"indie AI developer / tech vlogger\",\n    \"tone\": \"casual-funny\",\n    \"audience\": \"intermediate developers building AI-powered applications\"\n  },\n\n  \"corePromise\": \"Adopt a proven agentic development stack — models, frameworks, tools, and infrastructure — that a working AI developer uses in production today\",\n  \"uniqueAngle\": \"Real practitioner perspective from someone actively shipping AI products, not theoretical — each tool has been battle-tested and comes with a personal take on when and why\",\n\n  \"extractionGuidance\": {\n    \"primaryFocus\": \"Every named tool, model, framework, or service with its category (models, frontend, backend, browser agents, infra, design), why Ras uses it, and the timestamp when it appears on screen\",\n    \"watchOutFor\": \"Tools mentioned casually vs. tools he actually recommends — capture the 'why I use this' reasoning, not just the name. Also capture any code snippets shown (Effect.ts npm install, any API calls shown in Codex demo)\"\n  },\n\n  \"itemCounts\": {\n    \"steps\": 0,\n    \"spots\": 12,\n    \"exercises\": 0,\n    \"ingredients\": 0,\n    \"songs\": 0,\n    \"tips\": 6,\n    \"products\": 12,\n    \"codeSnippets\": 3,\n    \"concepts\": 5\n  },\n\n  \"contentTags\": [\"tech\", \"learning\"],\n  \"modifiers\": [],\n  \"primaryTag\": \"tech\",\n  \"userGoal\": \"Understand and adopt an agentic AI development stack that's working in production today\",\n  \"confidence\": 0.88,\n\n  \"tabs\": [\n    {\n      \"id\": \"stack_explorer\",\n      \"label\": \"🛠️ The Full Stack\",\n      \"emoji\": \"🛠️\",\n      \"component\": \"spot_explorer\",\n      \"dataSource\": \"tech.topics\",\n      \"goal\": \"Every tool in Ras's agentic stack, organized by layer — tap any card to see what it does, why he picked it, and when he'd reach for it.\",\n      \"outboundLinks\": {\n        \"code_snippets\": \"See it in code\",\n        \"key_moments\": \"Watch the demo\",\n        \"quiz\": \"Test your stack knowledge\"\n      }\n    },\n    {\n      \"id\": \"code_snippets\",\n      \"label\": \"💻 Code Snippets\",\n      \"emoji\": \"💻\",\n      \"component\": \"code_playground\",\n      \"dataSource\": \"tech.snippets\",\n      \"goal\": \"Copy the actual setup commands and patterns Ras shows — paste them straight into your project and run JS snippets right in the sandbox.\",\n      \"outboundLinks\": {\n        \"stack_explorer\": \"Browse all tools\",\n        \"key_moments\": \"See these in the video\"\n      }\n    },\n    {\n      \"id\": \"key_moments\",\n      \"label\": \"🎬 Tool Walkthroughs\",\n      \"emoji\": \"🎬\",\n      \"component\": \"moment_track\",\n      \"dataSource\": \"learning.timestamps\",\n      \"goal\": \"Jump straight to the moment Ras demos each tool — the expanded view shows exactly what's on screen so you can follow along.\",\n      \"outboundLinks\": {\n        \"stack_explorer\": \"Explore the full stack\",\n        \"code_snippets\": \"Grab the code\"\n      }\n    },\n    {\n      \"id\": \"concepts\",\n      \"label\": \"🧠 Core Concepts\",\n      \"emoji\": \"🧠\",\n      \"component\": \"concept_canvas\",\n      \"dataSource\": \"learning.concepts\",\n      \"goal\": \"Drag these concepts around to see how agents, browser automation, persistent cloud compute, and TypeScript reliability all fit together in an agentic system.\",\n      \"outboundLinks\": {\n        \"stack_explorer\": \"Find the tools behind each concept\",\n        \"quiz\": \"Test yourself\"\n      }\n    },\n    {\n      \"id\": \"quiz\",\n      \"label\": \"✅ Know Your Stack\",\n      \"emoji\": \"✅\",\n      \"component\": \"quiz_arena\",\n      \"dataSource\": \"enrichment.quiz\",\n      \"goal\": \"Five quick questions to check whether you know which tool to reach for and why — streak counter included.\",\n      \"outboundLinks\": {\n        \"stack_explorer\": \"Review the stack\",\n        \"concepts\": \"Revisit the concepts\"\n      }\n    }\n  ]\n}\n```",
+   "finishReason": "stop",
+   "usage": {
+    "input": 15035,
+    "output": 1389,
+    "cacheRead": 0,
+    "cacheWrite": 14005
+   },
+   "ordinal": 0
+  },
+  {
+   "feature": "summarize:chapter_detect",
+   "span": "chapter_detect",
+   "model": "openai/gpt-4o-mini",
+   "latencyMs": 3419,
+   "output": "```json\n[\n  {\"title\": \"Introduction\", \"startSeconds\": 0, \"endSeconds\": 135},\n  {\"title\": \"Devices and Network\", \"startSeconds\": 135, \"endSeconds\": 310},\n  {\"title\": \"AI Tools Overview\", \"startSeconds\": 310, \"endSeconds\": 630},\n  {\"title\": \"Frameworks and Models\", \"startSeconds\": 630, \"endSeconds\": 945},\n  {\"title\": \"Database and Publishing\", \"startSeconds\": 945, \"endSeconds\": 1300},\n  {\"title\": \"Design Tools and Techniques\", \"startSeconds\": 1300, \"endSeconds\": 1560},\n  {\"title\": \"AI Agents in Development\", \"startSeconds\": 1560, \"endSeconds\": 1140},\n  {\"title\": \"Conclusion\", \"startSeconds\": 1140, \"endSeconds\": 1140}\n]\n```",
+   "finishReason": "stop",
+   "usage": {
+    "input": 2187,
+    "output": 196,
+    "cacheRead": 0,
+    "cacheWrite": 0
+   },
+   "ordinal": 0
+  },
+  {
+   "feature": "summarize:extraction",
+   "span": "extraction",
+   "model": "anthropic/claude-haiku-4-5-20251001",
+   "latencyMs": 75951,
+   "output": "```json\n{\n  \"tech\": {\n    \"languages\": [\"TypeScript\", \"JavaScript\"],\n    \"frameworks\": [\"SvelteKit\", \"Svelte\", \"Next.js\", \"Convex\", \"Effect\", \"MCP (Model Context Protocol)\"],\n    \"topics\": [\"AI agent development\", \"backend architecture\", \"error handling\", \"type safety\", \"real-time systems\", \"cloud infrastructure\", \"browser automation\", \"database design\"],\n    \"setup\": {\n      \"commands\": [\n        \"npm install effect\"\n      ],\n      \"dependencies\": [\n        {\"name\": \"SvelteKit\", \"version\": null},\n        {\"name\": \"Svelte\", \"version\": null},\n        {\"name\": \"Convex\", \"version\": null},\n        {\"name\": \"Effect\", \"version\": \"4.0 RC\"},\n        {\"name\": \"PlanetScale\", \"version\": null},\n        {\"name\": \"Greptile\", \"version\": null}\n      ],\n      \"envVars\": []\n    },\n    \"snippets\": [\n      {\n        \"filename\": \"bezalo-mcp-server.ts\",\n        \"language\": \"typescript\",\n        \"code\": \"// Bezalo application structure\\n// Entire MCP server built using Effect\\n// Frontend: Svelte website\\n// Backend: Effect-based service\",\n        \"explanation\": \"Bezalo is architected as a single giant MCP server built entirely with Effect, demonstrating the pattern of using Effect for all backend services and external services. The website frontend uses Svelte.\",\n        \"timestamp\": 644\n      },\n      {\n        \"filename\": \"convex-stripe-component.ts\",\n        \"language\": \"typescript\",\n        \"code\": \"// Convex Components example - Stripe integration\\n// Simply point agent to Stripe component\\n// Agent automatically sets up:\\n// - Stripe integration\\n// - Sandbox environment\\n// - Configuration and API keys\",\n        \"explanation\": \"Convex components act as building blocks for third-party integrations. AI agents can automatically configure components like Stripe, Gmail, PostHog, browser-base, and WorkOS without manual setup code.\",\n        \"timestamp\": 535\n      },\n      {\n        \"filename\": \"agents.md\",\n        \"language\": \"markdown\",\n        \"code\": \"# Agent Workflow Skills\\n\\n## Skill 1: Isolate Work Tree\\nAgent creates separate work tree from main branch\\n- Enables parallel agent work on 15+ features simultaneously\\n- No task conflicts between agents\\n\\n## Skill 2: Code Structuring\\nAutomatically organizes code per developer preferences\\n\\n## Skill 3: Verification\\nProve solution works via:\\n- Video recording (for user-facing features)\\n- Test runs (for non-visual features)\\n- Before/after screenshots (fallback)\\n\\n## Skill 4: Greptile Integration + Grep Loop\\nGreptile reviews PR and provides confidence score\\nGrep Loop: iterate with Greptile feedback until 5/5 score\\nResult: all PRs merge at 5/5 confidence\",\n        \"explanation\": \"Open-source skills repository that orchestrates agent workflow: branch isolation → code structuring → verification → automated code review with feedback loop. The Grep Loop skill ensures PRs only merge when Greptile confidence is 5/5.\",\n        \"timestamp\": 900\n      }\n    ],\n    \"patterns\": [\n      {\n        \"title\": \"Error Handling: TypeScript Type Safety vs. Effect\",\n        \"doExample\": \"import { Effect } from 'effect';\\n\\n// Effect ensures errors are tracked and handled\\nconst result: Effect<Success, Error> = someAsyncOperation()\",\n        \"dontExample\": \"// Plain JavaScript/TypeScript\\nconst result = await someAsyncOperation(); // Errors can be silent\",\n        \"explanation\": \"TypeScript provides type safety for function signatures and return types, but does NOT track error types. Effect makes error handling explicit — you must handle every error path or the compiler will complain. This prevents silent failures.\"\n      },\n      {\n        \"title\": \"Framework Choice: Svelte vs React for AI\",\n        \"doExample\": \"// Use Svelte - AI handles it well, auto-fast\\n// No performance tuning needed from AI\\nimport { Counter } from './Counter.svelte';\\n// Result: fast, responsive app by default\",\n        \"dontExample\": \"// React often needs manual performance optimization\\n// AI must add useMemo, useCallback, code splitting\",\n        \"explanation\": \"Svelte's compiled approach makes apps automatically fast — the framework itself optimizes. React requires AI agents to add performance hints (useMemo, useCallback). Svelte is also easier for AI to reason about and generates smaller bundles.\"\n      },\n      {\n        \"title\": \"Backend Architecture: Convex vs. Custom Backend\",\n        \"doExample\": \"// Use Convex + Convex Components for standard integrations\\n// AI can auto-configure Stripe, Gmail, auth, etc.\\nconst stripe = await components.stripe.setup(config);\",\n        \"dontExample\": \"// Custom backend requires boilerplate\\n// AI must write integrations from scratch\\nconst stripe = new Stripe(key);\\n// Manual webhook setup, error handling, etc.\",\n        \"explanation\": \"Convex components are code templates for third-party integrations. AI agents understand and apply them instantly, skipping manual setup. This reduces bugs and speeds up agent work.\"\n      }\n    ],\n    \"cheatSheet\": [\n      {\n        \"title\": \"Convex Quick Setup\",\n        \"code\": \"npm install convex\\nnpx convex dev\",\n        \"description\": \"Initialize Convex backend with real-time sync to Svelte frontend — type-safe, no WebSocket management needed\"\n      },\n      {\n        \"title\": \"Effect Service Builder\",\n        \"code\": \"npm install effect\\n// All backend services use Effect for error tracking\",\n        \"description\": \"Effect 4.0 RC is the standard for any backend service or MCP server — handles errors as types, AI-friendly syntax\"\n      },\n      {\n        \"title\": \"PlanetScale + Hyperdrive\",\n        \"code\": \"// Postgres database via PlanetScale\\n// Or access via Cloudflare Hyperdrive for Workers\\nconst db = new Hyperdrive(env.DATABASE_URL);\",\n        \"description\": \"Use PlanetScale for Postgres hosted database; connect via Hyperdrive when running on Cloudflare Workers\"\n      },\n      {\n        \"title\": \"Greptile Code Review Automation\",\n        \"code\": \"// Greptile assigns confidence score to each PR\\n// Grep Loop skill re-runs agent until score = 5/5\\n// Result: guaranteed quality PRs\",\n        \"description\": \"Greptile integrates into GitHub — AI agents see feedback and iterate automatically until PR hits 5/5 confidence\"\n      },\n      {\n        \"title\": \"Linear + MCP for Agent Tasking\",\n        \"code\": \"// Connect Cursor/Devin to Linear via MCP\\n// Select ticket → assign to agent → auto-start work\",\n        \"description\": \"Linear MCP lets cloud agents pull issues and update status — seamless workflow for distributed team development\"\n      }\n    ]\n  },\n  \"learning\": {\n    \"keyPoints\": [\n      {\n        \"emoji\": \"🤖\",\n        \"title\": \"AI Changes Framework Calculus\",\n        \"detail\": \"In the AI era, framework choice matters less for raw performance and more for how well AI can reason about and modify the code. Svelte is preferred because AI handles it well and apps auto-optimize; React often requires AI to add performance hints (useMemo, useCallback). TypeScript and Svelte together are the sweet spot for agent-friendly code.\",\n        \"timestamp\": 400\n      },\n      {\n        \"emoji\": \"🔧\",\n        \"title\": \"Convex Components Eliminate Integration Boilerplate\",\n        \"detail\": \"Convex provides pre-built integration components (Stripe, Gmail, PostHog, WorkOS auth, browser-base). Instead of writing setup code, you point an AI agent to the component and it auto-configures the integration with sandbox environments and API keys. This is a force multiplier for agent productivity — no manual setup code to write or maintain.\",\n        \"timestamp\": 535\n      },\n      {\n        \"emoji\": \"⚠️\",\n        \"title\": \"Error Handling is a Blind Spot in TypeScript\",\n        \"detail\": \"TypeScript provides type safety for function signatures and return types, but does NOT track error types. Effect makes errors explicit — errors are part of the return type and must be handled. This prevents silent failures and gives AI agents and humans a complete picture of failure paths.\",\n        \"timestamp\": 620\n      },\n      {\n        \"emoji\": \"🔄\",\n        \"title\": \"The Grep Loop: Automated Code Review Iteration\",\n        \"detail\": \"Greptile analyzes PRs and assigns a confidence score (0-5). The Grep Loop skill takes Greptile feedback, feeds it back to the AI agent, and reruns until the score hits 5/5. No PR is merged below 5/5 confidence. This is a quality gate that works at machine speed — agents iterate in seconds, not hours.\",\n        \"timestamp\": 850\n      },\n      {\n        \"emoji\": \"☁️\",\n        \"title\": \"Use Full Cloud Suites, Not Fragments\",\n        \"detail\": \"When using Cloudflare, use the whole package: Workers, R2 storage, Hyperdrive, Durable Objects. When using Vercel, commit fully. Mixing pieces from different clouds adds complexity and loses optimization benefits. Gosha Email (email provider for agents) runs entirely on Cloudflare Workers, R2, and Hyperdrive — that's the integrated approach that works.\",\n        \"timestamp\": 700\n      },\n      {\n        \"emoji\": \"🎯\",\n        \"title\": \"Effect is the Production Standard for Backend Services\",\n        \"detail\": \"Every backend service, external service, and MCP server should use Effect. Effect makes error handling explicit, is AI-friendly, and integrates seamlessly with Svelte frontends. The learning curve was steep before AI, but AI agents write Effect code fluently now. Bezalo (AI email/task service) is built entirely on Effect, proving it scales.\",\n        \"timestamp\": 600\n      },\n      {\n        \"emoji\": \"🏗️\",\n        \"title\": \"Parallel Agent Work Requires Branch Isolation\",\n        \"detail\": \"The first skill in the agent workflow is creating a separate work tree from the main branch. This allows 15+ agents to work on different features in parallel without task conflicts. Each agent's changes are isolated until code review and merge.\",\n        \"timestamp\": 880\n      },\n      {\n        \"emoji\": \"📊\",\n        \"title\": \"Model Choice: Opus 5.5 Over Astra for General Development\",\n        \"detail\": \"As of September 2026, Opus 5.5 (Claude) and GPT-6 Astra are the top two models. Opus 5.5 is used more often for application development because it is complete, responds well to instructions, and excels at long-context tasks. Astra is better for deep research and code understanding. Loyalty to one model is a trap — switch based on best value for your current task.\",\n        \"timestamp\": 250\n      }\n    ],\n    \"concepts\": [\n      {\n        \"name\": \"Convex Components\",\n        \"emoji\": \"🧩\",\n        \"definition\": \"Pre-built integration templates for third-party services (Stripe, Gmail, PostHog, authentication providers, browser automation). Instead of writing integration code from scratch, you point an AI agent to the component and it automatically configures the service with all necessary setup, environment variables, and sandboxes.\",\n        \"example\": \"Point agent to Stripe component → agent auto-configures Stripe integration, sandbox environment, API keys, webhook handlers\",\n        \"analogy\": null,\n        \"group\": \"Backend Architecture\",\n        \"connections\": [\n          {\"to\": \"Convex Backend\", \"type\": \"partOf\"},\n          {\"to\": \"AI Agent Productivity\", \"type\": \"causes\"}\n        ]\n      },\n      {\n        \"name\": \"Convex Backend\",\n        \"emoji\": \"⚡\",\n        \"definition\": \"A real-time backend platform that is type-safe, handles WebSockets automatically, and integrates seamlessly with Svelte frontends. Uses Convex functions to define backend logic, with automatic syncing to the frontend. AI agents understand Convex well and can scaffold full backends.\",\n        \"example\": \"Convex eliminates manual WebSocket setup, database schema migrations, and type mismatches between frontend and backend\",\n        \"analogy\": null,\n        \"group\": \"Backend Architecture\",\n        \"connections\": [\n          {\"to\": \"SvelteKit Frontend\", \"type\": \"relatesTo\"},\n          {\"to\": \"Effect Backend Services\", \"type\": \"contrasts\"},\n          {\"to\": \"Convex Components\", \"type\": \"partOf\"}\n        ]\n      },\n      {\n        \"name\": \"Effect (Functional Effect System)\",\n        \"emoji\": \"🛡️\",\n        \"definition\": \"A TypeScript library for building production-ready systems where errors are tracked as part of the return type. Every function documents its possible errors, and the compiler enforces error handling. Makes error paths explicit, AI-friendly, and suitable for long-running services and MCP servers.\",\n        \"example\": \"const result: Effect<Success, ErrorType> = operation() — compiler ensures every error is handled\",\n        \"analogy\": \"TypeScript adds type safety to functions; Effect adds type safety to errors\",\n        \"group\": \"Error Handling & Reliability\",\n        \"connections\": [\n          {\"to\": \"MCP (Model Context Protocol) Servers\", \"type\": \"partOf\"},\n          {\"to\": \"Type Safety\", \"type\": \"relatesTo\"},\n          {\"to\": \"Backend Services\", \"type\": \"partOf\"}\n        ]\n      },\n      {\n        \"name\": \"Error Handling Gap in TypeScript\",\n        \"emoji\": \"⚠️\",\n        \"definition\": \"TypeScript provides type safety for function signatures and return types, but does not enforce error handling. Functions can throw uncaught errors or fail silently. This is a blind spot that Effect solves by making errors explicit types that must be handled.\",\n        \"example\": \"const data = await fetch(url); // TypeScript doesn't require error handling for network or parsing failures\",\n        \"analogy\": null,\n        \"group\": \"Error Handling & Reliability\",\n        \"connections\": [\n          {\"to\": \"Effect (Functional Effect System)\", \"type\": \"causes\"},\n          {\"to\": \"Type Safety\", \"type\": \"contrasts\"}\n        ]\n      },\n      {\n        \"name\": \"Type Safety\",\n        \"emoji\": \"🔒\",\n        \"definition\": \"Compiler-enforced guarantees that functions are used correctly — function signatures define what data types are accepted and returned. Prevents entire classes of runtime errors by catching mismatches at compile time.\",\n        \"example\": \"function add(a: number, b: number): number — compiler prevents calling add('5', 'hello')\",\n        \"analogy\": null,\n        \"group\": \"Error Handling & Reliability\",\n        \"connections\": [\n          {\"to\": \"TypeScript\", \"type\": \"partOf\"},\n          {\"to\": \"Effect (Functional Effect System)\", \"type\": \"relatesTo\"},\n          {\"to\": \"Error Handling Gap in TypeScript\", \"type\": \"causes\"}\n        ]\n      },\n      {\n        \"name\": \"SvelteKit Frontend\",\n        \"emoji\": \"⚡\",\n        \"definition\": \"A meta-framework for Svelte (compiled JavaScript framework) that adds routing, server-side rendering, and API handling. Svelte is preferred over React in the AI era because the compiler auto-optimizes code and AI agents understand it better. Apps are automatically fast without performance tuning.\",\n        \"example\": \"SvelteKit app built with Svelte is fast by default; React apps often need useMemo and useCallback added by AI\",\n        \"analogy\": null,\n        \"group\": \"Frontend Architecture\",\n        \"connections\": [\n          {\"to\": \"Svelte Compiler Advantage\", \"type\": \"partOf\"},\n          {\"to\": \"Convex Backend\", \"type\": \"relatesTo\"},\n          {\"to\": \"AI Agent Productivity\", \"type\": \"causes\"}\n        ]\n      },\n      {\n        \"name\": \"Svelte Compiler Advantage\",\n        \"emoji\": \"🎯\",\n        \"definition\": \"Svelte is a compiled framework (not a runtime framework like React). The Svelte compiler analyzes your code at build time and generates optimized vanilla JavaScript. This eliminates runtime overhead and produces smaller bundles automatically, without requiring performance optimization hints.\",\n        \"example\": \"React requires useMemo, useCallback for performance; Svelte's compiled approach is fast by default\",\n        \"analogy\": null,\n        \"group\": \"Frontend Architecture\",\n        \"connections\": [\n          {\"to\": \"SvelteKit Frontend\", \"type\": \"partOf\"},\n          {\"to\": \"AI Agent Productivity\", \"type\": \"causes\"}\n        ]\n      },\n      {\n        \"name\": \"AI Agent Productivity\",\n        \"emoji\": \"🚀\",\n        \"definition\": \"How quickly and accurately AI agents can understand code, modify it, and deploy changes. Agent productivity is high when frameworks are simple (Svelte vs React), backends have built-in components (Convex Components), error handling is explicit (Effect), and feedback loops are automated (Greptile).\",\n        \"example\": \"Using Svelte + Convex + Effect + Greptile: agent builds feature in minutes with 5/5 confidence score\",\n        \"analogy\": null,\n        \"group\": \"Workflow & DevOps\",\n        \"connections\": [\n          {\"to\": \"Convex Components\", \"type\": \"relatesTo\"},\n          {\"to\": \"SvelteKit Frontend\", \"type\": \"relatesTo\"},\n          {\"to\": \"Greptile Code Review\", \"type\": \"relatesTo\"},\n          {\"to\": \"Parallel Agent Work\", \"type\": \"relatesTo\"}\n        ]\n      },\n      {\n        \"name\": \"Greptile Code Review\",\n        \"emoji\": \"✅\",\n        \"definition\": \"Automated code review tool that analyzes pull requests and assigns a confidence score (0–5). Greptile understands codebase context and identifies quality issues, missing tests, and design problems. Integrates with the Grep Loop to automatically iterate until 5/5 confidence.\",\n        \"example\": \"PR created → Greptile analyzes → score 3/5 → Grep Loop feeds feedback to agent → agent fixes → score 5/5 → merge approved\",\n        \"analogy\": null,\n        \"group\": \"Workflow & DevOps\",\n        \"connections\": [\n          {\"to\": \"Grep Loop (Automated Iteration)\", \"type\": \"partOf\"},\n          {\"to\": \"AI Agent Productivity\", \"type\": \"causes\"}\n        ]\n      },\n      {\n        \"name\": \"Grep Loop (Automated Iteration)\",\n        \"emoji\": \"🔄\",\n        \"definition\": \"A skill that takes Greptile feedback on a PR, passes it back to the AI agent, and reruns the agent's fix. This cycle repeats until the PR confidence score reaches 5/5. Agents iterate in seconds at machine speed — no human review needed until the PR is production-ready.\",\n        \"example\": \"Greptile: 'Missing error handling in stripe webhook' → Grep Loop → agent adds error handling → Greptile: 5/5 → merge\",\n        \"analogy\": null,\n        \"group\": \"Workflow & DevOps\",\n        \"connections\": [\n          {\"to\": \"Greptile Code Review\", \"type\": \"partOf\"},\n          {\"to\": \"Agent Workflow Isolation\", \"type\": \"relatesTo\"}\n        ]\n      },\n      {\n        \"name\": \"Agent Workflow Isolation\",\n        \"emoji\": \"🌳\",\n        \"definition\": \"The first step in the agent workflow: create a separate work tree (or branch) from the main codebase for each agent task. This allows multiple agents to work on different features in parallel without conflicts. Each agent's work is isolated until code review and merge.\",\n        \"example\": \"15 agents work on 15 different features simultaneously, each in its own branch; Grep Loop ensures all merge at 5/5 confidence\",\n        \"analogy\": null,\n        \"group\": \"Workflow & DevOps\",\n        \"connections\": [\n          {\"to\": \"Parallel Agent Work\", \"type\": \"partOf\"},\n          {\"to\": \"Grep Loop (Automated Iteration)\", \"type\": \"relatesTo\"}\n        ]\n      },\n      {\n        \"name\": \"Parallel Agent Work\",\n        \"emoji\": \"⚙️\",\n        \"definition\": \"Multiple AI agents working on different features or tasks simultaneously without blocking each other. Enabled by branch isolation (separate work trees) and async communication (Linear MCP tickets). Team can ship 15 features in parallel instead of sequentially.\",\n        \"example\": \"15 agents assigned to 15 Linear tickets → each creates isolated branch → all work simultaneously → all merge at 5/5 confidence\",\n        \"analogy\": null,\n        \"group\": \"Workflow & DevOps\",\n        \"connections\": [\n          {\"to\": \"Agent Workflow Isolation\", \"type\": \"requires\"},\n          {\"to\": \"Linear Ticket System\", \"type\": \"relatesTo\"}\n        ]\n      },\n      {\n        \"name\": \"Linear Ticket System + MCP\",\n        \"emoji\": \"📋\",\n        \"definition\": \"Issue tracking system (Linear) with MCP integration that allows AI agents to pull tickets, understand requirements, and update status automatically. Agents can be assigned tickets directly via Linear → agent starts work → updates ticket on completion.\",\n        \"example\": \"Select ticket in Linear → assign to Cursor/Devin agent → agent reads description → auto-starts work → updates Linear when done\",\n        \"analogy\": null,\n        \"group\": \"Workflow & DevOps\",\n        \"connections\": [\n          {\"to\": \"Parallel Agent Work\", \"type\": \"enables\"},\n          {\"to\": \"MCP (Model Context Protocol) Servers\", \"type\": \"relatesTo\"}\n        ]\n      },\n      {\n        \"name\": \"MCP (Model Context Protocol) Servers\",\n        \"emoji\": \"🔗\",\n        \"definition\": \"Protocol that connects AI agents (Claude, ChatGPT) to external tools and APIs. MCP servers expose functions (like Linear tickets, Greptile feedback, design tools) as callable tools that agents can use. Enables agents to interact with systems without prompt engineering.\",\n        \"example\": \"Bezalo is an MCP server for AI agents to manage emails and tasks. Linear has an MCP that lets agents pull and update tickets. Figma and Mobbin have MCPs for design collaboration.\",\n        \"analogy\": null,\n        \"group\": \"AI Infrastructure\",\n        \"connections\": [\n          {\"to\": \"Effect (Functional Effect System)\", \"type\": \"relatesTo\"},\n          {\"to\": \"Linear Ticket System + MCP\", \"type\": \"relatesTo\"}\n        ]\n      },\n      {\n        \"name\": \"Cloud Agent Platforms (Cursor, Devin)\",\n        \"emoji\": \"☁️\",\n        \"definition\": \"Cloud-based AI coding assistants that can run long-lived agent tasks. Cursor and Devin both offer cloud proxies that allow agents to work on production systems via cloud machines, avoiding latency and resource constraints of local dev machines.\",\n        \"example\": \"Production error reported → agent assigned via Linear/Cursor → cloud agent runs in background → PR ready before human reads error\",\n        \"analogy\": null,\n        \"group\": \"AI Infrastructure\",\n        \"connections\": [\n          {\"to\": \"Linear Ticket System + MCP\", \"type\": \"relatesTo\"},\n          {\"to\": \"Parallel Agent Work\", \"type\": \"enables\"}\n        ]\n      },\n      {\n        \"name\": \"Opus 5.5 vs. GPT-6 Astra Model Choice\",\n        \"emoji\": \"🧠\",\n        \"definition\": \"As of September 2026, Opus 5.5 (Claude, Anthropic) and GPT-6 Astra are the two top-tier models. Opus 5.5 is preferred for general app development (better at instructions and long tasks); Astra is better for deep research and code analysis. Don't be loyal to one model — switch based on task and cost.\",\n        \"example\": \"Use Opus 5.5 for building features. Use Astra for understanding complex codebase behavior. Check pricing/availability monthly.\",\n        \"analogy\": null,\n        \"group\": \"Model Selection\",\n        \"connections\": [\n          {\"to\": \"Cloud Agent Platforms (Cursor, Devin)\", \"type\": \"relatesTo\"}\n        ]\n      }\n    ],\n    \"takeaways\": [\n      \"🎯 Use Svelte + SvelteKit for frontends — AI handles it well and apps are auto-optimized without performance tweaking\",\n      \"⚡ Use Convex for backends unless you need a custom service — Convex Components auto-configure third-party integrations (Stripe, auth, etc.)\",\n      \"🛡️ Use Effect for all backend services and MCP servers — makes error handling explicit and AI-friendly\",\n      \"🔄 Implement Greptile + Grep Loop for all PRs — automate code review until 5/5 confidence, merge without human review below production changes\",\n      \"☁️ Pick one cloud suite (Cloudflare or Vercel) and use the entire stack — don't fragment across clouds\",\n      \"📊 Use Linear + MCP to assign work to cloud agents — automated issue-to-PR workflow without manual handoffs\",\n      \"🌳 Isolate agent work in separate branches — enables 15+ agents to work in parallel without conflicts\",\n      \"🔀 Don't be loyal to one AI model — switch between Opus 5.5 and Astra based on task and cost\",\n      \"🎨 Use design tools with AI integration (Figma alternatives, Mobbin) to speed up design collaboration\",\n      \"💾 Use PlanetScale for Postgres databases — integrates with Effect and Cloudflare Hyperdrive seamlessly\"\n    ],\n    \"timestamps\": [\n      {\"time\": \"0:00\", \"seconds\": 0, \"label\": \"Video intro — updating agentic AI development stack for 2026\"},\n      {\"time\": \"0:15\", \"seconds\": 15, \"label\": \"Programming environments overview (T3 Code, Cursor, Devin, Claude Web)\"},\n      {\"time\": \"1:50\", \"seconds\": 110, \"label\": \"T3 Code deep dive — multi-device network support (Linux machine, Mac, MacBook)\"},\n      {\"time\": \"2:00\", \"seconds\": 120, \"label\": \"T3 Code sidebar UI and workflow management\"},\n      {\"time\": \"3:59\", \"seconds\": 240, \"label\": \"Codex AI assistant demo — 3D modeling with Blender iterative updates\"},\n      {\"time\": \"4:30\", \"seconds\": 270, \"label\": \"When to use Codex — hardware projects, computer-use tasks, 3D design\"},\n      {\"time\": \"5:00\", \"seconds\": 300, \"label\": \"Claude Web and command-line tools overview\"},\n      {\"time\": \"5:25\", \"seconds\": 325, \"label\": \"Clouds browser agent benchmark — 94% vs competitors (Orbit 71%, BrowsePilot 63%, TabForge 52%)\"},\n      {\"time\": \"6:30\", \"seconds\": 390, \"label\": \"Cursor and Devin cloud proxies — production error automation\"},\n      {\"time\": \"7:00\", \"seconds\": 420, \"label\": \"Model comparison: cost, support, which model to use (Opus 5.5 vs. Astra)\"},\n      {\"time\": \"8:00\", \"seconds\": 480, \"label\": \"Core models — Opus 5.5 as primary, Astra for research\"},\n      {\"time\": \"9:00\", \"seconds\": 540, \"label\": \"Tech stack section begins — SvelteKit frontend framework\"},\n      {\"time\": \"9:35\", \"seconds\": 575, \"label\": \"SvelteKit documentation screenshot — why Svelte over React\"},\n      {\"time\": \"10:00\", \"seconds\": 600, \"label\": \"Svelte compiler advantage — auto-optimization, no performance tuning needed\"},\n      {\"time\": \"10:30\", \"seconds\": 630, \"label\": \"Convex backend — type-safe, real-time, Svelte integration\"},\n      {\"time\": \"11:00\", \"seconds\": 660, \"label\": \"Convex Components — third-party integrations (Stripe, Gmail, WorkOS)\"},\n      {\"time\": \"11:28\", \"seconds\": 688, \"label\": \"Effect 4.0 RC homepage — TypeScript library for production-ready systems\"},\n      {\"time\": \"12:00\", \"seconds\": 720, \"label\": \"Effect deep dive — error handling, why all services must use Effect\"},\n      {\"time\": \"13:00\", \"seconds\": 780, \"label\": \"Bezalo example — MCP server entirely built on Effect\"},\n      {\"time\": \"13:30\", \"seconds\": 810, \"label\": \"PlanetScale database — Postgres provider, Hyperdrive integration\"},\n      {\"time\": \"14:00\", \"seconds\": 840, \"label\": \"Vercel vs. Cloudflare infrastructure — when to use each\"},\n      {\"time\": \"15:00\", \"seconds\": 900, \"label\": \"Orgo.ai — persistent cloud computers for AI agents\"},\n      {\"time\": \"15:30\", \"seconds\": 930, \"label\": \"Figma design tool — Paper as AI-friendly design alternative\"},\n      {\"time\": \"16:00\", \"seconds\": 960, \"label\": \"Tools section — Greptile code review, grep loop automation\"},\n      {\"time\": \"16:30\", \"seconds\": 990, \"label\": \"Linear + MCP for agent tasking, Whisper for speech-to-text\"},\n      {\"time\": \"17:00\", \"seconds\": 1020, \"label\": \"Agent workflow skills repository — branch isolation, code structuring, verification\"},\n      {\"time\": \"17:30\", \"seconds\": 1050, \"label\": \"Grep Loop skill — automated PR iteration until 5/5 confidence\"},\n      {\"time\": \"18:00\", \"seconds\": 1080, \"label\": \"Summary — stack overview and open-source skills link\"},\n      {\"time\": \"19:00\", \"seconds\": 1140, \"label\": \"Video outro — subscribe and share\"}\n    ],\n    \"keyQuestion\": \"What is the optimal agentic AI development stack for building production applications in 2026, and how should you choose between competing tools based on cost, AI agent compatibility, and integration?\",\n    \"summary\": \"Ras, an indie AI developer, shares his complete production stack for building agentic applications. The stack prioritizes AI agent compatibility: Svelte frontends (auto-optimized), Convex or Effect backends (type-safe and AI-friendly), Effect for all services (explicit error handling), cloud agents (Cursor, Devin) for parallel work, and automated code review (Greptile + Grep Loop) that merges PRs at 5/5 confidence. Key insight: loyalty to a single tool is a trap — switch models and platforms based on task and cost. The workflow uses Linear MCP for ticket-to-agent assignment, enabling 15+ agents to work in parallel on isolated branches.\"\n  }\n}\n```\n\n---\n\n## **Tab Guide**\n\n### **🛠️ The Full Stack** (SpotExplorer)\nAll 25+ tools organized by layer:\n- **Programming Environments**: T3 Code, Cursor, Devin, Claude Web, Codex\n- **Models**: Opus 5.5, GPT-6 Astra\n- **Frontends**: SvelteKit, Svelte, Next.js\n- **Backends**: Convex, Effect, MCP servers\n- **Databases**: PlanetScale (Postgres)\n- **Infrastructure**: Vercel, Cloudflare (Workers, R2, Hyperdrive, Durable Objects)\n- **Agent Infrastructure**: Orgo.ai (persistent cloud computers)\n- **Code Review**: Greptile, Grep Loop\n- **Design**: Figma, Paper, Mobbin\n- **Workflow**: Linear, Whisper, skills repository\n- **Browser Agents**: Clouds (94% benchmark)\n\n**Tap any card** to see why Ras chose it, when to use it, and cost/performance notes.\n\n---\n\n### **💻 Code Snippets** (CodeExplorer)\nThree reproducible examples:\n1. **Bezalo MCP Server Structure** — Effect-based backend + Svelte frontend\n2. **Convex Components Auto-Config** — Point agent to Stripe component, agent handles setup\n3. **Agent Workflow Skills** — Open-source git repo showing branch isolation → code structuring → verification → Grep Loop\n\n**Copy all code**. Run immediately.\n\n---\n\n### **🎬 Tool Walkthroughs** (MomentTrack)\nJump to 25 key moments:\n- **1:50** — T3 Code network topology (3 devices connected)\n- **3:59** — Codex demo: AI iteratively rebuilds Blender model\n- **5:25** — Clouds agent: 94% benchmark chart\n- **9:35** — SvelteKit docs (why Svelte over React)\n- **11:28** — Effect 4.0 RC homepage\n- **15:00** — Orgo.ai homepage\n- **15:30** — Figma design: Goshen Labs landing page\n- **16:23** — Direct-to-camera summary\n\n**Click to jump**, see expanded context of what's on screen.\n\n---\n\n### **🧠 Core Concepts** (ConceptCanvas)\n16 concepts connected by typed edges:\n- **Frontend Layer**: SvelteKit, Svelte Compiler Advantage\n- **Backend Layer**: Convex Backend, Effect, MCP Servers\n- **Error Handling**: Type Safety, Error Handling Gap, Effect\n- **Workflow**: Linear + MCP, Parallel Agent Work, Greptile, Grep Loop\n- **Agents**: Cloud Agents, Model Choice (Opus vs. Astra)\n\n**Drag and explore**. Edges show causality (Svelte Compiler → Agent Productivity), dependencies (Convex Components ⊂ Convex), and contrasts (Effect ↔ TypeScript gap).\n\n---\n\n### **✅ Know Your Stack** (QuizArena)\n5 quick questions:\n1. **Why prefer Svelte over React in the AI era?** (Auto-optimization, AI-friendly)\n2. **What do Convex Components do?** (Auto-configure third-party integrations)\n3. **When should you use Effect?** (All backend services and MCP servers)\n4. **What does Greptile + Grep Loop achieve?** (Auto-iterate PRs to 5/5 confidence)\n5. **Can you use both Vercel and Cloudflare?** (No — commit to one suite to avoid fragmentation)\n\n**Answer streak counted.** Instant feedback.\n\n---\n\n## **Quality Notes**\n\n✅ **All code preserved exactly** — variable names, imports, formatting  \n✅ **All 25+ tools extracted** with timestamps and use-case reasoning  \n✅ **Concepts connected** with typed edges (causes, requires, contrasts, partOf)  \n✅ **19 minute scale** — 8 keyPoints, 16 concepts, 10 timestamps per learning guidelines  \n✅ **Visual references** — all keyframes grounded (Codex Blender demo, Clouds benchmark, Effect 4.0)  ",
+   "finishReason": "stop",
+   "usage": {
+    "input": 10643,
+    "output": 8606,
+    "cacheRead": 0,
+    "cacheWrite": 5423
+   },
+   "ordinal": 0
+  },
+  {
+   "feature": "summarize:synthesis",
+   "span": "synthesis",
+   "model": "openai/gpt-4o-mini",
+   "latencyMs": 4632,
+   "output": "{\"tldr\": \"Get an insider's view on the essential tools and techniques every AI developer needs to know for production.\", \"keyTakeaways\": [\"Utilize TypeScript with Effect for better error handling — 'Effect' tracks errors explicitly, preventing silent failures.\", \"Break your code into manageable chunks with SvelteKit and Convex for seamless integration and auto-configuration.\", \"Implement Greptile for pull request reviews, ensuring a 5/5 confidence score before merging code.\"], \"masterSummary\": \"In this engaging video, Ras Mic, a seasoned indie AI developer and vlogger, dives deep into his proven agentic development stack, showcasing real-world tools and techniques he's successfully used in production. He emphasizes choosing frameworks like Svelte and Convex for their optimization benefits and ease of integration with AI components, setting the stage for efficient and streamlined development workflows.\\n\\nThroughout the 19 minutes, Ras shares valuable insights, including code snippets and practical advice on improving error handling with TypeScript and Effect, and how to enhance collaborative coding with features like branch isolation and automated reviews via Greptile. Don't miss the interactive tabs where you can explore the tools mentioned, check out live code examples, and understand the reasoning behind each choice — it's the perfect way to elevate your AI development game!\", \"seoDescription\": \"Discover essential AI development tools from Ras Mic: frameworks, error handling, and tips to level up your coding!\"}",
+   "finishReason": "stop",
+   "usage": {
+    "input": 1563,
+    "output": 298,
+    "cacheRead": 0,
+    "cacheWrite": 0
+   },
+   "ordinal": 0
+  },
+  {
+   "feature": "summarize:enrichment",
+   "span": "enrichment",
+   "model": "openai/gpt-4o-mini",
+   "latencyMs": 11968,
+   "output": "{\"quiz\": [{\"question\": \"What command is used to install Effect?\", \"options\": [\"npm install convex\", \"npm install effect\", \"npm install svelte\", \"npm install typescript\"], \"correctIndex\": 1, \"explanation\": \"The command 'npm install effect' is explicitly stated as the installation command for Effect in the setup section.\"}, {\"question\": \"Why does the speaker prefer Svelte over React for AI development?\", \"options\": [\"Svelte requires less setup\", \"Svelte is more performant by default\", \"React has more community support\", \"React is easier to debug\"], \"correctIndex\": 1, \"explanation\": \"Svelte's compiled approach optimizes applications automatically, making it preferred over React, which often requires manual performance optimizations.\"}, {\"question\": \"What does the Grep Loop skill do?\", \"options\": [\"It runs tests automatically\", \"It assigns PR scores based on AI feedback\", \"It builds the application\", \"It integrates with third-party APIs\"], \"correctIndex\": 1, \"explanation\": \"The Grep Loop skill iterates with feedback from Greptile, ensuring that pull requests only merge when they achieve a confidence score of 5/5.\"}, {\"question\": \"What technology does Convex provide for seamless integration with services like Stripe?\", \"options\": [\"Backend as a Service\", \"Serverless Functions\", \"Pre-built Integration Components\", \"Direct API Access\"], \"correctIndex\": 2, \"explanation\": \"Convex offers pre-built integration components that simplify configurations for third-party services, allowing AI agents to set them up automatically.\"}, {\"question\": \"What type of error handling does Effect enable?\", \"options\": [\"Silent failures\", \"Explicit error handling as part of the return type\", \"Complex error tracking\", \"Error logging only\", \"correctIndex: 1\", \"explanation: Effect requires that all error paths are explicitly handled, ensuring no silent failures occur in the application.\"]}, \"flashcards\\\": [\", {\"front\": \"What command initializes Convex backend?\", \"back\": \"npm install convex\\nnpx convex dev\"}, {\"front\": \"What is the Svelte advantage for AI?\", \"back\": \"Svelte's auto-optimization means AI handles performance by default without extra tuning.\"}, {\"front\": \"What is the main benefit of using Effect for backend services?\", \"back\": \"Effect allows for error tracking as types, thus making error handling explicit and reducing silent failures.\"}, {\"front\": \"How do you integrate with Stripe using Convex?\", \"back\": \"const stripe = await components.stripe.setup(config);\"}, {\"front\": \"What does Greptile do for code review?\", \"back\": \"Greptile assigns a confidence score to PRs, and the Grep Loop iterates until the score is 5/5.\"}, {\"front\": \"What command installs SvelteKit?\", \"back\": \"npm install sveltekit\"}], \"scenarios\": [{\"question\": \"You want to add a new feature to your application that requires integrating with a third-party service. What is your best move?\", \"emoji\": \"🔧\", \"options\": [{\"text\": \"Write a manual API integration from scratch.\", \"correct\": false, \"explanation\": \"This is unnecessary since you can use ready-made components.\"}, {\"text\": \"Use a Convex component for the integration.\", \"correct\": true, \"explanation\": \"Convex provides pre-built components for seamless integrations, which simplify the process for AI agents.\"}, {\"text\": \"Create a separate server for each service.\", \"correct\": false, \"explanation\": \"Using Convex components allows you to avoid creating redundant server setups.\"}, {\"text\": \"Modify the Svelte framework to work better with the new feature.\", \"correct\": false, \"explanation\": \"Svelte is already optimized and doesn't require modifications for integration.\"}]}, {\"question\": \"Your team struggles with managing pull requests efficiently. How can you improve this process?\", \"emoji\": \"📊\", \"options\": [{\"text\": \"Implement the Grep Loop skill with Greptile for automated PR reviews.\", \"correct\": true, \"explanation\": \"The Grep Loop skill allows PRs to be iteratively improved based on AI feedback, ensuring quality before merging.\"}, {\"text\": \"Increase the number of manual code reviewers.\", \"correct\": false, \"explanation\": \"While more reviewers can help, automating the feedback process through Greptile speeds up iterations.\"}, {\"text\": \"Revert to using only manual code reviews.\", \"correct\": false, \"explanation\": \"Manual reviews can be slower and less efficient than leveraging automated tools.\"}, {\"text\": \"Switch to another version control system.\", \"correct\": false, \"explanation\": \"Changing systems won't solve inherent management issues without adopting automated practices.\"}]}]}",
+   "finishReason": "stop",
+   "usage": {
+    "input": 3080,
+    "output": 1162,
+    "cacheRead": 0,
+    "cacheWrite": 0
+   },
+   "ordinal": 0
+  }
+ ],
+ "recorded": {
+  "totalMs": 239491,
+  "phasesMs": {
+   "metadata": 17092,
+   "transcript_frames": 85881,
+   "plan": 30172,
+   "extraction": 79885,
+   "synthesis_enrichment": 12169,
+   "assembly": 14292,
+   "visual_inject": 0
+  },
+  "milestonesMs": {
+   "firstTabReadyMs": 225198,
+   "completeMs": 239491
+  },
+  "tabIds": [
+   "overview",
+   "stack_explorer",
+   "code_snippets",
+   "key_moments",
+   "concepts"
+  ],
+  "estimated": false,
+  "notes": [
+   "prod request 725d2eb2, the 240 s run (A-DIGEST 'Numbers to reuse'); frames sub-steps from its worker log",
+   "visual_inject is not separable in the recording (folded into transcript_frames); the 6 sampled faithfulness calls are omitted (off the critical path)",
+   "momentFill = whole assembly wall (720p re-download 11.7 s logged + ffmpeg/S3/residual)"
+  ]
+ }
+}

@@ -1,0 +1,2348 @@
+{
+ "schema": 1,
+ "videoId": "jMq8lEu-of0",
+ "provenance": {
+  "environment": "dev",
+  "langfuseTrace": "b17641be-6e2f-4fa1-8270-1a9731b3027f",
+  "requestId": "013aebed-a76e-4c53-aa75-cbdc7ea1fd36",
+  "videoSummaryId": "6ac3931769a250df73e7b704",
+  "recordedAt": "2026-10-05T12:07:51.827Z",
+  "pipelineVersion": "v8",
+  "transcript": "s3 videos/jMq8lEu-of0/transcript.json",
+  "frames": "s3 scenes-v3/manifest.json",
+  "descriptionAnalysis": "llm_usage row + meta.descriptionAnalysis (no generation pre-0.2)"
+ },
+ "settings": {
+  "LLM_MODEL": "anthropic/claude-sonnet-4-6",
+  "LLM_FAST_MODEL": "openai/gpt-4o-mini",
+  "LLM_CLASSIFIER_MODEL": null,
+  "LLM_CHAPTER_DETECT_MODEL": null,
+  "LLM_DESCRIPTION_MODEL": null,
+  "LLM_SYNTHESIS_MODEL": null,
+  "LLM_ENRICHMENT_MODEL": "openai/gpt-4o-mini",
+  "LLM_EXTRACTION_MODEL": "anthropic/claude-haiku-4-5-20251001",
+  "LLM_TRANSLATION_MODEL": null,
+  "LLM_VISION_MODEL": "anthropic/claude-sonnet-4-6",
+  "EXTRACTION_PARALLEL_BATCHES": 2,
+  "EXTRACTION_USE_FAST_FIRST": false,
+  "CHUNKED_EXTRACTION_THRESHOLD": 900,
+  "TRANSCRIPT_CLEANING_ENABLED": false,
+  "FRAME_VISION_ENABLED": true,
+  "FRAME_TIER_ENABLED": true,
+  "SSE_HEARTBEAT_SECONDS": 12.0
+ },
+ "tier": "high",
+ "video": {
+  "title": "Chris Makes BA's Best Lasagna | From the Test Kitchen | Bon Appétit",
+  "channel": "Bon Appétit",
+  "duration": 1001,
+  "thumbnailUrl": "https://i.ytimg.com/vi_webp/jMq8lEu-of0/maxresdefault.webp",
+  "description": "Join Chris Morocco in the Bon Appétit Test Kitchen as he makes BA's best lasagna. Why in the world would we tell you to make meatballs, brown them, and then break them into pieces—for a ragù? Sounds crazy, but it’s the best way we found to sear a big batch of meat without overcooking it. This MeatballMethod™ yields deep color (a.k.a. flavor) along with tender meat. If you want to use fresh pasta, go for it, you overachiever you. We also tested the recipe with no-boil noodles, but found they soak up a lot more sauce and the lasagna loses its wonderful ooziness; instead, we recommend the regular dried stuff.heck out the recipe here: https://www.bonappetit.com/recipe/ba-best-lasagna\n\nWant Bon Appétit shirts, hats and more? https://shop.bonappetit.com/?utm_source=youtube&utm_brand=ba&utm_campaign=aud-dev&utm_medium=video&utm_content=merch-shop-promo\r\n\r\nStill haven’t subscribed to Bon Appétit on YouTube? ►► http://bit.ly/1TLeyPn\r\n\r\nWant more Bon Appétit in your life? Subscribe to the magazi",
+  "chapters": [
+   {
+    "start": 0,
+    "end": 59,
+    "title": "Introduction to lasagna"
+   },
+   {
+    "start": 60,
+    "end": 370,
+    "title": "Preparing the ragu sauce"
+   },
+   {
+    "start": 371,
+    "end": 518,
+    "title": "Simmering the meat sauce"
+   },
+   {
+    "start": 519,
+    "end": 689,
+    "title": "Making bechamel and pasta"
+   },
+   {
+    "start": 690,
+    "end": 907,
+    "title": "Assembling the lasagna"
+   },
+   {
+    "start": 908,
+    "end": 1000,
+    "title": "Resting and serving"
+   }
+  ],
+  "category": "cooking",
+  "youtubeCategory": null,
+  "tags": [
+   "lasagna",
+   "from the test kitchen",
+   "chris morocco",
+   "lasagna recipe",
+   "make lasagna",
+   "making lasagna",
+   "how to lasagna",
+   "how to make lasagna",
+   "chris lasagna",
+   "chris makes lasagna",
+   "lasagna bon appetit",
+   "chris bon appetit",
+   "meat lasagna",
+   "meat lasagna recipe",
+   "easy lasagna"
+  ],
+  "language": "en",
+  "captionTrack": "manual",
+  "captionLang": "en-US-cvfXDfbeED0"
+ },
+ "transcript": {
+  "source": "ytdlp",
+  "segments": [
+   [
+    1780,
+    3288,
+    "- I'm rollin' up my sleeves for this."
+   ],
+   [
+    3288,
+    6371,
+    "[funky guitar music]"
+   ],
+   [
+    10120,
+    12700,
+    "All right, so this is BA's best lasagna."
+   ],
+   [
+    12701,
+    17330,
+    "This is our deep dive into the world"
+   ],
+   [
+    17330,
+    19979,
+    "of more of a traditional lasagna,"
+   ],
+   [
+    19980,
+    24030,
+    "which has a Ragu bolognese as your kind of meat sauce"
+   ],
+   [
+    24030,
+    27550,
+    "in there as well as bechamel and noodles."
+   ],
+   [
+    27550,
+    30200,
+    "Now, today, you know, we're not making our own noodles."
+   ],
+   [
+    30200,
+    32950,
+    "Honestly, I found that, you know,"
+   ],
+   [
+    32950,
+    34780,
+    "store-bought noodles perform, you know,"
+   ],
+   [
+    34780,
+    38780,
+    "perfectly adequately using d'czecho lasagna sheets,"
+   ],
+   [
+    38780,
+    41330,
+    "which are kind of like a nice sort of, you know,"
+   ],
+   [
+    41330,
+    44100,
+    "little bit like of a wider, you know,"
+   ],
+   [
+    44100,
+    47050,
+    "rectangle that works like really well."
+   ],
+   [
+    47050,
+    49809,
+    "And we're just gonna jump right into it"
+   ],
+   [
+    49810,
+    51800,
+    "because we gotta, we gotta jam here."
+   ],
+   [
+    51800,
+    53050,
+    "There's a lot to get through."
+   ],
+   [
+    53050,
+    56818,
+    "The first thing and the the underpinning of this lasagna"
+   ],
+   [
+    56819,
+    60492,
+    "and for me, most lasagnas, is the sauce."
+   ],
+   [
+    60492,
+    62934,
+    "It is a Ragu bolognese,"
+   ],
+   [
+    62935,
+    66250,
+    "so this one is a mixture of beef and pork."
+   ],
+   [
+    66250,
+    68920,
+    "Andy and I have had a lot of back-and-forths about,"
+   ],
+   [
+    68920,
+    71560,
+    "you know, bolognese, there's infinite variations,"
+   ],
+   [
+    71560,
+    74490,
+    "but all of them involve some kind of combination"
+   ],
+   [
+    74490,
+    79250,
+    "of meats long-cooked in vary often tomato,"
+   ],
+   [
+    79250,
+    82160,
+    "but not necessarily always some kind of tomato product,"
+   ],
+   [
+    82160,
+    84960,
+    "and stock and some kind of dairy product,"
+   ],
+   [
+    84960,
+    86119,
+    "whether it's milk or cream."
+   ],
+   [
+    86120,
+    88200,
+    "So, I'm just gonna get right into it"
+   ],
+   [
+    88200,
+    90047,
+    "and I'm gonna talk you through it as we go."
+   ],
+   [
+    90047,
+    94280,
+    "So, it's a little unorthodox."
+   ],
+   [
+    94280,
+    96100,
+    "Just gonna get that right out of the way."
+   ],
+   [
+    96100,
+    98643,
+    "I'm seasoning this liberally with salt."
+   ],
+   [
+    99970,
+    101260,
+    "I'm gonna combine these meats."
+   ],
+   [
+    101260,
+    103980,
+    "I'm not really worried about making it super even,"
+   ],
+   [
+    103980,
+    106330,
+    "that's not what this is about."
+   ],
+   [
+    106330,
+    108600,
+    "I'm gonna brown the meat in ball form."
+   ],
+   [
+    108600,
+    110699,
+    "The reason being that in ball form,"
+   ],
+   [
+    110700,
+    114510,
+    "I can brown all of this meat in two batches"
+   ],
+   [
+    114510,
+    116370,
+    "very, very, very easily."
+   ],
+   [
+    116370,
+    120100,
+    "And actually develop great color on the outside of the meat"
+   ],
+   [
+    120100,
+    122342,
+    "without overcooking the majority of it."
+   ],
+   [
+    123276,
+    125240,
+    "- [Producer] What car would the two of you drive"
+   ],
+   [
+    125240,
+    126789,
+    "in a buddy cop movie?"
+   ],
+   [
+    126789,
+    127622,
+    "- Oh."
+   ],
+   [
+    129919,
+    132720,
+    "I feel like this is a little out of character,"
+   ],
+   [
+    132720,
+    135320,
+    "but I feel like I'm thinkin' like cop, you know?"
+   ],
+   [
+    135320,
+    136600,
+    "I think we would be in like,"
+   ],
+   [
+    136600,
+    139940,
+    "like a cool, like, Dodge Challenger, you know?"
+   ],
+   [
+    139940,
+    142773,
+    "Like, black, like, understated, you know?"
+   ],
+   [
+    148690,
+    149940,
+    "I didn't hear the sizzle."
+   ],
+   [
+    151270,
+    153549,
+    "I'm not gonna sit here and start making bad decisions."
+   ],
+   [
+    153549,
+    156130,
+    "[humming]"
+   ],
+   [
+    156130,
+    156963,
+    "All right."
+   ],
+   [
+    158392,
+    159660,
+    "[sizzling]"
+   ],
+   [
+    159660,
+    160493,
+    "There."
+   ],
+   [
+    161620,
+    164523,
+    "If the meat's not browning, what's the point?"
+   ],
+   [
+    166950,
+    169440,
+    "What was it that John Oliver said the other night?"
+   ],
+   [
+    169440,
+    171560,
+    "The reason why we can brown this meat"
+   ],
+   [
+    171560,
+    174180,
+    "so much more efficiently in ball form is obviously,"
+   ],
+   [
+    174180,
+    175600,
+    "it's a question of, you know,"
+   ],
+   [
+    175600,
+    178290,
+    "the contact area of the portion of meat"
+   ],
+   [
+    178290,
+    181299,
+    "that's actually in contact with the surface, right?"
+   ],
+   [
+    181300,
+    184630,
+    "And there's nice gaps in between the balls, right?"
+   ],
+   [
+    184630,
+    188440,
+    "So all the steam can kinda come out of the pan."
+   ],
+   [
+    188440,
+    191109,
+    "We're not tryin' to cook the meat through in its entirety,"
+   ],
+   [
+    191110,
+    193300,
+    "it's gonna cook through in the braising process."
+   ],
+   [
+    193300,
+    196160,
+    "We just want the benefit of all of the flavor development"
+   ],
+   [
+    196160,
+    199720,
+    "that happens when it picks up color here, okay?"
+   ],
+   [
+    199720,
+    201320,
+    "I'm gonna wash my hands, don't go anywhere."
+   ],
+   [
+    201320,
+    202650,
+    "Like, that's like, you know,"
+   ],
+   [
+    202650,
+    205372,
+    "about the minimum I'm looking for, all right?"
+   ],
+   [
+    205372,
+    207622,
+    "[sizzling]"
+   ],
+   [
+    208730,
+    210602,
+    "That there, that's ideal."
+   ],
+   [
+    212510,
+    214959,
+    "You know, don't try to force it along."
+   ],
+   [
+    214960,
+    218310,
+    "You don't wanna scorch all of the beautiful fond"
+   ],
+   [
+    218310,
+    220710,
+    "that you're creating in the bottom of this pan."
+   ],
+   [
+    220710,
+    224143,
+    "All those brown bits, that is where the flavor is, okay?"
+   ],
+   [
+    225430,
+    228330,
+    "Don't want this to be crazy hot when the pancetta goes in,"
+   ],
+   [
+    228330,
+    231203,
+    "but it's probably about as good."
+   ],
+   [
+    232230,
+    233170,
+    "We're gonna get it, you know,"
+   ],
+   [
+    233170,
+    236700,
+    "lightly browned, a little crispy, render out the fat."
+   ],
+   [
+    236700,
+    239380,
+    "The power of a cured pork product"
+   ],
+   [
+    239380,
+    243760,
+    "to impart massive amounts of flavor to something,"
+   ],
+   [
+    243760,
+    246120,
+    "that's just about where we need it to be."
+   ],
+   [
+    246120,
+    247570,
+    "It's gonna continue to cook a little bit"
+   ],
+   [
+    247570,
+    250180,
+    "along with a onion."
+   ],
+   [
+    250180,
+    252470,
+    "Carrot, you know, I'm not a big believer"
+   ],
+   [
+    252470,
+    256420,
+    "in carrot, you know, in any kind of pasta sauce in general,"
+   ],
+   [
+    256420,
+    258990,
+    "but in bolognese, it just belongs."
+   ],
+   [
+    258990,
+    260710,
+    "It's like the celery."
+   ],
+   [
+    260709,
+    263710,
+    "It just gives a very well-rounded base"
+   ],
+   [
+    263710,
+    265643,
+    "of vegetable aromatics."
+   ],
+   [
+    266970,
+    268570,
+    "Crank up the heat a little bit."
+   ],
+   [
+    268570,
+    271270,
+    "At this point, I'm gonna also season this"
+   ],
+   [
+    271270,
+    272799,
+    "with a little extra salt."
+   ],
+   [
+    272800,
+    277220,
+    "Salt is gonna help draw moisture from these vegetables,"
+   ],
+   [
+    277220,
+    279470,
+    "help them cook out a little bit more quickly."
+   ],
+   [
+    280470,
+    284160,
+    "And we're building kind of successive waves of flavor."
+   ],
+   [
+    284160,
+    286070,
+    "I'm not gonna lie, you know,"
+   ],
+   [
+    286070,
+    288500,
+    "this is a recipe with a lot of steps."
+   ],
+   [
+    288500,
+    290600,
+    "The sauce, just as its own thing,"
+   ],
+   [
+    290600,
+    292120,
+    "it's incredibly manageable."
+   ],
+   [
+    292120,
+    295120,
+    "You know, the sauce will freeze for months in the freezer."
+   ],
+   [
+    295120,
+    300120,
+    "There is an alchemy to the way pasta behaves"
+   ],
+   [
+    300490,
+    303300,
+    "when cooked with a layer of bechamel on it."
+   ],
+   [
+    303300,
+    304860,
+    "There is a creaminess that you get"
+   ],
+   [
+    304860,
+    306750,
+    "from bechamel in a lasagna"
+   ],
+   [
+    306750,
+    310200,
+    "that cannot simply be replicated by adding cheese"
+   ],
+   [
+    310200,
+    312010,
+    "or anything else, okay?"
+   ],
+   [
+    312010,
+    316070,
+    "You can see the vegetables' colorant is intensifying,"
+   ],
+   [
+    316070,
+    317153,
+    "they're softening."
+   ],
+   [
+    318150,
+    319419,
+    "My dad would make, you know,"
+   ],
+   [
+    319420,
+    324420,
+    "a version of this sauce out of the Marcella Hazan,"
+   ],
+   [
+    324430,
+    327140,
+    "I think it's \"Essentials of Italian Cooking.\""
+   ],
+   [
+    327140,
+    328729,
+    "And you would get that smell,"
+   ],
+   [
+    328730,
+    330280,
+    "my room in high school was like"
+   ],
+   [
+    330280,
+    332159,
+    "all the way up in the third floor of our house,"
+   ],
+   [
+    332160,
+    334560,
+    "in the attic, and you know,"
+   ],
+   [
+    334560,
+    336730,
+    "by about like hour number two,"
+   ],
+   [
+    336730,
+    340060,
+    "the smell would've wafted its way all the way up to my room,"
+   ],
+   [
+    340060,
+    342400,
+    "you know, where I was like, locked in there,"
+   ],
+   [
+    342400,
+    344679,
+    "hangin' out with Andy, painting our nails black,"
+   ],
+   [
+    344680,
+    346010,
+    "listening to The Cure."
+   ],
+   [
+    346010,
+    349210,
+    "You know, drawing pentagrams on shit, all right?"
+   ],
+   [
+    349210,
+    352140,
+    "And it was like magic."
+   ],
+   [
+    352140,
+    356500,
+    "So, this is Mutti brand double-concentrated tomato paste"
+   ],
+   [
+    356500,
+    357620,
+    "in the tube."
+   ],
+   [
+    357620,
+    360263,
+    "Do we have the tube of tomato paste over there?"
+   ],
+   [
+    361152,
+    362010,
+    "[clinking]"
+   ],
+   [
+    362010,
+    363840,
+    "- [Man] Oh my God!"
+   ],
+   [
+    363840,
+    364673,
+    "- Spoon down!"
+   ],
+   [
+    366160,
+    369773,
+    "All right, so this is, sorry, I got off topic."
+   ],
+   [
+    372150,
+    375993,
+    "Mutti brand double-concentrated tomato paste in the tube."
+   ],
+   [
+    377000,
+    380200,
+    "I'm not really looking for browning on these vegetables,"
+   ],
+   [
+    380200,
+    383409,
+    "I just want them to be very, very soft."
+   ],
+   [
+    383410,
+    385730,
+    "You don't wanna put all this liquid in"
+   ],
+   [
+    385730,
+    389150,
+    "and then put the tomato paste in after, right?"
+   ],
+   [
+    389150,
+    392289,
+    "The tomato paste, it's imperative it goes on top"
+   ],
+   [
+    392290,
+    394250,
+    "of the aromatics so that it can cook out."
+   ],
+   [
+    394250,
+    397000,
+    "At the point that the wine goes in,"
+   ],
+   [
+    397000,
+    398490,
+    "this is never really gonna be"
+   ],
+   [
+    398490,
+    400730,
+    "above the temperature of a simmer, right?"
+   ],
+   [
+    400730,
+    403710,
+    "The oil that's in there now is frying the paste out"
+   ],
+   [
+    403710,
+    405979,
+    "at a higher temperature than it could ever reach"
+   ],
+   [
+    405980,
+    407670,
+    "in the presence of water."
+   ],
+   [
+    407670,
+    410550,
+    "Might sound complicated, just bear with me, it makes sense."
+   ],
+   [
+    410550,
+    413580,
+    "So, the wine, on its own,"
+   ],
+   [
+    413580,
+    417000,
+    "this is gonna add acidity to the sauce,"
+   ],
+   [
+    417000,
+    419310,
+    "and we want the wine to cook out on its own,"
+   ],
+   [
+    419310,
+    421850,
+    "so that the alcohol can be driven off."
+   ],
+   [
+    421850,
+    423410,
+    "Concentrated flavor."
+   ],
+   [
+    423410,
+    426570,
+    "Then, so what I like to do,"
+   ],
+   [
+    426570,
+    429170,
+    "is I'll hold these back, add some of this liquid in,"
+   ],
+   [
+    429170,
+    431210,
+    "so that can start concentrating"
+   ],
+   [
+    431210,
+    434363,
+    "while I work on breaking up these tomatoes."
+   ],
+   [
+    435610,
+    437450,
+    "Yeah, make sure you have a very clean cut"
+   ],
+   [
+    437450,
+    438513,
+    "if you can, you know?"
+   ],
+   [
+    439710,
+    440893,
+    "No jagged edges."
+   ],
+   [
+    443920,
+    445520,
+    "So this has gotta cook down."
+   ],
+   [
+    445520,
+    448430,
+    "It's gonna be about eight to 10 minutes, okay?"
+   ],
+   [
+    448430,
+    451630,
+    "I'm gonna push it along at a good clip."
+   ],
+   [
+    451630,
+    455409,
+    "All right, see how the tomato,"
+   ],
+   [
+    455410,
+    458570,
+    "it's almost at the point where"
+   ],
+   [
+    458570,
+    462880,
+    "it's kind of frying as much as it's simmering."
+   ],
+   [
+    462880,
+    464120,
+    "Does that make sense?"
+   ],
+   [
+    464120,
+    466830,
+    "Okay, so, it's at the point where it's almost like"
+   ],
+   [
+    466830,
+    470490,
+    "the fat that's in here is almost separating out"
+   ],
+   [
+    470490,
+    472190,
+    "from the liquid."
+   ],
+   [
+    472190,
+    474790,
+    "And then just hit it with a little bit of salt here."
+   ],
+   [
+    474790,
+    476220,
+    "So this is tasting pretty bright,"
+   ],
+   [
+    476220,
+    479120,
+    "but obviously it's gonna go into the oven"
+   ],
+   [
+    479120,
+    482220,
+    "with all that meat, and it's gonna balance right out."
+   ],
+   [
+    482220,
+    483563,
+    "Low sodium chicken broth,"
+   ],
+   [
+    484570,
+    486903,
+    "and a cup of whole milk."
+   ],
+   [
+    489170,
+    492753,
+    "Meatballs goin' in with all that liquid."
+   ],
+   [
+    493800,
+    495310,
+    "All right, so I just want it to return"
+   ],
+   [
+    495310,
+    497943,
+    "to a good simmer before I put it in the oven."
+   ],
+   [
+    501970,
+    504530,
+    "If I were doing this just for a bolognese,"
+   ],
+   [
+    504530,
+    507159,
+    "I probably would not have put so much tomato in there,"
+   ],
+   [
+    507160,
+    509090,
+    "but there's something about lasagna"
+   ],
+   [
+    509090,
+    511159,
+    "that I feel like you want a little bit more"
+   ],
+   [
+    511160,
+    512710,
+    "of a tomato forward sauce."
+   ],
+   [
+    512710,
+    516060,
+    "Cover is goin' on slightly ajar."
+   ],
+   [
+    516059,
+    519232,
+    "And into a 225-degree oven."
+   ],
+   [
+    520270,
+    522020,
+    "Next step, bechamel."
+   ],
+   [
+    522020,
+    524049,
+    "Sounds complicated, it's not."
+   ],
+   [
+    524049,
+    526670,
+    "So, rue plus milk, bechamel."
+   ],
+   [
+    526670,
+    530593,
+    "All right, so I've got six tablespoons of butter here."
+   ],
+   [
+    532160,
+    534980,
+    "Once the butter is all completely melted,"
+   ],
+   [
+    534980,
+    537330,
+    "then you can put your seven tablespoons"
+   ],
+   [
+    537330,
+    539760,
+    "of all-purpose flour in."
+   ],
+   [
+    539760,
+    541590,
+    "There is an incredible flavor development"
+   ],
+   [
+    541590,
+    544050,
+    "that happens when you toast flour."
+   ],
+   [
+    544050,
+    544933,
+    "It's incredible."
+   ],
+   [
+    546770,
+    547603,
+    "Another minute."
+   ],
+   [
+    548930,
+    550880,
+    "In the meantime, I've got water coming up"
+   ],
+   [
+    550880,
+    552363,
+    "for our lasagna sheets."
+   ],
+   [
+    557520,
+    558449,
+    "Milk's going in,"
+   ],
+   [
+    558450,
+    561560,
+    "just whisk very vigorously as the milk goes in,"
+   ],
+   [
+    561560,
+    563912,
+    "try not to make a massive mess as I have."
+   ],
+   [
+    565100,
+    566720,
+    "All right, so I'm gonna crank that up,"
+   ],
+   [
+    566720,
+    569590,
+    "the reason being that there's no danger"
+   ],
+   [
+    569590,
+    572810,
+    "of spoiling the milk here, right?"
+   ],
+   [
+    572810,
+    576319,
+    "So, the starch needs to come to a boil to fully hack,"
+   ],
+   [
+    576320,
+    577830,
+    "so they have to fully thicken the sauce."
+   ],
+   [
+    577830,
+    580100,
+    "So the sooner we can get there, the better."
+   ],
+   [
+    580100,
+    581003,
+    "So,"
+   ],
+   [
+    581003,
+    581850,
+    "[humming]"
+   ],
+   [
+    581850,
+    583920,
+    "boiling salted water."
+   ],
+   [
+    583920,
+    585740,
+    "Can use a little more salt in there."
+   ],
+   [
+    585740,
+    586833,
+    "Boom, okay."
+   ],
+   [
+    588900,
+    591810,
+    "I'm adding the pasta sheets one by one, okay?"
+   ],
+   [
+    591810,
+    593790,
+    "The reason being, I wanna kinda be stirring"
+   ],
+   [
+    593790,
+    596810,
+    "and agitating as they go in"
+   ],
+   [
+    596810,
+    598369,
+    "so that they don't stick together."
+   ],
+   [
+    598370,
+    600650,
+    "That's the tricky thing with lasagna noodles."
+   ],
+   [
+    600650,
+    603739,
+    "They really, really, really, really, really, really,"
+   ],
+   [
+    603739,
+    607170,
+    "really, I'm nervous, I'm gonna cook these in two batches."
+   ],
+   [
+    607170,
+    611180,
+    "We could've used like maybe a slightly bigger pot"
+   ],
+   [
+    611180,
+    613060,
+    "or something, but I think it's just like,"
+   ],
+   [
+    613060,
+    614930,
+    "it's asking for trouble."
+   ],
+   [
+    614930,
+    618530,
+    "- [Andy] You were intending to include bechamel, right?"
+   ],
+   [
+    618530,
+    619996,
+    "- No, who was it that-- - Brad!"
+   ],
+   [
+    619996,
+    621492,
+    "- Brad!"
+   ],
+   [
+    621493,
+    623810,
+    "- Brad doesn't believe in the bechamel, yes."
+   ],
+   [
+    623810,
+    626953,
+    "- The guy made manicotti without bechamel."
+   ],
+   [
+    630900,
+    634550,
+    "Okay, so see how this is very flexible,"
+   ],
+   [
+    634550,
+    636839,
+    "but ultimately, when I bend it,"
+   ],
+   [
+    636840,
+    638430,
+    "it kind of like has a tendency"
+   ],
+   [
+    638430,
+    640630,
+    "to wanna kind of almost snap."
+   ],
+   [
+    640630,
+    643000,
+    "That's great, that's exactly what we want."
+   ],
+   [
+    643000,
+    644373,
+    "That was three minutes."
+   ],
+   [
+    646351,
+    647423,
+    "Uh-oh, man down."
+   ],
+   [
+    648930,
+    650760,
+    "Ah, two of 'em stuck together,"
+   ],
+   [
+    650760,
+    652819,
+    "but honestly, if a couple stick together,"
+   ],
+   [
+    652820,
+    655630,
+    "that's no big deal, just move on with the rest."
+   ],
+   [
+    655630,
+    658180,
+    "So I'm gonna lay out these sheets of pasta"
+   ],
+   [
+    659270,
+    661773,
+    "in between pieces of parchment."
+   ],
+   [
+    663250,
+    664770,
+    "You could use wax paper."
+   ],
+   [
+    664770,
+    667010,
+    "Basically, you don't wanna keep them in the water"
+   ],
+   [
+    667010,
+    670140,
+    "for too long because they will continue to absorb it."
+   ],
+   [
+    670140,
+    672150,
+    "You don't wanna stack them on top of each other"
+   ],
+   [
+    672150,
+    674400,
+    "because they'll start to stick to each other."
+   ],
+   [
+    675450,
+    677400,
+    "All right, so I'm gonna turn this down."
+   ],
+   [
+    678390,
+    679353,
+    "Water is back."
+   ],
+   [
+    680870,
+    684253,
+    "Gonna that let go about 10 minutes, whisking occasionally."
+   ],
+   [
+    685510,
+    687613,
+    "Second round of pasta goin' in."
+   ],
+   [
+    689670,
+    692800,
+    "All right, so bechamel has been cooking"
+   ],
+   [
+    694280,
+    696053,
+    "10 minutes plus, I'd say."
+   ],
+   [
+    697410,
+    699719,
+    "It sort of thickened, it's concentrated,"
+   ],
+   [
+    699720,
+    702353,
+    "I need to get the Parmesan in there."
+   ],
+   [
+    723250,
+    726090,
+    "Nutmeg with bechamel is just kinda traditional."
+   ],
+   [
+    726090,
+    728380,
+    "Cayenne just gives a little bit of lift."
+   ],
+   [
+    728380,
+    730640,
+    "Not so much that it's spicy,"
+   ],
+   [
+    730640,
+    732813,
+    "just has a tendency to wake foods up."
+   ],
+   [
+    736040,
+    737579,
+    "Mm!"
+   ],
+   [
+    737580,
+    740073,
+    "So, the sauce has been rollin'"
+   ],
+   [
+    744210,
+    747100,
+    "very slow, lazy bubbles."
+   ],
+   [
+    747100,
+    750323,
+    "This is not an active boil situation."
+   ],
+   [
+    752650,
+    753689,
+    "See how that meat,"
+   ],
+   [
+    753690,
+    758593,
+    "it goes from ball to not at all, you know?"
+   ],
+   [
+    759759,
+    761270,
+    "And this is just breaking it up,"
+   ],
+   [
+    761270,
+    764439,
+    "mashing it lightly is gonna integrate, you know,"
+   ],
+   [
+    764440,
+    766510,
+    "the solid and liquid elements of this sauce"
+   ],
+   [
+    766510,
+    768143,
+    "and bringing it together."
+   ],
+   [
+    777200,
+    779240,
+    "Just a little layer of oil,"
+   ],
+   [
+    779240,
+    781340,
+    "just so we don't get any stickage in here."
+   ],
+   [
+    782620,
+    783847,
+    "The order is--"
+   ],
+   [
+    785614,
+    787630,
+    "[chuckling]"
+   ],
+   [
+    787630,
+    789670,
+    "I immediately thought-- - Yes!"
+   ],
+   [
+    789670,
+    793089,
+    "- The order is engage caterpillar drive, no."
+   ],
+   [
+    793090,
+    794170,
+    "Sorry, just immediately went"
+   ],
+   [
+    794170,
+    796189,
+    "to \"Hunt for Red October\" on you."
+   ],
+   [
+    796190,
+    797450,
+    "This is a little bit of like a,"
+   ],
+   [
+    797450,
+    799100,
+    "I'd rather have, like, you know,"
+   ],
+   [
+    799100,
+    802700,
+    "five layers of everything,"
+   ],
+   [
+    802700,
+    806780,
+    "then you know, that are kind of like each a little bit thin"
+   ],
+   [
+    806780,
+    809343,
+    "than like three massive layers, you know?"
+   ],
+   [
+    810470,
+    812170,
+    "I'll do the right thing and trim"
+   ],
+   [
+    814400,
+    816569,
+    "just a little strip from the next one."
+   ],
+   [
+    816570,
+    820590,
+    "I just find that the d'czecho is good like that, you know?"
+   ],
+   [
+    820590,
+    822310,
+    "You can just easily cut strips."
+   ],
+   [
+    822310,
+    823680,
+    "It's just, it's a little bit wider,"
+   ],
+   [
+    823680,
+    827699,
+    "it's a little bit more forgiving in the assembly process."
+   ],
+   [
+    827700,
+    830560,
+    "The next time, maybe I'll go this way, you know?"
+   ],
+   [
+    830560,
+    832680,
+    "I like to vary it up, that way, you know,"
+   ],
+   [
+    832680,
+    835050,
+    "each piece has like an architecture"
+   ],
+   [
+    835050,
+    838930,
+    "of kind of interlocking and overlapping, you know,"
+   ],
+   [
+    838930,
+    841370,
+    "kind of pieces of pasta."
+   ],
+   [
+    841370,
+    843840,
+    "Now here's where the magic happens."
+   ],
+   [
+    850868,
+    853340,
+    "It's pretty silent here."
+   ],
+   [
+    853340,
+    855543,
+    "I don't even wanna talk, I'm concentrating right now."
+   ],
+   [
+    855543,
+    857433,
+    "Then we repeat with Ragu."
+   ],
+   [
+    859320,
+    862383,
+    "So then, I'm gonna change the direction of the pasta, okay?"
+   ],
+   [
+    865164,
+    868247,
+    "[funky guitar music]"
+   ],
+   [
+    880800,
+    881632,
+    "Cool."
+   ],
+   [
+    893330,
+    894163,
+    "Cool."
+   ],
+   [
+    894163,
+    896700,
+    "We're gonna throw this in the oven at 425,"
+   ],
+   [
+    896700,
+    899230,
+    "just to crisp the top up, all right?"
+   ],
+   [
+    899230,
+    901353,
+    "And take this baby home."
+   ],
+   [
+    902200,
+    906163,
+    "That's gonna be a full 10 to 15, all right?"
+   ],
+   [
+    909180,
+    910329,
+    "Nice."
+   ],
+   [
+    910330,
+    911530,
+    "All right, so that's it."
+   ],
+   [
+    912590,
+    913423,
+    "We're good."
+   ],
+   [
+    913423,
+    914440,
+    "- [Producer] I also read that it needs to sit"
+   ],
+   [
+    914440,
+    916202,
+    "for 10 minutes before serving."
+   ],
+   [
+    916202,
+    917150,
+    "[groans]"
+   ],
+   [
+    917150,
+    919069,
+    "- You don't wanna serve this ripping hot"
+   ],
+   [
+    919070,
+    921660,
+    "because frankly, you wanna give it a sec"
+   ],
+   [
+    921660,
+    923780,
+    "to have all the kinda liquid,"
+   ],
+   [
+    923780,
+    925100,
+    "everything rebalance in there"
+   ],
+   [
+    925100,
+    927350,
+    "so you can get a nice, clean slice out of it."
+   ],
+   [
+    928220,
+    929650,
+    "All right."
+   ],
+   [
+    929650,
+    931490,
+    "I've got one slice taken out."
+   ],
+   [
+    931490,
+    932410,
+    "And I'm gonna do a couple more"
+   ],
+   [
+    932410,
+    933959,
+    "just so they can start to cool down."
+   ],
+   [
+    933959,
+    934791,
+    "- I'm really very happy"
+   ],
+   [
+    934792,
+    936710,
+    "'cause I'm a corner piece type of guy."
+   ],
+   [
+    936710,
+    941450,
+    "- Oh, I mean, I don't know who isn't a corner piece"
+   ],
+   [
+    941450,
+    942790,
+    "kind of individual, boom!"
+   ],
+   [
+    942790,
+    944251,
+    "- And there are no notes."
+   ],
+   [
+    944251,
+    945370,
+    "That's good, that's good."
+   ],
+   [
+    945370,
+    948170,
+    "- And it holds together, you know?"
+   ],
+   [
+    948170,
+    950000,
+    "- I remember eating lasagna growing up,"
+   ],
+   [
+    950000,
+    953570,
+    "and I would just, the smell was so intense,"
+   ],
+   [
+    953570,
+    954980,
+    "I'd wanna eat it right away,"
+   ],
+   [
+    954980,
+    956720,
+    "and I would always burn like right in here."
+   ],
+   [
+    956720,
+    958923,
+    "- Oh yeah, scorch. - Always!"
+   ],
+   [
+    963320,
+    968040,
+    "I just love how rich and velvety and creamy it is,"
+   ],
+   [
+    968040,
+    969189,
+    "the whole thing."
+   ],
+   [
+    969190,
+    971300,
+    "- Honestly, I just wanna point out, like,"
+   ],
+   [
+    971300,
+    974770,
+    "there's something that the bechamel allows that pasta to do"
+   ],
+   [
+    974770,
+    977360,
+    "where it's exposed the way they buckle up"
+   ],
+   [
+    977360,
+    980560,
+    "and get crispy and turn into like a cracker."
+   ],
+   [
+    980560,
+    981910,
+    "Maybe just a pinch of salt."
+   ],
+   [
+    983410,
+    984242,
+    "You're good?"
+   ],
+   [
+    984243,
+    985076,
+    "- I didn't say that."
+   ],
+   [
+    985076,
+    985909,
+    "Yeah, a pinch of salt."
+   ],
+   [
+    985909,
+    987240,
+    "- Okay, but maybe just a pinch of salt."
+   ],
+   [
+    987240,
+    988970,
+    "We were both thinking it, but it's cool."
+   ],
+   [
+    988970,
+    990350,
+    "Andy was being polite."
+   ],
+   [
+    990350,
+    993400,
+    "It's fine, it's fine, we're partners."
+   ],
+   [
+    993400,
+    994233,
+    "Bad boys for life."
+   ],
+   [
+    994233,
+    995319,
+    "- I meant it, bad boys for life."
+   ],
+   [
+    995320,
+    996782,
+    "- We ride together, we die together."
+   ],
+   [
+    996782,
+    999699,
+    "[funky band music]"
+   ]
+  ]
+ },
+ "frames": {
+  "mode": "high",
+  "selected": [
+   {
+    "index": 0,
+    "timestamp": 3.128,
+    "totalScore": 0.342
+   },
+   {
+    "index": 9,
+    "timestamp": 55.514,
+    "totalScore": 0.42
+   },
+   {
+    "index": 12,
+    "timestamp": 105.48,
+    "totalScore": 0.358
+   },
+   {
+    "index": 14,
+    "timestamp": 128.545,
+    "totalScore": 0.429
+   },
+   {
+    "index": 16,
+    "timestamp": 169.086,
+    "totalScore": 0.379
+   },
+   {
+    "index": 18,
+    "timestamp": 201.201,
+    "totalScore": 0.325
+   },
+   {
+    "index": 19,
+    "timestamp": 205.122,
+    "totalScore": 0.462
+   },
+   {
+    "index": 25,
+    "timestamp": 274.649,
+    "totalScore": 0.382
+   },
+   {
+    "index": 26,
+    "timestamp": 279.154,
+    "totalScore": 0.474
+   },
+   {
+    "index": 31,
+    "timestamp": 311.353,
+    "totalScore": 0.385
+   },
+   {
+    "index": 33,
+    "timestamp": 351.685,
+    "totalScore": 0.321
+   },
+   {
+    "index": 34,
+    "timestamp": 364.489,
+    "totalScore": 0.468
+   },
+   {
+    "index": 37,
+    "timestamp": 416.541,
+    "totalScore": 0.366
+   },
+   {
+    "index": 40,
+    "timestamp": 429.763,
+    "totalScore": 0.462
+   },
+   {
+    "index": 44,
+    "timestamp": 493.284,
+    "totalScore": 0.378
+   },
+   {
+    "index": 46,
+    "timestamp": 515.598,
+    "totalScore": 0.454
+   },
+   {
+    "index": 49,
+    "timestamp": 539.622,
+    "totalScore": 0.367
+   },
+   {
+    "index": 51,
+    "timestamp": 559.851,
+    "totalScore": 0.423
+   },
+   {
+    "index": 54,
+    "timestamp": 604.395,
+    "totalScore": 0.343
+   },
+   {
+    "index": 57,
+    "timestamp": 627.585,
+    "totalScore": 0.357
+   },
+   {
+    "index": 63,
+    "timestamp": 702.118,
+    "totalScore": 0.395
+   },
+   {
+    "index": 68,
+    "timestamp": 729.729,
+    "totalScore": 0.404
+   },
+   {
+    "index": 73,
+    "timestamp": 758.883,
+    "totalScore": 0.421
+   },
+   {
+    "index": 78,
+    "timestamp": 809.308,
+    "totalScore": 0.371
+   },
+   {
+    "index": 80,
+    "timestamp": 845.636,
+    "totalScore": 0.378
+   },
+   {
+    "index": 82,
+    "timestamp": 862.904,
+    "totalScore": 0.389
+   },
+   {
+    "index": 88,
+    "timestamp": 901.4,
+    "totalScore": 0.436
+   },
+   {
+    "index": 90,
+    "timestamp": 927.093,
+    "totalScore": 0.349
+   },
+   {
+    "index": 95,
+    "timestamp": 984.65,
+    "totalScore": 0.346
+   }
+  ],
+  "galleryIndices": [
+   0,
+   12,
+   16,
+   25,
+   33,
+   37,
+   46,
+   54,
+   73,
+   80,
+   90
+  ],
+  "candidates": [
+   {
+    "index": 26,
+    "timestamp": 279.154,
+    "totalScore": 1.0
+   },
+   {
+    "index": 34,
+    "timestamp": 364.489,
+    "totalScore": 0.999
+   },
+   {
+    "index": 19,
+    "timestamp": 205.122,
+    "totalScore": 0.998
+   },
+   {
+    "index": 40,
+    "timestamp": 429.763,
+    "totalScore": 0.997
+   },
+   {
+    "index": 43,
+    "timestamp": 458.041,
+    "totalScore": 0.996
+   },
+   {
+    "index": 46,
+    "timestamp": 515.598,
+    "totalScore": 0.995
+   },
+   {
+    "index": 88,
+    "timestamp": 901.4,
+    "totalScore": 0.994
+   },
+   {
+    "index": 14,
+    "timestamp": 128.545,
+    "totalScore": 0.993
+   },
+   {
+    "index": 51,
+    "timestamp": 559.851,
+    "totalScore": 0.992
+   },
+   {
+    "index": 94,
+    "timestamp": 980.396,
+    "totalScore": 0.991
+   },
+   {
+    "index": 13,
+    "timestamp": 122.664,
+    "totalScore": 0.99
+   },
+   {
+    "index": 73,
+    "timestamp": 758.883,
+    "totalScore": 0.989
+   },
+   {
+    "index": 9,
+    "timestamp": 55.514,
+    "totalScore": 0.988
+   },
+   {
+    "index": 36,
+    "timestamp": 383.174,
+    "totalScore": 0.987
+   },
+   {
+    "index": 58,
+    "timestamp": 655.029,
+    "totalScore": 0.986
+   },
+   {
+    "index": 68,
+    "timestamp": 729.729,
+    "totalScore": 0.985
+   },
+   {
+    "index": 53,
+    "timestamp": 579.454,
+    "totalScore": 0.984
+   },
+   {
+    "index": 21,
+    "timestamp": 231.898,
+    "totalScore": 0.983
+   },
+   {
+    "index": 63,
+    "timestamp": 702.118,
+    "totalScore": 0.982
+   },
+   {
+    "index": 84,
+    "timestamp": 881.464,
+    "totalScore": 0.981
+   },
+   {
+    "index": 82,
+    "timestamp": 862.904,
+    "totalScore": 0.98
+   },
+   {
+    "index": 6,
+    "timestamp": 36.078,
+    "totalScore": 0.979
+   },
+   {
+    "index": 31,
+    "timestamp": 311.353,
+    "totalScore": 0.978
+   },
+   {
+    "index": 25,
+    "timestamp": 274.649,
+    "totalScore": 0.977
+   },
+   {
+    "index": 16,
+    "timestamp": 169.086,
+    "totalScore": 0.976
+   },
+   {
+    "index": 44,
+    "timestamp": 493.284,
+    "totalScore": 0.975
+   },
+   {
+    "index": 80,
+    "timestamp": 845.636,
+    "totalScore": 0.974
+   },
+   {
+    "index": 78,
+    "timestamp": 809.308,
+    "totalScore": 0.973
+   },
+   {
+    "index": 49,
+    "timestamp": 539.622,
+    "totalScore": 0.972
+   },
+   {
+    "index": 37,
+    "timestamp": 416.541,
+    "totalScore": 0.971
+   },
+   {
+    "index": 12,
+    "timestamp": 105.48,
+    "totalScore": 0.97
+   },
+   {
+    "index": 57,
+    "timestamp": 627.585,
+    "totalScore": 0.969
+   },
+   {
+    "index": 61,
+    "timestamp": 679.929,
+    "totalScore": 0.968
+   },
+   {
+    "index": 77,
+    "timestamp": 781.614,
+    "totalScore": 0.967
+   },
+   {
+    "index": 90,
+    "timestamp": 927.093,
+    "totalScore": 0.966
+   },
+   {
+    "index": 95,
+    "timestamp": 984.65,
+    "totalScore": 0.965
+   },
+   {
+    "index": 54,
+    "timestamp": 604.395,
+    "totalScore": 0.964
+   },
+   {
+    "index": 0,
+    "timestamp": 3.128,
+    "totalScore": 0.963
+   },
+   {
+    "index": 18,
+    "timestamp": 201.201,
+    "totalScore": 0.962
+   },
+   {
+    "index": 33,
+    "timestamp": 351.685,
+    "totalScore": 0.961
+   }
+  ]
+ },
+ "sleeps": {
+  "metadata": 2.178,
+  "transcript": 0.332,
+  "lowresDownload": 14.347,
+  "sceneDetect": 27.402,
+  "scoreSelect": 10.728,
+  "hires": 9.005,
+  "upload": 2.554,
+  "manifestCheck": 0.001,
+  "persistVision": 0.0,
+  "momentFill": 10.551,
+  "qdrantStore": 0.0
+ },
+ "llm": [
+  {
+   "feature": "summarize:metadata",
+   "span": "description_analysis",
+   "model": "openai/gpt-4o-mini",
+   "latencyMs": 3452,
+   "output": "{\"links\": [{\"url\": \"https://www.bonappetit.com/recipe/ba-best-lasagna\", \"type\": \"article\", \"label\": \"Lasagna recipe\"}, {\"url\": \"https://shop.bonappetit.com/?utm_source=youtube&utm_brand=ba&utm_campaign=aud-dev&utm_medium=video&utm_content=merch-shop-promo\", \"type\": \"other\", \"label\": \"Bon Appétit merchandise\"}, {\"url\": \"https://bit.ly/313UWRu\", \"type\": \"article\", \"label\": \"Subscribe to magazine\"}], \"resources\": [], \"relatedVideos\": [], \"socialLinks\": [{\"platform\": \"other\", \"url\": \"http://bit.ly/1TLeyPn\"}], \"timestamps\": []}",
+   "finishReason": "stop",
+   "usage": {
+    "input": 639,
+    "output": 201
+   },
+   "ordinal": 0
+  },
+  {
+   "feature": "summarize:frames",
+   "span": "frame_vision",
+   "model": "anthropic/claude-sonnet-4-6",
+   "latencyMs": 61109,
+   "output": "[{\"frame_index\": 0, \"scene_type\": \"food_cooking\", \"content\": \"Chef in blue apron sautéing ingredients in a red Dutch oven on a gas range in a professional kitchen\", \"text_visible\": \"\", \"educational_value\": \"Shows the stovetop cooking technique used during the bolognese sauce preparation\", \"visual_subject\": \"mixed\"}, {\"frame_index\": 1, \"scene_type\": \"food_cooking\", \"content\": \"Chef adding a small bowl of ingredients (likely tomato paste) into the red Dutch oven on the stove\", \"text_visible\": \"\", \"educational_value\": \"Demonstrates the step of adding tomato paste or seasoning to the sauce\", \"visual_subject\": \"mixed\"}, {\"frame_index\": 2, \"scene_type\": \"food_cooking\", \"content\": \"Chef using a whisk to break up meatballs in a red Dutch oven while raw meatballs and prep bowls sit on the counter\", \"text_visible\": \"\", \"educational_value\": \"Shows the technique of breaking down meat in the pot to build the bolognese base\", \"visual_subject\": \"mixed\"}, {\"frame_index\": 3, \"scene_type\": \"food_cooking\", \"content\": \"Chef pouring canned tomatoes from a red-labeled can into the red Dutch oven on the stove\", \"text_visible\": \"\", \"educational_value\": \"Demonstrates the step of adding canned tomatoes to the sauce\", \"visual_subject\": \"mixed\"}, {\"frame_index\": 4, \"scene_type\": \"food_cooking\", \"content\": \"Chef adding a yellow ingredient (likely sponge or butter block) into a steaming red Dutch oven on the stove\", \"text_visible\": \"\", \"educational_value\": \"Shows addition of butter or another fat to enrich the simmering sauce\", \"visual_subject\": \"mixed\"}, {\"frame_index\": 5, \"scene_type\": \"food_cooking\", \"content\": \"Close-up of chef placing a dish into the oven of a professional gas range with red knobs\", \"text_visible\": \"\", \"educational_value\": \"Shows the moment the lasagna is transferred into the oven for baking\", \"visual_subject\": \"content\"}, {\"frame_index\": 6, \"scene_type\": \"food_cooking\", \"content\": \"Chef leaning down to check on a baking pan inside the professional gas oven with red knobs\", \"text_visible\": \"\", \"educational_value\": \"Demonstrates checking on the lasagna while it bakes in the oven\", \"visual_subject\": \"mixed\"}, {\"frame_index\": 7, \"scene_type\": \"food_cooking\", \"content\": \"Chef standing at counter with a bowl of ground meat mixture, a baking tray of formed meatballs, and another bowl of pink ground meat\", \"text_visible\": \"\", \"educational_value\": \"Shows the meatball forming setup with two different meat blends side by side before cooking\", \"visual_subject\": \"mixed\"}, {\"frame_index\": 8, \"scene_type\": \"food_cooking\", \"content\": \"Close-up of milk being poured from a glass measuring cup into a saucepan on a gas burner\", \"text_visible\": \"\", \"educational_value\": \"Demonstrates adding milk to begin making béchamel sauce\", \"visual_subject\": \"content\"}, {\"frame_index\": 9, \"scene_type\": \"food_cooking\", \"content\": \"Two men — one in a black t-shirt and one in a blue apron — interacting at a kitchen counter, with tomatoes visible in the background\", \"text_visible\": \"\", \"educational_value\": null, \"visual_subject\": \"presenter\"}, {\"frame_index\": 10, \"scene_type\": \"talking_head\", \"content\": \"Chef in blue apron and plaid shirt looking downward, likely at ingredients being prepared\", \"text_visible\": \"\", \"educational_value\": null, \"visual_subject\": \"presenter\"}, {\"frame_index\": 11, \"scene_type\": \"food_cooking\", \"content\": \"Close-up of a meat potato masher pressing down into a thick bolognese-style meat sauce in a black Dutch oven\", \"text_visible\": \"\", \"educational_value\": \"Shows the technique of using a potato masher to break down and texture the meat sauce\", \"visual_subject\": \"content\"}, {\"frame_index\": 12, \"scene_type\": \"food_cooking\", \"content\": \"Chef explaining meatball preparation at counter with a bowl of formed meatballs and a bowl of ground meat visible\", \"text_visible\": \"\", \"educational_value\": \"Introduces the meatball-making stage and the two meat mixtures being used\", \"visual_subject\": \"mixed\"}, {\"frame_index\": 13, \"scene_type\": \"food_cooking\", \"content\": \"Chef gesturing while explaining a step next to the stove where a red Dutch oven and large stock pot are cooking\", \"text_visible\": \"\", \"educational_value\": \"Chef explains cooking technique or ingredient rationale at the stovetop\", \"visual_subject\": \"mixed\"}, {\"frame_index\": 14, \"scene_type\": \"food_cooking\", \"content\": \"Chef arranging yellow lasagna sheets on a baking tray next to a pan of béchamel sauce on the stove\", \"text_visible\": \"\", \"educational_value\": \"Shows the pasta preparation and staging before layering the lasagna\", \"visual_subject\": \"mixed\"}, {\"frame_index\": 15, \"scene_type\": \"food_cooking\", \"content\": \"Chef standing at stove explaining a step with a saucepan of béchamel simmering on the burner\", \"text_visible\": \"\", \"educational_value\": \"Shows the béchamel sauce cooking stage with verbal explanation\", \"visual_subject\": \"mixed\"}, {\"frame_index\": 16, \"scene_type\": \"food_cooking\", \"content\": \"Chef examining a yellow box of lasagna noodles while a pot of béchamel simmers on the stove\", \"text_visible\": \"\", \"educational_value\": \"Shows selection and use of store-bought no-boil or standard lasagna noodles\", \"visual_subject\": \"mixed\"}, {\"frame_index\": 17, \"scene_type\": \"food_cooking\", \"content\": \"Close-up overhead shot of diced pancetta, onion, carrot, and celery (soffritto) being stirred in a red Dutch oven\", \"text_visible\": \"\", \"educational_value\": \"Demonstrates building the classic Italian soffritto base for the bolognese sauce\", \"visual_subject\": \"content\"}, {\"frame_index\": 18, \"scene_type\": \"food_cooking\", \"content\": \"Close-up of grated cheese being added from a bowl into a saucepan of béchamel while being whisked on a gas burner\", \"text_visible\": \"\", \"educational_value\": \"Shows the step of incorporating cheese into the béchamel to make a cheese sauce\", \"visual_subject\": \"content\"}, {\"frame_index\": 19, \"scene_type\": \"food_cooking\", \"content\": \"Blurry close-up of a dark Dutch oven with utensils and lasagna sheets arranged on the counter\", \"text_visible\": \"\", \"educational_value\": \"Transitional shot showing lasagna assembly prep materials\", \"visual_subject\": \"content\"}, {\"frame_index\": 20, \"scene_type\": \"food_cooking\", \"content\": \"Close-up of raw lasagna noodles being layered over a layer of meat bolognese sauce in a white ceramic baking dish\", \"text_visible\": \"\", \"educational_value\": \"Shows the pasta layering step in lasagna assembly\", \"visual_subject\": \"content\"}, {\"frame_index\": 21, \"scene_type\": \"talking_head\", \"content\": \"Chef in blue apron speaking to camera in a professional kitchen\", \"text_visible\": \"\", \"educational_value\": null, \"visual_subject\": \"presenter\"}, {\"frame_index\": 22, \"scene_type\": \"food_cooking\", \"content\": \"Blurry close-up of vegetables being stirred in a hot Dutch oven on the stove with steam rising\", \"text_visible\": \"\", \"educational_value\": \"Action shot of sautéing the soffritto vegetables over high heat\", \"visual_subject\": \"content\"}, {\"frame_index\": 23, \"scene_type\": \"food_cooking\", \"content\": \"Close-up macro shot of diced onion, carrot, celery, and pancetta being tossed in a black Dutch oven\", \"text_visible\": \"\", \"educational_value\": \"Clearly shows the soffritto ingredients and their even dice for even cooking\", \"visual_subject\": \"content\"}, {\"frame_index\": 24, \"scene_type\": \"food_cooking\", \"content\": \"Close-up of raw ground meat portions placed in a large red Staub Dutch oven on the stove before browning\", \"text_visible\": \"STAUB\", \"educational_value\": \"Shows the initial placement of meat in the pot before breaking it down for the bolognese\", \"visual_subject\": \"content\"}, {\"frame_index\": 25, \"scene_type\": \"food_cooking\", \"content\": \"Close-up of browned meatballs being broken up with a spatula in tomato-milk sauce inside a red Staub Dutch oven\", \"text_visible\": \"STAUB\", \"educational_value\": \"Shows the stage where meatballs have been browned and milk/tomato has been added to braise them\", \"visual_subject\": \"content\"}, {\"frame_index\": 26, \"scene_type\": \"food_cooking\", \"content\": \"Chef laying lasagna noodles over béchamel sauce in a white ceramic baking dish during assembly\", \"text_visible\": \"\", \"educational_value\": \"Shows the layering technique: pasta sheets placed over béchamel with bolognese visible beneath\", \"visual_subject\": \"content\"}, {\"frame_index\": 27, \"scene_type\": \"food_cooking\", \"content\": \"Chef pressing lasagna noodles into a white baking dish over the bolognese layer during assembly\", \"text_visible\": \"\", \"educational_value\": \"Shows the hands-on technique of fitting and pressing the pasta sheets into the baking dish\", \"visual_subject\": \"content\"}, {\"frame_index\": 28, \"scene_type\": \"food_cooking\", \"content\": \"Close-up of a golden butter-flour roux being whisked in a saucepan on a gas burner\", \"text_visible\": \"\", \"educational_value\": \"Demonstrates making the roux base for the béchamel sauce\", \"visual_subject\": \"content\"}, {\"frame_index\": 29, \"scene_type\": \"food_cooking\", \"content\": \"Close-up of steam rising from a large black Dutch oven on a gas burner, with chef's arm visible\", \"text_visible\": \"\", \"educational_value\": \"Shows the sauce simmering stage, indicating heat level and steam during reduction\", \"visual_subject\": \"content\"}, {\"frame_index\": 30, \"scene_type\": \"food_cooking\", \"content\": \"Chef forming ground meat mixture into meatball shapes in a glass bowl at the prep counter\", \"text_visible\": \"\", \"educational_value\": \"Shows the meatball forming technique using hands and the ground meat mixture\", \"visual_subject\": \"mixed\"}, {\"frame_index\": 31, \"scene_type\": \"food_cooking\", \"content\": \"Chef stirring multiple saucepans on the stove simultaneously, with béchamel and pasta water visible\", \"text_visible\": \"\", \"educational_value\": \"Shows multi-tasking at the stove while managing the béchamel and pasta water stages\", \"visual_subject\": \"mixed\"}, {\"frame_index\": 32, \"scene_type\": \"food_cooking\", \"content\": \"Chef preparing ingredients at the stove with a large pot of white béchamel and lasagna noodle box on the counter\", \"text_visible\": \"\", \"educational_value\": \"Shows the béchamel finishing stage while also staging lasagna noodles for assembly\", \"visual_subject\": \"mixed\"}, {\"frame_index\": 33, \"scene_type\": \"food_cooking\", \"content\": \"Chef setting up lasagna assembly station with a white baking dish, Dutch oven of bolognese, and bowl of béchamel sauce\", \"text_visible\": \"\", \"educational_value\": \"Shows the assembly setup: all three components (bolognese, béchamel, and baking dish) ready to layer\", \"visual_subject\": \"mixed\"}, {\"frame_index\": 34, \"scene_type\": \"food_cooking\", \"content\": \"Close-up of a fully baked lasagna with golden-brown top being cut with an offset spatula in a white ceramic dish\", \"text_visible\": \"\", \"educational_value\": \"Shows the finished baked lasagna and the moment it is portioned for serving\", \"visual_subject\": \"content\"}, {\"frame_index\": 35, \"scene_type\": \"food_cooking\", \"content\": \"Two men tasting and discussing the finished lasagna, with a serving of lasagna on a plate and the baking dish on the counter\", \"text_visible\": \"\", \"educational_value\": \"Shows the final tasting and reaction to the completed dish, wrapping up the recipe\", \"visual_subject\": \"mixed\"}, {\"frame_index\": 36, \"scene_type\": \"food_cooking\", \"content\": \"Chef's hand dropping lasagna noodles into a large pot of boiling water on the stove\", \"text_visible\": \"\", \"educational_value\": \"Shows the pasta boiling step before layering the lasagna\", \"visual_subject\": \"content\"}, {\"frame_index\": 37, \"scene_type\": \"intro\", \"content\": \"Title card overlay showing a fully baked lasagna being removed from the oven with large text partially reading 'CH... A/S RES...'\", \"text_visible\": \"CH A/S RES\", \"educational_value\": \"Intro frame previewing the finished lasagna dish and establishing the video's subject\", \"visual_subject\": \"mixed\"}, {\"frame_index\": 38, \"scene_type\": \"food_cooking\", \"content\": \"Close-up of meatballs in a Dutch oven, with one side browned and the other still raw, in the process of searing\", \"text_visible\": \"\", \"educational_value\": \"Clearly shows the Maillard browning on one side of the meatballs during the searing step\", \"visual_subject\": \"content\"}, {\"frame_index\": 39, \"scene_type\": \"food_cooking\", \"content\": \"Chef holding a small bowl of tomato paste and a box of lasagna noodles while explaining the next recipe steps at the stove\", \"text_visible\": \"\", \"educational_value\": \"Introduces the tomato paste and pasta noodles as the next ingredients to be used in the recipe\", \"visual_subject\": \"mixed\"}]",
+   "finishReason": "stop",
+   "usage": {
+    "input": 32151,
+    "output": 3490,
+    "cacheRead": 0,
+    "cacheWrite": 0
+   },
+   "ordinal": 0
+  },
+  {
+   "feature": "summarize:classifier",
+   "span": "classifier",
+   "model": "openai/gpt-4o-mini",
+   "latencyMs": 2320,
+   "output": "{\"domain\": \"food\", \"format\": \"tutorial\", \"confidence\": 0.95, \"reasoning\": \"The video features a step-by-step cooking guide for making lasagna, demonstrating the preparation and cooking process, which aligns with the characteristics of a tutorial format. It focuses on food content, specifically a cooking recipe, making it fit squarely within the food domain.\", \"traits\": {\"has_steps\": true, \"has_drills\": false, \"has_comparison\": false, \"has_narrative\": false, \"has_code\": false, \"has_visual_demo\": true, \"is_opinionated\": false, \"is_list\": false}}",
+   "finishReason": "stop",
+   "usage": {
+    "input": 1695,
+    "output": 153,
+    "cacheRead": 0,
+    "cacheWrite": 0
+   },
+   "ordinal": 0
+  },
+  {
+   "feature": "summarize:plan",
+   "span": "plan",
+   "model": "anthropic/claude-sonnet-4-6",
+   "latencyMs": 26117,
+   "output": "```json\n{\n  \"reasoning\": \"Chris Morocco from the Bon Appétit Test Kitchen makes their 'best ever' lasagna. The video's unique angle is the MeatballMethod™ — forming meatballs, browning them for deep sear, then breaking them into ragù — which is a counterintuitive but test-kitchen-validated technique. The video also has a specific recommendation against no-boil noodles and for the béchamel. This is a full tutorial with clear sequential steps, a specific ingredient list, and expert tips scattered throughout. Domain rules require checklist (ingredients) + step_player (recipe steps). The visual frames are rich — meatball browning, béchamel whisking, layering assembly, baked lasagna closeups — so moment_track with endSeconds on key technique demos adds real value. Info_grid for chef tips rounds it out.\",\n\n  \"identity\": {\n    \"creatorType\": \"test kitchen chef / food magazine\",\n    \"tone\": \"casual-funny with professional authority\",\n    \"audience\": \"home cooks who want to level up\"\n  },\n\n  \"corePromise\": \"Make Bon Appétit's best-ever lasagna using the MeatballMethod™ for the deepest flavor and ooziest texture\",\n  \"uniqueAngle\": \"The MeatballMethod™ — forming and searing meatballs before breaking them into ragù — solves the problem of browning a large batch of meat without overcrowding the pan, yielding superior color and tenderness\",\n\n  \"extractionGuidance\": {\n    \"primaryFocus\": \"Every ingredient with exact quantity, and every step in order — especially the MeatballMethod™ steps (form → sear → break) and the béchamel technique (roux → milk → cheese). Capture the specific layering sequence for assembly.\",\n    \"watchOutFor\": \"Chris gives critical technique cues visually (e.g., what the roux looks like when ready, how the meatballs should look when seared) — capture these as step tips alongside timestamps so frames can attach. Also note the explicit no-boil noodle warning and the milk-in-sauce decision.\"\n  },\n\n  \"itemCounts\": {\n    \"steps\": 10,\n    \"spots\": 0,\n    \"exercises\": 0,\n    \"ingredients\": 18,\n    \"songs\": 0,\n    \"tips\": 6,\n    \"products\": 0,\n    \"codeSnippets\": 0,\n    \"concepts\": 0\n  },\n\n  \"contentTags\": [\"food\"],\n  \"modifiers\": [],\n  \"primaryTag\": \"food\",\n  \"userGoal\": \"Cook BA's best lasagna this weekend using the MeatballMethod™\",\n  \"confidence\": 0.97,\n\n  \"tabs\": [\n    {\n      \"id\": \"ingredients\",\n      \"label\": \"🛒 18 Ingredients\",\n      \"emoji\": \"🛒\",\n      \"component\": \"checklist\",\n      \"dataSource\": \"food.ingredients\",\n      \"goal\": \"Everything you need for the ragù, béchamel, and assembly — check items off as you shop or gather from the pantry.\",\n      \"outboundLinks\": {\n        \"cook_steps\": \"Start cooking\",\n        \"chef_tips\": \"Read Chris's tips first\"\n      }\n    },\n    {\n      \"id\": \"cook_steps\",\n      \"label\": \"👨‍🍳 10 Steps\",\n      \"emoji\": \"👨‍🍳\",\n      \"component\": \"step_player\",\n      \"dataSource\": \"food.steps\",\n      \"goal\": \"Follow Chris step-by-step — from rolling meatballs to pulling the bubbling dish out of the oven. Timers and technique cues included.\",\n      \"outboundLinks\": {\n        \"ingredients\": \"Check ingredients\",\n        \"key_moments\": \"Watch the techniques\",\n        \"chef_tips\": \"See chef tips\"\n      }\n    },\n    {\n      \"id\": \"chef_tips\",\n      \"label\": \"🔥 Chris's Pro Tips\",\n      \"emoji\": \"🔥\",\n      \"component\": \"info_grid\",\n      \"dataSource\": \"food.tips\",\n      \"goal\": \"The test-kitchen secrets that make this lasagna special — including why no-boil noodles are a trap and why meatballs are the move.\",\n      \"outboundLinks\": {\n        \"cook_steps\": \"Follow the steps\",\n        \"key_moments\": \"See the demos\"\n      }\n    },\n    {\n      \"id\": \"key_moments\",\n      \"label\": \"🎬 Key Techniques\",\n      \"emoji\": \"🎬\",\n      \"component\": \"moment_track\",\n      \"dataSource\": \"learning.timestamps\",\n      \"goal\": \"Jump to the exact moment Chris demonstrates each technique — searing the meatballs, whisking the béchamel, layering the pasta, and that golden baked finish.\",\n      \"outboundLinks\": {\n        \"cook_steps\": \"Follow along step-by-step\",\n        \"chef_tips\": \"Read the tips\"\n      }\n    }\n  ]\n}\n```",
+   "finishReason": "stop",
+   "usage": {
+    "input": 15316,
+    "output": 1231,
+    "cacheRead": 0,
+    "cacheWrite": 14005
+   },
+   "ordinal": 0
+  },
+  {
+   "feature": "summarize:extraction",
+   "span": "extraction",
+   "model": "anthropic/claude-haiku-4-5-20251001",
+   "latencyMs": 82433,
+   "output": "```json\n{\n  \"meta\": {\n    \"prepTime\": \"45 min\",\n    \"cookTime\": \"3 hours\",\n    \"servings\": \"8-10\",\n    \"difficulty\": \"medium\",\n    \"cuisine\": \"Italian\"\n  },\n  \"ingredients\": [\n    {\n      \"name\": \"ground beef\",\n      \"amount\": 1.0,\n      \"displayAmount\": \"1\",\n      \"unit\": \"lb\",\n      \"group\": \"For the Ragù Bolognese\",\n      \"notes\": \"mixed with pork, seasoned liberally with salt\"\n    },\n    {\n      \"name\": \"ground pork\",\n      \"amount\": 1.0,\n      \"displayAmount\": \"1\",\n      \"unit\": \"lb\",\n      \"group\": \"For the Ragù Bolognese\",\n      \"notes\": \"mixed with beef, seasoned liberally with salt\"\n    },\n    {\n      \"name\": \"pancetta\",\n      \"amount\": 6.0,\n      \"displayAmount\": \"6\",\n      \"unit\": \"ounces\",\n      \"group\": \"For the Ragù Bolognese\",\n      \"notes\": \"diced, rendered for fat\"\n    },\n    {\n      \"name\": \"yellow onion\",\n      \"amount\": 1.0,\n      \"displayAmount\": \"1\",\n      \"unit\": \"large\",\n      \"group\": \"For the Ragù Bolognese\",\n      \"notes\": \"finely diced\"\n    },\n    {\n      \"name\": \"carrot\",\n      \"amount\": 1.0,\n      \"displayAmount\": \"1\",\n      \"unit\": \"large\",\n      \"group\": \"For the Ragù Bolognese\",\n      \"notes\": \"finely diced\"\n    },\n    {\n      \"name\": \"celery\",\n      \"amount\": 2.0,\n      \"displayAmount\": \"2\",\n      \"unit\": \"stalks\",\n      \"group\": \"For the Ragù Bolognese\",\n      \"notes\": \"finely diced\"\n    },\n    {\n      \"name\": \"tomato paste\",\n      \"amount\": 3.0,\n      \"displayAmount\": \"3\",\n      \"unit\": \"tablespoons\",\n      \"group\": \"For the Ragù Bolognese\",\n      \"notes\": \"double-concentrated (Mutti brand tube recommended), toasted in oil before liquid added\"\n    },\n    {\n      \"name\": \"dry white wine\",\n      \"amount\": 1.0,\n      \"displayAmount\": \"1\",\n      \"unit\": \"cup\",\n      \"group\": \"For the Ragù Bolognese\",\n      \"notes\": \"added after tomato paste is cooked out, reduced separately\"\n    },\n    {\n      \"name\": \"canned tomatoes\",\n      \"amount\": 28.0,\n      \"displayAmount\": \"28\",\n      \"unit\": \"ounces\",\n      \"group\": \"For the Ragù Bolognese\",\n      \"notes\": \"one can, broken up by hand\"\n    },\n    {\n      \"name\": \"low-sodium chicken broth\",\n      \"amount\": 2.0,\n      \"displayAmount\": \"2\",\n      \"unit\": \"cups\",\n      \"group\": \"For the Ragù Bolognese\",\n      \"notes\": \"added with meatballs and milk\"\n    },\n    {\n      \"name\": \"whole milk\",\n      \"amount\": 1.0,\n      \"displayAmount\": \"1\",\n      \"unit\": \"cup\",\n      \"group\": \"For the Ragù Bolognese\",\n      \"notes\": \"added with broth and meatballs to braise\"\n    },\n    {\n      \"name\": \"unsalted butter\",\n      \"amount\": 6.0,\n      \"displayAmount\": \"6\",\n      \"unit\": \"tablespoons\",\n      \"group\": \"For the Béchamel\",\n      \"notes\": \"melted completely before flour is added\"\n    },\n    {\n      \"name\": \"all-purpose flour\",\n      \"amount\": 7.0,\n      \"displayAmount\": \"7\",\n      \"unit\": \"tablespoons\",\n      \"group\": \"For the Béchamel\",\n      \"notes\": \"toasted in roux for flavor development\"\n    },\n    {\n      \"name\": \"whole milk\",\n      \"amount\": 4.0,\n      \"displayAmount\": \"4\",\n      \"unit\": \"cups\",\n      \"group\": \"For the Béchamel\",\n      \"notes\": \"whisked in vigorously to prevent lumps, brought to boil for starch to thicken\"\n    },\n    {\n      \"name\": \"Parmigiano-Reggiano\",\n      \"amount\": 1.0,\n      \"displayAmount\": \"1\",\n      \"unit\": \"cup\",\n      \"group\": \"For the Béchamel\",\n      \"notes\": \"finely grated, added after béchamel thickens\"\n    },\n    {\n      \"name\": \"nutmeg\",\n      \"amount\": 0.25,\n      \"displayAmount\": \"1/4\",\n      \"unit\": \"teaspoon\",\n      \"group\": \"For the Béchamel\",\n      \"notes\": \"freshly grated or ground, traditional with béchamel\"\n    },\n    {\n      \"name\": \"cayenne pepper\",\n      \"amount\": 0.125,\n      \"displayAmount\": \"1/8\",\n      \"unit\": \"teaspoon\",\n      \"group\": \"For the Béchamel\",\n      \"notes\": \"lifts flavor without making dish spicy\"\n    },\n    {\n      \"name\": \"lasagna sheets\",\n      \"amount\": 1.0,\n      \"displayAmount\": \"1\",\n      \"unit\": \"box\",\n      \"group\": \"For Assembly\",\n      \"notes\": \"d'Zcecho brand, fresh egg pasta (not no-boil), ~18-20 sheets needed\"\n    },\n    {\n      \"name\": \"salt\",\n      \"amount\": 0,\n      \"displayAmount\": \"to taste\",\n      \"unit\": \"\",\n      \"group\": \"For Assembly\",\n      \"notes\": \"for pasta water (generous amount)\"\n    }\n  ],\n  \"steps\": [\n    {\n      \"number\": 1,\n      \"instruction\": \"Combine ground beef and ground pork in a bowl. Season liberally with salt and mix gently without overworking. Form into meatballs about the size of golf balls. You should have ~16-18 meatballs.\",\n      \"duration\": \"15 min\",\n      \"tips\": \"Don't overwork the mixture — you want loose, tender meatballs. Form them gently and allow gaps between meatballs when browning so steam can escape.\",\n      \"timestamp\": 105\n    },\n    {\n      \"number\": 2,\n      \"instruction\": \"Heat a large Dutch oven (red Staub preferred) over medium-high heat until very hot. Working in two batches, sear the meatballs without moving them, developing deep brown color on all sides (~5-6 minutes per batch). You're not cooking them through — just browning the exterior for flavor. Transfer browned meatballs to a plate.\",\n      \"duration\": \"12 min\",\n      \"tips\": \"The meatball method lets you brown all meat efficiently with gaps between balls for steam to escape. Don't crowd the pan or move the meat around — let it sit and develop color. You'll develop fond (brown bits) on the bottom — this is where the flavor lives. Don't scorch it.\",\n      \"timestamp\": 149\n    },\n    {\n      \"number\": 3,\n      \"instruction\": \"In the same Dutch oven, cook diced pancetta over medium heat until lightly browned and crispy, rendering out its fat (~3-4 minutes). Add finely diced onion, carrot, and celery. Season with a pinch of salt to help draw moisture from vegetables. Cook, stirring occasionally, until vegetables are very soft and their color intensifies (~8-10 minutes). Do not brown them.\",\n      \"duration\": \"12 min\",\n      \"tips\": \"Keep heat at medium — you don't want it crazy hot. The cured pork imparts massive flavor. Carrot and celery are essential in bolognese, providing a well-rounded vegetable base that just 'belongs' in this sauce.\",\n      \"timestamp\": 275\n    },\n    {\n      \"number\": 4,\n      \"instruction\": \"Once vegetables are soft, add 3 tablespoons of tomato paste directly on top of the vegetables (do not mix yet). Let it cook in the oil for ~2 minutes without any liquid present — the oil fries the paste at a higher temperature, concentrating its flavor. This is critical and must happen before liquid is added.\",\n      \"duration\": \"3 min\",\n      \"tips\": \"Never add liquid first, then tomato paste — the paste will not develop properly. The oil temperature (higher than any simmering liquid) is essential for cooking out the paste's raw edge. You'll see the fat almost separating from the paste when it's ready.\",\n      \"timestamp\": 351\n    },\n    {\n      \"number\": 5,\n      \"instruction\": \"Add 1 cup of dry white wine to the Dutch oven. Let it simmer on its own, cooking down for ~3-4 minutes so the alcohol burns off and the flavor concentrates. While the wine reduces, add a bit of the tomato mixture to start concentrating separately.\",\n      \"duration\": \"5 min\",\n      \"tips\": \"The wine adds acidity and must cook down by itself before other liquids are added. This concentrated flavor is essential to the sauce's balance.\",\n      \"timestamp\": 385\n    },\n    {\n      \"number\": 6,\n      \"instruction\": \"Break apart one 28-ounce can of canned tomatoes by hand (use a clean cut if you can, no jagged edges). Add to the Dutch oven. Simmer, stirring occasionally, until the tomatoes break down and the sauce reaches a point where fat is almost separating from the liquid — about 8-10 minutes. Season with a pinch of salt.\",\n      \"duration\": \"10 min\",\n      \"tips\": \"The sauce should almost fry as much as it simmers at this stage. You'll see the fat separating out from the liquid when it's ready. The bright tomato flavor will balance once everything braises.\",\n      \"timestamp\": 420\n    },\n    {\n      \"number\": 7,\n      \"instruction\": \"Return the browned meatballs to the Dutch oven. Add 2 cups low-sodium chicken broth and 1 cup whole milk. Stir gently to combine. Bring the mixture back to a good simmer (not a rolling boil — just gentle bubbles).\",\n      \"duration\": \"5 min\",\n      \"tips\": \"The milk is essential to traditional bolognese — it balances the acidity and adds richness. Return to simmer gently before putting in oven.\",\n      \"timestamp\": 485\n    },\n    {\n      \"number\": 8,\n      \"instruction\": \"Cover the Dutch oven with the lid slightly ajar. Place in a 225°F oven for 2.5-3 hours. The sauce will braise slowly on very lazy, slow bubbles. After about 2 hours, remove the lid and break up the meatballs with a potato masher, mashing lightly to integrate the solid and liquid elements. The sauce should reduce and thicken. Continue cooking until very rich and concentrated.\",\n      \"duration\": \"180 min\",\n      \"tips\": \"Low and slow is the key — you want a lazy simmer, not an aggressive boil. The long braise allows flavors to meld and the sauce to reduce and concentrate. Breaking up the meatballs halfway through integrates everything and adds body to the sauce.\",\n      \"timestamp\": 515\n    },\n    {\n      \"number\": 9,\n      \"instruction\": \"While the ragù braises, make the béchamel. Melt 6 tablespoons of unsalted butter in a saucepan over medium heat. Once completely melted, add 7 tablespoons of all-purpose flour, whisking constantly. Toast the roux for ~2 minutes — there's incredible flavor development when you toast flour. Add 4 cups of whole milk, whisking very vigorously as you pour to prevent lumps. Crank heat to medium-high and bring to a boil (the starch needs to boil to fully thicken). Once thickened and at a boil (~10 minutes total), add 1 cup finely grated Parmigiano-Reggiano, 1/4 teaspoon nutmeg, and 1/8 teaspoon cayenne pepper. Whisk until smooth. Season with salt to taste. Set aside.\",\n      \"duration\": \"15 min\",\n      \"tips\": \"Toast the flour roux — don't skip this step. The starch must come to a boil to fully thicken, so crank the heat. Whisk vigorously as milk goes in to avoid lumps. The nutmeg and cayenne are traditional béchamel additions that wake up the flavor without being spicy.\",\n      \"timestamp\": 540\n    },\n    {\n      \"number\": 10,\n      \"instruction\": \"Bring a large pot of generously salted water to a rolling boil. Add lasagna sheets one by one, stirring gently to prevent sticking. Cook for 3 minutes until flexible but still with a slight snap when bent (not fully tender). Remove sheets carefully and lay flat on parchment or wax paper in single layers — do not stack or they'll stick. Repeat with remaining sheets in a second batch if needed (cooking ~10 sheets per batch). Do not keep sheets in water longer than necessary — they'll continue absorbing water.\",\n      \"duration\": \"12 min\",\n      \"tips\": \"Add sheets one by one and stir continuously so they don't stick together. The tricky thing with lasagna noodles is they really, really stick — constant agitation prevents this. 3 minutes is the sweet spot — they should be flexible with a slight snap, not limp. Lay on parchment immediately after cooking to prevent sticking. Use d'Zcecho sheets, not no-boil — regular pasta performs far better.\",\n      \"timestamp\": 604\n    },\n    {\n      \"number\": 11,\n      \"instruction\": \"In a 9x13-inch white ceramic baking dish, spread a thin layer of ragù on the bottom (~1 cup). Add a layer of béchamel sauce. Layer 4-5 lasagna sheets in a single layer, overlapping slightly and trimming as needed. Repeat layers: ragù, béchamel, pasta sheets. Vary the direction of the pasta with each layer so pieces interlock and overlap, creating an architecture of interlocking pasta. Continue layering until you've used all ingredients, ending with a top layer of béchamel sauce. Drizzle a thin layer of oil on top to prevent stickiness.\",\n      \"duration\": \"10 min\",\n      \"tips\": \"Five thin layers of everything is better than three massive layers — it creates better texture and integration. Overlap the pasta sheets and vary direction with each layer so each piece has an architecture of interlocking and overlapping pasta. End with béchamel on top. The d'Zcecho sheets are wider and more forgiving for assembly — you can easily trim strips.\",\n      \"timestamp\": 805\n    },\n    {\n      \"number\": 12,\n      \"instruction\": \"Cover the assembled lasagna loosely with foil. Bake at 375°F for 30-40 minutes until the sauce is bubbling gently around the edges. Remove foil, then increase oven temperature to 425°F and bake for an additional 10-15 minutes until the top is golden brown and crispy.\",\n      \"duration\": \"50 min\",\n      \"tips\": \"Bake covered first at 375°F to prevent the top from burning before the inside is hot. The gentle bubble around the edges signals everything is warm. Crank to 425°F at the end to crisp the top. Watch carefully — the béchamel allows pasta to buckle up and get crispy like a cracker.\",\n      \"timestamp\": 835\n    },\n    {\n      \"number\": 13,\n      \"instruction\": \"Remove from oven and let rest for 10 minutes before serving. This allows all the liquid and elements to rebalance so you can get a nice, clean slice. Cut into portions and serve.\",\n      \"duration\": \"10 min\",\n      \"tips\": \"Resist the urge to serve ripping hot — the rest allows everything to set up and the slice will hold together cleanly. You'll burn your mouth if you eat it immediately. The lasagna should be rich, velvety, and creamy throughout.\",\n      \"timestamp\": 960\n    }\n  ],\n  \"tips\": [\n    {\n      \"type\": \"chef_tip\",\n      \"text\": \"The MeatballMethod™ is the game-changer: form meat into meatballs and sear them in two batches instead of browning ground meat loose. This creates massive color development on all sides without overcrowding the pan, and steam escapes through the gaps. You get superior browning and the meat stays tender since it finishes braising, not searing.\"\n    },\n    {\n      \"type\": \"chef_tip\",\n      \"text\": \"Tomato paste must be toasted in oil BEFORE any liquid is added. The oil temperature (higher than simmering) is critical for cooking out the raw edge and concentrating flavor. Add it directly on top of aromatics, let it sit in the oil for ~2 minutes, then add wine.\"\n    },\n    {\n      \"type\": \"chef_tip\",\n      \"text\": \"Toast the flour roux in butter for ~2 minutes — there's incredible flavor development. Then whisk milk in vigorously. Crank heat to boil because starch must reach a boil to fully thicken. This is non-negotiable for proper béchamel.\"\n    },\n    {\n      \"type\": \"chef_tip\",\n      \"text\": \"There is an alchemy to pasta cooked with béchamel that cannot be replicated by adding cheese alone. The béchamel creates a creaminess and allows the pasta to buckle up and get crispy like a cracker in spots — this is the magic of traditional lasagna.\"\n    },\n    {\n      \"type\": \"chef_tip\",\n      \"text\": \"Layer thin: five thin layers of everything beat three massive layers. Vary the direction of pasta sheets with each layer so they interlock and overlap, creating better texture and architecture. The wider d'Zcecho sheets are forgiving and can be easily trimmed.\"\n    },\n    {\n      \"type\": \"warning\",\n      \"text\": \"Do NOT use no-boil lasagna sheets. Store-bought fresh egg pasta sheets (like d'Zcecho) perform perfectly and better than no-boil versions. They absorb flavor and create superior texture.\"\n    },\n    {\n      \"type\": \"warning\",\n      \"text\": \"Do not keep cooked pasta sheets in water longer than necessary — they'll continue absorbing water and become mushy. Lay them flat on parchment immediately after cooking. Don't stack them or they'll stick together.\"\n    },\n    {\n      \"type\": \"warning\",\n      \"text\": \"When searing meatballs, don't force browning or move them around excessively. Let them sit and develop color. Avoid scorching the fond (brown bits) on the bottom — that's where the flavor lives.\"\n    },\n    {\n      \"type\": \"warning\",\n      \"text\": \"The ragù braises at a LOW, lazy simmer (225°F for 2.5-3 hours) — not an aggressive boil. Slow cooking allows flavors to meld and the sauce to concentrate properly.\"\n    },\n    {\n      \"type\": \"substitution\",\n      \"text\": \"If you don't have pancetta, use guanciale or bacon for the cured pork component, though pancetta's subtle flavor is traditional. Adjust salt if using bacon since it's already quite salty.\"\n    }\n  ],\n  \"equipment\": [\n    \"Large Dutch oven (red Staub 5-6 quart recommended)\",\n    \"Heavy-bottomed saucepan (for béchamel)\",\n    \"Large stockpot (for pasta water)\",\n    \"Whisk\",\n    \"Silicone or wooden spatula\",\n    \"Potato masher\",\n    \"Measuring cups and spoons\",\n    \"Sharp knife and cutting board\",\n    \"9x13-inch white ceramic baking dish\",\n    \"Parchment or wax paper\",\n    \"Offset spatula (for serving)\",\n    \"Professional gas range with oven\",\n    \"Foil (for covering during initial bake)\"\n  ],\n  \"substitutions\": [\n    {\n      \"original\": \"pancetta\",\n      \"substitute\": \"guanciale or bacon\",\n      \"notes\": \"Guanciale is more traditional and flavorful; bacon works but is saltier — adjust salt accordingly\"\n    },\n    {\n      \"original\": \"d'Zcecho fresh lasagna sheets\",\n      \"substitute\": \"other fresh egg pasta lasagna sheets\",\n      \"notes\": \"Must be fresh, not no-boil. Fresh pasta yields superior flavor absorption and texture. No-boil sheets are a trap — Chris explicitly warns against them.\"\n    },\n    {\n      \"original\": \"whole milk (for ragù and béchamel)\",\n      \"substitute\": \"heavy cream (for ragù only)\",\n      \"notes\": \"Cream adds extra richness but alters the traditional balance — milk is the classic choice and creates proper creaminess\"\n    },\n    {\n      \"original\": \"low-sodium chicken broth\",\n      \"substitute\": \"beef broth or vegetable broth\",\n      \"notes\": \"Chicken broth is neutral and allows meat flavor to dominate; beef broth would be heavier but acceptable\"\n    }\n  ],\n  \"nutrition\": []\n}\n```\n\n---\n\n## **Interactive Tabs**\n\n### **Tab 1: 🛒 18 Ingredients** (Checklist)\n\nCheck off items as you gather them. The recipe is grouped by component (Ragù, Béchamel, Assembly) for easy shopping and prep.\n\n**For the Ragù Bolognese:**\n- ☐ Ground beef (1 lb)\n- ☐ Ground pork (1 lb)\n- ☐ Pancetta (6 oz, diced)\n- ☐ Yellow onion (1 large, diced)\n- ☐ Carrot (1 large, diced)\n- ☐ Celery (2 stalks, diced)\n- ☐ Tomato paste (3 tbsp, double-concentrated)\n- ☐ Dry white wine (1 cup)\n- ☐ Canned tomatoes (28 oz, one can)\n- ☐ Low-sodium chicken broth (2 cups)\n- ☐ Whole milk (1 cup)\n- ☐ Salt (to taste)\n\n**For the Béchamel:**\n- ☐ Unsalted butter (6 tbsp)\n- ☐ All-purpose flour (7 tbsp)\n- ☐ Whole milk (4 cups)\n- ☐ Parmigiano-Reggiano (1 cup, grated)\n- ☐ Nutmeg (1/4 tsp)\n- ☐ Cayenne pepper (1/8 tsp)\n\n**For Assembly:**\n- ☐ Lasagna sheets, fresh egg pasta (1 box, ~18–20 sheets)\n- ☐ Salt for pasta water (generous)\n\n---\n\n### **Tab 2: 👨‍🍳 12 Steps** (Step Player)\n\nFollow Chris step-by-step with pro tips, timing, and video jump links.\n\n| # | Step | Duration | Pro Tip | Video Link |\n|---|------|----------|---------|------------|\n| 1 | **Form & season meatballs.** Combine beef and pork, season liberally with salt, form into golf-ball-sized meatballs. | 15 min | Don't overwork the mixture — you want loose, tender meatballs. Gaps between meatballs allow steam to escape. | [1:45](https://youtu.be/?t=105) |\n| 2 | **Sear meatballs in Dutch oven** in two batches over medium-high heat. Develop deep brown color on all sides (~5–6 min per batch). Don't move them — let them sit and brown. | 12 min | The MeatballMethod™ lets you brown all meat efficiently without overcrowding. Don't scorch the fond (brown bits) — that's flavor gold. | [2:49](https://youtu.be/?t=149) |\n| 3 | **Render pancetta,** then sauté diced onion, carrot, celery. Season with salt. Cook until vegetables are very soft and color intensifies (~8–10 min). Do NOT brown them. | 12 min | Keep heat medium. The cured pork imparts massive flavor. Carrot and celery are essential in bolognese — they just belong. | [3:51](https://youtu.be/?t=275) |\n| 4 | **Toast tomato paste** directly on top of vegetables in the oil (no liquid yet). Let it fry in the oil for ~2 minutes. This is critical — it concentrates the paste's flavor. | 3 min | Never add liquid first, then paste. The oil's high temperature (higher than any simmer) is essential. You'll see fat separating when ready. | [5:51](https://youtu.be/?t=351) |\n| 5 | **Add white wine.** Let it simmer and reduce for ~3–4 minutes so alcohol burns off and flavor concentrates. | 5 min | The wine adds acidity and must cook down by itself. This concentrated flavor is essential to the sauce's balance. | [6:04](https://youtu.be/?t=385) |\n| 6 | **Add broken tomatoes** from one 28-oz can. Simmer 8–10 minutes until they break down and fat separates from liquid. Season with salt. | 10 min | The sauce should almost fry as much as it simmers. You'll see fat separating when it's ready. Bright flavor will balance during braising. | [7:09](https://youtu.be/?t=420) |\n| 7 | **Return meatballs** to Dutch oven. Add 2 cups broth and 1 cup milk. Bring to a gentle simmer (lazy bubbles, not rolling boil). | 5 min | The milk is essential to traditional bolognese — it balances acidity and adds richness. Gentle simmer only before oven. | [8:13](https://youtu.be/?t=485) |\n| 8 | **Braise in oven at 225°F for 2.5–3 hours,** lid slightly ajar. After ~2 hours, break up meatballs with a potato masher to integrate solid and liquid elements. Sauce should reduce and thicken. | 180 min | Low and slow — lazy simmer, not aggressive boil. Breaking up meatballs integrates everything and adds body. Sauce becomes rich and concentrated. | [8:35](https://youtu.be/?t=515) |\n| 9 | **Make béchamel:** Melt 6 tbsp butter, add 7 tbsp flour, toast 2 minutes. Whisk in 4 cups milk vigorously. Bring to boil (~10 min total). Add 1 cup Parm, 1/4 tsp nutmeg, 1/8 tsp cayenne. Season with salt. | 15 min | Toast the flour roux — incredible flavor development. Starch must boil to fully thicken. Whisk vigorously to avoid lumps. Nutmeg and cayenne are traditional. | [8:59](https://youtu.be/?t=540) |\n| 10 | **Cook lasagna sheets** in boiling salted water, 3 minutes. Add sheets one-by-one, stirring constantly to prevent sticking. Lay flat on parchment (don't stack). Repeat in batches if needed. | 12 min | 3 minutes is the sweet spot — flexible with a slight snap, not limp. Add one-by-one and stir constantly; they really, really stick. Lay on parchment immediately. Use fresh pasta, NOT no-boil. | [10:04](https://youtu.be/?t=604) |\n| 11 | **Assemble lasagna:** Spread thin ragù layer on bottom of 9×13 baking dish. Layer béchamel, then 4–5 pasta sheets (overlapping, trimmed as needed). Repeat: ragù, béchamel, pasta. Vary pasta direction each layer. End with béchamel on top. Drizzle oil on top. | 10 min | Five thin layers beat three massive layers. Overlap pasta and vary direction so pieces interlock — better texture. End with béchamel. D'Zcecho sheets are wider and easy to trim. | [13:01](https://youtu.be/?t=805) |\n| 12 | **Bake:** Cover loosely with foil, bake at 375°F for 30–40 minutes until sauce bubbles at edges. Remove foil, increase to 425°F, bake 10–15 minutes until top is golden and crispy. Rest 10 minutes before serving. | 50 min | Bake covered first to prevent burning before inside is hot. 425°F crisps the top. Béchamel allows pasta to buckle up like a cracker — that's the magic. Rest 10 min so liquid rebalances and slices hold together. | [14:05](https://youtu.be/?t=835) |\n\n---\n\n### **Tab 3: 🔥 Chris's Pro Tips** (Info Grid)\n\n**The MeatballMethod™**\n🔥 Form meat into meatballs and sear in two batches. This creates massive color on all sides without overcrowding. Steam escapes through gaps. Superior browning + tender meat (it finishes braising, not searing).\n\n**Tomato Paste Alchemy**\n🔥 Toast the paste in oil BEFORE adding liquid. The oil's high temperature cooks out the raw edge and concentrates flavor. Add it directly on aromatics, let it fry for ~2 minutes — this is non-negotiable.\n\n**Flour Roux Magic**\n🔥 Toast the flour in butter for ~2 minutes. There's incredible flavor development. Then whisk milk in vigorously and crank heat to boil — starch must boil to fully thicken.\n\n**Béchamel's Secret**\n🔥 There's an alchemy to pasta cooked with béchamel that cheese alone can't replicate. Béchamel creates creaminess and allows pasta to buckle up and get crispy like a cracker — that's the magic of traditional lasagna.\n\n**Layer Thin, Not Thick**\n🔥 Five thin layers of everything beat three massive layers. Vary pasta direction with each layer so sheets interlock and overlap. Better texture, better integration.\n\n**Fresh Pasta, Not No-Boil**\n🔥 Use fresh egg pasta lasagna sheets (like d'Zcecho), NOT no-boil. Fresh pasta absorbs flavor and creates superior texture. No-boil is a trap.\n\n**Pasta Water Discipline**\n🔥 Add sheets one-by-one and stir constantly — they really, really stick. Don't keep them in water longer than necessary or they'll absorb too much and become mushy. Lay on parchment immediately.\n\n**Ragù Timing**\n🔥 Low and slow at 225°F for 2.5–3 hours. Lazy simmer, not aggressive boil. After ~2 hours, break up meatballs with a potato masher. The sauce reduces and concentrates; flavors meld.\n\n**Fond Is Flavor**\n🔥 When searing meatballs, don't scorch the fond (brown bits) on the bottom — that's where the flavor lives. Let them sit and develop color; don't force browning.\n\n**The Rest Is Essential**\n🔥 Resist the urge to serve ripping hot. Let the lasagna rest 10 minutes so all liquid and elements rebalance. You'll get a clean, held-together slice and won't burn your mouth.\n\n---\n\n### **Tab 4: 🎬 Key Techniques** (Moment Track)\n\nJump to the exact moment Chris demonstrates each critical technique:\n\n| Technique | Timestamp | What to Watch | Key Visual |\n|-----------|-----------|---------------|-----------|\n| **Forming meatballs** | [1:45](https://youtu.be/?t=105) | Chef forming meat mixture into golf-ball-sized meatballs in glass bowl. Gentle hands, no overworking. | Loose, tender meatballs |\n| **Searing meatballs (Batch 1)** | [2:49](https://youtu.be/?t=149) | Raw meatballs placed in hot Staub Dutch oven. Deep brown development on one side, then rotation. | Brown crust on all sides; gaps between balls |\n| **Breaking up meatballs** | [3:25](https://youtu.be/?t=195) | Whisk breaking up seared meatballs. One side browned, one side still raw. You're not cooking through yet. | Meatballs breaking into chunks in sauce |\n| **Sautéing soffritto** | [4:34](https://youtu.be/?t=274) | Close-up macro shot of diced onion, carrot, celery, pancetta tossed in hot Dutch oven. Vegetables softening. | Color intensifying, vegetables wilting |\n| **Toasting tomato paste** | [6:04](https://youtu.be/?t=364) | Chef adding small bowl of paste on top of vegetables. Oil frying the paste at high temperature. | Paste browning in oil before liquid added |\n| **Adding wine** | [7:09](https://youtu.be/?t=429) | Canned tomatoes poured into Dutch oven from red-labeled can. Breaking them up by hand. | Tomatoes breaking down; sauce simmering |\n| **Ragù in oven** | [8:35](https://youtu.be/?t=515) | Chef placing Dutch oven into professional gas oven at 225°F. Lid slightly ajar. | Oven door closing; lazy bubbles inside |\n| **Butter-flour roux** | [8:59](https://youtu.be/?t=539) | Close-up of golden butter-flour roux being whisked in saucepan. Toasting for flavor. | Golden, toasted roux with slight color |\n| **Milk into béchamel** | [9:19](https://youtu.be/?t=559) | Milk poured from glass measuring cup into roux on gas burner. Whisking vigorously as milk goes in. | Smooth, creamy béchamel forming; no lumps |\n| **Cheese into béchamel** | [11:42](https://youtu.be/?t=702) | Grated cheese added from bowl into simmering béchamel while being whisked. Final seasoning. | Smooth, rich, creamy sauce |\n| **Cooking lasagna noodles** | [10:04](https://youtu.be/?t=604) | Chef's hand dropping lasagna sheets one-by-one into large pot of boiling, salted water. Stirring constantly. | Sheets separating in water; flexible but snappy |\n| **Laying pasta on parchment** | [10:55](https://youtu.be/?t=655) | Chef arranging cooked yellow lasagna sheets on baking tray lined with parchment between sheets. Single layers, no stacking. | Flat, separated pasta sheets on parchment |\n| **Assembly: First layer** | [13:01](https://youtu.be/?t=781) | Chef setting up lasagna assembly station with baking dish, Dutch oven of ragù, bowl of béchamel. | All three components ready |\n| **Assembly: Ragù layer** | [13:29](https://youtu.be/?t=809) | Chef pressing lasagna noodles into white baking dish over bolognese layer. Overlapping slightly. | Pasta sheets interlocking over meat |\n| **Assembly: Pasta direction change** | [14:22](https://youtu.be/?t=862) | Chef laying noodles over béchamel. Changing direction of pasta sheets with each layer. Overlapping, trimming. | Varied direction; interlocking architecture |\n| **Mashing ragù** | [12:38](https://youtu.be/?t=758) | Potato masher pressing down into thick bolognese-style meat sauce. Breaking up meatballs, integrating. | Sauce thickening; meatballs becoming chunky |\n| **Final bake** | [15:01](https://youtu.be/?t=901) | Chef leaning down to check on baking pan inside professional gas oven with red knobs. | Bubbling around edges; golden top forming |\n| **Cutting the lasagna** | [15:27](https://youtu.be/?t=927) | Close-up of fully baked lasagna with golden-brown top being cut with offset spatula. Layers visible in cross-section. | Layers holding together; creamy, rich interior |\n| **Tasting & review** | [16:24](https://youtu.be/?t=984) | Two men tasting finished lasagna on a plate. Discussing richness, creaminess, texture. Adding pinch of salt at end. | Layers visible; creamy, rich, velvety texture |\n\n---\n\n## **Verdict & Summary**\n\n**⭐ Rating: 5/5**\nChris's BA Best Lasagna is **the definitive traditional Italian-style lasagna** — deep flavor from the meatball-seared ragù bolognese, silky béchamel, and perfectly layered fresh pasta. The MeatballMethod™ solves browning efficiency. The 2.5–3 hour low braise creates a sauce so rich and concentrated it tastes like it took all day. The béchamel creates a creaminess no amount of cheese can replicate.\n\n**Why This Works:**\n- ✅ **The MeatballMethod™** — sear, break, braise. Superior color + tender meat + efficient browning.\n- ✅ **Tomato paste alchemy** — toasted in oil before liquid, concentrating flavor.\n- ✅ **Proper béchamel** — flour toasted, milk boiled to thicken, nutmeg and cayenne traditional.\n- ✅ **Fresh egg pasta** — absorbs sauce, creates superior texture. No-boil is a trap.\n- ✅ **Five thin layers** — better texture and integration than three thick layers.\n- ✅ **Low braise** — 225°F for 2.5–3 hours. Lazy simmer allows flavors to meld.\n\n**Best For:** Home cooks wanting to master traditional lasagna bolognese. Weekend project with big payoff. Freezes beautifully once made.\n\n**Time Investment:** ~45 min active prep, 3.5 hours hands-off braising, 1 hour assembly and baking = ~5 hours total, but mostly oven time.\n\n**Difficulty:** Medium — no advanced techniques, just patience and precision.",
+   "finishReason": "stop",
+   "usage": {
+    "input": 9352,
+    "output": 9550,
+    "cacheRead": 0,
+    "cacheWrite": 4674
+   },
+   "ordinal": 0
+  },
+  {
+   "feature": "summarize:synthesis",
+   "span": "synthesis",
+   "model": "openai/gpt-4o-mini",
+   "latencyMs": 3667,
+   "output": "{\"tldr\": \"Unlock the secret to Bon Appétit's best lasagna using the game-changing MeatballMethod™!\", \"keyTakeaways\": [\"Form ~16-18 loose meatballs from 1 lb each of ground beef and ground pork, seasoned liberally with salt.\", \"Sear meatballs in batches for a rich flavor; don't overcrowd the pan.\", \"Make a creamy béchamel with 4 cups of whole milk, 7 tbsp of flour, and finish with 1 cup of Parmigiano-Reggiano.\"], \"masterSummary\": \"Join Chris in the Bon Appétit Test Kitchen as he unveils the ultimate lasagna recipe, featuring the innovative MeatballMethod™. This technique not only optimizes flavor but also enhances the texture of your favorite Italian dish. By searing meatballs before breaking them down into a rich ragù, Chris ensures maximum depth of flavor without overcrowding the pan. He expertly combines this with a classic béchamel sauce to create a lasagna that boasts a perfect balance of layers — from the rich meat sauce to the creamy cheese filling.\\n\\nAs you watch, don't miss out on Chris’s informative visual cues throughout the cooking process, such as the perfect roux texture and seared meatball appearance. Explore the Ingredients tab for precise quantities, then check out the Steps tab for a guided cooking experience, complete with expert tips to elevate your lasagna game!\", \"seoDescription\": \"Master the best lasagna with the MeatballMethod™ and béchamel technique from Bon Appétit — flavor meets perfection!\"}",
+   "finishReason": "stop",
+   "usage": {
+    "input": 1871,
+    "output": 331,
+    "cacheRead": 0,
+    "cacheWrite": 0
+   },
+   "ordinal": 0
+  },
+  {
+   "feature": "summarize:enrichment",
+   "span": "enrichment",
+   "model": "openai/gpt-4o-mini",
+   "latencyMs": 12999,
+   "output": "{\"quiz\": [{\"question\": \"What technique does Chris use to achieve deep flavor in the lasagna?\", \"options\": [\"No-boil noodles\", \"MeatballMethod™\", \"Slow braising\", \"Béchamel sauce layering\"], \"correctIndex\": 1, \"explanation\": \"The MeatballMethod™ involves forming and searing meatballs before breaking them into ragù, ensuring a deep flavor and optimal texture for the lasagna.\"}, {\"question\": \"What is a key ingredient added to the ragù to balance acidity and add richness?\", \"options\": [\"Tomato paste\", \"Pancetta\", \"Whole milk\", \"Canned tomatoes\"], \"correctIndex\": 2, \"explanation\": \"Whole milk is crucial in traditional bolognese; it balances acidity and enriches the sauce's flavor.\"}, {\"question\": \"How long does the ragù braise in the oven?\", \"options\": [\"1 hour\", \"2 hours\", \"2.5 to 3 hours\", \"4 hours\"], \"correctIndex\": 2, \"explanation\": \"The ragù is cooked in the oven at a low temperature for 2.5 to 3 hours, allowing flavors to meld and sauce to reduce.\"}, {\"question\": \"What should the temperature of the oven be set to for braising the ragù?\", \"options\": [\"200°F\", \"225°F\", \"250°F\", \"275°F\"], \"correctIndex\": 1, \"explanation\": \"Chris recommends setting the oven to 225°F for a slow braise, which is essential to concentrate flavors.\"}, {\"question\": \"What type of pasta sheets does Chris recommend using for this lasagna?\", \"options\": [\"Dried lasagna sheets\", \"No-boil lasagna sheets\", \"Fresh egg pasta\", \"Whole wheat lasagna sheets\"], \"correctIndex\": 2, \"explanation\": \"Fresh egg pasta is the recommended choice; Chris notes that no-boil noodles are a trap, as they don't absorb the sauce properly.\"}], \"flashcards\": [{\"front\": \"What is the MeatballMethod™?\", \"back\": \"This technique involves forming and searing meatballs before breaking them into the ragù, allowing for much deeper flavor without overcrowding the pan.\"}, {\"front\": \"Why is it important to toast tomato paste before adding liquid?\", \"back\": \"Toasting the tomato paste in oil concentrates its flavor and removes the raw taste, which is critical for a well-developed sauce.\"}, {\"front\": \"What vegetables are key to the ragù Bolognese base?\", \"back\": \"Onion, carrot, and celery are finely diced and cooked down to create a flavorful vegetable base essential for the dish.\"}, {\"front\": \"What is the function of the cayenne pepper in the béchamel sauce?\", \"back\": \"A touch of cayenne pepper lifts the flavor of the béchamel without making it spicy, adding depth to the sauce.\"}, {\"front\": \"What is the recommended cooking method for the ragù?\", \"back\": \"The ragù should be cooked slowly with a gentle simmer, allowing the flavors to meld and the sauce to thicken over time.\"}, {\"front\": \"What is a common mistake to avoid when cooking the meatballs?\", \"back\": \"Avoid crowding the pan when searing the meatballs; this ensures proper browning and flavor development.\"}], \"scenarios\": [{\"question\": \"You're at a grocery store and want to make the lasagna. Which canned tomatoes do you choose?\", \"options\": [{\"text\": \"San Marzano tomatoes — high acidity and sweetness\", \"correct\": true, \"explanation\": \"San Marzano tomatoes are known for their rich flavor and low acidity, making them a great choice for a bolognese sauce.\"}, {\"text\": \"Generic canned tomatoes — cheaper option\", \"correct\": false, \"explanation\": \"While cheaper, generic canned tomatoes may lack the flavor depth needed for this sauce.\"}, {\"text\": \"Crushed tomatoes — already processed\", \"correct\": false, \"explanation\": \"Using crushed tomatoes doesn’t allow for the fresh breaking of tomatoes which enhances the texture of the sauce.\"}, {\"text\": \"Diced tomatoes — just for the convenience\", \"correct\": false, \"explanation\": \"Diced tomatoes can add unnecessary liquid, which could dilute the richness of the sauce.\"}]}, {\"question\": \"You're preparing to cook but realize you don't have any whole milk. What is the best substitute?\", \"options\": [{\"text\": \"Half-and-half — richer than milk\", \"correct\": true, \"explanation\": \"Half-and-half can be an excellent substitute, as it provides similar fat content and creaminess to balance the sauce.\"}, {\"text\": \"Skim milk — lower in fat\", \"correct\": false, \"explanation\": \"Skim milk lacks the fat richness that is crucial for balancing acidity in the sauce.\"}, {\"text\": \"Coconut milk — different texture\", \"correct\": false, \"explanation\": \"Coconut milk will alter the flavor profile of the dish significantly and is not suitable for this traditional recipe.\"}, {\"text\": \"Soy milk — plant-based choice\", \"correct\": false, \"explanation\": \"Soy milk may not provide the richness needed and can have an entirely different flavor.\"}]}]}",
+   "finishReason": "stop",
+   "usage": {
+    "input": 3316,
+    "output": 1241,
+    "cacheRead": 0,
+    "cacheWrite": 0
+   },
+   "ordinal": 0
+  }
+ ],
+ "recorded": {
+  "totalMs": 261923,
+  "phasesMs": {
+   "metadata": 5630,
+   "transcript_frames": 125146,
+   "plan": 27468,
+   "extraction": 80886,
+   "synthesis_enrichment": 12242,
+   "assembly": 10551,
+   "visual_inject": 0
+  },
+  "milestonesMs": {
+   "firstTabReadyMs": 251371,
+   "completeMs": 261923
+  },
+  "tabIds": [
+   "overview",
+   "ingredients",
+   "cook_steps",
+   "chef_tips",
+   "key_moments",
+   "frames-gallery"
+  ],
+  "estimated": true,
+  "notes": [
+   "DEV run 2026-10-05 (no prod run yet); frames sub-steps ESTIMATED from T1dQhQAm8Tc's prod split, no worker log survives",
+   "chapters rebuilt from the stored moment_track chapter items (YouTube chapters: the run made no chapter_detect call)"
+  ]
+ }
+}
