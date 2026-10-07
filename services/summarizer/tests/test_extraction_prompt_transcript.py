@@ -38,6 +38,7 @@ def _ctx(duration: int, segments: list[dict[str, Any]] | None = None) -> SimpleN
             segments=segs, raw_text=raw_text, transcript_type="manual", source="ytdlp"
         ),
         clean_text=clean_transcript(raw_text),
+        source_language_code=None,
         frame_descriptions=[],
         scene_frames_all=[],
         scene_frames_gallery=[],
@@ -135,3 +136,20 @@ class TestExtractionPhaseUsesMarkedTranscript:
         assert [marker_seconds(ch.text)[0] for ch in chapters] == [
             int(ch.start_seconds) for ch in chapters
         ]
+
+
+class TestBuildPromptTranscriptLanguage:
+    def test_should_remove_fillers_from_an_english_source(self):
+        ctx = _ctx(10, segments=[{"text": "so um we start", "start": 0.0, "duration": 4.0}])
+
+        prompt = extraction_phase.build_prompt_transcript(ctx)
+
+        assert prompt == "[0:00] so we start"
+
+    def test_should_keep_um_in_a_portuguese_source(self):
+        ctx = _ctx(10, segments=[{"text": "um quilo de farinha", "start": 0.0, "duration": 4.0}])
+        ctx.source_language_code = "pt"
+
+        prompt = extraction_phase.build_prompt_transcript(ctx)
+
+        assert prompt == "[0:00] um quilo de farinha"

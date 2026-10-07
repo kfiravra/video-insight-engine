@@ -134,7 +134,9 @@ async def run_phase_transcript(ctx: PipelineContext) -> AsyncGenerator[str, None
     logger.info("Source language: %s (generation runs in English)", source_code or "en")
 
     yield sse_event("transcript_ready", {"duration": video_data.duration})
-    ctx.clean_text = clean_transcript(transcript_data.raw_text)
+    ctx.clean_text = clean_transcript(
+        transcript_data.raw_text, source_language=ctx.source_language_code
+    )
 
     # Advanced cleaning (spaCy + TF-IDF)
     if settings.TRANSCRIPT_CLEANING_ENABLED:
@@ -166,7 +168,9 @@ async def run_phase_transcript(ctx: PipelineContext) -> AsyncGenerator[str, None
             ]
             filtered = filter_transcript_segments(sb_segments, sponsor_segments)
             if filtered:
-                ctx.clean_text = clean_transcript(" ".join(s["text"] for s in filtered))
+                ctx.clean_text = clean_transcript(
+                    " ".join(s["text"] for s in filtered), source_language=ctx.source_language_code
+                )
                 logger.info("SponsorBlock: filtered %d sponsor segments", len(sponsor_segments))
     except (TypeError, ValueError, KeyError) as e:
         logger.warning("SponsorBlock filtering failed (non-critical): %s - %s", type(e).__name__, e)

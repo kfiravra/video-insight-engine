@@ -61,6 +61,36 @@ class TestCleanTranscript:
         result = clean_transcript("[Music] [Applause]")
         assert result == ""
 
+    def test_should_remove_fillers_in_basic_cleaning(self):
+        result = clean_transcript("So um today we uh basically bake bread so yeah")
+        assert result == "So today we bake bread"
+
+    def test_should_remove_fillers_and_artifacts_together(self):
+        result = clean_transcript("[Music] well basically the oven [Applause] is uh hot")
+        assert result == "the oven is hot"
+
+    @pytest.mark.parametrize(
+        "sentence",
+        [
+            "Do you know how long the dough rests?",
+            "What I mean is that the crust stays soft.",
+            "What kind of flour should I use?",
+            "Fold it, sort of the dough over itself.",
+            "It's okay so we can skip the egg.",
+            "Alright so the next step is the sauce.",
+        ],
+    )
+    def test_should_keep_phrases_that_carry_meaning(self, sentence):
+        assert clean_transcript(sentence) == sentence
+
+    def test_should_keep_um_when_the_source_is_portuguese(self):
+        result = clean_transcript("Adicione um quilo de farinha", source_language="pt")
+        assert result == "Adicione um quilo de farinha"
+
+    def test_should_remove_fillers_for_a_regional_english_code(self):
+        result = clean_transcript("so um we start", source_language="en-GB")
+        assert result == "so we start"
+
 
 class TestNormalizeSegments:
     """Tests for segment normalization to milliseconds."""

@@ -126,3 +126,45 @@ class TestRenderTranscriptMatchesCleanText:
 
     def test_should_return_empty_text_when_no_segment_has_words(self):
         assert render_transcript([{"text": "[Music]", "start": 0, "duration": 9}]) == ""
+
+
+class TestRenderTranscriptRemovesFillers:
+    """1a.5: filler removal is basic cleaning, so every prompt transcript is filler-free."""
+
+    _SEGMENTS = [
+        {"text": "so um today we", "start": 0.0, "duration": 4.0},
+        {"text": "uh basically make", "start": 4.0, "duration": 4.0},
+        {"text": "a kind of quick bread so yeah", "start": 8.0, "duration": 4.0},
+        {"text": "well basically it takes uh ten minutes", "start": 21.0, "duration": 4.0},
+    ]
+
+    def test_should_render_filler_free_text(self):
+        rendered = render_transcript(self._SEGMENTS)
+
+        assert rendered.splitlines() == [
+            "[0:00] so today we make a kind of quick bread",
+            "[0:21] it takes ten minutes",
+        ]
+
+    def test_should_match_clean_text_when_no_filler_spans_a_block_boundary(self):
+        clean_text = clean_transcript(" ".join(s["text"] for s in self._SEGMENTS))
+
+        assert _strip_markers(render_transcript(self._SEGMENTS)) == clean_text
+
+    def test_should_keep_english_fillers_out_of_non_english_cleaning(self):
+        segments = [{"text": "um quilo de farinha", "start": 0.0, "duration": 4.0}]
+
+        rendered = render_transcript(segments, source_language="pt")
+
+        assert rendered == "[0:00] um quilo de farinha"
+
+    def test_should_drop_a_segment_holding_only_fillers_from_marker_placement(self):
+        segments = [
+            {"text": "intro words", "start": 0.0, "duration": 5.0},
+            {"text": "um uh", "start": 20.0, "duration": 5.0},
+            {"text": "first step", "start": 26.0, "duration": 5.0},
+        ]
+
+        rendered = render_transcript(segments)
+
+        assert rendered.splitlines() == ["[0:00] intro words", "[0:26] first step"]

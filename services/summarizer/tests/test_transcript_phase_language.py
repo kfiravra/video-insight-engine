@@ -220,3 +220,44 @@ class TestTranscriptPhaseTrail:
             await _drain(transcript_phase.run_phase_transcript(ctx))
 
         assert ctx.transcript_trail.error_code == "UNKNOWN_ERROR"
+
+
+async def _run_with_language(text: str, language: str) -> SimpleNamespace:
+    """Run the transcript phase on one segment whose source reports ``language``."""
+    ctx = _build_ctx()
+
+    def fake_fetch(*_args, **_kwargs):
+        async def _gen():
+            yield TranscriptData(
+                segments=[{"text": text, "start": 0, "duration": 5}],
+                raw_text=text,
+                transcript_type="manual",
+                source="ytdlp",
+                language=language,
+            )
+
+        return _gen()
+
+    with (
+        patch.object(transcript_phase, "fetch_transcript", fake_fetch),
+        patch.object(transcript_phase.settings, "TRANSCRIPT_CLEANING_ENABLED", False),
+        patch.object(transcript_phase, "get_sponsor_segments", new=AsyncMock(return_value=[])),
+    ):
+        await _drain(transcript_phase.run_phase_transcript(ctx))
+    return ctx
+
+
+class TestTranscriptPhaseFillerLanguage:
+    """1a.5: basic cleaning drops English fillers, and only from English sources."""
+
+    async def test_should_drop_fillers_from_english_clean_text(self):
+        ctx = await _run_with_language("so um we basically start with the dough", "en")
+
+        assert ctx.clean_text == "so we start with the dough"
+
+    async def test_should_keep_um_in_portuguese_clean_text(self):
+        text = "Adicione um quilo de farinha e misture bem com a manteiga"
+
+        ctx = await _run_with_language(text, "pt")
+
+        assert ctx.clean_text == text

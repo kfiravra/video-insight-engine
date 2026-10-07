@@ -16,15 +16,18 @@ Format — one line per block, ``[m:ss] text``:
   the same clock the ``=== CHAPTER …`` headers of chunked batches use.
 
 Each block's text goes through the basic cleaning that builds ``clean_text``
-(``clean_transcript``), so the blocks joined without their markers read the same
-as ``clean_text`` built from the same segments.
+(``clean_transcript``: caption artifacts, English filler words, whitespace), so the
+blocks joined without their markers read the same as ``clean_text`` built from
+the same segments. The one difference: a multi-word filler split by a block
+boundary ("… you" | "[0:20] know …") is not seen as a filler and stays.
 """
 
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from functools import partial
 from typing import Any
 
 from src.services.transcription.transcript import clean_transcript
@@ -68,13 +71,15 @@ def _segment_start(segment: Mapping[str, Any]) -> float:
     return float(segment.get("start") or 0)
 
 
-def _group_blocks(segments: Sequence[Mapping[str, Any]], every: int) -> list[_Block]:
+def _group_blocks(
+    segments: Sequence[Mapping[str, Any]], every: int, clean: Callable[[str], str]
+) -> list[_Block]:
     """Group segments into marker blocks (see the module docstring)."""
     blocks: list[_Block] = []
     last_bucket = -1
     for segment in segments:
         raw = str(segment.get("text") or "")
-        if not clean_transcript(raw):
+        if not clean(raw):
             # A "[Music]"-only segment never carries a marker; it still joins
             # the open block so block cleaning sees the text clean_text sees.
             if blocks:
@@ -90,7 +95,12 @@ def _group_blocks(segments: Sequence[Mapping[str, Any]], every: int) -> list[_Bl
     return blocks
 
 
-def render_transcript(segments: Sequence[Mapping[str, Any]], every: int = 20) -> str:
+def render_transcript(
+    segments: Sequence[Mapping[str, Any]],
+    every: int = 20,
+    *,
+    source_language: str | None = None,
+) -> str:
     """Render segments as prompt text with an absolute ``[m:ss]`` marker per block.
 
     Args:
@@ -99,15 +109,18 @@ def render_transcript(segments: Sequence[Mapping[str, Any]], every: int = 20) ->
             are accepted too.
         every: Block spacing in seconds — a new marker at the first segment
             that crosses each multiple of ``every``.
+        source_language: Pass ``ctx.source_language_code`` (``None`` = English
+            source). English filler words are removed only from English text.
 
     Returns:
         ``"[0:00] text\\n[0:21] text…"``; ``""`` when no segment has text.
     """
     if every <= 0:
         raise ValueError(f"every must be a positive number of seconds, got {every}")
+    clean = partial(clean_transcript, source_language=source_language)
     lines: list[str] = []
-    for block in _group_blocks(segments, every):
-        text = clean_transcript(" ".join(block.raw_texts))
+    for block in _group_blocks(segments, every, clean):
+        text = clean(" ".join(block.raw_texts))
         if text:
             lines.append(f"{format_marker(block.start)} {text}")
     return "\n".join(lines)

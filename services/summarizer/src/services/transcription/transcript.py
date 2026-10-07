@@ -24,6 +24,7 @@ from src.services.media.download_utils import (
     ytdlp_proxy_exit_urls,
     ytdlp_proxy_url,
 )
+from src.services.transcript.cleaner import remove_fillers
 
 logger = logging.getLogger(__name__)
 
@@ -175,12 +176,27 @@ def _fetch_once(video_id: str, proxy_url: str | None) -> tuple[list[dict], str, 
         raise TranscriptError(f"Failed to fetch transcript: {str(e)}", ErrorCode.UNKNOWN_ERROR)
 
 
-def clean_transcript(text: str) -> str:
-    """Clean and normalize transcript text."""
+def _is_english_source(source_language: str | None) -> bool:
+    """``ctx.source_language_code`` convention: ``None`` means an English source."""
+    return source_language is None or source_language.lower().startswith("en")
+
+
+def clean_transcript(text: str, *, source_language: str | None = None) -> str:
+    """Basic cleaning: caption artifacts, filler words, whitespace.
+
+    Builds ``ctx.clean_text`` and every rendered prompt transcript; the
+    optional spaCy/TF-IDF pass runs on its output. Pass
+    ``source_language=ctx.source_language_code``: the filler list is English
+    and runs only on English sources — "um" is Portuguese for "one" and
+    German for "around", so removing it there deletes meaning.
+    """
     # Remove common artifacts
     text = re.sub(r"\[Music\]", "", text, flags=re.IGNORECASE)
     text = re.sub(r"\[Applause\]", "", text, flags=re.IGNORECASE)
     text = re.sub(r"\[Laughter\]", "", text, flags=re.IGNORECASE)
+
+    if _is_english_source(source_language):
+        text = remove_fillers(text)
 
     # Normalize whitespace
     text = re.sub(r"\s+", " ", text)

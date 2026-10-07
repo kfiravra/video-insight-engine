@@ -47,7 +47,7 @@ def build_prompt_transcript(ctx: PipelineContext) -> str:
     so they fall back to ``ctx.clean_text``.
     """
     segments = ctx.transcript_data.segments if ctx.transcript_data else []
-    marked = render_transcript(segments)
+    marked = render_transcript(segments, source_language=ctx.source_language_code)
     if not marked:
         return ctx.clean_text
     # Phase 2.5 annotated clean_text, which this text no longer derives from:
