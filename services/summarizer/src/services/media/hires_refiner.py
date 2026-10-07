@@ -138,7 +138,7 @@ async def _refine_from_local_download(video_id: str, candidates: list[dict]) -> 
     """Fallback: download a 720p rendition once, extract locally (can't 403)."""
     from src.services.media.local_video import cleanup_local_video, download_video_720p
 
-    downloaded = await download_video_720p(video_id)
+    downloaded = await download_video_720p(video_id, purpose="refiner")
     if not downloaded:
         logger.warning("Hi-res fallback unavailable for %s — keeping low-res frames", video_id)
         return 0

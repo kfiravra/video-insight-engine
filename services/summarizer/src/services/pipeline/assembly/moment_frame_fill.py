@@ -135,7 +135,9 @@ async def _fallback_pass(youtube_id: str, batch: list[FillTarget]) -> int:
     from src.services.media.local_video import cleanup_local_video, download_video_720p
 
     downloaded = await download_video_720p(
-        youtube_id, timeout=_FILL_FALLBACK_TIMEOUT - _FILL_FALLBACK_SEEK_RESERVE
+        youtube_id,
+        timeout=_FILL_FALLBACK_TIMEOUT - _FILL_FALLBACK_SEEK_RESERVE,
+        purpose="moment_fill",
     )
     if not downloaded:
         return 0

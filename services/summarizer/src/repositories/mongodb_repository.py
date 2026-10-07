@@ -181,6 +181,19 @@ class MongoDBVideoRepository:
             {"$set": {"transcriptMeta": meta, "updatedAt": _utc_now()}},
         )
 
+    def set_pipeline_timing(self, video_summary_id: str, timing: dict[str, Any]) -> None:
+        """Persist the run's ``pipeline.timing`` block (phase walls, LLM calls,
+        downloads, SSE milestones).
+
+        Written AFTER assembly's ``save_structured_result`` (which replaces the
+        whole ``pipeline`` object) and for failed runs too, so it is a dotted
+        ``$set``. No ``updatedAt`` bump: that field is the stall sweeper's
+        liveness signal and this write carries no progress.
+        """
+        self._collection.update_one(
+            {"_id": ObjectId(video_summary_id)}, {"$set": {"pipeline.timing": timing}}
+        )
+
     def clear_transcript_meta(self, video_summary_id: str) -> None:
         """Drop the previous run's transcript provenance block.
 

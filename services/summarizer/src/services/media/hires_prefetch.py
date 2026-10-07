@@ -142,4 +142,6 @@ async def start_local_hires(video_id: str, pass1_video: Path) -> LocalHiresSourc
         return LocalHiresSource(video_id, reuse_path=pass1_video)
 
     logger.info("Proxied run for %s: starting 720p download alongside scene detection", video_id)
-    return LocalHiresSource(video_id, task=asyncio.create_task(download_video_720p(video_id)))
+    return LocalHiresSource(
+        video_id, task=asyncio.create_task(download_video_720p(video_id, purpose="prefetch"))
+    )

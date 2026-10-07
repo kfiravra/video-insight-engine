@@ -18,6 +18,7 @@ import logging
 import re
 import shutil
 import tempfile
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Awaitable, Callable
@@ -25,6 +26,7 @@ from typing import Awaitable, Callable
 from src.config import settings
 from src.services.media.image_dedup import compute_ahash, is_duplicate
 from src.services.media.s3_client import s3_client
+from src.services.pipeline.pipeline_timing import mark_step, record_download
 from src.utils.constants import YOUTUBE_ID_RE
 
 logger = logging.getLogger(__name__)
@@ -461,6 +463,7 @@ async def _do_extraction(
     try:
         # Step 1: Download lowest quality video via yt-dlp
         dl_proc = None
+        dl_started = time.monotonic()
         try:
             from src.services.media.download_utils import (
                 ytdlp_client_cli_args,
@@ -484,6 +487,10 @@ async def _do_extraction(
             _, dl_stderr = await asyncio.wait_for(dl_proc.communicate(), timeout=120)
         except asyncio.TimeoutError:
             logger.warning("yt-dlp download timed out for %s (120s)", video_id)
+            record_download(
+                kind="lowres", purpose="scene_detect", start_monotonic=dl_started, path=None,
+                ok=False,
+            )
             if dl_proc:
                 try:
                     dl_proc.kill()
@@ -495,7 +502,12 @@ async def _do_extraction(
             logger.warning("yt-dlp not found, scene extraction unavailable")
             return empty_result
 
-        if (dl_proc and dl_proc.returncode != 0) or not temp_video.exists():
+        dl_ok = bool(dl_proc and dl_proc.returncode == 0 and temp_video.exists())
+        record_download(
+            kind="lowres", purpose="scene_detect", start_monotonic=dl_started, path=temp_video,
+            ok=dl_ok,
+        )
+        if not dl_ok:
             stderr_text = dl_stderr.decode("utf-8", errors="replace")[:300] if dl_stderr else ""
             logger.warning(
                 "yt-dlp download failed for %s (rc=%d): %s",
@@ -534,6 +546,7 @@ async def _do_extraction(
         ]
 
         ff_proc = None
+        detect_started = time.monotonic()
         try:
             ff_proc = await asyncio.create_subprocess_exec(
                 *ffmpeg_cmd,
@@ -558,6 +571,8 @@ async def _do_extraction(
         except FileNotFoundError:
             logger.warning("ffmpeg not found, scene extraction unavailable")
             return empty_result
+
+        mark_step("frames.scene_detect", detect_started)
 
         # Step 3: Parse pts_time from showinfo filter output
         timestamps: list[float] = []
@@ -616,6 +631,7 @@ async def _do_extraction(
         # Step 5: Score all frames locally (CPU only, ~2-3s)
         from src.services.media.frame_scorer import score_all_frames, select_frames
 
+        score_started = time.monotonic()
         try:
             scored_frames = await asyncio.to_thread(score_all_frames, all_frames)
         except Exception as e:
@@ -636,6 +652,7 @@ async def _do_extraction(
             # the first half of long videos.
             selected_frames = _sample_by_time(scored_frames, 25)
             gallery_frames = _sample_by_time(selected_frames, 12)
+        mark_step("frames.score_select", score_started)
 
         # Step 6b (HIGH visual tier): over-select candidates and let the
         # injected hook (vision-informed, lives in phases/frames.py — this
@@ -649,11 +666,13 @@ async def _do_extraction(
             # vision batch and could survive into hires refinement + upload.
             usable = [f for f in scored_frames if f.get("total_score", 0) > 0] or scored_frames
             candidates = _sample_by_time(usable, overselect_count)
+            reselect_started = time.monotonic()
             try:
                 kept = await reselect_hook(candidates)
             except Exception as e:
                 logger.warning("Frame reselect hook failed (using local selection): %s", e)
                 kept = None
+            mark_step("frames.vision_reselect", reselect_started)
             if kept:
                 selected_frames = _sample_by_time(kept, keep_count)
                 gallery_frames = _sample_by_time(selected_frames, 12)
@@ -668,9 +687,11 @@ async def _do_extraction(
         # per-frame fallback to the low-res detection JPEG on failure)
         from src.services.media.hires_refiner import refine_selected_frames
 
+        hires_started = time.monotonic()
         hires_count = await refine_selected_frames(
             video_id, selected_frames, local_source=hires_source
         )
+        mark_step("frames.hires", hires_started)
 
         # Step 7b: Dedup AFTER refinement — CDN seeks by int(timestamp) can
         # collapse distinct low-res picks into near-identical 720p frames.
@@ -682,6 +703,7 @@ async def _do_extraction(
         for f in selected_frames:
             f["s3_key"] = f"videos/{video_id}/{settings.SCENE_S3_PREFIX}/scene_{f['index']:04d}.jpg"
 
+        upload_started = time.monotonic()
         uploaded = await _upload_frames_batch(selected_frames)
 
         # Gallery membership requires a SUCCESSFUL upload — s3_key was stamped
@@ -692,6 +714,7 @@ async def _do_extraction(
         gallery_frames = [f for f in gallery_frames if id(f) in uploaded_ids]
 
         await _write_manifest(video_id, uploaded, gallery_frames, hires_count=hires_count)
+        mark_step("frames.upload", upload_started)
 
         # Log top 5 scored frames for debugging
         top_5 = sorted(scored_frames, key=lambda f: f.get("total_score", 0), reverse=True)[:5]

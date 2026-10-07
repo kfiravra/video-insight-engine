@@ -26,6 +26,7 @@ from src.models.schemas import (
     TranscriptSegment,
 )
 from src.services.media.download_utils import download_youtube_audio
+from src.services.pipeline.pipeline_timing import record_download
 from src.services.transcription.usage import emit_transcription_usage
 from src.utils.language_utils import normalize_language_code
 
@@ -116,9 +117,14 @@ def _download_audio_sync(video_id: str) -> Path:
         "continuedl": False,
     }
 
+    started = time.monotonic()
     download_youtube_audio(video_id, ydl_opts, TEMP_DIR, file_stem)
 
     mp3_path = TEMP_DIR / f"{file_stem}.mp3"
+    record_download(
+        kind="audio", purpose="whisper", start_monotonic=started, path=mp3_path,
+        ok=mp3_path.exists(),
+    )
     if not mp3_path.exists():
         raise TranscriptError(
             "Audio download completed but file not found",

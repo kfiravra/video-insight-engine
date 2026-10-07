@@ -180,7 +180,7 @@ class TestLocalDownloadFallback:
             result = await refine_selected_frames("dQw4w9WgXcQ", frames)
 
         assert result == 2
-        mock_download.assert_awaited_once_with("dQw4w9WgXcQ")
+        mock_download.assert_awaited_once_with("dQw4w9WgXcQ", purpose="refiner")
         for frame in frames:
             assert frame["path"].endswith(".hires.jpg")
             assert Path(frame["path"]).read_bytes() == b"hiresbytes"
@@ -240,7 +240,7 @@ class TestLocalDownloadFallback:
             result = await refine_selected_frames("dQw4w9WgXcQ", frames)
 
         assert result == 2
-        mock_download.assert_awaited_once_with("dQw4w9WgXcQ")
+        mock_download.assert_awaited_once_with("dQw4w9WgXcQ", purpose="refiner")
 
     @patch("src.services.media.local_video.download_video_720p", new_callable=AsyncMock)
     @patch(
@@ -368,5 +368,5 @@ class TestProxiedLocalSource:
 
         assert result == 1
         mock_stream.assert_not_awaited()
-        mock_download.assert_awaited_once_with("dQw4w9WgXcQ")
+        mock_download.assert_awaited_once_with("dQw4w9WgXcQ", purpose="refiner")
         assert not local_dir.exists()

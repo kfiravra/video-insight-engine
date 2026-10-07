@@ -23,6 +23,7 @@ import hashlib
 import logging
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
+from datetime import datetime
 from typing import Any, AsyncIterator, Protocol
 
 from src.config import settings
@@ -285,6 +286,26 @@ def update_trace_metadata(extra: dict[str, Any]) -> None:
         trace.update(metadata=extra)
     except Exception as exc:  # noqa: BLE001
         logger.debug("Langfuse trace metadata update failed: %s", exc)
+
+
+def log_span(
+    *,
+    name: str,
+    start_time: datetime,
+    end_time: datetime,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    """Record a timed span (a non-LLM pipeline phase) on the current trace.
+
+    No-op without a bound trace. Never raises.
+    """
+    trace = _current_trace.get()
+    if trace is None:
+        return
+    try:
+        trace.span(name=name, start_time=start_time, end_time=end_time, metadata=metadata or {})
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Langfuse span log failed (name=%s): %s", name, exc)
 
 
 # ─── Generation / score logging ─────────────────────────────────────────

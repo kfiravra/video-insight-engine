@@ -20,6 +20,8 @@ from litellm.exceptions import (
     Timeout as LitellmTimeout,
 )
 
+from src.services.pipeline.pipeline_timing import record_llm_failure
+
 if TYPE_CHECKING:
     from src.services.llm import LLMService
 
@@ -175,7 +177,13 @@ async def call_llm_with_retry(
                 max_retries + 1,
             )
 
-        except asyncio.TimeoutError:
+        except asyncio.TimeoutError as e:
+            # The outer asyncio.timeout cancels the provider coroutine, so the
+            # provider never sees this failure — record it here.
+            record_llm_failure(
+                span=stage_name, model=model_name, error=e, start_monotonic=start,
+                attempt=attempt + 1,
+            )
             duration = time.monotonic() - start
             logger.warning(
                 "[%s] Timeout after %.1fs (attempt %d/%d)",

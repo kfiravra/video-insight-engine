@@ -121,7 +121,7 @@ class TestStartLocalHires:
             assert source is not None and not source.reuses_pass1
             assert await source.path() == local_video
 
-        mock_download.assert_awaited_once_with(VIDEO_ID)
+        mock_download.assert_awaited_once_with(VIDEO_ID, purpose="prefetch")
 
     async def test_should_start_download_when_height_is_unknown(self, proxy, pass1_video):
         with (

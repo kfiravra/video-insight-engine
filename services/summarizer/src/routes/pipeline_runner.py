@@ -42,7 +42,7 @@ from src.repositories.mongodb_repository import MongoDBVideoRepository
 from src.routes.cached_response import stream_cached_structured as _stream_cached_structured
 from src.services.cache.response_cache import response_cache
 from src.services.llm import LLMService
-from src.services.observability import pipeline_trace, update_trace_metadata
+from src.services.observability import log_span, pipeline_trace, update_trace_metadata
 from src.services.override_state import clear_override
 from src.services.pipeline.context import PipelineContext
 from src.services.pipeline.enrichment import _has_meaningful_data
@@ -61,6 +61,7 @@ from src.services.pipeline.pipeline_helpers import (
     run_parallel_phases,
     sse_event,
 )
+from src.services.pipeline.pipeline_timing import PipelineTimingRecorder, start_run_timing
 from src.services.pipeline.post_processor import coverage_is_degraded
 from src.services.status_callback import send_video_status
 from src.services.transcription.transcript_meta import build_transcript_meta
@@ -183,11 +184,87 @@ def _persist_cache_hit(
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+def _mark_phase(
+    ctx: PipelineContext, timing: PipelineTimingRecorder, name: str, phase_start: float
+) -> None:
+    """Record a finished phase on ``ctx.phase_times`` (DONE log) and the timing doc."""
+    phase_end = time.monotonic()
+    ctx.phase_times[name] = round(phase_end - phase_start, 1)
+    timing.add_phase(name, phase_start, phase_end)
+
+
+def _trace_timing_summary(doc: dict[str, Any]) -> dict[str, Any]:
+    """Trace-metadata copy of ``pipeline.timing`` (LLM calls are already
+    generations on the trace, so they are summarized as counts here)."""
+    return {
+        "totalMs": doc["totalMs"],
+        "phases": doc["phases"],
+        "milestones": doc["milestones"],
+        "downloads": doc["downloads"],
+        "costUsd": doc["costUsd"],
+        "counts": doc["counts"],
+    }
+
+
+def _log_phase_spans(timing: PipelineTimingRecorder) -> None:
+    """Mirror each recorded phase as a Langfuse span with real start/end times."""
+    for phase in timing.phases:
+        log_span(
+            name=f"phase:{phase['name']}",
+            start_time=timing.wall_time(phase["startMs"]),
+            end_time=timing.wall_time(phase["endMs"]),
+        )
+
+
+async def _persist_run_timing(
+    ctx: PipelineContext,
+    repository: MongoDBVideoRepository,
+    video_summary_id: str,
+    timing: PipelineTimingRecorder,
+) -> None:
+    """Write ``pipeline.timing`` and mirror it onto the trace — for successful
+    AND failed runs. Best-effort: timing must never mask the run's own outcome."""
+    if ctx.row_deleted:
+        return
+    try:
+        doc = timing.to_document(
+            tabs_planned=len(ctx.triage.tabs) if ctx.triage else 0,
+            tabs_assembled=len(getattr(ctx, "assembled_tabs", None) or []),
+        )
+        update_trace_metadata({"timing": _trace_timing_summary(doc)})
+        _log_phase_spans(timing)
+        await asyncio.to_thread(repository.set_pipeline_timing, video_summary_id, doc)
+    except Exception as exc:
+        logger.warning("[pipeline] timing record failed for %s: %s", video_summary_id, exc)
+
+
 async def _run_pipeline_phases(
     ctx: PipelineContext,
     repository: MongoDBVideoRepository,
     video_summary_id: str,
     timer: PipelineTimer,
+) -> AsyncGenerator[str, None]:
+    """Run the pipeline with a timing recorder bound for this run.
+
+    Every outgoing SSE chunk stamps the recorder's milestones (first
+    ``tab_ready``, ``complete``, ``done``); the timing document is persisted
+    once the phases finish or fail.
+    """
+    timing = start_run_timing()
+    try:
+        async for event in _run_phases_in_order(ctx, repository, video_summary_id, timer, timing):
+            timing.observe_sse(event)
+            yield event
+    finally:
+        await _persist_run_timing(ctx, repository, video_summary_id, timing)
+
+
+async def _run_phases_in_order(
+    ctx: PipelineContext,
+    repository: MongoDBVideoRepository,
+    video_summary_id: str,
+    timer: PipelineTimer,
+    timing: PipelineTimingRecorder,
 ) -> AsyncGenerator[str, None]:
     """Run every pipeline phase in order, streaming SSE chunks to the caller.
 
@@ -205,7 +282,7 @@ async def _run_pipeline_phases(
         phase_start = time.monotonic()
         async for event in run_phase_metadata(ctx):
             yield event
-        ctx.phase_times["metadata"] = round(time.monotonic() - phase_start, 1)
+        _mark_phase(ctx, timing, "metadata", phase_start)
 
         # Phase 2: Transcript + Frames (parallel — both only need youtube_id + video_data)
         # ``finally`` so transcriptMeta is recorded whether the phases succeed
@@ -218,7 +295,7 @@ async def _run_pipeline_phases(
             async for event in run_parallel_phases([run_phase_transcript, run_phase_frames], ctx):
                 yield event
         finally:
-            ctx.phase_times["transcript_frames"] = round(time.monotonic() - phase_start, 1)
+            _mark_phase(ctx, timing, "transcript_frames", phase_start)
             await _record_transcript_outcome(ctx, repository, video_summary_id)
 
         # Phase 2.5: Inject visual context into transcript (after both phases complete)
@@ -240,16 +317,14 @@ async def _run_pipeline_phases(
                 logger.info(
                     "[pipeline] Injected %d visual annotations into transcript", annotation_count
                 )
-        ctx.phase_times["visual_inject"] = round(time.monotonic() - phase_start, 1)
+        _mark_phase(ctx, timing, "visual_inject", phase_start)
 
         # Phase 3-4: Plan -> Extraction (sequential — each depends on the previous)
         for phase in [run_phase_plan, run_phase_extraction]:
             phase_start = time.monotonic()
             async for event in phase(ctx):
                 yield event
-            ctx.phase_times[phase.__name__.replace("run_phase_", "")] = round(
-                time.monotonic() - phase_start, 1
-            )
+            _mark_phase(ctx, timing, phase.__name__.replace("run_phase_", ""), phase_start)
             # Fire-and-forget faithfulness judge once extraction has data. The
             # task copies the current ContextVar state so the Langfuse trace is
             # still attached. We track the task so we can drain it before
@@ -273,13 +348,13 @@ async def _run_pipeline_phases(
             for phase in [run_phase_synthesis, run_phase_enrichment]:
                 async for event in phase(ctx):
                     yield event
-        ctx.phase_times["synthesis_enrichment"] = round(time.monotonic() - phase_start, 1)
+        _mark_phase(ctx, timing, "synthesis_enrichment", phase_start)
 
         # Phase 6: Assembly (needs synthesis + enrichment results)
         phase_start = time.monotonic()
         async for event in run_phase_assembly(ctx):
             yield event
-        ctx.phase_times["assembly"] = round(time.monotonic() - phase_start, 1)
+        _mark_phase(ctx, timing, "assembly", phase_start)
 
         # Translation step — translate the English output into the source
         # language and attach it as ``sourceLanguage`` for the FE toggle.
@@ -312,7 +387,7 @@ async def _run_pipeline_phases(
                 # Translation raised — leave the doc "processing" (retriable) and
                 # emit no terminal event; the FE handles the stream close.
                 logger.warning("[pipeline] Translation failed (non-critical): %s", e)
-            ctx.phase_times["translation"] = round(time.monotonic() - phase_start, 1)
+            _mark_phase(ctx, timing, "translation", phase_start)
 
         # One-line pipeline summary with ALL phase timings
         pt = ctx.phase_times
@@ -322,7 +397,7 @@ async def _run_pipeline_phases(
             "[pipeline] DONE youtube_id=%s in %.0fs | "
             "metadata=%.1fs transcript_frames=%.1fs visual_inject=%.1fs "
             "plan=%.1fs(%s) extraction=%.1fs synthesis_enrichment=%.1fs(%s) "
-            "assembly=%.1fs | tabs=%d",
+            "assembly=%.1fs | tabs planned=%d assembled=%d emitted=%d",
             youtube_id,
             timer.elapsed(),
             pt.get("metadata", 0),
@@ -335,6 +410,8 @@ async def _run_pipeline_phases(
             enrich_ok,
             pt.get("assembly", 0),
             len(ctx.triage.tabs) if ctx.triage else 0,
+            len(getattr(ctx, "assembled_tabs", None) or []),
+            timing.tabs_emitted,
         )
     finally:
         # Drain in-flight faithfulness tasks BEFORE the surrounding

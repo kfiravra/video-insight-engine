@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import tempfile
+import time
 import uuid
 from pathlib import Path
 
@@ -27,6 +28,7 @@ from src.models.schemas import (
     TranscriptSegment,
 )
 from src.services.media.download_utils import download_youtube_audio
+from src.services.pipeline.pipeline_timing import record_download
 from src.services.transcription.usage import emit_transcription_usage
 from src.utils.language_utils import (
     detect_language_by_script,
@@ -156,10 +158,15 @@ def _download_audio_raw_sync(video_id: str) -> Path:
         "continuedl": False,
     }
 
+    started = time.monotonic()
     download_youtube_audio(video_id, ydl_opts, TEMP_DIR, file_stem)
 
     # Find the downloaded file (extension varies by source format)
     downloaded = [p for p in TEMP_DIR.glob(f"{file_stem}.*") if not p.suffix.endswith(".part")]
+    record_download(
+        kind="audio", purpose="gemini", start_monotonic=started,
+        path=downloaded[0] if downloaded else None, ok=bool(downloaded),
+    )
     if not downloaded:
         raise TranscriptError(
             "Audio download completed but file not found",
