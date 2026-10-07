@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from src.models.pipeline_types import PlanResult
 from src.services.pipeline import plan as plan_mod
+from src.services.pipeline import plan_prompt
 from src.services.pipeline.plan import _validate_data_sources, _validate_tabs
 from tests.test_phase_assembly_cache import _build_ctx
 
@@ -158,8 +159,8 @@ def _plan_json(tabs: list[dict]) -> str:
 
 async def _run_plan_with(tabs: list[dict]) -> PlanResult:
     with (
-        patch.object(plan_mod, "_load_plan_prompt", return_value="<video>{title}</video>"),
-        patch.object(plan_mod, "_load_component_toolkit", return_value=""),
+        patch.object(plan_prompt, "_load_plan_prompt", return_value="<video>{title}</video>"),
+        patch.object(plan_prompt, "_load_component_toolkit", return_value=""),
         patch.object(plan_mod, "call_llm_with_retry", AsyncMock(return_value=_plan_json(tabs))),
     ):
         return await plan_mod.run_plan(
@@ -169,7 +170,7 @@ async def _run_plan_with(tabs: list[dict]) -> PlanResult:
             duration=600,
             category_hint="food",
             content_format=None,
-            transcript_preview="",
+            transcript="",
             llm_service=MagicMock(),
         )
 

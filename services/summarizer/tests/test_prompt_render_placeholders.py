@@ -185,9 +185,9 @@ async def test_plan_prompt_renders_without_placeholders():
             duration=600,
             category_hint="tech",
             content_format="tutorial",
-            transcript_preview="transcript preview text",
+            transcript="[0:00] transcript text",
             llm_service=llm,
-            content_traits="has_code",
+            probe_hint="domain=tech, format=tutorial",
         )
     rendered = _captured_prompt_text(mock_call)
     assert rendered, "plan stage never reached the LLM call"
@@ -196,7 +196,7 @@ async def test_plan_prompt_renders_without_placeholders():
 
 @pytest.mark.asyncio
 async def test_plan_prompt_renders_with_optional_fields_absent():
-    """None-able inputs (channel/description/traits) must still fill their slots."""
+    """None-able inputs (channel/description/hint/transcript) must still fill their slots."""
     from src.services.pipeline import plan as plan_mod
 
     llm, mock_call = _capture_llm()
@@ -208,7 +208,7 @@ async def test_plan_prompt_renders_with_optional_fields_absent():
             duration=0,
             category_hint=None,
             content_format=None,
-            transcript_preview="",
+            transcript="",
             llm_service=llm,
         )
     _assert_no_unreplaced(

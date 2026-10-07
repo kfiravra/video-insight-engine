@@ -7,18 +7,15 @@ Two-part design:
    legacy ID-based fallback). The rules are PURELY STRUCTURAL — they carry
    no human-readable label text.
 
-2. **Labels** come from the Plan LLM, in source language, attached to each
-   source tab via ``outboundLinks: {target_tab_id: label}``. ``resolve_cross_tab_links``
-   takes that dict and uses it for the CTA text. When the Plan omits an
-   entry, we fall back to the target tab's own ``label`` field — which is
-   itself an LLM-generated source-language string, so the walker can
-   translate it normally.
+2. **Labels** are the target tab's own ``label`` — an LLM-generated string in
+   the output language, so the translation walker translates it like any
+   other label. The plan used to write a separate call-to-action per link;
+   pipeline-1min 1b.2 dropped it from the plan output.
 
 The point of this split: no hardcoded English in pipeline output. The
 translation walker collects every ``crossTabLinks[i].label`` and produces
 correct English at the top level + correct source-language under
-``sourceLanguage``. There used to be ~50 hardcoded English label strings
-in this file; they're all gone now.
+``sourceLanguage``.
 """
 
 from __future__ import annotations
@@ -92,29 +89,14 @@ _LEGACY_LINK_RULES: list[tuple[str, str]] = [
 ]
 
 
-def _resolve_label(
-    target_tab_id: str,
-    outbound_links: dict[str, str] | None,
-    all_tabs: list[dict] | None,
-) -> str:
-    """Pick the source-language label for a link.
-
-    Order:
-      1. Plan-provided ``outboundLinks[target_tab_id]`` (LLM-generated CTA
-         in source language)
-      2. The target tab's own ``label`` field (also source-language; the
-         walker translates it normally)
-      3. The target tab id itself (last-resort; shouldn't happen in practice
-         because every tab is created with a label)
-    """
-    if outbound_links and target_tab_id in outbound_links:
-        return outbound_links[target_tab_id]
-    if all_tabs:
-        for t in all_tabs:
-            if t.get("id") == target_tab_id:
-                fallback = t.get("label")
-                if isinstance(fallback, str) and fallback.strip():
-                    return fallback
+def _resolve_label(target_tab_id: str, all_tabs: list[dict] | None) -> str:
+    """The link text: the target tab's own ``label``, else its id (last resort —
+    every tab is created with a label)."""
+    for tab in all_tabs or []:
+        if tab.get("id") == target_tab_id:
+            label = tab.get("label")
+            if isinstance(label, str) and label.strip():
+                return label
     return target_tab_id
 
 
@@ -124,7 +106,6 @@ def resolve_cross_tab_links(
     component: str | None = None,
     all_tabs: list[dict] | None = None,
     primary_tag: str | None = None,
-    outbound_links: dict[str, str] | None = None,
 ) -> list[dict]:
     """Resolve cross-tab links for ``tab_id``.
 
@@ -134,10 +115,9 @@ def resolve_cross_tab_links(
         component: Source tab's component name (drives component-based rules).
         all_tabs: Full list of assembled tab dicts (needed for label fallback).
         primary_tag: The video's primary domain (filters domain-hinted rules).
-        outbound_links: Source tab's Plan-generated ``{target_id: label}`` map.
 
     Returns:
-        ``[{"targetTab": "...", "label": "..."}, ...]`` — labels in source
+        ``[{"targetTab": "...", "label": "..."}, ...]`` — labels in the output
         language, ready for the translation walker.
     """
     links: list[dict] = []
@@ -161,18 +141,22 @@ def resolve_cross_tab_links(
             target_ids = comp_to_tabs.get(tgt_comp, [])
             for tid in target_ids:
                 if tid != tab_id and tid in all_tab_ids and tid not in seen_targets:
-                    links.append({
-                        "targetTab": tid,
-                        "label": _resolve_label(tid, outbound_links, all_tabs),
-                    })
+                    links.append(
+                        {
+                            "targetTab": tid,
+                            "label": _resolve_label(tid, all_tabs),
+                        }
+                    )
                     seen_targets.add(tid)
 
     for source, target in _LEGACY_LINK_RULES:
         if source == tab_id and target in all_tab_ids and target not in seen_targets:
-            links.append({
-                "targetTab": target,
-                "label": _resolve_label(target, outbound_links, all_tabs),
-            })
+            links.append(
+                {
+                    "targetTab": target,
+                    "label": _resolve_label(target, all_tabs),
+                }
+            )
             seen_targets.add(target)
 
     return links

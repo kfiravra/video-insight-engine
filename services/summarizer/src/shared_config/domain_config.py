@@ -10,6 +10,7 @@ from __future__ import annotations
 import copy
 import json
 import logging
+from collections.abc import Mapping
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal, TypedDict
@@ -118,7 +119,8 @@ def domain_requirements() -> dict[str, dict]:
     """Per-domain assembled-output validation rules consumed by
     ``_validate_domain_requirements`` (assembly/core.py): ``required``
     components are backfilled when the planner drops them; ``max`` caps
-    per-component tab counts. See ``domainRequirementsNote`` in domains.json."""
+    per-component tab counts. ``render_domain_requirements`` shows the same
+    ``required`` lists to the planner. See ``domainRequirementsNote`` in domains.json."""
     return dict(get_config().get("domainRequirements", {}))
 
 
@@ -134,20 +136,39 @@ def get_playbook(domain: str, content_format: str | None) -> dict:
     return dict(playbooks.get(f"{domain}:{content_format}", {}))
 
 
-def effective_requirements(domain: str, content_format: str | None = None) -> dict:
+def _ruled_out_by_evidence(
+    domain: str, component: str, evidence: Mapping[str, bool] | None
+) -> bool:
+    """True when ``evidence`` answers ``False`` for the key gating ``component``."""
+    if not evidence:
+        return False
+    key = requirement_evidence().get(domain, {}).get(component)
+    return key is not None and evidence.get(key) is False
+
+
+def effective_requirements(
+    domain: str,
+    content_format: str | None = None,
+    evidence: Mapping[str, bool] | None = None,
+) -> dict:
     """Merged layout policy for a video: domain requirements + playbook.
 
     The single merge point for ALL enforcement (plan post-validation, assembly
     backstop, enrichment gating). Semantics: ``forbidden`` is the UNION of
     domain and playbook lists; ``required`` is the playbook's when present,
     else the domain's; ``max`` always comes from the domain.
+
+    ``evidence`` (the plan's Appendix-C booleans) makes ``required``
+    conditional: a component whose ``requirementEvidence`` key is ``False``
+    there is not required — a food vlog with no recipe needs no checklist. A
+    missing key is "no opinion" and keeps the requirement.
     """
     base = domain_requirements().get(domain, {})
     playbook = get_playbook(domain, content_format)
     forbidden = frozenset(base.get("forbidden", [])) | frozenset(playbook.get("forbidden", []))
     required = playbook["required"] if "required" in playbook else base.get("required", [])
     return {
-        "required": list(required),
+        "required": [c for c in required if not _ruled_out_by_evidence(domain, c, evidence)],
         "max": dict(base.get("max", {})),
         "forbidden": forbidden,
         "preferred": list(playbook.get("preferred", [])),
@@ -351,6 +372,47 @@ def demote_to() -> dict[str, list[str]]:
 def requirement_evidence() -> dict[str, dict[str, str]]:
     """Domain → required component → evidence key gating its backfill."""
     return {k: dict(v) for k, v in get_config().get("requirementEvidence", {}).items()}
+
+
+def render_requirement(domain: str, component: str) -> str:
+    """One required component as the planner reads it, gated on its evidence key.
+
+    The plan emits its own ``evidence`` in the same call, so the condition is
+    stated in the prompt instead of being resolved before the call.
+    """
+    key = requirement_evidence().get(domain, {}).get(component)
+    if key is None:
+        return f"`{component}` always"
+    return f"`{component}` only when {key} is true"
+
+
+def render_domain_requirements() -> str:
+    """Render plan.txt's ``{domain_requirements}`` list from domainRequirements.
+
+    One line per domain with a non-empty ``required`` list, each component
+    conditional on its ``requirementEvidence`` key — the same rule assembly's
+    backfill applies, so the prompt never demands what the content lacks.
+    """
+    lines: list[str] = []
+    for domain, rules in domain_requirements().items():
+        required = rules.get("required", [])
+        if required:
+            parts = " · ".join(render_requirement(domain, c) for c in required)
+            lines.append(f"- {domain}: {parts}")
+    return "\n".join(lines)
+
+
+def render_extraction_caps() -> str:
+    """Render plan.txt's ``{extraction_caps}`` block: one cap per registry dataSource.
+
+    One line per domain in registry order (``- food: ingredients ≤ 30, …``);
+    an object path is one item by definition, so it carries no number.
+    """
+    by_domain: dict[str, list[str]] = {}
+    for spec in _registry().values():
+        cap = "(one object)" if spec["kind"] == "object" else f"≤ {spec['cap']}"
+        by_domain.setdefault(spec["domain"], []).append(f"{spec['field']} {cap}")
+    return "\n".join(f"- {domain}: {', '.join(fields)}" for domain, fields in by_domain.items())
 
 
 def quiz_policy() -> QuizPolicy:

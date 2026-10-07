@@ -111,15 +111,13 @@ class TestCommittedDataset:
         anchors = ("v8KaQr0MhjE", "wCkLNqy5OHE", "uC45_4nnEAI", "Jru5B044HOs")
         assert all(by_url[yid].assertions and not by_url[yid].disabled for yid in anchors)
 
-    def test_should_xfail_the_story_intro_step_player_checks_until_1b2(
+    def test_should_gate_the_story_intro_step_player_checks_when_1b2_has_landed(
         self, dataset: GoldenDataset
     ) -> None:
+        """D23: the plan reads the full transcript, so the step_player checks gate."""
         video = next(v for v in dataset.videos if v.id == "food-recipe-story-intro")
-        marked = [(a.type, a.xfail_until) for a in video.assertions if a.xfail_reason]
-        assert (video.quick, marked) == (
-            True,
-            [("requiredComponents", "1b.2"), ("minItems", "1b.2")],
-        )
+        marked = [a.type for a in video.assertions if a.xfail_reason]
+        assert (video.quick, marked) == (True, [])
 
     def test_should_label_golden_entries_by_content_domain(self, dataset: GoldenDataset) -> None:
         by_id = {v.id: v for v in dataset.videos}

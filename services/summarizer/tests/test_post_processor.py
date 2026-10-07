@@ -9,11 +9,9 @@ from src.services.pipeline.post_processor import (
     resolve_celebrations,
     validate_extraction_counts,
     compute_extraction_coverage,
-    _count_items_at_path,
-    COMPLETENESS_THRESHOLD,
     COVERAGE_GATE_RATIO,
 )
-from src.models.pipeline_types import PlanResult, ItemCounts
+from src.models.pipeline_types import PlanResult
 
 
 class TestDropEmptyTabs:
@@ -226,108 +224,22 @@ class TestResolveCelebrations:
         assert result == []
 
 
-class TestCountItemsAtPath:
-    """Test _count_items_at_path helper."""
-
-    def test_simple_path(self):
-        data = {"food": {"ingredients": ["a", "b", "c"]}}
-        assert _count_items_at_path(data, "food.ingredients") == 3
-
-    def test_wildcard_path(self):
-        data = {
-            "travel": {
-                "itinerary": [
-                    {"spots": ["spot1", "spot2"]},
-                    {"spots": ["spot3"]},
-                ],
-            },
-        }
-        assert _count_items_at_path(data, "travel.itinerary.*.spots") == 3
-
-    def test_missing_path_returns_zero(self):
-        assert _count_items_at_path({}, "food.ingredients") == 0
-
-    def test_non_list_value_returns_zero(self):
-        data = {"food": {"name": "pasta"}}
-        assert _count_items_at_path(data, "food.name") == 0
-
-    def test_nested_wildcard_with_empty_lists(self):
-        data = {
-            "travel": {
-                "itinerary": [
-                    {"tips": []},
-                    {"tips": ["tip1"]},
-                ],
-            },
-        }
-        assert _count_items_at_path(data, "travel.itinerary.*.tips") == 1
-
-
 class TestValidateExtractionCounts:
-    """Test validate_extraction_counts function."""
+    """The plan stopped counting items (pipeline-1min 1b.2), so the check is a no-op."""
 
-    def test_returns_empty_when_no_manifest(self):
-        assert validate_extraction_counts(None, {"food": {"ingredients": []}}) == {}
+    def test_should_return_no_warnings_when_plan_carries_no_counts(self):
+        plan = PlanResult.model_validate({"contentTags": ["food"], "primaryTag": "food"})
+        data = {"food": {"ingredients": []}}
 
-    def test_returns_empty_when_no_extraction_data(self):
-        manifest = PlanResult.model_validate({"itemCounts": {"ingredients": 5}})
-        assert validate_extraction_counts(manifest, None) == {}
+        assert validate_extraction_counts(plan, data, content_tags=["food"]) == {}
 
-    def test_returns_empty_when_both_none(self):
+    def test_should_ignore_legacy_item_counts_when_an_old_plan_sends_them(self):
+        plan = PlanResult.model_validate({"itemCounts": {"exercises": 5}})
+
+        assert validate_extraction_counts(plan, {}) == {}
+
+    def test_should_return_no_warnings_when_inputs_are_missing(self):
         assert validate_extraction_counts(None, None) == {}
-
-    def test_no_warnings_when_counts_match(self):
-        manifest = PlanResult.model_validate({"itemCounts": {"ingredients": 5}})
-        data = {"food": {"ingredients": ["a", "b", "c", "d", "e"]}}
-
-        warnings = validate_extraction_counts(manifest, data)
-        assert warnings == {}
-
-    def test_no_warnings_above_threshold(self):
-        manifest = PlanResult.model_validate({"itemCounts": {"ingredients": 5}})
-        # 4/5 = 0.8 > 0.6 threshold
-        data = {"food": {"ingredients": ["a", "b", "c", "d"]}}
-
-        warnings = validate_extraction_counts(manifest, data)
-        assert warnings == {}
-
-    def test_warns_below_threshold(self):
-        manifest = PlanResult.model_validate({"itemCounts": {"ingredients": 10}})
-        # 2/10 = 0.2 < 0.6 threshold
-        data = {"food": {"ingredients": ["a", "b"]}}
-
-        warnings = validate_extraction_counts(manifest, data)
-        assert "ingredients" in warnings
-        assert warnings["ingredients"]["manifest"] == 10
-        assert warnings["ingredients"]["extracted"] == 2
-        assert warnings["ingredients"]["ratio"] == 0.2
-
-    def test_skips_zero_manifest_counts(self):
-        manifest = PlanResult.model_validate({"itemCounts": {"ingredients": 0, "spots": 0}})
-        data = {}
-
-        warnings = validate_extraction_counts(manifest, data)
-        assert warnings == {}
-
-    def test_multiple_paths_summed(self):
-        manifest = PlanResult.model_validate({"itemCounts": {"tips": 10}})
-        # tips checks food.tips + fitness.tips + travel.itinerary.*.tips
-        data = {
-            "food": {"tips": ["t1", "t2", "t3"]},
-            "fitness": {"tips": ["t4", "t5", "t6"]},
-        }
-
-        # 6/10 = 0.6, exactly at threshold — should NOT warn
-        warnings = validate_extraction_counts(manifest, data)
-        assert warnings == {}
-
-    def test_warns_when_extraction_missing_entirely(self):
-        manifest = PlanResult.model_validate({"itemCounts": {"exercises": 5}})
-        data = {}  # No fitness.exercises at all
-
-        warnings = validate_extraction_counts(manifest, data)
-        assert "exercises" in warnings
-        assert warnings["exercises"]["extracted"] == 0
 
 
 class TestComputeExtractionCoverage:
@@ -378,32 +290,3 @@ class TestComputeExtractionCoverage:
         assert (
             compute_extraction_coverage({"learning": {"timestamps": [{"seconds": 5}]}}, 0) is None
         )
-
-
-class TestValidateExtractionCountsDomainFilter:
-    """Regression: the plan prompt fills a flat, domain-agnostic itemCounts —
-    a gaming/review video can carry manifest counts for spots/tips that no
-    active schema could populate. Those must not warn (guaranteed 0% false
-    positives that also fed the retry trigger)."""
-
-    def test_skips_fields_outside_active_domains(self):
-        manifest = PlanResult.model_validate({"itemCounts": {"spots": 6, "tips": 3}})
-        data = {"review": {"comparisons": []}, "gaming": {}}
-
-        warnings = validate_extraction_counts(manifest, data, content_tags=["review", "gaming"])
-        assert warnings == {}
-
-    def test_still_warns_for_fields_in_active_domains(self):
-        manifest = PlanResult.model_validate({"itemCounts": {"spots": 6}})
-        data = {"travel": {"itinerary": [{"spots": []}]}}
-
-        warnings = validate_extraction_counts(manifest, data, content_tags=["travel"])
-        assert "spots" in warnings
-        assert warnings["spots"]["extracted"] == 0
-
-    def test_no_filter_when_content_tags_absent(self):
-        manifest = PlanResult.model_validate({"itemCounts": {"spots": 6}})
-        data = {"review": {}}
-
-        warnings = validate_extraction_counts(manifest, data)
-        assert "spots" in warnings

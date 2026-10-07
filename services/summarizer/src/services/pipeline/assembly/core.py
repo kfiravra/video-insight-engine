@@ -1611,22 +1611,8 @@ def assemble_response(
         content_format=triage.get("contentFormat"),
     )
 
-    # Resolve cross-tab links. ``outboundLinks`` on each source tab carries
-    # Plan-generated CTA labels in source language; cross_tab.py uses them
-    # as link text and falls back to the target tab's own label when an
-    # entry is missing.
+    # Resolve cross-tab links; each link's text is the target tab's own label.
     all_assembled_tab_ids = {t["id"] for t in assembled_tabs}
-    plan_outbound_by_tab: dict[str, dict[str, str]] = {}
-    for raw_tab in raw_tabs:
-        if not isinstance(raw_tab, dict):
-            continue
-        tid = raw_tab.get("id", "")
-        links_map = raw_tab.get("outboundLinks")
-        if isinstance(tid, str) and tid and isinstance(links_map, dict):
-            plan_outbound_by_tab[tid] = {
-                k: v for k, v in links_map.items() if isinstance(k, str) and isinstance(v, str)
-            }
-
     globally_linked: set[str] = set()
     for tab in assembled_tabs:
         links = resolve_cross_tab_links(
@@ -1635,7 +1621,6 @@ def assemble_response(
             component=tab.get("component"),
             all_tabs=assembled_tabs,
             primary_tag=primary_tag,
-            outbound_links=plan_outbound_by_tab.get(tab["id"]),
         )
         deduped = []
         for link in links:

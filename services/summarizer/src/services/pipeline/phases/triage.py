@@ -13,10 +13,11 @@ from typing import TYPE_CHECKING, AsyncGenerator
 from llm_common.context import llm_feature_var
 
 from src.services.override_state import check_override
-from src.services.pipeline.classifier import classify_domain_format, CLASSIFIER_CONFIDENCE_THRESHOLD
-from src.services.pipeline.plan import run_plan
+from src.services.pipeline.classifier import CLASSIFIER_CONFIDENCE_THRESHOLD, classify_domain_format
 from src.services.pipeline.pipeline_helpers import sse_event
+from src.services.pipeline.plan import run_plan
 from src.services.pipeline.triage import TriageResult
+from src.services.transcript.render import render_transcript
 
 if TYPE_CHECKING:
     from src.services.pipeline.context import PipelineContext
@@ -58,29 +59,33 @@ async def run_phase_plan(ctx: PipelineContext) -> AsyncGenerator[str, None]:
             ctx.content_traits = classification.traits
         if classification.confidence > CLASSIFIER_CONFIDENCE_THRESHOLD:
             ctx.category_hint = classification.domain
-            logger.info("pipeline.classifier.override", extra={
-                "video_id": ctx.video_summary_id,
-                "domain": classification.domain,
-                "format": classification.format,
-                "confidence": classification.confidence,
-                "reasoning": (classification.reasoning or "")[:200],
-            })
+            logger.info(
+                "pipeline.classifier.override",
+                extra={
+                    "video_id": ctx.video_summary_id,
+                    "domain": classification.domain,
+                    "format": classification.format,
+                    "confidence": classification.confidence,
+                    "reasoning": (classification.reasoning or "")[:200],
+                },
+            )
         else:
-            logger.info("pipeline.classifier.low_confidence", extra={
-                "video_id": ctx.video_summary_id,
-                "domain": classification.domain,
-                "format": classification.format,
-                "confidence": classification.confidence,
-            })
+            logger.info(
+                "pipeline.classifier.low_confidence",
+                extra={
+                    "video_id": ctx.video_summary_id,
+                    "domain": classification.domain,
+                    "format": classification.format,
+                    "confidence": classification.confidence,
+                },
+            )
 
-    # Build traits summary for plan prompt
-    traits_summary = None
-    if ctx.content_traits:
-        active = ctx.content_traits.active_traits()
-        traits_summary = ", ".join(active) if active else "none detected"
-
-    # Run plan (single Sonnet call — replaces manifest + triage)
+    # Run plan (single Sonnet call — replaces manifest + triage). It reads the
+    # FULL transcript with [m:ss] markers, rendered from the raw segments so
+    # the visual annotations injected into clean_text never reach it; a
+    # metadata-only transcript has no segments (renders "") → clean_text.
     llm_feature_var.set("summarize:plan")
+    segments = ctx.transcript_data.segments if ctx.transcript_data else []
     plan_result = await run_plan(
         title=video_data.title,
         channel=video_data.channel or "",
@@ -88,9 +93,9 @@ async def run_phase_plan(ctx: PipelineContext) -> AsyncGenerator[str, None]:
         duration=video_data.duration or 0,
         category_hint=ctx.category_hint,
         content_format=ctx.content_format,
-        transcript_preview=ctx.clean_text[:3000],
+        transcript=render_transcript(segments, source_language=ctx.source_language_code)
+        or ctx.clean_text,
         llm_service=ctx.llm_service,
-        content_traits=traits_summary,
     )
 
     # Store plan result and populate backward-compat fields
@@ -120,28 +125,37 @@ async def run_phase_plan(ctx: PipelineContext) -> AsyncGenerator[str, None]:
     yield sse_event("triage_complete", ctx.triage_dict)
 
     # Meta event for progressive rendering
-    yield sse_event("meta", {
-        "title": video_data.title,
-        "contentTags": plan_result.content_tags,
-        "modifiers": plan_result.modifiers,
-        "primaryTag": plan_result.primary_tag,
-        "tabCount": len(plan_result.tabs),
-        "tabLabels": [{"id": t["id"], "label": t["label"], "emoji": t.get("emoji", "")} for t in plan_result.tabs],
-        "contentFormat": ctx.content_format,
-        "language": ctx.language,
-        "isRTL": ctx.is_rtl,
-    })
+    yield sse_event(
+        "meta",
+        {
+            "title": video_data.title,
+            "contentTags": plan_result.content_tags,
+            "modifiers": plan_result.modifiers,
+            "primaryTag": plan_result.primary_tag,
+            "tabCount": len(plan_result.tabs),
+            "tabLabels": [
+                {"id": t["id"], "label": t["label"], "emoji": t.get("emoji", "")}
+                for t in plan_result.tabs
+            ],
+            "contentFormat": ctx.content_format,
+            "language": ctx.language,
+            "isRTL": ctx.is_rtl,
+        },
+    )
 
-    logger.info("pipeline.plan", extra={
-        "video_id": ctx.video_summary_id,
-        "content_tags": plan_result.content_tags,
-        "tabs_designed": len(plan_result.tabs),
-        "tab_components": [t.get("component") for t in plan_result.tabs],
-        "confidence": plan_result.confidence,
-        "classifier_domain": classification.domain if classification else None,
-        "classifier_format": classification.format if classification else None,
-        "classifier_confidence": classification.confidence if classification else None,
-    })
+    logger.info(
+        "pipeline.plan",
+        extra={
+            "video_id": ctx.video_summary_id,
+            "content_tags": plan_result.content_tags,
+            "tabs_designed": len(plan_result.tabs),
+            "tab_components": [t.get("component") for t in plan_result.tabs],
+            "confidence": plan_result.confidence,
+            "classifier_domain": classification.domain if classification else None,
+            "classifier_format": classification.format if classification else None,
+            "classifier_confidence": classification.confidence if classification else None,
+        },
+    )
 
 
 # Backward-compat alias
