@@ -155,7 +155,20 @@ class TestMergeInto:
         run_eval.main(
             [*argv, "--noise-runs", "2", "--merge-into", *reports, "--noise-out", "/dev/null"]
         )
-        assert Path(reports[0] + ".bak").read_text() == original
+        [backup] = Path(reports[0]).parent.glob(Path(reports[0]).name + ".*.bak")
+        assert backup.read_text() == original
+
+    def test_should_keep_one_timestamped_backup_per_rewrite(
+        self, tmp_path: Path, fake_api: list[str]
+    ) -> None:
+        reports = _baseline(tmp_path, [_record("a")])
+        dataset = _dataset(tmp_path, [_record("a", domain="science")])
+        run_eval.main(["--dataset", dataset, "--resync", reports[0]])
+        after_first = Path(reports[0]).read_text()
+        run_eval.main(["--dataset", _dataset(tmp_path, [_record("a")]), "--resync", reports[0]])
+        backups = Path(reports[0]).parent.glob(Path(reports[0]).name + ".*.bak")
+        contents = [b.read_text() for b in backups]
+        assert (len(contents), after_first in contents) == (2, True)
 
     def test_should_refuse_a_merge_when_reports_do_not_match_the_passes(self) -> None:
         with pytest.raises(SystemExit):
@@ -164,6 +177,45 @@ class TestMergeInto:
     def test_should_refuse_a_merge_without_ids(self) -> None:
         with pytest.raises(SystemExit):
             run_eval.main(["--merge-into", "r1.json"])
+
+    def _refused(self, tmp_path: Path, fake_api: list[str], *extra: str) -> list[str]:
+        """Run a merge expected to be refused; return what was POSTed meanwhile."""
+        dataset = _dataset(tmp_path, [_record("a"), _record("c")])
+        argv = ["--dataset", dataset, "--output", str(tmp_path / "new"), "--ids", "c"]
+        with pytest.raises(SystemExit):
+            run_eval.main([*argv, "--noise-out", "/dev/null", *extra])
+        return fake_api
+
+    def test_should_refuse_a_missing_merge_target_before_any_run(
+        self, tmp_path: Path, fake_api: list[str]
+    ) -> None:
+        missing = str(tmp_path / "absent.json")
+        assert self._refused(tmp_path, fake_api, "--merge-into", missing) == []
+
+    def test_should_refuse_the_same_merge_target_twice(
+        self, tmp_path: Path, fake_api: list[str]
+    ) -> None:
+        reports = _baseline(tmp_path, [_record("a")])
+        fake_api.clear()
+        twice = ["--noise-runs", "2", "--merge-into", reports[0], reports[0]]
+        assert self._refused(tmp_path, fake_api, *twice) == []
+
+    def test_should_refuse_a_merge_target_that_did_not_bypass_the_cache(
+        self, tmp_path: Path, fake_api: list[str]
+    ) -> None:
+        reports = _baseline(tmp_path, [_record("a")])
+        fake_api.clear()
+        summary = json.loads(Path(reports[0]).read_text())
+        Path(reports[0]).write_text(json.dumps({**summary, "bypassCache": False}))
+        assert self._refused(tmp_path, fake_api, "--merge-into", reports[0]) == []
+
+    def test_should_refuse_a_merge_target_from_another_api(
+        self, tmp_path: Path, fake_api: list[str]
+    ) -> None:
+        reports = _baseline(tmp_path, [_record("a")])
+        fake_api.clear()
+        other = ["--api-url", "https://other-host.example", "--merge-into", reports[0]]
+        assert self._refused(tmp_path, fake_api, *other) == []
 
 
 # ─── --resync ──────────────────────────────────────────────────────────

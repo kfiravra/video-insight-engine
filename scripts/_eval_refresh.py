@@ -3,8 +3,8 @@
 ``run_eval.py --refresh-langfuse <eval-….json> [...]`` re-reads the pipeline
 trace of every row that is missing a Langfuse-derived value — faithfulness,
 or the classifier format behind a skipped ``expectedFormat`` assertion — and
-rewrites the report's .json/.md/.csv in place (each original kept once as
-``<file>.bak``). It only reads Langfuse: no vie-api calls, no pipeline runs.
+rewrites the report's .json/.md/.csv in place (the replaced state kept as
+``<file>.<ts>.bak``). It only reads Langfuse: no vie-api calls, no pipeline runs.
 Rows that errored, have no ``videoSummaryId``, or are complete are left as
 they are, and values already present are never overwritten.
 """

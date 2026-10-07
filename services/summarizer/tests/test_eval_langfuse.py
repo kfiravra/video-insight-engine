@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import sys
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -278,7 +279,8 @@ class TestRefresh:
     ) -> None:
         await _refresh(report)
         backups = sorted(p.name for p in report.parent.glob("*.bak"))
-        assert backups == [f"{report.stem}.{ext}.bak" for ext in ("csv", "json", "md")]
+        pattern = re.compile(rf"{re.escape(report.stem)}\.(csv|json|md)\.\d{{8}}-\d{{6}}\.bak")
+        assert [pattern.fullmatch(name).group(1) for name in backups] == ["csv", "json", "md"]
 
     async def test_should_update_the_run_mean_when_a_row_is_filled(
         self, report: Path, langfuse: FakeLangfuse

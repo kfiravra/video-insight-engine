@@ -20,7 +20,8 @@ _SCRIPTS_DIR = Path(__file__).resolve().parents[3] / "scripts"
 sys.path.insert(0, str(_SCRIPTS_DIR))
 
 import gate  # noqa: E402
-from _eval_noise import build_noise, layout_jaccard  # noqa: E402
+from _eval_noise import build_noise  # noqa: E402
+from _eval_schema import parse_assertions  # noqa: E402
 
 _BASE = {"quality": 0.80, "faithfulness": 0.90, "duplicateRate": 0.05}
 
@@ -85,104 +86,44 @@ def _records(*live: str, retired: tuple[str, ...] = ()) -> list[dict[str, Any]]:
     ]
 
 
-def _failed_check(xfail: str | None = None) -> list[dict[str, Any]]:
-    """A video's stored assertions: completed, then one failed requiredComponents."""
+_REQUIRED = {"type": "requiredComponents", "components": ["step_player"]}
+_XFAIL_REQUIRED = {
+    **_REQUIRED,
+    "xfail": {"reason": "plan sees 3,000 chars; fixed by 1b.2", "until": "1b.2"},
+}
+
+
+def _key(assertion: dict[str, Any]) -> str:
+    [parsed] = parse_assertions({**_records("x")[0], "assertions": [assertion]})
+    return parsed.key
+
+
+def _failed_check(xfail: str | None = None, key: str | None = "default") -> list[dict[str, Any]]:
+    """A video's stored assertions: completed, then one failed ``_REQUIRED`` check."""
     return [
-        {"type": "completed", "passed": True, "detail": "run completed", "xfail": None},
-        {"type": "requiredComponents", "passed": False, "detail": "missing", "xfail": xfail},
+        {"type": "completed", "passed": True, "detail": "run completed", "key": "completed"},
+        {
+            "type": "requiredComponents",
+            "passed": False,
+            "detail": "missing",
+            "xfail": xfail,
+            "key": _key(_REQUIRED) if key == "default" else key,
+        },
     ]
 
 
-_XFAIL_REQUIRED = {
-    "type": "requiredComponents",
-    "components": ["step_player"],
-    "xfail": {"reason": "plan sees 3,000 chars; fixed by 1b.2", "until": "1b.2"},
-}
+def _without(report: dict[str, Any], metric: str, *ids: str) -> dict[str, Any]:
+    """``report`` with no ``metric`` value for ``ids``."""
+    for video in report["videos"]:
+        if video["id"] in ids:
+            video["metrics"][metric] = None
+    return report
 
 
 @pytest.fixture
 def noise() -> dict[str, Any]:
     """Two baseline passes; each video's quality differs by 0.04 between them."""
     return build_noise([_summary(), _summary({"quality": 0.04})], ["r1.json", "r2.json"])
-
-
-# ─── Noise file ────────────────────────────────────────────────────────
-class TestBuildNoise:
-    def test_should_record_run_mean_spread_when_two_passes_differ(
-        self, noise: dict[str, Any]
-    ) -> None:
-        assert noise["runMeanSpread"]["quality"] == 0.04
-
-    def test_should_pool_per_video_differences_into_sd_and_df_when_building_noise(
-        self, noise: dict[str, Any]
-    ) -> None:
-        # Two videos, d_i = 0.04 each: s^2 = sum(d^2) / 2n = 0.0008, df = n(N-1) = 2.
-        estimate = noise["noise"]["quality"]
-        assert (estimate["sd"], estimate["df"], estimate["n"]) == (
-            pytest.approx(0.0008**0.5, abs=1e-6),
-            2,
-            2,
-        )
-
-    def test_should_derive_sigma_of_one_pass_mean_when_building_noise(
-        self, noise: dict[str, Any]
-    ) -> None:
-        estimate = noise["noise"]["quality"]
-        assert estimate["sigmaMean"] == pytest.approx(estimate["sd"] / 2**0.5, abs=1e-6)
-
-    def test_should_record_mean_of_passes_as_baseline(self, noise: dict[str, Any]) -> None:
-        assert noise["baseline"]["quality"] == 0.82
-
-    def test_should_keep_per_video_means_when_building_noise(self, noise: dict[str, Any]) -> None:
-        assert noise["videos"]["a"]["quality"] == 0.82
-
-    def test_should_refuse_a_single_summary(self) -> None:
-        with pytest.raises(ValueError):
-            build_noise([_summary()], ["r1.json"])
-
-    def test_should_exclude_a_video_from_noise_when_it_errored_in_any_pass(self) -> None:
-        passes = [_summary(), _errored(_summary({"quality": 0.04}), "b")]
-        noise = build_noise(passes, ["r1.json", "r2.json"])
-        assert (noise["excludedVideos"], sorted(noise["videos"])) == (["b"], ["a"])
-
-    def test_should_not_inflate_noise_when_a_video_errored_in_one_pass(self) -> None:
-        # Old behaviour: the failed run scored quality 0.0 → noise ≈ 0.4, baseline halved.
-        passes = [_summary(), _errored(_summary({"quality": 0.04}), "b")]
-        noise = build_noise(passes, ["r1.json", "r2.json"])
-        assert (noise["runMeanSpread"]["quality"], noise["baseline"]["quality"]) == (0.04, 0.82)
-
-    def test_should_leave_a_metric_unscored_in_the_baseline_when_one_pass_lacks_it(self) -> None:
-        second = _summary({"quality": 0.04})
-        second["videos"][0]["metrics"]["faithfulness"] = None
-        noise = build_noise([_summary(), second], ["r1.json", "r2.json"])
-        video = noise["videos"]["a"]
-        assert (video["faithfulness"], video["quality"], noise["notScored"]["faithfulness"]) == (
-            None,
-            0.82,
-            ["a"],
-        )
-
-    def test_should_keep_an_unscored_video_out_of_that_metric_noise(self) -> None:
-        second = _summary()
-        second["videos"][0]["metrics"]["faithfulness"] = None
-        noise = build_noise([_summary(), second], ["r1.json", "r2.json"])
-        assert (noise["noise"]["faithfulness"]["n"], noise["noise"]["quality"]["n"]) == (1, 2)
-
-    def test_should_drop_retired_ids_when_building_noise_for_the_live_set(self) -> None:
-        noise = build_noise([_summary(), _summary()], ["r1", "r2"], live_ids={"a"})
-        assert (sorted(noise["videos"]), noise["retiredVideos"]) == (["a"], ["b"])
-
-    def test_should_label_noise_by_api_when_built_from_legacy_api_url_summaries(self) -> None:
-        legacy = [{**_summary(), "apiUrl": "http://localhost:3000"} for _ in range(2)]
-        for summary in legacy:
-            del summary["apiLabel"]
-        assert build_noise(legacy, ["r1", "r2"])["apiLabel"] == "localhost:3000"
-
-    def test_should_score_identical_layouts_as_fully_stable(self) -> None:
-        assert layout_jaccard(["overview", "quiz_arena"], ["quiz_arena", "overview"]) == 1.0
-
-    def test_should_score_half_overlap_layouts_as_one_third_stable(self) -> None:
-        assert layout_jaccard(["overview", "step_player"], ["overview", "checklist"]) == 1 / 3
 
 
 # ─── Gate ──────────────────────────────────────────────────────────────
@@ -315,11 +256,40 @@ class TestGate:
     def test_should_not_gate_a_metric_when_no_video_is_scored_in_both(
         self, noise: dict[str, Any]
     ) -> None:
-        report = _summary()
-        for video in report["videos"]:
-            video["metrics"]["faithfulness"] = None
+        report = _without(_summary(), "faithfulness", "a", "b")
         check = gate.check_metric(report, noise, "faithfulness")
         assert (check.gated, check.regressed) == (False, False)
+
+    def test_should_refuse_a_run_that_lost_a_metric_for_every_video(
+        self, noise: dict[str, Any]
+    ) -> None:
+        report = _without(_summary(), "faithfulness", "a", "b")
+        with pytest.raises(gate.GateInputError, match="metric faithfulness not scored for 2"):
+            gate.evaluate(report, noise)
+
+    def test_should_refuse_a_run_that_lost_a_metric_beyond_the_allowance(self) -> None:
+        ids = tuple(f"v{i:02d}" for i in range(12))
+        noise = build_noise([_summary(ids=ids), _summary(ids=ids)], ["r1", "r2"])
+        report = _without(_summary(ids=ids), "faithfulness", *ids[:3])  # 3 > max(2, 20 % of 9)
+        with pytest.raises(gate.GateInputError, match="unusable input"):
+            gate.evaluate(report, noise)
+
+    def test_should_pass_a_run_that_lost_a_metric_within_the_allowance(self) -> None:
+        ids = tuple(f"v{i:02d}" for i in range(12))
+        noise = build_noise([_summary(ids=ids), _summary(ids=ids)], ["r1", "r2"])
+        report = _without(_summary(ids=ids), "faithfulness", *ids[:2])
+        assert gate.evaluate(report, noise).passed
+
+    def test_should_not_count_videos_the_baseline_never_scored_as_lost(self) -> None:
+        ids = tuple(f"v{i:02d}" for i in range(12))
+        unscored = _without(_summary(ids=ids), "faithfulness", *ids[:5])
+        noise = build_noise([unscored, _summary(ids=ids)], ["r1", "r2"])
+        report = _without(_summary(ids=ids), "faithfulness", *ids[:5])
+        assert gate.evaluate(report, noise).passed
+
+    def test_should_not_count_an_errored_video_as_lost(self, noise: dict[str, Any]) -> None:
+        check = gate.check_metric(_errored(_summary(), "a"), noise, "faithfulness")
+        assert check.lost == ()
 
     def test_should_fail_when_a_non_xfail_assertion_failed(self, noise: dict[str, Any]) -> None:
         report = _summary()
@@ -359,23 +329,54 @@ class TestGate:
             "(xfail: plan sees 3,000 chars; fixed by 1b.2; until 1b.2)"
         ]
 
-    def test_should_report_xpass_when_a_marked_check_passes(self, noise: dict[str, Any]) -> None:
+    def test_should_fail_the_gate_when_a_strict_xfail_check_passes(
+        self, noise: dict[str, Any]
+    ) -> None:
         report = _summary()
         report["videos"][0]["assertions"] = _failed_check()
         report["videos"][0]["assertions"][1]["passed"] = True
         records = _records("a", "b")
         records[0]["assertions"] = [_XFAIL_REQUIRED]
         result = gate.evaluate(report, noise, records=records)
-        assert result.passed and len(result.xpasses) == 1
+        assert (result.passed, len(result.xpasses)) == (False, 1)
 
-    def test_should_keep_the_stored_marker_when_the_dataset_assertions_changed_shape(
+    def test_should_not_gate_an_xpass_when_the_marker_is_non_strict(
+        self, noise: dict[str, Any]
+    ) -> None:
+        report = _summary()
+        report["videos"][0]["assertions"] = _failed_check()
+        report["videos"][0]["assertions"][1]["passed"] = True
+        lenient = {**_REQUIRED, "xfail": {"reason": "flaky", "strict": False}}
+        records = _records("a", "b")
+        records[0]["assertions"] = [lenient]
+        result = gate.evaluate(report, noise, records=records)
+        assert (result.passed, len(result.lenient_xpasses)) == (True, 1)
+
+    def test_should_follow_a_marker_by_key_when_the_dataset_reorders_assertions(
         self, noise: dict[str, Any]
     ) -> None:
         report = _summary()
         report["videos"][0]["assertions"] = _failed_check()
         records = _records("a", "b")
-        records[0]["assertions"] = [_XFAIL_REQUIRED, {"type": "quizAbsentOrLast"}]
+        records[0]["assertions"] = [{"type": "quizAbsentOrLast"}, _XFAIL_REQUIRED]
+        assert gate.evaluate(report, noise, records=records).passed
+
+    def test_should_drop_a_stored_marker_when_the_dataset_check_changed(
+        self, noise: dict[str, Any]
+    ) -> None:
+        report = _summary()
+        report["videos"][0]["assertions"] = _failed_check(xfail="old marker")
+        records = _records("a", "b")
+        records[0]["assertions"] = [{**_XFAIL_REQUIRED, "components": ["checklist"]}]
         assert not gate.evaluate(report, noise, records=records).passed
+
+    def test_should_refuse_a_report_whose_results_predate_assertion_keys(
+        self, noise: dict[str, Any]
+    ) -> None:
+        report = _summary()
+        report["videos"][0]["assertions"] = _failed_check(xfail="marker", key=None)
+        with pytest.raises(gate.GateInputError, match="--resync"):
+            gate.evaluate(report, noise, records=_records("a", "b"))
 
     def test_should_refuse_a_report_when_no_row_is_a_live_golden_id(
         self, noise: dict[str, Any]

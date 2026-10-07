@@ -35,10 +35,14 @@
 #                        Every live run also asserts it completed. `xfail:
 #                        <reason>` — or `xfail: {reason, until: <task>}` —
 #                        keeps a known, tracked failure from failing the gate
-#                        (still reported as XFAIL; XPASS = drop the marker).
-#                        gate.py reads the markers from this file, so a new
-#                        marker needs no re-run (`run_eval.py --resync` also
-#                        writes it into stored reports, $0).
+#                        (still reported as XFAIL). Markers are STRICT: a
+#                        marked check that passes (XPASS) fails the gate until
+#                        the marker is removed; `strict: false` only for a
+#                        nondeterministic known failure. gate.py reads the
+#                        markers from this file by assertion key (type +
+#                        parameters), so a new marker needs no re-run
+#                        (`run_eval.py --resync` writes it into stored
+#                        reports, $0).
 #   quick              — member of `run_eval.py --subset quick`: exactly one
 #                        live entry per domain (the cheap post-change check).
 #
@@ -364,8 +368,10 @@ videos:
       - type: forbiddenComponents
         components: [step_player, checklist]
         xfail:
+          # Nondeterministic today: XPASS in baseline r1, XFAIL in r2.
           reason: "C19 — domain backfill is unconditional (expected to pass at gate 1)"
           until: "1b.2 / 1d.7"
+          strict: false
       - type: quizAbsentOrLast
       - type: minItems
         component: spot_explorer

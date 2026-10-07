@@ -6,14 +6,19 @@ eval before any pipeline spend, not after an hour of runs.
 Per-video ``assertions`` are deterministic checks over the assembled API
 response (plus the classifier format read from the Langfuse trace). Every
 assertion accepts an optional ``xfail`` marker — a reason string, or
-``{reason, until}`` naming the task that is expected to fix it: the check
-still runs and is reported, but a known, tracked failure does not fail the
-gate (a pass is reported as XPASS so the marker gets removed). The gate reads
-the markers from this file, so marking a known failure needs no re-run.
+``{reason, until, strict}`` naming the task that is expected to fix it: the
+check still runs and is reported, but a known, tracked failure does not fail
+the gate. Markers are strict by default: a marked check that PASSES (XPASS)
+fails the gate, so the marker is removed as soon as the fix lands and cannot
+hide a later regression. ``strict: false`` is only for a known failure that
+is nondeterministic (it passes on some runs). The gate reads the markers
+from this file, matched to stored results by ``key`` (type + parameters), so
+marking a known failure needs no re-run.
 """
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Annotated, Any, Literal
 from urllib.parse import urlparse
@@ -60,12 +65,29 @@ class Xfail(BaseModel):
 
     reason: str = Field(min_length=1)
     until: str | None = Field(default=None, min_length=1)
+    # False only for a nondeterministic known failure: its XPASS does not gate.
+    strict: bool = True
 
 
 class _AssertionBase(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     xfail: Annotated[str, Field(min_length=1)] | Xfail | None = None
+
+    @property
+    def key(self) -> str:
+        """Stable identity: the type plus every parameter except the marker.
+
+        Stored results are matched to dataset assertions by this key, so
+        reordering assertions moves their markers with them, and editing a
+        check's parameters detaches the old marker instead of reusing it.
+        """
+        params = self.model_dump(mode="json", by_alias=True, exclude={"type", "xfail"})
+        return f"{self.type}:{json.dumps(params, sort_keys=True, separators=(',', ':'))}"
+
+    @property
+    def xfail_strict(self) -> bool:
+        return self.xfail.strict if isinstance(self.xfail, Xfail) else True
 
     @property
     def xfail_reason(self) -> str | None:
@@ -176,6 +198,9 @@ class GoldenVideo(BaseModel):
             raise ValueError(f"{self.id}: a 'quick' entry must be live")
         if not self.disabled and not is_allowed_video_url(self.url):
             raise ValueError(f"{self.id}: live entry url {self.url!r} is not a YouTube URL")
+        keys = [a.key for a in self.assertions]
+        if len(keys) != len(set(keys)):
+            raise ValueError(f"{self.id}: duplicate assertion (same type and parameters)")
         return self
 
 

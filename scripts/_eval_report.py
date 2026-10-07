@@ -67,6 +67,8 @@ def _assertion_dict(result: AssertionResult) -> dict[str, Any]:
         "detail": result.detail,
         "xfail": result.xfail,
         "until": result.until,
+        "strict": result.strict,
+        "key": result.key,
     }
 
 
@@ -226,15 +228,29 @@ def outcomes_from_summary(summary: dict[str, Any]) -> list[VideoOutcome]:
     return [_outcome_from_row(row) for row in summary.get("videos") or []]
 
 
-def backup_reports(json_path: Path) -> None:
-    """Copy ``json_path`` and its .csv/.md siblings to ``<file>.bak`` before a rewrite.
+def _backup_path(path: Path, stamp: str, attempt: int) -> Path:
+    suffix = f"{stamp}-{attempt}" if attempt else stamp
+    return path.with_name(f"{path.name}.{suffix}.bak")
 
-    An existing ``.bak`` is kept: it holds the ORIGINAL run, not the last rewrite.
+
+def backup_reports(json_path: Path) -> list[Path]:
+    """Copy ``json_path`` and its .csv/.md siblings to ``<file>.<ts>.bak``; return the copies.
+
+    One timestamp per rewrite operation (a ``-N`` suffix on a same-second
+    collision), so every rewrite keeps the state it replaced.
     """
-    for path in (json_path, json_path.with_suffix(".csv"), json_path.with_suffix(".md")):
-        backup = path.with_name(path.name + ".bak")
-        if path.exists() and not backup.exists():
-            shutil.copy2(path, backup)
+    siblings = [
+        p
+        for p in (json_path, json_path.with_suffix(".csv"), json_path.with_suffix(".md"))
+        if p.exists()
+    ]
+    stamp, attempt = time.strftime("%Y%m%d-%H%M%S"), 0
+    while any(_backup_path(p, stamp, attempt).exists() for p in siblings):
+        attempt += 1
+    backups = [_backup_path(p, stamp, attempt) for p in siblings]
+    for source, backup in zip(siblings, backups, strict=True):
+        shutil.copy2(source, backup)
+    return backups
 
 
 def rewrite_reports(

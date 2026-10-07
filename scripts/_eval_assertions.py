@@ -3,7 +3,9 @@
 Evaluates the typed assertions from ``_eval_schema`` against one assembled
 API response (``{meta, tabs, duration}``) plus the trace signals read from
 Langfuse. Results are reported per video; ``scripts/gate.py`` fails on any
-failed assertion that is not marked ``xfail``.
+failed assertion that is not marked ``xfail``, and on any strict ``xfail``
+that passed (XPASS — the marker must go). Each result carries the ``key`` of
+the dataset assertion it came from, so markers are re-read by identity.
 
 An assertion whose input is unavailable (no classifier format on the trace,
 no duration on the response) is reported as *skipped* (``passed=None``) —
@@ -46,10 +48,17 @@ class AssertionResult:
     detail: str = ""
     xfail: str | None = None
     until: str | None = None  # the task expected to fix an xfail (e.g. "1b.2")
+    strict: bool = True  # a strict xfail that passes (XPASS) fails the gate
+    key: str | None = None  # the dataset assertion's ``key``; None in legacy reports
 
     @property
     def gating_failure(self) -> bool:
         return self.passed is False and self.xfail is None
+
+    @property
+    def strict_xpass(self) -> bool:
+        """A strict marker on a check that now passes: the fix landed, drop the marker."""
+        return self.passed is True and bool(self.xfail) and self.strict
 
     @property
     def label(self) -> str:
@@ -65,7 +74,8 @@ class AssertionResult:
         """``xfail: <reason>; until <task>`` — empty for an unmarked check."""
         if not self.xfail:
             return ""
-        return f"xfail: {self.xfail}" + (f"; until {self.until}" if self.until else "")
+        until = f"; until {self.until}" if self.until else ""
+        return f"xfail: {self.xfail}{until}" + ("" if self.strict else "; non-strict")
 
 
 @dataclass(frozen=True)
@@ -213,8 +223,8 @@ COMPLETED = "completed"
 def completed_result(error: str | None) -> AssertionResult:
     """Implicit assertion on every live video: the pipeline run completed."""
     if error:
-        return AssertionResult(type=COMPLETED, passed=False, detail=error[:200])
-    return AssertionResult(type=COMPLETED, passed=True, detail="run completed")
+        return AssertionResult(type=COMPLETED, passed=False, detail=error[:200], key=COMPLETED)
+    return AssertionResult(type=COMPLETED, passed=True, detail="run completed", key=COMPLETED)
 
 
 def evaluate_assertions(
@@ -231,9 +241,22 @@ def evaluate_assertions(
                 detail=detail,
                 xfail=assertion.xfail_reason,
                 until=assertion.xfail_until,
+                strict=assertion.xfail_strict,
+                key=assertion.key,
             )
         )
     return results
+
+
+def _marked(result: AssertionResult, assertion: Assertion | None) -> AssertionResult:
+    if assertion is None:  # the check left the dataset or changed: never keep its marker
+        return replace(result, xfail=None, until=None, strict=True)
+    return replace(
+        result,
+        xfail=assertion.xfail_reason,
+        until=assertion.xfail_until,
+        strict=assertion.xfail_strict,
+    )
 
 
 def apply_markers(
@@ -241,17 +264,33 @@ def apply_markers(
 ) -> list[AssertionResult]:
     """Re-read the ``xfail`` markers of stored results from the current dataset.
 
-    ``results`` are one video's reported checks (a leading ``completed``,
-    then one per dataset assertion, in order). Matched by position, and only
-    while the reported types still line up with ``assertions`` — after an
-    assertion is added, dropped or reordered the stored markers are kept.
+    Matched by ``key``: a result whose dataset assertion was edited or
+    removed (or a legacy result without a key) loses its stored marker, so a
+    stale marker can never hide a different failing check.
     """
+    by_key = {a.key: a for a in assertions}
+    return [
+        r if r.type == COMPLETED else _marked(r, by_key.get(r.key) if r.key else None)
+        for r in results
+    ]
+
+
+def assign_legacy_keys(
+    results: list[AssertionResult], assertions: list[Assertion]
+) -> list[AssertionResult]:
+    """One-time migration of a report written before results carried a ``key``.
+
+    Keys are assigned by position only when the stored types line up with
+    ``assertions`` exactly; otherwise the keyless results get a key that
+    matches nothing, so ``apply_markers`` drops their markers (strict).
+    """
+    if all(r.key for r in results):
+        return results
     lead = 1 if results and results[0].type == COMPLETED else 0
     body = results[lead:]
-    if [r.type for r in body] != [a.type for a in assertions]:
-        return results
-    remarked = [
-        replace(r, xfail=a.xfail_reason, until=a.xfail_until)
-        for r, a in zip(body, assertions, strict=True)
+    lined_up = [r.type for r in body] == [a.type for a in assertions]
+    keyed = [
+        r if r.key else replace(r, key=assertions[i].key if lined_up else f"unmatched:{r.type}:{i}")
+        for i, r in enumerate(body)
     ]
-    return results[:lead] + remarked
+    return [replace(r, key=r.key or COMPLETED) for r in results[:lead]] + keyed

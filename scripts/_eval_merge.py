@@ -9,11 +9,13 @@
   row from the current ``videos.yaml``: quality is re-scored from the stored
   row (``_eval_scoring.rescore`` — an ``expectedTabs`` / ``requiredComponents``
   / ``domain`` edit is applied exactly; a ``keyContent`` edit needs a fresh
-  run), and the ``xfail`` markers of the stored assertions are re-read.
+  run), and the ``xfail`` markers of the stored assertions are re-read by
+  key. A report written before results carried a ``key`` is migrated once
+  (``assign_legacy_keys``) — gate.py refuses such a report until it is.
 
 A merge re-syncs too, so a merged baseline is scored against one dataset.
-Both rewrite the report .json/.md/.csv in place, keeping the original once
-as ``<file>.bak``. Rows of ids no longer in the dataset are kept as they are
+Both rewrite the report .json/.md/.csv in place, keeping the replaced state
+as ``<file>.<ts>.bak`` (one per rewrite). Rows of ids no longer in the dataset are kept as they are
 (the gate and the noise file ignore ids that are not live).
 """
 
@@ -24,7 +26,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from _eval_assertions import apply_markers
+from _eval_assertions import apply_markers, assign_legacy_keys
 from _eval_noise import load_json
 from _eval_report import VideoOutcome, backup_reports, outcomes_from_summary, rewrite_reports
 from _eval_schema import parse_assertions
@@ -42,6 +44,7 @@ def resync_outcome(outcome: VideoOutcome, record: dict[str, Any] | None) -> Vide
     if record is None:
         return outcome
     domain = record.get("domain", "unknown")
+    assertions = parse_assertions(record)
     quality = (
         outcome.quality
         if outcome.error
@@ -51,7 +54,7 @@ def resync_outcome(outcome: VideoOutcome, record: dict[str, Any] | None) -> Vide
         outcome,
         domain=domain,
         quality={**quality, "domain": domain},
-        assertions=apply_markers(outcome.assertions, parse_assertions(record)),
+        assertions=apply_markers(assign_legacy_keys(outcome.assertions, assertions), assertions),
     )
 
 
@@ -81,7 +84,7 @@ def merge_into_reports(
     targets: list[str],
     records: dict[str, dict[str, Any]],
 ) -> None:
-    """Write pass k's outcomes into ``targets[k]`` (in place, ``.bak`` kept)."""
+    """Write pass k's outcomes into ``targets[k]`` (in place, ``<file>.<ts>.bak`` kept)."""
     if len(passes) != len(targets):
         raise ValueError(f"{len(passes)} pass(es) but {len(targets)} --merge-into report(s)")
     for outcomes, target in zip(passes, targets, strict=True):

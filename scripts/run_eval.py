@@ -34,7 +34,7 @@ Usage::
     # completed since the given time instead of re-running them
     python3 scripts/run_eval.py --noise-runs 2 --resume-since 2026-10-07T16:30:00+03:00
 
-    # Backfill Langfuse values a throttled read missed ($0), in place (.bak kept)
+    # Backfill Langfuse values a throttled read missed ($0), in place (<file>.<ts>.bak kept)
     python3 scripts/run_eval.py --refresh-langfuse reports/eval-<ts>-r1.json \\
         reports/eval-<ts>-r2.json
 
@@ -45,7 +45,7 @@ Usage::
     python3 scripts/run_eval.py --resync reports/eval-<ts>-r1.json reports/eval-<ts>-r2.json
 
     # Fold a new golden video into an existing baseline: run it twice, write
-    # pass k into the k-th report (.bak kept), rebuild noise.json from them
+    # pass k into the k-th report (<file>.<ts>.bak kept), rebuild noise.json from them
     python3 scripts/run_eval.py --ids review-new --noise-runs 2 \
         --merge-into reports/eval-<ts>-r1.json reports/eval-<ts>-r2.json
 

@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import argparse
 import os
+from pathlib import Path
 from typing import Any
 
-from _eval_noise import DEFAULT_NOISE_PATH
+from _eval_noise import DEFAULT_NOISE_PATH, api_label, load_json, summary_api_label
 from _eval_resume import parse_since
 from _eval_schema import DATASET_PATH
 
@@ -62,7 +63,7 @@ def _add_run(parser: argparse.ArgumentParser) -> None:
         default=[],
         metavar="REPORT_JSON",
         help="Write pass k's rows into the k-th existing report (same id → replaced; "
-        "in place, .bak kept); with --noise-runs, rebuild the noise file from them.",
+        "in place, <file>.<ts>.bak kept); with --noise-runs, rebuild the noise file from them.",
     )
     parser.add_argument(
         "--publish-run", default="", help="Langfuse dataset run name (empty = skip)."
@@ -83,7 +84,8 @@ def _add_offline(parser: argparse.ArgumentParser) -> None:
         nargs="+",
         default=[],
         metavar="REPORT_JSON",
-        help="Re-read missing Langfuse values into finished reports in place ($0; keeps .bak).",
+        help="Re-read missing Langfuse values into finished reports in place "
+        "($0; keeps <file>.<ts>.bak).",
     )
     parser.add_argument(
         "--resync",
@@ -91,7 +93,7 @@ def _add_offline(parser: argparse.ArgumentParser) -> None:
         default=[],
         metavar="REPORT_JSON",
         help="Re-score stored rows and re-read xfail markers from --dataset, in place "
-        "($0; keeps .bak).",
+        "($0; keeps <file>.<ts>.bak).",
     )
 
 
@@ -132,6 +134,30 @@ def _check_merge(parser: argparse.ArgumentParser, args: Any) -> None:
         parser.error("--merge-into folds fresh live runs; drop --dry-run/--no-bypass-cache")
     if not args.ids:
         parser.error("--merge-into needs --ids (the videos to fold into the reports)")
+    resolved = [Path(t).resolve() for t in args.merge_into]
+    if len(set(resolved)) != len(resolved):
+        parser.error("--merge-into reports must be distinct files (one per pass)")
+    run_label = api_label(args.api_url.rstrip("/"))
+    for target in args.merge_into:
+        problem = merge_target_problem(Path(target), run_label)
+        if problem:
+            parser.error(f"--merge-into {target}: {problem}")
+
+
+def merge_target_problem(path: Path, run_label: str) -> str | None:
+    """Why ``path`` cannot take this run's rows (checked before any paid pass), or None."""
+    if not path.is_file():
+        return "no such report"
+    try:
+        summary = load_json(path)
+    except (OSError, ValueError) as exc:
+        return f"unreadable report ({exc})"
+    if summary.get("dryRun") or summary.get("bypassCache") is not True:
+        return "not a fresh bypassCache run — its rows are not comparable"
+    target_label = summary_api_label(summary)
+    if target_label != run_label:
+        return f"ran against {target_label!r}, this run targets {run_label!r}"
+    return None
 
 
 def check_run_args(parser: argparse.ArgumentParser, args: Any) -> None:

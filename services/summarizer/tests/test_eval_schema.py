@@ -26,6 +26,7 @@ from _eval_assertions import (  # noqa: E402
     AssertionResult,
     TraceSignals,
     apply_markers,
+    assign_legacy_keys,
     evaluate_assertions,
 )
 from _eval_metrics import (  # noqa: E402
@@ -272,29 +273,75 @@ class TestAssertions:
             parse_assertions(_record([check]))
 
 
-class TestApplyMarkers:
-    _STORED = [
-        AssertionResult(type="completed", passed=True),
-        AssertionResult(type="requiredComponents", passed=False, detail="missing"),
+_REQ = {"type": "requiredComponents", "components": ["a"]}
+
+
+def _parsed(*assertions: dict[str, Any]) -> list[Any]:
+    return parse_assertions(_record(list(assertions)))
+
+
+def _stored(key: str | None, xfail: str | None = None) -> list[AssertionResult]:
+    return [
+        AssertionResult(type="completed", passed=True, key="completed"),
+        AssertionResult("requiredComponents", False, "missing", xfail=xfail, key=key),
     ]
 
-    def test_should_re_read_the_marker_by_position_when_the_types_line_up(self) -> None:
-        marked = {"type": "requiredComponents", "components": ["a"], "xfail": "known"}
-        result = apply_markers(self._STORED, parse_assertions(_record([marked])))
+
+class TestAssertionKeys:
+    def test_should_key_an_assertion_by_type_and_parameters(self) -> None:
+        [check] = _parsed({"type": "minItems", "component": "step_player", "min": 4})
+        assert check.key == 'minItems:{"component":"step_player","field":null,"min":4}'
+
+    def test_should_ignore_the_marker_when_keying_an_assertion(self) -> None:
+        [plain], [marked] = _parsed(_REQ), _parsed({**_REQ, "xfail": "known"})
+        assert plain.key == marked.key
+
+    def test_should_reject_a_video_with_two_identical_assertions(self) -> None:
+        with pytest.raises(ValidationError, match="duplicate assertion"):
+            _parsed(_REQ, {**_REQ, "xfail": "x"})
+
+    def test_should_default_an_xfail_marker_to_strict(self) -> None:
+        [string_form], [object_form] = (
+            _parsed({**_REQ, "xfail": "x"}),
+            _parsed({**_REQ, "xfail": {"reason": "x"}}),
+        )
+        assert (string_form.xfail_strict, object_form.xfail_strict) == (True, True)
+
+
+class TestApplyMarkers:
+    def test_should_re_read_the_marker_by_key_when_the_dataset_reorders_assertions(
+        self,
+    ) -> None:
+        dataset = _parsed({"type": "quizAbsentOrLast"}, {**_REQ, "xfail": "known"})
+        result = apply_markers(_stored(dataset[1].key), dataset)
         assert [r.xfail for r in result] == [None, "known"]
 
     def test_should_clear_a_stored_marker_when_the_dataset_dropped_it(self) -> None:
-        stored = [self._STORED[0], AssertionResult("requiredComponents", False, "", "old")]
-        plain = {"type": "requiredComponents", "components": ["a"]}
-        result = apply_markers(stored, parse_assertions(_record([plain])))
+        [plain] = _parsed(_REQ)
+        result = apply_markers(_stored(plain.key, xfail="old"), [plain])
         assert result[1].gating_failure is True
 
-    def test_should_keep_stored_results_when_the_dataset_assertions_changed_shape(self) -> None:
-        reordered = [
-            {"type": "quizAbsentOrLast"},
-            {"type": "requiredComponents", "components": ["a"], "xfail": "x"},
-        ]
-        assert apply_markers(self._STORED, parse_assertions(_record(reordered))) == self._STORED
+    def test_should_drop_a_stored_marker_when_the_check_parameters_changed(self) -> None:
+        [old] = _parsed(_REQ)
+        edited = _parsed({**_REQ, "components": ["b"], "xfail": "known"})
+        result = apply_markers(_stored(old.key, xfail="known"), edited)
+        assert result[1].xfail is None
+
+    def test_should_drop_the_marker_of_a_legacy_result_without_a_key(self) -> None:
+        result = apply_markers(_stored(None, xfail="known"), _parsed({**_REQ, "xfail": "known"}))
+        assert result[1].xfail is None
+
+
+class TestLegacyKeys:
+    def test_should_assign_keys_by_position_when_legacy_types_line_up(self) -> None:
+        dataset = _parsed({**_REQ, "xfail": "known"})
+        migrated = assign_legacy_keys(_stored(None), dataset)
+        assert [r.key for r in migrated] == ["completed", dataset[0].key]
+
+    def test_should_assign_unmatchable_keys_when_legacy_types_do_not_line_up(self) -> None:
+        dataset = _parsed({"type": "quizAbsentOrLast"}, {**_REQ, "xfail": "known"})
+        migrated = apply_markers(assign_legacy_keys(_stored(None), dataset), dataset)
+        assert (migrated[1].key, migrated[1].xfail) == ("unmatched:requiredComponents:0", None)
 
 
 # ─── Metrics ───────────────────────────────────────────────────────────

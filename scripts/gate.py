@@ -17,10 +17,15 @@ Compares one eval run summary (``reports/eval-<ts>.json`` from
   or none in the baseline is listed as not scored and left out of that
   metric's comparison. A video whose pipeline errored is not scored either —
   its failed ``completed`` assertion is what fails the gate.
-* Any per-video assertion that failed and is not marked ``xfail`` fails. The
-  ``xfail`` markers are read from ``videos.yaml`` (``--dataset``), so marking
-  a known failure there needs no re-run; XFAIL / XPASS are printed, never
-  gating.
+* But a run that LOST a metric (no value for videos the baseline scored)
+  beyond ``lost_allowance`` — or for every video — is unusable input
+  (exit 2): one missing score is noise, a missing metric is an outage.
+* Any per-video assertion that failed and is not marked ``xfail`` fails, and
+  so does a strict ``xfail`` that passed (XPASS: the fix landed — remove the
+  marker so it cannot hide a later regression). The markers are read from
+  ``videos.yaml`` (``--dataset``) by assertion key, so marking a known
+  failure there needs no re-run; a report whose results carry no keys is
+  refused until ``run_eval.py --resync`` migrates it ($0).
 * Only live golden ids count: report and noise rows of an entry that is now
   disabled or removed (a dead link) are ignored.
 * The report must be a fresh (``bypassCache``) run against the same API as
@@ -43,7 +48,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from _eval_assertions import AssertionResult, apply_markers
+from _eval_assertions import COMPLETED, AssertionResult, apply_markers
 from _eval_metrics import PRIMARY_METRICS
 from _eval_noise import (
     DEFAULT_NOISE_PATH,
@@ -101,6 +106,9 @@ class MetricCheck:
     # Videos with no value in the run or none in the baseline: "not scored",
     # left out of the comparison — never a regression on their own.
     not_scored: tuple[str, ...] = ()
+    # Completed videos the baseline scored but this run did not (a subset of
+    # ``not_scored``): too many of them make the run unusable (``check_coverage``).
+    lost: tuple[str, ...] = ()
 
     @property
     def gated(self) -> bool:
@@ -130,14 +138,20 @@ class MetricCheck:
 class GateResult:
     checks: list[MetricCheck]
     assertion_failures: list[str] = field(default_factory=list)
-    # Known failures (XFAIL) and marked checks that now pass (XPASS) — reported only.
-    xfails: list[str] = field(default_factory=list)
+    xfails: list[str] = field(default_factory=list)  # known failures — reported only
+    # Strict markers on checks that now pass — gating (drop the marker).
     xpasses: list[str] = field(default_factory=list)
+    # Non-strict (nondeterministic) markers that passed this time — reported only.
+    lenient_xpasses: list[str] = field(default_factory=list)
     ignored: list[str] = field(default_factory=list)  # report rows of retired ids
 
     @property
     def passed(self) -> bool:
-        return not self.assertion_failures and not any(c.regressed for c in self.checks)
+        return (
+            not self.assertion_failures
+            and not self.xpasses
+            and not any(c.regressed for c in self.checks)
+        )
 
 
 # ─── Comparison ────────────────────────────────────────────────────────
@@ -194,11 +208,14 @@ def check_metric(report: dict[str, Any], noise: dict[str, Any], metric: str) -> 
     base_pairs: list[float] = []
     current_pairs: list[float] = []
     not_scored: list[str] = []
+    lost: list[str] = []
     for vid, video in sorted(current_by_id.items()):
         base = (baseline_by_id.get(vid) or {}).get(metric)
         current = (video.get("metrics") or {}).get(metric)
         if base is None or current is None:
             not_scored.append(vid)
+            if base is not None and not video.get("error"):
+                lost.append(vid)
             continue
         base_pairs.append(base)
         current_pairs.append(current)
@@ -210,7 +227,30 @@ def check_metric(report: dict[str, Any], noise: dict[str, Any], metric: str) -> 
         tolerance=tolerance_for(metric, noise, len(current_pairs)),
         paired=len(current_pairs),
         not_scored=tuple(not_scored),
+        lost=tuple(lost),
     )
+
+
+def lost_allowance(paired: int) -> int:
+    """Videos a run may lose a metric for before it is unusable: max(2, 20 % of paired)."""
+    return max(2, math.floor(0.2 * paired))
+
+
+def check_coverage(checks: list[MetricCheck]) -> None:
+    """Raise ``GateInputError`` when a metric is missing beyond scattered gaps.
+
+    Compares against the baseline's own coverage: only videos the baseline
+    scored count as lost (its ``notScored`` videos have no baseline value).
+    """
+    for check in checks:
+        if not check.lost:
+            continue
+        if check.paired == 0 or len(check.lost) > lost_allowance(check.paired):
+            raise GateInputError(
+                f"unusable input: metric {check.metric} not scored for {len(check.lost)} "
+                f"video(s) the baseline scored ({', '.join(check.lost)}); allowance "
+                f"{lost_allowance(check.paired)} with {check.paired} paired"
+            )
 
 
 def _results(report: dict[str, Any]) -> list[tuple[str, AssertionResult]]:
@@ -231,8 +271,24 @@ def assertion_failures(report: dict[str, Any]) -> list[str]:
     return [_line(vid, r) for vid, r in _results(report) if r.gating_failure]
 
 
-def _labelled(report: dict[str, Any], label: str) -> list[str]:
-    return [_line(vid, r) for vid, r in _results(report) if r.label == label]
+def _xpasses(report: dict[str, Any], *, strict: bool) -> list[str]:
+    return [
+        _line(vid, r) for vid, r in _results(report) if r.label == "XPASS" and r.strict is strict
+    ]
+
+
+def _xfails(report: dict[str, Any]) -> list[str]:
+    return [_line(vid, r) for vid, r in _results(report) if r.label == "XFAIL"]
+
+
+def _keyed(vid: str, stored: list[AssertionResult]) -> list[AssertionResult]:
+    """``stored`` — refused when a result predates assertion keys (markers unmatchable)."""
+    if any(r.key is None and r.type != COMPLETED for r in stored):
+        raise GateInputError(
+            f"{vid}: report predates assertion keys — run "
+            "run_eval.py --resync <report> first ($0) so xfail markers match by key"
+        )
+    return stored
 
 
 def live_view(
@@ -245,7 +301,7 @@ def live_view(
     live = live_records(records)
     rows = []
     for video in live_only(report, set(live)).get("videos") or []:
-        stored = [AssertionResult(**a) for a in video.get("assertions") or []]
+        stored = _keyed(video["id"], [AssertionResult(**a) for a in video.get("assertions") or []])
         remarked = apply_markers(stored, parse_assertions(live[video["id"]]))
         rows.append({**video, "assertions": [vars(r) for r in remarked]})
     ignored = sorted(v["id"] for v in report.get("videos") or [] if v["id"] not in live)
@@ -289,11 +345,14 @@ def evaluate(
     if records is not None:
         report, noise, ignored = live_view(report, noise, records)
     validate_inputs(report, noise, allow_subset)
+    checks = [check_metric(report, noise, m) for m in PRIMARY_METRICS]
+    check_coverage(checks)
     return GateResult(
-        checks=[check_metric(report, noise, m) for m in PRIMARY_METRICS],
+        checks=checks,
         assertion_failures=assertion_failures(report),
-        xfails=_labelled(report, "XFAIL"),
-        xpasses=_labelled(report, "XPASS"),
+        xfails=_xfails(report),
+        xpasses=_xpasses(report, strict=True),
+        lenient_xpasses=_xpasses(report, strict=False),
         ignored=ignored,
     )
 
@@ -306,8 +365,10 @@ def _print_result(result: GateResult) -> None:
         print(check.describe())
     for line in result.xfails:
         print(f"assertion XFAIL {line}")
+    for line in result.lenient_xpasses:
+        print(f"assertion XPASS {line} (non-strict, not gating)")
     for line in result.xpasses:
-        print(f"assertion XPASS {line} — drop the xfail marker")
+        print(f"assertion XPASS FAILED {line} — the check passes now: drop the xfail marker")
     for failure in result.assertion_failures:
         print(f"assertion FAILED {failure}")
     print("GATE PASS" if result.passed else "GATE FAIL")
