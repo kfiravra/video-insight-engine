@@ -7,6 +7,7 @@ import re
 from functools import lru_cache
 from pathlib import Path
 
+from ...config import prompts_from_disk
 from ...utils.language_utils import ENGLISH_OUTPUT_DIRECTIVE
 from .pipeline_helpers import sanitize_for_prompt
 
@@ -101,6 +102,7 @@ def load_prompt_with_fallback(*, langfuse_name: str, fallback_path: Path) -> str
     """Fetch a prompt from Langfuse, falling back to a local ``.txt`` file.
 
     The Langfuse fetch is best-effort:
+      * When ``PROMPT_SOURCE=disk`` (dev-only), the registry is never asked.
       * When Langfuse is disabled (no keys), the local file is used.
       * When the prompt isn't registered yet, the local file is used.
       * Any SDK exception is swallowed by ``fetch_prompt_with_obj``.
@@ -112,6 +114,8 @@ def load_prompt_with_fallback(*, langfuse_name: str, fallback_path: Path) -> str
     Recording is explicit — callers can also call ``fetch_prompt_with_obj``
     + ``record_active_prompt`` themselves if they want different semantics.
     """
+    if prompts_from_disk():
+        return _read_file_cached(str(fallback_path))
     text = _try_fetch_from_registry(langfuse_name)
     if text is not None:
         return text
@@ -159,7 +163,7 @@ def build_tab_goals(triage_tabs: list[dict]) -> str:
         label = tab.get("label", tab.get("id", "unknown"))
         component = tab.get("component", "overview")
         goal = tab.get("goal", "")
-        lines.append(f"Tab: \"{label}\" ({component}) — {goal}")
+        lines.append(f'Tab: "{label}" ({component}) — {goal}')
     return "\n".join(lines)
 
 
@@ -229,7 +233,9 @@ def get_detail_level(duration_seconds: int) -> str:
 
 def get_content_emphasis(primary_tag: str) -> str:
     """Get content emphasis instruction for the primary domain."""
-    return _EMPHASIS.get(primary_tag, "Extract the most useful information with precision and completeness.")
+    return _EMPHASIS.get(
+        primary_tag, "Extract the most useful information with precision and completeness."
+    )
 
 
 def _build_base_template(
@@ -282,27 +288,39 @@ def _build_base_template(
         if schema:
             schema_parts.append(f"--- {modifier.upper()} MODIFIER ---\n{schema}")
 
-    domain_schemas = "\n\n".join(schema_parts) if schema_parts else "Use general-purpose extraction."
+    domain_schemas = (
+        "\n\n".join(schema_parts) if schema_parts else "Use general-purpose extraction."
+    )
 
     # Determine primary tag for example injection
     primary_tag = content_tags[0] if content_tags else "learning"
     domain_example = _load_domain_example(primary_tag)
 
     # Inject everything EXCEPT {transcript} — caller decides whether to fill it
-    return ENGLISH_OUTPUT_DIRECTIVE + "\n\n" + (
-        template
-        .replace("{domain_schemas}", domain_schemas)
-        .replace("{quality_rules}", quality_rules)
-        .replace("{title}", sanitize_for_prompt(title))
-        .replace("{duration_minutes}", str(duration_minutes))
-        .replace("{user_goal}", user_goal or "Extract the most useful information from this video")
-        .replace("{tab_goals}", tab_goals or "Not specified — use your best judgment for tab coverage")
-        .replace("{detail_level}", detail_level)
-        .replace("{content_emphasis}", content_emphasis or "Extract with precision and completeness.")
-        .replace("{video_context}", video_context or "Not available")
-        .replace("{frame_context}", frame_context or "No keyframe captions available.")
-        .replace("{primary_tag}", primary_tag)
-        .replace("{domain_example}", domain_example)
+    return (
+        ENGLISH_OUTPUT_DIRECTIVE
+        + "\n\n"
+        + (
+            template.replace("{domain_schemas}", domain_schemas)
+            .replace("{quality_rules}", quality_rules)
+            .replace("{title}", sanitize_for_prompt(title))
+            .replace("{duration_minutes}", str(duration_minutes))
+            .replace(
+                "{user_goal}", user_goal or "Extract the most useful information from this video"
+            )
+            .replace(
+                "{tab_goals}",
+                tab_goals or "Not specified — use your best judgment for tab coverage",
+            )
+            .replace("{detail_level}", detail_level)
+            .replace(
+                "{content_emphasis}", content_emphasis or "Extract with precision and completeness."
+            )
+            .replace("{video_context}", video_context or "Not available")
+            .replace("{frame_context}", frame_context or "No keyframe captions available.")
+            .replace("{primary_tag}", primary_tag)
+            .replace("{domain_example}", domain_example)
+        )
     )
 
 
@@ -338,8 +356,16 @@ def build_extraction_prompt(
         Assembled prompt string ready for LLM.
     """
     template = _build_base_template(
-        content_tags, modifiers, quality_rules, title, duration_minutes,
-        user_goal, tab_goals, detail_level, content_emphasis, video_context,
+        content_tags,
+        modifiers,
+        quality_rules,
+        title,
+        duration_minutes,
+        user_goal,
+        tab_goals,
+        detail_level,
+        content_emphasis,
+        video_context,
         frame_context,
     )
     # build_extraction_prompt is the single-shot convenience wrapper —
@@ -380,8 +406,16 @@ def build_extraction_template(
         Prompt template string with {transcript} placeholder intact.
     """
     return _build_base_template(
-        content_tags, modifiers, quality_rules, title, duration_minutes,
-        user_goal, tab_goals, detail_level, content_emphasis, video_context,
+        content_tags,
+        modifiers,
+        quality_rules,
+        title,
+        duration_minutes,
+        user_goal,
+        tab_goals,
+        detail_level,
+        content_emphasis,
+        video_context,
         frame_context,
     )
 
@@ -395,7 +429,9 @@ _FRAME_MATCH_TOLERANCE = 5.0  # seconds
 
 
 def _resolve_frame_caption(
-    frame: dict, timestamp: float, descriptions: list[dict],
+    frame: dict,
+    timestamp: float,
+    descriptions: list[dict],
 ) -> tuple[str, str]:
     """Pick the best caption + scene_type for a frame.
 

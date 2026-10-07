@@ -5,10 +5,11 @@ from __future__ import annotations
 import importlib.util
 import sys
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
+from src import config as app_config
 from src.services.observability import langfuse_client as lc
 from src.services.pipeline.prompt_builder import load_prompt_with_fallback
 
@@ -39,16 +40,74 @@ def test_load_prompt_with_fallback_prefers_remote_when_available(tmp_path):
         prompt = "REMOTE CONTENT"
         version = 7
 
-    with patch(
-        "src.services.observability.fetch_prompt_with_obj",
-        return_value=_FakePromptObj(),
-    ), patch(
-        "src.services.observability.record_active_prompt",
+    with (
+        patch(
+            "src.services.observability.fetch_prompt_with_obj",
+            return_value=_FakePromptObj(),
+        ),
+        patch(
+            "src.services.observability.record_active_prompt",
+        ),
     ):
         out = load_prompt_with_fallback(
-            langfuse_name="summarizer:base_extraction", fallback_path=f,
+            langfuse_name="summarizer:base_extraction",
+            fallback_path=f,
         )
     assert out == "REMOTE CONTENT"
+
+
+class _RemotePrompt:
+    prompt = "REMOTE CONTENT"
+    version = 3
+
+
+def _load_with_remote_available(path: Path, fetch: MagicMock) -> str:
+    with (
+        patch("src.services.observability.fetch_prompt_with_obj", fetch),
+        patch(
+            "src.services.observability.record_active_prompt",
+        ),
+    ):
+        return load_prompt_with_fallback(langfuse_name="summarizer:plan", fallback_path=path)
+
+
+class TestPromptSource:
+    """PROMPT_SOURCE=disk (0.9): dev edits to .txt files win without re-registering."""
+
+    @pytest.fixture
+    def local_prompt(self, tmp_path: Path) -> Path:
+        f = tmp_path / "plan.txt"
+        f.write_text("LOCAL CONTENT")
+        return f
+
+    def test_should_never_call_langfuse_when_prompt_source_is_disk(
+        self, monkeypatch: pytest.MonkeyPatch, local_prompt: Path
+    ) -> None:
+        monkeypatch.setattr(app_config.settings, "PROMPT_SOURCE", "disk")
+        monkeypatch.setattr(app_config.settings, "ENVIRONMENT", "development")
+        fetch = MagicMock(return_value=_RemotePrompt())
+
+        out = _load_with_remote_available(local_prompt, fetch)
+
+        assert out == "LOCAL CONTENT"
+        fetch.assert_not_called()
+
+    def test_should_ignore_disk_mode_when_environment_is_production(
+        self, monkeypatch: pytest.MonkeyPatch, local_prompt: Path
+    ) -> None:
+        monkeypatch.setattr(app_config.settings, "PROMPT_SOURCE", "disk")
+        monkeypatch.setattr(app_config.settings, "ENVIRONMENT", "production")
+
+        out = _load_with_remote_available(local_prompt, MagicMock(return_value=_RemotePrompt()))
+
+        assert out == "REMOTE CONTENT"
+
+    def test_should_prefer_registry_by_default(self, local_prompt: Path) -> None:
+        assert app_config.settings.PROMPT_SOURCE == "registry"
+
+        out = _load_with_remote_available(local_prompt, MagicMock(return_value=_RemotePrompt()))
+
+        assert out == "REMOTE CONTENT"
 
 
 def test_load_prompt_with_fallback_handles_fetch_exception(tmp_path):
@@ -60,7 +119,8 @@ def test_load_prompt_with_fallback_handles_fetch_exception(tmp_path):
         side_effect=RuntimeError("network"),
     ):
         out = load_prompt_with_fallback(
-            langfuse_name="summarizer:base_extraction", fallback_path=f,
+            langfuse_name="summarizer:base_extraction",
+            fallback_path=f,
         )
     assert out == "LOCAL CONTENT"
 
@@ -75,14 +135,18 @@ def test_load_prompt_with_fallback_records_prompt_obj(tmp_path):
         version = 3
 
     obj = _FakePromptObj()
-    with patch(
-        "src.services.observability.fetch_prompt_with_obj",
-        return_value=obj,
-    ), patch(
-        "src.services.observability.record_active_prompt",
-    ) as mock_record:
+    with (
+        patch(
+            "src.services.observability.fetch_prompt_with_obj",
+            return_value=obj,
+        ),
+        patch(
+            "src.services.observability.record_active_prompt",
+        ) as mock_record,
+    ):
         load_prompt_with_fallback(
-            langfuse_name="summarizer:base_extraction", fallback_path=f,
+            langfuse_name="summarizer:base_extraction",
+            fallback_path=f,
         )
     mock_record.assert_called_once_with("summarizer:base_extraction", obj)
 
@@ -173,7 +237,8 @@ def test_register_prompts_rejects_env_var_name_in_body():
     """An env-var name (LANGFUSE_SECRET_KEY) in the file is a strong signal of leak."""
     mod = _load_register_script()
     ok, _ = mod._is_safe_to_upload(
-        "Some text LANGFUSE_SECRET_KEY=abc123 ...", Path("x.txt"),
+        "Some text LANGFUSE_SECRET_KEY=abc123 ...",
+        Path("x.txt"),
     )
     assert ok is False
 
@@ -205,7 +270,8 @@ def test_load_prompt_text_routes_through_registry_for_prompts_dir(monkeypatch):
         return _FakePromptObj()
 
     monkeypatch.setattr(
-        "src.services.observability.fetch_prompt_with_obj", fake_fetch,
+        "src.services.observability.fetch_prompt_with_obj",
+        fake_fetch,
     )
     monkeypatch.setattr(
         "src.services.observability.record_active_prompt",

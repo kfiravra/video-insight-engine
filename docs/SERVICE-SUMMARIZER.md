@@ -206,6 +206,9 @@ YTDLP_PLAYER_CLIENTS=android           # yt-dlp player clients for pass 1 + audi
 YTDLP_HIRES_PLAYER_CLIENTS=web_embedded,android  # 720p download only (android caps at 360p); retries with the line above
 FRAME_TIER_ENABLED=true                # Adaptive visual tiers (HIGH: overselect + vision reselect before hires)
 
+# Prompts
+PROMPT_SOURCE=registry                 # registry (Langfuse label wins) | disk (local .txt, dev-only; ignored in production)
+
 # SSE streaming
 SSE_HEARTBEAT_SECONDS=12.0             # Keepalive cadence during silent phases — must stay under the gateway's 300s undici timeout
 

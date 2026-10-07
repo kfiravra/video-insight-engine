@@ -92,6 +92,8 @@ x-summarizer-env: &summarizer-env
   LANGFUSE_FAITHFULNESS_SAMPLE_RATE: ${LANGFUSE_FAITHFULNESS_SAMPLE_RATE:-0.2}
   LANGFUSE_USER_ID_MODE: ${LANGFUSE_USER_ID_MODE:-hash}
   LANGFUSE_USER_ID_HASH_SALT: ${LANGFUSE_USER_ID_HASH_SALT:-}
+  # Prompt templates — the code ignores "disk" in production; kept for parity
+  PROMPT_SOURCE: ${PROMPT_SOURCE:-registry}
   # Sentry — empty DSN = SDK no-ops
   SENTRY_DSN: ${SENTRY_DSN:-}
   SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-production}
