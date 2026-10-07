@@ -244,22 +244,7 @@ around real on-screen content.
 </frame_intelligence>
 
 <valid_datasources>
-tech: tech.snippets, tech.patterns, tech.cheatSheet, tech.setup.commands, tech.topics
-learning: learning.keyPoints, learning.concepts, learning.takeaways, learning.timestamps
-project: project.steps, project.materials, project.tools, project.safetyWarnings
-food: food.ingredients, food.steps, food.tips, food.equipment, food.substitutions
-travel: travel.itinerary, travel.budget, travel.packingList
-review: review.pros, review.cons, review.specs, review.comparisons, review.verdict
-fitness: fitness.exercises, fitness.warmup, fitness.cooldown, fitness.timer
-music: music.analysis, music.structure, music.lyrics, music.credits
-language: language.phrases, language.rules, language.drills, language.vocabulary
-science: science.concepts, science.keyFacts, science.experiments
-podcast: podcast.segments, podcast.guests, podcast.quotes, podcast.topics
-news: news.storyTimeline, news.entities, news.claims, news.context
-gaming: gaming.highlights, gaming.loadout, gaming.walkthrough, gaming.rankings
-sport: sport.matchEvents, sport.formation, sport.statComparison
-narrative: narrative.keyMoments, narrative.quotes, narrative.takeaways
-enrichment: enrichment.quiz, enrichment.flashcards, enrichment.scenarios
+{valid_datasources}
 
 Use only the paths listed here. If a path is not listed, it does not exist.
 </valid_datasources>

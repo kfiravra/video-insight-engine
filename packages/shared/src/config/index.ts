@@ -65,6 +65,37 @@ interface ModifierEntry {
  *  fallback renderer. */
 export type ComponentTier = 'primary' | 'secondary' | 'display';
 
+/** One extraction field the planner may name as a tab dataSource — see
+ *  `dataSourcesNote` in the JSON for each property's meaning and how
+ *  `outputWeight` was measured. Consumed by the Python summarizer. */
+interface DataSourceEntry {
+  domain: string;
+  field: string;
+  kind: 'list' | 'object';
+  components: string[];
+  siblings: string[];
+  requiresEvidence: string | null;
+  waitsForVisual: boolean;
+  cap: number;
+  outputWeight: number;
+}
+
+interface QuizPolicy {
+  position: 'last';
+  requiresEvidence: string;
+  attachmentHostsExclude: string[];
+}
+
+interface QuizEnrichment {
+  quizDomains: string[];
+  flavor: Record<string, string>;
+}
+
+interface GroupingConfig {
+  maxTextGroups: number;
+  groupOutputBudget: number;
+}
+
 interface DomainsConfig {
   components: string[];
   /** Optional so the `?? {}` read below stays meaningful for older/partial
@@ -97,6 +128,17 @@ interface DomainsConfig {
   modifiers: Record<Modifier, ModifierEntry>;
   enrichment: Record<string, string>;
   categoryMap: Record<string, string>;
+  /** Extraction-field registry keyed by dataSource path (e.g. `food.steps`). */
+  dataSources?: Record<string, DataSourceEntry>;
+  /** Plan-time evidence demotion ladder: component → simpler components. */
+  demoteTo?: Record<string, string[]>;
+  /** Domain → required component → gating evidence key. */
+  requirementEvidence?: Record<string, Record<string, string>>;
+  quizPolicy?: QuizPolicy;
+  /** Quiz-only enrichment config (the legacy `enrichment` map above is the
+   *  tag → prompt-path map until it is retired). */
+  quizEnrichment?: QuizEnrichment;
+  grouping?: GroupingConfig;
 }
 
 const config: DomainsConfig = domainsJson as DomainsConfig;
@@ -198,4 +240,14 @@ export function getDomainGradient(tag: ContentTag): string {
 
 /** Full raw config (escape hatch). */
 export { config as rawConfig };
-export type { TabMeta, DefaultTab, DomainEntry, ModifierEntry, DomainsConfig };
+export type {
+  TabMeta,
+  DefaultTab,
+  DomainEntry,
+  ModifierEntry,
+  DomainsConfig,
+  DataSourceEntry,
+  QuizPolicy,
+  QuizEnrichment,
+  GroupingConfig,
+};

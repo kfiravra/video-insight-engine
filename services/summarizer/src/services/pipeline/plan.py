@@ -19,6 +19,7 @@ from ...shared_config.domain_config import (
     map_category_to_tag,
     render_density_gate_table,
     render_valid_component_names,
+    render_valid_datasources,
     valid_components,
 )
 from ...utils.json_parsing import parse_json_response
@@ -228,15 +229,18 @@ async def run_plan(
     # Split prompt into static (cacheable) and dynamic parts.
     # Static: role + instructions + component_toolkit + output_schema + examples + rules
     # Dynamic: video details + transcript_preview
-    # All three are config-derived static content (no video data) and single-
-    # sourced from domains.json. {density_gates} lives inside the toolkit text,
-    # so it must be replaced AFTER {component_toolkit} is injected.
+    # All four are config-derived static content (no video data) and single-
+    # sourced from domains.json. {density_gates} and {valid_datasources} live
+    # inside the toolkit text, so they must be replaced AFTER {component_toolkit}
+    # is injected. str.replace is a no-op for a registry-served toolkit that
+    # predates a placeholder, so old Langfuse versions still render.
     static_template = (
         ENGLISH_OUTPUT_DIRECTIVE
         + "\n\n"
         + (
             prompt_template.replace("{component_toolkit}", component_toolkit)
             .replace("{density_gates}", render_density_gate_table())
+            .replace("{valid_datasources}", render_valid_datasources())
             .replace("{valid_components}", render_valid_component_names())
         )
     )
