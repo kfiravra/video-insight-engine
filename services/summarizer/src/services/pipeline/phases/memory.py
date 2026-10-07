@@ -4,6 +4,11 @@ Reads the same marked transcript as the plan (``ctx.prompt_transcript``) and
 leaves outline, evidence, tldr and takeaways on ``ctx.memory`` (``None`` when
 the call failed — every reader has a fallback). Never raises: ``run_memory``
 returns ``None`` on any failure.
+
+When memory has a tldr or takeaways it emits the first ``synthesis_complete``
+right away — the hero, long before synthesis (pipeline-1min 1b.5). The
+synthesis phase re-emits the full superset later; web and API merge the two
+(an empty field never overwrites a filled one).
 """
 
 from __future__ import annotations
@@ -11,8 +16,9 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, AsyncGenerator
 
-from src.models.memory_types import MemoryInput
+from src.models.memory_types import MemoryInput, MemoryResult
 from src.services.pipeline.memory import run_memory
+from src.services.pipeline.pipeline_helpers import sse_event
 
 if TYPE_CHECKING:
     from src.services.pipeline.context import PipelineContext
@@ -33,11 +39,17 @@ def memory_input(ctx: PipelineContext) -> MemoryInput:
     )
 
 
+def early_synthesis(memory: MemoryResult | None) -> dict[str, object] | None:
+    """The memory-done ``synthesis_complete`` payload, or ``None`` when memory has neither field."""
+    if memory is None or not (memory.tldr or memory.takeaways):
+        return None
+    return {"tldr": memory.tldr, "keyTakeaways": list(memory.takeaways)}
+
+
 async def run_phase_memory(ctx: PipelineContext) -> AsyncGenerator[str, None]:
-    """Run the memory call and keep its answer on ``ctx.memory``."""
+    """Run the memory call, keep its answer on ``ctx.memory``, emit the early hero."""
     ctx.memory = await run_memory(ctx.llm_service, memory_input(ctx))
     logger.info("pipeline.memory", extra={"video_id": ctx.video_summary_id, "ok": bool(ctx.memory)})
-    return
-    # A phase is an async generator; the memory-done hero event (1b.5) is
-    # this phase's only SSE output.
-    yield
+    payload = early_synthesis(ctx.memory)
+    if payload is not None:
+        yield sse_event("synthesis_complete", payload)

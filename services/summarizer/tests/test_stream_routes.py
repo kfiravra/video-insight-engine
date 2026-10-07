@@ -1401,6 +1401,17 @@ class TestResolveHelpers:
         assert result["tldr"] == "Syn TLDR"
         assert result["keyTakeaways"] == ["A"]
 
+    def test_resolve_synthesis_should_prefer_meta_takeaways_over_an_early_partial(self):
+        """1b.5: the relay may have persisted the memory-done partial in ``synthesis``;
+        ``meta`` holds what the run finally showed."""
+        from src.routes.cached_response import resolve_synthesis as _resolve_synthesis
+
+        entry = {
+            "meta": {"tldr": "Final", "keyTakeaways": ["final a", "final b"]},
+            "synthesis": {"tldr": "Early", "keyTakeaways": ["early a"]},
+        }
+        assert _resolve_synthesis(entry)["keyTakeaways"] == ["final a", "final b"]
+
     def test_resolve_synthesis_empty_returns_defaults(self):
         """Returns empty string defaults when no synthesis data."""
         from src.routes.cached_response import resolve_synthesis as _resolve_synthesis

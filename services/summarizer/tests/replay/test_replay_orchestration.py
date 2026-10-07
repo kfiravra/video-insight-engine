@@ -72,3 +72,15 @@ def test_extraction_should_wait_for_frames(scaled_reference: ReplayResult) -> No
     """Phase 1 keeps ONE extraction call, fed the frame annotations (until 1c.2)."""
     frames_end = _phase(scaled_reference, "frames")["endMs"]
     assert _phase(scaled_reference, "extraction")["startMs"] >= frames_end
+
+
+def test_hero_should_land_at_memory_done_before_frames(scaled_reference: ReplayResult) -> None:
+    """1b.5: the first ``synthesis_complete`` (memory's tldr + takeaways) is the hero."""
+    hero_ms = (scaled_reference.timing or {})["milestones"]["synthesisCompleteMs"]
+    memory_end = _phase(scaled_reference, "memory")["endMs"]
+    assert memory_end <= hero_ms < _phase(scaled_reference, "frames")["endMs"]
+
+
+def test_synthesis_complete_should_arrive_twice(scaled_reference: ReplayResult) -> None:
+    """Early {tldr, keyTakeaways} at memory-done, the full superset at synthesis-done."""
+    assert scaled_reference.event_names().count("synthesis_complete") == 2

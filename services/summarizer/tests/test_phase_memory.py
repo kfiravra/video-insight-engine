@@ -1,12 +1,14 @@
-"""The memory phase (pipeline-1min 1b.3, ``phases/memory.py``).
+"""The memory phase (pipeline-1min 1b.3/1b.5, ``phases/memory.py``).
 
 It reads the run's marked transcript (the plan's exact string) plus the
 video's metadata and leaves the answer — or ``None`` — on ``ctx.memory``.
+When memory has a tldr or takeaways it emits the early ``synthesis_complete``.
 ``run_memory`` (the LLM boundary) is patched.
 """
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -64,3 +66,41 @@ async def test_should_leave_no_memory_when_the_call_failed() -> None:
     await _run(ctx, None)
 
     assert ctx.memory is None
+
+
+def _events(chunks: list[str]) -> list[dict]:
+    return [json.loads(c.removeprefix("data: ")) for c in chunks]
+
+
+async def _emitted(result: MemoryResult | None) -> list[dict]:
+    with patch.object(memory_phase, "run_memory", AsyncMock(return_value=result)):
+        chunks = [event async for event in memory_phase.run_phase_memory(_ctx())]  # type: ignore[arg-type]
+    return _events(chunks)
+
+
+async def test_should_emit_the_early_hero_when_memory_has_tldr_and_takeaways() -> None:
+    memory = MemoryResult(tldr="Lasagna, no soggy layers.", takeaways=["a", "b", "c"])
+
+    events = await _emitted(memory)
+
+    assert events == [
+        {
+            "event": "synthesis_complete",
+            "tldr": "Lasagna, no soggy layers.",
+            "keyTakeaways": ["a", "b", "c"],
+        }
+    ]
+
+
+async def test_should_emit_the_hero_with_the_tldr_alone() -> None:
+    events = await _emitted(MemoryResult(tldr="Lasagna, no soggy layers."))
+
+    assert [(e["tldr"], e["keyTakeaways"]) for e in events] == [("Lasagna, no soggy layers.", [])]
+
+
+async def test_should_emit_nothing_when_memory_failed() -> None:
+    assert await _emitted(None) == []
+
+
+async def test_should_emit_nothing_when_memory_has_neither_tldr_nor_takeaways() -> None:
+    assert await _emitted(MemoryResult(evidence={"has_steps": True})) == []

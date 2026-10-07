@@ -97,14 +97,21 @@ def resolve_tabs(entry: dict[str, Any]) -> list[dict]:
 
 
 def resolve_synthesis(entry: dict[str, Any]) -> dict[str, Any]:
-    """Resolve synthesis data from any document shape."""
+    """Resolve synthesis data from any document shape.
+
+    ``meta`` wins for every field: it is what the run finally showed, while
+    the stored ``synthesis`` may hold an early partial (the memory-done
+    emission the API relay persists).
+    """
     meta = entry.get("meta", {})
     pipeline = entry.get("pipeline", {})
     synthesis = entry.get("synthesis") or pipeline.get("synthesis") or {}
     summary = entry.get("summary") or {}
     return {
         "tldr": meta.get("tldr") or synthesis.get("tldr") or summary.get("tldr", ""),
-        "keyTakeaways": synthesis.get("keyTakeaways") or summary.get("keyTakeaways", []),
+        "keyTakeaways": meta.get("keyTakeaways")
+        or synthesis.get("keyTakeaways")
+        or summary.get("keyTakeaways", []),
         "masterSummary": meta.get("masterSummary")
         or synthesis.get("masterSummary")
         or summary.get("masterSummary", ""),
