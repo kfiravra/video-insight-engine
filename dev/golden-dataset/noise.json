@@ -1,0 +1,156 @@
+{
+  "schemaVersion": 2,
+  "createdAt": "2026-10-07T15:57:18.741793+00:00",
+  "apiLabel": "localhost:3000",
+  "runs": 2,
+  "reports": [
+    "reports/eval-20261007-173833-r1.json",
+    "reports/eval-20261007-180350-r2.json"
+  ],
+  "directions": {
+    "quality": "higher",
+    "faithfulness": "higher",
+    "duplicateRate": "lower"
+  },
+  "runMeans": {
+    "quality": [
+      0.8408,
+      0.8399
+    ],
+    "faithfulness": [
+      0.7371,
+      0.7167
+    ],
+    "duplicateRate": [
+      0.0681,
+      0.0518
+    ]
+  },
+  "baseline": {
+    "quality": 0.8403,
+    "faithfulness": 0.7269,
+    "duplicateRate": 0.0599
+  },
+  "noise": {
+    "quality": {
+      "sd": 0.038554,
+      "df": 18,
+      "n": 18,
+      "passes": 2,
+      "sigmaMean": 0.009087
+    },
+    "faithfulness": {
+      "sd": 0.22345,
+      "df": 16,
+      "n": 16,
+      "passes": 2,
+      "sigmaMean": 0.055862
+    },
+    "duplicateRate": {
+      "sd": 0.067077,
+      "df": 18,
+      "n": 18,
+      "passes": 2,
+      "sigmaMean": 0.01581
+    }
+  },
+  "runMeanSpread": {
+    "quality": 0.0009,
+    "faithfulness": 0.0204,
+    "duplicateRate": 0.0163
+  },
+  "layoutStability": 0.7849,
+  "excludedVideos": [],
+  "videos": {
+    "fitness-7min-workout": {
+      "quality": 0.925,
+      "faithfulness": 0.55,
+      "duplicateRate": 0.0563
+    },
+    "fitness-pushup-form": {
+      "quality": 0.762,
+      "faithfulness": 0.55,
+      "duplicateRate": 0.0876
+    },
+    "food-knife-skills": {
+      "quality": 0.767,
+      "faithfulness": 1.0,
+      "duplicateRate": 0.1562
+    },
+    "food-recipe-story-intro": {
+      "quality": 0.846,
+      "faithfulness": 1.0,
+      "duplicateRate": 0.0
+    },
+    "food-travel-montreal-vlog": {
+      "quality": 0.9245,
+      "faithfulness": 0.2,
+      "duplicateRate": 0.2452
+    },
+    "gaming-op13-box-opening": {
+      "quality": 0.962,
+      "faithfulness": 0.5,
+      "duplicateRate": 0.3589
+    },
+    "gaming-op17-set-verdict": {
+      "quality": 0.962,
+      "faithfulness": 1.0,
+      "duplicateRate": 0.0
+    },
+    "gaming-op17-static-camera": {
+      "quality": 1.0,
+      "faithfulness": 1.0,
+      "duplicateRate": 0.0
+    },
+    "gaming-op17-unboxing": {
+      "quality": 0.925,
+      "faithfulness": 0.5835,
+      "duplicateRate": 0.1062
+    },
+    "learning-double-slit": {
+      "quality": 0.579,
+      "faithfulness": 1.0,
+      "duplicateRate": 0.0
+    },
+    "learning-photosynthesis": {
+      "quality": 0.725,
+      "faithfulness": 1.0,
+      "duplicateRate": 0.0
+    },
+    "review-airpods-pro": {
+      "quality": 0.592,
+      "faithfulness": 0.0,
+      "duplicateRate": 0.0
+    },
+    "science-black-holes": {
+      "quality": 0.825,
+      "faithfulness": 0.75,
+      "duplicateRate": 0.0
+    },
+    "science-crispr-intro": {
+      "quality": 0.7185,
+      "faithfulness": 1.0,
+      "duplicateRate": 0.0111
+    },
+    "tech-agentic-engineering": {
+      "quality": 0.925,
+      "faithfulness": 0.8335,
+      "duplicateRate": 0.0168
+    },
+    "tech-docker-basics": {
+      "quality": 0.808,
+      "faithfulness": 0.9165,
+      "duplicateRate": 0.0415
+    },
+    "tech-react-hooks": {
+      "quality": 0.9435,
+      "faithfulness": 0.8165,
+      "duplicateRate": 0.0
+    },
+    "travel-vietnam-10day": {
+      "quality": 0.937,
+      "faithfulness": 0.667,
+      "duplicateRate": 0.0
+    }
+  }
+}

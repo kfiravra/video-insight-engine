@@ -1,7 +1,7 @@
 # pipeline-1min — Plan
 
 Last Updated: 2026-10-07
-Status: PLANNED, REVIEWED by Kfir 2026-10-07 (8 fixes applied: C19–C21 added, C11/C18 resolutions changed, 1b.7 checkpoint, 1d.7, overview RAG fix in 1d.5, `FRAME_EXTRACTION_ENABLED` in 1d.6). EXECUTING since 2026-10-07 on worktree `../vie-p1min`, branch `feat/pipeline-1min` (one branch, six PR groups — see D14 in context.md).
+Status: PLANNED, REVIEWED by Kfir 2026-10-07 (8 fixes applied: C19–C21 added, C11/C18 resolutions changed, 1b.7 checkpoint, 1d.7, overview RAG fix in 1d.5, `FRAME_EXTRACTION_ENABLED` in 1d.6). EXECUTING since 2026-10-07 in the main tree on branch `feat/pipeline-1min` (worktrees retired) (one branch, six PR groups — see D14 in context.md).
 Owner: Kfir. Executor: CC.
 Brief: the `/task-plan pipeline-1min` message of 2026-10-07 (verbatim copy: `pipeline-1min-brief.md` in this folder).
 Evidence: `evidence/A-DIGEST.md` (A1–A27 condensed), `evidence/ans-*.md` (the 27 answers, verbatim),
@@ -105,7 +105,7 @@ fill ∥ faithfulness; persist in background. Done ≈ 62 s.
 
 ## Implementation Phases
 
-Conventions for every phase: one worktree `../vie-p1min` on `feat/pipeline-1min` (six PR groups: p0 · 1a+1b · 1c+1d · p2 · p3 · p4), never switch branches
+Conventions for every phase: the main tree on `feat/pipeline-1min` (no worktrees) (six PR groups: p0 · 1a+1b · 1c+1d · p2 · p3 · p4), never switch branches
 in the shared tree; commits per task id under Kfir's standing permission, no push/PR without his word; gate report ≤ 1
 page then STOP; prod benchmark only after the merge deploys (CI → `deploy.yml` on `workflow_run`);
 state run count + estimated cost before every prod/eval spend; changed prompts re-registered in both

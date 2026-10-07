@@ -1,6 +1,6 @@
 # pipeline-1min — Context
 
-Last Updated: 2026-10-07 — 🔄 IN PROGRESS (phase 0). Live docs in worktree `../vie-p1min`.
+Last Updated: 2026-10-07 — 🔄 IN PROGRESS (phase 0). Live docs in the main tree (branch `feat/pipeline-1min`).
 
 ## Why this task exists
 Prod takes 171–240 s per 20-minute captioned video and shows nothing until ~226 s. Kfir's brief
@@ -70,7 +70,7 @@ Prod measurement = median of 2 runs from `pipeline.timing` (phase 0 adds it). St
 - **D11 EXTRACTION_PARALLEL_BATCHES=6**: ships with the 429 counter as the guard; back off to 4 if any 429 at gate 1.
 - **D12 vision max_tokens**: scaled per frame type (screen recordings ~190 tok/frame, food ~85), not only per count.
 - **D13 eval cron + target** (revised by Kfir): `0 3 1,15 * *`; the scheduled job targets the prod API as the eval user (`EVAL_API_URL`, `EVAL_USER_EMAIL/PASSWORD`, Langfuse keys) — no compose boot on the runner, no proxy/S3/OpenAI secrets on GitHub. Gate-0 decision item: `bypassCache` allowed for the eval user; eval-user daily quota vs 18 videos × 2 (noise run); prod worker time at 03:00.
-- **D14 branches** (revised by Kfir 2026-10-07): ONE worktree `../vie-p1min` on `feat/pipeline-1min`; ONE PR per group — (1) phase 0, (2) 1a+1b, (3) 1c+1d, (4) phase 2, (5) phase 3, (6) phase 4; merge `origin/main` in at each group start (merge commits only). Standing commit permission per task id with tests green; push/PR on Kfir's word only.
+- **D14 branches** (revised by Kfir 2026-10-07, twice): `feat/pipeline-1min` checked out in the MAIN tree — no worktrees (Kfir wants every change visible live in the IDE; parallel subagents edit the same tree on disjoint files and never commit — the coordinator commits); ONE PR per group — (1) phase 0, (2) 1a+1b, (3) 1c+1d, (4) phase 2, (5) phase 3, (6) phase 4; merge `origin/main` in at each group start (merge commits only). Standing commit permission per task id with tests green; push/PR on Kfir's word only.
 - **D20 env changes** (Kfir): no prod `.env` edit until the end; every needed change collected in `env-changes.md`; each merge must run on prod with the current `.env` (safe defaults in config + compose). Scheduled eval = manual dispatch only until the GitHub secrets land at the end.
 - **D15 conditional domain requirements live in phase 1** (Kfir): 1b.2 renders `domain_requirements` conditional on the plan's own evidence; 1d.7 makes the assembly backfill check `requirementEvidence` against `plan.evidence`. Otherwise the food-travel-vlog assertion cannot pass at gate 1. Phase 3 reconcile adds only the memory second opinion + demotion.
 - **D16 output-language line** (Kfir): removing `<outbound_links_instructions>` removes plan.txt's only explicit language instruction → probe, plan and memory prompts get an explicit line (generation language = English; labels/goals per today's rule); the non-English regression run verifies it.
