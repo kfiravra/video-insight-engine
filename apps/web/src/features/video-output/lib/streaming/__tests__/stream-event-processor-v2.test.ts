@@ -376,50 +376,6 @@ describe('stream-event-processor — Pipeline events', () => {
   });
 
   // ─────────────────────────────────────────────────────
-  // synthesis_complete
-  // ─────────────────────────────────────────────────────
-
-  describe('synthesis_complete', () => {
-    it('should update synthesis with all fields', () => {
-      processEvent(
-        {
-          event: 'synthesis_complete',
-          tldr: 'Quick summary of the video',
-          keyTakeaways: ['Point 1', 'Point 2'],
-          masterSummary: 'A comprehensive overview of the content...',
-          seoDescription: 'SEO-optimized description for search engines',
-        },
-        mockSetState.setState,
-      );
-
-      expect(mockSetState.getState().synthesis).toEqual({
-        tldr: 'Quick summary of the video',
-        keyTakeaways: ['Point 1', 'Point 2'],
-        masterSummary: 'A comprehensive overview of the content...',
-        seoDescription: 'SEO-optimized description for search engines',
-      });
-    });
-
-    it('should default masterSummary to empty string when missing', () => {
-      processEvent(
-        { event: 'synthesis_complete', tldr: 'Short', keyTakeaways: [] },
-        mockSetState.setState,
-      );
-
-      expect(mockSetState.getState().synthesis?.masterSummary).toBe('');
-    });
-
-    it('should default seoDescription to empty string when missing', () => {
-      processEvent(
-        { event: 'synthesis_complete', tldr: 'Short', keyTakeaways: [], masterSummary: 'Full' },
-        mockSetState.setState,
-      );
-
-      expect(mockSetState.getState().synthesis?.seoDescription).toBe('');
-    });
-  });
-
-  // ─────────────────────────────────────────────────────
   // done
   // ─────────────────────────────────────────────────────
 

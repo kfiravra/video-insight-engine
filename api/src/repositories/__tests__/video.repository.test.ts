@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { MongoMemoryServer } from 'mongodb-memory-server';
-import { MongoClient, Db } from 'mongodb';
+import { MongoClient, Db, ObjectId } from 'mongodb';
 import {
   VideoRepository,
   type CreateVideoSummaryData,
@@ -219,6 +219,93 @@ describe('VideoRepository', () => {
     it('should return false when the row does not exist', async () => {
       const claimed = await repo.tryClaimDispatchRelease('507f1f77bcf86cd799439011');
       expect(claimed).toBe(false);
+    });
+  });
+
+  describe('mergeSynthesis', () => {
+    // memory-done emission (hero fields only) and the synthesis-done superset.
+    const early = { tldr: 'Memory tldr', keyTakeaways: ['Memory point'] };
+    const late = {
+      tldr: 'Final tldr',
+      keyTakeaways: ['Final point 1', 'Final point 2'],
+      masterSummary: 'The full master summary.',
+      seoDescription: 'SEO description.',
+    };
+
+    async function seedRow(dedupKey: string): Promise<string> {
+      const { doc } = await repo.upsertCacheByDedupKey({ ...makeCacheData(), dedupKey });
+      return doc._id.toString();
+    }
+
+    async function storedSynthesis(id: string): Promise<unknown> {
+      const doc = await db.collection('videoSummaryCache').findOne({ _id: new ObjectId(id) });
+      return doc?.synthesis;
+    }
+
+    it('should persist the hero fields when only the early emission arrives', async () => {
+      const id = await seedRow('synth-early');
+
+      await repo.mergeSynthesis(id, early);
+
+      expect(await storedSynthesis(id)).toEqual(early);
+    });
+
+    it('should persist every field when only the late emission arrives', async () => {
+      const id = await seedRow('synth-late');
+
+      await repo.mergeSynthesis(id, late);
+
+      expect(await storedSynthesis(id)).toEqual(late);
+    });
+
+    it('should let the superset overwrite the early fields when early lands before late', async () => {
+      const id = await seedRow('synth-early-late');
+
+      await repo.mergeSynthesis(id, early);
+      await repo.mergeSynthesis(id, late);
+
+      expect(await storedSynthesis(id)).toEqual(late);
+    });
+
+    it('should keep the full synthesis when a replayed early emission lands after late', async () => {
+      const id = await seedRow('synth-late-early');
+
+      await repo.mergeSynthesis(id, late);
+      await repo.mergeSynthesis(id, early);
+
+      expect(await storedSynthesis(id)).toEqual(late);
+    });
+
+    it('should be idempotent when the whole sequence is replayed', async () => {
+      const id = await seedRow('synth-replay');
+
+      for (const emission of [early, late, early, late]) {
+        await repo.mergeSynthesis(id, emission);
+      }
+
+      expect(await storedSynthesis(id)).toEqual(late);
+    });
+
+    it('should keep the early hero fields when the late emission leaves them empty', async () => {
+      const id = await seedRow('synth-late-empty-hero');
+
+      await repo.mergeSynthesis(id, early);
+      await repo.mergeSynthesis(id, { ...late, tldr: '', keyTakeaways: [] });
+
+      expect(await storedSynthesis(id)).toEqual({
+        ...early,
+        masterSummary: late.masterSummary,
+        seoDescription: late.seoDescription,
+      });
+    });
+
+    it('should not touch the row when the emission carries no content', async () => {
+      const id = await seedRow('synth-all-empty');
+      await repo.mergeSynthesis(id, early);
+
+      await repo.mergeSynthesis(id, { tldr: '', keyTakeaways: [], masterSummary: '', seoDescription: '' });
+
+      expect(await storedSynthesis(id)).toEqual(early);
     });
   });
 });

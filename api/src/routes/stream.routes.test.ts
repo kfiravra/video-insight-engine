@@ -305,6 +305,84 @@ describe('stream routes', () => {
       });
     });
 
+    describe('synthesis_complete persistence', () => {
+      // The container's mock repository predates mergeSynthesis; attach a
+      // fresh one per test so call assertions never leak across tests.
+      let mergeSynthesis: ReturnType<typeof vi.fn>;
+
+      const earlyEvent = { event: 'synthesis_complete', tldr: 'Memory tldr', keyTakeaways: ['Memory point'] };
+      const lateEvent = {
+        event: 'synthesis_complete',
+        tldr: 'Final tldr',
+        keyTakeaways: ['Final point'],
+        masterSummary: 'The full master summary.',
+        seoDescription: 'SEO description.',
+      };
+
+      function mockSummarizerStream(events: Record<string, unknown>[]): void {
+        const chunks = events.map((e) => new TextEncoder().encode(`data: ${JSON.stringify(e)}\n\n`));
+        const read = vi.fn();
+        for (const value of chunks) read.mockResolvedValueOnce({ done: false, value });
+        read.mockResolvedValueOnce({ done: true, value: undefined });
+        mockFetch.mockResolvedValue({
+          ok: true,
+          status: 200,
+          body: { getReader: () => ({ read, cancel: vi.fn().mockResolvedValue(undefined) }) },
+        });
+      }
+
+      async function requestStream(): Promise<{ body: string }> {
+        return app.inject({
+          method: 'GET',
+          url: `/api/videos/${validVideoSummaryId}/stream`,
+          headers: { authorization: authHeader, accept: 'text/event-stream' },
+        });
+      }
+
+      beforeEach(() => {
+        mergeSynthesis = vi.fn().mockResolvedValue(undefined);
+        Object.assign(mockContainer.videoRepository, { mergeSynthesis });
+      });
+
+      it('should persist the early emission when it has no masterSummary', async () => {
+        mockSummarizerStream([earlyEvent]);
+
+        await requestStream();
+
+        expect(mergeSynthesis).toHaveBeenCalledWith(
+          validVideoSummaryId,
+          expect.objectContaining({ tldr: 'Memory tldr', keyTakeaways: ['Memory point'] }),
+        );
+      });
+
+      it('should persist both emissions in arrival order when early precedes late', async () => {
+        mockSummarizerStream([earlyEvent, lateEvent]);
+
+        await requestStream();
+
+        expect(mergeSynthesis.mock.calls.map(([, fields]) => fields.masterSummary)).toEqual([
+          undefined,
+          'The full master summary.',
+        ]);
+      });
+
+      it('should skip persistence when the synthesis_complete payload is malformed', async () => {
+        mockSummarizerStream([{ event: 'synthesis_complete', tldr: 'x', keyTakeaways: 'not-a-list' }]);
+
+        await requestStream();
+
+        expect(mergeSynthesis).not.toHaveBeenCalled();
+      });
+
+      it('should still forward a malformed synthesis_complete event to the client', async () => {
+        mockSummarizerStream([{ event: 'synthesis_complete', tldr: 'x', keyTakeaways: 'not-a-list' }]);
+
+        const response = await requestStream();
+
+        expect(response.body).toContain('not-a-list');
+      });
+    });
+
     describe('error handling', () => {
       beforeEach(async () => {
         // Insert actual test data into MongoDB

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { ObjectId } from 'mongodb';
 import { config } from '../config.js';
 import { VideoNotFoundError } from '../utils/errors.js';
+import { synthesisCompleteEventSchema } from '../schemas/synthesis-event.schema.js';
 import { handleSSEPreflight, setSSECorsHeaders, setSSEResponseHeaders } from '../utils/cors.js';
 import { disableSocketInactivityTimeout } from '../utils/sse.js';
 
@@ -155,15 +156,16 @@ export async function streamRoutes(fastify: FastifyInstance) {
               // Raw triage/output/enrichment are no longer stored — the Python
               // summarizer saves the final assembledMeta + assembledTabs via
               // save_structured_result() at the end of the pipeline.
-              if (event.event === 'synthesis_complete' && event.masterSummary) {
-                pendingWrites.push(
-                  videoRepository.updateSynthesis(videoSummaryId, {
-                    tldr: event.tldr,
-                    keyTakeaways: event.keyTakeaways,
-                    masterSummary: event.masterSummary,
-                    seoDescription: event.seoDescription,
-                  })
-                );
+              // Both emissions (memory-done partial, synthesis-done superset)
+              // are merged; the repository keeps a partial from overwriting the
+              // superset.
+              if (event.event === 'synthesis_complete') {
+                const synthesis = synthesisCompleteEventSchema.safeParse(event);
+                if (synthesis.success) {
+                  pendingWrites.push(videoRepository.mergeSynthesis(videoSummaryId, synthesis.data));
+                } else {
+                  req.log.warn({ videoSummaryId, issues: synthesis.error.issues }, 'Invalid synthesis_complete event skipped');
+                }
               }
             } catch (err) {
               // Log parse errors in development for debugging

@@ -1,5 +1,7 @@
 import { Db, ObjectId, Collection } from 'mongodb';
 import { DatabaseError } from '../utils/errors.js';
+import { buildSynthesisMerge } from '../utils/synthesis-merge.js';
+import type { SynthesisFields } from '../schemas/synthesis-event.schema.js';
 
 /**
  * Transcript-phase provenance, written ONCE per run by the summarizer's
@@ -521,10 +523,13 @@ export class VideoRepository {
     );
   }
 
-  async updateSynthesis(id: string, synthesis: unknown): Promise<void> {
+  /** Merge one `synthesis_complete` emission — rules in buildSynthesisMerge. */
+  async mergeSynthesis(id: string, synthesis: SynthesisFields): Promise<void> {
+    const merge = buildSynthesisMerge(synthesis);
+    if (!merge) return;
     await this.cacheCollection.updateOne(
-      { _id: new ObjectId(id) },
-      { $set: { synthesis, updatedAt: new Date() } },
+      { _id: new ObjectId(id), ...merge.guard },
+      { $set: { ...merge.set, updatedAt: new Date() } },
     );
   }
 

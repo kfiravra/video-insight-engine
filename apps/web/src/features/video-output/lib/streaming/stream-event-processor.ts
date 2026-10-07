@@ -15,7 +15,7 @@ import type { SSEPhase } from "@/features/video-output/lib/streaming/sse-validat
 import { getUserFriendlyError } from "@/features/video-output/lib/streaming/stream-error-messages";
 import { validateTabProps } from "@/features/video-output/lib/tab-prop-schemas";
 import type { StreamState, FrameInfo, StreamPhase, StreamPhaseDetail } from "@/features/video-output/hooks/use-summary-stream";
-import type { ContentTag, TabDefinition, TabEntry, VIEResponseMeta, EnrichmentData, QuizQuestion, Flashcard, CodeCheatSheetItem, ScenarioItem, Modifier } from "@vie/types";
+import type { ContentTag, TabDefinition, TabEntry, VIEResponseMeta, EnrichmentData, QuizQuestion, Flashcard, CodeCheatSheetItem, ScenarioItem, Modifier, SynthesisResult } from "@vie/types";
 
 type SetState = Dispatch<SetStateAction<StreamState>>;
 
@@ -169,14 +169,38 @@ function handleEnrichmentComplete(event: Record<string, unknown>, setState: SetS
   setState((prev) => ({ ...prev, enrichment }));
 }
 
+const EMPTY_SYNTHESIS: SynthesisResult = { tldr: "", keyTakeaways: [], masterSummary: "", seoDescription: "" };
+
+/** Only the fields that carry content — an empty string or array never counts
+ *  as "set", so a failure-path emission can't blank what an earlier one filled. */
+function filledSynthesisFields(synthesis: Partial<SynthesisResult>): Partial<SynthesisResult> {
+  const filled: Partial<SynthesisResult> = {};
+  if (synthesis.tldr) filled.tldr = synthesis.tldr;
+  if (synthesis.keyTakeaways?.length) filled.keyTakeaways = synthesis.keyTakeaways;
+  if (synthesis.masterSummary) filled.masterSummary = synthesis.masterSummary;
+  if (synthesis.seoDescription) filled.seoDescription = synthesis.seoDescription;
+  return filled;
+}
+
+// synthesis_complete arrives up to twice per run: early {tldr, keyTakeaways}
+// at memory-done (drives the hero), then the full superset at synthesis-done.
+// Either can be missing on a failure path, and a reconnect can replay them in
+// any order — so emissions merge instead of replacing, and the superset wins:
+// a partial (no masterSummary) arriving after the full one is a replay and is
+// ignored. Same rule as the API relay's persistence (mergeSynthesis).
 function handleSynthesisComplete(event: Record<string, unknown>, setState: SetState): void {
   const { tldr, keyTakeaways } = validateSynthesisComplete(event);
-  const masterSummary = typeof event.masterSummary === "string" ? event.masterSummary : "";
-  const seoDescription = typeof event.seoDescription === "string" ? event.seoDescription : "";
-  setState((prev) => ({
-    ...prev,
-    synthesis: { tldr, keyTakeaways, masterSummary, seoDescription },
-  }));
+  const incoming = filledSynthesisFields({
+    tldr,
+    keyTakeaways,
+    masterSummary: typeof event.masterSummary === "string" ? event.masterSummary : "",
+    seoDescription: typeof event.seoDescription === "string" ? event.seoDescription : "",
+  });
+  setState((prev) => {
+    if (prev.synthesis?.masterSummary && !incoming.masterSummary) return prev;
+    const kept = prev.synthesis ? filledSynthesisFields(prev.synthesis) : {};
+    return { ...prev, synthesis: { ...EMPTY_SYNTHESIS, ...kept, ...incoming } };
+  });
 }
 
 function handleDoneEvent(event: Record<string, unknown>, setState: SetState): void {
