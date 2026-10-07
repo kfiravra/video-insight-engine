@@ -159,6 +159,7 @@ async def run_phase_frames(ctx: PipelineContext) -> AsyncGenerator[str, None]:
             overselect_count=overselect_count,
             reselect_hook=reselect_hook,
             hires_video=ctx.hires_video,
+            lowres_video=ctx.lowres_video,
         )
 
         all_frames = extraction_result.get("all_frames", [])

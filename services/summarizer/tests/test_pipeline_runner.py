@@ -720,13 +720,15 @@ async def test_transcript_error_from_phases_still_marks_row_failed() -> None:
 
 
 @pytest.mark.asyncio
-async def test_failed_run_closes_the_720p_file_before_persisting_timing() -> None:
-    """A run that dies before assembly must not leak the 720p download; its
-    cancellation is part of the timing record, so the close comes first."""
+async def test_failed_run_closes_both_downloads_before_persisting_timing() -> None:
+    """A run that dies before frames/assembly must not leak either download; a
+    cancelled download is part of the timing record, so the closes come first."""
     ctx = _english_ctx({})
     order: list[str] = []
+    ctx.lowres_video = MagicMock()
+    ctx.lowres_video.close = AsyncMock(side_effect=lambda: order.append("close-lowres"))
     ctx.hires_video = MagicMock()
-    ctx.hires_video.close = AsyncMock(side_effect=lambda: order.append("close"))
+    ctx.hires_video.close = AsyncMock(side_effect=lambda: order.append("close-720p"))
     timer = MagicMock()
     timer.elapsed = MagicMock(return_value=1.0)
 
@@ -750,4 +752,54 @@ async def test_failed_run_closes_the_720p_file_before_persisting_timing() -> Non
                 )
             ]
 
-    assert order == ["close", "persist"]
+    assert order == ["close-lowres", "close-720p", "persist"]
+
+
+@pytest.mark.asyncio
+async def test_failed_run_cancels_the_unjoined_t0_tasks() -> None:
+    ctx = _english_ctx({})
+    ctx.caption_task = asyncio.create_task(asyncio.sleep(60))
+    timer = MagicMock()
+    timer.elapsed = MagicMock(return_value=1.0)
+
+    async def _metadata_fails(_ctx):
+        raise RuntimeError("metadata exploded")
+        yield  # pragma: no cover — makes this an async generator
+
+    with ExitStack() as stack:
+        for p in _patched_phases():
+            stack.enter_context(p)
+        stack.enter_context(patch.object(pipeline_runner, "run_phase_metadata", _metadata_fails))
+        stack.enter_context(patch.object(pipeline_runner, "persist_run_timing", AsyncMock()))
+        with pytest.raises(RuntimeError):
+            _ = [
+                ev
+                async for ev in pipeline_runner._run_pipeline_phases(
+                    ctx, MagicMock(), "vsid", timer
+                )
+            ]
+    await asyncio.gather(ctx.caption_task, return_exceptions=True)
+
+    assert ctx.caption_task.cancelled()
+
+
+@pytest.mark.asyncio
+async def test_phase_two_runs_transcript_after_captions_with_frames_and_description() -> None:
+    ctx = _english_ctx({"key_points": [{"text": "a claim long enough"}]})
+    timer = MagicMock()
+    timer.elapsed = MagicMock(return_value=1.0)
+    groups: list[list[str]] = []
+
+    async def _capture_parallel(phases, _ctx):
+        groups.append([phase.__name__ for phase in phases])
+        yield "data: parallel\n\n"
+
+    with ExitStack() as stack:
+        for p in _patched_phases():
+            stack.enter_context(p)
+        stack.enter_context(patch.object(pipeline_runner, "run_parallel_phases", _capture_parallel))
+        _ = [
+            ev async for ev in pipeline_runner._run_pipeline_phases(ctx, MagicMock(), "vsid", timer)
+        ]
+
+    assert groups[0] == ["run_phase_transcript", "run_phase_frames", "run_phase_description"]

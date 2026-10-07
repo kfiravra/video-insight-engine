@@ -484,6 +484,9 @@ class VideoData:
     caption_track: str | None = None  # "manual" | "auto-generated"
     caption_lang: str | None = None  # matched caption key, e.g. "ar-SA"
     caption_fetch_error: str | None = None  # "http_<n>" | "request" | "parse" | "empty"
+    # json3 URL of the picked track while its fetch is deferred
+    # (``extract_video_data(with_captions=False)`` → ``fetch_video_captions``).
+    caption_url: str | None = None
 
     @property
     def has_chapters(self) -> bool:
@@ -750,25 +753,11 @@ def _extract_with_retry(url: str, opts: dict[str, Any]) -> dict[str, Any] | None
         return ydl.extract_info(url, download=False)
 
 
-def _extract_video_data_sync(video_id: str) -> VideoData:
-    """
-    Extract video data using yt-dlp (synchronous).
-
-    This function extracts all available video metadata in a single call:
-    - Title, channel, duration, thumbnail
-    - Creator-defined chapters
-    - Full description text
-    - Subtitles with timestamps
-    - Video context (category, tags)
-
-    Args:
-        video_id: YouTube video ID
-
-    Returns:
-        VideoData with all extracted information
+def _extract_video_info_sync(video_id: str) -> tuple[VideoData, SubtitleTrack | None]:
+    """One yt-dlp ``extract_info`` → metadata + the picked caption track (not yet fetched).
 
     Raises:
-        TranscriptError: If video is unavailable or extraction fails
+        TranscriptError: If video is unavailable, live, or extraction fails
     """
     url = f"https://www.youtube.com/watch?v={video_id}"
 
@@ -791,66 +780,83 @@ def _extract_video_data_sync(video_id: str) -> VideoData:
     if info.get("is_live"):
         raise TranscriptError("Live streams are not supported", ErrorCode.LIVE_STREAM)
 
-    # Extract basic metadata
-    title = info.get("title", "Unknown Title")
-    channel = info.get("uploader") or info.get("channel") or "Unknown Channel"
-    duration = int(info.get("duration") or 0)
     description = info.get("description") or ""
-    upload_date = info.get("upload_date")
-
-    # Get best thumbnail
-    thumbnails = info.get("thumbnails", [])
-    thumbnail_url = None
-    if thumbnails:
-        # Prefer maxresdefault or high quality
-        for thumb in reversed(thumbnails):  # Usually sorted by quality
-            if thumb.get("url"):
-                thumbnail_url = thumb["url"]
-                break
-
-    # If no thumbnail found, use standard YouTube thumbnail URL
-    if not thumbnail_url:
-        thumbnail_url = f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg"
-
-    # Parse chapters
     chapters = _parse_chapters(info)
     logger.info("Video %s: found %d chapters", video_id, len(chapters))
-
-    # Parse subtitles - try to get from json3 format
-    auto_captions = info.get("automatic_captions", {})
-    manual_captions = info.get("subtitles", {})
 
     # Resolve the video's primary language *before* picking subtitles. yt-dlp
     # also offers English auto-translations for every foreign-language video;
     # picking those would silently mislabel the audio as English.
+    auto_captions = info.get("automatic_captions", {})
+    manual_captions = info.get("subtitles", {})
     detected_language = resolve_video_language(info, manual_captions, auto_captions)
-
     track = _pick_subtitle_url(detected_language, manual_captions, auto_captions)
-    subtitles, caption_fetch_error = _fetch_picked_track(video_id, track, detected_language)
 
-    # Phase 1: Extract video context (category, persona, tags)
     context = extract_video_context(info, description)
     logger.info(
         "Video %s: category=%s, tags=%d", video_id, context.category, len(context.display_tags)
     )
 
-    return VideoData(
+    video_data = VideoData(
         video_id=video_id,
-        title=title,
-        channel=channel,
-        duration=duration,
-        thumbnail_url=thumbnail_url,
+        title=info.get("title", "Unknown Title"),
+        channel=info.get("uploader") or info.get("channel") or "Unknown Channel",
+        duration=int(info.get("duration") or 0),
+        thumbnail_url=_best_thumbnail(info, video_id),
         description=description,
         chapters=chapters,
-        subtitles=subtitles,
-        upload_date=upload_date,
+        upload_date=info.get("upload_date"),
         context=context,
         language=detected_language,
-        captions_rate_limited=caption_fetch_error == "http_429",
         caption_track=track.kind if track else None,
         caption_lang=track.lang if track else None,
-        caption_fetch_error=caption_fetch_error,
+        caption_url=track.url if track else None,
     )
+    return video_data, track
+
+
+def _best_thumbnail(info: dict[str, Any], video_id: str) -> str:
+    """Highest-quality thumbnail yt-dlp listed, else the standard YouTube URL."""
+    for thumb in reversed(info.get("thumbnails", [])):  # Usually sorted by quality
+        if thumb.get("url"):
+            return thumb["url"]
+    return f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg"
+
+
+def _apply_captions(video_data: VideoData, track: SubtitleTrack | None) -> None:
+    """Fetch the picked track and store segments + fetch outcome on ``video_data``."""
+    subtitles, caption_fetch_error = _fetch_picked_track(
+        video_data.video_id, track, video_data.language
+    )
+    video_data.subtitles = subtitles
+    video_data.captions_rate_limited = caption_fetch_error == "http_429"
+    video_data.caption_fetch_error = caption_fetch_error
+    video_data.caption_url = None
+
+
+def _extract_video_data_sync(video_id: str) -> VideoData:
+    """
+    Extract video data using yt-dlp (synchronous).
+
+    This function extracts all available video metadata in a single call:
+    - Title, channel, duration, thumbnail
+    - Creator-defined chapters
+    - Full description text
+    - Subtitles with timestamps
+    - Video context (category, tags)
+
+    Args:
+        video_id: YouTube video ID
+
+    Returns:
+        VideoData with all extracted information
+
+    Raises:
+        TranscriptError: If video is unavailable or extraction fails
+    """
+    video_data, track = _extract_video_info_sync(video_id)
+    _apply_captions(video_data, track)
+    return video_data
 
 
 def _fetch_picked_track(
@@ -1029,7 +1035,7 @@ def _pick_subtitle_url(
     return None
 
 
-async def extract_video_data(video_id: str) -> VideoData:
+async def extract_video_data(video_id: str, *, with_captions: bool = True) -> VideoData:
     """
     Extract video data using yt-dlp (async wrapper).
 
@@ -1043,8 +1049,14 @@ async def extract_video_data(video_id: str) -> VideoData:
     - Subtitles/captions with timestamps
     - Video context (category, tags)
 
+    ``with_captions=False`` returns right after ``extract_info``: the picked
+    track rides on ``caption_url`` and ``fetch_video_captions`` fetches it
+    later, so the caption fetch (and its 429 retries) stays out of the
+    metadata wall.
+
     Args:
         video_id: YouTube video ID
+        with_captions: Fetch the picked caption track before returning
 
     Returns:
         VideoData with all extracted information
@@ -1060,4 +1072,17 @@ async def extract_video_data(video_id: str) -> VideoData:
         # video_data.chapters[0].start_time -> 0
         # video_data.chapters[0].title -> "Intro"
     """
-    return await asyncio.to_thread(_extract_video_data_sync, video_id)
+    if with_captions:
+        return await asyncio.to_thread(_extract_video_data_sync, video_id)
+    video_data, _track = await asyncio.to_thread(_extract_video_info_sync, video_id)
+    return video_data
+
+
+async def fetch_video_captions(video_data: VideoData) -> None:
+    """Fetch the track ``extract_video_data(with_captions=False)`` picked, in place."""
+    track = None
+    if video_data.caption_url and video_data.caption_track and video_data.caption_lang:
+        track = SubtitleTrack(
+            url=video_data.caption_url, kind=video_data.caption_track, lang=video_data.caption_lang
+        )
+    await asyncio.to_thread(_apply_captions, video_data, track)

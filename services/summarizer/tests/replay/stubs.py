@@ -5,9 +5,10 @@ fill, tier decision) runs for real on top of the I/O fakes in
 ``media_fakes``. What stays stubbed here, at the highest seam that keeps the
 phase logic live (each one is "not provable by replay" until moved down):
 
-* metadata — ``youtube.extract_video_data`` (yt-dlp ``extract_info`` + the
-  caption fetch, one in-process call); the description LLM is NOT stubbed, it
-  replays through the fake LLM.
+* metadata — ``youtube.extract_video_data`` (yt-dlp ``extract_info``) and
+  ``youtube.fetch_video_captions`` (the deferred caption fetch); the recorded
+  ``metadata`` sleep is split between them (see ``_EXTRACT_INFO_SECONDS``).
+  The description LLM is NOT stubbed, it replays through the fake LLM.
 * transcript — caption runs keep the real ``fetch_transcript`` chain (S3
   miss, then the yt-dlp subtitles on the VideoData) behind a recorded delay;
   Whisper/Gemini/S3-sourced runs get a stub chain yielding the recorded
@@ -34,6 +35,11 @@ from tests.replay.media_fakes import MediaFakes, media_fakes
 
 _REPLAY_URL_BASE = "https://replay.invalid/"
 _CAPTION_SOURCE = "ytdlp"
+# The cassettes record extract_info + caption fetch as one ``metadata`` sleep.
+# T1dQhQAm8Tc's prod worker log split its 12.2 s as yt-dlp info 5.0 s + the
+# caption fetch (a 429 and its retry), so every replay splits it there: info
+# up to 5.0 s, captions the rest.
+_EXTRACT_INFO_SECONDS = 5.0
 
 FetchChain = Callable[..., AsyncGenerator[Any, None]]
 
@@ -48,9 +54,18 @@ class ReplayStubs:
         self.qdrant_stores: list[str] = []
 
     async def sleep(self, key: str) -> None:
-        seconds = self.cassette.sleeps.get(key, 0.0) * self.speed
+        await self._sleep_recorded(self.cassette.sleeps.get(key, 0.0))
+
+    async def _sleep_recorded(self, recorded_seconds: float) -> None:
+        seconds = recorded_seconds * self.speed
         if seconds > 0:
             await asyncio.sleep(seconds)
+
+    def _metadata_split(self) -> tuple[float, float]:
+        """(extract_info, caption fetch) seconds of the recorded metadata sleep."""
+        total = self.cassette.sleeps.get("metadata", 0.0)
+        info = min(total, _EXTRACT_INFO_SECONDS)
+        return info, total - info
 
     # ─── Metadata + transcript ───
 
@@ -84,9 +99,22 @@ class ReplayStubs:
             caption_lang=spec.caption_lang,
         )
 
-    async def extract_video_data(self, youtube_id: str) -> VideoData:
-        await self.sleep("metadata")
-        return self.video_data()
+    async def extract_video_data(self, youtube_id: str, *, with_captions: bool = True) -> VideoData:
+        if with_captions:
+            await self.sleep("metadata")
+            return self.video_data()
+        info_seconds, _ = self._metadata_split()
+        await self._sleep_recorded(info_seconds)
+        data = self.video_data()
+        data.caption_url = _REPLAY_URL_BASE + "timedtext" if data.subtitles else None
+        data.subtitles = []
+        return data
+
+    async def fetch_video_captions(self, video_data: VideoData) -> None:
+        _, caption_seconds = self._metadata_split()
+        await self._sleep_recorded(caption_seconds)
+        video_data.subtitles = self._subtitles()
+        video_data.caption_url = None
 
     def transcript_chain(self, real_fetch: FetchChain) -> FetchChain:
         """Caption runs: real chain after the recorded delay; others: recorded data."""
@@ -168,6 +196,7 @@ def _patch_targets(stubs: ReplayStubs) -> dict[str, Any]:
     store_mod = "src.services.vector.store"
     return {
         "src.services.video.youtube.extract_video_data": stubs.extract_video_data,
+        "src.services.video.youtube.fetch_video_captions": stubs.fetch_video_captions,
         f"{transcript_phase.__name__}.fetch_transcript": stubs.transcript_chain(
             transcript_phase.fetch_transcript
         ),

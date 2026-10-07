@@ -45,7 +45,10 @@ def test_tier_should_be_derived_by_production_code(cassettes: dict, video_id: st
 def test_should_download_one_720p_file_per_run(replays: dict, video_id: str) -> None:
     """1a.2: the prefetch serves hi-res frames AND moment fill — no refiner or
     moment-fill re-download (the recorded runs fetched 720p twice)."""
-    assert replays[video_id].downloads() == [("lowres", "scene_detect"), ("720p", "prefetch")]
+    assert sorted(replays[video_id].downloads()) == [
+        ("720p", "prefetch"),
+        ("lowres", "scene_detect"),
+    ]
 
 
 def test_moment_fill_should_seek_the_kept_720p_file(replays: dict) -> None:

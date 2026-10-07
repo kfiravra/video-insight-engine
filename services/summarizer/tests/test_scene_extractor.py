@@ -19,6 +19,22 @@ from src.services.media.scene_extractor import (
 EMPTY_RESULT = {"all_frames": [], "selected_frames": [], "gallery_frames": []}
 
 
+def _ready_lowres(tmp_path: Path, order: list[str] | None = None) -> MagicMock:
+    """The run's pass-1 handle with its download already on disk."""
+    video = tmp_path / "pass1.mp4"
+    video.write_bytes(b"x" * 2048)
+    handle = MagicMock()
+
+    async def path() -> Path:
+        if order is not None:
+            order.append("lowres-ready")
+        return video
+
+    handle.path = path
+    handle.close = AsyncMock()
+    return handle
+
+
 class TestExtractSceneKeyframes:
     """Test scene keyframe extraction."""
 
@@ -150,8 +166,10 @@ class TestExtractSceneKeyframes:
             "gallery_frames": frames[:12],
         }
 
-        result = await extract_scene_keyframes("dQw4w9WgXcQ")
+        lowres_video = MagicMock(close=AsyncMock())
+        result = await extract_scene_keyframes("dQw4w9WgXcQ", lowres_video=lowres_video)
 
+        lowres_video.close.assert_awaited_once()
         assert len(result["all_frames"]) == 15
         assert len(result["gallery_frames"]) == 12
         assert result["all_frames"][3]["timestamp"] == 30.0
@@ -349,10 +367,6 @@ class TestTwoPassExtraction:
 
         video_id = "dQw4w9WgXcQ"
 
-        async def ytdlp_communicate():
-            (tmp_path / f"{video_id}.mp4").write_bytes(b"x" * 2048)
-            return (b"", b"")
-
         async def ffmpeg_communicate():
             for i in (1, 2):
                 (tmp_path / "frames" / f"scene_{i:04d}.jpg").write_bytes(b"jpg")
@@ -361,7 +375,7 @@ class TestTwoPassExtraction:
         def fake_exec(*args, **kwargs):
             proc = AsyncMock()
             proc.returncode = 0
-            proc.communicate = ytdlp_communicate if args[0] == "yt-dlp" else ffmpeg_communicate
+            proc.communicate = ffmpeg_communicate
             return proc
 
         mock_exec.side_effect = fake_exec
@@ -369,7 +383,9 @@ class TestTwoPassExtraction:
         mock_select.side_effect = lambda frames, duration: (frames, frames[:1])
         mock_s3_client.put_json = AsyncMock()
 
-        result = await extract_scene_keyframes(video_id, duration_seconds=120)
+        result = await extract_scene_keyframes(
+            video_id, duration_seconds=120, lowres_video=_ready_lowres(tmp_path)
+        )
 
         # Detection ffmpeg args come from config (never-odd height via :-2)
         ffmpeg_args = next(c.args for c in mock_exec.call_args_list if c.args[0] == "ffmpeg")
@@ -562,10 +578,6 @@ class TestReselectHook:
 
         video_id = "dQw4w9WgXcQ"
 
-        async def ytdlp_communicate():
-            (tmp_path / f"{video_id}.mp4").write_bytes(b"x" * 2048)
-            return (b"", b"")
-
         async def ffmpeg_communicate():
             for i in (1, 2, 3):
                 (tmp_path / "frames" / f"scene_{i:04d}.jpg").write_bytes(b"jpg")
@@ -574,7 +586,7 @@ class TestReselectHook:
         def fake_exec(*args, **kwargs):
             proc = AsyncMock()
             proc.returncode = 0
-            proc.communicate = ytdlp_communicate if args[0] == "yt-dlp" else ffmpeg_communicate
+            proc.communicate = ffmpeg_communicate
             return proc
 
         mock_exec.side_effect = fake_exec
@@ -591,6 +603,7 @@ class TestReselectHook:
             duration_seconds=120,
             overselect_count=40,
             reselect_hook=bad_hook,
+            lowres_video=_ready_lowres(tmp_path),
         )
 
         # Local selection survives the hook failure
@@ -608,10 +621,6 @@ class TestZeroCandidatePath:
             proc.returncode = None
 
             async def communicate():
-                if args[0] == "yt-dlp":
-                    (tmp_path / f"{self.VIDEO_ID}.mp4").write_bytes(b"x" * 2048)
-                    proc.returncode = 0
-                    return (b"", b"")
                 if "-ss" in args:
                     Path(args[-1]).write_bytes(b"jpg")
                     proc.returncode = 0
@@ -648,7 +657,9 @@ class TestZeroCandidatePath:
             mock_settings.SCENE_S3_PREFIX = "scenes-v3"
             tempfile_mod.mkdtemp.return_value = str(tmp_path)
             s3.put_json = AsyncMock()
-            result = await extract_scene_keyframes(self.VIDEO_ID, duration_seconds=1127)
+            result = await extract_scene_keyframes(
+                self.VIDEO_ID, duration_seconds=1127, lowres_video=_ready_lowres(tmp_path)
+            )
 
         assert len(result["selected_frames"]) == 25
 
@@ -695,8 +706,8 @@ class TestManifestQualityGate:
 
 
 class TestRunHiresVideo:
-    """The run's 720p file: extraction starts its download after pass 1, refines from it,
-    and never closes it — moment fill reads it later, the run closes it."""
+    """The run's 720p file: extraction refines from it and never closes it — moment fill
+    reads it later, the run closes it. The pass-1 file is closed once detection is done."""
 
     VIDEO_ID = "dQw4w9WgXcQ"
 
@@ -709,11 +720,6 @@ class TestRunHiresVideo:
         mock_settings.SCENE_HIRES_ENABLED = hires_enabled
 
     def _fake_exec(self, tmp_path, order: list[str], ffmpeg_ok: bool):
-        async def ytdlp_communicate():
-            order.append("yt-dlp")
-            (tmp_path / f"{self.VIDEO_ID}.mp4").write_bytes(b"x" * 2048)
-            return (b"", b"")
-
         async def ffmpeg_communicate():
             order.append("ffmpeg")
             if not ffmpeg_ok:
@@ -725,7 +731,7 @@ class TestRunHiresVideo:
         def fake_exec(*args, **kwargs):
             proc = AsyncMock()
             proc.returncode = 0
-            proc.communicate = ytdlp_communicate if args[0] == "yt-dlp" else ffmpeg_communicate
+            proc.communicate = ffmpeg_communicate
             return proc
 
         return fake_exec
@@ -739,6 +745,7 @@ class TestRunHiresVideo:
         hires_enabled: bool = True,
     ):
         order: list[str] = []
+        lowres_video = _ready_lowres(tmp_path, order)
         hires_video = MagicMock()
         hires_video.close = AsyncMock()
         hires_video.start = MagicMock(side_effect=lambda: order.append("start-720p"))
@@ -774,44 +781,48 @@ class TestRunHiresVideo:
             tempfile_mod.mkdtemp.return_value = str(tmp_path)
             s3.put_json = AsyncMock()
             result = await extract_scene_keyframes(
-                self.VIDEO_ID, duration_seconds=120, hires_video=hires_video
+                self.VIDEO_ID,
+                duration_seconds=120,
+                hires_video=hires_video,
+                lowres_video=lowres_video,
             )
-        return result, hires_video, refine, order
+        return result, hires_video, refine, order, lowres_video
 
-    async def test_should_start_the_720p_download_between_pass1_and_detection(self, tmp_path):
-        _, _, _, order = await self._run(tmp_path)
+    async def test_should_start_the_720p_download_before_detection(self, tmp_path):
+        """start() is idempotent: the metadata phase normally started it already."""
+        _, _, _, order, _ = await self._run(tmp_path)
 
-        assert order[:3] == ["yt-dlp", "start-720p", "ffmpeg"]
+        assert order[:3] == ["start-720p", "lowres-ready", "ffmpeg"]
 
     async def test_should_refine_from_the_runs_720p_file(self, tmp_path):
-        _, hires_video, refine, _ = await self._run(tmp_path)
+        _, hires_video, refine, _, _ = await self._run(tmp_path)
 
         assert refine.await_args.args[2] is hires_video
 
     async def test_should_leave_the_720p_file_open_for_moment_fill(self, tmp_path):
-        _, hires_video, _, _ = await self._run(tmp_path)
+        _, hires_video, _, _, _ = await self._run(tmp_path)
 
         hires_video.close.assert_not_awaited()
 
     async def test_should_keep_the_720p_download_when_no_frame_survives(self, tmp_path):
         """Zero candidates used to cancel the prefetch; moment fill still needs it."""
-        result, hires_video, refine, _ = await self._run(tmp_path, ffmpeg_ok=False)
+        result, hires_video, refine, _, _ = await self._run(tmp_path, ffmpeg_ok=False)
 
         assert (result["selected_frames"], refine.await_count) == ([], 0)
         hires_video.close.assert_not_awaited()
 
     async def test_should_keep_the_720p_download_when_extraction_raises(self, tmp_path):
-        result, hires_video, _, _ = await self._run(tmp_path, select_raises=True)
+        result, hires_video, _, _, _ = await self._run(tmp_path, select_raises=True)
 
         assert result["selected_frames"] == []
         hires_video.close.assert_not_awaited()
 
     async def test_should_not_start_the_download_when_hires_is_disabled(self, tmp_path):
-        _, hires_video, _, _ = await self._run(tmp_path, hires_enabled=False)
+        _, hires_video, _, _, _ = await self._run(tmp_path, hires_enabled=False)
 
         hires_video.start.assert_not_called()
 
-    async def test_should_delete_the_pass1_video_on_exit(self, tmp_path):
-        await self._run(tmp_path, select_raises=True)
+    async def test_should_close_the_pass1_download_on_exit(self, tmp_path):
+        *_, lowres_video = await self._run(tmp_path, select_raises=True)
 
-        assert not (tmp_path / f"{self.VIDEO_ID}.mp4").exists()
+        lowres_video.close.assert_awaited_once()

@@ -1,8 +1,8 @@
 """End-to-end replays of the benchmark cassettes through ``stream_summarization``.
 
 Speed 0 runs every cassette in well under a second each (CI). The fidelity
-test replays T1dQhQAm8Tc at 1/20 of its recorded walls (~12 s) and rescales;
-set ``REPLAY_REALTIME=1`` to also run it at real speed (~4 min).
+test reads the shared 1/20-speed T1dQhQAm8Tc replay (``scaled_reference``)
+and rescales; set ``REPLAY_REALTIME=1`` to also run it at real speed (~4 min).
 """
 
 from __future__ import annotations
@@ -19,7 +19,6 @@ from tests.replay.driver import ReplayResult, run_replay
 from tests.replay.report import PhaseRow, out_of_tolerance, phase_rows
 
 _REFERENCE_VIDEO = "T1dQhQAm8Tc"
-_FIDELITY_SPEED = 0.05
 _TOP_LEVEL_PHASES = (
     "metadata",
     "transcript_frames",
@@ -42,7 +41,9 @@ _TABS_ADDED_SINCE_RECORDING: dict[str, list[str]] = {"uC45_4nnEAI": ["frames-gal
 # Phases the code under test moved on purpose since T1dQhQAm8Tc was recorded,
 # with the change that moved them; the 10 % fidelity gate holds for the rest.
 _PHASES_CHANGED_SINCE_RECORDING: dict[str, str] = {
+    "metadata": "1a.1: captions + description analysis run in the background (t=0 group)",
     "assembly": "1a.2: moment fill seeks the kept 720p file (the recording re-downloaded it)",
+    "total (complete)": "the sum of the changes above",
 }
 
 
@@ -130,12 +131,11 @@ def test_frames_substeps_should_be_timed_for_standard_tier(replays: dict) -> Non
     assert set(_FRAMES_SUBSTEPS) <= names
 
 
-async def test_reference_replay_should_reproduce_phase_walls_within_ten_percent(
-    cassettes: dict,
+def test_reference_replay_should_reproduce_phase_walls_within_ten_percent(
+    scaled_reference: ReplayResult, cassettes: dict
 ) -> None:
-    cassette = cassettes[_REFERENCE_VIDEO]
-    result = await run_replay(cassette, speed=_FIDELITY_SPEED)
-    assert out_of_tolerance(_unchanged_rows(result, cassette)) == []
+    rows = _unchanged_rows(scaled_reference, cassettes[_REFERENCE_VIDEO])
+    assert out_of_tolerance(rows) == []
 
 
 async def test_replay_should_leave_prompt_cache_as_found(cassettes: dict) -> None:

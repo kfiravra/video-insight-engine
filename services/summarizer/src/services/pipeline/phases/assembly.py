@@ -12,6 +12,7 @@ from src.services.cache.response_cache import response_cache
 from src.services.media.s3_client import S3Client
 from src.services.pipeline.assembly import assemble_response
 from src.services.pipeline.assembly.moment_frame_fill import fill_moment_frames
+from src.services.pipeline.phases.metadata import await_description_analysis
 from src.services.pipeline.pipeline_helpers import (
     normalize_segments,
     run_task_with_heartbeat,
@@ -45,10 +46,11 @@ async def run_phase_assembly(ctx: PipelineContext) -> AsyncGenerator[str, None]:
             for ch in (ctx.video_data.chapters or [])
         ],
     }
+    description_analysis = await await_description_analysis(ctx)
     desc_analysis_dict = (
-        ctx.description_analysis.to_dict()
-        if isinstance(ctx.description_analysis, DescriptionAnalysis)
-        and ctx.description_analysis.has_content
+        description_analysis.to_dict()
+        if isinstance(description_analysis, DescriptionAnalysis)
+        and description_analysis.has_content
         else None
     )
     assembled = assemble_response(

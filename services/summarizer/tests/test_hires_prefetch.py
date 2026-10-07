@@ -9,7 +9,11 @@ from pathlib import Path
 import pytest
 
 from src.services.media import hires_prefetch
-from src.services.media.hires_prefetch import DOWNLOAD_PURPOSE, LocalHiresSource
+from src.services.media.hires_prefetch import (
+    DOWNLOAD_PURPOSE,
+    LocalHiresSource,
+    LocalLowresSource,
+)
 
 VIDEO_ID = "dQw4w9WgXcQ"
 
@@ -222,3 +226,16 @@ class TestClose:
             await task
 
         assert after_close == [True]
+
+
+class TestLocalLowresSource:
+    async def test_should_download_the_pass1_rendition(self, monkeypatch, downloaded):
+        calls: list[str] = []
+
+        async def lowres(youtube_id: str) -> tuple[Path, str]:
+            calls.append(youtube_id)
+            return downloaded
+
+        monkeypatch.setattr(hires_prefetch, "download_video_lowres", lowres)
+
+        assert (await LocalLowresSource(VIDEO_ID).path(), calls) == (downloaded[0], [VIDEO_ID])

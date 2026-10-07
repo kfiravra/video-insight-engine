@@ -1,4 +1,4 @@
-"""Tests for the one-shot local 720p download fallback (media/local_video.py).
+"""Tests for the run's video downloads — 720p and low-res pass 1 (media/local_video.py).
 
 The leak path matters most: an outer budget (moment_frame_fill's fallback
 wait_for, a client disconnect) cancelling mid-download must kill yt-dlp and
@@ -239,3 +239,47 @@ async def test_outer_cancellation_kills_process_cleans_and_reraises(monkeypatch,
 
 def test_cleanup_tolerates_missing_dir(tmp_path):
     local_video.cleanup_local_video(str(tmp_path / "never-created"))
+
+
+class TestDownloadVideoLowres:
+    """Pass 1 — the worst-quality file scene detection reads, one attempt."""
+
+    async def test_should_download_the_worst_rendition(self, monkeypatch, tmp_path):
+        _capture_temp_dirs(monkeypatch, tmp_path)
+        formats: list[str] = []
+
+        async def _spawn(*args, **_kwargs):
+            formats.append(args[args.index("-f") + 1])
+            Path(args[args.index("-o") + 1]).write_bytes(b"mp4")
+            return _fake_proc(returncode=0)
+
+        with patch.object(local_video.asyncio, "create_subprocess_exec", side_effect=_spawn):
+            result = await local_video.download_video_lowres(VIDEO_ID)
+
+        assert result is not None and formats == ["worstvideo[ext=mp4]/worst[ext=mp4]/worst"]
+        local_video.cleanup_local_video(result[1])
+
+    async def test_should_remove_its_dir_when_yt_dlp_fails(self, monkeypatch, tmp_path):
+        created = _capture_temp_dirs(monkeypatch, tmp_path)
+
+        with patch.object(
+            local_video.asyncio,
+            "create_subprocess_exec",
+            AsyncMock(return_value=_fake_proc(returncode=1, stderr=b"HTTP Error 403")),
+        ):
+            result = await local_video.download_video_lowres(VIDEO_ID)
+
+        assert (result, Path(created[0]).exists()) == (None, False)
+
+    async def test_should_kill_yt_dlp_and_clean_up_when_cancelled(self, monkeypatch, tmp_path):
+        created = _capture_temp_dirs(monkeypatch, tmp_path)
+        proc = _fake_proc()
+        proc.communicate = AsyncMock(side_effect=_hang)
+
+        with patch.object(
+            local_video.asyncio, "create_subprocess_exec", AsyncMock(return_value=proc)
+        ):
+            with pytest.raises(asyncio.TimeoutError):
+                await asyncio.wait_for(local_video.download_video_lowres(VIDEO_ID), timeout=0.01)
+
+        assert (proc.kill.called, Path(created[0]).exists()) == (True, False)

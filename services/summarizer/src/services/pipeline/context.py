@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from src.models.pipeline_types import PlanResult
     from src.repositories.mongodb_repository import MongoDBVideoRepository
     from src.services.llm import LLMService
-    from src.services.media.hires_prefetch import LocalHiresSource
+    from src.services.media.hires_prefetch import LocalHiresSource, LocalLowresSource
     from src.services.pipeline.classifier import ContentTraits
     from src.services.pipeline.pipeline_helpers import (
         PipelineTimer,
@@ -52,11 +52,20 @@ class PipelineContext:
     transcript_trail: TranscriptTrail | None = None
     clean_text: str = ""
 
+    # t=0 background work, started by the metadata phase once the video is
+    # accepted: the caption fetch (the transcript phase awaits it) and the
+    # description analysis (readers await it via await_description_analysis).
+    caption_task: asyncio.Task[None] | None = None
+    description_task: asyncio.Task[None] | None = None
+
     # Scene extraction
     scene_task: asyncio.Task | None = None
-    # The run's one local 720p file (hi-res frames + moment fill). The runner
-    # creates it; assembly closes it after moment fill and the runner again
-    # when the run ends, so no exit path leaks the download.
+    # The run's two video downloads, started by the metadata phase unless the
+    # frames are cached. The runner creates both; scene extraction closes the
+    # low-res file after detection, assembly closes the 720p file after moment
+    # fill, and the runner closes both again when the run ends, so no exit
+    # path leaks a download.
+    lowres_video: LocalLowresSource | None = None
     hires_video: LocalHiresSource | None = None
     scene_frames_for_assembly: list[dict] = field(default_factory=list)
     scene_frames_all: list[dict] = field(

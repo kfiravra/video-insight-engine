@@ -269,13 +269,19 @@ The pipeline uses 3-6 LLM calls with a plan-first architecture:
     └─▶ If cached: stream structured result immediately
     └─▶ If pending: start processing pipeline
 
- 2. FETCH METADATA (yt-dlp) + DESCRIPTION ANALYSIS
-    └─▶ Title, channel, thumbnail, duration, chapters
+ 2. FETCH METADATA (one yt-dlp extract_info) → validate_duration → t=0 group
+    └─▶ Title, channel, thumbnail, duration, chapters, picked caption track
     └─▶ Category pre-detection from metadata
-    └─▶ Description analysis: extract links, resources, social links
-    └─▶ SSE: metadata event, description_analysis event
+    └─▶ SSE: metadata event. The phase ends here (~5 s); once the video is
+    │   accepted it starts, in the background: the caption fetch, description
+    │   analysis (links, resources, social links, timestamps), and — unless the
+    │   frame manifest is cached (checked during extract_info) — the low-res and
+    │   720p downloads (media/hires_prefetch.py, ctx.lowres_video / ctx.hires_video).
+    │   A rejected video starts nothing.
 
- 3. TRANSCRIPT + FRAMES (parallel via asyncio.Queue)
+ 3. TRANSCRIPT + FRAMES + DESCRIPTION (parallel via asyncio.Queue)
+    └─▶ transcript waits for the caption fetch; frames for the low-res file;
+    │   the description member emits the description_analysis SSE when it lands
     ┌─▶ TRANSCRIPT (Multi-Source Fallback Chain)
     │   └─▶ 0. S3 cached transcript (avoids all YouTube calls)
     │   └─▶ 1. yt-dlp subtitles (embedded in video metadata)
@@ -302,8 +308,8 @@ The pipeline uses 3-6 LLM calls with a plan-first architecture:
         │   FRAME_TIER_ENABLED): HIGH over-selects FRAME_OVERSELECT_COUNT candidates and
         │   vision-describes them BEFORE hires refinement so subject-matter frames beat
         │   presenter shots (floor FRAME_RESELECT_FLOOR); LOW skips vision; STANDARD = top-8.
-        └─▶ Pass 1 — detection: yt-dlp downloads WORST-quality video to temp file
-        │   (~15-20s; 144p is plenty for scene detection + scoring, keeps download fast).
+        └─▶ Pass 1 — detection: reads the run's WORST-quality download (started by the
+        │   metadata phase; ~15-20s; 144p is plenty for scene detection + scoring).
         │   All yt-dlp VIDEO/AUDIO downloads (detection, whisper audio; the 720p file uses
         │   YTDLP_HIRES_PLAYER_CLIENTS first) route through YTDLP_PLAYER_CLIENTS (default "android" — YouTube
         │   403s the web client's download URLs from some environments; never mix in

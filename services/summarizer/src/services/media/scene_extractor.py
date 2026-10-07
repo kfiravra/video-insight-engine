@@ -1,16 +1,16 @@
 """Scene-based keyframe extraction with smart frame selection (two-pass).
 
-Pass 1 (detection): downloads lowest-quality video via yt-dlp to a temp
-file — 144p is plenty for FFmpeg scene detection and local scoring, and
-keeps the download small/fast. Selects ~25 best frames with even time
-distribution.
+Pass 1 (detection): reads the run's lowest-quality download (``ctx.lowres_video``,
+started by the metadata phase) — 144p is plenty for FFmpeg scene detection
+and local scoring, and keeps the download small/fast. Selects ~25 best frames
+with even time distribution.
 
 Pass 2 (refinement): re-extracts only the SELECTED frames at 720p by
 seeking into the run's local 720p file (hires_refiner), so the JPEGs
 uploaded to S3 and sent to the vision LLM are sharp. Falls back to the
 low-res detection frames per-frame on any failure. The 720p file belongs to
-the run (``ctx.hires_video``): extraction starts its download and leaves it
-on disk for moment fill.
+the run (``ctx.hires_video``): extraction reads it and leaves it on disk for
+moment fill.
 
 Key principle: detect cheap, refine selectively, upload selectively.
 """
@@ -24,17 +24,15 @@ import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Awaitable, Callable
+from typing import Awaitable, Callable
 
 from src.config import settings
+from src.services.media.hires_prefetch import LocalHiresSource, LocalLowresSource
 from src.services.media.image_dedup import compute_ahash, is_duplicate
 from src.services.media.s3_client import s3_client
 from src.services.media.scene_detect import detect_candidate_frames
-from src.services.pipeline.pipeline_timing import mark_step, record_download
+from src.services.pipeline.pipeline_timing import mark_step
 from src.utils.constants import YOUTUBE_ID_RE
-
-if TYPE_CHECKING:
-    from src.services.media.hires_prefetch import LocalHiresSource
 
 logger = logging.getLogger(__name__)
 
@@ -139,6 +137,13 @@ async def _check_existing_frames(video_id: str) -> dict | None:
     except Exception as e:
         logger.debug("S3 frame manifest check failed (will extract): %s", e)
         return None
+
+
+async def frames_cached(video_id: str) -> bool:
+    """True when a usable frame manifest exists — the run then downloads no video early."""
+    if not YOUTUBE_ID_RE.match(video_id):
+        return False
+    return await _check_existing_frames(video_id) is not None
 
 
 async def persist_vision_descriptions(video_id: str, descriptions: list[dict]) -> None:
@@ -326,10 +331,11 @@ async def extract_scene_keyframes(
     overselect_count: int | None = None,
     reselect_hook: Callable[[list[dict]], Awaitable[list[dict]]] | None = None,
     hires_video: LocalHiresSource | None = None,
+    lowres_video: LocalLowresSource | None = None,
 ) -> dict:
     """Extract keyframes at scene change boundaries with smart selection.
 
-    Downloads lowest-quality video via yt-dlp, runs FFmpeg scene detection,
+    Reads the lowest-quality download, runs FFmpeg scene detection,
     scores all frames locally, selects ~25 best, uploads only those to S3.
 
     Args:
@@ -337,8 +343,10 @@ async def extract_scene_keyframes(
         scene_threshold: FFmpeg scene change threshold (0.0-1.0).
         max_frames: Maximum frames to extract from FFmpeg. Default from settings.
         duration_seconds: Video duration in seconds.
-        hires_video: The run's 720p file; started here, refined from, and
-            left open for moment fill (the run closes it).
+        hires_video: The run's 720p file; refined from and left open for
+            moment fill (the run closes it). Started here if nothing has.
+        lowres_video: The run's pass-1 file (started by the metadata phase);
+            closed here once detection is done. None = download one here.
 
     Returns:
         Dict with 'all_frames', 'selected_frames', 'gallery_frames' keys.
@@ -361,16 +369,19 @@ async def extract_scene_keyframes(
             # Check S3 first — skip extraction if frames already exist
             existing = await _check_existing_frames(video_id)
             if existing:
+                # Cached frames: an early pass-1 download is moot.
+                if lowres_video is not None:
+                    await lowres_video.close()
                 return existing
 
             return await _do_extraction(
                 video_id,
                 scene_threshold,
-                max_frames,
                 duration_seconds,
                 overselect_count=overselect_count,
                 reselect_hook=reselect_hook,
                 hires_video=hires_video,
+                lowres_video=lowres_video or LocalLowresSource(video_id),
             )
         finally:
             # Prune lock after use to prevent unbounded dict growth
@@ -380,11 +391,12 @@ async def extract_scene_keyframes(
 async def _do_extraction(
     video_id: str,
     scene_threshold: float | None,
-    max_frames: int | None,
     duration_seconds: int | None,
-    overselect_count: int | None = None,
-    reselect_hook: Callable[[list[dict]], Awaitable[list[dict]]] | None = None,
-    hires_video: LocalHiresSource | None = None,
+    *,
+    overselect_count: int | None,
+    reselect_hook: Callable[[list[dict]], Awaitable[list[dict]]] | None,
+    hires_video: LocalHiresSource | None,
+    lowres_video: LocalLowresSource,
 ) -> dict:
     """Core extraction logic — FFmpeg + scoring + selective upload."""
     empty_result: dict = {"all_frames": [], "selected_frames": [], "gallery_frames": []}
@@ -394,82 +406,18 @@ async def _do_extraction(
         logger.warning("Invalid scene threshold %.4f, using default 0.3", threshold)
         threshold = 0.3
 
-    youtube_url = f"https://www.youtube.com/watch?v={video_id}"
     temp_dir = tempfile.mkdtemp(prefix=f"vie-scene-{video_id}-")
-    temp_video = Path(temp_dir) / f"{video_id}.mp4"
     frames_dir = Path(temp_dir) / "frames"
     frames_dir.mkdir()
 
     try:
-        # Step 1: Download lowest quality video via yt-dlp
-        dl_proc = None
-        dl_started = time.monotonic()
-        try:
-            from src.services.media.download_utils import (
-                ytdlp_client_cli_args,
-                ytdlp_subprocess_env,
-            )
-
-            dl_proc = await asyncio.create_subprocess_exec(
-                "yt-dlp",
-                "-f",
-                "worstvideo[ext=mp4]/worst[ext=mp4]/worst",
-                "--no-playlist",
-                "--no-warnings",
-                *ytdlp_client_cli_args(),
-                "-o",
-                str(temp_video),
-                youtube_url,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env=ytdlp_subprocess_env(),
-            )
-            _, dl_stderr = await asyncio.wait_for(dl_proc.communicate(), timeout=120)
-        except asyncio.TimeoutError:
-            logger.warning("yt-dlp download timed out for %s (120s)", video_id)
-            record_download(
-                kind="lowres",
-                purpose="scene_detect",
-                start_monotonic=dl_started,
-                path=None,
-                ok=False,
-            )
-            if dl_proc:
-                try:
-                    dl_proc.kill()
-                    await dl_proc.wait()
-                except ProcessLookupError:
-                    pass
-            return empty_result
-        except FileNotFoundError:
-            logger.warning("yt-dlp not found, scene extraction unavailable")
-            return empty_result
-
-        dl_ok = bool(dl_proc and dl_proc.returncode == 0 and temp_video.exists())
-        record_download(
-            kind="lowres",
-            purpose="scene_detect",
-            start_monotonic=dl_started,
-            path=temp_video,
-            ok=dl_ok,
-        )
-        if not dl_ok:
-            stderr_text = dl_stderr.decode("utf-8", errors="replace")[:300] if dl_stderr else ""
-            logger.warning(
-                "yt-dlp download failed for %s (rc=%d): %s",
-                video_id,
-                dl_proc.returncode if dl_proc else -1,
-                stderr_text,
-            )
-            return empty_result
-
-        file_size_mb = temp_video.stat().st_size / 1_048_576
-        logger.info("Downloaded temp video for %s: %.1fMB", video_id, file_size_mb)
-
-        # Step 1b: start the run's 720p download now so it overlaps scene
-        # detection + scoring instead of following them.
+        # Step 1: the run's 720p download overlaps detection + scoring (the
+        # metadata phase normally started it already; start() is idempotent).
         if hires_video is not None and settings.SCENE_HIRES_ENABLED:
             hires_video.start()
+        temp_video = await lowres_video.path()
+        if temp_video is None:
+            return empty_result
 
         # Steps 2-4: scene detection on the LOCAL file, with the zero-candidate
         # ladder (floor threshold, then uniform seeks) and the static-camera
@@ -605,15 +553,11 @@ async def _do_extraction(
         logger.warning("Scene extraction failed for %s: %s", video_id, e)
         return empty_result
     finally:
-        # Delete the pass-1 video immediately (large, ~5-75MB). The 720p file
-        # is the run's and stays for moment fill, whatever happened here.
-        try:
-            if temp_video.exists():
-                temp_video.unlink()
-        except Exception as cleanup_err:
-            logger.debug("Failed to delete temp video: %s", cleanup_err)
-        # NOTE: Don't delete frames_dir — OCR needs the frame JPEGs.
-        # Cleanup via cleanup_temp_dir() after process_scene_frames().
+        # Delete the pass-1 video now (large, ~5-75MB) — nothing reads it after
+        # detection. The 720p file is the run's and stays for moment fill.
+        # NOTE: frames_dir stays — OCR needs the frame JPEGs; cleanup via
+        # cleanup_temp_dir() after process_scene_frames().
+        await lowres_video.close()
 
 
 async def cleanup_temp_dir(temp_dir: str) -> None:

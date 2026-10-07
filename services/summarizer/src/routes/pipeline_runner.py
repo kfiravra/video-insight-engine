@@ -35,7 +35,7 @@ from src.routes.pipeline_failures import classify_run_failure
 from src.routes.run_timing import log_run_summary, mark_phase, persist_run_timing
 from src.services.cache.response_cache import response_cache
 from src.services.llm import LLMService
-from src.services.media.hires_prefetch import LocalHiresSource
+from src.services.media.hires_prefetch import LocalHiresSource, LocalLowresSource
 from src.services.observability import pipeline_trace, update_trace_metadata
 from src.services.override_state import clear_override
 from src.services.pipeline.context import PipelineContext
@@ -157,13 +157,29 @@ async def _run_pipeline_phases(
             yield event
     finally:
         try:
-            # Failed or cancelled runs never reach assembly's close — the 720p
-            # download must not outlive them (its cancel lands in the timing).
-            hires_video = getattr(ctx, "hires_video", None)
-            if hires_video is not None:
-                await hires_video.close()
+            await _release_run_media(ctx)
         finally:
             await persist_run_timing(ctx, repository, video_summary_id, timing)
+
+
+async def _release_run_media(ctx: PipelineContext) -> None:
+    """Stop and delete whatever the t=0 group left running.
+
+    Failed or cancelled runs never reach the phases that close the run's
+    downloads; nothing may outlive the run (a cancelled download still lands
+    in the timing, so this runs before it is persisted).
+    """
+    from src.services.pipeline.phases.metadata import release_background_work
+
+    release_background_work(ctx)
+    lowres_video = getattr(ctx, "lowres_video", None)
+    hires_video = getattr(ctx, "hires_video", None)
+    try:
+        if lowres_video is not None:
+            await lowres_video.close()
+    finally:
+        if hires_video is not None:
+            await hires_video.close()
 
 
 async def _run_phases_in_order(
@@ -184,21 +200,28 @@ async def _run_phases_in_order(
     spawned_faithfulness: list[asyncio.Task[None]] = []
 
     try:
-        # Phase 1: Metadata (sequential — sets video_data needed by everything)
+        # Phase 1: Metadata — one extract_info + validate_duration; it then
+        # starts the t=0 group in the background (captions, description
+        # analysis, low-res + 720p downloads) and returns.
         phase_start = time.monotonic()
         async for event in run_phase_metadata(ctx):
             yield event
         mark_phase(ctx, timing, "metadata", phase_start)
 
-        # Phase 2: Transcript + Frames (parallel — both only need youtube_id + video_data)
+        # Phase 2: Transcript + Frames + description (parallel). Transcript
+        # waits for the caption fetch, frames for the low-res download, the
+        # description member emits its SSE once the analysis lands.
         # ``finally`` so transcriptMeta is recorded whether the phases succeed
         # or raise (cancellation included): a TranscriptError from the
         # fallback chain must still leave outcome="failed" + attempted +
         # errorCode on the row (the phase's own finally already stamped
         # ctx.transcript_trail by the time it propagates here).
+        from src.services.pipeline.phases.metadata import after_captions, run_phase_description
+
         phase_start = time.monotonic()
+        group = [after_captions(run_phase_transcript), run_phase_frames, run_phase_description]
         try:
-            async for event in run_parallel_phases([run_phase_transcript, run_phase_frames], ctx):
+            async for event in run_parallel_phases(group, ctx):
                 yield event
         finally:
             mark_phase(ctx, timing, "transcript_frames", phase_start)
@@ -453,6 +476,7 @@ async def stream_summarization(
                 repository=repository,
                 llm_service=llm_service,
                 timer=timer,
+                lowres_video=LocalLowresSource(youtube_id),
                 hires_video=LocalHiresSource(youtube_id),
             )
 
