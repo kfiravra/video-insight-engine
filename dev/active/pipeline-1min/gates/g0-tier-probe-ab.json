@@ -1,0 +1,949 @@
+{
+  "task": "pipeline-1min 0.8",
+  "models": [
+    "openai/gpt-4o-mini",
+    "anthropic/claude-haiku-4-5-20251001"
+  ],
+  "maxTokens": 80,
+  "temperature": 0,
+  "suspectGolden": [
+    "review-airpods-pro"
+  ],
+  "summary": {
+    "all": {
+      "anthropic/claude-haiku-4-5-20251001": {
+        "n": 18,
+        "domain_pct": 72.2,
+        "format_pct": 72.2,
+        "visual_pct": 88.9,
+        "parse_failures": 0,
+        "bare_json": 0,
+        "truncated": 12,
+        "call_errors": 0,
+        "p50_ms": 1350,
+        "p95_ms": 1635,
+        "max_ms": 1635,
+        "over_3s": 0,
+        "usd_per_call": 0.002238,
+        "usd_total": 0.040278
+      },
+      "openai/gpt-4o-mini": {
+        "n": 18,
+        "domain_pct": 72.2,
+        "format_pct": 77.8,
+        "visual_pct": 83.3,
+        "parse_failures": 1,
+        "bare_json": 18,
+        "truncated": 0,
+        "call_errors": 0,
+        "p50_ms": 1113,
+        "p95_ms": 4330,
+        "max_ms": 4330,
+        "over_3s": 1,
+        "usd_per_call": 0.000269,
+        "usd_total": 0.00484
+      }
+    },
+    "excludingSuspectGolden": {
+      "anthropic/claude-haiku-4-5-20251001": {
+        "n": 17,
+        "domain_pct": 76.5,
+        "format_pct": 76.5,
+        "visual_pct": 88.2,
+        "parse_failures": 0,
+        "bare_json": 0,
+        "truncated": 11,
+        "call_errors": 0,
+        "p50_ms": 1355,
+        "p95_ms": 1635,
+        "max_ms": 1635,
+        "over_3s": 0,
+        "usd_per_call": 0.002265,
+        "usd_total": 0.038504
+      },
+      "openai/gpt-4o-mini": {
+        "n": 17,
+        "domain_pct": 76.5,
+        "format_pct": 82.4,
+        "visual_pct": 88.2,
+        "parse_failures": 0,
+        "bare_json": 17,
+        "truncated": 0,
+        "call_errors": 0,
+        "p50_ms": 1126,
+        "p95_ms": 4330,
+        "max_ms": 4330,
+        "over_3s": 1,
+        "usd_per_call": 0.000273,
+        "usd_total": 0.004638
+      }
+    }
+  },
+  "inputs": {
+    "gaming-op17-unboxing": {
+      "metadata": "mongo+summarizer",
+      "transcript": "ytdlp-captions",
+      "transcriptLanguage": "en",
+      "transcriptChars": 35039,
+      "frameCaptions": []
+    },
+    "gaming-op13-box-opening": {
+      "metadata": "summarizer",
+      "transcript": "ytdlp-captions",
+      "transcriptLanguage": "en",
+      "transcriptChars": 11308,
+      "frameCaptions": []
+    },
+    "gaming-op17-set-verdict": {
+      "metadata": "summarizer",
+      "transcript": "ytdlp-captions",
+      "transcriptLanguage": "en",
+      "transcriptChars": 12945,
+      "frameCaptions": []
+    },
+    "tech-agentic-engineering": {
+      "metadata": "summarizer",
+      "transcript": "ytdlp-captions",
+      "transcriptLanguage": "en",
+      "transcriptChars": 77303,
+      "frameCaptions": []
+    },
+    "tech-react-hooks": {
+      "metadata": "summarizer",
+      "transcript": "ytdlp-captions (en track; resolver said en)",
+      "transcriptLanguage": "en",
+      "transcriptChars": 2090,
+      "frameCaptions": []
+    },
+    "tech-docker-basics": {
+      "metadata": "summarizer",
+      "transcript": "ytdlp-captions",
+      "transcriptLanguage": "en",
+      "transcriptChars": 108776,
+      "frameCaptions": []
+    },
+    "food-knife-skills": {
+      "metadata": "summarizer",
+      "transcript": "ytdlp-captions",
+      "transcriptLanguage": "en",
+      "transcriptChars": 12916,
+      "frameCaptions": []
+    },
+    "learning-photosynthesis": {
+      "metadata": "summarizer",
+      "transcript": "ytdlp-captions (en track; resolver said ar)",
+      "transcriptLanguage": "en",
+      "transcriptChars": 3535,
+      "frameCaptions": []
+    },
+    "learning-double-slit": {
+      "metadata": "summarizer",
+      "transcript": "ytdlp-captions (en track; resolver said ar)",
+      "transcriptLanguage": "en",
+      "transcriptChars": 7367,
+      "frameCaptions": []
+    },
+    "science-crispr-intro": {
+      "metadata": "summarizer",
+      "transcript": "ytdlp-captions",
+      "transcriptLanguage": "en",
+      "transcriptChars": 3065,
+      "frameCaptions": []
+    },
+    "science-black-holes": {
+      "metadata": "summarizer",
+      "transcript": "ytdlp-captions (en track; resolver said ar)",
+      "transcriptLanguage": "en",
+      "transcriptChars": 5673,
+      "frameCaptions": []
+    },
+    "travel-vietnam-10day": {
+      "metadata": "summarizer",
+      "transcript": "ytdlp-captions (en track; resolver said nl)",
+      "transcriptLanguage": "en-US",
+      "transcriptChars": 11298,
+      "frameCaptions": []
+    },
+    "fitness-pushup-form": {
+      "metadata": "mongo+summarizer",
+      "transcript": "s3",
+      "transcriptLanguage": "en",
+      "transcriptChars": 3160,
+      "frameCaptions": [
+        "\"Presenter in the top push-up position on a rooftop at the start of the video showing general form"
+      ]
+    },
+    "review-airpods-pro": {
+      "metadata": "summarizer",
+      "transcript": "ytdlp-captions",
+      "transcriptLanguage": "en",
+      "transcriptChars": 20,
+      "frameCaptions": []
+    },
+    "food-travel-montreal-vlog": {
+      "metadata": "summarizer",
+      "transcript": "ytdlp-captions (en track; resolver said ar)",
+      "transcriptLanguage": "en",
+      "transcriptChars": 28028,
+      "frameCaptions": []
+    },
+    "food-recipe-story-intro": {
+      "metadata": "summarizer",
+      "transcript": "ytdlp-captions",
+      "transcriptLanguage": "en",
+      "transcriptChars": 3164,
+      "frameCaptions": []
+    },
+    "gaming-op17-static-camera": {
+      "metadata": "summarizer",
+      "transcript": "ytdlp-captions",
+      "transcriptLanguage": "en",
+      "transcriptChars": 20382,
+      "frameCaptions": []
+    },
+    "fitness-7min-workout": {
+      "metadata": "mongo+summarizer",
+      "transcript": "s3",
+      "transcriptLanguage": "en",
+      "transcriptChars": 5568,
+      "frameCaptions": []
+    }
+  },
+  "visualDemoLabels": {
+    "gaming-op17-unboxing": {
+      "has_visual_demo": true,
+      "reason": "booster-box opening; the card reveals are the content",
+      "status": "proposed"
+    },
+    "gaming-op13-box-opening": {
+      "has_visual_demo": true,
+      "reason": "booster-box opening; the card reveals are the content",
+      "status": "proposed"
+    },
+    "gaming-op17-set-verdict": {
+      "has_visual_demo": false,
+      "reason": "talking-head set/market commentary over price charts",
+      "status": "proposed"
+    },
+    "tech-agentic-engineering": {
+      "has_visual_demo": true,
+      "reason": "screen-share of an app being built with coding agents",
+      "status": "proposed"
+    },
+    "tech-react-hooks": {
+      "has_visual_demo": true,
+      "reason": "hook code written and run on screen",
+      "status": "proposed"
+    },
+    "tech-docker-basics": {
+      "has_visual_demo": true,
+      "reason": "commands and Dockerfiles typed on screen",
+      "status": "proposed"
+    },
+    "food-knife-skills": {
+      "has_visual_demo": true,
+      "reason": "knife cuts demonstrated on a board",
+      "status": "proposed"
+    },
+    "learning-photosynthesis": {
+      "has_visual_demo": false,
+      "reason": "animated explainer; the narration carries the value",
+      "status": "proposed"
+    },
+    "learning-double-slit": {
+      "has_visual_demo": true,
+      "reason": "borderline: the slit experiment is run and shown on camera",
+      "status": "proposed"
+    },
+    "science-crispr-intro": {
+      "has_visual_demo": false,
+      "reason": "animated explainer; the narration carries the value",
+      "status": "proposed"
+    },
+    "science-black-holes": {
+      "has_visual_demo": false,
+      "reason": "animated explainer; the narration carries the value",
+      "status": "proposed"
+    },
+    "travel-vietnam-10day": {
+      "has_visual_demo": true,
+      "reason": "places toured on camera",
+      "status": "proposed"
+    },
+    "fitness-pushup-form": {
+      "has_visual_demo": true,
+      "reason": "push-up form demonstrated",
+      "status": "proposed"
+    },
+    "review-airpods-pro": {
+      "has_visual_demo": false,
+      "reason": "the URL is a 10-hour white-noise black screen, not a review",
+      "status": "proposed"
+    },
+    "food-travel-montreal-vlog": {
+      "has_visual_demo": true,
+      "reason": "food and places shown on camera; eating tour",
+      "status": "proposed"
+    },
+    "food-recipe-story-intro": {
+      "has_visual_demo": true,
+      "reason": "recipe cooked on camera after the story intro",
+      "status": "proposed"
+    },
+    "gaming-op17-static-camera": {
+      "has_visual_demo": true,
+      "reason": "static-camera pack opening; the reveals are the content",
+      "status": "proposed"
+    },
+    "fitness-7min-workout": {
+      "has_visual_demo": true,
+      "reason": "do-along workout; exercises demonstrated",
+      "status": "proposed"
+    }
+  },
+  "results": [
+    {
+      "golden_id": "gaming-op17-unboxing",
+      "model": "openai/gpt-4o-mini",
+      "latency_ms": 1605,
+      "cost_usd": 0.00027239999999999995,
+      "input_tokens": 1704,
+      "output_tokens": 28,
+      "finish_reason": "stop",
+      "raw": "{\"domain\": \"gaming\", \"format\": \"unboxing\", \"has_visual_demo\": true, \"confidence\": 1.0}",
+      "parsed": {
+        "domain": "gaming",
+        "format": "unboxing",
+        "has_visual_demo": true,
+        "confidence": 1.0
+      },
+      "parse_error": null,
+      "call_error": null
+    },
+    {
+      "golden_id": "gaming-op17-unboxing",
+      "model": "anthropic/claude-haiku-4-5-20251001",
+      "latency_ms": 1032,
+      "cost_usd": 0.002181,
+      "input_tokens": 1936,
+      "output_tokens": 49,
+      "finish_reason": "stop",
+      "raw": "```json\n{\n  \"domain\": \"gaming\",\n  \"format\": \"unboxing\",\n  \"has_visual_demo\": true,\n  \"confidence\": 0.98\n}\n```",
+      "parsed": {
+        "domain": "gaming",
+        "format": "unboxing",
+        "has_visual_demo": true,
+        "confidence": 0.98
+      },
+      "parse_error": null,
+      "call_error": null
+    },
+    {
+      "golden_id": "gaming-op13-box-opening",
+      "model": "anthropic/claude-haiku-4-5-20251001",
+      "latency_ms": 916,
+      "cost_usd": 0.00228,
+      "input_tokens": 2035,
+      "output_tokens": 49,
+      "finish_reason": "stop",
+      "raw": "```json\n{\n  \"domain\": \"gaming\",\n  \"format\": \"unboxing\",\n  \"has_visual_demo\": true,\n  \"confidence\": 0.98\n}\n```",
+      "parsed": {
+        "domain": "gaming",
+        "format": "unboxing",
+        "has_visual_demo": true,
+        "confidence": 0.98
+      },
+      "parse_error": null,
+      "call_error": null
+    },
+    {
+      "golden_id": "gaming-op13-box-opening",
+      "model": "openai/gpt-4o-mini",
+      "latency_ms": 1061,
+      "cost_usd": 0.00028815,
+      "input_tokens": 1809,
+      "output_tokens": 28,
+      "finish_reason": "stop",
+      "raw": "{\"domain\": \"gaming\", \"format\": \"unboxing\", \"has_visual_demo\": true, \"confidence\": 1.0}",
+      "parsed": {
+        "domain": "gaming",
+        "format": "unboxing",
+        "has_visual_demo": true,
+        "confidence": 1.0
+      },
+      "parse_error": null,
+      "call_error": null
+    },
+    {
+      "golden_id": "gaming-op17-set-verdict",
+      "model": "openai/gpt-4o-mini",
+      "latency_ms": 933,
+      "cost_usd": 0.0002871,
+      "input_tokens": 1802,
+      "output_tokens": 28,
+      "finish_reason": "stop",
+      "raw": "{\"domain\": \"review\", \"format\": \"commentary\", \"has_visual_demo\": false, \"confidence\": 0.9}",
+      "parsed": {
+        "domain": "review",
+        "format": "commentary",
+        "has_visual_demo": false,
+        "confidence": 0.9
+      },
+      "parse_error": null,
+      "call_error": null
+    },
+    {
+      "golden_id": "gaming-op17-set-verdict",
+      "model": "anthropic/claude-haiku-4-5-20251001",
+      "latency_ms": 1350,
+      "cost_usd": 0.002426,
+      "input_tokens": 2026,
+      "output_tokens": 80,
+      "finish_reason": "length",
+      "raw": "```json\n{\n  \"domain\": \"review\",\n  \"format\": \"commentary\",\n  \"has_visual_demo\": false,\n  \"confidence\": 0.85\n}\n```\n\n**Reasoning:**\n\n- **Domain: review** — The video evaluates a new TCG set (\"Did Bandai Just Create the BEST Set of All Time",
+      "parsed": {
+        "domain": "review",
+        "format": "commentary",
+        "has_visual_demo": false,
+        "confidence": 0.85
+      },
+      "parse_error": null,
+      "call_error": null
+    },
+    {
+      "golden_id": "tech-agentic-engineering",
+      "model": "anthropic/claude-haiku-4-5-20251001",
+      "latency_ms": 1635,
+      "cost_usd": 0.00235,
+      "input_tokens": 1950,
+      "output_tokens": 80,
+      "finish_reason": "length",
+      "raw": "```json\n{\n  \"domain\": \"tech\",\n  \"format\": \"walkthrough\",\n  \"has_visual_demo\": true,\n  \"confidence\": 0.92\n}\n```\n\n**Reasoning:**\n\n- **Domain: tech** — The video shows actual code, commands, and software development tools in action (terminal, IDE, GitHub, deployment",
+      "parsed": {
+        "domain": "tech",
+        "format": "walkthrough",
+        "has_visual_demo": true,
+        "confidence": 0.92
+      },
+      "parse_error": null,
+      "call_error": null
+    },
+    {
+      "golden_id": "tech-agentic-engineering",
+      "model": "openai/gpt-4o-mini",
+      "latency_ms": 1091,
+      "cost_usd": 0.0002766,
+      "input_tokens": 1736,
+      "output_tokens": 27,
+      "finish_reason": "stop",
+      "raw": "{\"domain\": \"tech\", \"format\": \"tutorial\", \"has_visual_demo\": true, \"confidence\": 0.9}",
+      "parsed": {
+        "domain": "tech",
+        "format": "tutorial",
+        "has_visual_demo": true,
+        "confidence": 0.9
+      },
+      "parse_error": null,
+      "call_error": null
+    },
+    {
+      "golden_id": "tech-react-hooks",
+      "model": "openai/gpt-4o-mini",
+      "latency_ms": 1113,
+      "cost_usd": 0.0002727,
+      "input_tokens": 1710,
+      "output_tokens": 27,
+      "finish_reason": "stop",
+      "raw": "{\"domain\": \"tech\", \"format\": \"tutorial\", \"has_visual_demo\": true, \"confidence\": 0.9}",
+      "parsed": {
+        "domain": "tech",
+        "format": "tutorial",
+        "has_visual_demo": true,
+        "confidence": 0.9
+      },
+      "parse_error": null,
+      "call_error": null
+    },
+    {
+      "golden_id": "tech-react-hooks",
+      "model": "anthropic/claude-haiku-4-5-20251001",
+      "latency_ms": 1492,
+      "cost_usd": 0.002357,
+      "input_tokens": 1957,
+      "output_tokens": 80,
+      "finish_reason": "length",
+      "raw": "```json\n{\n  \"domain\": \"tech\",\n  \"format\": \"tutorial\",\n  \"has_visual_demo\": true,\n  \"confidence\": 0.95\n}\n```\n\n**Reasoning:**\n- **Domain: tech** — The video teaches React Hooks with actual code concepts and framework features. It's about programming with code shown/explained",
+      "parsed": {
+        "domain": "tech",
+        "format": "tutorial",
+        "has_visual_demo": true,
+        "confidence": 0.95
+      },
+      "parse_error": null,
+      "call_error": null
+    },
+    {
+      "golden_id": "tech-docker-basics",
+      "model": "anthropic/claude-haiku-4-5-20251001",
+      "latency_ms": 1405,
+      "cost_usd": 0.002226,
+      "input_tokens": 1826,
+      "output_tokens": 80,
+      "finish_reason": "length",
+      "raw": "```json\n{\n  \"domain\": \"tech\",\n  \"format\": \"lecture\",\n  \"has_visual_demo\": true,\n  \"confidence\": 0.92\n}\n```\n\n**Reasoning:**\n- **Domain: tech** — This is a Docker tutorial showing actual software installation, configuration, and hands-on labs with real tools and commands (",
+      "parsed": {
+        "domain": "tech",
+        "format": "lecture",
+        "has_visual_demo": true,
+        "confidence": 0.92
+      },
+      "parse_error": null,
+      "call_error": null
+    },
+    {
+      "golden_id": "tech-docker-basics",
+      "model": "openai/gpt-4o-mini",
+      "latency_ms": 1452,
+      "cost_usd": 0.00026445,
+      "input_tokens": 1655,
+      "output_tokens": 27,
+      "finish_reason": "stop",
+      "raw": "{\"domain\": \"tech\", \"format\": \"tutorial\", \"has_visual_demo\": true, \"confidence\": 0.9}",
+      "parsed": {
+        "domain": "tech",
+        "format": "tutorial",
+        "has_visual_demo": true,
+        "confidence": 0.9
+      },
+      "parse_error": null,
+      "call_error": null
+    },
+    {
+      "golden_id": "food-knife-skills",
+      "model": "openai/gpt-4o-mini",
+      "latency_ms": 1169,
+      "cost_usd": 0.0002697,
+      "input_tokens": 1690,
+      "output_tokens": 27,
+      "finish_reason": "stop",
+      "raw": "{\"domain\": \"food\", \"format\": \"tutorial\", \"has_visual_demo\": true, \"confidence\": 1.0}",
+      "parsed": {
+        "domain": "food",
+        "format": "tutorial",
+        "has_visual_demo": true,
+        "confidence": 1.0
+      },
+      "parse_error": null,
+      "call_error": null
+    },
+    {
+      "golden_id": "food-knife-skills",
+      "model": "anthropic/claude-haiku-4-5-20251001",
+      "latency_ms": 921,
+      "cost_usd": 0.002142,
+      "input_tokens": 1907,
+      "output_tokens": 47,
+      "finish_reason": "stop",
+      "raw": "```json\n{\n  \"domain\": \"food\",\n  \"format\": \"tutorial\",\n  \"has_visual_demo\": true,\n  \"confidence\": 0.98\n}\n```",
+      "parsed": {
+        "domain": "food",
+        "format": "tutorial",
+        "has_visual_demo": true,
+        "confidence": 0.98
+      },
+      "parse_error": null,
+      "call_error": null
+    },
+    {
+      "golden_id": "learning-photosynthesis",
+      "model": "anthropic/claude-haiku-4-5-20251001",
+      "latency_ms": 1463,
+      "cost_usd": 0.002272,
+      "input_tokens": 1872,
+      "output_tokens": 80,
+      "finish_reason": "length",
+      "raw": "```json\n{\n  \"domain\": \"science\",\n  \"format\": \"lecture\",\n  \"has_visual_demo\": true,\n  \"confidence\": 0.95\n}\n```\n\n**Reasoning:**\n- **Domain: science** — The video explains photosynthesis, a biological/chemical process, covering atoms, molecules, carbohydrates",
+      "parsed": {
+        "domain": "science",
+        "format": "lecture",
+        "has_visual_demo": true,
+        "confidence": 0.95
+      },
+      "parse_error": null,
+      "call_error": null
+    },
+    {
+      "golden_id": "learning-photosynthesis",
+      "model": "openai/gpt-4o-mini",
+      "latency_ms": 4330,
+      "cost_usd": 0.0002631,
+      "input_tokens": 1646,
+      "output_tokens": 27,
+      "finish_reason": "stop",
+      "raw": "{\"domain\": \"science\", \"format\": \"lecture\", \"has_visual_demo\": true, \"confidence\": 0.9}",
+      "parsed": {
+        "domain": "science",
+        "format": "lecture",
+        "has_visual_demo": true,
+        "confidence": 0.9
+      },
+      "parse_error": null,
+      "call_error": null
+    },
+    {
+      "golden_id": "learning-double-slit",
+      "model": "openai/gpt-4o-mini",
+      "latency_ms": 1322,
+      "cost_usd": 0.00026955,
+      "input_tokens": 1689,
+      "output_tokens": 27,
+      "finish_reason": "stop",
+      "raw": "{\"domain\": \"science\", \"format\": \"lecture\", \"has_visual_demo\": true, \"confidence\": 0.9}",
+      "parsed": {
+        "domain": "science",
+        "format": "lecture",
+        "has_visual_demo": true,
+        "confidence": 0.9
+      },
+      "parse_error": null,
+      "call_error": null
+    },
+    {
+      "golden_id": "learning-double-slit",
+      "model": "anthropic/claude-haiku-4-5-20251001",
+      "latency_ms": 1302,
+      "cost_usd": 0.002267,
+      "input_tokens": 1867,
+      "output_tokens": 80,
+      "finish_reason": "length",
+      "raw": "```json\n{\n  \"domain\": \"science\",\n  \"format\": \"documentary\",\n  \"has_visual_demo\": true,\n  \"confidence\": 0.95\n}\n```\n\n**Reasoning:**\n\n- **Domain: science** — The video explains the double slit experiment, a foundational physics concept about the nature of light (wave vs.",
+      "parsed": {
+        "domain": "science",
+        "format": "documentary",
+        "has_visual_demo": true,
+        "confidence": 0.95
+      },
+      "parse_error": null,
+      "call_error": null
+    },
+    {
+      "golden_id": "science-crispr-intro",
+      "model": "anthropic/claude-haiku-4-5-20251001",
+      "latency_ms": 1558,
+      "cost_usd": 0.002203,
+      "input_tokens": 1803,
+      "output_tokens": 80,
+      "finish_reason": "length",
+      "raw": "```json\n{\n  \"domain\": \"science\",\n  \"format\": \"lecture\",\n  \"has_visual_demo\": true,\n  \"confidence\": 0.95\n}\n```\n\n**Reasoning:**\n- **Domain: science** — The video explains CRISPR-Cas9 genome editing, a scientific concept in molecular biology and genetics",
+      "parsed": {
+        "domain": "science",
+        "format": "lecture",
+        "has_visual_demo": true,
+        "confidence": 0.95
+      },
+      "parse_error": null,
+      "call_error": null
+    },
+    {
+      "golden_id": "science-crispr-intro",
+      "model": "openai/gpt-4o-mini",
+      "latency_ms": 1030,
+      "cost_usd": 0.00026189999999999997,
+      "input_tokens": 1634,
+      "output_tokens": 28,
+      "finish_reason": "stop",
+      "raw": "{\"domain\": \"science\", \"format\": \"documentary\", \"has_visual_demo\": true, \"confidence\": 0.9}",
+      "parsed": {
+        "domain": "science",
+        "format": "documentary",
+        "has_visual_demo": true,
+        "confidence": 0.9
+      },
+      "parse_error": null,
+      "call_error": null
+    },
+    {
+      "golden_id": "science-black-holes",
+      "model": "openai/gpt-4o-mini",
+      "latency_ms": 1077,
+      "cost_usd": 0.0002781,
+      "input_tokens": 1742,
+      "output_tokens": 28,
+      "finish_reason": "stop",
+      "raw": "{\"domain\": \"science\", \"format\": \"documentary\", \"has_visual_demo\": false, \"confidence\": 0.9}",
+      "parsed": {
+        "domain": "science",
+        "format": "documentary",
+        "has_visual_demo": false,
+        "confidence": 0.9
+      },
+      "parse_error": null,
+      "call_error": null
+    },
+    {
+      "golden_id": "science-black-holes",
+      "model": "anthropic/claude-haiku-4-5-20251001",
+      "latency_ms": 1507,
+      "cost_usd": 0.0024000000000000002,
+      "input_tokens": 2000,
+      "output_tokens": 80,
+      "finish_reason": "length",
+      "raw": "```json\n{\n  \"domain\": \"science\",\n  \"format\": \"commentary\",\n  \"has_visual_demo\": false,\n  \"confidence\": 0.95\n}\n```\n\n**Reasoning:**\n- **Domain: science** — The video explains black hole physics, formation, and behavior (gravity, event horizons, Hawking radiation).",
+      "parsed": {
+        "domain": "science",
+        "format": "commentary",
+        "has_visual_demo": false,
+        "confidence": 0.95
+      },
+      "parse_error": null,
+      "call_error": null
+    },
+    {
+      "golden_id": "travel-vietnam-10day",
+      "model": "anthropic/claude-haiku-4-5-20251001",
+      "latency_ms": 1382,
+      "cost_usd": 0.002245,
+      "input_tokens": 1845,
+      "output_tokens": 80,
+      "finish_reason": "length",
+      "raw": "```json\n{\n  \"domain\": \"travel\",\n  \"format\": \"documentary\",\n  \"has_visual_demo\": true,\n  \"confidence\": 0.95\n}\n```\n\n**Reasoning:**\n- **Domain: travel** — The video is explicitly a travel documentary covering a 10-day itinerary through Vietnam, visiting multiple destinations (",
+      "parsed": {
+        "domain": "travel",
+        "format": "documentary",
+        "has_visual_demo": true,
+        "confidence": 0.95
+      },
+      "parse_error": null,
+      "call_error": null
+    },
+    {
+      "golden_id": "travel-vietnam-10day",
+      "model": "openai/gpt-4o-mini",
+      "latency_ms": 1126,
+      "cost_usd": 0.00026129999999999995,
+      "input_tokens": 1630,
+      "output_tokens": 28,
+      "finish_reason": "stop",
+      "raw": "{\"domain\": \"travel\", \"format\": \"documentary\", \"has_visual_demo\": true, \"confidence\": 0.9}",
+      "parsed": {
+        "domain": "travel",
+        "format": "documentary",
+        "has_visual_demo": true,
+        "confidence": 0.9
+      },
+      "parse_error": null,
+      "call_error": null
+    },
+    {
+      "golden_id": "fitness-pushup-form",
+      "model": "openai/gpt-4o-mini",
+      "latency_ms": 2388,
+      "cost_usd": 0.00025844999999999997,
+      "input_tokens": 1615,
+      "output_tokens": 27,
+      "finish_reason": "stop",
+      "raw": "{\"domain\": \"fitness\", \"format\": \"tutorial\", \"has_visual_demo\": true, \"confidence\": 0.9}",
+      "parsed": {
+        "domain": "fitness",
+        "format": "tutorial",
+        "has_visual_demo": true,
+        "confidence": 0.9
+      },
+      "parse_error": null,
+      "call_error": null
+    },
+    {
+      "golden_id": "fitness-pushup-form",
+      "model": "anthropic/claude-haiku-4-5-20251001",
+      "latency_ms": 1355,
+      "cost_usd": 0.002201,
+      "input_tokens": 1801,
+      "output_tokens": 80,
+      "finish_reason": "length",
+      "raw": "```json\n{\n  \"domain\": \"fitness\",\n  \"format\": \"tutorial\",\n  \"has_visual_demo\": true,\n  \"confidence\": 0.95\n}\n```\n\n**Reasoning:**\n- **Domain: fitness** — The video teaches workout exercises and training routines (push-ups), which is core fitness content.\n- **",
+      "parsed": {
+        "domain": "fitness",
+        "format": "tutorial",
+        "has_visual_demo": true,
+        "confidence": 0.95
+      },
+      "parse_error": null,
+      "call_error": null
+    },
+    {
+      "golden_id": "review-airpods-pro",
+      "model": "anthropic/claude-haiku-4-5-20251001",
+      "latency_ms": 1325,
+      "cost_usd": 0.001774,
+      "input_tokens": 1374,
+      "output_tokens": 80,
+      "finish_reason": "length",
+      "raw": "```json\n{\n  \"domain\": \"learning\",\n  \"format\": \"entertainment\",\n  \"has_visual_demo\": false,\n  \"confidence\": 0.85\n}\n```\n\n**Reasoning:**\n- **Domain: learning** — This is ambient/background content designed to help with sleep, study, and focus. While not traditional education, it",
+      "parsed": {
+        "domain": "learning",
+        "format": "entertainment",
+        "has_visual_demo": false,
+        "confidence": 0.85
+      },
+      "parse_error": null,
+      "call_error": null
+    },
+    {
+      "golden_id": "review-airpods-pro",
+      "model": "openai/gpt-4o-mini",
+      "latency_ms": 1087,
+      "cost_usd": 0.00020205,
+      "input_tokens": 1227,
+      "output_tokens": 30,
+      "finish_reason": "stop",
+      "raw": "{\"domain\": \"entertainment\", \"format\": \"vlog\", \"has_visual_demo\": false, \"confidence\": 0.9}",
+      "parsed": null,
+      "parse_error": "invalid domain 'entertainment'",
+      "call_error": null
+    },
+    {
+      "golden_id": "food-travel-montreal-vlog",
+      "model": "openai/gpt-4o-mini",
+      "latency_ms": 959,
+      "cost_usd": 0.00028155,
+      "input_tokens": 1789,
+      "output_tokens": 22,
+      "finish_reason": "stop",
+      "raw": "{\"domain\":\"food\",\"format\":\"vlog\",\"has_visual_demo\":true,\"confidence\":0.9}",
+      "parsed": {
+        "domain": "food",
+        "format": "vlog",
+        "has_visual_demo": true,
+        "confidence": 0.9
+      },
+      "parse_error": null,
+      "call_error": null
+    },
+    {
+      "golden_id": "food-travel-montreal-vlog",
+      "model": "anthropic/claude-haiku-4-5-20251001",
+      "latency_ms": 1372,
+      "cost_usd": 0.0023710000000000003,
+      "input_tokens": 1971,
+      "output_tokens": 80,
+      "finish_reason": "length",
+      "raw": "```json\n{\n  \"domain\": \"food\",\n  \"format\": \"walkthrough\",\n  \"has_visual_demo\": true,\n  \"confidence\": 0.95\n}\n```\n\n**Reasoning:**\n- **Domain: food** — The video is about eating and experiencing Montreal's fast food establishments, restaurants, and dishes (poutine,",
+      "parsed": {
+        "domain": "food",
+        "format": "walkthrough",
+        "has_visual_demo": true,
+        "confidence": 0.95
+      },
+      "parse_error": null,
+      "call_error": null
+    },
+    {
+      "golden_id": "food-recipe-story-intro",
+      "model": "anthropic/claude-haiku-4-5-20251001",
+      "latency_ms": 990,
+      "cost_usd": 0.002229,
+      "input_tokens": 1994,
+      "output_tokens": 47,
+      "finish_reason": "stop",
+      "raw": "```json\n{\n  \"domain\": \"food\",\n  \"format\": \"tutorial\",\n  \"has_visual_demo\": true,\n  \"confidence\": 0.98\n}\n```",
+      "parsed": {
+        "domain": "food",
+        "format": "tutorial",
+        "has_visual_demo": true,
+        "confidence": 0.98
+      },
+      "parse_error": null,
+      "call_error": null
+    },
+    {
+      "golden_id": "food-recipe-story-intro",
+      "model": "openai/gpt-4o-mini",
+      "latency_ms": 2162,
+      "cost_usd": 0.00028139999999999996,
+      "input_tokens": 1744,
+      "output_tokens": 33,
+      "finish_reason": "stop",
+      "raw": "{\n  \"domain\": \"food\",\n  \"format\": \"tutorial\",\n  \"has_visual_demo\": true,\n  \"confidence\": 0.9\n}",
+      "parsed": {
+        "domain": "food",
+        "format": "tutorial",
+        "has_visual_demo": true,
+        "confidence": 0.9
+      },
+      "parse_error": null,
+      "call_error": null
+    },
+    {
+      "golden_id": "gaming-op17-static-camera",
+      "model": "openai/gpt-4o-mini",
+      "latency_ms": 1190,
+      "cost_usd": 0.00028169999999999996,
+      "input_tokens": 1766,
+      "output_tokens": 28,
+      "finish_reason": "stop",
+      "raw": "{\"domain\": \"gaming\", \"format\": \"unboxing\", \"has_visual_demo\": true, \"confidence\": 1.0}",
+      "parsed": {
+        "domain": "gaming",
+        "format": "unboxing",
+        "has_visual_demo": true,
+        "confidence": 1.0
+      },
+      "parse_error": null,
+      "call_error": null
+    },
+    {
+      "golden_id": "gaming-op17-static-camera",
+      "model": "anthropic/claude-haiku-4-5-20251001",
+      "latency_ms": 895,
+      "cost_usd": 0.002238,
+      "input_tokens": 1993,
+      "output_tokens": 49,
+      "finish_reason": "stop",
+      "raw": "```json\n{\n  \"domain\": \"gaming\",\n  \"format\": \"unboxing\",\n  \"has_visual_demo\": true,\n  \"confidence\": 0.98\n}\n```",
+      "parsed": {
+        "domain": "gaming",
+        "format": "unboxing",
+        "has_visual_demo": true,
+        "confidence": 0.98
+      },
+      "parse_error": null,
+      "call_error": null
+    },
+    {
+      "golden_id": "fitness-7min-workout",
+      "model": "anthropic/claude-haiku-4-5-20251001",
+      "latency_ms": 891,
+      "cost_usd": 0.002116,
+      "input_tokens": 1881,
+      "output_tokens": 47,
+      "finish_reason": "stop",
+      "raw": "```json\n{\n  \"domain\": \"fitness\",\n  \"format\": \"tutorial\",\n  \"has_visual_demo\": true,\n  \"confidence\": 0.98\n}\n```",
+      "parsed": {
+        "domain": "fitness",
+        "format": "tutorial",
+        "has_visual_demo": true,
+        "confidence": 0.98
+      },
+      "parse_error": null,
+      "call_error": null
+    },
+    {
+      "golden_id": "fitness-7min-workout",
+      "model": "openai/gpt-4o-mini",
+      "latency_ms": 1034,
+      "cost_usd": 0.0002697,
+      "input_tokens": 1690,
+      "output_tokens": 27,
+      "finish_reason": "stop",
+      "raw": "{\"domain\": \"fitness\", \"format\": \"tutorial\", \"has_visual_demo\": true, \"confidence\": 1.0}",
+      "parsed": {
+        "domain": "fitness",
+        "format": "tutorial",
+        "has_visual_demo": true,
+        "confidence": 1.0
+      },
+      "parse_error": null,
+      "call_error": null
+    }
+  ]
+}
