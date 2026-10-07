@@ -206,6 +206,9 @@ YTDLP_PLAYER_CLIENTS=android           # yt-dlp player clients for pass 1 + audi
 YTDLP_HIRES_PLAYER_CLIENTS=web_embedded,android  # 720p download only (android caps at 360p); retries with the line above
 FRAME_TIER_ENABLED=true                # Adaptive visual tiers (HIGH: overselect + vision reselect before hires)
 
+# Prompts
+PROMPT_SOURCE=registry                 # registry (Langfuse label wins) | disk (local .txt re-read per call, dev-only; ignored unless ENVIRONMENT is a dev name)
+
 # SSE streaming
 SSE_HEARTBEAT_SECONDS=12.0             # Keepalive cadence during silent phases — must stay under the gateway's 300s undici timeout
 
@@ -436,7 +439,11 @@ The pipeline uses 3-6 LLM calls with a plan-first architecture:
     └─▶ Per-tab drop accounting: assemble_response returns {"meta", "tabs", "dropped"} — drop
     │   reasons: assembler_raised, validation_empty_list, assembler_returned_none,
     │   domain_forbidden, domain_max_cap, all_timestamps_impossible (feeds tabsDropped/droppedTabs
-    │   telemetry instead of the old designed−assembled subtraction)
+    │   telemetry instead of the old designed−assembled subtraction). The plan stage's drops are
+    │   prepended: reason `invalid_datasource` = an unregistered dataSource with no same-domain
+    │   registry path for the tab's component (plan.py `_validate_data_sources`); when that
+    │   leaves no tab, the domain defaults stand in, `planFallback: true` is persisted and
+    │   tabsDesigned counts only the plan's drops
     └─▶ Frame thumbnail injection: items with timestamps get thumbnailUrl from nearest S3 frame;
     │   a relaxed second pass (±15s window) backfills still-thumbless moment items
     └─▶ Timestamp hygiene: moment_track items beyond video duration (+10s) are dropped;

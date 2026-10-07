@@ -1,7 +1,8 @@
 """Configuration settings for vie-summarizer service."""
 
 import logging
-from typing import ClassVar
+from functools import cache
+from typing import ClassVar, Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings
@@ -191,6 +192,11 @@ class Settings(BaseSettings):
     # "omit"; for support-driven debugging keep "identity".
     LANGFUSE_USER_ID_MODE: str = "identity"
     LANGFUSE_USER_ID_HASH_SALT: str = ""
+    # Where prompt templates come from. "registry": the Langfuse `production`
+    # label wins over the local .txt whenever keys are set. "disk": always the
+    # local .txt, so dev prompt edits take effect without re-registering.
+    # Dev-only — honoured only when ENVIRONMENT is a dev name (see prompts_from_disk()).
+    PROMPT_SOURCE: Literal["registry", "disk"] = "registry"
 
     # ─── Sentry error tracking ──────────────────────────────────────────
     # Empty DSN -> SDK no-ops. Lets dev/CI run without a live project.
@@ -424,6 +430,30 @@ settings = Settings()
 
 _PROD_ENVS = frozenset({"production", "prod", "staging", "stg"})
 _DEV_ENVS = frozenset({"", "development", "dev", "test", "local"})
+
+
+@cache
+def _warn_disk_prompts_ignored(env_name: str) -> None:
+    logging.getLogger(__name__).warning(
+        "PROMPT_SOURCE=disk ignored in ENVIRONMENT=%s — prompts load from the registry", env_name
+    )
+
+
+def prompts_from_disk() -> bool:
+    """True when prompt templates must skip the Langfuse registry.
+
+    A stray ``PROMPT_SOURCE=disk`` on prod would silently pin the pipeline
+    to whatever .txt files shipped in the image, so it is honoured only in a
+    known dev environment (allow-list — ``prd``/``live``/``demo`` and any
+    other unrecognised name count as non-dev and keep the registry).
+    """
+    if settings.PROMPT_SOURCE != "disk":
+        return False
+    env_name = settings.ENVIRONMENT.lower()
+    if env_name not in _DEV_ENVS:
+        _warn_disk_prompts_ignored(env_name)
+        return False
+    return True
 
 
 def validate_secrets() -> None:

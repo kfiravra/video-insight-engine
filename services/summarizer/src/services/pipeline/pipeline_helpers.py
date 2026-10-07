@@ -24,6 +24,7 @@ from src.config import settings
 from src.exceptions import TranscriptError
 from src.models.schemas import ErrorCode, TranscriptSegment
 from src.models.sse_events import validate_sse_event
+from src.services.pipeline.pipeline_timing import timed_step
 
 logger = logging.getLogger(__name__)
 
@@ -273,12 +274,13 @@ async def run_parallel_phases(
     queue: asyncio.Queue[str | BaseException | object] = asyncio.Queue()
 
     async def _run_phase(phase_fn: Callable) -> None:
+        phase_name = getattr(phase_fn, "__name__", str(phase_fn)).removeprefix("run_phase_")
         try:
-            async for event in phase_fn(ctx):
-                await queue.put(event)
+            with timed_step(phase_name):
+                async for event in phase_fn(ctx):
+                    await queue.put(event)
         except Exception as exc:
             # Annotate exception with phase name for debuggability
-            phase_name = getattr(phase_fn, "__name__", str(phase_fn))
             exc.add_note(f"Failed in parallel phase: {phase_name}")
             await queue.put(exc)
         finally:

@@ -70,6 +70,8 @@ x-summarizer-env: &summarizer-env
   LANGFUSE_FAITHFULNESS_SAMPLE_RATE: ${LANGFUSE_FAITHFULNESS_SAMPLE_RATE:-0.2}
   LANGFUSE_USER_ID_MODE: ${LANGFUSE_USER_ID_MODE:-identity}
   LANGFUSE_USER_ID_HASH_SALT: ${LANGFUSE_USER_ID_HASH_SALT:-}
+  # Prompt templates: registry (Langfuse wins) | disk (local .txt, dev-only)
+  PROMPT_SOURCE: ${PROMPT_SOURCE:-registry}
   # Sentry — empty DSN = SDK no-ops (consumed by vie-summarizer AND vie-summarizer-worker)
   SENTRY_DSN: ${SENTRY_DSN:-}
   SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-}

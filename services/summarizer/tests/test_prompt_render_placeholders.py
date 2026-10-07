@@ -351,6 +351,7 @@ async def test_chapter_detect_prompt_renders_without_placeholders():
 # ─── Description analysis (description_analysis.txt) ────────────────────
 @pytest.mark.asyncio
 async def test_description_analysis_prompt_renders_without_placeholders():
+    from src.services import llm_provider as provider_mod
     from src.services.video import description_analyzer as da_mod
 
     response = MagicMock()
@@ -360,7 +361,7 @@ async def test_description_analysis_prompt_renders_without_placeholders():
         '"hasTimestamps": false, "socialMedia": {}}'
     )
     mock_completion = AsyncMock(return_value=response)
-    with patch.object(da_mod, "acompletion", mock_completion):
+    with patch.object(provider_mod, "acompletion", mock_completion):
         await da_mod._analyze_description_async(
             "A video description long enough to pass the minimum-length gate.",
         )

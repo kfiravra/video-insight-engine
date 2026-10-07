@@ -187,7 +187,9 @@ async def test_cdn_403_with_three_targets_triggers_local_fallback(tmp_path):
     # The download gets the fallback budget minus the seek reserve so a slow
     # download exits cleanly instead of being cancelled at the outer deadline.
     mock_download.assert_awaited_once_with(
-        "yt123", timeout=mff._FILL_FALLBACK_TIMEOUT - mff._FILL_FALLBACK_SEEK_RESERVE
+        "yt123",
+        timeout=mff._FILL_FALLBACK_TIMEOUT - mff._FILL_FALLBACK_SEEK_RESERVE,
+        purpose="moment_fill",
     )
     assert all(it.get("thumbnailUrl") for it in items)
     assert not local_dir.exists()  # temp dir cleaned up

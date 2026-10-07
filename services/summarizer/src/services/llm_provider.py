@@ -22,6 +22,7 @@ from pydantic import BaseModel
 
 from src.config import settings
 from src.services.llm_telemetry import record_generation, stopwatch_ms_since
+from src.services.pipeline.pipeline_timing import record_llm_call, record_llm_failure
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,12 @@ logger = logging.getLogger(__name__)
 # call_llm_with_retry() which adds structured logging, per-stage
 # timeouts, and linear backoff.
 _LITELLM_NUM_RETRIES = 0
+
+
+def _attempt_of(span_metadata: dict[str, Any] | None) -> int:
+    """Retry attempt number stamped by ``call_llm_with_retry`` (1 when absent)."""
+    attempt = (span_metadata or {}).get("attempt", 1)
+    return attempt if isinstance(attempt, int) else 1
 
 
 class Message(BaseModel):
@@ -100,10 +107,16 @@ class LLMProvider:
         model: str | None = None,
         timeout_value: float | None = None,
         context: str = "",
+        span_name: str | None = None,
+        attempt: int = 1,
     ):
         """Execute an acompletion coroutine with standardized error logging.
 
-        Catches LiteLLM errors, logs with context, and re-raises.
+        Records EVERY failed attempt in ``pipeline.timing.llmFailures`` — not
+        just the classified LiteLLM errors: Anthropic 500/529
+        (``InternalServerError``), ``APIConnectionError``, ``BadRequestError``
+        and ``NotFoundError`` are separate classes and used to slip through
+        uncounted. Logs with context, and re-raises.
 
         NOTE: ``coro`` is an already-created coroutine (e.g., ``acompletion(**kwargs)``).
         Any synchronous validation errors raised during coroutine creation will
@@ -114,23 +127,38 @@ class LLMProvider:
         effective_model = model or self._model
         effective_timeout = timeout_value or self._timeout
         ctx = f" in {context}" if context else ""
+        start_monotonic = time.monotonic()
         try:
             return await coro
-        except RateLimitError as e:
-            logger.warning("Rate limited%s by %s: %s", ctx, self._extract_provider(effective_model), e)
+        except Exception as e:
+            record_llm_failure(
+                span=span_name or context or "unknown",
+                model=effective_model,
+                error=e,
+                start_monotonic=start_monotonic,
+                attempt=attempt,
+            )
+            self._log_provider_error(e, effective_model, effective_timeout, ctx)
             raise
-        except AuthenticationError as e:
-            logger.error("Auth error%s for %s: %s", ctx, self._extract_provider(effective_model), e)
-            raise
-        except Timeout as e:
+
+    def _log_provider_error(
+        self, e: Exception, effective_model: str, effective_timeout: float, ctx: str
+    ) -> None:
+        """Log a LiteLLM error with the severity its class deserves."""
+        if isinstance(e, RateLimitError):
+            provider = self._extract_provider(effective_model)
+            logger.warning("Rate limited%s by %s: %s", ctx, provider, e)
+        elif isinstance(e, AuthenticationError):
+            provider = self._extract_provider(effective_model)
+            logger.error("Auth error%s for %s: %s", ctx, provider, e)
+        elif isinstance(e, Timeout):
             logger.warning("Timeout%s after %ss: %s", ctx, effective_timeout, e)
-            raise
-        except ServiceUnavailableError as e:
+        elif isinstance(e, ServiceUnavailableError):
             logger.warning("Service unavailable%s: %s", ctx, e)
-            raise
-        except APIError as e:
+        elif isinstance(e, APIError):
             logger.error("API error%s: %s", ctx, e)
-            raise
+        else:
+            logger.error("LLM call failed%s (%s): %s", ctx, type(e).__name__, e)
 
     async def complete(
         self,
@@ -165,12 +193,18 @@ class LLMProvider:
 
         if cache_static and self._is_anthropic_model:
             # Split into cacheable system block + dynamic user block
-            messages.append({
-                "role": "system",
-                "content": [
-                    {"type": "text", "text": cache_static, "cache_control": {"type": "ephemeral"}},
-                ],
-            })
+            messages.append(
+                {
+                    "role": "system",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": cache_static,
+                            "cache_control": {"type": "ephemeral"},
+                        },
+                    ],
+                }
+            )
             messages.append({"role": "user", "content": prompt})
         else:
             # Non-Anthropic or no caching: single user message
@@ -180,8 +214,13 @@ class LLMProvider:
                 messages.append({"role": "user", "content": prompt})
 
         return await self.complete_with_messages(
-            messages, max_tokens, metadata, timeout=timeout, json_mode=json_mode,
-            span_name=span_name, span_metadata=span_metadata,
+            messages,
+            max_tokens,
+            metadata,
+            timeout=timeout,
+            json_mode=json_mode,
+            span_name=span_name,
+            span_metadata=span_metadata,
         )
 
     async def complete_fast(
@@ -211,50 +250,55 @@ class LLMProvider:
             Timeout: Request timed out
             APIError: General API error
         """
-        try:
-            msg_dicts = [{"role": "user", "content": prompt}]
-            kwargs: dict[str, Any] = {
-                "model": self._fast_model,
-                "messages": msg_dicts,
-                "max_tokens": max_tokens,
-                "timeout": timeout,
-                "num_retries": _LITELLM_NUM_RETRIES,
-            }
-            if json_mode:
-                kwargs["response_format"] = {"type": "json_object"}
+        msg_dicts = [{"role": "user", "content": prompt}]
+        kwargs: dict[str, Any] = {
+            "model": self._fast_model,
+            "messages": msg_dicts,
+            "max_tokens": max_tokens,
+            "timeout": timeout,
+            "num_retries": _LITELLM_NUM_RETRIES,
+        }
+        if json_mode:
+            kwargs["response_format"] = {"type": "json_object"}
 
-            start_monotonic = time.monotonic()
-            response = await acompletion(**kwargs)
-            latency_ms = stopwatch_ms_since(start_monotonic)
-            choice = response.choices[0]
-            if choice.finish_reason == "length":
-                logger.warning(
-                    "LLM response truncated (finish_reason=length), model=%s, max_tokens=%d",
-                    self._fast_model, max_tokens,
-                )
-            content = choice.message.content or ""
-            if span_name:
-                record_generation(
-                    span_name=span_name,
-                    model=self._fast_model,
-                    msg_dicts=msg_dicts,
-                    content=content,
-                    response=response,
-                    latency_ms=latency_ms,
-                    finish_reason=choice.finish_reason,
-                    extra_metadata=span_metadata,
-                )
-            return content
-
-        except RateLimitError as e:
-            logger.warning("Rate limited by %s: %s", self._extract_provider(self._fast_model), e)
-            raise
-        except Timeout as e:
-            logger.warning("Fast model timeout after %ss: %s", timeout, e)
-            raise
-        except APIError as e:
-            logger.error("Fast model API error: %s", e)
-            raise
+        start_monotonic = time.monotonic()
+        response = await self._call_with_error_logging(
+            acompletion(**kwargs),
+            model=self._fast_model,
+            timeout_value=timeout,
+            context="fast model",
+            span_name=span_name,
+            attempt=_attempt_of(span_metadata),
+        )
+        latency_ms = stopwatch_ms_since(start_monotonic)
+        record_llm_call(
+            span=span_name,
+            model=self._fast_model,
+            response=response,
+            start_monotonic=start_monotonic,
+            latency_ms=latency_ms,
+            attempt=_attempt_of(span_metadata),
+        )
+        choice = response.choices[0]
+        if choice.finish_reason == "length":
+            logger.warning(
+                "LLM response truncated (finish_reason=length), model=%s, max_tokens=%d",
+                self._fast_model,
+                max_tokens,
+            )
+        content = choice.message.content or ""
+        if span_name:
+            record_generation(
+                span_name=span_name,
+                model=self._fast_model,
+                msg_dicts=msg_dicts,
+                content=content,
+                response=response,
+                latency_ms=latency_ms,
+                finish_reason=choice.finish_reason,
+                extra_metadata=span_metadata,
+            )
+        return content
 
     async def complete_with_messages(
         self,
@@ -285,9 +329,7 @@ class LLMProvider:
             Generated text content
         """
         # Convert Message objects to dicts
-        msg_dicts = [
-            m.model_dump() if isinstance(m, Message) else m for m in messages
-        ]
+        msg_dicts = [m.model_dump() if isinstance(m, Message) else m for m in messages]
 
         effective_model = self._fast_model if use_fast_model else self._model
 
@@ -315,13 +357,24 @@ class LLMProvider:
             acompletion(**kwargs),
             model=effective_model,
             timeout_value=effective_timeout,
+            span_name=span_name,
+            attempt=_attempt_of(span_metadata),
         )
         latency_ms = stopwatch_ms_since(start_monotonic)
+        record_llm_call(
+            span=span_name,
+            model=effective_model,
+            response=response,
+            start_monotonic=start_monotonic,
+            latency_ms=latency_ms,
+            attempt=_attempt_of(span_metadata),
+        )
         choice = response.choices[0]
         if choice.finish_reason == "length":
             logger.warning(
                 "LLM response truncated (finish_reason=length), model=%s, max_tokens=%d",
-                effective_model, max_tokens,
+                effective_model,
+                max_tokens,
             )
 
         content = choice.message.content or ""
@@ -384,7 +437,8 @@ class LLMProvider:
         if response.choices[0].finish_reason == "length":
             logger.warning(
                 "LLM response truncated (finish_reason=length), model=%s, max_tokens=%d",
-                self._model, max_tokens,
+                self._model,
+                max_tokens,
             )
 
         end_time = datetime.now(UTC)
@@ -449,9 +503,7 @@ class LLMProvider:
             String tokens as generated
         """
         # Convert Message objects to dicts
-        msg_dicts = [
-            m.model_dump() if isinstance(m, Message) else m for m in messages
-        ]
+        msg_dicts = [m.model_dump() if isinstance(m, Message) else m for m in messages]
 
         try:
             # Build kwargs, only including optional params if set

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
@@ -139,6 +140,7 @@ class ManifestIntent(BaseModel):
 
 class ManifestIdentity(BaseModel):
     """Creator identity from video_dna."""
+
     model_config = {"populate_by_name": True}
 
     creator_type: str = Field("", alias="creatorType")
@@ -149,6 +151,7 @@ class ManifestIdentity(BaseModel):
 
 class ManifestValue(BaseModel):
     """Value proposition from video_dna."""
+
     model_config = {"populate_by_name": True}
 
     core_promise: str = Field("", alias="corePromise")
@@ -160,6 +163,7 @@ class ManifestValue(BaseModel):
 
 class ManifestVisualContent(BaseModel):
     """Visual content analysis from video_dna."""
+
     model_config = {"populate_by_name": True}
 
     screen_heavy: bool = Field(False, alias="screenHeavy")
@@ -170,6 +174,7 @@ class ManifestVisualContent(BaseModel):
 
 class ManifestExtractionGuidance(BaseModel):
     """Strategic extraction guidance from video_dna."""
+
     model_config = {"populate_by_name": True}
 
     primary_focus: str = Field("", alias="primaryFocus")
@@ -195,8 +200,12 @@ class ManifestResult(BaseModel):
     reasoning: str = ""
     identity: ManifestIdentity = Field(default_factory=ManifestIdentity)
     value: ManifestValue = Field(default_factory=ManifestValue)
-    visual_content: ManifestVisualContent = Field(default_factory=ManifestVisualContent, alias="visualContent")
-    extraction_guidance: ManifestExtractionGuidance = Field(default_factory=ManifestExtractionGuidance, alias="extractionGuidance")
+    visual_content: ManifestVisualContent = Field(
+        default_factory=ManifestVisualContent, alias="visualContent"
+    )
+    extraction_guidance: ManifestExtractionGuidance = Field(
+        default_factory=ManifestExtractionGuidance, alias="extractionGuidance"
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -239,6 +248,7 @@ class ManifestResult(BaseModel):
 
 class PlanIdentity(BaseModel):
     """Creator identity from the plan stage."""
+
     model_config = {"populate_by_name": True}
 
     creator_type: str = Field("", alias="creatorType")
@@ -248,6 +258,7 @@ class PlanIdentity(BaseModel):
 
 class PlanExtractionGuidance(BaseModel):
     """Strategic extraction guidance from the plan stage."""
+
     model_config = {"populate_by_name": True}
 
     primary_focus: str = Field("", alias="primaryFocus")
@@ -260,6 +271,7 @@ class PlanResult(BaseModel):
     Contains all fields from both ManifestResult and TriageResult in a single
     model. Provides adapter methods for backward compat with downstream consumers.
     """
+
     model_config = {"populate_by_name": True}
 
     # Identity & analysis (from manifest)
@@ -278,6 +290,12 @@ class PlanResult(BaseModel):
     primary_tag: str = Field("learning", alias="primaryTag")
     user_goal: str = Field("General summary of the video content", alias="userGoal")
     tabs: list[dict] = Field(default_factory=list)
+    # Tabs the plan stage removed (unregistered dataSource, no sibling) — the
+    # assembly phase prepends them to the persisted ``droppedTabs``.
+    dropped_tabs: list[dict] = Field(default_factory=list, alias="droppedTabs")
+    # Plan-time validation left no tab, so ``tabs`` are the domain defaults —
+    # assembly then counts only the drops as designed, not drops + defaults.
+    plan_fallback: bool = Field(False, alias="planFallback")
     confidence: float = 0.0
 
     @field_validator("content_tags", mode="before")
@@ -367,7 +385,18 @@ class PlanResult(BaseModel):
 
         counts = self.item_counts
         count_parts: list[str] = []
-        for field_name in ("steps", "spots", "exercises", "ingredients", "songs", "tips", "products", "code_snippets", "concepts", "quotes"):
+        for field_name in (
+            "steps",
+            "spots",
+            "exercises",
+            "ingredients",
+            "songs",
+            "tips",
+            "products",
+            "code_snippets",
+            "concepts",
+            "quotes",
+        ):
             v = getattr(counts, field_name, 0)
             if v > 0:
                 count_parts.append(f"{v} {field_name}")

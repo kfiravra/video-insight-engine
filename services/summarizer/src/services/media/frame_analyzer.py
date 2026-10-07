@@ -17,6 +17,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from src.config import settings
+from src.services.pipeline.pipeline_timing import record_llm_failure
 
 if TYPE_CHECKING:
     from src.services.llm_provider import LLMProvider
@@ -184,7 +185,14 @@ async def analyze_frames_with_vision(
             },
         )
         return parse_vision_response(raw, frame_metadata)
-    except asyncio.TimeoutError:
+    except asyncio.TimeoutError as e:
+        record_llm_failure(
+            span="frame_vision",
+            model=effective_provider.model,
+            error=e,
+            start_monotonic=started,
+            attempt=1,
+        )
         logger.warning(
             "Vision analysis timed out",
             extra={

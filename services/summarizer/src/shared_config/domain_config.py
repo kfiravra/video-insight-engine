@@ -7,10 +7,12 @@ Resolves path via:
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal, TypedDict
 
 logger = logging.getLogger(__name__)
 
@@ -261,3 +263,140 @@ def sibling_datasources(tag: str, data_source: str) -> list[str]:
     if not component:
         return []
     return [ds for ds in datasources_for_component(tag, component) if ds != data_source]
+
+
+# ─────────────────────────────────────────────────────
+# Extraction-field registry (dataSources + reconcile/grouping policy)
+# ─────────────────────────────────────────────────────
+
+# Evidence vocabulary (pipeline-1min brief, Appendix C): the plan and the video
+# memory each emit every key as a boolean; registry `requiresEvidence` values
+# and `requirementEvidence` must name one of these.
+EVIDENCE_KEYS: tuple[str, ...] = (
+    "has_steps",
+    "has_ingredients",
+    "has_materials",
+    "has_code",
+    "has_drills",
+    "has_comparison",
+    "has_ranking",
+    "has_lineup",
+    "has_claims",
+    "has_lyrics",
+    "has_itinerary",
+    "has_packing",
+    "is_learnable",
+)
+
+# Tab dataSources that are not extraction fields: ``frames`` feeds
+# video_filmstrip straight from the frames phase, so it has no registry entry.
+NON_EXTRACTION_DATASOURCES: frozenset[str] = frozenset({"frames"})
+
+
+class DataSourceSpec(TypedDict):
+    """One ``dataSources`` entry — see ``dataSourcesNote`` in domains.json."""
+
+    domain: str
+    field: str
+    kind: Literal["list", "object"]
+    components: list[str]
+    siblings: list[str]
+    requiresEvidence: str | None
+    waitsForVisual: bool
+    cap: int
+    outputWeight: int
+
+
+class QuizPolicy(TypedDict):
+    position: Literal["last"]
+    requiresEvidence: str
+    attachmentHostsExclude: list[str]
+
+
+class QuizEnrichment(TypedDict):
+    quizDomains: list[str]
+    flavor: dict[str, str]
+
+
+class GroupingConfig(TypedDict):
+    maxTextGroups: int
+    groupOutputBudget: int
+
+
+def _registry() -> dict[str, DataSourceSpec]:
+    """The cached registry map itself — read-only internal access, never returned."""
+    return get_config().get("dataSources", {})
+
+
+def data_sources() -> dict[str, DataSourceSpec]:
+    """dataSource path → registry entry, in prompt (config) order.
+
+    Deep-copied: the loaded config is cached process-wide, so a caller mutating
+    an entry (e.g. a spec's ``components`` list) must not leak into later reads.
+    """
+    return copy.deepcopy(_registry())
+
+
+def data_source(path: str) -> DataSourceSpec | None:
+    """Registry entry for one dataSource path, or None when it is not registered."""
+    spec = _registry().get(path)
+    return copy.deepcopy(spec) if spec is not None else None
+
+
+def demote_to() -> dict[str, list[str]]:
+    """Plan-time evidence demotion ladder (component → simpler components)."""
+    return {k: list(v) for k, v in get_config().get("demoteTo", {}).items()}
+
+
+def requirement_evidence() -> dict[str, dict[str, str]]:
+    """Domain → required component → evidence key gating its backfill."""
+    return {k: dict(v) for k, v in get_config().get("requirementEvidence", {}).items()}
+
+
+def quiz_policy() -> QuizPolicy:
+    """Quiz placement/attachment policy (position, evidence, excluded hosts)."""
+    return copy.deepcopy(get_config()["quizPolicy"])
+
+
+def quiz_enrichment() -> QuizEnrichment:
+    """Quiz-only enrichment config: allowed domains + per-domain flavor line."""
+    return copy.deepcopy(get_config()["quizEnrichment"])
+
+
+def grouping_config() -> GroupingConfig:
+    """Phase-3 extraction grouping limits (text-group cap, per-group output budget)."""
+    return copy.deepcopy(get_config()["grouping"])
+
+
+def registered_data_source(data_source: str, component: str) -> str | None:
+    """The registered dataSource a planned tab should read.
+
+    ``data_source`` itself when the registry (or ``NON_EXTRACTION_DATASOURCES``)
+    knows it; otherwise the first registered path of the same domain whose
+    components include ``component``; ``None`` when neither exists.
+    """
+    registry = _registry()
+    if data_source in registry or data_source in NON_EXTRACTION_DATASOURCES:
+        return data_source
+    domain = data_source.split(".", 1)[0]
+    return next(
+        (
+            path
+            for path, spec in registry.items()
+            if spec["domain"] == domain and component in spec["components"]
+        ),
+        None,
+    )
+
+
+def render_valid_datasources() -> str:
+    """Render component_toolkit.txt's ``{valid_datasources}`` block from the registry.
+
+    One ``domain: path, path`` line per domain in first-appearance order — the
+    exact format of the list that used to be hardcoded in the toolkit, so the
+    planner sees the same text while the registry stays the single source.
+    """
+    by_domain: dict[str, list[str]] = {}
+    for path, spec in _registry().items():
+        by_domain.setdefault(spec["domain"], []).append(path)
+    return "\n".join(f"{domain}: {', '.join(paths)}" for domain, paths in by_domain.items())

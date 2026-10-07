@@ -1,10 +1,14 @@
 # Golden dataset — hand-curated YouTube videos used to track pipeline
 # quality regressions over time.
 #
-# Distribution:
-#   - 3 gaming/TCG (unboxing consistency anchors)  - 3 tech
-#   - 3 food       - 2 learning    - 2 language    - 2 science
-#   - 3 travel     - 2 fitness     - 2 review      - 1 music  - 1 documentary
+# Distribution (live entries in brackets; `domain` is the content domain):
+#   - 3 gaming/TCG (unboxing consistency anchors) [3]   - 3 tech [3]
+#   - 3 food [1]   - 2 language [0]   - 4 science [4] (2 ids keep a legacy
+#     `learning-` prefix — ids are stable Langfuse dataset item ids)
+#   - 3 travel [1] - 2 fitness [1]    - 3 review [1]  - 1 music [0]
+#   - 1 documentary [0]
+#   - 4 pipeline-1min assertion anchors [4] (food-tasting vlog, story-intro
+#     recipe, static-camera unboxing, do-along workout)
 #
 # Each entry is a contract:
 #   id                 — stable slug used as the Langfuse dataset item ID
@@ -22,6 +26,25 @@
 #                        (hard product bugs — scored at weight 0.15, any hit
 #                        zeroes the forbidden_ok term)
 #   keyContent         — terms the extraction should mention (80%+ overlap target)
+#   assertions         — optional deterministic per-video checks, validated by
+#                        scripts/_eval_schema.py and gated by scripts/gate.py:
+#                        expectedDomain, expectedFormat (classifier output from
+#                        the Langfuse trace), forbiddenComponents,
+#                        requiredComponents, quizAbsentOrLast, minItems,
+#                        minItemsWithField, noTimestampBeyondDuration.
+#                        Every live run also asserts it completed. `xfail:
+#                        <reason>` — or `xfail: {reason, until: <task>}` —
+#                        keeps a known, tracked failure from failing the gate
+#                        (still reported as XFAIL). Markers are STRICT: a
+#                        marked check that passes (XPASS) fails the gate until
+#                        the marker is removed; `strict: false` only for a
+#                        nondeterministic known failure. gate.py reads the
+#                        markers from this file by assertion key (type +
+#                        parameters), so a new marker needs no re-run
+#                        (`run_eval.py --resync` writes it into stored
+#                        reports, $0).
+#   quick              — member of `run_eval.py --subset quick`: exactly one
+#                        live entry per domain (the cheap post-change check).
 #
 # Curation rules:
 #   - All videos are <35 minutes (so eval runs in ~2 hours, not days).
@@ -80,6 +103,7 @@ videos:
 
   - id: tech-react-hooks
     url: https://www.youtube.com/watch?v=TNhaISOUy6Q
+    quick: true
     domain: tech
     format: tutorial
     language: en
@@ -129,25 +153,6 @@ videos:
     forbiddenComponents: [quiz_arena]
     keyContent: [tonkotsu, broth, simmer, aromatic, pork bones]
 
-  # ─── Learning (2) — quiz allowed here ─────────────────────────────
-  - id: learning-photosynthesis
-    url: https://www.youtube.com/watch?v=eo5XndJaz-Y
-    domain: learning
-    format: lecture
-    language: en
-    expectedTabs: [key_points, concepts, takeaways, quizzes]
-    requiredComponents: [overview, quiz_arena]
-    keyContent: [chlorophyll, light reaction, calvin cycle, ATP, glucose]
-
-  - id: learning-double-slit
-    url: https://www.youtube.com/watch?v=Iuv6hY6zsd0
-    domain: learning
-    format: lecture
-    language: en
-    expectedTabs: [key_points, concepts, takeaways, quizzes, flashcards]
-    requiredComponents: [overview, quiz_arena, flash_deck]
-    keyContent: [interference, wave function, observer, quantum, particle]
-
   # ─── Language (2) ─────────────────────────────────────────────────
   - id: language-spanish-basics
     url: https://www.youtube.com/watch?v=t6Jrg-z4Gi8
@@ -169,9 +174,32 @@ videos:
     requiredComponents: [spot_explorer, info_grid, flash_deck]
     keyContent: [wa, ga, ni, particle, topic marker]
 
-  # ─── Science (2) — quiz allowed here ──────────────────────────────
+  # ─── Science (4) — quiz allowed here, not required ────────────────
+  # The two `learning-*` ids were labelled `learning` until gate 0; their
+  # content (and the pipeline's primaryTag, both baseline passes) is
+  # science. Ids kept stable; expectations follow the science domain
+  # (concept_canvas + facts), not the learning quiz/flashcard shape.
+  - id: learning-photosynthesis
+    url: https://www.youtube.com/watch?v=eo5XndJaz-Y
+    domain: science
+    format: lecture
+    language: en
+    expectedTabs: [overview, concepts, key_facts, moments]
+    requiredComponents: [overview, concept_canvas]
+    keyContent: [chlorophyll, light reaction, calvin cycle, ATP, glucose]
+
+  - id: learning-double-slit
+    url: https://www.youtube.com/watch?v=Iuv6hY6zsd0
+    domain: science
+    format: lecture
+    language: en
+    expectedTabs: [overview, concepts, key_facts, experiments]
+    requiredComponents: [overview, concept_canvas]
+    keyContent: [interference, wave function, observer, quantum, particle]
+
   - id: science-crispr-intro
     url: https://www.youtube.com/watch?v=2pp17E4E-O8
+    quick: true
     domain: science
     format: lecture
     language: en
@@ -191,6 +219,7 @@ videos:
   # ─── Travel (3) ───────────────────────────────────────────────────
   - id: travel-vietnam-10day
     url: https://www.youtube.com/watch?v=vOkkWuEwUmc
+    quick: true
     domain: travel
     format: documentary
     language: en
@@ -243,9 +272,10 @@ videos:
     forbiddenComponents: [quiz_arena]
     keyContent: [hip flexor, thoracic, ankle, mobility, range of motion]
 
-  # ─── Review (2) ───────────────────────────────────────────────────
+  # ─── Review (3) ───────────────────────────────────────────────────
   - id: review-airpods-pro
     url: https://www.youtube.com/watch?v=nMfPqeZjc2c
+    disabled: true  # wrong video — the URL plays "White Noise Black Screen | 10 Hours" (36,000 s; found at gate 0, 2026-10-07); replaced by review-airpods-pro-2
     domain: review
     format: commentary
     language: en
@@ -253,6 +283,30 @@ videos:
     requiredComponents: [overview, comparison, info_grid]
     forbiddenComponents: [quiz_arena]
     keyContent: [transparency, anc, battery, fit, sound stage]
+
+  - id: review-airpods-pro-2
+    # Marques Brownlee, "AirPods Pro 2 Review: 1 Underrated Thing!", 677 s
+    # (11:17), uploaded 2022-09-27, YouTube category Science & Technology
+    # (the summarizer's own category detection: `reviews`), manual en-US
+    # captions (321 segments). Checked live 2026-10-07 through the
+    # summarizer's extract_video_data (dev proxy). A single-product review
+    # replacing review-airpods-pro (same product line, same expectations).
+    url: https://www.youtube.com/watch?v=f3DfJxvkN-8
+    quick: true
+    domain: review
+    format: commentary
+    language: en
+    expectedTabs: [overview, pros_cons, specs, comparison]
+    requiredComponents: [overview, comparison, info_grid]
+    forbiddenComponents: [quiz_arena]
+    keyContent: [transparency, noise cancel, battery, h2, case]
+    assertions:
+      - type: expectedDomain
+        values: [review, tech]
+      - type: forbiddenComponents
+        components: [quiz_arena]
+      - type: quizAbsentOrLast
+      - type: noTimestampBeyondDuration
 
   - id: review-iphone-16
     url: https://www.youtube.com/watch?v=tZv2KsdwWZk
@@ -287,3 +341,135 @@ videos:
     expectedTabs: [key_moments, quotes, takeaways]
     requiredComponents: [overview, moment_track]
     keyContent: [hillary step, krakauer, scott fischer, hall, summit fever]
+
+  # ─── pipeline-1min assertion anchors (4) — added 2026-10-07 (task 0.7) ───
+  # The first two were picked on YouTube (oEmbed/watch page checked
+  # 2026-10-07: live, English captions) and approved by Kfir at gate 0.
+  - id: food-travel-montreal-vlog
+    # Mark Wiens, "Inside Canada's Fast Food PARADISE!! (Montreal, Quebec)",
+    # 31:08, category Travel & Events, manual en captions. A food-tasting
+    # vlog (restaurant hopping): content domain food — the pipeline's
+    # primaryTag in both baseline passes — with lots of food and zero
+    # cooking, the case where recipe components (step_player / checklist
+    # ingredients) are backfilled without evidence (C19).
+    url: https://www.youtube.com/watch?v=v8KaQr0MhjE
+    domain: food
+    format: vlog
+    language: en
+    expectedTabs: [overview, food_stops, highlights, must_order]
+    requiredComponents: [overview, spot_explorer]
+    forbiddenComponents: [quiz_arena]
+    keyContent: [montreal, poutine, hot dog, burger, orange julep]
+    assertions:
+      - type: expectedDomain
+        values: [food, travel]
+      - type: expectedFormat
+        values: [vlog, documentary, walkthrough]
+      - type: forbiddenComponents
+        components: [step_player, checklist]
+        xfail:
+          # Nondeterministic today: XPASS in baseline r1, XFAIL in r2.
+          reason: "C19 — domain backfill is unconditional (expected to pass at gate 1)"
+          until: "1b.2 / 1d.7"
+          strict: false
+      - type: quizAbsentOrLast
+      - type: minItems
+        component: spot_explorer
+        field: spots
+        min: 4
+      - type: noTimestampBeyondDuration
+
+  - id: food-recipe-story-intro
+    # Pasta Grannies, "How to Make Pissalandrea, Liguria's Traditional
+    # Focaccia", 11:15, category Entertainment, en auto captions (English
+    # narration over Italian speech). Opens with the village and the cook's
+    # 55-year story before the recipe starts — recipe components must still
+    # appear. Today the plan sees only the first 3,000 transcript chars (the
+    # story), so step_player is missing: xfail until 1b.2.
+    url: https://www.youtube.com/watch?v=wCkLNqy5OHE
+    quick: true
+    domain: food
+    format: tutorial
+    language: en
+    expectedTabs: [overview, ingredients, steps, tips]
+    requiredComponents: [overview, checklist, step_player]
+    forbiddenComponents: [quiz_arena]
+    keyContent: [focaccia, dough, onion, anchov, olive oil]
+    assertions:
+      - type: expectedDomain
+        values: [food]
+      - type: expectedFormat
+        values: [tutorial, documentary, story, vlog]
+      - type: requiredComponents
+        components: [step_player, checklist]
+        xfail:
+          reason: "plan sees 3,000 chars; fixed by 1b.2"
+          until: "1b.2"
+      - type: forbiddenComponents
+        components: [quiz_arena]
+      - type: quizAbsentOrLast
+      - type: minItems
+        component: step_player
+        field: steps
+        min: 4
+        xfail:
+          reason: "plan sees 3,000 chars; fixed by 1b.2"
+          until: "1b.2"
+      - type: minItems
+        component: checklist
+        field: items
+        min: 4
+      - type: noTimestampBeyondDuration
+
+  - id: gaming-op17-static-camera
+    # Benchmark 3: "Opening an OP-17 (The World's Strongest Warriors) One
+    # Piece Booster Box!", 1,127 s, static camera → FFmpeg scene detection
+    # finds 0 candidates. Moment images must still be present and the run
+    # must not fail on 0 candidates (C21 / D17; the implicit `completed`
+    # assertion covers the second half).
+    url: https://www.youtube.com/watch?v=uC45_4nnEAI
+    quick: true
+    domain: gaming
+    format: unboxing
+    language: en
+    expectedTabs: [overview, pulls, highlights, set_facts]
+    requiredComponents: [overview, tier_list, moment_track]
+    forbiddenComponents: [quiz_arena, code_playground, workout_room, claims_tracker]
+    keyContent: [booster box, one piece, pull, card, rare]
+    assertions:
+      - type: expectedFormat
+        values: [unboxing]
+      - type: minItemsWithField
+        component: moment_track
+        fields: [thumbnailUrl, s3Key]
+        min: 1
+      - type: forbiddenComponents
+        components: [quiz_arena, code_playground, workout_room, claims_tracker]
+      - type: quizAbsentOrLast
+      - type: noTimestampBeyondDuration
+
+  - id: fitness-7min-workout
+    # FitnessBlender "The Scientific 7 Minute Workout", 570 s, do-along
+    # bodyweight workout (0 scene frames locally). A do-along gets no quiz.
+    url: https://www.youtube.com/watch?v=Jru5B044HOs
+    quick: true
+    domain: fitness
+    format: tutorial
+    language: en
+    expectedTabs: [overview, workout, tips]
+    requiredComponents: [overview, workout_room]
+    forbiddenComponents: [quiz_arena]
+    keyContent: [jumping jack, wall sit, push-up, plank, squat]
+    assertions:
+      - type: expectedDomain
+        values: [fitness]
+      - type: expectedFormat
+        values: [tutorial, walkthrough]
+      - type: forbiddenComponents
+        components: [quiz_arena]
+      - type: quizAbsentOrLast
+      - type: minItems
+        component: workout_room
+        field: exercises
+        min: 6
+      - type: noTimestampBeyondDuration

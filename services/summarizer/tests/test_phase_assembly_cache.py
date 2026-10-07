@@ -48,6 +48,7 @@ def _build_ctx(source_language_code: str | None = None) -> SimpleNamespace:
         video_data=video_data,
         triage=triage,
         triage_dict={},
+        plan_result=None,
         extraction_data={},
         enrichment_data={},
         synthesis_dict=None,

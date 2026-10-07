@@ -25,7 +25,9 @@ from src.models.schemas import (
     NormalizedTranscript,
     TranscriptSegment,
 )
+from src.services.llm_telemetry import stopwatch_ms_since
 from src.services.media.download_utils import download_youtube_audio
+from src.services.pipeline.pipeline_timing import record_download
 from src.services.transcription.usage import emit_transcription_usage
 from src.utils.language_utils import normalize_language_code
 
@@ -116,9 +118,23 @@ def _download_audio_sync(video_id: str) -> Path:
         "continuedl": False,
     }
 
-    download_youtube_audio(video_id, ydl_opts, TEMP_DIR, file_stem)
+    started = time.monotonic()
+    try:
+        download_youtube_audio(video_id, ydl_opts, TEMP_DIR, file_stem)
+    except Exception:
+        record_download(
+            kind="audio", purpose="whisper", start_monotonic=started, path=None, ok=False
+        )
+        raise
 
     mp3_path = TEMP_DIR / f"{file_stem}.mp3"
+    record_download(
+        kind="audio",
+        purpose="whisper",
+        start_monotonic=started,
+        path=mp3_path,
+        ok=mp3_path.exists(),
+    )
     if not mp3_path.exists():
         raise TranscriptError(
             "Audio download completed but file not found",
@@ -490,6 +506,7 @@ async def translate_audio_to_english(
             audio_path = await asyncio.to_thread(_download_audio_sync, video_id)
             owns_audio = True
 
+        call_started = time.monotonic()
         result = await asyncio.to_thread(_translate_sync, audio_path)
 
         # The translate API billed by duration regardless of text content.
@@ -498,6 +515,7 @@ async def translate_audio_to_english(
             model="whisper-1",
             feature="summarize:transcript:whisper_translate",
             audio_seconds=float(result.get("duration") or 0.0),
+            duration_ms=stopwatch_ms_since(call_started),
             success=True,
         )
 
@@ -518,6 +536,7 @@ async def translate_audio_to_english(
             model="whisper-1",
             feature="summarize:transcript:whisper_translate",
             success=False,
+            error=e,
         )
         return None
     finally:
@@ -563,6 +582,7 @@ async def transcribe_with_whisper(
 
         # Check if chunking is needed
         file_size_mb = audio_path.stat().st_size / (1024 * 1024)
+        call_started = time.monotonic()
 
         if file_size_mb > CHUNK_TARGET_SIZE_MB:
             logger.info(
@@ -627,6 +647,7 @@ async def transcribe_with_whisper(
             model="whisper-1",
             feature="summarize:transcript:whisper",
             audio_seconds=float(result.get("duration") or 0.0),
+            duration_ms=stopwatch_ms_since(call_started),
             success=True,
         )
 
@@ -637,12 +658,13 @@ async def transcribe_with_whisper(
             language=detected_language,
         )
 
-    except Exception:
+    except Exception as exc:
         emit_transcription_usage(
             provider="openai",
             model="whisper-1",
             feature="summarize:transcript:whisper",
             success=False,
+            error=exc,
         )
         raise
     finally:

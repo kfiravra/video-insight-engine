@@ -109,15 +109,21 @@ async def run_phase_assembly(ctx: PipelineContext) -> AsyncGenerator[str, None]:
         for position in moment_positions:
             yield sse_event("tab_ready", {**all_tabs[position], "position": position})
 
-    # Drop count comes from the assembler's per-tab accounting — assembly also
+    # Drops = the plan's registry check (unregistered dataSource, no sibling)
+    # + the assembler's per-tab accounting — assembly also
     # ADDS tabs (overview, backfill, filmstrip, fallbacks), so the old
     # designed-minus-assembled subtraction masked drops and could go negative.
-    dropped_tabs = assembled.get("dropped", [])
+    plan_dropped = ctx.plan_result.dropped_tabs if ctx.plan_result else []
+    dropped_tabs = [*plan_dropped, *assembled.get("dropped", [])]
+    # Designed = what the planner designed. When plan validation left nothing
+    # and the domain defaults stand in, only the drops were the planner's.
+    plan_fallback = bool(ctx.plan_result and ctx.plan_result.plan_fallback)
+    tabs_designed = len(plan_dropped) + (0 if plan_fallback else len(ctx.triage.tabs))
     logger.info(
         "pipeline.assembly",
         extra={
             "video_id": ctx.video_summary_id,
-            "tabs_designed": len(ctx.triage.tabs),
+            "tabs_designed": tabs_designed,
             "tabs_assembled": len(assembled.get("tabs", [])),
             "tabs_dropped": len(dropped_tabs),
             "dropped_detail": dropped_tabs,
@@ -161,10 +167,11 @@ async def run_phase_assembly(ctx: PipelineContext) -> AsyncGenerator[str, None]:
             "enrichment": ctx.enrichment_data,
             "synthesis": ctx.synthesis_dict,
             "assembly": {
-                "tabsDesigned": len(ctx.triage.tabs),
+                "tabsDesigned": tabs_designed,
                 "tabsAssembled": len(assembled.get("tabs", [])),
                 "tabsDropped": len(dropped_tabs),
                 "droppedTabs": dropped_tabs,
+                **({"planFallback": True} if plan_fallback else {}),
             },
         },
         "processedAt": datetime.now(timezone.utc),

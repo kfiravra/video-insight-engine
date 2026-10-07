@@ -1,4 +1,4 @@
-"""Description analyzer service using Claude Haiku for fast extraction.
+"""Description analyzer: one fast-model call through ``LLMProvider``.
 
 This module extracts structured data from YouTube video descriptions:
 - Links (GitHub, docs, articles, tools)
@@ -13,10 +13,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from litellm import acompletion
 import litellm
 
 from src.config import settings
+from src.services.llm_provider import LLMProvider
 from src.utils.data_helpers import parse_timestamp_to_seconds
 from src.utils.json_parsing import parse_json_response
 
@@ -28,6 +28,7 @@ PROMPTS_DIR = Path(__file__).parent.parent.parent / "prompts"
 def load_prompt(name: str) -> str:
     """Registry-first prompt loader for description-analyzer prompts."""
     from src.services.pipeline.prompt_builder import load_prompt_text
+
     path = PROMPTS_DIR / f"{name}.txt"
     return load_prompt_text(path)
 
@@ -35,6 +36,7 @@ def load_prompt(name: str) -> str:
 @dataclass
 class DescriptionLink:
     """A link extracted from the description."""
+
     url: str
     type: str  # github, documentation, article, tool, course, other
     label: str
@@ -43,6 +45,7 @@ class DescriptionLink:
 @dataclass
 class Resource:
     """A named resource from the description."""
+
     name: str
     url: str
 
@@ -50,6 +53,7 @@ class Resource:
 @dataclass
 class RelatedVideo:
     """A related YouTube video mentioned in description."""
+
     title: str
     url: str
 
@@ -57,6 +61,7 @@ class RelatedVideo:
 @dataclass
 class SocialLink:
     """A social media link from description."""
+
     platform: str  # twitter, discord, github, linkedin, patreon, other
     url: str
 
@@ -64,14 +69,16 @@ class SocialLink:
 @dataclass
 class DescriptionTimestamp:
     """A manual chapter marker from the description (e.g. "2:30 Setup")."""
-    time: str       # raw "M:SS" | "H:MM:SS" as written by the creator
-    seconds: int    # parsed offset into the video
+
+    time: str  # raw "M:SS" | "H:MM:SS" as written by the creator
+    seconds: int  # parsed offset into the video
     label: str
 
 
 @dataclass
 class DescriptionAnalysis:
     """Complete analysis of a video description."""
+
     links: list[DescriptionLink] = field(default_factory=list)
     resources: list[Resource] = field(default_factory=list)
     related_videos: list[RelatedVideo] = field(default_factory=list)
@@ -86,8 +93,7 @@ class DescriptionAnalysis:
             "relatedVideos": [{"title": v.title, "url": v.url} for v in self.related_videos],
             "socialLinks": [{"platform": s.platform, "url": s.url} for s in self.social_links],
             "timestamps": [
-                {"time": t.time, "seconds": t.seconds, "label": t.label}
-                for t in self.timestamps
+                {"time": t.time, "seconds": t.seconds, "label": t.label} for t in self.timestamps
             ],
         }
 
@@ -95,8 +101,11 @@ class DescriptionAnalysis:
     def has_content(self) -> bool:
         """Check if any content was extracted."""
         return bool(
-            self.links or self.resources or self.related_videos or
-            self.social_links or self.timestamps
+            self.links
+            or self.resources
+            or self.related_videos
+            or self.social_links
+            or self.timestamps
         )
 
 
@@ -125,7 +134,11 @@ def _parse_timestamps(raw_items: Any) -> list[DescriptionTimestamp]:
 async def _analyze_description_async(
     description: str, fast_model: str | None = None
 ) -> DescriptionAnalysis:
-    """Analyze description asynchronously using LiteLLM (fast model).
+    """Analyze description asynchronously on the fast model.
+
+    Goes through ``LLMProvider`` like every other stage so the call is a
+    Langfuse generation on the run's trace, lands in ``pipeline.timing``,
+    and is fakeable at the provider's single ``acompletion`` seam.
 
     Args:
         description: The video description text
@@ -146,22 +159,19 @@ async def _analyze_description_async(
         # braces in LLM prompt templates (e.g., JSON examples with {{}})
         prompt = prompt_template.replace("{description}", description)
 
-        # Use the fast model for quick extraction
         model = fast_model or settings.llm_fast_model
-        response = await acompletion(
-            model=model,
-            max_tokens=1500,
-            timeout=30.0,
-            messages=[{"role": "user", "content": prompt}]
+        provider = LLMProvider(model=model, fast_model=model)
+        result_text = await provider.complete_fast(
+            prompt, max_tokens=1500, timeout=30.0, span_name="description_analysis"
         )
-
-        result_text = response.choices[0].message.content
         data = parse_json_response(result_text)
 
         # Parse into dataclasses
         analysis = DescriptionAnalysis(
             links=[
-                DescriptionLink(url=l.get("url", ""), type=l.get("type", "other"), label=l.get("label", ""))
+                DescriptionLink(
+                    url=l.get("url", ""), type=l.get("type", "other"), label=l.get("label", "")
+                )
                 for l in data.get("links", [])
                 if l.get("url")
             ],
@@ -195,7 +205,9 @@ async def _analyze_description_async(
         return analysis
 
     except litellm.exceptions.APIError as e:
-        logger.error("LLM API error during description analysis: %s", e)
+        # LLMProvider already logged this at the error class's severity; the
+        # analysis is optional, so it only degrades to an empty result here.
+        logger.warning("LLM API error during description analysis: %s", e)
         return DescriptionAnalysis()
     except Exception as e:
         logger.error("Error analyzing description: %s", e)
@@ -206,7 +218,7 @@ async def analyze_description(
     description: str, fast_model: str | None = None
 ) -> DescriptionAnalysis:
     """
-    Analyze a video description to extract structured data using LiteLLM.
+    Analyze a video description to extract structured data via ``LLMProvider``.
 
     This is a fast extraction (~1-2 seconds) that runs in parallel with other
     summarization tasks.

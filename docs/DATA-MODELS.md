@@ -212,6 +212,25 @@ One entry per YouTube video. Shared across all users.
     errorCode: string | null                             // failed rows: TranscriptError code (NO_TRANSCRIPT, RATE_LIMITED, …), UNKNOWN_ERROR (unexpected exception) or CANCELLED (producer torn down mid-fetch)
   } | absent,
 
+  // Per-run timing — written by the pipeline runner when the phases finish OR
+  // fail (dotted `$set` after assembly's save; absent on Redis-served rows).
+  // Offsets are ms since the run started. Mirrored (minus llmCalls) onto the
+  // Langfuse trace metadata; each phase is also a Langfuse span.
+  "pipeline.timing": {
+    version: 1,
+    startedAt: Date,
+    totalMs: number,
+    phases: [{ name: string, startMs: number, endMs: number, wallMs: number }],  // metadata, transcript, frames, transcript_frames, frames.* sub-steps, plan, extraction, synthesis, enrichment, assembly, translation…
+    milestones: { metadataMs?, synthesisCompleteMs?, firstTabReadyMs?, completeMs?, doneMs? },
+    llmCalls: [{ feature, span, model, responseModel, startMs, wallMs, inputTokens, outputTokens,
+                 cacheReadTokens, cacheWriteTokens, costUsd, attempt, fallbackUsed, finishReason }],  // incl. Whisper/Gemini transcription rows (span "transcription:openai|google")
+    llmFailures: [{ feature, span, model, startMs, wallMs, attempt, error, rateLimited }],
+    downloads: [{ kind: "lowres" | "720p" | "audio", purpose: string, startMs, wallMs, bytes: number | null, ok: boolean }],
+    costUsd: number,
+    counts: { llmCalls, llmFailures, retries, rateLimited, fallbacks, outputTokens, cacheReadTokens,
+              downloadBytes, tabsPlanned, tabsAssembled, tabsEmitted }
+  } | absent,
+
   // Processed summary (legacy v1 format — kept for backward compat,
   // new pipeline populates assembledMeta/assembledTabs instead)
   summary: {

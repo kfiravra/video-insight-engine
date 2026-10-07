@@ -1192,93 +1192,186 @@ VALID_CONTENT_TAGS = valid_content_tags()
 VALID_MODIFIERS = valid_modifiers()
 
 
+def _model_keys(model_cls: type[BaseModel]) -> set[str]:
+    """Field names and aliases the model accepts at its top level."""
+    keys: set[str] = set()
+    for name, field in model_cls.model_fields.items():
+        keys.add(name)
+        if field.alias:
+            keys.add(field.alias)
+    return keys
+
+
+def _is_empty(value: object) -> bool:
+    return value is None or value in ("", [], {})
+
+
+def _carries_own_fields(model_cls: type[BaseModel], data: dict) -> bool:
+    """True when ``data`` holds at least one non-empty field of ``model_cls``.
+
+    Checked on the RAW data: the validated dump always looks populated for
+    models with truthy defaults (``project_name="Untitled Project"``,
+    ``badge="recommended"``), which used to smuggle default-only domains in.
+    """
+    return any(not _is_empty(data.get(key)) for key in _model_keys(model_cls))
+
+
+def _flat_fields(model_cls: type[BaseModel], data: dict, exclude: set[str]) -> dict:
+    """The non-empty top-level fields of ``model_cls`` in ``data``, minus ``exclude``."""
+    return {
+        key: data[key]
+        for key in sorted(_model_keys(model_cls) - exclude)
+        if not _is_empty(data.get(key))
+    }
+
+
+def _wrapped_block(data: dict, tag: str) -> dict | None:
+    """The LLM's ``{tag}Data`` / ``{tag}`` block for ``tag``, if it wrapped one."""
+    for key in (f"{tag}Data", tag):
+        block = data.get(key)
+        if isinstance(block, dict) and block:
+            return block
+    return None
+
+
+def _merge_mixed_shape(tag: str, wrapper: dict, flat: dict) -> dict:
+    """Union of a tag's wrapped block and the same tag's flat top-level fields.
+
+    Reachable when chunked extraction merges a wrapped batch with a flat one
+    (``merge_batch_extractions``): both halves are real content, so neither
+    is dropped. An empty wrapper value takes the flat one, lists concatenate
+    (flat items the wrapper lacks are appended), and a true scalar/dict
+    conflict keeps the wrapper's value — a deterministic tie-break, since
+    neither half is more trustworthy than the other.
+    """
+    merged = dict(wrapper)
+    conflicts: list[str] = []
+    for key, flat_value in flat.items():
+        wrapped_value = wrapper.get(key)
+        if _is_empty(wrapped_value):
+            merged[key] = flat_value
+        elif isinstance(wrapped_value, list) and isinstance(flat_value, list):
+            merged[key] = wrapped_value + [v for v in flat_value if v not in wrapped_value]
+        elif wrapped_value != flat_value:
+            conflicts.append(key)
+    logger.warning(
+        "Tag %s has a wrapped block AND flat fields %s — merged (wrapper kept on %s)",
+        tag,
+        list(flat),
+        conflicts,
+    )
+    return merged
+
+
+def _validate_block(tag: str, model_cls: type[BaseModel] | None, block: dict) -> dict:
+    """Validate one domain/modifier block; pass it through when it does not fit."""
+    if model_cls is None:
+        logger.warning("No model for tag: %s — data passed through unvalidated", tag)
+        return block
+    try:
+        return model_cls.model_validate(block).model_dump(by_alias=True)
+    except ValidationError as e:
+        logger.warning("Validation failed for tag %s, passing data through: %s", tag, e)
+        return block
+
+
+def _single_tag_block(tag: str, data: dict) -> dict:
+    """Flat output is the norm for one tag, but the LLM sometimes wraps it
+    (``{"tech": {...}}``) — validating the wrapper against the model yields
+    all defaults (OuNKBjuV7A4). Unwrap it; when both shapes are present,
+    merge them rather than silently dropping either."""
+    model_cls = DOMAIN_MODELS.get(tag)
+    wrapper = _wrapped_block(data, tag)
+    if model_cls is None or not _carries_own_fields(model_cls, data):
+        return wrapper or data
+    if wrapper is None:
+        return data
+    return _merge_mixed_shape(tag, wrapper, _flat_fields(model_cls, data, exclude=set()))
+
+
+def _multi_tag_wrapped_block(tag: str, content_tags: list[str], data: dict) -> dict | None:
+    """``tag``'s wrapped block, merged with its flat fields when both exist.
+
+    Only flat keys no other content tag's model declares are merged: a shared
+    key (science/learning both have ``concepts``) cannot be attributed.
+    """
+    wrapper = _wrapped_block(data, tag)
+    model_cls = DOMAIN_MODELS.get(tag)
+    if wrapper is None or model_cls is None:
+        return wrapper
+    other_keys: set[str] = set()
+    for other in content_tags:
+        other_cls = DOMAIN_MODELS.get(other)
+        if other != tag and other_cls is not None:
+            other_keys |= _model_keys(other_cls)
+    flat = _flat_fields(model_cls, data, exclude=other_keys)
+    return _merge_mixed_shape(tag, wrapper, flat) if flat else wrapper
+
+
+def _validate_flat_fallback(tag: str, data: dict) -> dict | None:
+    """A missing tag validated from the flat data; ``None`` when absent or invalid.
+
+    Unlike a wrapped block, the flat data is the WHOLE response — passing it
+    through on a ValidationError would hand this tag every other tag's data
+    (e.g. ``tech`` receiving ``foodData``), so an invalid one is skipped.
+    """
+    model_cls = DOMAIN_MODELS.get(tag)
+    if model_cls is None or not _carries_own_fields(model_cls, data):
+        return None
+    try:
+        return model_cls.model_validate(data).model_dump(by_alias=True)
+    except ValidationError as e:
+        logger.warning(
+            "Flat validation failed for missing tag %s — skipped (fields: %s): %s",
+            tag,
+            sorted(data),
+            str(e)[:300],
+        )
+        return None
+
+
+def _validate_multi_tag(content_tags: list[str], data: dict) -> dict:
+    """Wrapped blocks first; flat data only for tags whose own fields are present."""
+    validated: dict = {}
+    for tag in content_tags:
+        block = _multi_tag_wrapped_block(tag, content_tags, data)
+        if block is not None:
+            validated[tag] = _validate_block(tag, DOMAIN_MODELS.get(tag), block)
+
+    missing_tags = [tag for tag in content_tags if tag not in validated]
+    if missing_tags:
+        # Handles LLMs that wrap some domains but leave others at the top level.
+        logger.info(
+            "Missing wrapped keys for tags %s — trying flat validation fallback", missing_tags
+        )
+    for tag in missing_tags:
+        flat_block = _validate_flat_fallback(tag, data)
+        if flat_block is not None:
+            validated[tag] = flat_block
+    return validated
+
+
 def validate_domain_output(content_tags: list[str], modifiers: list[str], data: dict) -> dict:
     """Validate LLM output against domain Pydantic models.
 
-    Single tag: data validated directly against DOMAIN_MODELS[tag].
-    Multi-tag: tries {tag}Data wrappers first, then {tag} keys, then
-    falls back to validating the flat data against each domain model
-    (lets Pydantic pick up matching fields and ignore the rest).
+    Single tag: flat data validated against DOMAIN_MODELS[tag]; a
+    ``{tag}Data``/``{tag}``-wrapped response is unwrapped first.
+    Multi-tag: ``{tag}Data`` / ``{tag}`` wrappers first, then the flat data
+    for tags whose own fields appear in it.
     Returns validated dict ready for storage/SSE.
     """
-    validated: dict = {}
-
     if len(content_tags) == 1:
         tag = content_tags[0]
-        model_cls = DOMAIN_MODELS.get(tag)
-        if model_cls:
-            try:
-                instance = model_cls.model_validate(data)
-                validated[tag] = instance.model_dump(by_alias=True)
-            except ValidationError as e:
-                logger.warning("Validation failed for tag %s, passing data through: %s", tag, e)
-                validated[tag] = data
-        else:
-            logger.warning("No domain model for tag: %s — data passed through unvalidated", tag)
-            validated[tag] = data
+        block = _single_tag_block(tag, data)
+        validated = {tag: _validate_block(tag, DOMAIN_MODELS.get(tag), block)}
     else:
-        for tag in content_tags:
-            wrapper_key = f"{tag}Data"
-            tag_data = data.get(wrapper_key) or data.get(tag)
-            if tag_data and isinstance(tag_data, dict):
-                model_cls = DOMAIN_MODELS.get(tag)
-                if model_cls:
-                    try:
-                        instance = model_cls.model_validate(tag_data)
-                        validated[tag] = instance.model_dump(by_alias=True)
-                    except ValidationError as e:
-                        logger.warning(
-                            "Validation failed for tag %s, passing data through: %s", tag, e
-                        )
-                        validated[tag] = tag_data
-                else:
-                    logger.warning(
-                        "No domain model for tag: %s — data passed through unvalidated", tag
-                    )
-                    validated[tag] = tag_data
-
-        # Fallback: for any tags missing a wrapped key, try validating flat data against the model.
-        # This handles LLMs that wrap some domains but leave others at the top level.
-        missing_tags = [tag for tag in content_tags if tag not in validated]
-        if missing_tags:
-            logger.info(
-                "Missing wrapped keys for tags %s — trying flat validation fallback", missing_tags
-            )
-            for tag in missing_tags:
-                model_cls = DOMAIN_MODELS.get(tag)
-                if model_cls:
-                    try:
-                        instance = model_cls.model_validate(data)
-                        dumped = instance.model_dump(by_alias=True)
-                        # Only include if the model actually extracted non-empty data
-                        if any(v for v in dumped.values() if v and v != [] and v != {}):
-                            validated[tag] = dumped
-                    except ValidationError as e:
-                        logger.warning(
-                            "Flat validation failed for missing tag %s — fields: %s, errors: %s",
-                            tag,
-                            list(data.keys()) if isinstance(data, dict) else "non-dict",
-                            str(e)[:300],
-                        )
+        validated = _validate_multi_tag(content_tags, data)
 
     for modifier in modifiers:
-        wrapper_key = f"{modifier}Data"
-        mod_data = data.get(wrapper_key) or data.get(modifier)
-        if mod_data and isinstance(mod_data, dict):
-            model_cls = MODIFIER_MODELS.get(modifier)
-            if model_cls:
-                try:
-                    instance = model_cls.model_validate(mod_data)
-                    validated[modifier] = instance.model_dump(by_alias=True)
-                except ValidationError as e:
-                    logger.warning(
-                        "Modifier validation failed for %s, passing through: %s", modifier, e
-                    )
-                    validated[modifier] = mod_data
-            else:
-                logger.warning(
-                    "No modifier model for: %s — data passed through unvalidated", modifier
-                )
-                validated[modifier] = mod_data
+        mod_block = _wrapped_block(data, modifier)
+        if mod_block is not None:
+            validated[modifier] = _validate_block(
+                modifier, MODIFIER_MODELS.get(modifier), mod_block
+            )
 
     return validated

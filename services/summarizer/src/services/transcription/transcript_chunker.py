@@ -9,9 +9,10 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ...config import settings
+from ...config import prompts_from_disk, settings
 from ...utils.json_parsing import parse_json_array_response, parse_json_response
 from ...utils.llm_retry import call_llm_with_retry
 from ...utils.transcript_slicer import slice_transcript_for_chapter
@@ -22,7 +23,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Process-lifetime cache of the chapter-detect prompt (registry mode only).
 _CHAPTER_DETECT_PROMPT: str | None = None
+_CHAPTER_DETECT_PATH = Path(__file__).parent.parent.parent / "prompts" / "chapter_detect.txt"
 
 
 @dataclass
@@ -45,8 +48,8 @@ def _estimate_tokens(text: str) -> int:
 
 # Pre-compiled regex for sentence splitting in force_split_by_sentences
 _ABBREV_PLACEHOLDER = "\uffff"  # Unicode noncharacter — safe for JSON/DB unlike NUL
-_ABBREV_RE = re.compile(r'\b(Mr|Mrs|Ms|Dr|Prof|Sr|Jr|vs|etc|approx|inc|avg)\.')
-_SENTENCE_SPLIT_RE = re.compile(r'(?<=[.!?])\s+')
+_ABBREV_RE = re.compile(r"\b(Mr|Mrs|Ms|Dr|Prof|Sr|Jr|vs|etc|approx|inc|avg)\.")
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
 
 FORCE_SPLIT_TARGET_WORDS = 5000  # target words per chunk
 
@@ -96,15 +99,17 @@ def force_split_by_sentences(
 
         if current_word_count >= target_words:
             text = " ".join(current_sentences)
-            chunks.append(ChapterChunk(
-                index=chunk_idx,
-                title=f"Part {chunk_idx + 1}",
-                start_seconds=chunk_idx * chunk_duration,
-                end_seconds=min((chunk_idx + 1) * chunk_duration, duration_seconds),
-                text=text,
-                source="force_split",
-                token_estimate=int(current_word_count * 1.33),
-            ))
+            chunks.append(
+                ChapterChunk(
+                    index=chunk_idx,
+                    title=f"Part {chunk_idx + 1}",
+                    start_seconds=chunk_idx * chunk_duration,
+                    end_seconds=min((chunk_idx + 1) * chunk_duration, duration_seconds),
+                    text=text,
+                    source="force_split",
+                    token_estimate=int(current_word_count * 1.33),
+                )
+            )
             chunk_idx += 1
             current_sentences = []
             current_word_count = 0
@@ -126,15 +131,17 @@ def force_split_by_sentences(
                     token_estimate=prev.token_estimate + int(current_word_count * 1.33),
                 )
             else:
-                chunks.append(ChapterChunk(
-                    index=chunk_idx,
-                    title=f"Part {chunk_idx + 1}",
-                    start_seconds=chunk_idx * chunk_duration,
-                    end_seconds=duration_seconds,
-                    text=text,
-                    source="force_split",
-                    token_estimate=int(current_word_count * 1.33),
-                ))
+                chunks.append(
+                    ChapterChunk(
+                        index=chunk_idx,
+                        title=f"Part {chunk_idx + 1}",
+                        start_seconds=chunk_idx * chunk_duration,
+                        end_seconds=duration_seconds,
+                        text=text,
+                        source="force_split",
+                        token_estimate=int(current_word_count * 1.33),
+                    )
+                )
         else:
             return []
 
@@ -176,7 +183,9 @@ async def split_transcript_into_chapters(
     if segments:
         sample_keys = set(segments[0].keys()) if segments else set()
         if "start" in sample_keys and "startMs" not in sample_keys:
-            logger.info("Normalizing %d segments from start/duration to startMs/endMs", len(segments))
+            logger.info(
+                "Normalizing %d segments from start/duration to startMs/endMs", len(segments)
+            )
             segments = normalize_segments(segments)
 
     max_minutes = settings.MAX_MINUTES_PER_BATCH
@@ -221,15 +230,17 @@ async def split_transcript_into_chapters(
 
     # Path 5: Single chunk fallback
     logger.info("Chapter splitting: 1 chapter from full (fallback)")
-    return [ChapterChunk(
-        index=0,
-        title="Full Video",
-        start_seconds=0,
-        end_seconds=float(duration) if duration else 0,
-        text=transcript,
-        source="full",
-        token_estimate=_estimate_tokens(transcript),
-    )]
+    return [
+        ChapterChunk(
+            index=0,
+            title="Full Video",
+            start_seconds=0,
+            end_seconds=float(duration) if duration else 0,
+            text=transcript,
+            source="full",
+            token_estimate=_estimate_tokens(transcript),
+        )
+    ]
 
 
 def _from_youtube_chapters(
@@ -268,15 +279,17 @@ def _from_youtube_chapters(
         if not text.strip():
             continue
 
-        result.append(ChapterChunk(
-            index=i,
-            title=title,
-            start_seconds=float(start),
-            end_seconds=float(end),
-            text=text,
-            source="youtube",
-            token_estimate=_estimate_tokens(text),
-        ))
+        result.append(
+            ChapterChunk(
+                index=i,
+                title=title,
+                start_seconds=float(start),
+                end_seconds=float(end),
+                text=text,
+                source="youtube",
+                token_estimate=_estimate_tokens(text),
+            )
+        )
 
     return result if len(result) >= 2 else None
 
@@ -312,21 +325,29 @@ def _from_description_timestamps(
         if end <= start:
             continue
 
-        text = slice_transcript_for_chapter(
-            segments, start_seconds=int(start), end_seconds=int(end),
-        ) if segments else ""
+        text = (
+            slice_transcript_for_chapter(
+                segments,
+                start_seconds=int(start),
+                end_seconds=int(end),
+            )
+            if segments
+            else ""
+        )
         if not text.strip():
             continue
 
-        result.append(ChapterChunk(
-            index=i,
-            title=str(marker.get("label", f"Chapter {i + 1}")),
-            start_seconds=start,
-            end_seconds=end,
-            text=text,
-            source="description",
-            token_estimate=_estimate_tokens(text),
-        ))
+        result.append(
+            ChapterChunk(
+                index=i,
+                title=str(marker.get("label", f"Chapter {i + 1}")),
+                start_seconds=start,
+                end_seconds=end,
+                text=text,
+                source="description",
+                token_estimate=_estimate_tokens(text),
+            )
+        )
 
     return result if len(result) >= 2 else None
 
@@ -362,19 +383,23 @@ def _subdivide_oversized_chapters(
             sub_start = ch.start_seconds + k * sub_dur
             sub_end = ch.end_seconds if k + 1 == parts else ch.start_seconds + (k + 1) * sub_dur
             text = slice_transcript_for_chapter(
-                segments, start_seconds=int(sub_start), end_seconds=int(sub_end),
+                segments,
+                start_seconds=int(sub_start),
+                end_seconds=int(sub_end),
             )
             if not text.strip():
                 continue
-            result.append(ChapterChunk(
-                index=0,  # re-indexed below
-                title=f"{ch.title} (part {k + 1})",
-                start_seconds=sub_start,
-                end_seconds=sub_end,
-                text=text,
-                source=ch.source,
-                token_estimate=_estimate_tokens(text),
-            ))
+            result.append(
+                ChapterChunk(
+                    index=0,  # re-indexed below
+                    title=f"{ch.title} (part {k + 1})",
+                    start_seconds=sub_start,
+                    end_seconds=sub_end,
+                    text=text,
+                    source=ch.source,
+                    token_estimate=_estimate_tokens(text),
+                )
+            )
 
     for i, ch in enumerate(result):
         ch.index = i
@@ -419,7 +444,9 @@ def _build_sampled_excerpts(
 
         if segments:
             text = slice_transcript_for_chapter(
-                segments, start_seconds=int(start), end_seconds=int(end),
+                segments,
+                start_seconds=int(start),
+                end_seconds=int(end),
             )
         else:
             start_word = int((start / duration) * len(words))
@@ -434,7 +461,9 @@ def _build_sampled_excerpts(
 
 
 def _chapters_cover_duration(
-    chunks: list[ChapterChunk], duration: float, tol: float = 0.05,
+    chunks: list[ChapterChunk],
+    duration: float,
+    tol: float = 0.05,
 ) -> bool:
     """True when chapters span ~the whole video (first ~0, last ~duration).
 
@@ -448,6 +477,28 @@ def _chapters_cover_duration(
     return first_start <= duration * tol and last_end >= duration * (1 - tol)
 
 
+def _chapter_detect_prompt() -> str | None:
+    """The chapter-detect prompt; ``None`` when the file is missing.
+
+    Registry mode caches it for the process lifetime. Disk mode
+    (``PROMPT_SOURCE=disk``) re-loads on every call so a dev's .txt edit
+    applies without a restart — and never touches the cache.
+    """
+    global _CHAPTER_DETECT_PROMPT
+    from_disk = prompts_from_disk()
+    if _CHAPTER_DETECT_PROMPT is not None and not from_disk:
+        return _CHAPTER_DETECT_PROMPT
+    if not _CHAPTER_DETECT_PATH.exists():
+        logger.warning("chapter_detect.txt prompt not found, skipping AI detection")
+        return None
+    from src.services.pipeline.prompt_builder import load_prompt_text
+
+    text = load_prompt_text(_CHAPTER_DETECT_PATH)
+    if not from_disk:
+        _CHAPTER_DETECT_PROMPT = text
+    return text
+
+
 async def _detect_chapters_with_ai(
     title: str,
     description: str,
@@ -457,24 +508,16 @@ async def _detect_chapters_with_ai(
     llm_service: LLMService,
 ) -> list[ChapterChunk] | None:
     """Use fast LLM to detect chapter boundaries from transcript content."""
-    from pathlib import Path
-
-    global _CHAPTER_DETECT_PROMPT
-    if _CHAPTER_DETECT_PROMPT is None:
-        prompt_path = Path(__file__).parent.parent.parent / "prompts" / "chapter_detect.txt"
-        if not prompt_path.exists():
-            logger.warning("chapter_detect.txt prompt not found, skipping AI detection")
-            return None
-        from src.services.pipeline.prompt_builder import load_prompt_text
-        _CHAPTER_DETECT_PROMPT = load_prompt_text(prompt_path)
+    chapter_prompt = _chapter_detect_prompt()
+    if chapter_prompt is None:
+        return None
 
     words = transcript.split()
     duration_min = round(duration / 60)
     samples = _build_sampled_excerpts(segments, duration, transcript)
 
     prompt = (
-        _CHAPTER_DETECT_PROMPT
-        .replace("{title}", title)
+        chapter_prompt.replace("{title}", title)
         .replace("{description}", (description or "")[:500])
         .replace("{transcript_samples}", samples)
         .replace("{duration_minutes}", str(duration_min))
@@ -483,12 +526,17 @@ async def _detect_chapters_with_ai(
     # Re-tag the feature so admin attribution shows chapter_detect cost
     # separately from extraction (outer phase sets summarize:extraction).
     from llm_common.context import llm_feature_var
+
     feature_token = llm_feature_var.set("summarize:chapter_detect")
     try:
         raw = await call_llm_with_retry(
-            llm_service, prompt,
-            max_tokens=3000, timeout=25.0, max_retries=1,
-            stage_name="chapter_detect", use_fast_model=True,
+            llm_service,
+            prompt,
+            max_tokens=3000,
+            timeout=25.0,
+            max_retries=1,
+            stage_name="chapter_detect",
+            use_fast_model=True,
             model_override=settings.get_stage_model("chapter_detect"),
         )
         if not raw:
@@ -535,15 +583,17 @@ async def _detect_chapters_with_ai(
             if not text.strip():
                 continue
 
-            result.append(ChapterChunk(
-                index=i,
-                title=ch_title,
-                start_seconds=start,
-                end_seconds=end,
-                text=text,
-                source="ai_detected",
-                token_estimate=_estimate_tokens(text),
-            ))
+            result.append(
+                ChapterChunk(
+                    index=i,
+                    title=ch_title,
+                    start_seconds=start,
+                    end_seconds=end,
+                    text=text,
+                    source="ai_detected",
+                    token_estimate=_estimate_tokens(text),
+                )
+            )
 
         if len(result) < 2:
             return None
@@ -586,8 +636,12 @@ def _time_split_chapters(
 
     if segments:
         sample = segments[0]
-        logger.debug("time_split: %d segments, sample keys=%s, first startMs=%s",
-                      len(segments), list(sample.keys()), sample.get("startMs", "MISSING"))
+        logger.debug(
+            "time_split: %d segments, sample keys=%s, first startMs=%s",
+            len(segments),
+            list(sample.keys()),
+            sample.get("startMs", "MISSING"),
+        )
 
     result: list[ChapterChunk] = []
     for i in range(num_chunks):
@@ -603,18 +657,24 @@ def _time_split_chapters(
         if not text.strip():
             continue
 
-        result.append(ChapterChunk(
-            index=i,
-            title=f"Part {i + 1}",
-            start_seconds=start,
-            end_seconds=end,
-            text=text,
-            source="time_split",
-            token_estimate=_estimate_tokens(text),
-        ))
+        result.append(
+            ChapterChunk(
+                index=i,
+                title=f"Part {i + 1}",
+                start_seconds=start,
+                end_seconds=end,
+                text=text,
+                source="time_split",
+                token_estimate=_estimate_tokens(text),
+            )
+        )
 
     empty_count = num_chunks - len(result)
     if empty_count > 0:
-        logger.warning("time_split: %d/%d chunks were empty (segments may lack startMs)", empty_count, num_chunks)
+        logger.warning(
+            "time_split: %d/%d chunks were empty (segments may lack startMs)",
+            empty_count,
+            num_chunks,
+        )
 
     return result

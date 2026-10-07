@@ -1,0 +1,2926 @@
+{
+ "schema": 2,
+ "videoId": "uC45_4nnEAI",
+ "provenance": {
+  "environment": "prod",
+  "langfuseTrace": "c69f959d-2828-46c8-a2b4-84dfe00fb0ab",
+  "requestId": "19562400-e182-4ed4-8cde-c179255fc543",
+  "videoSummaryId": "6ac53117d8075a18bed1afb3",
+  "recordedAt": "2026-10-06T17:34:15.692Z",
+  "pipelineVersion": "v8",
+  "transcript": "s3 videos/uC45_4nnEAI/transcript.json",
+  "frames": "none (zero scene frames)",
+  "descriptionAnalysis": "llm_usage row + meta.descriptionAnalysis (no generation pre-0.2)"
+ },
+ "settings": {
+  "LLM_MODEL": "anthropic/claude-sonnet-4-6",
+  "LLM_FAST_MODEL": "openai/gpt-4o-mini",
+  "LLM_CLASSIFIER_MODEL": null,
+  "LLM_CHAPTER_DETECT_MODEL": null,
+  "LLM_DESCRIPTION_MODEL": null,
+  "LLM_SYNTHESIS_MODEL": null,
+  "LLM_ENRICHMENT_MODEL": "openai/gpt-4o-mini",
+  "LLM_EXTRACTION_MODEL": "anthropic/claude-haiku-4-5-20251001",
+  "LLM_TRANSLATION_MODEL": null,
+  "LLM_VISION_MODEL": "anthropic/claude-sonnet-4-6",
+  "EXTRACTION_PARALLEL_BATCHES": 2,
+  "EXTRACTION_USE_FAST_FIRST": false,
+  "CHUNKED_EXTRACTION_THRESHOLD": 900,
+  "TRANSCRIPT_CLEANING_ENABLED": false,
+  "FRAME_VISION_ENABLED": true,
+  "FRAME_TIER_ENABLED": true,
+  "SCENE_HIRES_ENABLED": true,
+  "SSE_HEARTBEAT_SECONDS": 12.0,
+  "YOUTUBE_PROXY_URL": "http://replay-proxy.invalid:9"
+ },
+ "tier": "high",
+ "video": {
+  "title": "Opening an OP-17 (The World's Strongest Warriors) One Piece Booster Box!",
+  "channel": "Three Lions TCG",
+  "duration": 1127,
+  "thumbnailUrl": "https://i.ytimg.com/vi_webp/uC45_4nnEAI/maxresdefault.webp",
+  "description": "Today I am cracking open my second booster box of the new set OP-17 (The World's Strongest Warriors). What was your favorite pull today? I wish you the best of luck in your pulls if you're able to find product and as always thanks for watching! \n_________________________________\nIf you're interested in supporting me, the channel and my other platforms consider using the links below: \nJoin this channel to get access to perks:\nhttps://www.youtube.com/channel/UCI7tjOdXVqui1-A45Zwv9JQ/join\nSubscribe ►  https://www.youtube.com/channel/UCI7tjOdXVqui1-A45Zwv9JQ\nSocials/Store Page ► https://bit.ly/ThreeLionsTCG\nTCGPlayer Store ► https://bit.ly/threelionstcg\neBay Store ► https://www.ebay.com/str/threelionstcg\n_________________________________\n\n#onepiece #onepiececardgame #onepiecetcg    \n_________________________________\nBusiness Email: [REDACTED]\n_________________________________\n\nMake sure to check out my other videos by joining the community and subscribing to my channel. Thanks",
+  "chapters": [],
+  "category": "gaming",
+  "youtubeCategory": null,
+  "tags": [
+   "one piece card game",
+   "one piece",
+   "tcg",
+   "one piece opening",
+   "threelionstcg",
+   "one piece tcg",
+   "one piece booster box",
+   "optcg",
+   "one piece trading card",
+   "one piece booster box opening",
+   "one piece tcg unboxing",
+   "one piece cards",
+   "one piece cards opening",
+   "op17",
+   "op17 opening"
+  ],
+  "language": "en",
+  "captionTrack": "auto-generated",
+  "captionLang": "en"
+ },
+ "transcript": {
+  "source": "ytdlp",
+  "segments": [
+   [
+    160,
+    3679,
+    "Welcome back everyone to Thelines TCG."
+   ],
+   [
+    2320,
+    6560,
+    "Today we're going to be opening up"
+   ],
+   [
+    3679,
+    8320,
+    "another box of OP17. I'm super excited"
+   ],
+   [
+    6560,
+    10000,
+    "for this one. Uh if you didn't catch our"
+   ],
+   [
+    8320,
+    11920,
+    "first video, definitely go check it out."
+   ],
+   [
+    10000,
+    13360,
+    "I did a uh I opened a box from"
+   ],
+   [
+    11920,
+    15519,
+    "pre-release. We also got some"
+   ],
+   [
+    13360,
+    17600,
+    "pre-release packs and all of those other"
+   ],
+   [
+    15519,
+    19520,
+    "goodies, the 4th anniversary packs. So"
+   ],
+   [
+    17600,
+    21279,
+    "definitely go check that out. We did uh"
+   ],
+   [
+    19520,
+    23519,
+    "we did pretty well in that box. So"
+   ],
+   [
+    21279,
+    25680,
+    "hopefully we can continue with this one."
+   ],
+   [
+    23519,
+    27439,
+    "Um but if if not, then no worries. We"
+   ],
+   [
+    25680,
+    29198,
+    "did have to cut the seal um because we"
+   ],
+   [
+    27439,
+    31679,
+    "got this from our locals, but we got it"
+   ],
+   [
+    29199,
+    34160,
+    "for a cheaper price than what it's going"
+   ],
+   [
+    31679,
+    36239,
+    "for at market. Let's just say that. So,"
+   ],
+   [
+    34160,
+    37599,
+    "very much so worth it. We're just going"
+   ],
+   [
+    36239,
+    39680,
+    "to get right into it. Let's just go"
+   ],
+   [
+    37600,
+    41280,
+    "right into this thing. I'm uh I'm ready."
+   ],
+   [
+    39680,
+    43440,
+    "I need Lokis. That's what I'm looking"
+   ],
+   [
+    41280,
+    45840,
+    "for. Um I'm trying to build Elbath"
+   ],
+   [
+    43440,
+    47519,
+    "Luffy. So, I'm hoping if we don't pull a"
+   ],
+   [
+    45840,
+    50559,
+    "Loki today, at least if we can pull"
+   ],
+   [
+    47520,
+    51920,
+    "something, I can maybe trade for a Loki,"
+   ],
+   [
+    50559,
+    53199,
+    "that would be that would be nice. We"
+   ],
+   [
+    51920,
+    55039,
+    "start with a little sweet three"
+   ],
+   [
+    53199,
+    59039,
+    "generals. Do like this card. very"
+   ],
+   [
+    55039,
+    61520,
+    "playable. And then the rocks event card."
+   ],
+   [
+    59039,
+    63120,
+    "Now, of course, OP7's been out for what,"
+   ],
+   [
+    61520,
+    65040,
+    "a week? A couple weeks now, maybe when"
+   ],
+   [
+    63120,
+    67600,
+    "you're seeing this. So, I'll go ahead"
+   ],
+   [
+    65040,
+    69360,
+    "and ask, how has your OP7 look been?"
+   ],
+   [
+    67600,
+    71600,
+    "Have you been able to find packs? I"
+   ],
+   [
+    69360,
+    74159,
+    "know. Um I know this set was honestly"
+   ],
+   [
+    71600,
+    75600,
+    "overhyped in my opinion. So, uh it's a"
+   ],
+   [
+    74159,
+    77520,
+    "4th anniversary set, so everyone was"
+   ],
+   [
+    75600,
+    79039,
+    "going crazy for it, but I know as a"
+   ],
+   [
+    77520,
+    81679,
+    "result that means it's probably pretty"
+   ],
+   [
+    79040,
+    83360,
+    "hard to find packs in the wild. Um I"
+   ],
+   [
+    81680,
+    85600,
+    "managed to find, I think, a total of"
+   ],
+   [
+    83360,
+    87360,
+    "four. Um, so if you were lucky enough,"
+   ],
+   [
+    85600,
+    89919,
+    "then let me know what your hits were"
+   ],
+   [
+    87360,
+    94119,
+    "down below. We got a Charlotte Linlin."
+   ],
+   [
+    89920,
+    94119,
+    "Not bad there. And lead performers."
+   ],
+   [
+    94240,
+    97839,
+    "I'm curious as well what your thoughts"
+   ],
+   [
+    95759,
+    100400,
+    "are on the current meta and the state of"
+   ],
+   [
+    97840,
+    103040,
+    "the game in OP7. Obviously, the big"
+   ],
+   [
+    100400,
+    105520,
+    "complaints are Fish Hawk. Um, you know,"
+   ],
+   [
+    103040,
+    107759,
+    "using using Shanks with Mihawk into"
+   ],
+   [
+    105520,
+    109600,
+    "Vanderkin into Electrical Luna. If you"
+   ],
+   [
+    107759,
+    111840,
+    "want to, you actually don't even need to"
+   ],
+   [
+    109600,
+    114000,
+    "use electrical Luna. can just basically"
+   ],
+   [
+    111840,
+    116799,
+    "kill a lot of the big bodies just off"
+   ],
+   [
+    114000,
+    118000,
+    "that combo alone. Um, so I don't know,"
+   ],
+   [
+    116799,
+    120159,
+    "everyone's saying that that needs to be"
+   ],
+   [
+    118000,
+    121520,
+    "pair banned. I did talk about that in"
+   ],
+   [
+    120159,
+    123520,
+    "the last video, but it's even more"
+   ],
+   [
+    121520,
+    124719,
+    "relevant now than it was then. And I"
+   ],
+   [
+    123520,
+    126240,
+    "know a lot of people that are going to"
+   ],
+   [
+    124719,
+    127439,
+    "the Flame Flame event, they're uh"
+   ],
+   [
+    126240,
+    128799,
+    "they're nervous that every single"
+   ],
+   [
+    127439,
+    130799,
+    "matchup is probably going to be against"
+   ],
+   [
+    128800,
+    132160,
+    "Mihawk. Nice little Nico Robin at the"
+   ],
+   [
+    130800,
+    134800,
+    "end there. We do need that for our"
+   ],
+   [
+    132160,
+    136400,
+    "Elbath deck. Super important card. So"
+   ],
+   [
+    134800,
+    138400,
+    "yeah, so that's the uh most annoying"
+   ],
+   [
+    136400,
+    139599,
+    "thing I guess that has come out of OP7."
+   ],
+   [
+    138400,
+    142000,
+    "Let me know what your thoughts are down"
+   ],
+   [
+    139599,
+    144319,
+    "below on Fish Hawk, whether or not it"
+   ],
+   [
+    142000,
+    146160,
+    "should be just pair banned if Bandai are"
+   ],
+   [
+    144319,
+    148319,
+    "sleeping on this one. I think I think"
+   ],
+   [
+    146160,
+    149920,
+    "the biggest complaint honestly and and"
+   ],
+   [
+    148319,
+    150958,
+    "the biggest proof that they have I'm"
+   ],
+   [
+    149920,
+    153440,
+    "pretty sure there was a European"
+   ],
+   [
+    150959,
+    155360,
+    "tournament recently and all four of the"
+   ],
+   [
+    153440,
+    156640,
+    "top decks were all counters to Mihawk."
+   ],
+   [
+    155360,
+    158080,
+    "If that doesn't tell you anything, if"
+   ],
+   [
+    156640,
+    160079,
+    "that if that if that's not screaming at"
+   ],
+   [
+    158080,
+    161840,
+    "you that Mihawk is is kind of busted"
+   ],
+   [
+    160080,
+    163599,
+    "with the Shanks combo, then I don't know"
+   ],
+   [
+    161840,
+    165840,
+    "what is. Nice Charlotte Pudding here."
+   ],
+   [
+    163599,
+    167839,
+    "This is a very very good card right now."
+   ],
+   [
+    165840,
+    169599,
+    "Trashing a trigger to draw three cards"
+   ],
+   [
+    167840,
+    171760,
+    "is insane for yellow because obviously"
+   ],
+   [
+    169599,
+    173440,
+    "you run a lot of triggers. So I think"
+   ],
+   [
+    171760,
+    175280,
+    "that card specifically will probably get"
+   ],
+   [
+    173440,
+    176959,
+    "a lot of play outside of just I think"
+   ],
+   [
+    175280,
+    178879,
+    "Lynland's using it right now obviously,"
+   ],
+   [
+    176959,
+    180879,
+    "right? And then I think probably Nico"
+   ],
+   [
+    178879,
+    183440,
+    "Robin. Those are the two sort of big"
+   ],
+   [
+    180879,
+    185040,
+    "yellow decks right now. Um and that's"
+   ],
+   [
+    183440,
+    188000,
+    "why I think that's why that rare will"
+   ],
+   [
+    185040,
+    189599,
+    "probably stay at a solid like$1 or $2."
+   ],
+   [
+    188000,
+    191360,
+    "you're looking at that and then, you"
+   ],
+   [
+    189599,
+    192879,
+    "know, maybe in the next couple sets if"
+   ],
+   [
+    191360,
+    194400,
+    "there's a really really strong yellow"
+   ],
+   [
+    192879,
+    196399,
+    "deck, which I wouldn't be surprised if"
+   ],
+   [
+    194400,
+    198319,
+    "there is, then I'm sure that card will"
+   ],
+   [
+    196400,
+    200319,
+    "probably come back into uh into play and"
+   ],
+   [
+    198319,
+    202319,
+    "probably go up in price a bit. Nice"
+   ],
+   [
+    200319,
+    204640,
+    "Stussy here. One of the most busted"
+   ],
+   [
+    202319,
+    207920,
+    "cards in OP7."
+   ],
+   [
+    204640,
+    210399,
+    "Being able to uh free basically prevent"
+   ],
+   [
+    207920,
+    212238,
+    "a six cost base six cost from attacking"
+   ],
+   [
+    210400,
+    214799,
+    "and then just having to rest three dawn"
+   ],
+   [
+    212239,
+    216959,
+    "to do it again every turn is uh is"
+   ],
+   [
+    214799,
+    219040,
+    "pretty pretty crazy to be honest with"
+   ],
+   [
+    216959,
+    221360,
+    "you especially for blue. They've got"
+   ],
+   [
+    219040,
+    223040,
+    "enough control as it is, but uh super"
+   ],
+   [
+    221360,
+    225519,
+    "important obviously in your rocks deck"
+   ],
+   [
+    223040,
+    227359,
+    "to run that. Um I actually recently"
+   ],
+   [
+    225519,
+    229200,
+    "played into rocks and just got double"
+   ],
+   [
+    227360,
+    232080,
+    "gloriosided. I'm sure I'll talk about it"
+   ],
+   [
+    229200,
+    234480,
+    "at locals. Uh nice Kyo there. We do need"
+   ],
+   [
+    232080,
+    236640,
+    "that. Uh, it's actually in the new gene"
+   ],
+   [
+    234480,
+    238798,
+    "base support that I uh that I'm running."
+   ],
+   [
+    236640,
+    240720,
+    "Uh, Kaido as well. Very, very cool card."
+   ],
+   [
+    238799,
+    242799,
+    "I do like this one. And super playable"
+   ],
+   [
+    240720,
+    244879,
+    "and needed in your rocks deck. I think"
+   ],
+   [
+    242799,
+    246000,
+    "you run a play set of those. Yeah, I'll"
+   ],
+   [
+    244879,
+    248239,
+    "probably I'll probably end up running"
+   ],
+   [
+    246000,
+    250400,
+    "Gan Bay in my next week of locals. Um,"
+   ],
+   [
+    248239,
+    252799,
+    "because I I should have the cards needed"
+   ],
+   [
+    250400,
+    254400,
+    "for that different variant already. Uh,"
+   ],
+   [
+    252799,
+    256160,
+    "a lot of it's already, you know, cards"
+   ],
+   [
+    254400,
+    258000,
+    "from OP14 and, you know, cards I've"
+   ],
+   [
+    256160,
+    260720,
+    "already already had in my previous gene"
+   ],
+   [
+    258000,
+    262800,
+    "bay decks. But um the only support or"
+   ],
+   [
+    260720,
+    266479,
+    "the cards that you add to it are like"
+   ],
+   [
+    262800,
+    268800,
+    "Linlin and Kaio and things like that. Um"
+   ],
+   [
+    266479,
+    271599,
+    "there's a there's actually a uh a couple"
+   ],
+   [
+    268800,
+    273440,
+    "like niche little add-ons that you do"
+   ],
+   [
+    271600,
+    276800,
+    "that are really just to counter like"
+   ],
+   [
+    273440,
+    278639,
+    "rocks for example um or even even Kaido."
+   ],
+   [
+    276800,
+    280960,
+    "So there's there's a couple couple cards"
+   ],
+   [
+    278639,
+    283280,
+    "specifically meant for your OP7"
+   ],
+   [
+    280960,
+    284400,
+    "matchups. We do get a dawn. We didn't"
+   ],
+   [
+    283280,
+    286960,
+    "really get anything there, but we do get"
+   ],
+   [
+    284400,
+    288159,
+    "a dawn at least. Um, so this is uh I"
+   ],
+   [
+    286960,
+    290080,
+    "don't think we saw this in the last"
+   ],
+   [
+    288160,
+    291840,
+    "video, did we? This is Luffy and Loki"
+   ],
+   [
+    290080,
+    294240,
+    "Dawn. I love this one. I think all the"
+   ],
+   [
+    291840,
+    295758,
+    "Dawn in this set are beautiful. Yeah,"
+   ],
+   [
+    294240,
+    297360,
+    "the only reason I say I might just play"
+   ],
+   [
+    295759,
+    300880,
+    "Gan Bay is I don't think I'm going to"
+   ],
+   [
+    297360,
+    303040,
+    "have the Lokis in time. Um I I I think"
+   ],
+   [
+    300880,
+    304400,
+    "uh I think I've got a couple Luffies now"
+   ],
+   [
+    303040,
+    305919,
+    "and I might be able to trade for the"
+   ],
+   [
+    304400,
+    307120,
+    "SRs. The SRS are going to be easier to"
+   ],
+   [
+    305919,
+    309120,
+    "trade, right? Cuz if no one else is"
+   ],
+   [
+    307120,
+    310560,
+    "running Elbaf Luffy, then they'll just"
+   ],
+   [
+    309120,
+    312800,
+    "uh they'll just, you know, I can I can"
+   ],
+   [
+    310560,
+    314320,
+    "find a nice trade for that. But Loki is"
+   ],
+   [
+    312800,
+    316560,
+    "obviously a bit more expensive and it's"
+   ],
+   [
+    314320,
+    319440,
+    "a secret rare. So it has to be like a"
+   ],
+   [
+    316560,
+    321280,
+    "hit in your box and uh I definitely need"
+   ],
+   [
+    319440,
+    322639,
+    "four of them. I just I just think Elbath"
+   ],
+   [
+    321280,
+    324638,
+    "Luffy is just not good enough without"
+   ],
+   [
+    322639,
+    326960,
+    "four Lokis. You I can probably get away"
+   ],
+   [
+    324639,
+    329120,
+    "with three, but I need at least three,"
+   ],
+   [
+    326960,
+    331599,
+    "right? Nice Gloriosa here. We did pick"
+   ],
+   [
+    329120,
+    334000,
+    "this up in the last box and uh I got"
+   ],
+   [
+    331600,
+    336400,
+    "backto-back Gloriosid in my last match"
+   ],
+   [
+    334000,
+    338080,
+    "against Rock. So obviously a bit of a"
+   ],
+   [
+    336400,
+    340560,
+    "bogey card for me. Not my favorite"
+   ],
+   [
+    338080,
+    342560,
+    "anymore, but still a nice card to look"
+   ],
+   [
+    340560,
+    345039,
+    "at. And obviously a very tradable card"
+   ],
+   [
+    342560,
+    346960,
+    "if you run rocks. So, and we will always"
+   ],
+   [
+    345039,
+    348719,
+    "take trades, right? That's kind of the"
+   ],
+   [
+    346960,
+    350719,
+    "uh the way that the game should really"
+   ],
+   [
+    348720,
+    352080,
+    "be done cuz it is a trading card game,"
+   ],
+   [
+    350720,
+    354479,
+    "but it's really the best way to be able"
+   ],
+   [
+    352080,
+    355520,
+    "to get your decks done early. Uh because"
+   ],
+   [
+    354479,
+    356719,
+    "otherwise, I mean, there's just not"
+   ],
+   [
+    355520,
+    358400,
+    "enough products out there for you to"
+   ],
+   [
+    356720,
+    359759,
+    "pull it all. So, you have to really"
+   ],
+   [
+    358400,
+    362479,
+    "trade and you don't really want to have"
+   ],
+   [
+    359759,
+    364880,
+    "to pay pre-release pricing or, you know,"
+   ],
+   [
+    362479,
+    367840,
+    "opening week pricing. Granted, a lot of"
+   ],
+   [
+    364880,
+    369440,
+    "OP7 has plummeted to be fair. So, I'm"
+   ],
+   [
+    367840,
+    371679,
+    "sure the prices look slightly different"
+   ],
+   [
+    369440,
+    374719,
+    "in this video. We'll see. Oh. [snorts]"
+   ],
+   [
+    371680,
+    376720,
+    "Oh, we got the Luffy alt art. There we"
+   ],
+   [
+    374720,
+    379039,
+    "go. That's the SR that we need"
+   ],
+   [
+    376720,
+    380880,
+    "technically. So, uh we could technically"
+   ],
+   [
+    379039,
+    383520,
+    "alt it out if we want. This card is"
+   ],
+   [
+    380880,
+    385600,
+    "beautiful though. Oh my god. I do love"
+   ],
+   [
+    383520,
+    388719,
+    "Elbath Luffy in general. Like I like the"
+   ],
+   [
+    385600,
+    390000,
+    "the style of Elbath and uh and his fit"
+   ],
+   [
+    388720,
+    391919,
+    "and everything in here. But let's go"
+   ],
+   [
+    390000,
+    395759,
+    "ahead and get a zoom in. See if we can"
+   ],
+   [
+    391919,
+    400560,
+    "get this this texture pix pix picked up"
+   ],
+   [
+    395759,
+    402560,
+    "on the camera. Uh yeah. Ooh. Ooh, clean."
+   ],
+   [
+    400560,
+    404160,
+    "That is clean. I actually like these"
+   ],
+   [
+    402560,
+    406000,
+    "like sort of yellow dots on the bottom"
+   ],
+   [
+    404160,
+    408960,
+    "here cuz all of those look textured for"
+   ],
+   [
+    406000,
+    411600,
+    "me. And obviously like the swipe, all of"
+   ],
+   [
+    408960,
+    413120,
+    "that is textured, too. But I love cards"
+   ],
+   [
+    411600,
+    415199,
+    "again, and I will always talk about"
+   ],
+   [
+    413120,
+    417520,
+    "this. Any card that bleeds through the"
+   ],
+   [
+    415199,
+    419599,
+    "actual border of the artwork. Like"
+   ],
+   [
+    417520,
+    421039,
+    "obviously his entire cape is going"
+   ],
+   [
+    419599,
+    422880,
+    "through the entire artwork and"
+   ],
+   [
+    421039,
+    424880,
+    "everything. Any card that does that that"
+   ],
+   [
+    422880,
+    427280,
+    "has this full art feel to it, I just"
+   ],
+   [
+    424880,
+    429360,
+    "love that. Well, awesome. So"
+   ],
+   [
+    427280,
+    432080,
+    "technically, if we uh if we're one short"
+   ],
+   [
+    429360,
+    434240,
+    "for the Monkey Duffy SRS, cuz I'm hoping"
+   ],
+   [
+    432080,
+    436240,
+    "we pull at least another regular one in"
+   ],
+   [
+    434240,
+    438080,
+    "this box. If we can pull a regular one,"
+   ],
+   [
+    436240,
+    440000,
+    "then I think I'm up to at least two. I"
+   ],
+   [
+    438080,
+    442159,
+    "think we got one in the last box, right?"
+   ],
+   [
+    440000,
+    443440,
+    "And I'm sure on when I go to locals, I'm"
+   ],
+   [
+    442160,
+    444800,
+    "sure I'll be able to trade for another"
+   ],
+   [
+    443440,
+    446800,
+    "couple. So, we should be done on the"
+   ],
+   [
+    444800,
+    448400,
+    "Luffy's there. And then the only thing,"
+   ],
+   [
+    446800,
+    451360,
+    "like I say, the only big thing now will"
+   ],
+   [
+    448400,
+    453679,
+    "be Loki's. Um I will be trying to test"
+   ],
+   [
+    451360,
+    456000,
+    "some different variants for Elbath"
+   ],
+   [
+    453680,
+    457440,
+    "Luffy. We do get a nice Usopp there. We"
+   ],
+   [
+    456000,
+    460000,
+    "do need that as well. I think I'm"
+   ],
+   [
+    457440,
+    461520,
+    "actually missing one of those. So, I"
+   ],
+   [
+    460000,
+    465039,
+    "think we need uh Yeah, I think I need"
+   ],
+   [
+    461520,
+    467520,
+    "one more Usopp for Elbath Luffy as well."
+   ],
+   [
+    465039,
+    469039,
+    "Um but yeah, so I I I don't know if it's"
+   ],
+   [
+    467520,
+    470639,
+    "going to be this weekend or not. I"
+   ],
+   [
+    469039,
+    473199,
+    "actually don't know when this video is"
+   ],
+   [
+    470639,
+    474960,
+    "going out, but probably the weekend of"
+   ],
+   [
+    473199,
+    477520,
+    "this video going out, I will be trying"
+   ],
+   [
+    474960,
+    479440,
+    "to stream. Um I want to uh I have not"
+   ],
+   [
+    477520,
+    481359,
+    "been I've not streamed in a while in in"
+   ],
+   [
+    479440,
+    483840,
+    "all honesty. I've just been quite busy."
+   ],
+   [
+    481360,
+    486080,
+    "But I do want to uh start testing a lot"
+   ],
+   [
+    483840,
+    487679,
+    "of the OP7 decks. But more importantly,"
+   ],
+   [
+    486080,
+    490000,
+    "I want I've seen like three different"
+   ],
+   [
+    487680,
+    491599,
+    "variants for Elbath Luffy. And there's"
+   ],
+   [
+    490000,
+    493120,
+    "one that's a bit of a troll, but I want"
+   ],
+   [
+    491599,
+    494719,
+    "to test it out. And so I might do that"
+   ],
+   [
+    493120,
+    496560,
+    "on stream. So stop by if you want to"
+   ],
+   [
+    494720,
+    499360,
+    "play against me. Otherwise, I'll just be"
+   ],
+   [
+    496560,
+    500560,
+    "playing ranked. Another beautiful dawn."
+   ],
+   [
+    499360,
+    502240,
+    "One of my favorites here. This is the"
+   ],
+   [
+    500560,
+    503840,
+    "rocks dawn. And obviously quite"
+   ],
+   [
+    502240,
+    505440,
+    "expensive or more expensive than the"
+   ],
+   [
+    503840,
+    508159,
+    "other one just because obviously rocks"
+   ],
+   [
+    505440,
+    509759,
+    "is super meta right now. So in terms of"
+   ],
+   [
+    508160,
+    511440,
+    "this box, we have pulled both of our"
+   ],
+   [
+    509759,
+    514479,
+    "dons. So, I'm assuming it's not going to"
+   ],
+   [
+    511440,
+    516320,
+    "be like a Diamond Dawn uh box. I'm not"
+   ],
+   [
+    514479,
+    517599,
+    "again I've not done enough research on a"
+   ],
+   [
+    516320,
+    519680,
+    "lot of the stuff to know what all the"
+   ],
+   [
+    517599,
+    521440,
+    "pull rates are. I kind of just enjoy,"
+   ],
+   [
+    519679,
+    523120,
+    "you know, going into it blind a lot of"
+   ],
+   [
+    521440,
+    525120,
+    "the times because, you know, it's just"
+   ],
+   [
+    523120,
+    526640,
+    "too much to keep up with. And also, like"
+   ],
+   [
+    525120,
+    528320,
+    "I don't want to be spoiled either. So,"
+   ],
+   [
+    526640,
+    531040,
+    "like I know a lot of the Panda Man stuff"
+   ],
+   [
+    528320,
+    533360,
+    "has been linked to uh telling you uh you"
+   ],
+   [
+    531040,
+    534959,
+    "know, what pools you you end up getting."
+   ],
+   [
+    533360,
+    536720,
+    "So, I don't really want to look into"
+   ],
+   [
+    534959,
+    539119,
+    "that stuff as much as I possibly, you"
+   ],
+   [
+    536720,
+    541920,
+    "know, can. I'm trying to avoid it. But"
+   ],
+   [
+    539120,
+    544240,
+    "uh Ruaroo, we've sobered up into Kaido"
+   ],
+   [
+    541920,
+    546479,
+    "himself. So that's the other SR Kaido,"
+   ],
+   [
+    544240,
+    549040,
+    "the non-blocker one. I know. I'm pretty"
+   ],
+   [
+    546480,
+    551360,
+    "sure if you run Kaido, you do run, uh"
+   ],
+   [
+    549040,
+    552880,
+    "all four of each of the SRs. So I'll"
+   ],
+   [
+    551360,
+    554480,
+    "definitely keep one of those for for"
+   ],
+   [
+    552880,
+    556640,
+    "trade cuz I think there's a couple Kaido"
+   ],
+   [
+    554480,
+    558800,
+    "players at my locals. Um so I'll"
+   ],
+   [
+    556640,
+    560319,
+    "probably probably save that for them."
+   ],
+   [
+    558800,
+    561920,
+    "Hopefully they've got like an Usopp for"
+   ],
+   [
+    560320,
+    566720,
+    "me or something. We'll see. We got"
+   ],
+   [
+    561920,
+    568240,
+    "Rockstar, Building Snake, Kyo,"
+   ],
+   [
+    566720,
+    571040,
+    "Rocks,"
+   ],
+   [
+    568240,
+    572560,
+    "Charlotte Linland, and at the end we"
+   ],
+   [
+    571040,
+    575040,
+    "have I don't have time to chat with"
+   ],
+   [
+    572560,
+    576880,
+    "those snot-nosed brats."
+   ],
+   [
+    575040,
+    579599,
+    "Well, we've only gotten one hit so far"
+   ],
+   [
+    576880,
+    581839,
+    "and what, three SRS, if that. Yeah, the"
+   ],
+   [
+    579600,
+    583839,
+    "Kaido, the uh yeah, the Kaido, the"
+   ],
+   [
+    581839,
+    585600,
+    "Usopp, and the Gloriosa. So, we've"
+   ],
+   [
+    583839,
+    587279,
+    "actually got quite a lot of hits still"
+   ],
+   [
+    585600,
+    588959,
+    "in this box, which is quite exciting."
+   ],
+   [
+    587279,
+    592160,
+    "Hopefully save the the best till last"
+   ],
+   [
+    588959,
+    596160,
+    "here. Bonk Punch and Master Blenheim. We"
+   ],
+   [
+    592160,
+    599680,
+    "got Sanji Brulee, Fuller,"
+   ],
+   [
+    596160,
+    603120,
+    "Katakuri, Wong Z, there's the Kaido"
+   ],
+   [
+    599680,
+    605519,
+    "leader, Lucky Rue, and a Yamato. Really,"
+   ],
+   [
+    603120,
+    608000,
+    "really good card, the Yamato. Uh, super"
+   ],
+   [
+    605519,
+    609680,
+    "super playable. It's probably going to"
+   ],
+   [
+    608000,
+    612080,
+    "be one of those cards that's like a new"
+   ],
+   [
+    609680,
+    613839,
+    "staple card for purple just for three"
+   ],
+   [
+    612080,
+    616079,
+    "dawn, being able to ramp and also"
+   ],
+   [
+    613839,
+    618160,
+    "basically getting a a free blocker out."
+   ],
+   [
+    616079,
+    620399,
+    "Um, it's just it's just really strong. I"
+   ],
+   [
+    618160,
+    622959,
+    "know I'm running it in Foxy. That will"
+   ],
+   [
+    620399,
+    624800,
+    "be the other deck that I uh I sort of"
+   ],
+   [
+    622959,
+    626399,
+    "bring back, I guess, you know, because I"
+   ],
+   [
+    624800,
+    628240,
+    "know it's an OP07 leader, but I never"
+   ],
+   [
+    626399,
+    629760,
+    "really got to play it in person. I kind"
+   ],
+   [
+    628240,
+    631440,
+    "of trolled with it on the sim every once"
+   ],
+   [
+    629760,
+    632959,
+    "in a while. Um because obviously it's"
+   ],
+   [
+    631440,
+    635600,
+    "just very annoying and everyone hates"
+   ],
+   [
+    632959,
+    637119,
+    "Foxy. So, uh it's kind of fun to play"
+   ],
+   [
+    635600,
+    638480,
+    "him for that reason if you're trolling."
+   ],
+   [
+    637120,
+    641760,
+    "Oh, I think we've got something on the"
+   ],
+   [
+    638480,
+    644959,
+    "back here. This is lime juice."
+   ],
+   [
+    641760,
+    646880,
+    "There it is. There's our Loki. Let's go."
+   ],
+   [
+    644959,
+    648959,
+    "Oh, and we get Oh, and there's our"
+   ],
+   [
+    646880,
+    650320,
+    "pandan at the end as well. Nice. Okay,"
+   ],
+   [
+    648959,
+    651760,
+    "little little double hit there. I'm"
+   ],
+   [
+    650320,
+    652959,
+    "still not used to that. I still have to"
+   ],
+   [
+    651760,
+    654720,
+    "still have to remember that the"
+   ],
+   [
+    652959,
+    656560,
+    "pandammans are at the very end. Um,"
+   ],
+   [
+    654720,
+    658160,
+    "yeah, I love this card, though. Like,"
+   ],
+   [
+    656560,
+    660000,
+    "obviously, so I need these. This is"
+   ],
+   [
+    658160,
+    662319,
+    "super strong, right? Your this character"
+   ],
+   [
+    660000,
+    664079,
+    "gains 12 cost and then it's a 3k. It's"
+   ],
+   [
+    662320,
+    666720,
+    "basically an 11k blocker on your"
+   ],
+   [
+    664079,
+    668479,
+    "opponent's turn and then it's an 8k uh"
+   ],
+   [
+    666720,
+    670160,
+    "an 8k swing on your turn, you know? So,"
+   ],
+   [
+    668480,
+    672560,
+    "it's it's a it's a really really strong"
+   ],
+   [
+    670160,
+    674240,
+    "card and I love the look of it, too. um"
+   ],
+   [
+    672560,
+    675920,
+    "the snow on the left hand side and"
+   ],
+   [
+    674240,
+    677519,
+    "everything. It just looks dope for a for"
+   ],
+   [
+    675920,
+    679120,
+    "a secret rare. And then obviously King"
+   ],
+   [
+    677519,
+    680720,
+    "Doo. I want to try and collect all the"
+   ],
+   [
+    679120,
+    683360,
+    "Panda men. I think that would be dope in"
+   ],
+   [
+    680720,
+    685440,
+    "a binder. So I think that was I don't we"
+   ],
+   [
+    683360,
+    687839,
+    "didn't pull King Doo in the first box."
+   ],
+   [
+    685440,
+    689760,
+    "We got the uh we got the yellow one,"
+   ],
+   [
+    687839,
+    692560,
+    "right? We got Charlotte Dafuku or"
+   ],
+   [
+    689760,
+    693680,
+    "whatever his name is. So we'll um we'll"
+   ],
+   [
+    692560,
+    695599,
+    "that's the nice thing. We've at least"
+   ],
+   [
+    693680,
+    697920,
+    "got two unique ones. But the only thing"
+   ],
+   [
+    695600,
+    700079,
+    "I don't know, like I just said two packs"
+   ],
+   [
+    697920,
+    701920,
+    "ago, I don't know what that means. if if"
+   ],
+   [
+    700079,
+    703519,
+    "now we're done. If now we're we're sort"
+   ],
+   [
+    701920,
+    706319,
+    "of screwed. I'm not sure. I don't know"
+   ],
+   [
+    703519,
+    707760,
+    "what that pandan means. I I thought I"
+   ],
+   [
+    706320,
+    709600,
+    "heard if it's behind a secret rare,"
+   ],
+   [
+    707760,
+    711200,
+    "you've got a manga chance. So, I guess"
+   ],
+   [
+    709600,
+    713040,
+    "uh fingers crossed, lads. This could be"
+   ],
+   [
+    711200,
+    715360,
+    "the one. There we go. There's the other"
+   ],
+   [
+    713040,
+    717199,
+    "Luffy. So, that's perfect now. So, now"
+   ],
+   [
+    715360,
+    719279,
+    "we've got the Altar and the regular."
+   ],
+   [
+    717200,
+    721920,
+    "Surely that's enough now uh for the"
+   ],
+   [
+    719279,
+    723360,
+    "playset. I think I think that's three,"
+   ],
+   [
+    721920,
+    724959,
+    "right? Technically, I think I've got one"
+   ],
+   [
+    723360,
+    726320,
+    "more. I pulled one in the first box."
+   ],
+   [
+    724959,
+    728719,
+    "There's another one. And then we've got"
+   ],
+   [
+    726320,
+    730560,
+    "the alt art. So, yeah, that's three. And"
+   ],
+   [
+    728720,
+    732560,
+    "uh but I don't I don't like running"
+   ],
+   [
+    730560,
+    734399,
+    "expensive alt arts in a lot of my"
+   ],
+   [
+    732560,
+    736638,
+    "especially new decks, decks that I don't"
+   ],
+   [
+    734399,
+    739600,
+    "know if I really truly like yet. Um"
+   ],
+   [
+    736639,
+    742160,
+    "obviously I love Genebe and uh I'm a big"
+   ],
+   [
+    739600,
+    744320,
+    "fan of some of my my sort of older decks"
+   ],
+   [
+    742160,
+    746160,
+    "now that are sort of staples. So those"
+   ],
+   [
+    744320,
+    748560,
+    "are the ones I'm more looking to uh to"
+   ],
+   [
+    746160,
+    751040,
+    "alt out like Yamato for example, right?"
+   ],
+   [
+    748560,
+    754800,
+    "And OP16, but I'm pretty sure the SP in"
+   ],
+   [
+    751040,
+    756639,
+    "this set is the six go Yamato. So uh"
+   ],
+   [
+    754800,
+    758719,
+    "it'll be a little little expensive to al"
+   ],
+   [
+    756639,
+    760880,
+    "that one out. And uh ground death manga"
+   ],
+   [
+    758720,
+    764399,
+    "events don't sound like fun for my"
+   ],
+   [
+    760880,
+    766480,
+    "wallet either. Nice little uh soul. We"
+   ],
+   [
+    764399,
+    769440,
+    "do technically need those for Elbath"
+   ],
+   [
+    766480,
+    772480,
+    "Luffy. You run them in Elbath Sabo as"
+   ],
+   [
+    769440,
+    774240,
+    "well. Um I don't know. I'm only running"
+   ],
+   [
+    772480,
+    775839,
+    "two in my deck. That's why I want to I"
+   ],
+   [
+    774240,
+    777600,
+    "want to try and test some some different"
+   ],
+   [
+    775839,
+    779760,
+    "variants out for Elbath Luffy cuz he's"
+   ],
+   [
+    777600,
+    782240,
+    "not necessarily that important. Um it's"
+   ],
+   [
+    779760,
+    784000,
+    "just a nice four cost 6k blocker, right?"
+   ],
+   [
+    782240,
+    786880,
+    "And then it's a nice free search for"
+   ],
+   [
+    784000,
+    788959,
+    "you. But um I I don't necessarily think"
+   ],
+   [
+    786880,
+    790800,
+    "it's it's reason. I don't you don't"
+   ],
+   [
+    788959,
+    792880,
+    "really have to run a play set of them. I"
+   ],
+   [
+    790800,
+    795359,
+    "don't think uh just because pirate"
+   ],
+   [
+    792880,
+    797120,
+    "docking six is a thing. So we got a new"
+   ],
+   [
+    795360,
+    798720,
+    "gate here. We have a chance. We do."
+   ],
+   [
+    797120,
+    801920,
+    "Okay. Little backto-back new gate."
+   ],
+   [
+    798720,
+    804480,
+    "That's not bad. The rare into the SR and"
+   ],
+   [
+    801920,
+    805760,
+    "a a strong SR if you are playing new"
+   ],
+   [
+    804480,
+    807760,
+    "gate."
+   ],
+   [
+    805760,
+    810160,
+    "So, the one thing I'll say, too, and I I"
+   ],
+   [
+    807760,
+    812560,
+    "I will be the first advocate to tell you"
+   ],
+   [
+    810160,
+    814959,
+    "I hate when people jump to the new set"
+   ],
+   [
+    812560,
+    816160,
+    "when this set's not even been out for a"
+   ],
+   [
+    814959,
+    818239,
+    "couple weeks. Obviously, everyone's"
+   ],
+   [
+    816160,
+    819839,
+    "already doing that with OP8. I'll go"
+   ],
+   [
+    818240,
+    822800,
+    "ahead and mention it just if you haven't"
+   ],
+   [
+    819839,
+    824399,
+    "seen it yet, but um OP 18 looks"
+   ],
+   [
+    822800,
+    826000,
+    "incredible. Uh, and everyone's saying"
+   ],
+   [
+    824399,
+    827839,
+    "it's going to be better than this set."
+   ],
+   [
+    826000,
+    829839,
+    "Mainly just because there's that alt art"
+   ],
+   [
+    827839,
+    831760,
+    "Frankie uh which does look incredible"
+   ],
+   [
+    829839,
+    833839,
+    "and I do collect Frankie, so I will be"
+   ],
+   [
+    831760,
+    835200,
+    "getting him. And I know Nixon, friend of"
+   ],
+   [
+    833839,
+    836720,
+    "the channel, that's his favorite Straw"
+   ],
+   [
+    835200,
+    841279,
+    "Hat crew member. So, I'm sure that will"
+   ],
+   [
+    836720,
+    843360,
+    "be a big chase for him as well. Um, what"
+   ],
+   [
+    841279,
+    844480,
+    "what do you mean?"
+   ],
+   [
+    843360,
+    847120,
+    "That was just one rare. What do you"
+   ],
+   [
+    844480,
+    849040,
+    "mean? Where is it stuck? What? Did I"
+   ],
+   [
+    847120,
+    851199,
+    "just get robbed? What was that? All"
+   ],
+   [
+    849040,
+    853120,
+    "right, let me double check. Should we"
+   ],
+   [
+    851199,
+    855920,
+    "count these out? Why do I only have one"
+   ],
+   [
+    853120,
+    857760,
+    "rare in my 3 years of opening one piece?"
+   ],
+   [
+    855920,
+    860800,
+    "That's never happened. Is this like an"
+   ],
+   [
+    857760,
+    862639,
+    "error box? What the What's going on?"
+   ],
+   [
+    860800,
+    866574,
+    "Huh?"
+   ],
+   [
+    862639,
+    867120,
+    "Am I stupid? Help. Help. Help me."
+   ],
+   [
+    866574,
+    868880,
+    ""
+   ],
+   [
+    867120,
+    870320,
+    "Let's uh Okay, I'm going to count these"
+   ],
+   [
+    868880,
+    875040,
+    "out. There should be 12, right? 12 for"
+   ],
+   [
+    870320,
+    878560,
+    "pack. One, two, 7, 8, 9, 10, 11, 12. 12."
+   ],
+   [
+    875040,
+    880240,
+    "What the? I got three uncommons."
+   ],
+   [
+    878560,
+    882239,
+    "Yeah. So, I just rifled through the"
+   ],
+   [
+    880240,
+    883839,
+    "empty packs on the floor just to double"
+   ],
+   [
+    882240,
+    885920,
+    "check, make sure there wasn't, you know,"
+   ],
+   [
+    883839,
+    888320,
+    "a sneaky little manga hiding behind"
+   ],
+   [
+    885920,
+    890160,
+    "there or something. I That No, that's"
+   ],
+   [
+    888320,
+    891680,
+    "not. I I thought I might have been"
+   ],
+   [
+    890160,
+    894079,
+    "neuralized there while I was opening"
+   ],
+   [
+    891680,
+    896719,
+    "that, but I'm pretty sure I just opened"
+   ],
+   [
+    894079,
+    898079,
+    "a pack with just a rare. Now, is that"
+   ],
+   [
+    896720,
+    899920,
+    "because of the pandan? Does the"
+   ],
+   [
+    898079,
+    902719,
+    "panderman man take up a slot? And is"
+   ],
+   [
+    899920,
+    904479,
+    "that why I I got three uncommons? I've"
+   ],
+   [
+    902720,
+    907360,
+    "never seen that. That's weird. We got a"
+   ],
+   [
+    904480,
+    910480,
+    "Yasop. Okay, there's our other SR. I'm"
+   ],
+   [
+    907360,
+    912639,
+    "I'm hoping I don't know, man. I I feel I"
+   ],
+   [
+    910480,
+    914480,
+    "feel a bit robbed there. I feel like"
+   ],
+   [
+    912639,
+    915760,
+    "that if it's a secret rare and then you"
+   ],
+   [
+    914480,
+    917120,
+    "get the one altar. Is this going to be"
+   ],
+   [
+    915760,
+    918480,
+    "this going to be a two hit box? I think"
+   ],
+   [
+    917120,
+    921839,
+    "I'm I think I'm I think I'm about to get"
+   ],
+   [
+    918480,
+    923760,
+    "robbed. H I hope not. I I hope I hope"
+   ],
+   [
+    921839,
+    925600,
+    "that was just a little little technical"
+   ],
+   [
+    923760,
+    926800,
+    "glitch. Maybe it's not It can't be"
+   ],
+   [
+    925600,
+    928399,
+    "resealed. There's nothing like that"
+   ],
+   [
+    926800,
+    930000,
+    "because I got this from my local and"
+   ],
+   [
+    928399,
+    931600,
+    "obviously why would they keep two of the"
+   ],
+   [
+    930000,
+    933600,
+    "hits in here and how would they be able"
+   ],
+   [
+    931600,
+    935680,
+    "to determine the individual pack? It's"
+   ],
+   [
+    933600,
+    937440,
+    "just not possible. So that's got to be"
+   ],
+   [
+    935680,
+    938880,
+    "because of the Panda Man. I'm not 100%"
+   ],
+   [
+    937440,
+    941360,
+    "sure though. So let me know down below"
+   ],
+   [
+    938880,
+    943120,
+    "if that is the case. Um I've heard"
+   ],
+   [
+    941360,
+    945120,
+    "something about that. So maybe that's"
+   ],
+   [
+    943120,
+    947680,
+    "maybe that's what it is. Kaido into"
+   ],
+   [
+    945120,
+    949759,
+    "Ashiki. Okay. I hate this card, man."
+   ],
+   [
+    947680,
+    952560,
+    "This card destroys me. It It's such an"
+   ],
+   [
+    949759,
+    955040,
+    "easy board clear uh card, but very"
+   ],
+   [
+    952560,
+    957199,
+    "obviously very useful in rocks. I think"
+   ],
+   [
+    955040,
+    958639,
+    "that's all of our SRs. Maybe now that"
+   ],
+   [
+    957199,
+    960639,
+    "was what we got three there. That might"
+   ],
+   [
+    958639,
+    962880,
+    "Oh, that might be six SR. So, maybe we"
+   ],
+   [
+    960639,
+    965759,
+    "have one more SR and hopefully hopefully"
+   ],
+   [
+    962880,
+    968480,
+    "another hit. Man, I feel robbed though."
+   ],
+   [
+    965759,
+    971199,
+    "I hate that. If that if that's legit and"
+   ],
+   [
+    968480,
+    972959,
+    "if that's like how OP 17 is mapped and"
+   ],
+   [
+    971199,
+    975519,
+    "you can just basically get a pack that"
+   ],
+   [
+    972959,
+    980160,
+    "is just one rare. I don't know if I like"
+   ],
+   [
+    975519,
+    982560,
+    "that or not. We got rocks, pirates, EO"
+   ],
+   [
+    980160,
+    985560,
+    "chance at the end here. N just an event"
+   ],
+   [
+    982560,
+    985560,
+    "card."
+   ],
+   [
+    986880,
+    991439,
+    "Well, it's now or never. We got two more"
+   ],
+   [
+    988800,
+    994639,
+    "packs to go. Let's see if uh we can"
+   ],
+   [
+    991440,
+    996160,
+    "maybe turn our look around. I I don't I"
+   ],
+   [
+    994639,
+    997920,
+    "don't like that. I really don't like"
+   ],
+   [
+    996160,
+    999439,
+    "that. That's That's quite annoying. But"
+   ],
+   [
+    997920,
+    1000959,
+    "it is what it is. It is what it is. I I"
+   ],
+   [
+    999440,
+    1002639,
+    "can't complain about my first box. And"
+   ],
+   [
+    1000959,
+    1004560,
+    "to be honest, I got playables. I got"
+   ],
+   [
+    1002639,
+    1006160,
+    "cards that I need for my deck. So, if"
+   ],
+   [
+    1004560,
+    1007439,
+    "this is all we get, this is all we get,"
+   ],
+   [
+    1006160,
+    1009759,
+    "then that's, you know, that's all right"
+   ],
+   [
+    1007440,
+    1011759,
+    "with me. We got Fora,"
+   ],
+   [
+    1009759,
+    1013600,
+    "Jou, I don't want to see you again cuz"
+   ],
+   [
+    1011759,
+    1016079,
+    "you just gave me one of you last time."
+   ],
+   [
+    1013600,
+    1017759,
+    "Yeah. All team, I'm going to I'm going"
+   ],
+   [
+    1016079,
+    1019439,
+    "to look at the back of all of my Jous"
+   ],
+   [
+    1017759,
+    1020880,
+    "now. Like, manga. Manga. Is that"
+   ],
+   [
+    1019440,
+    1023199,
+    "Whitebeard? Are you Are you there? Are"
+   ],
+   [
+    1020880,
+    1026319,
+    "you Are you hiding behind your one of"
+   ],
+   [
+    1023199,
+    1030079,
+    "your commanders? Come on, bro. Uh, all"
+   ],
+   [
+    1026319,
+    1033199,
+    "right. Last pack. Come on. We got King."
+   ],
+   [
+    1030079,
+    1034240,
+    "We got Bez. I think he's seen an ugly"
+   ],
+   [
+    1033199,
+    1035760,
+    "future. I think that's what that was."
+   ],
+   [
+    1034240,
+    1039919,
+    "Zoro,"
+   ],
+   [
+    1035760,
+    1044160,
+    "Katakuri, Nami, Schwan, Aramaki,"
+   ],
+   [
+    1039919,
+    1046880,
+    "Ben Beckman. Here's our hits."
+   ],
+   [
+    1044160,
+    1048640,
+    "Classic. All right. Little double rare"
+   ],
+   [
+    1046880,
+    1050640,
+    "at the end there. That's all right. It's"
+   ],
+   [
+    1048640,
+    1052320,
+    "okay. All right. Uh, I'll put the total"
+   ],
+   [
+    1050640,
+    1054240,
+    "on screen. I can guarantee you it was"
+   ],
+   [
+    1052320,
+    1055840,
+    "nowhere near as good as the first box,"
+   ],
+   [
+    1054240,
+    1058080,
+    "but I'm sure a lot of the prices from"
+   ],
+   [
+    1055840,
+    1059678,
+    "the first box are inaccurate now, too."
+   ],
+   [
+    1058080,
+    1062159,
+    "But, uh, we'll still take that. Like I"
+   ],
+   [
+    1059679,
+    1063760,
+    "say, we got some playables that I need."
+   ],
+   [
+    1062160,
+    1066160,
+    "We'll run through the double hit here."
+   ],
+   [
+    1063760,
+    1067919,
+    "The Loki and the SR alternate art for"
+   ],
+   [
+    1066160,
+    1070080,
+    "Luffy. Beautiful cards. Like, I can't"
+   ],
+   [
+    1067919,
+    1072480,
+    "complain. I love the Loki artwork as"
+   ],
+   [
+    1070080,
+    1074320,
+    "well. And obviously, super playable. Uh"
+   ],
+   [
+    1072480,
+    1075760,
+    "I'm I need three more. That's the next"
+   ],
+   [
+    1074320,
+    1078399,
+    "goal. If I can get three more, then I'll"
+   ],
+   [
+    1075760,
+    1080160,
+    "be playing Elbath Luffy at Locals the uh"
+   ],
+   [
+    1078400,
+    1081520,
+    "the next week. But that is going to do"
+   ],
+   [
+    1080160,
+    1083440,
+    "it for this video, everyone. Thank you"
+   ],
+   [
+    1081520,
+    1085280,
+    "as always for watching. If you did enjoy"
+   ],
+   [
+    1083440,
+    1087039,
+    "this, please make sure to like, comment,"
+   ],
+   [
+    1085280,
+    1089760,
+    "and subscribe. I'm not sure what the"
+   ],
+   [
+    1087039,
+    1091760,
+    "next opening will be. hopefully some OP7"
+   ],
+   [
+    1089760,
+    1093360,
+    "related content. Otherwise though, like"
+   ],
+   [
+    1091760,
+    1095840,
+    "I said, if you are available this"
+   ],
+   [
+    1093360,
+    1099360,
+    "weekend and want to maybe test out some"
+   ],
+   [
+    1095840,
+    1101600,
+    "decks against me on the OPTCG sim, then"
+   ],
+   [
+    1099360,
+    1103280,
+    "stop on by on the stream. Uh, make sure"
+   ],
+   [
+    1101600,
+    1104480,
+    "you're notifications are turned on and"
+   ],
+   [
+    1103280,
+    1106160,
+    "that's when you'll know I'll go live."
+   ],
+   [
+    1104480,
+    1108640,
+    "Usually I go live at night, anywhere"
+   ],
+   [
+    1106160,
+    1110400,
+    "from like 9:00 p.m. Central um to 10:00"
+   ],
+   [
+    1108640,
+    1112480,
+    "p.m. Central, around that time, and I'll"
+   ],
+   [
+    1110400,
+    1114320,
+    "probably play to uh god knows how long"
+   ],
+   [
+    1112480,
+    1115760,
+    "in the morning. But that's how it goes."
+   ],
+   [
+    1114320,
+    1117520,
+    "When you get in the zone, you know, you"
+   ],
+   [
+    1115760,
+    1118559,
+    "got to keep going. Anyway, uh that is"
+   ],
+   [
+    1117520,
+    1120240,
+    "going to do it, like I say, for this"
+   ],
+   [
+    1118559,
+    1122000,
+    "video. I will catch you in the next one."
+   ],
+   [
+    1120240,
+    1125000,
+    "Have a great rest of your weekend."
+   ],
+   [
+    1122000,
+    1125000,
+    "Bye-bye."
+   ]
+  ]
+ },
+ "frames": {
+  "mode": "zero",
+  "selected": [],
+  "galleryIndices": []
+ },
+ "downloads": {
+  "lowres": {
+   "seconds": 22.0,
+   "bytes": 74973184
+  },
+  "hires720p": [
+   {
+    "seconds": 21.7,
+    "bytes": 174378188
+   },
+   {
+    "seconds": 21.7,
+    "bytes": 174378188
+   }
+  ]
+ },
+ "sleeps": {
+  "metadata": 15.36,
+  "transcript": 0.082,
+  "sceneDetect": 24.1,
+  "scoreSelect": 0.0,
+  "frameSeek": 1.1,
+  "s3Op": 0.1,
+  "sceneUpload": 0.0,
+  "ocr": 0.0,
+  "qdrantStore": 0.0
+ },
+ "llm": [
+  {
+   "feature": "summarize:metadata",
+   "span": "description_analysis",
+   "model": "openai/gpt-4o-mini",
+   "latencyMs": 3379,
+   "output": "{\"links\": [{\"url\": \"https://www.youtube.com/channel/UCI7tjOdXVqui1-A45Zwv9JQ/join\", \"type\": \"other\", \"label\": \"Join Channel\"}, {\"url\": \"https://www.youtube.com/channel/UCI7tjOdXVqui1-A45Zwv9JQ\", \"type\": \"other\", \"label\": \"Subscribe Channel\"}, {\"url\": \"https://bit.ly/ThreeLionsTCG\", \"type\": \"other\", \"label\": \"Socials/Store Page\"}, {\"url\": \"https://bit.ly/threelionstcg\", \"type\": \"other\", \"label\": \"TCGPlayer Store\"}, {\"url\": \"https://www.ebay.com/str/threelionstcg\", \"type\": \"other\", \"label\": \"eBay Store\"}], \"resources\": [], \"relatedVideos\": [], \"socialLinks\": [{\"platform\": \"other\", \"url\": \"[REDACTED]\"}], \"timestamps\": []}",
+   "finishReason": "stop",
+   "usage": {
+    "input": 561,
+    "output": 271
+   },
+   "ordinal": 0
+  },
+  {
+   "feature": "summarize:classifier",
+   "span": "classifier",
+   "model": "openai/gpt-4o-mini",
+   "latencyMs": 2066,
+   "output": "{\"domain\": \"gaming\", \"format\": \"unboxing\", \"confidence\": 0.95, \"reasoning\": \"The video features the host opening a One Piece trading card game booster box, which is a typical format for gameplay-related content as it showcases the excitement and anticipation of revealing card contents. The discussion surrounding the cards and the game's meta further emphasizes the gaming aspect.\", \"traits\": {\"has_steps\": false, \"has_code\": false, \"has_drills\": false, \"has_comparison\": false, \"has_narrative\": false, \"has_visual_demo\": false, \"is_opinionated\": false, \"is_list\": false}}",
+   "finishReason": "stop",
+   "usage": {
+    "input": 1653,
+    "output": 135,
+    "cacheRead": 0,
+    "cacheWrite": 0
+   },
+   "ordinal": 0
+  },
+  {
+   "feature": "summarize:plan",
+   "span": "plan",
+   "model": "anthropic/claude-sonnet-4-6",
+   "latencyMs": 22885,
+   "output": "```json\n{\n  \"reasoning\": \"Three Lions TCG is a casual-enthusiastic One Piece TCG content creator doing a booster box opening for OP-17 (The World's Strongest Warriors). The pulls are the content — viewers want to see what was pulled, ranked by rarity/value, and jump to the exciting reveal moments. The creator is also building an Elbath Luffy deck and mentions specific meta commentary (Fish Hawk, Mihawk combos), which adds flavor to the set context. This is pure entertainment content — tier_list for the ranked pulls, moment_track for the pull highlights, and info_grid for set facts. No quiz, no code, no workout. The creator mentions chasing Loki for an Elbath Luffy build, so the set context and notable cards carry extra weight for competitive players watching.\",\n\n  \"identity\": {\n    \"creatorType\": \"TCG content creator / collector\",\n    \"tone\": \"casual-enthusiastic\",\n    \"audience\": \"One Piece TCG collectors and competitive players\"\n  },\n\n  \"corePromise\": \"See every notable pull from a full OP-17 booster box, ranked by rarity and value\",\n  \"uniqueAngle\": \"Creator is actively building Elbath Luffy and filters pulls through a competitive lens, plus meta commentary on the Fish Hawk / Mihawk problem shaping OP-17's value\",\n\n  \"extractionGuidance\": {\n    \"primaryFocus\": \"Every named card pulled — especially the rare, SR, and alt-art hits — with rarity bracket as tier and why it matters (deck playability, trade value, chase status) as the reason. Capture timestamps for each notable reveal so frames can attach.\",\n    \"watchOutFor\": \"Creator mentions card names mid-sentence while reacting — don't miss commons that are actually meta-relevant (e.g. Nico Robin called out as 'super important for Elbath deck'). Market-value and playability comments are the tier reasons.\"\n  },\n\n  \"itemCounts\": {\n    \"steps\": 0,\n    \"spots\": 0,\n    \"exercises\": 0,\n    \"ingredients\": 0,\n    \"songs\": 0,\n    \"tips\": 4,\n    \"products\": 20,\n    \"codeSnippets\": 0,\n    \"concepts\": 0\n  },\n\n  \"contentTags\": [\"gaming\"],\n  \"modifiers\": [],\n  \"primaryTag\": \"gaming\",\n  \"userGoal\": \"Relive every notable pull from the OP-17 box and know exactly which cards matter and why\",\n  \"confidence\": 0.95,\n\n  \"tabs\": [\n    {\n      \"id\": \"pulls\",\n      \"label\": \"🃏 Box Pulls Ranked\",\n      \"emoji\": \"🃏\",\n      \"component\": \"tier_list\",\n      \"dataSource\": \"gaming.rankings\",\n      \"goal\": \"Every notable pull from the box ranked S through D — drag cards around to set your own tier if you disagree with the creator's take.\",\n      \"outboundLinks\": {\n        \"highlights\": \"Watch the reveal moments\",\n        \"set_facts\": \"Check set details\"\n      }\n    },\n    {\n      \"id\": \"highlights\",\n      \"label\": \"🎬 Pull Moments\",\n      \"emoji\": \"🎬\",\n      \"component\": \"moment_track\",\n      \"dataSource\": \"gaming.highlights\",\n      \"goal\": \"Jump straight to each big reveal — the frame shows the card held up to camera so you can see the exact pull reaction.\",\n      \"outboundLinks\": {\n        \"pulls\": \"See all pulls ranked\",\n        \"set_facts\": \"OP-17 set overview\"\n      }\n    },\n    {\n      \"id\": \"set_facts\",\n      \"label\": \"📋 OP-17 Set Info\",\n      \"emoji\": \"📋\",\n      \"component\": \"info_grid\",\n      \"dataSource\": \"gaming.loadout\",\n      \"goal\": \"Box odds, chase cards, and key OP-17 set facts at a glance — everything you need to know before cracking your own packs.\",\n      \"outboundLinks\": {\n        \"pulls\": \"See what came out of this box\",\n        \"highlights\": \"Watch the pulls live\"\n      }\n    }\n  ]\n}\n```",
+   "finishReason": "stop",
+   "usage": {
+    "input": 15283,
+    "output": 1029,
+    "cacheRead": 14005,
+    "cacheWrite": 0
+   },
+   "ordinal": 0
+  },
+  {
+   "feature": "summarize:chapter_detect",
+   "span": "chapter_detect",
+   "model": "openai/gpt-4o-mini",
+   "latencyMs": 1793,
+   "output": "```json\n[\n  {\"title\": \"Introduction and Expectations\", \"startSeconds\": 0, \"endSeconds\": 120},\n  {\"title\": \"Meta Discussion\", \"startSeconds\": 120, \"endSeconds\": 300},\n  {\"title\": \"Card Highlights and Strategies\", \"startSeconds\": 300, \"endSeconds\": 720},\n  {\"title\": \"Opening the Booster Box\", \"startSeconds\": 720, \"endSeconds\": 1260},\n  {\"title\": \"Review and Final Thoughts\", \"startSeconds\": 1260, \"endSeconds\": 1140}\n]\n```",
+   "finishReason": "stop",
+   "usage": {
+    "input": 2204,
+    "output": 126,
+    "cacheRead": 0,
+    "cacheWrite": 0
+   },
+   "ordinal": 0
+  },
+  {
+   "feature": "summarize:extraction",
+   "span": "extraction",
+   "model": "anthropic/claude-haiku-4-5-20251001",
+   "latencyMs": 49770,
+   "output": "```json\n{\n  \"title\": \"OP-17 Booster Box Opening — Elbath Luffy Pulls & Meta Build\",\n  \"highlights\": [\n    {\n      \"label\": \"Nico Robin rare pull\",\n      \"description\": \"Creator pulls a Nico Robin and immediately calls it 'super important for Elbath deck' — a key card he's been hunting for the build.\",\n      \"timestamp\": 180\n    },\n    {\n      \"label\": \"Charlotte Pudding SR — yellow staple\",\n      \"description\": \"Pulls Charlotte Pudding SR; creator notes it's 'insane for yellow' with trash-trigger-draw-three effect, currently run in Lynland and Nico Robin decks.\",\n      \"timestamp\": 290\n    },\n    {\n      \"label\": \"Stussy SR — blue control bomb\",\n      \"description\": \"Pulls Stussy SR and calls it 'one of the most busted cards in OP7' — free prevention of six-cost attacks, essential for Rocks deck.\",\n      \"timestamp\": 360\n    },\n    {\n      \"label\": \"Yamato SR — new purple staple\",\n      \"description\": \"Pulls Yamato SR; creator explains it's 'going to be one of those new staple cards for purple' with ramp and free blocker at three cost.\",\n      \"timestamp\": 820\n    },\n    {\n      \"label\": \"Loki secret rare reveal\",\n      \"description\": \"Pulls a Loki secret rare from the Pandaman slot — the exact card needed for Elbath Luffy. Creator celebrates but notes he still needs three more for a full playset.\",\n      \"timestamp\": 1010\n    },\n    {\n      \"label\": \"Elbath Luffy SR alt-art pull\",\n      \"description\": \"Pulls the SR alt-art Elbath Luffy with full-bleed cape and textured yellow dots; creator loves the border-breaking artwork and confirms it as one of the two SR copies needed.\",\n      \"timestamp\": 600\n    },\n    {\n      \"label\": \"Mystery one-rare pack anomaly\",\n      \"description\": \"Creator opens a pack containing only one rare and three uncommons — unusual pull, possibly tied to Pandaman taking a slot. Creator is confused and slightly frustrated.\",\n      \"timestamp\": 1240\n    },\n    {\n      \"label\": \"Second Elbath Luffy regular rare\",\n      \"description\": \"Pulls another regular Elbath Luffy rare near the end, giving him three total (one from first box, this regular, plus the alt-art SR) for a playable set.\",\n      \"timestamp\": 1100\n    }\n  ],\n  \"rankings\": [\n    {\n      \"item\": \"Loki (Secret Rare)\",\n      \"tier\": \"S\",\n      \"reason\": \"Absolute chase card for Elbath Luffy — 12-cost character gain + 3k makes an 11k blocker / 8k attacker. Creator needs four total; only pulled one.\",\n      \"emoji\": \"🔥\"\n    },\n    {\n      \"item\": \"Elbath Luffy SR (alt-art)\",\n      \"tier\": \"S\",\n      \"reason\": \"Full-bleed cape artwork, textured details, primary SR for Elbath Luffy deck. Creator now has three copies (one from first box, one regular, one alt-art).\",\n      \"emoji\": \"⭐\"\n    },\n    {\n      \"item\": \"Stussy SR\",\n      \"tier\": \"A\",\n      \"reason\": \"One of OP7's strongest cards — prevents six-cost base attacks for free, resets every turn. Essential in Rocks meta-dominating deck.\",\n      \"emoji\": \"🛡️\"\n    },\n    {\n      \"item\": \"Yamato SR\",\n      \"tier\": \"A\",\n      \"reason\": \"New purple staple with three-cost ramp + free blocker effect. Creator running it in Foxy deck; widely playable across purple archetypes.\",\n      \"emoji\": \"💜\"\n    },\n    {\n      \"item\": \"Charlotte Pudding SR\",\n      \"tier\": \"A\",\n      \"reason\": \"Trash-trigger-draw-three engine; core yellow card run in Lynland and Nico Robin. Holds $1–$2 price with growth potential if future yellow decks emerge.\",\n      \"emoji\": \"🌟\"\n    },\n    {\n      \"item\": \"Nico Robin rare\",\n      \"tier\": \"A\",\n      \"reason\": \"Creator calls it 'super important' for Elbath Luffy deck — a key support card he was actively hunting for the build.\",\n      \"emoji\": \"🎯\"\n    },\n    {\n      \"item\": \"Kaido SR (non-blocker)\",\n      \"tier\": \"A\",\n      \"reason\": \"Rocks meta staple; run as a full playset. Creator saving for local trade partners who play Kaido.\",\n      \"emoji\": \"⚔️\"\n    },\n    {\n      \"item\": \"Gloriosa SR\",\n      \"tier\": \"B\",\n      \"reason\": \"Rocks staple and trade-friendly card, but creator got back-to-back Gloriosa'd by Rock players in recent matches — less exciting for him personally.\",\n      \"emoji\": \"🔄\"\n    },\n    {\n      \"item\": \"Usopp rare (Elbath)\",\n      \"tier\": \"B\",\n      \"reason\": \"Needed for Elbath Luffy and Elbath Sabo; four-cost 6k blocker with free search. Creator running only two copies, not full playset.\",\n      \"emoji\": \"🎪\"\n    },\n    {\n      \"item\": \"Soul (event card)\",\n      \"tier\": \"B\",\n      \"reason\": \"Run in Elbath Luffy and Elbath Sabo; creator using only two copies as it's 'not necessarily that important' compared to pirate-docking-six.\",\n      \"emoji\": \"💫\"\n    },\n    {\n      \"item\": \"Luffy & Loki Dawn (gold card)\",\n      \"tier\": \"B\",\n      \"reason\": \"Beautiful down card from the set; creator loves all Dawn artwork in OP7 but notes it's not a hit rarity — collected for aesthetics.\",\n      \"emoji\": \"🌅\"\n    },\n    {\n      \"item\": \"Rocks Down (gold card)\",\n      \"tier\": \"B\",\n      \"reason\": \"More expensive than other Downs due to Rocks meta relevance; pulled in this box. Creator pulling both Downs suggests not a 'Diamond Down' box.\",\n      \"emoji\": \"🏴‍☠️\"\n    },\n    {\n      \"item\": \"King Doo Pandaman\",\n      \"tier\": \"B\",\n      \"reason\": \"Secret rare Pandaman; creator collecting all Pandamans for binder. First unique one from this box (pulled Charlotte Dafuku in first box).\",\n      \"emoji\": \"🐼\"\n    },\n    {\n      \"item\": \"Ashiki rare (Rocks)\",\n      \"tier\": \"C\",\n      \"reason\": \"Rocks board-clear card; creator says 'I hate this card' because it destroys him in matchups, but it's obviously useful in Rocks builds.\",\n      \"emoji\": \"⚡\"\n    },\n    {\n      \"item\": \"Three uncommons pack fill\",\n      \"tier\": \"D\",\n      \"reason\": \"Anomalous pack containing only one rare and three uncommons — possibly due to Pandaman taking a slot. Creator feels 'robbed' by this pull.\",\n      \"emoji\": \"📉\"\n    }\n  ],\n  \"loadout\": [\n    {\n      \"item\": \"Elbath Luffy\",\n      \"category\": \"leader\",\n      \"note\": \"Primary deck he's building; needs four Lokis to function optimally, though can run with three. Currently has two Luffy copies (regular + alt-art).\"\n    },\n    {\n      \"item\": \"Loki (×4)\",\n      \"category\": \"core\",\n      \"note\": \"Must-have secret rare for Elbath Luffy. Gives 12-cost gain + 3k (11k blocker / 8k attacker). Creator has one, needs three more.\"\n    },\n    {\n      \"item\": \"Elbath Luffy SR\",\n      \"category\": \"core\",\n      \"note\": \"Primary card draw for the deck. Creator running all three copies (one regular + alt-art + one from first box).\"\n    },\n    {\n      \"item\": \"Usopp (×2)\",\n      \"category\": \"support\",\n      \"note\": \"Four-cost 6k blocker with free search. Creator running only two copies, not full playset.\"\n    },\n    {\n      \"item\": \"Soul (×2)\",\n      \"category\": \"support\",\n      \"note\": \"Nice free search four-cost 6k blocker; run in Elbath Luffy and Elbath Sabo. Creator using two copies, not a full playset.\"\n    },\n    {\n      \"item\": \"Nico Robin\",\n      \"category\": \"support\",\n      \"note\": \"Called 'super important' for Elbath Luffy deck — core support card creator was hunting for.\"\n    },\n    {\n      \"item\": \"Yamato (Purple, OP7)\",\n      \"category\": \"tech\",\n      \"note\": \"Three-cost ramp + free blocker. Creator running in Foxy deck and considering for future purple brews.\"\n    }\n  ],\n  \"keyPoints\": [\n    {\n      \"emoji\": \"🎯\",\n      \"title\": \"Loki is the non-negotiable chase card for Elbath Luffy\",\n      \"detail\": \"Secret rare Loki gains the character 12 cost and +3k, making it an 11k blocker (opponent turn) or 8k attacker (your turn). Creator pulled one but needs three more for a functional playset; without Lokis, Elbath Luffy simply isn't competitive enough.\",\n      \"timestamp\": 1010\n    },\n    {\n      \"emoji\": \"🐟\",\n      \"title\": \"Fish Hawk / Mihawk combo is warping OP7 meta and may need a ban\",\n      \"detail\": \"Shanks into Mihawk into Vanderkin (optionally Electrical Luna) is so dominant that all four top decks at a recent European tournament were built to counter Mihawk. Creator calls it 'busted' and expects every Flame Flame event matchup to be against Mihawk.\",\n      \"timestamp\": 85\n    },\n    {\n      \"emoji\": \"💛\",\n      \"title\": \"Charlotte Pudding SR is the new yellow engine card\",\n      \"detail\": \"Trash-trigger-draw-three effect is 'insane for yellow' because yellow runs lots of triggers. Currently staple in Lynland and Nico Robin; should stay at $1–$2 but will climb if future yellow decks emerge.\",\n      \"timestamp\": 290\n    },\n    {\n      \"emoji\": \"🛡️\",\n      \"title\": \"Stussy is OP7's most broken blue card\",\n      \"description\": \"Free prevention of six-cost base attacks, reset every turn for three cost. Essential in Rocks, which is already packed with control tools.\",\n      \"timestamp\": 360\n    },\n    {\n      \"emoji\": \"💜\",\n      \"title\": \"Yamato is the new purple staple and ramp option\",\n      \"detail\": \"Three-cost card that ramps (gains cost) and provides a free blocker. Creator running it in Foxy and planning to slot it into other purple brews as a core engine piece.\",\n      \"timestamp\": 820\n    },\n    {\n      \"emoji\": \"🤝\",\n      \"title\": \"Trading is more efficient than cracking packs for deck building\",\n      \"detail\": \"Creator emphasizes not to pay opening-week pricing; instead, crack what you can, identify tradeable hits, and swap for specifics you need. 'It is a trading card game' — leverage the community to finish decks fast.\",\n      \"timestamp\": 410\n    },\n    {\n      \"emoji\": \"📉\",\n      \"title\": \"OP7 prices have already plummeted one week in\",\n      \"detail\": \"Creator notes many OP7 prices from the first video are now inaccurate due to fast market correction. Avoid paying pre-release / opening-week premiums; wait for the dust to settle.\",\n      \"timestamp\": 75\n    },\n    {\n      \"emoji\": \"⭐\",\n      \"title\": \"OP8 is being called better than OP7, especially the alt-art Frankie\",\n      \"detail\": \"Hype is already shifting to OP8 despite OP7 being only one week old. Creator notes alt-art Frankie is a major chase pull; he collects Frankie, and friend Nixon (channel regular) will chase it as his favorite Straw Hat.\",\n      \"timestamp\": 1340\n    }\n  ],\n  \"tips\": [\n    \"Don't alt-art expensive pulls in new decks you haven't tested yet — save the expensive alts for established meta staples (like Yamato OP16 or deck cores you love).\",\n    \"If you pull a Pandaman secret rare, expect the same pack to only contain one rare + three uncommons (Pandaman occupies a rare slot); this is not an error box.\",\n    \"Avoid opening-week pricing — OP7 prices have already crashed after one week. Trade for specific needs instead of cracking more boxes.\",\n    \"Test multiple Elbath Luffy variants on stream or ranked sim before committing cards — creator has seen three different builds and is skeptical about one 'troll' variant.\",\n    \"Run only two Soul cards (not four) in Elbath Luffy because pirate-docking-six is a superior search option and Soul is 'not necessarily that important'.\",\n    \"Collect all Pandaman alts in a binder — they're visually unique secret rares worth organizing by character.\",\n    \"If Rocks is dominating your local, keep Gloriosa and Stussy copies for trades with Rock players, even if they've beaten you recently.\",\n    \"Stream testing new deck builds at ~9–10 p.m. Central on weeknights — creator plans to test Elbath Luffy variants and play for hours once he gets 'in the zone'.\"\n  ],\n  \"setFacts\": [\n    {\n      \"emoji\": \"📊\",\n      \"label\": \"OP7 Availability\",\n      \"detail\": \"OP7 was overhyped as a 4th anniversary set, causing pack shortages. Creator found only four packs from local retail; many players struggled to find boxes at market price.\"\n    },\n    {\n      \"emoji\": \"🎨\",\n      \"label\": \"Dawn Pull Pattern\",\n      \"detail\": \"Both Luffy & Loki Down and Rocks Down pulled in this single box. Creator unsure if this rules out a 'Diamond Down' box pull pattern, suggesting he lacks full knowledge of OP7 rarity mechanics.\"\n    },\n    {\n      \"emoji\": \"🐼\",\n      \"label\": \"Pandaman Secret Rares\",\n      \"detail\": \"Pandaman cards occupy a secret-rare slot and appear at end of pack. Pulling a Pandaman may reduce rares pulled; one pack contained only one rare + three uncommons after a Pandaman pull.\"\n    },\n    {\n      \"emoji\": \"⚠️\",\n      \"label\": \"Meta Dominance: Rocks & Mihawk\",\n      \"detail\": \"Rocks deck (with Stussy control) and Fish Hawk / Mihawk combo are warping the format. Four of four top decks at a recent European tournament were Mihawk counters.\"\n    },\n    {\n      \"emoji\": \"🎯\",\n      \"label\": \"Key Meta Decks Emerging\",\n      \"detail\": \"Elbath Luffy, Lynland, Nico Robin (yellow), Rocks, Foxy, and Kaido variants are all seeing play. Elbath Luffy requires Lokis to be competitive.\"\n    }\n  ],\n  \"timestamps\": [\n    {\n      \"time\": \"0:00\",\n      \"seconds\": 0,\n      \"label\": \"Intro — opening OP7 box, hunting for Lokis for Elbath Luffy\"\n    },\n    {\n      \"time\": \"1:25\",\n      \"seconds\": 85,\n      \"label\": \"Fish Hawk / Mihawk problem meta discussion\"\n    },\n    {\n      \"time\": \"3:00\",\n      \"seconds\": 180,\n      \"label\": \"Nico Robin pull — 'super important for Elbath deck'\"\n    },\n    {\n      \"time\": \"4:50\",\n      \"seconds\": 290,\n      \"label\": \"Charlotte Pudding SR — yellow engine card reveal\"\n    },\n    {\n      \"time\": \"6:00\",\n      \"seconds\": 360,\n      \"label\": \"Stussy SR pull — 'one of the most busted cards in OP7'\"\n    },\n    {\n      \"time\": \"10:00\",\n      \"seconds\": 600,\n      \"label\": \"Elbath Luffy SR alt-art pull — zooming in on textured borders\"\n    },\n    {\n      \"time\": \"13:40\",\n      \"seconds\": 820,\n      \"label\": \"Yamato SR pull — new purple staple with ramp + blocker\"\n    },\n    {\n      \"time\": \"16:50\",\n      \"seconds\": 1010,\n      \"label\": \"Loki secret rare pull from Pandaman slot — 'Let's go!'\"\n    },\n    {\n      \"time\": \"18:20\",\n      \"seconds\": 1100,\n      \"label\": \"Second Elbath Luffy regular rare pull near end\"\n    },\n    {\n      \"time\": \"20:40\",\n      \"seconds\": 1240,\n      \"label\": \"Mystery one-rare pack anomaly — three uncommons, creator confused\"\n    }\n  ],\n  \"summary\": \"Creator opens an OP-17 booster box hunting for Loki secret rares to complete Elbath Luffy, a new competitive deck. He pulls one Loki (needs three more), two Elbath Luffy copies (regular + alt-art), and several meta staples: Stussy (Rocks control), Yamato (purple ramp), Charlotte Pudding (yellow engine), and Nico Robin (Elbath support). Box commentary centers on the dominant Fish Hawk / Mihawk combo warping the format, the value of trading vs. cracking packs, and OP7's quick price correction after one week of release. Creator plans to test multiple Elbath Luffy variants on stream and eventually pursue Lokis through trades. Overall box performance was solid for playables but lacked the chase hits of the first box; one pack anomaly contained only one rare + three uncommons, possibly due to a Pandaman taking a rare slot.\",\n  \"keyQuestion\": \"How many Lokis and Elbath Luffy copies do you need to build a competitive Elbath Luffy deck for OP7, and is Fish Hawk / Mihawk actually broken enough to warrant a ban?\"\n}\n```",
+   "finishReason": "stop",
+   "usage": {
+    "input": 10408,
+    "output": 4674,
+    "cacheRead": 0,
+    "cacheWrite": 4818
+   },
+   "ordinal": 0
+  },
+  {
+   "feature": "summarize:synthesis",
+   "span": "synthesis",
+   "model": "openai/gpt-4o-mini",
+   "latencyMs": 3528,
+   "output": "{\"tldr\": \"Watch as the creator opens an OP-17 booster box and reveals key pulls crucial for building Elbath Luffy decks!\", \"keyTakeaways\": [\"Nico Robin pull is essential for Elbath decks — consider it a must-have support card.\", \"Stussy SR prevents attacks for free—vital for dominating Rocks decks.\", \"Creator needs three more Loki secret rares for an optimal Elbath Luffy leader setup.\", \"Yamato SR is shaping up to be a new staple for purple strategies — keep it on your radar!\", \"An unusual pack anomaly reveals only one rare, sparking creator's curiosity and frustration.\"], \"masterSummary\": \"Join the creator of Three Lions TCG as they dive into a thrilling OP-17 booster box opening! This video is essential for any collector or competitive player, especially those aiming to build an Elbath Luffy deck. With every notable pull ranked by rarity and competitive playability, the creator highlights why certain cards like Nico Robin and Stussy SR could be game-changers in the meta.\\n\\nDiscover the excitement of pulling a Loki secret rare and the stunning alt-art Elbath Luffy. Each card dropped is accompanied by insights into its deck potential and current market value. Don’t miss the chance to explore the interactive tabs, where you can delve deeper into the rankings and loadout breakdowns as well as revisit those memorable card pulls!\", \"seoDescription\": \"Join the fun as an OP-17 booster box is opened, revealing crucial cards for Elbath Luffy decks and competitive play insights!\"}",
+   "finishReason": "stop",
+   "usage": {
+    "input": 1678,
+    "output": 328,
+    "cacheRead": 0,
+    "cacheWrite": 0
+   },
+   "ordinal": 0
+  },
+  {
+   "feature": "summarize:enrichment",
+   "span": "enrichment",
+   "model": "openai/gpt-4o-mini",
+   "latencyMs": 5351,
+   "output": "{\"flashcards\": [{\"front\": \"What is the primary card pulled that is 'super important' for the Elbath deck?\", \"back\": \"Nico Robin — Creator pulls a rare Nico Robin and emphasizes its significance for the Elbath deck at 3:00.\"}, {\"front\": \"What card is called 'insane for yellow' after being pulled?\", \"back\": \"Charlotte Pudding SR — The creator notes that its trash-trigger-draw-three effect is essential in Lynland and Nico Robin decks at 4:50.\"}, {\"front\": \"Which card did the creator label as 'one of the most busted cards in OP7'?\", \"back\": \"Stussy SR — Pulled at 6:00, the creator highlights its capability to prevent six-cost attacks for free.\"}, {\"front\": \"What did the creator describe as the 'new staple card for purple'?\", \"back\": \"Yamato SR — Mentioned at 13:40, it offers ramp and serves as a free blocker at three cost.\"}, {\"front\": \"What significant secret rare was pulled from the Pandaman slot?\", \"back\": \"Loki — Pulled at 16:50, the creator celebrates finding the exact card needed for the Elbath Luffy deck but needs three more for a full playset.\"}, {\"front\": \"What unique feature does the alternate-art Elbath Luffy have?\", \"back\": \"The Elbath Luffy SR alt-art features full-bleed cape artwork with textured yellow dots, confirmed as one of the two needed copies at 10:00.\"}, {\"front\": \"What unusual pack did the creator encounter during the opening?\", \"back\": \"A mystery one-rare pack that surprisingly contained only one rare and three uncommons, which left the creator feeling confused at 20:40.\"}, {\"front\": \"What was the number of regular Elbath Luffy pulled near the end?\", \"back\": \"The creator pulled a third regular Elbath Luffy, contributing to a playable set along with one from the first box and the alt-art SR at 18:30.\"}]}",
+   "finishReason": "stop",
+   "usage": {
+    "input": 2451,
+    "output": 479,
+    "cacheRead": 0,
+    "cacheWrite": 0
+   },
+   "ordinal": 0
+  }
+ ],
+ "recorded": {
+  "totalMs": 171121,
+  "phasesMs": {
+   "metadata": 18739,
+   "transcript_frames": 46311,
+   "plan": 24970,
+   "extraction": 51711,
+   "synthesis_enrichment": 5371,
+   "assembly": 24019,
+   "visual_inject": 0
+  },
+  "milestonesMs": {
+   "firstTabReadyMs": 147101,
+   "completeMs": 171121
+  },
+  "tabIds": [
+   "overview",
+   "pulls",
+   "highlights",
+   "set_facts"
+  ],
+  "estimated": false,
+  "notes": [
+   "prod request 19562400 (171 s); zero scene frames (HIGH via title keyword 'opening', vision never ran); sub-steps from its worker log",
+   "momentFill = whole assembly wall (720p re-download 21.7 s logged)"
+  ]
+ }
+}

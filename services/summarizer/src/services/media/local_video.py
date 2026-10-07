@@ -15,8 +15,10 @@ import asyncio
 import logging
 import shutil
 import tempfile
+import time
 from pathlib import Path
 
+from src.services.pipeline.pipeline_timing import record_download
 from src.utils.constants import YOUTUBE_ID_RE
 
 logger = logging.getLogger(__name__)
@@ -39,7 +41,7 @@ async def _kill_quietly(proc: asyncio.subprocess.Process | None) -> None:
 
 
 async def download_video_720p(
-    youtube_id: str, timeout: float = DOWNLOAD_TIMEOUT
+    youtube_id: str, timeout: float = DOWNLOAD_TIMEOUT, *, purpose: str = "hires"
 ) -> tuple[Path, str] | None:
     """Download a ≤720p rendition; returns (video_path, temp_dir) or None.
 
@@ -48,7 +50,8 @@ async def download_video_720p(
     The CALLER owns cleanup of temp_dir (``cleanup_local_video``). Best-effort:
     every failure logs and returns None. Cancellation (an outer budget expiring
     mid-download) kills the subprocess and removes the partial file before
-    re-raising, so neither leaks out of a long-lived worker.
+    re-raising, so neither leaks out of a long-lived worker. ``purpose`` labels
+    the download in the run's ``pipeline.timing`` (one 720p per job is the goal).
     """
     if not YOUTUBE_ID_RE.match(youtube_id):
         logger.warning("Invalid youtube_id for local 720p download: %s", youtube_id)
@@ -59,6 +62,7 @@ async def download_video_720p(
     temp_dir = tempfile.mkdtemp(prefix=f"vie-hires-{youtube_id}-")
     video_path = Path(temp_dir) / f"{youtube_id}.mp4"
     deadline = asyncio.get_running_loop().time() + timeout
+    started = time.monotonic()
     try:
         for clients in ytdlp_hires_client_attempts():
             remaining = deadline - asyncio.get_running_loop().time()
@@ -69,10 +73,15 @@ async def download_video_720p(
                 logger.info(
                     "Local 720p download for %s: %.1fMB (clients=%s)", youtube_id, size_mb, clients
                 )
+                record_download(
+                    kind="720p", purpose=purpose, start_monotonic=started, path=video_path, ok=True
+                )
                 return video_path, temp_dir
     except asyncio.CancelledError:
+        record_download(kind="720p", purpose=purpose, start_monotonic=started, path=None, ok=False)
         cleanup_local_video(temp_dir)
         raise
+    record_download(kind="720p", purpose=purpose, start_monotonic=started, path=None, ok=False)
     cleanup_local_video(temp_dir)
     return None
 
