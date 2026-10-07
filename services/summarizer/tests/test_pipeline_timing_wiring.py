@@ -20,7 +20,7 @@ from litellm.exceptions import (
 )
 
 from src.repositories.mongodb_repository import MongoDBVideoRepository
-from src.routes import pipeline_runner
+from src.routes import pipeline_orchestration
 from src.services.llm_provider import LLMProvider
 from src.services.media import local_video
 from src.services.pipeline import pipeline_timing
@@ -146,13 +146,13 @@ class TestRunnerPersistence:
                 yield event
 
         return [
-            patch.object(pipeline_runner, "run_phase_metadata", _one),
-            patch.object(pipeline_runner, "run_parallel_phases", lambda _p, _c: _one()),
-            patch.object(pipeline_runner, "run_phase_plan", plan or _one),
-            patch.object(pipeline_runner, "run_phase_extraction", _one),
-            patch.object(pipeline_runner, "run_phase_synthesis", _one),
-            patch.object(pipeline_runner, "run_phase_enrichment", _one),
-            patch.object(pipeline_runner, "run_phase_assembly", _assembly),
+            patch.object(pipeline_orchestration, "run_phase_metadata", _one),
+            patch.object(pipeline_orchestration, "run_parallel_phases", lambda _p, _c: _one()),
+            patch.object(pipeline_orchestration, "run_phase_plan", plan or _one),
+            patch.object(pipeline_orchestration, "run_phase_extraction", _one),
+            patch.object(pipeline_orchestration, "run_phase_synthesis", _one),
+            patch.object(pipeline_orchestration, "run_phase_enrichment", _one),
+            patch.object(pipeline_orchestration, "run_phase_assembly", _assembly),
         ]
 
     async def _drive(
@@ -167,7 +167,9 @@ class TestRunnerPersistence:
         for p in patches:
             p.start()
         try:
-            async for _ in pipeline_runner._run_pipeline_phases(ctx, repository, "vsid", timer):
+            async for _ in pipeline_orchestration.run_pipeline_phases(
+                ctx, repository, "vsid", timer
+            ):
                 pass
         finally:
             for p in patches:
@@ -215,7 +217,7 @@ class TestRunnerPersistence:
     async def test_done_log_should_carry_tab_counts(self, caplog: pytest.LogCaptureFixture) -> None:
         tab = sse_event("tab_ready", {"id": "a", "position": 0})
 
-        with caplog.at_level(logging.INFO, logger="src.routes.pipeline_runner"):
+        with caplog.at_level(logging.INFO, logger="src.routes.pipeline_orchestration"):
             await self._drive(self._ctx(), MagicMock(), [tab])
 
         assert "tabs planned=3 assembled=2 emitted=1" in caplog.text

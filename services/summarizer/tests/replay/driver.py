@@ -33,7 +33,7 @@ from tests.replay.process_state import preserved_process_state
 from tests.replay.repository import InMemoryRepository
 from tests.replay.stubs import external_stubs
 
-_RUNNER_LOGGER = "src.routes.pipeline_runner"
+_RUNNER_LOGGER = "src.routes.pipeline_orchestration"
 _DONE_MARKER = "[pipeline] DONE"
 _SSE_PREFIX = "data: "
 

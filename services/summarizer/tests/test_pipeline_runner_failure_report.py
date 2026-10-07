@@ -110,7 +110,7 @@ async def test_runner_should_fail_row_and_emit_sanitized_error_when_rate_limited
     send_status = AsyncMock()
     with (
         patch.object(pipeline_runner.settings, "REDIS_ENABLED", False),
-        patch.object(pipeline_runner, "_run_pipeline_phases", new=_phases_raise),
+        patch.object(pipeline_runner, "run_pipeline_phases", new=_phases_raise),
         patch.object(pipeline_runner, "send_video_status", new=send_status),
         patch.object(pipeline_runner, "clear_override", new=MagicMock()),
     ):

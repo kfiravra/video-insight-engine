@@ -1,4 +1,5 @@
-"""Tests for the pipeline orchestration in src.routes.pipeline_runner.
+"""Tests for the pipeline entry + phase orchestration (src.routes.pipeline_runner,
+src.routes.pipeline_orchestration).
 
 Focused on the faithfulness fire-and-forget spawn and the transcriptMeta
 provenance contract (single write point + run-start clears) — the rest of
@@ -19,7 +20,7 @@ from llm_common.context import llm_feature_var
 
 from src.exceptions import TranscriptError
 from src.models.schemas import ErrorCode, ProcessingStatus
-from src.routes import pipeline_runner
+from src.routes import pipeline_faithfulness, pipeline_orchestration, pipeline_runner
 from src.services.pipeline.pipeline_helpers import TranscriptData, TranscriptTrail
 
 
@@ -33,7 +34,7 @@ def _phase_stub(label: str):
 
 
 def _non_english_ctx() -> SimpleNamespace:
-    """Minimal ctx for _run_pipeline_phases driving the non-English path."""
+    """Minimal ctx for run_pipeline_phases driving the non-English path."""
     return SimpleNamespace(
         youtube_id="yt1",
         clean_text="",  # skip the visual-inject block
@@ -58,18 +59,18 @@ def _patched_phases():
         yield "data: parallel\n\n"
 
     return [
-        patch.object(pipeline_runner, "run_phase_metadata", _phase_stub("metadata")),
-        patch.object(pipeline_runner, "run_parallel_phases", _parallel_stub),
-        patch.object(pipeline_runner, "run_phase_plan", _phase_stub("plan")),
-        patch.object(pipeline_runner, "run_phase_extraction", _phase_stub("extraction")),
-        patch.object(pipeline_runner, "run_phase_synthesis", _phase_stub("synthesis")),
-        patch.object(pipeline_runner, "run_phase_enrichment", _phase_stub("enrichment")),
-        patch.object(pipeline_runner, "run_phase_assembly", _phase_stub("assembly")),
+        patch.object(pipeline_orchestration, "run_phase_metadata", _phase_stub("metadata")),
+        patch.object(pipeline_orchestration, "run_parallel_phases", _parallel_stub),
+        patch.object(pipeline_orchestration, "run_phase_plan", _phase_stub("plan")),
+        patch.object(pipeline_orchestration, "run_phase_extraction", _phase_stub("extraction")),
+        patch.object(pipeline_orchestration, "run_phase_synthesis", _phase_stub("synthesis")),
+        patch.object(pipeline_orchestration, "run_phase_enrichment", _phase_stub("enrichment")),
+        patch.object(pipeline_orchestration, "run_phase_assembly", _phase_stub("assembly")),
     ]
 
 
 def _english_ctx(extraction_data: dict) -> SimpleNamespace:
-    """Minimal ctx for _run_pipeline_phases driving the English path."""
+    """Minimal ctx for run_pipeline_phases driving the English path."""
     return SimpleNamespace(
         youtube_id="yt1",
         clean_text="",  # skip the visual-inject block and faithfulness spawn
@@ -102,24 +103,27 @@ async def test_synthesis_and_enrichment_parallel_when_extraction_has_data() -> N
         yield "data: parallel\n\n"
 
     patches = [
-        patch.object(pipeline_runner, "run_phase_metadata", _phase_stub("metadata")),
-        patch.object(pipeline_runner, "run_parallel_phases", _capture_parallel),
-        patch.object(pipeline_runner, "run_phase_plan", _phase_stub("plan")),
-        patch.object(pipeline_runner, "run_phase_extraction", _phase_stub("extraction")),
-        patch.object(pipeline_runner, "run_phase_synthesis", _phase_stub("synthesis")),
-        patch.object(pipeline_runner, "run_phase_enrichment", _phase_stub("enrichment")),
-        patch.object(pipeline_runner, "run_phase_assembly", _phase_stub("assembly")),
+        patch.object(pipeline_orchestration, "run_phase_metadata", _phase_stub("metadata")),
+        patch.object(pipeline_orchestration, "run_parallel_phases", _capture_parallel),
+        patch.object(pipeline_orchestration, "run_phase_plan", _phase_stub("plan")),
+        patch.object(pipeline_orchestration, "run_phase_extraction", _phase_stub("extraction")),
+        patch.object(pipeline_orchestration, "run_phase_synthesis", _phase_stub("synthesis")),
+        patch.object(pipeline_orchestration, "run_phase_enrichment", _phase_stub("enrichment")),
+        patch.object(pipeline_orchestration, "run_phase_assembly", _phase_stub("assembly")),
     ]
     for p in patches:
         p.start()
     try:
         _ = [
-            ev async for ev in pipeline_runner._run_pipeline_phases(ctx, MagicMock(), "vsid", timer)
+            ev
+            async for ev in pipeline_orchestration.run_pipeline_phases(
+                ctx, MagicMock(), "vsid", timer
+            )
         ]
         assert len(parallel_calls) == 2, "transcript+frames AND synthesis+enrichment"
         assert parallel_calls[1] == [
-            pipeline_runner.run_phase_synthesis,
-            pipeline_runner.run_phase_enrichment,
+            pipeline_orchestration.run_phase_synthesis,
+            pipeline_orchestration.run_phase_enrichment,
         ]
     finally:
         for p in patches:
@@ -142,19 +146,22 @@ async def test_synthesis_enrichment_sequential_when_extraction_empty() -> None:
         yield "data: parallel\n\n"
 
     patches = [
-        patch.object(pipeline_runner, "run_phase_metadata", _phase_stub("metadata")),
-        patch.object(pipeline_runner, "run_parallel_phases", _capture_parallel),
-        patch.object(pipeline_runner, "run_phase_plan", _phase_stub("plan")),
-        patch.object(pipeline_runner, "run_phase_extraction", _phase_stub("extraction")),
-        patch.object(pipeline_runner, "run_phase_synthesis", _phase_stub("synthesis")),
-        patch.object(pipeline_runner, "run_phase_enrichment", _phase_stub("enrichment")),
-        patch.object(pipeline_runner, "run_phase_assembly", _phase_stub("assembly")),
+        patch.object(pipeline_orchestration, "run_phase_metadata", _phase_stub("metadata")),
+        patch.object(pipeline_orchestration, "run_parallel_phases", _capture_parallel),
+        patch.object(pipeline_orchestration, "run_phase_plan", _phase_stub("plan")),
+        patch.object(pipeline_orchestration, "run_phase_extraction", _phase_stub("extraction")),
+        patch.object(pipeline_orchestration, "run_phase_synthesis", _phase_stub("synthesis")),
+        patch.object(pipeline_orchestration, "run_phase_enrichment", _phase_stub("enrichment")),
+        patch.object(pipeline_orchestration, "run_phase_assembly", _phase_stub("assembly")),
     ]
     for p in patches:
         p.start()
     try:
         events = [
-            ev async for ev in pipeline_runner._run_pipeline_phases(ctx, MagicMock(), "vsid", timer)
+            ev
+            async for ev in pipeline_orchestration.run_pipeline_phases(
+                ctx, MagicMock(), "vsid", timer
+            )
         ]
     finally:
         for p in patches:
@@ -186,7 +193,10 @@ async def test_done_emitted_after_translation_for_non_english() -> None:
         p.start()
     try:
         events = [
-            ev async for ev in pipeline_runner._run_pipeline_phases(ctx, MagicMock(), "vsid", timer)
+            ev
+            async for ev in pipeline_orchestration.run_pipeline_phases(
+                ctx, MagicMock(), "vsid", timer
+            )
         ]
     finally:
         for p in patches:
@@ -219,7 +229,10 @@ async def test_no_done_when_translation_raises() -> None:
         p.start()
     try:
         events = [
-            ev async for ev in pipeline_runner._run_pipeline_phases(ctx, MagicMock(), "vsid", timer)
+            ev
+            async for ev in pipeline_orchestration.run_pipeline_phases(
+                ctx, MagicMock(), "vsid", timer
+            )
         ]
     finally:
         for p in patches:
@@ -258,7 +271,7 @@ async def test_faithfulness_task_overrides_inherited_feature_var():
         "src.services.pipeline.faithfulness.run_faithfulness_check",
         new=fake_run_check,
     ):
-        task = pipeline_runner._launch_faithfulness_check(ctx)
+        task = pipeline_faithfulness._launch_faithfulness_check(ctx)
         assert task is not None
         await task
 
@@ -292,7 +305,7 @@ async def test_faithfulness_task_does_not_mutate_parent_feature_var():
             "src.services.pipeline.faithfulness.run_faithfulness_check",
             new=noop_run,
         ):
-            task = pipeline_runner._launch_faithfulness_check(ctx)
+            task = pipeline_faithfulness._launch_faithfulness_check(ctx)
             assert task is not None
             await task
 
@@ -310,7 +323,7 @@ async def test_launch_returns_none_when_extraction_data_missing():
     ctx.clean_text = "transcript"
     ctx.youtube_id = "abc123"
 
-    assert pipeline_runner._launch_faithfulness_check(ctx) is None
+    assert pipeline_faithfulness._launch_faithfulness_check(ctx) is None
 
 
 @pytest.mark.asyncio
@@ -321,7 +334,7 @@ async def test_launch_returns_none_when_transcript_missing():
     ctx.clean_text = ""
     ctx.youtube_id = "abc123"
 
-    assert pipeline_runner._launch_faithfulness_check(ctx) is None
+    assert pipeline_faithfulness._launch_faithfulness_check(ctx) is None
 
 
 @pytest.mark.asyncio
@@ -448,7 +461,7 @@ async def test_stream_reads_user_id_from_contextvars_when_entry_has_none():
 
 
 def _timer() -> MagicMock:
-    """Timer stand-in for _run_pipeline_phases (only read by the DONE log)."""
+    """Timer stand-in for run_pipeline_phases (only read by the DONE log)."""
     timer = MagicMock()
     timer.elapsed = MagicMock(return_value=1.0)
     return timer
@@ -476,14 +489,16 @@ async def _drain_phases(
     repository: MagicMock,
     *extra_patches: AbstractContextManager[object],
 ) -> list[str]:
-    """Drain _run_pipeline_phases under _patched_phases() plus ``extra_patches``
+    """Drain run_pipeline_phases under _patched_phases() plus ``extra_patches``
     (entered last, so they override a default patch on the same attribute)."""
     with ExitStack() as stack:
         for p in [*_patched_phases(), *extra_patches]:
             stack.enter_context(p)
         return [
             ev
-            async for ev in pipeline_runner._run_pipeline_phases(ctx, repository, "vsid", _timer())
+            async for ev in pipeline_orchestration.run_pipeline_phases(
+                ctx, repository, "vsid", _timer()
+            )
         ]
 
 
@@ -506,7 +521,7 @@ async def _stream_direct(
     (status callback HTTP, override clear) stubbed out."""
     with (
         patch.object(pipeline_runner.settings, "REDIS_ENABLED", False),
-        patch.object(pipeline_runner, "_run_pipeline_phases", new=phases_stub),
+        patch.object(pipeline_runner, "run_pipeline_phases", new=phases_stub),
         patch.object(pipeline_runner, "send_video_status", new=AsyncMock()),
         patch.object(pipeline_runner, "clear_override", new=MagicMock()),
     ):
@@ -529,7 +544,7 @@ async def test_records_transcript_meta_after_transcript_phase_success() -> None:
     trace_meta = MagicMock()
 
     await _drain_phases(
-        ctx, repository, patch.object(pipeline_runner, "update_trace_metadata", trace_meta)
+        ctx, repository, patch.object(pipeline_orchestration, "update_trace_metadata", trace_meta)
     )
 
     repository.set_transcript_meta.assert_called_once()
@@ -563,7 +578,9 @@ async def test_records_failed_transcript_meta_when_transcript_phase_raises() -> 
 
     with pytest.raises(TranscriptError):
         await _drain_phases(
-            ctx, repository, patch.object(pipeline_runner, "run_parallel_phases", _parallel_raises)
+            ctx,
+            repository,
+            patch.object(pipeline_orchestration, "run_parallel_phases", _parallel_raises),
         )
 
     repository.set_transcript_meta.assert_called_once()
@@ -681,7 +698,7 @@ async def test_transcript_meta_clear_failure_does_not_abort_run() -> None:
     repository.clear_transcript_meta.side_effect = RuntimeError("mongo down")
     with (
         patch.object(pipeline_runner.settings, "REDIS_ENABLED", False),
-        patch.object(pipeline_runner, "_run_pipeline_phases", new=_phases_stub),
+        patch.object(pipeline_runner, "run_pipeline_phases", new=_phases_stub),
         patch.object(pipeline_runner, "send_video_status", new=AsyncMock()),
         patch.object(pipeline_runner, "clear_override", new=MagicMock()),
     ):
@@ -742,12 +759,12 @@ async def test_failed_run_closes_both_downloads_before_persisting_timing() -> No
     with ExitStack() as stack:
         for p in _patched_phases():
             stack.enter_context(p)
-        stack.enter_context(patch.object(pipeline_runner, "run_phase_plan", _plan_fails))
-        stack.enter_context(patch.object(pipeline_runner, "persist_run_timing", _persist))
+        stack.enter_context(patch.object(pipeline_orchestration, "run_phase_plan", _plan_fails))
+        stack.enter_context(patch.object(pipeline_orchestration, "persist_run_timing", _persist))
         with pytest.raises(RuntimeError, match="plan exploded"):
             _ = [
                 ev
-                async for ev in pipeline_runner._run_pipeline_phases(
+                async for ev in pipeline_orchestration.run_pipeline_phases(
                     ctx, MagicMock(), "vsid", timer
                 )
             ]
@@ -769,12 +786,14 @@ async def test_failed_run_cancels_the_unjoined_t0_tasks() -> None:
     with ExitStack() as stack:
         for p in _patched_phases():
             stack.enter_context(p)
-        stack.enter_context(patch.object(pipeline_runner, "run_phase_metadata", _metadata_fails))
-        stack.enter_context(patch.object(pipeline_runner, "persist_run_timing", AsyncMock()))
+        stack.enter_context(
+            patch.object(pipeline_orchestration, "run_phase_metadata", _metadata_fails)
+        )
+        stack.enter_context(patch.object(pipeline_orchestration, "persist_run_timing", AsyncMock()))
         with pytest.raises(RuntimeError):
             _ = [
                 ev
-                async for ev in pipeline_runner._run_pipeline_phases(
+                async for ev in pipeline_orchestration.run_pipeline_phases(
                     ctx, MagicMock(), "vsid", timer
                 )
             ]
@@ -797,9 +816,14 @@ async def test_phase_two_runs_transcript_after_captions_with_frames_and_descript
     with ExitStack() as stack:
         for p in _patched_phases():
             stack.enter_context(p)
-        stack.enter_context(patch.object(pipeline_runner, "run_parallel_phases", _capture_parallel))
+        stack.enter_context(
+            patch.object(pipeline_orchestration, "run_parallel_phases", _capture_parallel)
+        )
         _ = [
-            ev async for ev in pipeline_runner._run_pipeline_phases(ctx, MagicMock(), "vsid", timer)
+            ev
+            async for ev in pipeline_orchestration.run_pipeline_phases(
+                ctx, MagicMock(), "vsid", timer
+            )
         ]
 
     assert groups[0] == ["run_phase_transcript", "run_phase_frames", "run_phase_description"]
