@@ -1,0 +1,137 @@
+"""The extraction prompt reads [m:ss]-marked transcript text (pipeline-1min 1a.4).
+
+Markers exist only in the prompt: ``ctx.clean_text`` (Qdrant, faithfulness) keeps
+the unmarked text, and chunked batches keep absolute times.
+"""
+
+from __future__ import annotations
+
+from types import SimpleNamespace
+from typing import Any
+from unittest.mock import AsyncMock, patch
+
+from src.services.pipeline.phases import extraction as extraction_phase
+from src.services.pipeline.pipeline_helpers import TranscriptData
+from src.services.transcript.render import MARKER_PATTERN, marker_seconds
+from src.services.transcription.transcript import clean_transcript
+
+
+def _segments(duration: int, step: int = 5) -> list[dict[str, Any]]:
+    return [
+        {"text": f"words at {start} seconds", "start": float(start), "duration": float(step)}
+        for start in range(0, duration, step)
+    ]
+
+
+def _ctx(duration: int, segments: list[dict[str, Any]] | None = None) -> SimpleNamespace:
+    """Minimal PipelineContext stand-in for the extraction phase."""
+    segs = _segments(duration) if segments is None else segments
+    raw_text = " ".join(s["text"] for s in segs) or "Title: metadata only"
+    return SimpleNamespace(
+        video_summary_id="vs1",
+        youtube_id="yt1",
+        video_data=SimpleNamespace(
+            title="T", channel="C", duration=duration, chapters=[], description=""
+        ),
+        triage=SimpleNamespace(content_tags=["learning"], modifiers=[], primary_tag="learning"),
+        transcript_data=TranscriptData(
+            segments=segs, raw_text=raw_text, transcript_type="manual", source="ytdlp"
+        ),
+        clean_text=clean_transcript(raw_text),
+        frame_descriptions=[],
+        scene_frames_all=[],
+        scene_frames_gallery=[],
+        description_analysis=None,
+        llm_service=AsyncMock(),
+        video_dna_compact="",
+        chapters=None,
+        extraction_data=None,
+        extraction_coverage=None,
+        plan_result=None,
+        repository=AsyncMock(),
+    )
+
+
+def _capturing_extract(captured: dict[str, Any]):
+    async def _extract(_llm, _triage, transcript, _video_info, **kwargs):
+        captured["transcript"] = transcript
+        captured["chapters"] = kwargs.get("chapters")
+        yield {"event": "extraction_complete", "data": {"learning": {"keyPoints": []}}}
+
+    return _extract
+
+
+async def _run(ctx: SimpleNamespace) -> dict[str, Any]:
+    captured: dict[str, Any] = {}
+    with patch.object(extraction_phase, "extract", _capturing_extract(captured)):
+        async for _ in extraction_phase.run_phase_extraction(ctx):
+            pass
+    return captured
+
+
+class TestBuildPromptTranscript:
+    def test_should_render_markers_from_the_segments(self):
+        ctx = _ctx(60)
+
+        prompt = extraction_phase.build_prompt_transcript(ctx)
+
+        assert marker_seconds(prompt) == [0, 20, 40]
+
+    def test_should_carry_exactly_the_clean_text_words(self):
+        ctx = _ctx(60)
+
+        prompt = extraction_phase.build_prompt_transcript(ctx)
+
+        unmarked = " ".join(MARKER_PATTERN.sub("", ln).strip() for ln in prompt.splitlines())
+        assert unmarked == ctx.clean_text
+
+    def test_should_fall_back_to_clean_text_without_segments(self):
+        ctx = _ctx(60, segments=[])
+
+        prompt = extraction_phase.build_prompt_transcript(ctx)
+
+        assert prompt == ctx.clean_text
+
+    def test_should_keep_visual_annotations_when_frames_were_described(self):
+        ctx = _ctx(60)
+        ctx.frame_descriptions = [
+            {"timestamp_sec": 30, "content": "whiteboard diagram", "frame_index": 0}
+        ]
+
+        prompt = extraction_phase.build_prompt_transcript(ctx)
+
+        assert "[VISUAL at 0:30" in prompt
+
+
+class TestExtractionPhaseUsesMarkedTranscript:
+    async def test_should_send_the_marked_transcript_to_extraction(self):
+        ctx = _ctx(120)
+
+        captured = await _run(ctx)
+
+        assert captured["transcript"].startswith("[0:00] words at 0 seconds")
+
+    async def test_should_leave_clean_text_unmarked(self):
+        ctx = _ctx(120)
+        clean_before = ctx.clean_text
+
+        await _run(ctx)
+
+        assert ctx.clean_text == clean_before
+        assert not MARKER_PATTERN.search(ctx.clean_text)
+
+    async def test_should_give_chunked_batches_absolute_times(self):
+        ctx = _ctx(1800)
+
+        with patch(
+            "src.services.transcription.transcript_chunker._detect_chapters_with_ai",
+            new_callable=AsyncMock,
+            return_value=None,
+        ):
+            captured = await _run(ctx)
+
+        chapters = captured["chapters"]
+        assert len(chapters) > 1
+        assert [marker_seconds(ch.text)[0] for ch in chapters] == [
+            int(ch.start_seconds) for ch in chapters
+        ]

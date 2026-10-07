@@ -29,12 +29,35 @@ from src.services.pipeline.post_processor import (
     validate_extraction_counts,
 )
 from src.services.pipeline.prompt_builder import format_gallery_frames_for_extraction
+from src.services.pipeline.scene_frames import inject_visual_context
 from src.services.pipeline.synthesis import synthesize
+from src.services.transcript.render import render_transcript
 
 if TYPE_CHECKING:
     from src.services.pipeline.context import PipelineContext
 
 logger = logging.getLogger(__name__)
+
+
+def build_prompt_transcript(ctx: PipelineContext) -> str:
+    """The transcript the extraction prompt reads: ``[m:ss]``-marked, from segments.
+
+    Markers live only in the prompt — ``ctx.clean_text`` (Qdrant, faithfulness)
+    and the S3 blob stay unmarked. Metadata-only transcripts carry no segments,
+    so they fall back to ``ctx.clean_text``.
+    """
+    segments = ctx.transcript_data.segments if ctx.transcript_data else []
+    marked = render_transcript(segments)
+    if not marked:
+        return ctx.clean_text
+    # Phase 2.5 annotated clean_text, which this text no longer derives from:
+    # same injection here so extraction keeps today's visual facts (1c.2 moves
+    # both to a <visual_annotations> block).
+    if ctx.frame_descriptions or ctx.scene_frames_all:
+        marked = inject_visual_context(
+            marked, segments, ctx.frame_descriptions, ctx.scene_frames_all
+        )
+    return marked
 
 
 def _record_extraction_coverage(
@@ -138,7 +161,7 @@ async def _attempt_synthesis_fed_retry(
     async for evt in extract(
         ctx.llm_service,
         ctx.triage,
-        ctx.clean_text,
+        build_prompt_transcript(ctx),
         video_info,
         chapters=chapters,
         video_context=ctx.video_dna_compact,
@@ -178,6 +201,8 @@ async def run_phase_extraction(ctx: PipelineContext) -> AsyncGenerator[str, None
         "chapters": getattr(ctx.video_data, "chapters", None),
     }
 
+    prompt_transcript = build_prompt_transcript(ctx)
+
     # Chapter splitting for long videos (>30 min)
     chapters = None
     duration = ctx.video_data.duration or 0
@@ -216,7 +241,7 @@ async def run_phase_extraction(ctx: PipelineContext) -> AsyncGenerator[str, None
             chapters = await split_transcript_into_chapters(
                 video_data=video_info,
                 segments=seg_dicts,
-                transcript=ctx.clean_text,
+                transcript=prompt_transcript,
                 llm_service=ctx.llm_service,
                 description_chapters=description_chapters,
             )
@@ -242,7 +267,7 @@ async def run_phase_extraction(ctx: PipelineContext) -> AsyncGenerator[str, None
         async for evt in extract(
             ctx.llm_service,
             ctx.triage,
-            ctx.clean_text,
+            prompt_transcript,
             video_info,
             chapters=chapters,
             video_context=ctx.video_dna_compact,

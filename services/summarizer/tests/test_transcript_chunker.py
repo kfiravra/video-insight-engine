@@ -3,6 +3,7 @@
 import pytest
 from unittest.mock import AsyncMock, patch
 
+from src.services.transcript.render import marker_seconds, render_transcript
 from src.services.transcription.transcript_chunker import (
     ChapterChunk,
     _build_sampled_excerpts,
@@ -11,6 +12,7 @@ from src.services.transcription.transcript_chunker import (
     _from_youtube_chapters,
     _subdivide_oversized_chapters,
     _time_split_chapters,
+    force_split_by_sentences,
     split_transcript_into_chapters,
 )
 
@@ -18,6 +20,7 @@ from src.services.transcription.transcript_chunker import (
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 def _make_segments(duration_seconds: int, words_per_second: float = 2.5) -> list[dict]:
     """Create mock transcript segments spanning the given duration."""
@@ -27,11 +30,13 @@ def _make_segments(duration_seconds: int, words_per_second: float = 2.5) -> list
         end_ms = min(start_ms + interval_ms, duration_seconds * 1000)
         word_count = int(words_per_second * (interval_ms / 1000))
         text = " ".join(f"word{i}" for i in range(word_count))
-        segments.append({
-            "text": text,
-            "startMs": start_ms,
-            "endMs": end_ms,
-        })
+        segments.append(
+            {
+                "text": text,
+                "startMs": start_ms,
+                "endMs": end_ms,
+            }
+        )
     return segments
 
 
@@ -51,6 +56,7 @@ def _make_youtube_chapters(count: int, duration: float) -> list[dict]:
 # ---------------------------------------------------------------------------
 # YouTube chapters path
 # ---------------------------------------------------------------------------
+
 
 class TestFromYouTubeChapters:
     def test_converts_youtube_chapters_to_chunks(self):
@@ -111,6 +117,7 @@ class TestFromYouTubeChapters:
 # Time-based splitting
 # ---------------------------------------------------------------------------
 
+
 class TestTimeSplitChapters:
     def test_splits_45min_video_into_chunks(self):
         duration = 2700  # 45 min
@@ -160,6 +167,7 @@ class TestTimeSplitChapters:
 # ---------------------------------------------------------------------------
 # Main orchestrator
 # ---------------------------------------------------------------------------
+
 
 class TestSplitTranscriptIntoChapters:
     @pytest.mark.asyncio
@@ -213,15 +221,46 @@ class TestSplitTranscriptIntoChapters:
             "src.services.transcription.transcript_chunker._detect_chapters_with_ai",
             new_callable=AsyncMock,
         ) as mock_detect:
-            from src.services.transcription.transcript_chunker import ChapterChunk as CC, _time_split_chapters
+            from src.services.transcription.transcript_chunker import (
+                ChapterChunk as CC,
+                _time_split_chapters,
+            )
+
             # Build the expected result from AI detection
             mock_detect.return_value = [
-                CC(0, "Intro", 0, 900, " ".join(s["text"] for s in segments if s["startMs"] < 900000), "ai_detected", 5000),
-                CC(1, "Main", 900, 1800, " ".join(s["text"] for s in segments if 900000 <= s["startMs"] < 1800000), "ai_detected", 5000),
-                CC(2, "Conclusion", 1800, 2700, " ".join(s["text"] for s in segments if s["startMs"] >= 1800000), "ai_detected", 5000),
+                CC(
+                    0,
+                    "Intro",
+                    0,
+                    900,
+                    " ".join(s["text"] for s in segments if s["startMs"] < 900000),
+                    "ai_detected",
+                    5000,
+                ),
+                CC(
+                    1,
+                    "Main",
+                    900,
+                    1800,
+                    " ".join(s["text"] for s in segments if 900000 <= s["startMs"] < 1800000),
+                    "ai_detected",
+                    5000,
+                ),
+                CC(
+                    2,
+                    "Conclusion",
+                    1800,
+                    2700,
+                    " ".join(s["text"] for s in segments if s["startMs"] >= 1800000),
+                    "ai_detected",
+                    5000,
+                ),
             ]
             result = await split_transcript_into_chapters(
-                video_data, segments, "full transcript", llm_service=mock_llm,
+                video_data,
+                segments,
+                "full transcript",
+                llm_service=mock_llm,
             )
 
         assert len(result) == 3
@@ -243,7 +282,10 @@ class TestSplitTranscriptIntoChapters:
             return_value=None,  # AI detection fails
         ):
             result = await split_transcript_into_chapters(
-                video_data, segments, "full transcript", llm_service=mock_llm,
+                video_data,
+                segments,
+                "full transcript",
+                llm_service=mock_llm,
             )
 
         assert len(result) >= 2
@@ -262,11 +304,13 @@ class TestSplitTranscriptIntoChapters:
         segments = []
         interval = 5  # 5-second segments
         for start in range(0, duration, interval):
-            segments.append({
-                "text": f"word{start // interval}",
-                "start": float(start),
-                "duration": float(interval),
-            })
+            segments.append(
+                {
+                    "text": f"word{start // interval}",
+                    "start": float(start),
+                    "duration": float(interval),
+                }
+            )
 
         video_data = {"duration": duration}
 
@@ -306,8 +350,12 @@ class TestSplitTranscriptIntoChapters:
                 "{title} {description} {transcript_samples} {duration_minutes}"
             )
             await tc._detect_chapters_with_ai(
-                title="t", description="d", transcript="word " * 100,
-                duration=duration, segments=segments, llm_service=mock_llm,
+                title="t",
+                description="d",
+                transcript="word " * 100,
+                duration=duration,
+                segments=segments,
+                llm_service=mock_llm,
             )
 
             assert mock_call.await_count == 1
@@ -346,8 +394,12 @@ class TestSplitTranscriptIntoChapters:
                     "{title} {description} {first_500_words} {last_500_words} {duration_minutes}"
                 )
                 await tc._detect_chapters_with_ai(
-                    title="t", description="d", transcript="word " * 50,
-                    duration=duration, segments=segments, llm_service=mock_llm,
+                    title="t",
+                    description="d",
+                    transcript="word " * 50,
+                    duration=duration,
+                    segments=segments,
+                    llm_service=mock_llm,
                 )
         finally:
             llm_feature_var.reset(outer_token)
@@ -364,11 +416,13 @@ class TestSplitTranscriptIntoChapters:
         duration = 600  # 10 min
         segments = []
         for start in range(0, duration, 5):
-            segments.append({
-                "text": f"seg_at_{start}s",
-                "start": float(start),
-                "duration": 5.0,
-            })
+            segments.append(
+                {
+                    "text": f"seg_at_{start}s",
+                    "start": float(start),
+                    "duration": 5.0,
+                }
+            )
 
         chapters = [
             {"title": "Part 1", "start_time": 0, "end_time": 300},
@@ -391,6 +445,7 @@ class TestSplitTranscriptIntoChapters:
 # ---------------------------------------------------------------------------
 # Description-timestamp path (Tier 2)
 # ---------------------------------------------------------------------------
+
 
 class TestFromDescriptionTimestamps:
     def test_converts_markers_to_chunks_with_derived_ends(self):
@@ -451,6 +506,7 @@ class TestFromDescriptionTimestamps:
 # Full-transcript sampling + coverage validation (Tier 3 rework)
 # ---------------------------------------------------------------------------
 
+
 class TestBuildSampledExcerpts:
     def test_excerpts_span_the_whole_video(self):
         duration = 16789  # 4.5h — the regression case
@@ -471,8 +527,15 @@ class TestBuildSampledExcerpts:
 class TestChaptersCoverDuration:
     def _chunks(self, ranges: list[tuple[float, float]]) -> list[ChapterChunk]:
         return [
-            ChapterChunk(index=i, title=f"c{i}", start_seconds=s, end_seconds=e,
-                         text="x", source="ai_detected", token_estimate=1)
+            ChapterChunk(
+                index=i,
+                title=f"c{i}",
+                start_seconds=s,
+                end_seconds=e,
+                text="x",
+                source="ai_detected",
+                token_estimate=1,
+            )
             for i, (s, e) in enumerate(ranges)
         ]
 
@@ -500,16 +563,23 @@ class TestAIDetectionCoverageGate:
         duration = 16789
         segments = _make_segments(duration)
         # LLM returns chapters covering only 0–5696s (the 1:34 of 4:39 bug).
-        ai_json = '[{"title":"A","startSeconds":0,"endSeconds":2800},' \
-                  '{"title":"B","startSeconds":2800,"endSeconds":5696}]'
+        ai_json = (
+            '[{"title":"A","startSeconds":0,"endSeconds":2800},'
+            '{"title":"B","startSeconds":2800,"endSeconds":5696}]'
+        )
 
         with patch(
             "src.services.transcription.transcript_chunker.call_llm_with_retry",
-            new_callable=AsyncMock, return_value=ai_json,
+            new_callable=AsyncMock,
+            return_value=ai_json,
         ):
             result = await tc._detect_chapters_with_ai(
-                title="t", description="d", transcript="word " * 500,
-                duration=duration, segments=segments, llm_service=AsyncMock(),
+                title="t",
+                description="d",
+                transcript="word " * 500,
+                duration=duration,
+                segments=segments,
+                llm_service=AsyncMock(),
             )
 
         assert result is None
@@ -520,16 +590,23 @@ class TestAIDetectionCoverageGate:
 
         duration = 16789
         segments = _make_segments(duration)
-        ai_json = '[{"title":"A","startSeconds":0,"endSeconds":8000},' \
-                  '{"title":"B","startSeconds":8000,"endSeconds":16700}]'
+        ai_json = (
+            '[{"title":"A","startSeconds":0,"endSeconds":8000},'
+            '{"title":"B","startSeconds":8000,"endSeconds":16700}]'
+        )
 
         with patch(
             "src.services.transcription.transcript_chunker.call_llm_with_retry",
-            new_callable=AsyncMock, return_value=ai_json,
+            new_callable=AsyncMock,
+            return_value=ai_json,
         ):
             result = await tc._detect_chapters_with_ai(
-                title="t", description="d", transcript="word " * 500,
-                duration=duration, segments=segments, llm_service=AsyncMock(),
+                title="t",
+                description="d",
+                transcript="word " * 500,
+                duration=duration,
+                segments=segments,
+                llm_service=AsyncMock(),
             )
 
         assert result is not None
@@ -569,6 +646,7 @@ class TestDescriptionPathOrdering:
 # ---------------------------------------------------------------------------
 # Oversized-chapter subdivision (Round 2 — the giant-tail-chapter bug)
 # ---------------------------------------------------------------------------
+
 
 class TestSubdivideOversizedChapters:
     def test_splits_giant_chapter_into_span_bounded_pieces(self):
@@ -621,19 +699,119 @@ class TestSubdivideOversizedChapters:
         duration = 16789
         segments = _make_segments(duration)
         # AI returns 2 chapters, the second spanning 1:40:00 → end (3h).
-        ai_json = '[{"title":"Intro","startSeconds":0,"endSeconds":6000},' \
-                  '{"title":"Final","startSeconds":6000,"endSeconds":16789}]'
+        ai_json = (
+            '[{"title":"Intro","startSeconds":0,"endSeconds":6000},'
+            '{"title":"Final","startSeconds":6000,"endSeconds":16789}]'
+        )
 
         with patch(
             "src.services.transcription.transcript_chunker.call_llm_with_retry",
-            new_callable=AsyncMock, return_value=ai_json,
+            new_callable=AsyncMock,
+            return_value=ai_json,
         ):
             result = await split_transcript_into_chapters(
                 video_data={"duration": duration, "title": "T", "chapters": None},
-                segments=segments, transcript="word " * 2000, llm_service=AsyncMock(),
+                segments=segments,
+                transcript="word " * 2000,
+                llm_service=AsyncMock(),
             )
 
         max_seconds = settings.MAX_MINUTES_PER_BATCH * 60
         assert all((c.end_seconds - c.start_seconds) <= max_seconds + 1 for c in result)
         assert result[0].start_seconds == 0
         assert result[-1].end_seconds == duration
+
+
+# ---------------------------------------------------------------------------
+# Chunk texts carry absolute [m:ss] markers (pipeline-1min 1a.4)
+# ---------------------------------------------------------------------------
+
+
+def _sentence_segments(count: int, seconds_each: float = 5.0, words: int = 10) -> list[dict]:
+    """Raw ``{text, start, duration}`` segments, one punctuated sentence each."""
+    return [
+        {
+            "text": " ".join(f"w{i}x{j}" for j in range(words)) + ".",
+            "start": i * seconds_each,
+            "duration": seconds_each,
+        }
+        for i in range(count)
+    ]
+
+
+def _markers_within_bounds(chunk: ChapterChunk) -> bool:
+    return all(chunk.start_seconds <= t <= chunk.end_seconds for t in marker_seconds(chunk.text))
+
+
+class TestChunkTextsCarryMarkers:
+    @pytest.mark.asyncio
+    async def test_should_open_each_time_split_chunk_on_its_absolute_start(self):
+        result = await split_transcript_into_chapters(
+            {"duration": 2700}, _make_segments(2700), "full transcript"
+        )
+
+        assert [marker_seconds(ch.text)[0] for ch in result] == [
+            int(ch.start_seconds) for ch in result
+        ]
+
+    @pytest.mark.asyncio
+    async def test_should_keep_every_chunk_marker_inside_its_chapter_range(self):
+        result = await split_transcript_into_chapters(
+            {"duration": 2700, "chapters": _make_youtube_chapters(6, 2700)},
+            _make_segments(2700),
+            "full transcript",
+        )
+
+        assert all(_markers_within_bounds(ch) for ch in result)
+
+    def test_should_render_chunks_past_one_hour_as_h_mm_ss(self):
+        chapters = [
+            {"title": "Early", "start_time": 0, "end_time": 3600},
+            {"title": "Late", "start_time": 3600, "end_time": 3900},
+        ]
+
+        result = _from_youtube_chapters(chapters, _make_segments(3900), 3900)
+
+        assert result is not None
+        assert result[1].text.startswith("[1:00:00] ")
+
+
+class TestForceSplitBoundsFromMarkers:
+    def _split(self, segment_count: int = 1200, target_chunks: int = 4) -> list[ChapterChunk]:
+        segments = _sentence_segments(segment_count)
+        duration = segment_count * 5.0
+        marked = render_transcript(segments)
+        return force_split_by_sentences(marked, duration, target_chunks=target_chunks)
+
+    def test_should_keep_every_marker_inside_its_chunk_bounds(self):
+        chunks = self._split()
+
+        assert len(chunks) >= 2
+        assert all(_markers_within_bounds(ch) for ch in chunks)
+
+    def test_should_make_bounds_contiguous_from_zero_to_duration(self):
+        chunks = self._split()
+
+        assert chunks[0].start_seconds == 0.0
+        assert chunks[-1].end_seconds == 6000.0
+        assert all(a.end_seconds == b.start_seconds for a, b in zip(chunks, chunks[1:]))
+
+    def test_should_start_a_chunk_that_opens_on_a_marker_at_that_marker(self):
+        chunks = self._split()  # 4 sentences per block, 300 per chunk → block-aligned
+
+        assert [c.start_seconds for c in chunks[1:]] == [
+            marker_seconds(c.text)[0] for c in chunks[1:]
+        ]
+
+    def test_should_start_a_chunk_that_opens_mid_block_at_the_previous_marker(self):
+        chunks = self._split(segment_count=1203, target_chunks=3)  # 401 per chunk
+
+        assert not chunks[1].text.startswith("[")
+        assert chunks[1].start_seconds == marker_seconds(chunks[0].text)[-1]
+
+    def test_should_keep_proportional_bounds_for_unmarked_text(self):
+        text = " ".join(s["text"] for s in _sentence_segments(1200))
+
+        chunks = force_split_by_sentences(text, 6000.0, target_chunks=4)
+
+        assert [c.start_seconds for c in chunks] == [0.0, 1500.0, 3000.0, 4500.0]

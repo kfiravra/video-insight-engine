@@ -1,4 +1,5 @@
 """Adaptive structured extraction — 1-N LLM calls based on transcript length and duration."""
+
 from __future__ import annotations
 
 import asyncio
@@ -30,8 +31,8 @@ logger = logging.getLogger(__name__)
 PROMPTS_DIR = Path(__file__).parent.parent.parent / "prompts"
 
 # Word-count thresholds for adaptive strategy (~1.33 tokens per word for English)
-SINGLE_THRESHOLD = 5333       # ~7K tokens → single call
-OVERFLOW_THRESHOLD = 20000    # ~27K tokens → overflow extraction
+SINGLE_THRESHOLD = 5333  # ~7K tokens → single call
+OVERFLOW_THRESHOLD = 20000  # ~27K tokens → overflow extraction
 
 
 def _dynamic_timeout(word_count: int) -> float:
@@ -56,6 +57,7 @@ def _force_split_by_sentences(
     that many chunks instead of fixed word-count buckets.
     """
     from ...services.transcription.transcript_chunker import force_split_by_sentences
+
     return force_split_by_sentences(transcript, duration_seconds, target_chunks=target_chunks)
 
 
@@ -102,21 +104,29 @@ def _resolve_strategy(
             return "chunked", chapters, False
         if word_count <= SINGLE_THRESHOLD:
             return "single", None, False
-        force_chunks = _force_split_by_sentences(transcript, duration_seconds, target_chunks=target_chunks)
+        force_chunks = _force_split_by_sentences(
+            transcript, duration_seconds, target_chunks=target_chunks
+        )
         if len(force_chunks) >= 2:
             logger.info(
                 "Single-batch chunked input force-split into %d chunks (%d words) — bypassing batch_chapters",
-                len(force_chunks), word_count,
+                len(force_chunks),
+                word_count,
             )
             return "chunked", force_chunks, True
         logger.info("Force-split also yielded a single chunk — falling back to overflow")
         return "overflow", None, False
 
     if word_count > OVERFLOW_THRESHOLD:
-        force_chunks = _force_split_by_sentences(transcript, duration_seconds, target_chunks=target_chunks)
+        force_chunks = _force_split_by_sentences(
+            transcript, duration_seconds, target_chunks=target_chunks
+        )
         if len(force_chunks) >= 2:
-            logger.info("Force-splitting %d-word transcript into %d chunks (chapter splitting unavailable)",
-                        word_count, len(force_chunks))
+            logger.info(
+                "Force-splitting %d-word transcript into %d chunks (chapter splitting unavailable)",
+                word_count,
+                len(force_chunks),
+            )
             return "chunked", force_chunks, True
         return "overflow", None, False
 
@@ -152,9 +162,13 @@ async def extract(
     word_count = len(transcript.split())
     duration_seconds = video_data.get("duration", 0)
     duration_minutes = duration_seconds / 60
-    logger.info("Extraction: tags=%s, words=%d, duration=%.0fmin, chapters=%s",
-                triage_result.content_tags, word_count, duration_minutes,
-                len(chapters) if chapters else "none")
+    logger.info(
+        "Extraction: tags=%s, words=%d, duration=%.0fmin, chapters=%s",
+        triage_result.content_tags,
+        word_count,
+        duration_minutes,
+        len(chapters) if chapters else "none",
+    )
 
     # Load quality rules (merged from accuracy_rules + voice rules)
     rules_path = PROMPTS_DIR / "quality_rules.txt"
@@ -195,7 +209,11 @@ async def extract(
     )
 
     strategy, resolved_chunks, one_chunk_per_batch = _resolve_strategy(
-        use_chunked, chapters, word_count, transcript, duration_seconds,
+        use_chunked,
+        chapters,
+        word_count,
+        transcript,
+        duration_seconds,
     )
 
     use_fast_model = settings.EXTRACTION_USE_FAST_FIRST and not force_primary_model
@@ -206,22 +224,34 @@ async def extract(
         if resolved_chunks is None:
             raise ValueError("resolved_chunks required for chunked strategy")
         async for event in _chunked_extraction(
-            llm_service, triage_result, prompt_template, resolved_chunks,
+            llm_service,
+            triage_result,
+            prompt_template,
+            resolved_chunks,
             use_fast_model=use_fast_model,
             one_chunk_per_batch=one_chunk_per_batch,
         ):
             yield event
     elif strategy == "single":
         async for event in _single_extraction(
-            llm_service, triage_result, prompt_template, transcript,
+            llm_service,
+            triage_result,
+            prompt_template,
+            transcript,
             use_fast_model=use_fast_model,
         ):
             yield event
     else:  # "overflow"
-        overflow_text = "\n".join(ch.text for ch in chapters) if use_chunked and chapters else transcript
+        overflow_text = (
+            "\n".join(ch.text for ch in chapters) if use_chunked and chapters else transcript
+        )
         async for event in _overflow_extraction(
-            llm_service, triage_result, prompt_template, overflow_text,
-            word_count=word_count, use_fast_model=use_fast_model,
+            llm_service,
+            triage_result,
+            prompt_template,
+            overflow_text,
+            word_count=word_count,
+            use_fast_model=use_fast_model,
         ):
             yield event
 
@@ -235,15 +265,13 @@ def _format_prompt(template: str, transcript: str, batch_context: str = "") -> s
     remain — both substituted per call so {batch_context} stays in the
     dynamic (uncached) portion of the prompt.
     """
-    return (
-        template
-        .replace("{batch_context}", batch_context)
-        .replace("{transcript}", transcript)
-    )
+    return template.replace("{batch_context}", batch_context).replace("{transcript}", transcript)
 
 
 def _split_prompt_for_caching(
-    template: str, transcript: str, batch_context: str = "",
+    template: str,
+    transcript: str,
+    batch_context: str = "",
 ) -> tuple[str, str]:
     """Split extraction prompt into static (cacheable) and dynamic parts.
 
@@ -260,15 +288,16 @@ def _split_prompt_for_caching(
     marker = "<transcript>"
     idx = template.find(marker)
     if idx == -1:
-        logger.debug("Prompt caching skipped: <transcript> marker not found in template (len=%d)", len(template))
+        logger.debug(
+            "Prompt caching skipped: <transcript> marker not found in template (len=%d)",
+            len(template),
+        )
         return "", _format_prompt(template, transcript, batch_context)
 
-    static = template[:idx + len(marker)]
-    dynamic_suffix = template[idx + len(marker):]
-    dynamic = (
-        dynamic_suffix
-        .replace("{batch_context}", batch_context)
-        .replace("{transcript}", transcript)
+    static = template[: idx + len(marker)]
+    dynamic_suffix = template[idx + len(marker) :]
+    dynamic = dynamic_suffix.replace("{batch_context}", batch_context).replace(
+        "{transcript}", transcript
     )
     return static, dynamic
 
@@ -302,7 +331,7 @@ def _build_batch_context(
         "CRITICAL RULES FOR PARTIAL EXTRACTION:\n"
         "- Extract ONLY what THIS segment explicitly contains.\n"
         "- Return EMPTY arrays for fields not present in your segment — other batches cover them.\n"
-        "- A downstream merger combines all batches; DO NOT pad fields to meet \"no empty array\" or density quotas.\n"
+        '- A downstream merger combines all batches; DO NOT pad fields to meet "no empty array" or density quotas.\n'
         "- The completeness/density rules in the base prompt apply to the FULL video's MERGED output, not your batch in isolation.\n"
         "- DO NOT infer absence: a field absent here may be covered by another batch.\n"
         "</batch_partial_context>\n"
@@ -314,7 +343,9 @@ def _parse_llm_json(raw: str) -> dict:
     cleaned = strip_markdown_fences(raw)
     data = parse_json_response(cleaned)
     if not data:
-        logger.error("Failed to parse JSON from LLM response (len=%d): %.500s", len(raw), repr(raw[:500]))
+        logger.error(
+            "Failed to parse JSON from LLM response (len=%d): %.500s", len(raw), repr(raw[:500])
+        )
         raise ValueError("Failed to parse JSON from LLM response")
     return data
 
@@ -322,6 +353,7 @@ def _parse_llm_json(raw: str) -> dict:
 # ---------------------------------------------------------------------------
 # Single extraction (<5.3K words)
 # ---------------------------------------------------------------------------
+
 
 async def _single_extraction(
     llm_service: LLMService,
@@ -338,9 +370,14 @@ async def _single_extraction(
 
     yield {"event": "extraction_progress", "section": "all", "percent": 30}
     raw = await call_llm_with_retry(
-        llm_service, dynamic_prompt,
-        max_tokens=16384, timeout=240.0, max_retries=2, stage_name="extraction",
-        json_mode=True, cache_static=cache_static or None,
+        llm_service,
+        dynamic_prompt,
+        max_tokens=16384,
+        timeout=240.0,
+        max_retries=2,
+        stage_name="extraction",
+        json_mode=True,
+        cache_static=cache_static or None,
         use_fast_model=use_fast_model,
         model_override=settings.get_stage_model("extraction"),
     )
@@ -361,6 +398,7 @@ async def _single_extraction(
 # ---------------------------------------------------------------------------
 # Overflow extraction (5.3-20K words)
 # ---------------------------------------------------------------------------
+
 
 async def _overflow_extraction(
     llm_service: LLMService,
@@ -383,9 +421,14 @@ async def _overflow_extraction(
 
     yield {"event": "extraction_progress", "section": "all", "percent": 25}
     raw = await call_llm_with_retry(
-        llm_service, dynamic_prompt,
-        max_tokens=32768, timeout=timeout, max_retries=2, stage_name="extraction",
-        json_mode=True, cache_static=cache_static or None,
+        llm_service,
+        dynamic_prompt,
+        max_tokens=32768,
+        timeout=timeout,
+        max_retries=2,
+        stage_name="extraction",
+        json_mode=True,
+        cache_static=cache_static or None,
         use_fast_model=use_fast_model,
         model_override=settings.get_stage_model("extraction"),
     )
@@ -406,6 +449,7 @@ async def _overflow_extraction(
 # ---------------------------------------------------------------------------
 # Chunked extraction (>30 min with chapters)
 # ---------------------------------------------------------------------------
+
 
 def batch_chapters(
     chapters: list[ChapterChunk],
@@ -466,7 +510,11 @@ def _format_time(seconds: float) -> str:
 
 
 def _build_batch_transcript(batch: list[ChapterChunk]) -> str:
-    """Build chapter-headed transcript text for a batch."""
+    """Build chapter-headed transcript text for a batch.
+
+    Chunk texts carry absolute ``[m:ss]`` markers; each header's range is on the
+    same clock and contains every marker of its chunk.
+    """
     parts: list[str] = []
     for ch in batch:
         header = f"\n\n=== CHAPTER {ch.index + 1}: {ch.title} ({_format_time(ch.start_seconds)} - {_format_time(ch.end_seconds)}) ==="
@@ -507,12 +555,18 @@ async def _run_batch_extraction(
     """
     chapter_text = _build_batch_transcript(batch)
     cache_static, dynamic_prompt = _split_prompt_for_caching(
-        template, chapter_text, batch_context=batch_context,
+        template,
+        chapter_text,
+        batch_context=batch_context,
     )
     raw = await call_llm_with_retry(
-        llm_service, dynamic_prompt,
-        max_tokens=16384, timeout=300.0, max_retries=2,
-        stage_name=stage_name, json_mode=True,
+        llm_service,
+        dynamic_prompt,
+        max_tokens=16384,
+        timeout=300.0,
+        max_retries=2,
+        stage_name=stage_name,
+        json_mode=True,
         cache_static=cache_static or None,
         use_fast_model=use_fast_model,
         propagate_rate_limit=True,
@@ -560,15 +614,20 @@ async def _chunked_extraction(
         batches = batch_chapters(chapters)
     num_batches = len(batches)
     full_duration_seconds = max((ch.end_seconds for ch in chapters), default=0.0)
-    logger.info("Chunked extraction: %d chapters in %d batches%s",
-                len(chapters), num_batches,
-                " (one chunk per batch — force-split bypass)" if one_chunk_per_batch else "")
+    logger.info(
+        "Chunked extraction: %d chapters in %d batches%s",
+        len(chapters),
+        num_batches,
+        " (one chunk per batch — force-split bypass)" if one_chunk_per_batch else "",
+    )
 
     # Initial kickoff event so the UI can render "Extracting batch 1/N…".
     yield {
         "event": "extraction_progress",
         "section": "chunked",
-        "batch": 0, "of": num_batches, "percent": 5,
+        "batch": 0,
+        "of": num_batches,
+        "percent": 5,
     }
 
     parallel_limit = max(1, min(settings.EXTRACTION_PARALLEL_BATCHES, num_batches))
@@ -583,17 +642,23 @@ async def _chunked_extraction(
         async with semaphore:
             try:
                 batch_results[batch_idx] = await _run_batch_extraction(
-                    llm_service, template, batch,
+                    llm_service,
+                    template,
+                    batch,
                     stage_name=f"extraction_batch{batch_idx + 1}",
                     use_fast_model=use_fast_model,
                     batch_context=_build_batch_context(
-                        batch_idx, num_batches, batch, full_duration_seconds,
+                        batch_idx,
+                        num_batches,
+                        batch,
+                        full_duration_seconds,
                     ),
                 )
             except (RateLimitError, ServiceUnavailableError) as e:
                 logger.warning(
                     "Batch %d rate-limited (%s); queued for sequential fallback",
-                    batch_idx + 1, type(e).__name__,
+                    batch_idx + 1,
+                    type(e).__name__,
                 )
                 rate_limited.append(batch_idx)
             except Exception:
@@ -602,12 +667,15 @@ async def _chunked_extraction(
                 # let the merger drop the missing slot.
                 logger.exception("Batch %d failed unexpectedly", batch_idx + 1)
         completed += 1
-        await progress_queue.put({
-            "event": "extraction_progress",
-            "section": "chunked",
-            "batch": completed, "of": num_batches,
-            "percent": _percent_for_batch(completed, num_batches),
-        })
+        await progress_queue.put(
+            {
+                "event": "extraction_progress",
+                "section": "chunked",
+                "batch": completed,
+                "of": num_batches,
+                "percent": _percent_for_batch(completed, num_batches),
+            }
+        )
 
     tasks = [asyncio.create_task(process_batch(i, batch)) for i, batch in enumerate(batches)]
 
@@ -634,24 +702,31 @@ async def _chunked_extraction(
     if rate_limited:
         logger.info(
             "Sequential fallback: re-running %d rate-limited batches with %.1fs backoff",
-            len(rate_limited), _RATE_LIMIT_BACKOFF_SECONDS,
+            len(rate_limited),
+            _RATE_LIMIT_BACKOFF_SECONDS,
         )
         total_seq = len(rate_limited)
         for seq_idx, batch_idx in enumerate(rate_limited, start=1):
             await asyncio.sleep(_RATE_LIMIT_BACKOFF_SECONDS)
             try:
                 batch_results[batch_idx] = await _run_batch_extraction(
-                    llm_service, template, batches[batch_idx],
+                    llm_service,
+                    template,
+                    batches[batch_idx],
                     stage_name=f"extraction_batch{batch_idx + 1}_seq",
                     use_fast_model=use_fast_model,
                     batch_context=_build_batch_context(
-                        batch_idx, num_batches, batches[batch_idx], full_duration_seconds,
+                        batch_idx,
+                        num_batches,
+                        batches[batch_idx],
+                        full_duration_seconds,
                     ),
                 )
             except (RateLimitError, ServiceUnavailableError) as e:
                 logger.warning(
                     "Batch %d still rate-limited on sequential retry (%s); skipping",
-                    batch_idx + 1, type(e).__name__,
+                    batch_idx + 1,
+                    type(e).__name__,
                 )
             # Spread sequential progress across the 70-85% band so the UI
             # advances per retry rather than appearing stuck at 70.
@@ -659,7 +734,8 @@ async def _chunked_extraction(
             yield {
                 "event": "extraction_progress",
                 "section": "chunked-sequential",
-                "batch": batch_idx + 1, "of": num_batches,
+                "batch": batch_idx + 1,
+                "of": num_batches,
                 "percent": min(85, seq_percent),
             }
 
@@ -674,7 +750,8 @@ async def _chunked_extraction(
         # coverage even though the run still "succeeds".
         logger.warning(
             "Chunked extraction dropped %d/%d batches — output may be incomplete",
-            num_batches - successful, num_batches,
+            num_batches - successful,
+            num_batches,
         )
 
     merged = merge_batch_extractions(batch_results, triage_result.content_tags)
@@ -689,5 +766,3 @@ async def _chunked_extraction(
         "batches_total": num_batches,
         "batches_succeeded": successful,
     }
-
-

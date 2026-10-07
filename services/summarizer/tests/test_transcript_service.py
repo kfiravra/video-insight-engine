@@ -13,7 +13,6 @@ from src.services.transcription.transcript import (
     _fetch_transcript_sync,
     _is_rate_limit_error,
     clean_transcript,
-    format_transcript_with_timestamps,
     get_transcript,
     normalize_segments,
 )
@@ -61,93 +60,6 @@ class TestCleanTranscript:
         """Test handling text with only annotations."""
         result = clean_transcript("[Music] [Applause]")
         assert result == ""
-
-
-class TestFormatTranscriptWithTimestamps:
-    """Tests for timestamp formatting of transcript segments."""
-
-    def test_formats_with_default_interval(self):
-        """Test formatting with default 30-second interval."""
-        segments = [
-            {"text": "Hello everyone", "start": 0},
-            {"text": "welcome to the video", "start": 5},
-            {"text": "Today we discuss", "start": 35},
-        ]
-
-        result = format_transcript_with_timestamps(segments)
-        lines = result.split("\n")
-
-        assert len(lines) == 2
-        assert "[0:00]" in lines[0]
-        assert "Hello everyone" in lines[0]
-        assert "[0:30]" in lines[1]  # 30-59 is interval 1, starting at 0:30
-        assert "Today we discuss" in lines[1]
-
-    def test_formats_with_custom_interval(self):
-        """Test formatting with custom interval."""
-        segments = [
-            {"text": "Part 1", "start": 0},
-            {"text": "Part 2", "start": 70},
-            {"text": "Part 3", "start": 130},
-        ]
-
-        result = format_transcript_with_timestamps(segments, interval_seconds=60)
-        lines = result.split("\n")
-
-        assert len(lines) == 3
-        assert "[0:00]" in lines[0]
-        assert "[1:00]" in lines[1]
-        assert "[2:00]" in lines[2]
-
-    def test_groups_segments_in_same_interval(self):
-        """Test that segments in same interval are grouped."""
-        segments = [
-            {"text": "First", "start": 0},
-            {"text": "Second", "start": 10},
-            {"text": "Third", "start": 20},
-        ]
-
-        result = format_transcript_with_timestamps(segments, interval_seconds=30)
-        lines = result.split("\n")
-
-        assert len(lines) == 1
-        assert "First" in lines[0]
-        assert "Second" in lines[0]
-        assert "Third" in lines[0]
-
-    def test_handles_empty_segments(self):
-        """Test handling empty segments list."""
-        result = format_transcript_with_timestamps([])
-        assert result == ""
-
-    def test_skips_empty_text(self):
-        """Test skipping segments with empty text."""
-        segments = [
-            {"text": "Hello", "start": 0},
-            {"text": "", "start": 10},
-            {"text": "   ", "start": 20},
-            {"text": "World", "start": 25},
-        ]
-
-        result = format_transcript_with_timestamps(segments)
-
-        assert "Hello" in result
-        assert "World" in result
-
-    def test_formats_minutes_correctly(self):
-        """Test correct minute formatting for longer videos."""
-        segments = [
-            {"text": "Start", "start": 0},
-            {"text": "Middle", "start": 600},  # 10 minutes
-            {"text": "End", "start": 3600},  # 60 minutes
-        ]
-
-        result = format_transcript_with_timestamps(segments, interval_seconds=300)
-        lines = result.split("\n")
-
-        assert "[0:00]" in lines[0]
-        assert "[10:00]" in lines[1]
-        assert "[60:00]" in lines[2]
 
 
 class TestNormalizeSegments:
@@ -445,68 +357,6 @@ class TestGetTranscriptAsync:
             await get_transcript("test123")
 
         assert exc_info.value.code == ErrorCode.NO_TRANSCRIPT
-
-
-class TestTranscriptSegmentationEdgeCases:
-    """Tests for edge cases in transcript segmentation."""
-
-    def test_handles_very_long_videos(self):
-        """Test formatting very long videos (2+ hours)."""
-        segments = [
-            {"text": "Start", "start": 0},
-            {"text": "End", "start": 7200},  # 2 hours
-        ]
-
-        result = format_transcript_with_timestamps(segments, interval_seconds=3600)
-        lines = result.split("\n")
-
-        assert "[0:00]" in lines[0]
-        assert "[120:00]" in lines[1]
-
-    def test_handles_fractional_timestamps(self):
-        """Test handling fractional second timestamps."""
-        segments = [
-            {"text": "A", "start": 0.333},
-            {"text": "B", "start": 29.999},
-            {"text": "C", "start": 30.001},
-        ]
-
-        result = format_transcript_with_timestamps(segments, interval_seconds=30)
-        lines = result.split("\n")
-
-        # First two should be in 0:00 interval, third in 0:30
-        assert len(lines) == 2
-        assert "A" in lines[0]
-        assert "B" in lines[0]
-        assert "C" in lines[1]
-
-    def test_handles_unicode_text(self):
-        """Test handling unicode characters in transcript."""
-        segments = [
-            {"text": "Hello world", "start": 0},
-            {"text": "Cafe latte", "start": 5},
-        ]
-
-        result = format_transcript_with_timestamps(segments)
-
-        assert "world" in result
-
-    def test_preserves_segment_order(self):
-        """Test that segment order is preserved."""
-        segments = [
-            {"text": "First", "start": 0},
-            {"text": "Second", "start": 5},
-            {"text": "Third", "start": 10},
-        ]
-
-        result = format_transcript_with_timestamps(segments)
-
-        # Order should be preserved in output
-        first_idx = result.find("First")
-        second_idx = result.find("Second")
-        third_idx = result.find("Third")
-
-        assert first_idx < second_idx < third_idx
 
 
 class TestBlockedDetection:

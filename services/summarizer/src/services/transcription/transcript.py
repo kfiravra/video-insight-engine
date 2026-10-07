@@ -188,60 +188,6 @@ def clean_transcript(text: str) -> str:
     return text.strip()
 
 
-def format_transcript_with_timestamps(segments: list[dict], interval_seconds: int = 30) -> str:
-    """Format transcript with timestamps at regular intervals.
-
-    Groups segments into chunks to reduce character bloat while still
-    providing timestamp context for the LLM. This is more efficient than
-    per-segment timestamps which can bloat the text by 2-3x.
-
-    Args:
-        segments: List of transcript segments with 'text' and 'start' keys
-        interval_seconds: Group segments into this interval (default 30s)
-
-    Returns:
-        Formatted string like:
-        [0:00] Hello everyone, welcome to the video. Today we're going to talk about...
-        [0:30] The first concept is dependency injection. It's a design pattern...
-        [1:00] Let me show you an example of how this works in practice.
-    """
-    if not segments:
-        return ""
-
-    lines = []
-    current_interval = -1
-    current_texts = []
-
-    for segment in segments:
-        start_seconds = int(segment.get("start", 0))
-        interval = start_seconds // interval_seconds
-
-        if interval != current_interval:
-            # Flush previous interval
-            if current_texts:
-                interval_start = current_interval * interval_seconds
-                mins = interval_start // 60
-                secs = interval_start % 60
-                timestamp = f"[{mins}:{secs:02d}]"
-                lines.append(f"{timestamp} {' '.join(current_texts)}")
-            current_texts = []
-            current_interval = interval
-
-        text = segment.get("text", "").strip()
-        if text:
-            current_texts.append(text)
-
-    # Flush final interval
-    if current_texts:
-        interval_start = current_interval * interval_seconds
-        mins = interval_start // 60
-        secs = interval_start % 60
-        timestamp = f"[{mins}:{secs:02d}]"
-        lines.append(f"{timestamp} {' '.join(current_texts)}")
-
-    return "\n".join(lines)
-
-
 def normalize_segments(
     segments: list[dict],
     source: TranscriptSource,

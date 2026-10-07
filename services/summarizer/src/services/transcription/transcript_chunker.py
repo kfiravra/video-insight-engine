@@ -2,6 +2,10 @@
 
 Splits long video transcripts into chapter-based chunks for batched extraction.
 Fallback chain: YouTube chapters -> AI detection -> time-based split -> single chunk.
+
+Chunk texts are extraction-prompt text: sliced from the segments and rendered
+with absolute ``[m:ss]`` markers (``render_transcript``), so every batch reads
+the same video clock as the single-call path.
 """
 
 from __future__ import annotations
@@ -15,8 +19,9 @@ from typing import TYPE_CHECKING, Any
 from ...config import prompts_from_disk, settings
 from ...utils.json_parsing import parse_json_array_response, parse_json_response
 from ...utils.llm_retry import call_llm_with_retry
-from ...utils.transcript_slicer import slice_transcript_for_chapter
+from ...utils.transcript_slicer import segments_in_range, slice_transcript_for_chapter
 from ...services.pipeline.pipeline_helpers import normalize_segments
+from ...services.transcript.render import MARKER_PATTERN, marker_seconds, render_transcript
 
 if TYPE_CHECKING:
     from ...services.llm import LLMService
@@ -44,6 +49,37 @@ class ChapterChunk:
 def _estimate_tokens(text: str) -> int:
     """Estimate token count from text (~1.33 words per token for English)."""
     return max(1, int(len(text.split()) * 1.33))
+
+
+def _chunk_text(segments: list[dict[str, Any]], start: float, end: float) -> str:
+    """Prompt text of one chunk: the segments starting in [start, end), rendered
+    with absolute ``[m:ss]`` markers (the chunk opens on its own marker)."""
+    return render_transcript(segments_in_range(segments, int(start), int(end)))
+
+
+def _snap_to_markers(chunks: list[ChapterChunk], duration_seconds: float) -> list[ChapterChunk]:
+    """Read force-split chunk bounds from the ``[m:ss]`` markers in their text.
+
+    Sentence splitting places bounds by word share, which disagrees with the
+    absolute markers inside each chunk. A chunk that opens on a marker starts
+    at it; one that opens mid-block starts at the last marker before it, so the
+    ``=== CHAPTER …`` header range contains every marker of its chunk. Each
+    chunk ends where the next starts, the last at the video's end. Unmarked
+    text (metadata-only transcripts) keeps the proportional bounds.
+    """
+    if not any(MARKER_PATTERN.search(chunk.text) for chunk in chunks):
+        return chunks
+    carry = 0.0
+    for i, chunk in enumerate(chunks):
+        times = marker_seconds(chunk.text)
+        opens_on_marker = MARKER_PATTERN.match(chunk.text.lstrip()) is not None
+        chunk.start_seconds = float(times[0]) if i and opens_on_marker else carry
+        if times:
+            carry = float(times[-1])
+    for chunk, following in zip(chunks, chunks[1:]):
+        chunk.end_seconds = following.start_seconds
+    chunks[-1].end_seconds = max(float(duration_seconds), carry)
+    return chunks
 
 
 # Pre-compiled regex for sentence splitting in force_split_by_sentences
@@ -145,7 +181,7 @@ def force_split_by_sentences(
         else:
             return []
 
-    return chunks if len(chunks) >= 2 else []
+    return _snap_to_markers(chunks, duration_seconds) if len(chunks) >= 2 else []
 
 
 async def split_transcript_into_chapters(
@@ -267,14 +303,7 @@ def _from_youtube_chapters(
             end = getattr(ch, "end_time", duration)
             title = getattr(ch, "title", f"Chapter {i + 1}")
 
-        if segments:
-            text = slice_transcript_for_chapter(
-                segments,
-                start_seconds=int(start),
-                end_seconds=int(end),
-            )
-        else:
-            text = ""
+        text = _chunk_text(segments, start, end) if segments else ""
 
         if not text.strip():
             continue
@@ -325,15 +354,7 @@ def _from_description_timestamps(
         if end <= start:
             continue
 
-        text = (
-            slice_transcript_for_chapter(
-                segments,
-                start_seconds=int(start),
-                end_seconds=int(end),
-            )
-            if segments
-            else ""
-        )
+        text = _chunk_text(segments, start, end) if segments else ""
         if not text.strip():
             continue
 
@@ -382,11 +403,7 @@ def _subdivide_oversized_chapters(
         for k in range(parts):
             sub_start = ch.start_seconds + k * sub_dur
             sub_end = ch.end_seconds if k + 1 == parts else ch.start_seconds + (k + 1) * sub_dur
-            text = slice_transcript_for_chapter(
-                segments,
-                start_seconds=int(sub_start),
-                end_seconds=int(sub_end),
-            )
+            text = _chunk_text(segments, sub_start, sub_end)
             if not text.strip():
                 continue
             result.append(
@@ -566,11 +583,7 @@ async def _detect_chapters_with_ai(
                 continue
 
             if segments:
-                text = slice_transcript_for_chapter(
-                    segments,
-                    start_seconds=int(start),
-                    end_seconds=int(end),
-                )
+                text = _chunk_text(segments, start, end)
             else:
                 # Fallback: slice by word position
                 total_dur = duration if duration > 0 else 1
@@ -648,11 +661,7 @@ def _time_split_chapters(
         start = i * chunk_duration
         end = min((i + 1) * chunk_duration, duration)
 
-        text = slice_transcript_for_chapter(
-            segments,
-            start_seconds=int(start),
-            end_seconds=int(end),
-        )
+        text = _chunk_text(segments, start, end)
 
         if not text.strip():
             continue
