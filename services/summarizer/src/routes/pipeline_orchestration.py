@@ -27,9 +27,8 @@ from src.services.pipeline.phases import (
     run_phase_extraction,
     run_phase_frames,
     run_phase_metadata,
-    run_phase_plan,
     run_phase_synthesis,
-    run_phase_transcript,
+    run_phase_text,
 )
 from src.services.pipeline.pipeline_helpers import (
     PipelineTimer,
@@ -141,6 +140,60 @@ async def _release_run_media(ctx: PipelineContext) -> None:
             await hires_video.close()
 
 
+async def _run_phase_two(
+    ctx: PipelineContext,
+    repository: MongoDBVideoRepository,
+    video_summary_id: str,
+    timing: PipelineTimingRecorder,
+) -> AsyncGenerator[str, None]:
+    """Text branch ∥ frames ∥ description, with the tier probe started alongside.
+
+    The text branch runs transcript → probe → plan ∥ memory, so the readers
+    work while frames + vision still run; frames reads the probe at Step 6b.
+    ``finally`` so transcriptMeta is recorded whether the phases succeed or
+    raise (cancellation included): a TranscriptError from the fallback chain
+    must still leave outcome="failed" + attempted + errorCode on the row (the
+    phase's own finally already stamped ctx.transcript_trail by the time it
+    propagates here).
+    """
+    from src.services.pipeline.phases.metadata import run_phase_description
+    from src.services.pipeline.phases.probe import start_tier_probe
+
+    phase_start = time.monotonic()
+    start_tier_probe(ctx)
+    group = [run_phase_text, run_phase_frames, run_phase_description]
+    try:
+        async for event in run_parallel_phases(group, ctx):
+            yield event
+    finally:
+        mark_phase(ctx, timing, "transcript_frames", phase_start)
+        await _record_transcript_outcome(ctx, repository, video_summary_id)
+
+
+def _inject_visual_context(ctx: PipelineContext) -> None:
+    """Phase 2.5: frame annotations into ``clean_text`` (removed by 1c.2).
+
+    Runs after the whole phase-2 group, so the plan, memory and probe — all
+    inside it — never read the annotated text.
+    """
+    if not (ctx.clean_text and (ctx.frame_descriptions or ctx.scene_frames_all)):
+        return
+    from src.services.pipeline.scene_frames import inject_visual_context
+
+    segments = ctx.transcript_data.segments if ctx.transcript_data else None
+    ctx.clean_text = inject_visual_context(
+        ctx.clean_text,
+        segments,
+        ctx.frame_descriptions,
+        ctx.scene_frames_all,
+    )
+    annotation_count = ctx.clean_text.count("[VISUAL at") + ctx.clean_text.count(
+        "[ON-SCREEN TEXT at"
+    )
+    if annotation_count:
+        logger.info("[pipeline] Injected %d visual annotations into transcript", annotation_count)
+
+
 async def _run_phases_in_order(
     ctx: PipelineContext,
     repository: MongoDBVideoRepository,
@@ -167,68 +220,29 @@ async def _run_phases_in_order(
             yield event
         mark_phase(ctx, timing, "metadata", phase_start)
 
-        # Phase 2: Transcript + Frames + description (parallel). Transcript
-        # waits for the caption fetch, frames for the low-res download, the
-        # description member emits its SSE once the analysis lands. The tier
-        # probe starts with the group and calls the LLM once the transcript
-        # is ready; frames reads it at Step 6b, the plan after.
-        # ``finally`` so transcriptMeta is recorded whether the phases succeed
-        # or raise (cancellation included): a TranscriptError from the
-        # fallback chain must still leave outcome="failed" + attempted +
-        # errorCode on the row (the phase's own finally already stamped
-        # ctx.transcript_trail by the time it propagates here).
-        from src.services.pipeline.phases.metadata import after_captions, run_phase_description
-        from src.services.pipeline.phases.probe import marks_transcript_ready, start_tier_probe
-
-        phase_start = time.monotonic()
-        start_tier_probe(ctx)
-        group = [
-            after_captions(marks_transcript_ready(run_phase_transcript)),
-            run_phase_frames,
-            run_phase_description,
-        ]
-        try:
-            async for event in run_parallel_phases(group, ctx):
-                yield event
-        finally:
-            mark_phase(ctx, timing, "transcript_frames", phase_start)
-            await _record_transcript_outcome(ctx, repository, video_summary_id)
+        # Phase 2: text branch (transcript → tier probe → plan ∥ memory) ∥
+        # frames ∥ description; extraction waits for all of it.
+        async for event in _run_phase_two(ctx, repository, video_summary_id, timing):
+            yield event
 
         # Phase 2.5: Inject visual context into transcript (after both phases complete)
         phase_start = time.monotonic()
-        if ctx.clean_text and (ctx.frame_descriptions or ctx.scene_frames_all):
-            from src.services.pipeline.scene_frames import inject_visual_context
-
-            segments = ctx.transcript_data.segments if ctx.transcript_data else None
-            ctx.clean_text = inject_visual_context(
-                ctx.clean_text,
-                segments,
-                ctx.frame_descriptions,
-                ctx.scene_frames_all,
-            )
-            annotation_count = ctx.clean_text.count("[VISUAL at") + ctx.clean_text.count(
-                "[ON-SCREEN TEXT at"
-            )
-            if annotation_count:
-                logger.info(
-                    "[pipeline] Injected %d visual annotations into transcript", annotation_count
-                )
+        _inject_visual_context(ctx)
         mark_phase(ctx, timing, "visual_inject", phase_start)
 
-        # Phase 3-4: Plan -> Extraction (sequential — each depends on the previous)
-        for phase in [run_phase_plan, run_phase_extraction]:
-            phase_start = time.monotonic()
-            async for event in phase(ctx):
-                yield event
-            mark_phase(ctx, timing, phase.__name__.replace("run_phase_", ""), phase_start)
-            # Fire-and-forget faithfulness judge once extraction has data. The
-            # task copies the current ContextVar state so the Langfuse trace is
-            # still attached. We track the task so we can drain it before
-            # exiting the trace.
-            if phase is run_phase_extraction and ctx.extraction_data:
-                spawned = _launch_faithfulness_check(ctx)
-                if spawned is not None:
-                    spawned_faithfulness.append(spawned)
+        # Phase 4: Extraction (the plan ran inside phase 2)
+        phase_start = time.monotonic()
+        async for event in run_phase_extraction(ctx):
+            yield event
+        mark_phase(ctx, timing, "extraction", phase_start)
+        # Fire-and-forget faithfulness judge once extraction has data. The
+        # task copies the current ContextVar state so the Langfuse trace is
+        # still attached. We track the task so we can drain it before
+        # exiting the trace.
+        if ctx.extraction_data:
+            spawned = _launch_faithfulness_check(ctx)
+            if spawned is not None:
+                spawned_faithfulness.append(spawned)
 
         # Phase 5: Synthesis + Enrichment. Both read only the extraction output,
         # so they run in parallel — EXCEPT when extraction came back empty:

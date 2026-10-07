@@ -17,6 +17,7 @@ from src.services.pipeline.extraction_quality import (
     merge_retry_fields,
 )
 from src.services.pipeline.extractor import extract
+from src.services.pipeline.memory import format_clock
 from src.services.pipeline.pipeline_helpers import (
     normalize_segments,
     sse_event,
@@ -43,10 +44,11 @@ def build_prompt_transcript(ctx: PipelineContext) -> str:
     """The transcript the extraction prompt reads: ``[m:ss]``-marked, from segments.
 
     Markers live only in the prompt — ``ctx.clean_text`` (Qdrant, faithfulness)
-    and the S3 blob stay unmarked. Metadata-only transcripts carry no segments,
-    so they fall back to ``ctx.clean_text``.
+    and the S3 blob stay unmarked. The segments are ``ctx.prompt_segments``
+    (sponsor reads cut), the ones plan and memory read. Metadata-only
+    transcripts carry no segments, so they fall back to ``ctx.clean_text``.
     """
-    segments = ctx.transcript_data.segments if ctx.transcript_data else []
+    segments = ctx.prompt_segments
     marked = render_transcript(segments, source_language=ctx.source_language_code)
     if not marked:
         return ctx.clean_text
@@ -144,7 +146,7 @@ async def _attempt_synthesis_fed_retry(
         duration=ctx.video_data.duration,
         output_type=ctx.triage.primary_tag,
         extraction_summary=extraction_summary,
-        video_context=ctx.video_dna_compact,
+        video_context=ctx.video_memory,
     )
     ctx.synthesis_dict = synthesis_result.model_dump(by_alias=True)
 
@@ -164,7 +166,7 @@ async def _attempt_synthesis_fed_retry(
         build_prompt_transcript(ctx),
         video_info,
         chapters=chapters,
-        video_context=ctx.video_dna_compact,
+        video_context=ctx.video_memory,
         extra_instruction=retry_prompt,
         force_primary_model=True,
     ):
@@ -188,6 +190,77 @@ async def _attempt_synthesis_fed_retry(
             )
 
 
+def _segment_dicts(segments: list[Any]) -> list[dict]:
+    """Transcript segments (dicts or ``TranscriptSegment`` objects) → ``startMs``/``endMs`` dicts."""
+    seg_as_dicts = []
+    for seg in segments:
+        if isinstance(seg, dict):
+            seg_as_dicts.append(seg)
+        elif hasattr(seg, "text"):
+            d: dict = {"text": seg.text}
+            if hasattr(seg, "startMs"):
+                d["startMs"] = seg.startMs
+                d["endMs"] = getattr(seg, "endMs", seg.startMs)
+            elif hasattr(seg, "start"):
+                d["start"] = seg.start
+                d["duration"] = getattr(seg, "duration", 0)
+            seg_as_dicts.append(d)
+    return normalize_segments(seg_as_dicts)
+
+
+def memory_outline_for_chapters(ctx: PipelineContext) -> list[dict[str, str]] | None:
+    """The memory outline in the chunker's shape (``{start: "m:ss", end, title}``).
+
+    ``None`` without a memory outline: chapter_detect then runs only when
+    batching needs chapters (1b.6).
+    """
+    memory = ctx.memory
+    if memory is None or not memory.outline:
+        return None
+    return [
+        {"start": format_clock(s.start), "end": format_clock(s.end), "title": s.title}
+        for s in memory.outline
+    ]
+
+
+def _description_chapters(ctx: PipelineContext) -> list[dict] | None:
+    """Tier 2 of chapter detection: author-listed timestamps from the description."""
+    da = ctx.description_analysis
+    if da is None or not getattr(da, "timestamps", None):
+        return None
+    return [{"seconds": t.seconds, "label": t.label} for t in da.timestamps]
+
+
+async def _split_chapters(
+    ctx: PipelineContext, video_info: dict, prompt_transcript: str
+) -> list[Any] | None:
+    """Chapters for chunked extraction (None = standard extraction).
+
+    Sliced from ``ctx.prompt_segments`` — the segments the marked transcript
+    was rendered from — so chapter text and the prompt agree.
+    """
+    from src.services.transcription.transcript_chunker import split_transcript_into_chapters
+
+    try:
+        chapters = await split_transcript_into_chapters(
+            video_data=video_info,
+            segments=_segment_dicts(ctx.prompt_segments),
+            transcript=prompt_transcript,
+            llm_service=ctx.llm_service,
+            description_chapters=_description_chapters(ctx),
+            memory_outline=memory_outline_for_chapters(ctx),
+        )
+    except Exception as e:
+        logger.warning(
+            "Chapter splitting failed (non-critical): %s — falling back to standard extraction",
+            e,
+        )
+        return None
+    ctx.chapters = chapters
+    logger.info("Prepared %d chapters for chunked extraction", len(chapters))
+    return chapters
+
+
 async def run_phase_extraction(ctx: PipelineContext) -> AsyncGenerator[str, None]:
     """Run adaptive extraction and optional count-validation retry."""
     llm_feature_var.set("summarize:extraction")
@@ -205,57 +278,11 @@ async def run_phase_extraction(ctx: PipelineContext) -> AsyncGenerator[str, None
 
     prompt_transcript = build_prompt_transcript(ctx)
 
-    # Chapter splitting for long videos (>30 min)
+    # Chapter splitting for long videos (> CHUNKED_EXTRACTION_THRESHOLD)
     chapters = None
     duration = ctx.video_data.duration or 0
     if duration > settings.CHUNKED_EXTRACTION_THRESHOLD and ctx.transcript_data:
-        try:
-            from src.services.transcription.transcript_chunker import split_transcript_into_chapters
-
-            raw_segments = (
-                ctx.transcript_data.segments if hasattr(ctx.transcript_data, "segments") else []
-            )
-            # Convert TranscriptSegment objects to dicts, then normalize to startMs/endMs
-            seg_as_dicts = []
-            for seg in raw_segments:
-                if isinstance(seg, dict):
-                    seg_as_dicts.append(seg)
-                elif hasattr(seg, "text"):
-                    d: dict = {"text": seg.text}
-                    if hasattr(seg, "startMs"):
-                        d["startMs"] = seg.startMs
-                        d["endMs"] = getattr(seg, "endMs", seg.startMs)
-                    elif hasattr(seg, "start"):
-                        d["start"] = seg.start
-                        d["duration"] = getattr(seg, "duration", 0)
-                    seg_as_dicts.append(d)
-            seg_dicts = normalize_segments(seg_as_dicts)
-
-            # Tier 2 of chapter detection: author-listed timestamps from the
-            # video description (used when YouTube has no native chapters).
-            description_chapters = None
-            da = ctx.description_analysis
-            if da is not None and getattr(da, "timestamps", None):
-                description_chapters = [
-                    {"seconds": t.seconds, "label": t.label} for t in da.timestamps
-                ]
-
-            chapters = await split_transcript_into_chapters(
-                video_data=video_info,
-                segments=seg_dicts,
-                transcript=prompt_transcript,
-                llm_service=ctx.llm_service,
-                description_chapters=description_chapters,
-                memory_outline=None,
-            )
-            ctx.chapters = chapters
-            logger.info("Prepared %d chapters for chunked extraction", len(chapters))
-        except Exception as e:
-            logger.warning(
-                "Chapter splitting failed (non-critical): %s — falling back to standard extraction",
-                e,
-            )
-            chapters = None
+        chapters = await _split_chapters(ctx, video_info, prompt_transcript)
 
     # Frames (stage 2b) are ready before extraction (stage 4) — fold their
     # captions into the prompt so the LLM can ground visual claims and warrant a
@@ -273,7 +300,7 @@ async def run_phase_extraction(ctx: PipelineContext) -> AsyncGenerator[str, None
             prompt_transcript,
             video_info,
             chapters=chapters,
-            video_context=ctx.video_dna_compact,
+            video_context=ctx.video_memory,
             frame_context=frame_context,
         ):
             event_name = evt["event"]

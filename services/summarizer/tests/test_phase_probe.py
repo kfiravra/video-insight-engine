@@ -2,19 +2,17 @@
 
 The probe task starts with phase 2, makes its call only once the transcript is
 ready (clean text final), tags the call as its own LLM feature, and is
-cancelled when the run ends first. ``run_tier_probe`` (the LLM boundary) is
+cancelled when the run ends first. The text branch that sets the event is
+tested in ``test_phase_text.py``. ``run_tier_probe`` (the LLM boundary) is
 patched; the wiring runs as production code.
 """
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncGenerator
 from types import SimpleNamespace
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 from llm_common.context import llm_feature_var
 
 from src.models.probe_types import TierProbe
@@ -42,20 +40,6 @@ def _ctx() -> SimpleNamespace:
     )
 
 
-async def _transcript_phase(ctx: SimpleNamespace) -> AsyncGenerator[str, None]:
-    ctx.clean_text = "clean speech after sponsorblock"
-    yield "data: transcript_ready\n\n"
-
-
-async def _failing_transcript(_ctx: SimpleNamespace) -> AsyncGenerator[str, None]:
-    raise RuntimeError("no transcript")
-    yield  # pragma: no cover — makes this an async generator
-
-
-async def _drain(phase: Any, ctx: SimpleNamespace) -> list[str]:
-    return [event async for event in phase(ctx)]
-
-
 class TestStartTierProbe:
     async def test_should_not_call_the_probe_before_the_transcript_is_ready(self) -> None:
         ctx = _ctx()
@@ -75,7 +59,8 @@ class TestStartTierProbe:
 
         with patch.object(probe_phase, "run_tier_probe", run):
             probe_phase.start_tier_probe(ctx)
-            await _drain(probe_phase.marks_transcript_ready(_transcript_phase), ctx)
+            ctx.clean_text = "clean speech after sponsorblock"
+            ctx.transcript_ready.set()
             await ctx.tier_probe_task
 
         probe_input: TierProbeInput = run.call_args.args[0]
@@ -110,28 +95,6 @@ class TestStartTierProbe:
             assert llm_feature_var.get() == "summarize:metadata"
         finally:
             llm_feature_var.reset(token)
-
-
-class TestMarksTranscriptReady:
-    async def test_should_set_the_event_after_the_phase_finished(self) -> None:
-        ctx = _ctx()
-
-        events = await _drain(probe_phase.marks_transcript_ready(_transcript_phase), ctx)
-
-        assert events == ["data: transcript_ready\n\n"] and ctx.transcript_ready.is_set()
-
-    async def test_should_leave_the_event_unset_when_the_phase_raises(self) -> None:
-        ctx = _ctx()
-
-        with pytest.raises(RuntimeError):
-            await _drain(probe_phase.marks_transcript_ready(_failing_transcript), ctx)
-
-        assert not ctx.transcript_ready.is_set()
-
-    def test_should_keep_the_phase_name_for_timing(self) -> None:
-        assert probe_phase.marks_transcript_ready(_transcript_phase).__name__ == (
-            "_transcript_phase"
-        )
 
 
 class TestCancelTierProbe:

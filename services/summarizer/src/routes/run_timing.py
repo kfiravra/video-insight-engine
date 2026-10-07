@@ -39,6 +39,13 @@ def _tab_counts(ctx: PipelineContext) -> tuple[int, int]:
     return planned, assembled
 
 
+def _phase_walls(ctx: PipelineContext, timing: PipelineTimingRecorder) -> dict[str, float]:
+    """Seconds per phase: every recorded step (plan and memory run inside the
+    phase-2 group), the runner's own stamps winning."""
+    walls = {p["name"]: round(p["wallMs"] / 1000, 1) for p in timing.phases}
+    return {**walls, **ctx.phase_times}
+
+
 def log_run_summary(
     ctx: PipelineContext,
     timer: PipelineTimer,
@@ -51,12 +58,12 @@ def log_run_summary(
     driver and log searches key on ``src.routes.pipeline_orchestration`` +
     ``[pipeline] DONE``.
     """
-    pt = ctx.phase_times
+    pt = _phase_walls(ctx, timing)
     planned, assembled = _tab_counts(ctx)
     log.info(
         "[pipeline] DONE youtube_id=%s in %.0fs | "
         "metadata=%.1fs transcript_frames=%.1fs visual_inject=%.1fs "
-        "plan=%.1fs(%s) extraction=%.1fs synthesis_enrichment=%.1fs(%s) "
+        "plan=%.1fs(%s) memory=%.1fs(%s) extraction=%.1fs synthesis_enrichment=%.1fs(%s) "
         "assembly=%.1fs | tabs planned=%d assembled=%d emitted=%d",
         ctx.youtube_id,
         timer.elapsed(),
@@ -65,6 +72,8 @@ def log_run_summary(
         pt.get("visual_inject", 0),
         pt.get("plan", 0),
         "ok" if ctx.plan_result is not None else "FAIL",
+        pt.get("memory", 0),
+        "ok" if getattr(ctx, "memory", None) is not None else "FAIL",
         pt.get("extraction", 0),
         pt.get("synthesis_enrichment", 0),
         "ok" if ctx.enrichment_data else "FAIL",

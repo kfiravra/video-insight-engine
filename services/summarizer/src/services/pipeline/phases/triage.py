@@ -18,7 +18,6 @@ from src.services.pipeline.phases.probe import probe_for_plan
 from src.services.pipeline.pipeline_helpers import sse_event
 from src.services.pipeline.plan import run_plan
 from src.services.pipeline.triage import TriageResult
-from src.services.transcript.render import render_transcript
 
 if TYPE_CHECKING:
     from src.models.pipeline_types import PlanResult
@@ -59,7 +58,6 @@ def _store_plan_result(ctx: PipelineContext, plan_result: PlanResult) -> None:
     """Put the plan on ``ctx`` plus the triage carriers downstream stages read."""
     ctx.plan_result = plan_result
     ctx.video_dna_text = plan_result.to_video_context_full()
-    ctx.video_dna_compact = plan_result.to_video_context_compact()
     ctx.triage = TriageResult(
         content_tags=plan_result.content_tags,
         modifiers=plan_result.modifiers,
@@ -109,11 +107,8 @@ async def run_phase_plan(ctx: PipelineContext) -> AsyncGenerator[str, None]:
     probe = await probe_for_plan(ctx)
     _set_plan_inputs(ctx, video_data, probe)
 
-    # Run plan (single Sonnet call — replaces manifest + triage). It reads the
-    # FULL transcript with [m:ss] markers, rendered from the raw segments so
-    # the visual annotations injected into clean_text never reach it; a
-    # metadata-only transcript has no segments (renders "") → clean_text.
-    segments = ctx.transcript_data.segments if ctx.transcript_data else []
+    # Run plan (single Sonnet call — replaces manifest + triage) on the FULL
+    # marked transcript the text branch rendered once for plan and memory.
     plan_result = await run_plan(
         title=video_data.title,
         channel=video_data.channel or "",
@@ -121,8 +116,7 @@ async def run_phase_plan(ctx: PipelineContext) -> AsyncGenerator[str, None]:
         duration=video_data.duration or 0,
         category_hint=ctx.category_hint,
         content_format=ctx.content_format,
-        transcript=render_transcript(segments, source_language=ctx.source_language_code)
-        or ctx.clean_text,
+        transcript=ctx.prompt_transcript,
         llm_service=ctx.llm_service,
         probe_hint=probe_hint(probe) if probe is not None and not ctx.override else None,
     )

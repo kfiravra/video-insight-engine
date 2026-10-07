@@ -4656,6 +4656,22 @@
    "synthetic": true
   },
   {
+   "feature": "summarize:memory",
+   "span": "memory",
+   "model": "anthropic/claude-haiku-4-5-20251001",
+   "latencyMs": 12000,
+   "output": "{\"outline\": [{\"start\": \"0:00\", \"end\": \"3:10\", \"title\": \"The technologies and\"}, {\"start\": \"3:10\", \"end\": \"6:21\", \"title\": \"to be built. I'm just waiting\"}, {\"start\": \"6:21\", \"end\": \"9:31\", \"title\": \"last time I used it\"}, {\"start\": \"9:31\", \"end\": \"12:42\", \"title\": \"what I use.\"}, {\"start\": \"12:42\", \"end\": \"15:52\", \"title\": \"there are two databases that I\"}, {\"start\": \"15:52\", \"end\": \"19:03\", \"title\": \"to build and explore\"}], \"evidence\": {}, \"tldr\": \"Get an insider's view on the essential tools and techniques every AI developer needs to know for production.\", \"takeaways\": [\"Utilize TypeScript with Effect for better error handling — 'Effect' tracks errors explicitly, preventing silent failures.\", \"Break your code into manageable chunks with SvelteKit and Convex for seamless integration and auto-configuration.\", \"Implement Greptile for pull request reviews, ensuring a 5/5 confidence score before merging code.\"]}",
+   "finishReason": "stop",
+   "usage": {
+    "input": 6666,
+    "output": 1200,
+    "cacheRead": 0,
+    "cacheWrite": 0
+   },
+   "ordinal": 0,
+   "synthetic": true
+  },
+  {
    "feature": "summarize:plan",
    "span": "plan",
    "model": "anthropic/claude-sonnet-4-6",
@@ -4743,7 +4759,8 @@
    "prod request 725d2eb2, the 240 s run (A-DIGEST 'Numbers to reuse'); frames sub-steps from its worker log",
    "visual_inject is not separable in the recording (folded into transcript_frames); the 6 sampled faithfulness calls are omitted (off the critical path)",
    "momentFill = whole assembly wall (720p re-download 11.7 s logged + ffmpeg/S3/residual)",
-   "tier_probe#0 is SYNTHETIC (task 1b.1): the recorded run called the retired classifier instead; its domain/format/confidence are kept, has_visual_demo is judged from the video, and wall/tokens are the gate-0 A/B Haiku numbers (1000 ms, 1800 in / 40 out). See tests/replay/synthetic.py."
+   "tier_probe#0 is SYNTHETIC (task 1b.1): the recorded run called the retired classifier instead; its domain/format/confidence are kept, has_visual_demo is judged from the video, and wall/tokens are the gate-0 A/B Haiku numbers (1000 ms, 1800 in / 40 out). See tests/replay/synthetic.py.",
+   "memory#0 is SYNTHETIC (task 1b.3): the recorded run predates the memory call; tldr/takeaways come from its synthesis output, the outline from its chapters (else 6 even sections), no evidence; wall = 1200 output tokens at 100 tok/s. See tests/replay/synthetic.py."
   ]
  }
 }

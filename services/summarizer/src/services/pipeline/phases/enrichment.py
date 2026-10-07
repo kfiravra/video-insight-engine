@@ -36,7 +36,7 @@ async def run_phase_enrichment(ctx: PipelineContext) -> AsyncGenerator[str, None
         ctx.video_data.title if ctx.video_data else "",
         content_tags=ctx.triage.content_tags,
         synthesis_data=ctx.synthesis_dict,
-        video_context=ctx.video_dna_compact,
+        video_context=ctx.video_memory,
         tab_goals=tab_goals_text,
         content_format=ctx.content_format,
     )

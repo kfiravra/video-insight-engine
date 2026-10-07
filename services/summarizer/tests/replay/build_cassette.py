@@ -40,6 +40,7 @@ _FEATURE_BY_SPAN = {
     "frame_vision": "summarize:frames",
     "classifier": "summarize:classifier",
     "tier_probe": "summarize:tier_probe",
+    "memory": "summarize:memory",
     "plan": "summarize:plan",
     "chapter_detect": "summarize:chapter_detect",
     "synthesis": "summarize:synthesis",

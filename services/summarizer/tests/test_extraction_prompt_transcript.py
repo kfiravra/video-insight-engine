@@ -1,4 +1,4 @@
-"""The extraction prompt reads [m:ss]-marked transcript text (pipeline-1min 1a.4).
+"""The extraction prompt reads [m:ss]-marked transcript text (pipeline-1min 1a.4, 1b).
 
 Markers exist only in the prompt: ``ctx.clean_text`` (Qdrant, faithfulness) keeps
 the unmarked text, and chunked batches keep absolute times.
@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
+from src.models.memory_types import MemoryResult, OutlineSection
 from src.services.pipeline.phases import extraction as extraction_phase
 from src.services.pipeline.pipeline_helpers import TranscriptData
 from src.services.transcript.render import MARKER_PATTERN, marker_seconds
@@ -37,6 +38,7 @@ def _ctx(duration: int, segments: list[dict[str, Any]] | None = None) -> SimpleN
         transcript_data=TranscriptData(
             segments=segs, raw_text=raw_text, transcript_type="manual", source="ytdlp"
         ),
+        prompt_segments=list(segs),
         clean_text=clean_transcript(raw_text),
         source_language_code=None,
         frame_descriptions=[],
@@ -44,7 +46,8 @@ def _ctx(duration: int, segments: list[dict[str, Any]] | None = None) -> SimpleN
         scene_frames_gallery=[],
         description_analysis=None,
         llm_service=AsyncMock(),
-        video_dna_compact="",
+        video_memory="<video_memory>\ndomains: learning\n</video_memory>",
+        memory=None,
         chapters=None,
         extraction_data=None,
         extraction_coverage=None,
@@ -71,6 +74,14 @@ async def _run(ctx: SimpleNamespace) -> dict[str, Any]:
 
 
 class TestBuildPromptTranscript:
+    def test_should_render_from_the_sponsor_filtered_prompt_segments(self):
+        ctx = _ctx(60)
+        ctx.prompt_segments = [s for s in ctx.prompt_segments if s["start"] < 20]
+
+        prompt = extraction_phase.build_prompt_transcript(ctx)
+
+        assert marker_seconds(prompt) == [0]
+
     def test_should_render_markers_from_the_segments(self):
         ctx = _ctx(60)
 
@@ -156,11 +167,12 @@ class TestBuildPromptTranscriptLanguage:
 
 
 class TestExtractionPhaseChapterSplitInputs:
-    """1b.6: chapter splitting gets the real description and, for now, no outline."""
+    """1b.6: chapter splitting gets the real description and the memory outline."""
 
-    async def _split_kwargs(self) -> dict[str, Any]:
+    async def _split_kwargs(self, memory: MemoryResult | None = None) -> dict[str, Any]:
         ctx = _ctx(1800)
         ctx.video_data.description = "Neapolitan dough, 72 h cold rise"
+        ctx.memory = memory
         split = AsyncMock(return_value=[])
 
         with patch(
@@ -175,7 +187,52 @@ class TestExtractionPhaseChapterSplitInputs:
 
         assert kwargs["video_data"]["description"] == "Neapolitan dough, 72 h cold rise"
 
-    async def test_should_pass_no_memory_outline_yet(self):
+    async def test_should_pass_no_outline_when_memory_failed(self):
         kwargs = await self._split_kwargs()
 
         assert kwargs["memory_outline"] is None
+
+    async def test_should_pass_the_memory_outline_as_clock_strings(self):
+        memory = MemoryResult(
+            outline=[
+                OutlineSection(start=0, end=600, title="dough"),
+                OutlineSection(start=600, end=1800, title="bake"),
+            ]
+        )
+
+        kwargs = await self._split_kwargs(memory)
+
+        assert kwargs["memory_outline"] == [
+            {"start": "0:00", "end": "10:00", "title": "dough"},
+            {"start": "10:00", "end": "30:00", "title": "bake"},
+        ]
+
+    async def test_should_slice_chapters_from_the_prompt_segments(self):
+        ctx = _ctx(1800)
+        ctx.prompt_segments = ctx.prompt_segments[:10]
+        split = AsyncMock(return_value=[])
+
+        with patch(
+            "src.services.transcription.transcript_chunker.split_transcript_into_chapters", split
+        ):
+            await _run(ctx)
+
+        assert len(split.await_args.kwargs["segments"]) == 10
+
+
+class TestExtractionPhaseVideoContext:
+    """1b.4: the extraction prompt's ``{video_context}`` slot carries the video_memory block."""
+
+    async def test_should_hand_extraction_the_runs_video_memory(self):
+        ctx = _ctx(120)
+        captured: dict[str, Any] = {}
+
+        async def _extract(_llm, _triage, _transcript, _video_info, **kwargs):
+            captured.update(kwargs)
+            yield {"event": "extraction_complete", "data": {"learning": {"keyPoints": []}}}
+
+        with patch.object(extraction_phase, "extract", _extract):
+            async for _ in extraction_phase.run_phase_extraction(ctx):
+                pass
+
+        assert captured["video_context"] is ctx.video_memory

@@ -56,6 +56,10 @@ class PipelineContext:
     # SponsorBlock-filtered list when sponsor reads were cut (``clean_text``
     # drops the same reads), else the raw ``transcript_data.segments``.
     prompt_segments: list[dict[str, Any]] = field(default_factory=list)
+    # ``prompt_segments`` rendered once with ``[m:ss]`` markers (``clean_text``
+    # for a segment-less transcript) at probe-done: plan and memory read the
+    # same string.
+    prompt_transcript: str = ""
 
     # Tier probe (pipeline-1min 1b.1). The task starts with phase 2 and makes
     # its call once ``transcript_ready`` is set (clean_text final); the frames
@@ -91,9 +95,8 @@ class PipelineContext:
     # Rendered <visual_annotations> block (descriptions + OCR), set at frames-done (1c.2).
     visual_annotations: str = ""
 
-    # Video DNA (formatted plan for downstream injection)
-    video_dna_text: str = ""  # Full formatted for logging
-    video_dna_compact: str = ""  # Compact ~300 chars for extraction/synthesis/enrichment
+    # Video DNA (the plan formatted in full; superseded by video_memory below)
+    video_dna_text: str = ""
 
     # Memory stage (1b.3; None = failed or not run) and the <video_memory>
     # block rendered once from plan + memory (1b.4) for every writer's

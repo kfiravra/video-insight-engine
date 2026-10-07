@@ -1,15 +1,16 @@
 """Tier-probe wiring for one run (pipeline-1min 1b.1).
 
 The probe task starts with phase 2 and makes its one call as soon as
-``ctx.transcript_ready`` is set — by ``marks_transcript_ready`` around the
-transcript phase, once ``clean_text`` is final (SponsorBlock included). It
-reads clean transcript windows only, never frame annotations.
+``ctx.transcript_ready`` is set — by the text branch (``phases/text.py``)
+once the transcript phase is done and ``clean_text`` final (SponsorBlock
+included). It reads clean transcript windows only, never frame annotations.
 
 Two readers, each with its own wait:
 
 * the frames branch, at most ``PROBE_WAIT_CAP_SECONDS`` just before Step 6b
   (``media/visual_tier.resolve_tier``; the metadata rule decides past that);
-* the plan, for the playbook and its ``Hint:`` line (``probe_for_plan``).
+* the text branch, before plan ∥ memory start; the plan reads it for the
+  playbook and its ``Hint:`` line (``probe_for_plan``).
 
 The task never raises (``run_tier_probe`` returns ``None`` on any failure);
 the run's cleanup cancels it when the run ends before it does.
@@ -18,9 +19,7 @@ the run's cleanup cancels it when the run ends before it does.
 from __future__ import annotations
 
 import asyncio
-import functools
 import logging
-from collections.abc import AsyncGenerator, Callable
 from typing import TYPE_CHECKING
 
 from llm_common.context import llm_feature_var
@@ -33,8 +32,6 @@ if TYPE_CHECKING:
     from src.services.pipeline.context import PipelineContext
 
 logger = logging.getLogger(__name__)
-
-PhaseFn = Callable[["PipelineContext"], AsyncGenerator[str, None]]
 
 TIER_PROBE_FEATURE = "summarize:tier_probe"
 # The plan wants the probe's answer, not a race: it waits out the probe's own
@@ -62,22 +59,6 @@ def start_tier_probe(ctx: PipelineContext) -> None:
         ctx.tier_probe_task = asyncio.create_task(_probe_at_transcript_ready(ctx))
     finally:
         llm_feature_var.reset(token)
-
-
-def marks_transcript_ready(phase: PhaseFn) -> PhaseFn:
-    """``phase`` (the transcript phase) then ``ctx.transcript_ready.set()``.
-
-    Keeps the phase's name for ``pipeline.timing``. A raising phase never sets
-    the event: the run fails and its cleanup cancels the waiting probe.
-    """
-
-    @functools.wraps(phase)
-    async def wrapped(ctx: PipelineContext) -> AsyncGenerator[str, None]:
-        async for event in phase(ctx):
-            yield event
-        ctx.transcript_ready.set()
-
-    return wrapped
 
 
 async def probe_for_plan(ctx: PipelineContext) -> TierProbe | None:

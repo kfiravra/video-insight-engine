@@ -41,6 +41,7 @@ def _ctx(task: asyncio.Future[TierProbe | None] | None) -> SimpleNamespace:
         video_data=video_data,
         transcript_data=SimpleNamespace(segments=[]),
         clean_text="Today, lasagna.",
+        prompt_transcript="[0:00] Today, lasagna.",
         source_language_code=None,
         video_summary_id="vsid",
         llm_service=MagicMock(),

@@ -63,7 +63,6 @@ def _patched_phases():
     return [
         patch.object(pipeline_orchestration, "run_phase_metadata", _phase_stub("metadata")),
         patch.object(pipeline_orchestration, "run_parallel_phases", _parallel_stub),
-        patch.object(pipeline_orchestration, "run_phase_plan", _phase_stub("plan")),
         patch.object(pipeline_orchestration, "run_phase_extraction", _phase_stub("extraction")),
         patch.object(pipeline_orchestration, "run_phase_synthesis", _phase_stub("synthesis")),
         patch.object(pipeline_orchestration, "run_phase_enrichment", _phase_stub("enrichment")),
@@ -109,7 +108,6 @@ async def test_synthesis_and_enrichment_parallel_when_extraction_has_data() -> N
     patches = [
         patch.object(pipeline_orchestration, "run_phase_metadata", _phase_stub("metadata")),
         patch.object(pipeline_orchestration, "run_parallel_phases", _capture_parallel),
-        patch.object(pipeline_orchestration, "run_phase_plan", _phase_stub("plan")),
         patch.object(pipeline_orchestration, "run_phase_extraction", _phase_stub("extraction")),
         patch.object(pipeline_orchestration, "run_phase_synthesis", _phase_stub("synthesis")),
         patch.object(pipeline_orchestration, "run_phase_enrichment", _phase_stub("enrichment")),
@@ -152,7 +150,6 @@ async def test_synthesis_enrichment_sequential_when_extraction_empty() -> None:
     patches = [
         patch.object(pipeline_orchestration, "run_phase_metadata", _phase_stub("metadata")),
         patch.object(pipeline_orchestration, "run_parallel_phases", _capture_parallel),
-        patch.object(pipeline_orchestration, "run_phase_plan", _phase_stub("plan")),
         patch.object(pipeline_orchestration, "run_phase_extraction", _phase_stub("extraction")),
         patch.object(pipeline_orchestration, "run_phase_synthesis", _phase_stub("synthesis")),
         patch.object(pipeline_orchestration, "run_phase_enrichment", _phase_stub("enrichment")),
@@ -753,8 +750,8 @@ async def test_failed_run_closes_both_downloads_before_persisting_timing() -> No
     timer = MagicMock()
     timer.elapsed = MagicMock(return_value=1.0)
 
-    async def _plan_fails(_ctx):
-        raise RuntimeError("plan exploded")
+    async def _extraction_fails(_ctx):
+        raise RuntimeError("extraction exploded")
         yield  # pragma: no cover — makes this an async generator
 
     async def _persist(*_args: object) -> None:
@@ -763,9 +760,11 @@ async def test_failed_run_closes_both_downloads_before_persisting_timing() -> No
     with ExitStack() as stack:
         for p in _patched_phases():
             stack.enter_context(p)
-        stack.enter_context(patch.object(pipeline_orchestration, "run_phase_plan", _plan_fails))
+        stack.enter_context(
+            patch.object(pipeline_orchestration, "run_phase_extraction", _extraction_fails)
+        )
         stack.enter_context(patch.object(pipeline_orchestration, "persist_run_timing", _persist))
-        with pytest.raises(RuntimeError, match="plan exploded"):
+        with pytest.raises(RuntimeError, match="extraction exploded"):
             _ = [
                 ev
                 async for ev in pipeline_orchestration.run_pipeline_phases(
@@ -807,7 +806,7 @@ async def test_failed_run_cancels_the_unjoined_t0_tasks() -> None:
 
 
 @pytest.mark.asyncio
-async def test_phase_two_runs_transcript_after_captions_with_frames_and_description() -> None:
+async def test_phase_two_runs_the_text_branch_with_frames_and_description() -> None:
     ctx = _english_ctx({"key_points": [{"text": "a claim long enough"}]})
     timer = MagicMock()
     timer.elapsed = MagicMock(return_value=1.0)
@@ -830,7 +829,7 @@ async def test_phase_two_runs_transcript_after_captions_with_frames_and_descript
             )
         ]
 
-    assert groups[0] == ["run_phase_transcript", "run_phase_frames", "run_phase_description"]
+    assert groups[0] == ["run_phase_text", "run_phase_frames", "run_phase_description"]
 
 
 @pytest.mark.asyncio
@@ -867,38 +866,3 @@ async def test_run_end_should_cancel_a_probe_still_waiting_for_the_transcript() 
     await asyncio.gather(ctx.tier_probe_task, return_exceptions=True)
 
     assert ctx.tier_probe_task.cancelled()
-
-
-@pytest.mark.asyncio
-async def test_phase_two_should_mark_the_transcript_ready_after_the_transcript_phase() -> None:
-    ctx = _english_ctx({})
-    groups: list[list] = []
-
-    async def _capture_parallel(phases, _ctx):
-        groups.append(list(phases))
-        yield "data: parallel\n\n"
-
-    async def _transcript(_ctx):
-        yield "data: transcript\n\n"
-
-    with ExitStack() as stack:
-        for p in _patched_phases():
-            stack.enter_context(p)
-        stack.enter_context(
-            patch.object(pipeline_orchestration, "run_parallel_phases", _capture_parallel)
-        )
-        stack.enter_context(
-            patch.object(pipeline_orchestration, "run_phase_transcript", _transcript)
-        )
-        stack.enter_context(
-            patch("src.services.pipeline.phases.metadata.await_captions", AsyncMock())
-        )
-        _ = [
-            ev
-            async for ev in pipeline_orchestration.run_pipeline_phases(
-                ctx, MagicMock(), "vsid", _timer()
-            )
-        ]
-        _ = [ev async for ev in groups[0][0](ctx)]
-
-    assert ctx.transcript_ready.is_set()

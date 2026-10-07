@@ -2274,6 +2274,22 @@
    "synthetic": true
   },
   {
+   "feature": "summarize:memory",
+   "span": "memory",
+   "model": "anthropic/claude-haiku-4-5-20251001",
+   "latencyMs": 12000,
+   "output": "{\"outline\": [{\"start\": \"0:00\", \"end\": \"0:59\", \"title\": \"Introduction to lasagna\"}, {\"start\": \"1:00\", \"end\": \"6:10\", \"title\": \"Preparing the ragu sauce\"}, {\"start\": \"6:11\", \"end\": \"8:38\", \"title\": \"Simmering the meat sauce\"}, {\"start\": \"8:39\", \"end\": \"11:29\", \"title\": \"Making bechamel and pasta\"}, {\"start\": \"11:30\", \"end\": \"15:07\", \"title\": \"Assembling the lasagna\"}, {\"start\": \"15:08\", \"end\": \"16:40\", \"title\": \"Resting and serving\"}], \"evidence\": {}, \"tldr\": \"Unlock the secret to Bon Appétit's best lasagna using the game-changing MeatballMethod™!\", \"takeaways\": [\"Form ~16-18 loose meatballs from 1 lb each of ground beef and ground pork, seasoned liberally with salt.\", \"Sear meatballs in batches for a rich flavor; don't overcrowd the pan.\", \"Make a creamy béchamel with 4 cups of whole milk, 7 tbsp of flour, and finish with 1 cup of Parmigiano-Reggiano.\"]}",
+   "finishReason": "stop",
+   "usage": {
+    "input": 4607,
+    "output": 1200,
+    "cacheRead": 0,
+    "cacheWrite": 0
+   },
+   "ordinal": 0,
+   "synthetic": true
+  },
+  {
    "feature": "summarize:plan",
    "span": "plan",
    "model": "anthropic/claude-sonnet-4-6",
@@ -2361,7 +2377,8 @@
   "notes": [
    "DEV run 2026-10-05 (no prod run yet); frames sub-steps ESTIMATED from T1dQhQAm8Tc's prod split, no worker log survives",
    "chapters rebuilt from the stored moment_track chapter items (YouTube chapters: the run made no chapter_detect call)",
-   "tier_probe#0 is SYNTHETIC (task 1b.1): the recorded run called the retired classifier instead; its domain/format/confidence are kept, has_visual_demo is judged from the video, and wall/tokens are the gate-0 A/B Haiku numbers (1000 ms, 1800 in / 40 out). See tests/replay/synthetic.py."
+   "tier_probe#0 is SYNTHETIC (task 1b.1): the recorded run called the retired classifier instead; its domain/format/confidence are kept, has_visual_demo is judged from the video, and wall/tokens are the gate-0 A/B Haiku numbers (1000 ms, 1800 in / 40 out). See tests/replay/synthetic.py.",
+   "memory#0 is SYNTHETIC (task 1b.3): the recorded run predates the memory call; tldr/takeaways come from its synthesis output, the outline from its chapters (else 6 even sections), no evidence; wall = 1200 output tokens at 100 tok/s. See tests/replay/synthetic.py."
   ]
  }
 }

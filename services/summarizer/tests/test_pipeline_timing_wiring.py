@@ -139,7 +139,7 @@ class TestRunnerPersistence:
             tier_probe_task=None,
         )
 
-    def _patches(self, assembly_events: list[str], plan: object | None = None) -> list:
+    def _patches(self, assembly_events: list[str], extraction: object | None = None) -> list:
         async def _one(*_a: object, **_k: object):
             yield "data: x\n\n"
 
@@ -150,8 +150,7 @@ class TestRunnerPersistence:
         return [
             patch.object(pipeline_orchestration, "run_phase_metadata", _one),
             patch.object(pipeline_orchestration, "run_parallel_phases", lambda _p, _c: _one()),
-            patch.object(pipeline_orchestration, "run_phase_plan", plan or _one),
-            patch.object(pipeline_orchestration, "run_phase_extraction", _one),
+            patch.object(pipeline_orchestration, "run_phase_extraction", extraction or _one),
             patch.object(pipeline_orchestration, "run_phase_synthesis", _one),
             patch.object(pipeline_orchestration, "run_phase_enrichment", _one),
             patch.object(pipeline_orchestration, "run_phase_assembly", _assembly),
@@ -162,10 +161,10 @@ class TestRunnerPersistence:
         ctx: SimpleNamespace,
         repository: MagicMock,
         events: list[str],
-        plan: object | None = None,
+        extraction: object | None = None,
     ) -> None:
         timer = MagicMock(elapsed=MagicMock(return_value=1.0))
-        patches = self._patches(events, plan)
+        patches = self._patches(events, extraction)
         for p in patches:
             p.start()
         try:
@@ -199,11 +198,11 @@ class TestRunnerPersistence:
         repository = MagicMock()
 
         async def _boom(*_a: object, **_k: object):
-            raise RuntimeError("plan exploded")
+            raise RuntimeError("extraction exploded")
             yield  # pragma: no cover
 
         with pytest.raises(RuntimeError):
-            await self._drive(self._ctx(), repository, [], plan=_boom)
+            await self._drive(self._ctx(), repository, [], extraction=_boom)
 
         repository.set_pipeline_timing.assert_called_once()
 

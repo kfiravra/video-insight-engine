@@ -2838,6 +2838,22 @@
    "synthetic": true
   },
   {
+   "feature": "summarize:memory",
+   "span": "memory",
+   "model": "anthropic/claude-haiku-4-5-20251001",
+   "latencyMs": 12000,
+   "output": "{\"outline\": [{\"start\": \"0:00\", \"end\": \"3:07\", \"title\": \"Welcome back everyone to Thelines TCG.\"}, {\"start\": \"3:07\", \"end\": \"6:15\", \"title\": \"you're looking at that and then,\"}, {\"start\": \"6:15\", \"end\": \"9:23\", \"title\": \"technically. So, uh we could technically\"}, {\"start\": \"9:23\", \"end\": \"12:31\", \"title\": \"Rocks,\"}, {\"start\": \"12:31\", \"end\": \"15:39\", \"title\": \"this set is the six go\"}, {\"start\": \"15:39\", \"end\": \"18:47\", \"title\": \"something about that. So maybe that's\"}], \"evidence\": {}, \"tldr\": \"Watch as the creator opens an OP-17 booster box and reveals key pulls crucial for building Elbath Luffy decks!\", \"takeaways\": [\"Nico Robin pull is essential for Elbath decks — consider it a must-have support card.\", \"Stussy SR prevents attacks for free—vital for dominating Rocks decks.\", \"Creator needs three more Loki secret rares for an optimal Elbath Luffy leader setup.\", \"Yamato SR is shaping up to be a new staple for purple strategies — keep it on your radar!\", \"An unusual pack anomaly reveals only one rare, sparking creator's curiosity and frustration.\"]}",
+   "finishReason": "stop",
+   "usage": {
+    "input": 6461,
+    "output": 1200,
+    "cacheRead": 0,
+    "cacheWrite": 0
+   },
+   "ordinal": 0,
+   "synthetic": true
+  },
+  {
    "feature": "summarize:plan",
    "span": "plan",
    "model": "anthropic/claude-sonnet-4-6",
@@ -2924,7 +2940,8 @@
    "prod request 19562400 (171 s); zero scene frames (HIGH via title keyword 'opening', vision never ran); sub-steps from its worker log",
    "momentFill = whole assembly wall (720p re-download 21.7 s logged)",
    "frame_vision#0 is SYNTHETIC (task 1a.3): the recorded run found zero scene frames so vision never ran; the zero-candidate ladder now seeks 30 uniform frames and the HIGH reselect describes them in one call. Latency/tokens estimated from the jMq8lEu-of0 HIGH call (87 output tokens and ~800 input tokens per frame; wall 6.6 s + 16.2 s per 1k output tokens). Re-add it if this cassette is rebuilt.",
-   "tier_probe#0 is SYNTHETIC (task 1b.1): the recorded run called the retired classifier instead; its domain/format/confidence are kept, has_visual_demo is judged from the video, and wall/tokens are the gate-0 A/B Haiku numbers (1000 ms, 1800 in / 40 out). See tests/replay/synthetic.py."
+   "tier_probe#0 is SYNTHETIC (task 1b.1): the recorded run called the retired classifier instead; its domain/format/confidence are kept, has_visual_demo is judged from the video, and wall/tokens are the gate-0 A/B Haiku numbers (1000 ms, 1800 in / 40 out). See tests/replay/synthetic.py.",
+   "memory#0 is SYNTHETIC (task 1b.3): the recorded run predates the memory call; tldr/takeaways come from its synthesis output, the outline from its chapters (else 6 even sections), no evidence; wall = 1200 output tokens at 100 tok/s. See tests/replay/synthetic.py."
   ]
  }
 }
