@@ -86,3 +86,6 @@ dev/diagnostics/
 
 # Demo preload exports (scripts/demo-export.sh) — local copies of cached videos
 demo-data/
+
+# pipeline-1min raw research answers (378 KB, session-scoped evidence; digest + code maps stay tracked)
+dev/active/pipeline-1min/evidence/ans-*.md
