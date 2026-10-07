@@ -7,7 +7,7 @@ Phases:
 2. For each live entry, POST it to vie-api with ``bypassCache`` (so the
    current code runs, not a stored output) and hold the SSE stream until the
    run ends — OR, with ``--dry-run``, score a stub without network calls.
-3. Read each run's Langfuse trace (faithfulness score, classifier format).
+3. Read each run's Langfuse trace (faithfulness score, tier-probe format).
 4. Score every video: the legacy quality score (``score_entry``), the
    duplicate-item rate, faithfulness, and the per-video assertions.
 5. Write ``reports/eval-{ts}.csv|.md|.json`` and optionally publish a
@@ -224,7 +224,7 @@ def _trace_targets(runs: list[EntryRun]) -> dict[str, TraceTarget]:
 
 
 async def fetch_signals(runs: list[EntryRun], session: Session) -> dict[str, TraceSignals]:
-    """Faithfulness + classifier format per golden id, from the runs' Langfuse traces."""
+    """Faithfulness + tier-probe format per golden id, from the runs' Langfuse traces."""
     if session.dry_run:
         return {}
     if session.langfuse is None:

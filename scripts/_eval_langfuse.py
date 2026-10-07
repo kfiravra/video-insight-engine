@@ -2,7 +2,7 @@
 
 Reads: per video, the pipeline trace ``pipeline:<videoSummaryId>`` created
 after the eval's POST, then its ``faithfulness`` score and its
-``classifier`` generation output (for the ``expectedFormat`` assertion).
+``tier_probe`` generation output (for the ``expectedFormat`` assertion).
 Every read goes through ``ReadPacer`` — Langfuse Cloud throttles the public
 read API hard (2026-10-07: 4 reads in 3 s, then 429 for > 30 s, which cost a
 baseline pass 16/18 faithfulness values).
@@ -31,7 +31,7 @@ from typing import Any
 
 import httpx
 from _eval_assertions import TraceSignals
-from _eval_metrics import extract_classifier_format, extract_faithfulness
+from _eval_metrics import extract_faithfulness, extract_probe_format
 
 logger = logging.getLogger("run_eval.langfuse")
 
@@ -197,7 +197,7 @@ async def fetch_signals(
     return TraceSignals(
         trace_id=trace_id,
         faithfulness=extract_faithfulness(trace),
-        classifier_format=extract_classifier_format(trace),
+        probe_format=extract_probe_format(trace),
     )
 
 

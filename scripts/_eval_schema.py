@@ -4,7 +4,7 @@ Validated once at load time so a typo in a per-video assertion fails the
 eval before any pipeline spend, not after an hour of runs.
 
 Per-video ``assertions`` are deterministic checks over the assembled API
-response (plus the classifier format read from the Langfuse trace). Every
+response (plus the tier-probe format read from the Langfuse trace). Every
 assertion accepts an optional ``xfail`` marker — a reason string, or
 ``{reason, until, strict}`` naming the task that is expected to fix it: the
 check still runs and is reported, but a known, tracked failure does not fail
@@ -106,7 +106,7 @@ class ExpectedDomain(_AssertionBase):
 
 
 class ExpectedFormat(_AssertionBase):
-    """The classifier format (Langfuse ``classifier`` generation) is one of ``values``."""
+    """The tier-probe format (Langfuse ``tier_probe`` generation) is one of ``values``."""
 
     type: Literal["expectedFormat"]
     values: list[str] = Field(min_length=1)

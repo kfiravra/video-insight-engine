@@ -7,7 +7,7 @@ failed assertion that is not marked ``xfail``, and on any strict ``xfail``
 that passed (XPASS — the marker must go). Each result carries the ``key`` of
 the dataset assertion it came from, so markers are re-read by identity.
 
-An assertion whose input is unavailable (no classifier format on the trace,
+An assertion whose input is unavailable (no tier-probe format on the trace,
 no duration on the response) is reported as *skipped* (``passed=None``) —
 never as a pass, never as a gate failure.
 """
@@ -82,7 +82,7 @@ class AssertionResult:
 class TraceSignals:
     trace_id: str | None = None
     faithfulness: float | None = None
-    classifier_format: str | None = None
+    probe_format: str | None = None
 
 
 # ─── Helpers ───────────────────────────────────────────────────────────
@@ -138,9 +138,9 @@ def _expected_domain(a: ExpectedDomain, actual: dict[str, Any], _: TraceSignals)
 
 
 def _expected_format(a: ExpectedFormat, _: dict[str, Any], signals: TraceSignals) -> _Verdict:
-    fmt = signals.classifier_format
+    fmt = signals.probe_format
     if fmt is None:
-        return None, "classifier format unavailable (no Langfuse trace/observation)"
+        return None, "probe format unavailable (no Langfuse trace/observation)"
     return fmt in {v.lower() for v in a.values}, f"format={fmt} expected one of {a.values}"
 
 

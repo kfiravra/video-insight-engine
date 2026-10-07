@@ -31,8 +31,8 @@ from _eval_assertions import (  # noqa: E402
 )
 from _eval_metrics import (  # noqa: E402
     duplicate_item_rate,
-    extract_classifier_format,
     extract_faithfulness,
+    extract_probe_format,
 )
 from _eval_schema import GoldenDataset, is_allowed_video_url, parse_assertions  # noqa: E402
 
@@ -239,13 +239,13 @@ class TestAssertions:
     def test_should_skip_timestamp_check_when_duration_is_unknown(self) -> None:
         assert _check({"type": "noTimestampBeyondDuration"}, _tabs("overview")).passed is None
 
-    def test_should_skip_format_check_when_trace_has_no_classifier(self) -> None:
+    def test_should_skip_format_check_when_trace_has_no_probe(self) -> None:
         check = {"type": "expectedFormat", "values": ["vlog"]}
         assert _check(check, _tabs("overview")).passed is None
 
-    def test_should_pass_format_check_when_classifier_format_matches(self) -> None:
+    def test_should_pass_format_check_when_probe_format_matches(self) -> None:
         check = {"type": "expectedFormat", "values": ["vlog"]}
-        signals = TraceSignals(classifier_format="vlog")
+        signals = TraceSignals(probe_format="vlog")
         assert _check(check, _tabs("overview"), signals).passed is True
 
     def test_should_carry_xfail_reason_without_gating(self) -> None:
@@ -370,8 +370,25 @@ class TestMetrics:
         }
         assert extract_faithfulness(trace) == 0.8
 
-    def test_should_parse_classifier_format_from_generation_output(self) -> None:
+    def test_should_parse_probe_format_from_generation_output(self) -> None:
         trace = {
-            "observations": [{"name": "classifier", "output": '```json\n{"format": "Vlog"}\n```'}]
+            "observations": [{"name": "tier_probe", "output": '```json\n{"format": "Vlog"}\n```'}]
         }
-        assert extract_classifier_format(trace) == "vlog"
+        assert extract_probe_format(trace) == "vlog"
+
+    def test_should_read_the_retired_classifier_on_pre_probe_traces(self) -> None:
+        trace = {"observations": [{"name": "classifier", "output": '{"format": "tutorial"}'}]}
+        assert extract_probe_format(trace) == "tutorial"
+
+    def test_should_prefer_the_probe_when_both_generations_exist(self) -> None:
+        trace = {
+            "observations": [
+                {"name": "classifier", "output": '{"format": "tutorial"}'},
+                {"name": "tier_probe", "output": '{"format": "vlog"}'},
+            ]
+        }
+        assert extract_probe_format(trace) == "vlog"
+
+    def test_should_return_none_when_no_generation_has_a_format(self) -> None:
+        trace = {"observations": [{"name": "plan", "output": '{"format": "vlog"}'}]}
+        assert extract_probe_format(trace) is None

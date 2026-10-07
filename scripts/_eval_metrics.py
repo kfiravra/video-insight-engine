@@ -186,15 +186,28 @@ def _parse_json_object(raw: Any) -> dict[str, Any] | None:
     return parsed if isinstance(parsed, dict) else None
 
 
-def extract_classifier_format(trace: dict[str, Any]) -> str | None:
-    """Return the ``format`` the ``classifier`` generation produced, if recorded."""
-    for observation in trace.get("observations") or []:
-        if not isinstance(observation, dict) or observation.get("name") != "classifier":
-            continue
-        data = _parse_json_object(observation.get("output"))
-        fmt = (data or {}).get("format")
-        if isinstance(fmt, str) and fmt.strip():
-            return fmt.strip().lower()
+# The early domain/format call: the tier probe since pipeline-1min 1b.1; runs
+# recorded before it (the phase-0 baseline, refreshed with --refresh-langfuse)
+# carry the same ``{"format": …}`` answer on the retired ``classifier``.
+_FORMAT_OBSERVATIONS = ("tier_probe", "classifier")
+
+
+def _observation_format(observation: dict[str, Any]) -> str | None:
+    data = _parse_json_object(observation.get("output"))
+    fmt = (data or {}).get("format")
+    return fmt.strip().lower() if isinstance(fmt, str) and fmt.strip() else None
+
+
+def extract_probe_format(trace: dict[str, Any]) -> str | None:
+    """Return the ``format`` the run's ``tier_probe`` (else ``classifier``) generation produced."""
+    observations = [o for o in trace.get("observations") or [] if isinstance(o, dict)]
+    for name in _FORMAT_OBSERVATIONS:
+        for observation in observations:
+            if observation.get("name") != name:
+                continue
+            fmt = _observation_format(observation)
+            if fmt is not None:
+                return fmt
     return None
 
 
