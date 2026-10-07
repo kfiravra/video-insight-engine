@@ -1,0 +1,58 @@
+<role>
+You read one video's full transcript and write its memory: an outline with real boundaries, evidence flags, the video's angle in one line, and its key takeaways. Later stages build on this memory — be exact and never guess.
+</role>
+
+<video>
+Title: {title}
+Channel: {channel}
+Duration: {duration}
+Description: {description}
+</video>
+
+<transcript>
+{transcript}
+</transcript>
+
+<outline_rules>
+Split the video into 4–12 sections at its real topic shifts. A video shorter than 4 minutes gets at most one section per full minute.
+- "start" and "end" use the transcript's timestamp format (m:ss, or h:mm:ss past one hour). Anchor every boundary on the [m:ss] marker nearest to where the topic changes.
+- The first section starts at 0:00. The last section ends at {duration}.
+- Sections are contiguous and never overlap: each section ends exactly where the next one starts.
+- Every section is at least 1 minute long.
+- Spread the sections across the WHOLE video — never cluster them in the first part.
+- "title": at most 8 words naming what happens in that section, with its specifics ("toast chiles, blend, braise" — not "Cooking").
+</outline_rules>
+
+<evidence_rules>
+Answer EVERY key below. true only when the transcript itself contains that content — said or shown, not implied by the topic or the title. When unsure, false.
+- has_steps: ordered steps the viewer can follow (a recipe method, build steps, a setup procedure)
+- has_ingredients: food ingredients named in the video, usually with amounts
+- has_materials: materials, tools or parts listed for a build or project
+- has_code: actual code, commands or configuration shown or dictated
+- has_drills: repeatable practice — exercises with sets or reps, pronunciation or skill drills
+- has_comparison: two or more products, options or methods evaluated against each other
+- has_ranking: an explicit ranking, top-N list or tier list
+- has_lineup: team lineups or formations
+- has_claims: factual claims about real-world events that can be checked
+- has_lyrics: song lyrics sung or quoted at length
+- has_itinerary: places visited or recommended in an order — a route or a day plan
+- has_packing: a packing or gear list for a trip
+- is_learnable: concepts or facts worth testing yourself on afterwards
+</evidence_rules>
+
+<summary_rules>
+- "tldr": one sentence of at most 150 characters with the video's angle — what makes THIS video different — not its topic.
+- "takeaways": 3–5 items. Each one carries a specific number, name or measurement from the video. No generic advice.
+</summary_rules>
+
+<output_language>
+Write the outline titles, the tldr and the takeaways in English, even when the transcript is in another language — translate the meaning, do not copy the original language. Numbers and units stay exactly as said.
+</output_language>
+
+<output_format>
+Return ONLY the JSON object — no code fences, no text before or after it, no explanation. Example for a 19-minute cooking video:
+{"outline": [{"start": "0:00", "end": "1:10", "title": "intro — what makes this birria different"}, {"start": "1:10", "end": "2:40", "title": "ingredients for the consommé and the tacos"}, {"start": "2:40", "end": "13:00", "title": "toast chiles, blend, braise the beef"}, {"start": "13:00", "end": "19:00", "title": "assemble, dip and plate the tacos"}],
+ "evidence": {"has_steps": true, "has_ingredients": true, "has_materials": false, "has_code": false, "has_drills": false, "has_comparison": false, "has_ranking": false, "has_lineup": false, "has_claims": false, "has_lyrics": false, "has_itinerary": false, "has_packing": false, "is_learnable": false},
+ "tldr": "A chef's one-pot birria that braises in its own consommé — no oven, ready in 4 hours",
+ "takeaways": ["Toast the 6 guajillo chiles 30 seconds per side — longer turns them bitter", "Braise 3 lb of chuck at a bare simmer for 3.5 hours", "Dip each tortilla in the consommé fat before it hits the 400°F griddle"]}
+</output_format>

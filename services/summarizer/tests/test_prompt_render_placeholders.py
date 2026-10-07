@@ -84,6 +84,7 @@ _COVERED_TEMPLATES: set[str] = {
     "translate_flat.txt",
     "chapter_detect.txt",
     "description_analysis.txt",
+    "memory.txt",
     *(f"schemas/{p.name}" for p in (PROMPTS_DIR / "schemas").glob("*.txt")),
     *(f"examples/{p.name}" for p in (PROMPTS_DIR / "examples").glob("*.txt")),
     *(f"enrich/{p.name}" for p in (PROMPTS_DIR / "enrich").glob("*.txt")),
@@ -369,3 +370,24 @@ async def test_description_analysis_prompt_renders_without_placeholders():
     messages = mock_completion.call_args.kwargs["messages"]
     rendered = "\n".join(m["content"] for m in messages)
     _assert_no_unreplaced(rendered, "description_analysis.txt")
+
+
+# ─── Video memory (memory.txt) ──────────────────────────────────────────
+@pytest.mark.asyncio
+async def test_memory_prompt_renders_without_placeholders():
+    from src.models.memory_types import MemoryInput
+    from src.services.pipeline import memory as memory_mod
+
+    llm, mock_call = _capture_llm()
+    request = MemoryInput(
+        title="Test Video",
+        channel="Test Channel",
+        duration=600,
+        description="Description text",
+        transcript="[0:00] intro text\n[0:20] more text",
+    )
+    with patch.object(memory_mod, "call_llm_with_retry", mock_call):
+        await memory_mod.run_memory(llm, request)
+    rendered = _captured_prompt_text(mock_call)
+    assert rendered, "memory never reached the LLM call"
+    _assert_no_unreplaced(rendered, "memory.txt")
