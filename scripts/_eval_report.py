@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import csv
 import json
+import shutil
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -65,6 +66,7 @@ def _assertion_dict(result: AssertionResult) -> dict[str, Any]:
         "passed": result.passed,
         "detail": result.detail,
         "xfail": result.xfail,
+        "until": result.until,
     }
 
 
@@ -155,8 +157,8 @@ def _assertion_lines(outcomes: list[VideoOutcome]) -> list[str]:
         for a in o.assertions:
             if a.passed is True and not a.xfail:
                 continue
-            label = {True: "XPASS", False: "XFAIL" if a.xfail else "FAIL", None: "SKIP"}[a.passed]
-            lines.append(f"- **{label}** `{o.id}` {a.type}: {a.detail}")
+            marker = f" ({a.marker})" if a.marker else ""
+            lines.append(f"- **{a.label}** `{o.id}` {a.type}: {a.detail}{marker}")
     return lines if len(lines) > 3 else [*lines, "- all passed"]
 
 
@@ -222,6 +224,17 @@ def _outcome_from_row(row: dict[str, Any]) -> VideoOutcome:
 def outcomes_from_summary(summary: dict[str, Any]) -> list[VideoOutcome]:
     """The per-video outcomes of an ``eval-*.json`` summary."""
     return [_outcome_from_row(row) for row in summary.get("videos") or []]
+
+
+def backup_reports(json_path: Path) -> None:
+    """Copy ``json_path`` and its .csv/.md siblings to ``<file>.bak`` before a rewrite.
+
+    An existing ``.bak`` is kept: it holds the ORIGINAL run, not the last rewrite.
+    """
+    for path in (json_path, json_path.with_suffix(".csv"), json_path.with_suffix(".md")):
+        backup = path.with_name(path.name + ".bak")
+        if path.exists() and not backup.exists():
+            shutil.copy2(path, backup)
 
 
 def rewrite_reports(

@@ -12,11 +12,17 @@ Compares one eval run summary (``reports/eval-<ts>.json`` from
   noise file; floored at ``MIN_TOLERANCE``). The floor keeps a metric whose
   baseline passes happened to agree exactly from gating on rounding-level
   changes.
-* A metric with a baseline but no value in the run (e.g. no Langfuse trace →
-  no faithfulness) fails: a gate that silently skips is not a gate. A video
-  whose pipeline errored is left out of the metrics — its failed
-  ``completed`` assertion already fails the gate.
-* Any per-video assertion that failed and is not marked ``xfail`` fails.
+* A missing score is "not scored", never a regression: a video with no
+  value for a metric in the run (e.g. no Langfuse trace → no faithfulness)
+  or none in the baseline is listed as not scored and left out of that
+  metric's comparison. A video whose pipeline errored is not scored either —
+  its failed ``completed`` assertion is what fails the gate.
+* Any per-video assertion that failed and is not marked ``xfail`` fails. The
+  ``xfail`` markers are read from ``videos.yaml`` (``--dataset``), so marking
+  a known failure there needs no re-run; XFAIL / XPASS are printed, never
+  gating.
+* Only live golden ids count: report and noise rows of an entry that is now
+  disabled or removed (a dead link) are ignored.
 * The report must be a fresh (``bypassCache``) run against the same API as
   the noise file, or the comparison is meaningless (exit 2).
 
@@ -37,8 +43,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from _eval_assertions import AssertionResult, apply_markers
 from _eval_metrics import PRIMARY_METRICS
-from _eval_noise import DEFAULT_NOISE_PATH, NOISE_SCHEMA_VERSION, load_json, summary_api_label
+from _eval_noise import (
+    DEFAULT_NOISE_PATH,
+    NOISE_SCHEMA_VERSION,
+    live_only,
+    load_json,
+    summary_api_label,
+)
+from _eval_schema import DATASET_PATH, live_records, parse_assertions, read_dataset
 
 # Tolerance derivation (``tolerance_for``). Model a per-video metric as
 # x_ip = μ_i + ε_ip, ε ~ N(0, s²) independent across videos i and passes p.
@@ -84,17 +98,16 @@ class MetricCheck:
     current: float | None
     tolerance: float
     paired: int
-    # Videos with a baseline value but none in this run (e.g. no Langfuse trace).
-    missing: tuple[str, ...] = ()
+    # Videos with no value in the run or none in the baseline: "not scored",
+    # left out of the comparison — never a regression on their own.
+    not_scored: tuple[str, ...] = ()
 
     @property
     def gated(self) -> bool:
-        return self.baseline is not None or bool(self.missing)
+        return self.baseline is not None and self.current is not None
 
     @property
     def regressed(self) -> bool:
-        if self.missing:
-            return True
         if self.baseline is None or self.current is None:
             return False
         if self.direction == "higher":
@@ -102,14 +115,14 @@ class MetricCheck:
         return self.current > self.baseline + self.tolerance
 
     def describe(self) -> str:
+        unscored = f"; not scored: {', '.join(self.not_scored)}" if self.not_scored else ""
         if not self.gated:
-            return f"{self.metric}: not gated (no baseline value)"
-        if self.missing:
-            return f"{self.metric}: REGRESSED — unavailable for {', '.join(self.missing)}"
+            return f"{self.metric}: not gated (no video scored in both run and baseline){unscored}"
         verdict = "REGRESSED" if self.regressed else "ok"
         return (
             f"{self.metric}: {self.current:.4f} vs baseline {self.baseline:.4f} "
-            f"(±{self.tolerance:.4f}, {self.direction} is better, n={self.paired}) {verdict}"
+            f"(±{self.tolerance:.4f}, {self.direction} is better, n={self.paired}) "
+            f"{verdict}{unscored}"
         )
 
 
@@ -117,6 +130,10 @@ class MetricCheck:
 class GateResult:
     checks: list[MetricCheck]
     assertion_failures: list[str] = field(default_factory=list)
+    # Known failures (XFAIL) and marked checks that now pass (XPASS) — reported only.
+    xfails: list[str] = field(default_factory=list)
+    xpasses: list[str] = field(default_factory=list)
+    ignored: list[str] = field(default_factory=list)  # report rows of retired ids
 
     @property
     def passed(self) -> bool:
@@ -166,20 +183,22 @@ def tolerance_for(metric: str, noise: dict[str, Any], paired: int) -> float:
 
 
 def check_metric(report: dict[str, Any], noise: dict[str, Any], metric: str) -> MetricCheck:
-    """Paired comparison of one metric over the videos both files measured."""
+    """Paired comparison of one metric over the videos both files scored.
+
+    A report video absent from the baseline, without a baseline value, or
+    without a value in this run is "not scored"; a baseline video absent
+    from the report (``--allow-subset``) is simply not compared.
+    """
     current_by_id = _report_videos(report)
+    baseline_by_id = noise.get("videos") or {}
     base_pairs: list[float] = []
     current_pairs: list[float] = []
-    missing: list[str] = []
-    for vid, base_metrics in sorted((noise.get("videos") or {}).items()):
-        base = base_metrics.get(metric)
-        video = current_by_id.get(vid)
-        # An errored run is gated by its `completed` assertion, not as a metric gap.
-        if base is None or video is None or video.get("error"):
-            continue
+    not_scored: list[str] = []
+    for vid, video in sorted(current_by_id.items()):
+        base = (baseline_by_id.get(vid) or {}).get(metric)
         current = (video.get("metrics") or {}).get(metric)
-        if current is None:
-            missing.append(vid)
+        if base is None or current is None:
+            not_scored.append(vid)
             continue
         base_pairs.append(base)
         current_pairs.append(current)
@@ -190,18 +209,48 @@ def check_metric(report: dict[str, Any], noise: dict[str, Any], metric: str) -> 
         current=_mean(current_pairs),
         tolerance=tolerance_for(metric, noise, len(current_pairs)),
         paired=len(current_pairs),
-        missing=tuple(missing),
+        not_scored=tuple(not_scored),
     )
+
+
+def _results(report: dict[str, Any]) -> list[tuple[str, AssertionResult]]:
+    return [
+        (video["id"], AssertionResult(**a))
+        for video in report.get("videos") or []
+        for a in video.get("assertions") or []
+    ]
+
+
+def _line(vid: str, result: AssertionResult) -> str:
+    marker = f" ({result.marker})" if result.marker else ""
+    return f"{vid}: {result.type} — {result.detail}{marker}"
 
 
 def assertion_failures(report: dict[str, Any]) -> list[str]:
     """Gating assertion failures: failed and not marked xfail."""
-    return [
-        f"{video['id']}: {a['type']} — {a.get('detail', '')}"
-        for video in report.get("videos") or []
-        for a in video.get("assertions") or []
-        if a.get("passed") is False and not a.get("xfail")
-    ]
+    return [_line(vid, r) for vid, r in _results(report) if r.gating_failure]
+
+
+def _labelled(report: dict[str, Any], label: str) -> list[str]:
+    return [_line(vid, r) for vid, r in _results(report) if r.label == label]
+
+
+def live_view(
+    report: dict[str, Any], noise: dict[str, Any], records: list[dict[str, Any]]
+) -> tuple[dict[str, Any], dict[str, Any], list[str]]:
+    """Report + noise restricted to the live golden ids, xfail markers from the dataset.
+
+    Returns the two views and the report ids that were dropped (retired).
+    """
+    live = live_records(records)
+    rows = []
+    for video in live_only(report, set(live)).get("videos") or []:
+        stored = [AssertionResult(**a) for a in video.get("assertions") or []]
+        remarked = apply_markers(stored, parse_assertions(live[video["id"]]))
+        rows.append({**video, "assertions": [vars(r) for r in remarked]})
+    ignored = sorted(v["id"] for v in report.get("videos") or [] if v["id"] not in live)
+    baseline = {k: v for k, v in (noise.get("videos") or {}).items() if k in live}
+    return {**report, "videos": rows}, {**noise, "videos": baseline}, ignored
 
 
 def validate_inputs(report: dict[str, Any], noise: dict[str, Any], allow_subset: bool) -> None:
@@ -213,6 +262,8 @@ def validate_inputs(report: dict[str, Any], noise: dict[str, Any], allow_subset:
             f"noise schemaVersion {noise.get('schemaVersion')!r} unsupported — rebuild it "
             "for $0: run_eval.py --noise-from <eval-…-r1.json> <eval-…-r2.json>"
         )
+    if not report.get("videos"):
+        raise GateInputError("report has no live golden video to gate (check --dataset)")
     if report.get("bypassCache") is not True:
         raise GateInputError("report is not a bypassCache run (it scored stored output)")
     report_api, noise_api = summary_api_label(report), summary_api_label(noise)
@@ -227,17 +278,36 @@ def validate_inputs(report: dict[str, Any], noise: dict[str, Any], allow_subset:
 
 
 def evaluate(
-    report: dict[str, Any], noise: dict[str, Any], *, allow_subset: bool = False
+    report: dict[str, Any],
+    noise: dict[str, Any],
+    *,
+    allow_subset: bool = False,
+    records: list[dict[str, Any]] | None = None,
 ) -> GateResult:
+    """Gate ``report`` against ``noise``; ``records`` (videos.yaml) scopes it to live ids."""
+    ignored: list[str] = []
+    if records is not None:
+        report, noise, ignored = live_view(report, noise, records)
     validate_inputs(report, noise, allow_subset)
-    checks = [check_metric(report, noise, m) for m in PRIMARY_METRICS]
-    return GateResult(checks=checks, assertion_failures=assertion_failures(report))
+    return GateResult(
+        checks=[check_metric(report, noise, m) for m in PRIMARY_METRICS],
+        assertion_failures=assertion_failures(report),
+        xfails=_labelled(report, "XFAIL"),
+        xpasses=_labelled(report, "XPASS"),
+        ignored=ignored,
+    )
 
 
 # ─── CLI ───────────────────────────────────────────────────────────────
 def _print_result(result: GateResult) -> None:
+    if result.ignored:
+        print(f"ignored (no longer live): {', '.join(result.ignored)}")
     for check in result.checks:
         print(check.describe())
+    for line in result.xfails:
+        print(f"assertion XFAIL {line}")
+    for line in result.xpasses:
+        print(f"assertion XPASS {line} — drop the xfail marker")
     for failure in result.assertion_failures:
         print(f"assertion FAILED {failure}")
     print("GATE PASS" if result.passed else "GATE FAIL")
@@ -250,12 +320,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--report", required=True, help="eval-<ts>.json from run_eval.py")
     parser.add_argument("--noise", default=str(DEFAULT_NOISE_PATH))
     parser.add_argument("--allow-subset", action="store_true")
+    parser.add_argument(
+        "--dataset", default=str(DATASET_PATH), help="videos.yaml: live ids + xfail markers"
+    )
     args = parser.parse_args(argv)
     try:
         result = evaluate(
             load_json(Path(args.report)),
             load_json(Path(args.noise)),
             allow_subset=args.allow_subset,
+            records=read_dataset(Path(args.dataset)),
         )
     except (OSError, ValueError) as exc:
         print(f"gate: {exc}", file=sys.stderr)

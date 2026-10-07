@@ -5,17 +5,22 @@ eval before any pipeline spend, not after an hour of runs.
 
 Per-video ``assertions`` are deterministic checks over the assembled API
 response (plus the classifier format read from the Langfuse trace). Every
-assertion accepts an optional ``xfail`` reason: the check still runs and is
-reported, but a known, tracked failure does not fail the gate (a pass is
-reported as XPASS so the marker gets removed).
+assertion accepts an optional ``xfail`` marker — a reason string, or
+``{reason, until}`` naming the task that is expected to fix it: the check
+still runs and is reported, but a known, tracked failure does not fail the
+gate (a pass is reported as XPASS so the marker gets removed). The gate reads
+the markers from this file, so marking a known failure needs no re-run.
 """
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from pathlib import Path
+from typing import Annotated, Any, Literal
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+DATASET_PATH = Path(__file__).resolve().parent.parent / "dev" / "golden-dataset" / "videos.yaml"
 
 # Golden dataset entries must point at YouTube only. Without this guard a
 # malicious PR could swap a URL to an internal host and the eval would
@@ -48,10 +53,27 @@ def is_allowed_video_url(url: str) -> bool:
 
 
 # ─── Assertion types ───────────────────────────────────────────────────
+class Xfail(BaseModel):
+    """A known, tracked failure: ``reason`` and the task expected to fix it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(min_length=1)
+    until: str | None = Field(default=None, min_length=1)
+
+
 class _AssertionBase(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    xfail: str | None = Field(default=None, min_length=1)
+    xfail: Annotated[str, Field(min_length=1)] | Xfail | None = None
+
+    @property
+    def xfail_reason(self) -> str | None:
+        return self.xfail.reason if isinstance(self.xfail, Xfail) else self.xfail
+
+    @property
+    def xfail_until(self) -> str | None:
+        return self.xfail.until if isinstance(self.xfail, Xfail) else None
 
 
 class ExpectedDomain(_AssertionBase):
@@ -187,3 +209,20 @@ class GoldenDataset(BaseModel):
 def parse_assertions(record: dict[str, object]) -> list[Assertion]:
     """Validate one raw dataset record and return its typed assertions."""
     return GoldenVideo.model_validate(record).assertions
+
+
+def read_dataset(path: Path = DATASET_PATH) -> list[dict[str, Any]]:
+    """The raw records of ``videos.yaml`` after validating the whole file.
+
+    Raises ``pydantic.ValidationError`` on any schema problem.
+    """
+    import yaml
+
+    data = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
+    GoldenDataset.model_validate(data)
+    return list(data["videos"])
+
+
+def live_records(records: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Live (not ``disabled``) records by id — the set the gate and noise file measure."""
+    return {r["id"]: r for r in records if not r.get("disabled")}

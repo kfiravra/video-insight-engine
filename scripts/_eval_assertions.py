@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from _eval_schema import (
@@ -45,10 +45,27 @@ class AssertionResult:
     passed: bool | None  # None = skipped (input unavailable)
     detail: str = ""
     xfail: str | None = None
+    until: str | None = None  # the task expected to fix an xfail (e.g. "1b.2")
 
     @property
     def gating_failure(self) -> bool:
         return self.passed is False and self.xfail is None
+
+    @property
+    def label(self) -> str:
+        """PASS / FAIL / SKIP, or XFAIL / XPASS for an ``xfail``-marked check."""
+        if self.passed is None:
+            return "SKIP"
+        if self.xfail:
+            return "XPASS" if self.passed else "XFAIL"
+        return "PASS" if self.passed else "FAIL"
+
+    @property
+    def marker(self) -> str:
+        """``xfail: <reason>; until <task>`` — empty for an unmarked check."""
+        if not self.xfail:
+            return ""
+        return f"xfail: {self.xfail}" + (f"; until {self.until}" if self.until else "")
 
 
 @dataclass(frozen=True)
@@ -190,11 +207,14 @@ _EVALUATORS: dict[type, Callable[..., _Verdict]] = {
 
 
 # ─── Entry points ──────────────────────────────────────────────────────
+COMPLETED = "completed"
+
+
 def completed_result(error: str | None) -> AssertionResult:
     """Implicit assertion on every live video: the pipeline run completed."""
     if error:
-        return AssertionResult(type="completed", passed=False, detail=error[:200])
-    return AssertionResult(type="completed", passed=True, detail="run completed")
+        return AssertionResult(type=COMPLETED, passed=False, detail=error[:200])
+    return AssertionResult(type=COMPLETED, passed=True, detail="run completed")
 
 
 def evaluate_assertions(
@@ -206,7 +226,32 @@ def evaluate_assertions(
         passed, detail = _EVALUATORS[type(assertion)](assertion, actual, signals)
         results.append(
             AssertionResult(
-                type=assertion.type, passed=passed, detail=detail, xfail=assertion.xfail
+                type=assertion.type,
+                passed=passed,
+                detail=detail,
+                xfail=assertion.xfail_reason,
+                until=assertion.xfail_until,
             )
         )
     return results
+
+
+def apply_markers(
+    results: list[AssertionResult], assertions: list[Assertion]
+) -> list[AssertionResult]:
+    """Re-read the ``xfail`` markers of stored results from the current dataset.
+
+    ``results`` are one video's reported checks (a leading ``completed``,
+    then one per dataset assertion, in order). Matched by position, and only
+    while the reported types still line up with ``assertions`` — after an
+    assertion is added, dropped or reordered the stored markers are kept.
+    """
+    lead = 1 if results and results[0].type == COMPLETED else 0
+    body = results[lead:]
+    if [r.type for r in body] != [a.type for a in assertions]:
+        return results
+    remarked = [
+        replace(r, xfail=a.xfail_reason, until=a.xfail_until)
+        for r, a in zip(body, assertions, strict=True)
+    ]
+    return results[:lead] + remarked

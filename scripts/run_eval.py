@@ -41,16 +41,22 @@ Usage::
     # Re-derive noise.json from the passes of an earlier noise run ($0)
     python3 scripts/run_eval.py --noise-from reports/eval-<ts>-r1.json reports/eval-<ts>-r2.json
 
+    # Re-score stored rows + re-read xfail markers after a videos.yaml edit ($0)
+    python3 scripts/run_eval.py --resync reports/eval-<ts>-r1.json reports/eval-<ts>-r2.json
+
+    # Fold a new golden video into an existing baseline: run it twice, write
+    # pass k into the k-th report (.bak kept), rebuild noise.json from them
+    python3 scripts/run_eval.py --ids review-new --noise-runs 2 \
+        --merge-into reports/eval-<ts>-r1.json reports/eval-<ts>-r2.json
+
     # Dry-run — exercises scoring + reporting without network calls
     python3 scripts/run_eval.py --dry-run --fail-under 0.7
 """
 
 from __future__ import annotations
 
-import argparse
 import asyncio
 import logging
-import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -63,6 +69,7 @@ from _eval_assertions import (
     completed_result,
     evaluate_assertions,
 )
+from _eval_cli import build_parser, check_run_args
 from _eval_langfuse import (
     LangfuseConfig,
     RunItem,
@@ -71,12 +78,19 @@ from _eval_langfuse import (
     make_client,
     publish_dataset_run,
 )
+from _eval_merge import merge_into_reports, run_resync
 from _eval_metrics import duplicate_item_rate
-from _eval_noise import DEFAULT_NOISE_PATH, api_label, write_noise_from
+from _eval_noise import api_label, write_noise_from
 from _eval_refresh import run_refresh
 from _eval_report import RunInfo, VideoOutcome, write_reports
 from _eval_resume import load_reusable_runs, parse_since, youtube_id
-from _eval_schema import GoldenDataset, is_allowed_video_url, parse_assertions
+from _eval_schema import (
+    DATASET_PATH,
+    is_allowed_video_url,
+    live_records,
+    parse_assertions,
+    read_dataset,
+)
 from _eval_scoring import EvalResult, failed_result, score_entry, stub_actual
 
 # `baseline_golden_dataset.py` imports these from here; __all__ keeps the
@@ -93,38 +107,47 @@ __all__ = [
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("run_eval")
 
-_REPO_ROOT = Path(__file__).resolve().parent.parent
-_DATASET_PATH = _REPO_ROOT / "dev" / "golden-dataset" / "videos.yaml"
 _POLITENESS_GAP_S = 1.0
 
 
 # ─── Loading ───────────────────────────────────────────────────────────
-def load_dataset(path: Path = _DATASET_PATH) -> list[dict[str, Any]]:
+def load_dataset(path: Path = DATASET_PATH) -> list[dict[str, Any]]:
     """Return the raw dataset records after validating the whole file.
 
     Raises ``pydantic.ValidationError`` on any schema problem so a typo in an
     assertion fails before the first paid run.
     """
-    import yaml
+    return read_dataset(path)
 
-    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    GoldenDataset.model_validate(data)
-    return list(data["videos"])
+
+def _parse_ids(ids: str) -> list[str]:
+    return [i.strip() for i in ids.split(",") if i.strip()]
 
 
 def select_records(
-    records: list[dict[str, Any]], id_filter: str = "", limit: int = 0, subset: str = "all"
+    records: list[dict[str, Any]],
+    id_filter: str = "",
+    limit: int = 0,
+    subset: str = "all",
+    ids: str = "",
 ) -> list[dict[str, Any]]:
-    """Live entries (``subset="quick"``: only ``quick`` ones) matching ``id_filter``,
-    capped at ``limit`` (0 = all).
+    """Live entries (``subset="quick"``: only ``quick`` ones) matching ``id_filter``
+    and, when given, the exact comma-separated ``ids``; capped at ``limit`` (0 = all).
 
     Disabled entries (dead links, placeholders) are excluded from the run AND
-    the averages — scoring them 0 would fail the gate on dataset rot.
+    the averages — scoring them 0 would fail the gate on dataset rot. An
+    ``ids`` entry that is not live raises ``ValueError`` before any spend.
     """
     skipped = [r["id"] for r in records if r.get("disabled")]
     if skipped:
         logger.info("Skipping %d disabled entries: %s", len(skipped), ", ".join(skipped))
     live = [r for r in records if not r.get("disabled") and id_filter in r["id"]]
+    wanted = _parse_ids(ids)
+    if wanted:
+        unknown = sorted(set(wanted) - {r["id"] for r in live})
+        if unknown:
+            raise ValueError(f"--ids not live in the dataset: {', '.join(unknown)}")
+        live = [r for r in live if r["id"] in wanted]
     if subset == "quick":
         live = [r for r in live if r.get("quick")]
     return live[:limit] if limit else live
@@ -331,11 +354,21 @@ async def reusable_runs(
     return await load_reusable_runs(session.api_url, session.auth.token, since, wanted)
 
 
+def _by_id(path: str) -> dict[str, dict[str, Any]]:
+    return {r["id"]: r for r in load_dataset(Path(path))}
+
+
+def _live_ids(path: str) -> set[str]:
+    return set(live_records(load_dataset(Path(path))))
+
+
 async def single_mode(records: list[dict[str, Any]], session: Session, args: Any) -> int:
     reuse = await reusable_runs(records, session, args)
     outcomes, _ = await run_pass(
         records, session, Path(args.output), suffix="", run_name=args.publish_run, reuse=reuse
     )
+    if args.merge_into:
+        merge_into_reports([outcomes], args.merge_into, _by_id(args.dataset))
     avg = _mean_overall(outcomes)
     logger.info("Average overall %.3f (n=%d)", avg, len(outcomes))
     if args.fail_under and avg < args.fail_under:
@@ -348,17 +381,24 @@ async def noise_mode(records: list[dict[str, Any]], session: Session, args: Any)
     """Run the live set ``--noise-runs`` times and write the per-metric noise file.
 
     ``--resume-since`` reuses completed runs in pass r1 only; later passes
-    always run fresh (they are what measures the run-to-run noise).
+    always run fresh (they are what measures the run-to-run noise). With
+    ``--merge-into`` pass k lands in the k-th existing report, and the noise
+    file is rebuilt from those merged reports.
     """
-    json_paths: list[Path] = []
+    json_paths: list[str] = []
+    passes: list[list[VideoOutcome]] = []
     for i in range(1, args.noise_runs + 1):
         run_name = f"{args.publish_run}-r{i}" if args.publish_run else ""
         reuse = await reusable_runs(records, session, args) if i == 1 else {}
-        _, json_path = await run_pass(
+        outcomes, json_path = await run_pass(
             records, session, Path(args.output), suffix=f"-r{i}", run_name=run_name, reuse=reuse
         )
-        json_paths.append(json_path)
-    return write_noise_from([str(p) for p in json_paths], args.noise_out)
+        json_paths.append(str(json_path))
+        passes.append(outcomes)
+    if args.merge_into:
+        merge_into_reports(passes, args.merge_into, _by_id(args.dataset))
+        json_paths = list(args.merge_into)
+    return write_noise_from(json_paths, args.noise_out, _live_ids(args.dataset))
 
 
 async def _open_session(args: Any) -> Session:
@@ -376,7 +416,7 @@ async def _open_session(args: Any) -> Session:
 
 async def run_all(args: Any) -> int:
     records = select_records(
-        load_dataset(Path(args.dataset)), args.filter, args.limit, subset=args.subset
+        load_dataset(Path(args.dataset)), args.filter, args.limit, args.subset, args.ids
     )
     session = await _open_session(args)
     if args.noise_runs:
@@ -384,98 +424,16 @@ async def run_all(args: Any) -> int:
     return await single_mode(records, session, args)
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
-    )
-    parser.add_argument(
-        "--api-url", default=os.environ.get("EVAL_API_URL") or "http://localhost:3000"
-    )
-    parser.add_argument("--dataset", default=str(_DATASET_PATH))
-    parser.add_argument("--output", default="reports/")
-    parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("--filter", default="", help="Only ids containing this substring.")
-    parser.add_argument("--limit", type=int, default=0, help="First N live entries (0 = all).")
-    parser.add_argument(
-        "--subset",
-        choices=("all", "quick"),
-        default="all",
-        help="quick = the one live entry per domain flagged `quick: true` in videos.yaml.",
-    )
-    parser.add_argument(
-        "--concurrency",
-        type=int,
-        default=1,
-        help="Videos in flight at once (default 1). Home IP: 3; drop to 2 if YouTube "
-        "throttles (caption/yt-dlp 429s).",
-    )
-    parser.add_argument(
-        "--resume-since",
-        default="",
-        metavar="ISO8601",
-        help="First pass only: score the eval user's runs that COMPLETED at/after this "
-        "time (offset required, e.g. 2026-10-07T16:30:00+03:00) instead of re-running them.",
-    )
-    parser.add_argument("--fail-under", type=float, default=0.0)
-    parser.add_argument(
-        "--no-bypass-cache",
-        action="store_true",
-        help="Score the stored output instead of a fresh run ($0; scorer debugging only).",
-    )
-    parser.add_argument(
-        "--noise-runs",
-        type=int,
-        default=0,
-        help="Run the live set N (>= 2) times and write the per-metric noise file.",
-    )
-    parser.add_argument("--noise-out", default=str(DEFAULT_NOISE_PATH))
-    parser.add_argument(
-        "--noise-from",
-        nargs="+",
-        default=[],
-        metavar="REPORT_JSON",
-        help="Rebuild the noise file from existing pass summaries ($0, no API calls).",
-    )
-    parser.add_argument(
-        "--refresh-langfuse",
-        nargs="+",
-        default=[],
-        metavar="REPORT_JSON",
-        help="Re-read missing Langfuse values into finished reports in place ($0; keeps .bak).",
-    )
-    parser.add_argument(
-        "--publish-run", default="", help="Langfuse dataset run name (empty = skip)."
-    )
-    return parser
-
-
-def _check_resume(parser: argparse.ArgumentParser, args: Any) -> None:
-    if args.dry_run or args.no_bypass_cache:
-        parser.error(
-            "--resume-since reuses live bypassCache runs; drop --dry-run/--no-bypass-cache"
-        )
-    try:
-        parse_since(args.resume_since)
-    except ValueError as exc:
-        parser.error(str(exc))
-
-
 def main(argv: list[str] | None = None) -> int:
-    parser = build_parser()
+    parser = build_parser(__doc__ or "")
     args = parser.parse_args(argv)
     if args.refresh_langfuse:
-        records = {r["id"]: r for r in load_dataset(Path(args.dataset))}
-        return run_refresh(args.refresh_langfuse, records)
+        return run_refresh(args.refresh_langfuse, _by_id(args.dataset))
+    if args.resync:
+        return run_resync(args.resync, _by_id(args.dataset))
     if args.noise_from:
-        return write_noise_from(args.noise_from, args.noise_out)
-    if args.noise_runs == 1 or args.noise_runs < 0:
-        parser.error("--noise-runs needs at least 2 passes")
-    if args.noise_runs and args.dry_run:
-        parser.error("--noise-runs measures live variance; it cannot be combined with --dry-run")
-    if args.concurrency < 1:
-        parser.error("--concurrency must be >= 1")
-    if args.resume_since:
-        _check_resume(parser, args)
+        return write_noise_from(args.noise_from, args.noise_out, _live_ids(args.dataset))
+    check_run_args(parser, args)
     return asyncio.run(run_all(args))
 
 

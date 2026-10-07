@@ -69,6 +69,37 @@ def _errored(summary: dict[str, Any], vid: str) -> dict[str, Any]:
     return summary
 
 
+def _records(*live: str, retired: tuple[str, ...] = ()) -> list[dict[str, Any]]:
+    """videos.yaml records: ``live`` entries plus ``retired`` (disabled) ones."""
+    base = {
+        "url": "https://www.youtube.com/watch?v=abcdefghijk",
+        "domain": "food",
+        "format": "tutorial",
+        "language": "en",
+        "expectedTabs": [],
+        "requiredComponents": [],
+        "keyContent": [],
+    }
+    return [{**base, "id": vid} for vid in live] + [
+        {**base, "id": vid, "disabled": True} for vid in retired
+    ]
+
+
+def _failed_check(xfail: str | None = None) -> list[dict[str, Any]]:
+    """A video's stored assertions: completed, then one failed requiredComponents."""
+    return [
+        {"type": "completed", "passed": True, "detail": "run completed", "xfail": None},
+        {"type": "requiredComponents", "passed": False, "detail": "missing", "xfail": xfail},
+    ]
+
+
+_XFAIL_REQUIRED = {
+    "type": "requiredComponents",
+    "components": ["step_player"],
+    "xfail": {"reason": "plan sees 3,000 chars; fixed by 1b.2", "until": "1b.2"},
+}
+
+
 @pytest.fixture
 def noise() -> dict[str, Any]:
     """Two baseline passes; each video's quality differs by 0.04 between them."""
@@ -119,6 +150,27 @@ class TestBuildNoise:
         passes = [_summary(), _errored(_summary({"quality": 0.04}), "b")]
         noise = build_noise(passes, ["r1.json", "r2.json"])
         assert (noise["runMeanSpread"]["quality"], noise["baseline"]["quality"]) == (0.04, 0.82)
+
+    def test_should_leave_a_metric_unscored_in_the_baseline_when_one_pass_lacks_it(self) -> None:
+        second = _summary({"quality": 0.04})
+        second["videos"][0]["metrics"]["faithfulness"] = None
+        noise = build_noise([_summary(), second], ["r1.json", "r2.json"])
+        video = noise["videos"]["a"]
+        assert (video["faithfulness"], video["quality"], noise["notScored"]["faithfulness"]) == (
+            None,
+            0.82,
+            ["a"],
+        )
+
+    def test_should_keep_an_unscored_video_out_of_that_metric_noise(self) -> None:
+        second = _summary()
+        second["videos"][0]["metrics"]["faithfulness"] = None
+        noise = build_noise([_summary(), second], ["r1.json", "r2.json"])
+        assert (noise["noise"]["faithfulness"]["n"], noise["noise"]["quality"]["n"]) == (1, 2)
+
+    def test_should_drop_retired_ids_when_building_noise_for_the_live_set(self) -> None:
+        noise = build_noise([_summary(), _summary()], ["r1", "r2"], live_ids={"a"})
+        assert (sorted(noise["videos"]), noise["retiredVideos"]) == (["a"], ["b"])
 
     def test_should_label_noise_by_api_when_built_from_legacy_api_url_summaries(self) -> None:
         legacy = [{**_summary(), "apiUrl": "http://localhost:3000"} for _ in range(2)]
@@ -204,11 +256,20 @@ class TestGate:
         with pytest.raises(gate.GateInputError, match="--noise-from"):
             gate.evaluate(_summary(), {**noise, "schemaVersion": 1})
 
-    def test_should_not_count_an_errored_video_as_a_missing_metric(
+    def test_should_list_an_errored_video_as_not_scored_when_checking_a_metric(
         self, noise: dict[str, Any]
     ) -> None:
         check = gate.check_metric(_errored(_summary(), "a"), noise, "faithfulness")
-        assert (check.missing, check.paired) == ((), 1)
+        assert (check.not_scored, check.paired, check.regressed) == (("a",), 1, False)
+
+    def test_should_still_fail_on_the_completed_assertion_when_a_run_errored(
+        self, noise: dict[str, Any]
+    ) -> None:
+        report = _errored(_summary(), "a")
+        report["videos"][0]["assertions"] = [
+            {"type": "completed", "passed": False, "detail": "boom", "xfail": None}
+        ]
+        assert not gate.evaluate(report, noise).passed
 
     def test_should_pass_when_quality_drop_is_within_noise(self, noise: dict[str, Any]) -> None:
         assert gate.evaluate(_summary({"quality": -0.01}), noise).passed
@@ -229,13 +290,36 @@ class TestGate:
         # inside the 0.02 floor.
         assert gate.evaluate(_summary({"faithfulness": -0.01}), noise).passed
 
-    def test_should_fail_when_faithfulness_is_unavailable_for_a_baseline_video(
+    def test_should_report_not_scored_without_failing_when_the_run_lacks_faithfulness(
         self, noise: dict[str, Any]
     ) -> None:
         report = _summary()
         report["videos"][0]["metrics"]["faithfulness"] = None
         check = gate.check_metric(report, noise, "faithfulness")
-        assert check.regressed and check.missing == ("a",)
+        assert (check.regressed, check.not_scored, check.paired) == (False, ("a",), 1)
+
+    def test_should_pass_the_gate_when_a_video_lacks_faithfulness_in_the_run(
+        self, noise: dict[str, Any]
+    ) -> None:
+        report = _summary()
+        report["videos"][0]["metrics"]["faithfulness"] = None
+        assert gate.evaluate(report, noise).passed
+
+    def test_should_not_score_a_video_when_its_baseline_value_is_missing(
+        self, noise: dict[str, Any]
+    ) -> None:
+        noise["videos"]["b"]["faithfulness"] = None
+        check = gate.check_metric(_summary({"faithfulness": -0.5}), noise, "faithfulness")
+        assert (check.not_scored, check.paired) == (("b",), 1)
+
+    def test_should_not_gate_a_metric_when_no_video_is_scored_in_both(
+        self, noise: dict[str, Any]
+    ) -> None:
+        report = _summary()
+        for video in report["videos"]:
+            video["metrics"]["faithfulness"] = None
+        check = gate.check_metric(report, noise, "faithfulness")
+        assert (check.gated, check.regressed) == (False, False)
 
     def test_should_fail_when_a_non_xfail_assertion_failed(self, noise: dict[str, Any]) -> None:
         report = _summary()
@@ -252,6 +336,52 @@ class TestGate:
             {"type": "forbiddenComponents", "passed": False, "detail": "", "xfail": "C19"}
         ]
         assert gate.evaluate(report, noise).passed
+
+    def test_should_ignore_rows_of_retired_ids_when_records_are_given(
+        self, noise: dict[str, Any]
+    ) -> None:
+        report = _summary({"quality": -0.5})
+        report["videos"][1]["metrics"]["quality"] = 0.82
+        report["videos"][0]["assertions"] = _failed_check()
+        result = gate.evaluate(report, noise, records=_records("b", retired=("a",)))
+        assert (result.passed, result.ignored, result.checks[0].paired) == (True, ["a"], 1)
+
+    def test_should_not_fail_on_a_check_the_dataset_marks_xfail_when_the_report_does_not(
+        self, noise: dict[str, Any]
+    ) -> None:
+        report = _summary()
+        report["videos"][0]["assertions"] = _failed_check()
+        records = _records("a", "b")
+        records[0]["assertions"] = [_XFAIL_REQUIRED]
+        result = gate.evaluate(report, noise, records=records)
+        assert result.passed and result.xfails == [
+            "a: requiredComponents — missing "
+            "(xfail: plan sees 3,000 chars; fixed by 1b.2; until 1b.2)"
+        ]
+
+    def test_should_report_xpass_when_a_marked_check_passes(self, noise: dict[str, Any]) -> None:
+        report = _summary()
+        report["videos"][0]["assertions"] = _failed_check()
+        report["videos"][0]["assertions"][1]["passed"] = True
+        records = _records("a", "b")
+        records[0]["assertions"] = [_XFAIL_REQUIRED]
+        result = gate.evaluate(report, noise, records=records)
+        assert result.passed and len(result.xpasses) == 1
+
+    def test_should_keep_the_stored_marker_when_the_dataset_assertions_changed_shape(
+        self, noise: dict[str, Any]
+    ) -> None:
+        report = _summary()
+        report["videos"][0]["assertions"] = _failed_check()
+        records = _records("a", "b")
+        records[0]["assertions"] = [_XFAIL_REQUIRED, {"type": "quizAbsentOrLast"}]
+        assert not gate.evaluate(report, noise, records=records).passed
+
+    def test_should_refuse_a_report_when_no_row_is_a_live_golden_id(
+        self, noise: dict[str, Any]
+    ) -> None:
+        with pytest.raises(gate.GateInputError, match="no live golden video"):
+            gate.evaluate(_summary(), noise, records=_records("z"))
 
     def test_should_refuse_a_dry_run_report(self, noise: dict[str, Any]) -> None:
         report = {**_summary(), "dryRun": True}
@@ -292,21 +422,34 @@ class TestGateCli:
         path.write_text(json.dumps(data), encoding="utf-8")
         return str(path)
 
+    def _argv(self, tmp_path: Path, report: dict[str, Any], noise: dict[str, Any]) -> list[str]:
+        return [
+            "--report",
+            self._write(tmp_path, "eval.json", report),
+            "--noise",
+            self._write(tmp_path, "noise.json", noise),
+            "--dataset",
+            self._write(tmp_path, "videos.yaml", {"videos": _records("a", "b")}),
+        ]
+
     def test_should_exit_one_when_a_synthetic_drop_exceeds_noise(
         self, tmp_path: Path, noise: dict[str, Any]
     ) -> None:
-        report = self._write(tmp_path, "eval.json", _summary({"faithfulness": -0.2}))
-        noise_path = self._write(tmp_path, "noise.json", noise)
-        assert gate.main(["--report", report, "--noise", noise_path]) == 1
+        argv = self._argv(tmp_path, _summary({"faithfulness": -0.2}), noise)
+        assert gate.main(argv) == 1
 
     def test_should_exit_zero_when_run_matches_baseline(
         self, tmp_path: Path, noise: dict[str, Any]
     ) -> None:
-        report = self._write(tmp_path, "eval.json", _summary({"quality": 0.02}))
-        noise_path = self._write(tmp_path, "noise.json", noise)
-        assert gate.main(["--report", report, "--noise", noise_path]) == 0
+        assert gate.main(self._argv(tmp_path, _summary({"quality": 0.02}), noise)) == 0
 
     def test_should_exit_two_when_noise_file_is_missing(self, tmp_path: Path) -> None:
-        report = self._write(tmp_path, "eval.json", _summary())
-        missing = str(tmp_path / "absent.json")
-        assert gate.main(["--report", report, "--noise", missing]) == 2
+        argv = self._argv(tmp_path, _summary(), {})
+        argv[3] = str(tmp_path / "absent.json")
+        assert gate.main(argv) == 2
+
+    def test_should_exit_two_when_the_report_has_no_live_golden_id(
+        self, tmp_path: Path, noise: dict[str, Any]
+    ) -> None:
+        argv = self._argv(tmp_path, _summary(ids=("x",)), noise)
+        assert gate.main(argv) == 2

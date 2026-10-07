@@ -22,7 +22,12 @@ from src.services.pipeline.classifier import VALID_FORMATS
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_REPO_ROOT / "scripts"))
 
-from _eval_assertions import TraceSignals, evaluate_assertions  # noqa: E402
+from _eval_assertions import (  # noqa: E402
+    AssertionResult,
+    TraceSignals,
+    apply_markers,
+    evaluate_assertions,
+)
 from _eval_metrics import (  # noqa: E402
     duplicate_item_rate,
     extract_classifier_format,
@@ -82,7 +87,7 @@ class TestCommittedDataset:
     def test_should_validate_when_loading_the_committed_golden_set(
         self, dataset: GoldenDataset
     ) -> None:
-        assert len(dataset.videos) == 28
+        assert len(dataset.videos) == 29
 
     def test_should_only_name_registry_components(self, dataset: GoldenDataset) -> None:
         registry = set(json.loads(_REGISTRY.read_text(encoding="utf-8"))["components"])
@@ -104,6 +109,29 @@ class TestCommittedDataset:
         by_url = {v.url.rsplit("=", 1)[-1]: v for v in dataset.videos}
         anchors = ("v8KaQr0MhjE", "wCkLNqy5OHE", "uC45_4nnEAI", "Jru5B044HOs")
         assert all(by_url[yid].assertions and not by_url[yid].disabled for yid in anchors)
+
+    def test_should_xfail_the_story_intro_step_player_checks_until_1b2(
+        self, dataset: GoldenDataset
+    ) -> None:
+        video = next(v for v in dataset.videos if v.id == "food-recipe-story-intro")
+        marked = [(a.type, a.xfail_until) for a in video.assertions if a.xfail_reason]
+        assert (video.quick, marked) == (
+            True,
+            [("requiredComponents", "1b.2"), ("minItems", "1b.2")],
+        )
+
+    def test_should_label_golden_entries_by_content_domain(self, dataset: GoldenDataset) -> None:
+        by_id = {v.id: v for v in dataset.videos}
+        labels = [
+            (by_id[vid].domain, by_id[vid].format)
+            for vid in ("learning-photosynthesis", "learning-double-slit")
+        ]
+        montreal = by_id["food-travel-montreal-vlog"]
+        assert labels + [(montreal.domain, montreal.format)] == [
+            ("science", "lecture"),
+            ("science", "lecture"),
+            ("food", "vlog"),
+        ]
 
     def test_should_flag_exactly_one_quick_entry_per_live_domain(
         self, dataset: GoldenDataset
@@ -224,6 +252,49 @@ class TestAssertions:
     def test_should_carry_xfail_reason_without_gating(self) -> None:
         check = {"type": "forbiddenComponents", "components": ["checklist"], "xfail": "C19"}
         assert _check(check, _tabs("checklist")).gating_failure is False
+
+    def test_should_carry_the_fixing_task_when_xfail_names_until(self) -> None:
+        check = {
+            "type": "requiredComponents",
+            "components": ["step_player"],
+            "xfail": {"reason": "plan sees 3,000 chars", "until": "1b.2"},
+        }
+        result = _check(check, _tabs("overview"))
+        assert (result.label, result.until, result.gating_failure) == ("XFAIL", "1b.2", False)
+
+    def test_should_label_a_passing_xfail_check_as_xpass(self) -> None:
+        check = {"type": "quizAbsentOrLast", "xfail": {"reason": "flaky", "until": "1d.7"}}
+        assert _check(check, _tabs("overview")).label == "XPASS"
+
+    def test_should_reject_an_unknown_key_in_an_xfail_marker(self) -> None:
+        check = {"type": "quizAbsentOrLast", "xfail": {"reason": "x", "when": "1b.2"}}
+        with pytest.raises(ValidationError):
+            parse_assertions(_record([check]))
+
+
+class TestApplyMarkers:
+    _STORED = [
+        AssertionResult(type="completed", passed=True),
+        AssertionResult(type="requiredComponents", passed=False, detail="missing"),
+    ]
+
+    def test_should_re_read_the_marker_by_position_when_the_types_line_up(self) -> None:
+        marked = {"type": "requiredComponents", "components": ["a"], "xfail": "known"}
+        result = apply_markers(self._STORED, parse_assertions(_record([marked])))
+        assert [r.xfail for r in result] == [None, "known"]
+
+    def test_should_clear_a_stored_marker_when_the_dataset_dropped_it(self) -> None:
+        stored = [self._STORED[0], AssertionResult("requiredComponents", False, "", "old")]
+        plain = {"type": "requiredComponents", "components": ["a"]}
+        result = apply_markers(stored, parse_assertions(_record([plain])))
+        assert result[1].gating_failure is True
+
+    def test_should_keep_stored_results_when_the_dataset_assertions_changed_shape(self) -> None:
+        reordered = [
+            {"type": "quizAbsentOrLast"},
+            {"type": "requiredComponents", "components": ["a"], "xfail": "x"},
+        ]
+        assert apply_markers(self._STORED, parse_assertions(_record(reordered))) == self._STORED
 
 
 # ─── Metrics ───────────────────────────────────────────────────────────

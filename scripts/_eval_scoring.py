@@ -51,7 +51,7 @@ def _flatten_text(tabs: list[dict[str, Any]]) -> str:
     return " ".join(out).lower()
 
 
-def _coverage(expected: list[str], present: set[str] | str) -> float:
+def _coverage(expected: list[str], present: frozenset[str] | str) -> float:
     """Share of ``expected`` found in ``present`` (1.0 when nothing is expected)."""
     if not expected:
         return 1.0
@@ -71,6 +71,48 @@ def _empty_tab_count(tabs: list[dict[str, Any]]) -> int:
     return empty
 
 
+@dataclass(frozen=True)
+class _Observed:
+    """What the quality score reads from one run's assembled tabs."""
+
+    tab_count: int
+    components: frozenset[str]
+    content_coverage: float
+    empty_tab_count: int
+
+
+def _score(expected: dict[str, Any], seen: _Observed) -> EvalResult:
+    expected_count = len(expected.get("expectedTabs") or [])
+    tab_count_score = max(0.0, 1.0 - abs(seen.tab_count - expected_count) * 0.25)
+    component_coverage = _coverage(expected.get("requiredComponents") or [], seen.components)
+    forbidden_hits = [
+        c for c in expected.get("forbiddenComponents") or [] if c.lower() in seen.components
+    ]
+    forbidden_ok = 0.0 if forbidden_hits else 1.0
+
+    overall = round(
+        (tab_count_score * 0.15)
+        + (component_coverage * 0.35)
+        + (seen.content_coverage * 0.25)
+        + (max(0.0, 1.0 - 0.1 * seen.empty_tab_count) * 0.10)
+        + (forbidden_ok * 0.15),
+        3,
+    )
+    return EvalResult(
+        id=expected.get("id", "unknown"),
+        domain=expected.get("domain", "unknown"),
+        tab_count=seen.tab_count,
+        expected_tab_count=expected_count,
+        tab_count_score=round(tab_count_score, 3),
+        component_coverage=round(component_coverage, 3),
+        content_coverage=round(seen.content_coverage, 3),
+        empty_tab_count=seen.empty_tab_count,
+        overall=overall,
+        forbidden_ok=forbidden_ok,
+        notes=f"forbidden: {', '.join(forbidden_hits)}" if forbidden_hits else "",
+    )
+
+
 def score_entry(expected: dict[str, Any], actual: dict[str, Any]) -> EvalResult:
     """Score one assembled response against its golden expectations.
 
@@ -78,36 +120,31 @@ def score_entry(expected: dict[str, Any], actual: dict[str, Any]) -> EvalResult:
     expected list is empty, so missing fields don't depress the overall.
     """
     tabs = actual.get("tabs", []) or []
-    expected_count = len(expected.get("expectedTabs") or [])
-    tab_count_score = max(0.0, 1.0 - abs(len(tabs) - expected_count) * 0.25)
-    present = {str(t.get("component", "")).lower() for t in tabs}
-    component_coverage = _coverage(expected.get("requiredComponents") or [], present)
-    content_coverage = _coverage(expected.get("keyContent") or [], _flatten_text(tabs))
-    empty = _empty_tab_count(tabs)
-    forbidden_hits = [c for c in expected.get("forbiddenComponents") or [] if c.lower() in present]
-    forbidden_ok = 0.0 if forbidden_hits else 1.0
-
-    overall = round(
-        (tab_count_score * 0.15)
-        + (component_coverage * 0.35)
-        + (content_coverage * 0.25)
-        + (max(0.0, 1.0 - 0.1 * empty) * 0.10)
-        + (forbidden_ok * 0.15),
-        3,
-    )
-    return EvalResult(
-        id=expected.get("id", "unknown"),
-        domain=expected.get("domain", "unknown"),
+    seen = _Observed(
         tab_count=len(tabs),
-        expected_tab_count=expected_count,
-        tab_count_score=round(tab_count_score, 3),
-        component_coverage=round(component_coverage, 3),
-        content_coverage=round(content_coverage, 3),
-        empty_tab_count=empty,
-        overall=overall,
-        forbidden_ok=forbidden_ok,
-        notes=f"forbidden: {', '.join(forbidden_hits)}" if forbidden_hits else "",
+        components=frozenset(str(t.get("component", "")).lower() for t in tabs),
+        content_coverage=_coverage(expected.get("keyContent") or [], _flatten_text(tabs)),
+        empty_tab_count=_empty_tab_count(tabs),
     )
+    return _score(expected, seen)
+
+
+def rescore(expected: dict[str, Any], quality: dict[str, Any], components: list[str]) -> EvalResult:
+    """Re-derive a stored report row's quality against the current expectations ($0).
+
+    ``quality`` is the row's stored ``EvalResult`` and ``components`` its tab
+    components. Every input but ``keyContent`` is stored, so an edit to
+    ``expectedTabs`` / ``requiredComponents`` / ``forbiddenComponents`` (or
+    ``domain``) is re-scored exactly; the stored content coverage is reused,
+    so a ``keyContent`` edit needs a fresh run.
+    """
+    seen = _Observed(
+        tab_count=int(quality.get("tab_count", len(components))),
+        components=frozenset(c.lower() for c in components),
+        content_coverage=float(quality.get("content_coverage", 0.0)),
+        empty_tab_count=int(quality.get("empty_tab_count", 0)),
+    )
+    return _score(expected, seen)
 
 
 def failed_result(expected: dict[str, Any], note: str) -> EvalResult:

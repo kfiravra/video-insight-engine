@@ -1,12 +1,14 @@
 # Golden dataset — hand-curated YouTube videos used to track pipeline
 # quality regressions over time.
 #
-# Distribution:
-#   - 3 gaming/TCG (unboxing consistency anchors)  - 3 tech
-#   - 3 food       - 2 learning    - 2 language    - 2 science
-#   - 3 travel     - 2 fitness     - 2 review      - 1 music  - 1 documentary
-#   - 4 pipeline-1min assertion anchors (food-travel vlog, story-intro recipe,
-#     static-camera unboxing, do-along workout)
+# Distribution (live entries in brackets; `domain` is the content domain):
+#   - 3 gaming/TCG (unboxing consistency anchors) [3]   - 3 tech [3]
+#   - 3 food [1]   - 2 language [0]   - 4 science [4] (2 ids keep a legacy
+#     `learning-` prefix — ids are stable Langfuse dataset item ids)
+#   - 3 travel [1] - 2 fitness [1]    - 3 review [1]  - 1 music [0]
+#   - 1 documentary [0]
+#   - 4 pipeline-1min assertion anchors [4] (food-tasting vlog, story-intro
+#     recipe, static-camera unboxing, do-along workout)
 #
 # Each entry is a contract:
 #   id                 — stable slug used as the Langfuse dataset item ID
@@ -31,8 +33,12 @@
 #                        requiredComponents, quizAbsentOrLast, minItems,
 #                        minItemsWithField, noTimestampBeyondDuration.
 #                        Every live run also asserts it completed. `xfail:
-#                        <reason>` keeps a known, tracked failure from failing
-#                        the gate (it is still reported; XPASS = drop the marker).
+#                        <reason>` — or `xfail: {reason, until: <task>}` —
+#                        keeps a known, tracked failure from failing the gate
+#                        (still reported as XFAIL; XPASS = drop the marker).
+#                        gate.py reads the markers from this file, so a new
+#                        marker needs no re-run (`run_eval.py --resync` also
+#                        writes it into stored reports, $0).
 #   quick              — member of `run_eval.py --subset quick`: exactly one
 #                        live entry per domain (the cheap post-change check).
 #
@@ -143,26 +149,6 @@ videos:
     forbiddenComponents: [quiz_arena]
     keyContent: [tonkotsu, broth, simmer, aromatic, pork bones]
 
-  # ─── Learning (2) — quiz allowed here ─────────────────────────────
-  - id: learning-photosynthesis
-    url: https://www.youtube.com/watch?v=eo5XndJaz-Y
-    quick: true
-    domain: learning
-    format: lecture
-    language: en
-    expectedTabs: [key_points, concepts, takeaways, quizzes]
-    requiredComponents: [overview, quiz_arena]
-    keyContent: [chlorophyll, light reaction, calvin cycle, ATP, glucose]
-
-  - id: learning-double-slit
-    url: https://www.youtube.com/watch?v=Iuv6hY6zsd0
-    domain: learning
-    format: lecture
-    language: en
-    expectedTabs: [key_points, concepts, takeaways, quizzes, flashcards]
-    requiredComponents: [overview, quiz_arena, flash_deck]
-    keyContent: [interference, wave function, observer, quantum, particle]
-
   # ─── Language (2) ─────────────────────────────────────────────────
   - id: language-spanish-basics
     url: https://www.youtube.com/watch?v=t6Jrg-z4Gi8
@@ -184,7 +170,29 @@ videos:
     requiredComponents: [spot_explorer, info_grid, flash_deck]
     keyContent: [wa, ga, ni, particle, topic marker]
 
-  # ─── Science (2) — quiz allowed here ──────────────────────────────
+  # ─── Science (4) — quiz allowed here, not required ────────────────
+  # The two `learning-*` ids were labelled `learning` until gate 0; their
+  # content (and the pipeline's primaryTag, both baseline passes) is
+  # science. Ids kept stable; expectations follow the science domain
+  # (concept_canvas + facts), not the learning quiz/flashcard shape.
+  - id: learning-photosynthesis
+    url: https://www.youtube.com/watch?v=eo5XndJaz-Y
+    domain: science
+    format: lecture
+    language: en
+    expectedTabs: [overview, concepts, key_facts, moments]
+    requiredComponents: [overview, concept_canvas]
+    keyContent: [chlorophyll, light reaction, calvin cycle, ATP, glucose]
+
+  - id: learning-double-slit
+    url: https://www.youtube.com/watch?v=Iuv6hY6zsd0
+    domain: science
+    format: lecture
+    language: en
+    expectedTabs: [overview, concepts, key_facts, experiments]
+    requiredComponents: [overview, concept_canvas]
+    keyContent: [interference, wave function, observer, quantum, particle]
+
   - id: science-crispr-intro
     url: https://www.youtube.com/watch?v=2pp17E4E-O8
     quick: true
@@ -207,6 +215,7 @@ videos:
   # ─── Travel (3) ───────────────────────────────────────────────────
   - id: travel-vietnam-10day
     url: https://www.youtube.com/watch?v=vOkkWuEwUmc
+    quick: true
     domain: travel
     format: documentary
     language: en
@@ -259,10 +268,10 @@ videos:
     forbiddenComponents: [quiz_arena]
     keyContent: [hip flexor, thoracic, ankle, mobility, range of motion]
 
-  # ─── Review (2) ───────────────────────────────────────────────────
+  # ─── Review (3) ───────────────────────────────────────────────────
   - id: review-airpods-pro
     url: https://www.youtube.com/watch?v=nMfPqeZjc2c
-    quick: true
+    disabled: true  # wrong video — the URL plays "White Noise Black Screen | 10 Hours" (36,000 s; found at gate 0, 2026-10-07); replaced by review-airpods-pro-2
     domain: review
     format: commentary
     language: en
@@ -270,6 +279,30 @@ videos:
     requiredComponents: [overview, comparison, info_grid]
     forbiddenComponents: [quiz_arena]
     keyContent: [transparency, anc, battery, fit, sound stage]
+
+  - id: review-airpods-pro-2
+    # Marques Brownlee, "AirPods Pro 2 Review: 1 Underrated Thing!", 677 s
+    # (11:17), uploaded 2022-09-27, YouTube category Science & Technology
+    # (the summarizer's own category detection: `reviews`), manual en-US
+    # captions (321 segments). Checked live 2026-10-07 through the
+    # summarizer's extract_video_data (dev proxy). A single-product review
+    # replacing review-airpods-pro (same product line, same expectations).
+    url: https://www.youtube.com/watch?v=f3DfJxvkN-8
+    quick: true
+    domain: review
+    format: commentary
+    language: en
+    expectedTabs: [overview, pros_cons, specs, comparison]
+    requiredComponents: [overview, comparison, info_grid]
+    forbiddenComponents: [quiz_arena]
+    keyContent: [transparency, noise cancel, battery, h2, case]
+    assertions:
+      - type: expectedDomain
+        values: [review, tech]
+      - type: forbiddenComponents
+        components: [quiz_arena]
+      - type: quizAbsentOrLast
+      - type: noTimestampBeyondDuration
 
   - id: review-iphone-16
     url: https://www.youtube.com/watch?v=tZv2KsdwWZk
@@ -306,32 +339,33 @@ videos:
     keyContent: [hillary step, krakauer, scott fischer, hall, summit fever]
 
   # ─── pipeline-1min assertion anchors (4) — added 2026-10-07 (task 0.7) ───
-  # The first two ids are PROPOSALS for gate 0 (Kfir to confirm or swap);
-  # neither was in the dev DB or the demo library, so they were picked on
-  # YouTube (oEmbed/watch page checked 2026-10-07: live, English captions).
+  # The first two were picked on YouTube (oEmbed/watch page checked
+  # 2026-10-07: live, English captions) and approved by Kfir at gate 0.
   - id: food-travel-montreal-vlog
-    # PROPOSAL (gate 0): Mark Wiens, "Inside Canada's Fast Food PARADISE!!
-    # (Montreal, Quebec)", 31:08, category Travel & Events, manual en captions.
-    # Restaurant-hopping food-travel vlog: lots of food, zero cooking — the
-    # case where recipe components (step_player / checklist ingredients) are
-    # backfilled without evidence (C19).
+    # Mark Wiens, "Inside Canada's Fast Food PARADISE!! (Montreal, Quebec)",
+    # 31:08, category Travel & Events, manual en captions. A food-tasting
+    # vlog (restaurant hopping): content domain food — the pipeline's
+    # primaryTag in both baseline passes — with lots of food and zero
+    # cooking, the case where recipe components (step_player / checklist
+    # ingredients) are backfilled without evidence (C19).
     url: https://www.youtube.com/watch?v=v8KaQr0MhjE
-    quick: true
-    domain: travel
+    domain: food
     format: vlog
     language: en
-    expectedTabs: [overview, itinerary, highlights, filmstrip]
+    expectedTabs: [overview, food_stops, highlights, must_order]
     requiredComponents: [overview, spot_explorer]
     forbiddenComponents: [quiz_arena]
     keyContent: [montreal, poutine, hot dog, burger, orange julep]
     assertions:
       - type: expectedDomain
-        values: [travel, food]
+        values: [food, travel]
       - type: expectedFormat
         values: [vlog, documentary, walkthrough]
       - type: forbiddenComponents
         components: [step_player, checklist]
-        xfail: "C19 — domain backfill is unconditional until 1b.2 / 1d.7 (expected to pass at gate 1)"
+        xfail:
+          reason: "C19 — domain backfill is unconditional (expected to pass at gate 1)"
+          until: "1b.2 / 1d.7"
       - type: quizAbsentOrLast
       - type: minItems
         component: spot_explorer
@@ -340,11 +374,12 @@ videos:
       - type: noTimestampBeyondDuration
 
   - id: food-recipe-story-intro
-    # PROPOSAL (gate 0): Pasta Grannies, "How to Make Pissalandrea, Liguria's
-    # Traditional Focaccia", 11:15, category Entertainment, en auto captions
-    # (English narration over Italian speech). Opens with the village and
-    # the cook's 55-year story before the recipe starts — recipe components
-    # must still appear.
+    # Pasta Grannies, "How to Make Pissalandrea, Liguria's Traditional
+    # Focaccia", 11:15, category Entertainment, en auto captions (English
+    # narration over Italian speech). Opens with the village and the cook's
+    # 55-year story before the recipe starts — recipe components must still
+    # appear. Today the plan sees only the first 3,000 transcript chars (the
+    # story), so step_player is missing: xfail until 1b.2.
     url: https://www.youtube.com/watch?v=wCkLNqy5OHE
     quick: true
     domain: food
@@ -361,6 +396,9 @@ videos:
         values: [tutorial, documentary, story, vlog]
       - type: requiredComponents
         components: [step_player, checklist]
+        xfail:
+          reason: "plan sees 3,000 chars; fixed by 1b.2"
+          until: "1b.2"
       - type: forbiddenComponents
         components: [quiz_arena]
       - type: quizAbsentOrLast
@@ -368,6 +406,9 @@ videos:
         component: step_player
         field: steps
         min: 4
+        xfail:
+          reason: "plan sees 3,000 chars; fixed by 1b.2"
+          until: "1b.2"
       - type: minItems
         component: checklist
         field: items

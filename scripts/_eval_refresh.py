@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import shutil
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
@@ -23,7 +22,7 @@ import httpx
 from _eval_assertions import AssertionResult, TraceSignals, evaluate_assertions
 from _eval_langfuse import LangfuseConfig, ReadPacer, TraceTarget, collect_signals, make_client
 from _eval_noise import load_json
-from _eval_report import VideoOutcome, outcomes_from_summary, rewrite_reports
+from _eval_report import VideoOutcome, backup_reports, outcomes_from_summary, rewrite_reports
 from _eval_schema import parse_assertions
 
 logger = logging.getLogger("run_eval.refresh")
@@ -75,13 +74,6 @@ def apply_signals(
     )
 
 
-def _backup(json_path: Path) -> None:
-    for path in (json_path, json_path.with_suffix(".csv"), json_path.with_suffix(".md")):
-        backup = path.with_name(path.name + ".bak")
-        if path.exists() and not backup.exists():  # keep the ORIGINAL on re-runs
-            shutil.copy2(path, backup)
-
-
 async def refresh_report(
     client: httpx.AsyncClient,
     json_path: Path,
@@ -98,7 +90,7 @@ async def refresh_report(
     signals = await collect_signals(client, targets, rounds=1, pacer=pacer)
     refreshed = [apply_signals(o, signals.get(o.id), records.get(o.id)) for o in outcomes]
     filled = sum(1 for old, new in zip(outcomes, refreshed, strict=True) if old != new)
-    _backup(json_path)
+    backup_reports(json_path)
     rewrite_reports(refreshed, summary, json_path)
     still = sorted(o.id for o in refreshed if needs_refresh(o))
     logger.info("%s: filled %d/%d rows; still missing: %s", json_path, filled, len(targets), still)

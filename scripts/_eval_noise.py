@@ -18,6 +18,12 @@ rebuilt for $0 from those passes' reports with ``--noise-from``:
                     pipeline errored (or was absent) in at least one pass: a
                     failed run is not a quality measurement, and counting it
                     as 0 would inflate the noise and drag the baseline down.
+* ``notScored[m]`` — completed videos with no ``m`` value in at least one
+                    pass (e.g. no Langfuse faithfulness): "not scored", never
+                    a 0 — left out of ``m``'s noise, run means and per-video
+                    baseline (``videos[id][m]`` is null), not of other metrics.
+* ``retiredVideos`` — report rows whose id is no longer a live golden entry
+                    (disabled or removed from ``videos.yaml``); ignored.
 * ``layoutStability`` — mean Jaccard of the tab-component multisets between
                     pass 1 and every later pass (reported, not gated).
 * ``apiLabel``    — non-secret label of the API the passes ran against (see
@@ -105,38 +111,47 @@ def _failed_in(videos: dict[str, dict[str, Any]], vid: str) -> bool:
     return vid not in videos or bool(videos[vid].get("error"))
 
 
+def _scored_ids(passes: list[dict[str, dict[str, Any]]], ids: list[str]) -> dict[str, list[str]]:
+    """Per metric, the ids that carry a value in every pass."""
+    return {
+        m: [
+            vid
+            for vid in ids
+            if all((p[vid].get("metrics") or {}).get(m) is not None for p in passes)
+        ]
+        for m in PRIMARY_METRICS
+    }
+
+
 def _per_video_means(
-    summaries: list[dict[str, Any]], excluded: set[str]
+    passes: list[dict[str, dict[str, Any]]], ids: list[str], scored: dict[str, list[str]]
 ) -> dict[str, dict[str, float | None]]:
-    passes = [_videos_by_id(s) for s in summaries]
-    ids = sorted({vid for p in passes for vid in p} - excluded)
     return {
         vid: {
             m: mean_or_none((p[vid].get("metrics") or {}).get(m) for p in passes)
+            if vid in scored[m]
+            else None
             for m in PRIMARY_METRICS
         }
         for vid in ids
     }
 
 
-def _run_means(summary: dict[str, Any], excluded: set[str]) -> dict[str, float | None]:
-    """One pass's metric means over the videos that completed in every pass."""
-    kept = [
-        v.get("metrics") or {} for vid, v in _videos_by_id(summary).items() if vid not in excluded
-    ]
-    return {m: mean_or_none(metrics.get(m) for metrics in kept) for m in PRIMARY_METRICS}
+def _run_means(
+    videos: dict[str, dict[str, Any]], scored: dict[str, list[str]]
+) -> dict[str, float | None]:
+    """One pass's metric means over the videos scored in every pass."""
+    return {
+        m: mean_or_none((videos[vid].get("metrics") or {}).get(m) for vid in scored[m])
+        for m in PRIMARY_METRICS
+    }
 
 
 def _pass_values(
     passes: list[dict[str, dict[str, Any]]], ids: list[str], metric: str
 ) -> list[list[float]]:
-    """Per video, the metric's value in every pass (videos lacking one are dropped)."""
-    rows = []
-    for vid in ids:
-        values = [(p[vid].get("metrics") or {}).get(metric) for p in passes]
-        if all(v is not None for v in values):
-            rows.append([float(v) for v in values])
-    return rows
+    """Per video, the metric's value in every pass (``ids`` are all scored)."""
+    return [[float((p[vid].get("metrics") or {})[metric]) for p in passes] for vid in ids]
 
 
 def per_video_noise(rows: list[list[float]]) -> dict[str, float | int] | None:
@@ -161,14 +176,6 @@ def per_video_noise(rows: list[list[float]]) -> dict[str, float | int] | None:
     }
 
 
-def _noise_estimates(
-    summaries: list[dict[str, Any]], excluded: set[str]
-) -> dict[str, dict[str, float | int] | None]:
-    passes = [_videos_by_id(s) for s in summaries]
-    ids = sorted({vid for p in passes for vid in p} - excluded)
-    return {m: per_video_noise(_pass_values(passes, ids, m)) for m in PRIMARY_METRICS}
-
-
 def layout_jaccard(a: list[str], b: list[str]) -> float:
     """Jaccard similarity of two tab-component multisets (1.0 when both empty)."""
     left, right = Counter(a), Counter(b)
@@ -186,12 +193,36 @@ def _layout_stability(summaries: list[dict[str, Any]]) -> float | None:
     return mean_or_none(scores)
 
 
-def build_noise(summaries: list[dict[str, Any]], report_paths: list[str]) -> dict[str, Any]:
-    """Build the noise file from N >= 2 eval run summaries (``eval-*.json``)."""
+def live_only(summary: dict[str, Any], live_ids: set[str] | None) -> dict[str, Any]:
+    """``summary`` without the rows whose id is not live (``None`` = keep every row)."""
+    if live_ids is None:
+        return summary
+    return {**summary, "videos": [v for v in summary.get("videos") or [] if v["id"] in live_ids]}
+
+
+def _retired_ids(summaries: list[dict[str, Any]], live_ids: set[str] | None) -> list[str]:
+    if live_ids is None:
+        return []
+    return sorted({vid for s in summaries for vid in _videos_by_id(s)} - live_ids)
+
+
+def build_noise(
+    summaries: list[dict[str, Any]], report_paths: list[str], live_ids: set[str] | None = None
+) -> dict[str, Any]:
+    """Build the noise file from N >= 2 eval run summaries (``eval-*.json``).
+
+    ``live_ids`` (the live golden ids) drops rows of retired entries; ``None``
+    keeps every row.
+    """
     if len(summaries) < 2:
         raise ValueError("noise needs at least two run summaries")
+    retired = _retired_ids(summaries, live_ids)
+    summaries = [live_only(s, live_ids) for s in summaries]
     excluded = excluded_video_ids(summaries)
-    per_pass = [_run_means(s, set(excluded)) for s in summaries]
+    passes = [_videos_by_id(s) for s in summaries]
+    ids = sorted({vid for p in passes for vid in p} - set(excluded))
+    scored = _scored_ids(passes, ids)
+    per_pass = [_run_means(p, scored) for p in passes]
     run_means = {m: [p[m] for p in per_pass] for m in PRIMARY_METRICS}
     return {
         "schemaVersion": NOISE_SCHEMA_VERSION,
@@ -202,11 +233,13 @@ def build_noise(summaries: list[dict[str, Any]], report_paths: list[str]) -> dic
         "directions": dict(PRIMARY_METRICS),
         "runMeans": run_means,
         "baseline": {m: mean_or_none(v) for m, v in run_means.items()},
-        "noise": _noise_estimates(summaries, set(excluded)),
+        "noise": {m: per_video_noise(_pass_values(passes, scored[m], m)) for m in PRIMARY_METRICS},
         "runMeanSpread": {m: _spread(v) for m, v in run_means.items()},
         "layoutStability": _layout_stability(summaries),
         "excludedVideos": excluded,
-        "videos": _per_video_means(summaries, set(excluded)),
+        "notScored": {m: sorted(set(ids) - set(scored[m])) for m in PRIMARY_METRICS},
+        "retiredVideos": retired,
+        "videos": _per_video_means(passes, ids, scored),
     }
 
 
@@ -216,14 +249,21 @@ def write_noise(noise: dict[str, Any], path: Path) -> Path:
     return path
 
 
-def write_noise_from(report_paths: list[str], noise_out: str) -> int:
-    """Build + write the noise file from pass summaries (``eval-*-rN.json``); exit code."""
-    noise = build_noise([load_json(Path(p)) for p in report_paths], report_paths)
+def write_noise_from(
+    report_paths: list[str], noise_out: str, live_ids: set[str] | None = None
+) -> int:
+    """Build + write the noise file from pass summaries (``eval-*-rN.json``); exit code.
+
+    ``live_ids``: see ``build_noise``.
+    """
+    noise = build_noise([load_json(Path(p)) for p in report_paths], report_paths, live_ids)
     path = write_noise(noise, Path(noise_out))
     logger.info(
-        "Noise file %s: noise=%s excluded=%s",
+        "Noise file %s: noise=%s excluded=%s notScored=%s retired=%s",
         path,
         json.dumps(noise["noise"]),
         noise["excludedVideos"],
+        json.dumps(noise["notScored"]),
+        noise["retiredVideos"],
     )
     return 0

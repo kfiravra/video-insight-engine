@@ -134,10 +134,10 @@ class TestScoreEntry:
 
 # ─── Dataset loading ───────────────────────────────────────────────────
 class TestDataset:
-    def test_should_load_28_entries_with_18_live_when_reading_the_golden_set(self) -> None:
+    def test_should_load_29_entries_with_18_live_when_reading_the_golden_set(self) -> None:
         records = run_eval.load_dataset()
         live = [r for r in records if not r.get("disabled")]
-        assert (len(records), len(live)) == (28, 18)
+        assert (len(records), len(live)) == (29, 18)
 
     def test_should_drop_disabled_entries_when_selecting_records(self) -> None:
         records = [_record(id="a"), _record(id="b", disabled=True), _record(id="c")]
@@ -147,6 +147,16 @@ class TestDataset:
         records = [_record(id="food-a"), _record(id="tech-b"), _record(id="food-c")]
         selected = run_eval.select_records(records, id_filter="food", limit=1)
         assert [r["id"] for r in selected] == ["food-a"]
+
+    def test_should_select_exactly_the_given_ids_when_ids_are_passed(self) -> None:
+        records = [_record(id="food-a"), _record(id="food-ab"), _record(id="tech-b")]
+        selected = run_eval.select_records(records, ids="food-a, tech-b")
+        assert [r["id"] for r in selected] == ["food-a", "tech-b"]
+
+    def test_should_refuse_ids_that_are_not_live_when_selecting_records(self) -> None:
+        records = [_record(id="a"), _record(id="b", disabled=True)]
+        with pytest.raises(ValueError, match="b, zz"):
+            run_eval.select_records(records, ids="a,b,zz")
 
     def test_should_reject_dataset_when_a_live_url_is_not_youtube(self, tmp_path: Path) -> None:
         path = tmp_path / "videos.yaml"
@@ -261,9 +271,27 @@ class TestRunner:
         run_eval.main([*argv, "--noise-out", str(tmp_path / "first.json")])
         reports = sorted(str(p) for p in out.glob("eval-*.json"))
         rebuilt = tmp_path / "rebuilt.json"
-        run_eval.main(["--noise-from", *reports, "--noise-out", str(rebuilt)])
+        run_eval.main(
+            ["--dataset", str(dataset), "--noise-from", *reports, "--noise-out", str(rebuilt)]
+        )
         noise = json.loads(rebuilt.read_text())
         assert (noise["reports"], noise["excludedVideos"], len(fake_api)) == (reports, [], 2)
+
+    def test_should_ignore_retired_ids_when_rebuilding_noise_from_reports(
+        self, tmp_path: Path, fake_api: list[tuple[str, bool]]
+    ) -> None:
+        dataset = _write_dataset(tmp_path, [_record(id="a"), _record(id="b", url=_yt(1))])
+        out = tmp_path / "out"
+        argv = ["--dataset", str(dataset), "--output", str(out), "--noise-runs", "2"]
+        run_eval.main([*argv, "--noise-out", str(tmp_path / "first.json")])
+        reports = sorted(str(p) for p in out.glob("eval-*.json"))
+        retired = _write_dataset(tmp_path, [_record(id="a"), _record(id="b", disabled=True)])
+        rebuilt = tmp_path / "rebuilt.json"
+        run_eval.main(
+            ["--dataset", str(retired), "--noise-from", *reports, "--noise-out", str(rebuilt)]
+        )
+        noise = json.loads(rebuilt.read_text())
+        assert (sorted(noise["videos"]), noise["retiredVideos"]) == (["a"], ["b"])
 
     def test_should_select_only_quick_entries_when_subset_is_quick(self) -> None:
         records = [_record(id="a", quick=True), _record(id="b"), _record(id="c", quick=True)]
@@ -271,9 +299,10 @@ class TestRunner:
         assert [r["id"] for r in selected] == ["a", "c"]
 
     def test_should_select_one_entry_per_live_domain_when_subset_is_quick(self) -> None:
-        records = run_eval.select_records(run_eval.load_dataset(), subset="quick")
-        domains = [r["domain"] for r in records]
-        assert sorted(domains) == sorted(set(domains)) and len(domains) >= 8
+        records = run_eval.load_dataset()
+        quick = [r["domain"] for r in run_eval.select_records(records, subset="quick")]
+        live_domains = {r["domain"] for r in records if not r.get("disabled")}
+        assert sorted(quick) == sorted(live_domains)
 
     def test_should_report_duplicate_rate_when_tabs_repeat_an_item(self) -> None:
         item = {"text": "whisk the eggs with the sugar until pale"}
