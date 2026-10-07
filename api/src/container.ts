@@ -115,6 +115,7 @@ export function createContainer(
     queuePublisher,
     idempotencyService,
     dispatchGuardService,
+    userRepository,
     logger,
   );
   const folderService = new FolderService(folderRepository, logger);

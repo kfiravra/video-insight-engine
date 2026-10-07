@@ -182,7 +182,7 @@ export async function videosRoutes(fastify: FastifyInstance) {
       });
     }
 
-    const versions = await videoService.getVersions(youtubeId, { limit });
+    const versions = await videoService.getVersions(req.user.userId, youtubeId, { limit });
     return { versions };
   });
 }

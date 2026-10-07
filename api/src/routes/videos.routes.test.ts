@@ -515,7 +515,7 @@ describe('videos routes', () => {
 
       expect(response.statusCode).toBe(200);
       expect(mockContainer.videoService.userOwnsVideo).toHaveBeenCalledWith('test-user-id', 'dQw4w9WgXcQ');
-      expect(mockContainer.videoService.getVersions).toHaveBeenCalledWith('dQw4w9WgXcQ', { limit: 10 });
+      expect(mockContainer.videoService.getVersions).toHaveBeenCalledWith('test-user-id', 'dQw4w9WgXcQ', { limit: 10 });
       expect(response.json()).toEqual({ versions: mockVersions });
     });
 
@@ -543,7 +543,7 @@ describe('videos routes', () => {
       });
 
       expect(response.statusCode).toBe(200);
-      expect(mockContainer.videoService.getVersions).toHaveBeenCalledWith('dQw4w9WgXcQ', { limit: 5 });
+      expect(mockContainer.videoService.getVersions).toHaveBeenCalledWith('test-user-id', 'dQw4w9WgXcQ', { limit: 5 });
     });
 
     it('should return 400 for invalid youtubeId format', async () => {

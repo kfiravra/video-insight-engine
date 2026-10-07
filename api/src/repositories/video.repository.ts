@@ -1,4 +1,4 @@
-import { Db, ObjectId, Collection } from 'mongodb';
+import { Db, ObjectId, Collection, type Filter } from 'mongodb';
 import { DatabaseError } from '../utils/errors.js';
 import { buildSynthesisMerge } from '../utils/synthesis-merge.js';
 import type { SynthesisFields } from '../schemas/synthesis-event.schema.js';
@@ -67,6 +67,11 @@ export interface VideoSummaryCacheDocument {
    *  (mongodb_repository.py) — that save is a $set merge, NOT a document
    *  replace, so the unset is load-bearing. */
   forceRefresh?: boolean;
+  /** D25: a version produced by the eval user (`users.isEvalUser`). Set once
+   *  at insert, never cleared. Eval rows are never `isLatest`, never hold the
+   *  shared version-1 dedupKey other users attach to, are hidden from other
+   *  users' version lists, and are pruned only among themselves. */
+  evalRun?: boolean;
   retryCount: number;
   errorCode?: string;
   errorMessage?: string;
@@ -145,6 +150,20 @@ export interface CreateVideoSummaryData {
    *  youtubeId-keyed response cache so the fresh row gets a real pipeline run
    *  regardless of which producer (worker or SSE client) wins the lock. */
   forceRefresh?: boolean;
+  /** Eval-user version — see `VideoSummaryCacheDocument.evalRun`. */
+  evalRun?: boolean;
+}
+
+/** Which version pool a prune works on — eval rows and user rows never prune each other. */
+export interface VersionPool {
+  evalRun: boolean;
+  /** Newest versions of the pool to keep. */
+  keep: number;
+}
+
+/** Mongo filter for one version pool (D25): eval rows, or every other row. */
+function versionPoolFilter(evalRun: boolean): Filter<VideoSummaryCacheDocument> {
+  return evalRun ? { evalRun: true } : { evalRun: { $ne: true } };
 }
 
 export interface CreateUserVideoData {
@@ -254,9 +273,11 @@ export class VideoRepository {
     );
   }
 
-  async findHighestVersion(youtubeId: string): Promise<VideoSummaryCacheDocument | null> {
+  /** Highest-numbered row; `evalRun` narrows it to one version pool (D25), omitted = every row. */
+  async findHighestVersion(youtubeId: string, evalRun?: boolean): Promise<VideoSummaryCacheDocument | null> {
+    const filter = evalRun === undefined ? { youtubeId } : { youtubeId, ...versionPoolFilter(evalRun) };
     return this.cacheCollection.findOne(
-      { youtubeId },
+      filter,
       { sort: { version: -1 }, projection: { version: 1 } }
     );
   }
@@ -319,9 +340,15 @@ export class VideoRepository {
     return !!result;
   }
 
-  async getVersions(youtubeId: string, limit: number): Promise<VideoSummaryCacheDocument[]> {
+  /** Version metadata, newest first. Eval rows only when `includeEval` (D25). */
+  async getVersions(
+    youtubeId: string,
+    limit: number,
+    options: { includeEval: boolean },
+  ): Promise<VideoSummaryCacheDocument[]> {
+    const filter = options.includeEval ? { youtubeId } : { youtubeId, ...versionPoolFilter(false) };
     return this.cacheCollection
-      .find({ youtubeId })
+      .find(filter)
       .project({
         _id: 1,
         youtubeId: 1,
@@ -343,17 +370,26 @@ export class VideoRepository {
       .toArray() as Promise<VideoSummaryCacheDocument[]>;
   }
 
-  async deleteOldVersions(youtubeId: string, keepAfterVersion: number): Promise<void> {
+  /**
+   * Keep the `keep` newest versions of ONE pool (eval rows, or every other
+   * row) and delete the rest of that pool; the other pool is never touched
+   * (D25). Ranked by version, not by arithmetic on the new version number:
+   * eval versions share the numbering, so a pool's versions can have gaps.
+   * Returns the number of rows deleted.
+   */
+  async pruneVersions(youtubeId: string, pool: VersionPool): Promise<number> {
+    const filter = { youtubeId, ...versionPoolFilter(pool.evalRun) };
+    // One video's version rows — a handful, so skip() costs nothing here.
     const toDelete = await this.cacheCollection
-      .find({ youtubeId, version: { $lt: keepAfterVersion } })
-      .project({ _id: 1 })
+      .find(filter)
+      .sort({ version: -1, createdAt: -1 })
+      .skip(pool.keep)
+      .project<{ _id: ObjectId }>({ _id: 1 })
       .toArray();
+    if (toDelete.length === 0) return 0;
 
-    if (toDelete.length > 0) {
-      await this.cacheCollection.deleteMany({
-        _id: { $in: toDelete.map(v => v._id) }
-      });
-    }
+    const result = await this.cacheCollection.deleteMany({ _id: { $in: toDelete.map(v => v._id) } });
+    return result.deletedCount;
   }
 
   /** Every version's id and share slug for a video — the global purge's work list. */

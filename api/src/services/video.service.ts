@@ -25,8 +25,42 @@ export interface CreateVideoOptions {
   requestId?: string;
 }
 
-// Maximum versions to keep per video (prevents unbounded storage growth)
+/**
+ * Reads the DB-only `users.isEvalUser` flag (D25). Narrow on purpose: version
+ * creation and listing need this one bit of the user document, nothing else.
+ */
+export interface EvalUserReader {
+  isEvalUser(userId: string): Promise<boolean>;
+}
+
+interface NewVersionInput {
+  userId: string;
+  url: string;
+  youtubeId: string;
+  folderId?: string;
+  providers?: ProviderConfig;
+  tier: UserTier;
+  requestId?: string;
+  evalRun: boolean;
+  /** Skip the summarizer's response cache (the submission's bypassCache). */
+  forceRefresh: boolean;
+}
+
+interface CreatedVersion {
+  userVideoId: string;
+  videoSummaryId: string;
+  newVersion: number;
+  previousVersion?: number;
+}
+
+// Maximum versions to keep per video and per pool — user versions and eval
+// versions are counted and pruned separately (prevents unbounded storage growth)
 const MAX_VERSIONS_PER_VIDEO = 5;
+
+/** A row without a `version` field predates versioning and counts as v1; no row is 0. */
+function versionOf(doc: Pick<VideoSummaryCacheDocument, 'version'> | null | undefined): number {
+  return doc ? doc.version || 1 : 0;
+}
 
 // A pending/processing cache row whose `updatedAt` is older than this is
 // treated as stalled — most likely a worker died without flipping the row
@@ -44,6 +78,7 @@ export class VideoService {
     private readonly queuePublisher: QueuePublisher,
     private readonly idempotencyService: IdempotencyService,
     private readonly dispatchGuard: IDispatchGuard,
+    private readonly evalUsers: EvalUserReader,
     private readonly logger: FastifyBaseLogger
   ) {}
 
@@ -180,6 +215,106 @@ export class VideoService {
     );
   }
 
+  /**
+   * Version numbers are shared by user and eval rows so every row keeps a
+   * distinct versioned dedupKey — a user run continues past eval versions
+   * instead of colliding with one. An eval run (D25) never demotes the current
+   * latest and never takes version 1: that number's dedupKey is the shared row
+   * every new submitter attaches to. A user run demotes the current latest and
+   * returns null when the video has no user versions (eval rows don't count),
+   * so the caller falls through to the normal flow.
+   */
+  private async nextVersionNumber(
+    youtubeId: string,
+    evalRun: boolean,
+  ): Promise<{ newVersion: number; previousVersion?: number } | null> {
+    const highest = versionOf(await this.videoRepository.findHighestVersion(youtubeId));
+    if (evalRun) return { newVersion: Math.max(highest, 1) + 1 };
+
+    const previousLatest = await this.videoRepository.markPreviousVersionsNotLatest(youtubeId);
+    // No latest row (orphaned versions) → continue from the highest user version
+    const previous = versionOf(previousLatest)
+      || versionOf(await this.videoRepository.findHighestVersion(youtubeId, false));
+    if (!previous) return null;
+    return { newVersion: Math.max(previous, highest) + 1, previousVersion: previous };
+  }
+
+  /** New version row + this user's library entry re-pointed at it + dispatch. */
+  private async insertVersion(input: NewVersionInput): Promise<CreatedVersion | null> {
+    const { userId, url, youtubeId, folderId, providers, tier, requestId, evalRun, forceRefresh } = input;
+    const numbering = await this.nextVersionNumber(youtubeId, evalRun);
+    if (!numbering) return null;
+
+    // The dedupKey is versioned so two concurrent Retry clicks that compute
+    // the same newVersion collide on the partial unique index (E11000 →
+    // VersionCreationError) instead of silently producing two duplicate rows.
+    const dedupKey = this.idempotencyService.computeContentKey({
+      youtubeId,
+      providers,
+      version: numbering.newVersion,
+    });
+    const cacheEntry = await this.videoRepository.createCacheEntry({
+      youtubeId,
+      url,
+      status: 'pending',
+      version: numbering.newVersion,
+      isLatest: !evalRun,
+      retryCount: 0,
+      dedupKey,
+      ...(forceRefresh && { forceRefresh: true }),
+      ...(evalRun && { evalRun: true }),
+    });
+    const videoSummaryId = cacheEntry._id.toString();
+
+    await this.videoRepository.deleteUserVideoByYoutubeId(userId, youtubeId, folderId);
+    const userVideo = await this.videoRepository.createUserVideo({
+      userId,
+      videoSummaryId,
+      youtubeId,
+      status: 'pending',
+      folderId,
+    });
+
+    // Non-blocking to avoid slowing down the request
+    this.videoRepository
+      .pruneVersions(youtubeId, { evalRun, keep: MAX_VERSIONS_PER_VIDEO })
+      .catch(err => {
+        this.logger.warn({ youtubeId, error: err }, 'Failed to cleanup old versions');
+      });
+
+    await this.dispatchPipeline({
+      videoSummaryId,
+      youtubeId,
+      url,
+      userId,
+      tier,
+      providers,
+      bypassCache: forceRefresh,
+      requestId,
+    });
+
+    return { userVideoId: userVideo._id.toString(), videoSummaryId, ...numbering };
+  }
+
+  /** `insertVersion` with its failures mapped to VersionCreationError. */
+  private async createVersion(input: NewVersionInput): Promise<CreatedVersion | null> {
+    try {
+      return await this.insertVersion(input);
+    } catch (error) {
+      // Duplicate key: two requests raced to create the same version
+      if (error instanceof Error && 'code' in error && (error as { code: number }).code === 11000) {
+        throw new VersionCreationError('Version conflict - please retry');
+      }
+      this.logger.error({
+        youtubeId: input.youtubeId,
+        userId: input.userId,
+        evalRun: input.evalRun,
+        error: error instanceof Error ? error.message : String(error),
+      }, 'Failed in version creation');
+      throw new VersionCreationError();
+    }
+  }
+
   async createVideo(userId: string, url: string, options: CreateVideoOptions) {
     const { folderId, bypassCache = false, providers, tier, requestId } = options;
     const youtubeId = extractYoutubeId(url);
@@ -187,109 +322,40 @@ export class VideoService {
       throw new InvalidYouTubeUrlError();
     }
 
-    // Handle cache bypass - create new version instead of deleting (for A/B testing prompts)
-    if (bypassCache) {
-      try {
-        // 1. Atomically find and mark old version as not latest
-        const previousLatest = await this.videoRepository.markPreviousVersionsNotLatest(youtubeId);
+    // D25: every eval-user submission becomes its own eval version — it never
+    // creates, attaches to, retries or regenerates a row other users are
+    // served. Its bypassCache only decides whether the summarizer may answer
+    // from its response cache.
+    const evalRun = await this.evalUsers.isEvalUser(userId);
 
-        // Determine new version number
-        let newVersion: number | undefined;
-        let previousVersion: number | undefined;
-
-        if (previousLatest) {
-          // Had a latest version, use it to determine new version
-          newVersion = (previousLatest.version || 1) + 1;
-          previousVersion = previousLatest.version || 1;
-        } else {
-          // No isLatest found - check if any versions exist (edge case: orphaned versions)
-          const highestVersion = await this.videoRepository.findHighestVersion(youtubeId);
-
-          if (highestVersion) {
-            // Orphaned versions exist, create next version
-            newVersion = (highestVersion.version || 1) + 1;
-            previousVersion = highestVersion.version || 1;
-          }
-        }
-
-        // Only proceed if we determined a version to create
-        if (newVersion && newVersion > 0) {
-          // 2. Create new version entry — dedupKey is versioned so two concurrent
-          //    Retry clicks that compute the same newVersion collide on the
-          //    partial unique index, triggering the E11000 → VersionCreationError
-          //    path below instead of silently producing two duplicate rows.
-          const dedupKey = this.idempotencyService.computeContentKey({
-            youtubeId,
-            providers,
-            version: newVersion,
-          });
-          const cacheEntry = await this.videoRepository.createCacheEntry({
-            youtubeId,
-            url,
-            status: 'pending',
-            version: newVersion,
-            isLatest: true,
-            retryCount: 0,
-            dedupKey,
-            forceRefresh: true,
-          });
-
-          // 3. Delete user's old video entry so they get the new version
-          await this.videoRepository.deleteUserVideoByYoutubeId(userId, youtubeId, folderId);
-
-          // 4. Create new user video entry
-          const userVideo = await this.videoRepository.createUserVideo({
-            userId,
-            videoSummaryId: cacheEntry._id.toString(),
+    // Cache bypass creates a new version instead of deleting (for A/B testing prompts)
+    if (bypassCache || evalRun) {
+      const created = await this.createVersion({
+        userId,
+        url,
+        youtubeId,
+        folderId,
+        providers,
+        tier,
+        requestId,
+        evalRun,
+        forceRefresh: bypassCache,
+      });
+      if (created) {
+        return {
+          video: {
+            id: created.userVideoId,
+            videoSummaryId: created.videoSummaryId,
             youtubeId,
             status: 'pending',
-            folderId,
-          });
-
-          // 5. Cleanup old versions (non-blocking to avoid slowing down the request)
-          this.cleanupOldVersions(youtubeId, newVersion).catch(err => {
-            this.logger.warn({ youtubeId, error: err }, 'Failed to cleanup old versions');
-          });
-
-          // 6. Trigger summarization (queue or HTTP, controlled by USE_QUEUE_PIPELINE)
-          await this.dispatchPipeline({
-            videoSummaryId: cacheEntry._id.toString(),
-            youtubeId,
-            url,
-            userId,
-            tier,
-            providers,
-            bypassCache: true,
-            requestId,
-          });
-
-          return {
-            video: {
-              id: userVideo._id.toString(),
-              videoSummaryId: cacheEntry._id.toString(),
-              youtubeId,
-              status: 'pending',
-              version: newVersion,
-              previousVersion,
-            },
-            cached: false,
-            newVersion: true,
-          };
-        }
-        // If no existing versions, fall through to normal flow
-      } catch (error) {
-        // Handle duplicate key error (race condition where two requests try to create same version)
-        if (error instanceof Error && 'code' in error && (error as { code: number }).code === 11000) {
-          throw new VersionCreationError('Version conflict - please retry');
-        }
-        // Log and rethrow other errors
-        this.logger.error({
-          youtubeId,
-          userId,
-          error: error instanceof Error ? error.message : String(error),
-        }, 'Failed in bypassCache version creation');
-        throw new VersionCreationError();
+            version: created.newVersion,
+            previousVersion: created.previousVersion,
+          },
+          cached: false,
+          newVersion: true,
+        };
       }
+      // A user run on a video with no user versions falls through to the normal flow
     }
 
     // Check if user already has this video in this folder (skip if bypassCache)
@@ -731,12 +797,14 @@ export class VideoService {
    * Get all versions of a video summary for A/B comparison.
    * Returns metadata only (not full summary content) to limit data exposure.
    */
-  async getVersions(youtubeId: string, options: { limit?: number } = {}) {
+  async getVersions(userId: string, youtubeId: string, options: { limit?: number } = {}) {
     const { limit = 10 } = options;
     // Server-side validation: enforce bounds regardless of input
     const safeLimit = Math.min(Math.max(1, limit), 50);
 
-    const versions = await this.videoRepository.getVersions(youtubeId, safeLimit);
+    // Eval versions are listed to the eval user only (D25)
+    const includeEval = await this.evalUsers.isEvalUser(userId);
+    const versions = await this.videoRepository.getVersions(youtubeId, safeLimit, { includeEval });
 
     return versions.map(v => ({
       id: v._id.toString(),
@@ -754,20 +822,6 @@ export class VideoService {
       errorCode: v.errorCode,
       errorMessage: v.errorMessage,
     }));
-  }
-
-  /**
-   * Cleanup old versions to prevent unbounded storage growth.
-   * Keeps only MAX_VERSIONS_PER_VIDEO most recent versions.
-   * Called asynchronously after version creation.
-   */
-  private async cleanupOldVersions(youtubeId: string, currentVersion: number): Promise<void> {
-    if (currentVersion <= MAX_VERSIONS_PER_VIDEO) return;
-
-    await this.videoRepository.deleteOldVersions(
-      youtubeId,
-      currentVersion - MAX_VERSIONS_PER_VIDEO + 1
-    );
   }
 
   private toCacheResponse(doc: VideoSummaryCacheDocument) {

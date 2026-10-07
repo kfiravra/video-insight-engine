@@ -19,6 +19,11 @@ export interface UserDocument {
   // Grants access to the vie-admin panel's email/password login. Only ever
   // set by scripts/create-admin.ts — the public register flow never writes it.
   role?: 'admin';
+  // Marks the golden-eval account (D25). Set ONLY by an admin in the DB
+  // (mongosh) — no API route writes it and no request input can set it. Every
+  // video this user submits becomes an eval-flagged version that other users
+  // are never served and that never prunes their versions.
+  isEvalUser?: boolean;
   // Profile fields (V1.5)
   username?: string;
   displayName?: string;
@@ -104,6 +109,19 @@ export class UserRepository {
       { _id: new ObjectId(userId) },
       { $set: { ...updates, updatedAt: new Date() } }
     );
+  }
+
+  /**
+   * Whether the user is the DB-flagged eval account. Strict `=== true` so a
+   * malformed value (string, number) never enables eval behaviour; an unknown
+   * user is simply not an eval user.
+   */
+  async isEvalUser(userId: string): Promise<boolean> {
+    const user = await this.collection.findOne(
+      { _id: new ObjectId(userId) },
+      { projection: { isEvalUser: 1 } }
+    );
+    return user?.isEvalUser === true;
   }
 
   async findByPaddleCustomerId(customerId: string): Promise<UserDocument | null> {
