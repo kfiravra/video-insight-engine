@@ -11,7 +11,7 @@ import asyncio
 import logging
 import time
 from functools import lru_cache
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, overload
 
 from litellm.exceptions import (
     APIError as LitellmAPIError,
@@ -24,6 +24,7 @@ from src.services.pipeline.pipeline_timing import record_llm_failure
 
 if TYPE_CHECKING:
     from src.services.llm import LLMService
+    from src.services.llm_messages import TextBlock, UserContent
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,8 @@ MODEL_CHAR_LIMITS: dict[str, int] = {
 }
 
 DEFAULT_CHAR_LIMIT = 300_000
+
+_TRUNCATION_MARKER = "\n\n[TRANSCRIPT TRUNCATED DUE TO LENGTH]"
 
 
 @lru_cache(maxsize=8)
@@ -60,28 +63,52 @@ def _wrap_with_override(model: str) -> LLMService:
     return _LLMService(provider)
 
 
-def truncate_prompt_if_needed(prompt: str, model: str) -> str:
+def _prompt_chars(prompt: UserContent) -> int:
+    if isinstance(prompt, str):
+        return len(prompt)
+    return sum(len(block["text"]) for block in prompt)
+
+
+def _truncate_longest_block(blocks: list[TextBlock], overflow: int) -> list[TextBlock]:
+    """Cut ``overflow`` chars off the longest block — the transcript — keeping its breakpoint."""
+    longest = max(range(len(blocks)), key=lambda i: len(blocks[i]["text"]))
+    text = blocks[longest]["text"]
+    cut: TextBlock = {**blocks[longest], "text": text[: max(len(text) - overflow, 0)]}
+    cut["text"] += _TRUNCATION_MARKER
+    return [cut if i == longest else block for i, block in enumerate(blocks)]
+
+
+@overload
+def truncate_prompt_if_needed(prompt: str, model: str) -> str: ...
+@overload
+def truncate_prompt_if_needed(prompt: list[TextBlock], model: str) -> list[TextBlock]: ...
+def truncate_prompt_if_needed(prompt: UserContent, model: str) -> UserContent:
     """Truncate prompt to model's character limit if exceeded.
 
     This is a safety net — chunked extraction should prevent it from
-    ever triggering. Logs a warning when truncation occurs.
+    ever triggering. Logs a warning when truncation occurs. A content-block
+    prompt is measured across all blocks and loses the overflow from its
+    longest block.
     """
     limit = MODEL_CHAR_LIMITS.get(model, DEFAULT_CHAR_LIMIT)
-    if len(prompt) > limit:
-        logger.warning(
-            "Prompt truncated from %d to %d chars for model %s (limit=%d)",
-            len(prompt),
-            limit,
-            model,
-            limit,
-        )
-        return prompt[:limit] + "\n\n[TRANSCRIPT TRUNCATED DUE TO LENGTH]"
-    return prompt
+    size = _prompt_chars(prompt)
+    if size <= limit:
+        return prompt
+    logger.warning(
+        "Prompt truncated from %d to %d chars for model %s (limit=%d)",
+        size,
+        limit,
+        model,
+        limit,
+    )
+    if isinstance(prompt, str):
+        return prompt[:limit] + _TRUNCATION_MARKER
+    return _truncate_longest_block(prompt, size - limit)
 
 
 async def call_llm_with_retry(
     llm_service: LLMService,
-    prompt: str,
+    prompt: UserContent,
     *,
     max_tokens: int = 4096,
     timeout: float = 60.0,
@@ -93,12 +120,14 @@ async def call_llm_with_retry(
     propagate_rate_limit: bool = False,
     model_override: str | None = None,
     temperature: float | None = None,
+    system_prompt: str | None = None,
 ) -> str | None:
     """Call LLM with timeout and retry. Returns raw string or None.
 
     Args:
         llm_service: LLMService instance with call_llm / call_llm_fast methods.
-        prompt: The prompt to send.
+        prompt: The prompt to send — a string, or content blocks where one
+            block ends an Anthropic cached prefix (``llm_messages.text_block``).
         max_tokens: Maximum tokens in response.
         timeout: Per-attempt timeout in seconds.
         max_retries: Maximum retry attempts (0 = no retries).
@@ -119,6 +148,9 @@ async def call_llm_with_retry(
         temperature: Sampling temperature forwarded on every attempt (also on
             the ``model_override`` path); ``None`` sends none, i.e. the
             provider default.
+        system_prompt: System text sent WITHOUT a cache breakpoint — the
+            alternative to ``cache_static`` (system text WITH one) when only a
+            user-block breakpoint is wanted.
 
     Returns:
         Raw LLM response string, or None if all attempts failed.
@@ -150,6 +182,7 @@ async def call_llm_with_retry(
                     span_name=stage_name,
                     span_metadata=span_metadata,
                     temperature=temperature,
+                    system_prompt=system_prompt,
                 )
             else:
                 raw = await llm_service.call_llm(
@@ -161,6 +194,7 @@ async def call_llm_with_retry(
                     span_name=stage_name,
                     span_metadata=span_metadata,
                     temperature=temperature,
+                    system_prompt=system_prompt,
                 )
             duration = time.monotonic() - start
 

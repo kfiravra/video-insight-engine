@@ -2,12 +2,10 @@
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from datetime import datetime, UTC
 
 from src.services.llm_provider import (
     LLMProvider,
     Message,
-    CompletionResult,
     get_llm_provider,
 )
 
@@ -23,26 +21,6 @@ class TestMessage:
     def test_message_system_role(self):
         msg = Message(role="system", content="You are helpful")
         assert msg.role == "system"
-
-
-class TestCompletionResult:
-    """Tests for CompletionResult model."""
-
-    def test_completion_result_creation(self):
-        result = CompletionResult(
-            content="Hello world",
-            model="anthropic/claude-sonnet-4-6",
-            input_tokens=10,
-            output_tokens=5,
-            cost_usd=0.001,
-            duration_ms=500,
-        )
-        assert result.content == "Hello world"
-        assert result.model == "anthropic/claude-sonnet-4-6"
-        assert result.input_tokens == 10
-        assert result.output_tokens == 5
-        assert result.cost_usd == 0.001
-        assert result.duration_ms == 500
 
 
 class TestLLMProvider:
@@ -152,37 +130,6 @@ class TestLLMProvider:
                 result = await provider.complete_with_messages(messages)
 
                 assert result == "Response"
-
-    @pytest.mark.asyncio
-    async def test_complete_with_tracking(self):
-        """Test completion with usage tracking."""
-        with patch("src.services.llm_provider.acompletion") as mock_acompletion:
-            mock_response = MagicMock()
-            mock_response.choices = [MagicMock()]
-            mock_response.choices[0].message.content = "Hello"
-            mock_response.model = "anthropic/claude-sonnet-4-6"
-            mock_response.usage = MagicMock()
-            mock_response.usage.prompt_tokens = 10
-            mock_response.usage.completion_tokens = 5
-            mock_acompletion.return_value = mock_response
-
-            with patch("src.services.llm_provider.completion_cost") as mock_cost:
-                mock_cost.return_value = 0.001
-
-                with patch("src.services.llm_provider.settings") as mock_settings:
-                    mock_settings.llm_model = "anthropic/claude-sonnet-4-6"
-                    mock_settings.llm_fallback_models = None
-                    mock_settings.LLM_TIMEOUT_SECONDS = 60.0
-                    mock_settings.LLM_NUM_RETRIES = 2
-
-                    provider = LLMProvider()
-                    result = await provider.complete_with_tracking("Test")
-
-                    assert isinstance(result, CompletionResult)
-                    assert result.content == "Hello"
-                    assert result.input_tokens == 10
-                    assert result.output_tokens == 5
-                    assert result.cost_usd == 0.001
 
     @pytest.mark.asyncio
     async def test_stream(self):
@@ -319,6 +266,7 @@ class TestGetLLMProvider:
         """Test that get_llm_provider returns cached instance."""
         # Reset global
         import src.services.llm_provider as llm_module
+
         llm_module._default_provider = None
 
         with patch("src.services.llm_provider.settings") as mock_settings:

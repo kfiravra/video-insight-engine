@@ -6,11 +6,10 @@ with built-in fallbacks, retries, and cost tracking.
 
 import logging
 import time
-from collections.abc import AsyncGenerator
-from datetime import UTC, datetime
+from collections.abc import AsyncGenerator, Sequence
 from typing import Any
 
-from litellm import acompletion, completion_cost
+from litellm import acompletion
 from litellm.exceptions import (
     APIError,
     AuthenticationError,
@@ -18,9 +17,17 @@ from litellm.exceptions import (
     ServiceUnavailableError,
     Timeout,
 )
-from pydantic import BaseModel
+from litellm.llms.openai.chat.gpt_5_transformation import OpenAIGPT5Config
 
 from src.config import settings
+from src.services.llm_messages import (
+    Message,
+    UserContent,
+    build_prompt_messages,
+    is_anthropic_model,
+    prepare_for_model,
+    to_message_dicts,
+)
 from src.services.llm_telemetry import record_generation, stopwatch_ms_since
 from src.services.pipeline.pipeline_timing import record_llm_call, record_llm_failure
 
@@ -38,14 +45,28 @@ def _attempt_of(span_metadata: dict[str, Any] | None) -> int:
     return attempt if isinstance(attempt, int) else 1
 
 
+def _rejects_temperature(model: str, temperature: float) -> bool:
+    """gpt-5 reasoning models accept only temperature=1; LiteLLM raises on any other value."""
+    if temperature == 1 or not OpenAIGPT5Config.is_model_gpt_5_model(model):
+        return False
+    return not OpenAIGPT5Config.is_model_gpt_5_1_model(model)
+
+
 def _with_sampling(kwargs: dict[str, Any], temperature: float | None) -> dict[str, Any]:
     """Add ``temperature`` to the request only when the caller set one.
 
     ``None`` leaves the key out so the provider default applies and the
-    request stays byte-identical to calls that never passed it.
+    request stays byte-identical to calls that never passed it. A value the
+    model rejects is dropped (with a warning) rather than failing every attempt.
     """
-    if temperature is not None:
-        kwargs["temperature"] = temperature
+    if temperature is None:
+        return kwargs
+    if _rejects_temperature(kwargs["model"], temperature):
+        logger.warning(
+            "Dropping temperature=%s: %s accepts only temperature=1", temperature, kwargs["model"]
+        )
+        return kwargs
+    kwargs["temperature"] = temperature
     return kwargs
 
 
@@ -54,24 +75,6 @@ def _model_parameters(kwargs: dict[str, Any]) -> dict[str, Any] | None:
     if "temperature" not in kwargs:
         return None
     return {"temperature": kwargs["temperature"]}
-
-
-class Message(BaseModel):
-    """Chat message for LLM conversation."""
-
-    role: str  # "system", "user", "assistant"
-    content: str
-
-
-class CompletionResult(BaseModel):
-    """Result from an LLM completion."""
-
-    content: str
-    model: str
-    input_tokens: int
-    output_tokens: int
-    cost_usd: float
-    duration_ms: int
 
 
 class LLMProvider:
@@ -102,7 +105,6 @@ class LLMProvider:
         self._fallback_models = fallback_models or settings.llm_fallback_models
         self._timeout = timeout if timeout is not None else settings.LLM_TIMEOUT_SECONDS
         self._num_retries = num_retries if num_retries is not None else settings.LLM_NUM_RETRIES
-        self._is_anthropic_model = self._model.startswith("anthropic/")
 
     @property
     def model(self) -> str:
@@ -188,6 +190,7 @@ class LLMProvider:
     ) -> str:
         """Send one ``acompletion`` request; record timing and the Langfuse generation."""
         model = kwargs["model"]
+        kwargs["messages"] = prepare_for_model(kwargs["messages"], model)
         attempt = _attempt_of(span_metadata)
         start_monotonic = time.monotonic()
         response = await self._call_with_error_logging(
@@ -231,7 +234,7 @@ class LLMProvider:
 
     async def complete(
         self,
-        prompt: str,
+        prompt: UserContent,
         max_tokens: int = 2000,
         system_prompt: str | None = None,
         metadata: dict[str, Any] | None = None,
@@ -245,9 +248,12 @@ class LLMProvider:
         """Generate completion from prompt.
 
         Args:
-            prompt: User prompt (dynamic part)
+            prompt: User prompt (dynamic part) — a string, or a list of content
+                blocks (``llm_messages.text_block``) where one block may end a
+                cached prefix (``text_block(..., cache=True)``): honoured on
+                Anthropic, stripped for every other provider.
             max_tokens: Maximum tokens in response
-            system_prompt: Optional system prompt
+            system_prompt: Optional system prompt (never carries a breakpoint)
             metadata: Optional metadata for tracking (user_id, feature, etc.)
             json_mode: Request JSON-only output
             cache_static: Static prompt content to cache (Anthropic prompt caching).
@@ -258,32 +264,12 @@ class LLMProvider:
         Returns:
             Generated text content
         """
-        messages: list[dict] = []
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
-
-        if cache_static and self._is_anthropic_model:
-            # Split into cacheable system block + dynamic user block
-            messages.append(
-                {
-                    "role": "system",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": cache_static,
-                            "cache_control": {"type": "ephemeral"},
-                        },
-                    ],
-                }
-            )
-            messages.append({"role": "user", "content": prompt})
-        else:
-            # Non-Anthropic or no caching: single user message
-            if cache_static:
-                messages.append({"role": "user", "content": cache_static + "\n\n" + prompt})
-            else:
-                messages.append({"role": "user", "content": prompt})
-
+        messages = build_prompt_messages(
+            prompt,
+            system_prompt=system_prompt,
+            cache_static=cache_static,
+            anthropic=is_anthropic_model(self._model),
+        )
         return await self.complete_with_messages(
             messages,
             max_tokens,
@@ -297,13 +283,14 @@ class LLMProvider:
 
     async def complete_fast(
         self,
-        prompt: str,
+        prompt: UserContent,
         max_tokens: int = 50,
         timeout: float = 5.0,
         json_mode: bool = False,
         span_name: str | None = None,
         span_metadata: dict[str, Any] | None = None,
         temperature: float | None = None,
+        system_prompt: str | None = None,
     ) -> str:
         """Generate quick completion using fast model.
 
@@ -311,10 +298,11 @@ class LLMProvider:
         and quick responses. Has shorter timeout than regular complete().
 
         Args:
-            prompt: User prompt
+            prompt: User prompt — a string or content blocks (see ``complete``)
             max_tokens: Maximum tokens in response (default 50)
             timeout: Request timeout in seconds (default 5.0)
             temperature: Sampling temperature; ``None`` sends none (provider default).
+            system_prompt: Optional system prompt (no cache breakpoint).
 
         Returns:
             Generated text content
@@ -326,7 +314,12 @@ class LLMProvider:
         """
         kwargs: dict[str, Any] = {
             "model": self._fast_model,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": build_prompt_messages(
+                prompt,
+                system_prompt=system_prompt,
+                cache_static=None,
+                anthropic=is_anthropic_model(self._fast_model),
+            ),
             "max_tokens": max_tokens,
             "timeout": timeout,
             "num_retries": _LITELLM_NUM_RETRIES,
@@ -342,7 +335,7 @@ class LLMProvider:
 
     async def complete_with_messages(
         self,
-        messages: list[dict | Message],
+        messages: Sequence[dict[str, Any] | Message],
         max_tokens: int = 2000,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
@@ -355,7 +348,9 @@ class LLMProvider:
         """Generate completion from message list.
 
         Args:
-            messages: List of messages (dict or Message objects)
+            messages: List of messages (dict or Message objects). Content may be
+                a list of blocks with ``cache_control`` (system and/or user):
+                sent as-is to Anthropic, stripped for every other provider.
             max_tokens: Maximum tokens in response
             metadata: Optional metadata for tracking
             use_fast_model: When True, route to ``self._fast_model``
@@ -370,11 +365,10 @@ class LLMProvider:
         Returns:
             Generated text content
         """
-        msg_dicts = [m.model_dump() if isinstance(m, Message) else m for m in messages]
         effective_model = self._fast_model if use_fast_model else self._model
         kwargs: dict[str, Any] = {
             "model": effective_model,
-            "messages": msg_dicts,
+            "messages": to_message_dicts(messages),
             "max_tokens": max_tokens,
             "timeout": timeout if timeout is not None else self._timeout,
             "num_retries": _LITELLM_NUM_RETRIES,
@@ -392,75 +386,6 @@ class LLMProvider:
             _with_sampling(kwargs, temperature),
             span_name=span_name,
             span_metadata=span_metadata,
-        )
-
-    async def complete_with_tracking(
-        self,
-        prompt: str,
-        max_tokens: int = 2000,
-        system_prompt: str | None = None,
-        metadata: dict[str, Any] | None = None,
-    ) -> CompletionResult:
-        """Generate completion with full tracking info.
-
-        Args:
-            prompt: User prompt
-            max_tokens: Maximum tokens in response
-            system_prompt: Optional system prompt
-            metadata: Optional metadata for tracking
-
-        Returns:
-            CompletionResult with content and usage info
-        """
-        messages = []
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
-        messages.append({"role": "user", "content": prompt})
-
-        start_time = datetime.now(UTC)
-
-        # Build kwargs, only including optional params if set
-        kwargs: dict[str, Any] = {
-            "model": self._model,
-            "messages": messages,
-            "max_tokens": max_tokens,
-            "timeout": self._timeout,
-            "num_retries": _LITELLM_NUM_RETRIES,
-        }
-        if self._fallback_models:
-            kwargs["fallbacks"] = self._fallback_models
-        if metadata:
-            kwargs["metadata"] = metadata
-
-        response = await self._call_with_error_logging(
-            acompletion(**kwargs),
-            context="tracking call",
-        )
-
-        if response.choices[0].finish_reason == "length":
-            logger.warning(
-                "LLM response truncated (finish_reason=length), model=%s, max_tokens=%d",
-                self._model,
-                max_tokens,
-            )
-
-        end_time = datetime.now(UTC)
-        duration_ms = int((end_time - start_time).total_seconds() * 1000)
-
-        # Calculate cost using LiteLLM's built-in function
-        cost = 0.0
-        try:
-            cost = completion_cost(completion_response=response)
-        except Exception as e:
-            logger.warning("Could not calculate cost: %s", e)
-
-        return CompletionResult(
-            content=response.choices[0].message.content or "",
-            model=response.model or self._model,
-            input_tokens=response.usage.prompt_tokens if response.usage else 0,
-            output_tokens=response.usage.completion_tokens if response.usage else 0,
-            cost_usd=cost,
-            duration_ms=duration_ms,
         )
 
     async def stream(

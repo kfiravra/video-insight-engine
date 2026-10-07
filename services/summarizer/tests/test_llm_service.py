@@ -41,6 +41,7 @@ class TestLLMService:
             span_name=None,
             span_metadata=None,
             temperature=None,
+            system_prompt=None,
         )
 
     @pytest.mark.asyncio
@@ -58,6 +59,7 @@ class TestLLMService:
             span_name=None,
             span_metadata=None,
             temperature=None,
+            system_prompt=None,
         )
 
     @pytest.mark.asyncio

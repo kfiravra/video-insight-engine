@@ -10,6 +10,7 @@ import logging
 from typing import Any, AsyncGenerator
 
 from src.config import settings
+from src.services.llm_messages import UserContent
 from src.services.llm_provider import LLMProvider
 
 logger = logging.getLogger(__name__)
@@ -42,18 +43,19 @@ class LLMService:
 
     async def call_llm_fast(
         self,
-        prompt: str,
+        prompt: UserContent,
         max_tokens: int = 4096,
         timeout: float | None = None,
         json_mode: bool = False,
         span_name: str | None = None,
         span_metadata: dict[str, Any] | None = None,
         temperature: float | None = None,
+        system_prompt: str | None = None,
     ) -> str:
         """Make an async LLM call using the fast model.
 
         Args:
-            prompt: The prompt to send
+            prompt: The prompt to send (string or content blocks, see ``LLMProvider.complete``)
             max_tokens: Maximum tokens in response
             timeout: Per-call timeout override (seconds). Falls back to 15s default.
             json_mode: When True, request JSON-only output from the model.
@@ -61,6 +63,8 @@ class LLMService:
                 span. Best-effort — observability failures are swallowed.
             span_metadata: Extra metadata merged into the generation span.
             temperature: Sampling temperature; ``None`` sends none (provider default).
+            system_prompt: Optional system prompt sent without a cache breakpoint
+                (``cache_static`` is the system text that carries one).
 
         Returns:
             Generated text content
@@ -75,11 +79,12 @@ class LLMService:
                 span_name=span_name,
                 span_metadata=span_metadata,
                 temperature=temperature,
+                system_prompt=system_prompt,
             )
 
     async def call_llm(
         self,
-        prompt: str,
+        prompt: UserContent,
         max_tokens: int = 2000,
         timeout: float | None = None,
         json_mode: bool = False,
@@ -87,11 +92,12 @@ class LLMService:
         span_name: str | None = None,
         span_metadata: dict[str, Any] | None = None,
         temperature: float | None = None,
+        system_prompt: str | None = None,
     ) -> str:
         """Make an async LLM call.
 
         Args:
-            prompt: The prompt to send
+            prompt: The prompt to send (string or content blocks, see ``LLMProvider.complete``)
             max_tokens: Maximum tokens in response
             timeout: Per-call timeout override (seconds). Falls back to LLM_TIMEOUT_SECONDS.
             json_mode: When True, request JSON-only output from the model.
@@ -100,6 +106,8 @@ class LLMService:
                 span. Best-effort — observability failures are swallowed.
             span_metadata: Extra metadata merged into the generation span.
             temperature: Sampling temperature; ``None`` sends none (provider default).
+            system_prompt: Optional system prompt sent without a cache breakpoint
+                (``cache_static`` is the system text that carries one).
 
         Returns:
             Generated text content
@@ -118,6 +126,7 @@ class LLMService:
                 span_name=span_name,
                 span_metadata=span_metadata,
                 temperature=temperature,
+                system_prompt=system_prompt,
             )
 
     async def stream_llm(self, prompt: str, max_tokens: int = 2000) -> AsyncGenerator[str, None]:

@@ -204,3 +204,30 @@ class TestTemperatureTelemetry:
                 await provider.complete("hi", span_name="plan")
 
         assert "model_parameters" not in fake_trace.generation.call_args.kwargs
+
+
+class TestUnsupportedTemperatureGuard:
+    """gpt-5 reasoning models reject temperature != 1 (LiteLLM UnsupportedParamsError)."""
+
+    @pytest.mark.parametrize("model", ["openai/gpt-5-mini", "openai/gpt-5"])
+    async def test_should_drop_temperature_when_model_accepts_only_one(
+        self, acompletion: AsyncMock, model: str
+    ) -> None:
+        await lp.LLMProvider(model=model, fallback_models=["x/y"]).complete("hi", temperature=0.0)
+
+        assert "temperature" not in acompletion.call_args.kwargs
+
+    async def test_should_keep_temperature_one_for_gpt5(self, acompletion: AsyncMock) -> None:
+        provider = lp.LLMProvider(model="openai/gpt-5-mini", fallback_models=["x/y"])
+
+        await provider.complete("hi", temperature=1.0)
+
+        assert acompletion.call_args.kwargs["temperature"] == 1.0
+
+    @pytest.mark.parametrize("model", ["openai/gpt-5.1", "openai/gpt-4o-mini", _HAIKU])
+    async def test_should_keep_temperature_when_model_supports_it(
+        self, acompletion: AsyncMock, model: str
+    ) -> None:
+        await lp.LLMProvider(model=model, fallback_models=["x/y"]).complete("hi", temperature=0.0)
+
+        assert acompletion.call_args.kwargs["temperature"] == 0.0
