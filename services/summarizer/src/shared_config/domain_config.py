@@ -357,6 +357,27 @@ def grouping_config() -> GroupingConfig:
     return get_config()["grouping"]
 
 
+def registered_data_source(data_source: str, component: str) -> str | None:
+    """The registered dataSource a planned tab should read.
+
+    ``data_source`` itself when the registry (or ``NON_EXTRACTION_DATASOURCES``)
+    knows it; otherwise the first registered path of the same domain whose
+    components include ``component``; ``None`` when neither exists.
+    """
+    registry = data_sources()
+    if data_source in registry or data_source in NON_EXTRACTION_DATASOURCES:
+        return data_source
+    domain = data_source.split(".", 1)[0]
+    return next(
+        (
+            path
+            for path, spec in registry.items()
+            if spec["domain"] == domain and component in spec["components"]
+        ),
+        None,
+    )
+
+
 def render_valid_datasources() -> str:
     """Render component_toolkit.txt's ``{valid_datasources}`` block from the registry.
 

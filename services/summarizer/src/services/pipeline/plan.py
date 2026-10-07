@@ -17,6 +17,7 @@ from ...shared_config.domain_config import (
     effective_requirements,
     get_playbook,
     map_category_to_tag,
+    registered_data_source,
     render_density_gate_table,
     render_valid_component_names,
     render_valid_datasources,
@@ -189,6 +190,46 @@ def _validate_tabs(tabs: list[dict]) -> list[dict]:
     return valid_tabs
 
 
+def _validate_data_sources(tabs: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Check every tab's dataSource against the registry before extraction.
+
+    An unregistered path (copied verbatim from the LLM) used to reach
+    extraction and burned 3 of 7 extraction retries without ever resolving.
+    Swap in a same-domain path rendered by the same component; otherwise drop
+    the tab and return it in the ``droppedTabs`` shape assembly persists.
+    """
+    kept: list[dict] = []
+    dropped: list[dict] = []
+    for tab in tabs:
+        planned = tab.get("dataSource", "")
+        resolved = registered_data_source(planned, tab["component"]) if planned else planned
+        if resolved is None:
+            logger.warning(
+                "Plan tab dropped: id=%r dataSource=%r is not registered and no %s sibling exists",
+                tab["id"],
+                planned,
+                tab["component"],
+            )
+            dropped.append(
+                {
+                    "id": tab["id"],
+                    "component": tab["component"],
+                    "dataSource": planned,
+                    "reason": "invalid_datasource",
+                }
+            )
+            continue
+        if resolved != planned:
+            logger.info(
+                "Plan tab %r: unregistered dataSource %r -> sibling %r",
+                tab["id"],
+                planned,
+                resolved,
+            )
+        kept.append({**tab, "dataSource": resolved})
+    return kept, dropped
+
+
 async def run_plan(
     title: str,
     channel: str,
@@ -307,8 +348,9 @@ async def run_plan(
 
         # Validate tabs before creating PlanResult
         raw_tabs = data.get("tabs", [])
-        validated_tabs = _validate_tabs(raw_tabs)
+        validated_tabs, dropped_tabs = _validate_data_sources(_validate_tabs(raw_tabs))
         data["tabs"] = validated_tabs
+        data["droppedTabs"] = dropped_tabs
 
         # Normalize content tags
         content_tags = data.get("contentTags", [])
