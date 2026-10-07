@@ -5,6 +5,8 @@
 #   - 3 gaming/TCG (unboxing consistency anchors)  - 3 tech
 #   - 3 food       - 2 learning    - 2 language    - 2 science
 #   - 3 travel     - 2 fitness     - 2 review      - 1 music  - 1 documentary
+#   - 4 pipeline-1min assertion anchors (food-travel vlog, story-intro recipe,
+#     static-camera unboxing, do-along workout)
 #
 # Each entry is a contract:
 #   id                 — stable slug used as the Langfuse dataset item ID
@@ -22,6 +24,15 @@
 #                        (hard product bugs — scored at weight 0.15, any hit
 #                        zeroes the forbidden_ok term)
 #   keyContent         — terms the extraction should mention (80%+ overlap target)
+#   assertions         — optional deterministic per-video checks, validated by
+#                        scripts/_eval_schema.py and gated by scripts/gate.py:
+#                        expectedDomain, expectedFormat (classifier output from
+#                        the Langfuse trace), forbiddenComponents,
+#                        requiredComponents, quizAbsentOrLast, minItems,
+#                        minItemsWithField, noTimestampBeyondDuration.
+#                        Every live run also asserts it completed. `xfail:
+#                        <reason>` keeps a known, tracked failure from failing
+#                        the gate (it is still reported; XPASS = drop the marker).
 #
 # Curation rules:
 #   - All videos are <35 minutes (so eval runs in ~2 hours, not days).
@@ -287,3 +298,121 @@ videos:
     expectedTabs: [key_moments, quotes, takeaways]
     requiredComponents: [overview, moment_track]
     keyContent: [hillary step, krakauer, scott fischer, hall, summit fever]
+
+  # ─── pipeline-1min assertion anchors (4) — added 2026-10-07 (task 0.7) ───
+  # The first two ids are PROPOSALS for gate 0 (Kfir to confirm or swap);
+  # neither was in the dev DB or the demo library, so they were picked on
+  # YouTube (oEmbed/watch page checked 2026-10-07: live, English captions).
+  - id: food-travel-montreal-vlog
+    # PROPOSAL (gate 0): Mark Wiens, "Inside Canada's Fast Food PARADISE!!
+    # (Montreal, Quebec)", 31:08, category Travel & Events, manual en captions.
+    # Restaurant-hopping food-travel vlog: lots of food, zero cooking — the
+    # case where recipe components (step_player / checklist ingredients) are
+    # backfilled without evidence (C19).
+    url: https://www.youtube.com/watch?v=v8KaQr0MhjE
+    domain: travel
+    format: vlog
+    language: en
+    expectedTabs: [overview, itinerary, highlights, filmstrip]
+    requiredComponents: [overview, spot_explorer]
+    forbiddenComponents: [quiz_arena]
+    keyContent: [montreal, poutine, hot dog, burger, orange julep]
+    assertions:
+      - type: expectedDomain
+        values: [travel, food]
+      - type: expectedFormat
+        values: [vlog, documentary, walkthrough]
+      - type: forbiddenComponents
+        components: [step_player, checklist]
+        xfail: "C19 — domain backfill is unconditional until 1b.2 / 1d.7 (expected to pass at gate 1)"
+      - type: quizAbsentOrLast
+      - type: minItems
+        component: spot_explorer
+        field: spots
+        min: 4
+      - type: noTimestampBeyondDuration
+
+  - id: food-recipe-story-intro
+    # PROPOSAL (gate 0): Pasta Grannies, "How to Make Pissalandrea, Liguria's
+    # Traditional Focaccia", 11:15, category Entertainment, en auto captions
+    # (English narration over Italian speech). Opens with the village and
+    # the cook's 55-year story before the recipe starts — recipe components
+    # must still appear.
+    url: https://www.youtube.com/watch?v=wCkLNqy5OHE
+    domain: food
+    format: tutorial
+    language: en
+    expectedTabs: [overview, ingredients, steps, tips]
+    requiredComponents: [overview, checklist, step_player]
+    forbiddenComponents: [quiz_arena]
+    keyContent: [focaccia, dough, onion, anchov, olive oil]
+    assertions:
+      - type: expectedDomain
+        values: [food]
+      - type: expectedFormat
+        values: [tutorial, documentary, story, vlog]
+      - type: requiredComponents
+        components: [step_player, checklist]
+      - type: forbiddenComponents
+        components: [quiz_arena]
+      - type: quizAbsentOrLast
+      - type: minItems
+        component: step_player
+        field: steps
+        min: 4
+      - type: minItems
+        component: checklist
+        field: items
+        min: 4
+      - type: noTimestampBeyondDuration
+
+  - id: gaming-op17-static-camera
+    # Benchmark 3: "Opening an OP-17 (The World's Strongest Warriors) One
+    # Piece Booster Box!", 1,127 s, static camera → FFmpeg scene detection
+    # finds 0 candidates. Moment images must still be present and the run
+    # must not fail on 0 candidates (C21 / D17; the implicit `completed`
+    # assertion covers the second half).
+    url: https://www.youtube.com/watch?v=uC45_4nnEAI
+    domain: gaming
+    format: unboxing
+    language: en
+    expectedTabs: [overview, pulls, highlights, set_facts]
+    requiredComponents: [overview, tier_list, moment_track]
+    forbiddenComponents: [quiz_arena, code_playground, workout_room, claims_tracker]
+    keyContent: [booster box, one piece, pull, card, rare]
+    assertions:
+      - type: expectedFormat
+        values: [unboxing]
+      - type: minItemsWithField
+        component: moment_track
+        fields: [thumbnailUrl, s3Key]
+        min: 1
+      - type: forbiddenComponents
+        components: [quiz_arena, code_playground, workout_room, claims_tracker]
+      - type: quizAbsentOrLast
+      - type: noTimestampBeyondDuration
+
+  - id: fitness-7min-workout
+    # FitnessBlender "The Scientific 7 Minute Workout", 570 s, do-along
+    # bodyweight workout (0 scene frames locally). A do-along gets no quiz.
+    url: https://www.youtube.com/watch?v=Jru5B044HOs
+    domain: fitness
+    format: tutorial
+    language: en
+    expectedTabs: [overview, workout, tips]
+    requiredComponents: [overview, workout_room]
+    forbiddenComponents: [quiz_arena]
+    keyContent: [jumping jack, wall sit, push-up, plank, squat]
+    assertions:
+      - type: expectedDomain
+        values: [fitness]
+      - type: expectedFormat
+        values: [tutorial, walkthrough]
+      - type: forbiddenComponents
+        components: [quiz_arena]
+      - type: quizAbsentOrLast
+      - type: minItems
+        component: workout_room
+        field: exercises
+        min: 6
+      - type: noTimestampBeyondDuration

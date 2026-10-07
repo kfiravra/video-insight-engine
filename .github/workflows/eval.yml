@@ -1,21 +1,26 @@
 name: Eval
 
-# LLM-quality gates (project-score-9 Phase 3):
+# LLM-quality gates (project-score-9 Phase 3; pipeline-1min 0.7):
 #
 #   golden-eval-dry-run  PR-triggered, zero spend. Exercises the golden-dataset
-#                        scoring path end to end (load → score → report →
-#                        --fail-under gate) so prompt/pipeline PRs can't break
-#                        the eval machinery itself.
+#                        schema + scoring path end to end (load → validate →
+#                        score → report → --fail-under gate) so prompt/pipeline
+#                        PRs can't break the eval machinery itself.
 #   retrieval-eval       PR-triggered, zero LLM spend. Recall@k + MRR floors
 #                        over the golden query→chunk fixture against an
 #                        ephemeral Qdrant service container. Baseline:
 #                        dev/golden-dataset/baseline.json (recall@3=1.0,
 #                        MRR=0.865; floors 0.85 / 0.7).
-#   golden-eval-live     WEEKLY scheduled (cadence decision 2026-07-07): runs
-#                        the 20-video golden dataset through the real pipeline
-#                        (~$2 LLM spend, hours) and publishes the run to
-#                        Langfuse. Requires repo secrets — skips cleanly when
-#                        they are absent (e.g. forks).
+#   golden-eval-live     MANUAL DISPATCH ONLY for now (D20): runs the live
+#                        golden set against the PROD API as the eval user
+#                        (C18 — no compose boot on the runner, so no proxy /
+#                        S3 / OpenAI secrets on GitHub), bypassCache on every
+#                        video, publishes a Langfuse dataset run and uploads
+#                        the reports as an artifact. mode=noise-baseline runs
+#                        the set twice and also uploads noise.json. The
+#                        twice-a-month cron (`0 3 1,15 * *`) is re-enabled once
+#                        the secrets land — see
+#                        dev/active/pipeline-1min/env-changes.md.
 
 on:
   pull_request:
@@ -33,16 +38,27 @@ on:
       - "services/assistant/src/repositories/qdrant_repository.py"
       - "services/assistant/src/config.py"
       - "scripts/run_eval.py"
+      - "scripts/_eval_*.py"
+      - "scripts/gate.py"
       - "dev/golden-dataset/**"
       - ".github/workflows/eval.yml"
-  schedule:
-    # Weekly live eval — Mondays 03:00 UTC.
-    - cron: "0 3 * * 1"
   workflow_dispatch:
+    inputs:
+      mode:
+        description: "eval = one pass + gate; noise-baseline = two passes → noise.json"
+        type: choice
+        options: [eval, noise-baseline]
+        default: eval
+      limit:
+        description: "First N live golden entries (0 = all) — 1 for a plumbing dry-run"
+        type: number
+        default: 0
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Only PR runs are cancelled by a newer push; a live eval in progress is
+  # never killed mid-spend by a second dispatch (that one queues).
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   golden-eval-dry-run:
@@ -56,7 +72,7 @@ jobs:
         with:
           python-version: "3.11"
 
-      - run: pip install pyyaml
+      - run: pip install pyyaml pydantic httpx
 
       # --dry-run makes zero network/LLM calls: it stubs each entry's output
       # and runs the real scoring + reporting + --fail-under exit-code path.
@@ -127,77 +143,70 @@ jobs:
           fi
 
   golden-eval-live:
-    name: Golden Eval (weekly live run → Langfuse)
+    name: Golden Eval (live, prod API → Langfuse)
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    # 20 videos × 12–20 min pipeline time, sequential, 30-min cap each.
+    # 18 videos × ~3–5 min prod pipeline time, sequential, 30-min cap each;
+    # noise-baseline mode runs the set twice.
     timeout-minutes: 350
     env:
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      EVAL_API_URL: ${{ secrets.EVAL_API_URL }}
+      EVAL_USER_EMAIL: ${{ secrets.EVAL_USER_EMAIL }}
+      EVAL_USER_PASSWORD: ${{ secrets.EVAL_USER_PASSWORD }}
       LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
       LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
-      EVAL_USER_PASSWORD: ${{ secrets.EVAL_USER_PASSWORD }}
+      MODE: ${{ inputs.mode || 'eval' }}
+      LIMIT: ${{ inputs.limit || 0 }}
     steps:
       - uses: actions/checkout@v4
 
-      # Forks / repos without spend secrets: exit green without booting
-      # anything. `if:` cannot read secrets directly, hence the env probe.
-      - name: Check spend secrets
+      # Forks / repos without the eval secrets: exit green without spending.
+      # `if:` cannot read secrets directly, hence the env probe. Langfuse is
+      # required: faithfulness (a primary metric) is read from the run traces.
+      - name: Check eval secrets
         id: secrets
         run: |
-          if [ -z "$ANTHROPIC_API_KEY" ] || [ -z "$EVAL_USER_PASSWORD" ]; then
-            echo "available=false" >> "$GITHUB_OUTPUT"
-            echo "Spend secrets not configured — skipping live eval."
-          else
-            echo "available=true" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Prepare compose environment
-        if: steps.secrets.outputs.available == 'true'
-        run: |
-          cp .env.example .env
-          {
-            echo "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY"
-            echo "LANGFUSE_PUBLIC_KEY=$LANGFUSE_PUBLIC_KEY"
-            echo "LANGFUSE_SECRET_KEY=$LANGFUSE_SECRET_KEY"
-          } >> .env
-
-      - name: Boot the stack
-        if: steps.secrets.outputs.available == 'true'
-        run: |
-          docker compose up -d --build
-          for i in $(seq 1 60); do
-            if curl -fsS http://localhost:3000/health >/dev/null 2>&1 \
-               && curl -fsS http://localhost:8000/health >/dev/null 2>&1; then
-              echo "stack healthy"; exit 0
+          for name in EVAL_API_URL EVAL_USER_EMAIL EVAL_USER_PASSWORD LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY; do
+            if [ -z "${!name}" ]; then
+              echo "available=false" >> "$GITHUB_OUTPUT"
+              echo "$name not configured — skipping live eval."
+              exit 0
             fi
-            sleep 5
           done
-          echo "::error::stack failed to become healthy"; docker compose ps; exit 1
+          echo "available=true" >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-python@v5
         if: steps.secrets.outputs.available == 'true'
         with:
           python-version: "3.11"
 
-      - name: Run live eval + publish to Langfuse
+      - run: pip install pyyaml pydantic httpx
+        if: steps.secrets.outputs.available == 'true'
+
+      - name: Run live eval against the prod API
         if: steps.secrets.outputs.available == 'true'
         run: |
-          pip install pyyaml httpx langfuse
-          FLOOR=$(python3 -c "import json; print(json.load(open('dev/golden-dataset/baseline.json'))['goldenEval']['failUnder'])")
-          python3 scripts/run_eval.py \
-            --output reports/ \
-            --fail-under "$FLOOR" \
-            --publish-run "weekly-$(date +%Y%m%d)"
+          STAMP=$(date +%Y%m%d)
+          if [ "$MODE" = "noise-baseline" ]; then
+            python3 scripts/run_eval.py --output reports/ --limit "$LIMIT" \
+              --noise-runs 2 --noise-out reports/noise.json \
+              --publish-run "golden-baseline-$STAMP"
+          else
+            FLOOR=$(python3 -c "import json; print(json.load(open('dev/golden-dataset/baseline.json'))['goldenEval']['failUnder'])")
+            python3 scripts/run_eval.py --output reports/ --limit "$LIMIT" \
+              --fail-under "$FLOOR" --publish-run "golden-$STAMP"
+          fi
+
+      # Gate on the committed noise file (absent until the first baseline is
+      # committed). A --limit run is a plumbing check, not a gate.
+      - name: Gate primary metrics against noise
+        if: steps.secrets.outputs.available == 'true' && env.MODE == 'eval' && env.LIMIT == '0' && hashFiles('dev/golden-dataset/noise.json') != ''
+        run: python3 scripts/gate.py --report "$(ls -t reports/eval-*.json | head -1)"
 
       - name: Upload live eval report
         if: always() && steps.secrets.outputs.available == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: golden-eval-live-report
-          path: reports/eval-*
+          name: golden-eval-${{ env.MODE }}-${{ github.run_id }}
+          path: reports/
           retention-days: 90
-
-      - name: Tear down
-        if: always() && steps.secrets.outputs.available == 'true'
-        run: docker compose down -v

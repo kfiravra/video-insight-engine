@@ -7,6 +7,8 @@ dev/completed/*
 dev/golden-dataset/*
 !dev/golden-dataset/baseline.json
 !dev/golden-dataset/videos.yaml
+# per-metric eval noise (0.7) — gate.py tolerances, committed after each baseline
+!dev/golden-dataset/noise.json
 .claude/skills/impeccable2
 
 # Skill / audit workspaces (generated artifacts, not source-of-truth)
