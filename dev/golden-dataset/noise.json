@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "createdAt": "2026-10-07T15:57:18.741793+00:00",
+  "createdAt": "2026-10-07T17:36:32.169021+00:00",
   "apiLabel": "localhost:3000",
   "runs": 2,
   "reports": [
@@ -14,53 +14,65 @@
   },
   "runMeans": {
     "quality": [
-      0.8408,
-      0.8399
+      0.8811,
+      0.8774
     ],
     "faithfulness": [
-      0.7371,
-      0.7167
+      0.7511,
+      0.7645
     ],
     "duplicateRate": [
-      0.0681,
-      0.0518
+      0.0793,
+      0.0527
     ]
   },
   "baseline": {
-    "quality": 0.8403,
-    "faithfulness": 0.7269,
-    "duplicateRate": 0.0599
+    "quality": 0.8792,
+    "faithfulness": 0.7578,
+    "duplicateRate": 0.066
   },
   "noise": {
     "quality": {
-      "sd": 0.038554,
+      "sd": 0.037643,
       "df": 18,
       "n": 18,
       "passes": 2,
-      "sigmaMean": 0.009087
+      "sigmaMean": 0.008872
     },
     "faithfulness": {
-      "sd": 0.22345,
-      "df": 16,
-      "n": 16,
+      "sd": 0.230778,
+      "df": 15,
+      "n": 15,
       "passes": 2,
-      "sigmaMean": 0.055862
+      "sigmaMean": 0.059587
     },
     "duplicateRate": {
-      "sd": 0.067077,
+      "sd": 0.073761,
       "df": 18,
       "n": 18,
       "passes": 2,
-      "sigmaMean": 0.01581
+      "sigmaMean": 0.017386
     }
   },
   "runMeanSpread": {
-    "quality": 0.0009,
-    "faithfulness": 0.0204,
-    "duplicateRate": 0.0163
+    "quality": 0.0037,
+    "faithfulness": 0.0134,
+    "duplicateRate": 0.0266
   },
-  "layoutStability": 0.7849,
+  "layoutStability": 0.7532,
   "excludedVideos": [],
+  "notScored": {
+    "quality": [],
+    "faithfulness": [
+      "gaming-op17-set-verdict",
+      "review-airpods-pro-2",
+      "science-crispr-intro"
+    ],
+    "duplicateRate": []
+  },
+  "retiredVideos": [
+    "review-airpods-pro"
+  ],
   "videos": {
     "fitness-7min-workout": {
       "quality": 0.925,
@@ -94,7 +106,7 @@
     },
     "gaming-op17-set-verdict": {
       "quality": 0.962,
-      "faithfulness": 1.0,
+      "faithfulness": null,
       "duplicateRate": 0.0
     },
     "gaming-op17-static-camera": {
@@ -108,19 +120,19 @@
       "duplicateRate": 0.1062
     },
     "learning-double-slit": {
-      "quality": 0.579,
+      "quality": 0.85,
       "faithfulness": 1.0,
       "duplicateRate": 0.0
     },
     "learning-photosynthesis": {
-      "quality": 0.725,
+      "quality": 0.9,
       "faithfulness": 1.0,
       "duplicateRate": 0.0
     },
-    "review-airpods-pro": {
-      "quality": 0.592,
-      "faithfulness": 0.0,
-      "duplicateRate": 0.0
+    "review-airpods-pro-2": {
+      "quality": 0.846,
+      "faithfulness": null,
+      "duplicateRate": 0.108
     },
     "science-black-holes": {
       "quality": 0.825,
@@ -129,7 +141,7 @@
     },
     "science-crispr-intro": {
       "quality": 0.7185,
-      "faithfulness": 1.0,
+      "faithfulness": null,
       "duplicateRate": 0.0111
     },
     "tech-agentic-engineering": {
