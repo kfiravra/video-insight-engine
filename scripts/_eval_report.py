@@ -34,14 +34,17 @@ class VideoOutcome:
     video_summary_id: str | None = None
     trace_id: str | None = None
     error: str | None = None
+    submitted_at: str | None = None  # ISO; anchors the Langfuse trace lookup
 
     @property
     def overall(self) -> float:
         return float(self.quality.get("overall", 0.0))
 
     def metrics(self) -> dict[str, float | None]:
+        # A failed run has no quality to measure — None, not 0.0, so it never
+        # drags a mean or a noise spread; the ``completed`` assertion gates it.
         return {
-            "quality": self.overall,
+            "quality": None if self.error else self.overall,
             "faithfulness": self.faithfulness,
             "duplicateRate": self.duplicate_rate,
         }
@@ -50,7 +53,7 @@ class VideoOutcome:
 @dataclass(frozen=True)
 class RunInfo:
     run_name: str
-    api_url: str
+    api_label: str  # _eval_noise.api_label — never the raw (secret) EVAL_API_URL
     bypass_cache: bool
     dry_run: bool
 
@@ -72,6 +75,7 @@ def _video_dict(outcome: VideoOutcome) -> dict[str, Any]:
         "youtubeId": outcome.youtube_id,
         "videoSummaryId": outcome.video_summary_id,
         "traceId": outcome.trace_id,
+        "submittedAt": outcome.submitted_at,
         "error": outcome.error,
         "metrics": outcome.metrics(),
         "components": outcome.components,
@@ -97,7 +101,7 @@ def build_summary(outcomes: list[VideoOutcome], info: RunInfo) -> dict[str, Any]
         "schemaVersion": SUMMARY_SCHEMA_VERSION,
         "runName": info.run_name,
         "createdAt": datetime.now(UTC).isoformat(),
-        "apiUrl": info.api_url,
+        "apiLabel": info.api_label,
         "bypassCache": info.bypass_cache,
         "dryRun": info.dry_run,
         "metrics": {m: mean_or_none(v) for m, v in per_metric.items()},
@@ -174,6 +178,16 @@ def _markdown(summary: dict[str, Any], outcomes: list[VideoOutcome], ts: str) ->
     return "\n".join(lines + _assertion_lines(outcomes)) + "\n"
 
 
+def _write_files(
+    outcomes: list[VideoOutcome], summary: dict[str, Any], json_path: Path, label: str
+) -> tuple[Path, Path, Path]:
+    csv_path, md_path = json_path.with_suffix(".csv"), json_path.with_suffix(".md")
+    _write_csv(csv_path, outcomes)
+    md_path.write_text(_markdown(summary, outcomes, label), encoding="utf-8")
+    json_path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+    return csv_path, md_path, json_path
+
+
 def write_reports(
     outcomes: list[VideoOutcome], info: RunInfo, out_dir: Path, suffix: str = ""
 ) -> tuple[Path, Path, Path]:
@@ -183,9 +197,50 @@ def write_reports(
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     ts = time.strftime("%Y%m%d-%H%M%S") + suffix
-    csv_path, md_path, json_path = (out_dir / f"eval-{ts}.{ext}" for ext in ("csv", "md", "json"))
-    summary = build_summary(outcomes, info)
-    _write_csv(csv_path, outcomes)
-    md_path.write_text(_markdown(summary, outcomes, ts), encoding="utf-8")
-    json_path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
-    return csv_path, md_path, json_path
+    return _write_files(outcomes, build_summary(outcomes, info), out_dir / f"eval-{ts}.json", ts)
+
+
+# ─── Read-back (``--refresh-langfuse``) ────────────────────────────────
+def _outcome_from_row(row: dict[str, Any]) -> VideoOutcome:
+    metrics = row.get("metrics") or {}
+    return VideoOutcome(
+        id=row["id"],
+        domain=row.get("domain", "unknown"),
+        quality=row.get("quality") or {},
+        duplicate_rate=metrics.get("duplicateRate"),
+        faithfulness=metrics.get("faithfulness"),
+        assertions=[AssertionResult(**a) for a in row.get("assertions") or []],
+        components=list(row.get("components") or []),
+        youtube_id=row.get("youtubeId"),
+        video_summary_id=row.get("videoSummaryId"),
+        trace_id=row.get("traceId"),
+        error=row.get("error"),
+        submitted_at=row.get("submittedAt"),
+    )
+
+
+def outcomes_from_summary(summary: dict[str, Any]) -> list[VideoOutcome]:
+    """The per-video outcomes of an ``eval-*.json`` summary."""
+    return [_outcome_from_row(row) for row in summary.get("videos") or []]
+
+
+def rewrite_reports(
+    outcomes: list[VideoOutcome], original: dict[str, Any], json_path: Path
+) -> tuple[Path, Path, Path]:
+    """Rewrite ``json_path`` and its .csv/.md siblings in place from ``outcomes``.
+
+    Run-level fields (run name, API label, createdAt, …) are kept from
+    ``original``; ``refreshedAt`` records the rewrite.
+    """
+    info = RunInfo(
+        run_name=original.get("runName", ""),
+        api_label=original.get("apiLabel") or "",
+        bypass_cache=bool(original.get("bypassCache")),
+        dry_run=bool(original.get("dryRun")),
+    )
+    summary = {
+        **build_summary(outcomes, info),
+        "createdAt": original.get("createdAt"),
+        "refreshedAt": datetime.now(UTC).isoformat(),
+    }
+    return _write_files(outcomes, summary, json_path, json_path.stem.removeprefix("eval-"))

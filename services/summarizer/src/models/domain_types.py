@@ -1202,6 +1202,10 @@ def _model_keys(model_cls: type[BaseModel]) -> set[str]:
     return keys
 
 
+def _is_empty(value: object) -> bool:
+    return value is None or value in ("", [], {})
+
+
 def _carries_own_fields(model_cls: type[BaseModel], data: dict) -> bool:
     """True when ``data`` holds at least one non-empty field of ``model_cls``.
 
@@ -1209,7 +1213,16 @@ def _carries_own_fields(model_cls: type[BaseModel], data: dict) -> bool:
     models with truthy defaults (``project_name="Untitled Project"``,
     ``badge="recommended"``), which used to smuggle default-only domains in.
     """
-    return any(data.get(key) not in (None, "", [], {}) for key in _model_keys(model_cls))
+    return any(not _is_empty(data.get(key)) for key in _model_keys(model_cls))
+
+
+def _flat_fields(model_cls: type[BaseModel], data: dict, exclude: set[str]) -> dict:
+    """The non-empty top-level fields of ``model_cls`` in ``data``, minus ``exclude``."""
+    return {
+        key: data[key]
+        for key in sorted(_model_keys(model_cls) - exclude)
+        if not _is_empty(data.get(key))
+    }
 
 
 def _wrapped_block(data: dict, tag: str) -> dict | None:
@@ -1219,6 +1232,35 @@ def _wrapped_block(data: dict, tag: str) -> dict | None:
         if isinstance(block, dict) and block:
             return block
     return None
+
+
+def _merge_mixed_shape(tag: str, wrapper: dict, flat: dict) -> dict:
+    """Union of a tag's wrapped block and the same tag's flat top-level fields.
+
+    Reachable when chunked extraction merges a wrapped batch with a flat one
+    (``merge_batch_extractions``): both halves are real content, so neither
+    is dropped. An empty wrapper value takes the flat one, lists concatenate
+    (flat items the wrapper lacks are appended), and a true scalar/dict
+    conflict keeps the wrapper's value — a deterministic tie-break, since
+    neither half is more trustworthy than the other.
+    """
+    merged = dict(wrapper)
+    conflicts: list[str] = []
+    for key, flat_value in flat.items():
+        wrapped_value = wrapper.get(key)
+        if _is_empty(wrapped_value):
+            merged[key] = flat_value
+        elif isinstance(wrapped_value, list) and isinstance(flat_value, list):
+            merged[key] = wrapped_value + [v for v in flat_value if v not in wrapped_value]
+        elif wrapped_value != flat_value:
+            conflicts.append(key)
+    logger.warning(
+        "Tag %s has a wrapped block AND flat fields %s — merged (wrapper kept on %s)",
+        tag,
+        list(flat),
+        conflicts,
+    )
+    return merged
 
 
 def _validate_block(tag: str, model_cls: type[BaseModel] | None, block: dict) -> dict:
@@ -1236,18 +1278,63 @@ def _validate_block(tag: str, model_cls: type[BaseModel] | None, block: dict) ->
 def _single_tag_block(tag: str, data: dict) -> dict:
     """Flat output is the norm for one tag, but the LLM sometimes wraps it
     (``{"tech": {...}}``) — validating the wrapper against the model yields
-    all defaults (OuNKBjuV7A4). Unwrap unless the flat data is the domain."""
+    all defaults (OuNKBjuV7A4). Unwrap it; when both shapes are present,
+    merge them rather than silently dropping either."""
     model_cls = DOMAIN_MODELS.get(tag)
-    if model_cls is not None and _carries_own_fields(model_cls, data):
+    wrapper = _wrapped_block(data, tag)
+    if model_cls is None or not _carries_own_fields(model_cls, data):
+        return wrapper or data
+    if wrapper is None:
         return data
-    return _wrapped_block(data, tag) or data
+    return _merge_mixed_shape(tag, wrapper, _flat_fields(model_cls, data, exclude=set()))
+
+
+def _multi_tag_wrapped_block(tag: str, content_tags: list[str], data: dict) -> dict | None:
+    """``tag``'s wrapped block, merged with its flat fields when both exist.
+
+    Only flat keys no other content tag's model declares are merged: a shared
+    key (science/learning both have ``concepts``) cannot be attributed.
+    """
+    wrapper = _wrapped_block(data, tag)
+    model_cls = DOMAIN_MODELS.get(tag)
+    if wrapper is None or model_cls is None:
+        return wrapper
+    other_keys: set[str] = set()
+    for other in content_tags:
+        other_cls = DOMAIN_MODELS.get(other)
+        if other != tag and other_cls is not None:
+            other_keys |= _model_keys(other_cls)
+    flat = _flat_fields(model_cls, data, exclude=other_keys)
+    return _merge_mixed_shape(tag, wrapper, flat) if flat else wrapper
+
+
+def _validate_flat_fallback(tag: str, data: dict) -> dict | None:
+    """A missing tag validated from the flat data; ``None`` when absent or invalid.
+
+    Unlike a wrapped block, the flat data is the WHOLE response — passing it
+    through on a ValidationError would hand this tag every other tag's data
+    (e.g. ``tech`` receiving ``foodData``), so an invalid one is skipped.
+    """
+    model_cls = DOMAIN_MODELS.get(tag)
+    if model_cls is None or not _carries_own_fields(model_cls, data):
+        return None
+    try:
+        return model_cls.model_validate(data).model_dump(by_alias=True)
+    except ValidationError as e:
+        logger.warning(
+            "Flat validation failed for missing tag %s — skipped (fields: %s): %s",
+            tag,
+            sorted(data),
+            str(e)[:300],
+        )
+        return None
 
 
 def _validate_multi_tag(content_tags: list[str], data: dict) -> dict:
     """Wrapped blocks first; flat data only for tags whose own fields are present."""
     validated: dict = {}
     for tag in content_tags:
-        block = _wrapped_block(data, tag)
+        block = _multi_tag_wrapped_block(tag, content_tags, data)
         if block is not None:
             validated[tag] = _validate_block(tag, DOMAIN_MODELS.get(tag), block)
 
@@ -1258,9 +1345,9 @@ def _validate_multi_tag(content_tags: list[str], data: dict) -> dict:
             "Missing wrapped keys for tags %s — trying flat validation fallback", missing_tags
         )
     for tag in missing_tags:
-        model_cls = DOMAIN_MODELS.get(tag)
-        if model_cls is not None and _carries_own_fields(model_cls, data):
-            validated[tag] = _validate_block(tag, model_cls, data)
+        flat_block = _validate_flat_fallback(tag, data)
+        if flat_block is not None:
+            validated[tag] = flat_block
     return validated
 
 

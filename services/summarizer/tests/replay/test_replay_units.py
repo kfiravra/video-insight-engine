@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 import re
 import socket
+import sys
 import threading
+import types
 from collections.abc import Callable
 
 import pytest
@@ -15,7 +17,9 @@ from llm_common.context import llm_feature_var
 from tests.replay.cassette import CASSETTE_DIR, LLMEntry, LLMKey, available_cassettes
 from tests.replay.fake_llm import CassetteMissError, ReplayLLM
 from tests.replay.network_guard import NetworkBlockedError, block_network
-from tests.replay.report import PhaseRow
+from tests.replay.driver import ReplayResult
+from tests.replay.process_state import UnsnapshottedModulesError, preserved_process_state
+from tests.replay.report import PhaseRow, check_speed, divergences
 
 _BENCHMARK_VIDEOS = ("T1dQhQAm8Tc", "jMq8lEu-of0", "uC45_4nnEAI")
 # Anything that looks like a credential, a signed URL or a personal address.
@@ -93,6 +97,29 @@ class TestNetworkGuard:
         attempts, result = _run_in_thread(started_before_guard=False)
         assert (len(attempts), result) == (1, "NetworkBlockedError")
 
+    def test_should_refuse_thread_reusing_finished_foreign_thread_slot(self) -> None:
+        # A foreign thread ends while the guard is active; a replay thread
+        # started afterwards (often recycling its ident) is still policed.
+        release, outcome = threading.Event(), []
+        foreign = threading.Thread(target=release.wait, args=(5,), name="foreign-lib-thread")
+        foreign.start()
+        with block_network() as attempts:
+            release.set()
+            foreign.join(timeout=5)
+            late = threading.Thread(target=_resolve_localhost, args=(release, outcome))
+            late.start()
+            late.join(timeout=5)
+        assert (len(attempts), outcome) == (1, ["NetworkBlockedError"])
+
+    def test_should_refuse_gethostbyname_when_guard_active(self) -> None:
+        with block_network(), pytest.raises(NetworkBlockedError):
+            socket.gethostbyname("example.com")
+
+    def test_should_refuse_udp_sendto_when_guard_active(self) -> None:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp:
+            with block_network(), pytest.raises(NetworkBlockedError):
+                udp.sendto(b"x", ("127.0.0.1", 9))
+
     def test_should_restore_connect_when_guard_exits(self) -> None:
         original = socket.socket.connect
         with block_network():
@@ -144,7 +171,65 @@ class TestReplayLLM:
         assert len(fake.model_mismatches) == 1
 
 
+# ─── Process state ───
+
+
+class TestPreservedProcessState:
+    def test_should_fail_naming_src_module_first_imported_during_replay(self) -> None:
+        name = "src._replay_probe_module"
+        try:
+            with pytest.raises(UnsnapshottedModulesError, match=name):
+                with preserved_process_state():
+                    sys.modules[name] = types.ModuleType(name)
+        finally:
+            sys.modules.pop(name, None)
+
+
 # ─── Report ───
+
+
+def _result(**overrides: object) -> ReplayResult:
+    fields: dict[str, object] = {
+        "video_id": "vid",
+        "speed": 0.0,
+        "wall_ms": 1,
+        "events": [],
+        "timing": None,
+        "done_line": "[pipeline] DONE",
+        "saved_result": None,
+        "statuses": [],
+        "llm_calls_served": 1,
+        "llm_misses": [],
+        "llm_unused": [],
+        "llm_model_mismatches": [],
+        "network_attempts": [],
+    }
+    return ReplayResult(**{**fields, **overrides})  # type: ignore[arg-type]
+
+
+class TestDivergences:
+    def test_should_count_model_mismatch_as_divergence(self) -> None:
+        result = _result(llm_model_mismatches=["plan/plan#0: requested a, recorded b"])
+        assert divergences(result) == ["model mismatch: plan/plan#0: requested a, recorded b"]
+
+    def test_should_count_unfaked_command_as_divergence(self) -> None:
+        assert divergences(_result(unexpected_commands=["yt-dlp --get-url"])) == [
+            "unfaked command: yt-dlp --get-url"
+        ]
+
+    def test_should_report_nothing_for_faithful_run(self) -> None:
+        assert divergences(_result()) == []
+
+
+class TestCheckSpeed:
+    @pytest.mark.parametrize("speed", [0.0, 0.02, 0.05, 1.0])
+    def test_should_accept_zero_or_scaled_speed(self, speed: float) -> None:
+        assert check_speed(speed) == speed
+
+    @pytest.mark.parametrize("speed", [-1.0, 0.001, 0.019])
+    def test_should_reject_speed_below_floor(self, speed: float) -> None:
+        with pytest.raises(ValueError, match="speed must be"):
+            check_speed(speed)
 
 
 class TestPhaseRow:

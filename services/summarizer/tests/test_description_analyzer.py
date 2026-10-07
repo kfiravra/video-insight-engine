@@ -1,15 +1,17 @@
 """Tests for description analyzer service."""
 
-import pytest
-from unittest.mock import MagicMock, patch
 import json
+import logging
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 from src.services.video.description_analyzer import (
     DescriptionAnalysis,
     DescriptionLink,
     DescriptionTimestamp,
-    Resource,
     RelatedVideo,
+    Resource,
     SocialLink,
     _analyze_description_async,
     _parse_timestamps,
@@ -57,9 +59,13 @@ class TestDescriptionAnalysisDataclass:
 
         result = analysis.to_dict()
 
-        assert result["links"] == [{"url": "https://github.com/test", "type": "github", "label": "Code"}]
+        assert result["links"] == [
+            {"url": "https://github.com/test", "type": "github", "label": "Code"}
+        ]
         assert result["resources"] == [{"name": "Tutorial", "url": "https://example.com"}]
-        assert result["relatedVideos"] == [{"title": "Part 2", "url": "https://youtube.com/watch?v=abc"}]
+        assert result["relatedVideos"] == [
+            {"title": "Part 2", "url": "https://youtube.com/watch?v=abc"}
+        ]
         assert result["socialLinks"] == [{"platform": "twitter", "url": "https://twitter.com/test"}]
         assert result["timestamps"] == []
 
@@ -175,12 +181,20 @@ class TestAnalyzeDescriptionAsync:
 
         mock_response = MagicMock()
         mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = json.dumps({
-            "links": [{"url": "https://github.com/test/repo", "type": "github", "label": "Source code"}],
-            "resources": [{"name": "Tutorial PDF", "url": "https://example.com/tutorial.pdf"}],
-            "relatedVideos": [{"title": "Part 2", "url": "https://youtube.com/watch?v=xyz"}],
-            "socialLinks": [{"platform": "twitter", "url": "https://twitter.com/creator"}],
-        })
+        mock_response.choices[0].message.content = json.dumps(
+            {
+                "links": [
+                    {
+                        "url": "https://github.com/test/repo",
+                        "type": "github",
+                        "label": "Source code",
+                    }
+                ],
+                "resources": [{"name": "Tutorial PDF", "url": "https://example.com/tutorial.pdf"}],
+                "relatedVideos": [{"title": "Part 2", "url": "https://youtube.com/watch?v=xyz"}],
+                "socialLinks": [{"platform": "twitter", "url": "https://twitter.com/creator"}],
+            }
+        )
         mock_acompletion.return_value = mock_response
 
         description = "Check out my code at https://github.com/test/repo. Follow me on Twitter!"
@@ -197,18 +211,40 @@ class TestAnalyzeDescriptionAsync:
     async def test_llm_api_error_returns_empty(self, mock_acompletion, mock_load_prompt):
         """Test that API errors return empty analysis."""
         import litellm
+
         mock_load_prompt.return_value = "Analyze: {description}"
         mock_acompletion.side_effect = litellm.exceptions.APIError(
-            message="API error",
-            llm_provider="anthropic",
-            model="test-model",
-            status_code=500
+            message="API error", llm_provider="anthropic", model="test-model", status_code=500
         )
 
         description = "This is a test description with enough content to analyze."
         result = await _analyze_description_async(description)
 
         assert result.has_content is False
+
+    @patch("src.services.video.description_analyzer.load_prompt")
+    @patch("src.services.llm_provider.acompletion")
+    async def test_should_log_api_error_once_at_error_when_provider_already_logged_it(
+        self, mock_acompletion, mock_load_prompt, caplog
+    ):
+        """Regression (p0.2 review): LLMProvider logs the APIError at error
+        level, so the analyzer's own line is a warning — not a second error."""
+        import litellm
+
+        mock_load_prompt.return_value = "Analyze: {description}"
+        mock_acompletion.side_effect = litellm.exceptions.APIError(
+            message="API error", llm_provider="anthropic", model="test-model", status_code=500
+        )
+
+        with caplog.at_level(logging.WARNING):
+            await _analyze_description_async(
+                "This is a test description with enough content to analyze."
+            )
+
+        analyzer_levels = [
+            r.levelno for r in caplog.records if r.name == "src.services.video.description_analyzer"
+        ]
+        assert analyzer_levels == [logging.WARNING]
 
     @patch("src.services.video.description_analyzer.load_prompt")
     @patch("src.services.llm_provider.acompletion")
@@ -270,13 +306,15 @@ class TestAnalyzeDescriptionAsync:
 
         mock_response = MagicMock()
         mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = json.dumps({
-            "links": [
-                {"url": "https://valid.com", "type": "article", "label": "Valid"},
-                {"url": "", "type": "article", "label": "Empty URL"},
-                {"type": "article", "label": "No URL"},
-            ],
-        })
+        mock_response.choices[0].message.content = json.dumps(
+            {
+                "links": [
+                    {"url": "https://valid.com", "type": "article", "label": "Valid"},
+                    {"url": "", "type": "article", "label": "Empty URL"},
+                    {"type": "article", "label": "No URL"},
+                ],
+            }
+        )
         mock_acompletion.return_value = mock_response
 
         description = "This is a test description with enough content to analyze."

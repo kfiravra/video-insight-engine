@@ -1,4 +1,4 @@
-"""Tests for the golden eval's HTTP clients (``scripts/_eval_api.py``, ``_eval_langfuse.py``).
+"""Tests for the golden eval's vie-api clients (``scripts/_eval_api.py``, ``_eval_resume.py``).
 
 vie-api and Langfuse are replaced by ``httpx.MockTransport`` handlers — no
 network, no spend.
@@ -6,6 +6,7 @@ network, no spend.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 from collections.abc import Callable
@@ -19,7 +20,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
 
 import _eval_api  # noqa: E402
-from _eval_langfuse import RunItem, TraceTarget, collect_signals, publish_dataset_run  # noqa: E402
+import _eval_resume  # noqa: E402
 
 _API = "http://api.test"
 _URL = "https://www.youtube.com/watch?v=abcdefghijk"
@@ -38,10 +39,15 @@ class FakeApi:
     """vie-api double: POST → SSE terminal event → doc; optional 401s on the doc poll."""
 
     def __init__(
-        self, doc_statuses: list[int] | None = None, doc: dict[str, Any] | None = None
+        self,
+        doc_statuses: list[int] | None = None,
+        doc: dict[str, Any] | None = None,
+        stream_statuses: list[int] | None = None,
     ) -> None:
         self.posts: list[dict[str, Any]] = []
+        self.stream_opens = 0
         self.doc_statuses = list(doc_statuses or [])
+        self.stream_statuses = list(stream_statuses or [])
         self.doc = doc or _DOC
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
@@ -50,7 +56,11 @@ class FakeApi:
             self.posts.append(json.loads(request.content))
             return httpx.Response(201, json={"video": {"id": "uv1", "videoSummaryId": "vs1"}})
         if path == "/api/videos/vs1/stream":
-            return httpx.Response(200, text="event: phase\ndata: {}\n\nevent: done\ndata: {}\n\n")
+            self.stream_opens += 1
+            status = self.stream_statuses.pop(0) if self.stream_statuses else 200
+            return httpx.Response(
+                status, text="event: phase\ndata: {}\n\nevent: done\ndata: {}\n\n"
+            )
         if path == "/api/videos/uv1":
             status = self.doc_statuses.pop(0) if self.doc_statuses else 200
             return httpx.Response(status, json=self.doc)
@@ -104,24 +114,76 @@ class TestRunPipeline:
         out, token = await _eval_api.run_with_reauth(_API, _URL, "old", bypass_cache=True)
         assert (len(api.posts), token, out["videoSummaryId"]) == (1, "fresh-token", "vs1")
 
-
-class TestAuthenticate:
-    async def test_should_log_in_when_registration_is_closed(
-        self, monkeypatch: pytest.MonkeyPatch
+    async def test_should_reattach_to_the_same_stream_when_stream_open_returns_401(
+        self, mount
     ) -> None:
-        def handler(request: httpx.Request) -> httpx.Response:
-            if request.url.path == "/api/auth/register":
-                return httpx.Response(403, json={"error": "REGISTRATION_CLOSED"})
-            return httpx.Response(200, json={"accessToken": "jwt"})
+        api = FakeApi(stream_statuses=[401])
+        mount(api)
+        out, token = await _eval_api.run_with_reauth(_API, _URL, "old", bypass_cache=True)
+        assert (len(api.posts), api.stream_opens, token) == (1, 2, "fresh-token")
 
-        real_client = httpx.AsyncClient
+
+class FakeAuth:
+    """vie-api auth double: scripted status per endpoint, records the call order."""
+
+    def __init__(self, login: list[int], register: int = 201) -> None:
+        self.login = list(login)
+        self.register = register
+        self.paths: list[str] = []
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        self.paths.append(request.url.path)
+        if request.url.path == "/api/auth/register":
+            return httpx.Response(self.register, json={"accessToken": "registered"})
+        return httpx.Response(self.login.pop(0), json={"accessToken": "jwt"})
+
+
+@pytest.fixture
+def auth_api(monkeypatch: pytest.MonkeyPatch) -> Callable[[FakeAuth], FakeAuth]:
+    """Route ``authenticate``'s client through a ``FakeAuth``; registration off by default."""
+    real_client = httpx.AsyncClient
+    monkeypatch.setenv("EVAL_USER_PASSWORD", "EvalRunner2026!")
+    monkeypatch.delenv("EVAL_ALLOW_REGISTER", raising=False)
+
+    def _mount(fake: FakeAuth) -> FakeAuth:
         monkeypatch.setattr(
             _eval_api.httpx,
             "AsyncClient",
-            lambda **kw: real_client(transport=httpx.MockTransport(handler), **kw),
+            lambda **kw: real_client(transport=httpx.MockTransport(fake), **kw),
         )
-        monkeypatch.setenv("EVAL_USER_PASSWORD", "EvalRunner2026!")
-        assert await _eval_api.authenticate(_API) == "jwt"
+        return fake
+
+    return _mount
+
+
+class TestAuthenticate:
+    async def test_should_log_in_without_registering_when_login_succeeds(self, auth_api) -> None:
+        fake = auth_api(FakeAuth(login=[200]))
+        token = await _eval_api.authenticate(_API)
+        assert (token, fake.paths) == ("jwt", ["/api/auth/login"])
+
+    async def test_should_not_register_when_login_fails_and_registration_is_not_allowed(
+        self, auth_api
+    ) -> None:
+        fake = auth_api(FakeAuth(login=[401]))
+        with pytest.raises(httpx.HTTPStatusError):
+            await _eval_api.authenticate(_API)
+        assert fake.paths == ["/api/auth/login"]
+
+    async def test_should_register_when_login_fails_and_registration_is_allowed(
+        self, auth_api, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("EVAL_ALLOW_REGISTER", "1")
+        auth_api(FakeAuth(login=[401], register=201))
+        assert await _eval_api.authenticate(_API) == "registered"
+
+    async def test_should_fall_through_to_login_when_register_is_rate_limited(
+        self, auth_api, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("EVAL_ALLOW_REGISTER", "true")
+        fake = auth_api(FakeAuth(login=[401, 200], register=429))
+        token = await _eval_api.authenticate(_API)
+        assert (token, fake.paths[-1]) == ("jwt", "/api/auth/login")
 
     def test_should_refuse_when_password_is_not_set(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("EVAL_USER_PASSWORD", raising=False)
@@ -129,64 +191,107 @@ class TestAuthenticate:
             _eval_api._resolve_eval_credentials()
 
 
-# ─── Langfuse ──────────────────────────────────────────────────────────
-_TRACE = {
-    "id": "tr1",
-    "scores": [{"name": "faithfulness", "value": 0.75, "timestamp": "2026-10-07T10:00:00Z"}],
-    "observations": [{"name": "classifier", "output": '{"format": "tutorial"}'}],
-}
-_TARGET = TraceTarget("vs1", datetime(2026, 10, 7, tzinfo=UTC))
+class TestSharedToken:
+    async def test_should_log_in_once_when_concurrent_runs_hit_a_401_together(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        logins: list[str] = []
+
+        async def fake_auth(api_url: str) -> str:
+            logins.append(api_url)
+            await asyncio.sleep(0)
+            return f"token-{len(logins)}"
+
+        monkeypatch.setattr(_eval_api, "authenticate", fake_auth)
+        shared = _eval_api.SharedToken(_API, "stale")
+        tokens = await asyncio.gather(*(shared.refresh("stale") for _ in range(3)))
+        assert (tokens, len(logins)) == (["token-1"] * 3, 1)
 
 
-def _langfuse(handler: Handler) -> httpx.AsyncClient:
-    return httpx.AsyncClient(base_url="http://lf.test", transport=httpx.MockTransport(handler))
+# ─── Resume (prior completed runs) ─────────────────────────────────────
+_SINCE = datetime(2026, 10, 7, 13, 30, tzinfo=UTC)
 
 
-async def _no_sleep(_: float) -> None:
-    return None
+def _row(yid: str, status: str, created: str, uv: str) -> dict[str, Any]:
+    return {
+        "id": uv,
+        "videoSummaryId": f"vs-{uv}",
+        "youtubeId": yid,
+        "status": status,
+        "createdAt": created,
+    }
 
 
-class TestLangfuse:
-    async def test_should_read_faithfulness_and_format_from_the_run_trace(self) -> None:
-        def handler(request: httpx.Request) -> httpx.Response:
-            if request.url.path == "/api/public/traces":
-                return httpx.Response(200, json={"data": [{"id": "tr1"}]})
-            return httpx.Response(200, json=_TRACE)
+class FakeLibrary:
+    """GET /api/videos (newest first) + GET /api/videos/:id; records every request."""
 
-        async with _langfuse(handler) as client:
-            signals = await collect_signals(client, {"g1": _TARGET}, sleep=_no_sleep)
-        assert (signals["g1"].faithfulness, signals["g1"].classifier_format) == (0.75, "tutorial")
+    def __init__(self, rows: list[dict[str, Any]]) -> None:
+        self.rows = rows
+        self.requests: list[tuple[str, str]] = []
 
-    async def test_should_search_traces_by_pipeline_summary_id(self) -> None:
-        names: list[str] = []
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append((request.method, request.url.path))
+        if request.url.path == "/api/videos":
+            return httpx.Response(200, json={"videos": self.rows})
+        row = next(r for r in self.rows if request.url.path.endswith(r["id"]))
+        return httpx.Response(200, json={**_DOC, "status": row["status"]})
 
-        def handler(request: httpx.Request) -> httpx.Response:
-            names.append(request.url.params["name"])
-            return httpx.Response(200, json={"data": []})
 
-        async with _langfuse(handler) as client:
-            await collect_signals(client, {"g1": _TARGET}, rounds=1, sleep=_no_sleep)
-        assert names == ["pipeline:vs1"]
+class TestResume:
+    async def _load(self, monkeypatch: pytest.MonkeyPatch, fake: FakeLibrary, ids: set[str]):
+        real_client = httpx.AsyncClient
+        monkeypatch.setattr(
+            _eval_resume.httpx,
+            "AsyncClient",
+            lambda **kw: real_client(transport=httpx.MockTransport(fake), **kw),
+        )
+        return await _eval_resume.load_reusable_runs(_API, "t", _SINCE, ids)
 
-    async def test_should_omit_video_when_no_trace_matches(self) -> None:
-        def handler(request: httpx.Request) -> httpx.Response:
-            return httpx.Response(200, json={"data": []})
+    async def test_should_reuse_only_completed_runs_created_since_the_cutoff(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        fake = FakeLibrary(
+            [
+                _row("aaaaaaaaaaa", "completed", "2026-10-07T14:00:00.000Z", "uv1"),
+                _row("bbbbbbbbbbb", "processing", "2026-10-07T13:50:00.000Z", "uv2"),
+                _row("ccccccccccc", "completed", "2026-10-07T12:00:00.000Z", "uv3"),
+            ]
+        )
+        ids = {"aaaaaaaaaaa", "bbbbbbbbbbb", "ccccccccccc"}
+        reusable = await self._load(monkeypatch, fake, ids)
+        assert sorted(reusable) == ["aaaaaaaaaaa"]
 
-        async with _langfuse(handler) as client:
-            signals = await collect_signals(client, {"g1": _TARGET}, rounds=2, sleep=_no_sleep)
-        assert signals == {}
+    async def test_should_never_post_when_loading_reusable_runs(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        fake = FakeLibrary([_row("aaaaaaaaaaa", "completed", "2026-10-07T14:00:00Z", "uv1")])
+        await self._load(monkeypatch, fake, {"aaaaaaaaaaa"})
+        assert {method for method, _ in fake.requests} == {"GET"}
 
-    async def test_should_link_only_items_that_have_a_trace(self) -> None:
-        posted: list[str] = []
+    async def test_should_stamp_the_reused_run_with_its_creation_time(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        fake = FakeLibrary([_row("aaaaaaaaaaa", "completed", "2026-10-07T14:00:00Z", "uv1")])
+        reusable = await self._load(monkeypatch, fake, {"aaaaaaaaaaa"})
+        out = reusable["aaaaaaaaaaa"]
+        assert (out["submittedAt"], out["videoSummaryId"]) == (
+            "2026-10-07T14:00:00+00:00",
+            "vs-uv1",
+        )
 
-        def handler(request: httpx.Request) -> httpx.Response:
-            posted.append(request.url.path)
-            return httpx.Response(200, json={})
+    @pytest.mark.parametrize(
+        ("url", "expected"),
+        [
+            ("https://www.youtube.com/watch?v=abcdefghijk", "abcdefghijk"),
+            ("https://youtu.be/abcdefghijk", "abcdefghijk"),
+            ("https://www.youtube.com/watch?list=x", None),
+        ],
+    )
+    def test_should_extract_the_youtube_id_when_given_a_video_url(
+        self, url: str, expected: str | None
+    ) -> None:
+        assert _eval_resume.youtube_id(url) == expected
 
-        items = [
-            RunItem("g1", "tr1", {}, {"quality": 0.9, "duplicateRate": None}),
-            RunItem("g2", None, {}),
-        ]
-        async with _langfuse(handler) as client:
-            linked = await publish_dataset_run(client, "golden-test", items)
-        assert (linked, posted) == (1, ["/api/public/scores", "/api/public/dataset-run-items"])
+    def test_should_refuse_a_cutoff_when_it_has_no_utc_offset(self) -> None:
+        with pytest.raises(ValueError, match="UTC offset"):
+            _eval_resume.parse_since("2026-10-07T16:30:00")

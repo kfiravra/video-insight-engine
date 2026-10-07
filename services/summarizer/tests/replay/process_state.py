@@ -8,7 +8,8 @@ into later tests (e.g. a test patching ``Path.read_text`` reads the cached
 real prompt instead). The pipeline's lazily-imported modules are imported
 BEFORE the snapshot so their globals are covered too; afterwards every
 rebound global is put back, globals the run added are dropped, and every
-lru cache that grew is cleared.
+lru cache that grew is cleared. ``_LAZY_PIPELINE_MODULES`` is hand-kept, so a
+run that imports a ``src`` module it does not list fails loudly, naming it.
 """
 
 from __future__ import annotations
@@ -38,11 +39,21 @@ _LAZY_PIPELINE_MODULES = (
     "src.services.pipeline.scene_frames",
     "src.services.pipeline.faithfulness",
     "src.services.media.frame_analyzer",
+    "src.services.media.frame_scorer",
+    "src.services.media.hires_prefetch",
+    "src.services.media.hires_refiner",
+    "src.services.media.local_video",
+    "src.services.media.download_utils",
+    "src.services.pipeline.assembly.moment_frame_fill",
     "src.services.video.description_analyzer",
     "src.services.video.youtube",
     "src.utils.language_utils",
     "src.routes.cached_response",
 )
+
+
+class UnsnapshottedModulesError(RuntimeError):
+    """The replay imported ``src`` modules whose state was never snapshotted."""
 
 
 @dataclass(frozen=True)
@@ -87,7 +98,8 @@ def _restore_globals(module: ModuleType, saved: dict[str, Any]) -> None:
             setattr(module, attr, value)
 
 
-def _restore(snapshot: _Snapshot) -> None:
+def _restore(snapshot: _Snapshot) -> list[str]:
+    """Put the snapshot back; returns ``src`` modules first imported during the run."""
     modules = _src_modules()
     for name, saved in snapshot.module_globals.items():
         if name in modules:
@@ -95,6 +107,7 @@ def _restore(snapshot: _Snapshot) -> None:
     for name, fn in _lru_caches(modules).items():
         if fn.cache_info().currsize != snapshot.cache_sizes.get(name, 0):
             fn.cache_clear()
+    return sorted(set(modules) - set(snapshot.module_globals))
 
 
 @contextmanager
@@ -106,4 +119,9 @@ def preserved_process_state() -> Iterator[None]:
     try:
         yield
     finally:
-        _restore(snapshot)
+        new_modules = _restore(snapshot)
+        if new_modules:
+            raise UnsnapshottedModulesError(
+                "replay imported src modules missing from _LAZY_PIPELINE_MODULES "
+                f"(their globals/caches are not restored): {', '.join(new_modules)}"
+            )

@@ -27,6 +27,7 @@ from src.models.schemas import (
     NormalizedTranscript,
     TranscriptSegment,
 )
+from src.services.llm_telemetry import stopwatch_ms_since
 from src.services.media.download_utils import download_youtube_audio
 from src.services.pipeline.pipeline_timing import record_download
 from src.services.transcription.usage import emit_transcription_usage
@@ -159,7 +160,13 @@ def _download_audio_raw_sync(video_id: str) -> Path:
     }
 
     started = time.monotonic()
-    download_youtube_audio(video_id, ydl_opts, TEMP_DIR, file_stem)
+    try:
+        download_youtube_audio(video_id, ydl_opts, TEMP_DIR, file_stem)
+    except Exception:
+        record_download(
+            kind="audio", purpose="gemini", start_monotonic=started, path=None, ok=False
+        )
+        raise
 
     # Find the downloaded file (extension varies by source format)
     downloaded = [p for p in TEMP_DIR.glob(f"{file_stem}.*") if not p.suffix.endswith(".part")]
@@ -418,6 +425,7 @@ async def transcribe_with_gemini(
 
         # Upload file to Gemini File API
         logger.info("Uploading audio to Gemini File API")
+        call_started = time.monotonic()
         upload_result = await asyncio.wait_for(
             client.aio.files.upload(
                 file=audio_path,
@@ -561,6 +569,7 @@ async def transcribe_with_gemini(
             feature="summarize:transcript:gemini",
             tokens_in=tokens_in,
             tokens_out=tokens_out,
+            duration_ms=stopwatch_ms_since(call_started),
             success=True,
         )
 
@@ -571,12 +580,13 @@ async def transcribe_with_gemini(
             language=detected_language,
         )
 
-    except Exception:
+    except Exception as exc:
         emit_transcription_usage(
             provider="google",
             model=_get_gemini_model(),
             feature="summarize:transcript:gemini",
             success=False,
+            error=exc,
         )
         raise
     finally:

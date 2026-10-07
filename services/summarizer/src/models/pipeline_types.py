@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
@@ -292,6 +293,9 @@ class PlanResult(BaseModel):
     # Tabs the plan stage removed (unregistered dataSource, no sibling) — the
     # assembly phase prepends them to the persisted ``droppedTabs``.
     dropped_tabs: list[dict] = Field(default_factory=list, alias="droppedTabs")
+    # Plan-time validation left no tab, so ``tabs`` are the domain defaults —
+    # assembly then counts only the drops as designed, not drops + defaults.
+    plan_fallback: bool = Field(False, alias="planFallback")
     confidence: float = 0.0
 
     @field_validator("content_tags", mode="before")

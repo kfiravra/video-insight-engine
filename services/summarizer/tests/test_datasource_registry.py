@@ -22,9 +22,11 @@ from pydantic import BaseModel
 
 from src.models.domain_types import DOMAIN_MODELS, MODIFIER_MODELS
 from src.models.pipeline_types import EnrichmentData
+from src.services.pipeline.assembly.core import _MOMENT_CAP_MAX
 from src.shared_config.domain_config import (
     EVIDENCE_KEYS,
     NON_EXTRACTION_DATASOURCES,
+    assembler_item_caps,
     data_source,
     data_sources,
     demote_to,
@@ -35,6 +37,7 @@ from src.shared_config.domain_config import (
     quiz_policy,
     render_valid_datasources,
     requirement_evidence,
+    sibling_datasources,
     valid_components,
 )
 
@@ -160,6 +163,64 @@ class TestDataSourceEntries:
 
     def test_should_return_none_when_path_is_unregistered(self):
         assert data_source("tech.setup") is None
+
+    @pytest.mark.parametrize("path", _ALL_PATHS)
+    def test_should_not_ask_for_more_items_than_the_primary_renderer_keeps(self, path):
+        spec = data_sources()[path]
+        # moment_track's hard cap scales with duration up to _MOMENT_CAP_MAX.
+        limits = {**assembler_item_caps(), "moment_track": _MOMENT_CAP_MAX}
+        limit = limits.get(spec["components"][0])
+
+        assert limit is None or spec["cap"] <= limit
+
+    def test_should_wait_for_visual_only_on_screen_read_paths(self):
+        visual = {p for p, spec in data_sources().items() if spec["waitsForVisual"]}
+
+        assert visual == {
+            "tech.snippets",
+            "tech.patterns",
+            "tech.cheatSheet",
+            "tech.setup.commands",
+            "gaming.highlights",
+        }
+
+    def test_should_not_wait_for_visual_when_moments_are_transcript_driven(self):
+        assert data_source("narrative.keyMoments")["waitsForVisual"] is False
+
+    @pytest.mark.parametrize("tab", _all_default_tabs(), ids=lambda t: t["dataSource"])
+    def test_should_list_every_default_tab_sibling_in_the_registry(self, tab):
+        tag = next(d for d, cfg in get_config()["domains"].items() if tab in cfg["defaultTabs"])
+        spec = data_source(tab["dataSource"])
+        registered = set(spec["siblings"]) if spec else set()
+
+        assert set(sibling_datasources(tag, tab["dataSource"])) <= registered
+
+
+class TestAccessorsReturnCopies:
+    def test_should_not_leak_mutation_when_a_registry_entry_is_edited(self):
+        data_sources()["food.steps"]["components"].append("mutated")
+
+        assert "mutated" not in data_sources()["food.steps"]["components"]
+
+    def test_should_not_leak_mutation_when_a_single_entry_is_edited(self):
+        data_source("food.steps")["siblings"].append("mutated")
+
+        assert "mutated" not in data_source("food.steps")["siblings"]
+
+    def test_should_not_leak_mutation_when_quiz_policy_is_edited(self):
+        quiz_policy()["attachmentHostsExclude"].append("mutated")
+
+        assert "mutated" not in quiz_policy()["attachmentHostsExclude"]
+
+    def test_should_not_leak_mutation_when_quiz_enrichment_is_edited(self):
+        quiz_enrichment()["quizDomains"].append("mutated")
+
+        assert "mutated" not in quiz_enrichment()["quizDomains"]
+
+    def test_should_not_leak_mutation_when_grouping_is_edited(self):
+        grouping_config()["maxTextGroups"] = -1
+
+        assert grouping_config()["maxTextGroups"] != -1
 
 
 # ─── dataSources: schema resolution ─────────────────────────────────────
@@ -335,7 +396,28 @@ class TestValidDatasourcesRender:
             for d, ln in zip(domains, lines, strict=True)
         )
 
-    def test_should_leave_a_toolkit_without_the_placeholder_unchanged(self):
-        legacy = "<valid_datasources>\ntech: tech.snippets\n</valid_datasources>"
+    def test_should_render_the_pre_registry_list_plus_fitness_tips(self):
+        # The hardcoded toolkit block this placeholder replaced (8d52e23^),
+        # with fitness.tips — the one path the registry added — appended.
+        expected = "\n".join(
+            [
+                "tech: tech.snippets, tech.patterns, tech.cheatSheet, tech.setup.commands, tech.topics",
+                "learning: learning.keyPoints, learning.concepts, learning.takeaways, learning.timestamps",
+                "project: project.steps, project.materials, project.tools, project.safetyWarnings",
+                "food: food.ingredients, food.steps, food.tips, food.equipment, food.substitutions",
+                "travel: travel.itinerary, travel.budget, travel.packingList",
+                "review: review.pros, review.cons, review.specs, review.comparisons, review.verdict",
+                "fitness: fitness.exercises, fitness.warmup, fitness.cooldown, fitness.timer, fitness.tips",
+                "music: music.analysis, music.structure, music.lyrics, music.credits",
+                "language: language.phrases, language.rules, language.drills, language.vocabulary",
+                "science: science.concepts, science.keyFacts, science.experiments",
+                "podcast: podcast.segments, podcast.guests, podcast.quotes, podcast.topics",
+                "news: news.storyTimeline, news.entities, news.claims, news.context",
+                "gaming: gaming.highlights, gaming.loadout, gaming.walkthrough, gaming.rankings",
+                "sport: sport.matchEvents, sport.formation, sport.statComparison",
+                "narrative: narrative.keyMoments, narrative.quotes, narrative.takeaways",
+                "enrichment: enrichment.quiz, enrichment.flashcards, enrichment.scenarios",
+            ]
+        )
 
-        assert legacy.replace("{valid_datasources}", render_valid_datasources()) == legacy
+        assert render_valid_datasources() == expected

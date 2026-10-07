@@ -320,7 +320,7 @@ New/changed vars introduced by the yt-dlp-403 fix and the two-pass frame pipelin
 | `YOUTUBE_PROXY_URL` | — | Proxy for every YouTube request (`http://user:pass@host:port`). When set, the frame pipeline never seeks stream URLs; hi-res frames and moment fills come from a proxied local 720p download |
 | `YOUTUBE_PROXY_EXIT_COUNT` | `1` | Sticky exits behind the proxy gateway (Webshare `USERNAME-1…N`). >1 lets a caption or timedtext 429 retry on the next exit before the 15-min caption marker is written |
 | `FRAME_TIER_ENABLED` | `true` | Adaptive visual tiers (high/standard/low from `domains.json` `visualCriticality`) |
-| `PROMPT_SOURCE` | `registry` | Where prompt templates load from: `registry` (the Langfuse `production` label wins over the local `.txt` whenever keys are set) or `disk` (always the local `.txt` — dev-only, for prompt edits without re-registering; ignored when `ENVIRONMENT` is production/staging) |
+| `PROMPT_SOURCE` | `registry` | Where prompt templates load from: `registry` (the Langfuse `production` label wins over the local `.txt` whenever keys are set) or `disk` (always the local `.txt`, re-read on every call — dev-only, for prompt edits without re-registering or restarting; honoured only when `ENVIRONMENT` is `""`/`development`/`dev`/`test`/`local`, ignored otherwise; traces carry no `promptVersions`) |
 | `TRANSCRIPT_CLEANING_TIMEOUT` | `30` | Transcript-cleaning LLM call timeout (was hardcoded) |
 | `HF_TOKEN` | empty | Optional Hugging Face Hub token for SentenceTransformer pulls |
 | `S3_PRESIGNED_URL_EXPIRY` | `21600` (was 3600) | Must stay ≥ api `FRAME_URL_TTL_SECONDS` |

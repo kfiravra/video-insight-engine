@@ -105,6 +105,13 @@ class TestCommittedDataset:
         anchors = ("v8KaQr0MhjE", "wCkLNqy5OHE", "uC45_4nnEAI", "Jru5B044HOs")
         assert all(by_url[yid].assertions and not by_url[yid].disabled for yid in anchors)
 
+    def test_should_flag_exactly_one_quick_entry_per_live_domain(
+        self, dataset: GoldenDataset
+    ) -> None:
+        live_domains = sorted({v.domain for v in dataset.videos if not v.disabled})
+        quick_domains = sorted(v.domain for v in dataset.videos if v.quick)
+        assert quick_domains == live_domains
+
 
 # ─── Schema rules ──────────────────────────────────────────────────────
 class TestSchema:
@@ -124,6 +131,20 @@ class TestSchema:
     def test_should_reject_a_live_entry_with_a_todo(self) -> None:
         with pytest.raises(ValidationError, match="must be disabled"):
             parse_assertions(_record([], todo="pick an id"))
+
+    def test_should_reject_a_quick_entry_when_it_is_disabled(self) -> None:
+        with pytest.raises(ValidationError, match="must be live"):
+            parse_assertions(_record([], quick=True, disabled=True))
+
+    def test_should_reject_two_quick_entries_when_they_share_a_domain(self) -> None:
+        videos = [_record([], id="a", quick=True), _record([], id="b", quick=True)]
+        with pytest.raises(ValidationError, match="exactly one quick"):
+            GoldenDataset.model_validate({"videos": videos})
+
+    def test_should_reject_quick_flags_when_a_live_domain_has_none(self) -> None:
+        videos = [_record([], id="a", quick=True), _record([], id="b", domain="tech")]
+        with pytest.raises(ValidationError, match="'tech' needs exactly one quick"):
+            GoldenDataset.model_validate({"videos": videos})
 
     def test_should_reject_duplicate_ids(self) -> None:
         with pytest.raises(ValidationError, match="duplicate golden id"):

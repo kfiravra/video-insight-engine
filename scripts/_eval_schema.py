@@ -139,6 +139,8 @@ class GoldenVideo(BaseModel):
     forbidden_components: list[str] = Field(default_factory=list, alias="forbiddenComponents")
     key_content: list[str] = Field(alias="keyContent")
     disabled: bool = False
+    # Member of ``run_eval.py --subset quick``: one live video per domain.
+    quick: bool = False
     # A placeholder entry (id still to be picked) carries the reason here and
     # must stay disabled so it can never be POSTed.
     todo: str | None = None
@@ -148,6 +150,8 @@ class GoldenVideo(BaseModel):
     def _check_runnable(self) -> GoldenVideo:
         if self.todo and not self.disabled:
             raise ValueError(f"{self.id}: an entry with 'todo' must be disabled")
+        if self.quick and self.disabled:
+            raise ValueError(f"{self.id}: a 'quick' entry must be live")
         if not self.disabled and not is_allowed_video_url(self.url):
             raise ValueError(f"{self.id}: live entry url {self.url!r} is not a YouTube URL")
         return self
@@ -165,6 +169,18 @@ class GoldenDataset(BaseModel):
             if video.id in seen:
                 raise ValueError(f"duplicate golden id: {video.id}")
             seen.add(video.id)
+        return self
+
+    @model_validator(mode="after")
+    def _one_quick_per_domain(self) -> GoldenDataset:
+        """Once any entry is ``quick``, every live domain needs exactly one."""
+        if not any(v.quick for v in self.videos):
+            return self
+        live_domains = {v.domain for v in self.videos if not v.disabled}
+        for domain in sorted(live_domains):
+            picks = [v.id for v in self.videos if v.quick and v.domain == domain]
+            if len(picks) != 1:
+                raise ValueError(f"domain {domain!r} needs exactly one quick entry, has {picks}")
         return self
 
 

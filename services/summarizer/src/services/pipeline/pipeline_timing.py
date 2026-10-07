@@ -256,6 +256,55 @@ def record_llm_failure(
     )
 
 
+def record_transcription_call(
+    *,
+    feature: str,
+    provider: str,
+    model: str,
+    wall_ms: int,
+    input_tokens: int,
+    output_tokens: int,
+    cost_usd: float,
+    error: str | None = None,
+) -> None:
+    """Record one Whisper/Gemini transcription call. Never raises.
+
+    Those SDKs bypass LiteLLM (and so :func:`record_llm_call`); without this
+    hook ``llmCalls``/``costUsd`` silently excluded transcription spend. A
+    success lands in ``llmCalls`` with the same keys as a LiteLLM call; a
+    failure (``error`` = exception class name; any step of the transcription,
+    download included) in ``llmFailures``.
+    """
+    recorder = _recorder_var.get()
+    if recorder is None:
+        return
+    end_ms = recorder.offset_ms()
+    entry: dict[str, Any] = {
+        "feature": feature,
+        "span": f"transcription:{provider}",
+        "model": model,
+        "startMs": max(0, end_ms - wall_ms),
+        "wallMs": wall_ms,
+        "attempt": 1,
+    }
+    if error is not None:
+        recorder.llm_failures.append({**entry, "error": error, "rateLimited": False})
+        return
+    recorder.llm_calls.append(
+        {
+            **entry,
+            "responseModel": None,
+            "inputTokens": input_tokens,
+            "outputTokens": output_tokens,
+            "cacheReadTokens": 0,
+            "cacheWriteTokens": 0,
+            "costUsd": cost_usd,
+            "fallbackUsed": False,
+            "finishReason": None,
+        }
+    )
+
+
 def record_download(
     *,
     kind: str,

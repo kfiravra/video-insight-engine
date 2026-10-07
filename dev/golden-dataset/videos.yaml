@@ -33,6 +33,8 @@
 #                        Every live run also asserts it completed. `xfail:
 #                        <reason>` keeps a known, tracked failure from failing
 #                        the gate (it is still reported; XPASS = drop the marker).
+#   quick              — member of `run_eval.py --subset quick`: exactly one
+#                        live entry per domain (the cheap post-change check).
 #
 # Curation rules:
 #   - All videos are <35 minutes (so eval runs in ~2 hours, not days).
@@ -91,6 +93,7 @@ videos:
 
   - id: tech-react-hooks
     url: https://www.youtube.com/watch?v=TNhaISOUy6Q
+    quick: true
     domain: tech
     format: tutorial
     language: en
@@ -143,6 +146,7 @@ videos:
   # ─── Learning (2) — quiz allowed here ─────────────────────────────
   - id: learning-photosynthesis
     url: https://www.youtube.com/watch?v=eo5XndJaz-Y
+    quick: true
     domain: learning
     format: lecture
     language: en
@@ -183,6 +187,7 @@ videos:
   # ─── Science (2) — quiz allowed here ──────────────────────────────
   - id: science-crispr-intro
     url: https://www.youtube.com/watch?v=2pp17E4E-O8
+    quick: true
     domain: science
     format: lecture
     language: en
@@ -257,6 +262,7 @@ videos:
   # ─── Review (2) ───────────────────────────────────────────────────
   - id: review-airpods-pro
     url: https://www.youtube.com/watch?v=nMfPqeZjc2c
+    quick: true
     domain: review
     format: commentary
     language: en
@@ -310,6 +316,7 @@ videos:
     # case where recipe components (step_player / checklist ingredients) are
     # backfilled without evidence (C19).
     url: https://www.youtube.com/watch?v=v8KaQr0MhjE
+    quick: true
     domain: travel
     format: vlog
     language: en
@@ -339,6 +346,7 @@ videos:
     # the cook's 55-year story before the recipe starts — recipe components
     # must still appear.
     url: https://www.youtube.com/watch?v=wCkLNqy5OHE
+    quick: true
     domain: food
     format: tutorial
     language: en
@@ -373,6 +381,7 @@ videos:
     # must not fail on 0 candidates (C21 / D17; the implicit `completed`
     # assertion covers the second half).
     url: https://www.youtube.com/watch?v=uC45_4nnEAI
+    quick: true
     domain: gaming
     format: unboxing
     language: en
@@ -396,6 +405,7 @@ videos:
     # FitnessBlender "The Scientific 7 Minute Workout", 570 s, do-along
     # bodyweight workout (0 scene frames locally). A do-along gets no quiz.
     url: https://www.youtube.com/watch?v=Jru5B044HOs
+    quick: true
     domain: fitness
     format: tutorial
     language: en

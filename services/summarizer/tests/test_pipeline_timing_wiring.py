@@ -12,6 +12,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from bson import ObjectId
+from litellm.exceptions import (
+    APIConnectionError,
+    BadRequestError,
+    InternalServerError,
+    NotFoundError,
+)
 
 from src.repositories.mongodb_repository import MongoDBVideoRepository
 from src.routes import pipeline_runner
@@ -73,6 +79,28 @@ class TestProviderSeam:
             await provider.complete_fast("hi", span_name="faithfulness")
 
         assert recorder.llm_calls[0]["model"] == "anthropic/fast"
+
+    @pytest.mark.parametrize(
+        "exc_type", [InternalServerError, APIConnectionError, BadRequestError, NotFoundError]
+    )
+    async def test_should_record_failure_when_provider_raises_unclassified_litellm_error(
+        self, recorder: PipelineTimingRecorder, exc_type: type[Exception]
+    ) -> None:
+        # Regression (G0 p0.1 #1): Anthropic 500/529 and friends are not
+        # litellm.APIError subclasses and used to bypass llmFailures.
+        provider = LLMProvider(model="anthropic/claude-sonnet-4-6", fallback_models=[])
+        error = exc_type(message="boom", llm_provider="anthropic", model="claude-sonnet-4-6")
+        with (
+            patch("src.services.llm_provider.acompletion", AsyncMock(side_effect=error)),
+            pytest.raises(exc_type),
+        ):
+            await provider.complete_with_messages(
+                [{"role": "user", "content": "hi"}], span_name="plan"
+            )
+
+        assert [(f["span"], f["error"]) for f in recorder.llm_failures] == [
+            ("plan", exc_type.__name__)
+        ]
 
 
 class TestRetrySeam:

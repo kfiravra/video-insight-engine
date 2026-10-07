@@ -40,6 +40,8 @@ _SSE_PREFIX = "data: "
 # Applied on top of the cassette's settings: no external services, no
 # observability exports, no audio fallbacks, no faithfulness judge (it is off
 # the critical path and its sampled calls are not part of the cassette).
+# ``YOUTUBE_PROXY_URL`` comes from the cassette (the recorded runs were
+# proxied, which decides the 720p prefetch / moment-fill download paths).
 _HARNESS_SETTINGS: dict[str, Any] = {
     "REDIS_ENABLED": False,
     "QDRANT_ENABLED": True,
@@ -48,7 +50,6 @@ _HARNESS_SETTINGS: dict[str, Any] = {
     "LANGFUSE_FAITHFULNESS_SAMPLE_RATE": 0.0,
     "WHISPER_ENABLED": False,
     "GEMINI_API_KEY": None,
-    "YOUTUBE_PROXY_URL": None,
     "SCENE_EXTRACTION_ENABLED": True,
 }
 
@@ -77,9 +78,16 @@ class ReplayResult:
     llm_model_mismatches: list[str]
     network_attempts: list[str]
     qdrant_stores: list[str] = field(default_factory=list)
+    unexpected_commands: list[str] = field(default_factory=list)
+    frame_manifest: dict[str, Any] | None = None
 
     def event_names(self) -> list[str]:
         return [record.event for record in self.events]
+
+    def downloads(self) -> list[tuple[str, str]]:
+        """(kind, purpose) of every download ``pipeline.timing`` recorded."""
+        rows = (self.timing or {}).get("downloads", [])
+        return [(d["kind"], d["purpose"]) for d in rows]
 
     def phase_walls(self) -> dict[str, int]:
         """Top-level ``pipeline.timing`` phases (last write wins per name)."""
@@ -199,4 +207,6 @@ async def run_replay(cassette: Cassette, *, speed: float = 1.0) -> ReplayResult:
         llm_model_mismatches=list(fake.model_mismatches),
         network_attempts=list(attempts),
         qdrant_stores=list(stubs.qdrant_stores),
+        unexpected_commands=list(stubs.media.unexpected_commands),
+        frame_manifest=stubs.media.scene_manifest(),
     )

@@ -8,8 +8,10 @@ is the only external dependency; it is replaced by a fake
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +22,9 @@ sys.path.insert(0, str(_SCRIPTS_DIR))
 
 import run_eval  # noqa: E402
 from _eval_scoring import score_entry, stub_actual  # noqa: E402
+
+# Captured before ``fake_api`` stubs ``asyncio.sleep``: fakes that must yield use it.
+_real_sleep = asyncio.sleep
 
 
 def _expected(**overrides: Any) -> dict[str, Any]:
@@ -163,7 +168,7 @@ def fake_api(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, bool]]:
     calls: list[tuple[str, bool]] = []
 
     async def fake_run(
-        api_url: str, url: str, token: str, bypass_cache: bool
+        api_url: str, url: str, token: str, bypass_cache: bool, **_: Any
     ) -> tuple[dict[str, Any], str]:
         calls.append((url, bypass_cache))
         return _fake_doc(_record()), token
@@ -219,6 +224,57 @@ class TestRunner:
         outcome = run_eval.to_outcome(run, None, dry_run=False)
         assert [(a.type, a.passed) for a in outcome.assertions] == [("completed", False)]
 
+    def test_should_report_quality_as_none_when_pipeline_run_errors(self) -> None:
+        run = run_eval.EntryRun(record=_record(), actual=None, error="pipeline failed: boom")
+        outcome = run_eval.to_outcome(run, None, dry_run=False)
+        assert outcome.metrics()["quality"] is None
+
+    def test_should_label_the_api_without_its_url_when_writing_the_summary(
+        self, tmp_path: Path, fake_api: list[tuple[str, bool]]
+    ) -> None:
+        dataset = _write_dataset(tmp_path, [_record()])
+        out = tmp_path / "out"
+        secret = "https://eval:pw@secret-host.example/api"
+        run_eval.main(["--dataset", str(dataset), "--output", str(out), "--api-url", secret])
+        text = next(out.glob("eval-*.json")).read_text()
+        assert "secret-host" not in text and '"apiLabel": "remote:' in text
+
+    async def test_should_scrub_the_api_url_when_an_error_quotes_it(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        secret = "https://secret-host.example"
+
+        async def failing_run(*_: Any) -> tuple[dict[str, Any], str]:
+            raise RuntimeError(f"Client error '500' for url '{secret}/api/videos'")
+
+        monkeypatch.setattr(run_eval, "run_with_reauth", failing_run)
+        session = run_eval.Session(api_url=secret, bypass_cache=True, dry_run=False, langfuse=None)
+        run = await run_eval.run_entry(_record(), session)
+        assert run.error is not None and "secret-host" not in run.error
+
+    def test_should_rebuild_noise_from_existing_reports_when_noise_from_is_given(
+        self, tmp_path: Path, fake_api: list[tuple[str, bool]]
+    ) -> None:
+        dataset = _write_dataset(tmp_path, [_record(id="a")])
+        out = tmp_path / "out"
+        argv = ["--dataset", str(dataset), "--output", str(out), "--noise-runs", "2"]
+        run_eval.main([*argv, "--noise-out", str(tmp_path / "first.json")])
+        reports = sorted(str(p) for p in out.glob("eval-*.json"))
+        rebuilt = tmp_path / "rebuilt.json"
+        run_eval.main(["--noise-from", *reports, "--noise-out", str(rebuilt)])
+        noise = json.loads(rebuilt.read_text())
+        assert (noise["reports"], noise["excludedVideos"], len(fake_api)) == (reports, [], 2)
+
+    def test_should_select_only_quick_entries_when_subset_is_quick(self) -> None:
+        records = [_record(id="a", quick=True), _record(id="b"), _record(id="c", quick=True)]
+        selected = run_eval.select_records(records, subset="quick")
+        assert [r["id"] for r in selected] == ["a", "c"]
+
+    def test_should_select_one_entry_per_live_domain_when_subset_is_quick(self) -> None:
+        records = run_eval.select_records(run_eval.load_dataset(), subset="quick")
+        domains = [r["domain"] for r in records]
+        assert sorted(domains) == sorted(set(domains)) and len(domains) >= 8
+
     def test_should_report_duplicate_rate_when_tabs_repeat_an_item(self) -> None:
         item = {"text": "whisk the eggs with the sugar until pale"}
         doc = {
@@ -241,3 +297,90 @@ class TestRunner:
     def test_should_refuse_a_single_noise_pass(self) -> None:
         with pytest.raises(SystemExit):
             run_eval.main(["--noise-runs", "1"])
+
+
+# ─── Concurrency ───────────────────────────────────────────────────────
+def _yt(i: int) -> str:
+    return f"https://www.youtube.com/watch?v=vid{i:08d}"
+
+
+class TestConcurrency:
+    def test_should_keep_at_most_n_runs_in_flight_when_concurrency_is_n(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_api: list[tuple[str, bool]]
+    ) -> None:
+        in_flight, peak = 0, 0
+
+        async def slow_run(*_: Any, **__: Any) -> tuple[dict[str, Any], str]:
+            nonlocal in_flight, peak
+            in_flight += 1
+            peak = max(peak, in_flight)
+            await _real_sleep(0.01)
+            in_flight -= 1
+            return _fake_doc(_record()), "token"
+
+        monkeypatch.setattr(run_eval, "run_with_reauth", slow_run)
+        dataset = _write_dataset(tmp_path, [_record(id=f"v{i}", url=_yt(i)) for i in range(7)])
+        argv = ["--dataset", str(dataset), "--output", str(tmp_path / "out")]
+        run_eval.main([*argv, "--concurrency", "3"])
+        assert peak == 3
+
+    def test_should_order_report_rows_by_golden_id_when_runs_finish_out_of_order(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_api: list[tuple[str, bool]]
+    ) -> None:
+        delays = {_yt(0): 0.03, _yt(1): 0.0, _yt(2): 0.015}
+
+        async def uneven_run(_api: str, url: str, *_: Any, **__: Any) -> tuple[dict[str, Any], str]:
+            await _real_sleep(delays[url])
+            return _fake_doc(_record()), "token"
+
+        monkeypatch.setattr(run_eval, "run_with_reauth", uneven_run)
+        records = [_record(id=vid, url=_yt(i)) for i, vid in enumerate(("c", "a", "b"))]
+        out = tmp_path / "out"
+        dataset = _write_dataset(tmp_path, records)
+        run_eval.main(["--dataset", str(dataset), "--output", str(out), "--concurrency", "3"])
+        summary = json.loads(next(out.glob("eval-*.json")).read_text())
+        assert [v["id"] for v in summary["videos"]] == ["a", "b", "c"]
+
+    def test_should_refuse_a_concurrency_below_one(self) -> None:
+        with pytest.raises(SystemExit):
+            run_eval.main(["--concurrency", "0"])
+
+
+# ─── Resume (--resume-since) ───────────────────────────────────────────
+class TestResume:
+    async def test_should_not_post_a_video_when_a_completed_run_is_reused(
+        self, fake_api: list[tuple[str, bool]]
+    ) -> None:
+        session = run_eval.Session(
+            api_url="http://api", bypass_cache=True, dry_run=False, langfuse=None
+        )
+        reuse = {"vid00000000": _fake_doc(_record())}
+        run = await run_eval.run_entry(_record(url=_yt(0)), session, reuse)
+        assert (run.actual is not None, fake_api) == (True, [])
+
+    def test_should_reuse_only_in_the_first_noise_pass_when_resuming(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_api: list[tuple[str, bool]]
+    ) -> None:
+        async def reusable(*_: Any) -> dict[str, dict[str, Any]]:
+            return {"vid00000000": _fake_doc(_record())}
+
+        monkeypatch.setattr(run_eval, "load_reusable_runs", reusable)
+        dataset = _write_dataset(
+            tmp_path, [_record(id="a", url=_yt(0)), _record(id="b", url=_yt(1))]
+        )
+        noise_path = tmp_path / "noise.json"
+        argv = ["--dataset", str(dataset), "--output", str(tmp_path / "out"), "--noise-runs", "2"]
+        run_eval.main(
+            [*argv, "--noise-out", str(noise_path), "--resume-since", "2026-10-07T16:30:00+03:00"]
+        )
+        noise = json.loads(noise_path.read_text())
+        posted = Counter(url for url, _ in fake_api)
+        assert (posted, noise["schemaVersion"], sorted(noise["videos"])) == (
+            Counter({_yt(0): 1, _yt(1): 2}),
+            2,
+            ["a", "b"],
+        )
+
+    def test_should_refuse_resume_when_since_has_no_utc_offset(self) -> None:
+        with pytest.raises(SystemExit):
+            run_eval.main(["--resume-since", "2026-10-07T16:30:00"])

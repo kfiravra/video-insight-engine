@@ -1,57 +1,48 @@
 """Tests for domain_types Pydantic models."""
 
-import pytest
-from pydantic import ValidationError
+import logging
 
 from src.models.domain_types import (
-    TravelData,
-    TravelDay,
-    TravelBudget,
-    TravelSpot,
-    TravelPackingItem,
-    FoodData,
-    FoodMeta,
-    FoodIngredient,
-    FoodStep,
-    FoodTip,
-    LearningData,
-    LearningKeyPoint,
-    LearningConcept,
-    LearningTimestamp,
-    ConceptConnection,
-    ScienceData,
-    ScienceConcept,
-    ReviewData,
-    ReviewRating,
-    ReviewVerdict,
-    ReviewComparison,
-    TechData,
-    TechSetup,
-    TechSnippet,
-    TechPattern,
-    FitnessData,
-    FitnessMeta,
-    FitnessExercise,
-    FitnessTimer,
-    MusicData,
-    MusicCredit,
-    MusicSection,
-    ProjectData,
-    ProjectStep,
-    ProjectMaterial,
-    NarrativeData,
-    NarrativeKeyMoment,
-    NarrativeQuote,
-    FinanceData,
-    FinanceCost,
-    TabDefinition,
-    SectionDefinition,
-    VIEResponseMeta,
-    VIEResponse,
     DOMAIN_MODELS,
     MODIFIER_MODELS,
     VALID_CONTENT_TAGS,
     VALID_MODIFIERS,
+    ConceptConnection,
+    FinanceCost,
+    FinanceData,
+    FitnessData,
+    FitnessExercise,
+    FitnessMeta,
+    FitnessTimer,
+    FoodData,
+    FoodIngredient,
+    FoodMeta,
+    FoodStep,
+    FoodTip,
+    LearningConcept,
+    LearningData,
+    LearningTimestamp,
+    MusicCredit,
+    MusicData,
+    MusicSection,
+    NarrativeData,
+    ProjectData,
+    ReviewComparison,
+    ReviewData,
+    ReviewRating,
+    ReviewVerdict,
+    ScienceConcept,
+    SectionDefinition,
+    TabDefinition,
+    TechData,
+    TechPattern,
+    TravelBudget,
+    TravelData,
+    TravelDay,
+    TravelPackingItem,
+    TravelSpot,
+    VIEResponse,
+    VIEResponseMeta,
     validate_domain_output,
 )
 
@@ -765,6 +756,107 @@ class TestSingleTagWrappedOutput:
         )
         # Should still return data (passed through despite validation issues)
         assert "food" in result
+
+
+class TestMultiTagFlatFallbackFailure:
+    """Regression (p0.6 review #1): a missing tag whose flat validation fails
+    used to receive the WHOLE raw response (tech got ``foodData``)."""
+
+    _DATA = {"foodData": {"steps": []}, "topics": 5}
+
+    def test_should_skip_tag_when_its_flat_validation_fails(self):
+        result = validate_domain_output(["tech", "food"], [], self._DATA)
+
+        assert "tech" not in result
+
+    def test_should_keep_wrapped_tag_when_other_tags_flat_validation_fails(self):
+        result = validate_domain_output(["tech", "food"], [], self._DATA)
+
+        assert result["food"]["steps"] == []
+
+
+class TestMixedWrappedAndFlatShape:
+    """Regression (p0.6 review #2): a tag with BOTH a wrapped block and flat
+    top-level fields (chunked merge of a wrapped batch with a flat one) used
+    to drop one half silently."""
+
+    def test_should_concatenate_lists_when_single_tag_is_both_wrapped_and_flat(self):
+        data = {"tech": {"topics": ["Wrapped"]}, "topics": ["Flat"]}
+
+        result = validate_domain_output(["tech"], [], data)
+
+        assert result["tech"]["topics"] == ["Wrapped", "Flat"]
+
+    def test_should_keep_wrapper_only_fields_when_single_tag_is_also_flat(self):
+        data = {"techData": {"languages": ["Ruby"]}, "topics": ["Flat"]}
+
+        result = validate_domain_output(["tech"], [], data)
+
+        assert result["tech"]["languages"] == ["Ruby"]
+
+    def test_should_not_duplicate_list_items_present_in_both_shapes(self):
+        data = {"tech": {"topics": ["Same"]}, "topics": ["Same", "New"]}
+
+        result = validate_domain_output(["tech"], [], data)
+
+        assert result["tech"]["topics"] == ["Same", "New"]
+
+    def test_should_merge_flat_fields_into_wrapped_block_when_multi_tag(self):
+        data = {
+            "techData": {"topics": ["Wrapped"]},
+            "frameworks": ["Rails"],
+            "learningData": {"takeaways": ["T1"]},
+        }
+
+        result = validate_domain_output(["tech", "learning"], [], data)
+
+        assert result["tech"]["frameworks"] == ["Rails"]
+
+    def test_should_keep_wrapper_value_when_scalar_fields_conflict(self):
+        data = {
+            "scienceData": {"field": "Physics"},
+            "field": "Chemistry",
+            "learningData": {"takeaways": ["T1"]},
+        }
+
+        result = validate_domain_output(["science", "learning"], [], data)
+
+        assert result["science"]["field"] == "Physics"
+
+    def test_should_take_flat_value_when_wrapper_value_is_empty(self):
+        data = {"scienceData": {"field": ""}, "field": "Chemistry", "learningData": {"x": 1}}
+
+        result = validate_domain_output(["science", "learning"], [], data)
+
+        assert result["science"]["field"] == "Chemistry"
+
+    def test_should_not_merge_flat_key_shared_with_another_content_tag(self):
+        concept = {"name": "Entropy", "emoji": "🔥", "definition": "d"}
+        data = {
+            "scienceData": {"field": "Physics"},
+            "learningData": {"takeaways": ["T1"]},
+            "concepts": [concept],
+        }
+
+        result = validate_domain_output(["science", "learning"], [], data)
+
+        assert result["science"]["concepts"] == []
+
+    def test_should_warn_when_wrapped_and_flat_shapes_are_merged(self, caplog):
+        data = {"tech": {"topics": ["Wrapped"]}, "topics": ["Flat"]}
+
+        with caplog.at_level(logging.WARNING, logger="src.models.domain_types"):
+            validate_domain_output(["tech"], [], data)
+
+        assert any("wrapped block AND flat fields" in r.message for r in caplog.records)
+
+    def test_should_not_warn_when_multi_tag_response_is_fully_wrapped(self, caplog):
+        data = {"techData": {"topics": ["A"]}, "learningData": {"takeaways": ["T1"]}}
+
+        with caplog.at_level(logging.WARNING, logger="src.models.domain_types"):
+            validate_domain_output(["tech", "learning"], [], data)
+
+        assert not any("flat fields" in r.message for r in caplog.records)
 
 
 class TestModelRegistries:

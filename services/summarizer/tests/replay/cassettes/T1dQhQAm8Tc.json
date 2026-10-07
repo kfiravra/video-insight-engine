@@ -1,5 +1,5 @@
 {
- "schema": 1,
+ "schema": 2,
  "videoId": "T1dQhQAm8Tc",
  "provenance": {
   "environment": "prod",
@@ -29,7 +29,9 @@
   "TRANSCRIPT_CLEANING_ENABLED": false,
   "FRAME_VISION_ENABLED": true,
   "FRAME_TIER_ENABLED": true,
-  "SSE_HEARTBEAT_SECONDS": 12.0
+  "SCENE_HIRES_ENABLED": true,
+  "SSE_HEARTBEAT_SECONDS": 12.0,
+  "YOUTUBE_PROXY_URL": "http://replay-proxy.invalid:9"
  },
  "tier": "standard",
  "video": {
@@ -4578,19 +4580,34 @@
    63,
    72,
    79
+  ],
+  "detectedCount": 82
+ },
+ "downloads": {
+  "lowres": {
+   "seconds": 11.1,
+   "bytes": null
+  },
+  "hires720p": [
+   {
+    "seconds": 29.6,
+    "bytes": null
+   },
+   {
+    "seconds": 11.7,
+    "bytes": null
+   }
   ]
  },
  "sleeps": {
   "metadata": 12.162,
   "transcript": 0.268,
-  "lowresDownload": 11.1,
   "sceneDetect": 21.2,
   "scoreSelect": 8.3,
-  "hires": 6.7,
-  "upload": 1.9,
-  "manifestCheck": 0.48,
-  "persistVision": 0.386,
-  "momentFill": 14.292,
+  "frameSeek": 1.1,
+  "s3Op": 0.1,
+  "sceneUpload": 1.8,
+  "ocr": 0.0,
   "qdrantStore": 0.0
  },
  "llm": [

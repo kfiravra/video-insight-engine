@@ -17,9 +17,20 @@ class StatusUpdate:
 
 
 @dataclass
+class _RecordingCollection:
+    """``_collection.update_one`` target (assembly's S3 ``rawTranscriptRef`` write)."""
+
+    updates: list[dict[str, Any]] = field(default_factory=list)
+
+    def update_one(self, query: dict[str, Any], update: dict[str, Any]) -> None:
+        self.updates.append(copy.deepcopy(update))
+
+
+@dataclass
 class InMemoryRepository:
     """Captures every write ``stream_summarization`` makes to the cache row."""
 
+    _collection: _RecordingCollection = field(default_factory=_RecordingCollection)
     statuses: list[StatusUpdate] = field(default_factory=list)
     saved_result: dict[str, Any] | None = None
     transcript_meta: dict[str, Any] | None = None

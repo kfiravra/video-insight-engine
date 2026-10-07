@@ -15,9 +15,10 @@ Run with the summarizer venv::
 
 ``--speed 1`` (default) reproduces the recorded walls (~4 min for
 T1dQhQAm8Tc); ``--speed 0`` skips every sleep (well under a second, for CI);
-values in between scale the sleeps and the table rescales them back.
-Exit code 1 when the replay diverged (cassette miss, unused recording, network
-attempt) or, at ``--speed`` > 0, when a phase is outside ``--tolerance``.
+values in between (>= 0.02) scale the sleeps and the table rescales them back.
+Exit code 1 when the replay diverged (cassette miss, unused recording, model
+mismatch, network attempt, unfaked subprocess) or, at ``--speed`` > 0, when a
+phase is outside ``--tolerance``.
 """
 
 from __future__ import annotations
@@ -41,21 +42,14 @@ from tests.replay.cassette import available_cassettes, load_cassette  # noqa: E4
 from tests.replay.driver import ReplayResult, run_replay  # noqa: E402
 from tests.replay.report import (  # noqa: E402
     DEFAULT_TOLERANCE,
+    check_speed,
+    divergences,
     format_table,
     out_of_tolerance,
     phase_rows,
 )
 
 logger = logging.getLogger("replay")
-
-
-def _divergences(result: ReplayResult) -> list[str]:
-    problems = [f"cassette miss: {m}" for m in result.llm_misses]
-    problems += [f"unused recording: {k}" for k in result.llm_unused]
-    problems += [f"network attempt: {a}" for a in result.network_attempts]
-    if result.done_line is None:
-        problems.append("no DONE line logged")
-    return problems
 
 
 def _print_summary(result: ReplayResult) -> None:
@@ -76,10 +70,17 @@ def _configure_logging(verbose: bool) -> None:
             handler.setLevel(logging.CRITICAL)
 
 
+def _speed(value: str) -> float:
+    try:
+        return check_speed(float(value))
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=(__doc__ or "replay").splitlines()[0])
     parser.add_argument("--video", required=True, choices=available_cassettes())
-    parser.add_argument("--speed", type=float, default=1.0)
+    parser.add_argument("--speed", type=_speed, default=1.0)
     parser.add_argument("--tolerance", type=float, default=DEFAULT_TOLERANCE)
     parser.add_argument("--verbose", action="store_true", help="show pipeline logs")
     return parser.parse_args()
@@ -98,7 +99,7 @@ def main() -> int:
         print("(phase walls are not comparable at --speed 0)")
     if cassette.recorded.estimated:
         print("note: recorded sub-steps are ESTIMATED for this cassette (see its notes)")
-    problems = _divergences(result)
+    problems = divergences(result)
     if args.speed > 0:
         problems += [
             f"phase outside tolerance: {n}" for n in out_of_tolerance(rows, args.tolerance)

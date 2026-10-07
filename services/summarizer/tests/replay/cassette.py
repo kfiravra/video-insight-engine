@@ -2,11 +2,11 @@
 
 A cassette is one recorded pipeline run, reduced to what a replay needs: the
 LLM outputs + latencies (keyed by ``llm_feature_var`` + span + ordinal), the
-transcript the pipeline consumed, the frame list, the non-LLM step durations
-the stubs sleep, the settings that shaped the run, and the phase walls the run
-actually took (the replay's fidelity target). ``build_cassette.py`` writes them
-from Langfuse + Mongo + S3 + ``llm_usage`` dumps; they are committed under
-``cassettes/``.
+transcript the pipeline consumed, the frame list, the media downloads, the
+non-LLM step durations the fakes sleep, the settings that shaped the run, and
+the phase walls the run actually took (the replay's fidelity target).
+``build_cassette.py`` writes them from Langfuse + Mongo + S3 + ``llm_usage``
+dumps; they are committed under ``cassettes/``.
 """
 
 from __future__ import annotations
@@ -17,21 +17,21 @@ from pathlib import Path
 from typing import Any
 
 CASSETTE_DIR = Path(__file__).parent / "cassettes"
-CASSETTE_SCHEMA = 1
+CASSETTE_SCHEMA = 2
 
-# Non-LLM steps the stubs sleep, in seconds of recorded wall time.
+# Non-LLM steps the fakes sleep, in seconds of recorded wall time. Per-call
+# latencies: ``frameSeek`` (one ffmpeg -ss extraction), ``s3Op`` (one S3 JSON
+# get/put or exists), ``sceneUpload`` (one scene-frame PUT; the batch is
+# concurrent, so it is also the batch wall).
 SLEEP_KEYS = (
     "metadata",
     "transcript",
-    "manifestCheck",
-    "lowresDownload",
     "sceneDetect",
     "scoreSelect",
-    "hires",
-    "upload",
+    "frameSeek",
+    "s3Op",
+    "sceneUpload",
     "ocr",
-    "persistVision",
-    "momentFill",
     "qdrantStore",
 )
 
@@ -90,6 +90,28 @@ class FramesSpec:
     selected: list[FrameRecord]
     gallery_indices: list[int]
     candidates: list[FrameRecord] = field(default_factory=list)
+    detected_count: int = 0
+
+
+@dataclass(frozen=True)
+class DownloadSpec:
+    """One yt-dlp download: wall seconds and file size (None = not recorded)."""
+
+    seconds: float
+    size_bytes: int | None
+
+
+@dataclass(frozen=True)
+class DownloadsSpec:
+    """The low-res pass-1 download and the 720p downloads in call order.
+
+    720p calls past the end of the list reuse its last entry, so a code change
+    that adds a download still pays for it and one that removes a download
+    simply leaves entries unused.
+    """
+
+    lowres: DownloadSpec
+    hires: list[DownloadSpec]
 
 
 @dataclass(frozen=True)
@@ -130,6 +152,7 @@ class Cassette:
     transcript_source: str
     segments: list[tuple[int, int, str]]
     frames: FramesSpec
+    downloads: DownloadsSpec
     sleeps: dict[str, float]
     llm: list[LLMEntry]
     recorded: RecordedRun
@@ -170,6 +193,19 @@ def _parse_frames(raw: dict[str, Any]) -> FramesSpec:
         selected=_parse_frame_list(raw.get("selected", [])),
         gallery_indices=[int(i) for i in raw.get("galleryIndices", [])],
         candidates=_parse_frame_list(raw.get("candidates", [])),
+        detected_count=int(raw.get("detectedCount", 0)),
+    )
+
+
+def _parse_download(raw: dict[str, Any]) -> DownloadSpec:
+    size = raw.get("bytes")
+    return DownloadSpec(seconds=float(raw["seconds"]), size_bytes=int(size) if size else None)
+
+
+def _parse_downloads(raw: dict[str, Any]) -> DownloadsSpec:
+    return DownloadsSpec(
+        lowres=_parse_download(raw["lowres"]),
+        hires=[_parse_download(d) for d in raw.get("hires720p", [])],
     )
 
 
@@ -205,6 +241,7 @@ def parse_cassette(raw: dict[str, Any]) -> Cassette:
         transcript_source=raw["transcript"]["source"],
         segments=[(int(s[0]), int(s[1]), str(s[2])) for s in raw["transcript"]["segments"]],
         frames=_parse_frames(raw["frames"]),
+        downloads=_parse_downloads(raw["downloads"]),
         sleeps=sleeps,
         llm=[_parse_entry(e) for e in raw["llm"]],
         recorded=RecordedRun(

@@ -223,7 +223,7 @@ One entry per YouTube video. Shared across all users.
     phases: [{ name: string, startMs: number, endMs: number, wallMs: number }],  // metadata, transcript, frames, transcript_frames, frames.* sub-steps, plan, extraction, synthesis, enrichment, assembly, translation…
     milestones: { metadataMs?, synthesisCompleteMs?, firstTabReadyMs?, completeMs?, doneMs? },
     llmCalls: [{ feature, span, model, responseModel, startMs, wallMs, inputTokens, outputTokens,
-                 cacheReadTokens, cacheWriteTokens, costUsd, attempt, fallbackUsed, finishReason }],
+                 cacheReadTokens, cacheWriteTokens, costUsd, attempt, fallbackUsed, finishReason }],  // incl. Whisper/Gemini transcription rows (span "transcription:openai|google")
     llmFailures: [{ feature, span, model, startMs, wallMs, attempt, error, rateLimited }],
     downloads: [{ kind: "lowres" | "720p" | "audio", purpose: string, startMs, wallMs, bytes: number | null, ok: boolean }],
     costUsd: number,

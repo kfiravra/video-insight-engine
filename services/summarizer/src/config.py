@@ -195,7 +195,7 @@ class Settings(BaseSettings):
     # Where prompt templates come from. "registry": the Langfuse `production`
     # label wins over the local .txt whenever keys are set. "disk": always the
     # local .txt, so dev prompt edits take effect without re-registering.
-    # Dev-only — ignored in production/staging (see prompts_from_disk()).
+    # Dev-only — honoured only when ENVIRONMENT is a dev name (see prompts_from_disk()).
     PROMPT_SOURCE: Literal["registry", "disk"] = "registry"
 
     # ─── Sentry error tracking ──────────────────────────────────────────
@@ -443,12 +443,14 @@ def prompts_from_disk() -> bool:
     """True when prompt templates must skip the Langfuse registry.
 
     A stray ``PROMPT_SOURCE=disk`` on prod would silently pin the pipeline
-    to whatever .txt files shipped in the image, so prod/staging ignore it.
+    to whatever .txt files shipped in the image, so it is honoured only in a
+    known dev environment (allow-list — ``prd``/``live``/``demo`` and any
+    other unrecognised name count as non-dev and keep the registry).
     """
     if settings.PROMPT_SOURCE != "disk":
         return False
     env_name = settings.ENVIRONMENT.lower()
-    if env_name in _PROD_ENVS:
+    if env_name not in _DEV_ENVS:
         _warn_disk_prompts_ignored(env_name)
         return False
     return True

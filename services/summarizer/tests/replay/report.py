@@ -12,6 +12,28 @@ from tests.replay.driver import ReplayResult
 DEFAULT_TOLERANCE = 0.10
 ABSOLUTE_SLACK_MS = 1000
 TOTAL_ROW = "total (complete)"
+# Replayed walls are rescaled by 1/speed, which also inflates real CPU time;
+# below this the inflation swamps the 10 % gate (0 = no sleeps, no table).
+MIN_SCALED_SPEED = 0.02
+
+
+def check_speed(speed: float) -> float:
+    """``speed`` when usable: 0 (CI, no sleeps) or ≥ ``MIN_SCALED_SPEED``."""
+    if speed < 0 or 0 < speed < MIN_SCALED_SPEED:
+        raise ValueError(f"speed must be 0 or >= {MIN_SCALED_SPEED} (got {speed})")
+    return speed
+
+
+def divergences(result: ReplayResult) -> list[str]:
+    """Why a replay did not reproduce its cassette (empty = faithful run)."""
+    problems = [f"cassette miss: {m}" for m in result.llm_misses]
+    problems += [f"unused recording: {k}" for k in result.llm_unused]
+    problems += [f"model mismatch: {m}" for m in result.llm_model_mismatches]
+    problems += [f"network attempt: {a}" for a in result.network_attempts]
+    problems += [f"unfaked command: {c}" for c in result.unexpected_commands]
+    if result.done_line is None:
+        problems.append("no DONE line logged")
+    return problems
 
 
 @dataclass(frozen=True)

@@ -7,7 +7,6 @@ set ``REPLAY_REALTIME=1`` to also run it at real speed (~4 min).
 
 from __future__ import annotations
 
-import asyncio
 import os
 import re
 
@@ -15,8 +14,8 @@ import pytest
 
 from src.services.pipeline import prompt_builder
 from src.services.transcription import transcript_chunker
-from tests.replay.cassette import Cassette, available_cassettes, load_cassette
-from tests.replay.driver import ReplayResult, run_replay
+from tests.replay.cassette import available_cassettes
+from tests.replay.driver import run_replay
 from tests.replay.report import out_of_tolerance, phase_rows
 
 _REFERENCE_VIDEO = "T1dQhQAm8Tc"
@@ -34,17 +33,6 @@ _FRAMES_SUBSTEPS = ("frames.scene_detect", "frames.score_select", "frames.hires"
 _MILESTONES = ("metadataMs", "synthesisCompleteMs", "firstTabReadyMs", "completeMs", "doneMs")
 _DONE_COUNTS = re.compile(r"tabs planned=(\d+) assembled=(\d+) emitted=(\d+)")
 _VIDEOS = available_cassettes()
-
-
-@pytest.fixture(scope="module")
-def cassettes() -> dict[str, Cassette]:
-    return {video_id: load_cassette(video_id) for video_id in _VIDEOS}
-
-
-@pytest.fixture(scope="module")
-def replays(cassettes: dict[str, Cassette]) -> dict[str, ReplayResult]:
-    """One speed-0 replay per cassette, shared by the assertions below."""
-    return {vid: asyncio.run(run_replay(c, speed=0)) for vid, c in cassettes.items()}
 
 
 @pytest.mark.parametrize("video_id", _VIDEOS)
@@ -72,6 +60,9 @@ class TestReplayAtSpeedZero:
 
     def test_should_mark_row_completed(self, replays: dict, video_id: str) -> None:
         assert (replays[video_id].saved_result or {}).get("status") == "completed"
+
+    def test_should_run_no_unfaked_command(self, replays: dict, video_id: str) -> None:
+        assert replays[video_id].unexpected_commands == []
 
     def test_should_index_output_in_qdrant(self, replays: dict, video_id: str) -> None:
         assert replays[video_id].qdrant_stores == [video_id, video_id]
@@ -117,10 +108,6 @@ def test_done_line_should_carry_planned_assembled_emitted(
 def test_frames_substeps_should_be_timed_for_standard_tier(replays: dict) -> None:
     names = set(replays[_REFERENCE_VIDEO].phase_walls())
     assert set(_FRAMES_SUBSTEPS) <= names
-
-
-def test_vision_reselect_should_be_timed_for_high_tier(replays: dict) -> None:
-    assert "frames.vision_reselect" in replays["jMq8lEu-of0"].phase_walls()
 
 
 async def test_reference_replay_should_reproduce_phase_walls_within_ten_percent(

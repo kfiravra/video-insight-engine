@@ -11,7 +11,15 @@ import pytest
 
 from src import config as app_config
 from src.services.observability import langfuse_client as lc
+from src.services.pipeline import prompt_builder
 from src.services.pipeline.prompt_builder import load_prompt_with_fallback
+from src.services.transcription import transcript_chunker
+
+
+@pytest.fixture(autouse=True)
+def _pin_registry_prompt_source(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Registry-mode tests must not depend on a dev's exported PROMPT_SOURCE=disk."""
+    monkeypatch.setattr(app_config.settings, "PROMPT_SOURCE", "registry")
 
 
 @pytest.fixture(autouse=True)
@@ -92,22 +100,78 @@ class TestPromptSource:
         assert out == "LOCAL CONTENT"
         fetch.assert_not_called()
 
-    def test_should_ignore_disk_mode_when_environment_is_production(
+    @pytest.mark.parametrize("environment", ["production", "staging", "prd", "live", "demo"])
+    def test_should_ignore_disk_mode_when_environment_is_not_a_dev_name(
+        self, monkeypatch: pytest.MonkeyPatch, local_prompt: Path, environment: str
+    ) -> None:
+        monkeypatch.setattr(app_config.settings, "PROMPT_SOURCE", "disk")
+        monkeypatch.setattr(app_config.settings, "ENVIRONMENT", environment)
+
+        out = _load_with_remote_available(local_prompt, MagicMock(return_value=_RemotePrompt()))
+
+        assert out == "REMOTE CONTENT"
+
+    def test_should_default_to_registry(self) -> None:
+        assert app_config.Settings.model_fields["PROMPT_SOURCE"].default == "registry"
+
+    def test_should_prefer_registry_when_prompt_source_is_registry(
+        self, local_prompt: Path
+    ) -> None:
+        out = _load_with_remote_available(local_prompt, MagicMock(return_value=_RemotePrompt()))
+
+        assert out == "REMOTE CONTENT"
+
+    def test_should_reread_edited_file_when_prompt_source_is_disk(
         self, monkeypatch: pytest.MonkeyPatch, local_prompt: Path
     ) -> None:
         monkeypatch.setattr(app_config.settings, "PROMPT_SOURCE", "disk")
-        monkeypatch.setattr(app_config.settings, "ENVIRONMENT", "production")
+        monkeypatch.setattr(app_config.settings, "ENVIRONMENT", "development")
+        load_prompt_with_fallback(langfuse_name="summarizer:plan", fallback_path=local_prompt)
+        local_prompt.write_text("EDITED CONTENT")
 
-        out = _load_with_remote_available(local_prompt, MagicMock(return_value=_RemotePrompt()))
+        out = load_prompt_with_fallback(langfuse_name="summarizer:plan", fallback_path=local_prompt)
 
-        assert out == "REMOTE CONTENT"
+        assert out == "EDITED CONTENT"
 
-    def test_should_prefer_registry_by_default(self, local_prompt: Path) -> None:
-        assert app_config.settings.PROMPT_SOURCE == "registry"
+    def test_should_keep_process_cache_when_prompt_source_is_registry(
+        self, local_prompt: Path
+    ) -> None:
+        # Langfuse is disabled by the autouse fixture → file fallback path.
+        load_prompt_with_fallback(langfuse_name="summarizer:plan", fallback_path=local_prompt)
+        local_prompt.write_text("EDITED CONTENT")
 
-        out = _load_with_remote_available(local_prompt, MagicMock(return_value=_RemotePrompt()))
+        out = load_prompt_with_fallback(langfuse_name="summarizer:plan", fallback_path=local_prompt)
 
-        assert out == "REMOTE CONTENT"
+        assert out == "LOCAL CONTENT"
+
+
+class TestChapterDetectPromptSource:
+    """The chunker's module-global prompt cache honours PROMPT_SOURCE=disk too."""
+
+    @pytest.fixture(autouse=True)
+    def _empty_cache(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(transcript_chunker, "_CHAPTER_DETECT_PROMPT", None)
+
+    def _load_twice(self, monkeypatch: pytest.MonkeyPatch) -> list[str | None]:
+        loader = MagicMock(side_effect=["FIRST", "SECOND"])
+        monkeypatch.setattr(prompt_builder, "load_prompt_text", loader)
+        return [transcript_chunker._chapter_detect_prompt() for _ in range(2)]
+
+    def test_should_reload_on_every_call_when_prompt_source_is_disk(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(app_config.settings, "PROMPT_SOURCE", "disk")
+        monkeypatch.setattr(app_config.settings, "ENVIRONMENT", "development")
+
+        assert (self._load_twice(monkeypatch), transcript_chunker._CHAPTER_DETECT_PROMPT) == (
+            ["FIRST", "SECOND"],
+            None,
+        )
+
+    def test_should_cache_for_process_when_prompt_source_is_registry(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        assert self._load_twice(monkeypatch) == ["FIRST", "FIRST"]
 
 
 def test_load_prompt_with_fallback_handles_fetch_exception(tmp_path):

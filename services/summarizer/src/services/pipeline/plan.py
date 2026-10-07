@@ -11,6 +11,7 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from ...models.domain_types import MODIFIER_MODELS
 from ...models.pipeline_types import PlanResult
 from ...shared_config.domain_config import (
     build_fallback_tabs,
@@ -22,6 +23,8 @@ from ...shared_config.domain_config import (
     render_valid_component_names,
     render_valid_datasources,
     valid_components,
+    valid_content_tags,
+    valid_modifiers,
 )
 from ...utils.json_parsing import parse_json_response
 from ...utils.language_utils import ENGLISH_OUTPUT_DIRECTIVE
@@ -31,6 +34,8 @@ from .pipeline_helpers import sanitize_for_prompt
 from .prompt_builder import load_prompt_text
 
 if TYPE_CHECKING:
+    from pydantic import BaseModel
+
     from ...services.llm import LLMService
 
 logger = logging.getLogger(__name__)
@@ -39,6 +44,11 @@ PROMPT_PATH = Path(__file__).parent.parent.parent / "prompts" / "plan.txt"
 COMPONENT_TOOLKIT_PATH = Path(__file__).parent.parent.parent / "prompts" / "component_toolkit.txt"
 
 CONFIDENCE_THRESHOLD = 0.6
+
+# Components whose assembler builds from synthesis/meta and ignores the tab's
+# data, so their dataSource needs no registry check (mirrors the overview half
+# of ``_SELF_SUFFICIENT`` in assembly/core.py — ``budget`` does read its data).
+_SELF_SUFFICIENT_COMPONENTS = frozenset({"overview"})
 
 
 def _load_plan_prompt() -> str:
@@ -180,7 +190,7 @@ def _validate_tabs(tabs: list[dict]) -> list[dict]:
                 "id": tid,
                 "label": tab["label"],
                 "emoji": tab.get("emoji", ""),
-                "dataSource": tab.get("dataSource", ""),
+                "dataSource": _coerce_data_source(tab.get("dataSource")),
                 "component": component,
                 "goal": tab.get("goal", ""),
                 "outboundLinks": outbound_links,
@@ -188,6 +198,41 @@ def _validate_tabs(tabs: list[dict]) -> list[dict]:
         )
 
     return valid_tabs
+
+
+def _coerce_data_source(raw: object) -> str:
+    """The LLM's dataSource as a string; null/list/dict → "" (an unset source)."""
+    return raw if isinstance(raw, str) else ""
+
+
+def _is_model_field(model: type[BaseModel], key: str) -> bool:
+    return any(key in (name, info.alias) for name, info in model.model_fields.items())
+
+
+def _bypasses_registry(tab: dict) -> bool:
+    """True for a dataSource assembly resolves although the registry does not list it.
+
+    - self-sufficient components (overview) ignore their data entirely;
+    - a bare domain (``"review"``, ``"fitness"``) or ``"<domain>.*"`` reads the
+      whole domain object — e.g. review pros_cons needs pros AND cons;
+    - a modifier field (``finance.costs``) — modifiers extract into their own
+      model, and finance has no registry entries at all.
+    """
+    if tab["component"] in _SELF_SUFFICIENT_COMPONENTS or tab["id"] == "overview":
+        return True
+    domain, _, field = tab["dataSource"].partition(".")
+    if field in ("", "*"):
+        return domain in valid_content_tags() | valid_modifiers()
+    modifier_model = MODIFIER_MODELS.get(domain)
+    return modifier_model is not None and _is_model_field(modifier_model, field.split(".")[0])
+
+
+def _resolve_data_source(tab: dict) -> str | None:
+    """The dataSource a validated tab should keep; None when it must be dropped."""
+    planned = tab["dataSource"]
+    if not planned or _bypasses_registry(tab):
+        return planned
+    return registered_data_source(planned, tab["component"])
 
 
 def _validate_data_sources(tabs: list[dict]) -> tuple[list[dict], list[dict]]:
@@ -201,8 +246,8 @@ def _validate_data_sources(tabs: list[dict]) -> tuple[list[dict], list[dict]]:
     kept: list[dict] = []
     dropped: list[dict] = []
     for tab in tabs:
-        planned = tab.get("dataSource", "")
-        resolved = registered_data_source(planned, tab["component"]) if planned else planned
+        planned = tab["dataSource"]
+        resolved = _resolve_data_source(tab)
         if resolved is None:
             logger.warning(
                 "Plan tab dropped: id=%r dataSource=%r is not registered and no %s sibling exists",
@@ -373,9 +418,11 @@ async def run_plan(
         validated_tabs = _enforce_domain_policy(validated_tabs, primary_tag, content_format)
         data["tabs"] = validated_tabs
 
-        # Fallback tabs if none valid
+        # Fallback tabs if none valid — flagged so assembly does not count the
+        # plan's drops on top of a tab set the planner never designed.
         if not validated_tabs:
             data["tabs"] = build_fallback_tabs(primary_tag)
+            data["planFallback"] = True
 
         result = PlanResult.model_validate(data)
 

@@ -9,6 +9,7 @@
   "suspectGolden": [
     "review-airpods-pro"
   ],
+  "droppedRows": [],
   "summary": {
     "all": {
       "anthropic/claude-haiku-4-5-20251001": {
@@ -17,11 +18,12 @@
         "format_pct": 72.2,
         "visual_pct": 88.9,
         "parse_failures": 0,
+        "field_errors": 0,
         "bare_json": 0,
         "truncated": 12,
         "call_errors": 0,
         "p50_ms": 1350,
-        "p95_ms": 1635,
+        "p95_ms": null,
         "max_ms": 1635,
         "over_3s": 0,
         "usd_per_call": 0.002238,
@@ -31,13 +33,14 @@
         "n": 18,
         "domain_pct": 72.2,
         "format_pct": 77.8,
-        "visual_pct": 83.3,
-        "parse_failures": 1,
+        "visual_pct": 88.9,
+        "parse_failures": 0,
+        "field_errors": 1,
         "bare_json": 18,
         "truncated": 0,
         "call_errors": 0,
         "p50_ms": 1113,
-        "p95_ms": 4330,
+        "p95_ms": null,
         "max_ms": 4330,
         "over_3s": 1,
         "usd_per_call": 0.000269,
@@ -51,11 +54,12 @@
         "format_pct": 76.5,
         "visual_pct": 88.2,
         "parse_failures": 0,
+        "field_errors": 0,
         "bare_json": 0,
         "truncated": 11,
         "call_errors": 0,
         "p50_ms": 1355,
-        "p95_ms": 1635,
+        "p95_ms": null,
         "max_ms": 1635,
         "over_3s": 0,
         "usd_per_call": 0.002265,
@@ -67,11 +71,12 @@
         "format_pct": 82.4,
         "visual_pct": 88.2,
         "parse_failures": 0,
+        "field_errors": 0,
         "bare_json": 17,
         "truncated": 0,
         "call_errors": 0,
         "p50_ms": 1126,
-        "p95_ms": 4330,
+        "p95_ms": null,
         "max_ms": 4330,
         "over_3s": 1,
         "usd_per_call": 0.000273,
@@ -85,21 +90,37 @@
       "transcript": "ytdlp-captions",
       "transcriptLanguage": "en",
       "transcriptChars": 35039,
-      "frameCaptions": []
+      "frameCaptions": [
+        "Hand holding up the 'Wo Ro Ro Ro Ro...' event card from The Four Emperors faction with alternate manga art",
+        "Kaido OP17-058 Leader card (The Four Emperors/Animal Kingdom Pirates) with 5-cost 5000 power and debuff ability",
+        "Jozu OP17-008 Whitebeard Pirates character card with 8000 power and a crystal-themed alternate art",
+        "Hand opening a yellow OP17 'The World's Strongest Warriors' 4th Anniversary booster pack above the camera",
+        "Hand holding up Howling Gab OP17-101 Rocks/Naval Pirates character card with 6-cost 8000 power"
+      ]
     },
     "gaming-op13-box-opening": {
       "metadata": "summarizer",
       "transcript": "ytdlp-captions",
       "transcriptLanguage": "en",
       "transcriptChars": 11308,
-      "frameCaptions": []
+      "frameCaptions": [
+        "Wapol character card (cost 6, 7000 power, Evil Black Drum Kingdom) held up with -$420 spend tracker",
+        "Holographic alternate-art Jewelry Bonney Leader card with crying-face artwork held up with -$380.50 spend tracker",
+        "Kouzuki Momonosuke character card (cost 3, 0 power, Land of Wano/Kozuki Clan) held up with -$380.50 spend tracker",
+        "Dark holographic card being pulled from its sleeve showing heavy foil texture with -$361 spend tracker"
+      ]
     },
     "gaming-op17-set-verdict": {
       "metadata": "summarizer",
       "transcript": "ytdlp-captions",
       "transcriptLanguage": "en",
       "transcriptChars": 12945,
-      "frameCaptions": []
+      "frameCaptions": [
+        "YouTube video description page for 'The One Piece Market Is Breaking Investor Hearts' by Straw Hat Speculator with affiliate links and channel information",
+        "OPDeckGuide popup showing a zoomed-in full-art image of the Rocks D. Xebec OP17-118 Pirate Crew Super Alt Manga card with 12000 power",
+        "TCG Quant dashboard showing OP set singles intel with value density 10/10, chase concentration 37%, cheapest top card $445.10, total set value $31,834.93, and top card thumbnails labeled SAMPLE",
+        "TCGPlayer product page for The World's Strongest Warriors Booster Box (OP17) showing presale price of $339.99, market price history chart, and price points around $341.09"
+      ]
     },
     "tech-agentic-engineering": {
       "metadata": "summarizer",
@@ -170,7 +191,7 @@
       "transcriptLanguage": "en",
       "transcriptChars": 3160,
       "frameCaptions": [
-        "\"Presenter in the top push-up position on a rooftop at the start of the video showing general form"
+        "Presenter in the top push-up position on a rooftop at the start of the video showing general form"
       ]
     },
     "review-airpods-pro": {
@@ -318,7 +339,8 @@
         "confidence": 1.0
       },
       "parse_error": null,
-      "call_error": null
+      "call_error": null,
+      "field_errors": []
     },
     {
       "golden_id": "gaming-op17-unboxing",
@@ -336,7 +358,8 @@
         "confidence": 0.98
       },
       "parse_error": null,
-      "call_error": null
+      "call_error": null,
+      "field_errors": []
     },
     {
       "golden_id": "gaming-op13-box-opening",
@@ -354,7 +377,8 @@
         "confidence": 0.98
       },
       "parse_error": null,
-      "call_error": null
+      "call_error": null,
+      "field_errors": []
     },
     {
       "golden_id": "gaming-op13-box-opening",
@@ -372,7 +396,8 @@
         "confidence": 1.0
       },
       "parse_error": null,
-      "call_error": null
+      "call_error": null,
+      "field_errors": []
     },
     {
       "golden_id": "gaming-op17-set-verdict",
@@ -390,7 +415,8 @@
         "confidence": 0.9
       },
       "parse_error": null,
-      "call_error": null
+      "call_error": null,
+      "field_errors": []
     },
     {
       "golden_id": "gaming-op17-set-verdict",
@@ -408,7 +434,8 @@
         "confidence": 0.85
       },
       "parse_error": null,
-      "call_error": null
+      "call_error": null,
+      "field_errors": []
     },
     {
       "golden_id": "tech-agentic-engineering",
@@ -426,7 +453,8 @@
         "confidence": 0.92
       },
       "parse_error": null,
-      "call_error": null
+      "call_error": null,
+      "field_errors": []
     },
     {
       "golden_id": "tech-agentic-engineering",
@@ -444,7 +472,8 @@
         "confidence": 0.9
       },
       "parse_error": null,
-      "call_error": null
+      "call_error": null,
+      "field_errors": []
     },
     {
       "golden_id": "tech-react-hooks",
@@ -462,7 +491,8 @@
         "confidence": 0.9
       },
       "parse_error": null,
-      "call_error": null
+      "call_error": null,
+      "field_errors": []
     },
     {
       "golden_id": "tech-react-hooks",
@@ -480,7 +510,8 @@
         "confidence": 0.95
       },
       "parse_error": null,
-      "call_error": null
+      "call_error": null,
+      "field_errors": []
     },
     {
       "golden_id": "tech-docker-basics",
@@ -498,7 +529,8 @@
         "confidence": 0.92
       },
       "parse_error": null,
-      "call_error": null
+      "call_error": null,
+      "field_errors": []
     },
     {
       "golden_id": "tech-docker-basics",
@@ -516,7 +548,8 @@
         "confidence": 0.9
       },
       "parse_error": null,
-      "call_error": null
+      "call_error": null,
+      "field_errors": []
     },
     {
       "golden_id": "food-knife-skills",
@@ -534,7 +567,8 @@
         "confidence": 1.0
       },
       "parse_error": null,
-      "call_error": null
+      "call_error": null,
+      "field_errors": []
     },
     {
       "golden_id": "food-knife-skills",
@@ -552,7 +586,8 @@
         "confidence": 0.98
       },
       "parse_error": null,
-      "call_error": null
+      "call_error": null,
+      "field_errors": []
     },
     {
       "golden_id": "learning-photosynthesis",
@@ -570,7 +605,8 @@
         "confidence": 0.95
       },
       "parse_error": null,
-      "call_error": null
+      "call_error": null,
+      "field_errors": []
     },
     {
       "golden_id": "learning-photosynthesis",
@@ -588,7 +624,8 @@
         "confidence": 0.9
       },
       "parse_error": null,
-      "call_error": null
+      "call_error": null,
+      "field_errors": []
     },
     {
       "golden_id": "learning-double-slit",
@@ -606,7 +643,8 @@
         "confidence": 0.9
       },
       "parse_error": null,
-      "call_error": null
+      "call_error": null,
+      "field_errors": []
     },
     {
       "golden_id": "learning-double-slit",
@@ -624,7 +662,8 @@
         "confidence": 0.95
       },
       "parse_error": null,
-      "call_error": null
+      "call_error": null,
+      "field_errors": []
     },
     {
       "golden_id": "science-crispr-intro",
@@ -642,7 +681,8 @@
         "confidence": 0.95
       },
       "parse_error": null,
-      "call_error": null
+      "call_error": null,
+      "field_errors": []
     },
     {
       "golden_id": "science-crispr-intro",
@@ -660,7 +700,8 @@
         "confidence": 0.9
       },
       "parse_error": null,
-      "call_error": null
+      "call_error": null,
+      "field_errors": []
     },
     {
       "golden_id": "science-black-holes",
@@ -678,7 +719,8 @@
         "confidence": 0.9
       },
       "parse_error": null,
-      "call_error": null
+      "call_error": null,
+      "field_errors": []
     },
     {
       "golden_id": "science-black-holes",
@@ -696,7 +738,8 @@
         "confidence": 0.95
       },
       "parse_error": null,
-      "call_error": null
+      "call_error": null,
+      "field_errors": []
     },
     {
       "golden_id": "travel-vietnam-10day",
@@ -714,7 +757,8 @@
         "confidence": 0.95
       },
       "parse_error": null,
-      "call_error": null
+      "call_error": null,
+      "field_errors": []
     },
     {
       "golden_id": "travel-vietnam-10day",
@@ -732,7 +776,8 @@
         "confidence": 0.9
       },
       "parse_error": null,
-      "call_error": null
+      "call_error": null,
+      "field_errors": []
     },
     {
       "golden_id": "fitness-pushup-form",
@@ -750,7 +795,8 @@
         "confidence": 0.9
       },
       "parse_error": null,
-      "call_error": null
+      "call_error": null,
+      "field_errors": []
     },
     {
       "golden_id": "fitness-pushup-form",
@@ -768,7 +814,8 @@
         "confidence": 0.95
       },
       "parse_error": null,
-      "call_error": null
+      "call_error": null,
+      "field_errors": []
     },
     {
       "golden_id": "review-airpods-pro",
@@ -786,7 +833,8 @@
         "confidence": 0.85
       },
       "parse_error": null,
-      "call_error": null
+      "call_error": null,
+      "field_errors": []
     },
     {
       "golden_id": "review-airpods-pro",
@@ -797,9 +845,17 @@
       "output_tokens": 30,
       "finish_reason": "stop",
       "raw": "{\"domain\": \"entertainment\", \"format\": \"vlog\", \"has_visual_demo\": false, \"confidence\": 0.9}",
-      "parsed": null,
-      "parse_error": "invalid domain 'entertainment'",
-      "call_error": null
+      "parsed": {
+        "domain": null,
+        "format": "vlog",
+        "has_visual_demo": false,
+        "confidence": 0.9
+      },
+      "parse_error": null,
+      "call_error": null,
+      "field_errors": [
+        "invalid domain 'entertainment'"
+      ]
     },
     {
       "golden_id": "food-travel-montreal-vlog",
@@ -817,7 +873,8 @@
         "confidence": 0.9
       },
       "parse_error": null,
-      "call_error": null
+      "call_error": null,
+      "field_errors": []
     },
     {
       "golden_id": "food-travel-montreal-vlog",
@@ -835,7 +892,8 @@
         "confidence": 0.95
       },
       "parse_error": null,
-      "call_error": null
+      "call_error": null,
+      "field_errors": []
     },
     {
       "golden_id": "food-recipe-story-intro",
@@ -853,7 +911,8 @@
         "confidence": 0.98
       },
       "parse_error": null,
-      "call_error": null
+      "call_error": null,
+      "field_errors": []
     },
     {
       "golden_id": "food-recipe-story-intro",
@@ -871,7 +930,8 @@
         "confidence": 0.9
       },
       "parse_error": null,
-      "call_error": null
+      "call_error": null,
+      "field_errors": []
     },
     {
       "golden_id": "gaming-op17-static-camera",
@@ -889,7 +949,8 @@
         "confidence": 1.0
       },
       "parse_error": null,
-      "call_error": null
+      "call_error": null,
+      "field_errors": []
     },
     {
       "golden_id": "gaming-op17-static-camera",
@@ -907,7 +968,8 @@
         "confidence": 0.98
       },
       "parse_error": null,
-      "call_error": null
+      "call_error": null,
+      "field_errors": []
     },
     {
       "golden_id": "fitness-7min-workout",
@@ -925,7 +987,8 @@
         "confidence": 0.98
       },
       "parse_error": null,
-      "call_error": null
+      "call_error": null,
+      "field_errors": []
     },
     {
       "golden_id": "fitness-7min-workout",
@@ -943,7 +1006,8 @@
         "confidence": 1.0
       },
       "parse_error": null,
-      "call_error": null
+      "call_error": null,
+      "field_errors": []
     }
   ]
 }

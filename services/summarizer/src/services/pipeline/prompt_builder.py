@@ -54,6 +54,18 @@ def _read_file_cached(path_str: str) -> str:
     return Path(path_str).read_text()
 
 
+def _read_prompt_file(path_str: str) -> str:
+    """Read a prompt ``.txt`` — fresh in disk mode, process-cached otherwise.
+
+    Disk mode exists so a dev's .txt edit takes effect on the next run; the
+    worker never reloads and uvicorn's reloader watches ``*.py`` only, so a
+    cached read would pin the first version until a restart.
+    """
+    if prompts_from_disk():
+        return Path(path_str).read_text()
+    return _read_file_cached(path_str)
+
+
 def _load_text(path_str: str) -> str:
     """Load a prompt file, preferring the Langfuse-registered version.
 
@@ -85,7 +97,7 @@ def load_prompt_text(path: Path) -> str:
         return ""
     langfuse_name = _langfuse_name_for(path)
     if langfuse_name is None:
-        return _read_file_cached(str(path))
+        return _read_prompt_file(str(path))
     return load_prompt_with_fallback(langfuse_name=langfuse_name, fallback_path=path)
 
 
@@ -102,7 +114,8 @@ def load_prompt_with_fallback(*, langfuse_name: str, fallback_path: Path) -> str
     """Fetch a prompt from Langfuse, falling back to a local ``.txt`` file.
 
     The Langfuse fetch is best-effort:
-      * When ``PROMPT_SOURCE=disk`` (dev-only), the registry is never asked.
+      * When ``PROMPT_SOURCE=disk`` (dev-only), the registry is never asked
+        and the file is re-read on every call (edits apply without a restart).
       * When Langfuse is disabled (no keys), the local file is used.
       * When the prompt isn't registered yet, the local file is used.
       * Any SDK exception is swallowed by ``fetch_prompt_with_obj``.
@@ -115,7 +128,7 @@ def load_prompt_with_fallback(*, langfuse_name: str, fallback_path: Path) -> str
     + ``record_active_prompt`` themselves if they want different semantics.
     """
     if prompts_from_disk():
-        return _read_file_cached(str(fallback_path))
+        return _read_prompt_file(str(fallback_path))
     text = _try_fetch_from_registry(langfuse_name)
     if text is not None:
         return text

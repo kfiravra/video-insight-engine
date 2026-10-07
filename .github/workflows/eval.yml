@@ -72,7 +72,8 @@ jobs:
         with:
           python-version: "3.11"
 
-      - run: pip install pyyaml pydantic httpx
+      # Same pins as services/summarizer/requirements.lock.
+      - run: pip install pyyaml==6.0.3 pydantic==2.13.4 httpx==0.28.1
 
       # --dry-run makes zero network/LLM calls: it stubs each entry's output
       # and runs the real scoring + reporting + --fail-under exit-code path.
@@ -149,12 +150,10 @@ jobs:
     # 18 videos × ~3–5 min prod pipeline time, sequential, 30-min cap each;
     # noise-baseline mode runs the set twice.
     timeout-minutes: 350
+    # Secrets are scoped to the two steps that read them (probe + run), never
+    # job-level env — that would hand them to checkout, setup-python, pip's
+    # package build hooks and upload-artifact as well.
     env:
-      EVAL_API_URL: ${{ secrets.EVAL_API_URL }}
-      EVAL_USER_EMAIL: ${{ secrets.EVAL_USER_EMAIL }}
-      EVAL_USER_PASSWORD: ${{ secrets.EVAL_USER_PASSWORD }}
-      LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
-      LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
       MODE: ${{ inputs.mode || 'eval' }}
       LIMIT: ${{ inputs.limit || 0 }}
     steps:
@@ -165,6 +164,12 @@ jobs:
       # required: faithfulness (a primary metric) is read from the run traces.
       - name: Check eval secrets
         id: secrets
+        env:
+          EVAL_API_URL: ${{ secrets.EVAL_API_URL }}
+          EVAL_USER_EMAIL: ${{ secrets.EVAL_USER_EMAIL }}
+          EVAL_USER_PASSWORD: ${{ secrets.EVAL_USER_PASSWORD }}
+          LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+          LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
         run: |
           for name in EVAL_API_URL EVAL_USER_EMAIL EVAL_USER_PASSWORD LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY; do
             if [ -z "${!name}" ]; then
@@ -180,11 +185,17 @@ jobs:
         with:
           python-version: "3.11"
 
-      - run: pip install pyyaml pydantic httpx
+      - run: pip install pyyaml==6.0.3 pydantic==2.13.4 httpx==0.28.1
         if: steps.secrets.outputs.available == 'true'
 
       - name: Run live eval against the prod API
         if: steps.secrets.outputs.available == 'true'
+        env:
+          EVAL_API_URL: ${{ secrets.EVAL_API_URL }}
+          EVAL_USER_EMAIL: ${{ secrets.EVAL_USER_EMAIL }}
+          EVAL_USER_PASSWORD: ${{ secrets.EVAL_USER_PASSWORD }}
+          LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+          LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
         run: |
           STAMP=$(date +%Y%m%d)
           if [ "$MODE" = "noise-baseline" ]; then

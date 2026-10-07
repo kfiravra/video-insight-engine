@@ -7,6 +7,7 @@ Resolves path via:
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 from functools import lru_cache
@@ -322,14 +323,24 @@ class GroupingConfig(TypedDict):
     groupOutputBudget: int
 
 
+def _registry() -> dict[str, DataSourceSpec]:
+    """The cached registry map itself — read-only internal access, never returned."""
+    return get_config().get("dataSources", {})
+
+
 def data_sources() -> dict[str, DataSourceSpec]:
-    """dataSource path → registry entry, in prompt (config) order."""
-    return dict(get_config().get("dataSources", {}))
+    """dataSource path → registry entry, in prompt (config) order.
+
+    Deep-copied: the loaded config is cached process-wide, so a caller mutating
+    an entry (e.g. a spec's ``components`` list) must not leak into later reads.
+    """
+    return copy.deepcopy(_registry())
 
 
 def data_source(path: str) -> DataSourceSpec | None:
     """Registry entry for one dataSource path, or None when it is not registered."""
-    return data_sources().get(path)
+    spec = _registry().get(path)
+    return copy.deepcopy(spec) if spec is not None else None
 
 
 def demote_to() -> dict[str, list[str]]:
@@ -344,17 +355,17 @@ def requirement_evidence() -> dict[str, dict[str, str]]:
 
 def quiz_policy() -> QuizPolicy:
     """Quiz placement/attachment policy (position, evidence, excluded hosts)."""
-    return get_config()["quizPolicy"]
+    return copy.deepcopy(get_config()["quizPolicy"])
 
 
 def quiz_enrichment() -> QuizEnrichment:
     """Quiz-only enrichment config: allowed domains + per-domain flavor line."""
-    return get_config()["quizEnrichment"]
+    return copy.deepcopy(get_config()["quizEnrichment"])
 
 
 def grouping_config() -> GroupingConfig:
     """Phase-3 extraction grouping limits (text-group cap, per-group output budget)."""
-    return get_config()["grouping"]
+    return copy.deepcopy(get_config()["grouping"])
 
 
 def registered_data_source(data_source: str, component: str) -> str | None:
@@ -364,7 +375,7 @@ def registered_data_source(data_source: str, component: str) -> str | None:
     knows it; otherwise the first registered path of the same domain whose
     components include ``component``; ``None`` when neither exists.
     """
-    registry = data_sources()
+    registry = _registry()
     if data_source in registry or data_source in NON_EXTRACTION_DATASOURCES:
         return data_source
     domain = data_source.split(".", 1)[0]
@@ -386,6 +397,6 @@ def render_valid_datasources() -> str:
     planner sees the same text while the registry stays the single source.
     """
     by_domain: dict[str, list[str]] = {}
-    for path, spec in data_sources().items():
+    for path, spec in _registry().items():
         by_domain.setdefault(spec["domain"], []).append(path)
     return "\n".join(f"{domain}: {', '.join(paths)}" for domain, paths in by_domain.items())

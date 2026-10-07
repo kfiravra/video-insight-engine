@@ -7,7 +7,10 @@ both providers record a cost row and a generation nested under the active
 pipeline trace. Attribution (user/video/run ids) is inherited automatically
 from the context vars the surrounding pipeline already set.
 
-Every emit is best-effort: a tracking failure must never break transcription.
+The same emit also lands the call in the run's ``pipeline.timing``
+(``llmCalls``/``costUsd``, or ``llmFailures``) so timing totals include
+transcription. Every emit is best-effort: a tracking failure must never
+break transcription.
 """
 
 from __future__ import annotations
@@ -18,8 +21,16 @@ from llm_common import UsageRecord, record_manual_usage
 from llm_common.models import compute_transcription_cost_usd
 
 from src.services.observability import log_generation
+from src.services.pipeline.pipeline_timing import record_transcription_call
 
 logger = logging.getLogger(__name__)
+
+
+def _failure_name(success: bool, error: BaseException | None) -> str | None:
+    """Timing failure label: ``None`` for a success, else the exception class."""
+    if success:
+        return None
+    return type(error).__name__ if error is not None else "TranscriptionError"
 
 
 def emit_transcription_usage(
@@ -32,6 +43,7 @@ def emit_transcription_usage(
     tokens_out: int = 0,
     duration_ms: int = 0,
     success: bool = True,
+    error: BaseException | None = None,
 ) -> None:
     """Record a transcription call to ``llm_usage`` and Langfuse.
 
@@ -44,11 +56,16 @@ def emit_transcription_usage(
         duration_ms: Wall-clock latency of the call, for the row + trace.
         success: ``False`` records a failed attempt at $0 (failed calls bill
             nothing) so the run still shows the attempt.
+        error: The exception behind a failed attempt (its class name is
+            stored on the timing failure row).
     """
     unit = "audio_seconds" if audio_seconds > 0 else "tokens"
     cost = (
         compute_transcription_cost_usd(
-            model, audio_seconds=audio_seconds, tokens_in=tokens_in, tokens_out=tokens_out,
+            model,
+            audio_seconds=audio_seconds,
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
         )
         if success
         else 0.0
@@ -87,3 +104,17 @@ def emit_transcription_usage(
         )
     except Exception as exc:  # noqa: BLE001 — observability is non-critical
         logger.debug("Transcription Langfuse generation skipped: %s", exc)
+
+    try:
+        record_transcription_call(
+            feature=feature,
+            provider=provider,
+            model=model,
+            wall_ms=duration_ms,
+            input_tokens=tokens_in,
+            output_tokens=tokens_out,
+            cost_usd=cost,
+            error=_failure_name(success, error),
+        )
+    except Exception as exc:  # noqa: BLE001 — timing is non-critical
+        logger.debug("Transcription timing record skipped: %s", exc)

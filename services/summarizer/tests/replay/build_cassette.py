@@ -12,10 +12,9 @@ Inputs (all JSON, produced read-only — see the cassette's ``provenance``):
   ``scenes-v3/manifest.json`` (frames, gallery, vision descriptions).
 * ``--chapters`` optional ``[{start, end, title}]`` YouTube chapters.
 
-Phase walls come from the LLM call intervals (start = end − latency) plus the
-run total; the non-LLM sleeps fill the gaps between them, split into
-frames sub-steps by the worker-log numbers in ``_LOGGED_FRAME_STEPS`` (or by
-T1dQhQAm8Tc's split when no log survives — flagged ``estimated``).
+Phase walls and the media fakes' latencies are derived in
+``cassette_timing`` (worker-log sub-steps where the log survived, an
+``estimated`` split otherwise).
 
 Usage (from ``services/summarizer``)::
 
@@ -33,6 +32,7 @@ from pathlib import Path
 from typing import Any
 
 from tests.replay.cassette import CASSETTE_DIR, CASSETTE_SCHEMA
+from tests.replay.cassette_timing import media_timings, phase_bounds, phases_ms, span_calls
 
 _SKIPPED_SPANS = frozenset({"faithfulness"})
 _FEATURE_BY_SPAN = {
@@ -66,24 +66,12 @@ _RUN_SETTINGS: dict[str, Any] = {
     "TRANSCRIPT_CLEANING_ENABLED": False,
     "FRAME_VISION_ENABLED": True,
     "FRAME_TIER_ENABLED": True,
+    "SCENE_HIRES_ENABLED": True,
     "SSE_HEARTBEAT_SECONDS": 12.0,
+    # Recorded runs were proxied (prefetch 720p, no stream-URL seeks). The
+    # host is unresolvable and the network guard refuses it anyway.
+    "YOUTUBE_PROXY_URL": "http://replay-proxy.invalid:9",
 }
-# Frames sub-steps (s) from the worker log lines of the recorded run.
-_LOGGED_FRAME_STEPS: dict[str, dict[str, float]] = {
-    "T1dQhQAm8Tc": {
-        "lowresDownload": 11.1,
-        "sceneDetect": 21.2,
-        "scoreSelect": 8.3,
-        "hires": 6.7,
-        "upload": 1.9,
-    },
-    "uC45_4nnEAI": {"lowresDownload": 22.0, "sceneDetect": 24.1},
-}
-_PRE_VISION_SPLIT = _LOGGED_FRAME_STEPS["T1dQhQAm8Tc"]
-_PRE_KEYS = ("lowresDownload", "sceneDetect", "scoreSelect")
-_POST_KEYS = ("hires", "upload")
-
-
 _EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 _REDACTED = "[REDACTED]"
 
@@ -253,89 +241,29 @@ def _frames_spec(manifest: dict[str, Any] | None, tier: str) -> dict[str, Any]:
             _frame(d["original_index"], d["timestamp_sec"], 1.0 - d["frame_index"] / 1000)
             for d in manifest["visionDescriptions"]
         ]
+    # Scene detection emitted at least every recorded index (index = position).
+    recorded = [f["index"] for f in [*selected, *spec.get("candidates", [])]]
+    spec["detectedCount"] = max(recorded) + 1
     return spec
 
 
 # ─── Timing ───
 
 
-def _span(calls: list[dict[str, Any]], *spans: str) -> list[dict[str, Any]]:
-    return [c for c in calls if c["span"] in spans or c["feature"] in spans]
-
-
-def _phase_bounds(calls: list[dict[str, Any]], total_s: float) -> dict[str, float]:
-    """Phase END offsets (s) derived from the LLM intervals."""
-    synth_enrich = _span(calls, "synthesis", "enrichment")
-    return {
-        "metadata": _span(calls, "description_analysis")[0]["_endS"],
-        "transcript_frames": _span(calls, "classifier")[0]["_startS"],
-        "plan": _span(calls, "plan")[-1]["_endS"],
-        "extraction": max(c["_endS"] for c in _span(calls, "summarize:extraction")),
-        "synthesis_enrichment": max(c["_endS"] for c in synth_enrich),
-        "assembly": total_s,
-    }
-
-
-def _phases_ms(bounds: dict[str, float]) -> dict[str, int]:
-    phases, previous = {}, 0.0
-    for name, end in bounds.items():
-        phases[name] = int(round((end - previous) * 1000))
-        previous = end
-    phases["visual_inject"] = 0
-    return phases
-
-
-def _split(total: float, weights: dict[str, float], keys: tuple[str, ...]) -> dict[str, float]:
-    weight_sum = sum(weights[k] for k in keys)
-    return {k: round(total * weights[k] / weight_sum, 3) for k in keys}
-
-
-def _frame_windows(calls: list[dict], bounds: dict[str, float]) -> tuple[float, float]:
-    """Seconds of the frames branch before and after the vision call."""
-    window_start, window_end = bounds["metadata"], bounds["transcript_frames"]
-    vision = _span(calls, "frame_vision")
-    if not vision:
-        return window_end - window_start, 0.0
-    return vision[0]["_startS"] - window_start, window_end - vision[0]["_endS"]
-
-
-def _frame_sleeps(
-    video_id: str, tier: str, calls: list[dict], bounds: dict[str, float]
-) -> tuple[dict[str, float], bool]:
-    """Frames sub-step sleeps; ``True`` when they had to be estimated.
-
-    STANDARD/zero runs do every download/detect/hires/upload step BEFORE the
-    vision call; HIGH runs call vision (the reselect hook) between scoring
-    and hi-res. Whatever the log does not account for lands in
-    ``manifestCheck`` (before) and ``persistVision`` (after).
-    """
-    pre, post = _frame_windows(calls, bounds)
-    before_keys = _PRE_KEYS if tier == "high" else _PRE_KEYS + _POST_KEYS
-    after_keys = _POST_KEYS if tier == "high" else ()
-    logged = _LOGGED_FRAME_STEPS.get(video_id)
-    estimated = logged is None
-    if estimated:
-        logged = {**_split(pre, _PRE_VISION_SPLIT, before_keys)}
-        if after_keys:
-            logged.update(_split(post, _PRE_VISION_SPLIT, after_keys))
-    sleeps = dict(logged)
-    sleeps["manifestCheck"] = round(max(0.0, pre - sum(logged.get(k, 0.0) for k in before_keys)), 3)
-    sleeps["persistVision"] = round(max(0.0, post - sum(logged.get(k, 0.0) for k in after_keys)), 3)
-    return sleeps, estimated
-
-
 def _sleeps(
-    args: argparse.Namespace, calls: list[dict], bounds: dict, doc: dict
-) -> tuple[dict, bool]:
-    frames, estimated = _frame_sleeps(args.video, args.tier, calls, bounds)
-    description = _span(calls, "description_analysis")[0]
-    return {
+    args: argparse.Namespace, calls: list[dict], bounds: dict, doc: dict, frames: dict
+) -> tuple[dict, dict, bool]:
+    """(sleeps, downloads, estimated) — LLM gaps + the media fakes' latencies."""
+    hires_frames = sum(1 for f in frames["selected"] if f["timestamp"] > 0)
+    media, downloads, estimated = media_timings(args.video, args.tier, calls, bounds, hires_frames)
+    description = span_calls(calls, "description_analysis")[0]
+    sleeps = {
         "metadata": round(bounds["metadata"] - description["latencyMs"] / 1000, 3),
         "transcript": doc["transcriptMeta"]["fetchWallMs"] / 1000,
-        **frames,
-        "momentFill": round(bounds["assembly"] - bounds["synthesis_enrichment"], 3),
+        **media,
         "qdrantStore": 0.0,
-    }, estimated
+    }
+    return sleeps, downloads, estimated
 
 
 # ─── Assembly of the cassette ───
@@ -363,7 +291,7 @@ def _provenance(args: argparse.Namespace, trace: dict, doc: dict, has_frames: bo
 def _recorded(bounds: dict[str, float], doc: dict, estimated: bool, notes: list[str]) -> dict:
     return {
         "totalMs": doc["processingTimeMs"],
-        "phasesMs": _phases_ms(bounds),
+        "phasesMs": phases_ms(bounds),
         "milestonesMs": {
             "firstTabReadyMs": int(bounds["synthesis_enrichment"] * 1000),
             "completeMs": doc["processingTimeMs"],
@@ -389,10 +317,11 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
     trace, doc, ledger, s3 = _load_run(args)
     t0 = _ts(trace["timestamp"])
     calls = _with_ordinals([*_trace_calls(trace, t0), _description_call(ledger, doc, t0)])
-    bounds = _phase_bounds(calls, doc["processingTimeMs"] / 1000)
-    sleeps, estimated = _sleeps(args, calls, bounds, doc)
+    bounds = phase_bounds(calls, doc["processingTimeMs"] / 1000)
     manifest = s3.get(f"videos/{args.video}/scenes-v3/manifest.json") or {}
     has_frames = "frames" in manifest
+    frames = _frames_spec(manifest if has_frames else None, args.tier)
+    sleeps, downloads, estimated = _sleeps(args, calls, bounds, doc, frames)
     segments = s3[f"videos/{args.video}/transcript.json"]["segments"]
     return {
         "schema": CASSETTE_SCHEMA,
@@ -405,7 +334,8 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
             "source": doc["transcriptMeta"]["source"],
             "segments": [[s["startMs"], s["endMs"], s["text"]] for s in segments],
         },
-        "frames": _frames_spec(manifest if has_frames else None, args.tier),
+        "frames": frames,
+        "downloads": downloads,
         "sleeps": sleeps,
         "llm": [{k: v for k, v in c.items() if not k.startswith("_")} for c in calls],
         "recorded": _recorded(bounds, doc, estimated, args.note or []),

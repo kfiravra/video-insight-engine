@@ -1,6 +1,6 @@
 # Gate 0 — tier-probe A/B, offline (task 0.8)
 
-**Recommendation: `anthropic/claude-haiku-4-5-20251001`, but 1b.1 must force bare JSON output.** Domain and `has_visual_demo` agreement are tied. Format differs by one video, which is noise at n = 18. Haiku is the only model that stayed under the 3 s cap on every call. Kfir decides (plan §owner list: "tier-probe model decision after the A/B").
+**Recommendation: `anthropic/claude-haiku-4-5-20251001`, but 1b.1 must force bare JSON output.** Domain and `has_visual_demo` agreement are tied, on all 18 rows and on the 17 left after dropping the suspect golden row (each field scored on its own; see Results). Format differs by one video, which is noise at n = 18. Haiku is the only model that stayed under the 3 s cap on every call, but that tail claim rests on a single gpt-4o-mini outlier. Kfir decides (plan §owner list: "tier-probe model decision after the A/B").
 
 Raw rows + summaries: [`g0-tier-probe-ab.json`](./g0-tier-probe-ab.json). Script: `scripts/tier_probe_ab.py` (+ `scripts/_tier_probe_inputs.py`, draft prompt `scripts/tier_probe_ab_prompt.txt`).
 
@@ -8,28 +8,30 @@ Raw rows + summaries: [`g0-tier-probe-ab.json`](./g0-tier-probe-ab.json). Script
 
 - 18 live golden entries (`dev/golden-dataset/videos.yaml`, `disabled` skipped), one call per (video, model), sequential, model order alternating per video. Total: 36 calls.
 - `temperature=0`, `max_tokens=80`, `response_format={"type":"json_object"}` (what the classifier sends today via `json_mode`), `timeout=15 s`, `num_retries=0`. LiteLLM direct, no callbacks → nothing written to Langfuse or Mongo.
-- Prompt (Appendix B.1): today's `classify.txt` domain/format lists + `<classification_guidance>`; traits and reasoning removed; `<has_visual_demo>` definition added; `<output_language>` line added (D16). The static part comes first and the per-video block last, so gpt-4o-mini's automatic prefix cache can apply. Haiku's minimum cacheable size is not reached (~1.9k tokens).
+- Prompt (Appendix B.1): today's `classify.txt` domain/format lists + `<classification_guidance>`; traits and reasoning removed; `<has_visual_demo>` definition added; `<output_language>` line added (D16). The static part comes first and the per-video block last. No prompt-cache effect was measured: the recorded costs match uncached list prices.
 - Input: title, channel, duration, YouTube category, ≤ 15 tags, description ≤ 500 chars, and three clean transcript windows of ≈ 700 chars (start/middle/end, cut on word boundaries). `[VISUAL at …]` / `[ON-SCREEN TEXT at …]` spans are stripped. A transcript ≤ 2,100 chars is split into thirds and never duplicated.
 
 ## Results
 
 All 18 live rows:
 
-| Model | domain % | format % | has_visual_demo % | parse fail | bare JSON | hit max_tokens | p50 ms | p95 ms | max ms | > 3 s | $/call |
+| Model | domain % | format % | has_visual_demo % | parse fail | field errors | bare JSON | hit max_tokens | p50 ms | max ms | > 3 s | $/call |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| gpt-4o-mini | 72.2 | **77.8** | 83.3 | 1 | **18/18** | 0 | **1113** | 4330 | 4330 | **1** | **0.00027** |
-| Haiku 4.5 | 72.2 | 72.2 | **88.9** | **0** | 0/18 | 12 | 1350 | **1635** | **1635** | 0 | 0.00224 |
+| gpt-4o-mini | 72.2 | **77.8** | 88.9 | 0 | 1 | **18/18** | 0 | **1113** | 4330 | **1** | **0.00027** |
+| Haiku 4.5 | 72.2 | 72.2 | 88.9 | 0 | 0 | 0/18 | 12 | 1350 | **1635** | 0 | 0.00224 |
 
 Without `review-airpods-pro`, whose golden URL is wrong (see below), n = 17:
 
-| Model | domain % | format % | has_visual_demo % | parse fail | p50 ms | p95 ms | $/call |
-|---|---|---|---|---|---|---|---|
-| gpt-4o-mini | 76.5 | 82.4 | 88.2 | 0 | 1126 | 4330 | 0.00027 |
-| Haiku 4.5 | 76.5 | 76.5 | 88.2 | 0 | 1355 | 1635 | 0.00227 |
+| Model | domain % | format % | has_visual_demo % | parse fail | field errors | p50 ms | max ms | $/call |
+|---|---|---|---|---|---|---|---|---|
+| gpt-4o-mini | 76.5 | 82.4 | 88.2 | 0 | 0 | 1126 | 4330 | 0.00027 |
+| Haiku 4.5 | 76.5 | 76.5 | 88.2 | 0 | 0 | 1355 | 1635 | 0.00227 |
 
-- **Parse fail.** A failure means the first JSON object is missing or has an invalid enum or type. Parsing uses the same rule as the pipeline's `parse_json_response` (fences and trailing prose are tolerated). gpt-4o-mini's one failure is `domain: "entertainment"` on the white-noise video. The prod classifier would return `None` on it and fall back.
+No p95 column: at n < 20 a nearest-rank p95 is just the max, so the script withholds it and the tables show the max.
+
+- **Parsing and scoring.** The first JSON object in the answer wins, as in the pipeline's `parse_json_response`; fences and trailing prose are tolerated. Fields are then normalised the way `classifier.py` does it: enums are `.strip().lower()`, an invalid format becomes `commentary`, and confidence is clamped to [0, 1]. An invalid domain becomes `null` (the prod classifier returns `None` for the whole result and falls back), and so does a non-boolean `has_visual_demo`, which has no prod counterpart. Each field scores on its own. "Parse fail" means no JSON object at all; "field errors" counts rows with any invalid field. gpt-4o-mini's single field error is `domain: "entertainment"` on the white-noise video; its format (`vlog`) and `has_visual_demo` (false) on that row still score.
 - **Haiku ignores `json_object` through LiteLLM.** All 18 Haiku answers were wrapped in a ```` ```json ```` fence. 12 of 18 then went on to a `**Reasoning:**` tail until they hit `max_tokens=80` (`finish_reason=length`). The JSON object always came first and was always complete, so nothing was lost. The cost was latency and tokens: the 6 Haiku calls without the tail took 891–1032 ms (median ≈ 0.92 s), and the 12 with it took 1302–1635 ms. A Haiku probe that returns bare JSON should therefore beat gpt-4o-mini's p50.
-- **Latency tail.** gpt-4o-mini: 1 of 18 calls over the 3 s cap (4.33 s, `learning-photosynthesis`) and 3 of 18 over 2 s (2.39, 2.16, 4.33 s). Haiku: max 1.64 s, even while generating the wasted tail. n = 18 is small; one outlier is weak evidence, but the frames branch caps the probe at 3 s, so the tail matters more than p50.
+- **Latency tail.** gpt-4o-mini: 1 of 18 calls over the 3 s cap (4.33 s, `learning-photosynthesis`) and 3 of 18 over 2 s (2.39, 2.16, 4.33 s). Haiku: max 1.64 s, even while generating the wasted tail. The tail comparison rests on that one 4.33 s outlier, which is weak evidence at n = 18. It still counts, because the frames branch caps the probe at 3 s, so the tail matters more than p50. Latency includes calls that errored (none did); a timeout would land in max and in "> 3 s".
 - **Cost.** gpt-4o-mini is 8× cheaper ($0.00027 vs $0.00224 per call), but either is under 1% of the $0.29 v8 per-video baseline.
 
 ## Per-video answers (golden → gpt-4o-mini / Haiku)
@@ -49,7 +51,7 @@ Without `review-airpods-pro`, whose golden URL is wrong (see below), n = 17:
 | science-black-holes | science/lecture | F | science/**documentary**/F | science/**commentary**/F |
 | travel-vietnam-10day | travel/documentary | T | travel/documentary/T | travel/documentary/T |
 | fitness-pushup-form | fitness/tutorial | T | fitness/tutorial/T | fitness/tutorial/T |
-| review-airpods-pro | review/commentary | F | parse fail (`entertainment`) | **learning**/**entertainment**/F |
+| review-airpods-pro | review/commentary | F | **null** (`entertainment`)/**vlog**/F | **learning**/**entertainment**/F |
 | food-travel-montreal-vlog | travel/vlog | T | **food**/vlog/T | **food**/**walkthrough**/T |
 | food-recipe-story-intro | food/tutorial | T | food/tutorial/T | food/tutorial/T |
 | gaming-op17-static-camera | gaming/unboxing | T | gaming/unboxing/T | gaming/unboxing/T |
@@ -59,7 +61,7 @@ Without `review-airpods-pro`, whose golden URL is wrong (see below), n = 17:
 
 ## Disagreements worth noting
 
-1. **Both models miss the same domains: 5/18 each, on the same videos.** On every row both parsed, the two models agree with each other on domain (17/17) and on `has_visual_demo` (17/17). The misses come from the prompt or the golden set, not the model:
+1. **Both models miss the same domains: 5/18 each, on the same videos.** The two models agree with each other on domain on 17/18 rows (the 18th is gpt-4o-mini's invalid `entertainment`) and on `has_visual_demo` on 18/18. The misses come from the prompt or the golden set, not the model:
    - `gaming-op17-set-verdict` → `review`. A TCG set/market commentary has no guidance line; only TCG *openings* are mapped to `gaming`. **1b.1:** add "TCG / collectible-card market or set commentary is `gaming`".
    - `learning-photosynthesis`, `learning-double-slit` → `science`. Both models are defensible here, since `science` is listed as "science explanations, experiments, physics, chemistry, biology". **Kfir:** re-label these golden rows as `science`, or add guidance that separates them.
    - `food-travel-montreal-vlog` → `food` (golden `travel`). This is the anchor the brief says must not get recipe components. Under v9 the domain picks the tier/playbook, so the probe will call this a food video. **1b.1/plan:** add "an eating tour of a city is `travel`, `food` is cooking/preparation", or accept `food` as the hint and rely on the plan's evidence (`has_ingredients=false`) to keep recipe tabs out. The `expectedDomain` assertion on this row will catch it either way.
@@ -69,7 +71,7 @@ Without `review-airpods-pro`, whose golden URL is wrong (see below), n = 17:
 
 ## Inputs and sources
 
-- **Dev MongoDB holds only 3 of the 18** (`IODxDxX7oi4` push-up, `Jru5B044HOs` 7-min workout, `5VOUleaZ63E` OP17 unboxing). Even those have no description/category/tags. Title/channel/duration came from Mongo for those 3 (`mongo+summarizer`) and from the summarizer fetch for the other 15. Stored frame captions exist for 1 video only (push-up: 1 caption), so labels came from domain/format, title and transcript.
+- **Dev MongoDB holds only 3 of the 18** (`IODxDxX7oi4` push-up, `Jru5B044HOs` 7-min workout, `5VOUleaZ63E` OP17 unboxing). Even those have no description/category/tags. Title/channel/duration came from Mongo for those 3 (`mongo+summarizer`) and from the summarizer fetch for the other 15. Frame captions are read by walking each Mongo document's fields. When the inputs were refreshed (local Mongo only, after golden runs landed in dev today), captions existed for 4 videos: push-up, OP17 unboxing, OP13 box opening and set-verdict. They agree with the proposed labels: cards held up to camera for the openings; YouTube, TCGPlayer and price-dashboard screens for set-verdict. For the rest, labels came from domain/format, title and transcript. Metadata and transcripts stay as first fetched; only the captions were refreshed. Prompts never include captions, so the recorded answers are unaffected.
 - **Metadata** for all 18 came from `extract_video_data` inside `vie-summarizer` (dev proxy, `docker exec`). Mongo was read via `docker exec vie-mongodb mongosh` because port 27017 refuses connections from the host. Inputs are cached in the session scratchpad, not the repo.
 - **Transcript layer per video**, in pipeline order:
   - `s3` (2): push-up, 7-min workout.
@@ -100,10 +102,9 @@ These are proposed labels, not ground truth. Reasons are in `VISUAL_DEMO_LABELS`
 ## Reproduce
 
 ```bash
-services/summarizer/.venv/bin/python scripts/tier_probe_ab.py --cache-dir <scratch>/probe-inputs --dry-run      # inputs only
-services/summarizer/.venv/bin/python scripts/tier_probe_ab.py --cache-dir <scratch>/probe-inputs \
-    --out-json dev/active/pipeline-1min/gates/g0-tier-probe-ab.json                                            # 36 calls
-services/summarizer/.venv/bin/python scripts/tier_probe_ab.py --cache-dir <scratch>/probe-inputs \
-    --out-json dev/active/pipeline-1min/gates/g0-tier-probe-ab.json --rescore                                  # no calls
-cd services/summarizer && .venv/bin/python -m pytest -q tests/test_tier_probe_ab.py                            # 32 passed
+P=services/summarizer/.venv/bin/python; J=dev/active/pipeline-1min/gates/g0-tier-probe-ab.json
+$P scripts/tier_probe_ab.py --cache-dir <scratch>/probe-inputs --dry-run                # inputs only; with --out-json $J refreshes its inputs block
+$P scripts/tier_probe_ab.py --cache-dir <scratch>/probe-inputs --out-json $J            # 36 calls
+$P scripts/tier_probe_ab.py --out-json $J --rescore                                     # offline: saved answers + saved inputs, nothing external
+cd services/summarizer && .venv/bin/python -m pytest -q tests/test_tier_probe_ab.py     # 45 passed
 ```
