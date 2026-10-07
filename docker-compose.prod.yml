@@ -41,7 +41,6 @@ x-summarizer-env: &summarizer-env
   LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-4096}
   LLM_FAST_MAX_TOKENS: ${LLM_FAST_MAX_TOKENS:-2048}
   LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-60.0}
-  LLM_NUM_RETRIES: ${LLM_NUM_RETRIES:-2}
   LLM_EXTRACTION_MODEL: ${LLM_EXTRACTION_MODEL:-}
   # Enrichment: blank = the fast tier of LLM_PROVIDER. Vision: Sonnet on purpose (frame descriptions
   # drive the moment gallery; owner rejected Haiku for it 2026-09-16). config.py keeps the Haiku dev pins.

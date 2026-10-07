@@ -241,7 +241,7 @@ volumes:
 # ────────────────────────────────────────────────────
 LLM_PROVIDER=anthropic          # anthropic, openai, or gemini
 LLM_FAST_PROVIDER=              # Optional: separate provider for fast model
-LLM_FALLBACK_PROVIDER=          # Optional: fallback if primary fails
+LLM_FALLBACK_PROVIDER=          # Optional: cross-provider fallback after one same-provider retry (primary-model calls)
 
 # Provider API Keys (set for providers you use)
 ANTHROPIC_API_KEY=sk-ant-api03-xxxxxxxxxxxxx

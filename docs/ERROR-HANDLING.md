@@ -220,8 +220,10 @@ async def validate_video(youtube_id: str) -> VideoValidation:
 
 Two layers, both real code:
 
-- **LLM calls** — LiteLLM `num_retries` (`LLM_NUM_RETRIES`) with provider fallbacks
-  (see [LLM Error Handling](#llm-error-handling)).
+- **LLM calls** — summarizer: `call_llm_with_retry` (`utils/llm_retry.py`) retries
+  transient errors on the same model, then falls back to `LLM_FALLBACK_PROVIDER`
+  (see [LLM Error Handling](#llm-error-handling)); LiteLLM's own retries and
+  fallbacks are off. The assistant keeps LiteLLM `num_retries` (`LLM_NUM_RETRIES`).
 - **Queue jobs** — `services/summarizer/src/worker/runner.py`: a pipeline exception
   with `attempt < WORKER_MAX_RETRIES` (3) waits
   `WORKER_RETRY_BACKOFF_SECONDS × 2^(attempt-1)` (5 → 10 → 20 s, capped 120 s) and
@@ -466,48 +468,36 @@ if await get_failed_jobs_count() > 10:
 
 ## LLM Error Handling
 
-### Claude API Errors
+Every summarizer stage calls the LLM through `call_llm_with_retry`
+(`services/summarizer/src/utils/llm_retry.py`). Each attempt is one request to one
+model (LiteLLM `num_retries=0`, no LiteLLM `fallbacks`), so telemetry and the
+Langfuse generation always name the model that actually answered.
 
-| Error                 | Action               |
-| --------------------- | -------------------- |
-| Rate limit (429)      | Retry with backoff   |
-| Server error (500)    | Retry with backoff   |
-| Invalid request (400) | Log, fail job        |
-| Auth error (401)      | Alert, fail all jobs |
+### Errors
 
-### Fallback Strategy
+| Error | Action |
+| --- | --- |
+| Timeout, 429, 5xx, connection error, empty reply | Retry (the stage's `max_retries` budget) |
+| 400 / 401 / 403 / 404 / 422, programming errors | Raise on first occurrence — another attempt cannot fix them |
 
-```python
-# summarizer/src/services/llm.py
+Before a same-model retry the wrapper waits the provider's `retry-after-ms` /
+`retry-after` header (capped at 20 s), else a linear backoff (1 s, 2 s, …). A
+switch to the fallback model does not wait.
 
-LLM_CONFIG = {
-    'primary': 'claude-sonnet-4-6',
-    'fallback': 'claude-3-haiku-20240307',  # Cheaper, for retries
-    'max_retries': 3
-}
+### Fallback
 
-async def call_llm(prompt: str, attempt: int = 1):
-    """Call Claude with fallback."""
+`LLM_FALLBACK_PROVIDER` (blank = none) names a cross-provider fallback for
+**primary-model** calls: the first try and ONE same-provider retry, then the
+fallback provider's default model for the remaining attempts
+(`max_retries` 1 or 2 → primary, primary, fallback; 3 → primary, primary,
+fallback, fallback; 0 → a single attempt). Fast-model calls never fall back, and
+a fallback on the primary's own provider is ignored. A fallback attempt is tagged
+`fallbackFrom` in the span metadata and counted in `pipeline.timing`.
 
-    model = LLM_CONFIG['primary'] if attempt <= 2 else LLM_CONFIG['fallback']
-
-    try:
-        return await anthropic.messages.create(
-            model=model,
-            max_tokens=4096,
-            messages=[{"role": "user", "content": prompt}]
-        )
-    except RateLimitError:
-        if attempt < LLM_CONFIG['max_retries']:
-            await asyncio.sleep(BACKOFF[attempt])
-            return await call_llm(prompt, attempt + 1)
-        raise
-    except ServerError:
-        if attempt < LLM_CONFIG['max_retries']:
-            await asyncio.sleep(BACKOFF[attempt])
-            return await call_llm(prompt, attempt + 1)
-        raise
-```
+When every attempt fails the wrapper returns `None` and the stage takes its own
+fallback (fallback plan, no memory, metadata tier, …); the parallel batch
+extractor alone asks for the last rate-limit error to be re-raised so it can
+re-run that batch sequentially.
 
 ---
 
