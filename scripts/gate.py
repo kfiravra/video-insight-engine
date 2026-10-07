@@ -12,6 +12,9 @@ Compares one eval run summary (``reports/eval-<ts>.json`` from
   noise file; floored at ``MIN_TOLERANCE``). The floor keeps a metric whose
   baseline passes happened to agree exactly from gating on rounding-level
   changes.
+* ``faithfulness`` is informational (``INFORMATIONAL_METRICS``): compared and
+  printed like the others, but it never fails the gate nor makes the input
+  unusable — the judge samples 20 % of claims, too noisy to gate on.
 * A missing score is "not scored", never a regression: a video with no
   value for a metric in the run (e.g. no Langfuse trace → no faithfulness)
   or none in the baseline is listed as not scored and left out of that
@@ -91,6 +94,10 @@ MIN_TOLERANCE: dict[str, float] = {
 }
 
 
+# Reported in the gate output, never gating (see the module docstring).
+INFORMATIONAL_METRICS: frozenset[str] = frozenset({"faithfulness"})
+
+
 class GateInputError(ValueError):
     """The report and noise file cannot be compared."""
 
@@ -109,6 +116,7 @@ class MetricCheck:
     # Completed videos the baseline scored but this run did not (a subset of
     # ``not_scored``): too many of them make the run unusable (``check_coverage``).
     lost: tuple[str, ...] = ()
+    informational: bool = False
 
     @property
     def gated(self) -> bool:
@@ -127,6 +135,8 @@ class MetricCheck:
         if not self.gated:
             return f"{self.metric}: not gated (no video scored in both run and baseline){unscored}"
         verdict = "REGRESSED" if self.regressed else "ok"
+        if self.informational:
+            verdict = f"{'below baseline' if self.regressed else 'ok'} (informational, not gating)"
         return (
             f"{self.metric}: {self.current:.4f} vs baseline {self.baseline:.4f} "
             f"(±{self.tolerance:.4f}, {self.direction} is better, n={self.paired}) "
@@ -150,7 +160,7 @@ class GateResult:
         return (
             not self.assertion_failures
             and not self.xpasses
-            and not any(c.regressed for c in self.checks)
+            and not any(c.regressed and not c.informational for c in self.checks)
         )
 
 
@@ -228,6 +238,7 @@ def check_metric(report: dict[str, Any], noise: dict[str, Any], metric: str) -> 
         paired=len(current_pairs),
         not_scored=tuple(not_scored),
         lost=tuple(lost),
+        informational=metric in INFORMATIONAL_METRICS,
     )
 
 
@@ -243,7 +254,7 @@ def check_coverage(checks: list[MetricCheck]) -> None:
     scored count as lost (its ``notScored`` videos have no baseline value).
     """
     for check in checks:
-        if not check.lost:
+        if not check.lost or check.informational:
             continue
         if check.paired == 0 or len(check.lost) > lost_allowance(check.paired):
             raise GateInputError(

@@ -14,7 +14,8 @@ Phases:
    Langfuse dataset run.
 
 Primary metrics (gated by ``scripts/gate.py`` against the noise file):
-quality (mean ``overall``), faithfulness, duplicate-item rate.
+quality (mean ``overall``), duplicate-item rate; faithfulness is reported
+there but never gates.
 
 Usage::
 

@@ -227,9 +227,26 @@ class TestGate:
     def test_should_apply_tolerance_floor_when_measured_noise_is_zero(
         self, noise: dict[str, Any]
     ) -> None:
-        # Both passes agreed exactly on faithfulness (noise 0.0); a 0.01 dip is
-        # inside the 0.02 floor.
-        assert gate.evaluate(_summary({"faithfulness": -0.01}), noise).passed
+        # Both passes agreed exactly on duplicateRate (noise 0.0); a 0.005 rise
+        # is inside the 0.01 floor.
+        assert gate.evaluate(_summary({"duplicateRate": 0.005}), noise).passed
+
+    def test_should_pass_the_gate_when_faithfulness_drops_beyond_its_tolerance(
+        self, noise: dict[str, Any]
+    ) -> None:
+        assert gate.evaluate(_summary({"faithfulness": -0.5}), noise).passed
+
+    def test_should_report_a_faithfulness_drop_as_informational(
+        self, noise: dict[str, Any]
+    ) -> None:
+        check = gate.check_metric(_summary({"faithfulness": -0.5}), noise, "faithfulness")
+        assert "below baseline (informational, not gating)" in check.describe()
+
+    def test_should_pass_a_run_that_lost_faithfulness_for_every_video(
+        self, noise: dict[str, Any]
+    ) -> None:
+        report = _without(_summary(), "faithfulness", "a", "b")
+        assert gate.evaluate(report, noise).passed
 
     def test_should_report_not_scored_without_failing_when_the_run_lacks_faithfulness(
         self, noise: dict[str, Any]
@@ -263,28 +280,28 @@ class TestGate:
     def test_should_refuse_a_run_that_lost_a_metric_for_every_video(
         self, noise: dict[str, Any]
     ) -> None:
-        report = _without(_summary(), "faithfulness", "a", "b")
-        with pytest.raises(gate.GateInputError, match="metric faithfulness not scored for 2"):
+        report = _without(_summary(), "quality", "a", "b")
+        with pytest.raises(gate.GateInputError, match="metric quality not scored for 2"):
             gate.evaluate(report, noise)
 
     def test_should_refuse_a_run_that_lost_a_metric_beyond_the_allowance(self) -> None:
         ids = tuple(f"v{i:02d}" for i in range(12))
         noise = build_noise([_summary(ids=ids), _summary(ids=ids)], ["r1", "r2"])
-        report = _without(_summary(ids=ids), "faithfulness", *ids[:3])  # 3 > max(2, 20 % of 9)
+        report = _without(_summary(ids=ids), "quality", *ids[:3])  # 3 > max(2, 20 % of 9)
         with pytest.raises(gate.GateInputError, match="unusable input"):
             gate.evaluate(report, noise)
 
     def test_should_pass_a_run_that_lost_a_metric_within_the_allowance(self) -> None:
         ids = tuple(f"v{i:02d}" for i in range(12))
         noise = build_noise([_summary(ids=ids), _summary(ids=ids)], ["r1", "r2"])
-        report = _without(_summary(ids=ids), "faithfulness", *ids[:2])
+        report = _without(_summary(ids=ids), "quality", *ids[:2])
         assert gate.evaluate(report, noise).passed
 
     def test_should_not_count_videos_the_baseline_never_scored_as_lost(self) -> None:
         ids = tuple(f"v{i:02d}" for i in range(12))
-        unscored = _without(_summary(ids=ids), "faithfulness", *ids[:5])
+        unscored = _without(_summary(ids=ids), "quality", *ids[:5])
         noise = build_noise([unscored, _summary(ids=ids)], ["r1", "r2"])
-        report = _without(_summary(ids=ids), "faithfulness", *ids[:5])
+        report = _without(_summary(ids=ids), "quality", *ids[:5])
         assert gate.evaluate(report, noise).passed
 
     def test_should_not_count_an_errored_video_as_lost(self, noise: dict[str, Any]) -> None:
@@ -436,7 +453,7 @@ class TestGateCli:
     def test_should_exit_one_when_a_synthetic_drop_exceeds_noise(
         self, tmp_path: Path, noise: dict[str, Any]
     ) -> None:
-        argv = self._argv(tmp_path, _summary({"faithfulness": -0.2}), noise)
+        argv = self._argv(tmp_path, _summary({"quality": -0.2}), noise)
         assert gate.main(argv) == 1
 
     def test_should_exit_zero_when_run_matches_baseline(
