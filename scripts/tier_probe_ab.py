@@ -80,7 +80,7 @@ VISUAL_DEMO_LABELS: dict[str, tuple[bool, str]] = {
     "science-black-holes": (False, "animated explainer; the narration carries the value"),
     "travel-vietnam-10day": (True, "places toured on camera"),
     "fitness-pushup-form": (True, "push-up form demonstrated"),
-    "review-airpods-pro": (False, "the URL is a 10-hour white-noise black screen, not a review"),
+    "review-airpods-pro-2": (True, "borderline: product + features in b-roll; verdict spoken"),
     "food-travel-montreal-vlog": (True, "food and places shown on camera; eating tour"),
     "food-recipe-story-intro": (True, "recipe cooked on camera after the story intro"),
     "gaming-op17-static-camera": (True, "static-camera pack opening; the reveals are the content"),
