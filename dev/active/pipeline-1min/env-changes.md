@@ -12,7 +12,7 @@ Prod today (read from `docker compose config` on the box, 2026-10-07):
 
 | Setting | Value | Why | Added by | Needed before |
 |---|---|---|---|---|
-| _(none yet)_ | | | | |
+| remove `SCENE_HIRES_TIMEOUT`, `FRAME_EXTRACTION_ENABLED`, `MAX_FRAMES_PER_VISUAL`, `MAX_FRAMES_PER_CHAPTER`, `FRAME_MIN_SPACING_SECONDS`, `FRAME_WITHIN_BLOCK_DEDUP_THRESHOLD` if present | (delete the lines) | settings deleted in 1a.2 (bf618ee) — ignored by the code now; cleanup only | 1a.2 | optional, any time |
 
 ## GitHub secrets (scheduled eval, prod-API mode — D13)
 
@@ -44,5 +44,6 @@ handle `schedule` (dry-run + retrieval skip, live runs with `mode=eval`, `limit=
 |---|---|---|
 | Prod eval user (`EVAL_USER_EMAIL`) created by an admin — prod runs `ALLOW_REGISTRATION=false`, so the eval's register call gets 403 and falls through to login | the live eval logs in as this user | gate-0 decision (0.7) |
 | Prod eval user `tier: team` (`USER_COST_LIMIT_TEAM=-1`) — prod `USER_COST_LIMIT_FREE=1` USD/day stops a free user after ~5 runs; `pro` (20 USD) also fits 18 runs | 18 runs per scheduled eval ≈ $3.5–6 | gate-0 decision (0.7) |
-| Dev `eval@vie.local` has `isEvalUser: true` (set by hand in `mongosh` 2026-10-07 for the work parked on `wip/eval-faithfulness`) — nothing on `feat/pipeline-1min` reads it | none today; 1d.8 may key its eval-user rule on it | prod: decided in 1d.8 |
+| Dev `eval@vie.local` has `isEvalUser: true` — since 1d.8 (00a68bc) the API keys the eval-user rule on it (D25: its runs become `evalRun` rows, never served to / pruning other users) | the eval user's results never replace real users' versions | dev: done |
+| Prod eval user flagged `isEvalUser: true` AFTER it is created (1d.8): on the box `docker exec vie-mongodb sh -c 'mongosh --quiet -u "$MONGO_INITDB_ROOT_USERNAME" -p "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin video-insight-engine --eval "db.users.updateOne({ email: \"<EVAL_USER_EMAIL>\" }, { \$set: { isEvalUser: true } })"'` → expect `matchedCount: 1`; then `db.users.countDocuments({ isEvalUser: true })` = 1. Safe before the deploy (old code ignores it). | scheduled eval must not touch real users' versions | at the end, before enabling the schedule |
 | Prod `VIDEO_DAILY_LIMIT` (30 in the local `.env.production` copy; per user, rolling 24 h) ≥ 36 ONLY if the noise baseline (18 × 2) ever runs on prod; 18 per scheduled run fits | POST /api/videos limiter is global, not per tier | gate-0 decision (0.7) — none needed if the noise run stays on dev |

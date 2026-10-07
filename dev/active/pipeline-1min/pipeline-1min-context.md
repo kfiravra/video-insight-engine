@@ -1,6 +1,12 @@
 # pipeline-1min — Context
 
-Last Updated: 2026-10-07 — 🔄 IN PROGRESS (phase 0). Live docs in the main tree (branch `feat/pipeline-1min`).
+Last Updated: 2026-10-08 — 🔄 IN PROGRESS (phase 1, one uninterrupted run 1a+1b → g1a → 1c+1d → g1 → review). Live docs in the main tree (branch `feat/pipeline-1min`). Phase 0 merged (PR #22).
+
+## RESUME HERE (phase 1 run state)
+- Rules for this run: top of `pipeline-1min-tasks.md` (local commits per task id without asking; never push; never stage CLAUDE.md / .claude/**; main tree only, no worktrees; stop only when g1a + g1 are written, review-fix commit last).
+- Implementation is done by parallel Opus subagents following `agent-rules.md`; the coordinator commits (stage by path; a file shared by two in-flight tasks is staged hunk-wise via `git hash-object -w` + `git update-index --cacheinfo`; TS-only commits with partial files use `--no-verify` so lint-staged doesn't hide other agents' in-flight edits).
+- Progress = tasks.md checkboxes + log. If the agents were lost (new session), re-launch the `[~]` tasks from tasks.md with the same file ownership; check `git status` for their uncommitted work first and keep it.
+- Pending hand-offs for the wiring agent: `ctx.prompt_segments` (sponsor-filtered) used by extraction/plan/memory renders; `cached_response.resolve_synthesis` prefer `meta.keyTakeaways`; two `synthesis_complete` emissions; `chapter_detect` outline param from 1b.6; probe await before Step 6b; memory ∥ plan; delete classifier + `FRAME_TIER_EARLY_CLASSIFIER` + `category_confidence`. For 1c: remove the `inject_visual_context` call inside `build_prompt_transcript` (phases/extraction.py) with Phase 2.5; base_extraction.txt says markers are absolute video time.
 
 ## Why this task exists
 Prod takes 171–240 s per 20-minute captioned video and shows nothing until ~226 s. Kfir's brief
