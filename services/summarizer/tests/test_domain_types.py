@@ -61,9 +61,17 @@ class TestTravelData:
 
     def test_valid_travel_data(self):
         data = TravelData(
-            itinerary=[TravelDay(day=1, city="Tokyo", spots=[
-                TravelSpot(name="Shibuya Crossing", emoji="🏙️", description="Famous crossing")
-            ])],
+            itinerary=[
+                TravelDay(
+                    day=1,
+                    city="Tokyo",
+                    spots=[
+                        TravelSpot(
+                            name="Shibuya Crossing", emoji="🏙️", description="Famous crossing"
+                        )
+                    ],
+                )
+            ],
             budget=TravelBudget(total=1500, currency="USD"),
             packingList=[TravelPackingItem(item="Adapter", category="Electronics", essential=True)],
         )
@@ -85,12 +93,14 @@ class TestTravelData:
         assert day.day == 1
 
     def test_alias_support(self):
-        data = TravelData.model_validate({
-            "packingList": [{"item": "Shoes", "category": "Clothing", "essential": False}],
-            "bestSeason": "Spring",
-            "accommodationTips": "Stay in Shinjuku",
-            "transportationTips": "Get a JR pass",
-        })
+        data = TravelData.model_validate(
+            {
+                "packingList": [{"item": "Shoes", "category": "Clothing", "essential": False}],
+                "bestSeason": "Spring",
+                "accommodationTips": "Stay in Shinjuku",
+                "transportationTips": "Get a JR pass",
+            }
+        )
         assert data.packing_list[0].item == "Shoes"
         assert data.best_season == "Spring"
 
@@ -168,14 +178,16 @@ class TestLearningData:
     """Test LearningData model."""
 
     def test_valid_learning_data(self):
-        data = LearningData.model_validate({
-            "keyPoints": [{"emoji": "💡", "title": "Point 1", "detail": "Detail"}],
-            "concepts": [{"name": "Concept 1", "emoji": "📚", "definition": "A concept"}],
-            "takeaways": ["Do this"],
-            "timestamps": [{"time": "0:00", "seconds": 0, "label": "Start"}],
-            "keyQuestion": "What is this about?",
-            "summary": "A summary",
-        })
+        data = LearningData.model_validate(
+            {
+                "keyPoints": [{"emoji": "💡", "title": "Point 1", "detail": "Detail"}],
+                "concepts": [{"name": "Concept 1", "emoji": "📚", "definition": "A concept"}],
+                "takeaways": ["Do this"],
+                "timestamps": [{"time": "0:00", "seconds": 0, "label": "Start"}],
+                "keyQuestion": "What is this about?",
+                "summary": "A summary",
+            }
+        )
         assert len(data.key_points) == 1
         assert data.key_question == "What is this about?"
 
@@ -199,44 +211,60 @@ class TestLearningData:
     def test_concept_accepts_typed_connections(self):
         """Typed `{to, type}` connections (current contract) must validate, not
         fall back to passthrough as bare strings would have under `list[str]`."""
-        concept = LearningConcept.model_validate({
-            "name": "OOP",
-            "definition": "Object-oriented programming",
-            "connections": [{"to": "Classes", "type": "requires"}],
-        })
+        concept = LearningConcept.model_validate(
+            {
+                "name": "OOP",
+                "definition": "Object-oriented programming",
+                "connections": [{"to": "Classes", "type": "requires"}],
+            }
+        )
         assert concept.connections == [ConceptConnection(to="Classes", type="requires")]
 
     def test_concept_off_enum_relation_does_not_raise(self):
         """An unknown relation must survive validation (assembler owns the enum);
         a strict Literal here would drop the whole domain to passthrough."""
-        concept = LearningConcept.model_validate({
-            "name": "OOP", "definition": "d",
-            "connections": [{"to": "Classes", "type": "leadsTo"}],
-        })
+        concept = LearningConcept.model_validate(
+            {
+                "name": "OOP",
+                "definition": "d",
+                "connections": [{"to": "Classes", "type": "leadsTo"}],
+            }
+        )
         assert concept.connections[0].type == "leadsTo"
 
     def test_concept_mixed_legacy_and_typed_connections(self):
-        concept = LearningConcept.model_validate({
-            "name": "OOP", "definition": "d",
-            "connections": ["Classes", {"to": "Inheritance", "type": "partOf"}],
-        })
+        concept = LearningConcept.model_validate(
+            {
+                "name": "OOP",
+                "definition": "d",
+                "connections": ["Classes", {"to": "Inheritance", "type": "partOf"}],
+            }
+        )
         assert concept.connections[0] == "Classes"
         assert concept.connections[1] == ConceptConnection(to="Inheritance", type="partOf")
 
     def test_concept_group_is_preserved(self):
         """`group` powers the ConceptCanvas Groups view; it must round-trip
         through `model_dump`, not be silently dropped as an unknown field."""
-        concept = LearningConcept.model_validate({
-            "name": "OOP", "definition": "d", "group": "Foundations",
-        })
+        concept = LearningConcept.model_validate(
+            {
+                "name": "OOP",
+                "definition": "d",
+                "group": "Foundations",
+            }
+        )
         assert concept.group == "Foundations"
         assert concept.model_dump()["group"] == "Foundations"
 
     def test_science_concept_accepts_typed_connections_and_group(self):
-        concept = ScienceConcept.model_validate({
-            "name": "Wave-Particle Duality", "definition": "d", "group": "Fundamentals",
-            "connections": [{"to": "Photon", "type": "relatesTo"}],
-        })
+        concept = ScienceConcept.model_validate(
+            {
+                "name": "Wave-Particle Duality",
+                "definition": "d",
+                "group": "Fundamentals",
+                "connections": [{"to": "Photon", "type": "relatesTo"}],
+            }
+        )
         assert concept.group == "Fundamentals"
         assert concept.connections[0].to == "Photon"
 
@@ -271,12 +299,14 @@ class TestReviewData:
         assert verdict.badge == "recommended"
 
     def test_comparison_alias(self):
-        comp = ReviewComparison.model_validate({
-            "feature": "Battery",
-            "thisProduct": "5000mAh",
-            "competitor": "4500mAh",
-            "competitorName": "Pixel 8",
-        })
+        comp = ReviewComparison.model_validate(
+            {
+                "feature": "Battery",
+                "thisProduct": "5000mAh",
+                "competitor": "4500mAh",
+                "competitorName": "Pixel 8",
+            }
+        )
         assert comp.this_product == "5000mAh"
         assert comp.competitor_name == "Pixel 8"
 
@@ -285,19 +315,29 @@ class TestTechData:
     """Test TechData model."""
 
     def test_valid_tech_data(self):
-        data = TechData.model_validate({
-            "languages": ["Python", "TypeScript"],
-            "frameworks": ["FastAPI"],
-            "topics": ["REST API"],
-            "setup": {
-                "commands": ["pip install fastapi"],
-                "dependencies": [{"name": "fastapi", "version": "0.100.0"}],
-                "envVars": [{"name": "API_KEY", "description": "Your API key"}],
-            },
-            "snippets": [{"language": "python", "code": "print('hi')", "explanation": "Hello"}],
-            "patterns": [{"title": "DI", "doExample": "good", "dontExample": "bad", "explanation": "Why"}],
-            "cheatSheet": [{"title": "Quick start", "code": "uvicorn main:app", "description": "Run server"}],
-        })
+        data = TechData.model_validate(
+            {
+                "languages": ["Python", "TypeScript"],
+                "frameworks": ["FastAPI"],
+                "topics": ["REST API"],
+                "setup": {
+                    "commands": ["pip install fastapi"],
+                    "dependencies": [{"name": "fastapi", "version": "0.100.0"}],
+                    "envVars": [{"name": "API_KEY", "description": "Your API key"}],
+                },
+                "snippets": [{"language": "python", "code": "print('hi')", "explanation": "Hello"}],
+                "patterns": [
+                    {"title": "DI", "doExample": "good", "dontExample": "bad", "explanation": "Why"}
+                ],
+                "cheatSheet": [
+                    {
+                        "title": "Quick start",
+                        "code": "uvicorn main:app",
+                        "description": "Run server",
+                    }
+                ],
+            }
+        )
         assert len(data.languages) == 2
         assert data.setup.commands[0] == "pip install fastapi"
 
@@ -309,27 +349,33 @@ class TestTechData:
 
     def test_concepts_to_topics_migration(self):
         """Backward compat: old cached data with 'concepts' should migrate to 'topics'."""
-        data = TechData.model_validate({
-            "languages": ["Python"],
-            "concepts": ["REST API", "GraphQL"],
-        })
+        data = TechData.model_validate(
+            {
+                "languages": ["Python"],
+                "concepts": ["REST API", "GraphQL"],
+            }
+        )
         assert data.topics == ["REST API", "GraphQL"]
 
     def test_concepts_not_migrated_when_topics_present(self):
         """If both 'concepts' and 'topics' exist, 'topics' takes precedence."""
-        data = TechData.model_validate({
-            "topics": ["New Topic"],
-            "concepts": ["Old Concept"],
-        })
+        data = TechData.model_validate(
+            {
+                "topics": ["New Topic"],
+                "concepts": ["Old Concept"],
+            }
+        )
         assert data.topics == ["New Topic"]
 
     def test_pattern_alias(self):
-        pattern = TechPattern.model_validate({
-            "title": "Test",
-            "doExample": "good code",
-            "dontExample": "bad code",
-            "explanation": "Because",
-        })
+        pattern = TechPattern.model_validate(
+            {
+                "title": "Test",
+                "doExample": "good code",
+                "dontExample": "bad code",
+                "explanation": "Because",
+            }
+        )
         assert pattern.do_example == "good code"
 
 
@@ -338,7 +384,9 @@ class TestFitnessData:
 
     def test_valid_fitness_data(self):
         data = FitnessData(
-            meta=FitnessMeta(type="HIIT", difficulty="advanced", duration=30, muscleGroups=["legs"]),
+            meta=FitnessMeta(
+                type="HIIT", difficulty="advanced", duration=30, muscleGroups=["legs"]
+            ),
             exercises=[FitnessExercise(name="Squats", sets=3, reps="10")],
         )
         assert data.meta.type == "HIIT"
@@ -368,7 +416,9 @@ class TestMusicData:
             artist="Queen",
             genre=["Rock", "Opera"],
             credits=[MusicCredit(role="Vocals", name="Freddie Mercury")],
-            analysis=[{"aspect": "Production", "emoji": "🎛️", "detail": "Groundbreaking multi-track"}],
+            analysis=[
+                {"aspect": "Production", "emoji": "🎛️", "detail": "Groundbreaking multi-track"}
+            ],
             structure=[MusicSection(name="Intro", description="Piano opening")],
         )
         assert data.title == "Bohemian Rhapsody"
@@ -393,25 +443,36 @@ class TestProjectData:
     """Test ProjectData model."""
 
     def test_valid_project_data(self):
-        data = ProjectData.model_validate({
-            "projectName": "Bookshelf",
-            "difficulty": "beginner",
-            "estimatedTime": "4 hours",
-            "estimatedCost": "$50",
-            "materials": [{"name": "Pine board", "quantity": "2", "cost": "$15"}],
-            "tools": [{"name": "Drill", "required": True}],
-            "steps": [{"number": 1, "title": "Cut wood", "instruction": "Cut to size", "safetyNote": "Wear goggles"}],
-            "safetyWarnings": ["Wear safety glasses"],
-        })
+        data = ProjectData.model_validate(
+            {
+                "projectName": "Bookshelf",
+                "difficulty": "beginner",
+                "estimatedTime": "4 hours",
+                "estimatedCost": "$50",
+                "materials": [{"name": "Pine board", "quantity": "2", "cost": "$15"}],
+                "tools": [{"name": "Drill", "required": True}],
+                "steps": [
+                    {
+                        "number": 1,
+                        "title": "Cut wood",
+                        "instruction": "Cut to size",
+                        "safetyNote": "Wear goggles",
+                    }
+                ],
+                "safetyWarnings": ["Wear safety glasses"],
+            }
+        )
         assert data.project_name == "Bookshelf"
         assert data.steps[0].safety_note == "Wear goggles"
 
     def test_coercion_defaults(self):
-        data = ProjectData.model_validate({
-            "projectName": None,
-            "difficulty": "expert",
-            "estimatedTime": None,
-        })
+        data = ProjectData.model_validate(
+            {
+                "projectName": None,
+                "difficulty": "expert",
+                "estimatedTime": None,
+            }
+        )
         assert data.project_name == "Untitled Project"
         assert data.difficulty == "intermediate"
         assert data.estimated_time == "unknown"
@@ -421,11 +482,15 @@ class TestNarrativeData:
     """Test NarrativeData modifier model."""
 
     def test_valid_narrative_data(self):
-        data = NarrativeData.model_validate({
-            "keyMoments": [{"description": "The big reveal", "mood": "triumphant", "emoji": "🎉"}],
-            "quotes": [{"text": "To be or not to be", "speaker": "Hamlet"}],
-            "takeaways": ["Life is short"],
-        })
+        data = NarrativeData.model_validate(
+            {
+                "keyMoments": [
+                    {"description": "The big reveal", "mood": "triumphant", "emoji": "🎉"}
+                ],
+                "quotes": [{"text": "To be or not to be", "speaker": "Hamlet"}],
+                "takeaways": ["Life is short"],
+            }
+        )
         assert len(data.key_moments) == 1
         assert data.quotes[0].text == "To be or not to be"
 
@@ -439,10 +504,12 @@ class TestFinanceData:
     """Test FinanceData modifier model."""
 
     def test_valid_finance_data(self):
-        data = FinanceData.model_validate({
-            "costs": [{"item": "Flight", "amount": 500, "currency": "EUR"}],
-            "savingTips": ["Book early for cheaper flights"],
-        })
+        data = FinanceData.model_validate(
+            {
+                "costs": [{"item": "Flight", "amount": 500, "currency": "EUR"}],
+                "savingTips": ["Book early for cheaper flights"],
+            }
+        )
         assert len(data.costs) == 1
         assert data.costs[0].amount == 500
 
@@ -452,10 +519,12 @@ class TestFinanceData:
 
     def test_finance_ignores_budget_field(self):
         """Finance modifier no longer has a budget field — primary domain owns budget."""
-        data = FinanceData.model_validate({
-            "costs": [],
-            "savingTips": [],
-        })
+        data = FinanceData.model_validate(
+            {
+                "costs": [],
+                "savingTips": [],
+            }
+        )
         assert not hasattr(data, "budget")
 
 
@@ -519,21 +588,25 @@ class TestVIEResponse:
         assert len(response.scenarios) == 1
 
     def test_tab_definition_alias(self):
-        tab = TabDefinition.model_validate({
-            "id": "test",
-            "label": "Test",
-            "dataSource": "learning.keyPoints",
-        })
+        tab = TabDefinition.model_validate(
+            {
+                "id": "test",
+                "label": "Test",
+                "dataSource": "learning.keyPoints",
+            }
+        )
         assert tab.data_source == "learning.keyPoints"
 
     def test_meta_alias(self):
-        meta = VIEResponseMeta.model_validate({
-            "videoId": "abc",
-            "videoTitle": "Test",
-            "contentTags": ["learning"],
-            "primaryTag": "learning",
-            "userGoal": "Learn",
-        })
+        meta = VIEResponseMeta.model_validate(
+            {
+                "videoId": "abc",
+                "videoTitle": "Test",
+                "contentTags": ["learning"],
+                "primaryTag": "learning",
+                "userGoal": "Learn",
+            }
+        )
         assert meta.video_id == "abc"
         assert meta.content_tags == ["learning"]
 
@@ -543,8 +616,13 @@ class TestValidateDomainOutput:
 
     def test_single_tag_validates_and_wraps(self):
         result = validate_domain_output(
-            ["learning"], [],
-            {"keyPoints": [{"emoji": "💡", "title": "P1", "detail": "D1"}], "concepts": [], "takeaways": []},
+            ["learning"],
+            [],
+            {
+                "keyPoints": [{"emoji": "💡", "title": "P1", "detail": "D1"}],
+                "concepts": [],
+                "takeaways": [],
+            },
         )
         assert "learning" in result
         assert isinstance(result["learning"], dict)
@@ -557,7 +635,8 @@ class TestValidateDomainOutput:
 
     def test_multi_tag_unwraps_data_wrappers(self):
         result = validate_domain_output(
-            ["travel", "food"], [],
+            ["travel", "food"],
+            [],
             {
                 "travelData": {"itinerary": [{"day": 1, "city": "Tokyo"}]},
                 "foodData": {"ingredients": [{"name": "rice", "amount": 1}]},
@@ -569,7 +648,8 @@ class TestValidateDomainOutput:
     def test_multi_tag_missing_one_domain_flat_fallback(self):
         """When one domain is wrapped and the other is flat at top level, both should validate."""
         result = validate_domain_output(
-            ["travel", "food"], [],
+            ["travel", "food"],
+            [],
             {
                 "travelData": {"itinerary": [{"day": 1, "city": "Tokyo"}]},
                 # food fields at top level (no foodData wrapper)
@@ -583,7 +663,8 @@ class TestValidateDomainOutput:
     def test_multi_tag_missing_domain_no_data(self):
         """When secondary domain has no data at all, it should not appear in result."""
         result = validate_domain_output(
-            ["travel", "food"], [],
+            ["travel", "food"],
+            [],
             {"travelData": {"itinerary": []}},
         )
         assert "travel" in result
@@ -591,9 +672,12 @@ class TestValidateDomainOutput:
 
     def test_modifiers_validated(self):
         result = validate_domain_output(
-            ["learning"], ["finance"],
+            ["learning"],
+            ["finance"],
             {
-                "keyPoints": [], "concepts": [], "takeaways": [],
+                "keyPoints": [],
+                "concepts": [],
+                "takeaways": [],
                 "financeData": {"costs": [{"item": "Book", "amount": 20}], "savingTips": []},
             },
         )
@@ -601,11 +685,49 @@ class TestValidateDomainOutput:
         assert "finance" in result
         assert result["finance"]["costs"][0]["item"] == "Book"
 
-    def test_empty_data_returns_defaults(self):
-        """When data is empty, models produce default structures via flat fallback."""
-        result = validate_domain_output(["travel", "food"], [], {})
-        # Models with nested defaults (budget, meta) produce non-empty defaults
-        assert "travel" in result or "food" in result
+    def test_should_not_invent_domains_when_multi_tag_data_is_empty(self):
+        """Truthy model defaults (travel budget, project name) used to pass the
+        flat-fallback gate and ship default-only domains."""
+        result = validate_domain_output(["travel", "project"], [], {})
+
+        assert result == {}
+
+    def test_should_keep_flat_domain_when_its_fields_are_present(self):
+        result = validate_domain_output(["tech", "project"], [], {"topics": ["Rails"]})
+
+        assert list(result) == ["tech"]
+
+
+class TestSingleTagWrappedOutput:
+    """Regression for OuNKBjuV7A4: a single-tag response wrapped in ``{tag}`` or
+    ``{tag}Data`` was validated whole against the model, yielding all defaults."""
+
+    _TOPICS = ["DHH on Rails", "Leaving the cloud"]
+
+    def test_should_unwrap_tag_keyed_response(self):
+        result = validate_domain_output(["tech"], [], {"tech": {"topics": self._TOPICS}})
+
+        assert result["tech"]["topics"][0] == "DHH on Rails"
+
+    def test_should_unwrap_tag_data_keyed_response(self):
+        result = validate_domain_output(["tech"], [], {"techData": {"topics": self._TOPICS}})
+
+        assert result["tech"]["topics"][0] == "DHH on Rails"
+
+    def test_should_validate_flat_response_unchanged(self):
+        result = validate_domain_output(["tech"], [], {"topics": self._TOPICS})
+
+        assert result["tech"]["topics"][0] == "DHH on Rails"
+
+    def test_should_keep_modifier_block_next_to_wrapped_domain(self):
+        data = {
+            "tech": {"topics": self._TOPICS},
+            "financeData": {"costs": [{"item": "Server", "amount": 9}], "savingTips": []},
+        }
+
+        result = validate_domain_output(["tech"], ["finance"], data)
+
+        assert result["finance"]["costs"][0]["item"] == "Server"
 
     def test_learning_typed_connections_and_group_survive_validation(self):
         """Regression: typed connections + `group` must round-trip through the
@@ -613,14 +735,20 @@ class TestValidateDomainOutput:
         ValidationError → whole-domain passthrough (connections kept but `group`
         and every other field's normalization lost)."""
         result = validate_domain_output(
-            ["learning"], [],
+            ["learning"],
+            [],
             {
-                "keyPoints": [], "takeaways": [],
-                "concepts": [{
-                    "name": "Compound interest", "emoji": "💵", "definition": "d",
-                    "group": "Foundations",
-                    "connections": [{"to": "Time value of money", "type": "causes"}],
-                }],
+                "keyPoints": [],
+                "takeaways": [],
+                "concepts": [
+                    {
+                        "name": "Compound interest",
+                        "emoji": "💵",
+                        "definition": "d",
+                        "group": "Foundations",
+                        "connections": [{"to": "Time value of money", "type": "causes"}],
+                    }
+                ],
             },
         )
         concept = result["learning"]["concepts"][0]
@@ -631,7 +759,8 @@ class TestValidateDomainOutput:
         """Invalid data is passed through (not raised) — validation is lenient."""
         # validate_domain_output catches errors and passes data through
         result = validate_domain_output(
-            ["food"], [],
+            ["food"],
+            [],
             {"steps": [{"number": "not_a_number", "instruction": 123}]},
         )
         # Should still return data (passed through despite validation issues)
@@ -642,8 +771,22 @@ class TestModelRegistries:
     """Test model registry completeness."""
 
     def test_all_eight_domains_registered(self):
-        expected = {"travel", "food", "learning", "review", "tech", "fitness", "music",
-                    "project", "language", "science", "podcast", "news", "gaming", "sport"}
+        expected = {
+            "travel",
+            "food",
+            "learning",
+            "review",
+            "tech",
+            "fitness",
+            "music",
+            "project",
+            "language",
+            "science",
+            "podcast",
+            "news",
+            "gaming",
+            "sport",
+        }
         assert set(DOMAIN_MODELS.keys()) == expected
 
     def test_all_modifiers_registered(self):
@@ -661,6 +804,7 @@ class TestScenarioOptionCoercion:
 
     def test_string_coerced_to_option(self):
         from src.models.pipeline_types import ScenarioOption
+
         opt = ScenarioOption.model_validate("I've never felt so iffy before.")
         assert opt.text == "I've never felt so iffy before."
         assert opt.correct is False
@@ -668,20 +812,26 @@ class TestScenarioOptionCoercion:
 
     def test_dict_still_works(self):
         from src.models.pipeline_types import ScenarioOption
-        opt = ScenarioOption.model_validate({"text": "Answer A", "correct": True, "explanation": "Correct!"})
+
+        opt = ScenarioOption.model_validate(
+            {"text": "Answer A", "correct": True, "explanation": "Correct!"}
+        )
         assert opt.text == "Answer A"
         assert opt.correct is True
 
     def test_scenario_item_with_mixed_options(self):
         from src.models.pipeline_types import ScenarioItem
-        item = ScenarioItem.model_validate({
-            "question": "What does 'iffy' mean?",
-            "options": [
-                {"text": "Uncertain", "correct": True, "explanation": "Correct!"},
-                "I've never felt so iffy before.",
-                "This is a plain string option",
-            ],
-        })
+
+        item = ScenarioItem.model_validate(
+            {
+                "question": "What does 'iffy' mean?",
+                "options": [
+                    {"text": "Uncertain", "correct": True, "explanation": "Correct!"},
+                    "I've never felt so iffy before.",
+                    "This is a plain string option",
+                ],
+            }
+        )
         assert len(item.options) == 3
         assert item.options[0].correct is True
         assert item.options[1].text == "I've never felt so iffy before."
