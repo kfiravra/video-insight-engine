@@ -14,7 +14,7 @@
 #   id                 — stable slug used as the Langfuse dataset item ID
 #   url                — YouTube URL the pipeline will fetch
 #   domain             — primary contentTag the pipeline must produce
-#   format             — one of the VALID_FORMATS in classifier.py (tutorial,
+#   format             — one of the VALID_FORMATS in models/probe_types.py (tutorial,
 #                        commentary, reaction, opinion_rant, motivational,
 #                        interview, lecture, vlog, documentary, walkthrough,
 #                        podcast, news, news_commentary, entertainment,
@@ -28,7 +28,7 @@
 #   keyContent         — terms the extraction should mention (80%+ overlap target)
 #   assertions         — optional deterministic per-video checks, validated by
 #                        scripts/_eval_schema.py and gated by scripts/gate.py:
-#                        expectedDomain, expectedFormat (classifier output from
+#                        expectedDomain, expectedFormat (tier-probe output from
 #                        the Langfuse trace), forbiddenComponents,
 #                        requiredComponents, quizAbsentOrLast, minItems,
 #                        minItemsWithField, noTimestampBeyondDuration.
