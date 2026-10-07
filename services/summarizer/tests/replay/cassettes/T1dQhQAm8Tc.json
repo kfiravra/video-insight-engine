@@ -4670,21 +4670,6 @@
    "ordinal": 0
   },
   {
-   "feature": "summarize:chapter_detect",
-   "span": "chapter_detect",
-   "model": "openai/gpt-4o-mini",
-   "latencyMs": 3419,
-   "output": "```json\n[\n  {\"title\": \"Introduction\", \"startSeconds\": 0, \"endSeconds\": 135},\n  {\"title\": \"Devices and Network\", \"startSeconds\": 135, \"endSeconds\": 310},\n  {\"title\": \"AI Tools Overview\", \"startSeconds\": 310, \"endSeconds\": 630},\n  {\"title\": \"Frameworks and Models\", \"startSeconds\": 630, \"endSeconds\": 945},\n  {\"title\": \"Database and Publishing\", \"startSeconds\": 945, \"endSeconds\": 1300},\n  {\"title\": \"Design Tools and Techniques\", \"startSeconds\": 1300, \"endSeconds\": 1560},\n  {\"title\": \"AI Agents in Development\", \"startSeconds\": 1560, \"endSeconds\": 1140},\n  {\"title\": \"Conclusion\", \"startSeconds\": 1140, \"endSeconds\": 1140}\n]\n```",
-   "finishReason": "stop",
-   "usage": {
-    "input": 2187,
-    "output": 196,
-    "cacheRead": 0,
-    "cacheWrite": 0
-   },
-   "ordinal": 0
-  },
-  {
    "feature": "summarize:extraction",
    "span": "extraction",
    "model": "anthropic/claude-haiku-4-5-20251001",

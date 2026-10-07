@@ -2852,21 +2852,6 @@
    "ordinal": 0
   },
   {
-   "feature": "summarize:chapter_detect",
-   "span": "chapter_detect",
-   "model": "openai/gpt-4o-mini",
-   "latencyMs": 1793,
-   "output": "```json\n[\n  {\"title\": \"Introduction and Expectations\", \"startSeconds\": 0, \"endSeconds\": 120},\n  {\"title\": \"Meta Discussion\", \"startSeconds\": 120, \"endSeconds\": 300},\n  {\"title\": \"Card Highlights and Strategies\", \"startSeconds\": 300, \"endSeconds\": 720},\n  {\"title\": \"Opening the Booster Box\", \"startSeconds\": 720, \"endSeconds\": 1260},\n  {\"title\": \"Review and Final Thoughts\", \"startSeconds\": 1260, \"endSeconds\": 1140}\n]\n```",
-   "finishReason": "stop",
-   "usage": {
-    "input": 2204,
-    "output": 126,
-    "cacheRead": 0,
-    "cacheWrite": 0
-   },
-   "ordinal": 0
-  },
-  {
    "feature": "summarize:extraction",
    "span": "extraction",
    "model": "anthropic/claude-haiku-4-5-20251001",

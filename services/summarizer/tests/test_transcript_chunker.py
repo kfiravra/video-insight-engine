@@ -4,15 +4,19 @@ import pytest
 from unittest.mock import AsyncMock, patch
 
 from src.services.transcript.render import marker_seconds, render_transcript
+from src.config import settings
+from src.services.transcription import transcript_chunker as chunker_module
 from src.services.transcription.transcript_chunker import (
     ChapterChunk,
     _build_sampled_excerpts,
     _chapters_cover_duration,
-    _from_description_timestamps,
+    _from_memory_outline,
+    _from_timestamp_markers,
     _from_youtube_chapters,
     _subdivide_oversized_chapters,
     _time_split_chapters,
     force_split_by_sentences,
+    needs_chapter_batching,
     split_transcript_into_chapters,
 )
 
@@ -457,7 +461,7 @@ class TestFromDescriptionTimestamps:
             {"seconds": 400, "label": "Demo"},
         ]
 
-        result = _from_description_timestamps(markers, segments, duration)
+        result = _from_timestamp_markers(markers, segments, duration, "description")
 
         assert result is not None
         assert len(result) == 3
@@ -476,7 +480,7 @@ class TestFromDescriptionTimestamps:
             {"seconds": 200, "label": "Setup"},
         ]
 
-        result = _from_description_timestamps(markers, segments, duration)
+        result = _from_timestamp_markers(markers, segments, duration, "description")
 
         assert result is not None
         assert [ch.start_seconds for ch in result] == [0, 200, 400]
@@ -485,7 +489,7 @@ class TestFromDescriptionTimestamps:
         segments = _make_segments(600)
         markers = [{"seconds": 0, "label": "Only one"}]
 
-        assert _from_description_timestamps(markers, segments, 600) is None
+        assert _from_timestamp_markers(markers, segments, 600, "description") is None
 
     def test_dedups_equal_start_offsets(self):
         duration = 600
@@ -496,7 +500,7 @@ class TestFromDescriptionTimestamps:
             {"seconds": 300, "label": "Middle"},
         ]
 
-        result = _from_description_timestamps(markers, segments, duration)
+        result = _from_timestamp_markers(markers, segments, duration, "description")
 
         assert result is not None
         assert len(result) == 2
@@ -815,3 +819,191 @@ class TestForceSplitBoundsFromMarkers:
         chunks = force_split_by_sentences(text, 6000.0, target_chunks=4)
 
         assert [c.start_seconds for c in chunks] == [0.0, 1500.0, 3000.0, 4500.0]
+
+
+# ---------------------------------------------------------------------------
+# chapter_detect gate (pipeline-1min 1b.6, D6/C7)
+# ---------------------------------------------------------------------------
+
+_OUTLINE = [
+    {"start": "0:00", "end": "9:30", "title": "Intro"},
+    {"start": "10:00", "end": "29:00", "title": "Main"},
+    {"start": "30:00", "end": "44:00", "title": "Tips"},
+]
+
+
+def _detect_mock(result: list[ChapterChunk] | None = None) -> AsyncMock:
+    return AsyncMock(return_value=result)
+
+
+class TestNeedsChapterBatching:
+    def test_should_need_batching_when_the_video_outlasts_one_batch_span(self):
+        duration = settings.MAX_MINUTES_PER_BATCH * 60 + 1
+
+        assert needs_chapter_batching(duration, "short transcript") is True
+
+    def test_should_need_batching_when_tokens_exceed_one_batch_budget(self):
+        with patch.object(settings, "MAX_TOKENS_PER_BATCH", 100):
+            assert needs_chapter_batching(600, "word " * 100) is True
+
+    def test_should_not_need_batching_when_one_batch_covers_the_video(self):
+        duration = settings.MAX_MINUTES_PER_BATCH * 60
+
+        assert needs_chapter_batching(duration, "word " * 1000) is False
+
+
+class TestChapterDetectGate:
+    async def _split(
+        self, duration: int, detect: AsyncMock, outline: list[dict] | None = None, **video
+    ) -> list[ChapterChunk]:
+        with patch.object(chunker_module, "_detect_chapters_with_ai", detect):
+            return await split_transcript_into_chapters(
+                {"duration": duration, "title": "T", **video},
+                _make_segments(duration),
+                "word " * 500,
+                llm_service=AsyncMock(),
+                memory_outline=outline,
+            )
+
+    @pytest.mark.asyncio
+    async def test_should_skip_chapter_detect_when_one_batch_covers_the_video(self):
+        detect = _detect_mock()
+
+        result = await self._split(1800, detect)
+
+        detect.assert_not_awaited()
+        assert {ch.source for ch in result} == {"time_split"}
+
+    @pytest.mark.asyncio
+    async def test_should_call_chapter_detect_for_a_long_video_without_outline(self):
+        detect = _detect_mock()
+
+        await self._split(2700, detect)
+
+        detect.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_should_call_chapter_detect_when_tokens_exceed_one_batch(self):
+        detect = _detect_mock()
+
+        with patch.object(settings, "MAX_TOKENS_PER_BATCH", 100):
+            await self._split(1800, detect)
+
+        detect.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_should_use_the_memory_outline_instead_of_chapter_detect(self):
+        detect = _detect_mock()
+
+        result = await self._split(2700, detect, outline=_OUTLINE)
+
+        detect.assert_not_awaited()
+        assert [ch.title for ch in result] == ["Intro", "Main", "Tips"]
+
+    @pytest.mark.asyncio
+    async def test_should_fall_back_to_chapter_detect_when_the_outline_is_unusable(self):
+        detect = _detect_mock()
+
+        await self._split(2700, detect, outline=[{"start": "0:00", "title": "Only one"}])
+
+        detect.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_should_ignore_the_outline_when_one_batch_covers_the_video(self):
+        detect = _detect_mock()
+
+        result = await self._split(1800, detect, outline=_OUTLINE)
+
+        assert {ch.source for ch in result} == {"time_split"}
+
+    @pytest.mark.asyncio
+    async def test_should_keep_youtube_chapters_ahead_of_the_outline(self):
+        detect = _detect_mock()
+
+        result = await self._split(
+            2700, detect, outline=_OUTLINE, chapters=_make_youtube_chapters(6, 2700)
+        )
+
+        assert {ch.source for ch in result} == {"youtube"}
+
+    @pytest.mark.asyncio
+    async def test_should_hand_chapter_detect_the_video_description(self):
+        detect = _detect_mock()
+
+        await self._split(2700, detect, description="Neapolitan dough, 72 h cold rise")
+
+        assert detect.await_args.kwargs["description"] == "Neapolitan dough, 72 h cold rise"
+
+    @pytest.mark.asyncio
+    async def test_should_put_the_description_into_the_chapter_detect_prompt(self):
+        call = AsyncMock(return_value=None)
+
+        with (
+            patch.object(chunker_module, "_CHAPTER_DETECT_PROMPT", "D={description}"),
+            patch.object(chunker_module, "prompts_from_disk", return_value=False),
+            patch.object(chunker_module, "call_llm_with_retry", call),
+        ):
+            await chunker_module._detect_chapters_with_ai(
+                title="t",
+                description="Neapolitan dough",
+                transcript="word " * 100,
+                duration=2700,
+                segments=_make_segments(2700),
+                llm_service=AsyncMock(),
+            )
+
+        assert call.await_args.args[1] == "D=Neapolitan dough"
+
+
+class TestMemoryOutlineChapters:
+    def test_should_start_each_chapter_at_its_section_start(self):
+        result = _from_memory_outline(_OUTLINE, _make_segments(2700), 2700)
+
+        assert result is not None
+        assert [ch.start_seconds for ch in result] == [0.0, 600.0, 1800.0]
+
+    def test_should_end_each_chapter_where_the_next_starts_and_the_last_at_the_end(self):
+        result = _from_memory_outline(_OUTLINE, _make_segments(2700), 2700)
+
+        assert result is not None
+        assert [ch.end_seconds for ch in result] == [600.0, 1800.0, 2700.0]
+
+    def test_should_pull_the_first_section_to_zero(self):
+        outline = [{"start": "0:30", "title": "A"}, {"start": "20:00", "title": "B"}]
+
+        result = _from_memory_outline(outline, _make_segments(2700), 2700)
+
+        assert result is not None
+        assert result[0].start_seconds == 0.0
+
+    def test_should_read_hour_long_starts(self):
+        outline = [{"start": "0:00", "title": "A"}, {"start": "1:05:00", "title": "B"}]
+
+        result = _from_memory_outline(outline, _make_segments(4500), 4500)
+
+        assert result is not None
+        assert result[1].start_seconds == 3900.0
+
+    def test_should_skip_sections_with_malformed_starts(self):
+        outline = [
+            {"start": "0:00", "title": "A"},
+            {"start": "abc", "title": "bad"},
+            {"start": None, "title": "missing"},
+            {"start": "15:00", "title": "B"},
+        ]
+
+        result = _from_memory_outline(outline, _make_segments(2700), 2700)
+
+        assert result is not None
+        assert [ch.title for ch in result] == ["A", "B"]
+
+    def test_should_return_none_with_fewer_than_two_usable_sections(self):
+        outline = [{"start": "0:00", "title": "A"}, {"start": "x", "title": "B"}]
+
+        assert _from_memory_outline(outline, _make_segments(2700), 2700) is None
+
+    def test_should_open_each_outline_chunk_on_its_absolute_marker(self):
+        result = _from_memory_outline(_OUTLINE, _make_segments(2700), 2700)
+
+        assert result is not None
+        assert [marker_seconds(ch.text)[0] for ch in result] == [0, 600, 1800]

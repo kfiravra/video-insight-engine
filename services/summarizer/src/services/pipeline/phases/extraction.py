@@ -199,6 +199,8 @@ async def run_phase_extraction(ctx: PipelineContext) -> AsyncGenerator[str, None
         "channel": ctx.video_data.channel,
         "duration": ctx.video_data.duration,
         "chapters": getattr(ctx.video_data, "chapters", None),
+        # chapter_detect reads it; without the key it ran on an empty description (A9).
+        "description": ctx.video_data.description,
     }
 
     prompt_transcript = build_prompt_transcript(ctx)
@@ -244,6 +246,7 @@ async def run_phase_extraction(ctx: PipelineContext) -> AsyncGenerator[str, None
                 transcript=prompt_transcript,
                 llm_service=ctx.llm_service,
                 description_chapters=description_chapters,
+                memory_outline=None,
             )
             ctx.chapters = chapters
             logger.info("Prepared %d chapters for chunked extraction", len(chapters))

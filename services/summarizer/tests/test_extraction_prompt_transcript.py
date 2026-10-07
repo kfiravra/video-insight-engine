@@ -153,3 +153,29 @@ class TestBuildPromptTranscriptLanguage:
         prompt = extraction_phase.build_prompt_transcript(ctx)
 
         assert prompt == "[0:00] um quilo de farinha"
+
+
+class TestExtractionPhaseChapterSplitInputs:
+    """1b.6: chapter splitting gets the real description and, for now, no outline."""
+
+    async def _split_kwargs(self) -> dict[str, Any]:
+        ctx = _ctx(1800)
+        ctx.video_data.description = "Neapolitan dough, 72 h cold rise"
+        split = AsyncMock(return_value=[])
+
+        with patch(
+            "src.services.transcription.transcript_chunker.split_transcript_into_chapters", split
+        ):
+            await _run(ctx)
+
+        return split.await_args.kwargs
+
+    async def test_should_pass_the_video_description_to_chapter_splitting(self):
+        kwargs = await self._split_kwargs()
+
+        assert kwargs["video_data"]["description"] == "Neapolitan dough, 72 h cold rise"
+
+    async def test_should_pass_no_memory_outline_yet(self):
+        kwargs = await self._split_kwargs()
+
+        assert kwargs["memory_outline"] is None

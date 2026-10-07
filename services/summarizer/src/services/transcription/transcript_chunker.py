@@ -1,7 +1,9 @@
 """Chapter-aware transcript splitting with fallback chain.
 
 Splits long video transcripts into chapter-based chunks for batched extraction.
-Fallback chain: YouTube chapters -> AI detection -> time-based split -> single chunk.
+Fallback chain: YouTube chapters -> description timestamps -> content chapters
+(memory outline, else AI detection — only when extraction needs > 1 batch) ->
+time-based split -> single chunk.
 
 Chunk texts are extraction-prompt text: sliced from the segments and rendered
 with absolute ``[m:ss]`` markers (``render_transcript``), so every batch reads
@@ -12,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -42,7 +45,8 @@ class ChapterChunk:
     start_seconds: float
     end_seconds: float
     text: str
-    source: str  # "youtube" | "ai_detected" | "time_split" | "full"
+    # "youtube" | "description" | "outline" | "ai_detected" | "time_split" | "force_split" | "full"
+    source: str
     token_estimate: int  # approximate token count
 
 
@@ -184,87 +188,87 @@ def force_split_by_sentences(
     return _snap_to_markers(chunks, duration_seconds) if len(chunks) >= 2 else []
 
 
-async def split_transcript_into_chapters(
+def needs_chapter_batching(duration: float, transcript: str) -> bool:
+    """True when extraction would need more than one batch (D6/C7).
+
+    ``batch_chapters`` closes a batch at ``MAX_MINUTES_PER_BATCH`` of video or
+    ``MAX_TOKENS_PER_BATCH`` tokens, so a video under both limits runs as one
+    batch whatever its chapters — content chapters would buy extraction nothing.
+    """
+    over_span = duration > settings.MAX_MINUTES_PER_BATCH * 60
+    return over_span or _estimate_tokens(transcript) > settings.MAX_TOKENS_PER_BATCH
+
+
+def _ms_segments(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Chunk slicing reads ``startMs``; raw pipeline segments carry ``start``."""
+    if segments and "start" in segments[0] and "startMs" not in segments[0]:
+        logger.info("Normalizing %d segments from start/duration to startMs/endMs", len(segments))
+        return normalize_segments(segments)
+    return segments
+
+
+def _listed_chapters(
     video_data: dict[str, Any],
     segments: list[dict[str, Any]],
     transcript: str,
-    llm_service: LLMService | None = None,
-    description_chapters: list[dict[str, Any]] | None = None,
-) -> list[ChapterChunk]:
-    """Split transcript into chapter-based chunks using fallback chain.
-
-    Fallback chain:
-    1. YouTube creator chapters (video_data["chapters"])
-    2. Author-description timestamp markers (description_chapters)
-    3. AI chapter detection (fast model)
-    4. Time-based splitting (~5 min segments)
-    5. Single chunk (entire transcript)
-
-    Args:
-        video_data: Video metadata dict with optional "chapters", "duration", "title".
-        segments: Transcript segments with startMs/endMs/text.
-        transcript: Full transcript text (fallback when segments unavailable).
-        llm_service: LLM service for AI chapter detection (optional).
-        description_chapters: Timestamp markers parsed from the video description,
-            each {"seconds": int, "label": str}. Used when the creator listed
-            chapters in the description but YouTube has no native chapters.
-
-    Returns:
-        List of ChapterChunk, always at least 1.
-    """
+    description_chapters: list[dict[str, Any]] | None,
+) -> list[ChapterChunk] | None:
+    """Paths 1–2: chapters the creator listed — YouTube chapters, then
+    description timestamps."""
     duration = video_data.get("duration", 0)
     chapters = video_data.get("chapters")
-
-    # Defensive: normalize segments to startMs/endMs format
-    if segments:
-        sample_keys = set(segments[0].keys()) if segments else set()
-        if "start" in sample_keys and "startMs" not in sample_keys:
-            logger.info(
-                "Normalizing %d segments from start/duration to startMs/endMs", len(segments)
-            )
-            segments = normalize_segments(segments)
-
-    max_minutes = settings.MAX_MINUTES_PER_BATCH
-
-    # Path 1: YouTube chapters
     if chapters and len(chapters) >= 2:
         result = _from_youtube_chapters(chapters, segments, duration)
         if result:
-            result = _subdivide_oversized_chapters(result, segments, max_minutes)
-            logger.info("Chapter splitting: %d chunks from youtube", len(result))
             return result
-
-    # Path 2: Author-description timestamp markers
     if description_chapters and len(description_chapters) >= 2 and (segments or transcript):
-        result = _from_description_timestamps(description_chapters, segments, duration)
-        if result:
-            result = _subdivide_oversized_chapters(result, segments, max_minutes)
-            logger.info("Chapter splitting: %d chunks from description", len(result))
-            return result
+        return _from_timestamp_markers(description_chapters, segments, duration, "description")
+    return None
 
-    # Path 3: AI chapter detection
-    if llm_service and duration > 0 and (segments or transcript):
-        result = await _detect_chapters_with_ai(
-            title=video_data.get("title", ""),
-            description=video_data.get("description", ""),
-            transcript=transcript,
-            duration=duration,
-            segments=segments,
-            llm_service=llm_service,
-        )
-        if result:
-            result = _subdivide_oversized_chapters(result, segments, max_minutes)
-            logger.info("Chapter splitting: %d chunks from ai_detected", len(result))
-            return result
 
-    # Path 4: Time-based splitting
+async def _content_chapters(
+    video_data: dict[str, Any],
+    segments: list[dict[str, Any]],
+    transcript: str,
+    llm_service: LLMService | None,
+    memory_outline: Sequence[Mapping[str, Any]] | None,
+) -> list[ChapterChunk] | None:
+    """Path 3: chapters read from the content — only when batching needs them.
+
+    The memory outline replaces the chapter_detect LLM call; an outline that
+    yields fewer than 2 chunks counts as no outline.
+    """
+    duration = video_data.get("duration", 0)
+    if not needs_chapter_batching(duration, transcript):
+        logger.info("Chapter detection skipped: one extraction batch covers the video")
+        return None
+    if memory_outline:
+        result = _from_memory_outline(memory_outline, segments, duration)
+        if result:
+            return result
+        logger.warning("Memory outline gave no usable chapters; falling back to chapter_detect")
+    if not (llm_service and duration > 0 and (segments or transcript)):
+        return None
+    return await _detect_chapters_with_ai(
+        title=video_data.get("title", ""),
+        description=video_data.get("description", ""),
+        transcript=transcript,
+        duration=duration,
+        segments=segments,
+        llm_service=llm_service,
+    )
+
+
+def _fallback_chapters(
+    duration: float, segments: list[dict[str, Any]], transcript: str
+) -> list[ChapterChunk]:
+    """Paths 4–5: ~5-minute time split, else the whole transcript as one chunk."""
     if duration > 0 and segments:
         result = _time_split_chapters(duration, segments)
         if result and len(result) >= 2:
             logger.info("Chapter splitting: %d chapters from time_split", len(result))
             return result
 
-    # Path 5: Single chunk fallback
     logger.info("Chapter splitting: 1 chapter from full (fallback)")
     return [
         ChapterChunk(
@@ -277,6 +281,56 @@ async def split_transcript_into_chapters(
             token_estimate=_estimate_tokens(transcript),
         )
     ]
+
+
+async def split_transcript_into_chapters(
+    video_data: dict[str, Any],
+    segments: list[dict[str, Any]],
+    transcript: str,
+    llm_service: LLMService | None = None,
+    description_chapters: list[dict[str, Any]] | None = None,
+    memory_outline: Sequence[Mapping[str, Any]] | None = None,
+) -> list[ChapterChunk]:
+    """Split transcript into chapter-based chunks using fallback chain.
+
+    Fallback chain:
+    1. YouTube creator chapters (video_data["chapters"])
+    2. Author-description timestamp markers (description_chapters)
+    3. Content chapters, only when extraction needs > 1 batch
+       (``needs_chapter_batching``): the memory outline when it is usable,
+       else AI chapter detection (fast model)
+    4. Time-based splitting (~5 min segments)
+    5. Single chunk (entire transcript)
+
+    Args:
+        video_data: Video metadata dict with optional "chapters", "duration",
+            "title", "description" (the description feeds chapter_detect).
+        segments: Transcript segments (startMs/endMs or start/duration).
+        transcript: Full prompt transcript (token estimate; fallback when
+            segments are unavailable).
+        llm_service: LLM service for AI chapter detection (optional).
+        description_chapters: Timestamp markers parsed from the video description,
+            each {"seconds": int, "label": str}. Used when the creator listed
+            chapters in the description but YouTube has no native chapters.
+        memory_outline: The memory call's outline,
+            ``[{"start": "m:ss", "end": "m:ss", "title": str}]``.
+
+    Returns:
+        List of ChapterChunk, always at least 1.
+    """
+    duration = video_data.get("duration", 0)
+    segments = _ms_segments(segments)
+
+    result = _listed_chapters(video_data, segments, transcript, description_chapters)
+    if result is None:
+        result = await _content_chapters(
+            video_data, segments, transcript, llm_service, memory_outline
+        )
+    if result:
+        result = _subdivide_oversized_chapters(result, segments, settings.MAX_MINUTES_PER_BATCH)
+        logger.info("Chapter splitting: %d chunks from %s", len(result), result[0].source)
+        return result
+    return _fallback_chapters(duration, segments, transcript)
 
 
 def _from_youtube_chapters(
@@ -323,12 +377,13 @@ def _from_youtube_chapters(
     return result if len(result) >= 2 else None
 
 
-def _from_description_timestamps(
-    description_chapters: list[dict[str, Any]],
+def _from_timestamp_markers(
+    timestamp_markers: list[dict[str, Any]],
     segments: list[dict[str, Any]],
     duration: float,
+    source: str,
 ) -> list[ChapterChunk] | None:
-    """Convert author-description timestamp markers to ChapterChunks.
+    """Convert timestamp markers (description timestamps, outline starts) to ChapterChunks.
 
     Each marker is {"seconds": int, "label": str}. Markers are sorted by
     start; each chapter's end is the next marker's start (the last ends at
@@ -336,7 +391,7 @@ def _from_description_timestamps(
     unless at least 2 non-empty chunks result.
     """
     markers = sorted(
-        (m for m in description_chapters if m.get("seconds") is not None),
+        (m for m in timestamp_markers if m.get("seconds") is not None),
         key=lambda m: m["seconds"],
     )
     # Drop duplicate start offsets (keep first label seen).
@@ -365,12 +420,48 @@ def _from_description_timestamps(
                 start_seconds=start,
                 end_seconds=end,
                 text=text,
-                source="description",
+                source=source,
                 token_estimate=_estimate_tokens(text),
             )
         )
 
     return result if len(result) >= 2 else None
+
+
+def _clock_seconds(value: object) -> int | None:
+    """``"m:ss"`` / ``"h:mm:ss"`` → seconds; ``None`` when malformed."""
+    parts = str(value).strip().split(":")
+    if not 2 <= len(parts) <= 3 or not all(part.isdigit() for part in parts):
+        return None
+    seconds = 0
+    for part in parts:
+        seconds = seconds * 60 + int(part)
+    return seconds
+
+
+def _from_memory_outline(
+    outline: Sequence[Mapping[str, Any]],
+    segments: list[dict[str, Any]],
+    duration: float,
+) -> list[ChapterChunk] | None:
+    """Memory outline sections (``{start: "m:ss", end, title}``) → ChapterChunks.
+
+    Only section starts are read: each section ends where the next starts, the
+    first is pulled to 0:00 and the last ends at the video's end, so no
+    transcript second falls between sections when the model's ``end`` values
+    leave gaps. Sections with a malformed start are skipped. ``None`` unless at
+    least 2 non-empty chunks result.
+    """
+    markers: list[dict[str, Any]] = []
+    for i, section in enumerate(outline):
+        seconds = _clock_seconds(section.get("start"))
+        if seconds is not None:
+            label = str(section.get("title") or f"Section {i + 1}")
+            markers.append({"seconds": seconds, "label": label})
+    if not markers:
+        return None
+    min(markers, key=lambda m: m["seconds"])["seconds"] = 0
+    return _from_timestamp_markers(markers, segments, duration, "outline")
 
 
 def _subdivide_oversized_chapters(
