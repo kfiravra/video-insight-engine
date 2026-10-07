@@ -168,7 +168,7 @@ class TestAnalyzeDescriptionAsync:
         assert result.has_content is False
 
     @patch("src.services.video.description_analyzer.load_prompt")
-    @patch("src.services.video.description_analyzer.acompletion")
+    @patch("src.services.llm_provider.acompletion")
     async def test_successful_analysis(self, mock_acompletion, mock_load_prompt):
         """Test successful description analysis."""
         mock_load_prompt.return_value = "Analyze this description: {description}"
@@ -193,7 +193,7 @@ class TestAnalyzeDescriptionAsync:
         assert len(result.social_links) == 1
 
     @patch("src.services.video.description_analyzer.load_prompt")
-    @patch("src.services.video.description_analyzer.acompletion")
+    @patch("src.services.llm_provider.acompletion")
     async def test_llm_api_error_returns_empty(self, mock_acompletion, mock_load_prompt):
         """Test that API errors return empty analysis."""
         import litellm
@@ -211,7 +211,7 @@ class TestAnalyzeDescriptionAsync:
         assert result.has_content is False
 
     @patch("src.services.video.description_analyzer.load_prompt")
-    @patch("src.services.video.description_analyzer.acompletion")
+    @patch("src.services.llm_provider.acompletion")
     async def test_general_exception_returns_empty(self, mock_acompletion, mock_load_prompt):
         """Test that general exceptions return empty analysis."""
         mock_load_prompt.return_value = "Analyze: {description}"
@@ -223,7 +223,7 @@ class TestAnalyzeDescriptionAsync:
         assert result.has_content is False
 
     @patch("src.services.video.description_analyzer.load_prompt")
-    @patch("src.services.video.description_analyzer.acompletion")
+    @patch("src.services.llm_provider.acompletion")
     async def test_truncates_long_description(self, mock_acompletion, mock_load_prompt):
         """Test that long descriptions are truncated."""
         mock_load_prompt.return_value = "Analyze: {description}"
@@ -245,7 +245,7 @@ class TestAnalyzeDescriptionAsync:
         assert "..." in prompt_content or len(prompt_content) < 6000
 
     @patch("src.services.video.description_analyzer.load_prompt")
-    @patch("src.services.video.description_analyzer.acompletion")
+    @patch("src.services.llm_provider.acompletion")
     async def test_custom_fast_model(self, mock_acompletion, mock_load_prompt):
         """Test using custom fast model."""
         mock_load_prompt.return_value = "Analyze: {description}"
@@ -263,7 +263,7 @@ class TestAnalyzeDescriptionAsync:
         assert call_args.kwargs.get("model") == custom_model
 
     @patch("src.services.video.description_analyzer.load_prompt")
-    @patch("src.services.video.description_analyzer.acompletion")
+    @patch("src.services.llm_provider.acompletion")
     async def test_filters_invalid_links(self, mock_acompletion, mock_load_prompt):
         """Test that links without URLs are filtered out."""
         mock_load_prompt.return_value = "Analyze: {description}"
@@ -284,6 +284,44 @@ class TestAnalyzeDescriptionAsync:
 
         assert len(result.links) == 1
         assert result.links[0].url == "https://valid.com"
+
+
+class TestDescriptionGoesThroughProvider:
+    """The description call uses LLMProvider like every other stage (traced,
+    timed, fakeable at ``llm_provider.acompletion``)."""
+
+    @staticmethod
+    def _response() -> MagicMock:
+        response = MagicMock()
+        response.choices = [MagicMock(finish_reason="stop")]
+        response.choices[0].message.content = '{"links": []}'
+        return response
+
+    @patch("src.services.video.description_analyzer.load_prompt")
+    @patch("src.services.llm_provider.record_generation")
+    @patch("src.services.llm_provider.acompletion")
+    async def test_should_record_a_langfuse_generation(
+        self, mock_acompletion, mock_record_generation, mock_load_prompt
+    ):
+        mock_load_prompt.return_value = "Analyze: {description}"
+        mock_acompletion.return_value = self._response()
+
+        await _analyze_description_async("A description long enough to analyze, with links.")
+
+        assert mock_record_generation.call_args.kwargs["span_name"] == "description_analysis"
+
+    @patch("src.services.video.description_analyzer.load_prompt")
+    @patch("src.services.llm_provider.acompletion")
+    async def test_should_land_in_the_run_timing(self, mock_acompletion, mock_load_prompt):
+        from src.services.pipeline import pipeline_timing
+
+        mock_load_prompt.return_value = "Analyze: {description}"
+        mock_acompletion.return_value = self._response()
+        recorder = pipeline_timing.start_run_timing()
+
+        await _analyze_description_async("A description long enough to analyze, with links.")
+
+        assert [c["span"] for c in recorder.llm_calls] == ["description_analysis"]
 
 
 class TestAnalyzeDescription:

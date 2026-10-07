@@ -13,10 +13,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from litellm import acompletion
 import litellm
 
 from src.config import settings
+from src.services.llm_provider import LLMProvider
 from src.utils.data_helpers import parse_timestamp_to_seconds
 from src.utils.json_parsing import parse_json_response
 
@@ -125,7 +125,11 @@ def _parse_timestamps(raw_items: Any) -> list[DescriptionTimestamp]:
 async def _analyze_description_async(
     description: str, fast_model: str | None = None
 ) -> DescriptionAnalysis:
-    """Analyze description asynchronously using LiteLLM (fast model).
+    """Analyze description asynchronously on the fast model.
+
+    Goes through ``LLMProvider`` like every other stage so the call is a
+    Langfuse generation on the run's trace, lands in ``pipeline.timing``,
+    and is fakeable at the provider's single ``acompletion`` seam.
 
     Args:
         description: The video description text
@@ -146,16 +150,11 @@ async def _analyze_description_async(
         # braces in LLM prompt templates (e.g., JSON examples with {{}})
         prompt = prompt_template.replace("{description}", description)
 
-        # Use the fast model for quick extraction
         model = fast_model or settings.llm_fast_model
-        response = await acompletion(
-            model=model,
-            max_tokens=1500,
-            timeout=30.0,
-            messages=[{"role": "user", "content": prompt}]
+        provider = LLMProvider(model=model, fast_model=model)
+        result_text = await provider.complete_fast(
+            prompt, max_tokens=1500, timeout=30.0, span_name="description_analysis"
         )
-
-        result_text = response.choices[0].message.content
         data = parse_json_response(result_text)
 
         # Parse into dataclasses
