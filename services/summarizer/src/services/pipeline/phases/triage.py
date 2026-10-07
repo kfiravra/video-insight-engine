@@ -74,6 +74,10 @@ def _store_plan_result(ctx: PipelineContext, plan_result: PlanResult) -> None:
         "tabs": plan_result.tabs,
         "confidence": plan_result.confidence,
         "contentFormat": ctx.content_format,
+        # Appendix-C evidence + canonical terms: persisted in pipeline.triage
+        # for the assembly backfill check (1d.7), reconcile (3.2) and the gate.
+        "evidence": plan_result.evidence,
+        "terms": plan_result.terms,
     }
 
 

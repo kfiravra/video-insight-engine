@@ -134,3 +134,20 @@ async def test_should_stop_waiting_for_a_stalled_probe_after_its_budget() -> Non
         kwargs = await _plan_kwargs(_ctx(stalled))
 
     assert kwargs["probe_hint"] is None
+
+
+async def test_should_carry_the_plans_evidence_and_terms_in_the_triage_dict() -> None:
+    ctx = _ctx(None)
+    plan = PlanResult.model_validate(
+        {"confidence": 0.9, "evidence": {"has_steps": True}, "terms": ["guanciale"]}
+    )
+    with (
+        patch.object(phase, "check_override", return_value=None),
+        patch.object(phase, "run_plan", AsyncMock(return_value=plan)),
+    ):
+        _ = [event async for event in phase.run_phase_plan(ctx)]  # type: ignore[arg-type]
+
+    assert (ctx.triage_dict["evidence"], ctx.triage_dict["terms"]) == (
+        {"has_steps": True},
+        ["guanciale"],
+    )
