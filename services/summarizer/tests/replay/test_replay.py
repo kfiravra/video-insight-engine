@@ -15,8 +15,8 @@ import pytest
 from src.services.pipeline import prompt_builder
 from src.services.transcription import transcript_chunker
 from tests.replay.cassette import Cassette, available_cassettes
-from tests.replay.driver import run_replay
-from tests.replay.report import out_of_tolerance, phase_rows
+from tests.replay.driver import ReplayResult, run_replay
+from tests.replay.report import PhaseRow, out_of_tolerance, phase_rows
 
 _REFERENCE_VIDEO = "T1dQhQAm8Tc"
 _FIDELITY_SPEED = 0.05
@@ -39,8 +39,20 @@ _VIDEOS = available_cassettes()
 _TABS_ADDED_SINCE_RECORDING: dict[str, list[str]] = {"uC45_4nnEAI": ["frames-gallery"]}
 
 
+# Phases the code under test moved on purpose since T1dQhQAm8Tc was recorded,
+# with the change that moved them; the 10 % fidelity gate holds for the rest.
+_PHASES_CHANGED_SINCE_RECORDING: dict[str, str] = {
+    "assembly": "1a.2: moment fill seeks the kept 720p file (the recording re-downloaded it)",
+}
+
+
 def _expected_tab_ids(cassette: Cassette) -> list[str]:
     return [*cassette.recorded.tab_ids, *_TABS_ADDED_SINCE_RECORDING.get(cassette.video_id, [])]
+
+
+def _unchanged_rows(result: ReplayResult, cassette: Cassette) -> list[PhaseRow]:
+    rows = phase_rows(result, cassette)
+    return [row for row in rows if row.name not in _PHASES_CHANGED_SINCE_RECORDING]
 
 
 @pytest.mark.parametrize("video_id", _VIDEOS)
@@ -123,7 +135,7 @@ async def test_reference_replay_should_reproduce_phase_walls_within_ten_percent(
 ) -> None:
     cassette = cassettes[_REFERENCE_VIDEO]
     result = await run_replay(cassette, speed=_FIDELITY_SPEED)
-    assert out_of_tolerance(phase_rows(result, cassette)) == []
+    assert out_of_tolerance(_unchanged_rows(result, cassette)) == []
 
 
 async def test_replay_should_leave_prompt_cache_as_found(cassettes: dict) -> None:
@@ -144,4 +156,4 @@ async def test_reference_replay_should_reproduce_phase_walls_in_real_time(
 ) -> None:
     cassette = cassettes[_REFERENCE_VIDEO]
     result = await run_replay(cassette, speed=1.0)
-    assert out_of_tolerance(phase_rows(result, cassette)) == []
+    assert out_of_tolerance(_unchanged_rows(result, cassette)) == []

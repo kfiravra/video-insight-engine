@@ -1,13 +1,20 @@
-"""Tests for the exact-timestamp frame fill (moment_track image guarantee)."""
+"""Tests for the exact-timestamp frame fill (moment_track image guarantee).
+
+Every seek reads the run's one local 720p file (``LocalHiresSource``); the fill
+never downloads on its own.
+"""
 
 from __future__ import annotations
 
+import asyncio
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.services.media import download_utils
 from src.services.pipeline.assembly import moment_frame_fill as mff
+
+LOCAL_VIDEO = Path("/tmp/vie-hires-yt123/yt123.mp4")
 
 
 def _moment_tab(items: list[dict]) -> dict:
@@ -23,39 +30,40 @@ def _patched_s3(exists: bool = False):
     return s3
 
 
-@pytest.mark.asyncio
-async def test_fills_only_frameless_items():
+def _handle(path: Path | None = LOCAL_VIDEO, *, started: bool = True) -> MagicMock:
+    """A LocalHiresSource stand-in: ``started`` = scene extraction already began the download."""
+    handle = MagicMock()
+    handle.started = started
+    handle.path = AsyncMock(return_value=path)
+    return handle
+
+
+async def test_should_fill_only_frameless_items_from_the_run_file():
     items = [
         {"label": "has", "seconds": 100, "thumbnailUrl": "existing"},
         {"label": "needs", "seconds": 200},
     ]
-    tabs = [_moment_tab(items)]
-    s3 = _patched_s3()
     with (
-        patch.object(mff, "s3_client", s3),
-        patch.object(mff, "get_video_stream_url", AsyncMock(return_value="https://stream")),
+        patch.object(mff, "s3_client", _patched_s3()),
         patch.object(mff, "extract_frame", AsyncMock(return_value=b"jpeg-bytes")) as mock_extract,
     ):
-        filled = await mff.fill_moment_frames(tabs, "yt123")
+        filled = await mff.fill_moment_frames([_moment_tab(items)], "yt123", _handle())
 
     assert filled == 1
-    mock_extract.assert_awaited_once_with("https://stream", 200)
+    mock_extract.assert_awaited_once_with(str(LOCAL_VIDEO), 200)
     assert items[1]["thumbnailUrl"] == "https://s3/videos/yt123/frames/200.jpg?sig"
     assert items[1]["s3Key"] == "videos/yt123/frames/200.jpg"
     assert items[0]["thumbnailUrl"] == "existing"
 
 
-@pytest.mark.asyncio
-async def test_reuses_existing_s3_frame_without_extraction():
+async def test_should_reuse_an_existing_s3_frame_without_extraction():
     items = [{"label": "needs", "seconds": 42}]
-    tabs = [_moment_tab(items)]
     s3 = _patched_s3(exists=True)
     with (
         patch.object(mff, "s3_client", s3),
-        patch.object(mff, "get_video_stream_url", AsyncMock(return_value="https://stream")),
         patch.object(mff, "extract_frame", AsyncMock()) as mock_extract,
     ):
-        filled = await mff.fill_moment_frames(tabs, "yt123")
+        filled = await mff.fill_moment_frames([_moment_tab(items)], "yt123", _handle())
 
     assert filled == 1
     mock_extract.assert_not_awaited()
@@ -63,197 +71,149 @@ async def test_reuses_existing_s3_frame_without_extraction():
     assert items[0]["s3Key"] == "videos/yt123/frames/42.jpg"
 
 
-@pytest.mark.asyncio
-async def test_same_second_targets_dedupe_within_tab():
+async def test_should_dedupe_same_second_targets_within_a_tab():
     """Two frameless moments flooring to the same second would extract the
     identical frame — only the first claims it (no within-tab duplicates)."""
-    items = [
-        {"label": "a", "seconds": 100.2},
-        {"label": "b", "seconds": 100.9},
-    ]
-    tabs = [_moment_tab(items)]
-    s3 = _patched_s3()
-    with (
-        patch.object(mff, "s3_client", s3),
-        patch.object(mff, "get_video_stream_url", AsyncMock(return_value="https://stream")),
-        patch.object(mff, "extract_frame", AsyncMock(return_value=b"jpeg")) as mock_extract,
-    ):
-        filled = await mff.fill_moment_frames(tabs, "yt123")
-
-    assert filled == 1
-    assert mock_extract.await_count == 1
-    assert items[0].get("thumbnailUrl")
-    assert not items[1].get("thumbnailUrl")
-
-
-@pytest.mark.asyncio
-async def test_no_stream_url_is_a_clean_noop():
-    items = [{"label": "needs", "seconds": 10}]
-    tabs = [_moment_tab(items)]
+    items = [{"label": "a", "seconds": 100.2}, {"label": "b", "seconds": 100.9}]
     with (
         patch.object(mff, "s3_client", _patched_s3()),
-        patch.object(mff, "get_video_stream_url", AsyncMock(return_value=None)),
+        patch.object(mff, "extract_frame", AsyncMock(return_value=b"jpeg")) as mock_extract,
+    ):
+        filled = await mff.fill_moment_frames([_moment_tab(items)], "yt123", _handle())
+
+    assert (filled, mock_extract.await_count) == (1, 1)
+    assert items[0].get("thumbnailUrl") and not items[1].get("thumbnailUrl")
+
+
+async def test_should_fill_a_single_target_when_the_file_is_already_downloading():
+    items = [{"label": "one", "seconds": 10}]
+    with (
+        patch.object(mff, "s3_client", _patched_s3()),
+        patch.object(mff, "extract_frame", AsyncMock(return_value=b"jpeg")),
+    ):
+        filled = await mff.fill_moment_frames([_moment_tab(items)], "yt123", _handle())
+
+    assert filled == 1
+
+
+async def test_should_not_start_a_download_for_fewer_than_three_targets():
+    items = [{"label": "a", "seconds": 100}, {"label": "b", "seconds": 200}]
+    handle = _handle(started=False)
+    with patch.object(mff, "s3_client", _patched_s3()):
+        filled = await mff.fill_moment_frames([_moment_tab(items)], "yt123", handle)
+
+    assert (filled, handle.path.await_count) == (0, 0)
+
+
+async def test_should_start_the_download_for_three_or_more_targets():
+    """A manifest cache hit skipped scene extraction — the fill fetches the file itself."""
+    items = [{"label": f"m{i}", "seconds": 100 + i * 60} for i in range(3)]
+    handle = _handle(started=False)
+    with (
+        patch.object(mff, "s3_client", _patched_s3()),
+        patch.object(mff, "extract_frame", AsyncMock(return_value=b"jpeg")),
+    ):
+        filled = await mff.fill_moment_frames([_moment_tab(items)], "yt123", handle)
+
+    assert (filled, handle.path.await_count) == (3, 1)
+
+
+async def test_should_be_a_clean_noop_when_the_download_failed():
+    items = [{"label": "needs", "seconds": 10}]
+    with (
+        patch.object(mff, "s3_client", _patched_s3()),
         patch.object(mff, "extract_frame", AsyncMock()) as mock_extract,
     ):
-        filled = await mff.fill_moment_frames(tabs, "yt123")
+        filled = await mff.fill_moment_frames([_moment_tab(items)], "yt123", _handle(None))
 
     assert filled == 0
     mock_extract.assert_not_awaited()
     assert "thumbnailUrl" not in items[0]
 
 
-@pytest.mark.asyncio
-async def test_extraction_failure_leaves_item_frameless():
+async def test_should_skip_everything_without_a_run_file():
     items = [{"label": "needs", "seconds": 10}]
-    tabs = [_moment_tab(items)]
     with (
         patch.object(mff, "s3_client", _patched_s3()),
-        patch.object(mff, "get_video_stream_url", AsyncMock(return_value="https://stream")),
+        patch.object(mff, "extract_frame", AsyncMock()) as mock_extract,
+    ):
+        filled = await mff.fill_moment_frames([_moment_tab(items)], "yt123", None)
+
+    assert filled == 0
+    mock_extract.assert_not_awaited()
+
+
+async def test_should_leave_an_item_frameless_when_its_seek_fails():
+    items = [{"label": "needs", "seconds": 10}]
+    with (
+        patch.object(mff, "s3_client", _patched_s3()),
         patch.object(mff, "extract_frame", AsyncMock(return_value=None)),
     ):
-        filled = await mff.fill_moment_frames(tabs, "yt123")
+        filled = await mff.fill_moment_frames([_moment_tab(items)], "yt123", _handle())
 
     assert filled == 0
     assert "thumbnailUrl" not in items[0]
 
 
-@pytest.mark.asyncio
-async def test_cap_limits_extraction_count():
+async def test_should_cap_the_extraction_count():
     items = [{"label": f"m{i}", "seconds": i * 30} for i in range(1, 16)]  # 15 targets
-    tabs = [_moment_tab(items)]
     with (
         patch.object(mff, "s3_client", _patched_s3()),
-        patch.object(mff, "get_video_stream_url", AsyncMock(return_value="https://stream")),
         patch.object(mff, "extract_frame", AsyncMock(return_value=b"jpeg")) as mock_extract,
     ):
-        filled = await mff.fill_moment_frames(tabs, "yt123")
+        filled = await mff.fill_moment_frames([_moment_tab(items)], "yt123", _handle())
 
-    assert filled == mff._FILL_MAX_FRAMES
-    assert mock_extract.await_count == mff._FILL_MAX_FRAMES
+    assert (filled, mock_extract.await_count) == (mff._FILL_MAX_FRAMES, mff._FILL_MAX_FRAMES)
 
 
-@pytest.mark.asyncio
-async def test_s3_unavailable_skips_everything():
+async def test_should_keep_partial_fills_when_the_budget_expires(monkeypatch):
+    monkeypatch.setattr(mff, "_FILL_TIMEOUT", 0.05)
+    items = [{"label": "fast", "seconds": 10}, {"label": "slow", "seconds": 20}]
+
+    async def fake_extract(source: str, second: int) -> bytes:
+        if second == 20:
+            await asyncio.sleep(10)
+        return b"jpeg"
+
+    with (
+        patch.object(mff, "s3_client", _patched_s3()),
+        patch.object(mff, "extract_frame", AsyncMock(side_effect=fake_extract)),
+    ):
+        filled = await mff.fill_moment_frames([_moment_tab(items)], "yt123", _handle())
+
+    assert filled == 1
+
+
+async def test_should_skip_everything_when_s3_is_unavailable():
     items = [{"label": "needs", "seconds": 10}]
-    tabs = [_moment_tab(items)]
     s3 = _patched_s3()
     s3.is_available = MagicMock(return_value=False)
-    with (
-        patch.object(mff, "s3_client", s3),
-        patch.object(mff, "get_video_stream_url", AsyncMock()) as mock_stream,
-    ):
-        filled = await mff.fill_moment_frames(tabs, "yt123")
+    handle = _handle()
+    with patch.object(mff, "s3_client", s3):
+        filled = await mff.fill_moment_frames([_moment_tab(items)], "yt123", handle)
 
-    assert filled == 0
-    mock_stream.assert_not_awaited()
+    assert (filled, handle.path.await_count) == (0, 0)
 
 
-@pytest.mark.asyncio
-async def test_no_targets_short_circuits():
+async def test_should_short_circuit_without_targets():
     tabs = [_moment_tab([{"label": "has", "seconds": 5, "thumbnailUrl": "u"}])]
     s3 = _patched_s3()
     with patch.object(mff, "s3_client", s3):
-        filled = await mff.fill_moment_frames(tabs, "yt123")
+        filled = await mff.fill_moment_frames(tabs, "yt123", _handle())
 
     assert filled == 0
     s3.is_available.assert_not_called()
 
 
-@pytest.mark.asyncio
-async def test_cdn_403_with_three_targets_triggers_local_fallback(tmp_path):
+@pytest.mark.parametrize("started", [True, False])
+async def test_should_never_download_on_its_own(started: bool):
+    """The fill reads the run's file only — no second 720p download, ever."""
     items = [{"label": f"m{i}", "seconds": 100 + i * 60} for i in range(3)]
-    tabs = [_moment_tab(items)]
-    local_dir = tmp_path / "dl"
-    local_dir.mkdir()
-    local_video = local_dir / "yt123.mp4"
-    local_video.write_bytes(b"720p")
-
-    async def fake_extract(source, sec):
-        # URL seeks 403 (None); the local file works.
-        return b"jpeg" if source == str(local_video) else None
-
     with (
         patch.object(mff, "s3_client", _patched_s3()),
-        patch.object(mff, "get_video_stream_url", AsyncMock(return_value="https://stream")),
-        patch.object(mff, "extract_frame", AsyncMock(side_effect=fake_extract)),
-        patch(
-            "src.services.media.local_video.download_video_720p",
-            AsyncMock(return_value=(local_video, str(local_dir))),
-        ) as mock_download,
+        patch.object(mff, "extract_frame", AsyncMock(return_value=b"jpeg")),
+        patch("src.services.media.local_video.download_video_720p", AsyncMock()) as download,
     ):
-        filled = await mff.fill_moment_frames(tabs, "yt123")
+        await mff.fill_moment_frames([_moment_tab(items)], "yt123", _handle(started=started))
 
-    assert filled == 3
-    # The download gets the fallback budget minus the seek reserve so a slow
-    # download exits cleanly instead of being cancelled at the outer deadline.
-    mock_download.assert_awaited_once_with(
-        "yt123",
-        timeout=mff._FILL_FALLBACK_TIMEOUT - mff._FILL_FALLBACK_SEEK_RESERVE,
-        purpose="moment_fill",
-    )
-    assert all(it.get("thumbnailUrl") for it in items)
-    assert not local_dir.exists()  # temp dir cleaned up
-
-
-@pytest.mark.asyncio
-async def test_fewer_than_three_failures_skip_the_download_fallback():
-    items = [{"label": "a", "seconds": 100}, {"label": "b", "seconds": 200}]
-    tabs = [_moment_tab(items)]
-    with (
-        patch.object(mff, "s3_client", _patched_s3()),
-        patch.object(mff, "get_video_stream_url", AsyncMock(return_value="https://stream")),
-        patch.object(mff, "extract_frame", AsyncMock(return_value=None)),
-        patch("src.services.media.local_video.download_video_720p", AsyncMock()) as mock_download,
-    ):
-        filled = await mff.fill_moment_frames(tabs, "yt123")
-
-    assert filled == 0
-    mock_download.assert_not_awaited()
-    assert not any(it.get("thumbnailUrl") for it in items)
-
-
-@pytest.mark.asyncio
-async def test_proxy_skips_the_stream_url_pass_and_fills_locally(tmp_path, monkeypatch):
-    monkeypatch.setattr(download_utils.settings, "YOUTUBE_PROXY_URL", "http://u-1:p@h:80")
-    items = [{"label": f"m{i}", "seconds": 100 + i * 60} for i in range(3)]
-    tabs = [_moment_tab(items)]
-    local_dir = tmp_path / "dl"
-    local_dir.mkdir()
-    local_video = local_dir / "yt123.mp4"
-    local_video.write_bytes(b"720p")
-
-    with (
-        patch.object(mff, "s3_client", _patched_s3()),
-        patch.object(mff, "get_video_stream_url", AsyncMock()) as mock_stream,
-        patch.object(mff, "extract_frame", AsyncMock(return_value=b"jpeg")) as mock_extract,
-        patch(
-            "src.services.media.local_video.download_video_720p",
-            AsyncMock(return_value=(local_video, str(local_dir))),
-        ) as mock_download,
-    ):
-        filled = await mff.fill_moment_frames(tabs, "yt123")
-
-    assert filled == 3
-    mock_stream.assert_not_awaited()
-    mock_download.assert_awaited_once()
-    assert all(call.args[0] == str(local_video) for call in mock_extract.await_args_list)
-    assert not local_dir.exists()
-
-
-@pytest.mark.asyncio
-async def test_proxy_with_too_few_targets_downloads_nothing(monkeypatch):
-    monkeypatch.setattr(download_utils.settings, "YOUTUBE_PROXY_URL", "http://u-1:p@h:80")
-    items = [{"label": "a", "seconds": 100}, {"label": "b", "seconds": 200}]
-    tabs = [_moment_tab(items)]
-    with (
-        patch.object(mff, "s3_client", _patched_s3()),
-        patch.object(mff, "get_video_stream_url", AsyncMock()) as mock_stream,
-        patch.object(mff, "extract_frame", AsyncMock()) as mock_extract,
-        patch("src.services.media.local_video.download_video_720p", AsyncMock()) as mock_download,
-    ):
-        filled = await mff.fill_moment_frames(tabs, "yt123")
-
-    assert filled == 0
-    mock_stream.assert_not_awaited()
-    mock_extract.assert_not_awaited()
-    mock_download.assert_not_awaited()
+    download.assert_not_awaited()

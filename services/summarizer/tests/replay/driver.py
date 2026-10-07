@@ -41,7 +41,7 @@ _SSE_PREFIX = "data: "
 # observability exports, no audio fallbacks, no faithfulness judge (it is off
 # the critical path and its sampled calls are not part of the cassette).
 # ``YOUTUBE_PROXY_URL`` comes from the cassette (the recorded runs were
-# proxied, which decides the 720p prefetch / moment-fill download paths).
+# proxied; downloads read it for their subprocess env).
 _HARNESS_SETTINGS: dict[str, Any] = {
     "REDIS_ENABLED": False,
     "QDRANT_ENABLED": True,

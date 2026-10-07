@@ -90,6 +90,7 @@ async def run_phase_assembly(ctx: PipelineContext) -> AsyncGenerator[str, None]:
     # appending it last and reshuffling once the doc becomes authoritative.
     # The payload is a copy — the persisted tab dict never gains `position`.
     all_tabs = assembled.get("tabs", [])
+    hires_video = getattr(ctx, "hires_video", None)
     moment_positions = [i for i, t in enumerate(all_tabs) if t.get("component") == "moment_track"]
     for position, tab in enumerate(all_tabs):
         if position in moment_positions:
@@ -99,15 +100,18 @@ async def run_phase_assembly(ctx: PipelineContext) -> AsyncGenerator[str, None]:
     if moment_positions:
         # Best-effort image guarantee for the value-moment gallery: extract a
         # frame at each still-frameless moment's own timestamp (never raises).
-        # Heartbeats keep the SSE hop alive — the fill can run for minutes
-        # (stream-URL pass + local-download fallback) and this phase is not
+        # Heartbeats keep the SSE hop alive — a run that skipped scene
+        # extraction downloads the 720p file here, and this phase is not
         # under run_parallel_phases' keepalive.
-        fill_task = asyncio.ensure_future(fill_moment_frames(all_tabs, ctx.youtube_id))
+        fill_task = asyncio.ensure_future(fill_moment_frames(all_tabs, ctx.youtube_id, hires_video))
         async for keepalive in run_task_with_heartbeat(fill_task):
             yield keepalive
         await fill_task
         for position in moment_positions:
             yield sse_event("tab_ready", {**all_tabs[position], "position": position})
+    # Moment fill was the 720p file's last reader — free the disk now.
+    if hires_video is not None:
+        await hires_video.close()
 
     # Drops = the plan's registry check (unregistered dataSource, no sibling)
     # + the assembler's per-tab accounting — assembly also

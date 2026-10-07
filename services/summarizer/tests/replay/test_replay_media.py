@@ -41,12 +41,24 @@ def test_tier_should_be_derived_by_production_code(cassettes: dict, video_id: st
     assert derive_tier(video.category, video.title, video.tags[:6]) == cassettes[video_id].tier
 
 
-def test_proxied_standard_run_should_download_like_prod(replays: dict) -> None:
-    assert replays[_REFERENCE_VIDEO].downloads() == [
-        ("lowres", "scene_detect"),
-        ("720p", "prefetch"),
-        ("720p", "moment_fill"),
+@pytest.mark.parametrize("video_id", available_cassettes())
+def test_should_download_one_720p_file_per_run(replays: dict, video_id: str) -> None:
+    """1a.2: the prefetch serves hi-res frames AND moment fill — no refiner or
+    moment-fill re-download (the recorded runs fetched 720p twice)."""
+    assert replays[video_id].downloads() == [("lowres", "scene_detect"), ("720p", "prefetch")]
+
+
+def test_moment_fill_should_seek_the_kept_720p_file(replays: dict) -> None:
+    """T1dQhQAm8Tc still has frameless moments after injection: moment fill
+    fills them from the prefetched file instead of downloading again."""
+    tabs = (replays[_REFERENCE_VIDEO].saved_result or {}).get("tabs", [])
+    keys = [
+        item.get("s3Key", "")
+        for tab in tabs
+        if tab.get("component") == "moment_track"
+        for item in tab["props"]["items"]
     ]
+    assert any("/frames/" in key for key in keys)
 
 
 def test_standard_selection_should_match_recording(replays: dict, cassettes: dict) -> None:

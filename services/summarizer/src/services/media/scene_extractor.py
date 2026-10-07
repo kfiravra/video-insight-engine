@@ -6,12 +6,16 @@ keeps the download small/fast. Selects ~25 best frames with even time
 distribution.
 
 Pass 2 (refinement): re-extracts only the SELECTED frames at 720p by
-seeking into a direct stream URL (hires_refiner), so the JPEGs uploaded
-to S3 and sent to the vision LLM are sharp. Falls back to the low-res
-detection frames per-frame on any failure.
+seeking into the run's local 720p file (hires_refiner), so the JPEGs
+uploaded to S3 and sent to the vision LLM are sharp. Falls back to the
+low-res detection frames per-frame on any failure. The 720p file belongs to
+the run (``ctx.hires_video``): extraction starts its download and leaves it
+on disk for moment fill.
 
 Key principle: detect cheap, refine selectively, upload selectively.
 """
+
+from __future__ import annotations
 
 import asyncio
 import logging
@@ -20,7 +24,7 @@ import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Awaitable, Callable
+from typing import TYPE_CHECKING, Awaitable, Callable
 
 from src.config import settings
 from src.services.media.image_dedup import compute_ahash, is_duplicate
@@ -28,6 +32,9 @@ from src.services.media.s3_client import s3_client
 from src.services.media.scene_detect import detect_candidate_frames
 from src.services.pipeline.pipeline_timing import mark_step, record_download
 from src.utils.constants import YOUTUBE_ID_RE
+
+if TYPE_CHECKING:
+    from src.services.media.hires_prefetch import LocalHiresSource
 
 logger = logging.getLogger(__name__)
 
@@ -257,7 +264,7 @@ def _sample_by_time(frames: list[dict], count: int) -> list[dict]:
 def _dedupe_refined_frames(frames: list[dict]) -> list[dict]:
     """Drop perceptually-duplicate frames after the hires second pass.
 
-    The refiner seeks a remote stream by int(timestamp), so two picks under
+    The refiner seeks the 720p file by int(timestamp), so two picks under
     a second apart (or snapped to the same keyframe) can produce identical
     720p images even though their low-res detection frames were distinct.
     On collision, a refined frame is reverted to its original low-res JPEG
@@ -318,6 +325,7 @@ async def extract_scene_keyframes(
     duration_seconds: int | None = None,
     overselect_count: int | None = None,
     reselect_hook: Callable[[list[dict]], Awaitable[list[dict]]] | None = None,
+    hires_video: LocalHiresSource | None = None,
 ) -> dict:
     """Extract keyframes at scene change boundaries with smart selection.
 
@@ -329,6 +337,8 @@ async def extract_scene_keyframes(
         scene_threshold: FFmpeg scene change threshold (0.0-1.0).
         max_frames: Maximum frames to extract from FFmpeg. Default from settings.
         duration_seconds: Video duration in seconds.
+        hires_video: The run's 720p file; started here, refined from, and
+            left open for moment fill (the run closes it).
 
     Returns:
         Dict with 'all_frames', 'selected_frames', 'gallery_frames' keys.
@@ -360,6 +370,7 @@ async def extract_scene_keyframes(
                 duration_seconds,
                 overselect_count=overselect_count,
                 reselect_hook=reselect_hook,
+                hires_video=hires_video,
             )
         finally:
             # Prune lock after use to prevent unbounded dict growth
@@ -373,6 +384,7 @@ async def _do_extraction(
     duration_seconds: int | None,
     overselect_count: int | None = None,
     reselect_hook: Callable[[list[dict]], Awaitable[list[dict]]] | None = None,
+    hires_video: LocalHiresSource | None = None,
 ) -> dict:
     """Core extraction logic — FFmpeg + scoring + selective upload."""
     empty_result: dict = {"all_frames": [], "selected_frames": [], "gallery_frames": []}
@@ -387,7 +399,6 @@ async def _do_extraction(
     temp_video = Path(temp_dir) / f"{video_id}.mp4"
     frames_dir = Path(temp_dir) / "frames"
     frames_dir.mkdir()
-    hires_source = None
 
     try:
         # Step 1: Download lowest quality video via yt-dlp
@@ -455,11 +466,10 @@ async def _do_extraction(
         file_size_mb = temp_video.stat().st_size / 1_048_576
         logger.info("Downloaded temp video for %s: %.1fMB", video_id, file_size_mb)
 
-        # Step 1b (proxied runs only): start the 720p download now so it
-        # overlaps scene detection + scoring instead of following them.
-        from src.services.media.hires_prefetch import start_local_hires
-
-        hires_source = await start_local_hires(video_id, temp_video)
+        # Step 1b: start the run's 720p download now so it overlaps scene
+        # detection + scoring instead of following them.
+        if hires_video is not None and settings.SCENE_HIRES_ENABLED:
+            hires_video.start()
 
         # Steps 2-4: scene detection on the LOCAL file, with the zero-candidate
         # ladder (floor threshold, then uniform seeks) and the static-camera
@@ -535,12 +545,10 @@ async def _do_extraction(
         from src.services.media.hires_refiner import refine_selected_frames
 
         hires_started = time.monotonic()
-        hires_count = await refine_selected_frames(
-            video_id, selected_frames, local_source=hires_source
-        )
+        hires_count = await refine_selected_frames(video_id, selected_frames, hires_video)
         mark_step("frames.hires", hires_started)
 
-        # Step 7b: Dedup AFTER refinement — CDN seeks by int(timestamp) can
+        # Step 7b: Dedup AFTER refinement — seeks by int(timestamp) can
         # collapse distinct low-res picks into near-identical 720p frames.
         selected_frames = await asyncio.to_thread(_dedupe_refined_frames, selected_frames)
         selected_ids = {id(f) for f in selected_frames}
@@ -597,21 +605,15 @@ async def _do_extraction(
         logger.warning("Scene extraction failed for %s: %s", video_id, e)
         return empty_result
     finally:
-        # Cancel/remove the prefetched 720p download on every exit path. The
-        # nested finally keeps the temp-video unlink when close() re-raises a
-        # cancel aimed at this task.
+        # Delete the pass-1 video immediately (large, ~5-75MB). The 720p file
+        # is the run's and stays for moment fill, whatever happened here.
         try:
-            if hires_source is not None:
-                await hires_source.close()
-        finally:
-            # Delete temp VIDEO file immediately (large, ~5-15MB)
-            try:
-                if temp_video.exists():
-                    temp_video.unlink()
-            except Exception as cleanup_err:
-                logger.debug("Failed to delete temp video: %s", cleanup_err)
-            # NOTE: Don't delete frames_dir — OCR needs the frame JPEGs.
-            # Cleanup via cleanup_temp_dir() after process_scene_frames().
+            if temp_video.exists():
+                temp_video.unlink()
+        except Exception as cleanup_err:
+            logger.debug("Failed to delete temp video: %s", cleanup_err)
+        # NOTE: Don't delete frames_dir — OCR needs the frame JPEGs.
+        # Cleanup via cleanup_temp_dir() after process_scene_frames().
 
 
 async def cleanup_temp_dir(temp_dir: str) -> None:

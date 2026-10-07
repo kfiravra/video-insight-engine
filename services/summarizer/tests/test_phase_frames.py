@@ -27,6 +27,7 @@ def _ctx() -> SimpleNamespace:
         scene_frames_for_assembly=None,
         scene_frames_all=None,
         scene_frames_gallery=None,
+        hires_video=None,
     )
 
 

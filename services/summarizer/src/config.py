@@ -281,15 +281,12 @@ class Settings(BaseSettings):
     SCENE_JPEG_QUALITY: int = 4  # ffmpeg -q:v (2 = near-lossless, 31 = worst)
 
     # Hi-res refinement: re-extract the ~25 SELECTED frames at 720p before S3
-    # upload + vision analysis. Proxyless: stream-URL seeks (no full download).
-    # Proxied: one local 720p download, prefetched during scene detection.
-    # Disable to fall back to single-pass low-res frames.
+    # upload + vision analysis, by seeking the run's one local 720p download
+    # (started during scene detection, kept for moment fill). Disable to fall
+    # back to single-pass low-res frames.
     SCENE_HIRES_ENABLED: bool = True
-    SCENE_HIRES_CONCURRENCY: int = 4  # parallel ffmpeg seeks (CDN or local file)
-    SCENE_HIRES_TIMEOUT: float = 90.0  # stream-URL budget; on expiry keep low-res
-    # Budget for the local-file seeks (after the one yt-dlp 720p download):
-    # the proxyless fallback when the CDN 403s every direct stream-URL
-    # extraction, and the only path when a proxy is set.
+    SCENE_HIRES_CONCURRENCY: int = 4  # parallel ffmpeg seeks into the local file
+    # Budget for the hi-res seeks into the local 720p file (after its download).
     SCENE_HIRES_FALLBACK_TIMEOUT: float = 180.0
     # yt-dlp player clients for VIDEO/AUDIO downloads (comma-separated).
     # 2026-08-19: YouTube 403s the web client's download URLs from this
@@ -340,17 +337,6 @@ class Settings(BaseSettings):
     # HIGH-tier floor: vision-informed reselection never keeps fewer than this
     # many frames (backfilled by local score when vision over-refuses).
     FRAME_RESELECT_FLOOR: int = 20
-
-    # Frame extraction (visual blocks)
-    # Default False for local dev (yt-dlp/ffmpeg may not be installed).
-    # docker-compose.yml sets FRAME_EXTRACTION_ENABLED=true for container environments.
-    FRAME_EXTRACTION_ENABLED: bool = False
-    MAX_FRAMES_PER_VISUAL: int = 6  # Cap frames[] array length per visual block
-    MAX_FRAMES_PER_CHAPTER: int = 12  # Total frames across all visual blocks in one chapter
-    FRAME_MIN_SPACING_SECONDS: int = 20  # Min gap between frames in same block
-    FRAME_WITHIN_BLOCK_DEDUP_THRESHOLD: int = (
-        12  # aHash hamming distance (relaxed for within-block)
-    )
 
     # Pipeline output-schema version — single-sourced from
     # packages/shared/src/config/pipeline-version.json (shared with the api

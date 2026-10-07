@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from src.models.pipeline_types import PlanResult
     from src.repositories.mongodb_repository import MongoDBVideoRepository
     from src.services.llm import LLMService
+    from src.services.media.hires_prefetch import LocalHiresSource
     from src.services.pipeline.classifier import ContentTraits
     from src.services.pipeline.pipeline_helpers import (
         PipelineTimer,
@@ -53,6 +54,10 @@ class PipelineContext:
 
     # Scene extraction
     scene_task: asyncio.Task | None = None
+    # The run's one local 720p file (hi-res frames + moment fill). The runner
+    # creates it; assembly closes it after moment fill and the runner again
+    # when the run ends, so no exit path leaks the download.
+    hires_video: LocalHiresSource | None = None
     scene_frames_for_assembly: list[dict] = field(default_factory=list)
     scene_frames_all: list[dict] = field(
         default_factory=list

@@ -87,7 +87,7 @@ async def test_heartbeats_flow_while_moment_fill_runs() -> None:
 
     ctx = _build_ctx()
 
-    async def slow_fill(_tabs, _yt) -> int:
+    async def slow_fill(_tabs, _yt, _hires_video) -> int:
         await asyncio.sleep(0.12)
         return 0
 
@@ -122,3 +122,48 @@ async def test_no_moment_tabs_means_no_fill_and_no_heartbeats() -> None:
     names = [e for e, _ in _events(chunks)]
     assert "heartbeat" not in names
     mock_fill.assert_not_awaited()
+
+
+class _HiresVideo:
+    """Records when the run's 720p file is closed relative to moment fill."""
+
+    def __init__(self, order: list[str]) -> None:
+        self._order = order
+
+    async def close(self) -> None:
+        self._order.append("close")
+
+
+@pytest.mark.asyncio
+async def test_moment_fill_reads_the_runs_720p_file_and_closes_it_after() -> None:
+    from src.services.pipeline.phases import assembly as phase
+
+    order: list[str] = []
+    ctx = _build_ctx()
+    ctx.hires_video = _HiresVideo(order)
+
+    async def fill(_tabs, _yt, hires_video) -> int:
+        order.append("fill" if hires_video is ctx.hires_video else "fill-without-file")
+        return 0
+
+    with (
+        patch.object(phase, "assemble_response", return_value={"tabs": _tabs(), "meta": {}}),
+        patch.object(phase, "fill_moment_frames", fill),
+    ):
+        await _collect(phase.run_phase_assembly(ctx))  # type: ignore[arg-type]
+
+    assert order == ["fill", "close"]
+
+
+@pytest.mark.asyncio
+async def test_runs_720p_file_is_closed_without_moment_tabs() -> None:
+    from src.services.pipeline.phases import assembly as phase
+
+    order: list[str] = []
+    ctx = _build_ctx()
+    ctx.hires_video = _HiresVideo(order)
+    tabs = [t for t in _tabs() if t["component"] != "moment_track"]
+    with patch.object(phase, "assemble_response", return_value={"tabs": tabs, "meta": {}}):
+        await _collect(phase.run_phase_assembly(ctx))  # type: ignore[arg-type]
+
+    assert order == ["close"]

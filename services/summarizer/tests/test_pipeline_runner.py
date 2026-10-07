@@ -717,3 +717,37 @@ async def test_transcript_error_from_phases_still_marks_row_failed() -> None:
     repository.update_status.assert_any_call(
         "vsum_9", ProcessingStatus.FAILED, ANY, ErrorCode.NO_TRANSCRIPT
     )
+
+
+@pytest.mark.asyncio
+async def test_failed_run_closes_the_720p_file_before_persisting_timing() -> None:
+    """A run that dies before assembly must not leak the 720p download; its
+    cancellation is part of the timing record, so the close comes first."""
+    ctx = _english_ctx({})
+    order: list[str] = []
+    ctx.hires_video = MagicMock()
+    ctx.hires_video.close = AsyncMock(side_effect=lambda: order.append("close"))
+    timer = MagicMock()
+    timer.elapsed = MagicMock(return_value=1.0)
+
+    async def _plan_fails(_ctx):
+        raise RuntimeError("plan exploded")
+        yield  # pragma: no cover — makes this an async generator
+
+    async def _persist(*_args: object) -> None:
+        order.append("persist")
+
+    with ExitStack() as stack:
+        for p in _patched_phases():
+            stack.enter_context(p)
+        stack.enter_context(patch.object(pipeline_runner, "run_phase_plan", _plan_fails))
+        stack.enter_context(patch.object(pipeline_runner, "persist_run_timing", _persist))
+        with pytest.raises(RuntimeError, match="plan exploded"):
+            _ = [
+                ev
+                async for ev in pipeline_runner._run_pipeline_phases(
+                    ctx, MagicMock(), "vsid", timer
+                )
+            ]
+
+    assert order == ["close", "persist"]

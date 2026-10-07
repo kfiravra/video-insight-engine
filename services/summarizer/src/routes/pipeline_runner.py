@@ -35,6 +35,7 @@ from src.routes.pipeline_failures import classify_run_failure
 from src.routes.run_timing import log_run_summary, mark_phase, persist_run_timing
 from src.services.cache.response_cache import response_cache
 from src.services.llm import LLMService
+from src.services.media.hires_prefetch import LocalHiresSource
 from src.services.observability import pipeline_trace, update_trace_metadata
 from src.services.override_state import clear_override
 from src.services.pipeline.context import PipelineContext
@@ -155,7 +156,14 @@ async def _run_pipeline_phases(
             timing.observe_sse(event)
             yield event
     finally:
-        await persist_run_timing(ctx, repository, video_summary_id, timing)
+        try:
+            # Failed or cancelled runs never reach assembly's close — the 720p
+            # download must not outlive them (its cancel lands in the timing).
+            hires_video = getattr(ctx, "hires_video", None)
+            if hires_video is not None:
+                await hires_video.close()
+        finally:
+            await persist_run_timing(ctx, repository, video_summary_id, timing)
 
 
 async def _run_phases_in_order(
@@ -445,6 +453,7 @@ async def stream_summarization(
                 repository=repository,
                 llm_service=llm_service,
                 timer=timer,
+                hires_video=LocalHiresSource(youtube_id),
             )
 
             async for event in _run_pipeline_phases(ctx, repository, video_summary_id, timer):

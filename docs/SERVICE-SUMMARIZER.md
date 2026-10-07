@@ -92,14 +92,14 @@ services/summarizer/
     │   │   ├── frame_scorer.py       # Frame scoring (visual, face, skin, center-detail, text, uniqueness)
     │   │   ├── frame_analyzer.py     # Vision LLM analysis (scene type, visual_subject, content)
     │   │   ├── visual_tier.py        # Adaptive visual tier (high/standard/low from metadata)
-    │   │   ├── hires_refiner.py      # Pass-2 720p re-extraction of selected frames (seek or local file)
-    │   │   ├── hires_prefetch.py     # Proxied runs: 720p download started alongside scene detection
-    │   │   ├── local_video.py        # One-shot ≤720p download (proxyless fallback / proxied primary)
+    │   │   ├── scene_detect.py       # Scene detection + zero-candidate ladder (0.3 → 0.15 → uniform seeks)
+    │   │   ├── hires_refiner.py      # Pass-2 720p re-extraction of selected frames (local file seeks)
+    │   │   ├── hires_prefetch.py     # The run's one 720p file (ctx.hires_video): frames + moment fill
+    │   │   ├── local_video.py        # One-shot ≤720p yt-dlp download
     │   │   ├── frame_ocr.py          # OCR on text-heavy frames (Tesseract)
-    │   │   ├── frame_extractor.py    # Video frame extraction + S3 upload
+    │   │   ├── frame_extractor.py    # Single-frame ffmpeg seek (refiner + moment fill)
     │   │   ├── image_dedup.py        # Perceptual hashing for dedup
     │   │   ├── s3_client.py          # Async S3 client
-    │   │   ├── stream_url.py         # Stream URL resolution
     │   │   └── download_utils.py     # Download helpers + yt-dlp player-client routing
     │   │
     │   └── video/                # YouTube & metadata
@@ -198,9 +198,8 @@ WHISPER_CHUNK_CONCURRENCY=3            # Concurrent chunk transcription (respect
 SCENE_EXTRACTION_ENABLED=true
 SCENE_S3_PREFIX=scenes-v3              # Versioned frame/manifest prefix — bump to invalidate the frame cache
 SCENE_HIRES_ENABLED=true               # Pass-2 720p refinement of the selected frames
-SCENE_HIRES_TIMEOUT=90.0               # Stream-URL refinement budget (proxyless); 0/N upgraded → local-download fallback
-SCENE_HIRES_FALLBACK_TIMEOUT=180.0     # Local-file seek budget after the 720p download (media/local_video.py)
-YOUTUBE_PROXY_URL=                     # One proxy for every YouTube request; when set, frames skip stream-URL seeks
+SCENE_HIRES_FALLBACK_TIMEOUT=180.0     # Hi-res seek budget in the run's local 720p file (media/hires_refiner.py)
+YOUTUBE_PROXY_URL=                     # One proxy for every YouTube request (metadata, captions, every download)
 YOUTUBE_PROXY_EXIT_COUNT=1             # Sticky exits (USERNAME-1…N) a caption/timedtext 429 may rotate through; 1 = no rotation
 YTDLP_PLAYER_CLIENTS=android           # yt-dlp player clients for pass 1 + audio downloads; empty = yt-dlp defaults
 YTDLP_HIRES_PLAYER_CLIENTS=web_embedded,android  # 720p download only (android caps at 360p); retries with the line above
@@ -305,8 +304,8 @@ The pipeline uses 3-6 LLM calls with a plan-first architecture:
         │   presenter shots (floor FRAME_RESELECT_FLOOR); LOW skips vision; STANDARD = top-8.
         └─▶ Pass 1 — detection: yt-dlp downloads WORST-quality video to temp file
         │   (~15-20s; 144p is plenty for scene detection + scoring, keeps download fast).
-        │   All yt-dlp VIDEO/AUDIO downloads (detection, stream URL, local 720p fallback,
-        │   whisper audio) route through YTDLP_PLAYER_CLIENTS (default "android" — YouTube
+        │   All yt-dlp VIDEO/AUDIO downloads (detection, whisper audio; the 720p file uses
+        │   YTDLP_HIRES_PLAYER_CLIENTS first) route through YTDLP_PLAYER_CLIENTS (default "android" — YouTube
         │   403s the web client's download URLs from some environments; never mix in
         │   "default": merged format lists let bestvideo pick a 403ing web DASH format).
         │   Metadata/subtitle extraction deliberately does NOT use it (android lacks subs).
@@ -319,16 +318,13 @@ The pipeline uses 3-6 LLM calls with a plan-first architecture:
         └─▶ Time-slot selection: ~25 frames evenly distributed across video duration
         └─▶ Gallery classification: top ~12 frames by score for Visual Moments tab
         └─▶ Pass 2 — hi-res refinement (hires_refiner.py, SCENE_HIRES_ENABLED):
-        │   re-extracts only the SELECTED frames at 720p via stream-URL seek
-        │   (no full download; ~1-3s/frame, SCENE_HIRES_CONCURRENCY parallel,
-        │    SCENE_HIRES_TIMEOUT total budget; per-frame fallback to low-res on failure).
-        │   0/N upgraded (or timeout with 0) = the CDN 403s plain-ffmpeg seeks (client-bound
-        │   googlevideo URLs) → local-download fallback: media/local_video.py downloads one
-        │   ≤720p rendition via yt-dlp and seeks the local file (SCENE_HIRES_FALLBACK_TIMEOUT).
-        │   With YOUTUBE_PROXY_URL set the stream URL is never looked up (the seeks would leave
-        │   from the blocked host IP): media/hires_prefetch.py starts the proxied 720p download
-        │   right after pass 1, so it overlaps scene detection + scoring, and the refiner seeks
-        │   that local file (a pass-1 file already ≥720p is reused instead).
+        │   re-extracts only the SELECTED frames at 720p by seeking the run's ONE local
+        │   ≤720p file (SCENE_HIRES_CONCURRENCY parallel, SCENE_HIRES_FALLBACK_TIMEOUT
+        │   budget; per-frame fallback to low-res on failure). media/hires_prefetch.py
+        │   (ctx.hires_video) starts that download right after pass 1 so it overlaps scene
+        │   detection + scoring; it stays on disk for moment fill and is deleted after it
+        │   (or when the run fails). No stream-URL seeks: client-bound googlevideo URLs
+        │   403 plain ffmpeg, and proxied runs would seek from the blocked host IP.
         │   Swaps frame paths in place → S3 upload, vision, and OCR all get the best available.
         └─▶ Batch parallel S3 upload (only selected frames — not all detected) + manifest write
         └─▶ OCR + Vision LLM analysis run in parallel:
@@ -452,9 +448,9 @@ The pipeline uses 3-6 LLM calls with a plan-first architecture:
     └─▶ Cross-tab links resolved from static LINK_RULES
     └─▶ SSE: tab_ready events (progressive rendering), each with `position` = index in the
     │   persisted tab order. moment_track tabs are HELD BACK: assembly/moment_frame_fill.py
-    │   extracts a frame AT each still-frameless moment's timestamp (stream-URL seek, then the
-    │   same local-download fallback as hires — with a proxy the seek pass is skipped and the
-    │   local download is the only pass; cap 12 frames, 60s + 150s budgets), heartbeats
+    │   extracts a frame AT each still-frameless moment's timestamp by seeking the run's one
+    │   local 720p file (already downloaded by the frames phase; a manifest cache hit starts
+    │   it here, for ≥3 moments only; cap 12 frames, 150s budget) and then deletes it; heartbeats
     │   keep the SSE hop alive meanwhile, then the moment tabs stream WITH their images and the
     │   client slots them by `position` so streamed order == persisted order
     └─▶ Store result to MongoDB + Redis cache (if enabled). Redis response-cache keys are

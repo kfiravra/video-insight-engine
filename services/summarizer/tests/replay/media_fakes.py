@@ -7,7 +7,7 @@ faked here:
 
 * ``asyncio.create_subprocess_exec`` — yt-dlp downloads (low-res pass 1 and
   every 720p download, sized files at the recorded size), ``--get-url``
-  lookups (fail: the recorded runs were proxied), ffprobe, ffmpeg scene
+  lookups (refused and reported: the stream-URL pass is gone), ffmpeg scene
   detection (recorded frames + ``pts_time`` lines + the ladder's score side
   file; a ``zero`` cassette exits like ffmpeg 7 on an empty output), ffmpeg
   ``-ss`` seeks (distinct decodable JPEGs). Anything else is refused and
@@ -40,7 +40,6 @@ from src.services.media.s3_client import S3Client
 from tests.replay.cassette import Cassette, DownloadSpec, FrameRecord
 
 _REPLAY_URL_BASE = "https://replay.invalid/"
-_PASS1_HEIGHT = b"360\n"
 _LOWRES_FORMAT = "worstvideo"
 _HIRES_FORMAT = "height<=720"
 _SCENE_FILTER = "select='gt(scene"
@@ -158,7 +157,7 @@ class MediaFakes:
 
     async def create_subprocess_exec(self, program: str, *args: Any, **kwargs: Any) -> FakeProcess:
         argv = [str(program), *(str(a) for a in args)]
-        handlers = {"yt-dlp": self._ytdlp, "ffmpeg": self._ffmpeg, "ffprobe": self._ffprobe}
+        handlers = {"yt-dlp": self._ytdlp, "ffmpeg": self._ffmpeg}
         handler = handlers.get(Path(argv[0]).name)
         if handler is None:
             self.unexpected_commands.append(" ".join(argv[:3]))
@@ -174,8 +173,8 @@ class MediaFakes:
     def _ytdlp(self, argv: list[str]) -> FakeProcess:
         fmt = _arg_after(argv, "-f") or _arg_after(argv, "--format")
         if "--get-url" in argv:
-            # Recorded runs were proxied: a stream-URL lookup is a regression
-            # the fallback chain must survive, not a path with timings.
+            # Every hi-res seek reads the run's local 720p file since 1a.2: a
+            # stream-URL lookup is a regression, not a path with timings.
             self.unexpected_commands.append("yt-dlp --get-url")
             return FakeProcess(0.0, returncode=1)
         if fmt.startswith(_LOWRES_FORMAT):
@@ -190,9 +189,6 @@ class MediaFakes:
         spec = plan[min(self._hires_calls, len(plan) - 1)]
         self._hires_calls += 1
         return spec
-
-    def _ffprobe(self, argv: list[str]) -> FakeProcess:
-        return FakeProcess(0.0, stdout=_PASS1_HEIGHT)
 
     def _ffmpeg(self, argv: list[str]) -> FakeProcess:
         video_filter = _arg_after(argv, "-vf")
