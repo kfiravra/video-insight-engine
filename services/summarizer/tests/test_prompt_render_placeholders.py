@@ -19,16 +19,15 @@ No LLM calls are made; the LLM boundary is mocked at each stage's module.
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-PROMPTS_DIR = Path(__file__).parent.parent / "src" / "prompts"
+from src.services.pipeline.prompt_registry import declared_placeholders
 
-_PLACEHOLDER_RE = re.compile(r"\{([a-z_]+)\}")
+PROMPTS_DIR = Path(__file__).parent.parent / "src" / "prompts"
 
 # Templates with placeholders that are deliberately NOT render-tested.
 # Keep this list justified — anything here is a known gap.
@@ -39,7 +38,7 @@ def _declared_placeholders(*relative_paths: str) -> set[str]:
     """Union of ``{placeholder}`` names declared by the given template files."""
     tokens: set[str] = set()
     for rel in relative_paths:
-        tokens |= set(_PLACEHOLDER_RE.findall((PROMPTS_DIR / rel).read_text()))
+        tokens |= declared_placeholders((PROMPTS_DIR / rel).read_text())
     return tokens
 
 

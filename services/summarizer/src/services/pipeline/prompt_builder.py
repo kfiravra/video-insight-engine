@@ -10,6 +10,11 @@ from pathlib import Path
 from ...config import prompts_from_disk
 from ...utils.language_utils import ENGLISH_OUTPUT_DIRECTIVE
 from .pipeline_helpers import sanitize_for_prompt
+from .prompt_registry import (
+    fetch_registered_prompt,
+    record_registered_prompt,
+    registry_matches_disk,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -119,9 +124,14 @@ def load_prompt_with_fallback(*, langfuse_name: str, fallback_path: Path) -> str
       * When Langfuse is disabled (no keys), the local file is used.
       * When the prompt isn't registered yet, the local file is used.
       * Any SDK exception is swallowed by ``fetch_prompt_with_obj``.
+      * When the registry version's ``{placeholder}`` set differs from the
+        local file's, the local file is used (warned once per name) — the code
+        renders the file it shipped with, so deploying and registering a
+        reworked prompt are safe in either order. Wording-only registry edits
+        keep the same slots and still win.
 
-    Side effect: a successful Langfuse fetch records the full Prompt
-    object via :func:`record_active_prompt` so subsequent LLM generations
+    Side effect: when the registry text is used, the full Prompt object is
+    recorded via :func:`record_active_prompt` so subsequent LLM generations
     get both the ``promptVersions`` metadata field AND the native
     ``trace.generation(prompt=...)`` cross-reference in the Langfuse UI.
     Recording is explicit — callers can also call ``fetch_prompt_with_obj``
@@ -129,35 +139,24 @@ def load_prompt_with_fallback(*, langfuse_name: str, fallback_path: Path) -> str
     """
     if prompts_from_disk():
         return _read_prompt_file(str(fallback_path))
-    text = _try_fetch_from_registry(langfuse_name)
-    if text is not None:
-        return text
-    return _read_file_cached(str(fallback_path))
-
-
-def _try_fetch_from_registry(langfuse_name: str) -> str | None:
-    """Attempt a registry fetch; record the Prompt on success. ``None`` on any failure."""
-    try:
-        from src.services.observability import (
-            fetch_prompt_with_obj,
-            record_active_prompt,
-        )
-    except Exception:  # noqa: BLE001 — observability import must never crash
-        return None
-    try:
-        obj = fetch_prompt_with_obj(langfuse_name)
-    except Exception:  # noqa: BLE001
-        return None
-    if obj is None:
-        return None
-    text = getattr(obj, "prompt", None)
-    if not isinstance(text, str):
-        return None
-    try:
-        record_active_prompt(langfuse_name, obj)
-    except Exception:  # noqa: BLE001 — recording is best-effort
-        pass
+    fetched = fetch_registered_prompt(langfuse_name)
+    if fetched is None:
+        return _read_file_cached(str(fallback_path))
+    text, prompt_obj = fetched
+    disk_text = _shipped_text_or_none(fallback_path)
+    if disk_text is not None and not registry_matches_disk(langfuse_name, text, disk_text):
+        return disk_text
+    record_registered_prompt(langfuse_name, prompt_obj)
     return text
+
+
+def _shipped_text_or_none(path: Path) -> str | None:
+    """The process-cached local file; ``None`` when unreadable (registry text then wins)."""
+    try:
+        return _read_file_cached(str(path))
+    except (OSError, UnicodeDecodeError) as exc:
+        logger.debug("No readable local prompt at %s for the placeholder check: %s", path, exc)
+        return None
 
 
 def build_tab_goals(triage_tabs: list[dict]) -> str:

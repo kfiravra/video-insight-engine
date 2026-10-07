@@ -324,9 +324,11 @@ def test_load_prompt_text_routes_through_registry_for_prompts_dir(monkeypatch):
 
     fake_path = prompt_builder.PROMPTS_DIR / "synthesis.txt"
     captured: dict[str, str] = {}
+    # Same placeholders as the shipped file — a different set falls back to disk.
+    registry_text = fake_path.read_text() + "\nREGISTRY VERSION"
 
     class _FakePromptObj:
-        prompt = "REGISTRY VERSION"
+        prompt = registry_text
         version = 1
 
     def fake_fetch(name: str) -> object | None:
@@ -342,7 +344,7 @@ def test_load_prompt_text_routes_through_registry_for_prompts_dir(monkeypatch):
         lambda *_args, **_kwargs: None,
     )
     result = prompt_builder.load_prompt_text(fake_path)
-    assert result == "REGISTRY VERSION"
+    assert result == registry_text
     assert captured["name"] == "summarizer:synthesis"
 
 
@@ -353,6 +355,7 @@ def test_load_prompt_text_rejects_paths_outside_prompts_dir(tmp_path, caplog):
     we don't read arbitrary files just because a caller asked nicely.
     """
     import logging
+
     from src.services.pipeline import prompt_builder
 
     f = tmp_path / "random.txt"
@@ -365,7 +368,7 @@ def test_load_prompt_text_rejects_paths_outside_prompts_dir(tmp_path, caplog):
 
 def test_langfuse_name_for_schema_path():
     """schemas/food.txt → summarizer:schema:food."""
-    from src.services.pipeline.prompt_builder import _langfuse_name_for, PROMPTS_DIR
+    from src.services.pipeline.prompt_builder import PROMPTS_DIR, _langfuse_name_for
 
     assert _langfuse_name_for(PROMPTS_DIR / "schemas" / "food.txt") == "summarizer:schema:food"
     assert _langfuse_name_for(PROMPTS_DIR / "plan.txt") == "summarizer:plan"
