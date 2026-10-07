@@ -181,7 +181,10 @@ async def call_llm_with_retry(
             # The outer asyncio.timeout cancels the provider coroutine, so the
             # provider never sees this failure — record it here.
             record_llm_failure(
-                span=stage_name, model=model_name, error=e, start_monotonic=start,
+                span=stage_name,
+                model=model_name,
+                error=e,
+                start_monotonic=start,
                 attempt=attempt + 1,
             )
             duration = time.monotonic() - start

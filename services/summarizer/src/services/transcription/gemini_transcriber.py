@@ -164,8 +164,11 @@ def _download_audio_raw_sync(video_id: str) -> Path:
     # Find the downloaded file (extension varies by source format)
     downloaded = [p for p in TEMP_DIR.glob(f"{file_stem}.*") if not p.suffix.endswith(".part")]
     record_download(
-        kind="audio", purpose="gemini", start_monotonic=started,
-        path=downloaded[0] if downloaded else None, ok=bool(downloaded),
+        kind="audio",
+        purpose="gemini",
+        start_monotonic=started,
+        path=downloaded[0] if downloaded else None,
+        ok=bool(downloaded),
     )
     if not downloaded:
         raise TranscriptError(

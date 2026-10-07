@@ -488,7 +488,10 @@ async def _do_extraction(
         except asyncio.TimeoutError:
             logger.warning("yt-dlp download timed out for %s (120s)", video_id)
             record_download(
-                kind="lowres", purpose="scene_detect", start_monotonic=dl_started, path=None,
+                kind="lowres",
+                purpose="scene_detect",
+                start_monotonic=dl_started,
+                path=None,
                 ok=False,
             )
             if dl_proc:
@@ -504,7 +507,10 @@ async def _do_extraction(
 
         dl_ok = bool(dl_proc and dl_proc.returncode == 0 and temp_video.exists())
         record_download(
-            kind="lowres", purpose="scene_detect", start_monotonic=dl_started, path=temp_video,
+            kind="lowres",
+            purpose="scene_detect",
+            start_monotonic=dl_started,
+            path=temp_video,
             ok=dl_ok,
         )
         if not dl_ok:

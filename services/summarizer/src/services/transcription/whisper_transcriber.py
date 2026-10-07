@@ -122,7 +122,10 @@ def _download_audio_sync(video_id: str) -> Path:
 
     mp3_path = TEMP_DIR / f"{file_stem}.mp3"
     record_download(
-        kind="audio", purpose="whisper", start_monotonic=started, path=mp3_path,
+        kind="audio",
+        purpose="whisper",
+        start_monotonic=started,
+        path=mp3_path,
         ok=mp3_path.exists(),
     )
     if not mp3_path.exists():
