@@ -175,10 +175,11 @@ Still one extraction call per batch with the planned domains' schemas, so the go
 | 1d.5 | Reliability: heartbeats around plan and extraction (reuse `run_parallel_phases`' heartbeat); embeddings preloaded at worker start; `drive_pipeline` status check before running (A4); LLM errors: honour `retry-after`, one same-provider retry before the cross-provider fallback inside `call_llm_with_retry`, fallback model tagged correctly (C4); `EXTRACTION_PARALLEL_BATCHES` default 6 + passthrough (C13); **overview tab RAG-indexed** — `output_chunker` reads `props.*` while overview stores `props.data.*`, so the overview is never indexed today (A23). | Retry/fallback unit tests (side_effect sequences); heartbeat present in replay; duplicate-run test; chunker test on an overview tab. | M |
 | 1d.6 | New flags `EXTRACTION_PARALLEL`, `FRAME_VISION_PARALLEL` (bool, default true) + passthrough fixes for `FRAME_VISION_ENABLED`, `FRAME_TIER_ENABLED`, `EXTRACTION_PARALLEL_BATCHES`, chunking knobs — all 8 touch points; literal defaults in compose (A16 crash-loop note); **`FRAME_EXTRACTION_ENABLED`** defaults `false` in config and `true` in both compose anchors — make them agree (one value, documented). | `config.test.py`; compose config validates in dev + prod; config default == compose default. | S |
 | 1d.7 | Assembly backfill of domain `required` components checks `requirementEvidence` against `plan.evidence` before backfilling (`effective_requirements()`); evidence false → no backfill, recorded in `droppedTabs`/log (C19). | Table test per domain in `requirementEvidence`; food-travel-vlog golden assertion passes at gate 1. | S |
+| 1d.8 | Eval-user versions (D25): eval-user results saved as versions flagged `eval=true`; never served to other users; never prune non-eval versions. Schedule re-enabled after this + secrets. | API tests: serve path ignores eval versions for other users; prune keeps non-eval versions. | S |
 
 **Phase 1 verification**: replay of 3 cassettes with the new orchestration (plan starts before frames-done; metadata ≤ 6 s; one 720p download; heartbeats present); golden full run → gate within noise + new assertions; prod benchmark 3 × 2 + regression set × 1 (state ~8 runs ≈ $1.5 first).
 
-**Gate 1**: golden within noise (quality, faithfulness, duplicates); assertions pass; benchmark table; cost ≤ baseline; 0 429/fallback events in timing; prompts re-registered in both projects.
+**Gate 1**: golden within noise (quality, duplicates; faithfulness reported, informational — D22); assertions pass; benchmark table; cost ≤ baseline; 0 429/fallback events in timing; prompts re-registered in both projects.
 
 ### Phase 2 — progressive output — effort M/L
 
@@ -205,7 +206,7 @@ Still one extraction call per batch with the planned domains' schemas, so the go
 
 **Phase 3 verification**: replay 3 cassettes with group timings synthesized from recorded output sizes; golden full run; prod benchmark 3 × 2 + regression set; cost per video from the ledger (requests tagged by group).
 
-**Gate 3**: golden within noise on quality + faithfulness; assertions pass; duplicate items ≤ baseline; benchmark table; cost; 429 count 0. Expected: HIGH cooking ≈ 55–60 s, text-only ≤ 55 s, hero ≤ 30 s, cost below baseline.
+**Gate 3**: golden within noise on quality (faithfulness reported, informational — D22); assertions pass; duplicate items ≤ baseline; benchmark table; cost; 429 count 0. Expected: HIGH cooking ≈ 55–60 s, text-only ≤ 55 s, hero ≤ 30 s, cost below baseline.
 
 ### Phase 4 — sweep, docs, report — effort M
 
@@ -220,7 +221,7 @@ Still one extraction call per batch with the planned domains' schemas, so the go
 | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|
 | Replay harness cannot reproduce 240 s within 10 % (sleeps vs real CPU-bound scene detect) | M | Blocks gate 0 | Model scene-detect/score as configurable sleeps from recorded `phase_times`; the 10 % target is on phase walls, not CPU. |
-| Golden noise is large (14 live videos, LLM variance) so the gate never fires or always fires | M | Gate meaningless | Two baseline runs → per-metric noise; primary metrics = quality, faithfulness, duplicates; per-video assertions are deterministic and carry the real signal. |
+| Golden noise is large (14 live videos, LLM variance) so the gate never fires or always fires | M | Gate meaningless | Two baseline runs → per-metric noise; gating metrics = quality, duplicates (faithfulness informational — D22); per-video assertions are deterministic and carry the real signal. |
 | Prompt changes (no floors, "empty array is correct") thin out outputs | M | Quality regression | Briefs carry `expect` counts from the plan; golden `min items` assertions; gate 1 before any split. |
 | Parallel groups hit 429 at `EXTRACTION_PARALLEL_BATCHES=6` | L (zero 429s ever, >12× headroom) | Latency spikes | 429 counter in timing; staggered firing; back off to 4. |
 | User-block cache breakpoint not honoured by LiteLLM for Anthropic | L | No cache reads, cost ↑ | Verify in 1c with cache-read tokens in telemetry; fall back to system-block placement of the transcript if needed (report). |
@@ -239,7 +240,7 @@ Still one extraction call per batch with the planned domains' schemas, so the go
 |---|---|---|
 | First visible content (hero `synthesis_complete` or first `tab_ready`) | ≈ 226 s | ≤ 30 s (phase 2: ≤ 35 s) |
 | All tabs final, 20-min captioned video | 171–240 s | ≤ 60–65 s |
-| Golden quality score / faithfulness / duplicate rate | run twice in phase 0 | within noise, never below |
+| Golden quality score / duplicate rate (faithfulness reported, informational) | run twice in phase 0 | within noise, never below |
 | Per-video assertions (4 new) | — | all pass every phase |
 | LLM cost per benchmark video | ≈ $0.186 (standard), ≈ $0.15 vision share (HIGH) | ≤ baseline (phase 3: below) |
 | 429 / fallback events per run | 0 | 0 |

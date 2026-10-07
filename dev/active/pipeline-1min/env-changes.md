@@ -44,4 +44,5 @@ handle `schedule` (dry-run + retrieval skip, live runs with `mode=eval`, `limit=
 |---|---|---|
 | Prod eval user (`EVAL_USER_EMAIL`) created by an admin — prod runs `ALLOW_REGISTRATION=false`, so the eval's register call gets 403 and falls through to login | the live eval logs in as this user | gate-0 decision (0.7) |
 | Prod eval user `tier: team` (`USER_COST_LIMIT_TEAM=-1`) — prod `USER_COST_LIMIT_FREE=1` USD/day stops a free user after ~5 runs; `pro` (20 USD) also fits 18 runs | 18 runs per scheduled eval ≈ $3.5–6 | gate-0 decision (0.7) |
+| Dev `eval@vie.local` has `isEvalUser: true` (set by hand in `mongosh` 2026-10-07 for the work parked on `wip/eval-faithfulness`) — nothing on `feat/pipeline-1min` reads it | none today; 1d.8 may key its eval-user rule on it | prod: decided in 1d.8 |
 | Prod `VIDEO_DAILY_LIMIT` (30 in the local `.env.production` copy; per user, rolling 24 h) ≥ 36 ONLY if the noise baseline (18 × 2) ever runs on prod; 18 per scheduled run fits | POST /api/videos limiter is global, not per tier | gate-0 decision (0.7) — none needed if the noise run stays on dev |
