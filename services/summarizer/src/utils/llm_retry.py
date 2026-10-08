@@ -41,7 +41,9 @@ logger = logging.getLogger(__name__)
 
 # The request was fine, the provider or the network was not — another attempt
 # can succeed. ``OSError`` covers ``ConnectionError`` and ``asyncio.TimeoutError``.
-_TRANSIENT_ERRORS: tuple[type[BaseException], ...] = (
+# Public: frame vision sends images, which call_llm_with_retry cannot carry, and
+# runs its own retry with this same classification.
+TRANSIENT_LLM_ERRORS: tuple[type[BaseException], ...] = (
     LitellmTimeout,
     RateLimitError,
     ServiceUnavailableError,
@@ -320,7 +322,7 @@ async def _try_once(
         )
         _log_attempt(logging.WARNING, attempt, stage, start, "Timeout")
         return None, e
-    except _TRANSIENT_ERRORS as e:
+    except TRANSIENT_LLM_ERRORS as e:
         _log_attempt(logging.WARNING, attempt, stage, start, f"LLM error {str(e)[:200]!r}")
         return None, e
     if raw and raw.strip():

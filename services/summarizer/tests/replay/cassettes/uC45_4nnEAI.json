@@ -24,7 +24,6 @@
   "LLM_TRANSLATION_MODEL": null,
   "LLM_VISION_MODEL": "anthropic/claude-sonnet-4-6",
   "EXTRACTION_PARALLEL_BATCHES": 2,
-  "EXTRACTION_USE_FAST_FIRST": false,
   "CHUNKED_EXTRACTION_THRESHOLD": 900,
   "TRANSCRIPT_CLEANING_ENABLED": false,
   "FRAME_VISION_ENABLED": true,
@@ -2809,16 +2808,64 @@
    "feature": "summarize:frames",
    "span": "frame_vision",
    "model": "anthropic/claude-sonnet-4-6",
-   "latencyMs": 49000,
-   "output": "[{\"frame_index\": 0, \"scene_type\": \"product_closeup\", \"content\": \"Sealed One Piece OP-17 booster pack held over a black playmat\", \"text_visible\": \"\", \"educational_value\": \"Shows the pack about to be opened\", \"visual_subject\": \"content\"}, {\"frame_index\": 1, \"scene_type\": \"card_reveal\", \"content\": \"Freshly pulled One Piece card fanned out from an opened OP-17 pack\", \"text_visible\": \"\", \"educational_value\": \"A pull from the box being revealed\", \"visual_subject\": \"content\"}, {\"frame_index\": 2, \"scene_type\": \"collectible_display\", \"content\": \"Row of opened OP-17 packs and sorted cards laid out on the table\", \"text_visible\": \"\", \"educational_value\": \"Running tally of the box's pulls\", \"visual_subject\": \"content\"}, {\"frame_index\": 3, \"scene_type\": \"card_reveal\", \"content\": \"Holographic One Piece leader card held up close to the camera\", \"text_visible\": \"\", \"educational_value\": \"A rare pull from the box\", \"visual_subject\": \"content\"}, {\"frame_index\": 4, \"scene_type\": \"product_demo\", \"content\": \"Hands sliding cards out of a torn OP-17 booster pack\", \"text_visible\": \"\", \"educational_value\": \"The opening process itself\", \"visual_subject\": \"content\"}, {\"frame_index\": 5, \"scene_type\": \"product_closeup\", \"content\": \"Sealed One Piece OP-17 booster pack held over a black playmat\", \"text_visible\": \"\", \"educational_value\": \"Shows the pack about to be opened\", \"visual_subject\": \"content\"}, {\"frame_index\": 6, \"scene_type\": \"card_reveal\", \"content\": \"Freshly pulled One Piece card fanned out from an opened OP-17 pack\", \"text_visible\": \"\", \"educational_value\": \"A pull from the box being revealed\", \"visual_subject\": \"content\"}, {\"frame_index\": 7, \"scene_type\": \"collectible_display\", \"content\": \"Row of opened OP-17 packs and sorted cards laid out on the table\", \"text_visible\": \"\", \"educational_value\": \"Running tally of the box's pulls\", \"visual_subject\": \"content\"}, {\"frame_index\": 8, \"scene_type\": \"card_reveal\", \"content\": \"Holographic One Piece leader card held up close to the camera\", \"text_visible\": \"\", \"educational_value\": \"A rare pull from the box\", \"visual_subject\": \"content\"}, {\"frame_index\": 9, \"scene_type\": \"product_demo\", \"content\": \"Hands sliding cards out of a torn OP-17 booster pack\", \"text_visible\": \"\", \"educational_value\": \"The opening process itself\", \"visual_subject\": \"content\"}, {\"frame_index\": 10, \"scene_type\": \"product_closeup\", \"content\": \"Sealed One Piece OP-17 booster pack held over a black playmat\", \"text_visible\": \"\", \"educational_value\": \"Shows the pack about to be opened\", \"visual_subject\": \"content\"}, {\"frame_index\": 11, \"scene_type\": \"card_reveal\", \"content\": \"Freshly pulled One Piece card fanned out from an opened OP-17 pack\", \"text_visible\": \"\", \"educational_value\": \"A pull from the box being revealed\", \"visual_subject\": \"content\"}, {\"frame_index\": 12, \"scene_type\": \"collectible_display\", \"content\": \"Row of opened OP-17 packs and sorted cards laid out on the table\", \"text_visible\": \"\", \"educational_value\": \"Running tally of the box's pulls\", \"visual_subject\": \"content\"}, {\"frame_index\": 13, \"scene_type\": \"card_reveal\", \"content\": \"Holographic One Piece leader card held up close to the camera\", \"text_visible\": \"\", \"educational_value\": \"A rare pull from the box\", \"visual_subject\": \"content\"}, {\"frame_index\": 14, \"scene_type\": \"product_demo\", \"content\": \"Hands sliding cards out of a torn OP-17 booster pack\", \"text_visible\": \"\", \"educational_value\": \"The opening process itself\", \"visual_subject\": \"content\"}, {\"frame_index\": 15, \"scene_type\": \"product_closeup\", \"content\": \"Sealed One Piece OP-17 booster pack held over a black playmat\", \"text_visible\": \"\", \"educational_value\": \"Shows the pack about to be opened\", \"visual_subject\": \"content\"}, {\"frame_index\": 16, \"scene_type\": \"card_reveal\", \"content\": \"Freshly pulled One Piece card fanned out from an opened OP-17 pack\", \"text_visible\": \"\", \"educational_value\": \"A pull from the box being revealed\", \"visual_subject\": \"content\"}, {\"frame_index\": 17, \"scene_type\": \"collectible_display\", \"content\": \"Row of opened OP-17 packs and sorted cards laid out on the table\", \"text_visible\": \"\", \"educational_value\": \"Running tally of the box's pulls\", \"visual_subject\": \"content\"}, {\"frame_index\": 18, \"scene_type\": \"card_reveal\", \"content\": \"Holographic One Piece leader card held up close to the camera\", \"text_visible\": \"\", \"educational_value\": \"A rare pull from the box\", \"visual_subject\": \"content\"}, {\"frame_index\": 19, \"scene_type\": \"product_demo\", \"content\": \"Hands sliding cards out of a torn OP-17 booster pack\", \"text_visible\": \"\", \"educational_value\": \"The opening process itself\", \"visual_subject\": \"content\"}, {\"frame_index\": 20, \"scene_type\": \"product_closeup\", \"content\": \"Sealed One Piece OP-17 booster pack held over a black playmat\", \"text_visible\": \"\", \"educational_value\": \"Shows the pack about to be opened\", \"visual_subject\": \"content\"}, {\"frame_index\": 21, \"scene_type\": \"card_reveal\", \"content\": \"Freshly pulled One Piece card fanned out from an opened OP-17 pack\", \"text_visible\": \"\", \"educational_value\": \"A pull from the box being revealed\", \"visual_subject\": \"content\"}, {\"frame_index\": 22, \"scene_type\": \"collectible_display\", \"content\": \"Row of opened OP-17 packs and sorted cards laid out on the table\", \"text_visible\": \"\", \"educational_value\": \"Running tally of the box's pulls\", \"visual_subject\": \"content\"}, {\"frame_index\": 23, \"scene_type\": \"card_reveal\", \"content\": \"Holographic One Piece leader card held up close to the camera\", \"text_visible\": \"\", \"educational_value\": \"A rare pull from the box\", \"visual_subject\": \"content\"}, {\"frame_index\": 24, \"scene_type\": \"product_demo\", \"content\": \"Hands sliding cards out of a torn OP-17 booster pack\", \"text_visible\": \"\", \"educational_value\": \"The opening process itself\", \"visual_subject\": \"content\"}, {\"frame_index\": 25, \"scene_type\": \"product_closeup\", \"content\": \"Sealed One Piece OP-17 booster pack held over a black playmat\", \"text_visible\": \"\", \"educational_value\": \"Shows the pack about to be opened\", \"visual_subject\": \"content\"}, {\"frame_index\": 26, \"scene_type\": \"card_reveal\", \"content\": \"Freshly pulled One Piece card fanned out from an opened OP-17 pack\", \"text_visible\": \"\", \"educational_value\": \"A pull from the box being revealed\", \"visual_subject\": \"content\"}, {\"frame_index\": 27, \"scene_type\": \"collectible_display\", \"content\": \"Row of opened OP-17 packs and sorted cards laid out on the table\", \"text_visible\": \"\", \"educational_value\": \"Running tally of the box's pulls\", \"visual_subject\": \"content\"}, {\"frame_index\": 28, \"scene_type\": \"card_reveal\", \"content\": \"Holographic One Piece leader card held up close to the camera\", \"text_visible\": \"\", \"educational_value\": \"A rare pull from the box\", \"visual_subject\": \"content\"}, {\"frame_index\": 29, \"scene_type\": \"product_demo\", \"content\": \"Hands sliding cards out of a torn OP-17 booster pack\", \"text_visible\": \"\", \"educational_value\": \"The opening process itself\", \"visual_subject\": \"content\"}]",
+   "latencyMs": 17810,
+   "output": "[{\"frame_index\": 0, \"scene_type\": \"product_closeup\", \"content\": \"Sealed One Piece OP-17 booster pack held over a black playmat\", \"text_visible\": \"\", \"educational_value\": \"Shows the pack about to be opened\", \"visual_subject\": \"content\"}, {\"frame_index\": 1, \"scene_type\": \"product_demo\", \"content\": \"Hands sliding cards out of a torn OP-17 booster pack\", \"text_visible\": \"\", \"educational_value\": \"The opening process itself\", \"visual_subject\": \"content\"}, {\"frame_index\": 2, \"scene_type\": \"card_reveal\", \"content\": \"Holographic One Piece leader card held up close to the camera\", \"text_visible\": \"\", \"educational_value\": \"A rare pull from the box\", \"visual_subject\": \"content\"}, {\"frame_index\": 3, \"scene_type\": \"collectible_display\", \"content\": \"Row of opened OP-17 packs and sorted cards laid out on the table\", \"text_visible\": \"\", \"educational_value\": \"Running tally of the box's pulls\", \"visual_subject\": \"content\"}, {\"frame_index\": 4, \"scene_type\": \"card_reveal\", \"content\": \"Freshly pulled One Piece card fanned out from an opened OP-17 pack\", \"text_visible\": \"\", \"educational_value\": \"A pull from the box being revealed\", \"visual_subject\": \"content\"}, {\"frame_index\": 5, \"scene_type\": \"product_closeup\", \"content\": \"Sealed One Piece OP-17 booster pack held over a black playmat\", \"text_visible\": \"\", \"educational_value\": \"Shows the pack about to be opened\", \"visual_subject\": \"content\"}, {\"frame_index\": 6, \"scene_type\": \"product_demo\", \"content\": \"Hands sliding cards out of a torn OP-17 booster pack\", \"text_visible\": \"\", \"educational_value\": \"The opening process itself\", \"visual_subject\": \"content\"}, {\"frame_index\": 7, \"scene_type\": \"card_reveal\", \"content\": \"Holographic One Piece leader card held up close to the camera\", \"text_visible\": \"\", \"educational_value\": \"A rare pull from the box\", \"visual_subject\": \"content\"}]",
    "finishReason": "stop",
    "usage": {
-    "input": 24100,
-    "output": 2620,
+    "input": 6427,
+    "output": 692,
     "cacheRead": 0,
     "cacheWrite": 0
    },
    "ordinal": 0,
+   "synthetic": true
+  },
+  {
+   "feature": "summarize:frames",
+   "span": "frame_vision",
+   "model": "anthropic/claude-sonnet-4-6",
+   "latencyMs": 17908,
+   "output": "[{\"frame_index\": 0, \"scene_type\": \"card_reveal\", \"content\": \"Freshly pulled One Piece card fanned out from an opened OP-17 pack\", \"text_visible\": \"\", \"educational_value\": \"A pull from the box being revealed\", \"visual_subject\": \"content\"}, {\"frame_index\": 1, \"scene_type\": \"product_closeup\", \"content\": \"Sealed One Piece OP-17 booster pack held over a black playmat\", \"text_visible\": \"\", \"educational_value\": \"Shows the pack about to be opened\", \"visual_subject\": \"content\"}, {\"frame_index\": 2, \"scene_type\": \"product_demo\", \"content\": \"Hands sliding cards out of a torn OP-17 booster pack\", \"text_visible\": \"\", \"educational_value\": \"The opening process itself\", \"visual_subject\": \"content\"}, {\"frame_index\": 3, \"scene_type\": \"card_reveal\", \"content\": \"Holographic One Piece leader card held up close to the camera\", \"text_visible\": \"\", \"educational_value\": \"A rare pull from the box\", \"visual_subject\": \"content\"}, {\"frame_index\": 4, \"scene_type\": \"collectible_display\", \"content\": \"Row of opened OP-17 packs and sorted cards laid out on the table\", \"text_visible\": \"\", \"educational_value\": \"Running tally of the box's pulls\", \"visual_subject\": \"content\"}, {\"frame_index\": 5, \"scene_type\": \"card_reveal\", \"content\": \"Freshly pulled One Piece card fanned out from an opened OP-17 pack\", \"text_visible\": \"\", \"educational_value\": \"A pull from the box being revealed\", \"visual_subject\": \"content\"}, {\"frame_index\": 6, \"scene_type\": \"product_closeup\", \"content\": \"Sealed One Piece OP-17 booster pack held over a black playmat\", \"text_visible\": \"\", \"educational_value\": \"Shows the pack about to be opened\", \"visual_subject\": \"content\"}, {\"frame_index\": 7, \"scene_type\": \"product_demo\", \"content\": \"Hands sliding cards out of a torn OP-17 booster pack\", \"text_visible\": \"\", \"educational_value\": \"The opening process itself\", \"visual_subject\": \"content\"}]",
+   "finishReason": "stop",
+   "usage": {
+    "input": 6427,
+    "output": 698,
+    "cacheRead": 0,
+    "cacheWrite": 0
+   },
+   "ordinal": 1,
+   "synthetic": true
+  },
+  {
+   "feature": "summarize:frames",
+   "span": "frame_vision",
+   "model": "anthropic/claude-sonnet-4-6",
+   "latencyMs": 16612,
+   "output": "[{\"frame_index\": 0, \"scene_type\": \"collectible_display\", \"content\": \"Row of opened OP-17 packs and sorted cards laid out on the table\", \"text_visible\": \"\", \"educational_value\": \"Running tally of the box's pulls\", \"visual_subject\": \"content\"}, {\"frame_index\": 1, \"scene_type\": \"card_reveal\", \"content\": \"Freshly pulled One Piece card fanned out from an opened OP-17 pack\", \"text_visible\": \"\", \"educational_value\": \"A pull from the box being revealed\", \"visual_subject\": \"content\"}, {\"frame_index\": 2, \"scene_type\": \"product_closeup\", \"content\": \"Sealed One Piece OP-17 booster pack held over a black playmat\", \"text_visible\": \"\", \"educational_value\": \"Shows the pack about to be opened\", \"visual_subject\": \"content\"}, {\"frame_index\": 3, \"scene_type\": \"product_demo\", \"content\": \"Hands sliding cards out of a torn OP-17 booster pack\", \"text_visible\": \"\", \"educational_value\": \"The opening process itself\", \"visual_subject\": \"content\"}, {\"frame_index\": 4, \"scene_type\": \"card_reveal\", \"content\": \"Holographic One Piece leader card held up close to the camera\", \"text_visible\": \"\", \"educational_value\": \"A rare pull from the box\", \"visual_subject\": \"content\"}, {\"frame_index\": 5, \"scene_type\": \"collectible_display\", \"content\": \"Row of opened OP-17 packs and sorted cards laid out on the table\", \"text_visible\": \"\", \"educational_value\": \"Running tally of the box's pulls\", \"visual_subject\": \"content\"}, {\"frame_index\": 6, \"scene_type\": \"card_reveal\", \"content\": \"Freshly pulled One Piece card fanned out from an opened OP-17 pack\", \"text_visible\": \"\", \"educational_value\": \"A pull from the box being revealed\", \"visual_subject\": \"content\"}]",
+   "finishReason": "stop",
+   "usage": {
+    "input": 5623,
+    "output": 618,
+    "cacheRead": 0,
+    "cacheWrite": 0
+   },
+   "ordinal": 2,
+   "synthetic": true
+  },
+  {
+   "feature": "summarize:frames",
+   "span": "frame_vision",
+   "model": "anthropic/claude-sonnet-4-6",
+   "latencyMs": 16514,
+   "output": "[{\"frame_index\": 0, \"scene_type\": \"card_reveal\", \"content\": \"Holographic One Piece leader card held up close to the camera\", \"text_visible\": \"\", \"educational_value\": \"A rare pull from the box\", \"visual_subject\": \"content\"}, {\"frame_index\": 1, \"scene_type\": \"collectible_display\", \"content\": \"Row of opened OP-17 packs and sorted cards laid out on the table\", \"text_visible\": \"\", \"educational_value\": \"Running tally of the box's pulls\", \"visual_subject\": \"content\"}, {\"frame_index\": 2, \"scene_type\": \"card_reveal\", \"content\": \"Freshly pulled One Piece card fanned out from an opened OP-17 pack\", \"text_visible\": \"\", \"educational_value\": \"A pull from the box being revealed\", \"visual_subject\": \"content\"}, {\"frame_index\": 3, \"scene_type\": \"product_closeup\", \"content\": \"Sealed One Piece OP-17 booster pack held over a black playmat\", \"text_visible\": \"\", \"educational_value\": \"Shows the pack about to be opened\", \"visual_subject\": \"content\"}, {\"frame_index\": 4, \"scene_type\": \"product_demo\", \"content\": \"Hands sliding cards out of a torn OP-17 booster pack\", \"text_visible\": \"\", \"educational_value\": \"The opening process itself\", \"visual_subject\": \"content\"}, {\"frame_index\": 5, \"scene_type\": \"card_reveal\", \"content\": \"Holographic One Piece leader card held up close to the camera\", \"text_visible\": \"\", \"educational_value\": \"A rare pull from the box\", \"visual_subject\": \"content\"}, {\"frame_index\": 6, \"scene_type\": \"collectible_display\", \"content\": \"Row of opened OP-17 packs and sorted cards laid out on the table\", \"text_visible\": \"\", \"educational_value\": \"Running tally of the box's pulls\", \"visual_subject\": \"content\"}]",
+   "finishReason": "stop",
+   "usage": {
+    "input": 5623,
+    "output": 612,
+    "cacheRead": 0,
+    "cacheWrite": 0
+   },
+   "ordinal": 3,
    "synthetic": true
   },
   {
@@ -2897,21 +2944,6 @@
     "cacheWrite": 0
    },
    "ordinal": 0
-  },
-  {
-   "feature": "summarize:enrichment",
-   "span": "enrichment",
-   "model": "openai/gpt-4o-mini",
-   "latencyMs": 5351,
-   "output": "{\"flashcards\": [{\"front\": \"What is the primary card pulled that is 'super important' for the Elbath deck?\", \"back\": \"Nico Robin — Creator pulls a rare Nico Robin and emphasizes its significance for the Elbath deck at 3:00.\"}, {\"front\": \"What card is called 'insane for yellow' after being pulled?\", \"back\": \"Charlotte Pudding SR — The creator notes that its trash-trigger-draw-three effect is essential in Lynland and Nico Robin decks at 4:50.\"}, {\"front\": \"Which card did the creator label as 'one of the most busted cards in OP7'?\", \"back\": \"Stussy SR — Pulled at 6:00, the creator highlights its capability to prevent six-cost attacks for free.\"}, {\"front\": \"What did the creator describe as the 'new staple card for purple'?\", \"back\": \"Yamato SR — Mentioned at 13:40, it offers ramp and serves as a free blocker at three cost.\"}, {\"front\": \"What significant secret rare was pulled from the Pandaman slot?\", \"back\": \"Loki — Pulled at 16:50, the creator celebrates finding the exact card needed for the Elbath Luffy deck but needs three more for a full playset.\"}, {\"front\": \"What unique feature does the alternate-art Elbath Luffy have?\", \"back\": \"The Elbath Luffy SR alt-art features full-bleed cape artwork with textured yellow dots, confirmed as one of the two needed copies at 10:00.\"}, {\"front\": \"What unusual pack did the creator encounter during the opening?\", \"back\": \"A mystery one-rare pack that surprisingly contained only one rare and three uncommons, which left the creator feeling confused at 20:40.\"}, {\"front\": \"What was the number of regular Elbath Luffy pulled near the end?\", \"back\": \"The creator pulled a third regular Elbath Luffy, contributing to a playable set along with one from the first box and the alt-art SR at 18:30.\"}]}",
-   "finishReason": "stop",
-   "usage": {
-    "input": 2451,
-    "output": 479,
-    "cacheRead": 0,
-    "cacheWrite": 0
-   },
-   "ordinal": 0
   }
  ],
  "recorded": {
@@ -2941,7 +2973,9 @@
    "momentFill = whole assembly wall (720p re-download 21.7 s logged)",
    "frame_vision#0 is SYNTHETIC (task 1a.3): the recorded run found zero scene frames so vision never ran; the zero-candidate ladder now seeks 30 uniform frames and the HIGH reselect describes them in one call. Latency/tokens estimated from the jMq8lEu-of0 HIGH call (87 output tokens and ~800 input tokens per frame; wall 6.6 s + 16.2 s per 1k output tokens). Re-add it if this cassette is rebuilt.",
    "tier_probe#0 is SYNTHETIC (task 1b.1): the recorded run called the retired classifier instead; its domain/format/confidence are kept, has_visual_demo is judged from the video, and wall/tokens are the gate-0 A/B Haiku numbers (1000 ms, 1800 in / 40 out). See tests/replay/synthetic.py.",
-   "memory#0 is SYNTHETIC (task 1b.3): the recorded run predates the memory call; tldr/takeaways come from its synthesis output, the outline from its chapters (else 6 even sections), no evidence; wall = 1200 output tokens at 100 tok/s. See tests/replay/synthetic.py."
+   "memory#0 is SYNTHETIC (task 1b.3): the recorded run predates the memory call; tldr/takeaways come from its synthesis output, the outline from its chapters (else 6 even sections), no evidence; wall = 1200 output tokens at 100 tok/s. See tests/replay/synthetic.py.",
+   "frame_vision#0..n-1 are SYNTHETIC (task 1d.4): the recorded single vision call split into the batched analyzer's calls (plan_vision_batches), descriptions relabelled per batch; tokens by output/frame share, wall 6.6 s + 16.2 s per 1k output tokens. See tests/replay/synthetic.py.",
+   "enrichment#0 dropped (task 1d.1): enrichment is quiz-only and demand-driven now; this video's domain allows no quiz, so the run makes no enrichment call."
   ]
  }
 }

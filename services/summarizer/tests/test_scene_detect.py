@@ -209,6 +209,12 @@ class TestSceneFilter:
 
         assert "metadata" not in vf
 
+    @pytest.mark.parametrize("threshold", [0.3, 0.1])
+    def test_should_cap_the_width_without_upscaling_detection_frames(self, tmp_path, threshold):
+        vf = scene_detect._scene_filter(threshold, tmp_path / "s.txt")
+
+        assert vf.endswith(",scale='trunc(min(iw,1024)/2)*2':-2")
+
 
 class TestUniformTimestamps:
     def test_should_cap_long_videos_at_thirty_samples(self):
@@ -239,3 +245,24 @@ class TestSeekFrames:
             )
 
         assert [(f["index"], f["timestamp"]) for f in frames] == [(6, 10.0), (5, 30.0)]
+
+    async def test_should_render_seeks_at_native_width_like_detection_frames(self, frames_dir):
+        fake = FakeFfmpeg()
+        argvs: list[tuple[str, ...]] = []
+
+        async def capture(*argv: str, **kwargs: object) -> _Proc:
+            argvs.append(argv)
+            return await fake.exec(*argv, **kwargs)
+
+        with patch("asyncio.create_subprocess_exec", side_effect=capture):
+            await seek_frames(
+                frames_dir.parent / "v.mp4",
+                frames_dir,
+                [10.0],
+                prefix="interval",
+                index_offset=0,
+                temp_dir="t",
+            )
+
+        (argv,) = argvs
+        assert argv[argv.index("-vf") + 1] == "scale='trunc(min(iw,1024)/2)*2':-2"

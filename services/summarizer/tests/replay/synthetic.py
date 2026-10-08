@@ -17,8 +17,18 @@ marked ``synthetic: true``:
   (the measured extraction rate is 101–112 tok/s), so 12 s, the top of the
   brief's 9–12 s; input ≈ transcript chars / 4 + the prompt.
 
-``build_cassette`` applies these to a fresh dump of a pre-1b run; the
-committed cassettes were converted with the same functions.
+* ``frame_vision#0..n-1`` (1d.4) split the recorded single vision call into
+  the per-batch calls the batched analyzer makes (``plan_vision_batches``,
+  ordinal = batch order = call order). Each batch answers its frames with the
+  recorded descriptions, relabelled 0..k-1 in the batch's own order. Tokens:
+  output by the batch's share of the recorded answer, input by its share of
+  the frames (the repeated text prompt is ignored — it is small next to the
+  images). Wall: 6.6 s + 16.2 s per 1k output tokens (A-DIGEST vision fit).
+
+The committed cassettes were converted with these functions, once (vision:
+with the frames each replay hands the analyzer). A cassette rebuilt by
+``build_cassette`` from a dump of a pre-1b / pre-1d.4 run needs the same
+conversion; runs recorded after those tasks carry the calls themselves.
 """
 
 from __future__ import annotations
@@ -160,3 +170,74 @@ def memory_entry(cassette: dict[str, Any]) -> dict[str, Any]:
         "ordinal": 0,
         "synthetic": True,
     }
+
+
+VISION_SPAN = "frame_vision"
+VISION_BASE_MS = 6600
+VISION_MS_PER_OUTPUT_TOKEN = 16.2  # 16.2 s per 1k output tokens
+VISION_NOTE = (
+    "frame_vision#0..n-1 are SYNTHETIC (task 1d.4): the recorded single vision call split "
+    "into the batched analyzer's calls (plan_vision_batches), descriptions relabelled per "
+    "batch; tokens by output/frame share, wall 6.6 s + 16.2 s per 1k output tokens. "
+    "See tests/replay/synthetic.py."
+)
+
+
+def _label_order(frames: list[dict[str, Any]], max_frames: int) -> list[dict[str, Any]]:
+    """The recorded call's label order: top ``max_frames`` by score (``_select_top_frames``)."""
+    return sorted(frames, key=lambda f: f.get("total_score", 0), reverse=True)[:max_frames]
+
+
+def _batch_answers(
+    entry: dict[str, Any], frames: list[dict[str, Any]], max_frames: int
+) -> list[list[dict[str, Any]]]:
+    """Per planned batch: the recorded descriptions of its frames, relabelled 0..k-1."""
+    from src.services.media.frame_analyzer import plan_vision_batches
+
+    labelled = _label_order(frames, max_frames)
+    label_of = {id(frame): label for label, frame in enumerate(labelled)}
+    recorded = {item["frame_index"]: item for item in json.loads(entry["output"])}
+    return [
+        [
+            {**recorded[label_of[id(frame)]], "frame_index": local}
+            for local, frame in enumerate(batch)
+            if label_of[id(frame)] in recorded
+        ]
+        for batch in plan_vision_batches(labelled)
+    ]
+
+
+def split_vision_entry(
+    entry: dict[str, Any], frames: list[dict[str, Any]], max_frames: int
+) -> list[dict[str, Any]]:
+    """The recorded single vision call as the batched analyzer's calls (see module docstring).
+
+    ``frames`` are the frames the vision call received (``timestamp``,
+    ``total_score``); ``max_frames`` its frame cap.
+    """
+    answers = _batch_answers(entry, frames, max_frames)
+    outputs = [json.dumps(items, ensure_ascii=False) for items in answers]
+    total_chars = sum(len(text) for text in outputs) or 1
+    total_frames = sum(len(items) for items in answers) or 1
+    usage = entry["usage"]
+    entries = []
+    for ordinal, (items, output) in enumerate(zip(answers, outputs, strict=True)):
+        output_tokens = round(usage["output"] * len(output) / total_chars)
+        entries.append(
+            {
+                "feature": entry["feature"],
+                "span": entry["span"],
+                "model": entry["model"],
+                "latencyMs": round(VISION_BASE_MS + VISION_MS_PER_OUTPUT_TOKEN * output_tokens),
+                "output": output,
+                "finishReason": entry.get("finishReason") or "stop",
+                "usage": {
+                    **usage,
+                    "input": round(usage["input"] * len(items) / total_frames),
+                    "output": output_tokens,
+                },
+                "ordinal": ordinal,
+                "synthetic": True,
+            }
+        )
+    return entries

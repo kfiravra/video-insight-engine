@@ -66,6 +66,16 @@ def _detect_timeout(duration_seconds: int | None) -> int:
     return min(300, max(60, int((duration_seconds or _DEFAULT_DURATION) * 0.3) + 30))
 
 
+def _scale_filter() -> str:
+    """Cap the width at SCENE_DETECT_SCALE_WIDTH and never upscale.
+
+    The pass-1 file is ~360p: scaling it to 1024 wide added no pixels, only
+    2.5x the vision image tokens (792 vs 314 per frame). Even width for mjpeg
+    via trunc(/2)*2; ``-2`` keeps the height even too.
+    """
+    return f"scale='trunc(min(iw,{settings.SCENE_DETECT_SCALE_WIDTH})/2)*2':-2"
+
+
 def _scene_filter(threshold: float, scores_path: Path | None) -> str:
     """Filtergraph for rung 1, also logging rung-2 scores when a side file is given.
 
@@ -73,8 +83,7 @@ def _scene_filter(threshold: float, scores_path: Path | None) -> str:
     ``lavfi.scene_score``; ``metadata=select`` then keeps only rung-1 frames,
     so the JPEGs written are exactly what ``gt(scene, threshold)`` alone wrote.
     """
-    # -2 (not -1) keeps the auto height even, which mjpeg requires
-    tail = f"showinfo,scale={settings.SCENE_DETECT_SCALE_WIDTH}:-2"
+    tail = f"showinfo,{_scale_filter()}"
     if scores_path is None or threshold <= LADDER_FLOOR:
         return f"select='gt(scene,{threshold:.4f})',{tail}"
     return (
@@ -206,7 +215,7 @@ async def _seek_frame(video: Path, timestamp: float, out_path: Path) -> bool:
         "-frames:v",
         "1",
         "-vf",
-        f"scale={settings.SCENE_DETECT_SCALE_WIDTH}:-2",
+        _scale_filter(),
         "-q:v",
         str(settings.SCENE_JPEG_QUALITY),
         "-loglevel",

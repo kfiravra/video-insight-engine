@@ -11,9 +11,14 @@ import pytest
 from src.services.media.frame_analyzer import (
     _select_top_frames,
     analyze_frames_with_vision,
-    format_visual_annotation,
     parse_vision_response,
 )
+
+
+@pytest.fixture(autouse=True)
+def _no_retry_pause(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Failed batches retry after a 1 s pause; tests need no real wait."""
+    monkeypatch.setattr("src.services.media.frame_analyzer._RETRY_PAUSE_SECONDS", 0.0)
 
 
 # ─────────────────────────────────────────────────────
@@ -132,13 +137,22 @@ class TestParseVisionResponse:
         assert results[0]["educational_value"] is None
 
     def test_frame_index_out_of_range(self):
+        """An index naming no frame is dropped — kept, it surfaced as a 0:00 caption."""
         raw = json.dumps([{"frame_index": 99, "scene_type": "code", "content": "test"}])
         results = parse_vision_response(raw, self._metadata(1))
 
-        assert len(results) == 1
-        # Out-of-range index → empty metadata
-        assert results[0]["timestamp_sec"] == 0
-        assert results[0]["s3_url"] == ""
+        assert results == []
+
+    def test_duplicate_frame_index_keeps_first(self):
+        raw = json.dumps(
+            [
+                {"frame_index": 0, "scene_type": "code", "content": "first"},
+                {"frame_index": 0, "scene_type": "slide", "content": "second"},
+            ]
+        )
+        results = parse_vision_response(raw, self._metadata(2))
+
+        assert [r["content"] for r in results] == ["first"]
 
     def test_non_dict_items_skipped(self):
         raw = json.dumps(
@@ -150,35 +164,6 @@ class TestParseVisionResponse:
         )
         results = parse_vision_response(raw, self._metadata(1))
         assert len(results) == 1
-
-
-# ─────────────────────────────────────────────────────
-# format_visual_annotation
-# ─────────────────────────────────────────────────────
-
-
-class TestFormatVisualAnnotation:
-    """Test annotation string formatting."""
-
-    def test_basic_annotation(self):
-        desc = {"timestamp_sec": 222, "content": "Python class definition", "text_visible": ""}
-        result = format_visual_annotation(desc)
-        assert result == "[VISUAL at 3:42: Python class definition]"
-
-    def test_with_visible_text(self):
-        desc = {"timestamp_sec": 65, "content": "Code editor", "text_visible": "def main():"}
-        result = format_visual_annotation(desc)
-        assert result == '[VISUAL at 1:05: Code editor; Text: "def main():"]'
-
-    def test_zero_timestamp(self):
-        desc = {"timestamp_sec": 0, "content": "Opening slide", "text_visible": ""}
-        result = format_visual_annotation(desc)
-        assert result == "[VISUAL at 0:00: Opening slide]"
-
-    def test_large_timestamp(self):
-        desc = {"timestamp_sec": 3661, "content": "Final summary", "text_visible": ""}
-        result = format_visual_annotation(desc)
-        assert result == "[VISUAL at 61:01: Final summary]"
 
 
 # ─────────────────────────────────────────────────────
@@ -312,11 +297,15 @@ class TestAnalyzeFramesWithVision:
 
             await analyze_frames_with_vision(frames, provider, max_frames=5)
 
-            # Verify only 5 images were sent (check the multipart content)
-            call_args = provider.complete_with_messages.call_args
-            messages = call_args[0][0]
-            content = messages[0]["content"]
-            image_count = sum(1 for c in content if c.get("type") == "image_url")
+            # Only 5 images were sent, across however many calls ("[]" is
+            # retried once, so count first attempts only)
+            image_count = sum(
+                1
+                for call in provider.complete_with_messages.call_args_list
+                if call.kwargs["span_metadata"]["attempt"] == 1
+                for block in call.args[0][0]["content"]
+                if block.get("type") == "image_url"
+            )
             assert image_count == 5
 
     @pytest.mark.asyncio
@@ -366,26 +355,3 @@ class TestVisualSubject:
         out = parse_vision_response(raw, [{"index": 0, "timestamp_sec": 0, "s3_url": ""}])
 
         assert out[0]["visual_subject"] == ""
-
-
-class TestMaxTokensScaling:
-    async def test_max_tokens_scales_with_batch(self, tmp_path):
-        from unittest.mock import AsyncMock, MagicMock
-
-        from PIL import Image
-
-        from src.services.media.frame_analyzer import analyze_frames_with_vision
-
-        frames = []
-        for i in range(30):
-            p = tmp_path / f"f{i:02d}.jpg"
-            Image.new("RGB", (8, 8), (i * 8, 0, 0)).save(p, "JPEG")
-            frames.append({"path": str(p), "total_score": 0.5, "timestamp": i * 10, "index": i})
-
-        provider = MagicMock()
-        provider.complete_with_messages = AsyncMock(return_value="[]")
-
-        await analyze_frames_with_vision(frames, provider, max_frames=30)
-
-        kwargs = provider.complete_with_messages.await_args.kwargs
-        assert kwargs["max_tokens"] == 250 * 30

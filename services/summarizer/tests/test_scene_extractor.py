@@ -390,7 +390,7 @@ class TestTwoPassExtraction:
         # Detection ffmpeg args come from config (never-odd height via :-2)
         ffmpeg_args = next(c.args for c in mock_exec.call_args_list if c.args[0] == "ffmpeg")
         vf_arg = ffmpeg_args[ffmpeg_args.index("-vf") + 1]
-        assert "scale=1024:-2" in vf_arg
+        assert "scale='trunc(min(iw,1024)/2)*2':-2" in vf_arg  # capped, never upscaled
         assert ffmpeg_args[ffmpeg_args.index("-q:v") + 1] == "4"
 
         # Hi-res refinement runs on the selected frames before upload

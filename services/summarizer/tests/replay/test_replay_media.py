@@ -12,6 +12,7 @@ import json
 import pytest
 
 from src.models.probe_types import TierProbe
+from src.services.media.frame_analyzer import plan_vision_batches
 from src.services.media.visual_tier import derive_tier
 from src.services.pipeline.phases.frames import _is_presenter_frame
 from tests.replay.cassette import Cassette, available_cassettes
@@ -27,10 +28,23 @@ def _replayed_selection(result: ReplayResult) -> list[int]:
 
 
 def _vision_kept(cassette: Cassette) -> set[int]:
-    """Candidates the recorded vision output does NOT mark as presenter filler."""
-    entry = next(e for e in cassette.llm if e.key.span == "frame_vision")
-    by_rank = sorted(cassette.frames.candidates, key=lambda f: -f.total_score)
-    described = {by_rank[d["frame_index"]].index: d for d in json.loads(entry.output)}
+    """Candidates the recorded vision output does NOT mark as presenter filler.
+
+    One recorded answer per vision batch (ordinal = batch order); each labels
+    its own frames 0..k-1 in the order ``plan_vision_batches`` gave them.
+    """
+    entries = sorted(
+        (e for e in cassette.llm if e.key.span == "frame_vision"), key=lambda e: e.key.ordinal
+    )
+    by_rank = [
+        {"index": f.index, "timestamp": f.timestamp}
+        for f in sorted(cassette.frames.candidates, key=lambda f: f.total_score, reverse=True)
+    ]
+    described = {
+        batch[d["frame_index"]]["index"]: d
+        for batch, entry in zip(plan_vision_batches(by_rank), entries, strict=True)
+        for d in json.loads(entry.output)
+    }
     return {
         f.index for f in cassette.frames.candidates if not _is_presenter_frame(vars(f), described)
     }
