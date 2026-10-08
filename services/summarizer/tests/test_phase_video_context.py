@@ -32,6 +32,9 @@ def _ctx() -> SimpleNamespace:
         content_format="tutorial",
         llm_service=MagicMock(),
         video_memory=_VIDEO_MEMORY,
+        memory=None,
+        assembled_tabs=None,
+        assembled_meta=None,
     )
 
 

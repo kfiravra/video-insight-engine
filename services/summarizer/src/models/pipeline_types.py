@@ -25,10 +25,16 @@ class FrameData:
 
 
 class SynthesisResult(BaseModel):
-    tldr: str
-    key_takeaways: list[str] = Field(alias="keyTakeaways")
+    """The synthesis call's answer (pipeline-1min 1d.3).
+
+    ``masterSummary`` + ``seoDescription`` always; ``tldr`` / ``keyTakeaways``
+    only when the call was asked for them because memory left one empty.
+    """
+
     master_summary: str = Field(alias="masterSummary")
-    seo_description: str = Field(alias="seoDescription")
+    seo_description: str = Field("", alias="seoDescription")
+    tldr: str = ""
+    key_takeaways: list[str] = Field(default_factory=list, alias="keyTakeaways")
 
     model_config = {"populate_by_name": True}
 
