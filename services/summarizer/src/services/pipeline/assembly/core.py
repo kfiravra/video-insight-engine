@@ -15,6 +15,7 @@ from src.shared_config.domain_config import (
     build_fallback_tabs,
     domain_requirements,
     effective_requirements,
+    quiz_policy,
     sibling_datasources,
 )
 from src.utils.data_helpers import is_empty_data
@@ -1169,6 +1170,23 @@ def _ensure_overview_first(
     )
 
 
+_QUIZ_COMPONENT = "quiz_arena"
+
+
+def _move_quiz_tabs_last(tabs: list[dict]) -> None:
+    """Move quiz_arena tabs to the end, in order, when ``quizPolicy.position`` is "last".
+
+    The plan already puts its quiz last, but assembly appends after the planned
+    tabs (backfilled requirements, the filmstrip, minimum-3 fallbacks), so
+    the order is enforced once every tab is in. Stable; mutates ``tabs``.
+    """
+    if quiz_policy()["position"] != "last":
+        return
+    quiz_tabs = [t for t in tabs if t.get("component") == _QUIZ_COMPONENT]
+    if quiz_tabs:
+        tabs[:] = [t for t in tabs if t.get("component") != _QUIZ_COMPONENT] + quiz_tabs
+
+
 def _annotate_overview_item_count(tabs: list[dict]) -> None:
     """Inject the content-tab count into the overview's data + stats pills.
 
@@ -1779,6 +1797,8 @@ def assemble_response(
                 "[assembly] Could not reach 3 tabs even with fallbacks (got %d)",
                 len(assembled_tabs),
             )
+
+    _move_quiz_tabs_last(assembled_tabs)
 
     # Annotate the overview with the final tab count — must run after all
     # additions (cross-tab links, gallery auto-append, fallback candidates)

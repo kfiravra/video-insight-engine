@@ -22,7 +22,7 @@ from src.services.pipeline.enrichment import (
     quiz_allowed,
     render_tab_goals,
 )
-from src.shared_config.domain_config import data_source, get_config, quiz_enrichment
+from src.shared_config.domain_config import data_source, get_config, quiz_enrichment, quiz_policy
 from src.utils.language_utils import ENGLISH_OUTPUT_DIRECTIVE
 
 _PATCH_LLM = "src.services.pipeline.enrichment.call_llm_with_retry"
@@ -106,6 +106,10 @@ class TestNeedsQuiz:
     def test_should_not_demand_a_quiz_when_no_tab_can_host_a_strip(self) -> None:
         plan = _plan(tabs=[_tab("overview"), _tab("video_filmstrip", "frames"), _tab("budget")])
         assert not needs_quiz(plan)
+
+    @pytest.mark.parametrize("host", quiz_policy()["attachmentHostsExclude"])
+    def test_should_not_demand_a_quiz_when_the_only_host_is_excluded(self, host: str) -> None:
+        assert not needs_quiz(_plan(tabs=[_tab(host, "tech.setup.commands")]))
 
     def test_should_not_demand_a_quiz_when_the_domain_forbids_quiz_arena(self) -> None:
         tabs = [_tab("quiz_arena", "enrichment.quiz"), _tab("info_grid", "food.tips")]

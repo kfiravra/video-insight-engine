@@ -7,11 +7,16 @@
 
 from __future__ import annotations
 
+import pytest
+
 from src.services.pipeline.assembly.attachments import (
     _DENSE_THRESHOLD,
+    _PRIMARY_LIST_KEY,
     _SPARSE_THRESHOLD,
     attach_secondaries,
+    can_host_quick_quiz,
 )
+from src.shared_config.domain_config import quiz_policy
 
 
 def _frames(n: int) -> list[dict]:
@@ -185,3 +190,41 @@ class TestOncePerResponseBudget:
         tab = _tab("info_grid", "items", 2)
         out = attach_secondaries(tab, {}, None, _frames(6), "review")
         assert [a["component"] for a in out] == ["frame_strip"]
+
+
+class TestQuickQuizHosts:
+    """quizPolicy.attachmentHostsExclude (pipeline-1min 1d.2): no quiz strip under do-along tabs."""
+
+    _ENRICHMENT = {
+        "quiz": [{"question": "Q?", "options": ["a", "b"], "correctIndex": 0, "explanation": "e"}]
+    }
+    _TIPS = {"food": {"tips": ["Rest the dough overnight."]}}
+
+    @pytest.mark.parametrize("component", quiz_policy()["attachmentHostsExclude"])
+    def test_should_attach_a_tip_not_a_quiz_when_the_host_is_excluded(self, component):
+        tab = _tab(component, _PRIMARY_LIST_KEY[component], 2)
+
+        out = attach_secondaries(tab, self._TIPS, self._ENRICHMENT, None, "food")
+
+        assert [a["component"] for a in out] == ["tip_callout"]
+
+    def test_should_attach_a_quick_quiz_when_the_host_is_allowed(self):
+        tab = _tab("info_grid", "items", 2)
+
+        out = attach_secondaries(tab, self._TIPS, self._ENRICHMENT, None, "food")
+
+        assert [a["component"] for a in out] == ["quick_quiz"]
+
+    @pytest.mark.parametrize(
+        ("component", "expected"),
+        [
+            ("info_grid", True),
+            ("spot_explorer", True),
+            ("concept_canvas", True),
+            ("quiz_arena", False),
+            ("overview", False),
+            *((excluded, False) for excluded in quiz_policy()["attachmentHostsExclude"]),
+        ],
+    )
+    def test_should_report_whether_a_component_can_host_a_quick_quiz(self, component, expected):
+        assert can_host_quick_quiz(component) is expected

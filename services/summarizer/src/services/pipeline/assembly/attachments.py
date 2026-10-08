@@ -17,6 +17,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from src.shared_config.domain_config import quiz_policy
+
 from .registry import ASSEMBLER_REGISTRY
 
 logger = logging.getLogger(__name__)
@@ -57,11 +59,16 @@ _NO_FRAME_STRIP_DOMAINS = frozenset({"narrative", "music"})
 def can_host_quick_quiz(component: str) -> bool:
     """True when a tab rendered as ``component`` may carry a quick_quiz strip.
 
-    A host needs a primary item list (attachments only go on list tabs) and must
-    not be a quiz itself. Also the enrichment demand gate's plan-time view of
-    "an allowed quick_quiz host" (``enrichment.needs_quiz``).
+    A host needs a primary item list (attachments only go on list tabs), must
+    not be a quiz itself, and must not be a do-along surface that
+    ``quizPolicy.attachmentHostsExclude`` lists (a quiz under a recipe's steps
+    or a workout interrupts the task). Read per call: the registry is the
+    source, never an import-time snapshot. Also the enrichment demand gate's
+    plan-time view of "an allowed quick_quiz host" (``enrichment.needs_quiz``).
     """
-    return component in _PRIMARY_LIST_KEY and component not in _NO_QUICK_QUIZ_COMPONENTS
+    if component not in _PRIMARY_LIST_KEY or component in _NO_QUICK_QUIZ_COMPONENTS:
+        return False
+    return component not in quiz_policy()["attachmentHostsExclude"]
 
 
 def _primary_item_count(component: str, props: dict) -> int | None:
