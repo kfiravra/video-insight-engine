@@ -27,6 +27,12 @@ BODY = json.dumps(
 ).encode()
 
 
+@pytest.fixture(autouse=True)
+def _fresh_exit_memory(monkeypatch):
+    """Each test starts with no remembered proxy exit (it is per-process state)."""
+    monkeypatch.setattr(download_utils, "_EXIT_MEMORY", download_utils._ExitMemory())
+
+
 def _exit(n: int) -> str:
     return f"http://user-{n}:pass@p.webshare.io:80"
 

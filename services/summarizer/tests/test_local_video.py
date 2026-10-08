@@ -14,9 +14,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.services.media import local_video
+from src.services.media import download_utils, local_video
 
 VIDEO_ID = "dQw4w9WgXcQ"
+
+
+@pytest.fixture(autouse=True)
+def _fresh_exit_memory(monkeypatch):
+    """Each test starts with no remembered proxy exit (it is per-process state)."""
+    monkeypatch.setattr(download_utils, "_EXIT_MEMORY", download_utils._ExitMemory())
 
 
 def _fake_proc(returncode: int = 0, stderr: bytes = b"") -> MagicMock:
@@ -390,6 +396,17 @@ class TestProxyExitRotation:
         assert result is not None
         assert not any("pass@" in arg for argv in ytdlp.argvs for arg in argv)
         local_video.cleanup_local_video(result[1])
+
+    async def test_should_start_the_next_download_from_the_exit_that_worked(self, ytdlp):
+        ytdlp.stderr_by_exit[_exit(1)] = BOT_CHECK
+        first = await local_video.download_video_lowres(VIDEO_ID)
+        ytdlp.tried.clear()
+
+        second = await local_video.download_video_lowres(VIDEO_ID)
+
+        assert first is not None and second is not None and ytdlp.tried == [_exit(2)]
+        for result in (first, second):
+            local_video.cleanup_local_video(result[1])
 
     async def test_should_log_the_exit_that_worked_without_credentials(self, ytdlp, caplog):
         ytdlp.stderr_by_exit[_exit(1)] = BOT_CHECK

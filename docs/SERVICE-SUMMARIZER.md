@@ -200,7 +200,7 @@ SCENE_S3_PREFIX=scenes-v3              # Versioned frame/manifest prefix — bum
 SCENE_HIRES_ENABLED=true               # Pass-2 720p refinement of the selected frames
 SCENE_HIRES_FALLBACK_TIMEOUT=180.0     # Hi-res seek budget in the run's local 720p file (media/hires_refiner.py)
 YOUTUBE_PROXY_URL=                     # One proxy for every YouTube request (metadata, captions, every download)
-YOUTUBE_PROXY_EXIT_COUNT=1             # Sticky exits (USERNAME-1…N) a caption/timedtext 429 may rotate through; 1 = no rotation
+YOUTUBE_PROXY_EXIT_COUNT=1             # Sticky exits (USERNAME-1…N) a 429 or bot check rotates through on every YouTube call (max 3); 1 = no rotation
 YTDLP_PLAYER_CLIENTS=android           # yt-dlp player clients for pass 1 + audio downloads; empty = yt-dlp defaults
 YTDLP_HIRES_PLAYER_CLIENTS=web_embedded,android  # 720p download only (android caps at 360p); retries with the line above
 FRAME_TIER_ENABLED=true                # Adaptive visual tiers (HIGH: overselect + vision reselect before hires)
@@ -878,6 +878,22 @@ proxy setup (`services/cache/caption_negative_cache.py`, Redis key
   without marking. The library's `RequestBlocked` (its 429 subclass
   `IpBlocked` plus the "not a bot" check) is recognised by type, since its
   message carries no "429" once a proxy config is attached.
+
+**Blocked proxy exit (429 or bot check).** YouTube's "Sign in to confirm
+you're not a bot" check is scoped to the exit IP like a 429 (2026-10-08: the
+main Webshare exit was bot-checked on every video while other exits worked),
+so with `YOUTUBE_PROXY_EXIT_COUNT` > 1 every proxied YouTube call moves to the
+next exit on either (`download_utils.is_exit_blocked`): the metadata
+`extract_info`, the timedtext fetch, the caption API, the low-res and 720p
+yt-dlp downloads (`media/local_video.py`, within the same timeout), the audio
+download and the playlist lookup (`video/playlist.py`, whose `ignoreerrors`
+result is classified from the error line yt-dlp logs). Private, removed,
+age-gated and 404 errors never rotate. When every tried exit is blocked the
+call fails with its usual error (metadata: `VIDEO_UNAVAILABLE`). The exit that
+last worked starts the next rotation in that process
+(`download_utils.record_working_exit`), so a blocked exit costs one failed
+attempt (~2.5 s) per process, not per call; logs name the working exit as
+`session -N`, never the URL.
 
 **Language detection.** Both the Gemini and Whisper paths keep the transcript
 **verbatim in its source language** (no internal translation), which is what

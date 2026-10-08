@@ -144,10 +144,15 @@ async def _run_ytdlp(
 
     ``clients`` None = YTDLP_PLAYER_CLIENTS (``ytdlp_client_cli_args`` default).
     YouTube's bot check and a 429 are scoped to the proxy exit's IP, so either
-    moves on to the next sticky exit (``ytdlp_proxy_exit_urls``) within the
-    same ``timeout``; any other failure ends the download.
+    moves on to the next sticky exit (``ytdlp_proxy_exit_urls``, starting from
+    the one that last worked) within the same ``timeout``; any other failure
+    ends the download.
     """
-    from src.services.media.download_utils import ytdlp_client_cli_args, ytdlp_proxy_exit_urls
+    from src.services.media.download_utils import (
+        record_working_exit,
+        ytdlp_client_cli_args,
+        ytdlp_proxy_exit_urls,
+    )
 
     argv = [
         "yt-dlp",
@@ -169,22 +174,13 @@ async def _run_ytdlp(
             return False
         attempt = await _run_ytdlp_once(argv, video_path, remaining, proxy_url, label)
         if attempt is not _Attempt.EXIT_BLOCKED:
-            if attempt is _Attempt.OK and n > 1:
-                _log_exit_success(label, n, len(exit_urls), proxy_url)
+            if attempt is _Attempt.OK and proxy_url:
+                record_working_exit(proxy_url, f"yt-dlp download for {label}", n, len(exit_urls))
             return attempt is _Attempt.OK
         logger.warning(
             "yt-dlp download for %s blocked on proxy exit %d/%d", label, n, len(exit_urls)
         )
     return False
-
-
-def _log_exit_success(label: str, n: int, total: int, proxy_url: str | None) -> None:
-    from src.services.media.download_utils import proxy_exit_label
-
-    exit_name = proxy_exit_label(proxy_url) if proxy_url else "direct"
-    logger.info(
-        "yt-dlp download for %s succeeded on proxy exit %d/%d (%s)", label, n, total, exit_name
-    )
 
 
 async def _run_ytdlp_once(

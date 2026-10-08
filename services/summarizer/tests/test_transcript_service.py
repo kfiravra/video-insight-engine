@@ -9,6 +9,7 @@ import pytest
 
 from src.exceptions import TranscriptError
 from src.models.schemas import ErrorCode
+from src.services.media import download_utils
 from src.services.transcription.transcript import (
     _fetch_transcript_sync,
     _is_rate_limit_error,
@@ -16,6 +17,12 @@ from src.services.transcription.transcript import (
     get_transcript,
     normalize_segments,
 )
+
+
+@pytest.fixture(autouse=True)
+def _fresh_exit_memory(monkeypatch):
+    """Each test starts with no remembered proxy exit (it is per-process state)."""
+    monkeypatch.setattr(download_utils, "_EXIT_MEMORY", download_utils._ExitMemory())
 
 
 class TestCleanTranscript:

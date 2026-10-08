@@ -7,11 +7,18 @@ extract_flat mode, which retrieves playlist info without downloading videos.
 import asyncio
 import logging
 from dataclasses import dataclass
+from functools import partial
+from typing import Any
 
 import yt_dlp  # type: ignore[import-untyped]
 from yt_dlp.utils import DownloadError, ExtractorError  # type: ignore[import-untyped]
 
-from src.services.media.download_utils import ytdlp_proxy_url
+from src.services.media.download_utils import (
+    is_exit_blocked,
+    try_proxy_exits,
+    ytdlp_proxy_exit_urls,
+    ytdlp_proxy_url,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +66,69 @@ def _build_playlist_opts() -> dict:
     return opts
 
 
+class _BlockedExit(Exception):
+    """YouTube bot-checked or rate limited the proxy exit (see is_exit_blocked)."""
+
+
+class _ErrorCapture:
+    """yt-dlp ``logger`` that keeps the error lines it is handed.
+
+    ``ignoreerrors`` turns a failed playlist page into a None result; the
+    line yt-dlp logged is the only trace of whether the exit was blocked.
+    """
+
+    def __init__(self) -> None:
+        self.errors: list[str] = []
+
+    def debug(self, msg: str) -> None:
+        logger.debug("yt-dlp: %s", msg)
+
+    def warning(self, msg: str) -> None:
+        logger.warning("yt-dlp: %s", msg)
+
+    def error(self, msg: str) -> None:
+        self.errors.append(msg)
+        logger.warning("yt-dlp: %s", msg)
+
+
+def _extract_flat(url: str, opts: dict[str, Any]) -> dict[str, Any] | None:
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        return ydl.extract_info(url, download=False)
+
+
+def _extract_flat_via_exit(url: str, opts: dict[str, Any], proxy_url: str) -> dict[str, Any] | None:
+    """One flat extraction through one exit; raises _BlockedExit when YouTube blocked it."""
+    capture = _ErrorCapture()
+    info = _extract_flat(url, {**opts, "proxy": proxy_url, "logger": capture})
+    blocked = next((line for line in capture.errors if is_exit_blocked(line)), None)
+    if info is None and blocked is not None:
+        raise _BlockedExit(blocked)
+    return info
+
+
+def _extract_playlist_info(playlist_id: str) -> dict[str, Any] | None:
+    """Flat ``extract_info`` through YOUTUBE_PROXY_URL's exits.
+
+    A bot check or 429 moves on to the next sticky exit, like every other
+    proxied YouTube call. When every exit is blocked the result is None, so
+    the caller fails with today's "Playlist not found or unavailable".
+    """
+    url = f"https://www.youtube.com/playlist?list={playlist_id}"
+    opts = _build_playlist_opts()
+    exit_urls = ytdlp_proxy_exit_urls()
+    if len(exit_urls) <= 1:
+        return _extract_flat(url, opts)
+    try:
+        return try_proxy_exits(
+            exit_urls,
+            partial(_extract_flat_via_exit, url, opts),
+            is_exit_blocked,
+            f"Playlist extract for {playlist_id}",
+        )
+    except _BlockedExit:
+        return None
+
+
 def _extract_playlist_sync(playlist_id: str, max_videos: int = 100) -> PlaylistData:
     """
     Extract playlist data using yt-dlp (synchronous).
@@ -76,12 +146,8 @@ def _extract_playlist_sync(playlist_id: str, max_videos: int = 100) -> PlaylistD
     Raises:
         ValueError: If playlist not found or extraction fails
     """
-    url = f"https://www.youtube.com/playlist?list={playlist_id}"
-
-    opts = _build_playlist_opts()
     try:
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(url, download=False)
+        info = _extract_playlist_info(playlist_id)
     except (DownloadError, ExtractorError, OSError, ConnectionError) as e:
         raise ValueError(f"Failed to extract playlist: {e}") from e
 

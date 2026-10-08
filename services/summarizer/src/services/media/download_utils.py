@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -25,6 +26,7 @@ __all__ = [
     "download_youtube_audio",
     "is_exit_blocked",
     "proxy_exit_label",
+    "record_working_exit",
     "ytdlp_client_api_opts",
     "ytdlp_client_cli_args",
     "ytdlp_hires_client_attempts",
@@ -78,6 +80,52 @@ def proxy_exit_label(proxy_url: str) -> str:
     return f"session -{match.group('n')}" if match else "unnamed session"
 
 
+class _ExitMemory:
+    """The proxy exit that last worked in this process, shared by every thread.
+
+    Rotations start from it, so a blocked exit costs one failed attempt per
+    process instead of one per YouTube call (~2.5 s each on 2026-10-08, when
+    two of three exits were bot-checked). Holds a credential-bearing URL in
+    memory only — it is never logged.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._url: str | None = None
+
+    def order(self, exit_urls: list[str]) -> list[str]:
+        """``exit_urls`` with the remembered exit moved to the front, if it is one of them."""
+        with self._lock:
+            preferred = self._url
+        if preferred is None or preferred not in exit_urls:
+            return exit_urls
+        return [preferred, *(url for url in exit_urls if url != preferred)]
+
+    def remember(self, proxy_url: str) -> None:
+        with self._lock:
+            self._url = proxy_url
+
+
+_EXIT_MEMORY = _ExitMemory()
+
+
+def record_working_exit(proxy_url: str, label: str, position: int, tried_of: int) -> None:
+    """Start the next rotation from ``proxy_url``; log it when earlier exits were blocked.
+
+    ``position`` is the exit's 1-based place among the ``tried_of`` exits of
+    this rotation. ``label`` is logged — never put a proxy URL in it.
+    """
+    _EXIT_MEMORY.remember(proxy_url)
+    if position > 1:
+        logger.info(
+            "%s succeeded on proxy exit %d/%d (%s)",
+            label,
+            position,
+            tried_of,
+            proxy_exit_label(proxy_url),
+        )
+
+
 def ytdlp_proxy_url() -> str | None:
     """YOUTUBE_PROXY_URL with whitespace stripped, or None for a direct connection."""
     url = (settings.YOUTUBE_PROXY_URL or "").strip()
@@ -89,9 +137,11 @@ def ytdlp_proxy_exit_urls() -> list[str]:
 
     Empty without a proxy. The configured URL comes first; when
     YOUTUBE_PROXY_EXIT_COUNT > 1 and its username carries a sticky ``-N``
-    suffix, the following exits (wrapping within 1..count, capped) follow.
-    Only the username is rewritten, in the raw netloc, so the password is
-    never re-encoded. Never log the returned URLs — they carry credentials.
+    suffix, the following exits (wrapping within 1..count, capped) follow,
+    and the exit that last worked in this process (record_working_exit) is
+    moved to the front. Only the username is rewritten, in the raw netloc,
+    so the password is never re-encoded. Never log the returned URLs — they
+    carry credentials.
     """
     primary = ytdlp_proxy_url()
     if not primary:
@@ -110,7 +160,7 @@ def ytdlp_proxy_exit_urls() -> list[str]:
     for step in range(1, min(count, _MAX_ROTATED_EXITS)):
         exit_no = (current - 1 + step) % count + 1
         urls.append(f"{scheme_sep}://{base}-{exit_no}{colon}{password}@{host}")
-    return urls
+    return _EXIT_MEMORY.order(urls)
 
 
 def try_proxy_exits(
@@ -124,7 +174,8 @@ def try_proxy_exits(
     A 429 or a bot check is scoped to the exit IP, so a blocked attempt moves
     straight on to the next exit instead of waiting on the same one. Any other
     error ends the rotation at once; when every exit is blocked the last error
-    is re-raised. ``label`` is logged — never put a proxy URL in it.
+    is re-raised. The exit that worked starts the next rotation
+    (record_working_exit). ``label`` is logged — never put a proxy URL in it.
     """
     last_error: Exception | None = None
     for n, proxy_url in enumerate(exit_urls, 1):
@@ -136,14 +187,7 @@ def try_proxy_exits(
             last_error = e
             logger.warning("%s blocked on proxy exit %d/%d", label, n, len(exit_urls))
             continue
-        if n > 1:
-            logger.info(
-                "%s succeeded on proxy exit %d/%d (%s)",
-                label,
-                n,
-                len(exit_urls),
-                proxy_exit_label(proxy_url),
-            )
+        record_working_exit(proxy_url, label, n, len(exit_urls))
         return result
     if last_error is None:
         raise ValueError("try_proxy_exits needs at least one exit")

@@ -7,6 +7,7 @@ audio download — a typo here silently reinstates the 403s everywhere.
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -14,6 +15,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.services.media import download_utils
+
+
+@pytest.fixture(autouse=True)
+def _fresh_exit_memory(monkeypatch):
+    """Each test starts with no remembered proxy exit (it is per-process state)."""
+    monkeypatch.setattr(download_utils, "_EXIT_MEMORY", download_utils._ExitMemory())
 
 
 @pytest.fixture
@@ -487,3 +494,86 @@ class TestDownloadYoutubeAudioExitRotation:
             )
 
         assert ydl.tried == ["http://caller.example:1"]
+
+
+class TestExitMemory:
+    """The exit that last worked starts the next rotation, so a blocked exit
+    costs one failed attempt per process instead of one per YouTube call."""
+
+    EXITS = [f"http://user-{n}:pass@p.webshare.io:80" for n in (1, 2, 3)]
+
+    @pytest.fixture(autouse=True)
+    def three_exits(self, monkeypatch):
+        monkeypatch.setattr(download_utils.settings, "YOUTUBE_PROXY_URL", self.EXITS[0])
+        monkeypatch.setattr(download_utils.settings, "YOUTUBE_PROXY_EXIT_COUNT", 3)
+
+    @staticmethod
+    def _rotate(blocked: set[str]) -> list[str]:
+        """One rotation over ytdlp_proxy_exit_urls(); returns the exits tried."""
+        tried: list[str] = []
+
+        def attempt(proxy_url: str) -> str:
+            tried.append(proxy_url)
+            if proxy_url in blocked:
+                raise _RateLimited
+            return "ok"
+
+        download_utils.try_proxy_exits(
+            download_utils.ytdlp_proxy_exit_urls(),
+            attempt,
+            lambda e: isinstance(e, _RateLimited),
+            "Test fetch",
+        )
+        return tried
+
+    def test_should_start_the_next_rotation_from_the_exit_that_worked(self):
+        self._rotate(blocked={self.EXITS[0]})
+
+        assert self._rotate(blocked={self.EXITS[0]}) == [self.EXITS[1]]
+
+    def test_should_continue_through_the_others_when_the_remembered_exit_fails(self):
+        self._rotate(blocked={self.EXITS[0]})
+
+        tried = self._rotate(blocked={self.EXITS[0], self.EXITS[1]})
+
+        assert tried == [self.EXITS[1], self.EXITS[0], self.EXITS[2]]
+        assert download_utils.ytdlp_proxy_exit_urls()[0] == self.EXITS[2]
+
+    def test_should_keep_the_memory_when_every_exit_is_blocked(self):
+        self._rotate(blocked={self.EXITS[0]})
+
+        with pytest.raises(_RateLimited):
+            self._rotate(blocked=set(self.EXITS))
+
+        assert download_utils.ytdlp_proxy_exit_urls()[0] == self.EXITS[1]
+
+    def test_should_ignore_a_remembered_exit_outside_the_configured_pool(self):
+        download_utils.record_working_exit("http://user-9:pass@p.webshare.io:80", "Test", 1, 1)
+
+        assert download_utils.ytdlp_proxy_exit_urls() == self.EXITS
+
+    def test_should_start_from_the_configured_exit_before_anything_worked(self):
+        assert download_utils.ytdlp_proxy_exit_urls() == self.EXITS
+
+    def test_should_stay_consistent_under_concurrent_rotations(self):
+        """Worker threads (asyncio.to_thread) rotate at once: every list must stay
+        a reordering of the pool and nothing may raise."""
+        orders: list[list[str]] = []
+        errors: list[BaseException] = []
+
+        def worker(n: int) -> None:
+            try:
+                for i in range(200):
+                    download_utils.record_working_exit(self.EXITS[(n + i) % 3], "T", 1, 1)
+                    orders.append(download_utils.ytdlp_proxy_exit_urls())
+            except BaseException as e:  # noqa: BLE001 — surfaced by the assert below
+                errors.append(e)
+
+        threads = [threading.Thread(target=worker, args=(n,)) for n in range(8)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        assert errors == []
+        assert all(sorted(order) == self.EXITS for order in orders)
