@@ -26,6 +26,16 @@ def frame_s3_key(youtube_id: str, timestamp_seconds: int) -> str:
     return f"videos/{youtube_id}/frames/{timestamp_seconds}.jpg"
 
 
+async def _kill(proc: asyncio.subprocess.Process) -> None:
+    if proc.returncode is not None:
+        return
+    try:
+        proc.kill()
+        await proc.wait()
+    except ProcessLookupError:
+        logger.debug("ffmpeg already exited before the kill")
+
+
 async def extract_frame(
     source: str,
     timestamp_seconds: int,
@@ -73,6 +83,12 @@ async def extract_frame(
             await proc.communicate()  # drain pipes
             logger.warning("ffmpeg timed out extracting frame at %ds", timestamp_seconds)
             return None
+        except asyncio.CancelledError:
+            # An outer budget expired (moment fill, hi-res refinement): stop
+            # ffmpeg before the finally removes its output, or it outlives the
+            # run and writes a stray jpg into the temp dir.
+            await _kill(proc)
+            raise
 
         if proc.returncode == 0 and os.path.exists(tmp_path):
             size = os.path.getsize(tmp_path)

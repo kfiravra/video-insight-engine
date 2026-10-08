@@ -21,7 +21,6 @@ from src.services.pipeline.tier_probe import (
     parse_tier_probe,
     render_tier_probe_prompt,
     run_tier_probe,
-    strip_visual_annotations,
     transcript_windows,
 )
 from src.services.video.youtube import VideoContext, VideoData
@@ -123,27 +122,6 @@ class TestParseTierProbe:
 # ─── Transcript windows ──────────────────────────────────────────────────────
 
 
-class TestStripVisualAnnotations:
-    def test_should_drop_inline_visual_span_when_speech_follows(self) -> None:
-        text = "add salt\n[VISUAL at 1:05: hand pours salt]then stir"
-        assert strip_visual_annotations(text) == "add salt then stir"
-
-    def test_should_drop_whole_annotation_when_it_contains_brackets(self) -> None:
-        text = "loop here\n[VISUAL at 2:00: code arr[i] = x]\nnext line"
-        assert strip_visual_annotations(text) == "loop here next line"
-
-    def test_should_drop_on_screen_text_annotations(self) -> None:
-        text = "intro [ON-SCREEN TEXT at 0:03: SUBSCRIBE] outro"
-        assert strip_visual_annotations(text) == "intro outro"
-
-    def test_should_stop_at_line_end_when_annotation_is_unbalanced(self) -> None:
-        text = "a\n[VISUAL at 0:01: broken [bracket\nspeech survives"
-        assert strip_visual_annotations(text) == "a speech survives"
-
-    def test_should_keep_text_unchanged_when_no_annotation(self) -> None:
-        assert strip_visual_annotations("plain  speech\ntext") == "plain speech text"
-
-
 class TestTranscriptWindows:
     def test_should_split_short_transcript_without_duplication(self) -> None:
         text = " ".join(f"w{i}" for i in range(100))
@@ -168,10 +146,8 @@ class TestTranscriptWindows:
         windows = transcript_windows(_long_speech())
         assert all(re.fullmatch(r"word\d+( word\d+)*", w) for w in windows)
 
-    def test_should_exclude_annotation_text_from_windows(self) -> None:
-        speech = _long_speech()
-        text = speech[:5000] + "\n[VISUAL at 9:00: SECRET-FRAME]" + speech[5000:]
-        assert "SECRET-FRAME" not in " ".join(transcript_windows(text))
+    def test_should_collapse_whitespace_when_building_windows(self) -> None:
+        assert transcript_windows("a  b\nc") == ("a", "b", "c")
 
     def test_should_return_empty_windows_for_empty_transcript(self) -> None:
         assert transcript_windows("") == ("", "", "")
@@ -196,11 +172,6 @@ class TestRenderTierProbePrompt:
     def test_should_put_the_output_format_after_the_video_data(self) -> None:
         prompt = render_tier_probe_prompt(_TEMPLATE, _input("speech"))
         assert prompt.rindex("</transcript_windows>") < prompt.rindex("<output_format>")
-
-    def test_should_never_render_annotation_text(self) -> None:
-        transcript = _long_speech()[:3000] + "\n[ON-SCREEN TEXT at 4:00: SECRET-OCR]\nmore"
-        prompt = render_tier_probe_prompt(_TEMPLATE, _input(transcript))
-        assert "SECRET-OCR" not in prompt
 
     def test_should_cap_description_at_500_chars(self) -> None:
         prompt = render_tier_probe_prompt("D:{description}|", _input(description="x" * 2000))

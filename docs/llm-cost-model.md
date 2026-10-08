@@ -106,16 +106,30 @@ billed at the full input rate, so total list-price spend ≈ `cost_usd + cache_s
 
 ## Where cache_control is set
 
-`services/summarizer/src/services/llm_provider.py:162-169` — when
-`cache_static` is provided and the model is Anthropic, the static prompt half
-is sent as a separate system message with `cache_control: {"type": "ephemeral"}`.
-LiteLLM forwards the directive to the Anthropic API.
+Since pipeline-1min 1c.3 there is **one** breakpoint, on extraction calls only
+(Anthropic models; `services/summarizer/src/services/llm_messages.py` strips the
+marker for every other provider):
 
-The current cached blocks are:
-- `services/summarizer/src/prompts/base_extraction.txt` (extraction)
-- `services/summarizer/src/prompts/plan.txt` (plan stage)
+- **system** = the rules section of `base_extraction.txt` (everything before
+  `<video>`) — byte-identical for every video, **no** breakpoint (`system_prompt`
+  never carries one);
+- **user block 1** = `[<video> + {transcript} + <video_memory>]` —
+  `text_block(..., cache=True)`, the one breakpoint
+  (`ExtractionPrompt.user_blocks` in `pipeline/extraction_prompt.py`);
+- **user block 2** = the job (planned tabs' briefs + caps, schemas, example,
+  visual annotations, key frames, per-batch context) — uncached, bound per call.
 
-Plus the dynamic prompt in `complete_with_messages` is appended afterward.
+The old `cache_static` path (static template half as a cached system message)
+is gone, and so is `cache_control` on the plan: there is one plan call per run,
+so a cache entry would be written and never read (A26). The plan reads the
+**full** `[m:ss]`-marked transcript (1b.2), so its input tokens — and cost —
+grow with the video; memory reads the same string.
+
+What the breakpoint buys in phase 1: nothing yet. A short video makes one
+extraction call; a chunked one sends each batch's own transcript slice in block
+1, so no two calls share the prefix. Haiku also caches nothing under 4,096
+tokens per block. Reads start in phase 3, when several extraction groups share
+one `[video + transcript + memory]` block.
 
 ## How to audit
 
@@ -131,13 +145,17 @@ python scripts/audit_cache_credits.py --json           # machine-readable
 Exit codes:
 - `0` cache hits observed on Anthropic calls
 - `1` no records in window
-- `2` Anthropic calls present but zero cache hits — investigate
+- `2` Anthropic calls present but zero cache hits — investigate, **except** in
+  pipeline-1min phases 1–2, where exit 2 is the expected result (no extraction
+  call shares its cached prefix with another; see above) until phase 3's
+  grouped extraction lands
 
 ## Common failure modes
 
-1. **Zero hits on Sonnet calls** — usually means the static prompt half is
-   not byte-identical between calls (e.g., a timestamp or user_goal slipped
-   in). Re-grep call sites for variable interpolation in cached blocks.
+1. **Zero hits on Sonnet calls** (from phase 3 on) — usually means the cached
+   `[video + transcript + memory]` block is not byte-identical across the calls
+   that share it (e.g. a per-call value slipped in before the breakpoint).
+   Everything a call varies must be bound in the job block.
 2. **`cache.rate_missing` log** — a model alias was added in `config.MODEL_MAP`
    without a corresponding entry in `_CACHE_RATES_USD_PER_M`. Add the
    per-1M-token rates for that model.
@@ -150,10 +168,10 @@ Exit codes:
 
 - ✅ Cache fields on `UsageRecord` (creation/read tokens, hit flag, savings)
 - ✅ Per-model cache rate map with miss-logging fallback
-- ✅ `cache_control: ephemeral` set on extraction + plan static halves
+- ✅ `cache_control: ephemeral` on the extraction `[video + transcript + memory]` user block (plan: none)
 - ✅ Audit script (`scripts/audit_cache_credits.py`)
-- 📋 Live audit pending production traffic — run the script after one
-      end-to-end pipeline run to confirm the second-pass call hits the cache.
+- 📋 Live audit meaningful from phase 3 (grouped extraction) — exit 2 is
+      expected before that.
 
 ## Per-user daily cap
 

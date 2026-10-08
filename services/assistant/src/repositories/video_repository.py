@@ -37,7 +37,10 @@ class MongoVideoRepository:
     async def get_video_context(self, video_id: str) -> VideoContext | None:
         """Load video context by video ID.
 
-        Tries youtubeId first, falls back to _id lookup.
+        Tries youtubeId first, falls back to _id lookup. A youtubeId resolves
+        to the served version (``isLatest``, else the newest user version) and
+        never to an eval run (D25): eval rows share the youtubeId but are
+        reachable only by their own _id.
 
         Args:
             video_id: YouTube video ID or document _id.
@@ -46,7 +49,10 @@ class MongoVideoRepository:
             VideoContext if found, None otherwise.
         """
         try:
-            doc = await self._collection.find_one({"youtubeId": video_id})
+            doc = await self._collection.find_one(
+                {"youtubeId": video_id, "evalRun": {"$ne": True}},
+                sort=[("isLatest", -1), ("version", -1)],
+            )
             if not doc:
                 doc = await self._find_by_id(video_id)
             if not doc:

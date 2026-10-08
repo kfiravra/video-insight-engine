@@ -70,6 +70,14 @@ class _BlockedExit(Exception):
     """YouTube bot-checked or rate limited the proxy exit (see is_exit_blocked)."""
 
 
+class _ExtractFailed(Exception):
+    """No playlist info and no block logged: the exit is fine, the playlist is not.
+
+    Raised instead of returning None so try_proxy_exits ends the rotation
+    without recording the exit as working.
+    """
+
+
 class _ErrorCapture:
     """yt-dlp ``logger`` that keeps the error lines it is handed.
 
@@ -84,7 +92,8 @@ class _ErrorCapture:
         logger.debug("yt-dlp: %s", msg)
 
     def warning(self, msg: str) -> None:
-        logger.warning("yt-dlp: %s", msg)
+        # Debug, as ``no_warnings`` intends: only the error lines matter here.
+        logger.debug("yt-dlp: %s", msg)
 
     def error(self, msg: str) -> None:
         self.errors.append(msg)
@@ -96,26 +105,33 @@ def _extract_flat(url: str, opts: dict[str, Any]) -> dict[str, Any] | None:
         return ydl.extract_info(url, download=False)
 
 
-def _extract_flat_via_exit(url: str, opts: dict[str, Any], proxy_url: str) -> dict[str, Any] | None:
-    """One flat extraction through one exit; raises _BlockedExit when YouTube blocked it."""
+def _extract_flat_via_exit(url: str, opts: dict[str, Any], proxy_url: str) -> dict[str, Any]:
+    """One flat extraction through one exit.
+
+    Raises _BlockedExit when YouTube blocked the exit, _ExtractFailed when the
+    extraction came back empty for any other reason.
+    """
     capture = _ErrorCapture()
     info = _extract_flat(url, {**opts, "proxy": proxy_url, "logger": capture})
+    if info is not None:
+        return info
     blocked = next((line for line in capture.errors if is_exit_blocked(line)), None)
-    if info is None and blocked is not None:
+    if blocked is not None:
         raise _BlockedExit(blocked)
-    return info
+    raise _ExtractFailed("playlist extraction returned no info")
 
 
 def _extract_playlist_info(playlist_id: str) -> dict[str, Any] | None:
     """Flat ``extract_info`` through YOUTUBE_PROXY_URL's exits.
 
     A bot check or 429 moves on to the next sticky exit, like every other
-    proxied YouTube call. When every exit is blocked the result is None, so
+    proxied YouTube call; the playlist id is the round-robin job key. When
+    every exit is blocked, or the extraction is empty, the result is None, so
     the caller fails with today's "Playlist not found or unavailable".
     """
     url = f"https://www.youtube.com/playlist?list={playlist_id}"
     opts = _build_playlist_opts()
-    exit_urls = ytdlp_proxy_exit_urls()
+    exit_urls = ytdlp_proxy_exit_urls(playlist_id)
     if len(exit_urls) <= 1:
         return _extract_flat(url, opts)
     try:
@@ -125,7 +141,7 @@ def _extract_playlist_info(playlist_id: str) -> dict[str, Any] | None:
             is_exit_blocked,
             f"Playlist extract for {playlist_id}",
         )
-    except _BlockedExit:
+    except (_BlockedExit, _ExtractFailed):
         return None
 
 

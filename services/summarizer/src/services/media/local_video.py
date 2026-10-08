@@ -1,11 +1,12 @@
 """The run's two video downloads: the low-res pass-1 file and the ≤720p file.
 
-The low-res file (worst quality) feeds scene detection and scoring; the 720p
-file feeds hi-res frames and moment fill. Both go through yt-dlp itself —
-googlevideo stream URLs are bound to the requesting client (PO tokens /
-headers) and 403 plain ffmpeg — and every frame is then seeked out of the
-local file, where ``-ss`` is instant and can't 403. Each download lands in
-its own temp dir, which the CALLER owns (``cleanup_local_video``).
+The low-res file (worst quality) feeds scene detection (scoring reads the
+JPEGs detection wrote); the 720p file feeds hi-res frames and moment fill.
+Both go through yt-dlp itself — googlevideo stream URLs are bound to the
+requesting client (PO tokens / headers) and 403 plain ffmpeg — and every
+frame is then seeked out of the local file, where ``-ss`` is instant and
+can't 403. Each download lands in its own temp dir, which the CALLER owns
+(``cleanup_local_video``).
 """
 
 from __future__ import annotations
@@ -59,10 +60,11 @@ async def download_video_720p(
     Tries YTDLP_HIRES_PLAYER_CLIENTS first (android alone caps at 360p), then
     once more with YTDLP_PLAYER_CLIENTS if that fails, both within ``timeout``.
     The CALLER owns cleanup of temp_dir (``cleanup_local_video``). Best-effort:
-    every failure logs and returns None. Cancellation (an outer budget expiring
-    mid-download) kills the subprocess and removes the partial file before
-    re-raising, so neither leaks out of a long-lived worker. ``purpose`` labels
-    the download in the run's ``pipeline.timing`` (one 720p per job is the goal).
+    every failed download logs and returns None. An exception (a cancel when
+    an outer budget expires mid-download, or EMFILE/EACCES) kills the
+    subprocess and removes the temp dir before re-raising, so neither leaks out
+    of a long-lived worker. ``purpose`` labels the download in the run's
+    ``pipeline.timing`` (one 720p per job is the goal).
     """
     if not YOUTUBE_ID_RE.match(youtube_id):
         logger.warning("Invalid youtube_id for local 720p download: %s", youtube_id)
@@ -88,7 +90,7 @@ async def download_video_720p(
                     kind="720p", purpose=purpose, start_monotonic=started, path=video_path, ok=True
                 )
                 return video_path, temp_dir
-    except asyncio.CancelledError:
+    except BaseException:
         record_download(kind="720p", purpose=purpose, start_monotonic=started, path=None, ok=False)
         cleanup_local_video(temp_dir)
         raise
@@ -103,8 +105,9 @@ async def download_video_lowres(
     """Download the worst-quality rendition (pass 1); returns (video_path, temp_dir) or None.
 
     One attempt with YTDLP_PLAYER_CLIENTS. Same contract as
-    ``download_video_720p``: the caller owns ``temp_dir``, failures log and
-    return None, a cancel kills yt-dlp and removes the partial file.
+    ``download_video_720p``: the caller owns ``temp_dir``, failed downloads log
+    and return None, an exception (a cancel included) kills yt-dlp and removes
+    the temp dir before re-raising.
     """
     if not YOUTUBE_ID_RE.match(youtube_id):
         logger.warning("Invalid youtube_id for low-res download: %s", youtube_id)
@@ -115,7 +118,7 @@ async def download_video_lowres(
     started = time.monotonic()
     try:
         ok = await _run_ytdlp(youtube_id, video_path, None, timeout, _LOWRES_FORMAT_SPEC)
-    except asyncio.CancelledError:
+    except BaseException:
         record_download(
             kind="lowres", purpose="scene_detect", start_monotonic=started, path=None, ok=False
         )
@@ -144,11 +147,12 @@ async def _run_ytdlp(
 
     ``clients`` None = YTDLP_PLAYER_CLIENTS (``ytdlp_client_cli_args`` default).
     YouTube's bot check and a 429 are scoped to the proxy exit's IP, so either
-    moves on to the next sticky exit (``ytdlp_proxy_exit_urls``, starting from
-    the one that last worked) within the same ``timeout``; any other failure
-    ends the download.
+    moves on to the next sticky exit (``ytdlp_proxy_exit_urls``: the job's
+    round-robin exit first, recently blocked exits last) within the same
+    ``timeout``; any other failure ends the download.
     """
     from src.services.media.download_utils import (
+        record_blocked_exit,
         record_working_exit,
         ytdlp_client_cli_args,
         ytdlp_proxy_exit_urls,
@@ -166,7 +170,7 @@ async def _run_ytdlp(
         f"https://www.youtube.com/watch?v={youtube_id}",
     ]
     label = f"{youtube_id} (format={format_spec.split('/', 1)[0]}, clients={clients})"
-    exit_urls: list[str | None] = [*ytdlp_proxy_exit_urls()] or [None]
+    exit_urls: list[str | None] = [*ytdlp_proxy_exit_urls(youtube_id)] or [None]
     deadline = asyncio.get_running_loop().time() + timeout
     for n, proxy_url in enumerate(exit_urls, 1):
         remaining = deadline - asyncio.get_running_loop().time()
@@ -177,6 +181,8 @@ async def _run_ytdlp(
             if attempt is _Attempt.OK and proxy_url:
                 record_working_exit(proxy_url, f"yt-dlp download for {label}", n, len(exit_urls))
             return attempt is _Attempt.OK
+        if proxy_url:
+            record_blocked_exit(proxy_url)
         logger.warning(
             "yt-dlp download for %s blocked on proxy exit %d/%d", label, n, len(exit_urls)
         )

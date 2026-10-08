@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from src.models.domain_types import (
     FoodData,
+    NarrativeData,
     ProjectData,
     TravelData,
     validate_domain_output,
@@ -121,3 +122,44 @@ class TestFoodMetaRoundTrip:
         data = {"meta": {"prepTime": 10, "cookTime": 20, "totalTime": 30}}
         dumped = FoodData.model_validate(data).model_dump(by_alias=True)
         assert dumped["meta"]["totalTime"] == 30
+
+
+class TestPackingItemRoundTrip:
+    """PackingMission reads weight (kg tally) and emoji from each packing item."""
+
+    def _dump_item(self, item: dict) -> dict:
+        validated = validate_domain_output(["travel"], [], {"packingList": [item]})
+        return validated["travel"]["packingList"][0]
+
+    def test_should_keep_weight_and_emoji_when_the_item_states_them(self):
+        item = self._dump_item({"item": "Hiking boots", "weight": 1.5, "emoji": "🥾"})
+
+        assert (item["weight"], item["emoji"]) == (1.5, "🥾")
+
+    def test_should_drop_weight_when_it_carries_a_unit(self):
+        item = self._dump_item({"item": "Sunscreen", "weight": "200 g"})
+
+        assert item["weight"] is None
+
+    def test_should_drop_weight_when_it_is_zero(self):
+        item = self._dump_item({"item": "Passport", "weight": 0})
+
+        assert item["weight"] is None
+
+
+class TestSpanEndRoundTrip:
+    """MomentTrack highlight spans read endTimestamp from moments and song sections."""
+
+    def test_should_keep_end_timestamp_on_a_narrative_key_moment(self):
+        moment = {"timestamp": 720, "endTimestamp": 812, "description": "Launch day"}
+
+        dumped = NarrativeData.model_validate({"keyMoments": [moment]}).model_dump(by_alias=True)
+
+        assert dumped["keyMoments"][0]["endTimestamp"] == 812
+
+    def test_should_keep_end_timestamp_on_a_music_section(self):
+        section = {"name": "Chorus", "timestamp": 60, "endTimestamp": 89}
+
+        validated = validate_domain_output(["music"], [], {"structure": [section]})
+
+        assert validated["music"]["structure"][0]["endTimestamp"] == 89

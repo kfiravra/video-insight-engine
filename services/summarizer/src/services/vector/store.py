@@ -2,9 +2,9 @@
 
 Called after pipeline completion. Failures are logged but never break the
 pipeline. ``store_transcript_chunks``, ``store_default_output_chunks`` and
-``store_visual_chunks`` pre-delete by ``(video_id, source)`` before upsert to
+``store_visual_chunks`` delete by ``(video_id, source)`` before upsert to
 keep reprocess idempotent — reprocesses with fewer chunks no longer leave
-orphan points.
+orphan points. ``store_visual_chunks`` embeds before it deletes.
 """
 
 from __future__ import annotations
@@ -235,10 +235,12 @@ async def store_visual_chunks(video_id: str, visual_annotations: str) -> None:
 
     Visual facts left ``clean_text`` in 1c.2, so the transcript points no
     longer carry them; these points keep them searchable, each chunk with the
-    ``timestamp``/``end_timestamp`` of its first and last frame. Pre-deletes
-    first even when the block is empty, so a rerun without frames leaves no
-    stale visual points behind. The vision captions are English, so the points
-    are stored as ``language="en"`` for every video.
+    ``timestamp``/``end_timestamp`` of its first and last frame. Embeds BEFORE
+    deleting the old points, so a failed or cancelled embed keeps the previous
+    run's visual points instead of leaving the video with none; an empty block
+    still deletes, so a rerun without frames leaves no stale visual points
+    behind. The vision captions are English, so the points are stored as
+    ``language="en"`` for every video.
 
     Designed to run as a background task — never raises.
     """
@@ -247,14 +249,14 @@ async def store_visual_chunks(video_id: str, visual_annotations: str) -> None:
 
     service = _get_vector_service()
     try:
-        await asyncio.to_thread(service.delete_by_video_and_source, video_id, SOURCE_VISUAL)
-
         chunks = chunk_visual_entries(annotation_entries(visual_annotations))
         if not chunks:
+            await asyncio.to_thread(service.delete_by_video_and_source, video_id, SOURCE_VISUAL)
             logger.debug("No visual annotations to index for video %s", video_id)
             return
 
         embeddings = await asyncio.to_thread(embed_texts, [c["text"] for c in chunks])
+        await asyncio.to_thread(service.delete_by_video_and_source, video_id, SOURCE_VISUAL)
         success = await asyncio.to_thread(
             service.store_chunks,
             video_id,

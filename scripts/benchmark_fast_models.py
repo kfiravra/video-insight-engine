@@ -55,12 +55,13 @@ from src.config import settings  # noqa: E402
 from src.services.llm import LLMService  # noqa: E402
 from src.services.llm_provider import LLMProvider  # noqa: E402
 from src.services.media.frame_analyzer import (  # noqa: E402
-    VISION_ANALYSIS_PROMPT,
+    _count_line,
+    load_vision_prompt,
     parse_vision_response,
 )
-from src.services.pipeline.enrichment import enrich_quiz  # noqa: E402
+from src.services.pipeline.enrichment import enrich_quiz, quiz_allowed  # noqa: E402
 from src.services.pipeline.synthesis import synthesize  # noqa: E402
-from src.services.pipeline.translation import _translate_json  # noqa: E402
+from src.services.pipeline.translation import translate_to_source  # noqa: E402
 # Reaching into transcript_chunker's private function is intentional: the
 # bench needs the AI chapter-detection step in isolation, but the public API
 # (`extract_chapter_chunks`) bundles it with YouTube-chapters detection and
@@ -365,16 +366,15 @@ _TRANSLATION_SAMPLE = {
 }
 
 
+async def _translate_sample(svc: LLMService) -> dict:
+    """The sample as the pipeline translates it: a meta block, en → he."""
+    result = await translate_to_source(svc, {"tabs": [], "meta": dict(_TRANSLATION_SAMPLE)}, "he")
+    return result.get("sourceLanguage", {}).get("meta", {})
+
+
 async def run_translation(case: CorpusCase, model: str, label: str) -> StageRun:
     svc = make_service(model)
-    return await _run_with_telemetry(
-        "translation", case, label,
-        lambda: _translate_json(
-            svc, _TRANSLATION_SAMPLE,
-            source_language="en", target_language="Hebrew",
-            stage_name=f"bench_translation_{label}",
-        ),
-    )
+    return await _run_with_telemetry("translation", case, label, lambda: _translate_sample(svc))
 
 
 # ─── Frame vision ───────────────────────────────────────────────────────────
@@ -445,7 +445,7 @@ def _list_scene_frames(youtube_id: str, n: int = 8) -> list[dict[str, Any]]:
 def _build_vision_messages(frames: list[dict]) -> tuple[list[dict], list[dict]]:
     """Mirror frame_analyzer's message builder so multiple model passes share input."""
     import base64
-    content: list[dict] = [{"type": "text", "text": VISION_ANALYSIS_PROMPT}]
+    content: list[dict] = [{"type": "text", "text": load_vision_prompt()}]
     meta: list[dict] = []
     for i, frame in enumerate(frames):
         try:
@@ -456,9 +456,11 @@ def _build_vision_messages(frames: list[dict]) -> tuple[list[dict], list[dict]]:
             data_uri = f"data:{mime};base64,{base64.b64encode(data).decode()}"
         except OSError:
             continue
-        content.append({"type": "text", "text": f"Frame {i} (at 0:00):"})
+        # Labels count the frames actually sent, as production does.
+        content.append({"type": "text", "text": f"Frame {len(meta)} (at 0:00):"})
         content.append({"type": "image_url", "image_url": {"url": data_uri}})
         meta.append({"index": i, "timestamp_sec": 0, "s3_key": frame["s3_key"]})
+    content.append({"type": "text", "text": _count_line(len(meta))})
     return [{"role": "user", "content": content}], meta
 
 
@@ -518,6 +520,11 @@ STAGE_SCORERS = {
     "enrichment": lambda b, c: scorers.score_enrichment(b.output, c.output),
     "translation": lambda b, c: scorers.score_translation(b.output, c.output, expected_lang="he"),
 }
+
+
+def _stage_applies(stage: str, case: CorpusCase) -> bool:
+    """Enrichment is the quiz alone now — only domains that get a quiz run it."""
+    return stage != "enrichment" or quiz_allowed(case.matched_tag or "learning")
 
 
 async def benchmark_stage(stage: str, case: CorpusCase) -> StageBenchResult:
@@ -832,6 +839,11 @@ async def amain(args: argparse.Namespace) -> int:
     by_stage: dict[str, list[StageBenchResult]] = {s: [] for s in stages}
     for case in corpus:
         for stage in stages:
+            if not _stage_applies(stage, case):
+                logger.info(
+                    "[%s] skipping stage=%s (no quiz for %s)", case.youtube_id, stage, case.matched_tag
+                )
+                continue
             logger.info("[%s] running stage=%s", case.youtube_id, stage)
             result = await benchmark_stage(stage, case)
             by_stage[stage].append(result)

@@ -1,7 +1,9 @@
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { actionEnumSchema, actionParamsSchema } from '../schemas/assistant.schema.js';
+import { VideoNotFoundError } from '../utils/errors.js';
 import type { AssistantAction } from '../services/assistant-client.js';
+import type { VideoRepository } from '../repositories/video.repository.js';
 
 const actionBodySchema = z.object({
   action: actionEnumSchema,
@@ -15,8 +17,21 @@ const actionBodySchema = z.object({
  * `/internal/assistant/*` scoped to the same user. `video_id` is optional because
  * library-scoped actions (organize_library, *_folder) have no single video.
  */
+const VIDEO_SUMMARY_ID = /^[a-f0-9]{24}$/i;
+
+/**
+ * The assistant loads `video_id` as given (a videoSummaryId from the web, or a
+ * youtubeId), so the user must hold it in their library — otherwise any
+ * version row, eval runs included (D25), could be read as action context.
+ */
+async function userCanReadVideo(videoRepository: VideoRepository, userId: string, videoId: string): Promise<boolean> {
+  return VIDEO_SUMMARY_ID.test(videoId)
+    ? videoRepository.userHasAccessToSummary(userId, videoId)
+    : videoRepository.userOwnsVideo(userId, videoId);
+}
+
 export async function assistantActionRoutes(fastify: FastifyInstance): Promise<void> {
-  const { assistantClient } = fastify.container;
+  const { assistantClient, videoRepository } = fastify.container;
 
   // POST /api/assistant/action
   fastify.post<{
@@ -32,12 +47,17 @@ export async function assistantActionRoutes(fastify: FastifyInstance): Promise<v
       });
     }
 
+    const videoId = parsed.data.video_id;
+    if (videoId && !(await userCanReadVideo(videoRepository, req.user.userId, videoId))) {
+      throw new VideoNotFoundError();
+    }
+
     try {
       const { status, body } = await assistantClient.action({
         action: parsed.data.action satisfies AssistantAction,
         params: parsed.data.params,
         userId: req.user.userId,
-        videoId: parsed.data.video_id,
+        videoId,
         requestId: req.id,
       });
 

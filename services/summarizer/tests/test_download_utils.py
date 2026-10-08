@@ -1,13 +1,12 @@
 """Tests for the shared yt-dlp player-client plumbing (media/download_utils.py).
 
-These builders are the one thing that must stay in sync across the stream-URL
-fetch, the scene-detection download, the local 720p fallback, and the whisper
+These builders are the one thing that must stay in sync across the metadata
+extraction, the run's one low-res and one ≤720p download, and the whisper
 audio download — a typo here silently reinstates the 403s everywhere.
 """
 
 from __future__ import annotations
 
-import threading
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -15,12 +14,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.services.media import download_utils
-
-
-@pytest.fixture(autouse=True)
-def _fresh_exit_memory(monkeypatch):
-    """Each test starts with no remembered proxy exit (it is per-process state)."""
-    monkeypatch.setattr(download_utils, "_EXIT_MEMORY", download_utils._ExitMemory())
 
 
 @pytest.fixture
@@ -395,9 +388,13 @@ class TestIsExitBlocked:
             "Sign in to confirm you are not a bot",
             "ERROR: unable to download video data: HTTP Error 429: Too Many Requests",
             "429 Client Error: Too Many Requests for url: https://www.youtube.com/api/timedtext",
+            "ERROR: [youtube] x: This content isn't available, try again later. The current "
+            "session has been rate-limited by YouTube for up to an hour.",
+            "ERROR: [youtube] x: Video unavailable. YouTube is requiring a captcha challenge "
+            "before playback",
         ],
     )
-    def test_should_be_true_for_a_bot_check_or_a_429(self, message):
+    def test_should_be_true_for_a_bot_check_429_or_session_block(self, message):
         assert download_utils.is_exit_blocked(message) is True
 
     @pytest.mark.parametrize(
@@ -475,6 +472,23 @@ class TestDownloadYoutubeAudioExitRotation:
         assert exc_info.value.code is download_utils.ErrorCode.VIDEO_UNAVAILABLE
         assert ydl.tried == self.EXITS
 
+    def test_should_not_retry_the_rotation_when_every_exit_is_blocked(self, ydl, tmp_path):
+        """A fully blocked rotation ends the download: 3 rounds would be 3x the blocks + sleeps."""
+        ydl.errors.update(dict.fromkeys(self.EXITS, BOT_CHECK))
+
+        with pytest.raises(download_utils.TranscriptError):
+            download_utils.download_youtube_audio("dQw4w9WgXcQ", {}, tmp_path, "audio")
+
+        assert ydl.tried == self.EXITS
+
+    def test_should_retry_the_download_after_an_error_that_is_not_a_block(self, ydl, tmp_path):
+        ydl.errors[self.EXITS[0]] = "ERROR: unable to download video data: HTTP Error 403"
+
+        with pytest.raises(download_utils.TranscriptError):
+            download_utils.download_youtube_audio("dQw4w9WgXcQ", {}, tmp_path, "audio")
+
+        assert ydl.tried == [self.EXITS[0]] * download_utils.MAX_DOWNLOAD_ATTEMPTS
+
     def test_should_not_rotate_on_a_private_video(self, ydl, tmp_path):
         ydl.errors[self.EXITS[0]] = "ERROR: [youtube] x: Private video"
 
@@ -494,86 +508,3 @@ class TestDownloadYoutubeAudioExitRotation:
             )
 
         assert ydl.tried == ["http://caller.example:1"]
-
-
-class TestExitMemory:
-    """The exit that last worked starts the next rotation, so a blocked exit
-    costs one failed attempt per process instead of one per YouTube call."""
-
-    EXITS = [f"http://user-{n}:pass@p.webshare.io:80" for n in (1, 2, 3)]
-
-    @pytest.fixture(autouse=True)
-    def three_exits(self, monkeypatch):
-        monkeypatch.setattr(download_utils.settings, "YOUTUBE_PROXY_URL", self.EXITS[0])
-        monkeypatch.setattr(download_utils.settings, "YOUTUBE_PROXY_EXIT_COUNT", 3)
-
-    @staticmethod
-    def _rotate(blocked: set[str]) -> list[str]:
-        """One rotation over ytdlp_proxy_exit_urls(); returns the exits tried."""
-        tried: list[str] = []
-
-        def attempt(proxy_url: str) -> str:
-            tried.append(proxy_url)
-            if proxy_url in blocked:
-                raise _RateLimited
-            return "ok"
-
-        download_utils.try_proxy_exits(
-            download_utils.ytdlp_proxy_exit_urls(),
-            attempt,
-            lambda e: isinstance(e, _RateLimited),
-            "Test fetch",
-        )
-        return tried
-
-    def test_should_start_the_next_rotation_from_the_exit_that_worked(self):
-        self._rotate(blocked={self.EXITS[0]})
-
-        assert self._rotate(blocked={self.EXITS[0]}) == [self.EXITS[1]]
-
-    def test_should_continue_through_the_others_when_the_remembered_exit_fails(self):
-        self._rotate(blocked={self.EXITS[0]})
-
-        tried = self._rotate(blocked={self.EXITS[0], self.EXITS[1]})
-
-        assert tried == [self.EXITS[1], self.EXITS[0], self.EXITS[2]]
-        assert download_utils.ytdlp_proxy_exit_urls()[0] == self.EXITS[2]
-
-    def test_should_keep_the_memory_when_every_exit_is_blocked(self):
-        self._rotate(blocked={self.EXITS[0]})
-
-        with pytest.raises(_RateLimited):
-            self._rotate(blocked=set(self.EXITS))
-
-        assert download_utils.ytdlp_proxy_exit_urls()[0] == self.EXITS[1]
-
-    def test_should_ignore_a_remembered_exit_outside_the_configured_pool(self):
-        download_utils.record_working_exit("http://user-9:pass@p.webshare.io:80", "Test", 1, 1)
-
-        assert download_utils.ytdlp_proxy_exit_urls() == self.EXITS
-
-    def test_should_start_from_the_configured_exit_before_anything_worked(self):
-        assert download_utils.ytdlp_proxy_exit_urls() == self.EXITS
-
-    def test_should_stay_consistent_under_concurrent_rotations(self):
-        """Worker threads (asyncio.to_thread) rotate at once: every list must stay
-        a reordering of the pool and nothing may raise."""
-        orders: list[list[str]] = []
-        errors: list[BaseException] = []
-
-        def worker(n: int) -> None:
-            try:
-                for i in range(200):
-                    download_utils.record_working_exit(self.EXITS[(n + i) % 3], "T", 1, 1)
-                    orders.append(download_utils.ytdlp_proxy_exit_urls())
-            except BaseException as e:  # noqa: BLE001 — surfaced by the assert below
-                errors.append(e)
-
-        threads = [threading.Thread(target=worker, args=(n,)) for n in range(8)]
-        for thread in threads:
-            thread.start()
-        for thread in threads:
-            thread.join()
-
-        assert errors == []
-        assert all(sorted(order) == self.EXITS for order in orders)

@@ -22,6 +22,10 @@ from src.services.pipeline.pipeline_timing import PipelineTimingRecorder
 
 logger = logging.getLogger(__name__)
 
+# An answer cut at max_tokens. The JSON repair keeps whatever parsed, so a
+# truncated plan silently loses its trailing tabs — counted per run to see it.
+_TRUNCATED_FINISH_REASON = "length"
+
 
 def mark_phase(
     ctx: PipelineContext, timing: PipelineTimingRecorder, name: str, phase_start: float
@@ -37,6 +41,11 @@ def _tab_counts(ctx: PipelineContext) -> tuple[int, int]:
     planned = len(ctx.triage.tabs) if ctx.triage else 0
     assembled = len(getattr(ctx, "assembled_tabs", None) or [])
     return planned, assembled
+
+
+def truncated_calls(timing: PipelineTimingRecorder) -> int:
+    """LLM answers this run that stopped at ``max_tokens`` (finish_reason=length)."""
+    return sum(1 for c in timing.llm_calls if c.get("finishReason") == _TRUNCATED_FINISH_REASON)
 
 
 def _phase_walls(ctx: PipelineContext, timing: PipelineTimingRecorder) -> dict[str, float]:
@@ -64,7 +73,8 @@ def log_run_summary(
         "[pipeline] DONE youtube_id=%s in %.0fs | "
         "metadata=%.1fs transcript_frames=%.1fs visual_inject=%.1fs "
         "plan=%.1fs(%s) memory=%.1fs(%s) extraction=%.1fs quiz=%.1fs(%s) "
-        "assembly=%.1fs synthesis=%.1fs | tabs planned=%d assembled=%d emitted=%d",
+        "assembly=%.1fs synthesis=%.1fs | tabs planned=%d assembled=%d emitted=%d "
+        "| llm truncated=%d",
         ctx.youtube_id,
         timer.elapsed(),
         pt.get("metadata", 0),
@@ -82,6 +92,7 @@ def log_run_summary(
         planned,
         assembled,
         timing.tabs_emitted,
+        truncated_calls(timing),
     )
 
 
@@ -128,6 +139,7 @@ async def persist_run_timing(
     try:
         planned, assembled = _tab_counts(ctx)
         doc = timing.to_document(tabs_planned=planned, tabs_assembled=assembled)
+        doc["counts"]["truncated"] = truncated_calls(timing)
         update_trace_metadata({"timing": _trace_timing_summary(doc)})
         _log_phase_spans(timing)
         await asyncio.to_thread(repository.set_pipeline_timing, video_summary_id, doc)

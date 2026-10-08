@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING, AsyncGenerator
 from llm_common.context import llm_feature_var
 
 from src.services.override_state import check_override
-from src.services.pipeline.phases.probe import probe_for_plan
 from src.services.pipeline.pipeline_helpers import sse_event
 from src.services.pipeline.plan import run_plan
 from src.services.pipeline.triage import TriageResult
@@ -57,7 +56,6 @@ def _set_plan_inputs(ctx: PipelineContext, video_data: VideoData, probe: TierPro
 def _store_plan_result(ctx: PipelineContext, plan_result: PlanResult) -> None:
     """Put the plan on ``ctx`` plus the triage carriers downstream stages read."""
     ctx.plan_result = plan_result
-    ctx.video_dna_text = plan_result.to_video_context_full()
     ctx.triage = TriageResult(
         content_tags=plan_result.content_tags,
         modifiers=plan_result.modifiers,
@@ -66,19 +64,7 @@ def _store_plan_result(ctx: PipelineContext, plan_result: PlanResult) -> None:
         tabs=plan_result.tabs,
         confidence=plan_result.confidence,
     )
-    ctx.triage_dict = {
-        "contentTags": plan_result.content_tags,
-        "modifiers": plan_result.modifiers,
-        "primaryTag": plan_result.primary_tag,
-        "userGoal": plan_result.user_goal,
-        "tabs": plan_result.tabs,
-        "confidence": plan_result.confidence,
-        "contentFormat": ctx.content_format,
-        # Appendix-C evidence + canonical terms: persisted in pipeline.triage
-        # for the assembly backfill check (1d.7), reconcile (3.2) and the gate.
-        "evidence": plan_result.evidence,
-        "terms": plan_result.terms,
-    }
+    ctx.triage_dict = plan_result.to_triage_dict(ctx.content_format)
 
 
 def _meta_payload(
@@ -102,13 +88,17 @@ def _meta_payload(
 
 
 async def run_phase_plan(ctx: PipelineContext) -> AsyncGenerator[str, None]:
-    """Read the tier probe's answer, then make the single plan call."""
+    """Plan from the tier probe's answer, then make the single plan call.
+
+    The text branch awaited the probe (``probe_for_plan``) before starting
+    plan ∥ memory, so the answer is already on ``ctx.probe`` — no second wait.
+    """
     video_data = ctx.video_data
     assert video_data is not None
 
     llm_feature_var.set("summarize:plan")
     ctx.override = check_override(ctx.video_summary_id)
-    probe = await probe_for_plan(ctx)
+    probe = ctx.probe
     _set_plan_inputs(ctx, video_data, probe)
 
     # Run plan (single Sonnet call — replaces manifest + triage) on the FULL

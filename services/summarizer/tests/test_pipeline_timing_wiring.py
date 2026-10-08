@@ -20,7 +20,7 @@ from litellm.exceptions import (
 )
 
 from src.repositories.mongodb_repository import MongoDBVideoRepository
-from src.routes import pipeline_orchestration
+from src.routes import pipeline_orchestration, run_timing
 from src.services.llm_provider import LLMProvider
 from src.services.media import local_video
 from src.services.pipeline import pipeline_timing
@@ -152,9 +152,7 @@ class TestRunnerPersistence:
             patch.object(pipeline_orchestration, "run_phase_metadata", _one),
             patch.object(pipeline_orchestration, "run_parallel_phases", lambda _p, _c: _one()),
             patch.object(pipeline_orchestration, "run_phase_extraction", _one),
-            patch.object(pipeline_orchestration, "run_phase_enrichment", _one),
             patch.object(pipeline_orchestration, "run_phase_assembly", assembly or _assembly),
-            patch.object(pipeline_orchestration, "needs_quiz", lambda *_a: False),
         ]
 
     async def _drive(
@@ -223,6 +221,49 @@ class TestRunnerPersistence:
             await self._drive(self._ctx(), MagicMock(), [tab])
 
         assert "tabs planned=3 assembled=2 emitted=1" in caplog.text
+
+
+class TestTruncatedCalls:
+    """Answers cut at max_tokens are counted per run (the JSON repair hides them)."""
+
+    @staticmethod
+    def _recorder(*finish_reasons: str | None) -> PipelineTimingRecorder:
+        recorder = PipelineTimingRecorder()
+        recorder.llm_calls = [{"span": "plan", "finishReason": r} for r in finish_reasons]
+        return recorder
+
+    def test_should_count_answers_that_stopped_at_max_tokens(self) -> None:
+        recorder = self._recorder("length", "stop", None, "length")
+
+        assert run_timing.truncated_calls(recorder) == 2
+
+    async def test_should_persist_the_truncated_count_when_a_plan_was_cut(self) -> None:
+        repository = MagicMock()
+        ctx = SimpleNamespace(row_deleted=False, triage=None, assembled_tabs=None)
+
+        await run_timing.persist_run_timing(ctx, repository, "vsid", self._recorder("length"))  # type: ignore[arg-type]
+
+        assert repository.set_pipeline_timing.call_args.args[1]["counts"]["truncated"] == 1
+
+    def test_should_report_truncated_answers_in_the_done_line(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        ctx = SimpleNamespace(
+            youtube_id="vid",
+            phase_times={},
+            triage=None,
+            assembled_tabs=None,
+            plan_result=None,
+            memory=None,
+            enrichment_data=None,
+        )
+        timer = MagicMock(elapsed=MagicMock(return_value=1.0))
+        log = logging.getLogger("test.truncated")
+
+        with caplog.at_level(logging.INFO, logger="test.truncated"):
+            run_timing.log_run_summary(ctx, timer, self._recorder("length"), log)  # type: ignore[arg-type]
+
+        assert "llm truncated=1" in caplog.text
 
 
 class TestRepositoryWrite:

@@ -28,9 +28,11 @@ def _skip_reason(ctx: PipelineContext) -> str | None:
 async def run_phase_enrichment(ctx: PipelineContext) -> AsyncGenerator[str, None]:
     """Generate the quiz for a plan that can show one; otherwise do nothing.
 
-    Gated here as well as by the orchestrator so the phase is safe to schedule
-    unconditionally. No synthesis input: the quiz reads the extraction and the
-    run's video_memory, so it can run alongside synthesis.
+    Gated here as well as by assembly (``phases/assembly._late_phases``), so the
+    phase is safe to schedule unconditionally. It runs in assembly's late group,
+    alongside synthesis and the moment fill, after the other tabs went out: no
+    synthesis input (the quiz reads the extraction and the run's video_memory),
+    and assembly adds the quiz tab last once it lands (``phases/late_quiz``).
     """
     llm_feature_var.set("summarize:enrichment")
     plan = ctx.plan_result

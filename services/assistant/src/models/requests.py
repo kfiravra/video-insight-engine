@@ -97,4 +97,4 @@ class LibrarySearchRequest(BaseModel):
     video_ids: list[VideoId] = Field(..., min_length=1, max_length=200)
     query: str = Field(..., min_length=1, max_length=500)
     top_k: int = Field(default=10, ge=1, le=50)
-    sources: list[Literal["transcript", "default_output"]] | None = None
+    sources: list[Literal["transcript", "default_output", "visual"]] | None = None

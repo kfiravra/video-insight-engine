@@ -11,7 +11,7 @@ import asyncio
 import logging
 
 from src.services.media.s3_client import s3_client
-from src.services.media.frame_ocr import extract_text_from_frames, enrich_transcript_with_ocr
+from src.services.media.frame_ocr import extract_text_from_frames
 from src.services.pipeline.pipeline_helpers import sse_event
 from src.utils.constants import YOUTUBE_ID_RE
 
@@ -21,28 +21,28 @@ logger = logging.getLogger(__name__)
 async def process_scene_frames(
     extraction_result: dict | list,
     youtube_id: str,
-    clean_text: str | None = None,
-) -> tuple[dict, str, str | None]:
-    """Run OCR, generate presigned URLs, optionally enrich transcript.
+) -> tuple[dict, str]:
+    """Run OCR on the frames and generate presigned URLs.
 
     Accepts the 3-tier dict from extract_scene_keyframes() or a legacy
-    flat list for backward compatibility.
+    flat list for backward compatibility. OCR text stays on the frames: it
+    reaches the LLM only through ``<visual_annotations>``, never the
+    transcript (``clean_text`` stays speech-only).
 
     Args:
         extraction_result: Dict with all_frames/selected_frames/gallery_frames,
             or a flat list of frame dicts (legacy).
         youtube_id: YouTube video ID.
-        clean_text: If provided, OCR results enrich this transcript text.
 
     Returns:
-        (enriched_result, sse_event_string, updated_clean_text_or_None).
-        enriched_result has same shape as input (3-tier dict).
+        (enriched_result, sse_event_string). enriched_result has the same
+        shape as the input (3-tier dict).
     """
     # Validate youtube_id (defense-in-depth)
     if not YOUTUBE_ID_RE.match(youtube_id):
         logger.warning("Invalid youtube_id in process_scene_frames: %s", youtube_id)
         empty = {"all_frames": [], "selected_frames": [], "gallery_frames": []}
-        return empty, "", None
+        return empty, ""
 
     # Handle legacy flat list input
     if isinstance(extraction_result, list):
@@ -56,7 +56,7 @@ async def process_scene_frames(
     selected_frames = extraction_result.get("selected_frames", [])
     gallery_frames = extraction_result.get("gallery_frames", [])
 
-    # Single OCR pass on ALL frames (for transcript enrichment, non-critical)
+    # Single OCR pass on ALL frames (frame metadata + visual annotations, non-critical)
     ocr_frames = [f for f in all_frames if f.get("path")]
     ocr_results: list[dict] = []
     try:
@@ -65,12 +65,6 @@ async def process_scene_frames(
     except Exception as e:
         logger.warning("Scene OCR failed (non-critical): %s", e)
     ocr_map = {r["index"]: r for r in ocr_results} if ocr_results else {}
-
-    # Enrich transcript if clean_text provided
-    updated_text = None
-    if clean_text is not None and ocr_results:
-        updated_text = enrich_transcript_with_ocr(clean_text, ocr_results)
-        logger.info("Scene OCR: enriched transcript with %d text frames", len(ocr_results))
 
     # Generate presigned URLs for SELECTED frames only (those with s3_key)
     enriched_selected: list[dict] = []
@@ -144,4 +138,4 @@ async def process_scene_frames(
         "gallery_frames": enriched_gallery,
     }
 
-    return result, event_str, updated_text
+    return result, event_str

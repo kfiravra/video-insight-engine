@@ -29,7 +29,9 @@ def _done_task(result: TierProbe | None) -> asyncio.Future[TierProbe | None]:
     return future
 
 
-def _ctx(task: asyncio.Future[TierProbe | None] | None) -> SimpleNamespace:
+def _ctx(
+    probe: TierProbe | None, task: asyncio.Future[TierProbe | None] | None = None
+) -> SimpleNamespace:
     video_data = SimpleNamespace(
         title="BA's Best Lasagna",
         channel="Bon Appétit",
@@ -49,7 +51,7 @@ def _ctx(task: asyncio.Future[TierProbe | None] | None) -> SimpleNamespace:
         category_hint=None,
         content_format=None,
         tier_probe_task=task,
-        probe=None,
+        probe=probe,
         language="en",
         is_rtl=False,
     )
@@ -66,7 +68,7 @@ async def _plan_kwargs(ctx: SimpleNamespace, override: dict | None = None) -> di
 
 
 async def test_should_hand_the_plan_the_probe_answer_as_one_hint_line() -> None:
-    kwargs = await _plan_kwargs(_ctx(_done_task(_probe())))
+    kwargs = await _plan_kwargs(_ctx(_probe()))
 
     assert kwargs["probe_hint"] == (
         "domain=food format=tutorial has_visual_demo=true confidence=0.90"
@@ -74,19 +76,19 @@ async def test_should_hand_the_plan_the_probe_answer_as_one_hint_line() -> None:
 
 
 async def test_should_pick_the_playbook_from_a_confident_probe() -> None:
-    kwargs = await _plan_kwargs(_ctx(_done_task(_probe())))
+    kwargs = await _plan_kwargs(_ctx(_probe()))
 
     assert (kwargs["category_hint"], kwargs["content_format"]) == ("food", "tutorial")
 
 
 async def test_should_keep_the_metadata_category_when_the_probe_is_unsure() -> None:
-    kwargs = await _plan_kwargs(_ctx(_done_task(_probe(confidence=0.4))))
+    kwargs = await _plan_kwargs(_ctx(_probe(confidence=0.4)))
 
     assert (kwargs["category_hint"], kwargs["content_format"]) == ("Howto & Style", "tutorial")
 
 
 async def test_should_plan_from_metadata_without_hint_when_the_probe_returned_none() -> None:
-    kwargs = await _plan_kwargs(_ctx(_done_task(None)))
+    kwargs = await _plan_kwargs(_ctx(None))
 
     assert (kwargs["category_hint"], kwargs["content_format"], kwargs["probe_hint"]) == (
         "Howto & Style",
@@ -102,7 +104,7 @@ async def test_should_plan_without_hint_when_no_probe_was_started() -> None:
 
 
 async def test_should_ignore_the_probe_when_an_override_is_set() -> None:
-    kwargs = await _plan_kwargs(_ctx(_done_task(_probe())), override={"category": "gaming"})
+    kwargs = await _plan_kwargs(_ctx(_probe()), override={"category": "gaming"})
 
     assert (kwargs["category_hint"], kwargs["content_format"], kwargs["probe_hint"]) == (
         "gaming",
@@ -111,16 +113,17 @@ async def test_should_ignore_the_probe_when_an_override_is_set() -> None:
     )
 
 
-async def test_should_store_the_probe_answer_on_the_context() -> None:
-    ctx = _ctx(_done_task(_probe()))
+async def test_should_not_wait_for_the_probe_task_again() -> None:
+    """The text branch already awaited it (``probe_for_plan``); the plan reads ``ctx.probe``."""
+    stalled: asyncio.Future[TierProbe | None] = asyncio.get_running_loop().create_future()
 
-    await _plan_kwargs(ctx)
+    kwargs = await asyncio.wait_for(_plan_kwargs(_ctx(_probe(), task=stalled)), timeout=1.0)
 
-    assert ctx.probe == _probe()
+    assert kwargs["probe_hint"] is not None
 
 
 async def test_should_record_the_probe_format_in_the_triage_dict() -> None:
-    ctx = _ctx(_done_task(_probe()))
+    ctx = _ctx(_probe())
 
     await _plan_kwargs(ctx)
 
@@ -129,11 +132,20 @@ async def test_should_record_the_probe_format_in_the_triage_dict() -> None:
 
 async def test_should_stop_waiting_for_a_stalled_probe_after_its_budget() -> None:
     stalled: asyncio.Future[TierProbe | None] = asyncio.get_running_loop().create_future()
+    ctx = _ctx(None, task=stalled)
 
     with patch.object(probe_phase, "PLAN_PROBE_WAIT_SECONDS", 0.01):
-        kwargs = await _plan_kwargs(_ctx(stalled))
+        probe = await probe_phase.probe_for_plan(ctx)  # type: ignore[arg-type]
 
-    assert kwargs["probe_hint"] is None
+    assert (probe, ctx.probe) == (None, None)
+
+
+async def test_should_store_the_probe_answer_on_the_context() -> None:
+    ctx = _ctx(None, task=_done_task(_probe()))
+
+    await probe_phase.probe_for_plan(ctx)  # type: ignore[arg-type]
+
+    assert ctx.probe == _probe()
 
 
 async def test_should_carry_the_plans_evidence_and_terms_in_the_triage_dict() -> None:

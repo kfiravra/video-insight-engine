@@ -55,7 +55,11 @@ _SCORES_FILENAME = "scene_scores.txt"
 
 @dataclass(frozen=True)
 class _ScenePass:
-    """One detection decode: rung-1 frames and the rung-2 (floor) timestamps."""
+    """One detection decode: rung-1 frames and the rung-2 (floor) timestamps.
+
+    ``ok`` False = the decode failed or timed out (no frames, no timestamps);
+    the ladder log labels that ``failed+uniform``, apart from a real zero.
+    """
 
     ok: bool
     frames: list[dict] = field(default_factory=list)
@@ -292,7 +296,7 @@ async def _ladder(
     temp_dir: str,
 ) -> tuple[list[dict], str]:
     """Rungs 2 and 3 on top of rung 1's result; returns (frames, rung label)."""
-    frames, rung = list(scene_pass.frames), "scene"
+    frames, rung = list(scene_pass.frames), "scene" if scene_pass.ok else "failed"
     if not frames and scene_pass.floor_timestamps:
         picks = _spread(scene_pass.floor_timestamps, _LADDER_MAX_SEEKS)
         frames = await seek_frames(
@@ -309,7 +313,7 @@ async def _ladder(
             index_offset=next_index,
             temp_dir=temp_dir,
         )
-        rung = f"{rung}+uniform" if frames else "uniform"
+        rung = f"{rung}+uniform" if frames or not scene_pass.ok else "uniform"
         frames = sorted([*frames, *uniform], key=lambda f: f.get("timestamp", 0.0))
     return frames, rung
 

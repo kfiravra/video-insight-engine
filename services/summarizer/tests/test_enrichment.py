@@ -12,6 +12,8 @@ import pytest
 
 from src.models.pipeline_types import EnrichmentData, PlanResult
 from src.services.pipeline import enrichment as enrichment_mod
+from src.services.pipeline import pipeline_timing
+from src.services.pipeline.assembly.attachments import SPARSE_THRESHOLD
 from src.services.pipeline.enrichment import (
     EMPTY_VIDEO_MEMORY,
     _has_meaningful_data,
@@ -22,6 +24,7 @@ from src.services.pipeline.enrichment import (
     quiz_allowed,
     render_tab_goals,
 )
+from src.services.pipeline.pipeline_timing import start_run_timing
 from src.shared_config.domain_config import data_source, get_config, quiz_enrichment, quiz_policy
 from src.utils.language_utils import ENGLISH_OUTPUT_DIRECTIVE
 
@@ -52,6 +55,11 @@ def _question(n: int = 0, **overrides: Any) -> dict[str, Any]:
 def _tab(component: str, data_source_path: str = "", **extra: Any) -> dict[str, Any]:
     return {"id": component, "label": component.title(), "component": component,
             "dataSource": data_source_path, "goal": f"{component} goal", **extra}  # fmt: skip
+
+
+def _sparse(component: str, data_source_path: str, expect: int = 3) -> dict[str, Any]:
+    """A strip host the plan expects to hold ``expect`` items."""
+    return _tab(component, data_source_path, brief={"what": "", "where": [], "expect": expect})
 
 
 def _plan(
@@ -92,15 +100,26 @@ class TestNeedsQuiz:
         plan = _plan(tabs=[_tab("quiz_arena", "enrichment.quiz")], evidence={"is_learnable": False})
         assert needs_quiz(plan)
 
-    def test_should_demand_a_quiz_when_a_learnable_plan_has_a_strip_host(self) -> None:
-        plan = _plan(tabs=[_tab("info_grid", "tech.topics")], evidence={"is_learnable": True})
+    def test_should_demand_a_quiz_when_a_learnable_plan_has_a_sparse_strip_host(self) -> None:
+        plan = _plan(tabs=[_sparse("info_grid", "tech.topics")], evidence={"is_learnable": True})
         assert needs_quiz(plan)
 
     def test_should_demand_a_quiz_when_learnability_is_unanswered(self) -> None:
-        assert needs_quiz(_plan(tabs=[_tab("info_grid", "tech.topics")]))
+        assert needs_quiz(_plan(tabs=[_sparse("info_grid", "tech.topics")]))
+
+    def test_should_demand_a_quiz_when_the_host_expects_exactly_the_sparse_limit(self) -> None:
+        tabs = [_sparse("info_grid", "tech.topics", expect=SPARSE_THRESHOLD)]
+        assert needs_quiz(_plan(tabs=tabs))
+
+    def test_should_not_demand_a_quiz_when_every_strip_host_is_dense(self) -> None:
+        tabs = [_sparse("info_grid", "tech.topics", expect=SPARSE_THRESHOLD + 1)]
+        assert not needs_quiz(_plan(tabs=tabs))
+
+    def test_should_not_demand_a_quiz_when_the_host_count_is_unknown(self) -> None:
+        assert not needs_quiz(_plan(tabs=[_tab("info_grid", "tech.topics")]))
 
     def test_should_not_demand_a_quiz_when_the_plan_says_not_learnable(self) -> None:
-        plan = _plan(tabs=[_tab("info_grid", "tech.topics")], evidence={"is_learnable": False})
+        plan = _plan(tabs=[_sparse("info_grid", "tech.topics")], evidence={"is_learnable": False})
         assert not needs_quiz(plan)
 
     def test_should_not_demand_a_quiz_when_no_tab_can_host_a_strip(self) -> None:
@@ -109,7 +128,7 @@ class TestNeedsQuiz:
 
     @pytest.mark.parametrize("host", quiz_policy()["attachmentHostsExclude"])
     def test_should_not_demand_a_quiz_when_the_only_host_is_excluded(self, host: str) -> None:
-        assert not needs_quiz(_plan(tabs=[_tab(host, "tech.setup.commands")]))
+        assert not needs_quiz(_plan(tabs=[_sparse(host, "tech.setup.commands")]))
 
     def test_should_not_demand_a_quiz_when_the_domain_forbids_quiz_arena(self) -> None:
         tabs = [_tab("quiz_arena", "enrichment.quiz"), _tab("info_grid", "food.tips")]
@@ -242,7 +261,7 @@ class TestEnrichQuiz:
         assert llm.await_args is not None
         kwargs = llm.await_args.kwargs
         assert (kwargs["stage_name"], kwargs["max_tokens"], kwargs["timeout"], kwargs["max_retries"]) == (
-            "enrichment", 2048, 25.0, 1)  # fmt: skip
+            "enrichment", 2048, 14.0, 1)  # fmt: skip
         assert kwargs["json_mode"] is True
 
     async def test_should_keep_at_most_the_registry_cap(self) -> None:
@@ -277,6 +296,34 @@ class TestEnrichQuiz:
             patch.object(enrichment_mod, "QUIZ_TOTAL_TIMEOUT_S", 0.01),
         ):
             assert await _enrich() is None
+
+    async def test_should_record_a_failure_when_the_stage_deadline_cuts_the_call(self) -> None:
+        async def slow_llm(*_args: object, **_kwargs: object) -> str:
+            await asyncio.sleep(1)
+            return _llm_reply(_question(1), _question(2))
+
+        token = pipeline_timing._recorder_var.set(None)
+        try:
+            recorder = start_run_timing()
+            with (
+                patch(_PATCH_LLM, new=slow_llm),
+                patch.object(enrichment_mod, "QUIZ_TOTAL_TIMEOUT_S", 0.01),
+            ):
+                await _enrich()
+        finally:
+            pipeline_timing._recorder_var.reset(token)
+
+        assert [(f["span"], f["error"]) for f in recorder.llm_failures] == [
+            ("enrichment", "TimeoutError")
+        ]
+
+    def test_should_leave_a_full_retry_inside_the_stage_cap(self) -> None:
+        backoff_s = 1.0
+        attempts = enrichment_mod.QUIZ_MAX_RETRIES + 1
+
+        assert attempts * enrichment_mod.QUIZ_ATTEMPT_TIMEOUT_S + backoff_s <= (
+            enrichment_mod.QUIZ_TOTAL_TIMEOUT_S
+        )
 
     async def test_should_not_raise_when_the_prompt_file_is_missing(self) -> None:
         with patch.object(

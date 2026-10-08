@@ -289,10 +289,10 @@ than the one you would design). When the evidence key is false, the component is
 {domain_requirements}
 
 Per-domain guidance (choices, not requirements):
-- food: checklist for the ingredients, step_player for the method (step_flow_canvas for 11+
-  stages). A tasting or restaurant vlog with no recipe gets spot_explorer (dishes, places),
-  moment_track and info_grid instead.
-- project: step_flow_canvas for builds with 6+ stages.
+- food: checklist for the ingredients, step_player for the method (step_flow_canvas for
+  {step_flow_threshold}+ stages). A tasting or restaurant vlog with no recipe gets spot_explorer
+  (dishes, places), moment_track and info_grid instead.
+- project: step_flow_canvas for builds with {step_flow_threshold}+ stages.
 - review: comparison carries the verdict — its ReviewSummary header folds the score, bottom
   line and best-for / not-for into the same surface. Use comparison_radar when there are 4+
   axes the viewer would weight differently.
@@ -316,7 +316,7 @@ Per-domain guidance (choices, not requirements):
   cells) for background context.
 - gaming: tier_list when the video ranks 4+ items (characters, weapons, maps, pulled cards) —
   a draggable S/A/B/C/D ranking. Use moment_track for highlight plays, checklist for the
-  build/loadout, and step_flow_canvas for a multi-stage walkthrough (6+ stages).
+  build/loadout, and step_flow_canvas for a multi-stage walkthrough ({step_flow_threshold}+ stages).
 - sport: formation_diagram when the video shows a lineup/formation with player positions — a
   read-only tactical pitch diagram. Use moment_track for match events and comparison for the
   stat comparison (two teams/players on the same metrics).
@@ -386,8 +386,9 @@ overview hero is emitted automatically by the page chrome above your tabs.
 
 <format_routing>
 Route on YOUR evidence — decide it first, then pick components from it:
-- has_steps=true → step_player for ≤10 steps; step_flow_canvas for 11+ steps where the visual
-  graph helps the user track progress (multi-stage builds, multi-phase recipes).
+- has_steps=true → step_player below {step_flow_threshold} steps; step_flow_canvas for
+  {step_flow_threshold}+ steps, where the visual graph helps the user track progress (multi-stage
+  builds, multi-phase recipes).
   has_steps=false → no step_player or step_flow_canvas.
 - has_ingredients=true → checklist on food.ingredients. has_materials=true → checklist on
   project.materials.
@@ -530,7 +531,7 @@ CRITICAL — Ground tabs in the actual transcript:
 - Only design tabs for data the transcript ACTUALLY contains. A tab that needs a key your
   evidence says is false, or whose brief.expect would be 0, is not planned.
 - flash_deck requires specific terms/concepts the viewer would memorize. Prefer `concept_canvas` when concepts have explicit connections to each other. If the transcript is conversational with no clear definitions, skip both.
-- step_player requires sequential steps (has_steps); use `step_flow_canvas` for 6+ stages. If the video is a discussion or review, don't force steps.
+- step_player requires sequential steps (has_steps); use `step_flow_canvas` for {step_flow_threshold}+ stages. If the video is a discussion or review, don't force steps.
 - code_playground requires actual code shown or described (has_code). If the video just mentions technology names, use info_grid instead.
 - Prefer 3 well-populated tabs over 6 tabs where half will be empty.
 - When in doubt, use info_grid — it works with any text content.

@@ -14,8 +14,9 @@ Idempotency strategy
 --------------------
 Langfuse versions prompts on every ``create_prompt`` call. We avoid creating
 no-op versions by comparing the local content to the server version that
-carries the target label (best-effort; on lookup failure we fall back to
-"upload anyway").
+carries the target label. A 404 means "not there yet" (upload); any other
+lookup failure reports ``unknown`` in a dry run and still uploads on commit.
+The exit code is 1 when any prompt is ``unknown`` or failed to upload.
 
 Run modes
 ---------
@@ -46,7 +47,7 @@ import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Literal, Protocol
 
 # Make the summarizer source tree importable when invoked from anywhere.
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -232,23 +233,40 @@ def _load_assistant_prompts() -> dict[str, str]:
     return out
 
 
-def _already_synced(
-    client: PromptRegistry, name: str, content: str, *, label: str = DEFAULT_LABEL
-) -> bool:
-    """Return True when the server version carrying ``label`` matches local content.
+SyncState = Literal["unchanged", "changed", "unknown"]
 
-    Scoped to the label so a content-equal version that lacks it correctly
-    reports as "not synced" — the runtime fetches prompts by label, so an
-    unlabelled match is useless. Any lookup failure (404 / missing label /
-    transient error) returns False, triggering an upload that (re)applies the
-    label.
+# Sync results that mean the run did not do (or could not check) its job.
+_FAILED_RESULTS = ("unknown", "error")
+
+
+def _is_not_found(exc: Exception) -> bool:
+    """True for the registry's 404 — the prompt or label doesn't exist yet."""
+    return getattr(exc, "status_code", None) == 404
+
+
+def _sync_state(
+    client: PromptRegistry, name: str, content: str, *, label: str = DEFAULT_LABEL
+) -> SyncState:
+    """Compare local content with the server version carrying ``label``.
+
+    Scoped to the label so a content-equal version that lacks it reports as
+    ``changed`` — the runtime fetches prompts by label, so an unlabelled match
+    is useless. A 404 (prompt or label not there yet) is ``changed`` too: an
+    upload creates it. Any other lookup failure (bad keys / 401, network, 5xx)
+    is ``unknown``: the script can't tell, so a dry run must not report it as a
+    planned upload.
     """
     try:
         existing = client.get_prompt(name, label=label)
-    except Exception:  # noqa: BLE001 — broad on purpose, see docstring
-        return False
+    except Exception as exc:  # noqa: BLE001 — classified: 404 vs anything else
+        if _is_not_found(exc):
+            return "changed"
+        logger.warning("Lookup failed for %s: %s", name, exc)
+        return "unknown"
     existing_text = getattr(existing, "prompt", None)
-    return isinstance(existing_text, str) and existing_text.strip() == content.strip()
+    if isinstance(existing_text, str) and existing_text.strip() == content.strip():
+        return "unchanged"
+    return "changed"
 
 
 def upload_prompt(
@@ -258,16 +276,20 @@ def upload_prompt(
     dry_run: bool,
     label: str = DEFAULT_LABEL,
 ) -> str:
-    """Sync one prompt; return one of ``unchanged|would-upload|updated|error``.
+    """Sync one prompt; return one of ``unchanged|would-upload|unknown|updated|error``.
 
     A dry run never uploads: with a client it reads the labelled version to
-    tell ``unchanged`` from ``would-upload``; without one (no keys) it cannot
-    compare and reports ``would-upload``.
+    tell ``unchanged`` from ``would-upload`` (``unknown`` when the lookup
+    failed); without one (no keys) it cannot compare and reports
+    ``would-upload``. A commit uploads whatever isn't known to be unchanged.
     """
-    if client is not None and _already_synced(client, record.name, record.content, label=label):
-        return "unchanged"
-    if dry_run or client is None:
+    if client is None:
         return "would-upload"
+    state = _sync_state(client, record.name, record.content, label=label)
+    if state == "unchanged":
+        return "unchanged"
+    if dry_run:
+        return "unknown" if state == "unknown" else "would-upload"
     try:
         client.create_prompt(name=record.name, prompt=record.content, labels=[label])
         return "updated"
@@ -360,7 +382,9 @@ def main(argv: list[str] | None = None) -> int:
         logger.info("  [%-12s] %s (%d bytes)", result, record.name, len(record.content))
 
     logger.info("Summary: %s", summary)
-    return 0
+    # Non-zero when any prompt failed to sync or couldn't be checked, so a
+    # caller (activate_langfuse.sh, CI) never mistakes it for a clean run.
+    return 1 if any(summary.get(result) for result in _FAILED_RESULTS) else 0
 
 
 if __name__ == "__main__":

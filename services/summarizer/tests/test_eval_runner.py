@@ -75,6 +75,19 @@ class TestScoreEntry:
         actual = _actual([{"id": "overview", "component": "overview", "props": {}}])
         assert score_entry(_expected(), actual).component_coverage == 0.5
 
+    def test_should_count_a_required_component_when_the_tab_renders_its_promotion(
+        self,
+    ) -> None:
+        # Assembly promotes a long step_player to step_flow_canvas (promotion.py).
+        expected = _expected(requiredComponents=["overview", "step_player"])
+        actual = _actual(
+            [
+                {"id": "overview", "component": "overview", "props": {}},
+                {"id": "steps", "component": "step_flow_canvas", "props": {}},
+            ]
+        )
+        assert score_entry(expected, actual).component_coverage == 1.0
+
     def test_should_zero_content_coverage_when_no_term_appears(self) -> None:
         actual = _actual(
             [{"id": "overview", "component": "overview", "props": {"items": [{"text": "x"}]}}]
@@ -218,6 +231,24 @@ class TestRunner:
         argv = ["--dataset", str(dataset), "--output", str(tmp_path / "out")]
         run_eval.main([*argv, "--no-bypass-cache"])
         assert fake_api[0][1] is False
+
+    def test_should_ask_for_a_cold_run_when_the_cold_flag_is_set(
+        self, tmp_path: Path, fake_api: list[tuple[str, bool]], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        cold_flags: list[bool] = []
+
+        async def cold_run(*_: Any, cold: bool = False, **__: Any) -> tuple[dict[str, Any], str]:
+            cold_flags.append(cold)
+            return _fake_doc(_record()), "token"
+
+        monkeypatch.setattr(run_eval, "run_with_reauth", cold_run)
+        dataset = _write_dataset(tmp_path, [_record()])
+        run_eval.main(["--dataset", str(dataset), "--output", str(tmp_path / "out"), "--cold"])
+        assert cold_flags == [True]
+
+    def test_should_refuse_a_cold_run_when_no_bypass_cache_is_set(self) -> None:
+        with pytest.raises(SystemExit):
+            run_eval.main(["--cold", "--no-bypass-cache"])
 
     def test_should_write_noise_file_when_running_the_set_twice(
         self, tmp_path: Path, fake_api: list[tuple[str, bool]]

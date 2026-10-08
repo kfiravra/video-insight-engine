@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
@@ -34,10 +35,14 @@ class _Downloads:
 
     def __init__(self, result: DownloadFn) -> None:
         self.calls: list[str] = []
+        self.timeouts: list[float] = []
         self._result = result
 
-    async def __call__(self, youtube_id: str, *, purpose: str) -> tuple[Path, str] | None:
+    async def __call__(
+        self, youtube_id: str, timeout: float, *, purpose: str
+    ) -> tuple[Path, str] | None:
         self.calls.append(purpose)
+        self.timeouts.append(timeout)
         return await self._result()
 
 
@@ -67,6 +72,33 @@ class TestStart:
         paths = await asyncio.gather(source.path(), source.path())
 
         assert (recorder.calls, paths) == ([DOWNLOAD_PURPOSE], [downloaded[0], downloaded[0]])
+
+    async def test_should_cap_the_download_with_the_starting_callers_timeout(
+        self, fake_download, downloaded
+    ):
+        """Moment fill starts the file with what is left of its own budget."""
+
+        async def done() -> tuple[Path, str]:
+            return downloaded
+
+        recorder = fake_download(done)
+        source = LocalHiresSource(VIDEO_ID)
+
+        source.start(timeout=120.0)
+        source.start(timeout=5.0)
+        await source.path()
+
+        assert recorder.timeouts == [120.0]
+
+    async def test_should_use_the_download_timeout_by_default(self, fake_download, downloaded):
+        async def done() -> tuple[Path, str]:
+            return downloaded
+
+        recorder = fake_download(done)
+
+        await LocalHiresSource(VIDEO_ID).path()
+
+        assert recorder.timeouts == [hires_prefetch.DOWNLOAD_TIMEOUT]
 
     async def test_should_start_lazily_on_the_first_path_request(self, fake_download, downloaded):
         async def done() -> tuple[Path, str]:
@@ -165,6 +197,24 @@ class TestClose:
 
         assert not Path(downloaded[1]).exists()
 
+    async def test_should_delete_the_file_off_the_event_loop_thread(
+        self, fake_download, downloaded, monkeypatch
+    ):
+        async def done() -> tuple[Path, str]:
+            return downloaded
+
+        threads: list[int] = []
+        monkeypatch.setattr(
+            hires_prefetch, "cleanup_local_video", lambda _d: threads.append(threading.get_ident())
+        )
+        fake_download(done)
+        source = LocalHiresSource(VIDEO_ID)
+        await source.path()
+
+        await source.close()
+
+        assert len(threads) == 1 and threads[0] != threading.get_ident()
+
     async def test_should_be_idempotent(self, fake_download):
         async def failed() -> None:
             return None
@@ -232,8 +282,9 @@ class TestLocalLowresSource:
     async def test_should_download_the_pass1_rendition(self, monkeypatch, downloaded):
         calls: list[str] = []
 
-        async def lowres(youtube_id: str) -> tuple[Path, str]:
+        async def lowres(youtube_id: str, timeout: float) -> tuple[Path, str]:
             calls.append(youtube_id)
+            assert timeout == hires_prefetch.LOWRES_DOWNLOAD_TIMEOUT
             return downloaded
 
         monkeypatch.setattr(hires_prefetch, "download_video_lowres", lowres)

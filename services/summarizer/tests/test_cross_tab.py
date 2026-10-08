@@ -7,6 +7,7 @@ purely structural — no hardcoded English label strings.
 
 from __future__ import annotations
 
+from src.services.pipeline.assembly import assemble_response
 from src.services.pipeline.assembly.cross_tab import resolve_cross_tab_links
 
 
@@ -115,3 +116,35 @@ class TestResolveCrossTabLinks:
             primary_tag="learning",
         )
         assert any(l["targetTab"] == "quiz" for l in links)
+
+
+class TestAssembledLinkLabels:
+    """Links are resolved after post-processing, so they read the tab's final label."""
+
+    @staticmethod
+    def _assembled_tabs(checklist_label: str) -> list[dict]:
+        triage = {
+            "contentTags": ["food"],
+            "primaryTag": "food",
+            "tabs": [
+                {"id": "ingredients", "label": checklist_label, "emoji": "🛒",
+                 "component": "checklist", "dataSource": "food.ingredients", "goal": "Shop"},
+            ],
+        }  # fmt: skip
+        extraction = {"food": {"ingredients": [{"name": f"item {i}"} for i in range(14)]}}
+        synthesis = {"tldr": "A lasagna.", "keyTakeaways": ["a", "b", "c"]}
+        return assemble_response(triage, extraction, None, synthesis)["tabs"]
+
+    def _link_label(self, checklist_label: str) -> str:
+        overview = self._assembled_tabs(checklist_label)[0]
+        return next(
+            link["label"]
+            for link in overview["crossTabLinks"]
+            if link["targetTab"] == "ingredients"
+        )
+
+    def test_should_drop_the_emoji_prefix_from_a_link_label(self) -> None:
+        assert self._link_label("🛒 14 Ingredients") == "14 Ingredients"
+
+    def test_should_not_leak_an_untitled_chapter_label_into_a_link(self) -> None:
+        assert "untitled" not in self._link_label("untitled chapter 3").casefold()

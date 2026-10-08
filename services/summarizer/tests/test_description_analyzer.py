@@ -1,5 +1,6 @@
 """Tests for description analyzer service."""
 
+import asyncio
 import json
 import logging
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -481,3 +482,52 @@ class TestDescriptionRetry:
         result = await _analyze_description_async(self._DESCRIPTION)
 
         assert result.timestamps and mock_acompletion.await_count == 3
+
+
+class TestDescriptionTotalCap:
+    """G21-4: both attempts, the backoff and any pause fit in one total cap."""
+
+    _DESCRIPTION = "Chapters: 0:00 intro, 2:10 the sauce, 9:45 baking the lasagna in the oven."
+
+    @staticmethod
+    async def _hang(**_kwargs: object) -> MagicMock:
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+    @pytest.fixture
+    def short_cap(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from src.services.video import description_analyzer
+
+        monkeypatch.setattr(description_analyzer, "DESCRIPTION_TOTAL_SECONDS", 0.05)
+
+    @patch("src.services.video.description_analyzer.load_prompt")
+    @patch("src.services.llm_provider.acompletion")
+    async def test_should_return_an_empty_analysis_when_the_total_cap_hits(
+        self, mock_acompletion, mock_load_prompt, short_cap
+    ):
+        mock_load_prompt.return_value = "Analyze: {description}"
+        mock_acompletion.side_effect = self._hang
+
+        result = await asyncio.wait_for(_analyze_description_async(self._DESCRIPTION), timeout=2)
+
+        assert result.has_content is False
+
+    @patch("src.services.video.description_analyzer.load_prompt")
+    @patch("src.services.llm_provider.acompletion")
+    async def test_should_record_the_capped_attempt_as_a_failure(
+        self, mock_acompletion, mock_load_prompt, short_cap
+    ):
+        from src.services.pipeline import pipeline_timing
+
+        mock_load_prompt.return_value = "Analyze: {description}"
+        mock_acompletion.side_effect = self._hang
+        recorder = pipeline_timing.start_run_timing()
+
+        await _analyze_description_async(self._DESCRIPTION)
+
+        assert [f["span"] for f in recorder.llm_failures] == ["description_analysis"]
+
+    def test_should_keep_one_attempt_shorter_than_the_total_cap(self):
+        from src.services.video import description_analyzer as da
+
+        assert da.DESCRIPTION_ATTEMPT_SECONDS < da.DESCRIPTION_TOTAL_SECONDS <= 30.0

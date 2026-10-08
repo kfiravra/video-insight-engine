@@ -266,3 +266,73 @@ class TestSeekFrames:
 
         (argv,) = argvs
         assert argv[argv.index("-vf") + 1] == "scale='trunc(min(iw,1024)/2)*2':-2"
+
+
+class _HangingProc(_Proc):
+    """A process whose ``communicate`` never finishes on its own."""
+
+    def __init__(self) -> None:
+        super().__init__(0, "", lambda: None)
+        self.killed = False
+
+    async def communicate(self) -> tuple[bytes, bytes]:
+        await asyncio.sleep(10)
+        return b"", b""
+
+    def kill(self) -> None:
+        self.killed = True
+        super().kill()
+
+
+class TestBudgetsAndCancel:
+    async def test_should_keep_landed_frames_and_stop_the_rest_when_the_seek_budget_expires(
+        self, frames_dir, monkeypatch
+    ):
+        monkeypatch.setattr(scene_detect, "_SEEK_BUDGET", 0.05)
+        fake = FakeFfmpeg()
+        stuck = _HangingProc()
+
+        async def exec_(*argv: str, **kwargs: object) -> _Proc:
+            if float(argv[argv.index("-ss") + 1]) == 20.0:
+                return stuck
+            return await fake.exec(*argv, **kwargs)
+
+        with patch("asyncio.create_subprocess_exec", side_effect=exec_):
+            frames = await seek_frames(
+                frames_dir.parent / "v.mp4",
+                frames_dir,
+                [10.0, 20.0, 30.0],
+                prefix="interval",
+                index_offset=0,
+                temp_dir="t",
+            )
+
+        assert (_stamps(frames), stuck.killed) == ([10.0, 30.0], True)
+
+    async def test_should_kill_ffmpeg_and_reraise_when_cancelled(self):
+        stuck = _HangingProc()
+
+        with patch("asyncio.create_subprocess_exec", return_value=stuck):
+            task = asyncio.create_task(scene_detect._run_ffmpeg(["ffmpeg"], timeout=30))
+            await asyncio.sleep(0.01)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+        assert stuck.killed
+
+
+class TestRungLabel:
+    async def test_should_label_a_failed_detection_pass_apart_from_a_real_zero(
+        self, frames_dir, caplog
+    ):
+        with caplog.at_level("INFO", logger="src.services.media.scene_detect"):
+            await _detect(FakeFfmpeg(scene=[5.0], scene_rc=1), frames_dir, duration=300)
+
+        assert "rung=failed+uniform" in caplog.text
+
+    async def test_should_label_a_zero_candidate_pass_uniform(self, frames_dir, caplog):
+        with caplog.at_level("INFO", logger="src.services.media.scene_detect"):
+            await _detect(FakeFfmpeg(), frames_dir, duration=300)
+
+        assert "rung=uniform)" in caplog.text

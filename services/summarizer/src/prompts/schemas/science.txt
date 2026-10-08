@@ -20,7 +20,7 @@ Extract structured science/STEM educational content.
     }
   ],
 > UI: Concepts → SpotExplorer cards, or ConceptCanvas tiered graph when connections are populated. Fill formula for expandable detail, realWorldExample for practical context.
-> GROUPING: give every concept a short `group` label (aim for 2-5 groups total). `connections` are typed objects — `to` is the EXACT concept name, `type` is the relationship (`causes`/`requires`/`contrasts`/`partOf`/`relatesTo`). Keep ≤16 concepts on the canvas; group tightly rather than listing more.
+> GROUPING: give every concept a short `group` label (aim for 2-5 groups total). `connections` are typed objects — `to` is the EXACT concept name, `type` is the relationship (`causes`/`requires`/`contrasts`/`partOf`/`relatesTo`). Group tightly rather than listing more disconnected terms.
   "keyFacts": [
     {
       "emoji": "relevant emoji",

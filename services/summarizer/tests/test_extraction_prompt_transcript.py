@@ -1,17 +1,23 @@
 """The extraction prompt reads [m:ss]-marked transcript text (pipeline-1min 1a.4, 1b).
 
 Markers exist only in the prompt: ``ctx.clean_text`` (Qdrant, faithfulness) keeps
-the unmarked text, and chunked batches keep absolute times.
+the unmarked text, and chunked batches keep absolute times. Extraction reads the
+string the text branch rendered once (``ctx.prompt_transcript``,
+``render_prompt_transcript``) — the one plan and memory read.
 """
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
+import pytest
+
 from src.models.memory_types import MemoryResult, OutlineSection
 from src.services.pipeline.phases import extraction as extraction_phase
+from src.services.pipeline.phases.text import render_prompt_transcript
 from src.services.pipeline.pipeline_helpers import TranscriptData
 from src.services.transcript.render import MARKER_PATTERN, marker_seconds
 from src.services.transcription.transcript import clean_transcript
@@ -28,7 +34,7 @@ def _ctx(duration: int, segments: list[dict[str, Any]] | None = None) -> SimpleN
     """Minimal PipelineContext stand-in for the extraction phase."""
     segs = _segments(duration) if segments is None else segments
     raw_text = " ".join(s["text"] for s in segs) or "Title: metadata only"
-    return SimpleNamespace(
+    ctx = SimpleNamespace(
         video_summary_id="vs1",
         youtube_id="yt1",
         video_data=SimpleNamespace(
@@ -55,6 +61,8 @@ def _ctx(duration: int, segments: list[dict[str, Any]] | None = None) -> SimpleN
         plan_result=None,
         repository=AsyncMock(),
     )
+    ctx.prompt_transcript = render_prompt_transcript(ctx)  # type: ignore[arg-type]
+    return ctx
 
 
 def _capturing_extract(captured: dict[str, Any]):
@@ -74,26 +82,26 @@ async def _run(ctx: SimpleNamespace) -> dict[str, Any]:
     return captured
 
 
-class TestBuildPromptTranscript:
+class TestRenderPromptTranscript:
     def test_should_render_from_the_sponsor_filtered_prompt_segments(self):
         ctx = _ctx(60)
         ctx.prompt_segments = [s for s in ctx.prompt_segments if s["start"] < 20]
 
-        prompt = extraction_phase.build_prompt_transcript(ctx)
+        prompt = render_prompt_transcript(ctx)  # type: ignore[arg-type]
 
         assert marker_seconds(prompt) == [0]
 
     def test_should_render_markers_from_the_segments(self):
         ctx = _ctx(60)
 
-        prompt = extraction_phase.build_prompt_transcript(ctx)
+        prompt = render_prompt_transcript(ctx)  # type: ignore[arg-type]
 
         assert marker_seconds(prompt) == [0, 20, 40]
 
     def test_should_carry_exactly_the_clean_text_words(self):
         ctx = _ctx(60)
 
-        prompt = extraction_phase.build_prompt_transcript(ctx)
+        prompt = render_prompt_transcript(ctx)  # type: ignore[arg-type]
 
         unmarked = " ".join(MARKER_PATTERN.sub("", ln).strip() for ln in prompt.splitlines())
         assert unmarked == ctx.clean_text
@@ -101,7 +109,7 @@ class TestBuildPromptTranscript:
     def test_should_fall_back_to_clean_text_without_segments(self):
         ctx = _ctx(60, segments=[])
 
-        prompt = extraction_phase.build_prompt_transcript(ctx)
+        prompt = render_prompt_transcript(ctx)  # type: ignore[arg-type]
 
         assert prompt == ctx.clean_text
 
@@ -111,12 +119,20 @@ class TestBuildPromptTranscript:
             {"timestamp_sec": 30, "content": "whiteboard diagram", "frame_index": 0}
         ]
 
-        prompt = extraction_phase.build_prompt_transcript(ctx)
+        prompt = render_prompt_transcript(ctx)  # type: ignore[arg-type]
 
         assert "whiteboard diagram" not in prompt
 
 
 class TestExtractionPhaseUsesMarkedTranscript:
+    async def test_should_send_the_text_branchs_prompt_transcript_to_extraction(self):
+        ctx = _ctx(120)
+        ctx.prompt_transcript = "[0:00] rendered once by the text branch"
+
+        captured = await _run(ctx)
+
+        assert captured["transcript"] == "[0:00] rendered once by the text branch"
+
     async def test_should_send_the_marked_transcript_to_extraction(self):
         ctx = _ctx(120)
 
@@ -150,11 +166,11 @@ class TestExtractionPhaseUsesMarkedTranscript:
         ]
 
 
-class TestBuildPromptTranscriptLanguage:
+class TestRenderPromptTranscriptLanguage:
     def test_should_remove_fillers_from_an_english_source(self):
         ctx = _ctx(10, segments=[{"text": "so um we start", "start": 0.0, "duration": 4.0}])
 
-        prompt = extraction_phase.build_prompt_transcript(ctx)
+        prompt = render_prompt_transcript(ctx)  # type: ignore[arg-type]
 
         assert prompt == "[0:00] so we start"
 
@@ -162,7 +178,7 @@ class TestBuildPromptTranscriptLanguage:
         ctx = _ctx(10, segments=[{"text": "um quilo de farinha", "start": 0.0, "duration": 4.0}])
         ctx.source_language_code = "pt"
 
-        prompt = extraction_phase.build_prompt_transcript(ctx)
+        prompt = render_prompt_transcript(ctx)  # type: ignore[arg-type]
 
         assert prompt == "[0:00] um quilo de farinha"
 
@@ -254,3 +270,63 @@ class TestExtractionPhaseVideoContext:
                 pass
 
         assert captured["visual_annotations"] is ctx.visual_annotations
+
+
+async def _split_kwargs_for(ctx: SimpleNamespace) -> dict[str, Any]:
+    split = AsyncMock(return_value=[])
+    with patch(
+        "src.services.transcription.transcript_chunker.split_transcript_into_chapters", split
+    ):
+        await _run(ctx)
+    assert split.await_args is not None
+    return dict(split.await_args.kwargs)
+
+
+class TestChapterSplitLanguage:
+    """G06-1: chunked batches get the same source-language cleaning as one call."""
+
+    async def test_should_pass_the_source_language_to_chapter_splitting(self):
+        ctx = _ctx(1800)
+        ctx.source_language_code = "pt"
+
+        kwargs = await _split_kwargs_for(ctx)
+
+        assert kwargs["source_language"] == "pt"
+
+
+class TestChapterSplitDescriptionWait:
+    """G03-4: the chunked path awaits the description analysis, capped."""
+
+    _ANALYSIS = SimpleNamespace(timestamps=[SimpleNamespace(seconds=0, label="intro")])
+
+    async def test_should_pass_description_timestamps_once_the_analysis_landed(self):
+        ctx = _ctx(1800)
+        ctx.description_analysis = self._ANALYSIS
+
+        kwargs = await _split_kwargs_for(ctx)
+
+        assert kwargs["description_chapters"] == [{"seconds": 0, "label": "intro"}]
+
+    async def test_should_split_without_description_timestamps_when_the_analysis_is_late(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.setattr(extraction_phase, "_DESCRIPTION_WAIT_SECONDS", 0.01)
+        ctx = _ctx(1800)
+        ctx.description_task = asyncio.create_task(asyncio.Event().wait())
+
+        kwargs = await _split_kwargs_for(ctx)
+
+        assert kwargs["description_chapters"] is None
+        ctx.description_task.cancel()
+
+    async def test_should_leave_a_late_analysis_running_for_its_other_readers(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.setattr(extraction_phase, "_DESCRIPTION_WAIT_SECONDS", 0.01)
+        ctx = _ctx(1800)
+        ctx.description_task = asyncio.create_task(asyncio.Event().wait())
+
+        await _split_kwargs_for(ctx)
+
+        assert not ctx.description_task.done()
+        ctx.description_task.cancel()

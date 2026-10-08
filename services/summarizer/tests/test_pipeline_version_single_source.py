@@ -117,6 +117,7 @@ def _build_assembly_ctx() -> SimpleNamespace:
         triage=SimpleNamespace(tabs=[]),
         triage_dict={},
         plan_result=None,
+        content_format=None,
         extraction_data={},
         enrichment_data={},
         synthesis_dict=None,

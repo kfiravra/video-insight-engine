@@ -13,6 +13,8 @@ Prod today (read from `docker compose config` on the box, 2026-10-07):
 | Setting | Value | Why | Added by | Needed before |
 |---|---|---|---|---|
 | **URGENT (incident 2026-10-08)** `YOUTUBE_PROXY_EXIT_COUNT` | `3` (or the number of sticky exits on the plan) | YouTube bot-check blocks the main exit → every submission fails. Today's code rotates only on caption 429s; after fix 7304540 deploys it also rotates on the bot check for metadata/downloads/audio. Stopgap before the deploy: point `YOUTUBE_PROXY_URL` at a working sticky session (`-3`). Recreate vie-summarizer + vie-summarizer-worker (no rebuild). | incident / 7304540 | NOW (stopgap) and with the phase-1 deploy |
+| check `LLM_CLASSIFIER_MODEL` (should be unset/blank or Haiku 4.5) | unset → Haiku default | compose now passes it through (review fix G07-1); an old classifier-era value (e.g. gpt-4o-mini) would move the tier probe off Haiku (D21) | review fixes | before the phase-1 deploy |
+| check for newly passed-through keys: `grep -E '^(EXTRACTION_\|FRAME_(VISION\|TIER)\|CHUNKED_EXTRACTION_THRESHOLD\|MAX_(TOKENS\|MINUTES)_PER_BATCH\|TRANSCRIPT_CLEANING_ENABLED\|LLM_CLASSIFIER_MODEL)' .env` | expect none (or intended values) | compose ignored these keys before phase 1; any line becomes live with the merge | 1d.6 + review fixes | before the phase-1 deploy |
 | remove `SCENE_HIRES_TIMEOUT`, `FRAME_EXTRACTION_ENABLED`, `MAX_FRAMES_PER_VISUAL`, `MAX_FRAMES_PER_CHAPTER`, `FRAME_MIN_SPACING_SECONDS`, `FRAME_WITHIN_BLOCK_DEDUP_THRESHOLD` if present | (delete the lines) | settings deleted in 1a.2 (bf618ee) — ignored by the code now; cleanup only | 1a.2 | optional, any time |
 
 ## GitHub secrets (scheduled eval, prod-API mode — D13)

@@ -482,8 +482,8 @@ class VideoData:
     caption_track: str | None = None  # "manual" | "auto-generated"
     caption_lang: str | None = None  # matched caption key, e.g. "ar-SA"
     caption_fetch_error: str | None = None  # "http_<n>" | "request" | "parse" | "empty"
-    # json3 URL of the picked track while its fetch is deferred
-    # (``extract_video_data(with_captions=False)`` → ``fetch_video_captions``).
+    # json3 URL of the picked track until ``fetch_video_captions`` fetches it
+    # (``extract_video_data`` never fetches captions itself).
     caption_url: str | None = None
 
     @property
@@ -642,10 +642,11 @@ def _is_timedtext_exit_blocked(exc: Exception) -> bool:
     return _http_status_of(exc) == 429 or is_exit_blocked(exc)
 
 
-def _fetch_subtitle_data_sync(url: str) -> dict:
+def _fetch_subtitle_data_sync(url: str, job_key: str | None = None) -> dict:
     """Fetch a timedtext json3 body through YOUTUBE_PROXY_URL's exits.
 
-    SYNC — must be called from asyncio.to_thread (via _extract_video_data_sync).
+    SYNC — must be called from asyncio.to_thread (via fetch_video_captions).
+    ``job_key`` (the youtube id) picks the job's round-robin exit.
 
     Never direct when a proxy is set — that would hit timedtext from the host
     IP the proxy exists to hide. With several sticky exits
@@ -654,7 +655,7 @@ def _fetch_subtitle_data_sync(url: str) -> dict:
     (``ip=0.0.0.0``) — so a 429 reaches the caller only when every tried exit
     was blocked. Direct connections and a single exit keep the same-IP retry.
     """
-    exit_urls = ytdlp_proxy_exit_urls()
+    exit_urls = ytdlp_proxy_exit_urls(job_key)
     if len(exit_urls) > 1:
         return try_proxy_exits(
             exit_urls,
@@ -683,10 +684,12 @@ def _parse_json3_events(data: dict) -> list[SubtitleSegment]:
     return segments
 
 
-def _fetch_subtitles_from_url_sync(url: str) -> tuple[list[SubtitleSegment], str | None]:
+def _fetch_subtitles_from_url_sync(
+    url: str, job_key: str | None = None
+) -> tuple[list[SubtitleSegment], str | None]:
     """Fetch and parse subtitles from a URL (json3 format).
 
-    SYNC — must be called from asyncio.to_thread (via _extract_video_data_sync).
+    SYNC — must be called from asyncio.to_thread (via fetch_video_captions).
 
     Returns:
         (segments, error_code) — ``error_code`` is classified here, at the
@@ -698,7 +701,7 @@ def _fetch_subtitles_from_url_sync(url: str) -> tuple[list[SubtitleSegment], str
         whether a track was actually offered and labels that ``"empty"``.
     """
     try:
-        data = _fetch_subtitle_data_sync(url)
+        data = _fetch_subtitle_data_sync(url, job_key)
     except (requests.exceptions.HTTPError, tenacity.RetryError) as e:
         status = _http_status_of(e)
         code = f"http_{status}" if status is not None else "request"
@@ -758,12 +761,13 @@ def _extract_info_via_exits(video_id: str) -> dict[str, Any] | None:
     """``extract_info`` through YOUTUBE_PROXY_URL's exits.
 
     YouTube's bot check and its 429 are scoped to the exit IP, so with several
-    sticky exits (YOUTUBE_PROXY_EXIT_COUNT) either moves on to the next one;
-    private / removed / age-gated videos fail on the first exit as before.
+    sticky exits (YOUTUBE_PROXY_EXIT_COUNT) either moves on to the next one,
+    starting from the video's round-robin exit; private / removed / age-gated
+    videos fail on the first exit as before.
     """
     url = f"https://www.youtube.com/watch?v={video_id}"
     opts = _build_yt_dlp_opts()
-    exit_urls = ytdlp_proxy_exit_urls()
+    exit_urls = ytdlp_proxy_exit_urls(video_id)
     if len(exit_urls) <= 1:
         return _extract_with_retry(url, opts)
     return try_proxy_exits(
@@ -852,31 +856,6 @@ def _apply_captions(video_data: VideoData, track: SubtitleTrack | None) -> None:
     video_data.caption_url = None
 
 
-def _extract_video_data_sync(video_id: str) -> VideoData:
-    """
-    Extract video data using yt-dlp (synchronous).
-
-    This function extracts all available video metadata in a single call:
-    - Title, channel, duration, thumbnail
-    - Creator-defined chapters
-    - Full description text
-    - Subtitles with timestamps
-    - Video context (category, tags)
-
-    Args:
-        video_id: YouTube video ID
-
-    Returns:
-        VideoData with all extracted information
-
-    Raises:
-        TranscriptError: If video is unavailable or extraction fails
-    """
-    video_data, track = _extract_video_info_sync(video_id)
-    _apply_captions(video_data, track)
-    return video_data
-
-
 def _fetch_picked_track(
     video_id: str,
     track: SubtitleTrack | None,
@@ -893,7 +872,7 @@ def _fetch_picked_track(
         logger.warning("Video %s: no subtitles URL found", video_id)
         return [], None
 
-    subtitles, error = _fetch_subtitles_from_url_sync(track.url)
+    subtitles, error = _fetch_subtitles_from_url_sync(track.url, video_id)
     for seg in subtitles:
         seg.text = _clean_subtitle_text(seg.text)
     if error is None and not subtitles:
@@ -1053,7 +1032,7 @@ def _pick_subtitle_url(
     return None
 
 
-async def extract_video_data(video_id: str, *, with_captions: bool = True) -> VideoData:
+async def extract_video_data(video_id: str) -> VideoData:
     """
     Extract video data using yt-dlp (async wrapper).
 
@@ -1064,17 +1043,14 @@ async def extract_video_data(video_id: str, *, with_captions: bool = True) -> Vi
     - Title, channel, duration (exact seconds), thumbnail
     - Creator-defined chapters (timestamps + titles)
     - Full description text
-    - Subtitles/captions with timestamps
     - Video context (category, tags)
 
-    ``with_captions=False`` returns right after ``extract_info``: the picked
-    track rides on ``caption_url`` and ``fetch_video_captions`` fetches it
-    later, so the caption fetch (and its 429 retries) stays out of the
-    metadata wall.
+    Captions are NOT fetched: the picked track rides on ``caption_url`` and
+    ``fetch_video_captions`` fetches it later, so the caption fetch (and its
+    429 rotation) stays out of the metadata wall.
 
     Args:
         video_id: YouTube video ID
-        with_captions: Fetch the picked caption track before returning
 
     Returns:
         VideoData with all extracted information
@@ -1090,14 +1066,12 @@ async def extract_video_data(video_id: str, *, with_captions: bool = True) -> Vi
         # video_data.chapters[0].start_time -> 0
         # video_data.chapters[0].title -> "Intro"
     """
-    if with_captions:
-        return await asyncio.to_thread(_extract_video_data_sync, video_id)
     video_data, _track = await asyncio.to_thread(_extract_video_info_sync, video_id)
     return video_data
 
 
 async def fetch_video_captions(video_data: VideoData) -> None:
-    """Fetch the track ``extract_video_data(with_captions=False)`` picked, in place."""
+    """Fetch the track ``extract_video_data`` picked, in place (fills ``subtitles``)."""
     track = None
     if video_data.caption_url and video_data.caption_track and video_data.caption_lang:
         track = SubtitleTrack(

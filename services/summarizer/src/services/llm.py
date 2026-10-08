@@ -68,8 +68,7 @@ class LLMService:
                 span. Best-effort — observability failures are swallowed.
             span_metadata: Extra metadata merged into the generation span.
             temperature: Sampling temperature; ``None`` sends none (provider default).
-            system_prompt: Optional system prompt sent without a cache breakpoint
-                (``cache_static`` is the system text that carries one).
+            system_prompt: Optional system prompt (never carries a cache breakpoint).
 
         Returns:
             Generated text content
@@ -93,7 +92,6 @@ class LLMService:
         max_tokens: int = 2000,
         timeout: float | None = None,
         json_mode: bool = False,
-        cache_static: str | None = None,
         span_name: str | None = None,
         span_metadata: dict[str, Any] | None = None,
         temperature: float | None = None,
@@ -106,13 +104,11 @@ class LLMService:
             max_tokens: Maximum tokens in response
             timeout: Per-call timeout override (seconds). Falls back to LLM_TIMEOUT_SECONDS.
             json_mode: When True, request JSON-only output from the model.
-            cache_static: Static prompt content for Anthropic prompt caching.
             span_name: When non-None, record the call as a Langfuse generation
                 span. Best-effort — observability failures are swallowed.
             span_metadata: Extra metadata merged into the generation span.
             temperature: Sampling temperature; ``None`` sends none (provider default).
-            system_prompt: Optional system prompt sent without a cache breakpoint
-                (``cache_static`` is the system text that carries one).
+            system_prompt: Optional system prompt (never carries a cache breakpoint).
 
         Returns:
             Generated text content
@@ -127,7 +123,6 @@ class LLMService:
                 max_tokens=max_tokens,
                 timeout=effective_timeout,
                 json_mode=json_mode,
-                cache_static=cache_static,
                 span_name=span_name,
                 span_metadata=span_metadata,
                 temperature=temperature,

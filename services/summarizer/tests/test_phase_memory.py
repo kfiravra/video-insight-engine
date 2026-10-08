@@ -28,6 +28,7 @@ def _ctx() -> SimpleNamespace:
             description="The recipe, start to finish.",
         ),
         prompt_transcript="[0:00] Hi, I'm Chris.",
+        prompt_segments=[{"text": "Hi, I'm Chris.", "start": 0.0, "duration": 2.0}],
         llm_service=MagicMock(),
         memory=None,
     )
@@ -66,6 +67,17 @@ async def test_should_leave_no_memory_when_the_call_failed() -> None:
     await _run(ctx, None)
 
     assert ctx.memory is None
+
+
+async def test_should_skip_the_call_when_the_transcript_has_no_timed_segments() -> None:
+    """Regression: a metadata-only video got an invented outline + takeaways."""
+    ctx = _ctx()
+    ctx.prompt_segments = []
+    ctx.memory = _MEMORY
+
+    run = await _run(ctx, _MEMORY)
+
+    assert (run.await_count, ctx.memory) == (0, None)
 
 
 def _events(chunks: list[str]) -> list[dict]:

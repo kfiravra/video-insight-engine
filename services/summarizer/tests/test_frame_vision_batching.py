@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
-from litellm.exceptions import BadRequestError, RateLimitError
+from litellm.exceptions import BadRequestError, RateLimitError, Timeout
 
 from src.services.media import frame_analyzer
 from src.services.media.frame_analyzer import (
@@ -19,6 +19,7 @@ from src.services.media.frame_analyzer import (
     analyze_frames_with_vision,
     batch_max_tokens,
     plan_vision_batches,
+    vision_call_timeout,
 )
 from src.services.pipeline.prompt_registry import declared_placeholders
 
@@ -119,6 +120,27 @@ class TestPlanVisionBatches:
         batches = plan_vision_batches(frames)
 
         assert batches == [frames]  # today's single call, frames in the given (score) order
+
+    async def test_should_map_every_frame_of_the_single_call_when_batching_is_off(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Rollback path (FRAME_VISION_PARALLEL=false) end to end: one call, labels
+        0..n-1 in score order, every description back on its own frame."""
+        monkeypatch.setattr(frame_analyzer.settings, "FRAME_VISION_PARALLEL", False)
+        frames = _frames(tmp_path, 8)
+        provider = MagicMock()
+        provider.complete_with_messages = AsyncMock(side_effect=lambda m, **_: _echo_reply(m))
+
+        descriptions = await analyze_frames_with_vision(frames, provider, max_frames=8)
+
+        (call,) = provider.complete_with_messages.call_args_list
+        assert [n for n, _ in _labels(call.args[0])] == list(range(8))
+        assert [d["frame_index"] for d in descriptions] == list(range(8))
+        by_original = {d["original_index"]: d for d in descriptions}
+        for frame in frames:
+            described = by_original[frame["index"]]
+            assert described["content"] == _mmss(frame["timestamp"])
+            assert described["timestamp_sec"] == frame["timestamp"]
 
 
 class TestIndexMapping:
@@ -222,7 +244,7 @@ class TestFailuresAndRetry:
     ) -> None:
         async def reply(messages: list[dict[str, Any]], **kwargs: Any) -> str:
             if kwargs["span_metadata"]["batch"] == 1:
-                raise asyncio.TimeoutError
+                return "not json"
             return _echo_reply(messages)
 
         provider = self._provider(reply)
@@ -249,15 +271,54 @@ class TestFailuresAndRetry:
         assert [d["content"] for d in descriptions] == ["ok"]
         sleep.assert_awaited_once_with(7.0)
 
-    async def test_should_stop_after_two_attempts_when_every_attempt_times_out(
+    async def test_should_not_retry_a_call_that_used_its_whole_timeout(
         self, tmp_path: Path
     ) -> None:
+        """Regression: a 90 s timeout was retried with 90 s again (~190 s stage)."""
         provider = self._provider(asyncio.TimeoutError)
 
         descriptions = await analyze_frames_with_vision(_frames(tmp_path, 1), provider)
 
-        assert descriptions == []
-        assert provider.complete_with_messages.await_count == 2
+        assert (descriptions, provider.complete_with_messages.await_count) == ([], 1)
+
+    async def test_should_not_retry_a_provider_timeout_at_the_calls_deadline(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(frame_analyzer, "_FULL_TIMEOUT_SHARE", 0.0)
+        provider = self._provider(Timeout("timed out", "claude", "anthropic"))
+
+        descriptions = await analyze_frames_with_vision(_frames(tmp_path, 1), provider)
+
+        assert (descriptions, provider.complete_with_messages.await_count) == ([], 1)
+
+    async def test_should_retry_a_provider_timeout_raised_long_before_the_deadline(
+        self, tmp_path: Path
+    ) -> None:
+        """A connect timeout seconds into a 45 s call never reached the model."""
+        provider = self._provider(
+            [Timeout("connect timed out", "claude", "anthropic"), '[{"frame_index": 0}]']
+        )
+
+        descriptions = await analyze_frames_with_vision(_frames(tmp_path, 1), provider)
+
+        assert (len(descriptions), provider.complete_with_messages.await_count) == (1, 2)
+
+    async def test_should_skip_a_retry_that_no_longer_fits_the_stage_deadline(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(frame_analyzer, "_SECONDS_PER_FRAME", 0.1)
+
+        async def slow_garbage(messages: list[dict[str, Any]], **_: Any) -> str:
+            await asyncio.sleep(0.06)
+            return "not json"
+
+        provider = self._provider(slow_garbage)
+
+        descriptions = await analyze_frames_with_vision(
+            _frames(tmp_path, 1), provider, timeout=0.05
+        )
+
+        assert (descriptions, provider.complete_with_messages.await_count) == ([], 1)
 
     async def test_should_not_retry_when_the_request_is_rejected(self, tmp_path: Path) -> None:
         response = httpx.Response(400, request=httpx.Request("POST", "https://llm"))
@@ -299,6 +360,31 @@ class TestFailuresAndRetry:
             c.kwargs["span_name"] == "frame_vision"
             for c in provider.complete_with_messages.call_args_list
         )
+
+
+class TestCallTimeout:
+    @pytest.mark.parametrize(
+        ("max_tokens", "expected"),
+        [(1000, 45.6), (1200, 52.08), (2200, 84.48), (4200, 90.0)],
+    )
+    def test_should_allow_twice_the_expected_wall_up_to_the_ceiling(
+        self, max_tokens: int, expected: float
+    ) -> None:
+        assert vision_call_timeout(max_tokens, 90.0) == pytest.approx(expected)
+
+    def test_should_never_go_below_the_minimum_call_timeout(self) -> None:
+        assert vision_call_timeout(0, 90.0) == 30.0
+
+    async def test_should_size_each_calls_timeout_from_its_token_ceiling(
+        self, tmp_path: Path, parallel_on: None
+    ) -> None:
+        provider = MagicMock()
+        provider.complete_with_messages = AsyncMock(side_effect=lambda m, **_: _echo_reply(m))
+
+        await analyze_frames_with_vision(_frames(tmp_path, 8), provider, max_frames=8, timeout=90)
+
+        timeouts = [c.kwargs["timeout"] for c in provider.complete_with_messages.call_args_list]
+        assert timeouts == [pytest.approx(52.08)] * 2  # 2 x 4 plain frames, 1,200 tokens each
 
 
 class TestTokenBudget:

@@ -12,7 +12,7 @@ import pytest
 from src.services.pipeline.assembly.attachments import (
     _DENSE_THRESHOLD,
     _PRIMARY_LIST_KEY,
-    _SPARSE_THRESHOLD,
+    SPARSE_THRESHOLD,
     attach_secondaries,
     can_host_quick_quiz,
 )
@@ -37,7 +37,7 @@ def _tab(component: str, list_key: str, n: int, goal: str = "Tab goal") -> dict:
 
 class TestSparseEnrichment:
     def test_sparse_tab_gets_a_frame_strip_when_frames_available(self):
-        tab = _tab("info_grid", "items", _SPARSE_THRESHOLD)
+        tab = _tab("info_grid", "items", SPARSE_THRESHOLD)
         out = attach_secondaries(tab, {}, None, _frames(6), "review")
         assert len(out) == 1
         assert out[0]["component"] == "frame_strip"
@@ -89,7 +89,7 @@ class TestDenseSummary:
 
 class TestNoStandaloneAndEdges:
     def test_mid_size_tab_gets_nothing(self):
-        mid = (_SPARSE_THRESHOLD + _DENSE_THRESHOLD) // 2
+        mid = (SPARSE_THRESHOLD + _DENSE_THRESHOLD) // 2
         tab = _tab("info_grid", "items", mid)
         out = attach_secondaries(tab, {"food": {"tips": ["x"]}}, None, _frames(6), "food")
         assert out == []

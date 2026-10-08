@@ -222,6 +222,39 @@ class TestNonRetryableErrors:
         assert acompletion.await_count == 1
 
 
+def _fallback_auth_error() -> AuthenticationError:
+    return AuthenticationError("missing key", "openai", "gpt-4o", response=_http(401))
+
+
+class TestFallbackRejectsTheRequest:
+    """G21-3: the fallback's own 401/400 ends the call with None, never a crash."""
+
+    async def test_should_return_none_when_the_fallback_rejects_the_request(
+        self, sleep: AsyncMock
+    ) -> None:
+        with _scripted(_rate_limited(), _rate_limited(), _fallback_auth_error()):
+            result = await call_llm_with_retry(_service(), "p", stage_name="plan", max_retries=2)
+
+        assert result is None
+
+    async def test_should_not_retry_a_fallback_that_rejected_the_request(
+        self, sleep: AsyncMock
+    ) -> None:
+        outcomes = (_rate_limited(), _rate_limited(), _fallback_auth_error(), _reply(_GPT4O))
+        with _scripted(*outcomes) as acompletion:
+            await call_llm_with_retry(_service(), "p", stage_name="plan", max_retries=3)
+
+        assert _models_called(acompletion) == [_SONNET, _SONNET, _GPT4O]
+
+    async def test_should_record_the_fallback_rejection_under_the_fallback_model(
+        self, sleep: AsyncMock, recorder: PipelineTimingRecorder
+    ) -> None:
+        with _scripted(_rate_limited(), _rate_limited(), _fallback_auth_error()):
+            await call_llm_with_retry(_service(), "p", stage_name="plan", max_retries=2)
+
+        assert [f["model"] for f in recorder.llm_failures] == [_SONNET, _SONNET, _GPT4O]
+
+
 class TestFallbackTelemetry:
     async def _run_fallback(self) -> None:
         with _scripted(_rate_limited(), _rate_limited(), _reply(_GPT4O)):

@@ -62,6 +62,7 @@ def _build_ctx(source_language_code: str | None = None) -> SimpleNamespace:
         triage=triage,
         triage_dict={},
         plan_result=None,
+        content_format=None,
         extraction_data={},
         enrichment_data={},
         synthesis_dict=None,

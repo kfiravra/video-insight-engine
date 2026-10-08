@@ -53,12 +53,19 @@ def span_calls(calls: list[dict[str, Any]], *spans: str) -> list[dict[str, Any]]
     return [c for c in calls if c["span"] in spans or c["feature"] in spans]
 
 
+def probe_span(spans: set[str]) -> str:
+    """The tier-probe span of a recorded run: ``tier_probe`` since 1b.1, else the
+    ``classifier`` it replaced (cassettes recorded before 1b.1)."""
+    return "tier_probe" if "tier_probe" in spans else "classifier"
+
+
 def phase_bounds(calls: list[dict[str, Any]], total_s: float) -> dict[str, float]:
     """Phase END offsets (s) derived from the LLM intervals."""
     synth_enrich = span_calls(calls, "synthesis", "enrichment")
+    probe = probe_span({c["span"] for c in calls})
     return {
         "metadata": span_calls(calls, "description_analysis")[0]["_endS"],
-        "transcript_frames": span_calls(calls, "classifier")[0]["_startS"],
+        "transcript_frames": span_calls(calls, probe)[0]["_startS"],
         "plan": span_calls(calls, "plan")[-1]["_endS"],
         "extraction": max(c["_endS"] for c in span_calls(calls, "summarize:extraction")),
         "synthesis_enrichment": max(c["_endS"] for c in synth_enrich),

@@ -50,7 +50,8 @@ from llm_common.context import llm_feature_var, llm_video_id_var  # noqa: E402
 from src.config import settings  # noqa: E402
 from src.services.llm_provider import LLMProvider  # noqa: E402
 from src.services.media.frame_analyzer import (  # noqa: E402
-    VISION_ANALYSIS_PROMPT,
+    _count_line,
+    load_vision_prompt,
     parse_vision_response,
 )
 
@@ -120,7 +121,7 @@ def _encode_frame_base64(path: str) -> str | None:
 
 def _build_vision_messages(frames: list[dict]) -> tuple[list[dict], list[dict]]:
     """Mirror frame_analyzer._build inner logic; return (messages, metadata)."""
-    content: list[dict] = [{"type": "text", "text": VISION_ANALYSIS_PROMPT}]
+    content: list[dict] = [{"type": "text", "text": load_vision_prompt()}]
     meta: list[dict] = []
     for i, frame in enumerate(frames):
         data_uri = _encode_frame_base64(frame["path"])
@@ -129,9 +130,11 @@ def _build_vision_messages(frames: list[dict]) -> tuple[list[dict], list[dict]]:
         ts = frame.get("timestamp", 0)
         mins = int(ts) // 60
         secs = int(ts) % 60
-        content.append({"type": "text", "text": f"Frame {i} (at {mins}:{secs:02d}):"})
+        # Labels count the frames actually sent, as production does.
+        content.append({"type": "text", "text": f"Frame {len(meta)} (at {mins}:{secs:02d}):"})
         content.append({"type": "image_url", "image_url": {"url": data_uri}})
         meta.append({"index": i, "timestamp_sec": ts, "s3_key": frame["s3_key"]})
+    content.append({"type": "text", "text": _count_line(len(meta))})
     return [{"role": "user", "content": content}], meta
 
 

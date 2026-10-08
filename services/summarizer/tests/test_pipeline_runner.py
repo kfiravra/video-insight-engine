@@ -70,9 +70,7 @@ def _patched_phases():
         patch.object(pipeline_orchestration, "run_phase_metadata", _phase_stub("metadata")),
         patch.object(pipeline_orchestration, "run_parallel_phases", _parallel_stub),
         patch.object(pipeline_orchestration, "run_phase_extraction", _phase_stub("extraction")),
-        patch.object(pipeline_orchestration, "run_phase_enrichment", _phase_stub("enrichment")),
         patch.object(pipeline_orchestration, "run_phase_assembly", _phase_stub("assembly")),
-        patch.object(pipeline_orchestration, "needs_quiz", lambda *_a: True),
     ]
 
 
@@ -97,10 +95,10 @@ def _english_ctx(extraction_data: dict) -> SimpleNamespace:
     )
 
 
-_TAIL_NAMES = ("run_phase_extraction", "run_phase_enrichment")
+_TAIL_NAMES = ("run_phase_extraction",)
 
 
-async def _parallel_groups(ctx: SimpleNamespace, *, quiz: bool) -> list[list[str]]:
+async def _parallel_groups(ctx: SimpleNamespace) -> list[list[str]]:
     """The phases the orchestration hands the parallel runner, by name, in order."""
     groups: list[list] = []
 
@@ -114,7 +112,6 @@ async def _parallel_groups(ctx: SimpleNamespace, *, quiz: bool) -> list[list[str
         stack.enter_context(
             patch.object(pipeline_orchestration, "run_parallel_phases", _capture_parallel)
         )
-        stack.enter_context(patch.object(pipeline_orchestration, "needs_quiz", lambda *_a: quiz))
         names = {getattr(pipeline_orchestration, name): name for name in _TAIL_NAMES}
         _ = [
             ev
@@ -126,23 +123,50 @@ async def _parallel_groups(ctx: SimpleNamespace, *, quiz: bool) -> list[list[str
 
 
 @pytest.mark.asyncio
-async def test_should_run_the_quiz_when_the_plan_demands_one() -> None:
-    """1d.1: the quiz runs before assembly (it is a tab); synthesis moved into assembly."""
-    groups = await _parallel_groups(_english_ctx({}), quiz=True)
-
-    assert groups[2] == ["run_phase_enrichment"]
-
-
-@pytest.mark.asyncio
-async def test_should_go_straight_to_assembly_when_no_quiz_is_demanded() -> None:
-    groups = await _parallel_groups(_english_ctx({}), quiz=False)
+async def test_should_go_straight_to_assembly_after_extraction() -> None:
+    """1d.1: the quiz never blocks tabs — it runs inside assembly's late group."""
+    groups = await _parallel_groups(_english_ctx({}))
 
     assert len(groups) == 2
 
 
 @pytest.mark.asyncio
+async def test_should_render_visual_annotations_before_extraction_starts() -> None:
+    """1c.2: extraction reads ctx.visual_annotations, rendered after the phase-2 group."""
+    ctx = _english_ctx({})
+    seen_at_extraction: list[str] = []
+
+    async def _capture_parallel(phases, run_ctx):
+        if phases == [pipeline_orchestration.run_phase_extraction]:
+            seen_at_extraction.append(run_ctx.visual_annotations)
+        yield "data: parallel\n\n"
+
+    rendered = "<visual_annotations>\n[1:05] a whiteboard\n</visual_annotations>"
+    with ExitStack() as stack:
+        for p in _patched_phases():
+            stack.enter_context(p)
+        stack.enter_context(
+            patch.object(pipeline_orchestration, "run_parallel_phases", _capture_parallel)
+        )
+        stack.enter_context(
+            patch.object(pipeline_orchestration, "render_visual_annotations", lambda *_a: rendered)
+        )
+        _ = [
+            ev
+            async for ev in pipeline_orchestration.run_pipeline_phases(
+                ctx,  # type: ignore[arg-type]
+                MagicMock(),
+                "vsid",
+                _timer(),
+            )
+        ]
+
+    assert seen_at_extraction == [rendered]
+
+
+@pytest.mark.asyncio
 async def test_should_run_extraction_through_the_heartbeat_runner() -> None:
-    groups = await _parallel_groups(_english_ctx({}), quiz=False)
+    groups = await _parallel_groups(_english_ctx({}))
 
     assert groups[1] == ["run_phase_extraction"]
 
@@ -165,7 +189,6 @@ async def test_should_send_heartbeats_while_extraction_is_silent() -> None:
             ("run_parallel_phases", run_parallel_phases),
             ("_run_phase_two", _phase_two),
             ("run_phase_extraction", _slow_extraction),
-            ("needs_quiz", lambda *_a: False),
         ):
             stack.enter_context(patch.object(pipeline_orchestration, name, value))
         stack.enter_context(patch.object(settings, "SSE_HEARTBEAT_SECONDS", 0.01))
@@ -814,7 +837,7 @@ async def test_failed_run_cancels_the_unjoined_t0_tasks() -> None:
 
 
 @pytest.mark.asyncio
-async def test_phase_two_runs_the_text_branch_with_frames_and_description() -> None:
+async def test_phase_two_runs_the_text_branch_with_frames_only() -> None:
     ctx = _english_ctx({"key_points": [{"text": "a claim long enough"}]})
     timer = MagicMock()
     timer.elapsed = MagicMock(return_value=1.0)
@@ -837,7 +860,8 @@ async def test_phase_two_runs_the_text_branch_with_frames_and_description() -> N
             )
         ]
 
-    assert groups[0] == ["run_phase_text", "run_phase_frames", "run_phase_description"]
+    # The description analysis is not a member: extraction never waits for it.
+    assert groups[0] == ["run_phase_text", "run_phase_frames"]
 
 
 @pytest.mark.asyncio

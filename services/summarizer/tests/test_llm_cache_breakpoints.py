@@ -83,14 +83,6 @@ class TestAnthropicUserBreakpoint:
 
         assert _sent_messages(acompletion) == [{"role": "user", "content": _blocks()}]
 
-    async def test_should_keep_system_breakpoint_when_caller_caches_static(
-        self, acompletion: AsyncMock
-    ) -> None:
-        await _provider(_HAIKU).complete(_blocks(), cache_static="RULES")
-
-        system = _sent_messages(acompletion)[0]
-        assert system["content"][0]["cache_control"] == _EPHEMERAL
-
     async def test_should_send_plain_system_when_caller_drops_its_breakpoint(
         self, acompletion: AsyncMock
     ) -> None:
@@ -110,15 +102,15 @@ class TestAnthropicUserBreakpoint:
 
 class TestNonAnthropicGetsNoBreakpoint:
     async def test_should_strip_breakpoints_from_complete(self, acompletion: AsyncMock) -> None:
-        await _provider(_MINI).complete(_blocks(), cache_static="RULES")
+        await _provider(_MINI).complete(_blocks(), system_prompt="RULES")
 
         assert "cache_control" not in json.dumps(_sent_messages(acompletion))
 
-    async def test_should_keep_static_and_block_text_in_order(self, acompletion: AsyncMock) -> None:
-        await _provider(_MINI).complete(_blocks(), cache_static="RULES")
+    async def test_should_keep_block_text_in_order(self, acompletion: AsyncMock) -> None:
+        await _provider(_MINI).complete(_blocks(), system_prompt="RULES")
 
-        texts = [block["text"] for block in _sent_messages(acompletion)[0]["content"]]
-        assert texts == ["RULES", "TRANSCRIPT + MEMORY", "YOUR JOB"]
+        texts = [block["text"] for block in _sent_messages(acompletion)[1]["content"]]
+        assert texts == ["TRANSCRIPT + MEMORY", "YOUR JOB"]
 
     async def test_should_strip_system_and_user_breakpoints_from_caller_messages(
         self, acompletion: AsyncMock

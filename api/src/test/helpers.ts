@@ -13,6 +13,9 @@ export interface MockContainer {
     updateCacheEntry: ReturnType<typeof vi.fn>;
     tryClaimDispatchRelease: ReturnType<typeof vi.fn>;
     getUserVideos: ReturnType<typeof vi.fn>;
+    mergeSynthesis: ReturnType<typeof vi.fn>;
+    promoteCompletedVersion: ReturnType<typeof vi.fn>;
+    restoreServedVersion: ReturnType<typeof vi.fn>;
   };
   videoService: {
     createVideo: ReturnType<typeof vi.fn>;
@@ -164,6 +167,9 @@ export function createMockContainer(): MockContainer {
       // override this continue to see `dispatchGuardService.release` called.
       tryClaimDispatchRelease: vi.fn().mockResolvedValue(true),
       getUserVideos: vi.fn().mockResolvedValue([]),
+      mergeSynthesis: vi.fn().mockResolvedValue(undefined),
+      promoteCompletedVersion: vi.fn().mockResolvedValue(false),
+      restoreServedVersion: vi.fn().mockResolvedValue(false),
     },
     videoService: {
       createVideo: vi.fn(),

@@ -6,7 +6,10 @@ Prompt: ``prompts/vision.txt`` (registry name ``summarizer:vision``).
 
 The stage takes as long as its slowest call and output tokens set a call's
 wall time (~16 s per 1k), so frames are spread over up to five calls of at
-most eight (pipeline-1min A18). A failed call costs only its own frames.
+most eight (pipeline-1min A18). A failed call costs only its own frames. A
+call's timeout is twice its expected wall; a call that used its whole timeout
+is not retried, and a retry must fit the stage deadline, so one slow batch
+never holds the finished ones for minutes.
 """
 
 from __future__ import annotations
@@ -21,6 +24,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from litellm.exceptions import Timeout as LitellmTimeout
 
 from src.config import settings
 from src.services.pipeline.pipeline_timing import record_llm_failure
@@ -52,7 +57,18 @@ _MIN_BATCH_TOKENS = 1000
 _RETRY_TOKEN_FACTOR = 1.5
 _MAX_ATTEMPTS = 2
 _RETRY_PAUSE_SECONDS = 1.0
+# The per-call ceiling (and the stage deadline) is the caller's timeout,
+# raised to this much per frame for a big single call (FRAME_VISION_PARALLEL off).
 _SECONDS_PER_FRAME = 4.0
+# Expected wall of one call, measured 2026-10-07 (A18): ~6.6 s fixed plus
+# ~16.2 s per 1k output tokens. A call gets twice its expected wall at
+# max_tokens, within [_MIN_CALL_TIMEOUT, ceiling] — 45-85 s for 1-8 frames,
+# where the flat 90 s floor plus a 90 s retry could hold the stage ~190 s.
+_WALL_FIXED_SECONDS = 6.6
+_WALL_SECONDS_PER_1K_TOKENS = 16.2
+_MIN_CALL_TIMEOUT = 30.0
+# A provider timeout this close to the call's own timeout used the whole of it.
+_FULL_TIMEOUT_SHARE = 0.9
 _SPAN_NAME = "frame_vision"
 
 _MAX_FRAME_SIZE_BYTES = 10 * 1024 * 1024  # 10 MB safety cap
@@ -67,7 +83,7 @@ class _VisionBatch:
     content: list[dict[str, Any]]
     metadata: list[dict]
     max_tokens: int
-    timeout: float
+    timeout_cap: float
 
 
 @dataclass(frozen=True)
@@ -77,6 +93,15 @@ class _Failure:
     retryable: bool
     pause: float | None = None  # None = _RETRY_PAUSE_SECONDS
     grow_tokens: bool = False
+
+
+@dataclass(frozen=True)
+class _Attempt:
+    """One call of one batch: its number, output ceiling and timeout."""
+
+    number: int
+    max_tokens: int
+    timeout: float
 
 
 # ─── Frame selection and encoding ───
@@ -162,6 +187,12 @@ def batch_max_tokens(frames: list[dict]) -> int:
     return max(_MIN_BATCH_TOKENS, budget)
 
 
+def vision_call_timeout(max_tokens: int, ceiling: float) -> float:
+    """Twice the call's expected wall at ``max_tokens``, within [_MIN_CALL_TIMEOUT, ceiling]."""
+    expected = _WALL_FIXED_SECONDS + _WALL_SECONDS_PER_1K_TOKENS * max_tokens / 1000
+    return min(ceiling, max(_MIN_CALL_TIMEOUT, 2 * expected))
+
+
 def _frame_label(position: int, timestamp: float) -> str:
     seconds = int(timestamp)
     return f"Frame {position} (at {seconds // 60}:{seconds % 60:02d}):"
@@ -214,7 +245,7 @@ def _prepare_batches(
                 content=content,
                 metadata=metadata,
                 max_tokens=batch_max_tokens(batch_frames),
-                timeout=max(timeout, _SECONDS_PER_FRAME * len(batch_frames)),
+                timeout_cap=max(timeout, _SECONDS_PER_FRAME * len(batch_frames)),
             )
         )
     return batches
@@ -243,45 +274,55 @@ def _vision_provider(llm_provider: LLMProvider) -> LLMProvider:
     return _LLMProvider(model=vision_model, fast_model=vision_model)
 
 
-async def _send_batch(
-    provider: LLMProvider, batch: _VisionBatch, attempt: int, max_tokens: int
-) -> str:
+async def _send_batch(provider: LLMProvider, batch: _VisionBatch, attempt: _Attempt) -> str:
     return await asyncio.wait_for(
         provider.complete_with_messages(
             [{"role": "user", "content": batch.content}],
-            max_tokens=max_tokens,
-            timeout=batch.timeout,
+            max_tokens=attempt.max_tokens,
+            timeout=attempt.timeout,
             use_fast_model=False,
             span_name=_SPAN_NAME,
             span_metadata={
                 "frameCount": len(batch.metadata),
                 "batch": batch.number,
                 "batches": batch.total,
-                "attempt": attempt,
+                "attempt": attempt.number,
                 "maxAttempts": _MAX_ATTEMPTS,
             },
         ),
-        timeout=batch.timeout + 5,  # outer safety net
+        timeout=attempt.timeout + 5,  # outer safety net
     )
 
 
 async def _attempt_batch(
-    provider: LLMProvider, batch: _VisionBatch, attempt: int, max_tokens: int
+    provider: LLMProvider, batch: _VisionBatch, attempt: _Attempt
 ) -> list[dict] | _Failure:
-    """One call for one batch: its descriptions, or why there are none."""
+    """One call for one batch: its descriptions, or why there are none.
+
+    A call that ran into its own timeout is not retried: it already had twice
+    its expected wall, and a second one would double the stage.
+    """
     started = time.monotonic()
-    where = f"batch {batch.number}/{batch.total}, attempt {attempt}/{_MAX_ATTEMPTS}"
+    where = f"batch {batch.number}/{batch.total}, attempt {attempt.number}/{_MAX_ATTEMPTS}"
     try:
-        raw = await _send_batch(provider, batch, attempt, max_tokens)
+        raw = await _send_batch(provider, batch, attempt)
     except asyncio.TimeoutError as e:
         # The outer wait_for cancels the provider coroutine, so the provider
         # never records this failure — record it here.
         record_llm_failure(
-            span=_SPAN_NAME, model=provider.model, error=e, start_monotonic=started, attempt=attempt
+            span=_SPAN_NAME,
+            model=provider.model,
+            error=e,
+            start_monotonic=started,
+            attempt=attempt.number,
         )
-        logger.warning("Vision %s timed out after %.0fs", where, batch.timeout)
-        return _Failure(retryable=True)
+        logger.warning("Vision %s timed out after %.0fs", where, attempt.timeout)
+        return _Failure(retryable=False)
     except TRANSIENT_LLM_ERRORS as e:
+        elapsed = time.monotonic() - started
+        if isinstance(e, LitellmTimeout) and elapsed >= _FULL_TIMEOUT_SHARE * attempt.timeout:
+            logger.warning("Vision %s timed out after %.0fs", where, elapsed)
+            return _Failure(retryable=False)
         logger.warning("Vision %s failed (transient): %s", where, e)
         return _Failure(retryable=True, pause=retry_after_seconds(e))
     except Exception as e:
@@ -295,17 +336,41 @@ async def _attempt_batch(
     return _Failure(retryable=True, grow_tokens=True)
 
 
+def _next_attempt(
+    batch: _VisionBatch, number: int, max_tokens: int, deadline: float
+) -> _Attempt | None:
+    """The call to make, or None when a retry no longer fits the stage deadline.
+
+    The first call always gets its sized timeout; a retry gets what is left of
+    the stage (at most its sized timeout), and only while that is a whole
+    minimum call.
+    """
+    sized = vision_call_timeout(max_tokens, batch.timeout_cap)
+    if number == 1:
+        return _Attempt(number, max_tokens, sized)
+    left = deadline - asyncio.get_running_loop().time()
+    if left < min(_MIN_CALL_TIMEOUT, sized):
+        return None
+    return _Attempt(number, max_tokens, min(sized, left))
+
+
 async def _describe_batch(
-    provider: LLMProvider, batch: _VisionBatch, semaphore: asyncio.Semaphore
+    provider: LLMProvider, batch: _VisionBatch, semaphore: asyncio.Semaphore, deadline: float
 ) -> list[dict]:
-    """The batch's descriptions after at most one retry; [] when both attempts fail."""
+    """The batch's descriptions after at most one retry; [] when no attempt succeeds."""
     max_tokens = batch.max_tokens
     async with semaphore:
-        for attempt in range(1, _MAX_ATTEMPTS + 1):
-            outcome = await _attempt_batch(provider, batch, attempt, max_tokens)
+        for number in range(1, _MAX_ATTEMPTS + 1):
+            attempt = _next_attempt(batch, number, max_tokens, deadline)
+            if attempt is None:
+                logger.warning(
+                    "Vision batch %d/%d: no time left for a retry", batch.number, batch.total
+                )
+                break
+            outcome = await _attempt_batch(provider, batch, attempt)
             if not isinstance(outcome, _Failure):
                 return outcome
-            if not outcome.retryable or attempt == _MAX_ATTEMPTS:
+            if not outcome.retryable or number == _MAX_ATTEMPTS:
                 break
             if outcome.grow_tokens:
                 max_tokens = int(max_tokens * _RETRY_TOKEN_FACTOR)
@@ -326,7 +391,8 @@ async def analyze_frames_with_vision(
         frames: Scored frame dicts with 'path' and 'total_score'.
         llm_provider: LLMProvider instance (uses primary model).
         max_frames: Maximum frames to send (cost control).
-        timeout: Per-call timeout floor in seconds (scaled up per frame).
+        timeout: Per-call timeout ceiling and stage deadline in seconds (raised
+            per frame for a big single call); calls are sized below it.
 
     Returns:
         Frame description dicts (scene_type, content, …) in time order. The
@@ -339,7 +405,10 @@ async def analyze_frames_with_vision(
     provider = _vision_provider(llm_provider)
     semaphore = asyncio.Semaphore(VISION_MAX_PARALLEL)
     started = time.monotonic()
-    results = await asyncio.gather(*(_describe_batch(provider, b, semaphore) for b in batches))
+    deadline = asyncio.get_running_loop().time() + max(b.timeout_cap for b in batches)
+    results = await asyncio.gather(
+        *(_describe_batch(provider, b, semaphore, deadline) for b in batches)
+    )
     descriptions = sorted((d for batch in results for d in batch), key=lambda d: d["frame_index"])
     logger.info(
         "frame_vision.complete",

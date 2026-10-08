@@ -8,7 +8,9 @@ This module extracts structured data from YouTube video descriptions:
 - Social links (creator's profiles)
 """
 
+import asyncio
 import logging
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -16,6 +18,7 @@ from typing import Any
 from src.config import settings
 from src.services.llm import LLMService
 from src.services.llm_provider import LLMProvider
+from src.services.pipeline.pipeline_timing import record_llm_failure
 from src.utils.data_helpers import parse_timestamp_to_seconds
 from src.utils.json_parsing import parse_json_response
 from src.utils.llm_retry import call_llm_with_retry
@@ -23,8 +26,15 @@ from src.utils.llm_retry import call_llm_with_retry
 logger = logging.getLogger(__name__)
 
 PROMPTS_DIR = Path(__file__).parent.parent.parent / "prompts"
-# Optional analysis, so one retry is enough: it runs off the critical path.
+_STAGE = "description_analysis"
+# Optional analysis, but readers wait for it (chapter tier 2 on the chunked
+# path, assembly's meta), so the whole call — both attempts, the backoff and
+# any retry-after pause — fits in DESCRIPTION_TOTAL_SECONDS. One retry, for a
+# fast transient failure; a slow first attempt leaves no room for a second.
 DESCRIPTION_MAX_RETRIES = 1
+DESCRIPTION_ATTEMPT_SECONDS = 25.0
+DESCRIPTION_TOTAL_SECONDS = 30.0
+_MAX_DESCRIPTION_CHARS = 5000
 
 
 def load_prompt(name: str) -> str:
@@ -133,6 +143,73 @@ def _parse_timestamps(raw_items: Any) -> list[DescriptionTimestamp]:
     return result
 
 
+def _parse_analysis(data: dict[str, Any]) -> DescriptionAnalysis:
+    """The model's JSON → ``DescriptionAnalysis``; entries without a URL/label are skipped."""
+    return DescriptionAnalysis(
+        links=[
+            DescriptionLink(
+                url=l.get("url", ""), type=l.get("type", "other"), label=l.get("label", "")
+            )
+            for l in data.get("links", [])
+            if l.get("url")
+        ],
+        resources=[
+            Resource(name=r.get("name", ""), url=r.get("url", ""))
+            for r in data.get("resources", [])
+            if r.get("name") and r.get("url")
+        ],
+        related_videos=[
+            RelatedVideo(title=v.get("title", ""), url=v.get("url", ""))
+            for v in data.get("relatedVideos", [])
+            if v.get("url")
+        ],
+        social_links=[
+            SocialLink(platform=s.get("platform", "other"), url=s.get("url", ""))
+            for s in data.get("socialLinks", [])
+            if s.get("url")
+        ],
+        timestamps=_parse_timestamps(data.get("timestamps", [])),
+    )
+
+
+async def _request_analysis(description: str, model: str) -> str | None:
+    """The model's raw reply, or None when every attempt failed or the total cap hit."""
+    # .replace(), not .format(): the template carries literal JSON braces.
+    prompt = load_prompt(_STAGE).replace("{description}", description)
+    start = time.monotonic()
+    try:
+        async with asyncio.timeout(DESCRIPTION_TOTAL_SECONDS):
+            return await call_llm_with_retry(
+                LLMService(LLMProvider(model=model, fast_model=model)),
+                prompt,
+                max_tokens=1500,
+                timeout=DESCRIPTION_ATTEMPT_SECONDS,
+                max_retries=DESCRIPTION_MAX_RETRIES,
+                stage_name=_STAGE,
+                use_fast_model=True,
+            )
+    except TimeoutError as e:
+        # The cap cancelled an attempt mid-flight, so the provider never saw it
+        # fail. Attempts stop at 25 s, so the cap always lands in the last one.
+        last_attempt = DESCRIPTION_MAX_RETRIES + 1
+        record_llm_failure(
+            span=_STAGE, model=model, error=e, start_monotonic=start, attempt=last_attempt
+        )
+        logger.warning("Description analysis hit its %.0fs cap", DESCRIPTION_TOTAL_SECONDS)
+        return None
+
+
+def _log_analysis(analysis: DescriptionAnalysis) -> None:
+    logger.info(
+        "Description analysis complete: %d links, %d resources, %d videos, %d social, %d timestamps",
+        len(analysis.links),
+        len(analysis.resources),
+        len(analysis.related_videos),
+        len(analysis.social_links),
+        len(analysis.timestamps),
+    )
+
+
 async def _analyze_description_async(
     description: str, fast_model: str | None = None
 ) -> DescriptionAnalysis:
@@ -140,9 +217,10 @@ async def _analyze_description_async(
 
     Goes through ``call_llm_with_retry`` like every other stage: a Langfuse
     generation on the run's trace, in ``pipeline.timing``, fakeable at the
-    provider's single ``acompletion`` seam — and one retry (a dropped
-    connection is re-sent at once on top of it), so a transient error no
-    longer loses the chapter timestamps the long-video path reads.
+    provider's single ``acompletion`` seam — with one retry (a dropped
+    connection is re-sent at once on top of it) inside a
+    ``DESCRIPTION_TOTAL_SECONDS`` cap. Never raises: a failure is an empty
+    analysis.
 
     Args:
         description: The video description text
@@ -152,73 +230,20 @@ async def _analyze_description_async(
         logger.debug("Description too short for analysis")
         return DescriptionAnalysis()
 
-    # Limit description length to avoid token limits
-    max_chars = 5000
-    if len(description) > max_chars:
-        description = description[:max_chars] + "..."
+    if len(description) > _MAX_DESCRIPTION_CHARS:
+        description = description[:_MAX_DESCRIPTION_CHARS] + "..."
 
     try:
-        prompt_template = load_prompt("description_analysis")
-        # Use .replace() instead of .format() to avoid crashes from literal
-        # braces in LLM prompt templates (e.g., JSON examples with {{}})
-        prompt = prompt_template.replace("{description}", description)
-
-        model = fast_model or settings.llm_fast_model
-        result_text = await call_llm_with_retry(
-            LLMService(LLMProvider(model=model, fast_model=model)),
-            prompt,
-            max_tokens=1500,
-            timeout=30.0,
-            max_retries=DESCRIPTION_MAX_RETRIES,
-            stage_name="description_analysis",
-            use_fast_model=True,
-        )
+        result_text = await _request_analysis(description, fast_model or settings.llm_fast_model)
         if result_text is None:
             logger.warning("Description analysis failed after retries; continuing without it")
             return DescriptionAnalysis()
-        data = parse_json_response(result_text)
-
-        # Parse into dataclasses
-        analysis = DescriptionAnalysis(
-            links=[
-                DescriptionLink(
-                    url=l.get("url", ""), type=l.get("type", "other"), label=l.get("label", "")
-                )
-                for l in data.get("links", [])
-                if l.get("url")
-            ],
-            resources=[
-                Resource(name=r.get("name", ""), url=r.get("url", ""))
-                for r in data.get("resources", [])
-                if r.get("name") and r.get("url")
-            ],
-            related_videos=[
-                RelatedVideo(title=v.get("title", ""), url=v.get("url", ""))
-                for v in data.get("relatedVideos", [])
-                if v.get("url")
-            ],
-            social_links=[
-                SocialLink(platform=s.get("platform", "other"), url=s.get("url", ""))
-                for s in data.get("socialLinks", [])
-                if s.get("url")
-            ],
-            timestamps=_parse_timestamps(data.get("timestamps", [])),
-        )
-
-        logger.info(
-            "Description analysis complete: %d links, %d resources, %d videos, %d social, %d timestamps",
-            len(analysis.links),
-            len(analysis.resources),
-            len(analysis.related_videos),
-            len(analysis.social_links),
-            len(analysis.timestamps),
-        )
-
-        return analysis
-
+        analysis = _parse_analysis(parse_json_response(result_text))
     except Exception as e:
         logger.error("Error analyzing description: %s", e)
         return DescriptionAnalysis()
+    _log_analysis(analysis)
+    return analysis
 
 
 async def analyze_description(
@@ -227,8 +252,8 @@ async def analyze_description(
     """
     Analyze a video description to extract structured data via ``LLMProvider``.
 
-    This is a fast extraction (~1-2 seconds) that runs in parallel with other
-    summarization tasks.
+    One fast-model call (typically a few seconds, never more than
+    ``DESCRIPTION_TOTAL_SECONDS``) that starts at t=0 alongside the transcript.
 
     Args:
         description: The full video description text

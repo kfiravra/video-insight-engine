@@ -13,6 +13,7 @@ from src.models.schemas import ErrorCode, ProcessingStatus
 from src.services.pipeline.extraction_quality import check_extraction_quality
 from src.services.pipeline.extractor import extract
 from src.services.pipeline.memory import format_clock
+from src.services.pipeline.phases.metadata import await_description_analysis
 from src.services.pipeline.pipeline_helpers import normalize_segments, sse_event
 from src.services.pipeline.post_processor import (
     COVERAGE_CRITICAL_RATIO,
@@ -20,26 +21,16 @@ from src.services.pipeline.post_processor import (
     compute_extraction_coverage,
 )
 from src.services.pipeline.prompt_builder import format_gallery_frames_for_extraction
-from src.services.transcript.render import render_transcript
 
 if TYPE_CHECKING:
     from src.services.pipeline.context import PipelineContext
 
 logger = logging.getLogger(__name__)
 
-
-def build_prompt_transcript(ctx: PipelineContext) -> str:
-    """The transcript the extraction prompt reads: ``[m:ss]``-marked, from segments.
-
-    Markers live only in the prompt — ``ctx.clean_text`` (Qdrant, faithfulness)
-    and the S3 blob stay unmarked. The segments are ``ctx.prompt_segments``
-    (sponsor reads cut), the ones plan and memory read. Metadata-only
-    transcripts carry no segments, so they fall back to ``ctx.clean_text``.
-    Speech only: what the frames show travels separately as
-    ``ctx.visual_annotations`` (1c.2).
-    """
-    marked = render_transcript(ctx.prompt_segments, source_language=ctx.source_language_code)
-    return marked or ctx.clean_text
+# The description analysis starts at t=0 under its own 30 s cap and extraction
+# starts after the plan, so it has nearly always landed. This bounds a
+# straggler: the chunked path then goes on without description timestamps.
+_DESCRIPTION_WAIT_SECONDS = 5.0
 
 
 def _record_extraction_coverage(
@@ -158,9 +149,18 @@ def memory_outline_for_chapters(ctx: PipelineContext) -> list[dict[str, str]] | 
     ]
 
 
-def _description_chapters(ctx: PipelineContext) -> list[dict] | None:
+async def _description_chapters(ctx: PipelineContext) -> list[dict] | None:
     """Tier 2 of chapter detection: author-listed timestamps from the description."""
-    da = ctx.description_analysis
+    try:
+        da = await asyncio.wait_for(
+            await_description_analysis(ctx), timeout=_DESCRIPTION_WAIT_SECONDS
+        )
+    except TimeoutError:
+        logger.warning(
+            "Description analysis not ready after %.0fs — chapters without its timestamps",
+            _DESCRIPTION_WAIT_SECONDS,
+        )
+        return None
     if da is None or not getattr(da, "timestamps", None):
         return None
     return [{"seconds": t.seconds, "label": t.label} for t in da.timestamps]
@@ -172,7 +172,8 @@ async def _split_chapters(
     """Chapters for chunked extraction (None = standard extraction).
 
     Sliced from ``ctx.prompt_segments`` — the segments the marked transcript
-    was rendered from — so chapter text and the prompt agree.
+    was rendered from, with the same source-language cleaning — so chapter
+    text and the prompt agree.
     """
     from src.services.transcription.transcript_chunker import split_transcript_into_chapters
 
@@ -182,8 +183,9 @@ async def _split_chapters(
             segments=_segment_dicts(ctx.prompt_segments),
             transcript=prompt_transcript,
             llm_service=ctx.llm_service,
-            description_chapters=_description_chapters(ctx),
+            description_chapters=await _description_chapters(ctx),
             memory_outline=memory_outline_for_chapters(ctx),
+            source_language=ctx.source_language_code,
         )
     except Exception as e:
         logger.warning(
@@ -211,7 +213,9 @@ async def run_phase_extraction(ctx: PipelineContext) -> AsyncGenerator[str, None
         "description": ctx.video_data.description,
     }
 
-    prompt_transcript = build_prompt_transcript(ctx)
+    # Rendered once by the text branch (``[m:ss]`` markers, sponsor reads cut,
+    # source-language cleaning) — the string plan and memory read.
+    prompt_transcript = ctx.prompt_transcript
 
     # Chapter splitting for long videos (> CHUNKED_EXTRACTION_THRESHOLD)
     chapters = None

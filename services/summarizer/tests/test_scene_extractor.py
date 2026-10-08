@@ -12,6 +12,7 @@ from src.services.media.scene_extractor import (
     _dedupe_refined_frames,
     cleanup_temp_dir,
     extract_scene_keyframes,
+    frames_cached,
     persist_vision_descriptions,
 )
 
@@ -30,8 +31,12 @@ def _ready_lowres(tmp_path: Path, order: list[str] | None = None) -> MagicMock:
             order.append("lowres-ready")
         return video
 
+    def closed() -> None:
+        if order is not None:
+            order.append("lowres-closed")
+
     handle.path = path
-    handle.close = AsyncMock()
+    handle.close = AsyncMock(side_effect=closed)
     return handle
 
 
@@ -825,6 +830,7 @@ class TestRunHiresVideo:
         hires_video.start = MagicMock(side_effect=lambda: order.append("start-720p"))
 
         def fake_select(frames, duration):
+            order.append("select")
             if select_raises:
                 raise RuntimeError("boom")
             return frames, frames[:1]
@@ -899,4 +905,58 @@ class TestRunHiresVideo:
     async def test_should_close_the_pass1_download_on_exit(self, tmp_path):
         *_, lowres_video = await self._run(tmp_path, select_raises=True)
 
-        lowres_video.close.assert_awaited_once()
+        lowres_video.close.assert_awaited()
+
+    async def test_should_close_the_pass1_download_as_soon_as_detection_is_done(self, tmp_path):
+        """Regression: the low-res file stayed on disk until the frames phase ended."""
+        _, _, _, order, _ = await self._run(tmp_path)
+
+        assert order.index("lowres-closed") < order.index("select")
+
+
+class TestColdMediaRun:
+    """1a.7: a cold benchmark run never reads the manifest; a normal run still does."""
+
+    @patch("src.services.media.scene_extractor.s3_client")
+    async def test_should_report_no_cached_frames_without_reading_s3_when_skip_cache_is_set(
+        self, mock_s3_client
+    ):
+        mock_s3_client.get_json = AsyncMock(return_value=_valid_manifest())
+
+        cached = await frames_cached("dQw4w9WgXcQ", skip_cache=True)
+
+        assert (cached, mock_s3_client.get_json.await_count) == (False, 0)
+
+    @patch("src.services.media.scene_extractor.settings")
+    @patch("src.services.media.scene_extractor.s3_client")
+    async def test_should_report_cached_frames_when_skip_cache_is_unset(
+        self, mock_s3_client, mock_settings
+    ):
+        mock_settings.SCENE_HIRES_ENABLED = True
+        mock_s3_client.get_json = AsyncMock(return_value=_valid_manifest())
+
+        assert await frames_cached("dQw4w9WgXcQ") is True
+
+    @patch("src.services.media.scene_extractor._do_extraction", new_callable=AsyncMock)
+    @patch("src.services.media.scene_extractor._check_existing_frames", new_callable=AsyncMock)
+    @patch("src.services.media.scene_extractor.settings")
+    async def test_should_extract_fresh_frames_without_a_manifest_lookup_when_skip_cache_is_set(
+        self, mock_settings, mock_check, mock_extract
+    ):
+        mock_settings.SCENE_EXTRACTION_ENABLED = True
+        mock_check.return_value = {
+            "all_frames": [{"index": 0}],
+            "selected_frames": [],
+            "gallery_frames": [],
+        }
+        mock_extract.return_value = {
+            "all_frames": [],
+            "selected_frames": [],
+            "gallery_frames": ["fresh"],
+        }
+
+        result = await extract_scene_keyframes(
+            "dQw4w9WgXcQ", lowres_video=MagicMock(close=AsyncMock()), skip_cache=True
+        )
+
+        assert (result["gallery_frames"], mock_check.await_count) == (["fresh"], 0)

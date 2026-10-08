@@ -107,6 +107,35 @@ class TestExtractFrame:
         assert result is None
 
     @pytest.mark.asyncio
+    async def test_should_kill_ffmpeg_and_reraise_when_an_outer_budget_cancels_it(self):
+        """Regression: an outer cancel left ffmpeg running to write a stray jpg."""
+        proc = MagicMock()
+        proc.returncode = None
+        proc.kill = MagicMock()
+        proc.wait = AsyncMock(return_value=-9)
+        temp_files_created: list[str] = []
+
+        async def _hang() -> tuple[bytes, bytes]:
+            await asyncio.sleep(10)
+            return b"", b""
+
+        async def _create_subprocess(*args, **kwargs):
+            temp_files_created.append(args[-1])
+            return proc
+
+        proc.communicate = AsyncMock(side_effect=_hang)
+        with patch(
+            "src.services.media.frame_extractor.asyncio.create_subprocess_exec",
+            side_effect=_create_subprocess,
+        ):
+            with pytest.raises(asyncio.TimeoutError):
+                await asyncio.wait_for(extract_frame("/tmp/v.mp4", 30), timeout=0.01)
+
+        proc.kill.assert_called_once()
+        proc.wait.assert_awaited_once()
+        assert not any(os.path.exists(path) for path in temp_files_created)
+
+    @pytest.mark.asyncio
     async def test_returns_none_on_unexpected_exception(self):
         with patch(
             "src.services.media.frame_extractor.asyncio.create_subprocess_exec",

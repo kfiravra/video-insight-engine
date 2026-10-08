@@ -14,12 +14,6 @@ from src.services.video.playlist import (
 )
 
 
-@pytest.fixture(autouse=True)
-def _fresh_exit_memory(monkeypatch):
-    """Each test starts with no remembered proxy exit (it is per-process state)."""
-    monkeypatch.setattr(download_utils, "_EXIT_MEMORY", download_utils._ExitMemory())
-
-
 class TestPlaylistVideoInfo:
     """Tests for PlaylistVideoInfo dataclass."""
 
@@ -445,7 +439,7 @@ class TestPlaylistExitRotation:
 
         assert ydl.tried == [_exit(1)]
 
-    def test_should_start_the_next_lookup_from_the_exit_that_worked(self, ydl):
+    def test_should_skip_the_blocked_exit_on_the_next_lookup(self, ydl):
         ydl.errors[_exit(1)] = BOT_CHECK
         _extract_playlist_sync("PLtest123")
         ydl.tried.clear()
@@ -453,6 +447,26 @@ class TestPlaylistExitRotation:
         _extract_playlist_sync("PLtest123")
 
         assert ydl.tried == [_exit(2)]
+
+    def test_should_start_another_playlist_on_the_next_exit(self, ydl):
+        _extract_playlist_sync("PLfirst")
+        ydl.tried.clear()
+
+        _extract_playlist_sync("PLsecond")
+
+        assert ydl.tried == [_exit(2)]
+
+    def test_should_not_record_the_exit_as_working_when_the_lookup_is_empty(self, ydl):
+        """An empty result without a block ends the rotation as a failure, not a success."""
+        ydl.errors[_exit(1)] = "ERROR: [youtube:tab] PLtest123: The playlist does not exist."
+
+        with (
+            patch.object(download_utils, "record_working_exit") as working,
+            pytest.raises(ValueError, match="not found"),
+        ):
+            _extract_playlist_sync("PLtest123")
+
+        working.assert_not_called()
 
     def test_should_make_one_attempt_with_a_single_exit(self, ydl, monkeypatch):
         from yt_dlp.utils import DownloadError
@@ -464,3 +478,14 @@ class TestPlaylistExitRotation:
             _extract_playlist_sync("PLtest123")
 
         assert ydl.tried == [_exit(1)]
+
+
+class TestErrorCapture:
+    def test_should_log_ytdlp_warnings_at_debug_only(self, caplog):
+        """``no_warnings`` is set: a warning line must not reach the WARNING log."""
+        from src.services.video.playlist import _ErrorCapture
+
+        with caplog.at_level("DEBUG", logger="src.services.video.playlist"):
+            _ErrorCapture().warning("Falling back to generic n function search")
+
+        assert [r.levelname for r in caplog.records] == ["DEBUG"]

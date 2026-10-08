@@ -180,6 +180,18 @@ def _chapter(index: int) -> ChapterChunk:
     )
 
 
+def _force_split_chunk(index: int, *, start: float, text: str) -> ChapterChunk:
+    return ChapterChunk(
+        index=index,
+        title=f"Part {index + 1}",
+        start_seconds=start,
+        end_seconds=start + 900.0,
+        text=text,
+        source="force_split",
+        token_estimate=60_000,  # one chunk per batch
+    )
+
+
 def _triage() -> TriageResult:
     return TriageResult(content_tags=["food"], primary_tag="food", tabs=[])
 
@@ -227,6 +239,42 @@ class TestChunkedBatches:
         assert (
             "[5:10]" in tails[False] and "[9:00]" in tails[False] and "[0:05]" not in tails[False]
         )
+
+    async def test_should_send_no_visual_guide_to_a_batch_without_annotations(self):
+        prompt = ExtractionPrompt(
+            system="RULES",
+            head="<transcript>\n{transcript}\n</transcript>",
+            tail=(
+                "<your_job>\n{batch_context}JOB\n</your_job>\n\n"
+                "<visual_context_guide>\nGUIDE\n</visual_context_guide>\n\n"
+                "{visual_annotations}\n\n"
+            ),
+            visual_annotations=_ANNOTATIONS,
+        )
+
+        sent = await _run_chunked(prompt, [_chapter(0), _chapter(1), _chapter(2)])
+
+        tails = {b[1]["text"].split("BATCH ")[1][0]: b[1]["text"] for b in sent}
+        assert ("GUIDE" in tails["2"], "GUIDE" in tails["3"]) == (True, False)
+
+    async def test_should_put_a_frame_at_a_force_split_boundary_with_its_marker(self):
+        # Batch 2 opens mid-block: its text continues the [15:00] block of batch 1,
+        # and its own first marker is [15:20].
+        first = _force_split_chunk(0, start=0.0, text="[0:00] a. [15:00] the sauce goes")
+        second = _force_split_chunk(1, start=900.0, text="in now. [15:20] stir it.")
+        prompt = ExtractionPrompt(
+            system="RULES",
+            head="{transcript}",
+            tail="{batch_context}\n{visual_annotations}",
+            visual_annotations=(
+                "<visual_annotations>\n[15:05] Sauce pot\n[15:25] Stirring\n</visual_annotations>"
+            ),
+        )
+
+        sent = await _run_chunked(prompt, [first, second])
+
+        tails = {("BATCH 1" in b[1]["text"]): b[1]["text"] for b in sent}
+        assert ("Sauce pot" in tails[True], "Stirring" in tails[False]) == (True, True)
 
     @pytest.mark.parametrize(("parallel", "expected"), [(False, 1), (True, 3)])
     async def test_should_cap_concurrency_by_extraction_parallel(

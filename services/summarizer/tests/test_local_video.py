@@ -14,15 +14,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.services.media import download_utils, local_video
+from src.services.media import local_video
 
 VIDEO_ID = "dQw4w9WgXcQ"
-
-
-@pytest.fixture(autouse=True)
-def _fresh_exit_memory(monkeypatch):
-    """Each test starts with no remembered proxy exit (it is per-process state)."""
-    monkeypatch.setattr(download_utils, "_EXIT_MEMORY", download_utils._ExitMemory())
 
 
 def _fake_proc(returncode: int = 0, stderr: bytes = b"") -> MagicMock:
@@ -245,6 +239,21 @@ async def test_outer_cancellation_kills_process_cleans_and_reraises(monkeypatch,
     assert not Path(created[0]).exists()
 
 
+@pytest.mark.parametrize("download", ["download_video_720p", "download_video_lowres"])
+async def test_should_remove_the_temp_dir_when_spawning_fails_with_an_os_error(
+    monkeypatch, tmp_path, download
+):
+    """Regression: only a cancel cleaned up — EMFILE/EACCES left the dir behind."""
+    created = _capture_temp_dirs(monkeypatch, tmp_path)
+    spawn = AsyncMock(side_effect=OSError(24, "Too many open files"))
+
+    with patch.object(local_video.asyncio, "create_subprocess_exec", spawn):
+        with pytest.raises(OSError, match="Too many open files"):
+            await getattr(local_video, download)(VIDEO_ID)
+
+    assert not Path(created[0]).exists()
+
+
 def test_cleanup_tolerates_missing_dir(tmp_path):
     local_video.cleanup_local_video(str(tmp_path / "never-created"))
 
@@ -397,12 +406,22 @@ class TestProxyExitRotation:
         assert not any("pass@" in arg for argv in ytdlp.argvs for arg in argv)
         local_video.cleanup_local_video(result[1])
 
-    async def test_should_start_the_next_download_from_the_exit_that_worked(self, ytdlp):
+    async def test_should_skip_the_blocked_exit_on_the_next_download(self, ytdlp):
         ytdlp.stderr_by_exit[_exit(1)] = BOT_CHECK
         first = await local_video.download_video_lowres(VIDEO_ID)
         ytdlp.tried.clear()
 
-        second = await local_video.download_video_lowres(VIDEO_ID)
+        second = await local_video.download_video_720p(VIDEO_ID)
+
+        assert first is not None and second is not None and ytdlp.tried == [_exit(2)]
+        for result in (first, second):
+            local_video.cleanup_local_video(result[1])
+
+    async def test_should_start_another_videos_download_on_the_next_exit(self, ytdlp):
+        first = await local_video.download_video_lowres(VIDEO_ID)
+        ytdlp.tried.clear()
+
+        second = await local_video.download_video_lowres("jNQXAC9IVRw")
 
         assert first is not None and second is not None and ytdlp.tried == [_exit(2)]
         for result in (first, second):

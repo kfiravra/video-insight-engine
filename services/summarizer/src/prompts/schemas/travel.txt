@@ -44,12 +44,11 @@ Extract a complete, actionable trip plan.
       "item": "Destination-specific item",
       "category": "Essentials | Clothing | Electronics | Documents | Health",
       "essential": true,
-      "weight": 0.4,
+      "weight": null,
       "emoji": "🎒"
     }
   ],
 > UI: Packing list → PackingMission drag-into-suitcase. `weight` powers the kg tally as items move into the suitcase; `essential` flags items that fire the missing-essentials warning when the user has packed >80% of non-essentials but skipped a flagged one.
-> Weight: numeric kg per item (e.g. 0.2 for sunscreen, 1.5 for hiking boots) only when the video states it. Omit `weight` when not stated — never estimate it, never use 0.
 
   "accommodationTips": [
     {"text": "Where to stay, neighborhood recommendation", "type": "tip | warning | info"}
@@ -80,4 +79,5 @@ RULES:
 - Include all spots/attractions mentioned in the video
 - Budget should reflect what the video states, not generic estimates
 - Packing list should be destination-specific
+- Packing `weight` is a number in kg per item (e.g. 0.2 for sunscreen, 1.5 for hiking boots), only when the video states it. Omit `weight` when not stated — never estimate it, never use 0
 </domain_schema>

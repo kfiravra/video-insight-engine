@@ -99,10 +99,7 @@ class ReplayStubs:
             caption_lang=spec.caption_lang,
         )
 
-    async def extract_video_data(self, youtube_id: str, *, with_captions: bool = True) -> VideoData:
-        if with_captions:
-            await self.sleep("metadata")
-            return self.video_data()
+    async def extract_video_data(self, youtube_id: str) -> VideoData:
         info_seconds, _ = self._metadata_split()
         await self._sleep_recorded(info_seconds)
         data = self.video_data()
@@ -147,8 +144,8 @@ class ReplayStubs:
     # ─── OCR (frames phase) ───
 
     async def process_scene_frames(
-        self, extraction_result: dict[str, Any], youtube_id: str, clean_text: str | None = None
-    ) -> tuple[dict[str, Any], str, str | None]:
+        self, extraction_result: dict[str, Any], youtube_id: str
+    ) -> tuple[dict[str, Any], str]:
         await self.sleep("ocr")
 
         def enrich(frame: dict[str, Any]) -> dict[str, Any]:
@@ -167,7 +164,7 @@ class ReplayStubs:
             }
             for f in result.get("selected_frames", [])
         ]
-        return result, sse_event("frames", {"videoId": youtube_id, "frames": payload}), None
+        return result, sse_event("frames", {"videoId": youtube_id, "frames": payload})
 
     # ─── Assembly ───
 

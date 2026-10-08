@@ -276,7 +276,9 @@ async def get_transcript(video_id: str) -> tuple[list[dict], str, str, str | Non
     Raises:
         TranscriptError: If transcript cannot be fetched
     """
-    exit_urls = ytdlp_proxy_exit_urls()
+    # Keyed by the video so the caption API starts on the job's exit (1a.6
+    # round-robin), the same one its yt-dlp calls use.
+    exit_urls = ytdlp_proxy_exit_urls(video_id)
     if len(exit_urls) > 1:
         return await asyncio.to_thread(_fetch_rotating_sync, video_id, exit_urls)
     return await asyncio.to_thread(_fetch_transcript_sync, video_id)

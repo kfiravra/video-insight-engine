@@ -130,7 +130,7 @@ from src.services.transcription.transcript import get_transcript
 from src.services.transcription.transcript_store import transcript_store
 from src.services.video.youtube import (
     _build_yt_dlp_opts, _extract_with_retry, _fetch_picked_track, _pick_subtitle_url,
-    extract_video_data)
+    extract_video_data, fetch_video_captions)
 
 def golden_track(vid, lang):
     info = _extract_with_retry(f"https://www.youtube.com/watch?v={vid}", _build_yt_dlp_opts())
@@ -157,6 +157,7 @@ async def transcript(vid, lang, d):
 
 async def main(vid, lang):
     d = await extract_video_data(vid)
+    await fetch_video_captions(d)
     ctx = d.context
     out = {"title": d.title, "channel": d.channel, "duration": d.duration,
            "description": d.description, "tags": ctx.tags if ctx else [],

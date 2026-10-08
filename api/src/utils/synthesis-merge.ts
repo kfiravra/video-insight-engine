@@ -1,3 +1,4 @@
+import { filledSynthesisFields } from '@vie/types';
 import type { SynthesisFields } from '../schemas/synthesis-event.schema.js';
 
 /** Filter + `$set` that merge one `synthesis_complete` emission into the cache doc. */
@@ -8,16 +9,6 @@ export interface SynthesisMerge {
   set: Record<string, unknown>;
 }
 
-/** Only the fields that carry content — an empty string or array never counts as "set". */
-function filledFields(synthesis: SynthesisFields): SynthesisFields {
-  const filled: SynthesisFields = {};
-  if (synthesis.tldr) filled.tldr = synthesis.tldr;
-  if (synthesis.keyTakeaways?.length) filled.keyTakeaways = synthesis.keyTakeaways;
-  if (synthesis.masterSummary) filled.masterSummary = synthesis.masterSummary;
-  if (synthesis.seoDescription) filled.seoDescription = synthesis.seoDescription;
-  return filled;
-}
-
 /**
  * Build the update for one emission, or null when it carries nothing (the
  * failure-path all-empty event). The full superset carries a masterSummary and
@@ -26,7 +17,7 @@ function filledFields(synthesis: SynthesisFields): SynthesisFields {
  * either emission is idempotent.
  */
 export function buildSynthesisMerge(synthesis: SynthesisFields): SynthesisMerge | null {
-  const filled = Object.entries(filledFields(synthesis));
+  const filled = Object.entries(filledSynthesisFields(synthesis));
   if (filled.length === 0) return null;
   const set = Object.fromEntries(filled.map(([key, value]) => [`synthesis.${key}`, value]));
   const guard = synthesis.masterSummary

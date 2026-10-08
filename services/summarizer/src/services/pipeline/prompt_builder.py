@@ -111,10 +111,11 @@ def load_prompt_with_fallback(*, langfuse_name: str, fallback_path: Path) -> str
       * When the prompt isn't registered yet, the local file is used.
       * Any SDK exception is swallowed by ``fetch_prompt_with_obj``.
       * When the registry version's ``{placeholder}`` set differs from the
-        local file's, the local file is used (warned once per name) — the code
-        renders the file it shipped with, so deploying and registering a
-        reworked prompt are safe in either order. Wording-only registry edits
-        keep the same slots and still win.
+        local file's, the local file is used (warned once per name), so the
+        code never renders a template whose slots it does not fill.
+        A wording-only change to the local file keeps the same slots, so the
+        registry's older text still wins until the file is registered
+        (``vie-langfuse-init`` re-registers every prompt on compose up).
 
     Side effect: when the registry text is used, the full Prompt object is
     recorded via :func:`record_active_prompt` so subsequent LLM generations

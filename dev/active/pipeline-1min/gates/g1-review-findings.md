@@ -117,3 +117,54 @@ Recipe: `review-p1.md`. One review agent per task-id group (24 groups for 56 com
 - [W] maintainability | tests/test_frame_intelligence_integration.py 503→559, faithfulness.py 526→528 | fix: move TestVisualAnnotationsIntegration
 - [W] docs | summarizer-workflow.md:140-146,256,345; ARCHITECTURE.md:180,268; SERVICE-SUMMARIZER.md:355-356; API-REFERENCE.md:1364; frames.py:89 | Phase 2.5 injection still described | fix: docs sweep
 
+## G23 p1d.8 (00a68bc 2673fd4) — C=0 W=7
+- [W] security | services/assistant/src/repositories/video_repository.py:49 (+ api/src/routes/assistant-action.routes.ts:39) | get_video_context find_one({"youtubeId"}) without isLatest/evalRun filter; the action route forwards a client video_id without an ownership check → another user can get the eval row as context (breaks D25) | fix: filter isLatest (or evalRun≠true, sort version desc) + userHasAccessToSummary on the route
+- [W] possible bug | api/src/services/video.service.ts:232 | eval and user bypass number versions from the same unlocked read → concurrent eval + user retry collide (E11000 → "Version conflict", latest row already demoted → no isLatest row) | fix: retry numbering on E11000 for eval; demote only after a successful insert (or restore on failure)
+- [W] best practice | video.service.ts:243 | insertVersion ~55 lines | fix: extract startVersionRun / repointUserVideo
+- [W] maintainability | video.service.ts 784→838, video.repository.ts 571→607 | fix: split version logic into video-version.service.ts / .repository.ts
+- [W] maintainability | phases/assembly.py:244 | eval branch grows run_phase_assembly | fix: _write_shared_artifacts(ctx, result) with one eval_run check
+- [W] docs | DATA-MODELS.md:404; IDEMPOTENCY.md | evalRun / isEvalUser / per-pool prune + shared numbering undocumented | fix: document
+
+## G22 p1d.6 (24da9a9) — C=0 W=4
+- [W] possible bug | config.py:117-123 (+ :349-351, INFRASTRUCTURE.md:343) | EXTRACTION_PARALLEL_BATCHES semaphore is per run → × WORKER_CONCURRENCY 2 = 12 extraction calls in flight per worker (+ 5 vision/run); WORKER_CONCURRENCY comment stale; per-run 429 counter can't see cross-run 429s | fix: document per-run × concurrency (or module-level semaphore if 6 is meant per process); rewrite the WORKER_CONCURRENCY rationale
+- [W] docs | PROJECT-BRIEFING.md:205 | deleted CHAPTER_BATCH_SIZE + batches=2 still documented | fix: docs sweep
+- [W] docs | tests/conftest.py:29-30 | docstring says vision pinned to haiku | fix: update docstring
+- [W] possible bug | tests/test_config.py:15 | parents[3] at import → IndexError in a container (skip guard dead) | fix: lazy root + skip, or drop the container wording
+
+## G18 p1d.2+1d.7 (40106f5 afa1f09) — C=0 W=4
+- [W] possible bug | assembly/core.py:567 | demotion_blocked / ruled_out_by_evidence use only primary_tag's gates → a travel-tagged Montreal vlog can still demote info_grid → checklist (golden forbidden gates strictly now) | fix: union of gates over all triage.contentTags + test
+- [W] maintainability | core.py:554 vs domain_config.py:139/149 | D15 rule duplicated; effective_requirements(evidence=) unused in prod (dup of G08) | fix: one public ruled_out_requirements(domain, evidence)
+- [W] test gap | phases/assembly.py:131 | no test that the persisted pipeline.assembly has tabsDropped without evidence skips while droppedTabs lists them | fix: _drop_accounting test
+- [W] maintainability | core.py 1804→1899 | fix: move requirement/evidence/quiz-order helpers to assembly/requirements.py (pure move)
+
+## G20 p1d.4 (ec5f68e c94ea68) — C=1 W=6
+- [C] bug | tests/replay/media_fakes.py:292 (+ build_cassette.py:12,288,323) | replay reads scenes-v3 hard-coded → 5 replay media tests red since c94ea68 (confirmed) | FIXED IN TREE (settings.SCENE_S3_PREFIX) — replay 123 passed
+- [W] bug | scripts/spotcheck_frame_vision.py:52-55, scripts/benchmark_fast_models.py:57-60 | import deleted VISION_ANALYSIS_PROMPT → ImportError | fix: load_vision_prompt + count line, or delete the scripts + doc ref
+- [W] performance | frame_analyzer.py:217 (+:304-313) | per-batch timeout max(90, 4 s×frames) = 90 s; retry with 90 s again; no stage deadline → worst case ~191 s vs measured 15–19 s | fix: size from expected wall (clamp 2×(6.6+16.2×max_tokens/1000), 30, 90); skip retry after a full timeout or one stage deadline keeping finished batches
+- [W] possible bug | scene_detect.py:76 (+ frame_scorer.py:111, frame_ocr.py 0.15, frame_analyzer.py:48) | thresholds tuned on upscaled frames; native 640×360 shifts sharpness/text gates (selection overlap 0.58/0.67) | fix: recalibrate on native frames + pin with tests, or tracked follow-up
+- [W] test gap | tests/test_frame_vision_batching.py:113-121 | FRAME_VISION_PARALLEL=false end-to-end mapping untested | fix: one-call test asserting labels/timestamps
+- [W] docs | summarizer-workflow.md:139; config.py:313, .env.example:344 | vision prompt/model stale; scenes-v4 meaning undocumented | fix: docs
+
+## G19 p1d.3 (907a910 1e5bfcd) — C=0 W=5
+- [W] possible bug | pipeline_orchestration.py:242 | the quiz runs alone BEFORE assembly → no tab until it finishes (≤ 30 s) — breaks "never blocks tabs" (1d.1) | fix: start the quiz as a task, emit non-quiz tabs, then add the quiz tab last (re-send quick_quiz hosts like the overview)
+- [W] possible bug | phases/assembly.py:67 | memory failed → seed_synthesis_dict {} → assemble_response gets synthesis=None → the min-3-tab Key Info fallback (core.py:1327) can't fire | fix: run synthesis before _assemble when needs_hero_fallback(ctx.memory) + test
+- [W] maintainability | scripts/_bench_quality_scorers.py:95 | score_synthesis still weights tldr/key_takeaways (always empty now) | fix: score masterSummary + seo only
+- [W] docs | SERVICE-SUMMARIZER.md:80,434-438,577; summarizer-workflow.md:195-200,378; ARCHITECTURE.md:28,320 | old synthesis order/budget | fix: docs
+- [W] maintainability | phases/enrichment.py:33 | docstring says quiz runs alongside synthesis | fix: update
+
+## G17 p1d.1 (abf8f87) — C=0 W=5
+- [W] performance | pipeline_orchestration.py:242 | quiz before assembly blocks tabs (dup of G19)
+- [W] performance | enrichment.py:103 | needs_quiz true for nearly every learning/tech/science/language plan (any list host) though quick_quiz shows only on ≤ 4-item hosts → paid, unseen quizzes | fix: require a sparse host (brief.expect ≤ _SPARSE_THRESHOLD) or keep strip-only quizzes off the critical path
+- [W] possible bug | pipeline_types.py:58 | QuizQuestion accepts duplicate options | fix: reject duplicates (casefold) + test
+- [W] best practice | enrichment.py:206 | 30 s asyncio.timeout cancels the attempt (CancelledError) → no failure record; 25 s attempt + 1 s leaves ~4 s for the retry | fix: attempt timeout ~14 s; record_llm_failure on TimeoutError
+- [W] maintainability | scripts/benchmark_fast_models.py:346 + _bench_quality_scorers.py:122 | enrichment bench runs non-quiz domains and scores dead fields | fix: skip non-quiz domains; score quiz only
+
+## G21 p1d.5 (90576a0 124c693 e08e44a cadf9cf e6fc9fa) — C=2 W=5
+- [C] bug | worker/pipeline.py:85/:100 | the completed-row skip also skips the API's stale-pipelineVersion regen (video.service.ts:373/:510 re-dispatch WITHOUT resetting status) → after the v9 bump every "regenerating" response runs nothing | fix: skip only when completed AND pipelineVersion == settings.PIPELINE_VERSION (or the API sets pending before re-dispatch) + test
+- [C] bug | worker/pipeline.py:55/:91-100 | _is_completed catches only OSError (pymongo AutoReconnect/NetworkTimeout/ServerSelectionTimeoutError are PyMongoError) and the post-lock recheck sits before produce_to_broker's try/finally → a Mongo blip leaves the Redis lock held 600 s, the retry is skip_locked-acked → job lost | fix: catch (OSError, PyMongoError); try/except BaseException → release_lock + re-raise; AutoReconnect test
+- [W] possible bug | llm_retry.py:325 | a non-retryable error on the FALLBACK attempt (401 missing key / 400) propagates → crash instead of None | fix: on fallback attempts catch Exception → record + (None, e); test P429,P429,F401 → None
+- [W] performance | description_analyzer.py:171 | 2×30 s + backoff ≈ 61 s worst case on the phase-2 group (comment says off the critical path) | fix: 30 s total (≈14 s per attempt or asyncio.timeout(30)); fix the comment
+- [W] possible bug | pipeline_orchestration.py:228 | extraction now in a task → later untagged calls (translation) inherit "summarize:metadata" → ledger/timing misattribute translation cost | fix: llm_feature_var.set("summarize:translation") in run_phase_translation (+ any inline call) + test
+- [W] best practice | output_chunker.py 681→685 | split deferred (4.1)
+- [W] best practice | description_analyzer.py:136 | _analyze_description_async ~87 lines | fix: extract _parse_analysis / _request_analysis
+

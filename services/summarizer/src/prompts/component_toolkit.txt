@@ -149,7 +149,7 @@ ACTION — user completes a task:
     GOOD FOR: Cooking, building, installing, setup, language drills.
 
   step_flow_canvas  ⭐ NEW (for long processes) — frame-aware
-    PICK WHEN: 6+ steps that benefit from a visual map of progress
+    PICK WHEN: {step_flow_threshold}+ steps that benefit from a visual map of progress
       (multi-stage projects, recipes with 8+ stages, complex installs).
     SHIPS: Zigzag node graph (React Flow), animated edges on completion,
       thumbnail + checkbox + timer per node.

@@ -144,9 +144,12 @@ async def _check_existing_frames(video_id: str) -> dict | None:
         return None
 
 
-async def frames_cached(video_id: str) -> bool:
-    """True when a usable frame manifest exists — the run then downloads no video early."""
-    if not YOUTUBE_ID_RE.match(video_id):
+async def frames_cached(video_id: str, *, skip_cache: bool = False) -> bool:
+    """True when a usable frame manifest exists — the run then downloads no video early.
+
+    ``skip_cache`` (cold-media benchmark run) answers False without reading S3.
+    """
+    if skip_cache or not YOUTUBE_ID_RE.match(video_id):
         return False
     return await _check_existing_frames(video_id) is not None
 
@@ -338,6 +341,7 @@ async def extract_scene_keyframes(
     hires_video: LocalHiresSource | None = None,
     lowres_video: LocalLowresSource | None = None,
     resolve_reselect: ReselectResolver | None = None,
+    skip_cache: bool = False,
 ) -> dict:
     """Extract keyframes at scene change boundaries with smart selection.
 
@@ -355,6 +359,8 @@ async def extract_scene_keyframes(
             closed here once detection is done. None = download one here.
         resolve_reselect: Awaited just before Step 6b; its answer replaces
             ``overselect_count`` + ``reselect_hook`` (the tier is decided late).
+        skip_cache: Cold-media benchmark run — ignore the S3 frame manifest and
+            extract; the fresh frames and manifest are still uploaded.
 
     Returns:
         Dict with 'all_frames', 'selected_frames', 'gallery_frames' keys.
@@ -375,7 +381,7 @@ async def extract_scene_keyframes(
     async with lock:
         try:
             # Check S3 first — skip extraction if frames already exist
-            existing = await _check_existing_frames(video_id)
+            existing = None if skip_cache else await _check_existing_frames(video_id)
             if existing:
                 # Cached frames: an early pass-1 download is moot.
                 if lowres_video is not None:
@@ -439,6 +445,10 @@ async def _do_extraction(
             temp_dir=temp_dir,
             threshold=threshold,
         )
+        # Nothing reads the pass-1 file after detection (scoring and the
+        # per-frame fallback use the JPEGs in frames_dir): free the disk now,
+        # not when the frames phase ends.
+        await lowres_video.close()
         if not all_frames:
             logger.info("No candidate frames for %s (every ladder rung failed)", video_id)
             return empty_result
@@ -565,8 +575,9 @@ async def _do_extraction(
         logger.warning("Scene extraction failed for %s: %s", video_id, e)
         return empty_result
     finally:
-        # Delete the pass-1 video now (large, ~5-75MB) — nothing reads it after
-        # detection. The 720p file is the run's and stays for moment fill.
+        # A failure before detection finished still deletes the pass-1 video
+        # (~5-75MB); close() is idempotent. The 720p file is the run's and
+        # stays for moment fill.
         # NOTE: frames_dir stays — OCR needs the frame JPEGs; cleanup via
         # cleanup_temp_dir() after process_scene_frames().
         await lowres_video.close()

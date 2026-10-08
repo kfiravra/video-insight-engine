@@ -39,7 +39,7 @@ THINKING GUIDE:
       "timestamp": 0
     }
   ],
-> UI: walkthrough → StepFlowCanvas. Ordered route stages; 6+ stages drive the canvas graph.
+> UI: walkthrough → StepFlowCanvas. Ordered route stages, in play order.
   "rankings": [
     {
       "item": "Thing being ranked (character, weapon, map)",

@@ -1,7 +1,7 @@
 """Tests for the exact-timestamp frame fill (moment_track image guarantee).
 
 Every seek reads the run's one local 720p file (``LocalHiresSource``); the fill
-never downloads on its own.
+starts that download only when nothing did (manifest cache hit), never a second one.
 """
 
 from __future__ import annotations
@@ -205,15 +205,47 @@ async def test_should_short_circuit_without_targets():
     s3.is_available.assert_not_called()
 
 
+def _run_source(monkeypatch, tmp_path: Path, *, started: bool):
+    """A real LocalHiresSource whose one yt-dlp download is faked."""
+    from src.services.media import hires_prefetch
+
+    local_dir = tmp_path / "vie-hires"
+    local_dir.mkdir()
+    video = local_dir / "yt123.mp4"
+    video.write_bytes(b"720p")
+    download = AsyncMock(return_value=(video, str(local_dir)))
+    monkeypatch.setattr(hires_prefetch, "download_video_720p", download)
+    source = hires_prefetch.LocalHiresSource("yt123")
+    if started:
+        source.start()
+    return source, download
+
+
 @pytest.mark.parametrize("started", [True, False])
-async def test_should_never_download_on_its_own(started: bool):
+async def test_should_download_the_run_file_at_most_once(started, monkeypatch, tmp_path):
     """The fill reads the run's file only — no second 720p download, ever."""
+    source, download = _run_source(monkeypatch, tmp_path, started=started)
     items = [{"label": f"m{i}", "seconds": 100 + i * 60} for i in range(3)]
     with (
         patch.object(mff, "s3_client", _patched_s3()),
         patch.object(mff, "extract_frame", AsyncMock(return_value=b"jpeg")),
-        patch("src.services.media.local_video.download_video_720p", AsyncMock()) as download,
     ):
-        await mff.fill_moment_frames([_moment_tab(items)], "yt123", _handle(started=started))
+        filled = await mff.fill_moment_frames([_moment_tab(items)], "yt123", source)
 
-    download.assert_not_awaited()
+    assert (filled, download.await_count) == (3, 1)
+
+
+async def test_should_leave_seek_time_when_it_starts_the_download_itself(monkeypatch, tmp_path):
+    """Regression: a fill-started download ran under the 180 s download timeout,
+    longer than the whole 150 s fill budget — it could fill nothing."""
+    source, download = _run_source(monkeypatch, tmp_path, started=False)
+    items = [{"label": f"m{i}", "seconds": 100 + i * 60} for i in range(3)]
+    with (
+        patch.object(mff, "s3_client", _patched_s3()),
+        patch.object(mff, "extract_frame", AsyncMock(return_value=b"jpeg")),
+    ):
+        await mff.fill_moment_frames([_moment_tab(items)], "yt123", source)
+
+    download.assert_awaited_once_with(
+        "yt123", mff._FILL_TIMEOUT - mff._FILL_SEEK_RESERVE, purpose="prefetch"
+    )

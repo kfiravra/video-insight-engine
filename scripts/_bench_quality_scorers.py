@@ -85,24 +85,22 @@ def score_description(baseline: Any, candidate: Any) -> float:
 def score_synthesis(baseline: Any, candidate: Any) -> float:
     """Score synthesis output (SynthesisResult Pydantic model).
 
-    Penalizes missing/empty fields and length anomalies (>3× baseline or
-    <0.25× baseline on master_summary).
+    Synthesis writes only master_summary + seo_description now (tldr and
+    key_takeaways come from video memory), so only those two are weighed:
+    master_summary present and within 0.25×–3× the baseline length, and a
+    seo_description of at least 30 characters.
     """
     if baseline is None or candidate is None:
         return 0.0
 
     score = 0.0
-    if candidate.tldr and len(candidate.tldr.strip()) >= 20:
-        score += 0.25
-    if candidate.key_takeaways and len(candidate.key_takeaways) >= max(2, len(baseline.key_takeaways) // 2):
-        score += 0.25
     if candidate.master_summary:
         base_len = len(baseline.master_summary or "")
         cand_len = len(candidate.master_summary)
         if base_len == 0 or 0.25 <= cand_len / max(base_len, 1) <= 3.0:
-            score += 0.25
+            score += 0.5
     if candidate.seo_description and len(candidate.seo_description.strip()) >= 30:
-        score += 0.25
+        score += 0.5
 
     return round(score, 4)
 
@@ -111,33 +109,20 @@ def score_synthesis(baseline: Any, candidate: Any) -> float:
 
 
 def score_enrichment(baseline: Any, candidate: Any) -> float:
-    """Score enrichment output (EnrichmentData).
+    """Score enrichment output (EnrichmentData) — the quiz is all it writes now.
 
-    Equally weight quiz/flashcards/scenarios/cheat_sheet count ratios.
-    Each is scored 0.0 if absent on candidate but present on baseline.
+    Quiz question count ratio against the baseline; 0.0 when the baseline
+    wrote a quiz and the candidate didn't, 1.0 when neither did.
     """
     if baseline is None or candidate is None:
         return 0.0
-
-    fields = [("quiz", 0.35), ("flashcards", 0.35), ("scenarios", 0.15), ("cheat_sheet", 0.15)]
-    total = 0.0
-    weight_sum = 0.0
-    for field, weight in fields:
-        b = getattr(baseline, field, None)
-        c = getattr(candidate, field, None)
-        if b is None and c is None:
-            continue  # neither domain supports this — exclude from weighting
-        weight_sum += weight
-        if not b:
-            total += weight  # baseline absent, candidate-anything is fine
-            continue
-        if not c:
-            continue  # baseline had it, candidate empty → 0
-        total += weight * _ratio(len(c), len(b))
-
-    if weight_sum == 0:
+    base_quiz = getattr(baseline, "quiz", None)
+    cand_quiz = getattr(candidate, "quiz", None)
+    if not base_quiz:
         return 1.0
-    return round(total / weight_sum, 4)
+    if not cand_quiz:
+        return 0.0
+    return round(_ratio(len(cand_quiz), len(base_quiz)), 4)
 
 
 # ─── translation ────────────────────────────────────────────────────────────

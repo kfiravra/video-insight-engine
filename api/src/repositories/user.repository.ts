@@ -124,6 +124,19 @@ export class UserRepository {
     return user?.isEvalUser === true;
   }
 
+  /**
+   * Whether the user may submit a cold-media benchmark run (1a.7): the admin
+   * role or the eval account, both DB-only flags no request can set. Same
+   * strict checks as `isEvalUser`.
+   */
+  async mayRunCold(userId: string): Promise<boolean> {
+    const user = await this.collection.findOne(
+      { _id: new ObjectId(userId) },
+      { projection: { isEvalUser: 1, role: 1 } }
+    );
+    return user?.isEvalUser === true || user?.role === 'admin';
+  }
+
   async findByPaddleCustomerId(customerId: string): Promise<UserDocument | null> {
     return this.collection.findOne({ paddleCustomerId: customerId });
   }

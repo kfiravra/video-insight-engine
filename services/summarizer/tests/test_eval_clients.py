@@ -96,6 +96,12 @@ class TestRunPipeline:
         await _eval_api.run_pipeline(_API, _URL, "t", bypass_cache=True)
         assert api.posts == [{"url": _URL, "bypassCache": True}]
 
+    async def test_should_send_cold_when_a_cold_run_is_requested(self, mount) -> None:
+        api = FakeApi()
+        mount(api)
+        await _eval_api.run_with_reauth(_API, _URL, "t", bypass_cache=True, cold=True)
+        assert api.posts == [{"url": _URL, "bypassCache": True, "cold": True}]
+
     async def test_should_return_tabs_duration_and_summary_id_when_completed(self, mount) -> None:
         mount(FakeApi())
         out = await _eval_api.run_pipeline(_API, _URL, "t")

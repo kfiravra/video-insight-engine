@@ -1,11 +1,9 @@
 """Tests for advanced transcript cleaning service."""
 
-import pytest
-
 from src.services.transcript.cleaner import (
-    remove_fillers,
-    collapse_repetitions,
     clean_transcript_advanced,
+    collapse_repetitions,
+    remove_fillers,
 )
 
 
@@ -63,6 +61,17 @@ class TestRemoveFillers:
 
     def test_should_drop_a_comma_stranded_at_the_start(self):
         assert remove_fillers("Um, so we go") == "so we go"
+
+    def test_should_keep_an_abbreviation_comma_when_a_filler_is_removed_elsewhere(self):
+        text = "Use e.g., flour, um, and sugar."
+
+        assert remove_fillers(text) == "Use e.g., flour, and sugar."
+
+    def test_should_keep_the_comma_after_an_initialism_when_a_filler_is_removed(self):
+        assert remove_fillers("In the U.S., um, people bake") == "In the U.S., people bake"
+
+    def test_should_drop_the_comma_a_mid_sentence_filler_carried(self):
+        assert remove_fillers("and um, then we bake") == "and then we bake"
 
     def test_should_leave_punctuation_alone_when_nothing_was_removed(self):
         text = "Use e.g., flour , or  sugar."

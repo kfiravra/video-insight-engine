@@ -45,7 +45,12 @@ async def _fetch_with_trail(
     got_transcript = False
     try:
         async for item in fetch_transcript(
-            ctx.youtube_id, video_data, video_data.duration, is_music=is_music, trail=trail
+            ctx.youtube_id,
+            video_data,
+            video_data.duration,
+            is_music=is_music,
+            trail=trail,
+            skip_cache=getattr(ctx, "cold_media", False),
         ):
             if not isinstance(item, str):
                 got_transcript = True

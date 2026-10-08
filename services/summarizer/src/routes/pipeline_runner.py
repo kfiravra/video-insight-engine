@@ -136,6 +136,10 @@ async def stream_summarization(
         eval_run = bool(entry.get("evalRun"))
         if eval_run:
             trace_metadata["evalRun"] = True
+        # 1a.7: the API stamps admin/eval benchmark rows that must measure cold media.
+        cold_media = bool(entry.get("coldMedia"))
+        if cold_media:
+            trace_metadata["coldMedia"] = True
         async with pipeline_trace(
             video_summary_id,
             tags=trace_tags,
@@ -215,6 +219,7 @@ async def stream_summarization(
                 lowres_video=LocalLowresSource(youtube_id),
                 hires_video=LocalHiresSource(youtube_id),
                 eval_run=eval_run,
+                cold_media=cold_media,
             )
 
             async for event in run_pipeline_phases(ctx, repository, video_summary_id, timer):

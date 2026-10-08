@@ -34,6 +34,8 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
+from src.config import settings
+
 from PIL import Image
 
 from src.services.media.s3_client import S3Client
@@ -289,7 +291,7 @@ class MediaFakes:
 
     def scene_manifest(self) -> dict[str, Any] | None:
         """The frame manifest the real extractor wrote (its uploaded selection)."""
-        key = f"videos/{self.cassette.video_id}/scenes-v3/manifest.json"
+        key = f"videos/{self.cassette.video_id}/{settings.SCENE_S3_PREFIX}/manifest.json"
         value = self.s3_objects.get(key)
         return value if isinstance(value, dict) else None
 

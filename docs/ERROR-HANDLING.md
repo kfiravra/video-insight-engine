@@ -224,7 +224,7 @@ Two layers, both real code:
   transient errors on the same model, then falls back to `LLM_FALLBACK_PROVIDER`
   (see [LLM Error Handling](#llm-error-handling)); LiteLLM's own retries and
   fallbacks are off. The assistant keeps LiteLLM `num_retries` (`LLM_NUM_RETRIES`).
-  Chunked extraction runs up to `EXTRACTION_PARALLEL_BATCHES` (6) batches at once; a
+  Chunked extraction runs up to `EXTRACTION_PARALLEL_BATCHES` (6) batches at once per run (× `WORKER_CONCURRENCY` per worker); a
   batch still rate-limited after its retries re-runs in a sequential second pass
   (2 s apart). `pipeline.timing` counts 429s per run — drop the setting to 4 if any appear.
 - **Queue jobs** — `services/summarizer/src/worker/runner.py`: a pipeline exception
@@ -481,11 +481,22 @@ Langfuse generation always name the model that actually answered.
 | Error | Action |
 | --- | --- |
 | Timeout, 429, 5xx, connection error, empty reply | Retry (the stage's `max_retries` budget) |
+| Connection error / LiteLLM `Timeout` in under 1 s (a dropped pooled connection — the request never reached the model) | Re-sent at once, once per call, outside the retry budget |
 | 400 / 401 / 403 / 404 / 422, programming errors | Raise on first occurrence — another attempt cannot fix them |
+| The same, on a **fallback** attempt (e.g. the fallback provider's key is missing) | The call ends with `None` like any other failed attempt — the last resort never turns a recoverable stage failure into a crash |
 
-Before a same-model retry the wrapper waits the provider's `retry-after-ms` /
-`retry-after` header (capped at 20 s), else a linear backoff (1 s, 2 s, …). A
-switch to the fallback model does not wait.
+Order per call: attempt 1 → (same-model retries: provider `retry-after-ms` /
+`retry-after` header, capped at 20 s, else a linear backoff 1 s, 2 s, …) → the
+fallback model when one applies (no wait on the switch). A stage that gets `None`
+takes its own fallback; a stage that gets a raised 400 fails unless it catches it.
+
+**Credit exhaustion is a non-retryable 400.** Anthropic's "Your credit balance is
+too low" arrives as `BadRequestError` (HTTP 400): it is not retried and does not
+fall back cross-provider (LiteLLM's old built-in fallbacks used to mask it with
+gpt-4o), so every Anthropic call fails on its first attempt; stages that catch
+take their fallback, extraction does not, so the run fails (6 of 18 golden-set
+runs on 2026-10-08). Top up the account; whether billing 400s
+should take the cross-provider fallback is an open phase-1 gate decision.
 
 ### Fallback
 

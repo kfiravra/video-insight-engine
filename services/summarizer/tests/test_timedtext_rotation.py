@@ -17,20 +17,15 @@ import requests
 from src.services.media import download_utils
 from src.services.video import youtube
 from src.services.video.youtube import (
-    _extract_video_data_sync,
     _fetch_subtitles_from_url_sync,
+    extract_video_data,
+    fetch_video_captions,
 )
 
 URL = "http://example/timedtext"
 BODY = json.dumps(
     {"events": [{"tStartMs": 0, "dDurationMs": 1000, "segs": [{"utf8": "hi"}]}]}
 ).encode()
-
-
-@pytest.fixture(autouse=True)
-def _fresh_exit_memory(monkeypatch):
-    """Each test starts with no remembered proxy exit (it is per-process state)."""
-    monkeypatch.setattr(download_utils, "_EXIT_MEMORY", download_utils._ExitMemory())
 
 
 def _exit(n: int) -> str:
@@ -175,7 +170,7 @@ class TestRateLimitedFlag:
         ("second_exit_status", "rate_limited"),
         [(429, True), (403, False), (200, False)],
     )
-    def test_should_flag_rate_limited_only_when_every_exit_429s(
+    async def test_should_flag_rate_limited_only_when_every_exit_429s(
         self, exits, timedtext, info, second_exit_status, rate_limited
     ):
         exits(primary=1, count=2)
@@ -183,6 +178,7 @@ class TestRateLimitedFlag:
         timedtext.statuses[_exit(2)] = second_exit_status
 
         with patch.object(youtube, "_extract_with_retry", return_value=info):
-            result = _extract_video_data_sync("test123")
+            result = await extract_video_data("test123")
+            await fetch_video_captions(result)
 
         assert result.captions_rate_limited is rate_limited

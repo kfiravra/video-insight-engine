@@ -14,7 +14,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.models.pipeline_types import MAX_PLAN_TERMS, PlanIdentity, PlanResult, TabBrief
+from src.models.pipeline_types import (
+    MAX_PLAN_TERMS,
+    PlanIdentity,
+    PlanResult,
+    QuizQuestion,
+    TabBrief,
+)
 from src.services.pipeline import plan as plan_mod
 from src.services.pipeline import plan_prompt
 from src.shared_config.domain_config import EVIDENCE_KEYS, get_config
@@ -191,11 +197,17 @@ class TestRunPlan:
             _GOOD_PLAN["terms"],
         )
 
-    async def test_should_call_with_45s_timeout_and_one_retry_when_planning(self) -> None:
+    async def test_should_call_with_60s_timeout_and_one_retry_when_planning(self) -> None:
         _, mock_call = await _run(json.dumps(_GOOD_PLAN))
 
         kwargs = mock_call.call_args.kwargs
-        assert (kwargs["timeout"], kwargs["max_retries"]) == (45.0, 1)
+        assert (kwargs["timeout"], kwargs["max_retries"]) == (60.0, 1)
+
+    async def test_should_leave_room_above_the_measured_answer_when_planning(self) -> None:
+        """Measured plans answer in up to 1,920 tokens; 2,048 truncated trailing tabs."""
+        _, mock_call = await _run(json.dumps(_GOOD_PLAN))
+
+        assert mock_call.call_args.kwargs["max_tokens"] >= 1.5 * 1920
 
     async def test_should_not_request_prompt_caching_when_planning(self) -> None:
         _, mock_call = await _run(json.dumps(_GOOD_PLAN))
@@ -220,3 +232,20 @@ class TestRunPlan:
         result, _ = await _run("not json at all")
 
         assert result.confidence == 0.0
+
+
+class TestQuizQuestion:
+    """Quiz items are salvaged one by one — a malformed one is dropped, never shipped."""
+
+    @staticmethod
+    def _question(options: list[str]) -> dict:
+        return {"question": "Q?", "options": options, "correctIndex": 0, "explanation": "E."}
+
+    def test_should_reject_options_that_repeat_the_same_answer(self) -> None:
+        with pytest.raises(ValueError, match="repeat"):
+            QuizQuestion.model_validate(self._question(["Paris", "paris ", "Rome"]))
+
+    def test_should_accept_distinct_options(self) -> None:
+        question = QuizQuestion.model_validate(self._question(["Paris", "Rome", "Oslo"]))
+
+        assert question.options == ["Paris", "Rome", "Oslo"]

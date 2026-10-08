@@ -39,6 +39,7 @@ def _ctx(plan_tabs: list[dict[str, Any]] | None = _PLAN_TABS) -> SimpleNamespace
         ),
         prompt_segments=list(segs),
         clean_text="words",
+        prompt_transcript="[0:00] words",
         source_language_code=None,
         frame_descriptions=[],
         scene_frames_all=[],

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from pathlib import Path
@@ -28,6 +29,7 @@ from src.utils.language_utils import ENGLISH_OUTPUT_DIRECTIVE
 PROMPT_FILE = Path(__file__).parent.parent / "src" / "prompts" / "memory.txt"
 _PLACEHOLDER_RE = re.compile(r"\{([a-z_]+)\}")
 _HAIKU = "anthropic/claude-haiku-4-5-20251001"
+_SONNET = "anthropic/claude-sonnet-4-6"
 
 DURATION = 1182  # 19:42
 
@@ -141,6 +143,16 @@ class TestRepairOutline:
         outline = repair_outline(raw, DURATION)
 
         assert outline[-1].end == DURATION
+
+    def test_should_reject_outline_when_it_stops_far_short_of_the_duration(self):
+        raw = [_section(f"{m}:00", f"{m + 5}:00") for m in range(0, 20, 5)]
+
+        assert repair_outline(raw, 90 * 60) == []
+
+    def test_should_stretch_last_section_when_the_gap_is_within_five_minutes(self):
+        raw = [*_valid_outline()[:3], _section("13:00", "15:00")]
+
+        assert repair_outline(raw, DURATION)[-1].end == DURATION
 
     def test_should_start_first_section_at_zero_when_model_skips_intro(self):
         raw = [_section("0:30", "1:10"), *_valid_outline()[1:]]
@@ -394,9 +406,18 @@ class TestRunMemory:
         assert {k: kwargs[k] for k in ("max_tokens", "timeout", "max_retries", "temperature")} == {
             "max_tokens": 1200,
             "timeout": 25.0,
-            "max_retries": 1,
+            "max_retries": 0,
             "temperature": 0.0,
         }
+
+    async def test_should_make_one_attempt_when_the_memory_call_times_out(self, monkeypatch):
+        """Regression: retries became primary-primary-fallback (3 x 25 s inside phase 2)."""
+        monkeypatch.setattr(settings, "LLM_EXTRACTION_MODEL", None)
+        service = MagicMock(model=_SONNET, fast_model=_HAIKU, fallback_model="openai/gpt-4o")
+        service.call_llm = AsyncMock(side_effect=asyncio.TimeoutError)
+
+        assert await run_memory(service, _request()) is None
+        assert service.call_llm.await_count == 1
 
     async def test_should_use_extraction_model_when_setting_pins_one(self, mock_call, monkeypatch):
         monkeypatch.setattr(settings, "LLM_EXTRACTION_MODEL", _HAIKU)

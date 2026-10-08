@@ -320,7 +320,8 @@ New/changed vars introduced by the yt-dlp-403 fix and the two-pass frame pipelin
 | `YOUTUBE_PROXY_EXIT_COUNT` | `1` | Sticky exits behind the proxy gateway (Webshare `USERNAME-1…N`). >1 lets a 429 or YouTube's "Sign in to confirm you're not a bot" check move to the next exit (at most 3) on every proxied call — metadata, timedtext and caption fetches, the low-res/720p/audio downloads, playlist lookups — and lets a caption 429 retry there before the 15-min caption marker is written. The exit that last worked starts the next rotation (per process). Set it to the plan's exit count, or one blocked exit takes the service down |
 | `FRAME_TIER_ENABLED` | `true` | Adaptive visual tiers (high/standard/low from `domains.json` `visualCriticality`) |
 | `PROMPT_SOURCE` | `registry` | Where prompt templates load from: `registry` (the Langfuse `production` label wins over the local `.txt` whenever keys are set) or `disk` (always the local `.txt`, re-read on every call — dev-only, for prompt edits without re-registering or restarting; honoured only when `ENVIRONMENT` is `""`/`development`/`dev`/`test`/`local`, ignored otherwise; traces carry no `promptVersions`) |
-| `TRANSCRIPT_CLEANING_TIMEOUT` | `30` | Transcript-cleaning LLM call timeout (was hardcoded) |
+| `TRANSCRIPT_CLEANING_ENABLED` | `false` | spaCy + TF-IDF pass over the stored transcript text (Qdrant chunks, faithfulness, S3 blob). No prompt reads that text (prompts render `[m:ss]` segments), so it is off by default — it only added wall time before `transcript_ready` |
+| `TRANSCRIPT_CLEANING_TIMEOUT` | `30` | Budget (s) for that pass; the first call per process pays the spaCy cold start |
 | `HF_TOKEN` | empty | Optional Hugging Face Hub token for SentenceTransformer pulls |
 | `S3_PRESIGNED_URL_EXPIRY` | `21600` (was 3600) | Must stay ≥ api `FRAME_URL_TTL_SECONDS` |
 | `EVAL_USER_EMAIL` / `EVAL_USER_PASSWORD` | `eval@vie.local` / none | Eval-runner local account — auto-registered on first run; no default password by design (also a CI secret) |
@@ -340,13 +341,14 @@ All pass through both `x-summarizer-env` anchors with literal defaults equal to 
 | Var | Default | Purpose |
 |-----|---------|---------|
 | `EXTRACTION_PARALLEL` | `true` | Chunked extraction batches run in parallel; `false` = one batch at a time |
-| `EXTRACTION_PARALLEL_BATCHES` | `6` | Max extraction LLM calls in flight per run (was 2). `pipeline.timing` counts 429s per run — drop to `4` if any appear |
+| `EXTRACTION_PARALLEL_BATCHES` | `6` | Max extraction LLM calls in flight per run (was 2). The semaphore is per run: a worker with `WORKER_CONCURRENCY=2` holds up to 12. `pipeline.timing` counts 429s per run (blind to a concurrent run's 429s) — drop to `4` if any appear |
 | `CHUNKED_EXTRACTION_THRESHOLD` | `900` | Videos longer than this (s) may split the transcript into chapter batches |
 | `MAX_TOKENS_PER_BATCH` / `MAX_MINUTES_PER_BATCH` | `50000` / `40` | Limits of one extraction batch: estimated transcript tokens, minutes of video |
 | `EXTRACTION_FORCE_SPLIT_CHUNKS` | `4` | Sub-batches when a long video's chunked transcript collapses to one batch |
 | `FRAME_VISION_ENABLED` | `true` | Frame descriptions by the vision model; `false` = OCR only |
 | `FRAME_VISION_PARALLEL` | `true` | Vision in parallel batches; `false` = one call with every frame |
 | `LLM_VISION_MODEL` | blank | Vision model override; blank = the primary model (Sonnet), which vision stays on |
+| `LLM_CLASSIFIER_MODEL` | `anthropic/claude-haiku-4-5-20251001` | Tier-probe model (D21; the name predates the probe). Literal default in both anchors — a blank passthrough would route the probe to the fast tier |
 
 ---
 

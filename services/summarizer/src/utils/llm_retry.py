@@ -10,7 +10,9 @@ answered. A connection error that fails in under a second (a dropped pooled
 connection) is re-sent at once, once per call, outside the retry budget.
 Returns the raw string, or None when every attempt failed; errors that
 another attempt cannot fix (400/401/403/404/422, programming errors)
-propagate on first occurrence.
+propagate on first occurrence — except on the fallback model, the last resort,
+where such an error (a key missing on that provider, a request it rejects) ends
+the call with None like any other failed attempt.
 """
 
 from __future__ import annotations
@@ -198,7 +200,6 @@ class _Request:
     max_tokens: int
     timeout: float
     json_mode: bool
-    cache_static: str | None
     temperature: float | None
     system_prompt: str | None
 
@@ -297,7 +298,7 @@ async def _send(attempt: _Attempt, request: _Request) -> str:
     }
     if request.use_fast_model:
         return await attempt.service.call_llm_fast(prompt, **common)
-    return await attempt.service.call_llm(prompt, cache_static=request.cache_static, **common)
+    return await attempt.service.call_llm(prompt, **common)
 
 
 def _log_attempt(level: int, attempt: _Attempt, stage: str, start: float, what: str) -> None:
@@ -318,7 +319,12 @@ def _log_attempt(level: int, attempt: _Attempt, stage: str, start: float, what: 
 async def _try_once(
     attempt: _Attempt, request: _Request
 ) -> tuple[str | None, BaseException | None]:
-    """The reply text, or None plus the transient error (None for an empty reply)."""
+    """The reply text, or None plus the error (None for an empty reply).
+
+    The error is transient, or — on a fallback attempt only — any ``Exception``:
+    the primary already failed, so the fallback's own 401/400 must not turn a
+    recoverable stage failure into a crash. The provider has recorded it.
+    """
     stage = request.stage_name
     start = time.monotonic()
     try:
@@ -333,6 +339,12 @@ async def _try_once(
         return None, e
     except TRANSIENT_LLM_ERRORS as e:
         _log_attempt(logging.WARNING, attempt, stage, start, f"LLM error {str(e)[:200]!r}")
+        return None, e
+    except Exception as e:
+        if attempt.fallback_from is None:
+            raise
+        what = f"Fallback rejected the request ({type(e).__name__}: {str(e)[:200]!r})"
+        _log_attempt(logging.ERROR, attempt, stage, start, what)
         return None, e
     if raw and raw.strip():
         _log_attempt(logging.INFO, attempt, stage, start, "LLM call succeeded")
@@ -367,7 +379,6 @@ async def call_llm_with_retry(
     stage_name: str = "unknown",
     use_fast_model: bool = False,
     json_mode: bool = False,
-    cache_static: str | None = None,
     propagate_rate_limit: bool = False,
     model_override: str | None = None,
     temperature: float | None = None,
@@ -394,9 +405,8 @@ async def call_llm_with_retry(
             ``settings.get_stage_model(stage_name)``).
         temperature: Sampling temperature forwarded on every attempt (also on
             the ``model_override`` and fallback paths); ``None`` sends none.
-        system_prompt: System text sent WITHOUT a cache breakpoint — the
-            alternative to ``cache_static`` (system text WITH one) when only a
-            user-block breakpoint is wanted.
+        system_prompt: System text; it never carries a cache breakpoint (a
+            caller that wants one marks a user block, ``llm_messages.text_block``).
 
     Returns:
         Raw LLM response string, or None if all attempts failed.
@@ -411,7 +421,6 @@ async def call_llm_with_retry(
         max_tokens=max_tokens,
         timeout=timeout,
         json_mode=json_mode,
-        cache_static=cache_static,
         temperature=temperature,
         system_prompt=system_prompt,
     )
@@ -444,6 +453,9 @@ async def _run_attempts(
             continue
         if isinstance(error, (RateLimitError, ServiceUnavailableError)):
             last_rate_limit = error
+        if error is not None and not isinstance(error, TRANSIENT_LLM_ERRORS):
+            # The fallback rejected the request itself: another attempt on it fails the same way.
+            break
         index += 1
         if index < len(attempts):
             upcoming = attempts[index]

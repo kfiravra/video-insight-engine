@@ -39,12 +39,6 @@ INFO = {
 }
 
 
-@pytest.fixture(autouse=True)
-def _fresh_exit_memory(monkeypatch):
-    """Each test starts with no remembered proxy exit (it is per-process state)."""
-    monkeypatch.setattr(download_utils, "_EXIT_MEMORY", download_utils._ExitMemory())
-
-
 def _exit(n: int) -> str:
     return f"http://user-{n}:pass@p.webshare.io:80"
 
@@ -132,7 +126,7 @@ class TestMetadataExitRotation:
         assert exc_info.value.code is ErrorCode.VIDEO_UNAVAILABLE
         assert ydl.tried == [_exit(1)]
 
-    def test_should_start_the_next_extract_from_the_exit_that_worked(self, exits, ydl):
+    def test_should_skip_the_blocked_exit_on_the_next_extract(self, exits, ydl):
         exits(primary=1)
         ydl.errors[_exit(1)] = BOT_CHECK
         _extract_video_info_sync(VIDEO_ID)
@@ -142,16 +136,26 @@ class TestMetadataExitRotation:
 
         assert ydl.tried == [_exit(2)]
 
-    def test_should_continue_through_the_others_when_the_remembered_exit_fails(self, exits, ydl):
+    def test_should_try_the_blocked_exit_last_when_the_others_fail_too(self, exits, ydl):
         exits(primary=1)
         ydl.errors[_exit(1)] = BOT_CHECK
         _extract_video_info_sync(VIDEO_ID)
-        ydl.errors[_exit(2)] = BOT_CHECK
+        ydl.errors.update({_exit(2): BOT_CHECK, _exit(3): BOT_CHECK})
         ydl.tried.clear()
 
-        _extract_video_info_sync(VIDEO_ID)
+        with pytest.raises(TranscriptError):
+            _extract_video_info_sync(VIDEO_ID)
 
-        assert ydl.tried == [_exit(2), _exit(1), _exit(3)]
+        assert ydl.tried == [_exit(2), _exit(3), _exit(1)]
+
+    def test_should_start_another_video_on_the_next_exit(self, exits, ydl):
+        exits(primary=1)
+        _extract_video_info_sync(VIDEO_ID)
+        ydl.tried.clear()
+
+        _extract_video_info_sync("jNQXAC9IVRw")
+
+        assert ydl.tried == [_exit(2)]
 
     def test_should_make_one_attempt_with_a_single_exit(self, exits, ydl):
         exits(primary=1, count=1)

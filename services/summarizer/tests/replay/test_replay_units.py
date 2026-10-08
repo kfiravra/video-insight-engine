@@ -15,6 +15,7 @@ from litellm import Choices, ModelResponse
 from llm_common.context import llm_feature_var
 
 from tests.replay.cassette import CASSETTE_DIR, LLMEntry, LLMKey, available_cassettes
+from tests.replay.cassette_timing import phase_bounds
 from tests.replay.fake_llm import CassetteMissError, ReplayLLM
 from tests.replay.network_guard import NetworkBlockedError, block_network
 from tests.replay.driver import ReplayResult
@@ -264,3 +265,30 @@ class TestCassettes:
         raw = json.loads((CASSETTE_DIR / f"{video_id}.json").read_text(encoding="utf-8"))
         recorded = raw["recorded"]
         assert abs(sum(recorded["phasesMs"].values()) - recorded["totalMs"]) <= 10
+
+
+def _call(span: str, start_s: float, end_s: float, feature: str = "") -> dict:
+    return {
+        "span": span,
+        "feature": feature or f"summarize:{span}",
+        "_startS": start_s,
+        "_endS": end_s,
+    }
+
+
+def _recorded_calls(probe_span: str) -> list[dict]:
+    return [
+        _call("description_analysis", 1.0, 3.0, "summarize:metadata"),
+        _call(probe_span, 40.0, 41.0),
+        _call("plan", 41.0, 70.0),
+        _call("extraction", 70.0, 140.0, "summarize:extraction"),
+        _call("synthesis", 140.0, 145.0),
+    ]
+
+
+class TestPhaseBounds:
+    def test_should_end_transcript_frames_at_the_tier_probe_when_the_trace_has_one(self) -> None:
+        assert phase_bounds(_recorded_calls("tier_probe"), 160.0)["transcript_frames"] == 40.0
+
+    def test_should_fall_back_to_the_classifier_when_recorded_before_the_probe(self) -> None:
+        assert phase_bounds(_recorded_calls("classifier"), 160.0)["transcript_frames"] == 40.0

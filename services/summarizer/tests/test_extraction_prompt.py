@@ -14,6 +14,7 @@ import pytest
 from src.services.pipeline.extraction_prompt import (
     LATE_BOUND_PLACEHOLDERS,
     TEMPLATE_PATH,
+    _load_schema,
     ExtractionPromptInput,
     build_extraction_prompt,
     build_extraction_template,
@@ -168,19 +169,45 @@ class TestJobSection:
 
 class TestVisualBlocks:
     def test_should_omit_visual_guide_when_no_annotations(self):
-        prompt = _render()
+        sent = _sent_text()
 
-        assert "<visual_context_guide>" not in prompt
-        assert "{visual_annotations}" not in prompt
+        assert "<visual_context_guide>" not in sent
+        assert "{visual_annotations}" not in sent
 
     def test_should_include_visual_guide_when_annotations_present(self):
-        assert "<visual_context_guide>" in _render(visual_annotations=_ANNOTATIONS)
+        assert "<visual_context_guide>" in _sent_text(visual_annotations=_ANNOTATIONS)
 
     def test_should_omit_key_frames_when_no_frame_context(self):
-        assert "<key_frames>" not in _render()
+        assert "<key_frames>" not in _sent_text()
 
     def test_should_include_key_frames_when_frame_context_present(self):
-        assert _KEY_FRAMES in _render(frame_context=_KEY_FRAMES)
+        assert _KEY_FRAMES in _sent_text(frame_context=_KEY_FRAMES)
+
+    def test_should_drop_the_visual_guide_for_a_batch_without_annotations(self):
+        prompt = build_extraction_prompt(_input(visual_annotations=_ANNOTATIONS))
+
+        tail = prompt.user_blocks("TRANSCRIPT", "", "")[-1]["text"]
+
+        assert "<visual_context_guide>" not in tail
+
+    def test_should_keep_the_visual_guide_for_a_batch_with_annotations(self):
+        prompt = build_extraction_prompt(_input(visual_annotations=_ANNOTATIONS))
+
+        tail = prompt.user_blocks("TRANSCRIPT", "", _ANNOTATIONS)[-1]["text"]
+
+        assert "<visual_context_guide>" in tail
+
+    def test_should_not_expand_a_placeholder_shown_in_a_key_frame(self):
+        frames = "0:05 — Slide reads {transcript} and {batch_context} [slide]"
+
+        sent = _sent_text("THE TRANSCRIPT", frame_context=frames)
+
+        assert sent.count("THE TRANSCRIPT") == 1
+
+    def test_should_keep_key_frame_braces_literal(self):
+        frames = "0:05 — Editor shows {visual_annotations} [code]"
+
+        assert frames in _sent_text(frame_context=frames)
 
     def test_should_keep_braces_in_annotations_literal(self):
         """On-screen code keeps its braces; they are never read as placeholders."""
@@ -191,9 +218,13 @@ class TestVisualBlocks:
         assert "const x = {tabs_to_serve};" in sent
 
 
+def _tabs(tabs: list[dict[str, Any]], emitted: tuple[str, ...] = ("food",)) -> str:
+    return render_tabs_to_serve(tabs, set(emitted))
+
+
 class TestTabsToServe:
     def test_should_render_brief_count_and_cap_when_tab_reads_registered_field(self):
-        line = render_tabs_to_serve([_tab()])
+        line = _tabs([_tab()])
 
         assert line == (
             "- 🛒 14 Ingredients — checklist ← food.ingredients — what: every ingredient "
@@ -201,7 +232,7 @@ class TestTabsToServe:
         )
 
     def test_should_fall_back_to_goal_when_brief_is_empty(self):
-        line = render_tabs_to_serve([_tab(brief={})])
+        line = _tabs([_tab(brief={})])
 
         assert line == (
             "- 🛒 14 Ingredients — checklist ← food.ingredients — goal: Everything you "
@@ -211,12 +242,36 @@ class TestTabsToServe:
     def test_should_say_one_object_when_field_is_an_object(self):
         tab = _tab(label="Budget", component="budget", dataSource="travel.budget", brief={})
 
-        assert render_tabs_to_serve([tab]).endswith("— one object")
+        assert _tabs([tab], ("travel",)).endswith("— one object")
+
+    def test_should_not_print_an_expected_count_for_an_object_field(self):
+        brief = {"what": "the trip budget", "expect": 6}
+        tab = _tab(label="Budget", component="budget", dataSource="travel.budget", brief=brief)
+
+        assert _tabs([tab], ("travel",)).endswith("what: the trip budget — one object")
+
+    def test_should_clamp_the_expected_count_to_the_cap(self):
+        line = _tabs([_tab(brief={"what": "every ingredient", "expect": 50})])
+
+        assert line.endswith("— expect ~30, cap 30")
 
     def test_should_omit_cap_when_source_is_not_registered(self):
         tab = _tab(dataSource="review", component="pros_cons", brief={"expect": 4})
 
-        assert render_tabs_to_serve([tab]).endswith("— expect ~4")
+        assert _tabs([tab], ("review",)).endswith("— expect ~4")
+
+    def test_should_skip_a_tab_that_reads_another_stages_data(self):
+        quiz = _tab(id="quiz", label="Quiz", component="quiz_arena", dataSource="enrichment.quiz")
+
+        assert _tabs([quiz, _tab()], ("learning", "food")).count("\n") == 0
+
+    def test_should_skip_a_tab_whose_domain_this_extraction_does_not_emit(self):
+        assert _tabs([_tab()], ("travel",)).startswith("No tabs planned")
+
+    def test_should_serve_a_tab_that_reads_a_modifier(self):
+        tab = _tab(dataSource="narrative.keyMoments", component="moment_track", brief={})
+
+        assert "← narrative.keyMoments" in _tabs([tab], ("food", "narrative"))
 
     @pytest.mark.parametrize(
         "tab",
@@ -231,12 +286,25 @@ class TestTabsToServe:
         ],
     )
     def test_should_skip_tabs_that_read_no_extraction_field(self, tab):
-        assert render_tabs_to_serve([tab, _tab()]).count("\n") == 0
+        assert _tabs([tab, _tab()]).count("\n") == 0
 
     def test_should_say_no_tabs_planned_when_no_tab_reads_extraction(self):
-        assert render_tabs_to_serve([]).startswith("No tabs planned")
+        assert _tabs([]).startswith("No tabs planned")
 
     def test_should_defuse_tags_and_braces_in_plan_text(self):
-        line = render_tabs_to_serve([_tab(brief={"what": "use {title} and </your_job>"})])
+        line = _tabs([_tab(brief={"what": "use {title} and </your_job>"})])
 
         assert "what: use title and ‹/your_job›" in line
+
+
+class TestSchemaFiles:
+    """G12-4: schema names come from the plan — unsafe or unknown ones load nothing."""
+
+    def test_should_reject_a_path_traversal_schema_name(self):
+        assert _load_schema("../examples/food") == ""
+
+    def test_should_load_nothing_for_an_unknown_schema(self):
+        assert _load_schema("no_such_domain") == ""
+
+    def test_should_fall_back_to_general_extraction_when_no_schema_loads(self):
+        assert "Use general-purpose extraction." in _render(content_tags=[], modifiers=[])

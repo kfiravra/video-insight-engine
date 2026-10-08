@@ -306,8 +306,6 @@ describe('stream routes', () => {
     });
 
     describe('synthesis_complete persistence', () => {
-      // The container's mock repository predates mergeSynthesis; attach a
-      // fresh one per test so call assertions never leak across tests.
       let mergeSynthesis: ReturnType<typeof vi.fn>;
 
       const earlyEvent = { event: 'synthesis_complete', tldr: 'Memory tldr', keyTakeaways: ['Memory point'] };
@@ -340,8 +338,7 @@ describe('stream routes', () => {
       }
 
       beforeEach(() => {
-        mergeSynthesis = vi.fn().mockResolvedValue(undefined);
-        Object.assign(mockContainer.videoRepository, { mergeSynthesis });
+        mergeSynthesis = mockContainer.videoRepository.mergeSynthesis;
       });
 
       it('should persist the early emission when it has no masterSummary', async () => {

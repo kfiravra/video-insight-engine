@@ -47,11 +47,13 @@ def _backfill_attempts(
     return [call.args[2] for call in spy.call_args_list], dropped
 
 
-def _food_vlog(evidence: dict[str, bool] | None) -> dict[str, Any]:
+def _food_vlog(
+    evidence: dict[str, bool] | None, tags: tuple[str, ...] = ("food",)
+) -> dict[str, Any]:
     """A tasting vlog's plan (one tips grid) over an extraction that does hold a recipe."""
     triage = {
-        "contentTags": ["food"],
-        "primaryTag": "food",
+        "contentTags": list(tags),
+        "primaryTag": tags[0],
         "contentFormat": "vlog",
         "evidence": evidence,
         "tabs": [
@@ -113,14 +115,18 @@ class TestBackfillGate:
 
 class TestDemotionBlock:
     def test_should_block_the_ruled_out_component_and_its_promotion_twin(self) -> None:
-        assert demotion_blocked("food", _NO_RECIPE) == {
+        assert demotion_blocked(["food"], _NO_RECIPE) == {
             "checklist",
             "step_player",
             "step_flow_canvas",
         }
 
     def test_should_block_nothing_without_evidence(self) -> None:
-        assert demotion_blocked("food", None) == frozenset()
+        assert demotion_blocked(["food"], None) == frozenset()
+
+    def test_should_block_a_secondary_tags_ruled_out_component(self) -> None:
+        """Regression: only the primary tag's gates were read (travel has no checklist gate)."""
+        assert "checklist" in demotion_blocked(["travel", "food"], {"has_ingredients": False})
 
     def test_should_skip_a_blocked_rung_when_demoting(self) -> None:
         data = ["Order the poutine", "Get the hot dog all-dressed"]
@@ -168,6 +174,13 @@ class TestFoodVlogAssembly:
 
         must_order = next(t for t in tabs if t["id"] == "must_order")
         assert (must_order["component"], must_order["degradedFrom"]) == (expected, "info_grid")
+
+    def test_should_not_degrade_into_a_checklist_a_secondary_tag_rules_out(self) -> None:
+        with patch.dict(ASSEMBLER_REGISTRY, {"info_grid": lambda *_args: None}):
+            tabs = _food_vlog({"has_ingredients": False}, tags=("travel", "food"))["tabs"]
+
+        must_order = next(t for t in tabs if t["id"] == "must_order")
+        assert must_order["component"] == "display_section"
 
 
 class TestCountDroppedTabs:

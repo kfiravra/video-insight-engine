@@ -9,7 +9,7 @@ Inputs (all JSON, produced read-only — see the cassette's ``provenance``):
 * ``--doc``     the ``videoSummaryCache`` doc (title, duration, ``processingTimeMs``,
   ``transcriptMeta``, ``meta.descriptionAnalysis`` = the description output).
 * ``--s3``      ``{key: object}`` with ``videos/<id>/transcript.json`` and the
-  ``scenes-v3/manifest.json`` (frames, gallery, vision descriptions).
+  ``<SCENE_S3_PREFIX>/manifest.json`` (frames, gallery, vision descriptions).
 * ``--chapters`` optional ``[{start, end, title}]`` YouTube chapters.
 
 Phase walls and the media fakes' latencies are derived in
@@ -31,8 +31,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from src.config import settings
 from tests.replay.cassette import CASSETTE_DIR, CASSETTE_SCHEMA
-from tests.replay.cassette_timing import media_timings, phase_bounds, phases_ms, span_calls
+from tests.replay.cassette_timing import (
+    media_timings,
+    phase_bounds,
+    phases_ms,
+    probe_span,
+    span_calls,
+)
 
 _SKIPPED_SPANS = frozenset({"faithfulness"})
 _FEATURE_BY_SPAN = {
@@ -194,10 +201,11 @@ def _user_prompt(trace: dict[str, Any], span: str) -> str:
 
 
 def _video_spec(trace: dict[str, Any], doc: dict[str, Any], args: argparse.Namespace) -> dict:
+    probe = probe_span({o["name"] for o in trace["observations"]})
     tags_line = next(
         (
             ln
-            for ln in _video_block(_user_prompt(trace, "classifier")).splitlines()
+            for ln in _video_block(_user_prompt(trace, probe)).splitlines()
             if ln.startswith("Tags:")
         ),
         "Tags:",
@@ -285,7 +293,9 @@ def _provenance(args: argparse.Namespace, trace: dict, doc: dict, has_frames: bo
         "recordedAt": trace["timestamp"],
         "pipelineVersion": doc.get("pipelineVersion", ""),
         "transcript": f"s3 videos/{args.video}/transcript.json",
-        "frames": "s3 scenes-v3/manifest.json" if has_frames else "none (zero scene frames)",
+        "frames": f"s3 {settings.SCENE_S3_PREFIX}/manifest.json"
+        if has_frames
+        else "none (zero scene frames)",
         "descriptionAnalysis": "llm_usage row + meta.descriptionAnalysis (no generation pre-0.2)",
     }
 
@@ -320,7 +330,7 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
     t0 = _ts(trace["timestamp"])
     calls = _with_ordinals([*_trace_calls(trace, t0), _description_call(ledger, doc, t0)])
     bounds = phase_bounds(calls, doc["processingTimeMs"] / 1000)
-    manifest = s3.get(f"videos/{args.video}/scenes-v3/manifest.json") or {}
+    manifest = s3.get(f"videos/{args.video}/{settings.SCENE_S3_PREFIX}/manifest.json") or {}
     has_frames = "frames" in manifest
     frames = _frames_spec(manifest if has_frames else None, args.tier)
     sleeps, downloads, estimated = _sleeps(args, calls, bounds, doc, frames)

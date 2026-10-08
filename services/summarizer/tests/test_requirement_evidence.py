@@ -3,8 +3,8 @@
 A domain's ``required`` component is required only when the plan's evidence
 for its ``requirementEvidence`` key is not false — a food vlog with no recipe
 needs no checklist or step_player. The same rule drives the plan prompt's
-rendered requirements and ``effective_requirements(..., evidence=...)``, the
-seam assembly's backfill uses.
+rendered requirements and ``ruled_out_requirements``, the one helper assembly's
+backfill and demotion guard use.
 """
 
 from __future__ import annotations
@@ -18,50 +18,43 @@ from src.shared_config.domain_config import (
     render_extraction_caps,
     render_requirement,
     requirement_evidence,
+    ruled_out_requirements,
 )
 
 
-class TestEffectiveRequirementsWithEvidence:
-    def test_should_drop_requirement_when_its_evidence_is_false(self) -> None:
-        required = effective_requirements(
-            "food", None, evidence={"has_ingredients": False, "has_steps": True}
-        )["required"]
+class TestRuledOutRequirements:
+    def test_should_rule_out_requirement_when_its_evidence_is_false(self) -> None:
+        evidence = {"has_ingredients": False, "has_steps": True}
 
-        assert required == ["step_player"]
+        assert ruled_out_requirements("food", evidence) == {"checklist": "has_ingredients"}
 
-    def test_should_require_nothing_when_food_vlog_has_no_recipe(self) -> None:
-        evidence = {"has_ingredients": False, "has_steps": False}
+    def test_should_rule_out_every_requirement_when_food_vlog_has_no_recipe(self) -> None:
+        ruled_out = ruled_out_requirements("food", {"has_ingredients": False, "has_steps": False})
 
-        assert effective_requirements("food", "vlog", evidence=evidence)["required"] == []
+        assert set(effective_requirements("food", "vlog")["required"]) <= set(ruled_out)
 
-    def test_should_keep_requirement_when_evidence_key_is_missing(self) -> None:
-        required = effective_requirements("food", None, evidence={"has_steps": True})["required"]
+    def test_should_rule_out_nothing_when_evidence_key_is_missing(self) -> None:
+        assert ruled_out_requirements("food", {"has_steps": True}) == {}
 
-        assert set(required) == {"step_player", "checklist"}
-
-    def test_should_keep_requirements_when_no_evidence_is_given(self) -> None:
-        assert (
-            effective_requirements("food")["required"] == domain_requirements()["food"]["required"]
-        )
+    def test_should_rule_out_nothing_when_no_evidence_is_given(self) -> None:
+        assert ruled_out_requirements("food", None) == {}
 
     def test_should_keep_ungated_requirement_when_all_evidence_is_false(self) -> None:
         evidence: dict[str, bool] = dict.fromkeys(
             ("has_steps", "has_claims", "is_learnable"), False
         )
 
-        assert effective_requirements("podcast", None, evidence=evidence)["required"] == [
-            "moment_track"
-        ]
+        assert ruled_out_requirements("podcast", evidence) == {}
 
     def test_should_gate_playbook_requirement_when_its_evidence_is_false(self) -> None:
-        merged = effective_requirements("gaming", "unboxing", evidence={"has_ranking": False})
+        ruled_out = ruled_out_requirements("gaming", {"has_ranking": False})
 
-        assert merged["required"] == []
+        assert set(effective_requirements("gaming", "unboxing")["required"]) <= set(ruled_out)
 
-    def test_should_keep_forbidden_components_when_evidence_is_given(self) -> None:
-        merged = effective_requirements("food", None, evidence={"has_steps": False})
-
-        assert "quiz_arena" in merged["forbidden"]
+    def test_should_keep_every_requirement_in_the_unconditional_policy(self) -> None:
+        assert (
+            effective_requirements("food")["required"] == domain_requirements()["food"]["required"]
+        )
 
 
 class TestRenderRequirements:

@@ -36,7 +36,7 @@ describe('VideoService', () => {
     deleteUserVideo: ReturnType<typeof vi.fn>;
     deleteUserVideoByYoutubeId: ReturnType<typeof vi.fn>;
     updateUserVideoFolder: ReturnType<typeof vi.fn>;
-    markPreviousVersionsNotLatest: ReturnType<typeof vi.fn>;
+    clearSynthesis: ReturnType<typeof vi.fn>;
     findHighestVersion: ReturnType<typeof vi.fn>;
     incrementRetryCount: ReturnType<typeof vi.fn>;
     getVersions: ReturnType<typeof vi.fn>;
@@ -59,6 +59,7 @@ describe('VideoService', () => {
   };
   let mockEvalUsers: {
     isEvalUser: ReturnType<typeof vi.fn>;
+    mayRunCold: ReturnType<typeof vi.fn>;
   };
 
   beforeAll(() => {
@@ -75,7 +76,7 @@ describe('VideoService', () => {
       deleteUserVideo: vi.fn(),
       deleteUserVideoByYoutubeId: vi.fn(),
       updateUserVideoFolder: vi.fn(),
-      markPreviousVersionsNotLatest: vi.fn(),
+      clearSynthesis: vi.fn().mockResolvedValue(undefined),
       findHighestVersion: vi.fn(),
       incrementRetryCount: vi.fn(),
       getVersions: vi.fn(),
@@ -102,6 +103,7 @@ describe('VideoService', () => {
     // __tests__/video.service.eval-versions.test.ts.
     mockEvalUsers = {
       isEvalUser: vi.fn().mockResolvedValue(false),
+      mayRunCold: vi.fn().mockResolvedValue(false),
     };
     videoService = new VideoService(
       mockVideoRepository as unknown as VideoRepository,
@@ -716,7 +718,7 @@ describe('VideoService', () => {
 
         mockIdempotencyService.computeContentKey.mockReturnValue('content-key-v2');
 
-        mockVideoRepository.markPreviousVersionsNotLatest.mockResolvedValue({
+        mockVideoRepository.findCacheByYoutubeId.mockResolvedValue({
           _id: { toString: () => previousSummaryId },
           youtubeId,
           version: 1,
@@ -757,7 +759,7 @@ describe('VideoService', () => {
         // cache — without it a bypassCache run is instantly re-fed the stale
         // cached payload whenever the SSE client wins the producer lock.
         const youtubeId = 'dQw4w9WgXcQ';
-        mockVideoRepository.markPreviousVersionsNotLatest.mockResolvedValue({
+        mockVideoRepository.findCacheByYoutubeId.mockResolvedValue({
           _id: 'prev-id',
           youtubeId,
           version: 1,

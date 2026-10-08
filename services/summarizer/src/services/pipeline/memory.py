@@ -45,10 +45,19 @@ MEMORY_STAGE = "memory"
 MEMORY_MODEL_STAGE = "extraction"
 MEMORY_MAX_TOKENS = 1200
 MEMORY_TIMEOUT_S = 25.0
-MEMORY_MAX_RETRIES = 1
+# One attempt: memory runs alongside the plan inside the phase-2 group, and a
+# retry budget became primary-primary-fallback (up to 3 x 25 s) once the
+# cross-provider fallback landed. Every reader has a fallback for a missing
+# memory; a dropped connection is still resent once by call_llm_with_retry.
+MEMORY_MAX_RETRIES = 0
 MEMORY_TEMPERATURE = 0.0
 
 MIN_SECTION_SECONDS = 60
+# An outline whose sections stop this far short of the duration only covers
+# the start of the video; stretching its last section over the rest would
+# pass a 20-minute outline of a 90-minute video. max(share, floor) of it.
+MAX_UNCOVERED_SHARE = 0.2
+MAX_UNCOVERED_FLOOR_SECONDS = 300
 MIN_SECTIONS = 4
 MAX_SECTIONS = 12
 OUTLINE_TITLE_MAX_CHARS = 60
@@ -170,6 +179,20 @@ def _fold_short_sections(sections: list[OutlineSection]) -> list[OutlineSection]
     return result
 
 
+def _covers_the_video(sections: list[OutlineSection], duration: int) -> bool:
+    """False when the model's own last end stops well short of the duration."""
+    uncovered = duration - max(s.end for s in sections)
+    allowed = max(MAX_UNCOVERED_SHARE * duration, MAX_UNCOVERED_FLOOR_SECONDS)
+    if uncovered <= allowed:
+        return True
+    logger.warning(
+        "Memory outline rejected: sections end at %ds of a %ds video",
+        duration - uncovered,
+        duration,
+    )
+    return False
+
+
 def _min_sections(duration: int) -> int:
     """4 sections, or one per full minute for videos under 4 minutes."""
     return max(1, min(MIN_SECTIONS, duration // MIN_SECTION_SECONDS))
@@ -180,7 +203,7 @@ def repair_outline(raw: object, duration: int) -> list[OutlineSection]:
     if duration < MIN_SECTION_SECONDS or not isinstance(raw, list):
         return []
     parsed = [s for s in (_parse_section(item, duration) for item in raw) if s is not None]
-    if not parsed:
+    if not parsed or not _covers_the_video(parsed, duration):
         return []
     outline = _fold_short_sections(_make_contiguous(parsed, duration))
     if not _min_sections(duration) <= len(outline) <= MAX_SECTIONS:

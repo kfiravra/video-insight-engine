@@ -150,7 +150,6 @@ class TestCallLlmWithRetry:
             max_tokens=8192,
             timeout=30.0,
             json_mode=False,
-            cache_static=None,
             span_name="triage",
             span_metadata={
                 "attempt": 1,

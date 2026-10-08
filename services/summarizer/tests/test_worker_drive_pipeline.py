@@ -13,13 +13,19 @@ guarantee we don't regress.
 
 from __future__ import annotations
 
+import asyncio
+import threading
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pymongo.errors import AutoReconnect
 
+from src.config import settings
 from src.worker import pipeline as worker_pipeline
-from src.worker.payload import ProviderConfig as WorkerProviderConfig, VideoJobPayload
-
+from src.worker.payload import ProviderConfig as WorkerProviderConfig
+from src.worker.payload import VideoJobPayload
 
 VALID_PAYLOAD = VideoJobPayload(
     videoSummaryId="abc123def456789012345678",
@@ -179,14 +185,18 @@ async def test_drive_pipeline_forwards_bypass_cache_as_force_refresh():
         await worker_pipeline.drive_pipeline(payload)
 
     produce.assert_awaited_once()
+    assert produce.await_args is not None
     assert produce.await_args.kwargs["force_refresh"] is True
 
 
 # ─── Duplicate runs (A4): a completed row is never re-run ────────────────────
 
 
-async def _drive_with_rows(rows: list[dict]) -> tuple[AsyncMock, AsyncMock, AsyncMock]:
-    """drive_pipeline where each get_video_summary call returns the next row."""
+@contextmanager
+def _patched_driver(
+    rows: list | Callable[[str], dict],
+) -> Iterator[tuple[AsyncMock, AsyncMock, AsyncMock]]:
+    """Patch drive_pipeline's deps; get_video_summary follows ``rows`` (a mock side_effect)."""
     mock_client, _mock_db, mock_repo = _patch_common()
     mock_repo.get_video_summary.side_effect = rows
     produce, acquire, release = AsyncMock(), AsyncMock(return_value=True), AsyncMock()
@@ -200,8 +210,14 @@ async def _drive_with_rows(rows: list[dict]) -> tuple[AsyncMock, AsyncMock, Asyn
         patch("src.routes.pipeline_broker.produce_to_broker", new=produce),
         patch.object(worker_pipeline, "clear_override"),
     ):
+        yield produce, acquire, release
+
+
+async def _drive_with_rows(rows: list) -> tuple[AsyncMock, AsyncMock, AsyncMock]:
+    """drive_pipeline where each get_video_summary call returns the next row."""
+    with _patched_driver(rows) as mocks:
         await worker_pipeline.drive_pipeline(VALID_PAYLOAD)
-    return produce, acquire, release
+    return mocks
 
 
 @pytest.mark.asyncio
@@ -238,3 +254,90 @@ async def test_should_run_when_the_recheck_cannot_read_mongo():
     )
 
     produce.assert_awaited_once()
+
+
+# ─── Stale-version regen (G21): the API re-dispatches a completed row ────────
+
+
+def _completed(version: str) -> dict:
+    return {"_id": "v", "status": "completed", "pipelineVersion": version}
+
+
+@pytest.mark.asyncio
+async def test_should_run_a_completed_row_stamped_with_an_older_pipeline_version():
+    """The API's stale-version regen re-dispatches WITHOUT resetting status."""
+    old = _completed("v0-older-than-current")
+
+    produce, _acquire, _release = await _drive_with_rows([old, old])
+
+    produce.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_should_skip_a_completed_row_stamped_with_the_current_pipeline_version():
+    current = _completed(settings.PIPELINE_VERSION)
+
+    produce, acquire, _release = await _drive_with_rows([current])
+
+    assert (produce.await_count, acquire.await_count) == (0, 0)
+
+
+@pytest.mark.asyncio
+async def test_should_skip_after_lock_when_the_regen_finished_meanwhile():
+    """A duplicate regen message: the row was re-stamped while we took the lock."""
+    rows = [_completed("v0-older-than-current"), _completed(settings.PIPELINE_VERSION)]
+
+    produce, _acquire, release = await _drive_with_rows(rows)
+
+    assert (produce.await_count, release.await_count) == (0, 1)
+
+
+# ─── Lock safety (G21): nothing between acquire and produce strands the lock ─
+
+
+@pytest.mark.asyncio
+async def test_should_run_and_hand_the_lock_to_the_producer_when_the_recheck_hits_autoreconnect():
+    """produce_to_broker's finally owns the release once it runs — no double release."""
+    produce, _acquire, release = await _drive_with_rows(
+        [{"_id": "v", "status": "pending"}, AutoReconnect("primary stepped down")]
+    )
+
+    assert (produce.await_count, release.await_count) == (1, 0)
+
+
+@pytest.mark.asyncio
+async def test_should_release_the_lock_when_the_recheck_raises_unexpectedly():
+    with _patched_driver([{"_id": "v", "status": "pending"}, ValueError("bad row")]) as mocks:
+        with pytest.raises(ValueError, match="bad row"):
+            await worker_pipeline.drive_pipeline(VALID_PAYLOAD)
+    produce, _acquire, release = mocks
+
+    assert (produce.await_count, release.await_count) == (0, 1)
+
+
+@pytest.mark.asyncio
+async def test_should_release_the_lock_when_cancelled_after_acquiring_it():
+    entered, unblock = threading.Event(), threading.Event()
+    reads = iter([{"_id": "v", "status": "pending"}])
+
+    def _rows(_video_summary_id: str) -> dict:
+        """First read returns at once; the post-lock re-check blocks until cancelled."""
+        row = next(reads, None)
+        if row is None:
+            entered.set()
+            unblock.wait(timeout=5)
+            row = {"_id": "v", "status": "pending"}
+        return row
+
+    with _patched_driver(_rows) as (produce, _acquire, release):
+        task = asyncio.create_task(worker_pipeline.drive_pipeline(VALID_PAYLOAD))
+        try:
+            while not entered.is_set():
+                await asyncio.sleep(0.01)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        finally:
+            unblock.set()
+
+    assert (produce.await_count, release.await_count) == (0, 1)

@@ -8,7 +8,14 @@ The placeholder guard exists for deploy order: the code ships with the ``.txt``
 it renders, while the registry's ``production`` label moves on its own
 schedule. A registry version written for older (or newer) code has a different
 slot set, and the renderer would silently leave slots unfilled or drop inputs.
-Comparing slot sets — not wording — keeps registry-only wording edits live.
+
+The guard compares slot sets only, so it catches slot drift and nothing else.
+A wording-only change to a shipped ``.txt`` (schemas, examples, the toolkit,
+any stage prompt) keeps the same slots: the registry's ``production`` version
+— the OLD wording — keeps being served until the file is registered.
+Registration is therefore a deploy step, never optional: ``vie-langfuse-init``
+re-registers every prompt (``scripts/register_prompts.py --commit``) on
+``docker compose up``; a deploy that skips it must run the script itself.
 """
 
 from __future__ import annotations

@@ -9,19 +9,21 @@ the video's duration.
 Cache layout (A26): the rules go out as the system prompt — byte-identical for
 every video — and the user message is two blocks: ``[video + transcript +
 video_memory]`` carrying the one cache breakpoint, then the job. Everything a
-call varies (batch transcript, batch context, the batch's annotation slice) is
-bound per call, in one pass, so on-screen text is never read as a placeholder.
+call varies (batch transcript, batch context, the batch's annotation slice) and
+all raw frame text (key-frame captions + OCR) is bound per call, in one pass,
+so on-screen text is never read as a placeholder. A call whose annotation slice
+or key frames are empty loses the matching guide/element too.
 """
 
 from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 
 from ...models.pipeline_types import TabBrief
-from ...shared_config.domain_config import NON_EXTRACTION_DATASOURCES, data_source
+from ...shared_config.domain_config import NON_EXTRACTION_DATASOURCES, DataSourceSpec, data_source
 from ...utils.language_utils import ENGLISH_OUTPUT_DIRECTIVE
 from ..llm_messages import TextBlock, text_block
 from ..transcript.render import format_marker
@@ -35,8 +37,10 @@ TEMPLATE_PATH = PROMPTS_DIR / "base_extraction.txt"
 SCHEMAS_DIR = PROMPTS_DIR / "schemas"
 EXAMPLES_DIR = PROMPTS_DIR / "examples"
 
-# Bound per call by the extractor, never at template-build time.
-LATE_BOUND_PLACEHOLDERS = frozenset({"transcript", "batch_context", "visual_annotations"})
+# Bound per call by the extractor, in one pass, never at template-build time.
+LATE_BOUND_PLACEHOLDERS = frozenset(
+    {"transcript", "batch_context", "visual_annotations", "frame_context"}
+)
 
 # Section openers, each on its own line: rules end before <video>, the job starts at <your_job>.
 _VIDEO_LINE = "\n<video>\n"
@@ -152,24 +156,33 @@ def _data_source(tab: Mapping[str, object]) -> str:
     return value if isinstance(value, str) else ""
 
 
-def _serves_extraction(tab: Mapping[str, object]) -> bool:
-    """Tabs that read extraction fields — not the overview, not the frames filmstrip."""
+def _source_domain(source: str) -> str:
+    """The domain (or modifier) a dataSource reads: ``food.ingredients`` → ``food``."""
+    spec = data_source(source)
+    return spec["domain"] if spec is not None else source.split(".", 1)[0]
+
+
+def _serves_extraction(tab: Mapping[str, object], emitted: Collection[str]) -> bool:
+    """Tabs that read a field this extraction emits — not the overview, not the
+    frames filmstrip, not another stage's data (the quiz tab reads enrichment)."""
     source = _data_source(tab)
     return (
         bool(source)
         and source not in NON_EXTRACTION_DATASOURCES
         and tab.get("component") != "overview"
+        and _source_domain(source) in emitted
     )
 
 
-def _amount(expect: int, source: str) -> str:
-    """``expect ~14, cap 30`` — the plan's count and the registry's cap, as known."""
-    spec = data_source(source)
-    cap = ""
-    if spec is not None:
-        cap = "one object" if spec["kind"] == "object" else f"cap {spec['cap']}"
-    expected = f"expect ~{expect}" if expect else ""
-    return ", ".join(part for part in (expected, cap) if part)
+def _amount(expect: int, spec: DataSourceSpec | None) -> str:
+    """``expect ~14, cap 30`` — the plan's count (never above the cap) and the
+    registry's cap; an object field is ``one object``, with no count."""
+    if spec is not None and spec["kind"] == "object":
+        return "one object"
+    if spec is None:
+        return f"expect ~{expect}" if expect else ""
+    expected = f"expect ~{min(expect, spec['cap'])}, " if expect else ""
+    return f"{expected}cap {spec['cap']}"
 
 
 def _tab_line(tab: Mapping[str, object]) -> str:
@@ -183,14 +196,15 @@ def _tab_line(tab: Mapping[str, object]) -> str:
         parts.append(f"goal: {_clean(goal, _BRIEF_MAX_CHARS)}")
     if brief.where:
         parts.append("where " + ", ".join(r.replace("-", "–") for r in brief.where))
-    if amount := _amount(brief.expect, source):
+    if amount := _amount(brief.expect, data_source(source)):
         parts.append(amount)
     return " — ".join(parts)
 
 
-def render_tabs_to_serve(tabs: Sequence[Mapping[str, object]]) -> str:
-    """One line per planned tab that reads extraction data: brief + count + cap."""
-    lines = [_tab_line(tab) for tab in tabs if _serves_extraction(tab)]
+def render_tabs_to_serve(tabs: Sequence[Mapping[str, object]], emitted: Collection[str]) -> str:
+    """One line per planned tab that reads a field of an ``emitted`` domain or
+    modifier: brief + count + cap."""
+    lines = [_tab_line(tab) for tab in tabs if _serves_extraction(tab, emitted)]
     return "\n".join(lines) or _NO_TABS
 
 
@@ -203,17 +217,22 @@ def drop_element(text: str, tag: str) -> str:
 
 
 def _drop_absent_blocks(template: str, inp: ExtractionPromptInput, example: str) -> str:
-    """Optional elements leave the template whole when their content is empty."""
+    """Run-level optional elements leave the template whole when their content is empty."""
     if not example:
         template = drop_element(template, "extraction_example")
-    if not inp.visual_annotations:
-        template = drop_element(template, "visual_context_guide")
-        template = template.replace("{visual_annotations}\n\n", "")
-    if not inp.frame_context:
-        template = drop_element(template, "key_frames")
     if not inp.video_memory:
         template = template.replace("{video_memory}\n\n", "")
     return template
+
+
+def _drop_absent_visual_blocks(tail: str, values: Mapping[str, str]) -> str:
+    """Per call: no annotation slice → no visual guide; no key frames → no element."""
+    if not values["visual_annotations"]:
+        tail = drop_element(tail, "visual_context_guide")
+        tail = tail.replace("{visual_annotations}\n\n", "")
+    if not values["frame_context"]:
+        tail = drop_element(tail, "key_frames")
+    return tail
 
 
 def _fill(template: str, values: Mapping[str, str]) -> str:
@@ -222,7 +241,7 @@ def _fill(template: str, values: Mapping[str, str]) -> str:
 
 
 def build_extraction_template(inp: ExtractionPromptInput) -> str:
-    """The run's extraction prompt with ``{transcript}`` / ``{batch_context}`` left to bind."""
+    """The run's extraction prompt with ``LATE_BOUND_PLACEHOLDERS`` left to bind."""
     primary_tag = inp.primary_tag or (inp.content_tags[0] if inp.content_tags else "learning")
     example = _load_domain_example(primary_tag)
     template = _drop_absent_blocks(load_prompt_text(TEMPLATE_PATH), inp, example)
@@ -232,12 +251,11 @@ def build_extraction_template(inp: ExtractionPromptInput) -> str:
         "duration": _format_duration(inp.duration_seconds),
         "video_memory": inp.video_memory,
         "emit_domains": _emit_domains(inp.content_tags, inp.modifiers),
-        "tabs_to_serve": render_tabs_to_serve(inp.tabs),
+        "tabs_to_serve": render_tabs_to_serve(inp.tabs, {*inp.content_tags, *inp.modifiers}),
         "content_emphasis": get_content_emphasis(primary_tag),
         "domain_schemas": _domain_schemas(inp.content_tags, inp.modifiers),
         "primary_tag": primary_tag,
         "domain_example": example,
-        "frame_context": inp.frame_context,
     }
     return f"{ENGLISH_OUTPUT_DIRECTIVE}\n\n{_fill(template, values)}"
 
@@ -251,14 +269,16 @@ class ExtractionPrompt:
 
     ``system`` = the rules (no per-video text); ``head`` = ``<video>`` +
     ``{transcript}`` + ``<video_memory>``, the cached prefix; ``tail`` = the job
-    with ``{batch_context}`` / ``{visual_annotations}`` open. An empty ``head``
-    means the template lost its section lines: everything is one uncached block.
+    with ``{batch_context}`` / ``{visual_annotations}`` / ``{frame_context}``
+    open. An empty ``head`` means the template lost its section lines:
+    everything is one uncached block.
     """
 
     system: str
     head: str
     tail: str
     visual_annotations: str = ""
+    frame_context: str = ""
 
     def user_blocks(
         self,
@@ -273,8 +293,9 @@ class ExtractionPrompt:
             "visual_annotations": (
                 self.visual_annotations if visual_annotations is None else visual_annotations
             ),
+            "frame_context": self.frame_context,
         }
-        tail = text_block(_fill(self.tail, values))
+        tail = text_block(_fill(_drop_absent_visual_blocks(self.tail, values), values))
         if not self.head:
             return [tail]
         return [text_block(_fill(self.head, values), cache=True), tail]
@@ -295,7 +316,7 @@ def _split_sections(text: str) -> tuple[str, str, str]:
 def build_extraction_prompt(inp: ExtractionPromptInput) -> ExtractionPrompt:
     """The run's prompt, split into system rules / cached head / job tail."""
     system, head, tail = _split_sections(build_extraction_template(inp))
-    return ExtractionPrompt(system, head, tail, inp.visual_annotations)
+    return ExtractionPrompt(system, head, tail, inp.visual_annotations, inp.frame_context)
 
 
 def slice_visual_annotations(

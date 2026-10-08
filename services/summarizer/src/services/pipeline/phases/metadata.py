@@ -6,7 +6,7 @@ now runs in the background from that moment, alongside transcript and frames:
 * the caption fetch (and its 429 retries) — the transcript phase awaits it
   (``after_captions``);
 * description analysis (an LLM call) — every reader awaits it
-  (``await_description_analysis``); ``run_phase_description`` emits its SSE;
+  (``await_description_analysis``); assembly emits its SSE;
 * the low-res and 720p downloads (``ctx.lowres_video`` / ``ctx.hires_video``),
   unless the frame manifest is cached — checked during ``extract_info``.
 
@@ -50,12 +50,14 @@ async def run_phase_metadata(ctx: PipelineContext) -> AsyncGenerator[str, None]:
     # The manifest lookup (one S3 GET) overlaps extract_info; its answer
     # decides whether the downloads start at all.
     cache_check = (
-        asyncio.create_task(frames_cached(ctx.youtube_id))
+        asyncio.create_task(
+            frames_cached(ctx.youtube_id, skip_cache=getattr(ctx, "cold_media", False))
+        )
         if settings.SCENE_EXTRACTION_ENABLED
         else None
     )
     try:
-        ctx.video_data = await youtube.extract_video_data(ctx.youtube_id, with_captions=False)
+        ctx.video_data = await youtube.extract_video_data(ctx.youtube_id)
         yield sse_event(
             "metadata",
             {
@@ -120,13 +122,6 @@ async def await_description_analysis(ctx: PipelineContext) -> DescriptionAnalysi
     if task is not None:
         await asyncio.shield(task)
     return getattr(ctx, "description_analysis", None)
-
-
-async def run_phase_description(ctx: PipelineContext) -> AsyncGenerator[str, None]:
-    """Parallel-group member: emit the description analysis once it lands."""
-    analysis = await await_description_analysis(ctx)
-    if isinstance(analysis, DescriptionAnalysis) and analysis.has_content:
-        yield sse_event("description_analysis", analysis.to_dict())
 
 
 async def await_captions(ctx: PipelineContext) -> None:

@@ -47,7 +47,16 @@ def early_synthesis(memory: MemoryResult | None) -> dict[str, object] | None:
 
 
 async def run_phase_memory(ctx: PipelineContext) -> AsyncGenerator[str, None]:
-    """Run the memory call, keep its answer on ``ctx.memory``, emit the early hero."""
+    """Run the memory call, keep its answer on ``ctx.memory``, emit the early hero.
+
+    No timed segments (a metadata-only transcript) → no call: the model would
+    invent an ``[m:ss]`` outline and takeaways from the title and description.
+    ``ctx.memory`` stays ``None`` and every reader takes its fallback.
+    """
+    if not ctx.prompt_segments:
+        ctx.memory = None
+        logger.info("pipeline.memory", extra={"video_id": ctx.video_summary_id, "skipped": True})
+        return
     ctx.memory = await run_memory(ctx.llm_service, memory_input(ctx))
     logger.info("pipeline.memory", extra={"video_id": ctx.video_summary_id, "ok": bool(ctx.memory)})
     payload = early_synthesis(ctx.memory)

@@ -45,76 +45,32 @@ class TestTextBlock:
         assert text_block("x") == {"type": "text", "text": "x"}
 
 
-class TestBuildPromptMessagesStringPrompt:
-    """Today's shapes, byte for byte — no existing caller may see a change."""
+class TestBuildPromptMessages:
+    def test_should_send_only_the_user_string_when_no_system_prompt(self) -> None:
+        messages = build_prompt_messages("dynamic", system_prompt=None)
 
-    def test_should_send_static_as_cached_system_block_when_anthropic(self) -> None:
-        messages = build_prompt_messages(
-            "dynamic", system_prompt=None, cache_static="STATIC", anthropic=True
-        )
+        assert messages == [{"role": "user", "content": "dynamic"}]
 
-        assert json.dumps(messages) == json.dumps(
-            [
-                {
-                    "role": "system",
-                    "content": [{"type": "text", "text": "STATIC", "cache_control": _EPHEMERAL}],
-                },
-                {"role": "user", "content": "dynamic"},
-            ]
-        )
-
-    def test_should_inline_static_into_user_string_when_not_anthropic(self) -> None:
-        messages = build_prompt_messages(
-            "dynamic", system_prompt=None, cache_static="STATIC", anthropic=False
-        )
-
-        assert messages == [{"role": "user", "content": "STATIC\n\ndynamic"}]
-
-    def test_should_send_plain_system_and_user_when_no_static(self) -> None:
-        messages = build_prompt_messages(
-            "dynamic", system_prompt="rules", cache_static=None, anthropic=True
-        )
+    def test_should_send_plain_system_then_user_when_system_prompt_given(self) -> None:
+        messages = build_prompt_messages("dynamic", system_prompt="rules")
 
         assert messages == [
             {"role": "system", "content": "rules"},
             {"role": "user", "content": "dynamic"},
         ]
 
-
-class TestBuildPromptMessagesBlockPrompt:
-    def test_should_keep_user_breakpoint_as_given_when_anthropic(self) -> None:
-        messages = build_prompt_messages(
-            _blocks(), system_prompt=None, cache_static=None, anthropic=True
-        )
+    def test_should_keep_user_breakpoint_as_given(self) -> None:
+        messages = build_prompt_messages(_blocks(), system_prompt=None)
 
         assert messages == [{"role": "user", "content": _blocks()}]
 
-    def test_should_keep_both_breakpoints_when_static_also_cached(self) -> None:
-        messages = build_prompt_messages(
-            _blocks(), system_prompt=None, cache_static="RULES", anthropic=True
-        )
-
-        assert messages == [
-            {"role": "system", "content": [text_block("RULES", cache=True)]},
-            {"role": "user", "content": _blocks()},
-        ]
-
-    def test_should_drop_system_breakpoint_when_rules_sent_as_system_prompt(self) -> None:
-        messages = build_prompt_messages(
-            _blocks(), system_prompt="RULES", cache_static=None, anthropic=True
-        )
+    def test_should_never_put_a_breakpoint_on_the_system_prompt(self) -> None:
+        messages = build_prompt_messages(_blocks(), system_prompt="RULES")
 
         assert messages == [
             {"role": "system", "content": "RULES"},
             {"role": "user", "content": _blocks()},
         ]
-
-    def test_should_prepend_static_as_first_block_when_not_anthropic(self) -> None:
-        messages = build_prompt_messages(
-            _blocks(), system_prompt=None, cache_static="STATIC", anthropic=False
-        )
-
-        assert messages == [{"role": "user", "content": [text_block("STATIC"), *_blocks()]}]
 
 
 class TestPrepareForModel:

@@ -12,7 +12,6 @@ from pydantic import TypeAdapter
 
 from src.config import Settings, settings
 
-_REPO_ROOT = Path(__file__).resolve().parents[3]
 _COMPOSE_FILES = ("docker-compose.yml", "docker-compose.prod.yml")
 # Passed through both x-summarizer-env anchors (pipeline-1min 1d.6). A setting
 # that compose does not pass silently keeps its code default in containers, and
@@ -28,6 +27,8 @@ _PASSED_THROUGH = (
     "FRAME_VISION_PARALLEL",
     "FRAME_TIER_ENABLED",
     "LLM_VISION_MODEL",
+    "LLM_CLASSIFIER_MODEL",
+    "TRANSCRIPT_CLEANING_ENABLED",
 )
 # Deleted settings must not linger in config.py or either compose anchor.
 _DELETED = (
@@ -48,9 +49,16 @@ def isolated_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> pytest.Monk
     return monkeypatch
 
 
+def _repo_root() -> Path | None:
+    """The monorepo root; None inside the image, where tests/ sits at /app/tests."""
+    parents = Path(__file__).resolve().parents
+    return parents[3] if len(parents) > 3 else None
+
+
 def _summarizer_env(compose_file: str) -> dict[str, Any]:
-    path = _REPO_ROOT / compose_file
-    if not path.is_file():
+    root = _repo_root()
+    path = root / compose_file if root is not None else None
+    if path is None or not path.is_file():
         pytest.skip(f"{compose_file} is not available here (container run)")
     return yaml.safe_load(path.read_text())["x-summarizer-env"]
 
@@ -110,6 +118,16 @@ class TestConcurrencyDefaults:
     ) -> None:
         isolated_env.setenv("FRAME_VISION_PARALLEL", "false")
         assert Settings().FRAME_VISION_PARALLEL is False
+
+    def test_should_skip_advanced_transcript_cleaning_when_env_is_unset(
+        self, isolated_env: pytest.MonkeyPatch
+    ) -> None:
+        assert Settings().TRANSCRIPT_CLEANING_ENABLED is False
+
+    def test_should_route_the_tier_probe_to_haiku_when_env_is_unset(
+        self, isolated_env: pytest.MonkeyPatch
+    ) -> None:
+        assert Settings().get_stage_model("tier_probe") == "anthropic/claude-haiku-4-5-20251001"
 
     def test_should_route_vision_to_the_primary_model_when_no_override_is_set(
         self, isolated_env: pytest.MonkeyPatch

@@ -62,13 +62,17 @@ class QuizQuestion(BaseModel):
     model_config = {"populate_by_name": True}
 
     @model_validator(mode="after")
-    def _answer_is_an_option(self) -> QuizQuestion:
+    def _answer_is_one_distinct_option(self) -> QuizQuestion:
         # Clamping an out-of-range index (as the quiz_arena normalizer does)
         # would mark a wrong option correct — the item is rejected instead.
         if self.correct_index >= len(self.options):
             raise ValueError(
                 f"correctIndex {self.correct_index} is not one of {len(self.options)} options"
             )
+        # Two options that read the same make the answer ambiguous (one of them
+        # is marked wrong) — the item is dropped like any malformed question.
+        if len({option.casefold() for option in self.options}) < len(self.options):
+            raise ValueError("options repeat the same answer")
         return self
 
 
@@ -244,8 +248,13 @@ class PlanResult(BaseModel):
             return {}
         return {k: val for k, val in v.items() if k in EVIDENCE_KEYS and isinstance(val, bool)}
 
-    def to_triage_dict(self) -> dict:
-        """Convert to the triage dict shape expected by SSE events and assembly."""
+    def to_triage_dict(self, content_format: str | None = None) -> dict:
+        """The ``triage_complete`` SSE payload and the persisted ``pipeline.triage``.
+
+        ``content_format`` is the probe's (it is not part of the plan's answer).
+        Evidence + canonical terms ride along for the assembly backfill check
+        (1d.7), reconcile (3.2) and the gate.
+        """
         return {
             "contentTags": self.content_tags,
             "modifiers": self.modifiers,
@@ -253,58 +262,7 @@ class PlanResult(BaseModel):
             "userGoal": self.user_goal,
             "tabs": self.tabs,
             "confidence": self.confidence,
+            "contentFormat": content_format,
+            "evidence": self.evidence,
+            "terms": self.terms,
         }
-
-    def to_video_context_compact(self) -> str:
-        """~300 char summary for extraction/synthesis/enrichment injection."""
-        parts: list[str] = []
-
-        ident = self.identity
-        if ident.creator_type and ident.tone:
-            parts.append(f"Creator: {ident.creator_type} ({ident.tone})")
-        elif ident.creator_type:
-            parts.append(f"Creator: {ident.creator_type}")
-
-        if self.core_promise:
-            parts.append(f"Core promise: {self.core_promise}")
-
-        if self.unique_angle:
-            parts.append(f"Unique angle: {self.unique_angle}")
-
-        eg = self.extraction_guidance
-        if eg.watch_out_for:
-            parts.append(f"Watch out for: {eg.watch_out_for}")
-        if eg.primary_focus:
-            parts.append(f"Focus: {eg.primary_focus}")
-
-        return "\n".join(parts)
-
-    def to_video_context_full(self) -> str:
-        """Full text for logging/debugging."""
-        lines: list[str] = []
-
-        ident = self.identity
-        id_parts = []
-        if ident.creator_type:
-            id_parts.append(f"type={ident.creator_type}")
-        if ident.tone:
-            id_parts.append(f"tone={ident.tone}")
-        if id_parts:
-            lines.append(f"Creator: {', '.join(id_parts)}")
-
-        if self.core_promise:
-            lines.append(f"Core promise: {self.core_promise}")
-        if self.unique_angle:
-            lines.append(f"Unique angle: {self.unique_angle}")
-
-        eg = self.extraction_guidance
-        if eg.primary_focus:
-            lines.append(f"Extraction focus: {eg.primary_focus}")
-        if eg.watch_out_for:
-            lines.append(f"Watch out for: {eg.watch_out_for}")
-
-        lines.append(f"Content tags: {', '.join(self.content_tags)}")
-        lines.append(f"User goal: {self.user_goal}")
-        lines.append(f"Tabs: {len(self.tabs)}")
-
-        return "\n".join(lines)

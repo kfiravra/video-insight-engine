@@ -28,6 +28,9 @@ x-summarizer-env: &summarizer-env
   LLM_DESCRIPTION_MODEL: ${LLM_DESCRIPTION_MODEL:-}
   LLM_SYNTHESIS_MODEL: ${LLM_SYNTHESIS_MODEL:-}
   LLM_TRANSLATION_MODEL: ${LLM_TRANSLATION_MODEL:-}
+  # Tier-probe model (pipeline-1min D21). Literal default = config.py: a blank
+  # passthrough would route the probe to the fast tier.
+  LLM_CLASSIFIER_MODEL: ${LLM_CLASSIFIER_MODEL:-anthropic/claude-haiku-4-5-20251001}
   # Extraction concurrency + chunking (literal defaults = config.py; a blank bool crash-loops)
   EXTRACTION_PARALLEL: ${EXTRACTION_PARALLEL:-true}
   EXTRACTION_PARALLEL_BATCHES: ${EXTRACTION_PARALLEL_BATCHES:-6}
@@ -45,7 +48,7 @@ x-summarizer-env: &summarizer-env
   # Transcript / proxy
   YOUTUBE_PROXY_URL: ${YOUTUBE_PROXY_URL:-}
   YOUTUBE_PROXY_EXIT_COUNT: ${YOUTUBE_PROXY_EXIT_COUNT:-1}
-  TRANSCRIPT_CLEANING_ENABLED: ${TRANSCRIPT_CLEANING_ENABLED:-true}
+  TRANSCRIPT_CLEANING_ENABLED: ${TRANSCRIPT_CLEANING_ENABLED:-false}
   TRANSCRIPT_CLEANING_TIMEOUT: ${TRANSCRIPT_CLEANING_TIMEOUT:-30.0}
   # Optional HF Hub token — blank = unauthenticated (rate-limited) model pulls
   HF_TOKEN: ${HF_TOKEN:-}
@@ -328,9 +331,9 @@ services:
   # runtime falls back to local .txt prompts on any 404, so racing here is
   # safe: late uploads just take effect on subsequent video runs.
   #
-  # Failure modes are all non-fatal (script exits 0):
+  # Failure modes (nothing depends on this container, so none blocks startup):
   #   - Langfuse keys blank → "not configured, skipping" log, exit 0.
-  #   - Network/auth error → individual prompt errors logged, exit 0.
+  #   - Network/auth error or an unreadable registry → errors logged, exit 1.
   #
   # To force a resync mid-session (e.g. after editing a prompt file):
   #   docker compose run --rm vie-langfuse-init

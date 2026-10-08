@@ -7,8 +7,8 @@ still do (pipeline-1min 1b, brief §2):
    ``ctx.transcript_ready`` releases the tier probe;
 2. the probe's answer (the plan's playbook + hint; frames waits for it on its own);
 3. the marked transcript, rendered ONCE from ``ctx.prompt_segments`` — plan
-   and memory read the same string, never frame annotations (those are
-   injected into ``clean_text`` only after the whole group);
+   and memory read the same string, never frame annotations (those render
+   into their own ``<visual_annotations>`` block after the whole group);
 4. plan ∥ memory, from probe-done;
 5. the ``<video_memory>`` block, rendered once for every writer's
    ``{video_context}`` slot.

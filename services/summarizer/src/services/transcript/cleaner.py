@@ -33,15 +33,16 @@ FILLERS = {
 
 # Build regex pattern from filler set (longest first to avoid partial matches)
 _sorted_fillers = sorted(FILLERS, key=len, reverse=True)
-FILLER_PATTERN = re.compile(
-    r"\b(" + "|".join(re.escape(f) for f in _sorted_fillers) + r")\b",
+_FILLER_ALTERNATION = "|".join(re.escape(f) for f in _sorted_fillers)
+
+# A filler with the commas that punctuated (manual) captions put around it.
+# Only these commas are touched — "e.g., x" or "U.S.," elsewhere in the text
+# keep theirs.
+_FILLER_WITH_COMMAS = re.compile(
+    r"(?P<lead>,\s*)?\b(?:" + _FILLER_ALTERNATION + r")\b(?P<trail>\s*,)?",
     re.IGNORECASE,
 )
-
-# Commas a removed filler leaves stranded in punctuated (manual) captions:
-# "So, um, I" → "So, , I" and "that's it, um." → "that's it, ."
-_ORPHAN_COMMA_AFTER = re.compile(r"(^|[.!?,])(?:\s*,)+")
-_ORPHAN_COMMA_BEFORE = re.compile(r",\s*([.!?])")
+_CLAUSE_END = re.compile(r"\s*(?:[.!?]|$)")
 
 # Lazy-loaded spaCy model (thread-safe)
 _nlp = None
@@ -71,13 +72,23 @@ def remove_fillers(text: str) -> str:
     if not text:
         return text
 
-    cleaned, removed = FILLER_PATTERN.subn("", text)
+    cleaned, removed = _FILLER_WITH_COMMAS.subn(_drop_filler, text)
     if not removed:
         return text
-    cleaned = _ORPHAN_COMMA_AFTER.sub(r"\1", cleaned)
-    cleaned = _ORPHAN_COMMA_BEFORE.sub(r"\1", cleaned)
     # Collapse multiple spaces left by removal
     return re.sub(r"\s{2,}", " ", cleaned).strip()
+
+
+def _drop_filler(match: re.Match[str]) -> str:
+    """What replaces one filler: its own trailing comma goes with it.
+
+    "So, um, I" keeps the comma before the filler ("So, I"); "that's it, um."
+    loses it too, since a clause end follows ("that's it."); "Um, so" → "so".
+    """
+    lead = match.group("lead") or ""
+    if lead and not match.group("trail") and _CLAUSE_END.match(match.string, match.end()):
+        return ""
+    return lead
 
 
 def collapse_repetitions(

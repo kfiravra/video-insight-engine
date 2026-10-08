@@ -15,6 +15,8 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, AsyncGenerator
 
+from llm_common.context import llm_feature_var
+
 from src.config import settings
 from src.models.schemas import ProcessingStatus
 from src.services.cache.response_cache import response_cache
@@ -27,6 +29,8 @@ if TYPE_CHECKING:
     from src.services.pipeline.context import PipelineContext
 
 logger = logging.getLogger(__name__)
+
+TRANSLATION_FEATURE = "summarize:translation"
 
 
 async def _translate_title(ctx: PipelineContext) -> None:
@@ -55,6 +59,10 @@ async def run_phase_translation(
     """Translate the English output into the source language for the FE toggle."""
     if not ctx.source_language_code:
         return
+    # Its own tag: extraction now runs in a task, so this inline phase would
+    # otherwise inherit the metadata phase's "summarize:metadata" and the cost
+    # ledger + pipeline.timing would book translation spend under metadata.
+    llm_feature_var.set(TRANSLATION_FEATURE)
 
     yield sse_event("phase", {"phase": "translation"})
 

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from collections.abc import Iterator
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -100,7 +99,6 @@ class TestRunPhaseMetadata:
         await _run(ctx, world)
         await ctx.caption_task
 
-        assert world.extract.await_args.kwargs == {"with_captions": False}
         world.captions.assert_awaited_once_with(ctx.video_data)
 
     async def test_should_start_both_downloads_when_frames_are_not_cached(self, world):
@@ -118,11 +116,19 @@ class TestRunPhaseMetadata:
 
         assert (ctx.lowres_video.start.call_count, ctx.hires_video.start.call_count) == (0, 0)
 
+    async def test_should_tell_the_manifest_lookup_to_skip_s3_when_the_run_is_cold(self, world):
+        ctx = _ctx()
+        ctx.cold_media = True
+
+        await _run(ctx, world)
+
+        assert world.cached.await_args.kwargs == {"skip_cache": True}
+
     async def test_should_start_downloads_when_the_manifest_lookup_is_slow(self, monkeypatch):
         monkeypatch.setattr(metadata, "_CACHE_CHECK_CAP_SECONDS", 0.01)
         world = _World(duration=600, cached=True)
 
-        async def slow_lookup(video_id: str) -> bool:
+        async def slow_lookup(video_id: str, *, skip_cache: bool = False) -> bool:
             await asyncio.sleep(10)
             return True
 
@@ -154,15 +160,6 @@ class TestDescriptionAnalysis:
         world.release.set()
 
         assert await metadata.await_description_analysis(ctx) is ANALYSIS  # type: ignore[arg-type]
-
-    async def test_should_emit_its_sse_from_the_parallel_group(self, world):
-        ctx = _ctx()
-        await _run(ctx, world)
-        world.release.set()
-
-        events = [e async for e in metadata.run_phase_description(ctx)]  # type: ignore[arg-type]
-
-        assert json.loads(events[0].removeprefix("data: "))["event"] == "description_analysis"
 
     async def test_should_yield_none_when_the_analysis_fails(self, world):
         async def broken(description: str, fast_model: str) -> DescriptionAnalysis:

@@ -9,7 +9,6 @@ import pytest
 
 from src.exceptions import TranscriptError
 from src.models.schemas import ErrorCode
-from src.services.media import download_utils
 from src.services.transcription.transcript import (
     _fetch_transcript_sync,
     _is_rate_limit_error,
@@ -17,12 +16,6 @@ from src.services.transcription.transcript import (
     get_transcript,
     normalize_segments,
 )
-
-
-@pytest.fixture(autouse=True)
-def _fresh_exit_memory(monkeypatch):
-    """Each test starts with no remembered proxy exit (it is per-process state)."""
-    monkeypatch.setattr(download_utils, "_EXIT_MEMORY", download_utils._ExitMemory())
 
 
 class TestCleanTranscript:
@@ -549,3 +542,19 @@ class TestExitRotation:
             await get_transcript("vid")
 
         assert mock_api.list.call_count == 3
+
+
+class TestJobExit:
+    """1a.6: the caption API starts on the job's round-robin exit, like yt-dlp."""
+
+    @patch(
+        "src.services.transcription.transcript._fetch_transcript_sync",
+        return_value=([], "", "manual", "en"),
+    )
+    @patch("src.services.transcription.transcript.ytdlp_proxy_exit_urls", return_value=[])
+    async def test_should_pick_the_exit_order_by_video_id_when_fetching_captions(
+        self, mock_exit_urls, _fetch
+    ):
+        await get_transcript("dQw4w9WgXcQ")
+
+        mock_exit_urls.assert_called_once_with("dQw4w9WgXcQ")

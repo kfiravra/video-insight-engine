@@ -24,6 +24,7 @@ from ...shared_config.domain_config import (
     render_valid_datasources,
 )
 from ...utils.language_utils import ENGLISH_OUTPUT_DIRECTIVE
+from .assembly import STEP_FLOW_THRESHOLD
 from .pipeline_helpers import sanitize_for_prompt
 from .prompt_builder import load_prompt_text
 
@@ -113,6 +114,9 @@ def _render_static(template: str) -> str:
         .replace("{valid_components}", render_valid_component_names())
         .replace("{extraction_caps}", render_extraction_caps())
         .replace("{domain_requirements}", render_domain_requirements())
+        # The step count at which assembly promotes step_player to
+        # step_flow_canvas — one number for the planner and the assembler.
+        .replace("{step_flow_threshold}", str(STEP_FLOW_THRESHOLD))
     )
 
 

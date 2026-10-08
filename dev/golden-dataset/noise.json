@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "createdAt": "2026-10-07T17:36:32.169021+00:00",
+  "createdAt": "2026-10-08T08:52:29.946685+00:00",
   "apiLabel": "localhost:3000",
   "runs": 2,
   "reports": [
@@ -14,8 +14,8 @@
   },
   "runMeans": {
     "quality": [
-      0.8811,
-      0.8774
+      0.9134,
+      0.9032
     ],
     "faithfulness": [
       0.7511,
@@ -27,17 +27,17 @@
     ]
   },
   "baseline": {
-    "quality": 0.8792,
+    "quality": 0.9083,
     "faithfulness": 0.7578,
     "duplicateRate": 0.066
   },
   "noise": {
     "quality": {
-      "sd": 0.037643,
+      "sd": 0.04807,
       "df": 18,
       "n": 18,
       "passes": 2,
-      "sigmaMean": 0.008872
+      "sigmaMean": 0.01133
     },
     "faithfulness": {
       "sd": 0.230778,
@@ -55,7 +55,7 @@
     }
   },
   "runMeanSpread": {
-    "quality": 0.0037,
+    "quality": 0.0102,
     "faithfulness": 0.0134,
     "duplicateRate": 0.0266
   },
@@ -85,12 +85,12 @@
       "duplicateRate": 0.0876
     },
     "food-knife-skills": {
-      "quality": 0.767,
+      "quality": 0.883,
       "faithfulness": 1.0,
       "duplicateRate": 0.1562
     },
     "food-recipe-story-intro": {
-      "quality": 0.846,
+      "quality": 0.962,
       "faithfulness": 1.0,
       "duplicateRate": 0.0
     },
@@ -130,7 +130,7 @@
       "duplicateRate": 0.0
     },
     "review-airpods-pro-2": {
-      "quality": 0.846,
+      "quality": 0.962,
       "faithfulness": null,
       "duplicateRate": 0.108
     },
@@ -140,7 +140,7 @@
       "duplicateRate": 0.0
     },
     "science-crispr-intro": {
-      "quality": 0.7185,
+      "quality": 0.777,
       "faithfulness": null,
       "duplicateRate": 0.0111
     },
@@ -150,7 +150,7 @@
       "duplicateRate": 0.0168
     },
     "tech-docker-basics": {
-      "quality": 0.808,
+      "quality": 0.925,
       "faithfulness": 0.9165,
       "duplicateRate": 0.0415
     },

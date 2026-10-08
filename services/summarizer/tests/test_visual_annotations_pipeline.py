@@ -51,6 +51,7 @@ def _ctx(*, eval_run: bool = False) -> SimpleNamespace:
         triage=SimpleNamespace(tabs=[]),
         triage_dict={},
         plan_result=None,
+        content_format=None,
         extraction_data={},
         enrichment_data={},
         synthesis_dict=None,

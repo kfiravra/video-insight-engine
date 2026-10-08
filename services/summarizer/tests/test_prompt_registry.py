@@ -246,7 +246,7 @@ def test_register_prompts_naming_uses_subdir_label():
     assert mod._name_for("summarizer", root, sample) == "summarizer:schema:food"
 
 
-def test_register_prompts_already_synced_returns_true_on_match():
+def test_register_prompts_sync_state_should_compare_the_labelled_content():
     """The idempotency check should skip uploads when content matches."""
     mod = _load_register_script()
 
@@ -254,16 +254,23 @@ def test_register_prompts_already_synced_returns_true_on_match():
         prompt = "hello world"
 
     class _FakeClient:
-        # _already_synced scopes the lookup to the production label, so the
+        # _sync_state scopes the lookup to the production label, so the
         # fake must accept the `label` kwarg the real client receives.
         def get_prompt(self, name: str, label: str | None = None):  # noqa: ARG002
             return _FakeExisting()
 
-    assert mod._already_synced(_FakeClient(), "x", "hello world") is True
-    assert mod._already_synced(_FakeClient(), "x", "different") is False
+    states = [mod._sync_state(_FakeClient(), "x", text) for text in ("hello world", "different")]
+
+    assert states == ["unchanged", "changed"]
 
 
 # ─── --label / --dry-run (stage prompts without moving `production`) ────
+class _NotFound(Exception):
+    """The registry's 404 — what the Langfuse SDK raises for a missing label."""
+
+    status_code = 404
+
+
 class _FakeRegistry:
     """Serves text per label and records every get/create call."""
 
@@ -275,7 +282,7 @@ class _FakeRegistry:
     def get_prompt(self, name: str, *, label: str | None = None) -> object:
         self.gets.append((name, label))
         if label not in self.by_label:
-            raise LookupError(f"no version of {name} carries label {label}")
+            raise _NotFound(f"no version of {name} carries label {label}")
         return MagicMock(prompt=self.by_label[label])
 
     def create_prompt(self, *, name: str, prompt: str, labels: list[str]) -> object:

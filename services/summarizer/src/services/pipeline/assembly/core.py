@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from typing import Any
 
 from src.shared_config.domain_config import (
@@ -17,7 +17,7 @@ from src.shared_config.domain_config import (
     domain_requirements,
     effective_requirements,
     quiz_policy,
-    requirement_evidence,
+    ruled_out_requirements,
     sibling_datasources,
 )
 from src.utils.data_helpers import is_empty_data
@@ -551,22 +551,16 @@ def _backfill_required_component(
     return False
 
 
-def ruled_out_by_evidence(primary_tag: str, evidence: Mapping[str, bool] | None) -> dict[str, str]:
-    """Required component → its evidence key, for each key the plan answered False.
+def demotion_blocked(
+    content_tags: Iterable[str], evidence: Mapping[str, bool] | None
+) -> frozenset[str]:
+    """Components no demotion may land on: the ruled-out ones and their equivalents.
 
-    A food vlog with ``has_ingredients: false`` rules ``checklist`` out: it is
-    neither backfilled nor reached by demotion (D15). A missing key is "no
-    opinion" and rules nothing out.
+    Gated over EVERY content tag, not only the primary: a travel-primary food
+    vlog with ``has_ingredients: false`` must not demote a spot_explorer onto a
+    checklist because travel itself has no checklist gate.
     """
-    if not evidence:
-        return {}
-    gates = requirement_evidence().get(primary_tag, {})
-    return {component: key for component, key in gates.items() if evidence.get(key) is False}
-
-
-def demotion_blocked(primary_tag: str, evidence: Mapping[str, bool] | None) -> frozenset[str]:
-    """Components no demotion may land on: the ruled-out ones and their equivalents."""
-    ruled_out = ruled_out_by_evidence(primary_tag, evidence)
+    ruled_out = {c for tag in content_tags for c in ruled_out_requirements(tag, evidence)}
     return frozenset().union(*(_REQUIREMENT_EQUIVALENTS.get(c, frozenset({c})) for c in ruled_out))
 
 
@@ -680,7 +674,7 @@ def _validate_domain_requirements(
         tabs, reqs.get("forbidden") or frozenset(), primary_tag, content_format, dropped_sink
     )
 
-    ruled_out = ruled_out_by_evidence(primary_tag, evidence)
+    ruled_out = ruled_out_requirements(primary_tag, evidence)
     for req in reqs.get("required", []):
         accepted = _REQUIREMENT_EQUIVALENTS.get(req, frozenset({req}))
         if any(t.get("component", "") in accepted for t in tabs):
@@ -1004,6 +998,26 @@ def _post_process_tabs(tabs: list[dict], video_duration: float | None = None) ->
                                             if idx_in_list == 0
                                             else f"Part {m.group(1)}"
                                         )
+
+
+def _link_tabs(tabs: list[dict], primary_tag: str) -> None:
+    """Set every tab's ``crossTabLinks``; each target is linked from one tab only."""
+    all_tab_ids = {t["id"] for t in tabs}
+    globally_linked: set[str] = set()
+    for tab in tabs:
+        links = resolve_cross_tab_links(
+            tab_id=tab["id"],
+            all_tab_ids=all_tab_ids,
+            component=tab.get("component"),
+            all_tabs=tabs,
+            primary_tag=primary_tag,
+        )
+        deduped = []
+        for link in links:
+            if link["targetTab"] not in globally_linked:
+                deduped.append(link)
+                globally_linked.add(link["targetTab"])
+        tab["crossTabLinks"] = deduped
 
 
 # ─────────────────────────────────────────────────────
@@ -1444,7 +1458,7 @@ def assemble_response(
     # The plan's Appendix-C booleans (D15): a required component they rule out
     # is neither backfilled nor reached by demotion.
     evidence = triage.get("evidence") if isinstance(triage.get("evidence"), dict) else None
-    blocked_rungs = demotion_blocked(primary_tag, evidence)
+    blocked_rungs = demotion_blocked({primary_tag, *meta["contentTags"]}, evidence)
 
     assembled_tabs: list[dict] = []
     # Response-wide reuse ledger: s3 key -> timestamp of first attachment.
@@ -1704,25 +1718,6 @@ def assemble_response(
         evidence=evidence,
     )
 
-    # Resolve cross-tab links; each link's text is the target tab's own label.
-    all_assembled_tab_ids = {t["id"] for t in assembled_tabs}
-    globally_linked: set[str] = set()
-    for tab in assembled_tabs:
-        links = resolve_cross_tab_links(
-            tab_id=tab["id"],
-            all_tab_ids=all_assembled_tab_ids,
-            component=tab.get("component"),
-            all_tabs=assembled_tabs,
-            primary_tag=primary_tag,
-        )
-        deduped = []
-        for link in links:
-            target = link["targetTab"]
-            if target not in globally_linked:
-                deduped.append(link)
-                globally_linked.add(target)
-        tab["crossTabLinks"] = deduped
-
     # Conditional filmstrip auto-append. The standalone gallery component was
     # retired in the video-to-action overhaul; this surfaces the same frames as
     # a `video_filmstrip` scrubber instead.
@@ -1811,6 +1806,9 @@ def assemble_response(
             )
 
     _post_process_tabs(assembled_tabs, (video_meta or {}).get("duration"))
+    # After post-processing: a link's text is its target's FINAL label (emoji
+    # prefix stripped, "Untitled Chapter N" renamed), never the raw plan label.
+    _link_tabs(assembled_tabs, primary_tag)
 
     # Secondary-tier attachments (interactive-overhaul-v2 P2): enrich sparse
     # tabs / break up dense ones. Authoritative + data-driven; runs after tabs

@@ -102,6 +102,14 @@ export class DemoRestrictedError extends AppError {
   }
 }
 
+/** `cold: true` (benchmark-only cold-media run) from a user who is neither admin nor the eval account. */
+export class ColdRunForbiddenError extends AppError {
+  constructor() {
+    super('COLD_RUN_FORBIDDEN', 403, 'Cold runs are limited to admin and eval accounts');
+    this.name = 'ColdRunForbiddenError';
+  }
+}
+
 export class UserNotFoundError extends AppError {
   constructor() {
     super('USER_NOT_FOUND', 404, 'User not found');

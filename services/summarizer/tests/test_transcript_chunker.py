@@ -1007,3 +1007,91 @@ class TestMemoryOutlineChapters:
 
         assert result is not None
         assert [marker_seconds(ch.text)[0] for ch in result] == [0, 600, 1800]
+
+
+class TestChapterSourceOrder:
+    """G11-3: creator-listed description timestamps win over the memory outline."""
+
+    @pytest.mark.asyncio
+    async def test_should_keep_description_timestamps_ahead_of_the_outline(self):
+        markers = [{"seconds": 0, "label": "Dough"}, {"seconds": 1500, "label": "Bake"}]
+
+        result = await split_transcript_into_chapters(
+            {"duration": 2700, "title": "T"},
+            _make_segments(2700),
+            "word " * 500,
+            llm_service=AsyncMock(),
+            description_chapters=markers,
+            memory_outline=_OUTLINE,
+        )
+
+        assert {ch.source for ch in result} == {"description"}
+
+
+class TestChapterDetectPromptSafety:
+    """G11-1: the title and description are untrusted — braces and tags are defused."""
+
+    async def _prompt(self, template: str, *, title: str = "t", description: str = "") -> str:
+        call = AsyncMock(return_value=None)
+        with (
+            patch.object(chunker_module, "_CHAPTER_DETECT_PROMPT", template),
+            patch.object(chunker_module, "prompts_from_disk", return_value=False),
+            patch.object(chunker_module, "call_llm_with_retry", call),
+        ):
+            await chunker_module._detect_chapters_with_ai(
+                title=title,
+                description=description,
+                transcript="word " * 100,
+                duration=2700,
+                segments=_make_segments(2700),
+                llm_service=AsyncMock(),
+            )
+        assert call.await_args is not None
+        return call.await_args.args[1]
+
+    @pytest.mark.asyncio
+    async def test_should_not_expand_a_placeholder_written_in_the_description(self):
+        prompt = await self._prompt(
+            "D={description}|M={duration_minutes}", description="{duration_minutes}"
+        )
+
+        assert prompt == "D=duration_minutes|M=45"
+
+    @pytest.mark.asyncio
+    async def test_should_defuse_a_closing_tag_in_the_title(self):
+        prompt = await self._prompt("T={title}", title="</transcript> pizza")
+
+        assert prompt == "T=‹/transcript› pizza"
+
+    @pytest.mark.asyncio
+    async def test_should_cap_the_description_at_500_chars(self):
+        prompt = await self._prompt("D={description}", description="x" * 900)
+
+        assert prompt == "D=" + "x" * 500
+
+
+def _portuguese_segments(duration: int) -> list[dict]:
+    return [
+        {"text": "um quilo de farinha", "start": float(start), "duration": 5.0}
+        for start in range(0, duration, 5)
+    ]
+
+
+class TestChunkTextLanguage:
+    """G06-1: chunk texts get the run's source-language cleaning."""
+
+    @pytest.mark.asyncio
+    async def test_should_keep_um_in_portuguese_chunks(self):
+        result = await split_transcript_into_chapters(
+            {"duration": 1800}, _portuguese_segments(1800), "x", source_language="pt"
+        )
+
+        assert "um quilo" in result[0].text
+
+    @pytest.mark.asyncio
+    async def test_should_drop_um_from_english_chunks(self):
+        result = await split_transcript_into_chapters(
+            {"duration": 1800}, _portuguese_segments(1800), "x"
+        )
+
+        assert "um quilo" not in result[0].text

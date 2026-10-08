@@ -49,6 +49,9 @@ x-summarizer-env: &summarizer-env
   LLM_DESCRIPTION_MODEL: ${LLM_DESCRIPTION_MODEL:-}
   LLM_SYNTHESIS_MODEL: ${LLM_SYNTHESIS_MODEL:-}
   LLM_TRANSLATION_MODEL: ${LLM_TRANSLATION_MODEL:-}
+  # Tier-probe model (pipeline-1min D21). Literal default = config.py: a blank
+  # passthrough would route the probe to the fast tier.
+  LLM_CLASSIFIER_MODEL: ${LLM_CLASSIFIER_MODEL:-anthropic/claude-haiku-4-5-20251001}
   # Extraction concurrency + chunking (literal defaults = config.py; a blank bool crash-loops)
   EXTRACTION_PARALLEL: ${EXTRACTION_PARALLEL:-true}
   EXTRACTION_PARALLEL_BATCHES: ${EXTRACTION_PARALLEL_BATCHES:-6}
@@ -71,7 +74,7 @@ x-summarizer-env: &summarizer-env
   INTERNAL_SECRET: ${INTERNAL_SECRET:?INTERNAL_SECRET is required (openssl rand -base64 32)}
   YOUTUBE_PROXY_URL: ${YOUTUBE_PROXY_URL:-}
   YOUTUBE_PROXY_EXIT_COUNT: ${YOUTUBE_PROXY_EXIT_COUNT:-1}
-  TRANSCRIPT_CLEANING_ENABLED: ${TRANSCRIPT_CLEANING_ENABLED:-true}
+  TRANSCRIPT_CLEANING_ENABLED: ${TRANSCRIPT_CLEANING_ENABLED:-false}
   TRANSCRIPT_CLEANING_TIMEOUT: ${TRANSCRIPT_CLEANING_TIMEOUT:-30.0}
   HF_TOKEN: ${HF_TOKEN:-}
   S3_BUCKET: ${S3_BUCKET:-vie-transcripts}

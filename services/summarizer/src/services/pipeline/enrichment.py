@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -30,8 +31,9 @@ from ...shared_config.domain_config import (
 from ...utils.json_parsing import parse_json_response
 from ...utils.language_utils import ENGLISH_OUTPUT_DIRECTIVE
 from ...utils.llm_retry import call_llm_with_retry
-from .assembly.attachments import can_host_quick_quiz
+from .assembly.attachments import SPARSE_THRESHOLD, can_host_quick_quiz
 from .pipeline_helpers import sanitize_for_prompt
+from .pipeline_timing import record_llm_failure
 from .prompt_builder import load_prompt_text
 
 if TYPE_CHECKING:
@@ -45,10 +47,12 @@ QUIZ_COMPONENT = "quiz_arena"
 QUIZ_DATA_SOURCE = "enrichment.quiz"
 QUIZ_STAGE = "enrichment"
 QUIZ_MAX_TOKENS = 2048
-# The whole stage, retry included, ends within the brief's 30 s, so the quiz
-# never holds the tabs longer than that; one attempt alone may use 25 s.
+# The whole stage, retry included, ends within the brief's 30 s. The quiz runs
+# on the fast model (no cross-provider fallback), so it is two attempts: 14 s
+# each plus the 1 s backoff fit inside the cap, and a slow first answer still
+# leaves a full retry (measured quiz walls are ~6-10 s).
 QUIZ_TOTAL_TIMEOUT_S = 30.0
-QUIZ_ATTEMPT_TIMEOUT_S = 25.0
+QUIZ_ATTEMPT_TIMEOUT_S = 14.0
 QUIZ_MAX_RETRIES = 1
 MIN_QUIZ_QUESTIONS = 2
 TAB_TEXT_MAX_CHARS = 300
@@ -85,13 +89,28 @@ def _is_quiz_tab(tab: Mapping[str, Any]) -> bool:
     return tab.get("component") == QUIZ_COMPONENT or tab.get("dataSource") == QUIZ_DATA_SOURCE
 
 
+def _is_sparse_strip_host(tab: Mapping[str, Any]) -> bool:
+    """A tab able to host the quick_quiz strip that the plan expects to stay sparse.
+
+    Assembly attaches the strip only to a list of at most ``SPARSE_THRESHOLD``
+    items, so a dense host never shows it. ``expect`` 0 means "not counted"
+    (fallback tabs) and is not treated as sparse: a strip-only quiz with no
+    sparse host is paid for and seen nowhere.
+    """
+    if not can_host_quick_quiz(str(tab.get("component", ""))):
+        return False
+    brief = tab.get("brief")
+    expect = brief.get("expect") if isinstance(brief, Mapping) else 0
+    return isinstance(expect, int) and 0 < expect <= SPARSE_THRESHOLD
+
+
 def needs_quiz(plan: PlanResult | None, content_format: str | None = None) -> bool:
     """Whether this run's plan can use a quiz — the enrichment demand gate (A7).
 
     A planned quiz tab always demands one (the plan has the final say). Without
-    one, only a quick_quiz strip could show it: that needs a tab able to host
-    the strip and evidence that does not rule learning out (a missing key is
-    "no opinion", not false).
+    one, only a quick_quiz strip could show it: that needs a host the plan
+    expects to be sparse (:func:`_is_sparse_strip_host`) and evidence that does
+    not rule learning out (a missing key is "no opinion", not false).
     """
     if plan is None or not quiz_allowed(plan.primary_tag, content_format):
         return False
@@ -100,7 +119,7 @@ def needs_quiz(plan: PlanResult | None, content_format: str | None = None) -> bo
         return True
     if plan.evidence.get(quiz_policy()["requiresEvidence"]) is False:
         return False
-    return any(can_host_quick_quiz(str(tab.get("component", ""))) for tab in tabs)
+    return any(_is_sparse_strip_host(tab) for tab in tabs)
 
 
 # ─── Prompt ───
@@ -200,21 +219,43 @@ def _quiz_cap() -> int:
 # ─── Stage ───
 
 
+async def _call_quiz_llm(llm_service: LLMService, prompt: str) -> str | None:
+    """The quiz reply, bounded by the stage deadline.
+
+    The deadline cancels whatever is in flight, so neither the provider nor the
+    retry wrapper records that failure — it is recorded here, timed from the
+    stage start, as attempt 0 (the stage deadline, not one provider attempt).
+    """
+    model = settings.get_stage_model(QUIZ_STAGE)
+    started = time.monotonic()
+    try:
+        async with asyncio.timeout(QUIZ_TOTAL_TIMEOUT_S):
+            return await call_llm_with_retry(
+                llm_service,
+                prompt,
+                max_tokens=QUIZ_MAX_TOKENS,
+                timeout=QUIZ_ATTEMPT_TIMEOUT_S,
+                max_retries=QUIZ_MAX_RETRIES,
+                stage_name=QUIZ_STAGE,
+                json_mode=True,
+                use_fast_model=True,
+                model_override=model,
+            )
+    except TimeoutError as e:
+        record_llm_failure(
+            span=QUIZ_STAGE,
+            model=model or llm_service.fast_model,
+            error=e,
+            start_monotonic=started,
+            attempt=0,
+        )
+        raise
+
+
 async def _run_quiz(
     llm_service: LLMService, primary_tag: str, prompt: str
 ) -> EnrichmentData | None:
-    async with asyncio.timeout(QUIZ_TOTAL_TIMEOUT_S):
-        raw = await call_llm_with_retry(
-            llm_service,
-            prompt,
-            max_tokens=QUIZ_MAX_TOKENS,
-            timeout=QUIZ_ATTEMPT_TIMEOUT_S,
-            max_retries=QUIZ_MAX_RETRIES,
-            stage_name=QUIZ_STAGE,
-            json_mode=True,
-            use_fast_model=True,
-            model_override=settings.get_stage_model(QUIZ_STAGE),
-        )
+    raw = await _call_quiz_llm(llm_service, prompt)
     if not raw:
         logger.warning("Quiz LLM call failed after retries for %s", primary_tag)
         return None

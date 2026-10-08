@@ -9,9 +9,10 @@ definition — no vision filler-check applies.
 
 The seeks run against the run's one local 720p file (``hires_prefetch``),
 which scene extraction already downloaded; a run that skipped scene
-extraction (manifest cache hit) starts that download here, and only when
-enough moments need it. Best-effort by design: any failure (no file,
-extraction timeout, S3 down) leaves the item on its glyph-plate fallback.
+extraction (manifest cache hit) starts that download here — capped so the
+seeks keep part of the budget — and only when enough moments need it.
+Best-effort by design: any failure (no file, extraction timeout, S3 down)
+leaves the item on its glyph-plate fallback.
 """
 
 from __future__ import annotations
@@ -36,6 +37,9 @@ _FILL_MAX_FRAMES = 12
 # Whole-fill budget: waiting for the 720p file (normally already on disk)
 # plus the local seeks. Partial fills stand.
 _FILL_TIMEOUT = 150.0
+# A download the fill starts itself gets the budget minus this, so a slow
+# download can't hold `complete` for the whole budget and leave no time to seek.
+_FILL_SEEK_RESERVE = 30.0
 # Starting the 720p download just for one or two glyph plates isn't worth it;
 # once the file exists (or is on its way), every frameless moment is filled.
 _FILL_DOWNLOAD_MIN_TARGETS = 3
@@ -126,6 +130,40 @@ def _count_filled(targets: list[FillTarget]) -> int:
     return sum(1 for item, _ in targets if item.get("thumbnailUrl"))
 
 
+def _cap_targets(targets: list[FillTarget]) -> list[FillTarget]:
+    capped = targets[:_FILL_MAX_FRAMES]
+    if len(targets) > len(capped):
+        logger.warning(
+            "moment_frame_fill: %d frameless moments exceed the %d-frame cap — "
+            "the overflow keeps the glyph-plate fallback",
+            len(targets),
+            _FILL_MAX_FRAMES,
+        )
+    return capped
+
+
+async def _fill_within_budget(
+    youtube_id: str, capped: list[FillTarget], hires_video: LocalHiresSource
+) -> int:
+    """_fill_from_local under _FILL_TIMEOUT; partial fills stand, never raises."""
+    try:
+        return await asyncio.wait_for(
+            _fill_from_local(youtube_id, capped, hires_video), timeout=_FILL_TIMEOUT
+        )
+    except asyncio.TimeoutError:
+        filled = _count_filled(capped)
+        logger.warning(
+            "moment_frame_fill: timed out after %.0fs — %d/%d filled",
+            _FILL_TIMEOUT,
+            filled,
+            len(capped),
+        )
+        return filled
+    except Exception as e:  # noqa: BLE001 — strictly best-effort side quest
+        logger.warning("moment_frame_fill: failed (%s: %s)", type(e).__name__, e)
+        return _count_filled(capped)
+
+
 async def fill_moment_frames(
     tabs: list[dict], youtube_id: str, hires_video: LocalHiresSource | None
 ) -> int:
@@ -143,36 +181,16 @@ async def fill_moment_frames(
     if hires_video is None:
         return 0
 
-    capped = targets[:_FILL_MAX_FRAMES]
-    if len(targets) > len(capped):
-        logger.warning(
-            "moment_frame_fill: %d frameless moments exceed the %d-frame cap — "
-            "the overflow keeps the glyph-plate fallback",
-            len(targets),
-            _FILL_MAX_FRAMES,
-        )
-    if not hires_video.started and len(capped) < _FILL_DOWNLOAD_MIN_TARGETS:
-        logger.info(
-            "moment_frame_fill: %d frameless moments — not worth a 720p download", len(capped)
-        )
-        return 0
+    capped = _cap_targets(targets)
+    if not hires_video.started:
+        if len(capped) < _FILL_DOWNLOAD_MIN_TARGETS:
+            logger.info(
+                "moment_frame_fill: %d frameless moments — not worth a 720p download", len(capped)
+            )
+            return 0
+        hires_video.start(timeout=_FILL_TIMEOUT - _FILL_SEEK_RESERVE)
 
-    try:
-        filled = await asyncio.wait_for(
-            _fill_from_local(youtube_id, capped, hires_video), timeout=_FILL_TIMEOUT
-        )
-    except asyncio.TimeoutError:
-        filled = _count_filled(capped)
-        logger.warning(
-            "moment_frame_fill: timed out after %.0fs — %d/%d filled",
-            _FILL_TIMEOUT,
-            filled,
-            len(capped),
-        )
-    except Exception as e:  # noqa: BLE001 — strictly best-effort side quest
-        logger.warning("moment_frame_fill: failed (%s: %s)", type(e).__name__, e)
-        return _count_filled(capped)
-
+    filled = await _fill_within_budget(youtube_id, capped, hires_video)
     if filled:
         logger.info(
             "moment_frame_fill: +%d/%d moment images for %s", filled, len(capped), youtube_id

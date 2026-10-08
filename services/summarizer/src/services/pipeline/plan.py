@@ -40,9 +40,14 @@ CONFIDENCE_THRESHOLD = 0.6
 # The plan sits on the critical path and its fallback plan still ships tabs, so
 # a slow call gets one retry, not two. There is one plan call per run, so a
 # prompt cache would be written and never read (A26): no cache_control.
-PLAN_TIMEOUT_SECONDS = 45.0
+# Sized from measured phase-1 plans: 1,814–1,920 output tokens in 36.7–39.8 s.
+# 2,048 tokens truncated the answer (the JSON repair then silently dropped the
+# trailing tabs) and the brief's 45 s sat ~5 s above the measured wall, so a
+# slow answer timed out and retried into the fallback plan. 3,500 tokens is
+# ~1.8x the measured answer; 60 s covers it at the measured rate.
+PLAN_TIMEOUT_SECONDS = 60.0
 PLAN_MAX_RETRIES = 1
-PLAN_MAX_TOKENS = 2048
+PLAN_MAX_TOKENS = 3500
 
 # Components whose assembler builds from synthesis/meta and ignores the tab's
 # data, so their dataSource needs no registry check (mirrors the overview half

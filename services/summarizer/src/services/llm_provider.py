@@ -26,7 +26,6 @@ from src.services.llm_messages import (
     Message,
     UserContent,
     build_prompt_messages,
-    is_anthropic_model,
     prepare_for_model,
     to_message_dicts,
 )
@@ -252,7 +251,6 @@ class LLMProvider:
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
         json_mode: bool = False,
-        cache_static: str | None = None,
         span_name: str | None = None,
         span_metadata: dict[str, Any] | None = None,
         temperature: float | None = None,
@@ -268,20 +266,12 @@ class LLMProvider:
             system_prompt: Optional system prompt (never carries a breakpoint)
             metadata: Optional metadata for tracking (user_id, feature, etc.)
             json_mode: Request JSON-only output
-            cache_static: Static prompt content to cache (Anthropic prompt caching).
-                When provided, the static part is sent as a system message with
-                cache_control, and the dynamic prompt as the user message.
             temperature: Sampling temperature; ``None`` sends none (provider default).
 
         Returns:
             Generated text content
         """
-        messages = build_prompt_messages(
-            prompt,
-            system_prompt=system_prompt,
-            cache_static=cache_static,
-            anthropic=is_anthropic_model(self._model),
-        )
+        messages = build_prompt_messages(prompt, system_prompt=system_prompt)
         return await self.complete_with_messages(
             messages,
             max_tokens,
@@ -326,12 +316,7 @@ class LLMProvider:
         """
         kwargs: dict[str, Any] = {
             "model": self._fast_model,
-            "messages": build_prompt_messages(
-                prompt,
-                system_prompt=system_prompt,
-                cache_static=None,
-                anthropic=is_anthropic_model(self._fast_model),
-            ),
+            "messages": build_prompt_messages(prompt, system_prompt=system_prompt),
             "max_tokens": max_tokens,
             "timeout": timeout,
             "num_retries": _LITELLM_NUM_RETRIES,

@@ -163,9 +163,10 @@ class _TierGate:
 async def run_phase_frames(ctx: PipelineContext) -> AsyncGenerator[str, None]:
     """Extract scene keyframes, score, select, run OCR + vision, and prepare for assembly.
 
-    Downloads lowest-quality video via yt-dlp, runs FFmpeg scene detection,
-    scores frames locally, selects ~25 best, uploads to S3, runs OCR
-    and vision analysis in parallel, and stores enriched frames on context.
+    Reads the run's low-res file (``ctx.lowres_video``, started by the metadata
+    phase), runs FFmpeg scene detection, scores frames locally, selects ~25
+    best, refines them from the run's 720p file, uploads to S3, runs OCR and
+    vision analysis in parallel, and stores enriched frames on context.
     """
     if not settings.SCENE_EXTRACTION_ENABLED:
         return
@@ -186,6 +187,7 @@ async def run_phase_frames(ctx: PipelineContext) -> AsyncGenerator[str, None]:
             hires_video=ctx.hires_video,
             lowres_video=ctx.lowres_video,
             resolve_reselect=gate.reselect if gate is not None else None,
+            skip_cache=getattr(ctx, "cold_media", False),
         )
         tier = gate.tier if gate is not None else "standard"
 
@@ -212,7 +214,7 @@ async def run_phase_frames(ctx: PipelineContext) -> AsyncGenerator[str, None]:
             _run_vision_analysis(ctx, selected_frames) if tier != "low" else asyncio.sleep(0)
         )
 
-        (enriched_result, event_str, _), _ = await asyncio.gather(
+        (enriched_result, event_str), _ = await asyncio.gather(
             ocr_task,
             vision_task,
         )

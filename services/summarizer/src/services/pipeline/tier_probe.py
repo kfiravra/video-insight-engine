@@ -11,7 +11,6 @@ metadata tier, no hint), so the probe never raises into the pipeline.
 from __future__ import annotations
 
 import logging
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -41,9 +40,6 @@ WINDOW_CHARS = 700
 DESCRIPTION_CHARS = 500
 MAX_TAGS = 15
 _NO_TRANSCRIPT = "(no transcript)"
-# Frame annotations Phase 2.5 splices into clean_text ("[VISUAL at 3:42: ...]",
-# "[ON-SCREEN TEXT at 3:42: ...]"). The probe judges speech, never captions.
-_ANNOTATION_START = re.compile(r"\[(?:VISUAL|ON-SCREEN TEXT)\b")
 
 
 @dataclass(frozen=True)
@@ -76,35 +72,6 @@ class TierProbeInput:
 # ─── Transcript windows ──────────────────────────────────────────────────────
 
 
-def _annotation_end(text: str, start: int) -> int:
-    """Index after the bracket closing the annotation at ``start`` (one line max)."""
-    line_end = text.find("\n", start)
-    line_end = len(text) if line_end < 0 else line_end
-    depth = 0
-    for index in range(start, line_end):
-        if text[index] == "[":
-            depth += 1
-        elif text[index] == "]":
-            depth -= 1
-            if depth == 0:
-                return index + 1
-    last = text.rfind("]", start, line_end)
-    return last + 1 if last > start else line_end
-
-
-def strip_visual_annotations(text: str) -> str:
-    """Drop ``[VISUAL ...]`` / ``[ON-SCREEN TEXT ...]`` spans; collapse whitespace."""
-    kept: list[str] = []
-    position = 0
-    for match in _ANNOTATION_START.finditer(text):
-        if match.start() < position:
-            continue
-        kept.append(text[position : match.start()])
-        position = _annotation_end(text, match.start())
-    kept.append(text[position:])
-    return " ".join("".join(kept).split())
-
-
 def _window(text: str, start: int, size: int) -> str:
     """Slice ``size`` chars from ``start`` and trim partial words at both edges."""
     start = max(0, min(start, len(text) - size))
@@ -117,8 +84,13 @@ def _window(text: str, start: int, size: int) -> str:
 
 
 def transcript_windows(transcript: str, size: int = WINDOW_CHARS) -> tuple[str, str, str]:
-    """Clean start/middle/end windows; a short transcript is split, never duplicated."""
-    clean = strip_visual_annotations(transcript)
+    """Start/middle/end windows of the whitespace-collapsed transcript.
+
+    A short transcript is split, never duplicated. The probe reads
+    ``clean_text``, which never carries frame annotations (1c.2 renders them
+    into their own block), so there is nothing to strip.
+    """
+    clean = " ".join(transcript.split())
     if len(clean) <= 3 * size:
         thirds = [clean[i * len(clean) // 3 : (i + 1) * len(clean) // 3] for i in range(3)]
         return thirds[0].strip(), thirds[1].strip(), thirds[2].strip()

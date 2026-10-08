@@ -56,7 +56,7 @@ async def _run(ctx) -> list[str]:
 
 
 def _common_patches(extraction_result: dict):
-    ocr_result = (extraction_result, "event: frames\\n\\n", None)
+    ocr_result = (extraction_result, "event: frames\\n\\n")
     return (
         patch(f"{PHASE}.settings"),
         patch(f"{PHASE}.extract_scene_keyframes", AsyncMock(return_value=extraction_result)),
@@ -110,6 +110,18 @@ async def test_cache_hit_without_descriptions_does_not_call_vision():
     assert ctx.frame_descriptions == []
     mock_vision.assert_not_awaited()
     mock_persist.assert_not_awaited()
+
+
+async def test_should_ask_scene_extraction_to_skip_the_manifest_when_the_run_is_cold():
+    result = {"all_frames": [], "selected_frames": [], "gallery_frames": []}
+    ctx = _ctx()
+    ctx.cold_media = True
+    s, extract, ocr, persist, cleanup, vision = _common_patches(result)
+    with s as settings, extract as mock_extract, ocr, persist, cleanup, vision:
+        _configure(settings)
+        await _run(ctx)
+
+    assert mock_extract.await_args.kwargs["skip_cache"] is True
 
 
 async def test_fresh_run_persists_descriptions(tmp_path):

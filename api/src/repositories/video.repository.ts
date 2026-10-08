@@ -54,6 +54,8 @@ export interface VideoSummaryCacheDocument {
   context?: unknown;
   outputType?: string;
   version: number;
+  /** The served version: the newest completed user-pool row. A re-run takes
+   *  it only on completion (promoteCompletedVersion, 1d.8). */
   isLatest: boolean;
   /** Content-addressed dedup key — SHA-256 of (youtubeId, PIPELINE_VERSION,
    *  providers, version). Used by `upsertCacheByDedupKey` to collapse
@@ -72,6 +74,11 @@ export interface VideoSummaryCacheDocument {
    *  shared version-1 dedupKey other users attach to, are hidden from other
    *  users' version lists, and are pruned only among themselves. */
   evalRun?: boolean;
+  /** 1a.7: a benchmark run (admin/eval `cold: true`) — the summarizer skips
+   *  its S3 transcript cache and scene-frame manifest so the run measures cold
+   *  media (fresh results are still written). Cleared with `forceRefresh` in
+   *  the summarizer's final save, so a later re-run of the row is warm. */
+  coldMedia?: boolean;
   retryCount: number;
   errorCode?: string;
   errorMessage?: string;
@@ -152,6 +159,8 @@ export interface CreateVideoSummaryData {
   forceRefresh?: boolean;
   /** Eval-user version — see `VideoSummaryCacheDocument.evalRun`. */
   evalRun?: boolean;
+  /** Cold-media benchmark run — see `VideoSummaryCacheDocument.coldMedia`. */
+  coldMedia?: boolean;
 }
 
 /** Which version pool a prune works on — eval rows and user rows never prune each other. */
@@ -265,12 +274,51 @@ export class VideoRepository {
     );
   }
 
-  async markPreviousVersionsNotLatest(youtubeId: string): Promise<VideoSummaryCacheDocument | null> {
-    return this.cacheCollection.findOneAndUpdate(
-      { youtubeId, isLatest: true },
-      { $set: { isLatest: false, updatedAt: new Date() } },
-      { returnDocument: 'before' }
+  /**
+   * A user-pool version takes `isLatest` only once it completes (1d.8), so a
+   * failed or still-running re-run never displaces the served version. Set
+   * self, demote older latest rows, then yield to a newer latest row: any
+   * interleaving of concurrent completions converges on the newest one, and an
+   * older run finishing late never displaces it. Eval rows are never promoted.
+   */
+  async promoteCompletedVersion(id: string): Promise<boolean> {
+    const row = await this.cacheCollection.findOne(
+      { _id: new ObjectId(id), status: 'completed', isLatest: { $ne: true }, ...versionPoolFilter(false) },
+      { projection: { youtubeId: 1, version: 1 } },
     );
+    if (!row) return false;
+    const version = row.version || 1;
+    const updatedAt = new Date();
+    await this.cacheCollection.updateOne({ _id: row._id }, { $set: { isLatest: true, updatedAt } });
+    await this.cacheCollection.updateMany(
+      { youtubeId: row.youtubeId, isLatest: true, version: { $lt: version } },
+      { $set: { isLatest: false, updatedAt } },
+    );
+    const newer = await this.cacheCollection.findOne({ youtubeId: row.youtubeId, isLatest: true, version: { $gt: version } });
+    if (!newer) return true;
+    await this.cacheCollection.updateOne({ _id: row._id }, { $set: { isLatest: false, updatedAt } });
+    return false;
+  }
+
+  /**
+   * A failed user-pool re-run hands its library entries back to the completed
+   * version still being served (1d.8). No-op for eval rows, for rows that are
+   * no longer failed (a retry already re-dispatched them) and when no
+   * completed version exists (a first run that failed stays as it is).
+   */
+  async restoreServedVersion(failedId: string): Promise<boolean> {
+    const failed = await this.cacheCollection.findOne(
+      { _id: new ObjectId(failedId), status: 'failed', isLatest: { $ne: true }, ...versionPoolFilter(false) },
+      { projection: { youtubeId: 1 } },
+    );
+    if (!failed) return false;
+    const served = await this.cacheCollection.findOne({ youtubeId: failed.youtubeId, isLatest: true, status: 'completed' });
+    if (!served) return false;
+    await this.userVideosCollection.updateMany(
+      { videoSummaryId: failed._id },
+      { $set: { videoSummaryId: served._id, status: 'completed', updatedAt: new Date() } },
+    );
+    return true;
   }
 
   /** Highest-numbered row; `evalRun` narrows it to one version pool (D25), omitted = every row. */
@@ -379,13 +427,16 @@ export class VideoRepository {
    */
   async pruneVersions(youtubeId: string, pool: VersionPool): Promise<number> {
     const filter = { youtubeId, ...versionPoolFilter(pool.evalRun) };
-    // One video's version rows — a handful, so skip() costs nothing here.
-    const toDelete = await this.cacheCollection
+    // One video's version rows — a handful, so skip() costs nothing here. The
+    // served row survives even when newer re-runs (failed or running) outnumber
+    // `keep` (1d.8).
+    const beyondKeep = await this.cacheCollection
       .find(filter)
       .sort({ version: -1, createdAt: -1 })
       .skip(pool.keep)
-      .project<{ _id: ObjectId }>({ _id: 1 })
+      .project<{ _id: ObjectId; isLatest?: boolean }>({ _id: 1, isLatest: 1 })
       .toArray();
+    const toDelete = beyondKeep.filter(v => !v.isLatest);
     if (toDelete.length === 0) return 0;
 
     const result = await this.cacheCollection.deleteMany({ _id: { $in: toDelete.map(v => v._id) } });
@@ -557,6 +608,15 @@ export class VideoRepository {
       { _id: new ObjectId(id) },
       { $set: { output, updatedAt: new Date() } },
     );
+  }
+
+  /**
+   * Drop the previous run's synthesis before a row is (re-)dispatched: the
+   * merge guard can't tell runs apart, so a stale masterSummary would block
+   * this run's partial and mix into a cached replay.
+   */
+  async clearSynthesis(id: string): Promise<void> {
+    await this.cacheCollection.updateOne({ _id: new ObjectId(id) }, { $unset: { synthesis: '' } });
   }
 
   /** Merge one `synthesis_complete` emission — rules in buildSynthesisMerge. */

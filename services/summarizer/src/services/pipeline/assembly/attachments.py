@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 # Tabs whose primary list is at or below this length are "sparse" — they have
 # room for an enriching attachment without crowding.
-_SPARSE_THRESHOLD = 4
+SPARSE_THRESHOLD = 4
 # Tabs whose primary list is at or above this length are "dense" — a top
 # summary header gives the reader an anchor before the long scroll.
 _DENSE_THRESHOLD = 10
@@ -168,7 +168,7 @@ def attach_secondaries(
 ) -> list[dict]:
     """Decide and build secondary attachments for a single assembled tab.
 
-    Sparse tab (≤ _SPARSE_THRESHOLD items): add ONE enriching bottom attachment,
+    Sparse tab (≤ SPARSE_THRESHOLD items): add ONE enriching bottom attachment,
     trying frame_strip → quick_quiz → tip_callout in priority order. Dense tab
     (≥ _DENSE_THRESHOLD items): add a top summary_header. Tabs in between get
     nothing. Returns a (possibly empty) list of attachment dicts.
@@ -189,7 +189,7 @@ def attach_secondaries(
 
     attachments: list[dict] = []
 
-    if count <= _SPARSE_THRESHOLD:
+    if count <= SPARSE_THRESHOLD:
         attachment = None
         if (
             "frame_strip" not in excluded_kinds

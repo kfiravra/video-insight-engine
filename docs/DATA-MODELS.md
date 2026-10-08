@@ -146,14 +146,14 @@ Category serves as a fallback when triage confidence < 0.6. The triage LLM now d
 
 ## videoSummaryCache
 
-One entry per YouTube video. Shared across all users.
+One row per video **version** (`version`, `isLatest` below); the served row is shared across all users.
 
 ```javascript
 {
   _id: ObjectId,
 
   // YouTube identification
-  youtubeId: string,              // "dQw4w9WgXcQ" - UNIQUE
+  youtubeId: string,              // "dQw4w9WgXcQ" — repeated on every version row (not unique)
   url: string,
 
   // Metadata
@@ -212,15 +212,16 @@ One entry per YouTube video. Shared across all users.
     errorCode: string | null                             // failed rows: TranscriptError code (NO_TRANSCRIPT, RATE_LIMITED, …), UNKNOWN_ERROR (unexpected exception) or CANCELLED (producer torn down mid-fetch)
   } | absent,
 
-  // Per-run timing — written by the pipeline runner when the phases finish OR
+  // Per-run timing — written by pipeline_orchestration (run_timing.persist_run_timing) when the phases finish OR
   // fail (dotted `$set` after assembly's save; absent on Redis-served rows).
+  // Eval-user runs (evalRun) write it too — it is how benchmarks are read.
   // Offsets are ms since the run started. Mirrored (minus llmCalls) onto the
   // Langfuse trace metadata; each phase is also a Langfuse span.
   "pipeline.timing": {
     version: 1,
     startedAt: Date,
     totalMs: number,
-    phases: [{ name: string, startMs: number, endMs: number, wallMs: number }],  // metadata, transcript, frames, transcript_frames, frames.* sub-steps, plan, extraction, synthesis, enrichment, assembly, translation…
+    phases: [{ name: string, startMs: number, endMs: number, wallMs: number }],  // metadata, transcript_frames (phase 2: text, transcript, plan, memory, frames, frames.* sub-steps incl. frames.tier_wait), visual_inject (name kept: the annotations render), extraction, assembly (moment_fill, synthesis, enrichment = the quiz, run inside it), translation
     milestones: { metadataMs?, synthesisCompleteMs?, firstTabReadyMs?, completeMs?, doneMs? },
     llmCalls: [{ feature, span, model, responseModel, startMs, wallMs, inputTokens, outputTokens,
                  cacheReadTokens, cacheWriteTokens, costUsd, attempt, fallbackUsed, finishReason }],  // incl. Whisper/Gemini transcription rows (span "transcription:openai|google")
@@ -228,7 +229,8 @@ One entry per YouTube video. Shared across all users.
     downloads: [{ kind: "lowres" | "720p" | "audio", purpose: string, startMs, wallMs, bytes: number | null, ok: boolean }],
     costUsd: number,
     counts: { llmCalls, llmFailures, retries, rateLimited, fallbacks, outputTokens, cacheReadTokens,
-              downloadBytes, tabsPlanned, tabsAssembled, tabsEmitted }
+              downloadBytes, tabsPlanned, tabsAssembled, tabsEmitted,  // tabsEmitted = distinct tabs streamed
+              truncated }  // answers that stopped at max_tokens (finish_reason=length); DONE log line `llm truncated=N`
   } | absent,
 
   // Processed summary (legacy v1 format — kept for backward compat,
@@ -278,19 +280,36 @@ One entry per YouTube video. Shared across all users.
     confidence: number
   } | null,
 
+  // The summarizer's own copy of each stage's answer (allowlisted $set in
+  // save_structured_result): pipeline.triage = the triage_complete payload —
+  // the fields above + userGoal, contentFormat (the tier probe's), tab briefs
+  // ({what, where[], expect}), evidence ({has_steps, has_ingredients, … : bool},
+  // the plan's own read; drives conditional domain requirements and the
+  // assembly backfill check) and terms (≤12 canonical spellings);
+  // pipeline.extraction / .enrichment / .synthesis / .assembly (tab drop
+  // accounting: tabsDesigned, tabsAssembled, tabsDropped, droppedTabs[],
+  // planFallback?); pipeline.timing (above).
+  pipeline: { triage, extraction, enrichment, synthesis, assembly, timing } | absent,
+
   // Domain-keyed extraction data
   output: Record<string, unknown> | null,
 
   // Enrichment (quiz, flashcards, scenarios)
   enrichment: Record<string, unknown> | null,
 
-  // Synthesis (TLDR, takeaways, master summary)
+  // Synthesis (TLDR, takeaways, master summary) — written by the API relay
+  // from synthesis_complete, field by field (dotted $set of filled fields
+  // only). Possibly PARTIAL: the memory-done emission brings only tldr +
+  // keyTakeaways; the synthesis-done superset adds masterSummary +
+  // seoDescription; either can be missing on a failure path. A partial never
+  // overwrites a stored masterSummary. $unset on every (re-)dispatch of the
+  // row. Rules: docs/API-REFERENCE.md#synthesis_complete.
   synthesis: {
-    tldr: string,
-    keyTakeaways: string[],
-    masterSummary: string,
-    seoDescription: string
-  } | null,
+    tldr?: string,
+    keyTakeaways?: string[],
+    masterSummary?: string,
+    seoDescription?: string
+  } | absent,
 
   // Multi-language support
   // For non-English videos the translation phase promotes English to the
@@ -358,8 +377,27 @@ One entry per YouTube video. Shared across all users.
   // are cleaned by scripts/migrate-remove-video-expiry.ts; the API drops a
   // surviving TTL index at boot (mongodb.ts hasVideoExpiryTtlIndex).
 
+  // Versions (see docs/IDEMPOTENCY.md#version-rows-bypasscache-and-eval-runs)
+  version: number,                  // shared numbering across user and eval rows
+  isLatest: boolean,                // the SERVED version: the newest COMPLETED user-pool row.
+                                    // A bypassCache re-run is inserted isLatest:false and promoted
+                                    // only on its `completed` status (/internal/status →
+                                    // promoteCompletedVersion); a failed re-run hands the requester's
+                                    // library entry back to the served row (restoreServedVersion).
+  evalRun: true | absent,           // D25: produced by the eval user (users.isEvalUser). Set once at
+                                    // insert. Never isLatest, never version 1 (the shared dedupKey
+                                    // row), hidden from other users' version lists, pruned only
+                                    // among eval rows; the run writes no Redis response copy and no
+                                    // Qdrant points.
+  forceRefresh: true | absent,      // bypassCache: summarizer skips its Redis response cache; $unset on save
+  coldMedia: true | absent,         // POST /videos `cold` (admin/eval only): the run also skips the
+                                    // S3 transcript + scene-frame caches
+  pipelineVersion: string | absent, // PIPELINE_VERSION stamp of the run that saved the row; a stale
+                                    // stamp re-runs on the user's next submission (and the worker
+                                    // skips a queued job only when the row is completed by the
+                                    // CURRENT version)
+
   // Cache metadata
-  version: number,
   processedAt: Date | null,
   processingTimeMs: number | null,  // How long it took
 
@@ -389,7 +427,7 @@ One entry per YouTube video. Shared across all users.
 }
 ```
 
-> **`transcriptMeta` caveats.** Written by `pipeline_runner._record_transcript_outcome` via the dedicated `$set`-only `set_transcript_meta` (never through `save_structured_result`, which `$unset`s `forceRefresh`). Cleared (`$unset`) at the `processing` transition of every run and when the Redis fast path completes a row — so a completed row with **no `transcriptMeta` and no `pipelineVersion` was served from the Redis response cache**. `attempted` lists only layers that actually ran and failed: a gated layer (Whisper disabled, over the duration cap, no Gemini key) is not an attempt, and the negative-cache skip of youtube-transcript-api is reported by `captionApiSkipped` instead. `origin` is `null` when the S3 blob's recorded source had already decayed to `"s3"` (regens before the assembly re-store skip). Redis payloads, frontend responses, and public share responses never carry the block. Old rows are not migrated — flush with `scripts/wipe-data.sh` (dry run by default; `--yes` deletes the Mongo video collections, Redis, **and** every `videos/<id>/transcript.json` in the real S3 bucket — irreversible. Pass `--keep-s3` to keep the raw transcripts, in which case reprocessed rows report `source: "s3"`).
+> **`transcriptMeta` caveats.** Written by `pipeline_orchestration._record_transcript_outcome` via the dedicated `$set`-only `set_transcript_meta` (never through `save_structured_result`, which `$unset`s `forceRefresh`). Cleared (`$unset`) at the `processing` transition of every run and when the Redis fast path completes a row — so a completed row with **no `transcriptMeta` and no `pipelineVersion` was served from the Redis response cache**. `attempted` lists only layers that actually ran and failed: a gated layer (Whisper disabled, over the duration cap, no Gemini key) is not an attempt, and the negative-cache skip of youtube-transcript-api is reported by `captionApiSkipped` instead. `origin` is `null` when the S3 blob's recorded source had already decayed to `"s3"` (regens before the assembly re-store skip). Redis payloads, frontend responses, and public share responses never carry the block. Old rows are not migrated — flush with `scripts/wipe-data.sh` (dry run by default; `--yes` deletes the Mongo video collections, Redis, **and** every `videos/<id>/transcript.json` in the real S3 bucket — irreversible. Pass `--keep-s3` to keep the raw transcripts, in which case reprocessed rows report `source: "s3"`).
 >
 > ```js
 > // which layer wins / how often does paid ASR run
@@ -472,6 +510,12 @@ One entry per chapter/concept expansion. Shared across all users.
 
   // Tier (v1.4) — free, pro, team
   tier: "free" | "pro" | "team",  // Default: "free"
+
+  // D25 eval account. DB-only: set by hand (mongosh), never by an API route or
+  // request input; only a literal `true` counts. Every submission of this user
+  // becomes its own `evalRun` version row (see videoSummaryCache), and it may
+  // submit `cold` benchmark runs.
+  isEvalUser: true | absent,
 
   // Activity tracking
   lastLoginAt: Date | null,

@@ -95,9 +95,6 @@ class PipelineContext:
     # Rendered <visual_annotations> block (descriptions + OCR), set at frames-done (1c.2).
     visual_annotations: str = ""
 
-    # Video DNA (the plan formatted in full; superseded by video_memory below)
-    video_dna_text: str = ""
-
     # Memory stage (1b.3; None = failed or not run) and the <video_memory>
     # block rendered once from plan + memory (1b.4) for every writer's
     # ``{video_context}`` slot.
@@ -161,3 +158,7 @@ class PipelineContext:
     # Eval-user run (D25): its result is a private eval version, so it never
     # reaches the shared Redis response cache or the Qdrant collection.
     eval_run: bool = False
+    # Cold-media benchmark run (1a.7, the API's admin/eval-only `cold` flag):
+    # the S3 transcript cache and the scene-frame manifest are not read, so
+    # the run measures cold media; fresh results are still written to both.
+    cold_media: bool = False

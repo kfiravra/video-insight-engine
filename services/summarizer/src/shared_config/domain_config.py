@@ -136,39 +136,35 @@ def get_playbook(domain: str, content_format: str | None) -> dict:
     return dict(playbooks.get(f"{domain}:{content_format}", {}))
 
 
-def _ruled_out_by_evidence(
-    domain: str, component: str, evidence: Mapping[str, bool] | None
-) -> bool:
-    """True when ``evidence`` answers ``False`` for the key gating ``component``."""
+def ruled_out_requirements(domain: str, evidence: Mapping[str, bool] | None) -> dict[str, str]:
+    """Required component → its evidence key, for each key ``evidence`` answers False.
+
+    The single home of the D15 rule (pipeline-1min 1b.2/1d.7): a food vlog with
+    ``has_ingredients: false`` rules ``checklist`` out — the planner is told it
+    is not required, and assembly neither backfills it nor demotes onto it. A
+    missing key is "no opinion" and rules nothing out.
+    """
     if not evidence:
-        return False
-    key = requirement_evidence().get(domain, {}).get(component)
-    return key is not None and evidence.get(key) is False
+        return {}
+    gates = requirement_evidence().get(domain, {})
+    return {component: key for component, key in gates.items() if evidence.get(key) is False}
 
 
-def effective_requirements(
-    domain: str,
-    content_format: str | None = None,
-    evidence: Mapping[str, bool] | None = None,
-) -> dict:
+def effective_requirements(domain: str, content_format: str | None = None) -> dict:
     """Merged layout policy for a video: domain requirements + playbook.
 
     The single merge point for ALL enforcement (plan post-validation, assembly
     backstop, enrichment gating). Semantics: ``forbidden`` is the UNION of
     domain and playbook lists; ``required`` is the playbook's when present,
-    else the domain's; ``max`` always comes from the domain.
-
-    ``evidence`` (the plan's Appendix-C booleans) makes ``required``
-    conditional: a component whose ``requirementEvidence`` key is ``False``
-    there is not required — a food vlog with no recipe needs no checklist. A
-    missing key is "no opinion" and keeps the requirement.
+    else the domain's; ``max`` always comes from the domain. ``required`` is
+    unconditional here — ``ruled_out_requirements`` applies the plan's evidence.
     """
     base = domain_requirements().get(domain, {})
     playbook = get_playbook(domain, content_format)
     forbidden = frozenset(base.get("forbidden", [])) | frozenset(playbook.get("forbidden", []))
     required = playbook["required"] if "required" in playbook else base.get("required", [])
     return {
-        "required": [c for c in required if not _ruled_out_by_evidence(domain, c, evidence)],
+        "required": list(required),
         "max": dict(base.get("max", {})),
         "forbidden": forbidden,
         "preferred": list(playbook.get("preferred", [])),

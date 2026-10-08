@@ -20,6 +20,7 @@ from .extraction_prompt import (
     build_extraction_prompt,
     slice_visual_annotations,
 )
+from ..transcript.render import MARKER_PATTERN, marker_seconds
 from .prompt_builder import load_prompt_text
 from .triage import TriageResult
 
@@ -466,18 +467,33 @@ def _percent_for_batch(completed: int, total: int) -> int:
     return max(5, min(70, raw))
 
 
+def _batch_start_seconds(batch: list[ChapterChunk]) -> float:
+    """Where a batch's annotation window opens: its first ``[m:ss]`` marker.
+
+    A force-split chunk opens mid-block — its ``start_seconds`` is the previous
+    chunk's last marker, and the text before its own first marker continues a
+    block that marker opened in the previous batch. Frames are matched to the
+    batch holding their block's marker. Unmarked text keeps ``start_seconds``.
+    """
+    for chunk in batch:
+        found = MARKER_PATTERN.search(chunk.text)
+        if found:
+            return float(marker_seconds(found.group(0))[0])
+    return batch[0].start_seconds
+
+
 def _batch_annotations(
     prompt: ExtractionPrompt, batches: list[list[ChapterChunk]], batch_idx: int
 ) -> str:
-    """The batch's slice of the annotations, cut at the next batch's start.
+    """The batch's slice of the annotations, cut where the next batch's window opens.
 
     Open-ended at both video ends so no frame falls between batches.
     """
     if not prompt.visual_annotations or len(batches) <= 1:
         return prompt.visual_annotations
-    start = None if batch_idx == 0 else batches[batch_idx][0].start_seconds
+    start = None if batch_idx == 0 else _batch_start_seconds(batches[batch_idx])
     last = batch_idx == len(batches) - 1
-    end = None if last else batches[batch_idx + 1][0].start_seconds
+    end = None if last else _batch_start_seconds(batches[batch_idx + 1])
     return slice_visual_annotations(prompt.visual_annotations, start, end)
 
 

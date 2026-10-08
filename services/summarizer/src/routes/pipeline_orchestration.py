@@ -20,10 +20,8 @@ from src.routes.pipeline_faithfulness import _drain_faithfulness, _launch_faithf
 from src.routes.run_timing import log_run_summary, mark_phase, persist_run_timing
 from src.services.observability import update_trace_metadata
 from src.services.pipeline.context import PipelineContext
-from src.services.pipeline.enrichment import needs_quiz
 from src.services.pipeline.phases import (
     run_phase_assembly,
-    run_phase_enrichment,
     run_phase_extraction,
     run_phase_frames,
     run_phase_metadata,
@@ -160,22 +158,24 @@ async def _run_phase_two(
     video_summary_id: str,
     timing: PipelineTimingRecorder,
 ) -> AsyncGenerator[str, None]:
-    """Text branch ∥ frames ∥ description, with the tier probe started alongside.
+    """Text branch ∥ frames, with the tier probe started alongside.
 
     The text branch runs transcript → probe → plan ∥ memory, so the readers
     work while frames + vision still run; frames reads the probe at Step 6b.
+    The description analysis (started at metadata-end) is not a member: no
+    reader in this group needs it, and extraction must not wait for its LLM
+    call — its readers (chunked chapters, assembly) await it with a cap.
     ``finally`` so transcriptMeta is recorded whether the phases succeed or
     raise (cancellation included): a TranscriptError from the fallback chain
     must still leave outcome="failed" + attempted + errorCode on the row (the
     phase's own finally already stamped ctx.transcript_trail by the time it
     propagates here).
     """
-    from src.services.pipeline.phases.metadata import run_phase_description
     from src.services.pipeline.phases.probe import start_tier_probe
 
     phase_start = time.monotonic()
     start_tier_probe(ctx)
-    group = [run_phase_text, run_phase_frames, run_phase_description]
+    group = [run_phase_text, run_phase_frames]
     try:
         async for event in run_parallel_phases(group, ctx):
             yield event
@@ -211,7 +211,7 @@ async def _run_phases_in_order(
         mark_phase(ctx, timing, "metadata", phase_start)
 
         # Phase 2: text branch (transcript → tier probe → plan ∥ memory) ∥
-        # frames ∥ description; extraction waits for all of it.
+        # frames; extraction waits for both.
         async for event in _run_phase_two(ctx, repository, video_summary_id, timing):
             yield event
 
@@ -236,14 +236,8 @@ async def _run_phases_in_order(
             if spawned is not None:
                 spawned_faithfulness.append(spawned)
 
-        # Phase 5: the quiz, only for a plan that can show one (1d.1; the
-        # phase re-checks the gate). Assembly needs it: the quiz is a tab. The
-        # runner gives it heartbeats and the "enrichment" timing step.
-        if needs_quiz(ctx.plan_result, ctx.content_format):
-            async for event in run_parallel_phases([run_phase_enrichment], ctx):
-                yield event
-
-        # Phase 6: Assembly — tabs first, then synthesis ∥ moment fill (1d.3),
+        # Phase 6: Assembly — tabs first, then synthesis ∥ moment fill ∥ the
+        # quiz (1d.1/1d.3: the quiz never blocks tabs; its tab joins last),
         # then the save.
         phase_start = time.monotonic()
         async for event in run_phase_assembly(ctx):

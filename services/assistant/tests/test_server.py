@@ -440,6 +440,16 @@ class TestLibrarySearchEndpoint:
         kwargs = mock_rag.search_library.call_args.kwargs
         assert kwargs["sources"] == ["default_output"]
 
+    async def test_should_accept_visual_source_filter_when_searching(self, app_client, mock_rag):
+        # Visual annotations are indexed as source="visual" points (summarizer
+        # vector store) — filtering on them must not 422.
+        mock_rag.search_library = AsyncMock(return_value=[])
+        payload = {"video_ids": ["v1"], "query": "the slide", "sources": ["visual"]}
+
+        response = await app_client.post("/library/search", json=payload)
+
+        assert response.status_code == 200
+
     async def test_should_return_422_when_video_ids_empty(self, app_client):
         payload = {"video_ids": [], "query": "anything"}
         response = await app_client.post("/library/search", json=payload)

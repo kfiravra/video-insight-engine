@@ -106,7 +106,7 @@ async def _run_frames(ctx: Any, tmp_path: Any, tier_enabled: bool = True) -> tup
     with (
         patch(f"{PHASE}.settings") as mock_settings,
         patch(f"{PHASE}.extract_scene_keyframes", _extract),
-        patch(f"{PHASE}.process_scene_frames", AsyncMock(return_value=(result, "e", None))),
+        patch(f"{PHASE}.process_scene_frames", AsyncMock(return_value=(result, "e"))),
         patch(f"{PHASE}.persist_vision_descriptions", AsyncMock()),
         patch(f"{PHASE}.cleanup_temp_dir", AsyncMock()),
         patch("src.services.media.frame_analyzer.analyze_frames_with_vision", vision),

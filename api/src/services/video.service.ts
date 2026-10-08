@@ -6,7 +6,7 @@ import { IdempotencyService } from './idempotency.service.js';
 import type { IDispatchGuard } from './dispatch-guard.service.js';
 import { config } from '../config.js';
 import { extractYoutubeId } from '../utils/youtube.js';
-import { InvalidYouTubeUrlError, VideoNotFoundError, VersionCreationError, InvalidCategoryError, QueuePublishError } from '../utils/errors.js';
+import { ColdRunForbiddenError, InvalidYouTubeUrlError, VideoNotFoundError, VersionCreationError, InvalidCategoryError, QueuePublishError } from '../utils/errors.js';
 import { buildMetaFromDoc, buildTabsFromDoc } from '../utils/meta-builder.js';
 import { refreshFrameUrls } from '../utils/refresh-frame-urls.js';
 import { parseSourceLanguage } from '../utils/source-language.js';
@@ -23,14 +23,18 @@ export interface CreateVideoOptions {
    * so the downstream pipeline binds the same id no matter which path runs.
    */
   requestId?: string;
+  /** 1a.7 benchmark flag (admin/eval only): skip the summarizer's media caches. */
+  cold?: boolean;
 }
 
 /**
- * Reads the DB-only `users.isEvalUser` flag (D25). Narrow on purpose: version
- * creation and listing need this one bit of the user document, nothing else.
+ * Reads the DB-only `users.isEvalUser` flag (D25) and the cold-run permission
+ * (eval flag or admin role, 1a.7). Narrow on purpose: version creation and
+ * listing need these bits of the user document, nothing else.
  */
 export interface EvalUserReader {
   isEvalUser(userId: string): Promise<boolean>;
+  mayRunCold(userId: string): Promise<boolean>;
 }
 
 interface NewVersionInput {
@@ -44,13 +48,27 @@ interface NewVersionInput {
   evalRun: boolean;
   /** Skip the summarizer's response cache (the submission's bypassCache). */
   forceRefresh: boolean;
+  /** Skip the summarizer's media caches too (the submission's `cold`). */
+  coldMedia: boolean;
 }
 
-interface CreatedVersion {
-  userVideoId: string;
+interface VersionRow {
   videoSummaryId: string;
   newVersion: number;
   previousVersion?: number;
+}
+
+interface CreatedVersion extends VersionRow {
+  userVideoId: string;
+}
+
+// Renumbering attempts for an eval run whose version number a concurrent run
+// took (E11000 on the versioned dedupKey).
+const EVAL_NUMBERING_ATTEMPTS = 3;
+
+/** Mongo duplicate-key error (E11000) — a unique index rejected the write. */
+function isDuplicateKeyError(error: unknown): boolean {
+  return error instanceof Error && 'code' in error && (error as { code: number }).code === 11000;
 }
 
 // Maximum versions to keep per video and per pool — user versions and eval
@@ -128,6 +146,9 @@ export class VideoService {
     // propagating. Without this the guard sits held for the full TTL
     // (DISPATCH_GUARD_TTL_SECONDS), silently blocking the user's retries.
     try {
+      // A re-dispatched row (stale regen, failed retry, stall) still carries
+      // the previous run's synthesis, which would block this run's partial.
+      await this.videoRepository.clearSynthesis(payload.videoSummaryId);
       if (config.USE_QUEUE_PIPELINE) {
         try {
           // `bypassCache` IS consumed downstream: the worker maps it to
@@ -218,11 +239,12 @@ export class VideoService {
   /**
    * Version numbers are shared by user and eval rows so every row keeps a
    * distinct versioned dedupKey — a user run continues past eval versions
-   * instead of colliding with one. An eval run (D25) never demotes the current
-   * latest and never takes version 1: that number's dedupKey is the shared row
-   * every new submitter attaches to. A user run demotes the current latest and
-   * returns null when the video has no user versions (eval rows don't count),
-   * so the caller falls through to the normal flow.
+   * instead of colliding with one. An eval run (D25) never takes version 1:
+   * that number's dedupKey is the shared row every new submitter attaches to.
+   * A user run numbers past the served (latest) version and returns null when
+   * the video has no user versions (eval rows don't count), so the caller
+   * falls through to the normal flow. Nothing is demoted here: the new row
+   * takes `isLatest` only when it completes (1d.8).
    */
   private async nextVersionNumber(
     youtubeId: string,
@@ -231,41 +253,50 @@ export class VideoService {
     const highest = versionOf(await this.videoRepository.findHighestVersion(youtubeId));
     if (evalRun) return { newVersion: Math.max(highest, 1) + 1 };
 
-    const previousLatest = await this.videoRepository.markPreviousVersionsNotLatest(youtubeId);
-    // No latest row (orphaned versions) → continue from the highest user version
-    const previous = versionOf(previousLatest)
+    // No served row (orphaned versions) → continue from the highest user version
+    const previous = versionOf(await this.videoRepository.findCacheByYoutubeId(youtubeId))
       || versionOf(await this.videoRepository.findHighestVersion(youtubeId, false));
     if (!previous) return null;
     return { newVersion: Math.max(previous, highest) + 1, previousVersion: previous };
   }
 
-  /** New version row + this user's library entry re-pointed at it + dispatch. */
-  private async insertVersion(input: NewVersionInput): Promise<CreatedVersion | null> {
-    const { userId, url, youtubeId, folderId, providers, tier, requestId, evalRun, forceRefresh } = input;
-    const numbering = await this.nextVersionNumber(youtubeId, evalRun);
-    if (!numbering) return null;
+  /**
+   * Number and insert the version row. The dedupKey is versioned so two
+   * concurrent Retry clicks that compute the same newVersion collide on the
+   * partial unique index (E11000 → VersionCreationError) instead of silently
+   * producing two duplicate rows. An eval run renumbers instead: every eval
+   * submission is its own version, so a number taken by a concurrent run is
+   * not a duplicate.
+   */
+  private async insertVersionRow(input: NewVersionInput): Promise<VersionRow | null> {
+    const { youtubeId, url, providers, evalRun, forceRefresh, coldMedia } = input;
+    for (let attempt = 1; ; attempt++) {
+      const numbering = await this.nextVersionNumber(youtubeId, evalRun);
+      if (!numbering) return null;
+      const dedupKey = this.idempotencyService.computeContentKey({ youtubeId, providers, version: numbering.newVersion });
+      try {
+        const cacheEntry = await this.videoRepository.createCacheEntry({
+          youtubeId,
+          url,
+          status: 'pending',
+          version: numbering.newVersion,
+          isLatest: false,
+          retryCount: 0,
+          dedupKey,
+          ...(forceRefresh && { forceRefresh: true }),
+          ...(evalRun && { evalRun: true }),
+          ...(coldMedia && { coldMedia: true }),
+        });
+        return { videoSummaryId: cacheEntry._id.toString(), ...numbering };
+      } catch (error) {
+        if (!evalRun || !isDuplicateKeyError(error) || attempt >= EVAL_NUMBERING_ATTEMPTS) throw error;
+      }
+    }
+  }
 
-    // The dedupKey is versioned so two concurrent Retry clicks that compute
-    // the same newVersion collide on the partial unique index (E11000 →
-    // VersionCreationError) instead of silently producing two duplicate rows.
-    const dedupKey = this.idempotencyService.computeContentKey({
-      youtubeId,
-      providers,
-      version: numbering.newVersion,
-    });
-    const cacheEntry = await this.videoRepository.createCacheEntry({
-      youtubeId,
-      url,
-      status: 'pending',
-      version: numbering.newVersion,
-      isLatest: !evalRun,
-      retryCount: 0,
-      dedupKey,
-      ...(forceRefresh && { forceRefresh: true }),
-      ...(evalRun && { evalRun: true }),
-    });
-    const videoSummaryId = cacheEntry._id.toString();
-
+  /** This user's library entry for the video, re-pointed at the new version row. */
+  private async repointUserVideo(input: NewVersionInput, videoSummaryId: string): Promise<string> {
+    const { userId, youtubeId, folderId } = input;
     await this.videoRepository.deleteUserVideoByYoutubeId(userId, youtubeId, folderId);
     const userVideo = await this.videoRepository.createUserVideo({
       userId,
@@ -274,16 +305,25 @@ export class VideoService {
       status: 'pending',
       folderId,
     });
+    return userVideo._id.toString();
+  }
+
+  /** New version row + this user's library entry re-pointed at it + dispatch. */
+  private async insertVersion(input: NewVersionInput): Promise<CreatedVersion | null> {
+    const row = await this.insertVersionRow(input);
+    if (!row) return null;
+    const userVideoId = await this.repointUserVideo(input, row.videoSummaryId);
 
     // Non-blocking to avoid slowing down the request
     this.videoRepository
-      .pruneVersions(youtubeId, { evalRun, keep: MAX_VERSIONS_PER_VIDEO })
+      .pruneVersions(input.youtubeId, { evalRun: input.evalRun, keep: MAX_VERSIONS_PER_VIDEO })
       .catch(err => {
-        this.logger.warn({ youtubeId, error: err }, 'Failed to cleanup old versions');
+        this.logger.warn({ youtubeId: input.youtubeId, error: err }, 'Failed to cleanup old versions');
       });
 
+    const { userId, url, youtubeId, tier, providers, requestId, forceRefresh } = input;
     await this.dispatchPipeline({
-      videoSummaryId,
+      videoSummaryId: row.videoSummaryId,
       youtubeId,
       url,
       userId,
@@ -293,7 +333,7 @@ export class VideoService {
       requestId,
     });
 
-    return { userVideoId: userVideo._id.toString(), videoSummaryId, ...numbering };
+    return { userVideoId, ...row };
   }
 
   /** `insertVersion` with its failures mapped to VersionCreationError. */
@@ -302,7 +342,7 @@ export class VideoService {
       return await this.insertVersion(input);
     } catch (error) {
       // Duplicate key: two requests raced to create the same version
-      if (error instanceof Error && 'code' in error && (error as { code: number }).code === 11000) {
+      if (isDuplicateKeyError(error)) {
         throw new VersionCreationError('Version conflict - please retry');
       }
       this.logger.error({
@@ -316,10 +356,16 @@ export class VideoService {
   }
 
   async createVideo(userId: string, url: string, options: CreateVideoOptions) {
-    const { folderId, bypassCache = false, providers, tier, requestId } = options;
+    const { folderId, providers, tier, requestId, cold = false } = options;
+    // A cold run measures a whole fresh pipeline, so the response cache must
+    // not answer it either: cold implies bypassCache.
+    const bypassCache = (options.bypassCache ?? false) || cold;
     const youtubeId = extractYoutubeId(url);
     if (!youtubeId) {
       throw new InvalidYouTubeUrlError();
+    }
+    if (cold && !(await this.evalUsers.mayRunCold(userId))) {
+      throw new ColdRunForbiddenError();
     }
 
     // D25: every eval-user submission becomes its own eval version — it never
@@ -340,6 +386,7 @@ export class VideoService {
         requestId,
         evalRun,
         forceRefresh: bypassCache,
+        coldMedia: cold,
       });
       if (created) {
         return {
@@ -445,6 +492,8 @@ export class VideoService {
       // response cache is keyed by youtubeId and can outlive the Mongo rows,
       // so the bypass intent must still ride on the fresh row.
       ...(bypassCache && { forceRefresh: true }),
+      // Same for cold: S3 media caches outlive the Mongo rows too.
+      ...(cold && { coldMedia: true }),
     });
 
     if (wasInsert) {

@@ -64,6 +64,9 @@ class Settings(BaseSettings):
     # Translation stays on the default fast tier (gpt-4o-mini); the Gemini
     # Flash-Lite savings were fractions of a cent — not worth adding a third
     # provider dependency.
+    # The tier probe's model (stage "tier_probe"; the name predates the probe).
+    # Both composes pass it through with this same literal default, so a blank
+    # .env never routes the probe to the fast tier.
     LLM_CLASSIFIER_MODEL: str | None = "anthropic/claude-haiku-4-5-20251001"
     LLM_CHAPTER_DETECT_MODEL: str | None = None
     LLM_DESCRIPTION_MODEL: str | None = None
@@ -115,11 +118,13 @@ class Settings(BaseSettings):
     # Chunked extraction batches run in parallel; false = one batch at a time
     # (the switch to rule out concurrency when a run misbehaves).
     EXTRACTION_PARALLEL: bool = True
-    # Max extraction calls in flight per run. 6 (pipeline-1min D11): prod
+    # Max extraction calls in flight per RUN (the semaphore is per run, not per
+    # process): a worker holds up to EXTRACTION_PARALLEL_BATCHES ×
+    # WORKER_CONCURRENCY extraction calls at once. 6 (pipeline-1min D11): prod
     # extraction runs on Haiku, no 429 has ever been recorded and the rate
     # limits leave >12x headroom (the old 2 dated from 529s at 3 concurrent
-    # Sonnet calls). pipeline.timing counts 429s per run — back off to 4 if a
-    # run records any.
+    # Sonnet calls). pipeline.timing counts 429s per run (it cannot see a
+    # concurrent run's 429s) — back off to 4 if a run records any.
     EXTRACTION_PARALLEL_BATCHES: int = 6
     # Sub-batches when a long video's chunked input collapses to one batch;
     # they run in one round while EXTRACTION_PARALLEL_BATCHES >= this.
@@ -133,16 +138,14 @@ class Settings(BaseSettings):
     SPONSORBLOCK_TIMEOUT: float = 5.0
 
     # The only proxy setting. One exit for every YouTube-facing request: yt-dlp
-    # downloads (scene detection, local 720p fallback, stream-URL lookup,
+    # downloads (the run's low-res detection file and its one ≤720p file,
     # whisper/gemini audio), metadata, playlists and caption fetches (timedtext
     # + caption API). Full URL with credentials, e.g. http://user:pass@host:port.
     # Blank = direct. Needed on the EC2 box, whose datacenter IP is bot-checked
     # (2026-09); the exit must be a residential/ISP IP — datacenter proxies are
-    # blocked the same way. ffmpeg seeks on a looked-up stream URL would leave
-    # from the host IP unproxied and 403, so with a proxy set the frame pipeline
-    # never looks one up: hi-res frames come from a proxied local 720p download
-    # started alongside scene detection, and moment fills (>=3 frameless moments)
-    # download it again during assembly — two downloads through the proxy.
+    # blocked the same way. No stream URL is ever handed to ffmpeg (it would
+    # leave from the host IP unproxied and 403): hi-res frames and moment fills
+    # are ffmpeg seeks into the run's local ≤720p download.
     YOUTUBE_PROXY_URL: str | None = None
     # Sticky exits behind the proxy gateway, addressed by the username suffix
     # (Webshare: USERNAME-1 … USERNAME-N). A caption 429 is IP-scoped, so both
@@ -251,8 +254,12 @@ class Settings(BaseSettings):
     # 60s proxy read timeout, or the SSE proxy hop aborts an idle-but-live stream.
     SSE_HEARTBEAT_SECONDS: float = 12.0
 
-    # Advanced transcript cleaning (spaCy + TF-IDF)
-    TRANSCRIPT_CLEANING_ENABLED: bool = True
+    # Advanced transcript cleaning (spaCy + TF-IDF) of ctx.clean_text — what
+    # Qdrant chunks, faithfulness and the S3 blob read. Off by default (prod's
+    # .env already had it off): every LLM prompt reads the [m:ss]-rendered
+    # segments, never this text, so the spaCy pass only cost wall time on the
+    # critical path before transcript_ready.
+    TRANSCRIPT_CLEANING_ENABLED: bool = False
     # Budget for the advanced-cleaning pass. The first call per worker process
     # pays a spaCy cold-start inside this window; raise if cold-start timeouts
     # show up in logs ("Advanced transcript cleaning timed out").
@@ -311,12 +318,15 @@ class Settings(BaseSettings):
     # Versioned S3 prefix — bumping it defeats the frames-already-exist cache
     # so quality changes take effect for reprocessed videos ("scenes" = pre-hires).
     # v3: subject-aware scoring (skin/center-detail) + adaptive vision tiers.
+    # v4: pipeline-1min frame selection — zero-candidate ladder, native-width
+    # detection (no upscale), batched vision.
     SCENE_S3_PREFIX: str = "scenes-v4"
 
     # Vision LLM analysis on top-scored frames. FRAME_VISION_MAX_FRAMES = frames
-    # described on the STANDARD tier. FRAME_VISION_TIMEOUT = per-call floor in
-    # seconds; frame_analyzer scales it up per frame in the call, since
-    # 8 base64 frames to Sonnet legitimately take 30-50s under load.
+    # described on the STANDARD tier. FRAME_VISION_TIMEOUT = per-call CEILING
+    # and the vision stage deadline, in seconds — not a floor: frame_analyzer
+    # sizes each call from its max_tokens (twice the expected wall, >= 30 s)
+    # and caps it here (raised per frame only for one big unbatched call).
     FRAME_VISION_ENABLED: bool = True
     # Frames go to vision in parallel batches (media/frame_analyzer.py);
     # false = one call with every frame, the pre-batching path.
@@ -346,8 +356,10 @@ class Settings(BaseSettings):
     # ─── RabbitMQ worker ────────────────────────────────────────────────
     # AMQP URL — kept aligned with the API's RABBITMQ_URL in docker-compose.
     RABBITMQ_URL: str = "amqp://vie:vie-dev@vie-rabbitmq:5672/"
-    # Concurrent jobs processed in one worker process. Cap matches the LLM
-    # provider's parallelism — 2 keeps Anthropic 529 (overloaded) rare.
+    # Concurrent pipeline runs in one worker process. Every per-run cap
+    # multiplies by it — extraction calls (EXTRACTION_PARALLEL_BATCHES), vision
+    # batches, the run's two downloads and its ffmpeg seeks — so 2 runs hold up
+    # to 12 extraction calls in flight. The .env examples (and prod) set 1.
     WORKER_CONCURRENCY: int = 2
     # Re-publish a failed message up to this many times before sending to DLQ.
     # Tracked via the x-attempt header so retries survive restarts.
