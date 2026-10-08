@@ -115,40 +115,43 @@ _ALL_SCHEMA_TAGS = sorted(p.stem for p in (PROMPTS_DIR / "schemas").glob("*.txt"
 
 
 class TestExtractionPromptRenders:
+    @staticmethod
+    def _rendered(tags: list[str], modifiers: list[str]) -> str:
+        """The full prompt a single call sends (late-bound slots filled as the extractor does)."""
+        from src.services.pipeline.extraction_prompt import (
+            ExtractionPromptInput,
+            build_extraction_template,
+        )
+
+        template = build_extraction_template(
+            ExtractionPromptInput(
+                tags,
+                modifiers,
+                "quality rules text",
+                title="Video Title",
+                duration_seconds=720,
+                tabs=[{"label": "Steps", "component": "step_player", "dataSource": "food.steps"}],
+                video_memory="<video_memory>\ndomains: food\n</video_memory>",
+                frame_context="0:12 — a frame",
+                visual_annotations="<visual_annotations>\n[0:12] a frame\n</visual_annotations>",
+            )
+        )
+        return template.replace("{batch_context}", "").replace("{transcript}", "transcript body")
+
     @pytest.mark.parametrize("tag", _ALL_SCHEMA_TAGS)
     def test_single_domain_prompt_has_no_unreplaced_placeholders(self, tag):
-        from src.services.pipeline.prompt_builder import build_extraction_prompt
+        prompt = self._rendered([tag], [])
 
-        prompt = build_extraction_prompt(
-            [tag],
-            [],
-            "the transcript body goes here",
-            "quality rules text",
-            title="Video Title",
-            duration_minutes=12,
-        )
         _assert_no_unreplaced(
             prompt,
             "base_extraction.txt",
             "quality_rules.txt",
             f"schemas/{tag}.txt",
         )
-        # {transcript}/{batch_context} are late-bound by design — the full
-        # prompt builder must have filled both.
-        assert "{transcript}" not in prompt
-        assert "{batch_context}" not in prompt
 
     def test_modifier_schema_placeholders_are_filled(self):
-        from src.services.pipeline.prompt_builder import build_extraction_prompt
+        prompt = self._rendered(["travel"], ["finance"])
 
-        prompt = build_extraction_prompt(
-            ["travel"],
-            ["finance"],
-            "transcript",
-            "rules",
-            title="T",
-            duration_minutes=30,
-        )
         _assert_no_unreplaced(prompt, "schemas/travel.txt", "schemas/finance.txt")
 
     def test_domain_example_files_declare_no_placeholders(self):
@@ -160,13 +163,17 @@ class TestExtractionPromptRenders:
             )
 
     def test_extraction_template_keeps_late_bound_placeholders_only(self):
-        from src.services.pipeline.prompt_builder import build_extraction_template
+        from src.services.pipeline.extraction_prompt import (
+            LATE_BOUND_PLACEHOLDERS,
+            ExtractionPromptInput,
+            build_extraction_template,
+        )
 
-        template = build_extraction_template(["tech"], [], "rules", title="T")
+        template = build_extraction_template(ExtractionPromptInput(["tech"], [], "rules"))
         remaining = {
             tok for tok in _declared_placeholders("base_extraction.txt") if f"{{{tok}}}" in template
         }
-        assert remaining == {"transcript", "batch_context"}
+        assert remaining == LATE_BOUND_PLACEHOLDERS
 
 
 # ─── Plan (plan.txt + component_toolkit.txt) ────────────────────────────

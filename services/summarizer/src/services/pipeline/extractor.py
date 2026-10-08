@@ -14,13 +14,8 @@ from ...models.domain_types import validate_domain_output
 from ...utils.json_parsing import parse_json_response, strip_markdown_fences
 from ...utils.llm_retry import call_llm_with_retry
 from .extraction_merger import merge_batch_extractions
-from .prompt_builder import (
-    build_extraction_template,
-    build_tab_goals,
-    get_content_emphasis,
-    get_detail_level,
-    load_prompt_text,
-)
+from .extraction_prompt import ExtractionPromptInput, build_extraction_template
+from .prompt_builder import load_prompt_text
 from .triage import TriageResult
 
 if TYPE_CHECKING:
@@ -146,6 +141,7 @@ async def extract(
     extra_instruction: str = "",
     force_primary_model: bool = False,
     frame_context: str = "",
+    visual_annotations: str = "",
 ) -> AsyncGenerator[dict, None]:
     """Adaptive extraction yielding progress events and final result.
 
@@ -154,6 +150,10 @@ async def extract(
     - <5.3K words (~4K tokens): single extraction call
     - 5.3-20K words (~4-15K tokens): single call + overflow retry if validation fails
     - 20K+ words: overflow extraction
+
+    ``video_context`` is the run's ``<video_memory>`` block; ``frame_context``
+    the ≤ 12 key-frame lines; ``visual_annotations`` the ``<visual_annotations>``
+    block ("" = no frames/OCR, and the prompt then carries no visual guide).
 
     ``force_primary_model`` overrides ``EXTRACTION_USE_FAST_FIRST`` and is set
     to True by the synthesis-fed retry path, so the retry always escalates
@@ -174,26 +174,19 @@ async def extract(
     rules_path = PROMPTS_DIR / "quality_rules.txt"
     quality_rules = _load_prompt(str(rules_path.resolve())) if rules_path.exists() else ""
 
-    title = video_data.get("title", "")
-    duration_min = round(duration_seconds / 60)
-
-    tab_goals_text = build_tab_goals(triage_result.tabs)
-    detail_level = get_detail_level(duration_seconds)
-    primary_tag = triage_result.primary_tag
-    content_emphasis = get_content_emphasis(primary_tag)
-
     prompt_template = build_extraction_template(
-        triage_result.content_tags,
-        triage_result.modifiers,
-        quality_rules,
-        title,
-        duration_min,
-        user_goal=triage_result.user_goal,
-        tab_goals=tab_goals_text,
-        detail_level=detail_level,
-        content_emphasis=content_emphasis,
-        video_context=video_context,
-        frame_context=frame_context,
+        ExtractionPromptInput(
+            content_tags=triage_result.content_tags,
+            modifiers=triage_result.modifiers,
+            quality_rules=quality_rules,
+            primary_tag=triage_result.primary_tag,
+            title=video_data.get("title", ""),
+            duration_seconds=duration_seconds,
+            tabs=triage_result.tabs,
+            video_memory=video_context,
+            frame_context=frame_context,
+            visual_annotations=visual_annotations,
+        )
     )
 
     if extra_instruction:
@@ -311,29 +304,23 @@ def _build_batch_context(
     """Build per-batch partial-extraction guidance.
 
     Returns an empty string when there is only one batch (single-call paths).
-    Otherwise returns an XML block that overrides the base prompt's
-    completeness/density rules for partial transcripts. This is the
-    Phase 6.1+6.2 fix for the v6 retry burn: when the chunked path runs
-    parallel batches over slices of the transcript, the model would
-    otherwise see "108-min video missing steps" and either invent steps
-    or return empty arrays — both of which trip the low-score retry gate.
+    Otherwise an XML block telling the model it sees one slice (with its
+    absolute time range): the plan's briefs, counts and caps describe the whole
+    video, so a batch must neither pad toward them nor read absence from them.
     """
     if total_batches <= 1:
         return ""
     batch_seconds = sum(ch.end_seconds - ch.start_seconds for ch in batch)
     full_minutes = max(1, int(round(full_duration_seconds / 60)))
     batch_minutes = max(1, int(round(batch_seconds / 60)))
+    span = f"{_format_time(batch[0].start_seconds)}–{_format_time(batch[-1].end_seconds)}"
     return (
         "<batch_partial_context>\n"
         f"You are extracting from BATCH {batch_idx + 1} of {total_batches} parallel batches.\n"
-        f"This segment covers ~{batch_minutes} of the full {full_minutes}-minute video.\n"
-        "\n"
-        "CRITICAL RULES FOR PARTIAL EXTRACTION:\n"
-        "- Extract ONLY what THIS segment explicitly contains.\n"
-        "- Return EMPTY arrays for fields not present in your segment — other batches cover them.\n"
-        '- A downstream merger combines all batches; DO NOT pad fields to meet "no empty array" or density quotas.\n'
-        "- The completeness/density rules in the base prompt apply to the FULL video's MERGED output, not your batch in isolation.\n"
-        "- DO NOT infer absence: a field absent here may be covered by another batch.\n"
+        f"This part covers ~{batch_minutes} minutes ({span}) of the full {full_minutes}-minute video.\n"
+        "- Extract only what this part of the transcript contains; a merger combines every batch's output.\n"
+        "- Return empty arrays for fields this part does not cover — other batches cover them.\n"
+        "- The briefs, expected counts and caps below describe the whole video: take the items inside this part, never pad toward a count.\n"
         "</batch_partial_context>\n"
     )
 

@@ -27,7 +27,10 @@ from src.services.transcription.transcript_chunker import ChapterChunk
 # Fixtures
 # ---------------------------------------------------------------------------
 
-def _make_chapter(index: int, text: str = "Some transcript text here", token_estimate: int = 5000) -> ChapterChunk:
+
+def _make_chapter(
+    index: int, text: str = "Some transcript text here", token_estimate: int = 5000
+) -> ChapterChunk:
     return ChapterChunk(
         index=index,
         title=f"Chapter {index + 1}",
@@ -45,7 +48,9 @@ def _make_triage(tags: list[str] | None = None) -> TriageResult:
         modifiers=[],
         primary_tag=(tags or ["learning"])[0],
         user_goal="Test goal",
-        tabs=[{"id": "key_points", "label": "Key Points", "component": "list_items", "goal": "test"}],
+        tabs=[
+            {"id": "key_points", "label": "Key Points", "component": "list_items", "goal": "test"}
+        ],
         confidence=0.9,
     )
 
@@ -53,6 +58,7 @@ def _make_triage(tags: list[str] | None = None) -> TriageResult:
 # ---------------------------------------------------------------------------
 # batch_chapters
 # ---------------------------------------------------------------------------
+
 
 class TestBatchChapters:
     def test_single_batch_when_all_fit(self):
@@ -103,6 +109,7 @@ class TestBatchChapters:
 # _build_batch_transcript
 # ---------------------------------------------------------------------------
 
+
 class TestBuildBatchTranscript:
     def test_includes_chapter_headers(self):
         chapters = [
@@ -128,6 +135,7 @@ class TestBuildBatchTranscript:
 # _format_time
 # ---------------------------------------------------------------------------
 
+
 class TestFormatTime:
     def test_minutes_seconds(self):
         assert _format_time(65) == "1:05"
@@ -143,6 +151,7 @@ class TestFormatTime:
 # ---------------------------------------------------------------------------
 # extract() routing
 # ---------------------------------------------------------------------------
+
 
 class TestExtractRouting:
     @pytest.mark.asyncio
@@ -200,7 +209,9 @@ class TestExtractRouting:
                 return_value=extraction_data,
             ):
                 events = []
-                async for evt in extract(mock_llm, triage, transcript, video_data, chapters=chapters):
+                async for evt in extract(
+                    mock_llm, triage, transcript, video_data, chapters=chapters
+                ):
                     events.append(evt)
 
         complete_events = [e for e in events if e["event"] == "extraction_complete"]
@@ -240,6 +251,7 @@ class TestExtractRouting:
 # _resolve_strategy — single-batch chunked detection + force-split fallback
 # ---------------------------------------------------------------------------
 
+
 def _make_sentence_transcript(words: int) -> str:
     out = []
     for i in range(words):
@@ -261,8 +273,11 @@ class TestResolveStrategy:
         chapters = [_make_chapter(i, token_estimate=1000) for i in range(8)]
         transcript = _make_sentence_transcript(20_000)
         strategy, chunks, one_chunk_per_batch = _resolve_strategy(
-            use_chunked=True, chapters=chapters,
-            word_count=20_000, transcript=transcript, duration_seconds=6480,
+            use_chunked=True,
+            chapters=chapters,
+            word_count=20_000,
+            transcript=transcript,
+            duration_seconds=6480,
         )
         assert strategy == "chunked"
         assert chunks is not None
@@ -274,8 +289,11 @@ class TestResolveStrategy:
         chapters = [_make_chapter(i, token_estimate=500) for i in range(2)]
         transcript = _make_sentence_transcript(SINGLE_THRESHOLD - 500)
         strategy, chunks, one_chunk_per_batch = _resolve_strategy(
-            use_chunked=True, chapters=chapters,
-            word_count=SINGLE_THRESHOLD - 500, transcript=transcript, duration_seconds=1800,
+            use_chunked=True,
+            chapters=chapters,
+            word_count=SINGLE_THRESHOLD - 500,
+            transcript=transcript,
+            duration_seconds=1800,
         )
         assert strategy == "single"
         assert chunks is None
@@ -286,8 +304,11 @@ class TestResolveStrategy:
         chapters = [_make_chapter(i, token_estimate=500) for i in range(4)]
         transcript = _make_sentence_transcript(20_000)
         _, chunks, _flag = _resolve_strategy(
-            use_chunked=True, chapters=chapters,
-            word_count=20_000, transcript=transcript, duration_seconds=6000,
+            use_chunked=True,
+            chapters=chapters,
+            word_count=20_000,
+            transcript=transcript,
+            duration_seconds=6000,
         )
         assert chunks is not None
         # ~4 chunks (allow some slack for sentence-boundary snapping)
@@ -299,8 +320,11 @@ class TestResolveStrategy:
         # 60K tokens worth of chapters → batch_chapters yields >1 batch
         chapters = [_make_chapter(i, token_estimate=20_000) for i in range(3)]
         strategy, chunks, one_chunk_per_batch = _resolve_strategy(
-            use_chunked=True, chapters=chapters,
-            word_count=50_000, transcript="", duration_seconds=3600,
+            use_chunked=True,
+            chapters=chapters,
+            word_count=50_000,
+            transcript="",
+            duration_seconds=3600,
         )
         assert strategy == "chunked"
         assert chunks is chapters
@@ -310,6 +334,7 @@ class TestResolveStrategy:
 # ---------------------------------------------------------------------------
 # _percent_for_batch — progress band clamping
 # ---------------------------------------------------------------------------
+
 
 class TestPercentForBatch:
     def test_first_batch_is_inside_band(self):
@@ -329,6 +354,7 @@ class TestPercentForBatch:
 # _chunked_extraction — per-batch SSE + rate-limit fallback
 # ---------------------------------------------------------------------------
 
+
 class TestChunkedExtractionStreamingProgress:
     @pytest.mark.asyncio
     async def test_emits_per_batch_progress_events(self):
@@ -343,18 +369,28 @@ class TestChunkedExtractionStreamingProgress:
         chapters = [_make_chapter(i, token_estimate=60_000) for i in range(4)]
         extraction_data = {"learning": {"keyPoints": [{"title": "A"}]}}
 
-        with patch(
-            "src.services.pipeline.extractor.call_llm_with_retry",
-            new_callable=AsyncMock, return_value=json.dumps(extraction_data),
-        ), patch(
-            "src.services.pipeline.extractor.validate_domain_output",
-            return_value=extraction_data,
+        with (
+            patch(
+                "src.services.pipeline.extractor.call_llm_with_retry",
+                new_callable=AsyncMock,
+                return_value=json.dumps(extraction_data),
+            ),
+            patch(
+                "src.services.pipeline.extractor.validate_domain_output",
+                return_value=extraction_data,
+            ),
         ):
             events = []
-            async for evt in _chunked_extraction(mock_llm, triage, "template {transcript}", chapters):
+            async for evt in _chunked_extraction(
+                mock_llm, triage, "template {transcript}", chapters
+            ):
                 events.append(evt)
 
-        progress = [e for e in events if e.get("event") == "extraction_progress" and e.get("section") == "chunked"]
+        progress = [
+            e
+            for e in events
+            if e.get("event") == "extraction_progress" and e.get("section") == "chunked"
+        ]
         # Initial kickoff (batch=0) + one per completed batch.
         assert progress[0]["batch"] == 0
         assert progress[0]["of"] == 4
@@ -375,15 +411,21 @@ class TestChunkedExtractionStreamingProgress:
         chapters = [_make_chapter(i, token_estimate=60_000) for i in range(3)]
         extraction_data = {"learning": {"keyPoints": [{"title": "A"}]}}
 
-        with patch(
-            "src.services.pipeline.extractor.call_llm_with_retry",
-            new_callable=AsyncMock, return_value=json.dumps(extraction_data),
-        ), patch(
-            "src.services.pipeline.extractor.validate_domain_output",
-            return_value=extraction_data,
+        with (
+            patch(
+                "src.services.pipeline.extractor.call_llm_with_retry",
+                new_callable=AsyncMock,
+                return_value=json.dumps(extraction_data),
+            ),
+            patch(
+                "src.services.pipeline.extractor.validate_domain_output",
+                return_value=extraction_data,
+            ),
         ):
             events = []
-            async for evt in _chunked_extraction(mock_llm, triage, "template {transcript}", chapters):
+            async for evt in _chunked_extraction(
+                mock_llm, triage, "template {transcript}", chapters
+            ):
                 events.append(evt)
 
         complete = [e for e in events if e["event"] == "extraction_complete"][0]
@@ -408,16 +450,23 @@ class TestChunkedExtractionStreamingProgress:
         async def fake_call(*_args, **_kwargs):
             return results.pop(0)
 
-        with patch(
-            "src.services.pipeline.extractor.call_llm_with_retry", new=fake_call,
-        ), patch(
-            "src.services.pipeline.extractor.validate_domain_output",
-            return_value={"learning": {"keyPoints": []}},
-        ), patch(
-            "src.services.pipeline.extractor.logger.warning",
-        ) as mock_warn:
+        with (
+            patch(
+                "src.services.pipeline.extractor.call_llm_with_retry",
+                new=fake_call,
+            ),
+            patch(
+                "src.services.pipeline.extractor.validate_domain_output",
+                return_value={"learning": {"keyPoints": []}},
+            ),
+            patch(
+                "src.services.pipeline.extractor.logger.warning",
+            ) as mock_warn,
+        ):
             events = []
-            async for evt in _chunked_extraction(mock_llm, triage, "template {transcript}", chapters):
+            async for evt in _chunked_extraction(
+                mock_llm, triage, "template {transcript}", chapters
+            ):
                 events.append(evt)
 
         complete = [e for e in events if e["event"] == "extraction_complete"][0]
@@ -444,7 +493,9 @@ class TestChunkedExtractionStreamingProgress:
         # Fourth call: sequential retry of batch 1 succeeds.
         call_results = [
             ok_payload,
-            RateLimitError(message="429", model="anthropic/claude-sonnet-4-6", llm_provider="anthropic"),
+            RateLimitError(
+                message="429", model="anthropic/claude-sonnet-4-6", llm_provider="anthropic"
+            ),
             ok_payload,
             ok_payload,  # sequential retry
         ]
@@ -455,17 +506,24 @@ class TestChunkedExtractionStreamingProgress:
                 raise outcome
             return outcome
 
-        with patch(
-            "src.services.pipeline.extractor.call_llm_with_retry",
-            new=fake_call,
-        ), patch(
-            "src.services.pipeline.extractor.validate_domain_output",
-            return_value={"learning": {"keyPoints": []}},
-        ), patch(
-            "src.services.pipeline.extractor._RATE_LIMIT_BACKOFF_SECONDS", 0.0,
+        with (
+            patch(
+                "src.services.pipeline.extractor.call_llm_with_retry",
+                new=fake_call,
+            ),
+            patch(
+                "src.services.pipeline.extractor.validate_domain_output",
+                return_value={"learning": {"keyPoints": []}},
+            ),
+            patch(
+                "src.services.pipeline.extractor._RATE_LIMIT_BACKOFF_SECONDS",
+                0.0,
+            ),
         ):
             events = []
-            async for evt in _chunked_extraction(mock_llm, triage, "template {transcript}", chapters):
+            async for evt in _chunked_extraction(
+                mock_llm, triage, "template {transcript}", chapters
+            ):
                 events.append(evt)
 
         # The sequential fallback must have fired with the dedicated section name
@@ -504,13 +562,19 @@ class TestChunkedExtractionStreamingProgress:
             active -= 1
             return json.dumps({"learning": {"keyPoints": []}})
 
-        with patch(
-            "src.services.pipeline.extractor.call_llm_with_retry", new=slow_call,
-        ), patch(
-            "src.services.pipeline.extractor.validate_domain_output",
-            return_value={"learning": {"keyPoints": []}},
-        ), patch(
-            "src.services.pipeline.extractor.settings.EXTRACTION_PARALLEL_BATCHES", 1,
+        with (
+            patch(
+                "src.services.pipeline.extractor.call_llm_with_retry",
+                new=slow_call,
+            ),
+            patch(
+                "src.services.pipeline.extractor.validate_domain_output",
+                return_value={"learning": {"keyPoints": []}},
+            ),
+            patch(
+                "src.services.pipeline.extractor.settings.EXTRACTION_PARALLEL_BATCHES",
+                1,
+            ),
         ):
             async for _ in _chunked_extraction(mock_llm, triage, "template {transcript}", chapters):
                 pass
@@ -540,20 +604,27 @@ class TestChunkedExtractionStreamingProgress:
                 raise outcome
             return outcome
 
-        with patch(
-            "src.services.pipeline.extractor.call_llm_with_retry", new=fake_call,
-        ), patch(
-            "src.services.pipeline.extractor.validate_domain_output",
-            return_value={"learning": {"keyPoints": []}},
+        with (
+            patch(
+                "src.services.pipeline.extractor.call_llm_with_retry",
+                new=fake_call,
+            ),
+            patch(
+                "src.services.pipeline.extractor.validate_domain_output",
+                return_value={"learning": {"keyPoints": []}},
+            ),
         ):
             events = []
-            async for evt in _chunked_extraction(mock_llm, triage, "template {transcript}", chapters):
+            async for evt in _chunked_extraction(
+                mock_llm, triage, "template {transcript}", chapters
+            ):
                 events.append(evt)
 
         # All three slots must have fired their per-batch progress event so
         # the UI never appears stuck. Plus the kickoff (batch=0).
         chunked_progress = [
-            e for e in events
+            e
+            for e in events
             if e.get("event") == "extraction_progress" and e.get("section") == "chunked"
         ]
         completed_batches = [e["batch"] for e in chunked_progress if e["batch"] > 0]
@@ -578,9 +649,13 @@ class TestChunkedExtractionStreamingProgress:
         # 4 parallel calls (2 fail), then 2 sequential retries succeed.
         call_results = [
             ok_payload,
-            RateLimitError(message="429", model="anthropic/claude-sonnet-4-6", llm_provider="anthropic"),
+            RateLimitError(
+                message="429", model="anthropic/claude-sonnet-4-6", llm_provider="anthropic"
+            ),
             ok_payload,
-            RateLimitError(message="429", model="anthropic/claude-sonnet-4-6", llm_provider="anthropic"),
+            RateLimitError(
+                message="429", model="anthropic/claude-sonnet-4-6", llm_provider="anthropic"
+            ),
             ok_payload,  # sequential retry for batch idx 1
             ok_payload,  # sequential retry for batch idx 3
         ]
@@ -591,16 +666,24 @@ class TestChunkedExtractionStreamingProgress:
                 raise outcome
             return outcome
 
-        with patch(
-            "src.services.pipeline.extractor.call_llm_with_retry", new=fake_call,
-        ), patch(
-            "src.services.pipeline.extractor.validate_domain_output",
-            return_value={"learning": {"keyPoints": []}},
-        ), patch(
-            "src.services.pipeline.extractor._RATE_LIMIT_BACKOFF_SECONDS", 0.0,
+        with (
+            patch(
+                "src.services.pipeline.extractor.call_llm_with_retry",
+                new=fake_call,
+            ),
+            patch(
+                "src.services.pipeline.extractor.validate_domain_output",
+                return_value={"learning": {"keyPoints": []}},
+            ),
+            patch(
+                "src.services.pipeline.extractor._RATE_LIMIT_BACKOFF_SECONDS",
+                0.0,
+            ),
         ):
             events = []
-            async for evt in _chunked_extraction(mock_llm, triage, "template {transcript}", chapters):
+            async for evt in _chunked_extraction(
+                mock_llm, triage, "template {transcript}", chapters
+            ):
                 events.append(evt)
 
         seq_events = [e for e in events if e.get("section") == "chunked-sequential"]
@@ -615,6 +698,7 @@ class TestChunkedExtractionStreamingProgress:
 # ---------------------------------------------------------------------------
 # Phase 4 — EXTRACTION_USE_FAST_FIRST flag plumbing
 # ---------------------------------------------------------------------------
+
 
 class TestFastModelFirstFlag:
     """The flag itself is gated on a corpus eval before flip; these tests
@@ -634,13 +718,19 @@ class TestFastModelFirstFlag:
             captured.append(kwargs.get("use_fast_model", False))
             return json.dumps({"learning": {"keyPoints": []}})
 
-        with patch(
-            "src.services.pipeline.extractor.call_llm_with_retry", new=capture_call,
-        ), patch(
-            "src.services.pipeline.extractor.validate_domain_output",
-            return_value={"learning": {"keyPoints": []}},
-        ), patch(
-            "src.services.pipeline.extractor.settings.EXTRACTION_USE_FAST_FIRST", False,
+        with (
+            patch(
+                "src.services.pipeline.extractor.call_llm_with_retry",
+                new=capture_call,
+            ),
+            patch(
+                "src.services.pipeline.extractor.validate_domain_output",
+                return_value={"learning": {"keyPoints": []}},
+            ),
+            patch(
+                "src.services.pipeline.extractor.settings.EXTRACTION_USE_FAST_FIRST",
+                False,
+            ),
         ):
             transcript = " ".join(["w"] * 100)  # tiny → single
             async for _ in extract(mock_llm, triage, transcript, {"title": "t", "duration": 60}):
@@ -661,13 +751,19 @@ class TestFastModelFirstFlag:
             captured.append(kwargs.get("use_fast_model", False))
             return json.dumps({"learning": {"keyPoints": []}})
 
-        with patch(
-            "src.services.pipeline.extractor.call_llm_with_retry", new=capture_call,
-        ), patch(
-            "src.services.pipeline.extractor.validate_domain_output",
-            return_value={"learning": {"keyPoints": []}},
-        ), patch(
-            "src.services.pipeline.extractor.settings.EXTRACTION_USE_FAST_FIRST", True,
+        with (
+            patch(
+                "src.services.pipeline.extractor.call_llm_with_retry",
+                new=capture_call,
+            ),
+            patch(
+                "src.services.pipeline.extractor.validate_domain_output",
+                return_value={"learning": {"keyPoints": []}},
+            ),
+            patch(
+                "src.services.pipeline.extractor.settings.EXTRACTION_USE_FAST_FIRST",
+                True,
+            ),
         ):
             transcript = " ".join(["w"] * 100)
             async for _ in extract(mock_llm, triage, transcript, {"title": "t", "duration": 60}):
@@ -689,17 +785,26 @@ class TestFastModelFirstFlag:
             captured.append(kwargs.get("use_fast_model", False))
             return json.dumps({"learning": {"keyPoints": []}})
 
-        with patch(
-            "src.services.pipeline.extractor.call_llm_with_retry", new=capture_call,
-        ), patch(
-            "src.services.pipeline.extractor.validate_domain_output",
-            return_value={"learning": {"keyPoints": []}},
-        ), patch(
-            "src.services.pipeline.extractor.settings.EXTRACTION_USE_FAST_FIRST", True,
+        with (
+            patch(
+                "src.services.pipeline.extractor.call_llm_with_retry",
+                new=capture_call,
+            ),
+            patch(
+                "src.services.pipeline.extractor.validate_domain_output",
+                return_value={"learning": {"keyPoints": []}},
+            ),
+            patch(
+                "src.services.pipeline.extractor.settings.EXTRACTION_USE_FAST_FIRST",
+                True,
+            ),
         ):
             transcript = " ".join(["w"] * 100)
             async for _ in extract(
-                mock_llm, triage, transcript, {"title": "t", "duration": 60},
+                mock_llm,
+                triage,
+                transcript,
+                {"title": "t", "duration": 60},
                 force_primary_model=True,
             ):
                 pass
@@ -712,6 +817,7 @@ class TestFastModelFirstFlag:
 # ---------------------------------------------------------------------------
 # Phase 6 — batch-aware extraction prompt
 # ---------------------------------------------------------------------------
+
 
 class TestBuildBatchContext:
     """``_build_batch_context`` produces the partial-extraction guidance block."""
@@ -732,14 +838,16 @@ class TestBuildBatchContext:
         assert "<batch_partial_context>" in ctx
         assert "</batch_partial_context>" in ctx
 
-    def test_overrides_completeness_rule_for_partial_transcripts(self):
-        """The fix for the v6 retry burn — the model must be told NOT to
-        pad fields and that empty arrays are expected for absent fields."""
-        batch = [_make_chapter(0)]
-        ctx = _build_batch_context(1, 4, batch, full_duration_seconds=6000.0)
-        assert "Return EMPTY arrays" in ctx
-        assert "DO NOT pad fields" in ctx
-        assert "merged output" in ctx.lower()
+    def test_tells_batch_to_return_empty_arrays_for_fields_outside_its_part(self):
+        """Empty arrays are expected for fields this slice does not cover."""
+        ctx = _build_batch_context(1, 4, [_make_chapter(0)], full_duration_seconds=6000.0)
+        assert "Return empty arrays for fields this part does not cover" in ctx
+
+    def test_tells_batch_not_to_pad_toward_whole_video_counts(self):
+        """Briefs/expect/caps describe the whole video — a slice must not pad toward them."""
+        ctx = _build_batch_context(1, 4, [_make_chapter(0)], full_duration_seconds=6000.0)
+        assert "never pad toward a count" in ctx
+        assert "a merger combines every batch's output" in ctx
 
     def test_computes_batch_minutes_from_chapter_range(self):
         """Each ChapterChunk has start/end seconds — the helper sums the
@@ -749,7 +857,7 @@ class TestBuildBatchContext:
         batch = [_make_chapter(0), _make_chapter(1)]
         ctx = _build_batch_context(0, 4, batch, full_duration_seconds=6000.0)
         # 0..600s = 10 min of a 100-min full video
-        assert "~10 of the full 100-minute" in ctx
+        assert "~10 minutes (0:00–10:00) of the full 100-minute" in ctx
 
 
 class TestPromptHelpersWithBatchContext:
@@ -779,7 +887,9 @@ class TestPromptHelpersWithBatchContext:
         Anthropic prompt cache on every call."""
         template = "CACHED_STATIC <transcript>\n{batch_context}{transcript}\n</transcript>"
         static, dynamic = _split_prompt_for_caching(
-            template, transcript="T", batch_context="B-CTX",
+            template,
+            transcript="T",
+            batch_context="B-CTX",
         )
         assert "{batch_context}" not in static
         assert "{transcript}" not in static
@@ -807,22 +917,22 @@ class TestChunkedExtractionInjectsBatchContext:
         # Use a template that includes the {batch_context} placeholder so we
         # can verify the dynamic prompt actually carries the partial-context
         # block when it reaches call_llm_with_retry.
-        template = (
-            "STATIC SCHEMAS HERE\n"
-            "<transcript>\n{batch_context}{transcript}\n</transcript>"
-        )
+        template = "STATIC SCHEMAS HERE\n<transcript>\n{batch_context}{transcript}\n</transcript>"
         captured_prompts: list[str] = []
 
         async def capture_call(_llm_service, prompt, *_args, **_kwargs):
             captured_prompts.append(prompt)
             return json.dumps(extraction_data)
 
-        with patch(
-            "src.services.pipeline.extractor.call_llm_with_retry",
-            new=capture_call,
-        ), patch(
-            "src.services.pipeline.extractor.validate_domain_output",
-            return_value=extraction_data,
+        with (
+            patch(
+                "src.services.pipeline.extractor.call_llm_with_retry",
+                new=capture_call,
+            ),
+            patch(
+                "src.services.pipeline.extractor.validate_domain_output",
+                return_value=extraction_data,
+            ),
         ):
             async for _ in _chunked_extraction(mock_llm, triage, template, chapters):
                 pass
@@ -832,10 +942,8 @@ class TestChunkedExtractionInjectsBatchContext:
             assert "<batch_partial_context>" in prompt, (
                 f"batch {idx} prompt missing partial-context block"
             )
-            assert f"BATCH {idx} of 3" in prompt, (
-                f"batch {idx} prompt missing batch indicator"
-            )
-            assert "Return EMPTY arrays" in prompt, (
+            assert f"BATCH {idx} of 3" in prompt, f"batch {idx} prompt missing batch indicator"
+            assert "Return empty arrays" in prompt, (
                 f"batch {idx} prompt missing override of density rule"
             )
 
@@ -851,10 +959,7 @@ class TestChunkedExtractionInjectsBatchContext:
 
         triage = _make_triage()
         chapters = [_make_chapter(i, token_estimate=60_000) for i in range(2)]
-        template = (
-            "STATIC SCHEMAS HERE\n"
-            "<transcript>\n{batch_context}{transcript}\n</transcript>"
-        )
+        template = "STATIC SCHEMAS HERE\n<transcript>\n{batch_context}{transcript}\n</transcript>"
 
         ok = json.dumps({"learning": {"keyPoints": []}})
         # Batch 0 succeeds, batch 1 raises 429 in parallel pass then succeeds
@@ -866,7 +971,8 @@ class TestChunkedExtractionInjectsBatchContext:
             call_count["n"] += 1
             if call_count["n"] == 2:  # parallel batch 1
                 raise RateLimitError(
-                    message="429", model="anthropic/claude-sonnet-4-6",
+                    message="429",
+                    model="anthropic/claude-sonnet-4-6",
                     llm_provider="anthropic",
                 )
             stage_name = kwargs.get("stage_name", "")
@@ -874,13 +980,19 @@ class TestChunkedExtractionInjectsBatchContext:
                 captured_seq_prompt.append(prompt)
             return ok
 
-        with patch(
-            "src.services.pipeline.extractor.call_llm_with_retry", new=fake_call,
-        ), patch(
-            "src.services.pipeline.extractor.validate_domain_output",
-            return_value={"learning": {"keyPoints": []}},
-        ), patch(
-            "src.services.pipeline.extractor._RATE_LIMIT_BACKOFF_SECONDS", 0.0,
+        with (
+            patch(
+                "src.services.pipeline.extractor.call_llm_with_retry",
+                new=fake_call,
+            ),
+            patch(
+                "src.services.pipeline.extractor.validate_domain_output",
+                return_value={"learning": {"keyPoints": []}},
+            ),
+            patch(
+                "src.services.pipeline.extractor._RATE_LIMIT_BACKOFF_SECONDS",
+                0.0,
+            ),
         ):
             async for _ in _chunked_extraction(mock_llm, triage, template, chapters):
                 pass

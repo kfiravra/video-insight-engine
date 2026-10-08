@@ -14,11 +14,12 @@ import pytest
 from pydantic import BaseModel
 
 from src.models.domain_types import DOMAIN_MODELS, MODIFIER_MODELS
-from src.services.pipeline.prompt_builder import (
+from src.services.pipeline.extraction_prompt import (
     EXAMPLES_DIR,
     SCHEMAS_DIR,
+    ExtractionPromptInput,
     _load_domain_example,
-    build_extraction_prompt,
+    build_extraction_template,
 )
 from src.services.pipeline.prompt_registry import declared_placeholders
 
@@ -150,13 +151,13 @@ class TestExampleFiles:
 
     @pytest.mark.parametrize("domain", _NO_EXAMPLE_DOMAINS)
     def test_should_omit_example_block_when_primary_domain_has_no_example(self, domain):
-        prompt = build_extraction_prompt([domain], [], "transcript", "rules", title="T")
+        prompt = build_extraction_template(ExtractionPromptInput([domain], [], "rules"))
 
         assert "<extraction_example" not in prompt
         assert "example of learning extraction output" not in prompt
 
     def test_should_include_example_block_when_primary_domain_has_example(self):
-        prompt = build_extraction_prompt(["food"], [], "transcript", "rules", title="T")
+        prompt = build_extraction_template(ExtractionPromptInput(["food"], [], "rules"))
 
         assert '<extraction_example domain="food">' in prompt
         assert "example of food extraction output" in prompt
