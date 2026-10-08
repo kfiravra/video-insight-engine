@@ -9,6 +9,7 @@ from src.services.vector.qdrant_service import (
     COLLECTION_NAME,
     SOURCE_DEFAULT_OUTPUT,
     SOURCE_TRANSCRIPT,
+    SOURCE_VISUAL,
     VectorService,
     _point_id,
 )
@@ -349,6 +350,11 @@ class TestPointId:
         transcript = _point_id(SOURCE_TRANSCRIPT, "v1", None, None, 0)
         output = _point_id(SOURCE_DEFAULT_OUTPUT, "v1", "tab1", "field", 0)
         assert transcript != output
+
+    def test_should_give_visual_points_ids_distinct_from_transcript_points(self):
+        transcript = _point_id(SOURCE_TRANSCRIPT, "v1", None, None, 0)
+        visual = _point_id(SOURCE_VISUAL, "v1", None, None, 0)
+        assert transcript != visual
 
     def test_different_tabs_produce_different_ids(self):
         a = _point_id(SOURCE_DEFAULT_OUTPUT, "v1", "tab_a", "x", 0)

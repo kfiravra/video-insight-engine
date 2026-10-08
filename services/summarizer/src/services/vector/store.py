@@ -1,9 +1,10 @@
-"""Store transcript and output chunks in Qdrant as background tasks.
+"""Store transcript, output and visual chunks in Qdrant as background tasks.
 
 Called after pipeline completion. Failures are logged but never break the
-pipeline. Both ``store_transcript_chunks`` and ``store_default_output_chunks``
-pre-delete by ``(video_id, source)`` before upsert to keep reprocess
-idempotent — reprocesses with fewer chunks no longer leave orphan points.
+pipeline. ``store_transcript_chunks``, ``store_default_output_chunks`` and
+``store_visual_chunks`` pre-delete by ``(video_id, source)`` before upsert to
+keep reprocess idempotent — reprocesses with fewer chunks no longer leave
+orphan points.
 """
 
 from __future__ import annotations
@@ -12,12 +13,18 @@ import asyncio
 import logging
 
 from src.config import settings
-from src.services.vector.chunking import assign_chunk_timestamps, chunk_transcript
+from src.services.pipeline.visual_annotations import annotation_entries
+from src.services.vector.chunking import (
+    assign_chunk_timestamps,
+    chunk_transcript,
+    chunk_visual_entries,
+)
 from src.services.vector.embedding import embed_texts
 from src.services.vector.output_chunker import chunk_assembled_tabs
 from src.services.vector.qdrant_service import (
     SOURCE_DEFAULT_OUTPUT,
     SOURCE_TRANSCRIPT,
+    SOURCE_VISUAL,
     VectorService,
 )
 
@@ -221,3 +228,46 @@ async def store_default_output_chunks(
             video_id,
             e,
         )
+
+
+async def store_visual_chunks(video_id: str, visual_annotations: str) -> None:
+    """Index the rendered ``<visual_annotations>`` block as ``source="visual"`` points.
+
+    Visual facts left ``clean_text`` in 1c.2, so the transcript points no
+    longer carry them; these points keep them searchable, each chunk with the
+    ``timestamp``/``end_timestamp`` of its first and last frame. Pre-deletes
+    first even when the block is empty, so a rerun without frames leaves no
+    stale visual points behind. The vision captions are English, so the points
+    are stored as ``language="en"`` for every video.
+
+    Designed to run as a background task — never raises.
+    """
+    if not settings.QDRANT_ENABLED:
+        return
+
+    service = _get_vector_service()
+    try:
+        await asyncio.to_thread(service.delete_by_video_and_source, video_id, SOURCE_VISUAL)
+
+        chunks = chunk_visual_entries(annotation_entries(visual_annotations))
+        if not chunks:
+            logger.debug("No visual annotations to index for video %s", video_id)
+            return
+
+        embeddings = await asyncio.to_thread(embed_texts, [c["text"] for c in chunks])
+        success = await asyncio.to_thread(
+            service.store_chunks,
+            video_id,
+            chunks,
+            embeddings,
+            "en",
+            None,
+            SOURCE_VISUAL,
+        )
+        if success:
+            logger.info("Stored %d visual chunks for video %s", len(chunks), video_id)
+        else:
+            logger.warning("Failed to store visual chunks for video %s", video_id)
+
+    except Exception as e:
+        logger.warning("Background visual chunk storage failed for %s: %s", video_id, e)

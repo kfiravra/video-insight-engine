@@ -261,6 +261,7 @@ async def test_faithfulness_task_overrides_inherited_feature_var():
     ctx = MagicMock()
     ctx.extraction_data = {"key_points": [{"text": "claim long enough to be used"}]}
     ctx.clean_text = "some transcript text"
+    ctx.visual_annotations = ""
     ctx.youtube_id = "abc123"
     ctx.llm_service = MagicMock()
 
@@ -296,6 +297,7 @@ async def test_faithfulness_task_does_not_mutate_parent_feature_var():
         ctx = MagicMock()
         ctx.extraction_data = {"key_points": [{"text": "claim long enough to be used"}]}
         ctx.clean_text = "transcript"
+        ctx.visual_annotations = ""
         ctx.youtube_id = "abc123"
         ctx.llm_service = MagicMock()
 
