@@ -1,4 +1,4 @@
-Here is one high-quality example of food extraction output. Match this density, specificity, and field completeness in your response.
+Here is one high-quality example of food extraction output. Match this specificity and field completeness; counts come from your brief.
 
 Video: "Perfect Scrambled Eggs — 3 Methods Compared" (12 minutes)
 

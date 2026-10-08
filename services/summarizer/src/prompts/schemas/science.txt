@@ -56,11 +56,6 @@ Extract structured science/STEM educational content.
   ]
 }
 
-SCALING (video is {duration_minutes} minutes):
-- Under 15 min: 3-5 concepts, 3-5 keyFacts, 0-2 experiments
-- 15-30 min: 5-8 concepts, 5-10 keyFacts, 1-3 experiments
-- Over 30 min: 8-15 concepts, 10-20 keyFacts, 2-5 experiments
-
 RULES:
 - Preserve scientific terminology exactly as used
 - Include formulas/equations when presented

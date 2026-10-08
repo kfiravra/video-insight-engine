@@ -1,4 +1,4 @@
-Here is one high-quality example of tech extraction output. Match this density, specificity, and field completeness in your response.
+Here is one high-quality example of tech extraction output. Match this specificity and field completeness; counts come from your brief.
 
 Video: "Build a REST API with Express.js and TypeScript" (18 minutes)
 

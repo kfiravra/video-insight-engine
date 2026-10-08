@@ -200,24 +200,31 @@ def _load_schema(name: str) -> str:
 
 
 def _load_domain_example(tag: str) -> str:
-    """Load a domain example file, falling back to learning.txt if not found.
+    """Load the domain's example file; ``""`` when the domain has none.
+
+    No cross-domain fallback: another domain's example teaches the wrong
+    fields and item shapes (learning's keyPoints for a gaming video), so a
+    domain without an example gets no example block at all.
 
     Args:
         tag: Domain tag (e.g., "food", "tech"). Must pass _SAFE_NAME_RE.
 
     Returns:
-        Example text content, or learning example as fallback.
+        Example text content, or ``""`` (unsafe tag, or no example file).
     """
     if not _SAFE_NAME_RE.match(tag):
         logger.warning("Rejected unsafe example tag: %r", tag)
-        tag = "learning"
+        return ""
     example_path = EXAMPLES_DIR / f"{tag}.txt"
     if not example_path.exists():
-        logger.info("No example for domain %r, falling back to learning", tag)
-        example_path = EXAMPLES_DIR / "learning.txt"
-    if not example_path.exists():
-        return "No example available — follow the schema above precisely, filling every field."
+        logger.info("No example for domain %r — prompt gets no example block", tag)
+        return ""
     return _load_text(str(example_path))
+
+
+def _drop_element(text: str, tag: str) -> str:
+    """Remove the whole ``<tag …>…</tag>`` element (and its trailing blank line)."""
+    return re.sub(rf"<{tag}\b[^>]*>.*?</{tag}>\n*", "", text, flags=re.DOTALL)
 
 
 _EMPHASIS = {
@@ -307,6 +314,8 @@ def _build_base_template(
     # Determine primary tag for example injection
     primary_tag = content_tags[0] if content_tags else "learning"
     domain_example = _load_domain_example(primary_tag)
+    if not domain_example:
+        template = _drop_element(template, "extraction_example")
 
     # Inject everything EXCEPT {transcript} — caller decides whether to fill it
     return (

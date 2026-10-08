@@ -2,7 +2,7 @@
 NARRATIVE MODIFIER — NarrativeData schema
 
 Additional extraction for content with storytelling elements.
-Merge this INTO the main domain data.
+Return it under its own "narrative" key, next to the domain keys.
 
 {
   "keyMoments": [
@@ -39,11 +39,6 @@ Merge this INTO the main domain data.
   ],
   "takeaways": ["Persistence through near-failure was the defining factor in their success"]
 }
-
-SCALING (video is {duration_minutes} minutes):
-- Under 15 min: 2-3 key moments, 2-3 quotes, 2-3 takeaways
-- 15-30 min: 4-6 key moments, 3-5 quotes, 3-5 takeaways
-- Over 30 min: 6-10 key moments, 5-8 quotes, 5-8 takeaways
 
 RULES:
 - Quotes must be exact — don't paraphrase

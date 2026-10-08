@@ -72,11 +72,6 @@ THINKING GUIDE:
   ]
 }
 
-SCALING (video is {duration_minutes} minutes):
-- Under 20 min: 3-5 segments, 0-2 guests, 3-6 quotes, 4-8 topics
-- 20-60 min: 5-10 segments, 1-3 guests, 5-12 quotes, 6-15 topics
-- Over 60 min: 8-20 segments, 1-4 guests, 8-20 quotes, 10-20 topics
-
 RULES:
 - Preserve quotes verbatim — do not paraphrase a quote.
 - Attribute every quote and segment to a speaker when the audio makes it clear.

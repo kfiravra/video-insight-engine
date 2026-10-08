@@ -73,11 +73,6 @@ Extract a complete, followable workout plan.
   "timer": {"intervals": [{"name": "Work", "duration": 40, "type": "work"}, {"name": "Rest", "duration": 20, "type": "rest"}], "rounds": 4}
 }
 
-SCALING (video is {duration_minutes} minutes):
-- Under 15 min: all exercises shown, basic form cues
-- 15-30 min: full warmup/workout/cooldown, detailed form cues, 3-5 tips
-- Over 30 min: complete program with all exercises, all modifications, all form cues, timer intervals
-
 RULES:
 - Include all exercises with sets, reps, and rest periods
 - Exercise names must be exact: "Bulgarian Split Squats" not "single-leg squats"

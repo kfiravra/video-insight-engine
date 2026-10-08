@@ -49,7 +49,7 @@ Extract a complete, actionable trip plan.
     }
   ],
 > UI: Packing list → PackingMission drag-into-suitcase. `weight` powers the kg tally as items move into the suitcase; `essential` flags items that fire the missing-essentials warning when the user has packed >80% of non-essentials but skipped a flagged one.
-> REQUIRED for weight: numeric kg estimate per item (e.g. 0.2 for sunscreen, 1.5 for hiking boots, 0.05 for charger cable). Estimate when the video doesn't state weight — better an approximate tally than no tally. Omit `weight` entirely (don't use 0) if you genuinely can't estimate.
+> Weight: numeric kg per item (e.g. 0.2 for sunscreen, 1.5 for hiking boots) only when the video states it. Omit `weight` when not stated — never estimate it, never use 0.
 
   "accommodationTips": [
     {"text": "Where to stay, neighborhood recommendation", "type": "tip | warning | info"}
@@ -74,16 +74,10 @@ Extract a complete, actionable trip plan.
   "budget": {"total": 1200, "currency": "USD", "breakdown": [{"category": "Accommodation", "amount": 400, "currency": "USD", "notes": "Kuramae hostel, $55/night for 7 nights"}]}
 }
 
-SCALING (video is {duration_minutes} minutes):
-- Under 15 min: 1-2 days, key spots, basic budget
-- 15-30 min: full itinerary, all spots mentioned, packing list, budget breakdown
-- Over 30 min: comprehensive itinerary, all spots with tips, detailed budget, accommodation & transport tips, bestSeason
-
 RULES:
 - mapQuery must be a real Google Maps searchable string with city and country
 - All prices with currency: "€18" not "cheap"
 - Include all spots/attractions mentioned in the video
 - Budget should reflect what the video states, not generic estimates
 - Packing list should be destination-specific
-- Minimum: 1 day with spots, 5 packing items
 </domain_schema>

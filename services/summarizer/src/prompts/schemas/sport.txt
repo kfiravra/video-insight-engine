@@ -87,11 +87,6 @@ THINKING GUIDE:
   }
 }
 
-SCALING (video is {duration_minutes} minutes):
-- Under 10 min: 3-6 match events, 1 formation (3-11 players), 3-6 stat rows
-- 10-30 min: 5-12 match events, 1-2 formations, 4-10 stat rows
-- Over 30 min: 8-20 match events, 1-2 formations, 5-12 stat rows
-
 RULES:
 - formation.positions x and y MUST be 0-100. A player with no clear position is
   omitted, not stacked at 0,0.

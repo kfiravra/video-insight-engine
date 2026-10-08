@@ -53,16 +53,8 @@ Extract structured educational content.
   ]
 }
 
-SCALING (video is {duration_minutes} minutes):
-- Under 10 min: 3-5 keyPoints, 2-3 concepts, 2-3 takeaways, timestamps for each topic shift
-- 10-30 min: 5-8 keyPoints, 4-6 concepts, 4-5 takeaways, timestamps every 3-5 min
-- 30-60 min: 8-15 keyPoints, 6-10 concepts, 5-8 takeaways, timestamps every 3-5 min
-- Over 60 min: 15-25 keyPoints, 10-15 concepts, 8-12 takeaways, timestamps every 3-5 min
-
 COMPLETENESS:
 - Cover the full video chronologically — don't cluster points from the first 10 minutes
-- Every major topic should have at least one keyPoint and one concept
-- If the video has chapters, each chapter should contribute at least one keyPoint
 
 RULES:
 - keyPoints teach one specific thing each — no filler

@@ -78,11 +78,6 @@ INGREDIENT AMOUNT RULES:
 - "a pinch" / "to taste" → amount: 0, displayAmount: "to taste"
 - Integer amounts are still floats: "2 cups" → amount: 2.0, displayAmount: "2"
 
-SCALING (video is {duration_minutes} minutes):
-- Under 15 min: 1 recipe, core ingredients, essential steps
-- 15-30 min: 1-2 recipes, full ingredient list, detailed steps, 3-5 tips
-- Over 30 min: all recipes shown, complete ingredients, all steps, all tips and substitutions
-
 RULES:
 - Include every ingredient with exact measurements — missing one ruins the recipe
 - Steps in correct chronological order

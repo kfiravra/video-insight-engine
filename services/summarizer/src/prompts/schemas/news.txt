@@ -74,11 +74,6 @@ THINKING GUIDE:
   ]
 }
 
-SCALING (video is {duration_minutes} minutes):
-- Under 10 min: 3-5 timeline events, 2-5 entities, 3-6 claims, 3-6 context items
-- 10-30 min: 5-10 timeline events, 4-10 entities, 5-12 claims, 5-12 context items
-- Over 30 min: 8-20 timeline events, 6-20 entities, 8-20 claims, 8-20 context items
-
 RULES:
 - A claim's status MUST be one of: verified, disputed, context. When the report
   does not establish truth, use "context" — never guess "verified".
