@@ -44,6 +44,9 @@ class TestRenderVisualAnnotations:
     def test_should_return_empty_string_when_there_are_no_frames(self):
         assert render_visual_annotations([], []) == ""
 
+    def test_should_read_missing_frame_lists_as_no_frames(self):
+        assert render_visual_annotations(None, None) == ""
+
     def test_should_return_empty_string_when_no_frame_has_caption_or_text(self):
         assert render_visual_annotations([], [_frame(0, 5.0), _frame(1, 9.0, "ab")]) == ""
 
