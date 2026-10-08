@@ -54,6 +54,37 @@ class TestOverview:
         assert "keyTakeaways[0]" in paths
         assert "keyTakeaways[1]" in paths
 
+    def test_should_index_the_assembled_overview_fields_under_props_data(self):
+        """A23: assemble_overview stores everything under ``props.data``."""
+        tab = _tab(
+            "overview",
+            {
+                "data": {
+                    "title": "React in an hour",
+                    "masterSummary": "This video walks through React fundamentals across an hour.",
+                    "tldr": "Hooks make state and effects composable across components.",
+                    "keyTakeaways": ["Use hooks to manage local state cleanly inside components."],
+                }
+            },
+        )
+
+        paths = [c.prop_path for c in chunk_assembled_tabs([tab])]
+
+        assert paths == ["data.masterSummary", "data.keyTakeaways[0]", "data.tldr"]
+
+    def test_should_index_a_real_assembled_overview_tab(self):
+        """End to end through the overview assembler (no chunk = A23 is back)."""
+        from src.services.pipeline.assembly.assemblers_learning import assemble_overview
+
+        synthesis = {
+            "masterSummary": "This video walks through React fundamentals across an hour.",
+            "keyTakeaways": ["Use hooks to manage local state cleanly inside components."],
+        }
+        props = assemble_overview({"_synthesis": synthesis, "_video_meta": {}}, None, {}, None)
+        tab = _tab("overview", props or {})
+
+        assert len(chunk_assembled_tabs([tab])) == 2
+
 
 class TestSpotExplorer:
     def test_should_emit_one_chunk_per_spot_with_name_description_tips(self):

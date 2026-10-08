@@ -58,6 +58,7 @@ def _assembly_ctx(eval_run: bool) -> SimpleNamespace:
         timer=MagicMock(elapsed=MagicMock(return_value=1.0)),
         transcript_data=None,
         audio_path=None,
+        visual_annotations="",
         eval_run=eval_run,
     )
 
@@ -68,6 +69,7 @@ async def _assemble(ctx: SimpleNamespace) -> dict[str, Any]:
         "redis": AsyncMock(return_value=True),
         "transcript": AsyncMock(),
         "output": AsyncMock(),
+        "visual": AsyncMock(),
     }
     settings = SimpleNamespace(REDIS_ENABLED=True, QDRANT_ENABLED=True, PIPELINE_VERSION="vtest")
     with (
@@ -76,6 +78,7 @@ async def _assemble(ctx: SimpleNamespace) -> dict[str, Any]:
         patch.object(assembly_phase, "response_cache") as cache,
         patch.object(assembly_phase, "store_transcript_chunks", stores["transcript"]),
         patch.object(assembly_phase, "store_default_output_chunks", stores["output"]),
+        patch.object(assembly_phase, "store_visual_chunks", stores["visual"]),
         patch("src.routes.cached_response.build_frontend_response", return_value={}),
     ):
         cache.set_response = stores["redis"]
@@ -93,7 +96,8 @@ class TestAssembly:
     async def test_should_skip_qdrant_for_an_eval_run(self) -> None:
         stores = await _assemble(_assembly_ctx(eval_run=True))
 
-        assert (stores["transcript"].call_count, stores["output"].call_count) == (0, 0)
+        qdrant = ("transcript", "output", "visual")
+        assert [stores[k].call_count for k in qdrant] == [0, 0, 0]
 
     async def test_should_still_save_the_eval_row_itself(self) -> None:
         ctx = _assembly_ctx(eval_run=True)
@@ -105,7 +109,8 @@ class TestAssembly:
     async def test_should_write_redis_and_qdrant_for_a_normal_run(self) -> None:
         stores = await _assemble(_assembly_ctx(eval_run=False))
 
-        assert [stores[k].call_count for k in ("redis", "transcript", "output")] == [1, 1, 1]
+        stores_written = ("redis", "transcript", "output", "visual")
+        assert [stores[k].call_count for k in stores_written] == [1, 1, 1, 1]
 
 
 def _translation_ctx(eval_run: bool) -> SimpleNamespace:
