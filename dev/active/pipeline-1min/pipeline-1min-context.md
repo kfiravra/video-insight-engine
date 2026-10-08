@@ -123,6 +123,8 @@ New settings allowed: `EXTRACTION_PARALLEL`, `FRAME_VISION_PARALLEL` (bool, defa
 - Vision today = exactly ONE call per run in every tier (`frames.py:36-39` skips the second pass once `frame_descriptions` is set).
 - `FRAME_EXTRACTION_ENABLED` defaults `false` in config but `true` in both compose anchors.
 - Shared tree, parallel sessions: `git branch --show-current` before any branch op.
+- Dev `vie-api` runs `node dist/index.js` baked into its image (src is mounted but unused) → API code changes need `docker compose build vie-api` + force-recreate. On this WSL box the build fails with "error getting credentials" → build with `DOCKER_CONFIG=<dir with {} config.json + cli-plugins symlink>`.
+- After a WSL hiccup the host port proxies (27017/6379/3000) can accept then reset connections → `docker compose up -d --force-recreate --no-build vie-mongodb vie-redis vie-api …` fixes it (api route tests fail with ECONNRESET / "Plugin did not start in time" otherwise).
 
 ## Skills
 summarizer / llm-common → `backend-python`; api → `backend-node`; web → `react-vite`. Read SKILL.md + the listed resources when the hook fires, before code.
