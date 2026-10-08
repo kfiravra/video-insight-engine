@@ -378,16 +378,30 @@ Submit YouTube URL for summarization.
 ```json
 {
   "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-  "folderId": "507f1f77bcf86cd799439013"
+  "folderId": "507f1f77bcf86cd799439013",
+  "bypassCache": false,
+  "cold": false
 }
 ```
+
+`bypassCache` (optional) starts a fresh run as a new version row (see below).
+`cold` (optional, benchmark-only) also marks the row `coldMedia: true` so the
+summarizer skips its S3 transcript + scene-frame caches; it implies
+`bypassCache` and is allowed only for admin and eval accounts (others get
+`403 COLD_RUN_FORBIDDEN`).
 
 **Logic:**
 
 1. Extract `youtubeId` from URL
-2. Check `videoSummaryCache` for existing summary
-3. If **HIT**: create `userVideo` reference, return immediately
-4. If **MISS**: create cache entry, publish job, return with `status: pending`
+2. `bypassCache` on a video that already has a user version, or any submission by the
+   eval user (`users.isEvalUser`, D25): insert a new version row (`isLatest: false`; numbering and pools in
+   [IDEMPOTENCY.md](./IDEMPOTENCY.md#version-rows-bypasscache-and-eval-runs)), re-point
+   the user's library entry at it, publish the job, return `status: pending` with
+   `newVersion: true`. A user row is promoted to `isLatest` only when it completes; an
+   eval row never is.
+3. Otherwise check `videoSummaryCache` for the served (`isLatest`) summary
+4. If **HIT**: create `userVideo` reference, return immediately
+5. If **MISS**: create cache entry, publish job, return with `status: pending`
 
 **Response (201) - Cache Hit:**
 
@@ -436,6 +450,24 @@ the user past the cap, the increment is refunded and the request fails:
 Cache hits refund the reservation immediately. Real spend is reconciled from
 `llm_usage` when the pipeline reaches a terminal status (see
 [Per-User Cost Model](./llm-cost-model.md)).
+
+---
+
+### GET /videos/versions/:youtubeId
+
+Version rows of one video, newest first (`?limit=` 1–50, default 10) — for A/B
+comparison of `bypassCache` runs. `404 VIDEO_NOT_FOUND` unless the user has the
+video in their library. Eval-run rows (`evalRun: true`, D25) are listed only to the
+eval user; everyone else sees the user-version pool only.
+
+```json
+{
+  "versions": [
+    { "_id": "…", "youtubeId": "dQw4w9WgXcQ", "version": 3, "isLatest": true, "status": "completed",
+      "title": "…", "createdAt": "…", "processedAt": "…", "processingTimeMs": 61234 }
+  ]
+}
+```
 
 ---
 
@@ -1245,6 +1277,17 @@ The same envelope is returned for action-level errors (400/404) with `success: f
 
 ---
 
+## POST /api/assistant/action
+
+Same action envelope as above, with `video_id` in the body (optional; omitted for
+library-scoped actions). When `video_id` is given (a `videoSummaryId`, or a
+`youtubeId`), the user must hold that video in their library — otherwise
+`404 VIDEO_NOT_FOUND` before the assistant is called, so no other user's version
+(eval runs included) can be loaded as action context. A `youtubeId` resolves to the
+served version, never an eval row.
+
+---
+
 ## POST /api/assistant/library/chat
 
 Library-wide RAG chat (SSE) — answers across many of the user's videos when no
@@ -1310,16 +1353,16 @@ The summarization pipeline uses SSE to stream results progressively, allowing th
 | `metadata` | 1 | Video metadata (title, channel, duration, context) |
 | `chapters` | 1 | Creator chapters if available |
 | `sponsor_segments` | 1 | SponsorBlock segments |
-| `transcript_ready` | 1 | Transcript extraction complete (authoritative `duration`) |
-| `description_analysis` | 2 | Links, resources extracted from description |
-| `triage_complete` | 3 | Content tags, tab layout, confidence from plan stage |
+| `transcript_ready` | 2 | Transcript extraction complete (authoritative `duration`) |
+| `description_analysis` | 5 | Links, resources extracted from description — emitted at assembly (assembly waits ≤ 5 s for the analysis started at metadata-end; past that, nothing) |
+| `triage_complete` | 2 | Content tags, tab layout, confidence, `contentFormat`, `evidence`, `terms` from the plan (runs ∥ memory inside phase 2) |
 | `extraction_progress` | 4 | Chunked-extraction progress for long videos |
 | `extraction_complete` | 4 | Domain extraction finished |
-| `frames` | 5 | Extracted frame set (presigned URLs) |
-| `meta` | 5 | VIEResponseMeta with videoId, contentTags, tldr, etc. |
-| `tab_ready` | 5 | Individual assembled tab with component, props, and `position` (may arrive out of natural order — slot by `position`, see below) |
-| `enrichment_complete` | 5 | Enrichment (quiz/flashcards) finished |
-| `synthesis_complete` | 5 | TLDR and key takeaways |
+| `frames` | 2 | Extracted frame set (presigned URLs), from the frames branch of phase 2 |
+| `meta` | 2 | VIEResponseMeta with videoId, contentTags, tab labels — emitted with `triage_complete` |
+| `tab_ready` | 5 | Individual assembled tab with component, props, and `position` (may arrive out of natural order — slot by `position`, see below). A tab can arrive again at the same `position`: the overview after synthesis, the quiz tab (last) and any tab it changed (quick_quiz host, links, overview count) after the quiz |
+| `enrichment_complete` | 5 | The quiz landed (only for a plan with a quiz host; runs after the first tabs) |
+| `synthesis_complete` | 2 + 5 | Up to twice: `{tldr, keyTakeaways}` at memory-done (the hero), then the four-field superset after the tabs — see [synthesis_complete](#synthesis_complete) |
 | `heartbeat` | Any | Keep-alive during long-running steps (e.g. moment frame fill) — carries `ts`, safe to ignore |
 | `complete` | 6 | Processing complete with tab count and timing |
 | `done` | 6 | Final event, closes stream |
@@ -1341,55 +1384,47 @@ The summarization pipeline uses SSE to stream results progressively, allowing th
 │                    STREAMING PHASES (SSE Events)                            │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
-│  PHASE 1: METADATA + TRANSCRIPT + FRAMES (parallel)                        │
+│  PHASE 1: METADATA (one yt-dlp extract_info, ~5 s)                         │
 │  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │  yt-dlp Metadata → then Transcript + Frames in parallel             │   │
-│  │                                                                      │   │
-│  │  Output events:                                                      │   │
-│  │    - metadata (title, channel, thumbnail, duration)                 │   │
-│  │    - chapters (if creator chapters exist)                            │   │
-│  │    - sponsor_segments (SponsorBlock API)                             │   │
-│  │    - transcript_ready                                                │   │
-│  │                                                                      │   │
+│  │  Output event: metadata (title, channel, thumbnail, duration)       │   │
+│  │  Then, in the background: caption fetch, description analysis,      │   │
+│  │  low-res + one ≤720p download (skipped on a frame-manifest hit)     │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                             │
+│  PHASE 2: TEXT BRANCH ∥ FRAMES                                             │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │  Text: transcript → tier probe (Haiku) → plan (Sonnet) ∥ memory     │   │
+│  │  Frames: scenes → tier (probe, ≤3 s wait) → hi-res → OCR ∥ vision   │   │
+│  │                                                                     │   │
+│  │  Output events: transcript_ready, synthesis_complete (memory-done:  │   │
+│  │    tldr + keyTakeaways), triage_complete + meta (plan), frames      │   │
+│  │                                                                     │   │
 │  │  Transcript source chain (first success wins):                      │   │
 │  │    1. S3 cache          → phase: transcript_cached (~instant)       │   │
 │  │    2. yt-dlp captions   → phase: transcript (~1-3s)                 │   │
-│  │    3. Gemini audio      → phase: audio_transcription (~5-15s)      │   │
+│  │    3. Gemini audio      → phase: audio_transcription (~5-15s)       │   │
 │  │    4. Whisper audio     → phase: whisper_transcription (~10-30s)    │   │
-│  │    5. Metadata fallback → phase: metadata_fallback (music only)    │   │
+│  │    5. Metadata fallback → phase: metadata_fallback (music only)     │   │
 │  └─────────────────────────────────────────────────────────────────────┘   │
 │                                                                             │
-│  PHASE 2: VISUAL CONTEXT INJECTION                                         │
+│  PHASE 3: VISUAL ANNOTATIONS (code, no events)                             │
 │  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │  Inject [VISUAL at M:SS] annotations from frame analysis            │   │
-│  │  into transcript (if frame intelligence enabled)                    │   │
+│  │  Frame captions + OCR → <visual_annotations> block for extraction;  │   │
+│  │  the transcript itself stays speech-only                            │   │
 │  └─────────────────────────────────────────────────────────────────────┘   │
 │                                                                             │
-│  PHASE 3: CLASSIFIER + PLAN (~2-5 seconds)                                 │
+│  PHASE 4: EXTRACTION (one call; chunked batches for long videos)           │
 │  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │  Classifier (fast model) + Plan (Sonnet) determine domain,          │   │
-│  │  content tags, and tab layout                                       │   │
-│  │                                                                      │   │
-│  │  Output event: triage_complete                                      │   │
+│  │  Output events: extraction_progress (chunked), extraction_complete  │   │
 │  └─────────────────────────────────────────────────────────────────────┘   │
 │                                                                             │
-│  PHASE 4: EXTRACTION (~5-30 seconds, chunked for long videos)              │
+│  PHASE 5: ASSEMBLY → LATE GROUP                                            │
 │  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │  Domain-specific extraction using schemas                           │   │
-│  │  Chunked extraction for >30min videos (chapter-aware batching)     │   │
-│  │                                                                      │   │
-│  │  Output event: extraction_complete                                  │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-│                                                                             │
-│  PHASE 5: ENRICHMENT + SYNTHESIS + ASSEMBLY (parallel where possible)      │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │  Enrichment (quiz/flashcards, fast model) runs if domain supports   │   │
-│  │  Synthesis (fast model) + Assembly (code, no LLM calls) in parallel │   │
-│  │                                                                      │   │
-│  │  Output events: frames, meta, tab_ready[] (one per tab, carries     │   │
-│  │                 `position`; moment_track tabs held back for frame   │   │
-│  │                 fill + streamed last, with heartbeats),             │   │
-│  │                 synthesis_complete                                   │   │
+│  │  Output events: description_analysis, tab_ready[] (all but moment   │   │
+│  │    tabs, each with `position`), then moment fill ∥ synthesis ∥ quiz:│   │
+│  │    moment tabs (framed, heartbeats meanwhile), synthesis_complete   │   │
+│  │    (superset) + overview re-sent, enrichment_complete + quiz tab    │   │
+│  │    last + every tab the quiz changed re-sent at its position        │   │
 │  └─────────────────────────────────────────────────────────────────────┘   │
 │                                                                             │
 │  PHASE 6: SAVE & DONE                                                      │
@@ -1584,6 +1619,10 @@ Clients should not cache frame URLs beyond a session.
 
 ### synthesis_complete
 
+Emitted **up to twice per run**, every field optional:
+
+1. **Memory-done** (phase 2, only when memory produced a tldr or takeaways) — the hero:
+
 ```json
 {
   "event": "synthesis_complete",
@@ -1595,6 +1634,26 @@ Clients should not cache frame URLs beyond a session.
   ]
 }
 ```
+
+2. **Synthesis-done** (phase 5, after the first tabs) — the four-field superset:
+   `{tldr, keyTakeaways, masterSummary, seoDescription}`. `tldr`/`keyTakeaways` are
+   memory's; synthesis writes them only when memory left one empty. A failed
+   synthesis still emits it: memory's hero, empty `masterSummary`/`seoDescription`.
+   A cached replay sends one superset event.
+
+**Merge rules** (one rule, two consumers — `filledSynthesisFields` in `@vie/types`):
+
+- An empty string or array never counts as set, so a later emission never blanks a
+  field an earlier one filled; filled fields merge field by field.
+- The superset wins: once a `masterSummary` is held, an emission without one (a
+  reconnect replaying the partial) is ignored.
+- Web: `handleSynthesisComplete` in `stream-event-processor.ts`. API relay
+  (`stream.routes.ts` → `VideoRepository.mergeSynthesis` → `buildSynthesisMerge`):
+  dotted `$set` of the filled `synthesis.*` fields; a partial is guarded by
+  `synthesis.masterSummary ∈ {null, ""}`. Re-applying either emission is idempotent.
+- Every (re-)dispatch of a row (new version, retry, stale-version regen, stall)
+  first `$unset`s its `synthesis`, so a previous run's `masterSummary` can't block
+  this run's partial.
 
 ### done
 
@@ -1686,11 +1745,15 @@ For a typical video (v2 pipeline):
 
 | Stage | Model | Calls | Parallel? |
 |-------|-------|-------|-----------|
-| Classifier | Fast (Haiku) | 1 | Yes (with Plan) |
-| Plan | Sonnet | 1 | Yes (with Classifier) |
-| Extraction | Sonnet | 1-N (chunked for long videos) | Batched |
-| Enrichment | Fast (Haiku) | 1 (if domain supports it) | No |
-| Synthesis | Fast (Haiku) | 1 | Yes (with Assembly) |
-| Assembly | None (0 LLM calls; no longer instant — may run exact-timestamp moment frame extraction with SSE heartbeats) | 0 | Yes (with Synthesis) |
+| Description analysis | Fast | 1 | Background from metadata-end |
+| Tier probe | Haiku 4.5 (`LLM_CLASSIFIER_MODEL`) | 1 | At transcript-ready, ∥ frames |
+| Plan | Primary (Sonnet) | 1 | ∥ Memory |
+| Memory | `LLM_EXTRACTION_MODEL` (blank = primary) | 1 (none without timed transcript) | ∥ Plan |
+| Frame vision | Primary (Sonnet) | 1-5 batches (none on LOW tier / manifest hit) | ∥ text branch |
+| Chapter detect | Fast | 0-1 (long videos with no listed chapters and no memory outline) | No |
+| Extraction | `LLM_EXTRACTION_MODEL` | 1, or one per batch (chunked) | Batches in parallel |
+| Synthesis | Fast | 1 | ∥ moment fill ∥ quiz, after the first tabs |
+| Quiz (enrichment) | Fast | 0-1 (plan with a quiz host) | ∥ moment fill ∥ synthesis |
+| Assembly | None (code; moment frame fill does frame I/O with heartbeats) | 0 | — |
 
-**Total: ~4-6 LLM calls, ~15-40 seconds** (varies with video length and chunking)
+**Total: ~6-7 calls plus vision batches** for a short video (more when chunked; translation adds batched calls for non-English videos)

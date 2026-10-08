@@ -521,6 +521,8 @@ export interface TravelPackingItem {
   item: string;
   category: string;
   essential: boolean;
+  weight?: number;
+  emoji?: string;
 }
 
 export interface TravelTip {
@@ -650,6 +652,7 @@ export interface MusicCredit {
 export interface MusicSection {
   name: string;
   timestamp?: number;
+  endTimestamp?: number;
   duration?: number;
   description: string;
 }
@@ -879,6 +882,7 @@ export interface SportData {
 
 export interface NarrativeKeyMoment {
   timestamp: number;
+  endTimestamp?: number;
   description: string;
   mood?: string;
   emoji?: string;

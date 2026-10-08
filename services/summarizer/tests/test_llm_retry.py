@@ -11,6 +11,7 @@ from litellm.exceptions import (
     ServiceUnavailableError,
 )
 
+from src.services.llm_messages import text_block
 from src.utils.llm_retry import call_llm_with_retry, truncate_prompt_if_needed
 
 
@@ -149,7 +150,6 @@ class TestCallLlmWithRetry:
             max_tokens=8192,
             timeout=30.0,
             json_mode=False,
-            cache_static=None,
             span_name="triage",
             span_metadata={
                 "attempt": 1,
@@ -157,6 +157,8 @@ class TestCallLlmWithRetry:
                 "useFastModel": False,
                 "modelOverride": None,
             },
+            temperature=None,
+            system_prompt=None,
         )
 
     @pytest.mark.asyncio
@@ -385,3 +387,22 @@ class TestTruncatePromptIfNeeded:
         prompt = "x" * 500_000
         result = truncate_prompt_if_needed(prompt, "gemini/gemini-2.5-flash")
         assert result == prompt  # 500K < 3M limit
+
+    def test_short_block_prompt_unchanged(self):
+        blocks = [text_block("transcript", cache=True), text_block("job")]
+        result = truncate_prompt_if_needed(blocks, "anthropic/claude-sonnet-4-6")
+        assert result is blocks
+
+    def test_block_prompt_should_fit_limit_when_longest_block_truncated(self):
+        blocks = [text_block("t" * 700_000, cache=True), text_block("job")]
+        result = truncate_prompt_if_needed(blocks, "anthropic/claude-sonnet-4-6")
+        marker = len("\n\n[TRANSCRIPT TRUNCATED DUE TO LENGTH]")
+        assert sum(len(block["text"]) for block in result) == 600_000 + marker
+
+    def test_block_prompt_should_keep_breakpoint_and_tail_when_truncated(self):
+        blocks = [text_block("t" * 700_000, cache=True), text_block("job")]
+        result = truncate_prompt_if_needed(blocks, "anthropic/claude-sonnet-4-6")
+        assert (result[0].get("cache_control"), result[1]) == (
+            {"type": "ephemeral"},
+            text_block("job"),
+        )

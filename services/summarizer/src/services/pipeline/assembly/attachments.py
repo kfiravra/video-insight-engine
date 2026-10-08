@@ -17,13 +17,15 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from src.shared_config.domain_config import quiz_policy
+
 from .registry import ASSEMBLER_REGISTRY
 
 logger = logging.getLogger(__name__)
 
 # Tabs whose primary list is at or below this length are "sparse" — they have
 # room for an enriching attachment without crowding.
-_SPARSE_THRESHOLD = 4
+SPARSE_THRESHOLD = 4
 # Tabs whose primary list is at or above this length are "dense" — a top
 # summary header gives the reader an anchor before the long scroll.
 _DENSE_THRESHOLD = 10
@@ -52,6 +54,21 @@ _NO_FRAME_STRIP_COMPONENTS = frozenset({"video_filmstrip", "frame_strip"})
 _NO_QUICK_QUIZ_COMPONENTS = frozenset({"quiz_arena", "quick_quiz"})
 # Domains where the filmstrip never adds value (talking-head footage).
 _NO_FRAME_STRIP_DOMAINS = frozenset({"narrative", "music"})
+
+
+def can_host_quick_quiz(component: str) -> bool:
+    """True when a tab rendered as ``component`` may carry a quick_quiz strip.
+
+    A host needs a primary item list (attachments only go on list tabs), must
+    not be a quiz itself, and must not be a do-along surface that
+    ``quizPolicy.attachmentHostsExclude`` lists (a quiz under a recipe's steps
+    or a workout interrupts the task). Read per call: the registry is the
+    source, never an import-time snapshot. Also the enrichment demand gate's
+    plan-time view of "an allowed quick_quiz host" (``enrichment.needs_quiz``).
+    """
+    if component not in _PRIMARY_LIST_KEY or component in _NO_QUICK_QUIZ_COMPONENTS:
+        return False
+    return component not in quiz_policy()["attachmentHostsExclude"]
 
 
 def _primary_item_count(component: str, props: dict) -> int | None:
@@ -151,7 +168,7 @@ def attach_secondaries(
 ) -> list[dict]:
     """Decide and build secondary attachments for a single assembled tab.
 
-    Sparse tab (≤ _SPARSE_THRESHOLD items): add ONE enriching bottom attachment,
+    Sparse tab (≤ SPARSE_THRESHOLD items): add ONE enriching bottom attachment,
     trying frame_strip → quick_quiz → tip_callout in priority order. Dense tab
     (≥ _DENSE_THRESHOLD items): add a top summary_header. Tabs in between get
     nothing. Returns a (possibly empty) list of attachment dicts.
@@ -172,7 +189,7 @@ def attach_secondaries(
 
     attachments: list[dict] = []
 
-    if count <= _SPARSE_THRESHOLD:
+    if count <= SPARSE_THRESHOLD:
         attachment = None
         if (
             "frame_strip" not in excluded_kinds
@@ -183,7 +200,7 @@ def attach_secondaries(
         if (
             attachment is None
             and "quick_quiz" not in excluded_kinds
-            and component not in _NO_QUICK_QUIZ_COMPONENTS
+            and can_host_quick_quiz(component)
         ):
             attachment = _quick_quiz_attachment(enrichment)
         if attachment is None and "tip_callout" not in excluded_kinds:

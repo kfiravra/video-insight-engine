@@ -1,24 +1,25 @@
-"""Schema injection system — assembles extraction prompts from base template + domain schemas."""
+"""Prompt loading (Langfuse registry first, disk fallback) + the extraction key-frames block.
+
+The extraction template itself is rendered by ``extraction_prompt``.
+"""
 
 from __future__ import annotations
 
 import logging
-import re
 from functools import lru_cache
 from pathlib import Path
 
 from ...config import prompts_from_disk
-from ...utils.language_utils import ENGLISH_OUTPUT_DIRECTIVE
-from .pipeline_helpers import sanitize_for_prompt
+from ..transcript.render import format_marker
+from .prompt_registry import (
+    fetch_registered_prompt,
+    record_registered_prompt,
+    registry_matches_disk,
+)
 
 logger = logging.getLogger(__name__)
 
 PROMPTS_DIR = Path(__file__).parent.parent.parent / "prompts"
-SCHEMAS_DIR = PROMPTS_DIR / "schemas"
-EXAMPLES_DIR = PROMPTS_DIR / "examples"
-
-# Allowed schema names — alphanumeric + underscore only (no path traversal)
-_SAFE_NAME_RE = re.compile(r"^[a-z0-9_]+$")
 
 # Subdirectory → Langfuse name-segment. Mirrors ``scripts/register_prompts.py``
 # so the registry name we look up matches the name the uploader registered.
@@ -66,16 +67,6 @@ def _read_prompt_file(path_str: str) -> str:
     return _read_file_cached(path_str)
 
 
-def _load_text(path_str: str) -> str:
-    """Load a prompt file, preferring the Langfuse-registered version.
-
-    For paths under ``PROMPTS_DIR`` we delegate to
-    :func:`load_prompt_with_fallback` so the registry version (if any)
-    wins. Paths outside the prompts dir bypass the registry entirely.
-    """
-    return load_prompt_text(Path(path_str))
-
-
 def load_prompt_text(path: Path) -> str:
     """Public registry-first loader for any prompt file under ``PROMPTS_DIR``.
 
@@ -119,9 +110,15 @@ def load_prompt_with_fallback(*, langfuse_name: str, fallback_path: Path) -> str
       * When Langfuse is disabled (no keys), the local file is used.
       * When the prompt isn't registered yet, the local file is used.
       * Any SDK exception is swallowed by ``fetch_prompt_with_obj``.
+      * When the registry version's ``{placeholder}`` set differs from the
+        local file's, the local file is used (warned once per name), so the
+        code never renders a template whose slots it does not fill.
+        A wording-only change to the local file keeps the same slots, so the
+        registry's older text still wins until the file is registered
+        (``vie-langfuse-init`` re-registers every prompt on compose up).
 
-    Side effect: a successful Langfuse fetch records the full Prompt
-    object via :func:`record_active_prompt` so subsequent LLM generations
+    Side effect: when the registry text is used, the full Prompt object is
+    recorded via :func:`record_active_prompt` so subsequent LLM generations
     get both the ``promptVersions`` metadata field AND the native
     ``trace.generation(prompt=...)`` cross-reference in the Langfuse UI.
     Recording is explicit — callers can also call ``fetch_prompt_with_obj``
@@ -129,308 +126,24 @@ def load_prompt_with_fallback(*, langfuse_name: str, fallback_path: Path) -> str
     """
     if prompts_from_disk():
         return _read_prompt_file(str(fallback_path))
-    text = _try_fetch_from_registry(langfuse_name)
-    if text is not None:
-        return text
-    return _read_file_cached(str(fallback_path))
-
-
-def _try_fetch_from_registry(langfuse_name: str) -> str | None:
-    """Attempt a registry fetch; record the Prompt on success. ``None`` on any failure."""
-    try:
-        from src.services.observability import (
-            fetch_prompt_with_obj,
-            record_active_prompt,
-        )
-    except Exception:  # noqa: BLE001 — observability import must never crash
-        return None
-    try:
-        obj = fetch_prompt_with_obj(langfuse_name)
-    except Exception:  # noqa: BLE001
-        return None
-    if obj is None:
-        return None
-    text = getattr(obj, "prompt", None)
-    if not isinstance(text, str):
-        return None
-    try:
-        record_active_prompt(langfuse_name, obj)
-    except Exception:  # noqa: BLE001 — recording is best-effort
-        pass
+    fetched = fetch_registered_prompt(langfuse_name)
+    if fetched is None:
+        return _read_file_cached(str(fallback_path))
+    text, prompt_obj = fetched
+    disk_text = _shipped_text_or_none(fallback_path)
+    if disk_text is not None and not registry_matches_disk(langfuse_name, text, disk_text):
+        return disk_text
+    record_registered_prompt(langfuse_name, prompt_obj)
     return text
 
 
-def build_tab_goals(triage_tabs: list[dict]) -> str:
-    """Format triage tabs into a goal-oriented description for extraction prompt.
-
-    Args:
-        triage_tabs: Tab dicts from triage result, each with id, label, component, goal.
-
-    Returns:
-        Formatted string describing each tab's purpose for the LLM.
-    """
-    if not triage_tabs:
-        return "Not specified — use your best judgment for tab coverage"
-    lines = []
-    for tab in triage_tabs:
-        label = tab.get("label", tab.get("id", "unknown"))
-        component = tab.get("component", "overview")
-        goal = tab.get("goal", "")
-        lines.append(f'Tab: "{label}" ({component}) — {goal}')
-    return "\n".join(lines)
-
-
-def _load_schema(name: str) -> str:
-    """Load a domain or modifier schema file.
-
-    Args:
-        name: Schema name (e.g., "travel", "food", "narrative").
-              Must be alphanumeric + underscore only (no path traversal).
-
-    Returns:
-        Schema text content, or empty string if file not found or name invalid.
-    """
-    if not _SAFE_NAME_RE.match(name):
-        logger.warning("Rejected unsafe schema name: %r", name)
-        return ""
-    schema_path = SCHEMAS_DIR / f"{name}.txt"
-    if not schema_path.exists():
-        logger.warning("Schema file not found: %s", schema_path)
-        return ""
-    return _load_text(str(schema_path))
-
-
-def _load_domain_example(tag: str) -> str:
-    """Load a domain example file, falling back to learning.txt if not found.
-
-    Args:
-        tag: Domain tag (e.g., "food", "tech"). Must pass _SAFE_NAME_RE.
-
-    Returns:
-        Example text content, or learning example as fallback.
-    """
-    if not _SAFE_NAME_RE.match(tag):
-        logger.warning("Rejected unsafe example tag: %r", tag)
-        tag = "learning"
-    example_path = EXAMPLES_DIR / f"{tag}.txt"
-    if not example_path.exists():
-        logger.info("No example for domain %r, falling back to learning", tag)
-        example_path = EXAMPLES_DIR / "learning.txt"
-    if not example_path.exists():
-        return "No example available — follow the schema above precisely, filling every field."
-    return _load_text(str(example_path))
-
-
-_EMPHASIS = {
-    "food": "PRIORITY: Every ingredient with exact measurement. Steps in order. Temps with units.",
-    "tech": "PRIORITY: Every code snippet exactly. Variable names preserved. Commands reproducible.",
-    "travel": "PRIORITY: Every location map-searchable. Costs with currency. Transport specific.",
-    "fitness": "PRIORITY: Every exercise with sets/reps/rest. Form cues verbatim. Modifications included.",
-    "review": "PRIORITY: All pros AND cons. Specs with numbers. Verdict unmodified.",
-    "learning": "PRIORITY: All concepts with definitions. Examples preserved. Progression maintained.",
-    "music": "PRIORITY: Lyrics exact or omitted. Credits complete. Genre specific.",
-    "project": "PRIORITY: All materials with specs. Steps in order. Safety verbatim.",
-}
-
-
-def get_detail_level(duration_seconds: int) -> str:
-    """Determine extraction detail level based on video duration."""
-    duration_minutes = duration_seconds / 60
-    if duration_minutes < 10:
-        return "concise"
-    elif duration_minutes < 45:
-        return "standard"
-    else:
-        return "detailed"
-
-
-def get_content_emphasis(primary_tag: str) -> str:
-    """Get content emphasis instruction for the primary domain."""
-    return _EMPHASIS.get(
-        primary_tag, "Extract the most useful information with precision and completeness."
-    )
-
-
-def _build_base_template(
-    content_tags: list[str],
-    modifiers: list[str],
-    quality_rules: str,
-    title: str = "",
-    duration_minutes: int = 0,
-    user_goal: str = "",
-    tab_goals: str = "",
-    detail_level: str = "standard",
-    content_emphasis: str = "",
-    video_context: str = "",
-    frame_context: str = "",
-) -> str:
-    """Build extraction prompt with domain schemas injected, {transcript} placeholder intact.
-
-    Loads the base_extraction.txt template, then injects domain schemas for
-    each content tag and modifier. Uses .replace() (not .format()) to avoid
-    format-string injection from user-controlled content.
-
-    Args:
-        content_tags: List of domain tags (e.g., ["travel", "food"]).
-        modifiers: List of modifier tags (e.g., ["narrative", "finance"]).
-        quality_rules: Combined quality rules string.
-        title: Video title.
-        duration_minutes: Video duration in minutes.
-        user_goal: What the viewer wants from this video.
-        tab_goals: Tab goals description from triage.
-
-    Returns:
-        Prompt template with {transcript} placeholder still intact.
-    """
-    base_path = PROMPTS_DIR / "base_extraction.txt"
-    if not base_path.exists():
-        raise FileNotFoundError(f"Base extraction template not found: {base_path}")
-
-    template = _load_text(str(base_path))
-
-    # Build combined domain schemas
-    schema_parts: list[str] = []
-
-    for tag in content_tags:
-        schema = _load_schema(tag)
-        if schema:
-            schema_parts.append(f"--- {tag.upper()} DOMAIN ---\n{schema}")
-
-    for modifier in modifiers:
-        schema = _load_schema(modifier)
-        if schema:
-            schema_parts.append(f"--- {modifier.upper()} MODIFIER ---\n{schema}")
-
-    domain_schemas = (
-        "\n\n".join(schema_parts) if schema_parts else "Use general-purpose extraction."
-    )
-
-    # Determine primary tag for example injection
-    primary_tag = content_tags[0] if content_tags else "learning"
-    domain_example = _load_domain_example(primary_tag)
-
-    # Inject everything EXCEPT {transcript} — caller decides whether to fill it
-    return (
-        ENGLISH_OUTPUT_DIRECTIVE
-        + "\n\n"
-        + (
-            template.replace("{domain_schemas}", domain_schemas)
-            .replace("{quality_rules}", quality_rules)
-            .replace("{title}", sanitize_for_prompt(title))
-            .replace("{duration_minutes}", str(duration_minutes))
-            .replace(
-                "{user_goal}", user_goal or "Extract the most useful information from this video"
-            )
-            .replace(
-                "{tab_goals}",
-                tab_goals or "Not specified — use your best judgment for tab coverage",
-            )
-            .replace("{detail_level}", detail_level)
-            .replace(
-                "{content_emphasis}", content_emphasis or "Extract with precision and completeness."
-            )
-            .replace("{video_context}", video_context or "Not available")
-            .replace("{frame_context}", frame_context or "No keyframe captions available.")
-            .replace("{primary_tag}", primary_tag)
-            .replace("{domain_example}", domain_example)
-        )
-    )
-
-
-def build_extraction_prompt(
-    content_tags: list[str],
-    modifiers: list[str],
-    transcript: str,
-    quality_rules: str,
-    title: str = "",
-    duration_minutes: int = 0,
-    user_goal: str = "",
-    tab_goals: str = "",
-    detail_level: str = "standard",
-    content_emphasis: str = "",
-    video_context: str = "",
-    frame_context: str = "",
-) -> str:
-    """Assemble a complete extraction prompt from base template + domain schemas.
-
-    Args:
-        content_tags: List of domain tags (e.g., ["travel", "food"]).
-        modifiers: List of modifier tags (e.g., ["narrative", "finance"]).
-        transcript: Full transcript text.
-        quality_rules: Combined quality rules string.
-        title: Video title.
-        duration_minutes: Video duration in minutes.
-        user_goal: What the viewer wants from this video.
-        tab_goals: Tab goals description from triage.
-        detail_level: "concise", "standard", or "detailed" based on duration.
-        content_emphasis: Domain-specific priority instructions.
-
-    Returns:
-        Assembled prompt string ready for LLM.
-    """
-    template = _build_base_template(
-        content_tags,
-        modifiers,
-        quality_rules,
-        title,
-        duration_minutes,
-        user_goal,
-        tab_goals,
-        detail_level,
-        content_emphasis,
-        video_context,
-        frame_context,
-    )
-    # build_extraction_prompt is the single-shot convenience wrapper —
-    # no batch context applies, so clear the placeholder explicitly.
-    return template.replace("{batch_context}", "").replace("{transcript}", transcript)
-
-
-def build_extraction_template(
-    content_tags: list[str],
-    modifiers: list[str],
-    quality_rules: str,
-    title: str = "",
-    duration_minutes: int = 0,
-    user_goal: str = "",
-    tab_goals: str = "",
-    detail_level: str = "standard",
-    content_emphasis: str = "",
-    video_context: str = "",
-    frame_context: str = "",
-) -> str:
-    """Build extraction prompt template with {transcript} placeholder for extractor to fill.
-
-    Similar to build_extraction_prompt() but does NOT replace {transcript}.
-    The extractor injects transcript per-segment for adaptive splitting.
-
-    Args:
-        content_tags: List of domain tags (e.g., ["travel", "food"]).
-        modifiers: List of modifier tags (e.g., ["narrative", "finance"]).
-        quality_rules: Combined quality rules string.
-        title: Video title.
-        duration_minutes: Video duration in minutes.
-        user_goal: What the viewer wants from this video.
-        tab_goals: Tab goals description from triage.
-        detail_level: "concise", "standard", or "detailed" based on duration.
-        content_emphasis: Domain-specific priority instructions.
-
-    Returns:
-        Prompt template string with {transcript} placeholder intact.
-    """
-    return _build_base_template(
-        content_tags,
-        modifiers,
-        quality_rules,
-        title,
-        duration_minutes,
-        user_goal,
-        tab_goals,
-        detail_level,
-        content_emphasis,
-        video_context,
-        frame_context,
-    )
+def _shipped_text_or_none(path: Path) -> str | None:
+    """The process-cached local file; ``None`` when unreadable (registry text then wins)."""
+    try:
+        return _read_file_cached(str(path))
+    except (OSError, UnicodeDecodeError) as exc:
+        logger.debug("No readable local prompt at %s for the placeholder check: %s", path, exc)
+        return None
 
 
 # Keep the frame block bounded — a long, low-signal list crowds the transcript
@@ -487,7 +200,7 @@ def format_gallery_frames_for_extraction(
         if not caption:
             continue
         caption = caption[:_FRAME_CAPTION_MAX]
-        time_str = f"{int(timestamp) // 60}:{int(timestamp) % 60:02d}"
+        time_str = format_marker(timestamp)[1:-1]
         suffix = f" [{scene}]" if scene else ""
         lines.append(f"{time_str} — {caption}{suffix}")
     return "\n".join(lines)

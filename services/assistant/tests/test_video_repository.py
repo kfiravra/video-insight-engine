@@ -126,6 +126,20 @@ class TestGetVideoContext:
         result = await repo.get_video_context("missing")
         assert result is None
 
+    async def test_should_resolve_youtube_id_to_served_non_eval_version(self):
+        # D25: eval rows share the youtubeId; a youtubeId lookup must land on
+        # the served (isLatest, else newest) user version, never an eval run.
+        repo, collection = _make_repo()
+        collection.find_one.return_value = None
+
+        await repo.get_video_context("abc123")
+
+        first_call = collection.find_one.call_args_list[0]
+        assert (first_call.args[0], first_call.kwargs["sort"]) == (
+            {"youtubeId": "abc123", "evalRun": {"$ne": True}},
+            [("isLatest", -1), ("version", -1)],
+        )
+
     async def test_should_map_new_shape_doc_to_video_context(self):
         repo, collection = _make_repo()
         collection.find_one.side_effect = [
@@ -309,7 +323,10 @@ class TestGetVideoContext:
         assert ctx.title == "Found via string id"
         assert collection.find_one.call_count == 3
 
-        types = [call.args[0]["_id"].__class__.__name__ for call in collection.find_one.await_args_list[1:]]
+        types = [
+            call.args[0]["_id"].__class__.__name__
+            for call in collection.find_one.await_args_list[1:]
+        ]
         assert types == ["ObjectId", "str"]
 
     async def test_should_return_none_when_query_raises(self):

@@ -22,6 +22,20 @@ import pytest
 
 from src.services.pipeline.pipeline_helpers import TranscriptData
 
+
+@pytest.fixture(autouse=True)
+def _no_synthesis_call():
+    """Synthesis runs inside assembly since 1d.3 (∥ moment fill); its own tests cover it."""
+    from src.services.pipeline.phases import assembly as phase
+
+    async def _no_synthesis(_ctx):
+        return
+        yield  # pragma: no cover — makes this an async generator
+
+    with patch.object(phase, "run_phase_synthesis", _no_synthesis):
+        yield
+
+
 _SETTINGS = SimpleNamespace(REDIS_ENABLED=False, QDRANT_ENABLED=False, PIPELINE_VERSION="vtest")
 
 
@@ -66,6 +80,7 @@ def _build_ctx(transcript_data: TranscriptData) -> SimpleNamespace:
         triage=triage,
         triage_dict={},
         plan_result=None,
+        content_format=None,
         extraction_data={},
         enrichment_data={},
         synthesis_dict=None,
@@ -86,6 +101,8 @@ def _build_ctx(transcript_data: TranscriptData) -> SimpleNamespace:
         timer=timer,
         transcript_data=transcript_data,
         audio_path=None,
+        memory=None,
+        video_memory="",
     )
 
 

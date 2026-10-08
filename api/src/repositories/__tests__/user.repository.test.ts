@@ -349,4 +349,36 @@ describe('UserRepository', () => {
       expect(removed).toBe(false);
     });
   });
+
+  describe('isEvalUser', () => {
+    it('should return true when the user document has isEvalUser: true', async () => {
+      const user = await repository.create(createUserData());
+      await db.collection('users').updateOne({ _id: user._id }, { $set: { isEvalUser: true } });
+
+      expect(await repository.isEvalUser(user._id.toString())).toBe(true);
+    });
+
+    it('should return false when the flag is absent', async () => {
+      const user = await repository.create(createUserData());
+
+      expect(await repository.isEvalUser(user._id.toString())).toBe(false);
+    });
+
+    it('should return false when the flag is a truthy non-boolean', async () => {
+      const user = await repository.create(createUserData());
+      await db.collection('users').updateOne({ _id: user._id }, { $set: { isEvalUser: 'true' } });
+
+      expect(await repository.isEvalUser(user._id.toString())).toBe(false);
+    });
+
+    it('should return false when the user does not exist', async () => {
+      expect(await repository.isEvalUser(new ObjectId().toString())).toBe(false);
+    });
+
+    it('should not set the flag when a user is created', async () => {
+      const user = await repository.create(createUserData());
+
+      expect(user.isEvalUser).toBeUndefined();
+    });
+  });
 });

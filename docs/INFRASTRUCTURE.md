@@ -241,7 +241,7 @@ volumes:
 # ────────────────────────────────────────────────────
 LLM_PROVIDER=anthropic          # anthropic, openai, or gemini
 LLM_FAST_PROVIDER=              # Optional: separate provider for fast model
-LLM_FALLBACK_PROVIDER=          # Optional: fallback if primary fails
+LLM_FALLBACK_PROVIDER=          # Optional: cross-provider fallback after one same-provider retry (primary-model calls)
 
 # Provider API Keys (set for providers you use)
 ANTHROPIC_API_KEY=sk-ant-api03-xxxxxxxxxxxxx
@@ -313,15 +313,15 @@ New/changed vars introduced by the yt-dlp-403 fix and the two-pass frame pipelin
 |-----|---------|---------|
 | `YTDLP_PLAYER_CLIENTS` | `android` | yt-dlp player clients for pass-1 video and all audio downloads (the 720p download uses `YTDLP_HIRES_PLAYER_CLIENTS`). YouTube 403s the web client's URLs from some environments. **Never mix in `default`** — a merged format list lets bestvideo pick a 403ing web DASH format. Metadata/subtitle extraction deliberately doesn't use it. |
 | `SCENE_HIRES_ENABLED` | `true` | Pass-2 720p refinement of selected frames |
-| `YTDLP_HIRES_PLAYER_CLIENTS` | `web_embedded,android` | Player clients for the local 720p download only (hi-res prefetch, refiner fallback, moment fill). `android` alone caps at 640×360; measured 2026-10-06 with real downloads, `web_embedded`/`tv_embedded` get 720p. A failed download retries once with `YTDLP_PLAYER_CLIENTS` |
-| `SCENE_S3_PREFIX` | `scenes-v3` | Versioned frame-cache prefix — bump to invalidate the S3 frame cache |
-| `SCENE_HIRES_TIMEOUT` | `90` | Stream-URL refinement budget (s), proxyless runs only |
-| `SCENE_HIRES_FALLBACK_TIMEOUT` | `180` | Local-file seek budget (s) after the one ≤720p download — the proxyless fallback, the only path with a proxy |
-| `YOUTUBE_PROXY_URL` | — | Proxy for every YouTube request (`http://user:pass@host:port`). When set, the frame pipeline never seeks stream URLs; hi-res frames and moment fills come from a proxied local 720p download |
-| `YOUTUBE_PROXY_EXIT_COUNT` | `1` | Sticky exits behind the proxy gateway (Webshare `USERNAME-1…N`). >1 lets a caption or timedtext 429 retry on the next exit before the 15-min caption marker is written |
+| `YTDLP_HIRES_PLAYER_CLIENTS` | `web_embedded,android` | Player clients for the run's one local 720p download only (hi-res frames + moment fill). `android` alone caps at 640×360; measured 2026-10-06 with real downloads, `web_embedded`/`tv_embedded` get 720p. A failed download retries once with `YTDLP_PLAYER_CLIENTS` |
+| `SCENE_S3_PREFIX` | `scenes-v4` | Versioned frame-cache prefix — bump to invalidate the S3 frame cache |
+| `SCENE_HIRES_FALLBACK_TIMEOUT` | `180` | Seek budget (s) for the hi-res frames in the run's one local ≤720p download |
+| `YOUTUBE_PROXY_URL` | — | Proxy for every YouTube request (`http://user:pass@host:port`). Every run downloads one ≤720p file (through the proxy when set); hi-res frames and moment fills seek it — there are no stream-URL seeks |
+| `YOUTUBE_PROXY_EXIT_COUNT` | `1` | Sticky exits behind the proxy gateway (Webshare `USERNAME-1…N`). >1 lets a 429 or YouTube's "Sign in to confirm you're not a bot" check move to the next exit (at most 3) on every proxied call — metadata, timedtext and caption fetches, the low-res/720p/audio downloads, playlist lookups — and lets a caption 429 retry there before the 15-min caption marker is written. The exit that last worked starts the next rotation (per process). Set it to the plan's exit count, or one blocked exit takes the service down |
 | `FRAME_TIER_ENABLED` | `true` | Adaptive visual tiers (high/standard/low from `domains.json` `visualCriticality`) |
 | `PROMPT_SOURCE` | `registry` | Where prompt templates load from: `registry` (the Langfuse `production` label wins over the local `.txt` whenever keys are set) or `disk` (always the local `.txt`, re-read on every call — dev-only, for prompt edits without re-registering or restarting; honoured only when `ENVIRONMENT` is `""`/`development`/`dev`/`test`/`local`, ignored otherwise; traces carry no `promptVersions`) |
-| `TRANSCRIPT_CLEANING_TIMEOUT` | `30` | Transcript-cleaning LLM call timeout (was hardcoded) |
+| `TRANSCRIPT_CLEANING_ENABLED` | `false` | spaCy + TF-IDF pass over the stored transcript text (Qdrant chunks, faithfulness, S3 blob). No prompt reads that text (prompts render `[m:ss]` segments), so it is off by default — it only added wall time before `transcript_ready` |
+| `TRANSCRIPT_CLEANING_TIMEOUT` | `30` | Budget (s) for that pass; the first call per process pays the spaCy cold start |
 | `HF_TOKEN` | empty | Optional Hugging Face Hub token for SentenceTransformer pulls |
 | `S3_PRESIGNED_URL_EXPIRY` | `21600` (was 3600) | Must stay ≥ api `FRAME_URL_TTL_SECONDS` |
 | `EVAL_USER_EMAIL` / `EVAL_USER_PASSWORD` | `eval@vie.local` / none | Eval-runner local account — auto-registered on first run; no default password by design (also a CI secret) |
@@ -333,6 +333,22 @@ New/changed vars introduced by the yt-dlp-403 fix and the two-pass frame pipelin
 | `BACKUP_KEEP` / `BACKUP_MAX_AGE_HOURS` | `14` / `26` | Backups retained by `scripts/backup.sh` / the `vie-backup-cron` sidecar; age past which vie-admin's `backup_stale` dead-man's switch trips |
 | `STALL_SWEEP_ENABLED` / `STALL_SWEEP_INTERVAL_SECONDS` / `STALL_THRESHOLD_MINUTES` | `true` / `300` / `30` | Summarizer stall sweeper — fails `processing` rows with no progress + no live producer lock, alerts `pipeline_stalled` |
 | `WORKER_RETRY_BACKOFF_SECONDS` | `5` | Worker retry delay, doubled per attempt (5 → 10 → 20 s), capped at 120 s (worker service env, not `x-summarizer-env`) |
+
+### Extraction + vision concurrency (2026-10, pipeline-1min)
+
+All pass through both `x-summarizer-env` anchors with literal defaults equal to `config.py` (a blank boolean would fail settings validation and crash-loop the container). `tests/test_config.py` checks that every compose default matches its `config.py` default.
+
+| Var | Default | Purpose |
+|-----|---------|---------|
+| `EXTRACTION_PARALLEL` | `true` | Chunked extraction batches run in parallel; `false` = one batch at a time |
+| `EXTRACTION_PARALLEL_BATCHES` | `6` | Max extraction LLM calls in flight per run (was 2). The semaphore is per run: a worker with `WORKER_CONCURRENCY=2` holds up to 12. `pipeline.timing` counts 429s per run (blind to a concurrent run's 429s) — drop to `4` if any appear |
+| `CHUNKED_EXTRACTION_THRESHOLD` | `900` | Videos longer than this (s) may split the transcript into chapter batches |
+| `MAX_TOKENS_PER_BATCH` / `MAX_MINUTES_PER_BATCH` | `50000` / `40` | Limits of one extraction batch: estimated transcript tokens, minutes of video |
+| `EXTRACTION_FORCE_SPLIT_CHUNKS` | `4` | Sub-batches when a long video's chunked transcript collapses to one batch |
+| `FRAME_VISION_ENABLED` | `true` | Frame descriptions by the vision model; `false` = OCR only |
+| `FRAME_VISION_PARALLEL` | `true` | Vision in parallel batches; `false` = one call with every frame |
+| `LLM_VISION_MODEL` | blank | Vision model override; blank = the primary model (Sonnet), which vision stays on |
+| `LLM_CLASSIFIER_MODEL` | `anthropic/claude-haiku-4-5-20251001` | Tier-probe model (D21; the name predates the probe). Literal default in both anchors — a blank passthrough would route the probe to the fast tier |
 
 ---
 

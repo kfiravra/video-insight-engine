@@ -26,8 +26,8 @@ Extract structured educational content.
     }
   ],
 > UI: Concepts → ConceptCanvas tiered graph explorer (grouped lanes + typed edges) when connections are populated; otherwise falls back to FlashDeck flip cards.
-> REQUIRED: every concept MUST list 1-3 `connections` to other concepts in this same `concepts` array. Each connection is an object: `to` is the EXACT NAME of the other concept, `type` is the relationship the speaker draws — `causes`/`requires` (X drives or depends on Y), `contrasts` (X is opposed to / a trade-off against Y), `partOf` (X is a component of Y), or `relatesTo` (loose association). These typed connections are the spine of the concept_canvas — without them the canvas renders disconnected dots. If no other concept legitimately connects to this one, leave the array empty and the fallback layer routes to flash_deck.
-> GROUPING: assign every concept a short `group` label — aim for 2-5 thematic groups across the whole list (e.g. Foundations / Mechanics / Applications). Keep ≤16 concepts on the canvas; when the video is richer, group tightly rather than listing more disconnected terms.
+> CONNECTIONS: list the 0-3 `connections` the speaker draws from each concept to other concepts in this same `concepts` array. Each connection is an object: `to` is the EXACT NAME of the other concept, `type` is the relationship the speaker draws — `causes`/`requires` (X drives or depends on Y), `contrasts` (X is opposed to / a trade-off against Y), `partOf` (X is a component of Y), or `relatesTo` (loose association). Never invent a link to fill the canvas: when the speaker draws none for a concept, leave its array empty.
+> GROUPING: assign every concept a short `group` label — aim for 2-5 thematic groups across the whole list (e.g. Foundations / Mechanics / Applications). When the video is richer, group tightly rather than listing more disconnected terms.
   "takeaways": [
     "Actionable conclusion starting with a verb: Use..., Implement..., Avoid..."
   ],
@@ -53,16 +53,8 @@ Extract structured educational content.
   ]
 }
 
-SCALING (video is {duration_minutes} minutes):
-- Under 10 min: 3-5 keyPoints, 2-3 concepts, 2-3 takeaways, timestamps for each topic shift
-- 10-30 min: 5-8 keyPoints, 4-6 concepts, 4-5 takeaways, timestamps every 3-5 min
-- 30-60 min: 8-15 keyPoints, 6-10 concepts, 5-8 takeaways, timestamps every 3-5 min
-- Over 60 min: 15-25 keyPoints, 10-15 concepts, 8-12 takeaways, timestamps every 3-5 min
-
 COMPLETENESS:
 - Cover the full video chronologically — don't cluster points from the first 10 minutes
-- Every major topic should have at least one keyPoint and one concept
-- If the video has chapters, each chapter should contribute at least one keyPoint
 
 RULES:
 - keyPoints teach one specific thing each — no filler

@@ -398,7 +398,8 @@ class TestValidDatasourcesRender:
 
     def test_should_render_the_pre_registry_list_plus_fitness_tips(self):
         # The hardcoded toolkit block this placeholder replaced (8d52e23^),
-        # with fitness.tips — the one path the registry added — appended.
+        # with fitness.tips — the one path the registry added — appended and
+        # enrichment.flashcards/scenarios gone with quiz-only enrichment (1d.1).
         expected = "\n".join(
             [
                 "tech: tech.snippets, tech.patterns, tech.cheatSheet, tech.setup.commands, tech.topics",
@@ -416,7 +417,7 @@ class TestValidDatasourcesRender:
                 "gaming: gaming.highlights, gaming.loadout, gaming.walkthrough, gaming.rankings",
                 "sport: sport.matchEvents, sport.formation, sport.statComparison",
                 "narrative: narrative.keyMoments, narrative.quotes, narrative.takeaways",
-                "enrichment: enrichment.quiz, enrichment.flashcards, enrichment.scenarios",
+                "enrichment: enrichment.quiz",
             ]
         )
 

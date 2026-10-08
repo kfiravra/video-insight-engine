@@ -1,4 +1,5 @@
-"""Tests for the pipeline orchestration in src.routes.pipeline_runner.
+"""Tests for the pipeline entry + phase orchestration (src.routes.pipeline_runner,
+src.routes.pipeline_orchestration).
 
 Focused on the faithfulness fire-and-forget spawn and the transcriptMeta
 provenance contract (single write point + run-start clears) — the rest of
@@ -19,8 +20,13 @@ from llm_common.context import llm_feature_var
 
 from src.exceptions import TranscriptError
 from src.models.schemas import ErrorCode, ProcessingStatus
-from src.routes import pipeline_runner
-from src.services.pipeline.pipeline_helpers import TranscriptData, TranscriptTrail
+from src.routes import pipeline_faithfulness, pipeline_orchestration, pipeline_runner
+from src.config import settings
+from src.services.pipeline.pipeline_helpers import (
+    TranscriptData,
+    TranscriptTrail,
+    run_parallel_phases,
+)
 
 
 def _phase_stub(label: str):
@@ -33,7 +39,7 @@ def _phase_stub(label: str):
 
 
 def _non_english_ctx() -> SimpleNamespace:
-    """Minimal ctx for _run_pipeline_phases driving the non-English path."""
+    """Minimal ctx for run_pipeline_phases driving the non-English path."""
     return SimpleNamespace(
         youtube_id="yt1",
         clean_text="",  # skip the visual-inject block
@@ -47,6 +53,9 @@ def _non_english_ctx() -> SimpleNamespace:
         plan_result=object(),
         enrichment_data={"a": 1},
         triage=SimpleNamespace(tabs=[]),
+        transcript_ready=asyncio.Event(),
+        tier_probe_task=None,
+        content_format=None,
     )
 
 
@@ -58,18 +67,15 @@ def _patched_phases():
         yield "data: parallel\n\n"
 
     return [
-        patch.object(pipeline_runner, "run_phase_metadata", _phase_stub("metadata")),
-        patch.object(pipeline_runner, "run_parallel_phases", _parallel_stub),
-        patch.object(pipeline_runner, "run_phase_plan", _phase_stub("plan")),
-        patch.object(pipeline_runner, "run_phase_extraction", _phase_stub("extraction")),
-        patch.object(pipeline_runner, "run_phase_synthesis", _phase_stub("synthesis")),
-        patch.object(pipeline_runner, "run_phase_enrichment", _phase_stub("enrichment")),
-        patch.object(pipeline_runner, "run_phase_assembly", _phase_stub("assembly")),
+        patch.object(pipeline_orchestration, "run_phase_metadata", _phase_stub("metadata")),
+        patch.object(pipeline_orchestration, "run_parallel_phases", _parallel_stub),
+        patch.object(pipeline_orchestration, "run_phase_extraction", _phase_stub("extraction")),
+        patch.object(pipeline_orchestration, "run_phase_assembly", _phase_stub("assembly")),
     ]
 
 
 def _english_ctx(extraction_data: dict) -> SimpleNamespace:
-    """Minimal ctx for _run_pipeline_phases driving the English path."""
+    """Minimal ctx for run_pipeline_phases driving the English path."""
     return SimpleNamespace(
         youtube_id="yt1",
         clean_text="",  # skip the visual-inject block and faithfulness spawn
@@ -83,87 +89,118 @@ def _english_ctx(extraction_data: dict) -> SimpleNamespace:
         plan_result=object(),
         enrichment_data={"a": 1},
         triage=SimpleNamespace(tabs=[]),
+        transcript_ready=asyncio.Event(),
+        tier_probe_task=None,
+        content_format=None,
     )
 
 
-@pytest.mark.asyncio
-async def test_synthesis_and_enrichment_parallel_when_extraction_has_data() -> None:
-    """Synthesis and enrichment both read only extraction output, so when the
-    extraction produced meaningful data they run through run_parallel_phases
-    (second parallel group after transcript+frames)."""
-    ctx = _english_ctx({"key_points": [{"text": "a claim long enough"}]})
-    timer = MagicMock()
-    timer.elapsed = MagicMock(return_value=1.0)
+_TAIL_NAMES = ("run_phase_extraction",)
 
-    parallel_calls: list[list] = []
+
+async def _parallel_groups(ctx: SimpleNamespace) -> list[list[str]]:
+    """The phases the orchestration hands the parallel runner, by name, in order."""
+    groups: list[list] = []
 
     async def _capture_parallel(phases, _ctx):
-        parallel_calls.append(list(phases))
+        groups.append(list(phases))
         yield "data: parallel\n\n"
 
-    patches = [
-        patch.object(pipeline_runner, "run_phase_metadata", _phase_stub("metadata")),
-        patch.object(pipeline_runner, "run_parallel_phases", _capture_parallel),
-        patch.object(pipeline_runner, "run_phase_plan", _phase_stub("plan")),
-        patch.object(pipeline_runner, "run_phase_extraction", _phase_stub("extraction")),
-        patch.object(pipeline_runner, "run_phase_synthesis", _phase_stub("synthesis")),
-        patch.object(pipeline_runner, "run_phase_enrichment", _phase_stub("enrichment")),
-        patch.object(pipeline_runner, "run_phase_assembly", _phase_stub("assembly")),
-    ]
-    for p in patches:
-        p.start()
-    try:
+    with ExitStack() as stack:
+        for p in _patched_phases():
+            stack.enter_context(p)
+        stack.enter_context(
+            patch.object(pipeline_orchestration, "run_parallel_phases", _capture_parallel)
+        )
+        names = {getattr(pipeline_orchestration, name): name for name in _TAIL_NAMES}
         _ = [
-            ev async for ev in pipeline_runner._run_pipeline_phases(ctx, MagicMock(), "vsid", timer)
+            ev
+            async for ev in pipeline_orchestration.run_pipeline_phases(
+                ctx, MagicMock(), "vsid", _timer()
+            )
         ]
-        assert len(parallel_calls) == 2, "transcript+frames AND synthesis+enrichment"
-        assert parallel_calls[1] == [
-            pipeline_runner.run_phase_synthesis,
-            pipeline_runner.run_phase_enrichment,
-        ]
-    finally:
-        for p in patches:
-            p.stop()
+    return [[names.get(phase, getattr(phase, "__name__", "?")) for phase in g] for g in groups]
 
 
 @pytest.mark.asyncio
-async def test_synthesis_enrichment_sequential_when_extraction_empty() -> None:
-    """When extraction came back empty, enrichment falls back to reading the
-    synthesis output as its context — that data dependency forces the
-    sequential order (synthesis strictly before enrichment)."""
+async def test_should_go_straight_to_assembly_after_extraction() -> None:
+    """1d.1: the quiz never blocks tabs — it runs inside assembly's late group."""
+    groups = await _parallel_groups(_english_ctx({}))
+
+    assert len(groups) == 2
+
+
+@pytest.mark.asyncio
+async def test_should_render_visual_annotations_before_extraction_starts() -> None:
+    """1c.2: extraction reads ctx.visual_annotations, rendered after the phase-2 group."""
     ctx = _english_ctx({})
-    timer = MagicMock()
-    timer.elapsed = MagicMock(return_value=1.0)
+    seen_at_extraction: list[str] = []
 
-    parallel_calls: list[list] = []
-
-    async def _capture_parallel(phases, _ctx):
-        parallel_calls.append(list(phases))
+    async def _capture_parallel(phases, run_ctx):
+        if phases == [pipeline_orchestration.run_phase_extraction]:
+            seen_at_extraction.append(run_ctx.visual_annotations)
         yield "data: parallel\n\n"
 
-    patches = [
-        patch.object(pipeline_runner, "run_phase_metadata", _phase_stub("metadata")),
-        patch.object(pipeline_runner, "run_parallel_phases", _capture_parallel),
-        patch.object(pipeline_runner, "run_phase_plan", _phase_stub("plan")),
-        patch.object(pipeline_runner, "run_phase_extraction", _phase_stub("extraction")),
-        patch.object(pipeline_runner, "run_phase_synthesis", _phase_stub("synthesis")),
-        patch.object(pipeline_runner, "run_phase_enrichment", _phase_stub("enrichment")),
-        patch.object(pipeline_runner, "run_phase_assembly", _phase_stub("assembly")),
-    ]
-    for p in patches:
-        p.start()
-    try:
-        events = [
-            ev async for ev in pipeline_runner._run_pipeline_phases(ctx, MagicMock(), "vsid", timer)
+    rendered = "<visual_annotations>\n[1:05] a whiteboard\n</visual_annotations>"
+    with ExitStack() as stack:
+        for p in _patched_phases():
+            stack.enter_context(p)
+        stack.enter_context(
+            patch.object(pipeline_orchestration, "run_parallel_phases", _capture_parallel)
+        )
+        stack.enter_context(
+            patch.object(pipeline_orchestration, "render_visual_annotations", lambda *_a: rendered)
+        )
+        _ = [
+            ev
+            async for ev in pipeline_orchestration.run_pipeline_phases(
+                ctx,  # type: ignore[arg-type]
+                MagicMock(),
+                "vsid",
+                _timer(),
+            )
         ]
-    finally:
-        for p in patches:
-            p.stop()
 
-    assert len(parallel_calls) == 1, "only transcript+frames should parallelize"
-    synth_idx = next(i for i, ev in enumerate(events) if "synthesis" in ev)
-    enrich_idx = next(i for i, ev in enumerate(events) if "enrichment" in ev)
-    assert synth_idx < enrich_idx, "empty extraction keeps synthesis before enrichment"
+    assert seen_at_extraction == [rendered]
+
+
+@pytest.mark.asyncio
+async def test_should_run_extraction_through_the_heartbeat_runner() -> None:
+    groups = await _parallel_groups(_english_ctx({}))
+
+    assert groups[1] == ["run_phase_extraction"]
+
+
+@pytest.mark.asyncio
+async def test_should_send_heartbeats_while_extraction_is_silent() -> None:
+    """1d.5: one extraction call can be silent for minutes (API gateway idle timeout)."""
+
+    async def _slow_extraction(_ctx):
+        await asyncio.sleep(0.05)
+        yield "data: extraction\n\n"
+
+    async def _phase_two(_ctx, *_args):
+        yield "data: phase two\n\n"
+
+    with ExitStack() as stack:
+        for p in _patched_phases():
+            stack.enter_context(p)
+        for name, value in (
+            ("run_parallel_phases", run_parallel_phases),
+            ("_run_phase_two", _phase_two),
+            ("run_phase_extraction", _slow_extraction),
+        ):
+            stack.enter_context(patch.object(pipeline_orchestration, name, value))
+        stack.enter_context(patch.object(settings, "SSE_HEARTBEAT_SECONDS", 0.01))
+        events = [
+            ev
+            async for ev in pipeline_orchestration.run_pipeline_phases(
+                _english_ctx({}), MagicMock(), "vsid", _timer()
+            )
+        ]
+
+    extraction_at = events.index("data: extraction\n\n")
+    assert any('"heartbeat"' in ev for ev in events[:extraction_at])
 
 
 @pytest.mark.asyncio
@@ -186,7 +223,10 @@ async def test_done_emitted_after_translation_for_non_english() -> None:
         p.start()
     try:
         events = [
-            ev async for ev in pipeline_runner._run_pipeline_phases(ctx, MagicMock(), "vsid", timer)
+            ev
+            async for ev in pipeline_orchestration.run_pipeline_phases(
+                ctx, MagicMock(), "vsid", timer
+            )
         ]
     finally:
         for p in patches:
@@ -219,7 +259,10 @@ async def test_no_done_when_translation_raises() -> None:
         p.start()
     try:
         events = [
-            ev async for ev in pipeline_runner._run_pipeline_phases(ctx, MagicMock(), "vsid", timer)
+            ev
+            async for ev in pipeline_orchestration.run_pipeline_phases(
+                ctx, MagicMock(), "vsid", timer
+            )
         ]
     finally:
         for p in patches:
@@ -247,6 +290,7 @@ async def test_faithfulness_task_overrides_inherited_feature_var():
     ctx = MagicMock()
     ctx.extraction_data = {"key_points": [{"text": "claim long enough to be used"}]}
     ctx.clean_text = "some transcript text"
+    ctx.visual_annotations = ""
     ctx.youtube_id = "abc123"
     ctx.llm_service = MagicMock()
 
@@ -258,7 +302,7 @@ async def test_faithfulness_task_overrides_inherited_feature_var():
         "src.services.pipeline.faithfulness.run_faithfulness_check",
         new=fake_run_check,
     ):
-        task = pipeline_runner._launch_faithfulness_check(ctx)
+        task = pipeline_faithfulness._launch_faithfulness_check(ctx)
         assert task is not None
         await task
 
@@ -282,6 +326,7 @@ async def test_faithfulness_task_does_not_mutate_parent_feature_var():
         ctx = MagicMock()
         ctx.extraction_data = {"key_points": [{"text": "claim long enough to be used"}]}
         ctx.clean_text = "transcript"
+        ctx.visual_annotations = ""
         ctx.youtube_id = "abc123"
         ctx.llm_service = MagicMock()
 
@@ -292,7 +337,7 @@ async def test_faithfulness_task_does_not_mutate_parent_feature_var():
             "src.services.pipeline.faithfulness.run_faithfulness_check",
             new=noop_run,
         ):
-            task = pipeline_runner._launch_faithfulness_check(ctx)
+            task = pipeline_faithfulness._launch_faithfulness_check(ctx)
             assert task is not None
             await task
 
@@ -310,7 +355,7 @@ async def test_launch_returns_none_when_extraction_data_missing():
     ctx.clean_text = "transcript"
     ctx.youtube_id = "abc123"
 
-    assert pipeline_runner._launch_faithfulness_check(ctx) is None
+    assert pipeline_faithfulness._launch_faithfulness_check(ctx) is None
 
 
 @pytest.mark.asyncio
@@ -321,7 +366,7 @@ async def test_launch_returns_none_when_transcript_missing():
     ctx.clean_text = ""
     ctx.youtube_id = "abc123"
 
-    assert pipeline_runner._launch_faithfulness_check(ctx) is None
+    assert pipeline_faithfulness._launch_faithfulness_check(ctx) is None
 
 
 @pytest.mark.asyncio
@@ -448,7 +493,7 @@ async def test_stream_reads_user_id_from_contextvars_when_entry_has_none():
 
 
 def _timer() -> MagicMock:
-    """Timer stand-in for _run_pipeline_phases (only read by the DONE log)."""
+    """Timer stand-in for run_pipeline_phases (only read by the DONE log)."""
     timer = MagicMock()
     timer.elapsed = MagicMock(return_value=1.0)
     return timer
@@ -476,14 +521,16 @@ async def _drain_phases(
     repository: MagicMock,
     *extra_patches: AbstractContextManager[object],
 ) -> list[str]:
-    """Drain _run_pipeline_phases under _patched_phases() plus ``extra_patches``
+    """Drain run_pipeline_phases under _patched_phases() plus ``extra_patches``
     (entered last, so they override a default patch on the same attribute)."""
     with ExitStack() as stack:
         for p in [*_patched_phases(), *extra_patches]:
             stack.enter_context(p)
         return [
             ev
-            async for ev in pipeline_runner._run_pipeline_phases(ctx, repository, "vsid", _timer())
+            async for ev in pipeline_orchestration.run_pipeline_phases(
+                ctx, repository, "vsid", _timer()
+            )
         ]
 
 
@@ -506,7 +553,7 @@ async def _stream_direct(
     (status callback HTTP, override clear) stubbed out."""
     with (
         patch.object(pipeline_runner.settings, "REDIS_ENABLED", False),
-        patch.object(pipeline_runner, "_run_pipeline_phases", new=phases_stub),
+        patch.object(pipeline_runner, "run_pipeline_phases", new=phases_stub),
         patch.object(pipeline_runner, "send_video_status", new=AsyncMock()),
         patch.object(pipeline_runner, "clear_override", new=MagicMock()),
     ):
@@ -529,7 +576,7 @@ async def test_records_transcript_meta_after_transcript_phase_success() -> None:
     trace_meta = MagicMock()
 
     await _drain_phases(
-        ctx, repository, patch.object(pipeline_runner, "update_trace_metadata", trace_meta)
+        ctx, repository, patch.object(pipeline_orchestration, "update_trace_metadata", trace_meta)
     )
 
     repository.set_transcript_meta.assert_called_once()
@@ -563,7 +610,9 @@ async def test_records_failed_transcript_meta_when_transcript_phase_raises() -> 
 
     with pytest.raises(TranscriptError):
         await _drain_phases(
-            ctx, repository, patch.object(pipeline_runner, "run_parallel_phases", _parallel_raises)
+            ctx,
+            repository,
+            patch.object(pipeline_orchestration, "run_parallel_phases", _parallel_raises),
         )
 
     repository.set_transcript_meta.assert_called_once()
@@ -681,7 +730,7 @@ async def test_transcript_meta_clear_failure_does_not_abort_run() -> None:
     repository.clear_transcript_meta.side_effect = RuntimeError("mongo down")
     with (
         patch.object(pipeline_runner.settings, "REDIS_ENABLED", False),
-        patch.object(pipeline_runner, "_run_pipeline_phases", new=_phases_stub),
+        patch.object(pipeline_runner, "run_pipeline_phases", new=_phases_stub),
         patch.object(pipeline_runner, "send_video_status", new=AsyncMock()),
         patch.object(pipeline_runner, "clear_override", new=MagicMock()),
     ):
@@ -717,3 +766,135 @@ async def test_transcript_error_from_phases_still_marks_row_failed() -> None:
     repository.update_status.assert_any_call(
         "vsum_9", ProcessingStatus.FAILED, ANY, ErrorCode.NO_TRANSCRIPT
     )
+
+
+@pytest.mark.asyncio
+async def test_failed_run_closes_both_downloads_before_persisting_timing() -> None:
+    """A run that dies before frames/assembly must not leak either download; a
+    cancelled download is part of the timing record, so the closes come first."""
+    ctx = _english_ctx({})
+    order: list[str] = []
+    ctx.lowres_video = MagicMock()
+    ctx.lowres_video.close = AsyncMock(side_effect=lambda: order.append("close-lowres"))
+    ctx.hires_video = MagicMock()
+    ctx.hires_video.close = AsyncMock(side_effect=lambda: order.append("close-720p"))
+    timer = MagicMock()
+    timer.elapsed = MagicMock(return_value=1.0)
+
+    async def _assembly_fails(_ctx):
+        raise RuntimeError("assembly exploded")
+        yield  # pragma: no cover — makes this an async generator
+
+    async def _persist(*_args: object) -> None:
+        order.append("persist")
+
+    with ExitStack() as stack:
+        for p in _patched_phases():
+            stack.enter_context(p)
+        stack.enter_context(
+            patch.object(pipeline_orchestration, "run_phase_assembly", _assembly_fails)
+        )
+        stack.enter_context(patch.object(pipeline_orchestration, "persist_run_timing", _persist))
+        with pytest.raises(RuntimeError, match="assembly exploded"):
+            _ = [
+                ev
+                async for ev in pipeline_orchestration.run_pipeline_phases(
+                    ctx, MagicMock(), "vsid", timer
+                )
+            ]
+
+    assert order == ["close-lowres", "close-720p", "persist"]
+
+
+@pytest.mark.asyncio
+async def test_failed_run_cancels_the_unjoined_t0_tasks() -> None:
+    ctx = _english_ctx({})
+    ctx.caption_task = asyncio.create_task(asyncio.sleep(60))
+    timer = MagicMock()
+    timer.elapsed = MagicMock(return_value=1.0)
+
+    async def _metadata_fails(_ctx):
+        raise RuntimeError("metadata exploded")
+        yield  # pragma: no cover — makes this an async generator
+
+    with ExitStack() as stack:
+        for p in _patched_phases():
+            stack.enter_context(p)
+        stack.enter_context(
+            patch.object(pipeline_orchestration, "run_phase_metadata", _metadata_fails)
+        )
+        stack.enter_context(patch.object(pipeline_orchestration, "persist_run_timing", AsyncMock()))
+        with pytest.raises(RuntimeError):
+            _ = [
+                ev
+                async for ev in pipeline_orchestration.run_pipeline_phases(
+                    ctx, MagicMock(), "vsid", timer
+                )
+            ]
+    await asyncio.gather(ctx.caption_task, return_exceptions=True)
+
+    assert ctx.caption_task.cancelled()
+
+
+@pytest.mark.asyncio
+async def test_phase_two_runs_the_text_branch_with_frames_only() -> None:
+    ctx = _english_ctx({"key_points": [{"text": "a claim long enough"}]})
+    timer = MagicMock()
+    timer.elapsed = MagicMock(return_value=1.0)
+    groups: list[list[str]] = []
+
+    async def _capture_parallel(phases, _ctx):
+        groups.append([phase.__name__ for phase in phases])
+        yield "data: parallel\n\n"
+
+    with ExitStack() as stack:
+        for p in _patched_phases():
+            stack.enter_context(p)
+        stack.enter_context(
+            patch.object(pipeline_orchestration, "run_parallel_phases", _capture_parallel)
+        )
+        _ = [
+            ev
+            async for ev in pipeline_orchestration.run_pipeline_phases(
+                ctx, MagicMock(), "vsid", timer
+            )
+        ]
+
+    # The description analysis is not a member: extraction never waits for it.
+    assert groups[0] == ["run_phase_text", "run_phase_frames"]
+
+
+@pytest.mark.asyncio
+async def test_should_start_the_tier_probe_with_phase_two() -> None:
+    """1b.1: the probe task exists from phase 2 on (it waits for transcript-ready)."""
+    ctx = _english_ctx({"key_points": [{"text": "a claim long enough"}]})
+    started: list[object] = []
+
+    async def _capture_parallel(_phases, run_ctx):
+        started.append(run_ctx.tier_probe_task)
+        yield "data: parallel\n\n"
+
+    with ExitStack() as stack:
+        for p in _patched_phases():
+            stack.enter_context(p)
+        stack.enter_context(
+            patch.object(pipeline_orchestration, "run_parallel_phases", _capture_parallel)
+        )
+        _ = [
+            ev
+            async for ev in pipeline_orchestration.run_pipeline_phases(
+                ctx, MagicMock(), "vsid", _timer()
+            )
+        ]
+
+    assert started[0] is not None
+
+
+@pytest.mark.asyncio
+async def test_run_end_should_cancel_a_probe_still_waiting_for_the_transcript() -> None:
+    ctx = _english_ctx({})
+
+    await _drain_phases(ctx, MagicMock())
+    await asyncio.gather(ctx.tier_probe_task, return_exceptions=True)
+
+    assert ctx.tier_probe_task.cancelled()

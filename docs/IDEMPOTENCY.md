@@ -138,6 +138,52 @@ Beyond the gate, `bypassCache` also has to defeat the summarizer's **Redis respo
 
 Either one makes the summarizer skip the Redis response cache and run the pipeline fresh.
 
+## Version rows (bypassCache and eval runs)
+
+A `bypassCache` submission on a video that already has a user version, and **every**
+submission by the eval user (`users.isEvalUser`, D25), inserts a new
+`videoSummaryCache` row instead of attaching to the served one
+(`VideoService.insertVersionRow` / `nextVersionNumber`).
+
+- **Numbering is shared** by user and eval rows, so every row keeps a distinct
+  versioned `dedupKey`. A user run takes `max(served version, highest row) + 1`; with
+  no user version at all it falls through to the normal flow. An eval run takes
+  `max(highest row, 1) + 1` — never version 1, whose `dedupKey` is the shared row new
+  submitters attach to.
+- **Collisions:** two concurrent user re-runs that compute the same number collide on
+  the partial unique `dedupKey` index (E11000 → `VersionCreationError` "Version
+  conflict - please retry"). An eval run is its own version by definition, so it
+  renumbers and retries (up to 3 attempts) instead.
+- **Two pools:** the user pool (`evalRun ≠ true`) and the eval pool (`evalRun: true`).
+  Pruning keeps the 5 newest versions **per pool**, ranked by `version` (a pool's
+  numbers have gaps), never deletes the served `isLatest` row, and never touches the
+  other pool. Version lists show eval rows to the eval user only.
+- **Served version = newest completed user row.** A new row is inserted
+  `isLatest: false`; the summarizer's `completed` status (`/internal/status`) promotes
+  it (`promoteCompletedVersion`: set self, demote older latest rows, yield to a newer
+  one — concurrent completions converge on the newest). A `failed` re-run re-points the
+  requester's library entries to the completed row still served
+  (`restoreServedVersion`). Eval rows are never promoted.
+- **Eval runs stay private:** no Redis response-cache write and no Qdrant points; the
+  summarizer may still *answer* an eval run from the Redis response cache unless it
+  was submitted with `bypassCache`.
+- **Every (re-)dispatch** (new version, retry, stale-version regen, stall recovery)
+  `$unset`s the row's `synthesis` first, so the previous run's `masterSummary` can't
+  block this run's merge (see `synthesis_complete` in API-REFERENCE).
+
+### Worker skip (completed rows)
+
+`drive_pipeline` (`services/summarizer/src/worker/pipeline.py`) acks a queued job
+without running it when the row is already `completed` **by the current
+`PIPELINE_VERSION`** — checked before taking the per-video lock and again once it
+holds it (an SSE-started producer may have finished meanwhile; on prod 2026-10-05 a
+duplicate run cost $0.16). A completed row stamped with an **older**
+`pipelineVersion` still runs: the API's stale-version regen re-dispatches it without
+resetting its status. Unstamped rows count as current (same rule as the API's
+`isStaleVersion`). A Mongo error on the post-lock re-check runs the job, and any
+exception before the producer starts releases the lock first, so a retry is never
+acked as `skip_locked`.
+
 ## Collection schema
 
 `idempotencyKeys` collection, indexes:

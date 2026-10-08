@@ -1,7 +1,7 @@
 """Tests for the golden-dataset schema, per-video assertions and trace metrics.
 
 Covers ``scripts/_eval_schema.py`` (incl. the committed ``videos.yaml``
-against the live component registry and classifier formats),
+against the live component registry and tier-probe formats),
 ``scripts/_eval_assertions.py`` and the trace readers in
 ``scripts/_eval_metrics.py``.
 """
@@ -17,7 +17,7 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
-from src.services.pipeline.classifier import VALID_FORMATS
+from src.models.probe_types import VALID_FORMATS
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_REPO_ROOT / "scripts"))
@@ -31,8 +31,8 @@ from _eval_assertions import (  # noqa: E402
 )
 from _eval_metrics import (  # noqa: E402
     duplicate_item_rate,
-    extract_classifier_format,
     extract_faithfulness,
+    extract_probe_format,
 )
 from _eval_schema import GoldenDataset, is_allowed_video_url, parse_assertions  # noqa: E402
 
@@ -98,7 +98,7 @@ class TestCommittedDataset:
     def test_should_never_name_retired_components(self, dataset: GoldenDataset) -> None:
         assert not any(_component_names(v) & _RETIRED for v in dataset.videos)
 
-    def test_should_only_use_classifier_formats(self, dataset: GoldenDataset) -> None:
+    def test_should_only_use_tier_probe_formats(self, dataset: GoldenDataset) -> None:
         formats = {v.format for v in dataset.videos}
         for v in dataset.videos:
             formats.update(*(a.values for a in v.assertions if a.type == "expectedFormat"))
@@ -111,15 +111,13 @@ class TestCommittedDataset:
         anchors = ("v8KaQr0MhjE", "wCkLNqy5OHE", "uC45_4nnEAI", "Jru5B044HOs")
         assert all(by_url[yid].assertions and not by_url[yid].disabled for yid in anchors)
 
-    def test_should_xfail_the_story_intro_step_player_checks_until_1b2(
+    def test_should_gate_the_story_intro_step_player_checks_when_1b2_has_landed(
         self, dataset: GoldenDataset
     ) -> None:
+        """D23: the plan reads the full transcript, so the step_player checks gate."""
         video = next(v for v in dataset.videos if v.id == "food-recipe-story-intro")
-        marked = [(a.type, a.xfail_until) for a in video.assertions if a.xfail_reason]
-        assert (video.quick, marked) == (
-            True,
-            [("requiredComponents", "1b.2"), ("minItems", "1b.2")],
-        )
+        marked = [a.type for a in video.assertions if a.xfail_reason]
+        assert (video.quick, marked) == (True, [])
 
     def test_should_label_golden_entries_by_content_domain(self, dataset: GoldenDataset) -> None:
         by_id = {v.id: v for v in dataset.videos}
@@ -241,13 +239,13 @@ class TestAssertions:
     def test_should_skip_timestamp_check_when_duration_is_unknown(self) -> None:
         assert _check({"type": "noTimestampBeyondDuration"}, _tabs("overview")).passed is None
 
-    def test_should_skip_format_check_when_trace_has_no_classifier(self) -> None:
+    def test_should_skip_format_check_when_trace_has_no_probe(self) -> None:
         check = {"type": "expectedFormat", "values": ["vlog"]}
         assert _check(check, _tabs("overview")).passed is None
 
-    def test_should_pass_format_check_when_classifier_format_matches(self) -> None:
+    def test_should_pass_format_check_when_probe_format_matches(self) -> None:
         check = {"type": "expectedFormat", "values": ["vlog"]}
-        signals = TraceSignals(classifier_format="vlog")
+        signals = TraceSignals(probe_format="vlog")
         assert _check(check, _tabs("overview"), signals).passed is True
 
     def test_should_carry_xfail_reason_without_gating(self) -> None:
@@ -372,8 +370,25 @@ class TestMetrics:
         }
         assert extract_faithfulness(trace) == 0.8
 
-    def test_should_parse_classifier_format_from_generation_output(self) -> None:
+    def test_should_parse_probe_format_from_generation_output(self) -> None:
         trace = {
-            "observations": [{"name": "classifier", "output": '```json\n{"format": "Vlog"}\n```'}]
+            "observations": [{"name": "tier_probe", "output": '```json\n{"format": "Vlog"}\n```'}]
         }
-        assert extract_classifier_format(trace) == "vlog"
+        assert extract_probe_format(trace) == "vlog"
+
+    def test_should_read_the_retired_classifier_on_pre_probe_traces(self) -> None:
+        trace = {"observations": [{"name": "classifier", "output": '{"format": "tutorial"}'}]}
+        assert extract_probe_format(trace) == "tutorial"
+
+    def test_should_prefer_the_probe_when_both_generations_exist(self) -> None:
+        trace = {
+            "observations": [
+                {"name": "classifier", "output": '{"format": "tutorial"}'},
+                {"name": "tier_probe", "output": '{"format": "vlog"}'},
+            ]
+        }
+        assert extract_probe_format(trace) == "vlog"
+
+    def test_should_return_none_when_no_generation_has_a_format(self) -> None:
+        trace = {"observations": [{"name": "plan", "output": '{"format": "vlog"}'}]}
+        assert extract_probe_format(trace) is None

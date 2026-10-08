@@ -146,6 +146,7 @@ _SAMPLE_OVERRIDES: dict[str, object] = {
     "isRTL": True,
     "degraded": True,
     "timestamp": 42,
+    "endTimestamp": 90,
     "seconds": 42,
     "endSeconds": 90,
     "duration": 5,

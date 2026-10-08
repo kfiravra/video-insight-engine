@@ -55,11 +55,6 @@ Extract a structured product review or comparison.
   "verdict": {"badge": "recommended", "bestFor": ["Photography enthusiasts", "Long-term Android users"], "notFor": ["Power users who need all-day battery", "Gamers"], "bottomLine": "The best camera phone under $1000, if you can live with average battery life.", "subScores": [{"category": "Camera", "score": 9.5}, {"category": "Battery", "score": 7.0}]}
 }
 
-SCALING (video is {duration_minutes} minutes):
-- Under 15 min: key pros/cons, basic specs, verdict
-- 15-30 min: all pros/cons, full specs, comparisons if mentioned, detailed verdict
-- Over 30 min: comprehensive pros/cons, all specs, all comparisons, full verdict with use cases
-
 RULES:
 - Include all pros AND cons — never drop cons to soften the review
 - All specs with actual numbers: "6.7-inch AMOLED, 120Hz" not "large display"

@@ -1,10 +1,17 @@
-"""Advanced pre-LLM transcript cleaning: filler removal + repetition collapse.
+"""Pre-LLM transcript cleaning: filler removal + advanced repetition collapse.
 
-Designed to reduce token count by 15-25% without losing meaningful content.
-Uses spaCy for sentence segmentation and TF-IDF for near-duplicate detection.
+``remove_fillers`` is part of BASIC cleaning — ``clean_transcript`` calls it, so
+``clean_text`` and every rendered prompt transcript are filler-free whatever
+``TRANSCRIPT_CLEANING_ENABLED`` says.
 
-The conservative filler list avoids false positives — only removes phrases
-that are NEVER meaningful in context (e.g., "um", "uh", "you know").
+``clean_transcript_advanced`` is the optional pass behind that flag: spaCy
+sentence segmentation + TF-IDF near-duplicate collapse on basic-cleaned text.
+
+The filler list holds only phrases that are never content. Basic cleaning runs
+on every English transcript, so a phrase that is a filler only most of the time
+would corrupt the rest: "you know", "i mean", "kind of", "sort of", "okay so"
+and "alright so" are excluded because "do you know how", "what I mean is",
+"what kind of flour", "sort of the dough" and "it's okay so we" need them.
 """
 
 import logging
@@ -13,30 +20,29 @@ import threading
 
 logger = logging.getLogger(__name__)
 
-# Conservative filler set — only unambiguously meaningless phrases.
-# "like", "right", "actually" are excluded because they carry meaning in many contexts.
+# Phrases that are never content (see the module docstring for what is excluded
+# and why). "like", "right", "actually" carry meaning in many contexts too.
 FILLERS = {
     "um",
     "uh",
     "uh huh",
-    "you know",
-    "you know what i mean",
-    "i mean",
-    "kind of",
-    "sort of",
     "basically",
     "so yeah",
-    "okay so",
-    "alright so",
     "well basically",
 }
 
 # Build regex pattern from filler set (longest first to avoid partial matches)
 _sorted_fillers = sorted(FILLERS, key=len, reverse=True)
-FILLER_PATTERN = re.compile(
-    r"\b(" + "|".join(re.escape(f) for f in _sorted_fillers) + r")\b",
+_FILLER_ALTERNATION = "|".join(re.escape(f) for f in _sorted_fillers)
+
+# A filler with the commas that punctuated (manual) captions put around it.
+# Only these commas are touched — "e.g., x" or "U.S.," elsewhere in the text
+# keep theirs.
+_FILLER_WITH_COMMAS = re.compile(
+    r"(?P<lead>,\s*)?\b(?:" + _FILLER_ALTERNATION + r")\b(?P<trail>\s*,)?",
     re.IGNORECASE,
 )
+_CLAUSE_END = re.compile(r"\s*(?:[.!?]|$)")
 
 # Lazy-loaded spaCy model (thread-safe)
 _nlp = None
@@ -60,19 +66,34 @@ def remove_fillers(text: str) -> str:
     """Remove filler words/phrases from text.
 
     Conservative approach: only removes phrases from the curated FILLERS set.
-    Preserves punctuation, capitalization, and meaningful words.
+    Preserves capitalization and meaningful words; a comma the removal strands
+    is dropped, other punctuation is kept. Text without fillers is unchanged.
     """
     if not text:
         return text
 
-    cleaned = FILLER_PATTERN.sub("", text)
+    cleaned, removed = _FILLER_WITH_COMMAS.subn(_drop_filler, text)
+    if not removed:
+        return text
     # Collapse multiple spaces left by removal
-    cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()
-    return cleaned
+    return re.sub(r"\s{2,}", " ", cleaned).strip()
+
+
+def _drop_filler(match: re.Match[str]) -> str:
+    """What replaces one filler: its own trailing comma goes with it.
+
+    "So, um, I" keeps the comma before the filler ("So, I"); "that's it, um."
+    loses it too, since a clause end follows ("that's it."); "Um, so" → "so".
+    """
+    lead = match.group("lead") or ""
+    if lead and not match.group("trail") and _CLAUSE_END.match(match.string, match.end()):
+        return ""
+    return lead
 
 
 def collapse_repetitions(
-    sentences: list[str], threshold: float = 0.9,
+    sentences: list[str],
+    threshold: float = 0.9,
 ) -> list[str]:
     """Remove near-duplicate sentences using TF-IDF cosine similarity.
 
@@ -127,30 +148,28 @@ def collapse_repetitions(
 
 
 def clean_transcript_advanced(text: str) -> str:
-    """Full advanced cleaning pipeline.
+    """Advanced cleaning pass (behind ``TRANSCRIPT_CLEANING_ENABLED``).
 
     Steps:
-    1. Remove filler words/phrases
-    2. Segment into sentences (spaCy)
-    3. Collapse near-duplicate sentences (TF-IDF)
-    4. Rejoin and normalize whitespace
+    1. Segment into sentences (spaCy)
+    2. Collapse near-duplicate sentences (TF-IDF)
+    3. Rejoin and normalize whitespace
 
-    Call AFTER SponsorBlock filtering and basic artifact removal.
+    Call on basic-cleaned text (``clean_transcript``): fillers are already gone.
     """
     if not text or len(text.strip()) < 50:
         return text.strip() if text else ""
 
     original_len = len(text)
 
-    # Step 1: Remove fillers
-    text = remove_fillers(text)
-
-    # Step 2: Sentence segmentation
+    # Step 1: Sentence segmentation
     # Cap at 100K chars to avoid excessive memory usage in spaCy's full pipeline.
     # Typical 2-hour video transcript is ~30K chars; 100K handles up to ~6 hours.
     if len(text) > 100_000:
-        logger.info("Transcript too long for spaCy (%d chars), using regex sentence split", len(text))
-        sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', text) if s.strip()]
+        logger.info(
+            "Transcript too long for spaCy (%d chars), using regex sentence split", len(text)
+        )
+        sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
     else:
         nlp = _get_nlp()
         doc = nlp(text)
@@ -159,10 +178,10 @@ def clean_transcript_advanced(text: str) -> str:
     if not sentences:
         return text
 
-    # Step 3: Collapse repetitions
+    # Step 2: Collapse repetitions
     sentences = collapse_repetitions(sentences)
 
-    # Step 4: Rejoin and normalize
+    # Step 3: Rejoin and normalize
     result = " ".join(sentences)
     result = re.sub(r"\s{2,}", " ", result).strip()
 

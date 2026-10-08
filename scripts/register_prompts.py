@@ -13,20 +13,29 @@ Walks the summarizer's `prompts/` tree plus the assistant's
 Idempotency strategy
 --------------------
 Langfuse versions prompts on every ``create_prompt`` call. We avoid creating
-no-op versions by comparing the local content to the latest version on the
-server (best-effort; on lookup failure we fall back to "upload anyway").
+no-op versions by comparing the local content to the server version that
+carries the target label. A 404 means "not there yet" (upload); any other
+lookup failure reports ``unknown`` in a dry run and still uploads on commit.
+The exit code is 1 when any prompt is ``unknown`` or failed to upload.
 
 Run modes
 ---------
-``--dry-run`` prints what would change without touching Langfuse.
-``--commit`` uploads. Default is ``--dry-run`` so the script is safe to
-copy/paste from docs.
+``--dry-run`` prints what would change and uploads nothing. With Langfuse
+keys in the environment it reads the labelled versions to tell
+``unchanged`` from ``would-upload``; without keys every prompt is listed as
+``would-upload``. ``--commit`` uploads. Default is ``--dry-run`` so the
+script is safe to copy/paste from docs.
+
+``--label NAME`` (default ``production``) is the label uploads receive and
+the idempotency check compares against. A non-production label stages new
+prompt text in a project without moving what the runtime serves (the
+runtime fetches ``production``); re-run with the default label to promote.
 
 Local run::
 
     python3 scripts/register_prompts.py --dry-run
     LANGFUSE_PUBLIC_KEY=pk LANGFUSE_SECRET_KEY=sk \\
-        python3 scripts/register_prompts.py --commit
+        python3 scripts/register_prompts.py --commit [--label staging]
 """
 
 from __future__ import annotations
@@ -38,6 +47,7 @@ import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal, Protocol
 
 # Make the summarizer source tree importable when invoked from anywhere.
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -80,6 +90,33 @@ _SECRET_PROBE_RE = re.compile(
     r")\b",
     re.IGNORECASE,
 )
+
+# The runtime fetches prompts by this label (Langfuse's default for
+# ``get_prompt``), so only uploads carrying it change what is served.
+DEFAULT_LABEL = "production"
+# Langfuse's label charset. ``latest`` is assigned by Langfuse to every new
+# version, so it cannot serve as a sync target.
+_LABEL_RE = re.compile(r"^[a-z0-9_.-]+$")
+_RESERVED_LABELS = frozenset({"latest"})
+
+
+class PromptRegistry(Protocol):
+    """The two Langfuse client calls the sync needs (narrow, so tests can fake it)."""
+
+    def get_prompt(self, name: str, *, label: str | None = None) -> object: ...
+
+    def create_prompt(self, *, name: str, prompt: str, labels: list[str]) -> object: ...
+
+
+def _parse_label(value: str) -> str:
+    """argparse ``type`` for ``--label``: reject names Langfuse would refuse or manages itself."""
+    if not _LABEL_RE.match(value):
+        raise argparse.ArgumentTypeError(
+            f"invalid label {value!r}: use lowercase letters, digits, '_', '-' or '.'"
+        )
+    if value in _RESERVED_LABELS:
+        raise argparse.ArgumentTypeError(f"label {value!r} is managed by Langfuse")
+    return value
 
 
 @dataclass(frozen=True)
@@ -151,11 +188,13 @@ def discover_prompts() -> list[PromptRecord]:
         if not ok:
             logger.warning("Skipping assistant prompt %s — %s", name, reason)
             continue
-        records.append(PromptRecord(
-            name=f"assistant:{name}",
-            content=content,
-            source_path=_ASSISTANT_SRC / "src" / "utils" / "prompt_templates.py",
-        ))
+        records.append(
+            PromptRecord(
+                name=f"assistant:{name}",
+                content=content,
+                source_path=_ASSISTANT_SRC / "src" / "utils" / "prompt_templates.py",
+            )
+        )
     return records
 
 
@@ -194,75 +233,132 @@ def _load_assistant_prompts() -> dict[str, str]:
     return out
 
 
-def _already_synced(client, name: str, content: str) -> bool:
-    """Return True when the production-labelled server version matches local content.
+SyncState = Literal["unchanged", "changed", "unknown"]
 
-    Scoped to ``label="production"`` so a content-equal version that lacks
-    the production label correctly reports as "not synced" — the runtime
-    fetches prompts by label, so an unlabelled match is useless. Any lookup
-    failure (404 / missing label / transient error) returns False, triggering
-    an upload that (re)applies the label.
+# Sync results that mean the run did not do (or could not check) its job.
+_FAILED_RESULTS = ("unknown", "error")
+
+
+def _is_not_found(exc: Exception) -> bool:
+    """True for the registry's 404 — the prompt or label doesn't exist yet."""
+    return getattr(exc, "status_code", None) == 404
+
+
+def _sync_state(
+    client: PromptRegistry, name: str, content: str, *, label: str = DEFAULT_LABEL
+) -> SyncState:
+    """Compare local content with the server version carrying ``label``.
+
+    Scoped to the label so a content-equal version that lacks it reports as
+    ``changed`` — the runtime fetches prompts by label, so an unlabelled match
+    is useless. A 404 (prompt or label not there yet) is ``changed`` too: an
+    upload creates it. Any other lookup failure (bad keys / 401, network, 5xx)
+    is ``unknown``: the script can't tell, so a dry run must not report it as a
+    planned upload.
     """
     try:
-        existing = client.get_prompt(name, label="production")
-    except Exception:  # noqa: BLE001 — broad on purpose, see docstring
-        return False
+        existing = client.get_prompt(name, label=label)
+    except Exception as exc:  # noqa: BLE001 — classified: 404 vs anything else
+        if _is_not_found(exc):
+            return "changed"
+        logger.warning("Lookup failed for %s: %s", name, exc)
+        return "unknown"
     existing_text = getattr(existing, "prompt", None)
-    return isinstance(existing_text, str) and existing_text.strip() == content.strip()
-
-
-def upload_prompt(client, record: PromptRecord, *, dry_run: bool) -> str:
-    """Upload a single prompt; return one of ``unchanged|updated|created|skipped``."""
-    if dry_run:
-        return "would-upload"
-    if _already_synced(client, record.name, record.content):
+    if isinstance(existing_text, str) and existing_text.strip() == content.strip():
         return "unchanged"
+    return "changed"
+
+
+def upload_prompt(
+    client: PromptRegistry | None,
+    record: PromptRecord,
+    *,
+    dry_run: bool,
+    label: str = DEFAULT_LABEL,
+) -> str:
+    """Sync one prompt; return one of ``unchanged|would-upload|unknown|updated|error``.
+
+    A dry run never uploads: with a client it reads the labelled version to
+    tell ``unchanged`` from ``would-upload`` (``unknown`` when the lookup
+    failed); without one (no keys) it cannot compare and reports
+    ``would-upload``. A commit uploads whatever isn't known to be unchanged.
+    """
+    if client is None:
+        return "would-upload"
+    state = _sync_state(client, record.name, record.content, label=label)
+    if state == "unchanged":
+        return "unchanged"
+    if dry_run:
+        return "unknown" if state == "unknown" else "would-upload"
     try:
-        client.create_prompt(
-            name=record.name,
-            prompt=record.content,
-            labels=["production"],
-        )
+        client.create_prompt(name=record.name, prompt=record.content, labels=[label])
         return "updated"
     except Exception as exc:  # noqa: BLE001
         logger.warning("Upload failed for %s: %s", record.name, exc)
         return "error"
 
 
-def _build_client():
-    """Initialize a Langfuse client, or return None when Langfuse is disabled.
+def _build_client(*, dry_run: bool) -> PromptRegistry | None:
+    """Initialize a Langfuse client, or return None when there is nothing to talk to.
 
     Returns ``None`` when ``LANGFUSE_PUBLIC_KEY`` / ``LANGFUSE_SECRET_KEY`` are
     blank — this is the "observability not configured" path and is normal for
-    fresh dev setups. ``main()`` short-circuits on ``None`` and exits 0, so
-    when this script runs as a one-shot init container it won't block
-    downstream services for users who haven't signed up for Langfuse.
+    fresh dev setups. ``main()`` short-circuits a commit on ``None`` and exits
+    0, so when this script runs as a one-shot init container it won't block
+    downstream services for users who haven't signed up for Langfuse. A dry
+    run also tolerates a missing SDK (host-side previews with a bare
+    ``python3``) and then compares nothing.
     """
-    try:
-        from langfuse import Langfuse  # type: ignore
-    except ImportError as exc:
-        sys.exit(f"Langfuse SDK is not installed: {exc}")
-
     public = os.environ.get("LANGFUSE_PUBLIC_KEY")
     secret = os.environ.get("LANGFUSE_SECRET_KEY")
     host = os.environ.get("LANGFUSE_BASE_URL", "https://cloud.langfuse.com")
     if not public or not secret:
-        logger.info("Langfuse not configured (LANGFUSE_PUBLIC_KEY/SECRET_KEY blank) — skipping prompt sync")
+        outcome = "dry run compares nothing" if dry_run else "skipping prompt sync"
+        logger.info("Langfuse not configured (LANGFUSE_PUBLIC_KEY/SECRET_KEY blank) — %s", outcome)
+        return None
+    try:
+        from langfuse import Langfuse  # type: ignore
+    except ImportError as exc:
+        if not dry_run:
+            sys.exit(f"Langfuse SDK is not installed: {exc}")
+        logger.warning("Langfuse SDK is not installed (%s) — dry run compares nothing", exc)
         return None
     return Langfuse(public_key=public, secret_key=secret, host=host)
 
 
-def main() -> int:
+def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--commit", action="store_true",
-        help="Actually upload to Langfuse. Default is dry-run.",
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
+        "--commit",
+        action="store_true",
+        help="Actually upload to Langfuse.",
+    )
+    mode.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Report what would change and upload nothing (the default).",
     )
     parser.add_argument(
-        "--filter", default="",
+        "--filter",
+        default="",
         help="Only sync prompts whose name contains this substring.",
     )
-    args = parser.parse_args()
+    parser.add_argument(
+        "--label",
+        type=_parse_label,
+        default=DEFAULT_LABEL,
+        help=(
+            f"Label uploads receive and the idempotency check compares against "
+            f"(default: {DEFAULT_LABEL}). Any other label stages prompts without "
+            f"changing what the runtime serves."
+        ),
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parse_args(argv)
     dry_run = not args.commit
 
     records = discover_prompts()
@@ -272,8 +368,8 @@ def main() -> int:
         logger.warning("No prompts discovered — nothing to do")
         return 0
 
-    logger.info("Discovered %d prompts (dry_run=%s)", len(records), dry_run)
-    client = None if dry_run else _build_client()
+    logger.info("Discovered %d prompts (dry_run=%s, label=%s)", len(records), dry_run, args.label)
+    client = _build_client(dry_run=dry_run)
     if not dry_run and client is None:
         # _build_client logged the reason (e.g. Langfuse disabled). Exit 0 so
         # the init container doesn't block downstream services in compose.
@@ -281,12 +377,14 @@ def main() -> int:
 
     summary: dict[str, int] = {}
     for record in records:
-        result = upload_prompt(client, record, dry_run=dry_run)
+        result = upload_prompt(client, record, dry_run=dry_run, label=args.label)
         summary[result] = summary.get(result, 0) + 1
         logger.info("  [%-12s] %s (%d bytes)", result, record.name, len(record.content))
 
     logger.info("Summary: %s", summary)
-    return 0
+    # Non-zero when any prompt failed to sync or couldn't be checked, so a
+    # caller (activate_langfuse.sh, CI) never mistakes it for a clean run.
+    return 1 if any(summary.get(result) for result in _FAILED_RESULTS) else 0
 
 
 if __name__ == "__main__":

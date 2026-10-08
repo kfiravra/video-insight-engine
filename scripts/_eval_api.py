@@ -155,12 +155,13 @@ async def _consume_stream(client: httpx.AsyncClient, api_url: str, submission: S
 
 
 async def _submit(
-    client: httpx.AsyncClient, api_url: str, url: str, bypass_cache: bool
+    client: httpx.AsyncClient, api_url: str, url: str, bypass_cache: bool, cold: bool = False
 ) -> Submission:
     submitted_at = datetime.now(UTC)
-    resp = await client.post(
-        f"{api_url}/api/videos", json={"url": url, "bypassCache": bypass_cache}
-    )
+    body_in: dict[str, Any] = {"url": url, "bypassCache": bypass_cache}
+    if cold:
+        body_in["cold"] = True
+    resp = await client.post(f"{api_url}/api/videos", json=body_in)
     resp.raise_for_status()
     body = resp.json()
     # POST /api/videos returns {"video": {"id", "videoSummaryId", ...}, "cached": bool}.
@@ -217,16 +218,17 @@ async def _finish(
 
 
 async def run_pipeline(
-    api_url: str, url: str, token: str, bypass_cache: bool = False
+    api_url: str, url: str, token: str, bypass_cache: bool = False, cold: bool = False
 ) -> dict[str, Any]:
     """POST the video, hold the SSE stream to a terminal event, return the doc.
 
     Returns ``meta`` + ``tabs`` (the scored payload) plus ``duration``,
     ``youtubeId``, ``videoSummaryId`` and ``submittedAt`` (used to find the
-    run's Langfuse trace). ``bypass_cache=True`` forces a fresh pipeline run.
+    run's Langfuse trace). ``bypass_cache=True`` forces a fresh pipeline run;
+    ``cold=True`` (admin/eval only) also skips the summarizer's media caches.
     """
     async with _client(token) as client:
-        submission = await _submit(client, api_url, url, bypass_cache)
+        submission = await _submit(client, api_url, url, bypass_cache, cold)
         return to_output(await _finish(client, api_url, submission, attach=True), submission)
 
 
@@ -251,7 +253,12 @@ class SharedToken:
 
 
 async def run_with_reauth(
-    api_url: str, url: str, token: str, bypass_cache: bool, refresh: Refresh | None = None
+    api_url: str,
+    url: str,
+    token: str,
+    bypass_cache: bool,
+    refresh: Refresh | None = None,
+    cold: bool = False,
 ) -> tuple[dict[str, Any], str]:
     """Run one video, re-authenticating once on a 401. Returns (doc, token).
 
@@ -264,7 +271,7 @@ async def run_with_reauth(
     """
     renew = refresh or (lambda _stale: authenticate(api_url))
     try:
-        return await run_pipeline(api_url, url, token, bypass_cache=bypass_cache), token
+        return await run_pipeline(api_url, url, token, bypass_cache=bypass_cache, cold=cold), token
     except SubmittedUnauthorizedError as exc:
         logger.info("Token expired mid-run (%s) — re-authenticating to resume %s", exc, url)
         token = await renew(token)
@@ -277,4 +284,4 @@ async def run_with_reauth(
             raise
         logger.info("Token expired — re-authenticating, retrying %s", url)
         token = await renew(token)
-        return await run_pipeline(api_url, url, token, bypass_cache=bypass_cache), token
+        return await run_pipeline(api_url, url, token, bypass_cache=bypass_cache, cold=cold), token

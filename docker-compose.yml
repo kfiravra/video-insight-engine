@@ -21,7 +21,6 @@ x-summarizer-env: &summarizer-env
   LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-4096}
   LLM_FAST_MAX_TOKENS: ${LLM_FAST_MAX_TOKENS:-2048}
   LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-60.0}
-  LLM_NUM_RETRIES: ${LLM_NUM_RETRIES:-2}
   # Per-stage model overrides (blank → primary model)
   LLM_EXTRACTION_MODEL: ${LLM_EXTRACTION_MODEL:-}
   LLM_ENRICHMENT_MODEL: ${LLM_ENRICHMENT_MODEL:-}
@@ -29,7 +28,16 @@ x-summarizer-env: &summarizer-env
   LLM_DESCRIPTION_MODEL: ${LLM_DESCRIPTION_MODEL:-}
   LLM_SYNTHESIS_MODEL: ${LLM_SYNTHESIS_MODEL:-}
   LLM_TRANSLATION_MODEL: ${LLM_TRANSLATION_MODEL:-}
-  EXTRACTION_USE_FAST_FIRST: ${EXTRACTION_USE_FAST_FIRST:-false}
+  # Tier-probe model (pipeline-1min D21). Literal default = config.py: a blank
+  # passthrough would route the probe to the fast tier.
+  LLM_CLASSIFIER_MODEL: ${LLM_CLASSIFIER_MODEL:-anthropic/claude-haiku-4-5-20251001}
+  # Extraction concurrency + chunking (literal defaults = config.py; a blank bool crash-loops)
+  EXTRACTION_PARALLEL: ${EXTRACTION_PARALLEL:-true}
+  EXTRACTION_PARALLEL_BATCHES: ${EXTRACTION_PARALLEL_BATCHES:-6}
+  CHUNKED_EXTRACTION_THRESHOLD: ${CHUNKED_EXTRACTION_THRESHOLD:-900}
+  MAX_TOKENS_PER_BATCH: ${MAX_TOKENS_PER_BATCH:-50000}
+  MAX_MINUTES_PER_BATCH: ${MAX_MINUTES_PER_BATCH:-40}
+  EXTRACTION_FORCE_SPLIT_CHUNKS: ${EXTRACTION_FORCE_SPLIT_CHUNKS:-4}
   # Provider API keys
   ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
   OPENAI_API_KEY: ${OPENAI_API_KEY:-}
@@ -40,7 +48,7 @@ x-summarizer-env: &summarizer-env
   # Transcript / proxy
   YOUTUBE_PROXY_URL: ${YOUTUBE_PROXY_URL:-}
   YOUTUBE_PROXY_EXIT_COUNT: ${YOUTUBE_PROXY_EXIT_COUNT:-1}
-  TRANSCRIPT_CLEANING_ENABLED: ${TRANSCRIPT_CLEANING_ENABLED:-true}
+  TRANSCRIPT_CLEANING_ENABLED: ${TRANSCRIPT_CLEANING_ENABLED:-false}
   TRANSCRIPT_CLEANING_TIMEOUT: ${TRANSCRIPT_CLEANING_TIMEOUT:-30.0}
   # Optional HF Hub token — blank = unauthenticated (rate-limited) model pulls
   HF_TOKEN: ${HF_TOKEN:-}
@@ -52,12 +60,13 @@ x-summarizer-env: &summarizer-env
   AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
   AWS_ENDPOINT_URL: ${AWS_ENDPOINT_URL:-}
   # Frame extraction
-  FRAME_EXTRACTION_ENABLED: ${FRAME_EXTRACTION_ENABLED:-true}
   SCENE_EXTRACTION_ENABLED: ${SCENE_EXTRACTION_ENABLED:-true}
   SCENE_HIRES_ENABLED: ${SCENE_HIRES_ENABLED:-true}
-  SCENE_S3_PREFIX: ${SCENE_S3_PREFIX:-scenes-v3}
-  SCENE_HIRES_TIMEOUT: ${SCENE_HIRES_TIMEOUT:-90.0}
+  SCENE_S3_PREFIX: ${SCENE_S3_PREFIX:-scenes-v4}
   SCENE_HIRES_FALLBACK_TIMEOUT: ${SCENE_HIRES_FALLBACK_TIMEOUT:-180.0}
+  FRAME_VISION_ENABLED: ${FRAME_VISION_ENABLED:-true}
+  FRAME_VISION_PARALLEL: ${FRAME_VISION_PARALLEL:-true}
+  FRAME_TIER_ENABLED: ${FRAME_TIER_ENABLED:-true}
   # yt-dlp player clients for video/audio downloads — the knob to turn when
   # YouTube shifts which clients' download URLs 403 (2026-08: android only)
   YTDLP_PLAYER_CLIENTS: ${YTDLP_PLAYER_CLIENTS:-android}
@@ -322,9 +331,9 @@ services:
   # runtime falls back to local .txt prompts on any 404, so racing here is
   # safe: late uploads just take effect on subsequent video runs.
   #
-  # Failure modes are all non-fatal (script exits 0):
+  # Failure modes (nothing depends on this container, so none blocks startup):
   #   - Langfuse keys blank → "not configured, skipping" log, exit 0.
-  #   - Network/auth error → individual prompt errors logged, exit 0.
+  #   - Network/auth error or an unreadable registry → errors logged, exit 1.
   #
   # To force a resync mid-session (e.g. after editing a prompt file):
   #   docker compose run --rm vie-langfuse-init

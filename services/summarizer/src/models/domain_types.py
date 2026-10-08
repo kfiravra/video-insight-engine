@@ -109,6 +109,25 @@ class TravelPackingItem(BaseModel):
     item: str
     category: str = "Essentials"
     essential: bool = False
+    weight: float | None = None
+    emoji: str = ""
+
+    @field_validator("weight", mode="before")
+    @classmethod
+    def coerce_weight(cls, v: Any) -> float | None:
+        """Kilograms as a positive number, else ``None``.
+
+        Unit strings ("200 g") are dropped rather than parsed: the schema asks
+        for kg, so reading the digits would turn grams into kilograms, and a
+        hard failure would push the whole travel block through unvalidated.
+        """
+        if isinstance(v, bool) or v is None:
+            return None
+        try:
+            kg = float(v)
+        except (TypeError, ValueError):
+            return None
+        return kg if kg > 0 else None
 
 
 class TravelTip(BaseModel):
@@ -615,8 +634,11 @@ class MusicCredit(BaseModel):
 
 
 class MusicSection(BaseModel):
+    model_config = {"populate_by_name": True}
+
     name: str
     timestamp: int | None = None
+    end_timestamp: int | None = Field(None, alias="endTimestamp")
     duration: int | None = None
     description: str = ""
 
@@ -736,7 +758,10 @@ class ProjectData(BaseModel):
 
 
 class NarrativeKeyMoment(BaseModel):
+    model_config = {"populate_by_name": True}
+
     timestamp: int | None = None
+    end_timestamp: int | None = Field(None, alias="endTimestamp")
     description: str = ""
     mood: str = ""
     emoji: str = ""

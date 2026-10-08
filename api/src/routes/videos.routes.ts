@@ -21,6 +21,10 @@ const createVideoSchema = z.object({
   url: z.string().url(),
   folderId: objectIdSchema.optional(),
   bypassCache: z.boolean().optional().default(false),
+  // Benchmark-only (admin/eval accounts; anyone else gets 403): skip the
+  // summarizer's S3 transcript + scene-frame caches so the run measures cold
+  // media. Implies bypassCache.
+  cold: z.boolean().optional().default(false),
   providers: providerConfigSchema,
 });
 
@@ -120,6 +124,7 @@ export async function videosRoutes(fastify: FastifyInstance) {
       tier: req.tier.name,
       folderId: input.folderId,
       bypassCache: input.bypassCache,
+      cold: input.cold,
       providers: input.providers,
       clientKey,
       requestId: req.id,
@@ -182,7 +187,7 @@ export async function videosRoutes(fastify: FastifyInstance) {
       });
     }
 
-    const versions = await videoService.getVersions(youtubeId, { limit });
+    const versions = await videoService.getVersions(req.user.userId, youtubeId, { limit });
     return { versions };
   });
 }

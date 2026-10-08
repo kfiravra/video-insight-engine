@@ -1,8 +1,9 @@
-import { FastifyInstance } from 'fastify';
+import { FastifyInstance, type FastifyBaseLogger } from 'fastify';
 import { z } from 'zod';
 import { ObjectId } from 'mongodb';
 import { isValidInternalSecret } from '../utils/internal-auth.js';
 import { getUtcDateKey } from '../repositories/user-cost.repository.js';
+import type { VideoRepository } from '../repositories/video.repository.js';
 
 const videoStatusSchema = z.object({
   type: z.literal('video.status'),
@@ -40,6 +41,29 @@ const runDeletionsBodySchema = z
     limit: z.number().int().positive().max(500).optional(),
   })
   .optional();
+
+/**
+ * 1d.8: a re-run becomes the served version only once it completes; a failed
+ * one hands its library entries back to the completed version still served.
+ * Both repository calls are idempotent, so duplicate status events are safe.
+ * Best-effort: the status relay itself must not fail on it.
+ */
+async function settleServedVersion(
+  videoRepository: VideoRepository,
+  videoSummaryId: string,
+  status: 'completed' | 'failed',
+  log: FastifyBaseLogger,
+): Promise<void> {
+  try {
+    if (status === 'completed') {
+      await videoRepository.promoteCompletedVersion(videoSummaryId);
+    } else {
+      await videoRepository.restoreServedVersion(videoSummaryId);
+    }
+  } catch (err) {
+    log.warn({ err, videoSummaryId, status }, 'served-version settle failed');
+  }
+}
 
 export async function internalRoutes(fastify: FastifyInstance) {
   const {
@@ -189,6 +213,8 @@ export async function internalRoutes(fastify: FastifyInstance) {
             }
           }),
         );
+        // Last: the reconcile lookup above still needs the failed row's library entries.
+        await settleServedVersion(videoRepository, videoSummaryId, status, req.log);
       }
     } else if (event.type === 'expansion.status') {
       // Expansion status - broadcast to all users who have this video

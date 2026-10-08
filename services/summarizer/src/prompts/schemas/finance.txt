@@ -2,7 +2,7 @@
 FINANCE MODIFIER — FinanceData schema
 
 Additional extraction for content with financial details.
-This is a MODIFIER — it adds financial data alongside the primary domain.
+This is a MODIFIER — return it under its own "finance" key, next to the domain keys.
 
 {
   "costs": [

@@ -62,6 +62,7 @@ When you fix a bug, add it here to prevent re-investigation.
 | Hot reload not working | Volume not mounted | Check docker-compose volumes | 2026-02 |
 | Port already in use | Dangling container | `docker-compose down` first | 2026-02 |
 | Build fails (npm install) | Package-lock stale | Delete node_modules, reinstall | 2026-02 |
+| Dev eval collapses across services at once: LLM calls time out (`asyncio.timeout` firing seconds late), `getaddrinfo EAI_AGAIN vie-mongodb`/`vie-summarizer`, pymongo "Temporary failure in name resolution", `docker logs` silent for many minutes then a flood (Docker Desktop on WSL2) | The WSL2 VM runs out of memory: swap 100 % used, kernel `page allocation failure: order:7` in `hvs_probe`/`vmbus_alloc_ring` (Hyper-V vsock). Docker Desktop's daemon then stalls (embedded DNS 127.0.0.11 and log collection) for every container, and the whole VM freezes for seconds at a time. Host IDE/LSP servers (tsserver, pyright, pylance) can hold 3-5 GB of the default 8 GB VM. Not a pipeline-code regression: the idle `vie-summarizer-worker` shows the same heartbeat log gap | Before a multi-video eval, check `free -m` and `dmesg \| grep "page allocation failure"`. Free memory (close idle LSP/IDE sessions, `wsl --shutdown`, restart Docker Desktop) or raise `memory=` in `%USERPROFILE%\.wslconfig`. Run dev evals at concurrency 2 or less | 2026-10 |
 
 ---
 

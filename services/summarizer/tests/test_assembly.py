@@ -84,9 +84,8 @@ class TestCrossTabLinks:
         assert links == []
 
     def test_component_link_travel_flow(self):
-        """Travel domain: overview → spot_explorer → budget. Label text
-        comes from the Plan's outboundLinks when provided; otherwise falls
-        back to the target tab's own label."""
+        """Travel domain: overview → spot_explorer → budget. Label text is
+        the target tab's own label."""
         all_tabs = [
             {"id": "overview", "component": "overview", "label": "Overview"},
             {"id": "itinerary", "component": "spot_explorer", "label": "7 Day Itinerary"},
@@ -98,11 +97,10 @@ class TestCrossTabLinks:
             component="overview",
             all_tabs=all_tabs,
             primary_tag="travel",
-            outbound_links={"itinerary": "See the itinerary"},
         )
         assert len(links) >= 1
         assert links[0]["targetTab"] == "itinerary"
-        assert links[0]["label"] == "See the itinerary"
+        assert links[0]["label"] == "7 Day Itinerary"
 
 
 # ─── Cross-Tab Link Updates ───
@@ -114,8 +112,8 @@ class TestMaterialsStepsCrossLinks:
         assert any(l["targetTab"] == "materials" for l in links)
 
     def test_materials_to_steps(self):
-        # Legacy ID rule fires structurally; label falls back to the target
-        # tab's own label when no all_tabs / outbound_links provided.
+        # Legacy ID rule fires structurally; without all_tabs the label is
+        # the target tab id.
         links = resolve_cross_tab_links("materials", {"materials", "steps"})
         assert any(l["targetTab"] == "steps" for l in links)
 

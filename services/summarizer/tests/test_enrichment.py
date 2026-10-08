@@ -1,640 +1,369 @@
-"""Tests for enrichment service."""
+"""Quiz-only enrichment (pipeline-1min 1d.1): demand gate, prompt, salvage and the stage call."""
 
+from __future__ import annotations
+
+import asyncio
 import json
-from unittest.mock import AsyncMock, MagicMock
+import re
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.services.pipeline.enrichment import ENRICHMENT_MAP, _has_meaningful_data, enrich
+from src.models.pipeline_types import EnrichmentData, PlanResult
+from src.services.pipeline import enrichment as enrichment_mod
+from src.services.pipeline import pipeline_timing
+from src.services.pipeline.assembly.attachments import SPARSE_THRESHOLD
+from src.services.pipeline.enrichment import (
+    EMPTY_VIDEO_MEMORY,
+    _has_meaningful_data,
+    build_quiz_prompt,
+    enrich_quiz,
+    needs_quiz,
+    parse_quiz,
+    quiz_allowed,
+    render_tab_goals,
+)
+from src.services.pipeline.pipeline_timing import start_run_timing
+from src.shared_config.domain_config import data_source, get_config, quiz_enrichment, quiz_policy
+from src.utils.language_utils import ENGLISH_OUTPUT_DIRECTIVE
+
+_PATCH_LLM = "src.services.pipeline.enrichment.call_llm_with_retry"
+_QUIZ_DOMAINS = quiz_enrichment()["quizDomains"]
+_QUIZ_CAP = (data_source("enrichment.quiz") or {"cap": 0})["cap"]
+_PLACEHOLDER_RE = re.compile(r"\{[a-z_]+\}")
+_VIDEO_MEMORY = "<video_memory>\ndomains: tech · goal: Ship a FastAPI service\n</video_memory>"
+_EXTRACTION = {"tech": {"snippets": [{"code": "pip install fastapi", "timestamp": 70}]}}
 
 
-@pytest.fixture
-def mock_llm():
-    """Mock LLM service.
-
-    Enrichment uses call_llm_with_retry(use_fast_model=True) which calls
-    call_llm_fast(). We mock both and keep them in sync via a shared holder.
-    """
-    service = MagicMock()
-    service.call_llm = AsyncMock()
-    service.call_llm_fast = AsyncMock()
-    service.model = "anthropic/claude-sonnet-4-6"
-    service.fast_model = "anthropic/claude-haiku-4-5-20251001"
-    return service
-
-
-def _set_llm_return(mock_llm, value):
-    """Set return value on both call_llm and call_llm_fast."""
-    mock_llm.call_llm.return_value = value
-    mock_llm.call_llm_fast.return_value = value
+def _question(n: int = 0, **overrides: Any) -> dict[str, Any]:
+    item: dict[str, Any] = {
+        "question": f"Which command installs the framework (#{n})?",
+        "options": [
+            "pip install fastapi",
+            "pip install flask",
+            "npm i fastapi",
+            "brew install fastapi",
+        ],
+        "correctIndex": 0,
+        "explanation": "At 1:10 the speaker runs pip install fastapi before writing any route.",
+    }
+    item.update(overrides)
+    return item
 
 
-class TestEnrich:
-    """Test enrich function."""
-
-    @pytest.mark.asyncio
-    async def test_food_tag_gets_enrichment(self, mock_llm):
-        _set_llm_return(
-            mock_llm,
-            json.dumps(
-                {
-                    "quiz": [
-                        {
-                            "question": "What temperature for pasta water?",
-                            "options": ["Boiling", "Warm", "Cold", "Room temp"],
-                            "correctIndex": 0,
-                            "explanation": "Pasta needs a rolling boil",
-                        }
-                    ],
-                    "flashcards": [{"front": "Al dente", "back": "Firm to the bite"}],
-                }
-            ),
-        )
-        result = await enrich(
-            mock_llm, "food", {"ingredients": [{"name": "pasta"}]}, "Recipe Video"
-        )
-        assert result is not None
-        # food forbids quiz_arena — quiz is stripped by the code guardrail
-        assert not result.quiz
-        assert result.flashcards and len(result.flashcards) == 1
-        mock_llm.call_llm_fast.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_tech_primary_with_learning_content_tag_runs_enrichment(self, mock_llm):
-        """primary_tag='tech' has no mapping, but 'learning' in content_tags should trigger enrichment."""
-        _set_llm_return(
-            mock_llm,
-            json.dumps(
-                {
-                    "quiz": [
-                        {
-                            "question": "What is MCP?",
-                            "options": ["Protocol", "Language", "Framework", "Database"],
-                            "correctIndex": 0,
-                            "explanation": "Model Context Protocol",
-                        }
-                    ],
-                    "flashcards": [
-                        {"front": "MCP", "back": "Model Context Protocol"},
-                    ],
-                }
-            ),
-        )
-
-        result = await enrich(
-            mock_llm,
-            "tech",
-            {"concepts": [{"name": "MCP", "definition": "A protocol"}]},
-            "MCP vs Skills",
-            content_tags=["tech", "learning"],
-        )
-
-        assert result is not None
-        assert len(result.quiz) == 1
-        mock_llm.call_llm_fast.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_tech_primary_no_content_tags_gets_enrichment(self, mock_llm):
-        """primary_tag='tech' with no content_tags — now gets enrichment via direct mapping."""
-        _set_llm_return(
-            mock_llm,
-            json.dumps(
-                {
-                    "quiz": [
-                        {
-                            "question": "What is Docker?",
-                            "options": ["Container runtime", "Language", "Database", "OS"],
-                            "correctIndex": 0,
-                            "explanation": "Docker is a container runtime",
-                        }
-                    ],
-                    "flashcards": [{"front": "Docker", "back": "Container platform"}],
-                }
-            ),
-        )
-        result = await enrich(mock_llm, "tech", {"concepts": [{"name": "Docker"}]}, "Tech Video")
-        assert result is not None
-        assert len(result.quiz) == 1
-        mock_llm.call_llm_fast.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_tech_primary_content_tags_no_learning_gets_enrichment(self, mock_llm):
-        """primary_tag='tech', content_tags without 'learning' — now gets enrichment via direct mapping."""
-        _set_llm_return(
-            mock_llm,
-            json.dumps(
-                {
-                    "quiz": [
-                        {
-                            "question": "What is a REST API?",
-                            "options": ["Interface", "Database", "Language", "OS"],
-                            "correctIndex": 0,
-                            "explanation": "REST is an API architecture",
-                        }
-                    ],
-                    "flashcards": [{"front": "REST", "back": "Representational State Transfer"}],
-                }
-            ),
-        )
-        result = await enrich(
-            mock_llm,
-            "tech",
-            {"concepts": [{"name": "REST"}]},
-            "Tech Video",
-            content_tags=["tech", "review"],
-        )
-        assert result is not None
-        assert len(result.quiz) == 1
-        mock_llm.call_llm_fast.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_fitness_tag_gets_enrichment(self, mock_llm):
-        _set_llm_return(
-            mock_llm,
-            json.dumps(
-                {
-                    "quiz": [
-                        {
-                            "question": "What muscle does a squat target?",
-                            "options": ["Quads", "Biceps", "Abs", "Chest"],
-                            "correctIndex": 0,
-                            "explanation": "Squats primarily target quadriceps",
-                        }
-                    ],
-                    "flashcards": [{"front": "Squat", "back": "Compound lower body exercise"}],
-                }
-            ),
-        )
-        result = await enrich(
-            mock_llm, "fitness", {"exercises": [{"name": "Squat"}]}, "Workout Video"
-        )
-        assert result is not None
-        # fitness forbids quiz_arena — quiz is stripped by the code guardrail
-        assert not result.quiz
-        assert result.flashcards and len(result.flashcards) == 1
-        mock_llm.call_llm_fast.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_enriches_learning_with_quiz(self, mock_llm):
-        _set_llm_return(
-            mock_llm,
-            json.dumps(
-                {
-                    "quiz": [
-                        {
-                            "question": "What is Python?",
-                            "options": ["Language", "Snake", "Framework", "OS"],
-                            "correctIndex": 0,
-                            "explanation": "Python is a programming language",
-                        }
-                    ],
-                    "flashcards": [
-                        {"front": "What is a variable?", "back": "A named storage location"},
-                    ],
-                }
-            ),
-        )
-
-        result = await enrich(
-            mock_llm,
-            "learning",
-            {"concepts": [{"name": "Python", "definition": "A language"}]},
-            "Learn Python",
-        )
-
-        assert result is not None
-        assert len(result.quiz) == 1
-        assert len(result.flashcards) == 1
-
-    @pytest.mark.asyncio
-    async def test_enriches_learning_with_scenarios(self, mock_llm):
-        _set_llm_return(
-            mock_llm,
-            json.dumps(
-                {
-                    "quiz": [
-                        {
-                            "question": "What is Python?",
-                            "options": ["Language", "Snake", "Framework", "OS"],
-                            "correctIndex": 0,
-                            "explanation": "Python is a programming language",
-                        }
-                    ],
-                    "flashcards": [
-                        {"front": "What is a variable?", "back": "A named storage location"},
-                    ],
-                    "scenarios": [
-                        {
-                            "question": "You need to store user data. Which approach?",
-                            "emoji": "🤔",
-                            "options": [
-                                {
-                                    "text": "Use a dictionary",
-                                    "correct": True,
-                                    "explanation": "Dict is key-value",
-                                },
-                                {
-                                    "text": "Use a list",
-                                    "correct": False,
-                                    "explanation": "List is ordered",
-                                },
-                            ],
-                        }
-                    ],
-                }
-            ),
-        )
-
-        result = await enrich(
-            mock_llm,
-            "learning",
-            {"concepts": [{"name": "Python", "definition": "A language"}]},
-            "Learn Python",
-        )
-
-        assert result is not None
-        assert len(result.scenarios) == 1
-        assert result.scenarios[0].question == "You need to store user data. Which approach?"
-        assert len(result.scenarios[0].options) == 2
-
-    @pytest.mark.asyncio
-    async def test_review_gets_enrichment(self, mock_llm):
-        """review tag now gets enrichment."""
-        _set_llm_return(
-            mock_llm,
-            json.dumps(
-                {
-                    "quiz": [
-                        {
-                            "question": "What was the main pro?",
-                            "options": ["Battery life", "Weight", "Price", "Screen"],
-                            "correctIndex": 0,
-                            "explanation": "Battery life was highlighted as the top feature",
-                        }
-                    ],
-                    "flashcards": [
-                        {"front": "Main verdict", "back": "Recommended for battery life"}
-                    ],
-                }
-            ),
-        )
-        result = await enrich(
-            mock_llm,
-            "review",
-            {"verdict": {"summary": "Great battery"}},
-            "Product Review",
-        )
-
-        assert result is not None
-        # review forbids quiz_arena — quiz is stripped by the code guardrail
-        assert not result.quiz
-        assert result.flashcards and len(result.flashcards) == 1
-        mock_llm.call_llm_fast.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_returns_none_on_llm_error(self, mock_llm):
-        mock_llm.call_llm.side_effect = TimeoutError("timeout")
-        mock_llm.call_llm_fast.side_effect = TimeoutError("timeout")
-
-        result = await enrich(
-            mock_llm,
-            "learning",
-            {"data": "test"},
-            "Test",
-        )
-
-        assert result is None
-
-    @pytest.mark.asyncio
-    async def test_returns_none_on_empty_response(self, mock_llm):
-        _set_llm_return(mock_llm, "I can't generate that")
-
-        result = await enrich(
-            mock_llm,
-            "learning",
-            {"data": "test"},
-            "Test",
-        )
-
-        assert result is None
+def _tab(component: str, data_source_path: str = "", **extra: Any) -> dict[str, Any]:
+    return {"id": component, "label": component.title(), "component": component,
+            "dataSource": data_source_path, "goal": f"{component} goal", **extra}  # fmt: skip
 
 
-class TestEnrichmentMap:
-    """Test enrichment configuration."""
+def _sparse(component: str, data_source_path: str, expect: int = 3) -> dict[str, Any]:
+    """A strip host the plan expects to hold ``expect`` items."""
+    return _tab(component, data_source_path, brief={"what": "", "where": [], "expect": expect})
 
-    def test_all_primary_domains_have_enrichment(self):
-        expected = {"learning", "tech", "fitness", "food", "music", "travel", "review", "project"}
-        for domain in expected:
-            assert domain in ENRICHMENT_MAP, f"{domain} missing from ENRICHMENT_MAP"
 
-    def test_supported_tags_count(self):
-        # 10 enriched domains + podcast + gaming + "default" entry
-        # (news + sport have no enrichment)
-        assert len(ENRICHMENT_MAP) == 13
-
-    def test_each_domain_has_own_prompt(self):
-        """Each domain maps to its own prompt file in enrich/ subfolder."""
-        expected_prompts = {
-            "learning": "enrich/enrich_study.txt",
-            "tech": "enrich/enrich_tech.txt",
-            "fitness": "enrich/enrich_fitness.txt",
-            "food": "enrich/enrich_food.txt",
-            "music": "enrich/enrich_music.txt",
-            "travel": "enrich/enrich_travel.txt",
-            "review": "enrich/enrich_review.txt",
-            "project": "enrich/enrich_project.txt",
+def _plan(
+    primary: str = "tech", tabs: list[dict] | None = None, evidence: dict | None = None
+) -> PlanResult:
+    return PlanResult.model_validate(
+        {
+            "primaryTag": primary,
+            "contentTags": [primary],
+            "tabs": tabs or [],
+            "evidence": evidence or {},
         }
-        for domain, expected_path in expected_prompts.items():
-            assert ENRICHMENT_MAP[domain] == expected_path, (
-                f"{domain} uses {ENRICHMENT_MAP[domain]}, expected {expected_path}"
-            )
+    )
+
+
+def _llm_reply(*questions: dict[str, Any], **extra: Any) -> str:
+    return json.dumps({"quiz": list(questions), **extra})
+
+
+async def _enrich(primary: str = "tech", tabs: list[dict] | None = None) -> EnrichmentData | None:
+    return await enrich_quiz(
+        MagicMock(),
+        primary_tag=primary,
+        extraction_data=_EXTRACTION,
+        video_memory=_VIDEO_MEMORY,
+        tabs=tabs or [_tab("quiz_arena", "enrichment.quiz")],
+    )
+
+
+class TestNeedsQuiz:
+    def test_should_demand_a_quiz_when_the_plan_has_a_quiz_arena_tab(self) -> None:
+        assert needs_quiz(_plan(tabs=[_tab("quiz_arena", "enrichment.quiz")]))
+
+    def test_should_demand_a_quiz_when_a_tab_reads_enrichment_quiz(self) -> None:
+        assert needs_quiz(_plan(tabs=[_tab("display_section", "enrichment.quiz")]))
+
+    def test_should_demand_a_quiz_tab_even_when_the_plan_says_not_learnable(self) -> None:
+        plan = _plan(tabs=[_tab("quiz_arena", "enrichment.quiz")], evidence={"is_learnable": False})
+        assert needs_quiz(plan)
+
+    def test_should_demand_a_quiz_when_a_learnable_plan_has_a_sparse_strip_host(self) -> None:
+        plan = _plan(tabs=[_sparse("info_grid", "tech.topics")], evidence={"is_learnable": True})
+        assert needs_quiz(plan)
+
+    def test_should_demand_a_quiz_when_learnability_is_unanswered(self) -> None:
+        assert needs_quiz(_plan(tabs=[_sparse("info_grid", "tech.topics")]))
+
+    def test_should_demand_a_quiz_when_the_host_expects_exactly_the_sparse_limit(self) -> None:
+        tabs = [_sparse("info_grid", "tech.topics", expect=SPARSE_THRESHOLD)]
+        assert needs_quiz(_plan(tabs=tabs))
+
+    def test_should_not_demand_a_quiz_when_every_strip_host_is_dense(self) -> None:
+        tabs = [_sparse("info_grid", "tech.topics", expect=SPARSE_THRESHOLD + 1)]
+        assert not needs_quiz(_plan(tabs=tabs))
+
+    def test_should_not_demand_a_quiz_when_the_host_count_is_unknown(self) -> None:
+        assert not needs_quiz(_plan(tabs=[_tab("info_grid", "tech.topics")]))
+
+    def test_should_not_demand_a_quiz_when_the_plan_says_not_learnable(self) -> None:
+        plan = _plan(tabs=[_sparse("info_grid", "tech.topics")], evidence={"is_learnable": False})
+        assert not needs_quiz(plan)
+
+    def test_should_not_demand_a_quiz_when_no_tab_can_host_a_strip(self) -> None:
+        plan = _plan(tabs=[_tab("overview"), _tab("video_filmstrip", "frames"), _tab("budget")])
+        assert not needs_quiz(plan)
+
+    @pytest.mark.parametrize("host", quiz_policy()["attachmentHostsExclude"])
+    def test_should_not_demand_a_quiz_when_the_only_host_is_excluded(self, host: str) -> None:
+        assert not needs_quiz(_plan(tabs=[_sparse(host, "tech.setup.commands")]))
+
+    def test_should_not_demand_a_quiz_when_the_domain_forbids_quiz_arena(self) -> None:
+        tabs = [_tab("quiz_arena", "enrichment.quiz"), _tab("info_grid", "food.tips")]
+        assert not needs_quiz(_plan(primary="food", tabs=tabs))
+
+    def test_should_not_demand_a_quiz_without_a_plan(self) -> None:
+        assert not needs_quiz(None)
+
+    @pytest.mark.parametrize("domain", sorted(get_config()["domains"]))
+    def test_should_allow_a_quiz_exactly_in_the_quiz_domains(self, domain: str) -> None:
+        assert quiz_allowed(domain) == (domain in _QUIZ_DOMAINS)
+
+
+class TestRenderTabGoals:
+    def test_should_show_label_component_goal_and_the_brief(self) -> None:
+        tab = _tab("quiz_arena", "enrichment.quiz", label="✅ Test Yourself",
+                   brief={"what": "checks on routing and DI", "where": [], "expect": 5})  # fmt: skip
+
+        line = render_tab_goals([tab])
+
+        assert (
+            line
+            == '- "✅ Test Yourself" (quiz_arena): quiz_arena goal — what: checks on routing and DI; expect ~5'
+        )
+
+    def test_should_strip_template_and_tag_characters_from_plan_text(self) -> None:
+        line = render_tab_goals([_tab("info_grid", goal="use {braces} and <tags>")])
+
+        assert "{" not in line and "<" not in line
+
+    def test_should_say_not_specified_when_there_are_no_tabs(self) -> None:
+        assert render_tab_goals([]) == "Not specified"
+
+
+class TestBuildQuizPrompt:
+    @pytest.mark.parametrize("domain", _QUIZ_DOMAINS)
+    def test_should_put_the_domain_flavor_line_in_the_prompt(self, domain: str) -> None:
+        prompt = build_quiz_prompt(domain, _EXTRACTION, _VIDEO_MEMORY, [])
+
+        assert prompt is not None and quiz_enrichment()["flavor"][domain] in prompt
+
+    def test_should_place_the_video_memory_block_verbatim(self) -> None:
+        prompt = build_quiz_prompt("tech", _EXTRACTION, _VIDEO_MEMORY, [])
+
+        assert prompt is not None and _VIDEO_MEMORY in prompt
+
+    def test_should_say_not_available_when_the_run_has_no_video_memory(self) -> None:
+        prompt = build_quiz_prompt("tech", _EXTRACTION, "", [])
+
+        assert prompt is not None and EMPTY_VIDEO_MEMORY in prompt
+
+    def test_should_send_the_full_extraction_not_a_prefix(self) -> None:
+        long_extraction = {
+            "learning": {"keyPoints": [{"text": f"point {i} " + "x" * 200} for i in range(100)]}
+        }
+
+        prompt = build_quiz_prompt("learning", long_extraction, _VIDEO_MEMORY, [])
+
+        assert prompt is not None and "point 99 " in prompt
+
+    def test_should_leave_no_placeholder_unfilled(self) -> None:
+        prompt = build_quiz_prompt("tech", _EXTRACTION, _VIDEO_MEMORY, [_tab("quiz_arena")])
+
+        assert prompt is not None and not _PLACEHOLDER_RE.findall(prompt)
+
+    def test_should_start_with_the_english_output_directive(self) -> None:
+        prompt = build_quiz_prompt("tech", _EXTRACTION, _VIDEO_MEMORY, [])
+
+        assert prompt is not None and prompt.startswith(ENGLISH_OUTPUT_DIRECTIVE)
+
+    def test_should_return_none_when_the_domain_has_no_flavor_line(self) -> None:
+        assert build_quiz_prompt("food", _EXTRACTION, _VIDEO_MEMORY, []) is None
+
+
+class TestParseQuiz:
+    @pytest.mark.parametrize(
+        "broken",
+        [
+            _question(question="   "),
+            _question(options=["only one"]),
+            _question(options=["a", " "]),
+            _question(correctIndex=4),
+            _question(explanation=""),
+            {"front": "Al dente", "back": "Firm to the bite"},
+            "not an object",
+        ],
+    )
+    def test_should_drop_a_broken_question_and_keep_the_valid_ones(self, broken: object) -> None:
+        questions = parse_quiz({"quiz": [_question(1), broken, _question(2)]}, cap=8)
+
+        assert [q.question for q in questions] == [
+            _question(1)["question"],
+            _question(2)["question"],
+        ]
+
+    def test_should_drop_a_repeated_question(self) -> None:
+        repeat = _question(1, question=_question(1)["question"].upper())
+
+        assert len(parse_quiz({"quiz": [_question(1), repeat]}, cap=8)) == 1
+
+    def test_should_keep_at_most_cap_questions(self) -> None:
+        assert len(parse_quiz({"quiz": [_question(i) for i in range(12)]}, cap=8)) == 8
+
+    def test_should_accept_a_bare_list(self) -> None:
+        assert len(parse_quiz([_question(1), _question(2)], cap=8)) == 2
+
+    def test_should_ignore_keys_other_than_quiz(self) -> None:
+        data = {"quiz": [_question(1)], "flashcards": [_question(2)], "scenarios": [_question(3)]}
+
+        assert len(parse_quiz(data, cap=8)) == 1
+
+    def test_should_return_nothing_when_quiz_is_not_a_list(self) -> None:
+        assert parse_quiz({"quiz": "none"}, cap=8) == []
+
+
+class TestEnrichQuiz:
+    async def test_should_return_only_the_quiz_when_the_model_adds_other_keys(self) -> None:
+        reply = _llm_reply(_question(1), _question(2), _question(3), flashcards=[{"front": "f"}])
+        with patch(_PATCH_LLM, new=AsyncMock(return_value=reply)):
+            result = await _enrich()
+
+        assert result is not None and list(result.model_dump(by_alias=True)) == ["quiz"]
+        assert len(result.quiz) == 3
+
+    async def test_should_call_the_enrichment_stage_with_the_quiz_budget(self) -> None:
+        llm = AsyncMock(return_value=_llm_reply(_question(1), _question(2)))
+        with patch(_PATCH_LLM, new=llm):
+            await _enrich()
+
+        assert llm.await_args is not None
+        kwargs = llm.await_args.kwargs
+        assert (kwargs["stage_name"], kwargs["max_tokens"], kwargs["timeout"], kwargs["max_retries"]) == (
+            "enrichment", 2048, 14.0, 1)  # fmt: skip
+        assert kwargs["json_mode"] is True
+
+    async def test_should_keep_at_most_the_registry_cap(self) -> None:
+        reply = _llm_reply(*(_question(i) for i in range(_QUIZ_CAP + 3)))
+        with patch(_PATCH_LLM, new=AsyncMock(return_value=reply)):
+            result = await _enrich()
+
+        assert result is not None and len(result.quiz) == _QUIZ_CAP
+
+    @pytest.mark.parametrize("reply", [None, "", "no json here", _llm_reply(_question(1))])
+    async def test_should_return_none_when_fewer_than_two_questions_survive(
+        self, reply: str | None
+    ) -> None:
+        with patch(_PATCH_LLM, new=AsyncMock(return_value=reply)):
+            assert await _enrich() is None
+
+    async def test_should_not_call_the_llm_for_a_domain_without_a_flavor_line(self) -> None:
+        llm = AsyncMock()
+        with patch(_PATCH_LLM, new=llm):
+            result = await _enrich(primary="food")
+
+        assert result is None
+        llm.assert_not_awaited()
+
+    async def test_should_give_up_when_the_whole_stage_exceeds_its_time_cap(self) -> None:
+        async def slow_llm(*_args: object, **_kwargs: object) -> str:
+            await asyncio.sleep(1)
+            return _llm_reply(_question(1), _question(2))
+
+        with (
+            patch(_PATCH_LLM, new=slow_llm),
+            patch.object(enrichment_mod, "QUIZ_TOTAL_TIMEOUT_S", 0.01),
+        ):
+            assert await _enrich() is None
+
+    async def test_should_record_a_failure_when_the_stage_deadline_cuts_the_call(self) -> None:
+        async def slow_llm(*_args: object, **_kwargs: object) -> str:
+            await asyncio.sleep(1)
+            return _llm_reply(_question(1), _question(2))
+
+        token = pipeline_timing._recorder_var.set(None)
+        try:
+            recorder = start_run_timing()
+            with (
+                patch(_PATCH_LLM, new=slow_llm),
+                patch.object(enrichment_mod, "QUIZ_TOTAL_TIMEOUT_S", 0.01),
+            ):
+                await _enrich()
+        finally:
+            pipeline_timing._recorder_var.reset(token)
+
+        assert [(f["span"], f["error"]) for f in recorder.llm_failures] == [
+            ("enrichment", "TimeoutError")
+        ]
+
+    def test_should_leave_a_full_retry_inside_the_stage_cap(self) -> None:
+        backoff_s = 1.0
+        attempts = enrichment_mod.QUIZ_MAX_RETRIES + 1
+
+        assert attempts * enrichment_mod.QUIZ_ATTEMPT_TIMEOUT_S + backoff_s <= (
+            enrichment_mod.QUIZ_TOTAL_TIMEOUT_S
+        )
+
+    async def test_should_not_raise_when_the_prompt_file_is_missing(self) -> None:
+        with patch.object(
+            enrichment_mod, "load_prompt_text", side_effect=FileNotFoundError("gone")
+        ):
+            assert await _enrich() is None
 
 
 class TestHasMeaningfulData:
-    """Test _has_meaningful_data helper."""
+    """The phase skips the quiz when extraction carries nothing to ask about."""
 
-    def test_returns_true_for_nonempty_list(self):
-        assert _has_meaningful_data({"domain": {"items": [{"name": "test"}]}}) is True
+    def test_returns_true_for_nonempty_list(self) -> None:
+        assert _has_meaningful_data({"items": [1]})
 
-    def test_returns_true_for_long_string(self):
-        assert _has_meaningful_data({"domain": {"summary": "A long enough string"}}) is True
+    def test_returns_true_for_long_string(self) -> None:
+        assert _has_meaningful_data({"text": "a long enough string"})
 
-    def test_returns_false_for_empty_dict(self):
-        assert _has_meaningful_data({}) is False
+    def test_returns_false_for_empty_dict(self) -> None:
+        assert not _has_meaningful_data({})
 
-    def test_returns_false_for_empty_nested(self):
-        assert _has_meaningful_data({"domain": {"items": [], "summary": ""}}) is False
+    def test_returns_false_for_empty_nested(self) -> None:
+        assert not _has_meaningful_data({"tech": {"snippets": [], "topics": []}})
 
-    def test_returns_false_for_short_strings(self):
-        assert _has_meaningful_data({"domain": {"key": "short"}}) is False
+    def test_returns_false_for_short_strings(self) -> None:
+        assert not _has_meaningful_data({"a": "short"})
 
-    def test_returns_true_for_top_level_list(self):
-        assert _has_meaningful_data({"items": [{"name": "test"}]}) is True
-
-    def test_returns_true_for_top_level_long_string(self):
-        assert _has_meaningful_data({"summary": "A long enough string value"}) is True
-
-    def test_returns_false_for_none_values(self):
-        assert _has_meaningful_data({"domain": {"key": None}}) is False
+    def test_returns_false_for_none_values(self) -> None:
+        assert not _has_meaningful_data({"a": None})
 
 
-class TestEnrichSynthesisFallback:
-    """Test enrichment synthesis fallback when extraction is empty."""
+class TestRemovedReaders:
+    def test_should_have_no_legacy_enrichment_map_in_the_registry(self) -> None:
+        assert "enrichment" not in get_config()
 
-    @pytest.fixture
-    def mock_llm(self):
-        service = MagicMock()
-        service.call_llm = AsyncMock()
-        service.call_llm_fast = AsyncMock()
-        service.model = "anthropic/claude-sonnet-4-6"
-        service.fast_model = "anthropic/claude-haiku-4-5-20251001"
-        return service
+    def test_should_have_no_per_domain_enrich_prompts(self) -> None:
+        assert not (enrichment_mod.PROMPT_PATH.parent / "enrich").exists()
 
-    @pytest.mark.asyncio
-    async def test_uses_synthesis_when_extraction_empty(self, mock_llm):
-        """When extraction is empty, synthesis data should be used as context."""
-        _set_llm_return(
-            mock_llm,
-            json.dumps(
-                {
-                    "quiz": [
-                        {
-                            "question": "What was the main topic?",
-                            "options": ["AI", "Cooking", "Sports", "Music"],
-                            "correctIndex": 0,
-                            "explanation": "The video was about AI",
-                        }
-                    ],
-                    "flashcards": [{"front": "Key point", "back": "AI is transformative"}],
-                }
-            ),
-        )
+    def test_should_register_only_the_quiz_as_enrichment_data(self) -> None:
+        paths = [
+            p for p, spec in get_config()["dataSources"].items() if spec["domain"] == "enrichment"
+        ]
 
-        result = await enrich(
-            mock_llm,
-            "learning",
-            {},  # Empty extraction
-            "AI Overview Video",
-            synthesis_data={
-                "masterSummary": "This video covers AI fundamentals and applications.",
-                "keyTakeaways": ["AI is transformative", "Machine learning is a subset"],
-                "tldr": "An overview of AI",
-            },
-        )
-
-        assert result is not None
-        assert len(result.quiz) == 1
-        # Verify the LLM was called (synthesis used as fallback context)
-        mock_llm.call_llm_fast.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_uses_extraction_when_available(self, mock_llm):
-        """When extraction has data, it should be used instead of synthesis."""
-        _set_llm_return(
-            mock_llm,
-            json.dumps(
-                {
-                    "quiz": [
-                        {
-                            "question": "What is Python?",
-                            "options": ["Language", "Snake", "Framework", "OS"],
-                            "correctIndex": 0,
-                            "explanation": "Python is a programming language",
-                        }
-                    ],
-                    "flashcards": [{"front": "Python", "back": "A programming language"}],
-                }
-            ),
-        )
-
-        result = await enrich(
-            mock_llm,
-            "learning",
-            {"concepts": [{"name": "Python", "definition": "A language"}]},
-            "Learn Python",
-            synthesis_data={"masterSummary": "Should not be used"},
-        )
-
-        assert result is not None
-        # Verify LLM was called with extraction data (not synthesis)
-        call_args = mock_llm.call_llm_fast.call_args
-        prompt = call_args[0][0] if call_args[0] else call_args[1].get("prompt", "")
-        assert "Python" in prompt
-        assert "Should not be used" not in prompt
-
-
-class TestOutputCaps:
-    """Hard caps on enrichment output regardless of LLM compliance with the prompt."""
-
-    @pytest.mark.asyncio
-    async def test_quiz_is_truncated_to_max(self, mock_llm):
-        """An over-generous LLM that returns 20 quiz questions must be capped at 12."""
-        oversized = {
-            "quiz": [
-                {
-                    "question": f"Q{i}",
-                    "options": ["a", "b", "c", "d"],
-                    "correctIndex": 0,
-                    "explanation": "e",
-                }
-                for i in range(20)
-            ],
-            "flashcards": [{"front": f"F{i}", "back": "b"} for i in range(5)],
-        }
-        _set_llm_return(mock_llm, json.dumps(oversized))
-        result = await enrich(mock_llm, "tech", {"concepts": [{"name": "x"}]}, "T")
-        assert result is not None
-        assert result.quiz is not None
-        assert len(result.quiz) == 12
-
-    @pytest.mark.asyncio
-    async def test_flashcards_are_truncated_to_max(self, mock_llm):
-        """LLM returning 25 flashcards (e.g. legacy language prompt) must be capped at 15."""
-        oversized = {
-            "quiz": [
-                {
-                    "question": "q",
-                    "options": ["a", "b", "c", "d"],
-                    "correctIndex": 0,
-                    "explanation": "e",
-                }
-            ],
-            "flashcards": [{"front": f"F{i}", "back": "b"} for i in range(25)],
-        }
-        _set_llm_return(mock_llm, json.dumps(oversized))
-        result = await enrich(mock_llm, "language", {"vocabulary": [{"term": "x"}]}, "T")
-        assert result is not None
-        assert result.flashcards is not None
-        assert len(result.flashcards) == 15
-
-    @pytest.mark.asyncio
-    async def test_within_cap_passes_unchanged(self, mock_llm):
-        """Output already within caps must not be touched."""
-        compliant = {
-            "quiz": [
-                {
-                    "question": f"Q{i}",
-                    "options": ["a", "b", "c", "d"],
-                    "correctIndex": 0,
-                    "explanation": "e",
-                }
-                for i in range(5)
-            ],
-            "flashcards": [{"front": f"F{i}", "back": "b"} for i in range(8)],
-        }
-        _set_llm_return(mock_llm, json.dumps(compliant))
-        result = await enrich(mock_llm, "tech", {"concepts": [{"name": "x"}]}, "T")
-        assert result is not None
-        assert result.quiz is not None
-        assert result.flashcards is not None
-        assert len(result.quiz) == 5
-        assert len(result.flashcards) == 8
-
-    @pytest.mark.asyncio
-    async def test_max_tokens_is_16384(self, mock_llm):
-        """Regression: previous 8192 limit caused finish_reason=length on long videos.
-
-        Bumped to 16384 so dense enrichment output isn't truncated mid-JSON.
-        """
-        _set_llm_return(
-            mock_llm,
-            json.dumps(
-                {
-                    "quiz": [
-                        {
-                            "question": "q",
-                            "options": ["a", "b", "c", "d"],
-                            "correctIndex": 0,
-                            "explanation": "e",
-                        }
-                    ],
-                    "flashcards": [{"front": "F", "back": "b"}],
-                }
-            ),
-        )
-        await enrich(mock_llm, "tech", {"concepts": [{"name": "x"}]}, "T")
-        call_kwargs = mock_llm.call_llm_fast.call_args.kwargs
-        assert call_kwargs.get("max_tokens") == 16384
-
-
-class TestQuizGuardrail:
-    """Domains where quiz_arena is forbidden must never carry quiz/scenarios."""
-
-    async def test_gaming_quiz_stripped_even_when_llm_returns_it(self):
-        from unittest.mock import AsyncMock, patch
-
-        from src.services.pipeline.enrichment import enrich
-
-        raw = (
-            '{"quiz": [{"question": "Q?", "options": ["a", "b", "c", "d"], "correctIndex": 0, "explanation": "e"}],'
-            ' "flashcards": [{"front": "F", "back": "B"}],'
-            ' "scenarios": []}'
-        )
-        with patch(
-            "src.services.pipeline.enrichment.call_llm_with_retry",
-            new=AsyncMock(return_value=raw),
-        ):
-            result = await enrich(
-                AsyncMock(),
-                "gaming",
-                {"gaming": {"highlights": [{"title": "t"}]}},
-                "Box opening",
-                content_format="unboxing",
-            )
-
-        assert result is not None
-        assert not result.quiz
-        assert not result.scenarios
-        assert result.flashcards and result.flashcards[0].front == "F"
-
-    async def test_learning_quiz_preserved(self):
-        from unittest.mock import AsyncMock, patch
-
-        from src.services.pipeline.enrichment import enrich
-
-        raw = (
-            '{"quiz": [{"question": "Q?", "options": ["a", "b", "c", "d"], "correctIndex": 0, "explanation": "e"}],'
-            ' "flashcards": []}'
-        )
-        with patch(
-            "src.services.pipeline.enrichment.call_llm_with_retry",
-            new=AsyncMock(return_value=raw),
-        ):
-            result = await enrich(
-                AsyncMock(),
-                "learning",
-                {"learning": {"keyPoints": [{"title": "t"}]}},
-                "Lecture",
-            )
-
-        assert result is not None
-        assert result.quiz and len(result.quiz) == 1
-
-
-class TestQuizStripShape:
-    """Stripped quiz/scenarios must stay list-shaped — the phase logger calls
-    len() on model_dump output (regression: None crashed the whole pipeline)."""
-
-    async def test_stripped_result_model_dump_is_len_safe(self):
-        from unittest.mock import AsyncMock, patch
-
-        from src.services.pipeline.enrichment import enrich
-
-        raw = (
-            '{"quiz": [{"question": "Q?", "options": ["a", "b", "c", "d"], '
-            '"correctIndex": 0, "explanation": "e"}], "flashcards": []}'
-        )
-        with patch(
-            "src.services.pipeline.enrichment.call_llm_with_retry",
-            new=AsyncMock(return_value=raw),
-        ):
-            result = await enrich(
-                AsyncMock(), "gaming", {"gaming": {"highlights": [{"t": 1}]}}, "Box"
-            )
-
-        assert result is not None
-        dumped = result.model_dump(by_alias=True)
-        # The exact expressions the phase logger runs:
-        assert len(dumped.get("quiz") or []) == 0
-        assert len(dumped.get("scenarios") or []) == 0
-        assert dumped.get("quiz") == []
+        assert paths == ["enrichment.quiz"]

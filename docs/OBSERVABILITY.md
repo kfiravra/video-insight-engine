@@ -30,12 +30,16 @@ One pipeline run = one trace named `pipeline:{videoSummaryId}`, tagged with `you
 Trace: pipeline:{videoSummaryId}
 ├── generation: transcription:openai  model=whisper-1         audioSeconds cost  (audio-fallback only)
 ├── generation: transcription:google  model=gemini-…          tokens   cost      (audio-fallback only)
-├── generation: classifier           model=gpt-4o-mini       tokens   cost  latency
+├── generation: description_analysis  model=fast tier
+├── generation: tier_probe            model=haiku-4.5         (LLM_CLASSIFIER_MODEL)
 ├── generation: plan                  model=sonnet            tokens   cost  latency
-├── generation: extraction            model=sonnet            tokens   cost  latency
-│   └── (one generation per batch when chunked extraction kicks in)
-├── generation: synthesis             model=gpt-4o-mini
-├── generation: enrichment            model=haiku
+├── generation: memory                model=LLM_EXTRACTION_MODEL (∥ plan)
+├── generation: frame_vision          model=sonnet            (1-5 batches; none on LOW tier / manifest hit)
+├── generation: chapter_detect        model=fast tier         (long videos without listed chapters or a memory outline)
+├── generation: extraction            model=LLM_EXTRACTION_MODEL tokens cost latency
+│   └── (chunked: one `extraction_batchN` generation per batch; `_seq` for the rate-limited second pass)
+├── generation: synthesis             model=fast tier
+├── generation: enrichment            model=fast tier         (the quiz; only for a plan with a quiz host)
 ├── generation: translation_*         (if non-English video)
 ├── score: faithfulness               0.0–1.0  (sampled, see below)
 └── (assembly has no generations — pure code)
@@ -67,7 +71,8 @@ Local `.txt` files in `services/summarizer/src/prompts/**` are the source of tru
 | --- | --- |
 | `prompts/base_extraction.txt` | `summarizer:base_extraction` |
 | `prompts/schemas/food.txt` | `summarizer:schema:food` |
-| `prompts/enrich/enrich_study.txt` | `summarizer:enrich:enrich_study` |
+| `prompts/enrich_quiz.txt` | `summarizer:enrich_quiz` |
+| `prompts/vision.txt` | `summarizer:vision` |
 | `prompts/examples/learning.txt` | `summarizer:example:learning` |
 | `services/assistant/src/utils/prompt_templates.py::RAG_HEADER` | `assistant:rag_header` |
 
@@ -85,15 +90,25 @@ Updating prompts:
 # reads from):
 docker compose run --rm vie-langfuse-init
 
-# Or for a dry run from the host (no Langfuse calls):
-python3 scripts/register_prompts.py
+# Dry run from the host (the default mode; uploads nothing). With Langfuse keys
+# in the environment it READS the labelled versions to report
+# unchanged / would-upload / unknown; without keys every prompt is would-upload:
+python3 scripts/register_prompts.py --dry-run [--label staging]
+
+# Stage, then promote: upload under a non-production label (the runtime only
+# fetches `production`, so nothing served changes), check it, then re-run with
+# the default label to promote the same text:
+python3 scripts/register_prompts.py --commit --label staging
+python3 scripts/register_prompts.py --commit
 ```
 
-A new version is created only when the production-labelled server version differs from the local file. If a prompt exists in the project but lacks the `production` label, the script re-uploads to apply it — so partial earlier runs heal on the next sync.
+`--label NAME` (default `production`) is the label uploads receive and the one the idempotency check compares against: a new version is created only when the server version carrying that label differs from the local file. If a prompt exists but lacks the label, the script re-uploads to apply it — so partial earlier runs heal on the next sync. A lookup that fails for any reason but a 404 reports `unknown`; the exit code is **1** when any prompt is `unknown` or failed to upload (so `scripts/activate_langfuse.sh`, which runs under `set -e`, stops at step 5's dry run on a bad key or an unreachable host).
+
+**Registration is a deploy step.** The loader's registry guard (`pipeline/prompt_registry.py`) only catches placeholder drift: a wording-only edit to a shipped `.txt` (stage prompt, schema, example, toolkit) keeps the same slots, so the registry's `production` version — the old wording — is served until the file is registered. `vie-langfuse-init` runs `register_prompts.py --commit` on every `docker compose up` (both compose files); a deploy that skips it must run the script itself.
 
 ## Faithfulness judge
 
-After extraction completes, a fire-and-forget task samples 20% of extracted items (capped at 6 per video, deterministic by `youtubeId`) and asks a Haiku-tier LLM "is this claim supported by the transcript?". The aggregate `grounded / total` ratio is logged as a Langfuse score named `faithfulness`.
+After extraction completes, a fire-and-forget task samples 20% of extracted items (capped at 6 per video, deterministic by `youtubeId`) and asks a Haiku-tier LLM "is this claim supported by the transcript?" — the excerpt may end with the rendered `<visual_annotations>` block, so on-screen facts count as support (frame text no longer sits in the transcript). The aggregate `grounded / total` ratio is logged as a Langfuse score named `faithfulness`.
 
 The check is **informational only** — it never blocks the pipeline or fails a video. Use the Langfuse dashboards to track drift over time. A run below 0.7 is logged at warning level but otherwise ignored.
 

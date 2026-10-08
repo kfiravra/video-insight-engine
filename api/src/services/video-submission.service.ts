@@ -16,6 +16,8 @@ export interface SubmitVideoInput {
   tier: UserTier;
   folderId?: string;
   bypassCache?: boolean;
+  /** Cold-media benchmark run (admin/eval only — createVideo enforces it). */
+  cold?: boolean;
   providers?: ProviderConfig;
   /** Pre-validated `Idempotency-Key` header value (validation is an HTTP
    *  concern and stays at the route boundary). */
@@ -93,6 +95,7 @@ export class VideoSubmissionService {
       result = await this.videoService.createVideo(input.userId, input.url, {
         folderId: input.folderId,
         bypassCache: input.bypassCache,
+        cold: input.cold,
         providers: input.providers,
         tier: input.tier,
         requestId: input.requestId,
@@ -123,13 +126,14 @@ export class VideoSubmissionService {
   /**
    * Reserve-before-work idempotency gate. Atomic insert of a `pending`
    * placeholder on the unique-hash index — concurrent identical submits race
-   * here and exactly one proceeds. `bypassCache=true` is the explicit escape
-   * hatch and skips the gate entirely; malformed URLs also skip (createVideo
+   * here and exactly one proceeds. `bypassCache=true` (or `cold`, which
+   * implies it) is the explicit escape hatch and skips the gate entirely;
+   * malformed URLs also skip (createVideo
    * raises InvalidYouTubeUrlError downstream).
    */
   private async openIdempotencyGate(input: SubmitVideoInput): Promise<IdempotencyGateResult> {
     const youtubeId = extractYoutubeId(input.url);
-    if (!youtubeId || input.bypassCache) return { kind: 'proceed', hash: null };
+    if (!youtubeId || input.bypassCache || input.cold) return { kind: 'proceed', hash: null };
 
     const hash = this.idempotencyService.computeKey({
       userId: input.userId,

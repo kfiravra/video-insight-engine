@@ -19,6 +19,19 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _no_synthesis_call():
+    """Synthesis runs inside assembly since 1d.3 (∥ moment fill); its own tests cover it."""
+    from src.services.pipeline.phases import assembly as phase
+
+    async def _no_synthesis(_ctx):
+        return
+        yield  # pragma: no cover — makes this an async generator
+
+    with patch.object(phase, "run_phase_synthesis", _no_synthesis):
+        yield
+
+
 async def _drain(gen):
     """Exhaust an async generator (we only care about side effects)."""
     async for _ in gen:
@@ -49,6 +62,7 @@ def _build_ctx(source_language_code: str | None = None) -> SimpleNamespace:
         triage=triage,
         triage_dict={},
         plan_result=None,
+        content_format=None,
         extraction_data={},
         enrichment_data={},
         synthesis_dict=None,
@@ -69,6 +83,8 @@ def _build_ctx(source_language_code: str | None = None) -> SimpleNamespace:
         timer=timer,
         transcript_data=None,
         audio_path=None,
+        memory=None,
+        video_memory="",
     )
 
 

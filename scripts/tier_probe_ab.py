@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Offline tier-probe A/B (pipeline-1min task 0.8): gpt-4o-mini vs Haiku 4.5.
 
-Runs the draft ``tier_probe`` prompt (``scripts/tier_probe_ab_prompt.txt``,
-brief Appendix B.1) once per (live golden video, model) at temperature 0 and
-max_tokens 80, then scores agreement with the golden ``domain``/``format`` and
-the proposed ``has_visual_demo`` labels below, plus latency, cost and
-JSON-parse failures.
+Runs the pipeline's ``tier_probe`` prompt (``src/prompts/tier_probe.txt``,
+brief Appendix B.1, rendered by ``src/services/pipeline/tier_probe.py``) once
+per (live golden video, model) at temperature 0 and the pipeline's max_tokens,
+then scores agreement with the golden ``domain``/``format`` and the proposed
+``has_visual_demo`` labels below, plus latency, cost and JSON-parse failures.
+The gate-0 run (``g0-tier-probe-ab.json``) used the draft that became it.
 
 Inputs are gathered read-only by ``_tier_probe_inputs.py`` and cached under
 ``--cache-dir`` (never the repo). No pipeline run, no Langfuse, no Mongo
@@ -31,7 +32,12 @@ import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from _tier_probe_inputs import (
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_SUMMARIZER_DIR = _REPO_ROOT / "services" / "summarizer"
+if str(_SUMMARIZER_DIR) not in sys.path:
+    sys.path.insert(0, str(_SUMMARIZER_DIR))
+
+from _tier_probe_inputs import (  # noqa: E402
     GoldenVideo,
     gather_inputs,
     input_sources,
@@ -40,29 +46,21 @@ from _tier_probe_inputs import (
     render_prompt,
 )
 
-_REPO_ROOT = Path(__file__).resolve().parent.parent
-PROMPT_PATH = Path(__file__).resolve().parent / "tier_probe_ab_prompt.txt"
+from src.models.probe_types import DEFAULT_FORMAT, VALID_FORMATS  # noqa: E402
+from src.services.pipeline.tier_probe import PROBE_MAX_TOKENS, PROMPT_PATH  # noqa: E402
+from src.shared_config.domain_config import valid_content_tags  # noqa: E402
+
 ENV_PATH = _REPO_ROOT / ".env"
 
 MODELS: tuple[str, ...] = ("openai/gpt-4o-mini", "anthropic/claude-haiku-4-5-20251001")
-MAX_TOKENS = 80
+MAX_TOKENS = PROBE_MAX_TOKENS
 CALL_TIMEOUT_S = 15.0
 # Golden rows whose URL no longer matches the entry (reported, scored both ways).
 SUSPECT_GOLDEN: frozenset[str] = frozenset({"review-airpods-pro"})
 # Below this many calls a nearest-rank p95 is just the max, so it is not reported.
 P95_MIN_CALLS = 20
-DEFAULT_FORMAT = "commentary"  # classifier.py's fallback for an invalid format
-
-# Mirrors src/services/pipeline/classifier.py (a unit test guards the drift).
-VALID_DOMAINS: frozenset[str] = frozenset(
-    "learning tech food travel fitness music review project language science "
-    "podcast news gaming sport".split()
-)
-VALID_FORMATS: frozenset[str] = frozenset(
-    "tutorial commentary reaction opinion_rant motivational interview lecture vlog "
-    "documentary walkthrough podcast news news_commentary entertainment performance "
-    "comparison story unboxing".split()
-)
+# The probe's own enums: registry domains + the probe formats (one source).
+VALID_DOMAINS: frozenset[str] = valid_content_tags()
 
 # PROPOSED has_visual_demo ground truth (no golden label exists). Keyed by
 # golden id: (label, one-line reason). Reviewed in the gate report.
@@ -141,9 +139,10 @@ def _enum_value(value: object) -> str:
 
 
 def normalize_probe(data: dict[str, object]) -> tuple[dict[str, object], list[str]]:
-    """Normalise like ``classifier.py``: strip/lower enums, invalid format →
-    commentary, confidence clamped to [0, 1]. An invalid domain (the classifier
-    returns None for it) and a non-bool ``has_visual_demo`` become ``None``.
+    """Normalise like the pipeline's ``TierProbe``: strip/lower enums, invalid
+    format → commentary, confidence clamped to [0, 1]. An invalid domain (the
+    pipeline rejects the answer for it) and a non-bool ``has_visual_demo``
+    become ``None`` here, so every other field still scores.
     """
     issues: list[str] = []
     domain: str | None = _enum_value(data.get("domain"))

@@ -2,7 +2,11 @@
 
 import pytest
 
-from src.services.vector.chunking import assign_chunk_timestamps, chunk_transcript
+from src.services.vector.chunking import (
+    assign_chunk_timestamps,
+    chunk_transcript,
+    chunk_visual_entries,
+)
 
 
 class TestChunkTranscript:
@@ -174,3 +178,34 @@ class TestAssignChunkTimestamps:
         assign_chunk_timestamps(chunks, segments)
 
         assert chunks[0]["start_time"] == 5.0
+
+
+class TestChunkVisualEntries:
+    """Packing rendered visual-annotation entries into labelled chunks."""
+
+    def test_should_return_no_chunks_for_no_entries(self):
+        assert chunk_visual_entries([]) == []
+
+    def test_should_open_every_chunk_with_the_on_screen_label(self):
+        chunks = chunk_visual_entries([(12, "[0:12] Code"), (40, "[0:40] Diagram")])
+
+        assert chunks[0]["text"] == "On screen:\n[0:12] Code\n[0:40] Diagram"
+
+    def test_should_span_from_the_first_to_the_last_entry(self):
+        chunks = chunk_visual_entries([(12, "[0:12] Code"), (40, "[0:40] Diagram")])
+
+        assert (chunks[0]["start_time"], chunks[0]["end_time"]) == (12.0, 40.0)
+
+    def test_should_start_a_new_chunk_when_the_budget_is_reached(self):
+        entries = [(10 * i, f"[0:{10 * i:02d}] " + "x" * 40) for i in range(4)]
+
+        chunks = chunk_visual_entries(entries, max_chunk_chars=120)
+
+        assert [(c["start_time"], c["end_time"]) for c in chunks] == [(0.0, 10.0), (20.0, 30.0)]
+
+    def test_should_never_split_an_entry_longer_than_the_budget(self):
+        long_entry = "[0:05] " + "y" * 300
+
+        chunks = chunk_visual_entries([(5, long_entry)], max_chunk_chars=100)
+
+        assert chunks[0]["text"] == f"On screen:\n{long_entry}"

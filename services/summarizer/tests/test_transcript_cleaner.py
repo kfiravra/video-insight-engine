@@ -1,11 +1,9 @@
 """Tests for advanced transcript cleaning service."""
 
-import pytest
-
 from src.services.transcript.cleaner import (
-    remove_fillers,
-    collapse_repetitions,
     clean_transcript_advanced,
+    collapse_repetitions,
+    remove_fillers,
 )
 
 
@@ -13,7 +11,7 @@ class TestRemoveFillers:
     """Test filler word removal."""
 
     def test_removes_common_fillers(self):
-        text = "So um I think uh this is basically a good idea you know"
+        text = "So um I think uh this is basically a good idea so yeah"
         result = remove_fillers(text)
         assert "um" not in result.lower().split()
         assert "uh" not in result.lower().split()
@@ -50,10 +48,34 @@ class TestRemoveFillers:
         assert result == text
 
     def test_case_insensitive(self):
-        text = "UM UH basically BASICALLY you know YOU KNOW"
+        text = "UM UH basically BASICALLY So Yeah WELL BASICALLY"
         result = remove_fillers(text)
         # All fillers should be removed regardless of case
         assert result.strip() == ""
+
+    def test_should_drop_commas_stranded_between_clauses(self):
+        assert remove_fillers("So, um, uh, I think we start.") == "So, I think we start."
+
+    def test_should_drop_a_comma_stranded_before_sentence_end(self):
+        assert remove_fillers("And that's it, um. Next step") == "And that's it. Next step"
+
+    def test_should_drop_a_comma_stranded_at_the_start(self):
+        assert remove_fillers("Um, so we go") == "so we go"
+
+    def test_should_keep_an_abbreviation_comma_when_a_filler_is_removed_elsewhere(self):
+        text = "Use e.g., flour, um, and sugar."
+
+        assert remove_fillers(text) == "Use e.g., flour, and sugar."
+
+    def test_should_keep_the_comma_after_an_initialism_when_a_filler_is_removed(self):
+        assert remove_fillers("In the U.S., um, people bake") == "In the U.S., people bake"
+
+    def test_should_drop_the_comma_a_mid_sentence_filler_carried(self):
+        assert remove_fillers("and um, then we bake") == "and then we bake"
+
+    def test_should_leave_punctuation_alone_when_nothing_was_removed(self):
+        text = "Use e.g., flour , or  sugar."
+        assert remove_fillers(text) == text
 
 
 class TestCollapseRepetitions:
@@ -109,22 +131,24 @@ class TestCollapseRepetitions:
 
 
 class TestCleanTranscriptAdvanced:
-    """Test full advanced cleaning pipeline."""
+    """Test the advanced pass (sentence segmentation + repetition collapse)."""
 
-    def test_reduces_text_length(self):
-        # Simulate a real transcript with fillers and repetition
+    def test_should_collapse_repeated_sentences(self):
         text = (
-            "So um basically what we're going to do today is talk about um "
-            "machine learning. You know machine learning is basically a way to "
-            "teach computers. I mean computers can learn from data. "
-            "So yeah that's basically what machine learning is about. "
-            "You know what I mean. Okay so let's get started."
+            "Machine learning is a way to teach computers. "
+            "Machine learning is a way to teach computers. "
+            "Computers can learn patterns from data."
         )
         result = clean_transcript_advanced(text)
-        # Should be shorter after filler removal
-        assert len(result) < len(text)
-        # Should preserve meaningful content
-        assert "machine learning" in result
+        assert result.count("Machine learning is a way to teach computers.") == 1
+
+    def test_should_leave_filler_removal_to_basic_cleaning(self):
+        text = (
+            "So basically we talk about machine learning today. "
+            "Computers can learn patterns from data."
+        )
+        result = clean_transcript_advanced(text)
+        assert "basically" in result
 
     def test_short_text_passthrough(self):
         text = "Hi there."

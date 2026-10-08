@@ -6,8 +6,8 @@ completes, then streamed last. Two invariants make that safe for the client:
 1. Every tab_ready carries ``position`` (its index in the persisted order) so
    a late moment tab is slotted where the DB doc will have it, and the
    persisted tab dicts never gain that key.
-2. Heartbeats flow while the fill runs — this phase is not under
-   run_parallel_phases' keepalive, and the fill can run for minutes.
+2. Heartbeats flow while the fill runs (it runs ∥ synthesis under
+   run_parallel_phases since 1d.3), and the fill can run for minutes.
 """
 
 from __future__ import annotations
@@ -20,6 +20,19 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from tests.test_phase_assembly_cache import _build_ctx
+
+
+@pytest.fixture(autouse=True)
+def _no_synthesis_call():
+    """Synthesis runs inside assembly since 1d.3 (∥ moment fill); its own tests cover it."""
+    from src.services.pipeline.phases import assembly as phase
+
+    async def _no_synthesis(_ctx):
+        return
+        yield  # pragma: no cover — makes this an async generator
+
+    with patch.object(phase, "run_phase_synthesis", _no_synthesis):
+        yield
 
 
 def _events(chunks: list[str]) -> list[tuple[str, dict]]:
@@ -87,7 +100,7 @@ async def test_heartbeats_flow_while_moment_fill_runs() -> None:
 
     ctx = _build_ctx()
 
-    async def slow_fill(_tabs, _yt) -> int:
+    async def slow_fill(_tabs, _yt, _hires_video) -> int:
         await asyncio.sleep(0.12)
         return 0
 
@@ -122,3 +135,48 @@ async def test_no_moment_tabs_means_no_fill_and_no_heartbeats() -> None:
     names = [e for e, _ in _events(chunks)]
     assert "heartbeat" not in names
     mock_fill.assert_not_awaited()
+
+
+class _HiresVideo:
+    """Records when the run's 720p file is closed relative to moment fill."""
+
+    def __init__(self, order: list[str]) -> None:
+        self._order = order
+
+    async def close(self) -> None:
+        self._order.append("close")
+
+
+@pytest.mark.asyncio
+async def test_moment_fill_reads_the_runs_720p_file_and_closes_it_after() -> None:
+    from src.services.pipeline.phases import assembly as phase
+
+    order: list[str] = []
+    ctx = _build_ctx()
+    ctx.hires_video = _HiresVideo(order)
+
+    async def fill(_tabs, _yt, hires_video) -> int:
+        order.append("fill" if hires_video is ctx.hires_video else "fill-without-file")
+        return 0
+
+    with (
+        patch.object(phase, "assemble_response", return_value={"tabs": _tabs(), "meta": {}}),
+        patch.object(phase, "fill_moment_frames", fill),
+    ):
+        await _collect(phase.run_phase_assembly(ctx))  # type: ignore[arg-type]
+
+    assert order == ["fill", "close"]
+
+
+@pytest.mark.asyncio
+async def test_runs_720p_file_is_closed_without_moment_tabs() -> None:
+    from src.services.pipeline.phases import assembly as phase
+
+    order: list[str] = []
+    ctx = _build_ctx()
+    ctx.hires_video = _HiresVideo(order)
+    tabs = [t for t in _tabs() if t["component"] != "moment_track"]
+    with patch.object(phase, "assemble_response", return_value={"tabs": tabs, "meta": {}}):
+        await _collect(phase.run_phase_assembly(ctx))  # type: ignore[arg-type]
+
+    assert order == ["close"]

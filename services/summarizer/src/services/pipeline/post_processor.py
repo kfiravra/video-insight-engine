@@ -3,12 +3,9 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from ...utils.data_helpers import parse_timestamp_to_seconds
-
-if TYPE_CHECKING:
-    from ...models.pipeline_types import PlanResult
 
 logger = logging.getLogger(__name__)
 
@@ -137,127 +134,8 @@ def resolve_celebrations(tabs: list[dict]) -> list[dict]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Extraction Count Validation (advisory, non-blocking)
+# Extraction Coverage
 # ─────────────────────────────────────────────────────────────────────────────
-
-# Mapping: manifest itemCounts field → where to find extracted items in the data
-_COUNT_EXTRACTORS: dict[str, list[str]] = {
-    "spots": ["travel.itinerary.*.spots"],
-    "ingredients": ["food.ingredients"],
-    "exercises": ["fitness.exercises"],
-    "steps": ["food.steps", "project.steps"],
-    "songs": ["music.structure"],
-    "tips": ["food.tips", "fitness.tips", "travel.itinerary.*.tips"],
-    "products": ["review.comparisons"],
-}
-
-
-def _derive_field_to_domains(extractors: dict[str, list[str]]) -> dict[str, frozenset[str]]:
-    """Derive {field → {domain, …}} from the path map.
-
-    The first segment of each dot-path is the domain that owns the field.
-    Used to skip retry attempts for fields that no active contentTag schema defines.
-    """
-    return {
-        field: frozenset(path.split(".", 1)[0] for path in paths)
-        for field, paths in extractors.items()
-    }
-
-
-# Maps each manifest itemCount field to the set of domains whose schemas
-# actually define it. A `tech + learning` video should not retry for
-# "steps" or "tips" — those fields exist only in food/project/fitness/travel.
-FIELD_TO_DOMAINS: dict[str, frozenset[str]] = _derive_field_to_domains(_COUNT_EXTRACTORS)
-
-
-COMPLETENESS_THRESHOLD = 0.6
-
-
-def _count_items_at_path(data: dict, path: str) -> int:
-    """Count items at a dot-separated path. Supports wildcard for nested lists.
-
-    Examples:
-        "food.ingredients" → len(data["food"]["ingredients"])
-        "travel.itinerary.*.spots" → sum(len(day["spots"]) for day in data["travel"]["itinerary"])
-    """
-    parts = path.split(".")
-    current: list = [data]
-
-    for part in parts:
-        next_level: list = []
-        for node in current:
-            if part == "*":
-                if isinstance(node, list):
-                    next_level.extend(node)
-            elif isinstance(node, dict) and part in node:
-                next_level.append(node[part])
-        current = next_level
-
-    total = 0
-    for node in current:
-        if isinstance(node, list):
-            total += len(node)
-    return total
-
-
-def validate_extraction_counts(
-    manifest: PlanResult | None,
-    extraction_data: dict | None,
-    content_tags: list[str] | None = None,
-) -> dict[str, dict]:
-    """Compare plan item counts against extraction results.
-
-    Returns a dict of warnings for items where extraction < 60% of plan estimate.
-    Logs warnings but does NOT block the pipeline.
-
-    Args:
-        manifest: PlanResult from the plan stage (or None). Accepts any object with item_counts.
-        extraction_data: Validated extraction data dict (or None).
-        content_tags: Active content tags. When provided, fields owned by
-            domains outside the active set are skipped — the plan prompt fills
-            a flat, domain-agnostic itemCounts block, so a gaming/review video
-            can carry manifest counts for "spots"/"tips" that no active schema
-            could ever populate. Warning on those is a guaranteed false
-            positive (and feeds the retry-trigger score for nothing).
-
-    Returns:
-        Dict of {field: {"plan": N, "extracted": M, "ratio": float}} for warnings.
-    """
-    if manifest is None or extraction_data is None:
-        return {}
-
-    warnings: dict[str, dict] = {}
-    counts = manifest.item_counts
-    active = set(content_tags) if content_tags else None
-
-    for field, paths in _COUNT_EXTRACTORS.items():
-        manifest_count = getattr(counts, field, 0)
-        if manifest_count == 0:
-            continue
-
-        field_domains = FIELD_TO_DOMAINS.get(field)
-        if active is not None and field_domains and not (field_domains & active):
-            continue
-
-        extracted_count = sum(_count_items_at_path(extraction_data, p) for p in paths)
-        ratio = extracted_count / manifest_count if manifest_count > 0 else 1.0
-
-        if ratio < COMPLETENESS_THRESHOLD:
-            warnings[field] = {
-                "manifest": manifest_count,
-                "extracted": extracted_count,
-                "ratio": round(ratio, 2),
-            }
-            logger.warning(
-                "Extraction completeness warning: %s — manifest=%d, extracted=%d (%.0f%%)",
-                field,
-                manifest_count,
-                extracted_count,
-                ratio * 100,
-            )
-
-    return warnings
-
 
 # Ratio below which the extraction is flagged for under-coverage: the latest
 # timestamped item is far short of the video's end (e.g. a 4.5h video whose

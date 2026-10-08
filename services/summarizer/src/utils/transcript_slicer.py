@@ -10,6 +10,27 @@ enabling:
 from typing import Any
 
 
+def segments_in_range(
+    segments: list[dict[str, Any]],
+    start_seconds: int,
+    end_seconds: int,
+) -> list[dict[str, Any]]:
+    """
+    Segments whose start falls within [start_seconds, end_seconds).
+
+    Args:
+        segments: List of transcript segments with text, startMs, endMs
+        start_seconds: Range start time in seconds
+        end_seconds: Range end time in seconds (exclusive)
+
+    Returns:
+        The matching segments, in their original order
+    """
+    start_ms = start_seconds * 1000
+    end_ms = end_seconds * 1000
+    return [seg for seg in segments if start_ms <= seg.get("startMs", 0) < end_ms]
+
+
 def slice_transcript_for_chapter(
     segments: list[dict[str, Any]],
     start_seconds: int,
@@ -29,25 +50,11 @@ def slice_transcript_for_chapter(
     Returns:
         Concatenated transcript text for the time range, space-separated
     """
-    if not segments:
-        return ""
-
-    start_ms = start_seconds * 1000
-    end_ms = end_seconds * 1000
-
     texts: list[str] = []
-
-    for seg in segments:
-        seg_start_ms = seg.get("startMs", 0)
-
-        # Include segment if its start falls within the chapter range
-        if start_ms <= seg_start_ms < end_ms:
-            text = seg.get("text")
-            if text:
-                cleaned = str(text).strip()
-                if cleaned:
-                    texts.append(cleaned)
-
+    for seg in segments_in_range(segments, start_seconds, end_seconds):
+        cleaned = str(seg.get("text") or "").strip()
+        if cleaned:
+            texts.append(cleaned)
     return " ".join(texts)
 
 

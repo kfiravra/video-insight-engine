@@ -149,30 +149,3 @@ def extract_text_from_frames(
         density_threshold,
     )
     return results
-
-
-def enrich_transcript_with_ocr(
-    transcript: str,
-    ocr_results: list[dict],
-) -> str:
-    """Append OCR-detected text to transcript for LLM context.
-
-    Only appends if OCR results exist. The on-screen text section
-    helps the LLM understand visual content that isn't in the audio.
-    Uses timestamps when available for better temporal context.
-    """
-    if not ocr_results:
-        return transcript
-
-    screen_text = "\n\nON-SCREEN TEXT DETECTED:\n"
-    for ocr in ocr_results:
-        ts = ocr.get("timestamp")
-        if ts is not None:
-            mins = int(ts) // 60
-            secs = int(ts) % 60
-            screen_text += f"- [{mins}:{secs:02d}] {ocr['ocr_text']}\n"
-        else:
-            idx = ocr.get("index", "?")
-            screen_text += f"- [Frame {idx}] {ocr['ocr_text']}\n"
-
-    return transcript + screen_text

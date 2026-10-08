@@ -39,7 +39,7 @@ THINKING GUIDE:
       "timestamp": 0
     }
   ],
-> UI: walkthrough → StepFlowCanvas. Ordered route stages; 6+ stages drive the canvas graph.
+> UI: walkthrough → StepFlowCanvas. Ordered route stages, in play order.
   "rankings": [
     {
       "item": "Thing being ranked (character, weapon, map)",
@@ -77,11 +77,6 @@ THINKING GUIDE:
     {"item": "Yoru", "tier": "C", "reason": "Hard to use, niche value", "emoji": "👤"}
   ]
 }
-
-SCALING (video is {duration_minutes} minutes):
-- Under 10 min: 3-6 highlights, 3-8 loadout items, 4-8 walkthrough stages, 4-8 rankings
-- 10-30 min: 5-12 highlights, 4-15 loadout items, 6-15 walkthrough stages, 5-15 rankings
-- Over 30 min: 8-20 highlights, 6-25 loadout items, 8-25 walkthrough stages, 8-20 rankings
 
 RULES:
 - A ranking's tier MUST be one of: S, A, B, C, D (uppercase). Omit when the

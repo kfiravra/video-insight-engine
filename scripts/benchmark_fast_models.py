@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Multi-model fast-tier benchmark across the summarizer pipeline.
 
-Runs each fast-tier stage (classifier, chapter_detect, description analysis,
-synthesis, enrichment, translation) with four candidate models against three
+Runs each fast-tier stage (chapter_detect, description analysis, synthesis,
+enrichment, translation) with four candidate models against three
 real cached videos (tech / food / language), scores candidates against the
 Sonnet baseline, and writes a Markdown report with per-stage winners.
 
@@ -55,16 +55,13 @@ from src.config import settings  # noqa: E402
 from src.services.llm import LLMService  # noqa: E402
 from src.services.llm_provider import LLMProvider  # noqa: E402
 from src.services.media.frame_analyzer import (  # noqa: E402
-    VISION_ANALYSIS_PROMPT,
+    _count_line,
+    load_vision_prompt,
     parse_vision_response,
 )
-from src.services.pipeline.classifier import (  # noqa: E402
-    ClassificationResult,
-    classify_domain_format,
-)
-from src.services.pipeline.enrichment import enrich  # noqa: E402
+from src.services.pipeline.enrichment import enrich_quiz, quiz_allowed  # noqa: E402
 from src.services.pipeline.synthesis import synthesize  # noqa: E402
-from src.services.pipeline.translation import _translate_json  # noqa: E402
+from src.services.pipeline.translation import translate_to_source  # noqa: E402
 # Reaching into transcript_chunker's private function is intentional: the
 # bench needs the AI chapter-detection step in isolation, but the public API
 # (`extract_chapter_chunks`) bundles it with YouTube-chapters detection and
@@ -106,7 +103,6 @@ BASELINE_LABEL = "sonnet-4.6"
 #   "cheapest" → lowest cost/call
 #   "fastest"  → highest output tokens/sec
 TIE_BREAK: dict[str, str] = {
-    "classifier": "cheapest",
     "chapter_detect": "cheapest",
     "description": "cheapest",
     "synthesis": "fastest",
@@ -196,7 +192,6 @@ def make_provider(model: str) -> LLMProvider:
         fast_model=model,
         fallback_models=None,
         timeout=120.0,
-        num_retries=0,
     )
 
 
@@ -314,17 +309,6 @@ async def _run_with_telemetry(
 
 # Each stage takes a (case, model_string, model_label) and returns a StageRun.
 
-async def run_classifier(case: CorpusCase, model: str, label: str) -> StageRun:
-    svc = make_service(model)
-    return await _run_with_telemetry(
-        "classifier", case, label,
-        lambda: classify_domain_format(
-            case.title, case.channel, case.duration, case.tags,
-            case.transcript[:4000], svc,
-        ),
-    )
-
-
 async def run_chapter_detect(case: CorpusCase, model: str, label: str) -> StageRun:
     svc = make_service(model)
     return await _run_with_telemetry(
@@ -363,10 +347,9 @@ async def run_enrichment(case: CorpusCase, model: str, label: str) -> StageRun:
     primary_tag = case.matched_tag or "learning"
     return await _run_with_telemetry(
         "enrichment", case, label,
-        lambda: enrich(
-            svc, primary_tag, case.extraction_data, case.title,
-            content_tags=[primary_tag],
-            synthesis_data=case.synthesis_baseline,
+        lambda: enrich_quiz(
+            svc, primary_tag=primary_tag, extraction_data=case.extraction_data,
+            video_memory="", tabs=[],
         ),
     )
 
@@ -383,16 +366,15 @@ _TRANSLATION_SAMPLE = {
 }
 
 
+async def _translate_sample(svc: LLMService) -> dict:
+    """The sample as the pipeline translates it: a meta block, en → he."""
+    result = await translate_to_source(svc, {"tabs": [], "meta": dict(_TRANSLATION_SAMPLE)}, "he")
+    return result.get("sourceLanguage", {}).get("meta", {})
+
+
 async def run_translation(case: CorpusCase, model: str, label: str) -> StageRun:
     svc = make_service(model)
-    return await _run_with_telemetry(
-        "translation", case, label,
-        lambda: _translate_json(
-            svc, _TRANSLATION_SAMPLE,
-            source_language="en", target_language="Hebrew",
-            stage_name=f"bench_translation_{label}",
-        ),
-    )
+    return await _run_with_telemetry("translation", case, label, lambda: _translate_sample(svc))
 
 
 # ─── Frame vision ───────────────────────────────────────────────────────────
@@ -463,7 +445,7 @@ def _list_scene_frames(youtube_id: str, n: int = 8) -> list[dict[str, Any]]:
 def _build_vision_messages(frames: list[dict]) -> tuple[list[dict], list[dict]]:
     """Mirror frame_analyzer's message builder so multiple model passes share input."""
     import base64
-    content: list[dict] = [{"type": "text", "text": VISION_ANALYSIS_PROMPT}]
+    content: list[dict] = [{"type": "text", "text": load_vision_prompt()}]
     meta: list[dict] = []
     for i, frame in enumerate(frames):
         try:
@@ -474,9 +456,11 @@ def _build_vision_messages(frames: list[dict]) -> tuple[list[dict], list[dict]]:
             data_uri = f"data:{mime};base64,{base64.b64encode(data).decode()}"
         except OSError:
             continue
-        content.append({"type": "text", "text": f"Frame {i} (at 0:00):"})
+        # Labels count the frames actually sent, as production does.
+        content.append({"type": "text", "text": f"Frame {len(meta)} (at 0:00):"})
         content.append({"type": "image_url", "image_url": {"url": data_uri}})
         meta.append({"index": i, "timestamp_sec": 0, "s3_key": frame["s3_key"]})
+    content.append({"type": "text", "text": _count_line(len(meta))})
     return [{"role": "user", "content": content}], meta
 
 
@@ -522,7 +506,6 @@ def attach_costs(results: list[StageBenchResult], costs: dict[str, dict[str, flo
 
 
 STAGE_RUNNERS = {
-    "classifier": run_classifier,
     "chapter_detect": run_chapter_detect,
     "description": run_description,
     "synthesis": run_synthesis,
@@ -531,13 +514,17 @@ STAGE_RUNNERS = {
 }
 
 STAGE_SCORERS = {
-    "classifier": lambda b, c: scorers.score_classifier(b.output, c.output),
     "chapter_detect": lambda b, c: scorers.score_chapter_detect(b.output or [], c.output or []),
     "description": lambda b, c: scorers.score_description(b.output, c.output),
     "synthesis": lambda b, c: scorers.score_synthesis(b.output, c.output),
     "enrichment": lambda b, c: scorers.score_enrichment(b.output, c.output),
     "translation": lambda b, c: scorers.score_translation(b.output, c.output, expected_lang="he"),
 }
+
+
+def _stage_applies(stage: str, case: CorpusCase) -> bool:
+    """Enrichment is the quiz alone now — only domains that get a quiz run it."""
+    return stage != "enrichment" or quiz_allowed(case.matched_tag or "learning")
 
 
 async def benchmark_stage(stage: str, case: CorpusCase) -> StageBenchResult:
@@ -653,13 +640,6 @@ def _sample_diff(stage: str, baseline_out: Any, cand_out: Any, model_label: str)
             text = repr(v)[:limit]
         return f"`{text}`"
 
-    if stage == "classifier" and baseline_out and cand_out:
-        return (
-            f"- baseline: {baseline_out.domain}/{baseline_out.format} "
-            f"traits={baseline_out.traits.active_traits() if baseline_out.traits else []}\n"
-            f"- {model_label}: {cand_out.domain}/{cand_out.format} "
-            f"traits={cand_out.traits.active_traits() if cand_out.traits else []}"
-        )
     if stage == "synthesis" and baseline_out and cand_out:
         return (
             f"- baseline TLDR: {_short(baseline_out.tldr, 200)}\n"
@@ -699,7 +679,7 @@ def render_report(
         out.append(f"| {c.domain_key} | `{c.youtube_id}` | {title} | {c.duration}s | {c.matched_tag} |")
     out.append("")
 
-    for stage in ["classifier", "chapter_detect", "description", "synthesis", "enrichment", "translation", "vision"]:
+    for stage in ["chapter_detect", "description", "synthesis", "enrichment", "translation", "vision"]:
         if stage not in by_stage:
             continue
         results = by_stage[stage]
@@ -855,10 +835,15 @@ async def amain(args: argparse.Namespace) -> int:
         return 0
 
     # 2. Run stages
-    stages = ["classifier", "chapter_detect", "description", "synthesis", "enrichment", "translation"]
+    stages = ["chapter_detect", "description", "synthesis", "enrichment", "translation"]
     by_stage: dict[str, list[StageBenchResult]] = {s: [] for s in stages}
     for case in corpus:
         for stage in stages:
+            if not _stage_applies(stage, case):
+                logger.info(
+                    "[%s] skipping stage=%s (no quiz for %s)", case.youtube_id, stage, case.matched_tag
+                )
+                continue
             logger.info("[%s] running stage=%s", case.youtube_id, stage)
             result = await benchmark_stage(stage, case)
             by_stage[stage].append(result)

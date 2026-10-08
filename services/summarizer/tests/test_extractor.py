@@ -12,7 +12,6 @@ from src.services.pipeline.extractor import (
     _dynamic_timeout,
     _estimate_tokens,
     _force_split_by_sentences,
-    _format_prompt,
     _parse_llm_json,
     batch_chapters,
     extract,
@@ -20,7 +19,10 @@ from src.services.pipeline.extractor import (
     OVERFLOW_THRESHOLD,
 )
 from src.services.transcription.transcript_chunker import ChapterChunk, FORCE_SPLIT_TARGET_WORDS
+from src.services.pipeline.extraction_prompt import ExtractionPrompt
 from src.services.pipeline.triage import TriageResult
+
+_PROMPT = ExtractionPrompt(system="rules", head="template {transcript}", tail="job")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -113,34 +115,6 @@ class TestEstimateTokens:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Prompt Formatting
-# ─────────────────────────────────────────────────────────────────────────────
-
-
-class TestFormatPrompt:
-    """Tests for _format_prompt."""
-
-    def test_replaces_transcript_placeholder(self):
-        template = "Analyze: {transcript}"
-        result = _format_prompt(template, "Hello world")
-        assert "Hello world" in result
-        assert "{transcript}" not in result
-
-    def test_preserves_other_text(self):
-        template = "Title: My Video\n{transcript}"
-        result = _format_prompt(template, "text")
-        assert "Title: My Video" in result
-
-    def test_only_replaces_transcript(self):
-        """_format_prompt should only replace {transcript}, all other placeholders handled earlier."""
-        template = "Goal: some goal\nSections: some sections\n{transcript}"
-        result = _format_prompt(template, "content")
-        assert "Goal: some goal" in result
-        assert "Sections: some sections" in result
-        assert "content" in result
-
-
-# ─────────────────────────────────────────────────────────────────────────────
 # JSON Parsing
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -191,22 +165,28 @@ class TestStrategySelection:
     """Tests for extraction strategy selection based on word count and duration."""
 
     @pytest.mark.asyncio
-    @patch("src.services.pipeline.extractor.build_extraction_template", return_value="template {transcript}")
+    @patch("src.services.pipeline.extractor.build_extraction_prompt", return_value=_PROMPT)
     @patch("src.services.pipeline.extractor._load_prompt", return_value="")
-    async def test_short_transcript_uses_single(self, mock_prompt, mock_template, mock_llm, learning_triage):
+    async def test_short_transcript_uses_single(
+        self, mock_prompt, mock_template, mock_llm, learning_triage
+    ):
         """Transcripts below SINGLE_THRESHOLD use single extraction."""
         short_transcript = _make_transcript(SINGLE_THRESHOLD - 100)
-        mock_llm.call_llm.return_value = json.dumps({
-            "keyPoints": [{"emoji": "💡", "title": "Point", "detail": "Detail"}],
-            "concepts": [],
-            "takeaways": [],
-            "timestamps": [],
-            "keyQuestion": "",
-            "summary": "",
-        })
+        mock_llm.call_llm.return_value = json.dumps(
+            {
+                "keyPoints": [{"emoji": "💡", "title": "Point", "detail": "Detail"}],
+                "concepts": [],
+                "takeaways": [],
+                "timestamps": [],
+                "keyQuestion": "",
+                "summary": "",
+            }
+        )
 
         events = []
-        async for evt in extract(mock_llm, learning_triage, short_transcript, {"title": "Test", "duration": 300}):
+        async for evt in extract(
+            mock_llm, learning_triage, short_transcript, {"title": "Test", "duration": 300}
+        ):
             events.append(evt)
 
         # Single extraction = 1 LLM call
@@ -214,22 +194,28 @@ class TestStrategySelection:
         assert any(e["event"] == "extraction_complete" for e in events)
 
     @pytest.mark.asyncio
-    @patch("src.services.pipeline.extractor.build_extraction_template", return_value="template {transcript}")
+    @patch("src.services.pipeline.extractor.build_extraction_prompt", return_value=_PROMPT)
     @patch("src.services.pipeline.extractor._load_prompt", return_value="")
-    async def test_medium_transcript_uses_overflow(self, mock_prompt, mock_template, mock_llm, learning_triage):
+    async def test_medium_transcript_uses_overflow(
+        self, mock_prompt, mock_template, mock_llm, learning_triage
+    ):
         """Transcripts between SINGLE and OVERFLOW thresholds use overflow strategy."""
         medium_transcript = _make_transcript(SINGLE_THRESHOLD + 100)
-        mock_llm.call_llm.return_value = json.dumps({
-            "keyPoints": [{"emoji": "💡", "title": "Point", "detail": "Detail"}],
-            "concepts": [],
-            "takeaways": [],
-            "timestamps": [],
-            "keyQuestion": "",
-            "summary": "",
-        })
+        mock_llm.call_llm.return_value = json.dumps(
+            {
+                "keyPoints": [{"emoji": "💡", "title": "Point", "detail": "Detail"}],
+                "concepts": [],
+                "takeaways": [],
+                "timestamps": [],
+                "keyQuestion": "",
+                "summary": "",
+            }
+        )
 
         events = []
-        async for evt in extract(mock_llm, learning_triage, medium_transcript, {"title": "Test", "duration": 300}):
+        async for evt in extract(
+            mock_llm, learning_triage, medium_transcript, {"title": "Test", "duration": 300}
+        ):
             events.append(evt)
 
         # Overflow = 1 LLM call (unless validation fails)
@@ -239,9 +225,11 @@ class TestStrategySelection:
     @pytest.mark.asyncio
     @patch("src.services.pipeline.extractor.validate_domain_output")
     @patch("src.services.pipeline.extractor.call_llm_with_retry", new_callable=AsyncMock)
-    @patch("src.services.pipeline.extractor.build_extraction_template", return_value="template {transcript}")
+    @patch("src.services.pipeline.extractor.build_extraction_prompt", return_value=_PROMPT)
     @patch("src.services.pipeline.extractor._load_prompt", return_value="")
-    async def test_long_transcript_short_duration_uses_force_split(self, mock_prompt, mock_template, mock_llm_retry, mock_validate, mock_llm, learning_triage):
+    async def test_long_transcript_short_duration_uses_force_split(
+        self, mock_prompt, mock_template, mock_llm_retry, mock_validate, mock_llm, learning_triage
+    ):
         """Long transcripts with short duration use force-split chunked extraction."""
         long_transcript = _make_transcript(OVERFLOW_THRESHOLD + 100, with_sentences=True)
         extraction_data = {
@@ -254,21 +242,27 @@ class TestStrategySelection:
         mock_validate.return_value = {"learning": extraction_data}
 
         events = []
-        async for evt in extract(mock_llm, learning_triage, long_transcript, {"title": "Test", "duration": 60 * 60}):
+        async for evt in extract(
+            mock_llm, learning_triage, long_transcript, {"title": "Test", "duration": 60 * 60}
+        ):
             events.append(evt)
 
         # Force-split routes through _chunked_extraction (batches may merge into 1 call)
         assert mock_llm_retry.call_count >= 1
         assert any(e["event"] == "extraction_complete" for e in events)
         # Verify chunked progress events (not overflow "primary" section)
-        assert any(e.get("section") == "chunked" for e in events if e["event"] == "extraction_progress")
+        assert any(
+            e.get("section") == "chunked" for e in events if e["event"] == "extraction_progress"
+        )
 
     @pytest.mark.asyncio
     @patch("src.services.pipeline.extractor.validate_domain_output")
     @patch("src.services.pipeline.extractor.call_llm_with_retry", new_callable=AsyncMock)
-    @patch("src.services.pipeline.extractor.build_extraction_template", return_value="template {transcript}")
+    @patch("src.services.pipeline.extractor.build_extraction_prompt", return_value=_PROMPT)
     @patch("src.services.pipeline.extractor._load_prompt", return_value="")
-    async def test_long_transcript_without_chapters_uses_force_split(self, mock_prompt, mock_template, mock_llm_retry, mock_validate, mock_llm, learning_triage):
+    async def test_long_transcript_without_chapters_uses_force_split(
+        self, mock_prompt, mock_template, mock_llm_retry, mock_validate, mock_llm, learning_triage
+    ):
         """Long transcripts without chapters use force-split chunked extraction."""
         long_transcript = _make_transcript(OVERFLOW_THRESHOLD + 100, with_sentences=True)
         extraction_data = {
@@ -282,22 +276,30 @@ class TestStrategySelection:
 
         events = []
         # Long duration without chapters → force-split into chunks
-        async for evt in extract(mock_llm, learning_triage, long_transcript, {"title": "Test", "duration": 60 * 60 * 4}):
+        async for evt in extract(
+            mock_llm, learning_triage, long_transcript, {"title": "Test", "duration": 60 * 60 * 4}
+        ):
             events.append(evt)
 
         # Force-split routes through _chunked_extraction
         assert mock_llm_retry.call_count >= 1
         assert any(e["event"] == "extraction_complete" for e in events)
-        assert any(e.get("section") == "chunked" for e in events if e["event"] == "extraction_progress")
+        assert any(
+            e.get("section") == "chunked" for e in events if e["event"] == "extraction_progress"
+        )
 
     @pytest.mark.asyncio
     @patch("src.services.pipeline.extractor.validate_domain_output")
     @patch("src.services.pipeline.extractor.call_llm_with_retry", new_callable=AsyncMock)
-    @patch("src.services.pipeline.extractor.build_extraction_template", return_value="template {transcript}")
+    @patch("src.services.pipeline.extractor.build_extraction_prompt", return_value=_PROMPT)
     @patch("src.services.pipeline.extractor._load_prompt", return_value="")
-    async def test_very_long_transcript_force_splits_into_multiple_batches(self, mock_prompt, mock_template, mock_llm_retry, mock_validate, mock_llm, learning_triage):
+    async def test_very_long_transcript_force_splits_into_multiple_batches(
+        self, mock_prompt, mock_template, mock_llm_retry, mock_validate, mock_llm, learning_triage
+    ):
         """Very long transcripts (34K+ words) produce multiple batches via force-split."""
-        very_long_transcript = _make_transcript(34840, with_sentences=True)  # ~536 min video scenario
+        very_long_transcript = _make_transcript(
+            34840, with_sentences=True
+        )  # ~536 min video scenario
         extraction_data = {
             "keyPoints": [{"emoji": "💡", "title": "Point", "detail": "Detail"}],
             "concepts": [],
@@ -308,24 +310,34 @@ class TestStrategySelection:
         mock_validate.return_value = {"learning": extraction_data}
 
         events = []
-        async for evt in extract(mock_llm, learning_triage, very_long_transcript, {"title": "Test", "duration": 536 * 60}):
+        async for evt in extract(
+            mock_llm, learning_triage, very_long_transcript, {"title": "Test", "duration": 536 * 60}
+        ):
             events.append(evt)
 
         # 34840 words / 5000 = 7 chunks → each ~6.6K tokens → batches depend on MAX_TOKENS_PER_BATCH
         # With default 50K limit: ~7 chunks * 6.6K = 46.2K < 50K → might fit in 1-2 batches
         assert mock_llm_retry.call_count >= 1
         assert any(e["event"] == "extraction_complete" for e in events)
-        assert any(e.get("section") == "chunked" for e in events if e["event"] == "extraction_progress")
+        assert any(
+            e.get("section") == "chunked" for e in events if e["event"] == "extraction_progress"
+        )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Batch span cap (batch_chapters)
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def _chapter(index: int, start: float, end: float, tokens: int) -> ChapterChunk:
     return ChapterChunk(
-        index=index, title=f"Ch{index}", start_seconds=start, end_seconds=end,
-        text="x", source="time_split", token_estimate=tokens,
+        index=index,
+        title=f"Ch{index}",
+        start_seconds=start,
+        end_seconds=end,
+        text="x",
+        source="time_split",
+        token_estimate=tokens,
     )
 
 
@@ -371,22 +383,30 @@ class TestOverflowExtraction:
 
     @pytest.mark.asyncio
     @patch("src.services.pipeline.extractor.validate_domain_output")
-    @patch("src.services.pipeline.extractor.build_extraction_template", return_value="template {transcript}")
+    @patch("src.services.pipeline.extractor.build_extraction_prompt", return_value=_PROMPT)
     @patch("src.services.pipeline.extractor._load_prompt", return_value="")
-    async def test_single_call_on_medium_transcript(self, mock_prompt, mock_template, mock_validate, mock_llm, learning_triage):
+    async def test_single_call_on_medium_transcript(
+        self, mock_prompt, mock_template, mock_validate, mock_llm, learning_triage
+    ):
         """Overflow extraction makes a single call (no retry) with JSON mode."""
         medium_transcript = _make_transcript(SINGLE_THRESHOLD + 100)
 
-        mock_llm.call_llm.return_value = json.dumps({
-            "keyPoints": [{"emoji": "💡", "title": "Test", "detail": "Detail"}],
-            "concepts": [],
-            "takeaways": [],
-            "timestamps": [],
-        })
-        mock_validate.return_value = {"learning": {"keyPoints": [{"emoji": "💡", "title": "Test", "detail": "Detail"}]}}
+        mock_llm.call_llm.return_value = json.dumps(
+            {
+                "keyPoints": [{"emoji": "💡", "title": "Test", "detail": "Detail"}],
+                "concepts": [],
+                "takeaways": [],
+                "timestamps": [],
+            }
+        )
+        mock_validate.return_value = {
+            "learning": {"keyPoints": [{"emoji": "💡", "title": "Test", "detail": "Detail"}]}
+        }
 
         events = []
-        async for evt in extract(mock_llm, learning_triage, medium_transcript, {"title": "Test", "duration": 300}):
+        async for evt in extract(
+            mock_llm, learning_triage, medium_transcript, {"title": "Test", "duration": 300}
+        ):
             events.append(evt)
 
         assert mock_llm.call_llm.call_count == 1
@@ -475,7 +495,9 @@ class TestForceSplitBySentences:
         # Each chunk text should end with a sentence terminator (or be the last chunk)
         for ch in result[:-1]:
             last_char = ch.text.rstrip()[-1] if ch.text.rstrip() else ""
-            assert last_char == ".", f"Chunk should end at sentence boundary, got: ...{ch.text[-20:]}"
+            assert last_char == ".", (
+                f"Chunk should end at sentence boundary, got: ...{ch.text[-20:]}"
+            )
 
     def test_preserves_all_content(self):
         transcript = _make_sentence_transcript(12000)
@@ -522,34 +544,51 @@ class TestExtractionModelOverride:
     def test_settings_returns_none_when_extraction_override_unset(self, monkeypatch):
         """Default: no override → primary model wins (Sonnet in production)."""
         from src.config import settings
+
         monkeypatch.setattr(settings, "LLM_EXTRACTION_MODEL", None)
         assert settings.get_stage_model("extraction") is None
 
     def test_settings_returns_env_value_when_extraction_override_set(self, monkeypatch):
         """Operator-set value flows through get_stage_model."""
         from src.config import settings
+
         monkeypatch.setattr(
-            settings, "LLM_EXTRACTION_MODEL", "anthropic/claude-haiku-4-5-20251001",
+            settings,
+            "LLM_EXTRACTION_MODEL",
+            "anthropic/claude-haiku-4-5-20251001",
         )
         assert settings.get_stage_model("extraction") == "anthropic/claude-haiku-4-5-20251001"
 
     @pytest.mark.asyncio
     @patch("src.services.pipeline.extractor.validate_domain_output")
     @patch("src.services.pipeline.extractor.call_llm_with_retry", new_callable=AsyncMock)
-    @patch("src.services.pipeline.extractor.build_extraction_template", return_value="template {transcript}")
+    @patch("src.services.pipeline.extractor.build_extraction_prompt", return_value=_PROMPT)
     @patch("src.services.pipeline.extractor._load_prompt", return_value="")
     async def test_single_path_threads_extraction_override(
-        self, mock_prompt, mock_template, mock_llm_retry, mock_validate,
-        mock_llm, learning_triage, monkeypatch,
+        self,
+        mock_prompt,
+        mock_template,
+        mock_llm_retry,
+        mock_validate,
+        mock_llm,
+        learning_triage,
+        monkeypatch,
     ):
         """Short videos (<SINGLE_THRESHOLD) → _single_extraction must forward LLM_EXTRACTION_MODEL."""
         from src.config import settings
+
         monkeypatch.setattr(settings, "LLM_EXTRACTION_MODEL", "anthropic/claude-haiku-4-5-20251001")
-        mock_llm_retry.return_value = json.dumps({"keyPoints": [], "concepts": [], "takeaways": [], "timestamps": []})
-        mock_validate.return_value = {"learning": {"keyPoints": [], "concepts": [], "takeaways": [], "timestamps": []}}
+        mock_llm_retry.return_value = json.dumps(
+            {"keyPoints": [], "concepts": [], "takeaways": [], "timestamps": []}
+        )
+        mock_validate.return_value = {
+            "learning": {"keyPoints": [], "concepts": [], "takeaways": [], "timestamps": []}
+        }
 
         short_transcript = _make_transcript(SINGLE_THRESHOLD - 100)
-        async for _ in extract(mock_llm, learning_triage, short_transcript, {"title": "T", "duration": 120}):
+        async for _ in extract(
+            mock_llm, learning_triage, short_transcript, {"title": "T", "duration": 120}
+        ):
             pass
 
         assert mock_llm_retry.called
@@ -560,20 +599,33 @@ class TestExtractionModelOverride:
     @pytest.mark.asyncio
     @patch("src.services.pipeline.extractor.validate_domain_output")
     @patch("src.services.pipeline.extractor.call_llm_with_retry", new_callable=AsyncMock)
-    @patch("src.services.pipeline.extractor.build_extraction_template", return_value="template {transcript}")
+    @patch("src.services.pipeline.extractor.build_extraction_prompt", return_value=_PROMPT)
     @patch("src.services.pipeline.extractor._load_prompt", return_value="")
     async def test_overflow_path_threads_extraction_override(
-        self, mock_prompt, mock_template, mock_llm_retry, mock_validate,
-        mock_llm, learning_triage, monkeypatch,
+        self,
+        mock_prompt,
+        mock_template,
+        mock_llm_retry,
+        mock_validate,
+        mock_llm,
+        learning_triage,
+        monkeypatch,
     ):
         """Medium videos with chapters → _overflow_extraction must forward the override."""
         from src.config import settings
+
         monkeypatch.setattr(settings, "LLM_EXTRACTION_MODEL", "openai/gpt-4o-mini")
-        mock_llm_retry.return_value = json.dumps({"keyPoints": [], "concepts": [], "takeaways": [], "timestamps": []})
-        mock_validate.return_value = {"learning": {"keyPoints": [], "concepts": [], "takeaways": [], "timestamps": []}}
+        mock_llm_retry.return_value = json.dumps(
+            {"keyPoints": [], "concepts": [], "takeaways": [], "timestamps": []}
+        )
+        mock_validate.return_value = {
+            "learning": {"keyPoints": [], "concepts": [], "takeaways": [], "timestamps": []}
+        }
 
         medium_transcript = _make_transcript(SINGLE_THRESHOLD + 100)
-        async for _ in extract(mock_llm, learning_triage, medium_transcript, {"title": "T", "duration": 300}):
+        async for _ in extract(
+            mock_llm, learning_triage, medium_transcript, {"title": "T", "duration": 300}
+        ):
             pass
 
         assert mock_llm_retry.called
@@ -583,11 +635,17 @@ class TestExtractionModelOverride:
     @pytest.mark.asyncio
     @patch("src.services.pipeline.extractor.validate_domain_output")
     @patch("src.services.pipeline.extractor.call_llm_with_retry", new_callable=AsyncMock)
-    @patch("src.services.pipeline.extractor.build_extraction_template", return_value="template {transcript}")
+    @patch("src.services.pipeline.extractor.build_extraction_prompt", return_value=_PROMPT)
     @patch("src.services.pipeline.extractor._load_prompt", return_value="")
     async def test_chunked_batches_thread_extraction_override(
-        self, mock_prompt, mock_template, mock_llm_retry, mock_validate,
-        mock_llm, learning_triage, monkeypatch,
+        self,
+        mock_prompt,
+        mock_template,
+        mock_llm_retry,
+        mock_validate,
+        mock_llm,
+        learning_triage,
+        monkeypatch,
     ):
         """The cost-heavy path: every chunked batch call must carry the override.
 
@@ -597,12 +655,19 @@ class TestExtractionModelOverride:
         "extraction" key, not the per-batch span name.
         """
         from src.config import settings
+
         monkeypatch.setattr(settings, "LLM_EXTRACTION_MODEL", "anthropic/claude-haiku-4-5-20251001")
-        mock_llm_retry.return_value = json.dumps({"keyPoints": [], "concepts": [], "takeaways": [], "timestamps": []})
-        mock_validate.return_value = {"learning": {"keyPoints": [], "concepts": [], "takeaways": [], "timestamps": []}}
+        mock_llm_retry.return_value = json.dumps(
+            {"keyPoints": [], "concepts": [], "takeaways": [], "timestamps": []}
+        )
+        mock_validate.return_value = {
+            "learning": {"keyPoints": [], "concepts": [], "takeaways": [], "timestamps": []}
+        }
 
         very_long_transcript = _make_transcript(OVERFLOW_THRESHOLD + 100, with_sentences=True)
-        async for _ in extract(mock_llm, learning_triage, very_long_transcript, {"title": "T", "duration": 60 * 60}):
+        async for _ in extract(
+            mock_llm, learning_triage, very_long_transcript, {"title": "T", "duration": 60 * 60}
+        ):
             pass
 
         assert mock_llm_retry.call_count >= 1, "Chunked path should make at least one batch call"
@@ -617,20 +682,31 @@ class TestExtractionModelOverride:
     @pytest.mark.asyncio
     @patch("src.services.pipeline.extractor.validate_domain_output")
     @patch("src.services.pipeline.extractor.call_llm_with_retry", new_callable=AsyncMock)
-    @patch("src.services.pipeline.extractor.build_extraction_template", return_value="template {transcript}")
+    @patch("src.services.pipeline.extractor.build_extraction_prompt", return_value=_PROMPT)
     @patch("src.services.pipeline.extractor._load_prompt", return_value="")
     async def test_default_passes_none_as_model_override(
-        self, mock_prompt, mock_template, mock_llm_retry, mock_validate,
-        mock_llm, learning_triage,
+        self,
+        mock_prompt,
+        mock_template,
+        mock_llm_retry,
+        mock_validate,
+        mock_llm,
+        learning_triage,
     ):
         """When LLM_EXTRACTION_MODEL is unset (the default), the kwarg must be
         explicitly None — not omitted, not a stale value from another stage."""
         # conftest._disable_stage_model_overrides already forces None
-        mock_llm_retry.return_value = json.dumps({"keyPoints": [], "concepts": [], "takeaways": [], "timestamps": []})
-        mock_validate.return_value = {"learning": {"keyPoints": [], "concepts": [], "takeaways": [], "timestamps": []}}
+        mock_llm_retry.return_value = json.dumps(
+            {"keyPoints": [], "concepts": [], "takeaways": [], "timestamps": []}
+        )
+        mock_validate.return_value = {
+            "learning": {"keyPoints": [], "concepts": [], "takeaways": [], "timestamps": []}
+        }
 
         short_transcript = _make_transcript(SINGLE_THRESHOLD - 100)
-        async for _ in extract(mock_llm, learning_triage, short_transcript, {"title": "T", "duration": 120}):
+        async for _ in extract(
+            mock_llm, learning_triage, short_transcript, {"title": "T", "duration": 120}
+        ):
             pass
 
         assert mock_llm_retry.call_args.kwargs.get("model_override") is None

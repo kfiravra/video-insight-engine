@@ -143,3 +143,30 @@ async def test_should_skip_status_and_cache_when_row_deleted_mid_run(_stub_statu
     _stub_status_callback.assert_not_called()
     mock_cache.set_response.assert_not_called()
     assert ctx.row_deleted is True
+
+
+@pytest.mark.asyncio
+async def test_should_tag_translation_calls_with_their_own_feature() -> None:
+    """Regression: translation inherited "summarize:metadata" (ledger + timing misattributed)."""
+    from llm_common.context import llm_feature_var
+
+    from src.services.pipeline.phases import translation as phase
+
+    seen: list[str | None] = []
+
+    async def _translate(*_a: object, **_k: object) -> dict:
+        seen.append(llm_feature_var.get())
+        return {"tabs": [], "meta": {}, "sourceLanguage": {"code": "he", "tabs": [], "meta": {}}}
+
+    token = llm_feature_var.set("summarize:metadata")
+    try:
+        with (
+            patch.object(phase, "translate_to_source", _translate),
+            patch.object(phase, "translate_text", AsyncMock(return_value="English title")),
+            patch.object(phase, "settings", SimpleNamespace(REDIS_ENABLED=False)),
+        ):
+            await _drain(phase.run_phase_translation(_build_ctx(), MagicMock(), "vsid"))  # type: ignore[arg-type]
+    finally:
+        llm_feature_var.reset(token)
+
+    assert seen == ["summarize:translation"]

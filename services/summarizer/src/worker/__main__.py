@@ -206,6 +206,23 @@ def _redact_url(url: str) -> str:
         return "amqp://(unparseable)"
 
 
+async def _preload_embeddings() -> None:
+    """Load the SentenceTransformer before the first job, like the API does.
+
+    Otherwise the first job's Qdrant writes pay the model load (A4). Non-fatal:
+    embeddings feed RAG, not the pipeline's own output.
+    """
+    if not settings.QDRANT_ENABLED:
+        return
+    try:
+        from src.services.vector.embedding import _get_model
+
+        await asyncio.to_thread(_get_model)
+        logger.info("worker_embeddings_preloaded")
+    except Exception as e:  # noqa: BLE001 — a broken model must not keep the worker down
+        logger.warning("worker_embeddings_preload_failed", error=str(e))
+
+
 async def main() -> None:
     """Connect, declare topology, and spin N concurrent consumers."""
     # Sentry first — boot-time exceptions in Langfuse init or aio-pika should
@@ -232,6 +249,7 @@ async def main() -> None:
     # Register the LLM usage callback so the queue path captures the full cost
     # ledger (the worker bypasses the FastAPI lifespan that wires this in app).
     usage_callback = _setup_usage_callback()
+    await _preload_embeddings()
 
     connection = await aio_pika.connect_robust(settings.RABBITMQ_URL)
     logger.info("worker_connected url=%s", _redact_url(settings.RABBITMQ_URL))

@@ -99,6 +99,33 @@ describe('assistant action proxy route', () => {
     );
   });
 
+  it('should return 404 without forwarding when the user lacks the video summary', async () => {
+    mockContainer.videoRepository.userHasAccessToSummary.mockResolvedValueOnce(false);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/assistant/action',
+      headers: { authorization: authHeader },
+      payload: { action: 'save_note', video_id: '65f0c0ffee0000000000abcd', params: { note: 'hi' } },
+    });
+
+    expect({ status: response.statusCode, forwarded: mockContainer.assistantClient.action.mock.calls.length })
+      .toEqual({ status: 404, forwarded: 0 });
+  });
+
+  it('should check library ownership when video_id is a youtubeId', async () => {
+    mockContainer.videoRepository.userOwnsVideo.mockResolvedValueOnce(false);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/assistant/action',
+      headers: { authorization: authHeader },
+      payload: { action: 'save_note', video_id: 'dQw4w9WgXcQ', params: { note: 'hi' } },
+    });
+
+    expect(response.statusCode).toBe(404);
+  });
+
   it('should return 502 when the assistant client throws', async () => {
     const { ServiceUnavailableError } = await import('../utils/errors.js');
     mockContainer.assistantClient.action.mockRejectedValue(new ServiceUnavailableError('Assistant'));

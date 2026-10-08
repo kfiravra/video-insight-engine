@@ -4,13 +4,19 @@ Uses sentence-boundary splitting with configurable overlap to ensure
 semantic coherence within chunks and smooth transitions between them.
 ``assign_chunk_timestamps`` then maps each chunk back onto the transcript
 segment timeline so Qdrant payloads carry start/end times for [MM:SS]
-citations.
+citations. ``chunk_visual_entries`` packs the rendered visual annotations
+(``source="visual"`` points) into chunks that carry their own frame times.
 """
 
 from __future__ import annotations
 
 import re
 from bisect import bisect_right
+from collections.abc import Sequence
+
+# Visual chunks open with this line: the assistant formats every source the same
+# way, so without it on-screen text would be quoted as something the speaker said.
+VISUAL_CHUNK_LABEL = "On screen:"
 
 
 def chunk_transcript(
@@ -138,4 +144,47 @@ def assign_chunk_timestamps(
         end_idx = max(start_idx, min(end_idx, last))
         chunk["start_time"] = round(spans[start_idx][1], 2)
         chunk["end_time"] = round(spans[end_idx][2], 2)
+    return chunks
+
+
+def _visual_chunk(group: Sequence[tuple[float, str]]) -> dict:
+    """One labelled chunk; its time span runs from the first entry to the last."""
+    lines = [VISUAL_CHUNK_LABEL, *(text for _, text in group)]
+    return {
+        "text": "\n".join(lines),
+        "start_time": float(group[0][0]),
+        "end_time": float(group[-1][0]),
+    }
+
+
+def chunk_visual_entries(
+    entries: Sequence[tuple[float, str]],
+    max_chunk_chars: int = 1000,
+) -> list[dict]:
+    """Pack rendered visual-annotation entries into labelled chunks of whole entries.
+
+    Same character budget as ``chunk_transcript`` so similarity scores stay
+    comparable across sources. An entry is never split (one longer than the
+    budget becomes its own chunk), and chunks do not overlap: each entry is one
+    self-contained frame, so a repeated entry would only duplicate a retrieval hit.
+
+    Args:
+        entries: ``(seconds, entry_text)`` pairs in video order, as parsed by
+            ``visual_annotations.annotation_entries``.
+        max_chunk_chars: Character budget per chunk, label included.
+
+    Returns:
+        Dicts with ``text``, ``start_time`` and ``end_time`` (seconds).
+    """
+    chunks: list[dict] = []
+    group: list[tuple[float, str]] = []
+    size = len(VISUAL_CHUNK_LABEL)
+    for seconds, text in entries:
+        if group and size + 1 + len(text) > max_chunk_chars:
+            chunks.append(_visual_chunk(group))
+            group, size = [], len(VISUAL_CHUNK_LABEL)
+        group.append((seconds, text))
+        size += 1 + len(text)
+    if group:
+        chunks.append(_visual_chunk(group))
     return chunks

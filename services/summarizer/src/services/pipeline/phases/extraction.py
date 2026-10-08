@@ -1,4 +1,4 @@
-"""Phase 4: Extraction — adaptive structured extraction with count validation."""
+"""Phase 4: Extraction — adaptive structured extraction, then coverage and quality metrics."""
 
 from __future__ import annotations
 
@@ -10,31 +10,27 @@ from llm_common.context import llm_feature_var
 
 from src.config import settings
 from src.models.schemas import ErrorCode, ProcessingStatus
-from src.services.pipeline.extraction_quality import (
-    build_synthesis_fed_retry_prompt,
-    check_extraction_quality,
-    decide_extraction_retry,
-    merge_retry_fields,
-)
+from src.services.pipeline.extraction_quality import check_extraction_quality
 from src.services.pipeline.extractor import extract
-from src.services.pipeline.pipeline_helpers import (
-    normalize_segments,
-    sse_event,
-    truncate_json_safely,
-)
+from src.services.pipeline.memory import format_clock
+from src.services.pipeline.phases.metadata import await_description_analysis
+from src.services.pipeline.pipeline_helpers import normalize_segments, sse_event
 from src.services.pipeline.post_processor import (
     COVERAGE_CRITICAL_RATIO,
     COVERAGE_GATE_RATIO,
     compute_extraction_coverage,
-    validate_extraction_counts,
 )
 from src.services.pipeline.prompt_builder import format_gallery_frames_for_extraction
-from src.services.pipeline.synthesis import synthesize
 
 if TYPE_CHECKING:
     from src.services.pipeline.context import PipelineContext
 
 logger = logging.getLogger(__name__)
+
+# The description analysis starts at t=0 under its own 30 s cap and extraction
+# starts after the plan, so it has nearly always landed. This bounds a
+# straggler: the chunked path then goes on without description timestamps.
+_DESCRIPTION_WAIT_SECONDS = 5.0
 
 
 def _record_extraction_coverage(
@@ -94,79 +90,116 @@ def _record_extraction_coverage(
         )
 
 
-async def _attempt_synthesis_fed_retry(
-    ctx: PipelineContext,
-    plan_tabs: list[dict],
-    quality: Any,
-    video_info: dict,
-    chapters: Any,
-    retry_fields: list[str] | None = None,
-) -> None:
-    """Run synthesis early, then re-extract with evidence-based guidance.
+def _record_extraction_quality(ctx: PipelineContext) -> None:
+    """Log the share of planned dataSources the extraction populated (metric only).
 
-    Mutates ctx.extraction_data (if retry improves quality) and ctx.synthesis_dict.
-    When ``retry_fields`` is provided, it replaces ``quality.empty_fields`` in
-    the retry prompt — useful when the caller has merged in hard-miss
-    annotations from count validation.
+    The synthesis-fed retry this score used to gate is gone (pipeline-1min 1c.5):
+    7 firings in 55 runs, 0 of the 3 measurable ones improved. The numbers sit in the
+    message because the stdlib log handler drops ``extra``.
     """
-    if ctx.video_data is None or ctx.triage is None:
-        logger.warning("[pipeline] Cannot retry extraction: missing video_data or triage")
+    if ctx.plan_result is None or not ctx.extraction_data:
         return
-
-    extraction_summary = truncate_json_safely(ctx.extraction_data, 4000)
-    synthesis_result = await synthesize(
-        ctx.llm_service,
-        title=ctx.video_data.title,
-        channel=ctx.video_data.channel,
-        duration=ctx.video_data.duration,
-        output_type=ctx.triage.primary_tag,
-        extraction_summary=extraction_summary,
-        video_context=ctx.video_dna_compact,
-    )
-    ctx.synthesis_dict = synthesis_result.model_dump(by_alias=True)
-
-    fields_for_prompt = retry_fields if retry_fields else quality.empty_fields
-    retry_prompt = build_synthesis_fed_retry_prompt(
-        fields_for_prompt,
-        ctx.synthesis_dict,
+    quality = check_extraction_quality(ctx.plan_result.tabs, ctx.extraction_data)
+    logger.info(
+        "pipeline.extraction_quality score=%.2f populated=%d/%d empty=%s",
+        quality.score,
+        quality.populated,
+        quality.total,
+        quality.empty_fields,
+        extra={
+            "video_id": ctx.video_summary_id,
+            "score": quality.score,
+            "populated": quality.populated,
+            "total": quality.total,
+            "empty_fields": quality.empty_fields,
+        },
     )
 
-    retry_data = None
-    # Synthesis-fed retry always escalates to the primary model — even when
-    # EXTRACTION_USE_FAST_FIRST is on. The first pass already proved the fast
-    # model under-extracted; doubling down on it just burns tokens.
-    async for evt in extract(
-        ctx.llm_service,
-        ctx.triage,
-        ctx.clean_text,
-        video_info,
-        chapters=chapters,
-        video_context=ctx.video_dna_compact,
-        extra_instruction=retry_prompt,
-        force_primary_model=True,
-    ):
-        if evt["event"] == "extraction_complete":
-            retry_data = evt.get("data")
 
-    if retry_data:
-        retry_quality = check_extraction_quality(plan_tabs, retry_data)
-        if retry_quality.score > quality.score:
-            ctx.extraction_data = retry_data
-            logger.info(
-                "[pipeline] Extraction retry improved quality: %.2f → %.2f",
-                quality.score,
-                retry_quality.score,
-            )
-        else:
-            logger.info(
-                "[pipeline] Extraction retry did not improve quality (%.2f vs %.2f), keeping original",
-                retry_quality.score,
-                quality.score,
-            )
+def _segment_dicts(segments: list[Any]) -> list[dict]:
+    """Transcript segments (dicts or ``TranscriptSegment`` objects) → ``startMs``/``endMs`` dicts."""
+    seg_as_dicts = []
+    for seg in segments:
+        if isinstance(seg, dict):
+            seg_as_dicts.append(seg)
+        elif hasattr(seg, "text"):
+            d: dict = {"text": seg.text}
+            if hasattr(seg, "startMs"):
+                d["startMs"] = seg.startMs
+                d["endMs"] = getattr(seg, "endMs", seg.startMs)
+            elif hasattr(seg, "start"):
+                d["start"] = seg.start
+                d["duration"] = getattr(seg, "duration", 0)
+            seg_as_dicts.append(d)
+    return normalize_segments(seg_as_dicts)
+
+
+def memory_outline_for_chapters(ctx: PipelineContext) -> list[dict[str, str]] | None:
+    """The memory outline in the chunker's shape (``{start: "m:ss", end, title}``).
+
+    ``None`` without a memory outline: chapter_detect then runs only when
+    batching needs chapters (1b.6).
+    """
+    memory = ctx.memory
+    if memory is None or not memory.outline:
+        return None
+    return [
+        {"start": format_clock(s.start), "end": format_clock(s.end), "title": s.title}
+        for s in memory.outline
+    ]
+
+
+async def _description_chapters(ctx: PipelineContext) -> list[dict] | None:
+    """Tier 2 of chapter detection: author-listed timestamps from the description."""
+    try:
+        da = await asyncio.wait_for(
+            await_description_analysis(ctx), timeout=_DESCRIPTION_WAIT_SECONDS
+        )
+    except TimeoutError:
+        logger.warning(
+            "Description analysis not ready after %.0fs — chapters without its timestamps",
+            _DESCRIPTION_WAIT_SECONDS,
+        )
+        return None
+    if da is None or not getattr(da, "timestamps", None):
+        return None
+    return [{"seconds": t.seconds, "label": t.label} for t in da.timestamps]
+
+
+async def _split_chapters(
+    ctx: PipelineContext, video_info: dict, prompt_transcript: str
+) -> list[Any] | None:
+    """Chapters for chunked extraction (None = standard extraction).
+
+    Sliced from ``ctx.prompt_segments`` — the segments the marked transcript
+    was rendered from, with the same source-language cleaning — so chapter
+    text and the prompt agree.
+    """
+    from src.services.transcription.transcript_chunker import split_transcript_into_chapters
+
+    try:
+        chapters = await split_transcript_into_chapters(
+            video_data=video_info,
+            segments=_segment_dicts(ctx.prompt_segments),
+            transcript=prompt_transcript,
+            llm_service=ctx.llm_service,
+            description_chapters=await _description_chapters(ctx),
+            memory_outline=memory_outline_for_chapters(ctx),
+            source_language=ctx.source_language_code,
+        )
+    except Exception as e:
+        logger.warning(
+            "Chapter splitting failed (non-critical): %s — falling back to standard extraction",
+            e,
+        )
+        return None
+    ctx.chapters = chapters
+    logger.info("Prepared %d chapters for chunked extraction", len(chapters))
+    return chapters
 
 
 async def run_phase_extraction(ctx: PipelineContext) -> AsyncGenerator[str, None]:
-    """Run adaptive extraction and optional count-validation retry."""
+    """Run adaptive extraction, then record its coverage and quality metrics."""
     llm_feature_var.set("summarize:extraction")
     assert ctx.triage is not None
     assert ctx.video_data is not None
@@ -176,58 +209,19 @@ async def run_phase_extraction(ctx: PipelineContext) -> AsyncGenerator[str, None
         "channel": ctx.video_data.channel,
         "duration": ctx.video_data.duration,
         "chapters": getattr(ctx.video_data, "chapters", None),
+        # chapter_detect reads it; without the key it ran on an empty description (A9).
+        "description": ctx.video_data.description,
     }
 
-    # Chapter splitting for long videos (>30 min)
+    # Rendered once by the text branch (``[m:ss]`` markers, sponsor reads cut,
+    # source-language cleaning) — the string plan and memory read.
+    prompt_transcript = ctx.prompt_transcript
+
+    # Chapter splitting for long videos (> CHUNKED_EXTRACTION_THRESHOLD)
     chapters = None
     duration = ctx.video_data.duration or 0
     if duration > settings.CHUNKED_EXTRACTION_THRESHOLD and ctx.transcript_data:
-        try:
-            from src.services.transcription.transcript_chunker import split_transcript_into_chapters
-
-            raw_segments = (
-                ctx.transcript_data.segments if hasattr(ctx.transcript_data, "segments") else []
-            )
-            # Convert TranscriptSegment objects to dicts, then normalize to startMs/endMs
-            seg_as_dicts = []
-            for seg in raw_segments:
-                if isinstance(seg, dict):
-                    seg_as_dicts.append(seg)
-                elif hasattr(seg, "text"):
-                    d: dict = {"text": seg.text}
-                    if hasattr(seg, "startMs"):
-                        d["startMs"] = seg.startMs
-                        d["endMs"] = getattr(seg, "endMs", seg.startMs)
-                    elif hasattr(seg, "start"):
-                        d["start"] = seg.start
-                        d["duration"] = getattr(seg, "duration", 0)
-                    seg_as_dicts.append(d)
-            seg_dicts = normalize_segments(seg_as_dicts)
-
-            # Tier 2 of chapter detection: author-listed timestamps from the
-            # video description (used when YouTube has no native chapters).
-            description_chapters = None
-            da = ctx.description_analysis
-            if da is not None and getattr(da, "timestamps", None):
-                description_chapters = [
-                    {"seconds": t.seconds, "label": t.label} for t in da.timestamps
-                ]
-
-            chapters = await split_transcript_into_chapters(
-                video_data=video_info,
-                segments=seg_dicts,
-                transcript=ctx.clean_text,
-                llm_service=ctx.llm_service,
-                description_chapters=description_chapters,
-            )
-            ctx.chapters = chapters
-            logger.info("Prepared %d chapters for chunked extraction", len(chapters))
-        except Exception as e:
-            logger.warning(
-                "Chapter splitting failed (non-critical): %s — falling back to standard extraction",
-                e,
-            )
-            chapters = None
+        chapters = await _split_chapters(ctx, video_info, prompt_transcript)
 
     # Frames (stage 2b) are ready before extraction (stage 4) — fold their
     # captions into the prompt so the LLM can ground visual claims and warrant a
@@ -242,11 +236,12 @@ async def run_phase_extraction(ctx: PipelineContext) -> AsyncGenerator[str, None
         async for evt in extract(
             ctx.llm_service,
             ctx.triage,
-            ctx.clean_text,
+            prompt_transcript,
             video_info,
             chapters=chapters,
-            video_context=ctx.video_dna_compact,
+            video_context=ctx.video_memory,
             frame_context=frame_context,
+            visual_annotations=ctx.visual_annotations,
         ):
             event_name = evt["event"]
             yield sse_event(event_name, {k: v for k, v in evt.items() if k != "event"})
@@ -295,65 +290,4 @@ async def run_phase_extraction(ctx: PipelineContext) -> AsyncGenerator[str, None
     )
 
     _record_extraction_coverage(ctx, batches_total, batches_succeeded)
-
-    # Quality check + conditional synthesis-fed retry.
-    # Count validation runs alongside the quality check so that a hard miss
-    # on a manifest-planned field (e.g. plan said 6 tips, extraction returned 0)
-    # can trigger a retry even when the overall score is above threshold.
-    if ctx.extraction_data and ctx.triage is not None and ctx.plan_result is not None:
-        plan_tabs = ctx.plan_result.tabs
-        quality = check_extraction_quality(plan_tabs, ctx.extraction_data)
-        count_warnings = validate_extraction_counts(
-            ctx.plan_result,
-            ctx.extraction_data,
-            content_tags=ctx.plan_result.content_tags,
-        )
-        retry_decision = decide_extraction_retry(
-            quality,
-            count_warnings,
-            content_tags=ctx.plan_result.content_tags,
-            content_format=ctx.content_format,
-            content_traits=ctx.content_traits,
-        )
-
-        logger.info(
-            "pipeline.extraction_quality",
-            extra={
-                "video_id": ctx.video_summary_id,
-                "score": quality.score,
-                "populated": quality.populated,
-                "total": quality.total,
-                "empty_fields": quality.empty_fields,
-                "count_warnings": count_warnings,
-                "hard_miss_fields": retry_decision.hard_miss_fields,
-            },
-        )
-
-        if retry_decision.should_retry:
-            logger.warning(
-                "[pipeline] Extraction retry triggered (%s) for video_id=%s — attempting synthesis-fed retry",
-                retry_decision.reason,
-                ctx.video_summary_id,
-            )
-            retry_fields = merge_retry_fields(
-                quality.empty_fields,
-                retry_decision.hard_miss_fields,
-                count_warnings,
-            )
-            try:
-                await _attempt_synthesis_fed_retry(
-                    ctx,
-                    plan_tabs,
-                    quality,
-                    video_info,
-                    chapters,
-                    retry_fields=retry_fields,
-                )
-            except Exception as e:
-                logger.warning("[pipeline] Extraction retry failed (non-critical): %s", e)
-        elif count_warnings:
-            logger.warning(
-                "[pipeline] Extraction count mismatch (not retried) for video_id=%s: %s",
-                ctx.video_summary_id,
-                count_warnings,
-            )
+    _record_extraction_quality(ctx)

@@ -1,8 +1,8 @@
 """End-to-end replays of the benchmark cassettes through ``stream_summarization``.
 
 Speed 0 runs every cassette in well under a second each (CI). The fidelity
-test replays T1dQhQAm8Tc at 1/20 of its recorded walls (~12 s) and rescales;
-set ``REPLAY_REALTIME=1`` to also run it at real speed (~4 min).
+test reads the shared 1/20-speed T1dQhQAm8Tc replay (``scaled_reference``)
+and rescales; set ``REPLAY_REALTIME=1`` to also run it at real speed (~4 min).
 """
 
 from __future__ import annotations
@@ -14,25 +14,55 @@ import pytest
 
 from src.services.pipeline import prompt_builder
 from src.services.transcription import transcript_chunker
-from tests.replay.cassette import available_cassettes
-from tests.replay.driver import run_replay
-from tests.replay.report import out_of_tolerance, phase_rows
+from tests.replay.cassette import Cassette, available_cassettes
+from tests.replay.driver import ReplayResult, run_replay
+from tests.replay.report import PhaseRow, out_of_tolerance, phase_rows
 
 _REFERENCE_VIDEO = "T1dQhQAm8Tc"
-_FIDELITY_SPEED = 0.05
 _TOP_LEVEL_PHASES = (
     "metadata",
     "transcript_frames",
     "visual_inject",
     "plan",
     "extraction",
-    "synthesis_enrichment",
     "assembly",
+    "synthesis",
+    "moment_fill",
 )
 _FRAMES_SUBSTEPS = ("frames.scene_detect", "frames.score_select", "frames.hires", "frames.upload")
 _MILESTONES = ("metadataMs", "synthesisCompleteMs", "firstTabReadyMs", "completeMs", "doneMs")
 _DONE_COUNTS = re.compile(r"tabs planned=(\d+) assembled=(\d+) emitted=(\d+)")
 _VIDEOS = available_cassettes()
+# Tabs the code under test adds on top of a recording: uC45_4nnEAI was recorded
+# with zero scene frames; since the 1a.3 ladder it has captioned frames, so
+# assembly appends its "Visual Moments" filmstrip. T1dQhQAm8Tc's recorded
+# enrichment answer nested flashcards inside ``quiz`` and the prod run dropped
+# all of it; since 1d.1 the valid quiz items are salvaged and a quiz tab
+# assembles last.
+_TABS_ADDED_SINCE_RECORDING: dict[str, list[str]] = {
+    "uC45_4nnEAI": ["frames-gallery"],
+    "T1dQhQAm8Tc": ["quiz"],
+}
+
+
+# Phases the code under test moved on purpose since T1dQhQAm8Tc was recorded,
+# with the change that moved them; the 10 % fidelity gate holds for the rest.
+_PHASES_CHANGED_SINCE_RECORDING: dict[str, str] = {
+    "metadata": "1a.1: captions + description analysis run in the background (t=0 group)",
+    "assembly": "1a.2: moment fill seeks the kept 720p file (the recording re-downloaded it)",
+    "transcript_frames": "1d.4: vision runs as parallel batches (the recording made one call)",
+    "synthesis_enrichment": "1d.1/1d.3: the quiz runs alone; synthesis moved into assembly",
+    "total (complete)": "the sum of the changes above",
+}
+
+
+def _expected_tab_ids(cassette: Cassette) -> list[str]:
+    return [*cassette.recorded.tab_ids, *_TABS_ADDED_SINCE_RECORDING.get(cassette.video_id, [])]
+
+
+def _unchanged_rows(result: ReplayResult, cassette: Cassette) -> list[PhaseRow]:
+    rows = phase_rows(result, cassette)
+    return [row for row in rows if row.name not in _PHASES_CHANGED_SINCE_RECORDING]
 
 
 @pytest.mark.parametrize("video_id", _VIDEOS)
@@ -56,7 +86,7 @@ class TestReplayAtSpeedZero:
         self, replays: dict, cassettes: dict, video_id: str
     ) -> None:
         saved = replays[video_id].saved_result or {}
-        assert [t["id"] for t in saved.get("tabs", [])] == cassettes[video_id].recorded.tab_ids
+        assert [t["id"] for t in saved.get("tabs", [])] == _expected_tab_ids(cassettes[video_id])
 
     def test_should_mark_row_completed(self, replays: dict, video_id: str) -> None:
         assert (replays[video_id].saved_result or {}).get("status") == "completed"
@@ -65,7 +95,8 @@ class TestReplayAtSpeedZero:
         assert replays[video_id].unexpected_commands == []
 
     def test_should_index_output_in_qdrant(self, replays: dict, video_id: str) -> None:
-        assert replays[video_id].qdrant_stores == [video_id, video_id]
+        # transcript, output and visual-annotation points (1c.2)
+        assert replays[video_id].qdrant_stores == [video_id, video_id, video_id]
 
 
 @pytest.mark.parametrize("video_id", _VIDEOS)
@@ -92,7 +123,7 @@ class TestPipelineTimingRecord:
         self, replays: dict, cassettes: dict, video_id: str
     ) -> None:
         counts = (replays[video_id].timing or {}).get("counts", {})
-        expected = len(cassettes[video_id].recorded.tab_ids)
+        expected = len(_expected_tab_ids(cassettes[video_id]))
         assert (counts.get("tabsAssembled"), counts.get("tabsEmitted")) == (expected, expected)
 
 
@@ -101,7 +132,7 @@ def test_done_line_should_carry_planned_assembled_emitted(
     replays: dict, cassettes: dict, video_id: str
 ) -> None:
     match = _DONE_COUNTS.search(replays[video_id].done_line or "")
-    expected = len(cassettes[video_id].recorded.tab_ids)
+    expected = len(_expected_tab_ids(cassettes[video_id]))
     assert match is not None and (int(match[2]), int(match[3])) == (expected, expected)
 
 
@@ -110,12 +141,11 @@ def test_frames_substeps_should_be_timed_for_standard_tier(replays: dict) -> Non
     assert set(_FRAMES_SUBSTEPS) <= names
 
 
-async def test_reference_replay_should_reproduce_phase_walls_within_ten_percent(
-    cassettes: dict,
+def test_reference_replay_should_reproduce_phase_walls_within_ten_percent(
+    scaled_reference: ReplayResult, cassettes: dict
 ) -> None:
-    cassette = cassettes[_REFERENCE_VIDEO]
-    result = await run_replay(cassette, speed=_FIDELITY_SPEED)
-    assert out_of_tolerance(phase_rows(result, cassette)) == []
+    rows = _unchanged_rows(scaled_reference, cassettes[_REFERENCE_VIDEO])
+    assert out_of_tolerance(rows) == []
 
 
 async def test_replay_should_leave_prompt_cache_as_found(cassettes: dict) -> None:
@@ -136,4 +166,4 @@ async def test_reference_replay_should_reproduce_phase_walls_in_real_time(
 ) -> None:
     cassette = cassettes[_REFERENCE_VIDEO]
     result = await run_replay(cassette, speed=1.0)
-    assert out_of_tolerance(phase_rows(result, cassette)) == []
+    assert out_of_tolerance(_unchanged_rows(result, cassette)) == []

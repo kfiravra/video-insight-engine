@@ -54,11 +54,6 @@ Extract structured music analysis content.
   ]
 }
 
-SCALING (video is {duration_minutes} minutes):
-- Under 15 min: core analysis (2-3 aspects), basic structure, key credits
-- 15-30 min: detailed analysis (4-6 aspects), full structure, all credits, themes
-- Over 30 min: comprehensive analysis (6-10 aspects), full structure with timestamps, all lyrics, all credits
-
 RULES:
 - Lyrics must be exact — quote accurately or omit
 - All credits: featured artists, producers, songwriters when mentioned

@@ -70,7 +70,9 @@ _JUDGE_PROMPT = (
     "Reply in this exact JSON format:\n"
     '{{"grounded": true|false, "evidence": "quoted span ≤25 words or empty"}}\n\n'
     'Be strict: "grounded" must be true only if the transcript explicitly '
-    "states the claim. Paraphrases are fine; inferences are not.\n\n"
+    "states the claim. Paraphrases are fine; inferences are not.\n"
+    "The excerpt may end with a <visual_annotations> block (what the video "
+    "shows on screen at [m:ss]); a claim supported there counts as supported.\n\n"
     "TRANSCRIPT:\n{transcript}\n\n"
     "CLAIM:\n{claim}\n"
 )

@@ -11,6 +11,8 @@ import json
 
 import pytest
 
+from src.models.probe_types import TierProbe
+from src.services.media.frame_analyzer import plan_vision_batches
 from src.services.media.visual_tier import derive_tier
 from src.services.pipeline.phases.frames import _is_presenter_frame
 from tests.replay.cassette import Cassette, available_cassettes
@@ -26,27 +28,68 @@ def _replayed_selection(result: ReplayResult) -> list[int]:
 
 
 def _vision_kept(cassette: Cassette) -> set[int]:
-    """Candidates the recorded vision output does NOT mark as presenter filler."""
-    entry = next(e for e in cassette.llm if e.key.span == "frame_vision")
-    by_rank = sorted(cassette.frames.candidates, key=lambda f: -f.total_score)
-    described = {by_rank[d["frame_index"]].index: d for d in json.loads(entry.output)}
+    """Candidates the recorded vision output does NOT mark as presenter filler.
+
+    One recorded answer per vision batch (ordinal = batch order); each labels
+    its own frames 0..k-1 in the order ``plan_vision_batches`` gave them.
+    """
+    entries = sorted(
+        (e for e in cassette.llm if e.key.span == "frame_vision"), key=lambda e: e.key.ordinal
+    )
+    by_rank = [
+        {"index": f.index, "timestamp": f.timestamp}
+        for f in sorted(cassette.frames.candidates, key=lambda f: f.total_score, reverse=True)
+    ]
+    described = {
+        batch[d["frame_index"]]["index"]: d
+        for batch, entry in zip(plan_vision_batches(by_rank), entries, strict=True)
+        for d in json.loads(entry.output)
+    }
     return {
         f.index for f in cassette.frames.candidates if not _is_presenter_frame(vars(f), described)
     }
 
 
+def _probe(cassette: Cassette) -> TierProbe:
+    entry = next(e for e in cassette.llm if e.key.span == "tier_probe")
+    return TierProbe.model_validate(json.loads(entry.output))
+
+
 @pytest.mark.parametrize("video_id", available_cassettes())
-def test_tier_should_be_derived_by_production_code(cassettes: dict, video_id: str) -> None:
-    video = cassettes[video_id].video
-    assert derive_tier(video.category, video.title, video.tags[:6]) == cassettes[video_id].tier
+def test_tier_should_be_derived_from_the_probe_by_production_code(
+    cassettes: dict, video_id: str
+) -> None:
+    cassette = cassettes[video_id]
+    assert derive_tier(_probe(cassette), cassette.video.title) == cassette.tier
 
 
-def test_proxied_standard_run_should_download_like_prod(replays: dict) -> None:
-    assert replays[_REFERENCE_VIDEO].downloads() == [
-        ("lowres", "scene_detect"),
+@pytest.mark.parametrize("video_id", available_cassettes())
+def test_frames_should_wait_for_the_tier_at_step_6b(replays: dict, video_id: str) -> None:
+    """1b.1: the tier is decided at Step 6b (probe ≤ 3 s, else metadata), not at frames start."""
+    assert "frames.tier_wait" in replays[video_id].phase_walls()
+
+
+@pytest.mark.parametrize("video_id", available_cassettes())
+def test_should_download_one_720p_file_per_run(replays: dict, video_id: str) -> None:
+    """1a.2: the prefetch serves hi-res frames AND moment fill — no refiner or
+    moment-fill re-download (the recorded runs fetched 720p twice)."""
+    assert sorted(replays[video_id].downloads()) == [
         ("720p", "prefetch"),
-        ("720p", "moment_fill"),
+        ("lowres", "scene_detect"),
     ]
+
+
+def test_moment_fill_should_seek_the_kept_720p_file(replays: dict) -> None:
+    """T1dQhQAm8Tc still has frameless moments after injection: moment fill
+    fills them from the prefetched file instead of downloading again."""
+    tabs = (replays[_REFERENCE_VIDEO].saved_result or {}).get("tabs", [])
+    keys = [
+        item.get("s3Key", "")
+        for tab in tabs
+        if tab.get("component") == "moment_track"
+        for item in tab["props"]["items"]
+    ]
+    assert any("/frames/" in key for key in keys)
 
 
 def test_standard_selection_should_match_recording(replays: dict, cassettes: dict) -> None:
@@ -70,8 +113,22 @@ def test_high_tier_should_time_vision_reselect(replays: dict) -> None:
     assert "frames.vision_reselect" in replays[_HIGH_VIDEO].phase_walls()
 
 
-def test_zero_frame_run_should_upload_no_manifest(replays: dict) -> None:
-    assert replays[_ZERO_FRAMES_VIDEO].frame_manifest is None
+def test_zero_candidate_run_should_upload_ladder_frames(replays: dict) -> None:
+    """C21/D17: the static-camera benchmark gets frames from the 1a.3 ladder."""
+    manifest = replays[_ZERO_FRAMES_VIDEO].frame_manifest or {}
+    assert len(manifest.get("frames", [])) > 0
+
+
+def test_zero_candidate_run_should_time_the_ladder(replays: dict) -> None:
+    assert "frames.scene_ladder" in replays[_ZERO_FRAMES_VIDEO].phase_walls()
+
+
+def test_zero_candidate_run_should_show_moment_images(replays: dict) -> None:
+    tabs = (replays[_ZERO_FRAMES_VIDEO].saved_result or {}).get("tabs", [])
+    moments = [t for t in tabs if t.get("component") == "moment_track"]
+    assert moments and all(
+        any(item.get("thumbnailUrl") for item in t["props"]["items"]) for t in moments
+    )
 
 
 def test_hires_should_upgrade_every_selected_frame(replays: dict, cassettes: dict) -> None:

@@ -23,7 +23,7 @@ class RAGSource(BaseModel):
     end_seconds: float | None = None
     score: float = 0.0
     chunk_index: int = 0
-    source: str = "transcript"  # "transcript" | "default_output"
+    source: str = "transcript"  # "transcript" | "default_output" | "visual"
     tab_id: str | None = None  # set for default_output results
     tab_component: str | None = None  # e.g. "quiz", "overview"
     prop_path: str | None = None  # e.g. "questions[0]"

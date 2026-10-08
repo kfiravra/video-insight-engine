@@ -102,6 +102,12 @@ class TestRescore:
         edited = rescore(_record("a"), stored, components)
         assert (stored["component_coverage"], edited.component_coverage) == (0.0, 1.0)
 
+    def test_should_accept_a_promotion_target_when_rescoring_a_stored_row(self) -> None:
+        record = _record("a", requiredComponents=["step_player"])
+        stored = score_entry(record, _DOC).as_dict()
+        rescored = rescore(record, stored, ["step_flow_canvas"])
+        assert rescored.component_coverage == 1.0
+
 
 # ─── --merge-into ──────────────────────────────────────────────────────
 class TestMergeInto:

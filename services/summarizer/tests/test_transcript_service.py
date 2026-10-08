@@ -13,7 +13,6 @@ from src.services.transcription.transcript import (
     _fetch_transcript_sync,
     _is_rate_limit_error,
     clean_transcript,
-    format_transcript_with_timestamps,
     get_transcript,
     normalize_segments,
 )
@@ -62,92 +61,35 @@ class TestCleanTranscript:
         result = clean_transcript("[Music] [Applause]")
         assert result == ""
 
+    def test_should_remove_fillers_in_basic_cleaning(self):
+        result = clean_transcript("So um today we uh basically bake bread so yeah")
+        assert result == "So today we bake bread"
 
-class TestFormatTranscriptWithTimestamps:
-    """Tests for timestamp formatting of transcript segments."""
+    def test_should_remove_fillers_and_artifacts_together(self):
+        result = clean_transcript("[Music] well basically the oven [Applause] is uh hot")
+        assert result == "the oven is hot"
 
-    def test_formats_with_default_interval(self):
-        """Test formatting with default 30-second interval."""
-        segments = [
-            {"text": "Hello everyone", "start": 0},
-            {"text": "welcome to the video", "start": 5},
-            {"text": "Today we discuss", "start": 35},
-        ]
+    @pytest.mark.parametrize(
+        "sentence",
+        [
+            "Do you know how long the dough rests?",
+            "What I mean is that the crust stays soft.",
+            "What kind of flour should I use?",
+            "Fold it, sort of the dough over itself.",
+            "It's okay so we can skip the egg.",
+            "Alright so the next step is the sauce.",
+        ],
+    )
+    def test_should_keep_phrases_that_carry_meaning(self, sentence):
+        assert clean_transcript(sentence) == sentence
 
-        result = format_transcript_with_timestamps(segments)
-        lines = result.split("\n")
+    def test_should_keep_um_when_the_source_is_portuguese(self):
+        result = clean_transcript("Adicione um quilo de farinha", source_language="pt")
+        assert result == "Adicione um quilo de farinha"
 
-        assert len(lines) == 2
-        assert "[0:00]" in lines[0]
-        assert "Hello everyone" in lines[0]
-        assert "[0:30]" in lines[1]  # 30-59 is interval 1, starting at 0:30
-        assert "Today we discuss" in lines[1]
-
-    def test_formats_with_custom_interval(self):
-        """Test formatting with custom interval."""
-        segments = [
-            {"text": "Part 1", "start": 0},
-            {"text": "Part 2", "start": 70},
-            {"text": "Part 3", "start": 130},
-        ]
-
-        result = format_transcript_with_timestamps(segments, interval_seconds=60)
-        lines = result.split("\n")
-
-        assert len(lines) == 3
-        assert "[0:00]" in lines[0]
-        assert "[1:00]" in lines[1]
-        assert "[2:00]" in lines[2]
-
-    def test_groups_segments_in_same_interval(self):
-        """Test that segments in same interval are grouped."""
-        segments = [
-            {"text": "First", "start": 0},
-            {"text": "Second", "start": 10},
-            {"text": "Third", "start": 20},
-        ]
-
-        result = format_transcript_with_timestamps(segments, interval_seconds=30)
-        lines = result.split("\n")
-
-        assert len(lines) == 1
-        assert "First" in lines[0]
-        assert "Second" in lines[0]
-        assert "Third" in lines[0]
-
-    def test_handles_empty_segments(self):
-        """Test handling empty segments list."""
-        result = format_transcript_with_timestamps([])
-        assert result == ""
-
-    def test_skips_empty_text(self):
-        """Test skipping segments with empty text."""
-        segments = [
-            {"text": "Hello", "start": 0},
-            {"text": "", "start": 10},
-            {"text": "   ", "start": 20},
-            {"text": "World", "start": 25},
-        ]
-
-        result = format_transcript_with_timestamps(segments)
-
-        assert "Hello" in result
-        assert "World" in result
-
-    def test_formats_minutes_correctly(self):
-        """Test correct minute formatting for longer videos."""
-        segments = [
-            {"text": "Start", "start": 0},
-            {"text": "Middle", "start": 600},  # 10 minutes
-            {"text": "End", "start": 3600},  # 60 minutes
-        ]
-
-        result = format_transcript_with_timestamps(segments, interval_seconds=300)
-        lines = result.split("\n")
-
-        assert "[0:00]" in lines[0]
-        assert "[10:00]" in lines[1]
-        assert "[60:00]" in lines[2]
+    def test_should_remove_fillers_for_a_regional_english_code(self):
+        result = clean_transcript("so um we start", source_language="en-GB")
+        assert result == "so we start"
 
 
 class TestNormalizeSegments:
@@ -447,68 +389,6 @@ class TestGetTranscriptAsync:
         assert exc_info.value.code == ErrorCode.NO_TRANSCRIPT
 
 
-class TestTranscriptSegmentationEdgeCases:
-    """Tests for edge cases in transcript segmentation."""
-
-    def test_handles_very_long_videos(self):
-        """Test formatting very long videos (2+ hours)."""
-        segments = [
-            {"text": "Start", "start": 0},
-            {"text": "End", "start": 7200},  # 2 hours
-        ]
-
-        result = format_transcript_with_timestamps(segments, interval_seconds=3600)
-        lines = result.split("\n")
-
-        assert "[0:00]" in lines[0]
-        assert "[120:00]" in lines[1]
-
-    def test_handles_fractional_timestamps(self):
-        """Test handling fractional second timestamps."""
-        segments = [
-            {"text": "A", "start": 0.333},
-            {"text": "B", "start": 29.999},
-            {"text": "C", "start": 30.001},
-        ]
-
-        result = format_transcript_with_timestamps(segments, interval_seconds=30)
-        lines = result.split("\n")
-
-        # First two should be in 0:00 interval, third in 0:30
-        assert len(lines) == 2
-        assert "A" in lines[0]
-        assert "B" in lines[0]
-        assert "C" in lines[1]
-
-    def test_handles_unicode_text(self):
-        """Test handling unicode characters in transcript."""
-        segments = [
-            {"text": "Hello world", "start": 0},
-            {"text": "Cafe latte", "start": 5},
-        ]
-
-        result = format_transcript_with_timestamps(segments)
-
-        assert "world" in result
-
-    def test_preserves_segment_order(self):
-        """Test that segment order is preserved."""
-        segments = [
-            {"text": "First", "start": 0},
-            {"text": "Second", "start": 5},
-            {"text": "Third", "start": 10},
-        ]
-
-        result = format_transcript_with_timestamps(segments)
-
-        # Order should be preserved in output
-        first_idx = result.find("First")
-        second_idx = result.find("Second")
-        third_idx = result.find("Third")
-
-        assert first_idx < second_idx < third_idx
-
-
 class TestBlockedDetection:
     """The library's IP-scoped blocks — the 429 (IpBlocked) and its parent, the
     bot check (RequestBlocked) — must read as a rate limit even once a proxy
@@ -580,12 +460,14 @@ class TestExitRotation:
         return urls
 
     @staticmethod
-    def _api_that_429s_on(blocked_urls: set[str], mock_api_class) -> None:
+    def _api_that_429s_on(
+        blocked_urls: set[str], mock_api_class, error: Exception | None = None
+    ) -> None:
         def build(proxy_config=None):
             api = MagicMock()
             url = proxy_config.to_requests_dict()["https"] if proxy_config else None
             if url in blocked_urls:
-                api.list.side_effect = Exception("429 Too Many Requests")
+                api.list.side_effect = error or Exception("429 Too Many Requests")
             else:
                 track = MagicMock(language_code="en")
                 track.fetch.return_value = [{"text": "hi", "start": 0.0, "duration": 1.0}]
@@ -600,6 +482,19 @@ class TestExitRotation:
     @patch("src.services.transcription.transcript.YouTubeTranscriptApi")
     async def test_should_succeed_on_the_next_exit_after_a_429(self, mock_api_class):
         self._api_that_429s_on({self.EXITS[0]}, mock_api_class)
+
+        segments, _, _, _ = await get_transcript("vid")
+
+        assert segments[0]["text"] == "hi"
+        assert self._proxied_urls(mock_api_class) == self.EXITS[:2]
+
+    @pytest.mark.usefixtures("exits")
+    @patch("src.services.transcription.transcript.YouTubeTranscriptApi")
+    async def test_should_succeed_on_the_next_exit_after_a_bot_check(self, mock_api_class):
+        """The library raises RequestBlocked for "Sign in to confirm you're not a bot"."""
+        from youtube_transcript_api._errors import RequestBlocked
+
+        self._api_that_429s_on({self.EXITS[0]}, mock_api_class, RequestBlocked("vid"))
 
         segments, _, _, _ = await get_transcript("vid")
 
@@ -647,3 +542,19 @@ class TestExitRotation:
             await get_transcript("vid")
 
         assert mock_api.list.call_count == 3
+
+
+class TestJobExit:
+    """1a.6: the caption API starts on the job's round-robin exit, like yt-dlp."""
+
+    @patch(
+        "src.services.transcription.transcript._fetch_transcript_sync",
+        return_value=([], "", "manual", "en"),
+    )
+    @patch("src.services.transcription.transcript.ytdlp_proxy_exit_urls", return_value=[])
+    async def test_should_pick_the_exit_order_by_video_id_when_fetching_captions(
+        self, mock_exit_urls, _fetch
+    ):
+        await get_transcript("dQw4w9WgXcQ")
+
+        mock_exit_urls.assert_called_once_with("dQw4w9WgXcQ")

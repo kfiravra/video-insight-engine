@@ -47,7 +47,10 @@ class Settings(BaseSettings):
     # LLM Provider Configuration
     LLM_PROVIDER: str = "anthropic"  # anthropic, openai, gemini
     LLM_FAST_PROVIDER: str | None = None  # Optional separate provider for fast model
-    LLM_FALLBACK_PROVIDER: str | None = None  # Optional fallback provider
+    # Cross-provider fallback for primary-model calls (call_llm_with_retry): the
+    # first try and one same-provider retry, then this provider's default model
+    # for the remaining retries. Fast-model calls never fall back. None = none.
+    LLM_FALLBACK_PROVIDER: str | None = None
     LLM_MODEL: str | None = None  # Override default model (e.g., "anthropic/claude-sonnet-4-6")
     LLM_FAST_MODEL: str | None = None  # Override fast model
 
@@ -55,26 +58,28 @@ class Settings(BaseSettings):
     # Defaults reflect the 2026-05-19 fast-tier benchmark winners
     # (reports/fast-model-bench-20260519-074647.md). Override via env to test
     # alternatives without rebuilding.
-    # Only the two stages with material wins (enrichment quality +35%,
-    # vision -67% cost) are pinned. Classifier/translation stay on the
-    # default fast tier (gpt-4o-mini); the Gemini Flash-Lite savings were
-    # fractions of a cent — not worth adding a third provider dependency.
-    LLM_CLASSIFIER_MODEL: str | None = None
+    # Only enrichment (+35% quality) is pinned from that bench, plus the tier
+    # probe: the 2026-10-07 A/B (pipeline-1min gate 0, D21) picked Haiku 4.5
+    # at temperature 0.
+    # Translation stays on the default fast tier (gpt-4o-mini); the Gemini
+    # Flash-Lite savings were fractions of a cent — not worth adding a third
+    # provider dependency.
+    # The tier probe's model (stage "tier_probe"; the name predates the probe).
+    # Both composes pass it through with this same literal default, so a blank
+    # .env never routes the probe to the fast tier.
+    LLM_CLASSIFIER_MODEL: str | None = "anthropic/claude-haiku-4-5-20251001"
     LLM_CHAPTER_DETECT_MODEL: str | None = None
     LLM_DESCRIPTION_MODEL: str | None = None
     LLM_SYNTHESIS_MODEL: str | None = None
     LLM_ENRICHMENT_MODEL: str | None = "anthropic/claude-haiku-4-5-20251001"
     LLM_TRANSLATION_MODEL: str | None = None
-    LLM_VISION_MODEL: str | None = "anthropic/claude-haiku-4-5-20251001"
-    # Extraction model override. Default `None` falls through to the primary
-    # model (claude-sonnet-4-6 in production), preserving the current cost
-    # profile. Set to "anthropic/claude-haiku-4-5-20251001" or another model
-    # to A/B against Sonnet without rebuilding. Unlike EXTRACTION_USE_FAST_FIRST
-    # (which routes the FIRST pass to the fast tier and escalates retries to
-    # primary), this override pins ALL extraction passes — including retries —
-    # to the chosen model. Use when you want a clean A/B with no escalation
-    # noise; use EXTRACTION_USE_FAST_FIRST when you want a cost-saving first
-    # pass with Sonnet as a safety net on failure.
+    # Vision stays on the primary model (Sonnet): frame descriptions drive the
+    # moment gallery and OCR, and Haiku was rejected for them (2026-09-16).
+    # None → the caller's primary model (frame_analyzer).
+    LLM_VISION_MODEL: str | None = None
+    # Extraction model override — pins every extraction call and the memory
+    # stage (pipeline-1min D5). None → the primary model (Sonnet); prod pins
+    # "anthropic/claude-haiku-4-5-20251001" via env.
     LLM_EXTRACTION_MODEL: str | None = None
 
     # Provider API Keys (set for providers you use)
@@ -93,16 +98,10 @@ class Settings(BaseSettings):
     MAX_VIDEO_DURATION_MINUTES: int = 600
     MIN_VIDEO_DURATION_SECONDS: int = 60
     LLM_TIMEOUT_SECONDS: float = 60.0
-    LLM_NUM_RETRIES: int = 2
     LLM_MAX_TOKENS: int = 4096
     LLM_FAST_MAX_TOKENS: int = 4096
 
-    # Token limits for LLM prompts (large safety nets - modern LLMs handle full transcripts)
-    MAX_TRANSCRIPT_CHARS: int = 500000  # ~500K chars = well within all LLM limits
-    MAX_CHAPTER_CHARS: int = 100000  # ~100K chars per chapter
-
     # Chapter-based chunked extraction
-    CHAPTER_BATCH_SIZE: int = 3
     # Videos longer than this run chapter detection + chunked-batch extraction
     # (parallel Sonnet calls). Lowered 1800→900 on 2026-05-24 to halve the
     # wallclock for 15–30 min videos at the cost of a small chapter_detect
@@ -116,19 +115,20 @@ class Settings(BaseSettings):
     # the tail (a 4.5h video produced output only up to 1:34). Bounding span to
     # 40 min keeps each batch densely coverable within the 16K output budget.
     MAX_MINUTES_PER_BATCH: int = 40
-    CHUNKED_EXTRACTION_TIMEOUT: float = 300.0  # 5 min — per-batch timeout for chunked extraction
-    # Parallel concurrency for the chunked extraction batches. Defaults to 2
-    # because production has hit Anthropic 529 (overloaded) at 3 concurrent
-    # Sonnet calls; 2 keeps tail latency stable while still ~halving wall time.
-    EXTRACTION_PARALLEL_BATCHES: int = 2
-    # Force-split target — kept aligned with EXTRACTION_PARALLEL_BATCHES * 2
-    # so a single round of the parallel limit drains half the chunks.
+    # Chunked extraction batches run in parallel; false = one batch at a time
+    # (the switch to rule out concurrency when a run misbehaves).
+    EXTRACTION_PARALLEL: bool = True
+    # Max extraction calls in flight per RUN (the semaphore is per run, not per
+    # process): a worker holds up to EXTRACTION_PARALLEL_BATCHES ×
+    # WORKER_CONCURRENCY extraction calls at once. 6 (pipeline-1min D11): prod
+    # extraction runs on Haiku, no 429 has ever been recorded and the rate
+    # limits leave >12x headroom (the old 2 dated from 529s at 3 concurrent
+    # Sonnet calls). pipeline.timing counts 429s per run (it cannot see a
+    # concurrent run's 429s) — back off to 4 if a run records any.
+    EXTRACTION_PARALLEL_BATCHES: int = 6
+    # Sub-batches when a long video's chunked input collapses to one batch;
+    # they run in one round while EXTRACTION_PARALLEL_BATCHES >= this.
     EXTRACTION_FORCE_SPLIT_CHUNKS: int = 4
-    # Phase 4 / P2: route the *first* extraction pass through the fast model.
-    # Default OFF — flip via env after the corpus eval (scripts/eval_extraction_models.py)
-    # confirms quality delta < 0.05 across all primary domains. Retries always
-    # escalate to the primary model regardless of this flag.
-    EXTRACTION_USE_FAST_FIRST: bool = False
 
     # Timeout constants for pipeline stages
     TRANSCRIPT_FETCH_TIMEOUT: float = 30.0
@@ -138,16 +138,14 @@ class Settings(BaseSettings):
     SPONSORBLOCK_TIMEOUT: float = 5.0
 
     # The only proxy setting. One exit for every YouTube-facing request: yt-dlp
-    # downloads (scene detection, local 720p fallback, stream-URL lookup,
+    # downloads (the run's low-res detection file and its one ≤720p file,
     # whisper/gemini audio), metadata, playlists and caption fetches (timedtext
     # + caption API). Full URL with credentials, e.g. http://user:pass@host:port.
     # Blank = direct. Needed on the EC2 box, whose datacenter IP is bot-checked
     # (2026-09); the exit must be a residential/ISP IP — datacenter proxies are
-    # blocked the same way. ffmpeg seeks on a looked-up stream URL would leave
-    # from the host IP unproxied and 403, so with a proxy set the frame pipeline
-    # never looks one up: hi-res frames come from a proxied local 720p download
-    # started alongside scene detection, and moment fills (>=3 frameless moments)
-    # download it again during assembly — two downloads through the proxy.
+    # blocked the same way. No stream URL is ever handed to ffmpeg (it would
+    # leave from the host IP unproxied and 403): hi-res frames and moment fills
+    # are ffmpeg seeks into the run's local ≤720p download.
     YOUTUBE_PROXY_URL: str | None = None
     # Sticky exits behind the proxy gateway, addressed by the username suffix
     # (Webshare: USERNAME-1 … USERNAME-N). A caption 429 is IP-scoped, so both
@@ -256,8 +254,12 @@ class Settings(BaseSettings):
     # 60s proxy read timeout, or the SSE proxy hop aborts an idle-but-live stream.
     SSE_HEARTBEAT_SECONDS: float = 12.0
 
-    # Advanced transcript cleaning (spaCy + TF-IDF)
-    TRANSCRIPT_CLEANING_ENABLED: bool = True
+    # Advanced transcript cleaning (spaCy + TF-IDF) of ctx.clean_text — what
+    # Qdrant chunks, faithfulness and the S3 blob read. Off by default (prod's
+    # .env already had it off): every LLM prompt reads the [m:ss]-rendered
+    # segments, never this text, so the spaCy pass only cost wall time on the
+    # critical path before transcript_ready.
+    TRANSCRIPT_CLEANING_ENABLED: bool = False
     # Budget for the advanced-cleaning pass. The first call per worker process
     # pays a spaCy cold-start inside this window; raise if cold-start timeouts
     # show up in logs ("Advanced transcript cleaning timed out").
@@ -274,20 +276,19 @@ class Settings(BaseSettings):
     SCENE_THRESHOLD: float = 0.3
     SCENE_MAX_FRAMES: int = 100
     # Detection pass renders from the worst-quality download; these only shape
-    # the low-res JPEGs used for scoring/OCR (and the fallback if hi-res fails).
+    # the low-res JPEGs used for scoring/OCR/HIGH-tier vision (and the fallback
+    # if hi-res fails). MAX width: frames narrower than this are never upscaled
+    # (upscaling the ~360p file added no pixels, only vision image tokens).
     SCENE_DETECT_SCALE_WIDTH: int = 1024
     SCENE_JPEG_QUALITY: int = 4  # ffmpeg -q:v (2 = near-lossless, 31 = worst)
 
     # Hi-res refinement: re-extract the ~25 SELECTED frames at 720p before S3
-    # upload + vision analysis. Proxyless: stream-URL seeks (no full download).
-    # Proxied: one local 720p download, prefetched during scene detection.
-    # Disable to fall back to single-pass low-res frames.
+    # upload + vision analysis, by seeking the run's one local 720p download
+    # (started during scene detection, kept for moment fill). Disable to fall
+    # back to single-pass low-res frames.
     SCENE_HIRES_ENABLED: bool = True
-    SCENE_HIRES_CONCURRENCY: int = 4  # parallel ffmpeg seeks (CDN or local file)
-    SCENE_HIRES_TIMEOUT: float = 90.0  # stream-URL budget; on expiry keep low-res
-    # Budget for the local-file seeks (after the one yt-dlp 720p download):
-    # the proxyless fallback when the CDN 403s every direct stream-URL
-    # extraction, and the only path when a proxy is set.
+    SCENE_HIRES_CONCURRENCY: int = 4  # parallel ffmpeg seeks into the local file
+    # Budget for the hi-res seeks into the local 720p file (after its download).
     SCENE_HIRES_FALLBACK_TIMEOUT: float = 180.0
     # yt-dlp player clients for VIDEO/AUDIO downloads (comma-separated).
     # 2026-08-19: YouTube 403s the web client's download URLs from this
@@ -317,12 +318,19 @@ class Settings(BaseSettings):
     # Versioned S3 prefix — bumping it defeats the frames-already-exist cache
     # so quality changes take effect for reprocessed videos ("scenes" = pre-hires).
     # v3: subject-aware scoring (skin/center-detail) + adaptive vision tiers.
-    SCENE_S3_PREFIX: str = "scenes-v3"
+    # v4: pipeline-1min frame selection — zero-candidate ladder, native-width
+    # detection (no upscale), batched vision.
+    SCENE_S3_PREFIX: str = "scenes-v4"
 
-    # Vision LLM analysis on top-scored frames.
-    # Sending 8 base64 frames to Sonnet legitimately takes 30-50s under load;
-    # HIGH-tier batches (~40 low-res frames) need the larger 90s budget.
+    # Vision LLM analysis on top-scored frames. FRAME_VISION_MAX_FRAMES = frames
+    # described on the STANDARD tier. FRAME_VISION_TIMEOUT = per-call CEILING
+    # and the vision stage deadline, in seconds — not a floor: frame_analyzer
+    # sizes each call from its max_tokens (twice the expected wall, >= 30 s)
+    # and caps it here (raised per frame only for one big unbatched call).
     FRAME_VISION_ENABLED: bool = True
+    # Frames go to vision in parallel batches (media/frame_analyzer.py);
+    # false = one call with every frame, the pre-batching path.
+    FRAME_VISION_PARALLEL: bool = True
     FRAME_VISION_MAX_FRAMES: int = 8
     FRAME_VISION_TIMEOUT: float = 90.0
 
@@ -332,23 +340,9 @@ class Settings(BaseSettings):
     # frames (cards, dishes, places) win over presenter shots.
     FRAME_TIER_ENABLED: bool = True
     FRAME_OVERSELECT_COUNT: int = 40
-    # Reserved: refine the metadata-derived tier with an early classifier call
-    # launched at frames-phase start (classification normally runs later).
-    FRAME_TIER_EARLY_CLASSIFIER: bool = False
     # HIGH-tier floor: vision-informed reselection never keeps fewer than this
     # many frames (backfilled by local score when vision over-refuses).
     FRAME_RESELECT_FLOOR: int = 20
-
-    # Frame extraction (visual blocks)
-    # Default False for local dev (yt-dlp/ffmpeg may not be installed).
-    # docker-compose.yml sets FRAME_EXTRACTION_ENABLED=true for container environments.
-    FRAME_EXTRACTION_ENABLED: bool = False
-    MAX_FRAMES_PER_VISUAL: int = 6  # Cap frames[] array length per visual block
-    MAX_FRAMES_PER_CHAPTER: int = 12  # Total frames across all visual blocks in one chapter
-    FRAME_MIN_SPACING_SECONDS: int = 20  # Min gap between frames in same block
-    FRAME_WITHIN_BLOCK_DEDUP_THRESHOLD: int = (
-        12  # aHash hamming distance (relaxed for within-block)
-    )
 
     # Pipeline output-schema version — single-sourced from
     # packages/shared/src/config/pipeline-version.json (shared with the api
@@ -362,8 +356,10 @@ class Settings(BaseSettings):
     # ─── RabbitMQ worker ────────────────────────────────────────────────
     # AMQP URL — kept aligned with the API's RABBITMQ_URL in docker-compose.
     RABBITMQ_URL: str = "amqp://vie:vie-dev@vie-rabbitmq:5672/"
-    # Concurrent jobs processed in one worker process. Cap matches the LLM
-    # provider's parallelism — 2 keeps Anthropic 529 (overloaded) rare.
+    # Concurrent pipeline runs in one worker process. Every per-run cap
+    # multiplies by it — extraction calls (EXTRACTION_PARALLEL_BATCHES), vision
+    # batches, the run's two downloads and its ffmpeg seeks — so 2 runs hold up
+    # to 12 extraction calls in flight. The .env examples (and prod) set 1.
     WORKER_CONCURRENCY: int = 2
     # Re-publish a failed message up to this many times before sending to DLQ.
     # Tracked via the x-attempt header so retries survive restarts.
@@ -404,7 +400,7 @@ class Settings(BaseSettings):
     # constant — without it, Pydantic v2 might try to interpret it as a
     # configurable field, which would silently break depending on version.
     _STAGE_TO_SETTING: ClassVar[dict[str, str]] = {
-        "classifier": "LLM_CLASSIFIER_MODEL",
+        "tier_probe": "LLM_CLASSIFIER_MODEL",
         "chapter_detect": "LLM_CHAPTER_DETECT_MODEL",
         "description_analysis": "LLM_DESCRIPTION_MODEL",
         "synthesis": "LLM_SYNTHESIS_MODEL",

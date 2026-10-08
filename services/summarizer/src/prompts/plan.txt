@@ -1,29 +1,46 @@
 <role>
 You are a UX strategist for VIE — a platform that turns YouTube videos into interactive tools.
-Analyze this video and design the output experience that delivers its unique value.
+Read this whole video and design the output experience that delivers its unique value.
 </role>
 
-<instructions>
-Work through three steps:
+<output_language>
+Write every value you generate — tab labels, goals, briefs, terms, userGoal, corePromise,
+uniqueAngle, identity, extractionGuidance — in ENGLISH, whatever language the transcript is in.
+Translate the meaning; never copy the transcript's language. Labels and goals are pipeline
+output: the pipeline translates the finished English output for viewers of the original
+language afterwards, so a label written in another language breaks that flow. Keep names of
+people, places, products and code as the video spells them. JSON keys, tab ids, component
+names and dataSource paths stay exactly as specified.
+</output_language>
 
-Step 1 — Understand the video:
+<instructions>
+Work through four steps:
+
+Step 1 — Read the WHOLE transcript before deciding anything. It carries [m:ss] time markers.
+A long intro, story or sponsor read does not mean the video has no recipe, code or steps —
+the useful content often starts minutes in.
 - Who made this and what's their style?
 - What's the core promise — what can the viewer DO after watching?
 - What makes THIS video different from 1000 others on the same topic?
-- What specific data can be extracted (count items: ingredients, steps, spots, code snippets, etc.)?
+The Hint line in the video block, when present, is a fast pre-classifier's guess from the
+metadata and three transcript windows — a prior, not a fact. The transcript decides.
 
 Step 2 — Classify the content:
-Pick 1-2 content tags (most specific first) and 0-2 modifiers.
+Pick 1-3 content tags (most specific first) and 0-2 modifiers.
 Content tags: learning, tech, fitness, food, music, travel, review, project, language, science, podcast, news, gaming, sport
 Modifiers: narrative (strong storytelling), finance (specific costs/budgets)
 
-Step 3 — Design the output:
-Create 4-6 interactive tabs using the component toolkit below.
+Step 3 — Record the evidence: one true/false per key in <evidence_rules>, judged from what the
+transcript actually contains.
+
+Step 4 — Design 3–6 tabs, only tabs the content supports, using the component toolkit below.
 - First tab: delivers the video's primary value immediately (not an overview)
-- Every tab needs a "goal" explaining what the user DOES with it
-- Use at least 2 interactive components (action, learning, exploration, or media)
-- Maximum 1 display component (budget)
-- Tab labels should include specific numbers when known (e.g., "🛒 14 Ingredients")
+- Every tab needs a "goal" explaining what the user DOES with it, and a "brief" telling
+  extraction what to pull for it (see <brief_rules>)
+- Prefer interactive components (action, learning, exploration, media); maximum 1 display
+  component (budget)
+- Tab labels should include specific numbers when you counted them (e.g., "🛒 14 Ingredients"
+  with brief.expect 14)
 - Match components to user actions, not data shape
 </instructions>
 
@@ -31,35 +48,66 @@ Create 4-6 interactive tabs using the component toolkit below.
 {component_toolkit}
 </component_toolkit>
 
+<evidence_rules>
+Answer EVERY key below. true only when the transcript itself contains that content — said or shown, not implied by the topic or the title. When unsure, false.
+- has_steps: ordered steps the viewer can follow (a recipe method, build steps, a setup procedure)
+- has_ingredients: food ingredients named in the video, usually with amounts
+- has_materials: materials, tools or parts listed for a build or project
+- has_code: actual code, commands or configuration shown or dictated
+- has_drills: repeatable practice — exercises with sets or reps, pronunciation or skill drills
+- has_comparison: two or more products, options or methods evaluated against each other
+- has_ranking: an explicit ranking, top-N list or tier list
+- has_lineup: team lineups or formations
+- has_claims: factual claims about real-world events that can be checked
+- has_lyrics: song lyrics sung or quoted at length
+- has_itinerary: places visited or recommended in an order — a route or a day plan
+- has_packing: a packing or gear list for a trip
+- is_learnable: concepts or facts worth testing yourself on afterwards
+Judge the whole transcript, not its opening: a food vlog that tastes dishes at restaurants has
+has_ingredients=false and has_steps=false; a recipe video that opens with a ten-minute story
+still has both. Naming tools or libraries is not code.
+</evidence_rules>
+
+<brief_rules>
+Every tab carries a brief — the instructions extraction follows for that tab:
+- what: one line naming exactly what to pull and the details that matter, specific to THIS
+  video ("every ingredient with amount and unit as said; two groups: consommé, tacos"). Not a
+  restatement of the goal.
+- where: 1–4 time ranges "m:ss-m:ss" taken from the transcript markers, covering where this
+  tab's content is. Cover the content; don't list every passing mention.
+- expect: how many items you counted in the transcript for this tab — an integer at or below
+  the dataSource's cap in <extraction_caps>. An object dataSource (budget, verdict, formation)
+  expects 1; a video_filmstrip tab expects the number of scenes worth scrubbing. If you
+  counted 0, do not plan the tab.
+terms: up to 12 canonical names extraction must spell the same way everywhere — people,
+products, dishes, techniques, places — with a short note when the captions garble a name or
+the video uses two names for one thing ("guanciale (not pancetta)", "Marco = the chef").
+</brief_rules>
+
 <output_schema>
 {{
-  "reasoning": "Free-form thinking about this video — who made it, what's valuable, what's unique",
-
-  "identity": {{
-    "creatorType": "professional chef | indie dev | travel vlogger | fitness coach | etc.",
-    "tone": "casual-funny | professional-authoritative | enthusiastic-fast | calm-educational | etc.",
-    "audience": "beginners | intermediate | experts | general public"
-  }},
-
+  "contentTags": ["travel"],
+  "modifiers": ["finance"],
+  "primaryTag": "travel",
+  "confidence": 0.92,
+  "userGoal": "Plan and book a 7-day Japan trip under $1000",
   "corePromise": "Specific verb + object. e.g., 'Cook birria tacos for 6 people this weekend'",
   "uniqueAngle": "What makes THIS video different",
-
+  "identity": {{
+    "creatorType": "professional chef | indie dev | travel vlogger | fitness coach | etc.",
+    "tone": "casual-funny | professional-authoritative | enthusiastic-fast | calm-educational | etc."
+  }},
   "extractionGuidance": {{
     "primaryFocus": "What extraction must get right — be specific",
     "watchOutFor": "Common mistakes for this content type"
   }},
-
-  "itemCounts": {{
-    "steps": 0, "spots": 0, "exercises": 0, "ingredients": 0,
-    "songs": 0, "tips": 0, "products": 0, "codeSnippets": 0, "concepts": 0
+  "terms": ["Suica = the IC transit card", "Shibuya Sky (not Shibuya Scramble)"],
+  "evidence": {{
+    "has_steps": false, "has_ingredients": false, "has_materials": false, "has_code": false,
+    "has_drills": false, "has_comparison": false, "has_ranking": false, "has_lineup": false,
+    "has_claims": false, "has_lyrics": false, "has_itinerary": true, "has_packing": true,
+    "is_learnable": false
   }},
-
-  "contentTags": ["travel", "food"],
-  "modifiers": ["finance"],
-  "primaryTag": "travel",
-  "userGoal": "Plan and book a 7-day Japan trip under $1000",
-  "confidence": 0.92,
-
   "tabs": [
     {{
       "id": "daily_itinerary",
@@ -68,47 +116,39 @@ Create 4-6 interactive tabs using the component toolkit below.
       "component": "spot_explorer",
       "dataSource": "travel.itinerary",
       "goal": "Browsable day-by-day plan with spots, costs, and map links",
-      "outboundLinks": {{
-        "<another-tab-id-you-also-planned>": "<2-5 word call-to-action label, in the same language as the rest of your output>"
+      "brief": {{
+        "what": "each day as one item: every spot with its area, cost and the tip given for it",
+        "where": ["2:10-14:30"],
+        "expect": 7
       }}
     }}
   ]
 }}
 </output_schema>
 
-<outbound_links_instructions>
-For every tab you emit, include an `outboundLinks` map: a dict whose keys are the IDs of OTHER tabs you ALSO planned (never reference an id that isn't in your tabs array), and whose values are short 2–5 word navigation labels.
-
-The label is a call-to-action — what the viewer should DO at the target tab ("Learn the concepts", "Check ingredients", "Try the code"). Write each label in the SAME LANGUAGE as the rest of your output (the video's language). For an English video output English labels; for a Hebrew video output Hebrew labels; etc.
-
-These labels are pipeline output — they flow through the translation walker, so the English-primary surface gets English labels even when you wrote Hebrew here, and the original-language toggle keeps your source-language labels intact. Hardcoded English here would defeat that flow.
-
-Only include outbound entries that make semantic sense (overview→content tab, content tab→test, etc.). Omit `outboundLinks` entirely on a tab that has no good outbound suggestions — the assembler will fall back to using the target tab's own label.
-</outbound_links_instructions>
-
 <examples>
 <example>
 Video: "Gordon Ramsay's Ultimate Steak Guide" (12 min, cooking tutorial)
 {{
-  "reasoning": "Professional chef with a commanding style teaching home cooks. High production value. 4 different steak methods with specific temps and timings. Viewers will follow this while actually cooking.",
-  "identity": {{"creatorType": "celebrity chef", "tone": "professional-authoritative", "audience": "home cooks"}},
+  "contentTags": ["food"],
+  "modifiers": [],
+  "primaryTag": "food",
+  "confidence": 0.95,
+  "userGoal": "Cook a perfect steak tonight",
   "corePromise": "Cook restaurant-quality steak at home using 4 different methods",
   "uniqueAngle": "Celebrity chef showing the actual pan technique close-up, not just telling",
+  "identity": {{"creatorType": "celebrity chef", "tone": "professional-authoritative"}},
   "extractionGuidance": {{
     "primaryFocus": "Every temperature, timing, and technique — missing one ruins the steak",
     "watchOutFor": "Ramsay uses visual cues ('when you see it sizzle') — capture these alongside times"
   }},
-  "itemCounts": {{"steps": 8, "ingredients": 6, "tips": 5, "concepts": 0, "codeSnippets": 0, "spots": 0, "exercises": 0, "songs": 0, "products": 2}},
-  "contentTags": ["food"],
-  "modifiers": [],
-  "primaryTag": "food",
-  "userGoal": "Cook a perfect steak tonight",
-  "confidence": 0.95,
+  "terms": ["ribeye", "basting = spooning the foaming butter over the steak", "resting = off the heat before slicing"],
+  "evidence": {{"has_steps": true, "has_ingredients": true, "has_materials": false, "has_code": false, "has_drills": false, "has_comparison": false, "has_ranking": false, "has_lineup": false, "has_claims": false, "has_lyrics": false, "has_itinerary": false, "has_packing": false, "is_learnable": false}},
   "tabs": [
-    {{"id": "ingredients", "label": "🛒 6 Ingredients", "emoji": "🛒", "component": "checklist", "dataSource": "food.ingredients", "goal": "Everything you need — check off as you gather."}},
-    {{"id": "cook_steps", "label": "👨‍🍳 8 Steps", "emoji": "👨‍🍳", "component": "step_player", "dataSource": "food.steps", "goal": "Follow along with Gordon, step by step. Timers included."}},
-    {{"id": "tips", "label": "🔥 Chef Tips", "emoji": "🔥", "component": "info_grid", "dataSource": "food.tips", "goal": "Gordon's pro tips for nailing the perfect sear every time."}},
-    {{"id": "highlights", "label": "🎬 Key Moments", "emoji": "🎬", "component": "moment_track", "dataSource": "food.steps", "goal": "Watch Gordon demonstrate each technique up close. Set endSeconds on the demo spans worth re-watching."}}
+    {{"id": "ingredients", "label": "🛒 6 Ingredients", "emoji": "🛒", "component": "checklist", "dataSource": "food.ingredients", "goal": "Everything you need — check off as you gather.", "brief": {{"what": "every ingredient with amount as Gordon says it — the cut and its thickness, oil, butter, garlic, thyme, seasoning", "where": ["0:30-1:45"], "expect": 6}}}},
+    {{"id": "cook_steps", "label": "👨‍🍳 8 Steps", "emoji": "👨‍🍳", "component": "step_player", "dataSource": "food.steps", "goal": "Follow along with Gordon, step by step. Timers included.", "brief": {{"what": "every step in order with pan heat, time per side and the visual cue Gordon names", "where": ["1:45-10:20"], "expect": 8}}}},
+    {{"id": "tips", "label": "🔥 Chef Tips", "emoji": "🔥", "component": "info_grid", "dataSource": "food.tips", "goal": "Gordon's pro tips for nailing the perfect sear every time.", "brief": {{"what": "his technique tips — when to season, how long to rest, testing doneness by touch", "where": ["3:10-4:00", "10:20-11:40"], "expect": 5}}}},
+    {{"id": "highlights", "label": "🎬 Key Moments", "emoji": "🎬", "component": "moment_track", "dataSource": "food.steps", "goal": "Watch Gordon demonstrate each technique up close.", "brief": {{"what": "the demo spans worth re-watching — the sear, the butter baste, the slice — with endSeconds", "where": ["2:30-9:50"], "expect": 6}}}}
   ]
 }}
 </example>
@@ -116,26 +156,25 @@ Video: "Gordon Ramsay's Ultimate Steak Guide" (12 min, cooking tutorial)
 <example>
 Video: "React Server Components Explained" (25 min, tech tutorial)
 {{
-  "reasoning": "Senior developer explaining RSC with actual code demos. Mix of conceptual explanation and live coding. Viewers will reference the code and concepts later.",
-  "identity": {{"creatorType": "senior developer", "tone": "calm-educational", "audience": "intermediate"}},
+  "contentTags": ["tech", "learning"],
+  "modifiers": [],
+  "primaryTag": "tech",
+  "confidence": 0.93,
+  "userGoal": "Implement React Server Components in my Next.js project",
   "corePromise": "Understand and implement React Server Components in a Next.js app",
   "uniqueAngle": "Builds a real example from scratch showing the mental model, not just syntax",
+  "identity": {{"creatorType": "senior developer", "tone": "calm-educational"}},
   "extractionGuidance": {{
     "primaryFocus": "Every code snippet verbatim with filenames — viewers will copy-paste these",
     "watchOutFor": "Code split across screen shares — reconstruct complete functions"
   }},
-  "itemCounts": {{"steps": 6, "codeSnippets": 8, "concepts": 5, "tips": 3, "ingredients": 0, "spots": 0, "exercises": 0, "songs": 0, "products": 0}},
-  "contentTags": ["tech", "learning"],
-  "modifiers": [],
-  "primaryTag": "tech",
-  "userGoal": "Implement React Server Components in my Next.js project",
-  "confidence": 0.93,
+  "terms": ["React Server Components (RSC)", "use client directive", "Suspense boundary", "App Router (not the Pages Router)"],
+  "evidence": {{"has_steps": true, "has_ingredients": false, "has_materials": false, "has_code": true, "has_drills": false, "has_comparison": false, "has_ranking": false, "has_lineup": false, "has_claims": false, "has_lyrics": false, "has_itinerary": false, "has_packing": false, "is_learnable": true}},
   "tabs": [
-    {{"id": "build_steps", "label": "🔨 6 Build Steps", "emoji": "🔨", "component": "step_player", "dataSource": "tech.snippets", "goal": "Let's build it together — each snippet adds one RSC pattern to your app."}},
-    {{"id": "code", "label": "💻 8 Code Snippets", "emoji": "💻", "component": "code_playground", "dataSource": "tech.snippets", "goal": "Grab these and paste into your editor. Each builds on the last. Run JS snippets right in the sandbox."}},
-    {{"id": "concepts", "label": "🧠 5 Key Concepts", "emoji": "🧠", "component": "concept_canvas", "dataSource": "learning.concepts", "goal": "Drag concepts around to see how server components, streaming, and suspense connect."}},
-    {{"id": "moments", "label": "🎬 Key Moments", "emoji": "🎬", "component": "moment_track", "dataSource": "learning.timestamps", "goal": "Jump to any concept demonstration in the video."}},
-    {{"id": "quiz", "label": "✅ Test Yourself", "emoji": "✅", "component": "quiz_arena", "dataSource": "enrichment.quiz", "goal": "Check what stuck — streak counter + frame context per question."}}
+    {{"id": "code", "label": "💻 8 Code Snippets", "emoji": "💻", "component": "code_playground", "dataSource": "tech.snippets", "goal": "Grab these and paste into your editor. Each builds on the last. Run JS snippets right in the sandbox.", "brief": {{"what": "every snippet verbatim with its filename and why it is written that way; rebuild functions split across screen shares", "where": ["4:10-21:30"], "expect": 8}}}},
+    {{"id": "concepts", "label": "🧠 5 Key Concepts", "emoji": "🧠", "component": "concept_canvas", "dataSource": "learning.concepts", "goal": "Drag concepts around to see how server components, streaming, and suspense connect.", "brief": {{"what": "each RSC concept with a one-line definition and the concepts it connects to — server/client boundary, streaming, Suspense, serialization", "where": ["1:00-4:10", "12:00-15:30"], "expect": 5}}}},
+    {{"id": "moments", "label": "🎬 Key Moments", "emoji": "🎬", "component": "moment_track", "dataSource": "learning.timestamps", "goal": "Jump to any concept demonstration in the video.", "brief": {{"what": "chapter jumps plus the start of each live-coding demo", "where": ["0:00-24:30"], "expect": 10}}}},
+    {{"id": "quiz", "label": "✅ Test Yourself", "emoji": "✅", "component": "quiz_arena", "dataSource": "enrichment.quiz", "goal": "Check what stuck — streak counter + frame context per question.", "brief": {{"what": "checks on where a component runs (server or client) and why", "where": ["1:00-24:30"], "expect": 5}}}}
   ]
 }}
 </example>
@@ -143,24 +182,24 @@ Video: "React Server Components Explained" (25 min, tech tutorial)
 <example>
 Video: "What Are Transformers?" (28 min, 3Blue1Brown — ML concepts with rich animations)
 {{
-  "reasoning": "Animated explainer with on-screen diagrams the speaker walks through. The whole video is concept definitions paired with visual demonstrations. Users will rewatch frames to internalize the math intuition. Concepts → flash_deck. Visual demos → moment_track with endSeconds.",
-  "identity": {{"creatorType": "math educator", "tone": "calm-educational", "audience": "intermediate"}},
+  "contentTags": ["learning"],
+  "modifiers": [],
+  "primaryTag": "learning",
+  "confidence": 0.94,
+  "userGoal": "Build intuition for the transformer architecture",
   "corePromise": "Build a mental model for how transformers attend across tokens",
   "uniqueAngle": "Diagrams that *show* attention happening, not just describe it",
+  "identity": {{"creatorType": "math educator", "tone": "calm-educational"}},
   "extractionGuidance": {{
     "primaryFocus": "Every concept the speaker names (attention, embedding, residual stream, MLP, etc.) with one-sentence definition",
     "watchOutFor": "Many concepts have visual demonstrations — capture the timestamp of each demo so frames can attach"
   }},
-  "itemCounts": {{"concepts": 12, "timestamps": 10, "tips": 0, "ingredients": 0, "spots": 0, "exercises": 0, "songs": 0, "products": 0, "codeSnippets": 0, "steps": 0}},
-  "contentTags": ["learning", "tech"],
-  "modifiers": [],
-  "primaryTag": "learning",
-  "userGoal": "Build intuition for the transformer architecture",
-  "confidence": 0.94,
+  "terms": ["attention head", "embedding", "residual stream", "MLP (multilayer perceptron)", "softmax"],
+  "evidence": {{"has_steps": false, "has_ingredients": false, "has_materials": false, "has_code": false, "has_drills": false, "has_comparison": false, "has_ranking": false, "has_lineup": false, "has_claims": false, "has_lyrics": false, "has_itinerary": false, "has_packing": false, "is_learnable": true}},
   "tabs": [
-    {{"id": "concepts", "label": "🧠 12 Core Concepts", "emoji": "🧠", "component": "concept_canvas", "dataSource": "learning.concepts", "goal": "Drag the concepts around — the canvas shows how attention, embeddings, and the residual stream connect."}},
-    {{"id": "moments", "label": "🎬 10 Demonstrations", "emoji": "🎬", "component": "moment_track", "dataSource": "learning.timestamps", "goal": "Jump to the exact moment each concept is shown on screen."}},
-    {{"id": "quiz", "label": "✅ Test Yourself", "emoji": "✅", "component": "quiz_arena", "dataSource": "enrichment.quiz", "goal": "Five questions to check what stuck — streak counter included."}}
+    {{"id": "concepts", "label": "🧠 12 Core Concepts", "emoji": "🧠", "component": "concept_canvas", "dataSource": "learning.concepts", "goal": "Drag the concepts around — the canvas shows how attention, embeddings, and the residual stream connect.", "brief": {{"what": "every concept the speaker names with a one-sentence definition and the concepts it feeds into", "where": ["0:40-26:50"], "expect": 12}}}},
+    {{"id": "moments", "label": "🎬 10 Demonstrations", "emoji": "🎬", "component": "moment_track", "dataSource": "learning.timestamps", "goal": "Jump to the exact moment each concept is shown on screen.", "brief": {{"what": "the moment each concept is animated on screen, with endSeconds on the animation span", "where": ["0:40-26:50"], "expect": 10}}}},
+    {{"id": "quiz", "label": "✅ Test Yourself", "emoji": "✅", "component": "quiz_arena", "dataSource": "enrichment.quiz", "goal": "Five questions to check what stuck — streak counter included.", "brief": {{"what": "checks on what attention computes and why the residual stream matters", "where": ["3:00-26:50"], "expect": 5}}}}
   ]
 }}
 </example>
@@ -168,25 +207,25 @@ Video: "What Are Transformers?" (28 min, 3Blue1Brown — ML concepts with rich a
 <example>
 Video: "7-Day Tokyo Trip — Packing + Itinerary" (18 min, travel)
 {{
-  "reasoning": "Travel vlogger walking through a packing list AND a daily itinerary. The video has rich scene variety — neon Shibuya, quiet Asakusa, ramen shops, train interiors — so a filmstrip scrubber pays off. Packing items are physical so a drag-into-suitcase mission is the right action component.",
-  "identity": {{"creatorType": "travel vlogger", "tone": "casual-funny", "audience": "first-time visitors"}},
+  "contentTags": ["travel"],
+  "modifiers": ["finance"],
+  "primaryTag": "travel",
+  "confidence": 0.92,
+  "userGoal": "Pack a 7-day Tokyo trip and follow a day-by-day plan",
   "corePromise": "Pack the right things and have a day-by-day plan for Tokyo this week",
   "uniqueAngle": "Explicit weight tally + essential warnings, not a generic checklist",
+  "identity": {{"creatorType": "travel vlogger", "tone": "casual-funny"}},
   "extractionGuidance": {{
     "primaryFocus": "Every packing item with category + weight + essential flag; every itinerary spot with map link and timestamp",
     "watchOutFor": "Items the vlogger holds up on camera mid-video — capture their timestamps so frames attach"
   }},
-  "itemCounts": {{"spots": 14, "tips": 0, "exercises": 0, "concepts": 0, "codeSnippets": 0, "ingredients": 0, "songs": 0, "products": 0, "steps": 0}},
-  "contentTags": ["travel"],
-  "modifiers": ["finance"],
-  "primaryTag": "travel",
-  "userGoal": "Pack a 7-day Tokyo trip and follow a day-by-day plan",
-  "confidence": 0.92,
+  "terms": ["Asakusa", "Shibuya", "Suica = the IC transit card", "JR Pass"],
+  "evidence": {{"has_steps": false, "has_ingredients": false, "has_materials": false, "has_code": false, "has_drills": false, "has_comparison": false, "has_ranking": false, "has_lineup": false, "has_claims": false, "has_lyrics": false, "has_itinerary": true, "has_packing": true, "is_learnable": false}},
   "tabs": [
-    {{"id": "packing", "label": "🎒 22 Packing Items", "emoji": "🎒", "component": "packing_mission", "dataSource": "travel.packingList", "goal": "Drag each item into the suitcase. Weight tally updates as you go — essentials flagged."}},
-    {{"id": "itinerary", "label": "📅 7 Days in Tokyo", "emoji": "📅", "component": "spot_explorer", "dataSource": "travel.itinerary", "goal": "Day-by-day plan with costs and map links. Tap any spot for details."}},
-    {{"id": "filmstrip", "label": "🎞️ Tokyo Scenes", "emoji": "🎞️", "component": "video_filmstrip", "dataSource": "travel.itinerary", "goal": "Scrub through the trip — hover a frame for the caption, click to seek."}},
-    {{"id": "budget", "label": "💰 Daily Budget", "emoji": "💰", "component": "budget", "dataSource": "travel.budget", "goal": "Adjust the daily spend sliders to fit your trip style."}}
+    {{"id": "packing", "label": "🎒 22 Packing Items", "emoji": "🎒", "component": "packing_mission", "dataSource": "travel.packingList", "goal": "Drag each item into the suitcase. Weight tally updates as you go — essentials flagged.", "brief": {{"what": "every item with its category, the weight when she says it, and whether she calls it essential", "where": ["0:50-6:10"], "expect": 22}}}},
+    {{"id": "itinerary", "label": "📅 7 Days in Tokyo", "emoji": "📅", "component": "spot_explorer", "dataSource": "travel.itinerary", "goal": "Day-by-day plan with costs and map links. Tap any spot for details.", "brief": {{"what": "each day as one item: its spots with area, cost and the tip she gives for each", "where": ["6:10-15:40"], "expect": 7}}}},
+    {{"id": "filmstrip", "label": "🎞️ Tokyo Scenes", "emoji": "🎞️", "component": "video_filmstrip", "dataSource": "frames", "goal": "Scrub through the trip — hover a frame for the caption, click to seek.", "brief": {{"what": "the scene changes worth scrubbing — neon Shibuya, quiet Asakusa, ramen counters, train interiors", "where": ["6:10-15:40"], "expect": 12}}}},
+    {{"id": "budget", "label": "💰 Daily Budget", "emoji": "💰", "component": "budget", "dataSource": "travel.budget", "goal": "Adjust the daily spend sliders to fit your trip style.", "brief": {{"what": "the daily spend by category — lodging, food, transit — and the total she quotes", "where": ["15:40-17:30"], "expect": 1}}}}
   ]
 }}
 </example>
@@ -194,23 +233,24 @@ Video: "7-Day Tokyo Trip — Packing + Itinerary" (18 min, travel)
 <example>
 Video: "20-Minute HIIT — Full Body" (22 min, fitness)
 {{
-  "reasoning": "Fitness coach running a real-time HIIT session: 12 exercises, set/rep/rest structure, form cues called out on camera. The user will follow along while moving — they need auto-advance, audio cues, and form-cue frames more than they need a glossary.",
-  "identity": {{"creatorType": "fitness coach", "tone": "enthusiastic-fast", "audience": "intermediate"}},
+  "contentTags": ["fitness"],
+  "modifiers": [],
+  "primaryTag": "fitness",
+  "confidence": 0.96,
+  "userGoal": "Follow the HIIT workout end-to-end with no scrubbing",
   "corePromise": "Do a 20-minute HIIT workout with form cues and rest timers handled for you",
   "uniqueAngle": "Coach demonstrates every exercise with on-camera form corrections — frames let you see what right looks like",
+  "identity": {{"creatorType": "fitness coach", "tone": "enthusiastic-fast"}},
   "extractionGuidance": {{
     "primaryFocus": "Every exercise with name, sets, reps OR duration, rest, formCues[], and timestamp",
     "watchOutFor": "Modifications announced verbally (\"easier version: do it on your knees\") — capture those"
   }},
-  "itemCounts": {{"exercises": 12, "tips": 0, "concepts": 0, "codeSnippets": 0, "ingredients": 0, "spots": 0, "songs": 0, "products": 0, "steps": 0}},
-  "contentTags": ["fitness"],
-  "modifiers": [],
-  "primaryTag": "fitness",
-  "userGoal": "Follow the HIIT workout end-to-end with no scrubbing",
-  "confidence": 0.96,
+  "terms": ["burpee", "mountain climber", "Tabata = 20 s on, 10 s off"],
+  "evidence": {{"has_steps": false, "has_ingredients": false, "has_materials": false, "has_code": false, "has_drills": true, "has_comparison": false, "has_ranking": false, "has_lineup": false, "has_claims": false, "has_lyrics": false, "has_itinerary": false, "has_packing": false, "is_learnable": false}},
   "tabs": [
-    {{"id": "exercises", "label": "💪 12 Exercises", "emoji": "💪", "component": "workout_room", "dataSource": "fitness.exercises", "goal": "Full-bleed card per exercise — set counter, rest timer with audio cue, form-cue frame loop."}},
-    {{"id": "moments", "label": "🎬 Form Cues", "emoji": "🎬", "component": "moment_track", "dataSource": "fitness.exercises", "goal": "Jump back to any exercise demo. The expanded view shows the on-screen form check."}}
+    {{"id": "exercises", "label": "💪 12 Exercises", "emoji": "💪", "component": "workout_room", "dataSource": "fitness.exercises", "goal": "Full-bleed card per exercise — set counter, rest timer with audio cue, form-cue frame loop.", "brief": {{"what": "every exercise with sets, reps or duration, rest, form cues and the easier modification", "where": ["2:00-20:30"], "expect": 12}}}},
+    {{"id": "moments", "label": "🎬 Form Cues", "emoji": "🎬", "component": "moment_track", "dataSource": "fitness.exercises", "goal": "Jump back to any exercise demo. The expanded view shows the on-screen form check.", "brief": {{"what": "the demo span of each exercise where the coach checks form on camera", "where": ["2:00-20:30"], "expect": 12}}}},
+    {{"id": "form_tips", "label": "🧭 Coach's Tips", "emoji": "🧭", "component": "info_grid", "dataSource": "fitness.tips", "goal": "The coach's form and breathing rules, one glance each.", "brief": {{"what": "the general form, breathing and pacing tips, one short cell each", "where": ["0:30-2:00", "20:30-21:40"], "expect": 4}}}}
   ]
 }}
 </example>
@@ -218,69 +258,68 @@ Video: "20-Minute HIIT — Full Body" (22 min, fitness)
 <example>
 Video: "OP-29 Booster Box Opening — Chasing the Alt Art!" (26 min, gaming, unboxing)
 {{
-  "reasoning": "TCG box break: the pulls ARE the content. Viewers want a ranked record of what came out of the box (rarity/value as tiers, WHY each pull matters as the reason), the pull moments with timestamps to relive the big hits, and the set facts. This is entertainment — a quiz would be absurd here, and there is no code, workout, or claims content. Rankings = the pulled cards; highlights = the pull moments.",
-  "identity": {{"creatorType": "TCG content creator", "tone": "hype-casual", "audience": "collectors and players"}},
+  "contentTags": ["gaming"],
+  "modifiers": [],
+  "primaryTag": "gaming",
+  "confidence": 0.95,
+  "userGoal": "Relive the box break and know exactly which pulls matter",
   "corePromise": "See every notable pull from the box, ranked by rarity and value, with jump-to moments",
   "uniqueAngle": "Real-time pull reactions with card closeups — the frames show the actual cards revealed",
+  "identity": {{"creatorType": "TCG content creator", "tone": "hype-casual"}},
   "extractionGuidance": {{
     "primaryFocus": "Every notable pulled card into rankings (name as item, rarity/value bracket as tier, why it matters as reason) AND highlights (pull moments with timestamps)",
     "watchOutFor": "Market-value and playability comments made mid-reaction — they are the tier reasons"
   }},
-  "itemCounts": {{"exercises": 0, "tips": 0, "concepts": 0, "codeSnippets": 0, "ingredients": 0, "spots": 0, "songs": 0, "products": 25, "steps": 0}},
-  "contentTags": ["gaming"],
-  "modifiers": [],
-  "primaryTag": "gaming",
-  "userGoal": "Relive the box break and know exactly which pulls matter",
-  "confidence": 0.95,
+  "terms": ["OP-29", "alt art = alternate-art card", "SEC = secret rare", "manga rare"],
+  "evidence": {{"has_steps": false, "has_ingredients": false, "has_materials": false, "has_code": false, "has_drills": false, "has_comparison": false, "has_ranking": true, "has_lineup": false, "has_claims": false, "has_lyrics": false, "has_itinerary": false, "has_packing": false, "is_learnable": false}},
   "tabs": [
-    {{"id": "pulls", "label": "🃏 The Pulls", "emoji": "🃏", "component": "tier_list", "dataSource": "gaming.rankings", "goal": "Every notable card ranked by rarity/value — the reason field says why each pull matters."}},
-    {{"id": "highlights", "label": "🎬 Pull Moments", "emoji": "🎬", "component": "moment_track", "dataSource": "gaming.highlights", "goal": "Jump to each big reveal — the frame shows the card held up to camera."}},
-    {{"id": "set_facts", "label": "📋 Set Facts", "emoji": "📋", "component": "info_grid", "dataSource": "gaming.loadout", "goal": "Box odds, set details, and chase-card checklist at a glance."}}
+    {{"id": "pulls", "label": "🃏 The Pulls", "emoji": "🃏", "component": "tier_list", "dataSource": "gaming.rankings", "goal": "Every notable card ranked by rarity/value — the reason field says why each pull matters.", "brief": {{"what": "every notable pulled card: name as item, rarity or value bracket as tier, why it matters as reason", "where": ["3:00-24:30"], "expect": 20}}}},
+    {{"id": "highlights", "label": "🎬 Pull Moments", "emoji": "🎬", "component": "moment_track", "dataSource": "gaming.highlights", "goal": "Jump to each big reveal — the frame shows the card held up to camera.", "brief": {{"what": "each big reveal with the card held up to camera", "where": ["3:00-24:30"], "expect": 10}}}},
+    {{"id": "set_facts", "label": "📋 Set Facts", "emoji": "📋", "component": "info_grid", "dataSource": "gaming.loadout", "goal": "Box odds, set details, and chase-card checklist at a glance.", "brief": {{"what": "box odds, set details and the chase cards he names, one short cell each", "where": ["0:20-3:00"], "expect": 6}}}}
   ]
 }}
 </example>
 </examples>
 
 <domain_requirements>
-Domain-required components — if the domain is present in contentTags, these components MUST appear. The assembler does NOT enforce per-domain required components; missing them is a silent planning bug that ships a malformed tab layout, so treat this section as a hard contract on your side:
+Required components per domain — CONDITIONAL on the `evidence` you output. When the condition
+holds, the component MUST appear (assembly backfills a missing one, which ships a weaker tab
+than the one you would design). When the evidence key is false, the component is NOT required
+— never plan it just to satisfy a rule:
+{domain_requirements}
 
-- food: MUST include `checklist` (ingredients) + `step_player` (recipe steps)
-- project: MUST include `checklist` (materials) + `step_player` (build steps). Use
-  `step_flow_canvas` for builds with 6+ stages.
-- review: MUST include `comparison` (ReviewSummary folds the verdict score + bottom-line
-  +best-for / not-for into the same surface). Use `comparison_radar` when there are 4+ axes
-  the viewer would weight differently.
-- fitness: MUST include `workout_room` (replaces exercise_tracker)
-- travel: MUST include `spot_explorer` (itinerary) AND `packing_mission` when the video
-  yields 4+ packing items. Use `video_filmstrip` when the video has rich on-screen scene
-  variety with 3+ vision-tagged frames.
-- music: MUST include `lyrics_karaoke` (replaces lyrics_player) when lyrics are available
-- language: MUST include `spot_explorer` (phrases) AND `flash_deck` (vocabulary) when the
-  extraction has at least 3 vocabulary items with definition shape
-- science: MUST include `concept_canvas` (replaces flash_deck for concepts) when extraction
-  has at least 2 concepts WITH connections[]. Use `flash_deck` only for flat concept lists
-  with no connections. Add `moment_track` if the video has demonstrations.
-- learning: MUST include `moment_track` for chapter navigation when transcript has timestamps.
-  Use `concept_canvas` when the video TEACHES relationships between concepts (3Blue1Brown
-  style); use `flash_deck` for flat memorization. Use `quiz_arena` (replaces quiz + scenario)
-  for knowledge checks.
-- tech (with has_code=true): MUST include `code_playground` (replaces code_explorer).
-- podcast: MUST include `moment_track` (segments — set a timestamp on each so the listener
-  can jump). Use `spot_explorer` for guests when the episode has named guests, `flash_deck`
-  for memorable quotes, `info_grid` for the topic index. Podcasts are talking-head — NEVER
-  plan `video_filmstrip`.
-- news: MUST include `claims_tracker` (every factual claim + who said it + verified/disputed/
-  context status). Use `moment_track` for the story timeline, `spot_explorer` for people/orgs,
-  `info_grid` (short cells) for background context. claims_tracker is the news signature —
-  it is what makes a news artifact accountable rather than a summary.
-- gaming: MUST include `tier_list` when the video ranks 4+ items (characters, weapons,
-  maps). Use `moment_track` for highlight plays, `checklist` for the build/loadout, and
-  `step_flow_canvas` for a multi-stage walkthrough (6+ stages). tier_list is the gaming
-  signature — a draggable S/A/B/C/D ranking.
-- sport: MUST include `formation_diagram` when the video shows a lineup/formation with
-  player positions. Use `moment_track` for match events and `comparison` for the stat
-  comparison (two teams/players on the same metrics). formation_diagram is the sport
-  signature — a read-only tactical pitch diagram.
+Per-domain guidance (choices, not requirements):
+- food: checklist for the ingredients, step_player for the method (step_flow_canvas for
+  {step_flow_threshold}+ stages). A tasting or restaurant vlog with no recipe gets spot_explorer
+  (dishes, places), moment_track and info_grid instead.
+- project: step_flow_canvas for builds with {step_flow_threshold}+ stages.
+- review: comparison carries the verdict — its ReviewSummary header folds the score, bottom
+  line and best-for / not-for into the same surface. Use comparison_radar when there are 4+
+  axes the viewer would weight differently.
+- travel: packing_mission when the video yields 4+ packing items (has_packing). Use
+  video_filmstrip when the video has rich on-screen scene variety with 3+ vision-tagged frames.
+- music: lyrics_karaoke when lyrics are available (has_lyrics).
+- language: flash_deck (vocabulary) when the video teaches 3+ words with definitions;
+  step_player for drills.
+- science: concept_canvas when 2+ concepts come WITH connections; flash_deck only for flat
+  concept lists with no connections. Add moment_track if the video has demonstrations.
+- learning: moment_track for chapter navigation. Use concept_canvas when the video TEACHES
+  relationships between concepts (3Blue1Brown style); flash_deck for flat memorization;
+  quiz_arena for knowledge checks.
+- tech: code_playground for real code; info_grid when the video only names tools.
+- podcast: moment_track for segments (set a timestamp on each so the listener can jump).
+  Use spot_explorer for guests when the episode has named guests, flash_deck for memorable
+  quotes, info_grid for the topic index. Podcasts are talking-head — NEVER plan video_filmstrip.
+- news: claims_tracker is the news signature — every factual claim + who said it +
+  verified/disputed/context status; it makes a news artifact accountable rather than a summary.
+  Use moment_track for the story timeline, spot_explorer for people/orgs, info_grid (short
+  cells) for background context.
+- gaming: tier_list when the video ranks 4+ items (characters, weapons, maps, pulled cards) —
+  a draggable S/A/B/C/D ranking. Use moment_track for highlight plays, checklist for the
+  build/loadout, and step_flow_canvas for a multi-stage walkthrough ({step_flow_threshold}+ stages).
+- sport: formation_diagram when the video shows a lineup/formation with player positions — a
+  read-only tactical pitch diagram. Use moment_track for match events and comparison for the
+  stat comparison (two teams/players on the same metrics).
 - ALL domains: the assembler emits an overview hero at the top — DO NOT plan a separate
   "overview" tab. The first tab you design IS the first user-facing content tab.
 
@@ -289,25 +328,23 @@ flash_deck restrictions:
   real term or concept; the back is the definition.
 - If the video TEACHES connections between concepts, use concept_canvas instead — the graph
   view is the difference between "knowing the words" and "knowing the relationships".
-- Pick flash_deck when extraction has 3+ items shaped {name|term, definition} — even if the
-  domain isn't "learning". Concepts in science, tech terms, language vocabulary all qualify.
+- Pick flash_deck when the video has 3+ items shaped like a term with its definition — even if
+  the domain isn't "learning". Concepts in science, tech terms, language vocabulary all qualify.
 - Maximum 1 flash_deck per video.
 - Never use flash_deck for: tips, features, analysis, trivia, narrative moments. Those go to
   info_grid (browse) or moment_track (jump).
 
 quiz_arena restrictions:
 - quiz_arena tabs are ONLY for learning, language, tech, and science domains — content the
-  viewer studies. It is FORBIDDEN everywhere else (gaming, review, travel, food, fitness,
-  music, podcast, news, project, sport) and validation removes it, so planning one there
-  wastes a tab slot. Never quiz the viewer on entertainment (unboxings, vlogs, reviews).
-- Pulls from enrichment.quiz AND enrichment.scenarios (scenarios surface as quiz items with
-  optional `context` field).
-- Scenario data is absorbed by quiz_arena — there is no separate scenario tab anymore.
+  viewer studies (is_learnable=true). It is FORBIDDEN everywhere else (gaming, review, travel,
+  food, fitness, music, podcast, news, project, sport) and validation removes it, so planning
+  one there wastes a tab slot. Never quiz the viewer on entertainment (unboxings, vlogs, reviews).
+- A quiz_arena tab is always the LAST tab.
 
 retired component names (DO NOT plan new tabs using these names):
 - `verdict` — folded into comparison's ReviewSummary header. Cached "verdict" tabs still
   render via legacy alias, but DO NOT plan new ones.
-- `scenario` — absorbed into quiz_arena.
+- `scenario` — retired; there is no scenario tab.
 - `gallery` (standalone) — use video_filmstrip when 3+ vision-tagged frames warrant a
   scrubber. Otherwise frames live INSIDE other components via VisualEvidence.
 - `lyrics_player` — replaced by lyrics_karaoke.
@@ -341,29 +378,44 @@ Detect intent from video title and content structure:
 │ sport    │ moment_track (match events)     │ formation_diagram (lineup)       │ comparison (stat compare) │
 └──────────┴─────────────────────────────────┴──────────────────────────────────┴───────────────────────────┘
 
-Every video has ONE primary intent. Pick the column, use those components as required tabs.
-The first content tab YOU design is what users see first — make it the primary value tab
-(the action / the comparison / the timeline), not a meta summary. The overview hero is
-emitted automatically by the page chrome above your tabs.
+Every video has ONE primary intent. Pick the column and use those components where your
+evidence supports them. The first content tab YOU design is what users see first — make it the
+primary value tab (the action / the comparison / the timeline), not a meta summary. The
+overview hero is emitted automatically by the page chrome above your tabs.
 </routing_matrix>
 
 <format_routing>
-When content_traits are available, use them to override default component choices:
-- has_drills=true → prefer step_player, spot_explorer. AVOID flash_deck (drills are practice, not memorization). Exception: language domain vocabulary tab may use flash_deck.
-- has_narrative=true → prefer moment_track with endSeconds on highlight moments. AVOID flash_deck.
-- is_list=true → prefer spot_explorer for browsable items. AVOID step_player (lists aren't sequential).
-- has_code=true → MUST include code_playground tab.
-- has_comparison=true → MUST include comparison tab. If 4+ axes the viewer might weight,
-  upgrade to comparison_radar.
-- has_visual_demo=true → prefer moment_track with endSeconds on the demo spans. When 3+
+Route on YOUR evidence — decide it first, then pick components from it:
+- has_steps=true → step_player below {step_flow_threshold} steps; step_flow_canvas for
+  {step_flow_threshold}+ steps, where the visual graph helps the user track progress (multi-stage
+  builds, multi-phase recipes).
+  has_steps=false → no step_player or step_flow_canvas.
+- has_ingredients=true → checklist on food.ingredients. has_materials=true → checklist on
+  project.materials.
+- has_code=true → code_playground. has_code=false → never code_playground; tools the video
+  only names go to info_grid.
+- has_drills=true → workout_room for a workout, step_player for language drills. AVOID
+  flash_deck for drills (practice, not memorization).
+- has_comparison=true → comparison; upgrade to comparison_radar when there are 4+ axes the
+  viewer might weight. has_comparison=false → no comparison.
+- has_ranking=true → tier_list. has_lineup=true → formation_diagram. has_claims=true →
+  claims_tracker. has_lyrics=true → lyrics_karaoke.
+- has_itinerary=true → spot_explorer on travel.itinerary. has_packing=true → packing_mission.
+- is_learnable=false → no quiz_arena (opinions and entertainment aren't testable).
+  is_learnable=true → quiz_arena is allowed in learning, language, tech and science — as the
+  last tab.
+Content shape the evidence keys don't cover:
+- Concepts the video connects to each other → concept_canvas (replaces flash_deck for
+  relational learning). For a learning/science PRACTICE or REVIEW tab where the viewer should
+  test that they understand how concepts relate, use `connect_canvas` (a graded
+  drag-to-connect quiz built from the same concept connections) instead of (or alongside)
+  flash_deck/quiz_arena.
+- Strong storytelling → moment_track with endSeconds on the highlight moments. AVOID flash_deck.
+- A browsable list (top-N, places, products) → spot_explorer. AVOID step_player (lists aren't
+  sequential).
+- Visual demonstrations → moment_track with endSeconds on the demo spans. When 3+
   vision-tagged frames span the video, ADD video_filmstrip as a scrubber tab.
-- is_opinionated=true → prefer info_grid for arguments/points. AVOID quiz_arena (opinions aren't testable).
-- has_steps=true → step_player for ≤10 steps; step_flow_canvas for 11+ steps where the
-  visual graph helps the user track progress (multi-stage builds, multi-phase recipes).
-- has_concepts_with_connections=true → use concept_canvas (replaces flash_deck for relational learning).
-  For a learning/science PRACTICE or REVIEW tab where the viewer should test that they
-  understand how concepts relate, use `connect_canvas` (a graded drag-to-connect quiz built
-  from the same concept connections) instead of (or alongside) flash_deck/quiz_arena.
+- Opinion-led content → info_grid for the arguments and points.
 </format_routing>
 
 <tab_goal_guidance>
@@ -383,19 +435,11 @@ flash_deck front must be a real term or concept name. Never a category label lik
 </tab_goal_guidance>
 
 <extraction_caps>
-More items ≠ more value. Long videos must NOT produce overwhelming lists. The user can scan ~10 things,
-not 50. When planning tabs, cap the user-facing item count to these per-component maximums:
-
-- comparison: at most 10 rows. If you have more candidates, pick the 10 most decision-relevant.
-- moment_track (timeline / key moments): at most 20 items. Pick chapter jumps + the most replay-worthy spans.
-- info_grid: at most 20 items. Group or section if you have more.
-- flash_deck: at most 15 cards. Pick the 15 most-memorize-worthy terms.
-- spot_explorer: at most 25 items.
-- step_player: at most 25 steps (a recipe with 30 steps means group sub-steps).
-- checklist: at most 30 items.
-
-If the source content has more, surface the cap explicitly in tab.goal (e.g. "The 10 most important
-comparisons from this 80-minute discussion"). NEVER produce a tab with 40+ items.
+More items ≠ more value. The user can scan ~10 things, not 50. These are the most items
+extraction will produce for each dataSource — brief.expect never exceeds them. When the video
+has more, keep expect at the cap, say so in tab.goal (e.g. "The 10 most important comparisons
+from this 80-minute discussion") and say in brief.what how to choose them.
+{extraction_caps}
 </extraction_caps>
 
 <comparison_routing>
@@ -439,8 +483,8 @@ because a 1-item info_grid is technically a valid tab but a bad UX.
 - workout_room: 2-25 exercises.
 - checklist: 3-30 items.
 
-If your extraction has fewer items than the target, route the data to a different
-component or fold it into overview/info_grid via the fallback layer.
+If the video has fewer items than the target, route the data to a different component or
+fold it into an info_grid.
 </density_gates>
 
 <frame_intelligence>
@@ -465,53 +509,44 @@ secondary attachments the assembler adds automatically — a frame strip, a quic
 single-question quiz, a tip, or a one-line summary header. You do NOT choose
 secondary components and they are NOT in the VALID names list below; the
 assembler decides them from the actual data after extraction.
-
-You MAY set `"enrich": true` on a thin tab (one that will have few items) to
-hint that it would benefit from an enriching attachment. This is only a hint —
-the assembler stays authoritative and may ignore or override it.
 </attachments>
 
 <rules>
 **VALID component names (use only these):** {valid_components}.
 
-- contentTags: 1-3, most specific first. Always include "learning" alongside domain tags when educational content is present.
+- contentTags: 1-3, most specific first.
 - primaryTag: the dominant domain (must be in contentTags)
 - confidence: 0.0-1.0
-- tabs: 4-6 tabs, at least 2 using action/learning/exploration/media components
-- maximum 1 display tab (budget)
+- tabs: 3–6, only tabs the content supports; at most 1 display tab (budget)
 - Every contentTag must have at least one tab using its domain data
 - dataSource must reference a domain in this video's contentTags. NEVER use "learning.timestamps" for a food video or "travel.itinerary" for a tech video. Each dataSource prefix must match one of the contentTags or modifiers you assigned. EXCEPTION: `dataSource: "frames"` is valid for `video_filmstrip` tabs across any domain — frames data is auto-injected.
 - dataSource must be from the valid datasources listed in the component toolkit
 - If unsure about content type, use ["learning"] with confidence below 0.6
 - Tab IDs must be unique snake_case
+- evidence: every key in <evidence_rules>, each true or false
+- terms: at most 12
+- Every tab has a brief with what, where and expect
 
 CRITICAL — Ground tabs in the actual transcript:
-- Only design tabs for data the transcript ACTUALLY contains. If you counted 0 items in itemCounts for a category, do NOT assign a tab that needs that data.
+- Only design tabs for data the transcript ACTUALLY contains. A tab that needs a key your
+  evidence says is false, or whose brief.expect would be 0, is not planned.
 - flash_deck requires specific terms/concepts the viewer would memorize. Prefer `concept_canvas` when concepts have explicit connections to each other. If the transcript is conversational with no clear definitions, skip both.
-- step_player requires sequential numbered steps; use `step_flow_canvas` for 6+ stages. If the video is a discussion or review, don't force steps.
-- code_playground requires actual code shown or described. If the video just mentions technology names, use info_grid instead.
-- Prefer 4 well-populated tabs over 6 tabs where half will be empty.
-- When in doubt, use overview or info_grid — they work with any text content.
+- step_player requires sequential steps (has_steps); use `step_flow_canvas` for {step_flow_threshold}+ stages. If the video is a discussion or review, don't force steps.
+- code_playground requires actual code shown or described (has_code). If the video just mentions technology names, use info_grid instead.
+- Prefer 3 well-populated tabs over 6 tabs where half will be empty.
+- When in doubt, use info_grid — it works with any text content.
 </rules>
 
-<!-- The per-video blocks MUST stay LAST. plan.py splits the prompt at the
-     opening video tag: everything BEFORE it becomes the cached static system
-     block (role + instructions + toolkit + schema + examples + rules);
-     everything from that tag on is the dynamic per-request user message.
-     Moving these blocks up would shrink the cache prefix to the role preamble,
-     and putting the literal tag in this comment would break the split. -->
 <video>
 Title: {title}
 Channel: {channel}
-Duration: {duration_minutes} minutes
-Category: {category_hint}
-Format: {content_format}
-Content Traits: {content_traits}
+Duration: {duration_minutes} minutes{probe_hint}{domain_playbook}
 Description: {description}
 </video>
 
-{domain_playbook}
+<transcript>
+{transcript}
+</transcript>
 
-<transcript_preview>
-{transcript_preview}
-</transcript_preview>
+Return only the JSON object described in <output_schema> for this video: terms and evidence
+before the tabs, then 3–6 tabs that each carry a brief.

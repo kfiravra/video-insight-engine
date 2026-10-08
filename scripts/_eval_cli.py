@@ -51,6 +51,13 @@ def _add_run(parser: argparse.ArgumentParser) -> None:
         help="Score the stored output instead of a fresh run ($0; scorer debugging only).",
     )
     parser.add_argument(
+        "--cold",
+        action="store_true",
+        help="Benchmark cold media: the summarizer skips its S3 transcript cache and "
+        "scene-frame manifest (fresh results are still written). Admin/eval accounts "
+        "only (the API answers 403 otherwise); implies bypassCache.",
+    )
+    parser.add_argument(
         "--noise-runs",
         type=int,
         default=0,
@@ -168,6 +175,8 @@ def check_run_args(parser: argparse.ArgumentParser, args: Any) -> None:
         parser.error("--noise-runs measures live variance; it cannot be combined with --dry-run")
     if args.concurrency < 1:
         parser.error("--concurrency must be >= 1")
+    if args.cold and (args.dry_run or args.no_bypass_cache):
+        parser.error("--cold measures a fresh live run; drop --dry-run/--no-bypass-cache")
     if args.resume_since:
         _check_resume(parser, args)
     if args.merge_into:

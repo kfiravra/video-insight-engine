@@ -31,6 +31,7 @@ import yt_dlp  # type: ignore[import-untyped]
 from src.exceptions import TranscriptError
 from src.models.schemas import ErrorCode
 from src.services.media.download_utils import (
+    is_exit_blocked,
     try_proxy_exits,
     ytdlp_proxy_exit_urls,
     ytdlp_proxy_url,
@@ -152,14 +153,12 @@ class VideoContext:
         category: Detected content category (e.g., "cooking", "coding", "standard")
         tags: Raw tags from video metadata
         display_tags: Cleaned, deduplicated tags for UI display (max 6)
-        category_confidence: Confidence score from detection (0.0-1.0)
     """
 
     youtube_category: str | None
     category: str  # "cooking", "coding", "travel", etc.
     tags: list[str]
     display_tags: list[str]
-    category_confidence: float = 1.0
 
 
 def _extract_hashtags(description: str) -> list[str]:
@@ -395,7 +394,6 @@ def extract_video_context(
         category=category,
         tags=tags,
         display_tags=display_tags,
-        category_confidence=confidence,
     )
 
 
@@ -484,6 +482,9 @@ class VideoData:
     caption_track: str | None = None  # "manual" | "auto-generated"
     caption_lang: str | None = None  # matched caption key, e.g. "ar-SA"
     caption_fetch_error: str | None = None  # "http_<n>" | "request" | "parse" | "empty"
+    # json3 URL of the picked track until ``fetch_video_captions`` fetches it
+    # (``extract_video_data`` never fetches captions itself).
+    caption_url: str | None = None
 
     @property
     def has_chapters(self) -> bool:
@@ -636,27 +637,31 @@ def _http_status_of(exc: BaseException | None) -> int | None:
     return None
 
 
-def _is_http_429(exc: Exception) -> bool:
-    """True for a timedtext rate limit, the IP-scoped failure worth another exit."""
-    return _http_status_of(exc) == 429
+def _is_timedtext_exit_blocked(exc: Exception) -> bool:
+    """True for an IP-scoped timedtext failure worth another exit: a 429 or the bot check."""
+    return _http_status_of(exc) == 429 or is_exit_blocked(exc)
 
 
-def _fetch_subtitle_data_sync(url: str) -> dict:
+def _fetch_subtitle_data_sync(url: str, job_key: str | None = None) -> dict:
     """Fetch a timedtext json3 body through YOUTUBE_PROXY_URL's exits.
 
-    SYNC — must be called from asyncio.to_thread (via _extract_video_data_sync).
+    SYNC — must be called from asyncio.to_thread (via fetch_video_captions).
+    ``job_key`` (the youtube id) picks the job's round-robin exit.
 
     Never direct when a proxy is set — that would hit timedtext from the host
     IP the proxy exists to hide. With several sticky exits
-    (YOUTUBE_PROXY_EXIT_COUNT) a 429 moves on to the next exit at once — the
-    URL is not bound to the exit that produced it (``ip=0.0.0.0``) — so a 429
-    reaches the caller only when every tried exit returned one. Direct
-    connections and a single exit keep the same-IP retry.
+    (YOUTUBE_PROXY_EXIT_COUNT) a 429 or bot check moves on to the next exit at
+    once — the URL is not bound to the exit that produced it
+    (``ip=0.0.0.0``) — so a 429 reaches the caller only when every tried exit
+    was blocked. Direct connections and a single exit keep the same-IP retry.
     """
-    exit_urls = ytdlp_proxy_exit_urls()
+    exit_urls = ytdlp_proxy_exit_urls(job_key)
     if len(exit_urls) > 1:
         return try_proxy_exits(
-            exit_urls, partial(_get_subtitle_json_sync, url), _is_http_429, "Timedtext fetch"
+            exit_urls,
+            partial(_get_subtitle_json_sync, url),
+            _is_timedtext_exit_blocked,
+            "Timedtext fetch",
         )
     return _fetch_subtitle_single_exit_sync(url)
 
@@ -679,10 +684,12 @@ def _parse_json3_events(data: dict) -> list[SubtitleSegment]:
     return segments
 
 
-def _fetch_subtitles_from_url_sync(url: str) -> tuple[list[SubtitleSegment], str | None]:
+def _fetch_subtitles_from_url_sync(
+    url: str, job_key: str | None = None
+) -> tuple[list[SubtitleSegment], str | None]:
     """Fetch and parse subtitles from a URL (json3 format).
 
-    SYNC — must be called from asyncio.to_thread (via _extract_video_data_sync).
+    SYNC — must be called from asyncio.to_thread (via fetch_video_captions).
 
     Returns:
         (segments, error_code) — ``error_code`` is classified here, at the
@@ -694,7 +701,7 @@ def _fetch_subtitles_from_url_sync(url: str) -> tuple[list[SubtitleSegment], str
         whether a track was actually offered and labels that ``"empty"``.
     """
     try:
-        data = _fetch_subtitle_data_sync(url)
+        data = _fetch_subtitle_data_sync(url, job_key)
     except (requests.exceptions.HTTPError, tenacity.RetryError) as e:
         status = _http_status_of(e)
         code = f"http_{status}" if status is not None else "request"
@@ -750,31 +757,35 @@ def _extract_with_retry(url: str, opts: dict[str, Any]) -> dict[str, Any] | None
         return ydl.extract_info(url, download=False)
 
 
-def _extract_video_data_sync(video_id: str) -> VideoData:
-    """
-    Extract video data using yt-dlp (synchronous).
+def _extract_info_via_exits(video_id: str) -> dict[str, Any] | None:
+    """``extract_info`` through YOUTUBE_PROXY_URL's exits.
 
-    This function extracts all available video metadata in a single call:
-    - Title, channel, duration, thumbnail
-    - Creator-defined chapters
-    - Full description text
-    - Subtitles with timestamps
-    - Video context (category, tags)
-
-    Args:
-        video_id: YouTube video ID
-
-    Returns:
-        VideoData with all extracted information
-
-    Raises:
-        TranscriptError: If video is unavailable or extraction fails
+    YouTube's bot check and its 429 are scoped to the exit IP, so with several
+    sticky exits (YOUTUBE_PROXY_EXIT_COUNT) either moves on to the next one,
+    starting from the video's round-robin exit; private / removed / age-gated
+    videos fail on the first exit as before.
     """
     url = f"https://www.youtube.com/watch?v={video_id}"
-
     opts = _build_yt_dlp_opts()
+    exit_urls = ytdlp_proxy_exit_urls(video_id)
+    if len(exit_urls) <= 1:
+        return _extract_with_retry(url, opts)
+    return try_proxy_exits(
+        exit_urls,
+        lambda proxy_url: _extract_with_retry(url, {**opts, "proxy": proxy_url}),
+        is_exit_blocked,
+        f"Metadata extract for {video_id}",
+    )
+
+
+def _extract_video_info_sync(video_id: str) -> tuple[VideoData, SubtitleTrack | None]:
+    """One yt-dlp ``extract_info`` → metadata + the picked caption track (not yet fetched).
+
+    Raises:
+        TranscriptError: If video is unavailable, live, or extraction fails
+    """
     try:
-        info = _extract_with_retry(url, opts)
+        info = _extract_info_via_exits(video_id)
     except Exception as e:
         raise TranscriptError(
             f"Failed to extract video information: {e}",
@@ -791,66 +802,58 @@ def _extract_video_data_sync(video_id: str) -> VideoData:
     if info.get("is_live"):
         raise TranscriptError("Live streams are not supported", ErrorCode.LIVE_STREAM)
 
-    # Extract basic metadata
-    title = info.get("title", "Unknown Title")
-    channel = info.get("uploader") or info.get("channel") or "Unknown Channel"
-    duration = int(info.get("duration") or 0)
     description = info.get("description") or ""
-    upload_date = info.get("upload_date")
-
-    # Get best thumbnail
-    thumbnails = info.get("thumbnails", [])
-    thumbnail_url = None
-    if thumbnails:
-        # Prefer maxresdefault or high quality
-        for thumb in reversed(thumbnails):  # Usually sorted by quality
-            if thumb.get("url"):
-                thumbnail_url = thumb["url"]
-                break
-
-    # If no thumbnail found, use standard YouTube thumbnail URL
-    if not thumbnail_url:
-        thumbnail_url = f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg"
-
-    # Parse chapters
     chapters = _parse_chapters(info)
     logger.info("Video %s: found %d chapters", video_id, len(chapters))
-
-    # Parse subtitles - try to get from json3 format
-    auto_captions = info.get("automatic_captions", {})
-    manual_captions = info.get("subtitles", {})
 
     # Resolve the video's primary language *before* picking subtitles. yt-dlp
     # also offers English auto-translations for every foreign-language video;
     # picking those would silently mislabel the audio as English.
+    auto_captions = info.get("automatic_captions", {})
+    manual_captions = info.get("subtitles", {})
     detected_language = resolve_video_language(info, manual_captions, auto_captions)
-
     track = _pick_subtitle_url(detected_language, manual_captions, auto_captions)
-    subtitles, caption_fetch_error = _fetch_picked_track(video_id, track, detected_language)
 
-    # Phase 1: Extract video context (category, persona, tags)
     context = extract_video_context(info, description)
     logger.info(
         "Video %s: category=%s, tags=%d", video_id, context.category, len(context.display_tags)
     )
 
-    return VideoData(
+    video_data = VideoData(
         video_id=video_id,
-        title=title,
-        channel=channel,
-        duration=duration,
-        thumbnail_url=thumbnail_url,
+        title=info.get("title", "Unknown Title"),
+        channel=info.get("uploader") or info.get("channel") or "Unknown Channel",
+        duration=int(info.get("duration") or 0),
+        thumbnail_url=_best_thumbnail(info, video_id),
         description=description,
         chapters=chapters,
-        subtitles=subtitles,
-        upload_date=upload_date,
+        upload_date=info.get("upload_date"),
         context=context,
         language=detected_language,
-        captions_rate_limited=caption_fetch_error == "http_429",
         caption_track=track.kind if track else None,
         caption_lang=track.lang if track else None,
-        caption_fetch_error=caption_fetch_error,
+        caption_url=track.url if track else None,
     )
+    return video_data, track
+
+
+def _best_thumbnail(info: dict[str, Any], video_id: str) -> str:
+    """Highest-quality thumbnail yt-dlp listed, else the standard YouTube URL."""
+    for thumb in reversed(info.get("thumbnails", [])):  # Usually sorted by quality
+        if thumb.get("url"):
+            return thumb["url"]
+    return f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg"
+
+
+def _apply_captions(video_data: VideoData, track: SubtitleTrack | None) -> None:
+    """Fetch the picked track and store segments + fetch outcome on ``video_data``."""
+    subtitles, caption_fetch_error = _fetch_picked_track(
+        video_data.video_id, track, video_data.language
+    )
+    video_data.subtitles = subtitles
+    video_data.captions_rate_limited = caption_fetch_error == "http_429"
+    video_data.caption_fetch_error = caption_fetch_error
+    video_data.caption_url = None
 
 
 def _fetch_picked_track(
@@ -869,7 +872,7 @@ def _fetch_picked_track(
         logger.warning("Video %s: no subtitles URL found", video_id)
         return [], None
 
-    subtitles, error = _fetch_subtitles_from_url_sync(track.url)
+    subtitles, error = _fetch_subtitles_from_url_sync(track.url, video_id)
     for seg in subtitles:
         seg.text = _clean_subtitle_text(seg.text)
     if error is None and not subtitles:
@@ -1040,8 +1043,11 @@ async def extract_video_data(video_id: str) -> VideoData:
     - Title, channel, duration (exact seconds), thumbnail
     - Creator-defined chapters (timestamps + titles)
     - Full description text
-    - Subtitles/captions with timestamps
     - Video context (category, tags)
+
+    Captions are NOT fetched: the picked track rides on ``caption_url`` and
+    ``fetch_video_captions`` fetches it later, so the caption fetch (and its
+    429 rotation) stays out of the metadata wall.
 
     Args:
         video_id: YouTube video ID
@@ -1060,4 +1066,15 @@ async def extract_video_data(video_id: str) -> VideoData:
         # video_data.chapters[0].start_time -> 0
         # video_data.chapters[0].title -> "Intro"
     """
-    return await asyncio.to_thread(_extract_video_data_sync, video_id)
+    video_data, _track = await asyncio.to_thread(_extract_video_info_sync, video_id)
+    return video_data
+
+
+async def fetch_video_captions(video_data: VideoData) -> None:
+    """Fetch the track ``extract_video_data`` picked, in place (fills ``subtitles``)."""
+    track = None
+    if video_data.caption_url and video_data.caption_track and video_data.caption_lang:
+        track = SubtitleTrack(
+            url=video_data.caption_url, kind=video_data.caption_track, lang=video_data.caption_lang
+        )
+    await asyncio.to_thread(_apply_captions, video_data, track)

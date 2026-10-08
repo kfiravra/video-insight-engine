@@ -66,11 +66,6 @@ Extract structured language learning content.
   ]
 }
 
-SCALING (video is {duration_minutes} minutes):
-- Under 15 min: 5-10 phrases, 2-3 rules, 3-5 drills, 8-15 vocabulary
-- 15-30 min: 10-20 phrases, 3-6 rules, 5-10 drills, 15-25 vocabulary
-- Over 30 min: 20-40 phrases, 5-10 rules, 10-20 drills, 25-50 vocabulary
-
 RULES:
 - Preserve exact target language text — no paraphrasing
 - Include pronunciation guides whenever provided

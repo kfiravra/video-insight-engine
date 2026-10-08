@@ -134,11 +134,17 @@ export interface SSECompleteEvent {
   cached?: boolean;
 }
 
-export interface SSESynthesisEvent {
-  event: 'synthesis';
-  tldr: string;
-  seoDescription: string;
-  keyTakeaways: string[];
+/** Emitted up to twice per run: early at memory-done with only `tldr` +
+ *  `keyTakeaways` (drives the hero), then the full superset at
+ *  synthesis-done. Either can be missing on a failure path and a reconnect
+ *  can replay them in any order, so every content field is optional and
+ *  consumers merge emissions — a partial never overwrites the superset. */
+export interface SSESynthesisCompleteEvent {
+  event: 'synthesis_complete';
+  tldr?: string;
+  keyTakeaways?: string[];
+  masterSummary?: string;
+  seoDescription?: string;
 }
 
 export interface SSEFramesEvent {

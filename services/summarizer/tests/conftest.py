@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from src.config import settings as _settings
 from src.models.schemas import ProcessingStatus, ErrorCode
+from src.services.media import download_utils as _download_utils
 
 # Names of every per-stage override on the Settings object. Tests never want
 # these to fire — they would wrap a MagicMock with a real ``LLMService`` and
@@ -26,14 +27,23 @@ _STAGE_OVERRIDE_ATTRS = (
 def _disable_stage_model_overrides(monkeypatch):
     """Force every per-stage LLM override to None for the duration of the test.
 
-    Production ships with `LLM_ENRICHMENT_MODEL` and `LLM_VISION_MODEL`
-    pinned to haiku-4.5 in `src/config.py`. Without this fixture, any test
-    that calls a stage function with a `MagicMock` for `llm_service` would
-    trigger `call_llm_with_retry` to replace the mock with a real
-    `LLMService` and make a live API call.
+    `src/config.py` pins `LLM_CLASSIFIER_MODEL` and `LLM_ENRICHMENT_MODEL` to
+    Haiku 4.5, and the env can pin any other stage (prod pins extraction).
+    Without this fixture, any test that calls a stage function with a
+    `MagicMock` for `llm_service` would trigger `call_llm_with_retry` to
+    replace the mock with a real `LLMService` and make a live API call.
     """
     for attr in _STAGE_OVERRIDE_ATTRS:
         monkeypatch.setattr(_settings, attr, None)
+
+
+@pytest.fixture(autouse=True)
+def _fresh_exit_memory(monkeypatch):
+    """Each test starts with no round-robin assignments and no blocked proxy exits.
+
+    The exit bookkeeping (download_utils._ExitMemory) is per-process state.
+    """
+    monkeypatch.setattr(_download_utils, "_EXIT_MEMORY", _download_utils._ExitMemory())
 
 
 def _utc_now() -> datetime:
@@ -168,48 +178,54 @@ def mock_llm_service(mock_llm_provider):
     service._provider = mock_llm_provider
 
     # Mock process_video - the main entry point
-    service.process_video = AsyncMock(return_value={
-        "tldr": "Test TLDR summary",
-        "key_takeaways": ["Takeaway 1", "Takeaway 2"],
-        "sections": [
-            {
-                "id": "section-1",
-                "title": "Introduction",
-                "timestamp": "00:00",
-                "startSeconds": 0,
-                "endSeconds": 60,
-                "content": [
-                    {"type": "paragraph", "text": "Introduction section summary"},
-                    {"type": "bullets", "items": ["Point 1", "Point 2"]},
-                ],
-            }
-        ],
-        "concepts": [
-            {
-                "id": "concept-1",
-                "name": "Test Concept",
-                "definition": "A concept used for testing",
-            }
-        ],
-    })
+    service.process_video = AsyncMock(
+        return_value={
+            "tldr": "Test TLDR summary",
+            "key_takeaways": ["Takeaway 1", "Takeaway 2"],
+            "sections": [
+                {
+                    "id": "section-1",
+                    "title": "Introduction",
+                    "timestamp": "00:00",
+                    "startSeconds": 0,
+                    "endSeconds": 60,
+                    "content": [
+                        {"type": "paragraph", "text": "Introduction section summary"},
+                        {"type": "bullets", "items": ["Point 1", "Point 2"]},
+                    ],
+                }
+            ],
+            "concepts": [
+                {
+                    "id": "concept-1",
+                    "name": "Test Concept",
+                    "definition": "A concept used for testing",
+                }
+            ],
+        }
+    )
 
     # Mock individual steps
-    service.detect_sections = AsyncMock(return_value=[
-        {"title": "Introduction", "startSeconds": 0, "endSeconds": 60}
-    ])
-    service.summarize_section = AsyncMock(return_value={
-        "content": [
-            {"type": "paragraph", "text": "Section summary"},
-            {"type": "bullets", "items": ["Bullet 1", "Bullet 2"]},
-        ],
-    })
-    service.extract_concepts = AsyncMock(return_value=[
-        {"name": "Test Concept", "definition": "A test definition"}
-    ])
-    service.synthesize_summary = AsyncMock(return_value={
-        "tldr": "Test TLDR",
-        "keyTakeaways": ["Takeaway 1", "Takeaway 2"],
-    })
+    service.detect_sections = AsyncMock(
+        return_value=[{"title": "Introduction", "startSeconds": 0, "endSeconds": 60}]
+    )
+    service.summarize_section = AsyncMock(
+        return_value={
+            "content": [
+                {"type": "paragraph", "text": "Section summary"},
+                {"type": "bullets", "items": ["Bullet 1", "Bullet 2"]},
+            ],
+        }
+    )
+    service.extract_concepts = AsyncMock(
+        return_value=[{"name": "Test Concept", "definition": "A test definition"}]
+    )
+    service.synthesize_summary = AsyncMock(
+        return_value={
+            "tldr": "Test TLDR",
+            "keyTakeaways": ["Takeaway 1", "Takeaway 2"],
+        }
+    )
 
     return service
 
@@ -292,7 +308,10 @@ def sample_processing_result():
                     "title": "Introduction to Testing",
                     "content": [
                         {"type": "paragraph", "text": "Overview of why testing matters"},
-                        {"type": "bullets", "items": ["Tests catch bugs early", "Tests serve as documentation"]},
+                        {
+                            "type": "bullets",
+                            "items": ["Tests catch bugs early", "Tests serve as documentation"],
+                        },
                     ],
                 }
             ],
@@ -324,7 +343,11 @@ def sample_segments():
         {"text": "to this video about testing", "start": 5.0, "duration": 10.0},
         {"text": "Today we will learn", "start": 15.0, "duration": 10.0},
         {"text": "how to write good tests", "start": 25.0, "duration": 15.0},
-        {"text": "First, let's understand why testing is important", "start": 40.0, "duration": 15.0},
+        {
+            "text": "First, let's understand why testing is important",
+            "start": 40.0,
+            "duration": 15.0,
+        },
         {"text": "Testing helps catch bugs early", "start": 55.0, "duration": 10.0},
         {"text": "and serves as documentation for your code", "start": 65.0, "duration": 10.0},
     ]
@@ -352,7 +375,11 @@ def sample_normalized_segments():
         {"text": "to this video about testing", "startMs": 5000, "endMs": 15000},
         {"text": "Today we will learn", "startMs": 15000, "endMs": 25000},
         {"text": "how to write good tests", "startMs": 25000, "endMs": 40000},
-        {"text": "First, let's understand why testing is important", "startMs": 40000, "endMs": 55000},
+        {
+            "text": "First, let's understand why testing is important",
+            "startMs": 40000,
+            "endMs": 55000,
+        },
         {"text": "Testing helps catch bugs early", "startMs": 55000, "endMs": 65000},
         {"text": "and serves as documentation for your code", "startMs": 65000, "endMs": 75000},
     ]
@@ -361,7 +388,6 @@ def sample_normalized_segments():
 # ============================================================
 # Sample LLM Response Fixtures
 # ============================================================
-
 
 
 @pytest.fixture

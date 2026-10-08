@@ -78,31 +78,3 @@ class TestExtractTextFromFrames:
         results = extract_text_from_frames(frames, density_threshold=0.15)
 
         assert len(results) == 0
-
-
-class TestEnrichTranscriptWithOcr:
-    """Test transcript enrichment with OCR results."""
-
-    def test_appends_ocr_text(self):
-        from src.services.media.frame_ocr import enrich_transcript_with_ocr
-
-        transcript = "Original transcript text."
-        ocr_results = [
-            {"index": 5, "ocr_text": "def main():"},
-            {"index": 12, "ocr_text": "pip install numpy"},
-        ]
-
-        result = enrich_transcript_with_ocr(transcript, ocr_results)
-
-        assert "Original transcript text." in result
-        assert "ON-SCREEN TEXT DETECTED" in result
-        assert "def main():" in result
-        assert "pip install numpy" in result
-
-    def test_no_ocr_results_unchanged(self):
-        from src.services.media.frame_ocr import enrich_transcript_with_ocr
-
-        transcript = "Original text."
-        result = enrich_transcript_with_ocr(transcript, [])
-
-        assert result == transcript

@@ -7,7 +7,7 @@ Phases:
 2. For each live entry, POST it to vie-api with ``bypassCache`` (so the
    current code runs, not a stored output) and hold the SSE stream until the
    run ends — OR, with ``--dry-run``, score a stub without network calls.
-3. Read each run's Langfuse trace (faithfulness score, classifier format).
+3. Read each run's Langfuse trace (faithfulness score, tier-probe format).
 4. Score every video: the legacy quality score (``score_entry``), the
    duplicate-item rate, faithfulness, and the per-video assertions.
 5. Write ``reports/eval-{ts}.csv|.md|.json`` and optionally publish a
@@ -30,6 +30,10 @@ Usage::
 
     # Cheap post-change check: one live video per domain
     python3 scripts/run_eval.py --subset quick --concurrency 3
+
+    # Cold-media benchmark (admin/eval account only): skip the summarizer's S3
+    # transcript cache + scene-frame manifest so re-runs measure cold media
+    python3 scripts/run_eval.py --ids <id> --cold
 
     # Resume a stopped noise run: pass r1 scores the eval user's runs that
     # completed since the given time instead of re-running them
@@ -164,6 +168,8 @@ class Session:
     dry_run: bool
     langfuse: LangfuseConfig | None
     concurrency: int = 1
+    # 1a.7 benchmark: the summarizer skips its S3 transcript + frame caches.
+    cold: bool = False
     auth: SharedToken = field(init=False)
 
     def __post_init__(self) -> None:
@@ -203,6 +209,7 @@ async def run_entry(
             session.auth.token,
             session.bypass_cache,
             refresh=session.auth.refresh,
+            cold=session.cold,
         )
     except Exception as exc:  # noqa: BLE001 — one failed video must not abort the run
         logger.warning("Pipeline failed for %s: %s", record["id"], exc)
@@ -224,7 +231,7 @@ def _trace_targets(runs: list[EntryRun]) -> dict[str, TraceTarget]:
 
 
 async def fetch_signals(runs: list[EntryRun], session: Session) -> dict[str, TraceSignals]:
-    """Faithfulness + classifier format per golden id, from the runs' Langfuse traces."""
+    """Faithfulness + tier-probe format per golden id, from the runs' Langfuse traces."""
     if session.dry_run:
         return {}
     if session.langfuse is None:
@@ -315,11 +322,12 @@ async def run_pass(
 ) -> tuple[list[VideoOutcome], Path]:
     """Run every record once, score, report and publish; return outcomes + JSON path."""
     logger.info(
-        "Eval pass%s: %d entries (dry_run=%s, bypassCache=%s, concurrency=%d, reused=%d)",
+        "Eval pass%s: %d entries (dry_run=%s, bypassCache=%s, cold=%s, concurrency=%d, reused=%d)",
         suffix,
         len(records),
         session.dry_run,
         session.bypass_cache,
+        session.cold,
         session.concurrency,
         len(reuse or {}),
     )
@@ -406,6 +414,7 @@ async def _open_session(args: Any) -> Session:
     session = Session(
         api_url=args.api_url.rstrip("/"),
         bypass_cache=not args.no_bypass_cache,
+        cold=args.cold,
         dry_run=args.dry_run,
         langfuse=LangfuseConfig.from_env(),
         concurrency=args.concurrency,

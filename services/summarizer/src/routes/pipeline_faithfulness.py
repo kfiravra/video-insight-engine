@@ -32,6 +32,16 @@ _FAITHFULNESS_TASKS: set[asyncio.Task[None]] = set()
 _FAITHFULNESS_DRAIN_TIMEOUT_S = 25.0
 
 
+def _judge_source(ctx: PipelineContext) -> str:
+    """What the judge checks claims against: the transcript + the visual annotations.
+
+    Extraction reads both (1c.2), so a claim grounded only in what the video
+    shows on screen is still a grounded claim.
+    """
+    parts = [ctx.clean_text or "", ctx.visual_annotations]
+    return "\n\n".join(part for part in parts if part)
+
+
 def _launch_faithfulness_check(ctx: PipelineContext) -> asyncio.Task[None] | None:
     """Spawn the faithfulness judge in the background — never blocks.
 
@@ -58,7 +68,7 @@ def _launch_faithfulness_check(ctx: PipelineContext) -> asyncio.Task[None] | Non
         try:
             await run_faithfulness_check(
                 llm_service=ctx.llm_service,
-                transcript=ctx.clean_text or "",
+                transcript=_judge_source(ctx),
                 extraction_data=ctx.extraction_data or {},
                 youtube_id=ctx.youtube_id,
             )

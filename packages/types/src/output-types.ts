@@ -25,6 +25,21 @@ export interface SynthesisResult {
   seoDescription: string;
 }
 
+/**
+ * The synthesis fields that carry content — an empty string or array never
+ * counts as "set", so a failure-path `synthesis_complete` emission can't blank
+ * what an earlier one filled. One rule for both consumers that merge the
+ * emissions: the web stream state and the API relay's persistence.
+ */
+export function filledSynthesisFields(synthesis: Partial<SynthesisResult>): Partial<SynthesisResult> {
+  const filled: Partial<SynthesisResult> = {};
+  if (synthesis.tldr) filled.tldr = synthesis.tldr;
+  if (synthesis.keyTakeaways?.length) filled.keyTakeaways = synthesis.keyTakeaways;
+  if (synthesis.masterSummary) filled.masterSummary = synthesis.masterSummary;
+  if (synthesis.seoDescription) filled.seoDescription = synthesis.seoDescription;
+  return filled;
+}
+
 // ─────────────────────────────────────────────────────
 // Enrichment Data
 // ─────────────────────────────────────────────────────

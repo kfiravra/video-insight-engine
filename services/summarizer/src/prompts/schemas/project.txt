@@ -58,11 +58,6 @@ Extract a complete, actionable project guide.
   "safetyWarnings": ["Always wear safety glasses when cutting", "Work in a ventilated area when sanding cedar"]
 }
 
-SCALING (video is {duration_minutes} minutes):
-- Under 15 min: core materials, essential tools, key steps
-- 15-30 min: full materials list, all tools, detailed steps with tips
-- Over 30 min: complete materials with costs, all tools with alternatives, all steps with safety notes
-
 RULES:
 - Include all materials, tools, and safety warnings
 - Measurements must be exact: "2x4 lumber, 8 feet" not "some wood"

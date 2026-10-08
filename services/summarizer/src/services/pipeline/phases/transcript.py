@@ -45,7 +45,12 @@ async def _fetch_with_trail(
     got_transcript = False
     try:
         async for item in fetch_transcript(
-            ctx.youtube_id, video_data, video_data.duration, is_music=is_music, trail=trail
+            ctx.youtube_id,
+            video_data,
+            video_data.duration,
+            is_music=is_music,
+            trail=trail,
+            skip_cache=getattr(ctx, "cold_media", False),
         ):
             if not isinstance(item, str):
                 got_transcript = True
@@ -89,6 +94,7 @@ async def run_phase_transcript(ctx: PipelineContext) -> AsyncGenerator[str, None
     assert transcript_data is not None
 
     ctx.transcript_data = transcript_data
+    ctx.prompt_segments = list(transcript_data.segments or [])
 
     # English-canonical pipeline: ALL generation runs in English, so ctx.language
     # stays "en" (its default). We only record the DETECTED original language —
@@ -134,7 +140,9 @@ async def run_phase_transcript(ctx: PipelineContext) -> AsyncGenerator[str, None
     logger.info("Source language: %s (generation runs in English)", source_code or "en")
 
     yield sse_event("transcript_ready", {"duration": video_data.duration})
-    ctx.clean_text = clean_transcript(transcript_data.raw_text)
+    ctx.clean_text = clean_transcript(
+        transcript_data.raw_text, source_language=ctx.source_language_code
+    )
 
     # Advanced cleaning (spaCy + TF-IDF)
     if settings.TRANSCRIPT_CLEANING_ENABLED:
@@ -166,7 +174,11 @@ async def run_phase_transcript(ctx: PipelineContext) -> AsyncGenerator[str, None
             ]
             filtered = filter_transcript_segments(sb_segments, sponsor_segments)
             if filtered:
-                ctx.clean_text = clean_transcript(" ".join(s["text"] for s in filtered))
+                ctx.clean_text = clean_transcript(
+                    " ".join(s["text"] for s in filtered), source_language=ctx.source_language_code
+                )
+                # Prompt renders must drop the sponsor read too, not just clean_text.
+                ctx.prompt_segments = filtered
                 logger.info("SponsorBlock: filtered %d sponsor segments", len(sponsor_segments))
     except (TypeError, ValueError, KeyError) as e:
         logger.warning("SponsorBlock filtering failed (non-critical): %s - %s", type(e).__name__, e)

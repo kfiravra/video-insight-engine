@@ -10,6 +10,9 @@ import { sseLogger } from './sse-logger';
 import { incrementTelemetryCounter } from '@/features/video-output/lib/telemetry';
 import {
   VIDEO_CATEGORY_VALUES,
+  filledSynthesisFields,
+  type SSESynthesisCompleteEvent,
+  type SynthesisResult,
   type DescriptionLink,
   type Resource,
   type RelatedVideo,
@@ -130,31 +133,29 @@ export function validateMetadataEvent(data: unknown): VideoMetadata {
   };
 }
 
+// Every content field is optional: the memory-done partial carries only
+// tldr + keyTakeaways, a failure path can carry nothing. `satisfies` ties the
+// schema to the shared event type so the two can't drift apart.
 const synthesisCompleteEventSchema = z.object({
   event: z.literal('synthesis_complete'),
-  tldr: z.string().default(''),
-  keyTakeaways: z.array(z.string()).default([]),
-});
-
-interface SynthesisResult {
-  tldr: string;
-  keyTakeaways: string[];
-}
+  tldr: z.string().optional(),
+  keyTakeaways: z.array(z.string()).optional(),
+  masterSummary: z.string().optional(),
+  seoDescription: z.string().optional(),
+}) satisfies z.ZodType<SSESynthesisCompleteEvent>;
 
 /**
  * Validate synthesis_complete event from SSE.
- * Returns validated synthesis data or defaults if validation fails.
+ * Returns only the fields that carry content ({} if validation fails), ready
+ * to merge over what earlier emissions filled.
  */
-export function validateSynthesisComplete(data: unknown): SynthesisResult {
+export function validateSynthesisComplete(data: unknown): Partial<SynthesisResult> {
   const result = synthesisCompleteEventSchema.safeParse(data);
   if (!result.success) {
     reportInvalidEvent('Invalid synthesis_complete event:', result.error.message);
-    return { tldr: '', keyTakeaways: [] };
+    return {};
   }
-  return {
-    tldr: result.data.tldr,
-    keyTakeaways: result.data.keyTakeaways,
-  };
+  return filledSynthesisFields(result.data);
 }
 
 const doneEventSchema = z.object({

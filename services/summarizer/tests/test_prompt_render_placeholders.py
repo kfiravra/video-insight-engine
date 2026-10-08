@@ -19,16 +19,15 @@ No LLM calls are made; the LLM boundary is mocked at each stage's module.
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-PROMPTS_DIR = Path(__file__).parent.parent / "src" / "prompts"
+from src.services.pipeline.prompt_registry import declared_placeholders
 
-_PLACEHOLDER_RE = re.compile(r"\{([a-z_]+)\}")
+PROMPTS_DIR = Path(__file__).parent.parent / "src" / "prompts"
 
 # Templates with placeholders that are deliberately NOT render-tested.
 # Keep this list justified — anything here is a known gap.
@@ -39,7 +38,7 @@ def _declared_placeholders(*relative_paths: str) -> set[str]:
     """Union of ``{placeholder}`` names declared by the given template files."""
     tokens: set[str] = set()
     for rel in relative_paths:
-        tokens |= set(_PLACEHOLDER_RE.findall((PROMPTS_DIR / rel).read_text()))
+        tokens |= declared_placeholders((PROMPTS_DIR / rel).read_text())
     return tokens
 
 
@@ -79,14 +78,15 @@ _COVERED_TEMPLATES: set[str] = {
     "quality_rules.txt",
     "plan.txt",
     "component_toolkit.txt",
-    "classify.txt",
     "synthesis.txt",
     "translate_flat.txt",
     "chapter_detect.txt",
     "description_analysis.txt",
+    "memory.txt",
+    "tier_probe.txt",
+    "enrich_quiz.txt",
     *(f"schemas/{p.name}" for p in (PROMPTS_DIR / "schemas").glob("*.txt")),
     *(f"examples/{p.name}" for p in (PROMPTS_DIR / "examples").glob("*.txt")),
-    *(f"enrich/{p.name}" for p in (PROMPTS_DIR / "enrich").glob("*.txt")),
 }
 
 
@@ -115,40 +115,44 @@ _ALL_SCHEMA_TAGS = sorted(p.stem for p in (PROMPTS_DIR / "schemas").glob("*.txt"
 
 
 class TestExtractionPromptRenders:
-    @pytest.mark.parametrize("tag", _ALL_SCHEMA_TAGS)
-    def test_single_domain_prompt_has_no_unreplaced_placeholders(self, tag):
-        from src.services.pipeline.prompt_builder import build_extraction_prompt
+    @staticmethod
+    def _rendered(tags: list[str], modifiers: list[str]) -> str:
+        """Everything a single call sends: system rules + bound user blocks."""
+        from src.services.pipeline.extraction_prompt import (
+            ExtractionPromptInput,
+            build_extraction_prompt,
+        )
 
         prompt = build_extraction_prompt(
-            [tag],
-            [],
-            "the transcript body goes here",
-            "quality rules text",
-            title="Video Title",
-            duration_minutes=12,
+            ExtractionPromptInput(
+                tags,
+                modifiers,
+                "quality rules text",
+                title="Video Title",
+                duration_seconds=720,
+                tabs=[{"label": "Steps", "component": "step_player", "dataSource": "food.steps"}],
+                video_memory="<video_memory>\ndomains: food\n</video_memory>",
+                frame_context="0:12 — a frame",
+                visual_annotations="<visual_annotations>\n[0:12] a frame\n</visual_annotations>",
+            )
         )
+        blocks = prompt.user_blocks("transcript body")
+        return "\n".join([prompt.system, *(block["text"] for block in blocks)])
+
+    @pytest.mark.parametrize("tag", _ALL_SCHEMA_TAGS)
+    def test_single_domain_prompt_has_no_unreplaced_placeholders(self, tag):
+        prompt = self._rendered([tag], [])
+
         _assert_no_unreplaced(
             prompt,
             "base_extraction.txt",
             "quality_rules.txt",
             f"schemas/{tag}.txt",
         )
-        # {transcript}/{batch_context} are late-bound by design — the full
-        # prompt builder must have filled both.
-        assert "{transcript}" not in prompt
-        assert "{batch_context}" not in prompt
 
     def test_modifier_schema_placeholders_are_filled(self):
-        from src.services.pipeline.prompt_builder import build_extraction_prompt
+        prompt = self._rendered(["travel"], ["finance"])
 
-        prompt = build_extraction_prompt(
-            ["travel"],
-            ["finance"],
-            "transcript",
-            "rules",
-            title="T",
-            duration_minutes=30,
-        )
         _assert_no_unreplaced(prompt, "schemas/travel.txt", "schemas/finance.txt")
 
     def test_domain_example_files_declare_no_placeholders(self):
@@ -160,13 +164,20 @@ class TestExtractionPromptRenders:
             )
 
     def test_extraction_template_keeps_late_bound_placeholders_only(self):
-        from src.services.pipeline.prompt_builder import build_extraction_template
+        from src.services.pipeline.extraction_prompt import (
+            LATE_BOUND_PLACEHOLDERS,
+            ExtractionPromptInput,
+            build_extraction_template,
+        )
 
-        template = build_extraction_template(["tech"], [], "rules", title="T")
+        annotations = "<visual_annotations>\n[0:01] a slide\n</visual_annotations>"
+        template = build_extraction_template(
+            ExtractionPromptInput(["tech"], [], "rules", visual_annotations=annotations)
+        )
         remaining = {
             tok for tok in _declared_placeholders("base_extraction.txt") if f"{{{tok}}}" in template
         }
-        assert remaining == {"transcript", "batch_context"}
+        assert remaining == LATE_BOUND_PLACEHOLDERS
 
 
 # ─── Plan (plan.txt + component_toolkit.txt) ────────────────────────────
@@ -183,9 +194,9 @@ async def test_plan_prompt_renders_without_placeholders():
             duration=600,
             category_hint="tech",
             content_format="tutorial",
-            transcript_preview="transcript preview text",
+            transcript="[0:00] transcript text",
             llm_service=llm,
-            content_traits="has_code",
+            probe_hint="domain=tech, format=tutorial",
         )
     rendered = _captured_prompt_text(mock_call)
     assert rendered, "plan stage never reached the LLM call"
@@ -194,7 +205,7 @@ async def test_plan_prompt_renders_without_placeholders():
 
 @pytest.mark.asyncio
 async def test_plan_prompt_renders_with_optional_fields_absent():
-    """None-able inputs (channel/description/traits) must still fill their slots."""
+    """None-able inputs (channel/description/hint/transcript) must still fill their slots."""
     from src.services.pipeline import plan as plan_mod
 
     llm, mock_call = _capture_llm()
@@ -206,7 +217,7 @@ async def test_plan_prompt_renders_with_optional_fields_absent():
             duration=0,
             category_hint=None,
             content_format=None,
-            transcript_preview="",
+            transcript="",
             llm_service=llm,
         )
     _assert_no_unreplaced(
@@ -214,26 +225,6 @@ async def test_plan_prompt_renders_with_optional_fields_absent():
         "plan.txt",
         "component_toolkit.txt",
     )
-
-
-# ─── Classifier (classify.txt) ──────────────────────────────────────────
-@pytest.mark.asyncio
-async def test_classify_prompt_renders_without_placeholders():
-    from src.services.pipeline import classifier as classifier_mod
-
-    llm, mock_call = _capture_llm()
-    with patch.object(classifier_mod, "call_llm_with_retry", mock_call):
-        await classifier_mod.classify_domain_format(
-            title="Test Video",
-            channel="Chan",
-            duration=300,
-            tags=["python", "tutorial"],
-            transcript_preview="preview",
-            llm_service=llm,
-        )
-    rendered = _captured_prompt_text(mock_call)
-    assert rendered, "classifier never reached the LLM call"
-    _assert_no_unreplaced(rendered, "classify.txt")
 
 
 # ─── Synthesis (synthesis.txt) ──────────────────────────────────────────
@@ -259,23 +250,16 @@ async def test_synthesis_prompt_renders_without_placeholders():
     _assert_no_unreplaced(rendered, "synthesis.txt")
 
 
-# ─── Enrichment (enrich/enrich_*.txt, one per mapped tag) ───────────────
-def _enrichment_prompt_files() -> list[tuple[str, str]]:
-    """(tag, template path relative to src/prompts) — one tag per template.
+# ─── Quiz enrichment (enrich_quiz.txt, one flavor line per quiz domain) ──
+def _quiz_domains() -> list[str]:
+    from src.shared_config.domain_config import quiz_enrichment
 
-    ENRICHMENT_MAP values already carry the ``enrich/`` prefix.
-    """
-    from src.services.pipeline.enrichment import ENRICHMENT_MAP
-
-    seen: dict[str, str] = {}
-    for tag, rel_path in sorted(ENRICHMENT_MAP.items()):
-        seen.setdefault(rel_path, tag)
-    return [(tag, rel_path) for rel_path, tag in sorted(seen.items())]
+    return quiz_enrichment()["quizDomains"]
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("tag,rel_path", _enrichment_prompt_files())
-async def test_enrichment_prompt_renders_without_placeholders(tag, rel_path):
+@pytest.mark.parametrize("tag", _quiz_domains())
+async def test_enrich_quiz_prompt_renders_without_placeholders(tag):
     from src.services.pipeline import enrichment as enrichment_mod
 
     llm, mock_call = _capture_llm()
@@ -283,28 +267,16 @@ async def test_enrichment_prompt_renders_without_placeholders(tag, rel_path):
         "key_points": [{"text": "a meaningful extracted point about the topic"}],
     }
     with patch.object(enrichment_mod, "call_llm_with_retry", mock_call):
-        await enrichment_mod.enrich(
-            llm_service=llm,
+        await enrichment_mod.enrich_quiz(
+            llm,
             primary_tag=tag,
             extraction_data=extraction,
-            title="Test Video",
+            video_memory="<video_memory>\ndomains: x\n</video_memory>",
+            tabs=[{"id": "quiz", "label": "Quiz", "component": "quiz_arena", "goal": "Check it"}],
         )
     rendered = _captured_prompt_text(mock_call)
-    assert rendered, f"enrichment for {tag} never reached the LLM call"
-    _assert_no_unreplaced(rendered, rel_path)
-
-
-def test_every_enrich_template_is_reachable_via_map():
-    """Each enrich/*.txt must be mapped, or it can never render (dead prompt)."""
-    from src.services.pipeline.enrichment import ENRICHMENT_MAP
-
-    mapped = set(ENRICHMENT_MAP.values())
-    on_disk = {f"enrich/{p.name}" for p in (PROMPTS_DIR / "enrich").glob("*.txt")}
-    assert on_disk == mapped, (
-        f"enrich templates and ENRICHMENT_MAP drifted: "
-        f"unmapped files {sorted(on_disk - mapped)}, "
-        f"missing files {sorted(mapped - on_disk)}"
-    )
+    assert rendered, f"the quiz for {tag} never reached the LLM call"
+    _assert_no_unreplaced(rendered, "enrich_quiz.txt")
 
 
 # ─── Translation (translate_flat.txt) ───────────────────────────────────
@@ -369,3 +341,46 @@ async def test_description_analysis_prompt_renders_without_placeholders():
     messages = mock_completion.call_args.kwargs["messages"]
     rendered = "\n".join(m["content"] for m in messages)
     _assert_no_unreplaced(rendered, "description_analysis.txt")
+
+
+# ─── Video memory (memory.txt) ──────────────────────────────────────────
+@pytest.mark.asyncio
+async def test_memory_prompt_renders_without_placeholders():
+    from src.models.memory_types import MemoryInput
+    from src.services.pipeline import memory as memory_mod
+
+    llm, mock_call = _capture_llm()
+    request = MemoryInput(
+        title="Test Video",
+        channel="Test Channel",
+        duration=600,
+        description="Description text",
+        transcript="[0:00] intro text\n[0:20] more text",
+    )
+    with patch.object(memory_mod, "call_llm_with_retry", mock_call):
+        await memory_mod.run_memory(llm, request)
+    rendered = _captured_prompt_text(mock_call)
+    assert rendered, "memory never reached the LLM call"
+    _assert_no_unreplaced(rendered, "memory.txt")
+
+
+# ─── Tier probe (tier_probe.txt) ────────────────────────────────────────
+@pytest.mark.asyncio
+async def test_tier_probe_prompt_renders_without_placeholders():
+    from src.services.pipeline import tier_probe as tier_probe_mod
+
+    llm, mock_call = _capture_llm()
+    request = tier_probe_mod.TierProbeInput(
+        title="Test Video",
+        channel="Test Channel",
+        duration=600,
+        youtube_category="Education",
+        description="Description text",
+        transcript="intro text " * 400,
+        tags=["tag-a", "tag-b"],
+    )
+    with patch.object(tier_probe_mod, "call_llm_with_retry", mock_call):
+        await tier_probe_mod.run_tier_probe(request, llm)
+    rendered = _captured_prompt_text(mock_call)
+    assert rendered, "tier probe never reached the LLM call"
+    _assert_no_unreplaced(rendered, "tier_probe.txt")

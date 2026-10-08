@@ -19,7 +19,6 @@
     "src/models/domain_types.py",
     "src/models/pipeline_types.py",
     "src/services/cache/pipeline_event_stream.py",
-    "src/services/llm_provider.py",
     "src/services/media/download_utils.py",
     "src/services/media/frame_analyzer.py",
     "src/services/media/frame_scorer.py",

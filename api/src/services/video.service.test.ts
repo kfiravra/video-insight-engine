@@ -36,11 +36,11 @@ describe('VideoService', () => {
     deleteUserVideo: ReturnType<typeof vi.fn>;
     deleteUserVideoByYoutubeId: ReturnType<typeof vi.fn>;
     updateUserVideoFolder: ReturnType<typeof vi.fn>;
-    markPreviousVersionsNotLatest: ReturnType<typeof vi.fn>;
+    clearSynthesis: ReturnType<typeof vi.fn>;
     findHighestVersion: ReturnType<typeof vi.fn>;
     incrementRetryCount: ReturnType<typeof vi.fn>;
     getVersions: ReturnType<typeof vi.fn>;
-    deleteOldVersions: ReturnType<typeof vi.fn>;
+    pruneVersions: ReturnType<typeof vi.fn>;
     userOwnsVideo: ReturnType<typeof vi.fn>;
     updateCacheEntry: ReturnType<typeof vi.fn>;
   };
@@ -57,6 +57,10 @@ describe('VideoService', () => {
     acquire: ReturnType<typeof vi.fn>;
     release: ReturnType<typeof vi.fn>;
   };
+  let mockEvalUsers: {
+    isEvalUser: ReturnType<typeof vi.fn>;
+    mayRunCold: ReturnType<typeof vi.fn>;
+  };
 
   beforeAll(() => {
     mockVideoRepository = {
@@ -72,11 +76,11 @@ describe('VideoService', () => {
       deleteUserVideo: vi.fn(),
       deleteUserVideoByYoutubeId: vi.fn(),
       updateUserVideoFolder: vi.fn(),
-      markPreviousVersionsNotLatest: vi.fn(),
+      clearSynthesis: vi.fn().mockResolvedValue(undefined),
       findHighestVersion: vi.fn(),
       incrementRetryCount: vi.fn(),
       getVersions: vi.fn(),
-      deleteOldVersions: vi.fn(),
+      pruneVersions: vi.fn().mockResolvedValue(0),
       userOwnsVideo: vi.fn(),
       updateCacheEntry: vi.fn(),
     };
@@ -95,12 +99,19 @@ describe('VideoService', () => {
       acquire: vi.fn().mockResolvedValue({ acquired: true, token: 'test-token' }),
       release: vi.fn().mockResolvedValue(undefined),
     };
+    // Default: nobody is the eval user; eval behaviour lives in
+    // __tests__/video.service.eval-versions.test.ts.
+    mockEvalUsers = {
+      isEvalUser: vi.fn().mockResolvedValue(false),
+      mayRunCold: vi.fn().mockResolvedValue(false),
+    };
     videoService = new VideoService(
       mockVideoRepository as unknown as VideoRepository,
       mockSummarizerClient as unknown as SummarizerClient,
       mockQueuePublisher as unknown as QueuePublisher,
       mockIdempotencyService as unknown as IdempotencyService,
       mockDispatchGuard as unknown as DispatchGuardService,
+      mockEvalUsers,
       mockLogger
     );
   });
@@ -707,7 +718,7 @@ describe('VideoService', () => {
 
         mockIdempotencyService.computeContentKey.mockReturnValue('content-key-v2');
 
-        mockVideoRepository.markPreviousVersionsNotLatest.mockResolvedValue({
+        mockVideoRepository.findCacheByYoutubeId.mockResolvedValue({
           _id: { toString: () => previousSummaryId },
           youtubeId,
           version: 1,
@@ -748,7 +759,7 @@ describe('VideoService', () => {
         // cache — without it a bypassCache run is instantly re-fed the stale
         // cached payload whenever the SSE client wins the producer lock.
         const youtubeId = 'dQw4w9WgXcQ';
-        mockVideoRepository.markPreviousVersionsNotLatest.mockResolvedValue({
+        mockVideoRepository.findCacheByYoutubeId.mockResolvedValue({
           _id: 'prev-id',
           youtubeId,
           version: 1,

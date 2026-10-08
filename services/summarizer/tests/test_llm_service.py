@@ -33,8 +33,14 @@ class TestLLMService:
         result = await service.call_llm("test prompt")
         assert result == "Hello world"
         mock_llm_provider.complete.assert_called_once_with(
-            "test prompt", max_tokens=2000, timeout=60.0, json_mode=False, cache_static=None,
-            span_name=None, span_metadata=None,
+            "test prompt",
+            max_tokens=2000,
+            timeout=60.0,
+            json_mode=False,
+            span_name=None,
+            span_metadata=None,
+            temperature=None,
+            system_prompt=None,
         )
 
     @pytest.mark.asyncio
@@ -44,22 +50,12 @@ class TestLLMService:
         service = LLMService(mock_llm_provider)
         await service.call_llm("prompt", max_tokens=4096)
         mock_llm_provider.complete.assert_called_once_with(
-            "prompt", max_tokens=4096, timeout=60.0, json_mode=False, cache_static=None,
-            span_name=None, span_metadata=None,
+            "prompt",
+            max_tokens=4096,
+            timeout=60.0,
+            json_mode=False,
+            span_name=None,
+            span_metadata=None,
+            temperature=None,
+            system_prompt=None,
         )
-
-    @pytest.mark.asyncio
-    async def test_stream_llm_yields_tokens(self, mock_llm_provider):
-        """Test streaming LLM response yields tokens."""
-        async def mock_stream(*args, **kwargs):
-            for token in ["Hello", " ", "world"]:
-                yield token
-
-        mock_llm_provider.stream = mock_stream
-        service = LLMService(mock_llm_provider)
-
-        tokens = []
-        async for token in service.stream_llm("test prompt"):
-            tokens.append(token)
-
-        assert tokens == ["Hello", " ", "world"]

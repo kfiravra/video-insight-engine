@@ -1,10 +1,14 @@
-"""Shared pipeline types used across synthesis, enrichment, and manifest stages."""
+"""Shared pipeline types used across the plan, synthesis and enrichment stages."""
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
+from typing import Annotated
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, StringConstraints, field_validator, model_validator
+
+from ..shared_config.domain_config import EVIDENCE_KEYS
 
 
 @dataclass
@@ -22,228 +26,132 @@ class FrameData:
 
 
 class SynthesisResult(BaseModel):
-    tldr: str
-    key_takeaways: list[str] = Field(alias="keyTakeaways")
+    """The synthesis call's answer (pipeline-1min 1d.3).
+
+    ``masterSummary`` + ``seoDescription`` always; ``tldr`` / ``keyTakeaways``
+    only when the call was asked for them because memory left one empty.
+    """
+
     master_summary: str = Field(alias="masterSummary")
-    seo_description: str = Field(alias="seoDescription")
+    seo_description: str = Field("", alias="seoDescription")
+    tldr: str = ""
+    key_takeaways: list[str] = Field(default_factory=list, alias="keyTakeaways")
 
     model_config = {"populate_by_name": True}
+
+
+# Quiz text the UI renders as-is: trimmed, never blank.
+_QuizText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
+MIN_QUIZ_OPTIONS = 2
+MAX_QUIZ_OPTIONS = 6
 
 
 class QuizQuestion(BaseModel):
-    question: str
-    options: list[str]
-    correct_index: int = Field(alias="correctIndex")
-    explanation: str
+    """One multiple-choice question.
+
+    Strict on purpose: the quiz call is salvaged item by item, so a malformed
+    question is dropped instead of shipping a broken answer key.
+    """
+
+    question: _QuizText
+    options: list[_QuizText] = Field(min_length=MIN_QUIZ_OPTIONS, max_length=MAX_QUIZ_OPTIONS)
+    correct_index: int = Field(alias="correctIndex", ge=0)
+    explanation: _QuizText
 
     model_config = {"populate_by_name": True}
 
-
-class Flashcard(BaseModel):
-    front: str
-    back: str
-
-
-class CodeCheatSheetItem(BaseModel):
-    title: str
-    code: str
-    description: str
-
-
-class ScenarioOption(BaseModel):
-    text: str
-    correct: bool = False
-    explanation: str = ""
-
-    @model_validator(mode="before")
-    @classmethod
-    def _coerce_string(cls, data: object) -> object:
-        """LLM sometimes returns plain strings instead of option dicts."""
-        if isinstance(data, str):
-            return {"text": data, "correct": False, "explanation": ""}
-        return data
-
-
-class ScenarioItem(BaseModel):
-    question: str
-    emoji: str = ""
-    options: list[ScenarioOption] = []
+    @model_validator(mode="after")
+    def _answer_is_one_distinct_option(self) -> QuizQuestion:
+        # Clamping an out-of-range index (as the quiz_arena normalizer does)
+        # would mark a wrong option correct — the item is rejected instead.
+        if self.correct_index >= len(self.options):
+            raise ValueError(
+                f"correctIndex {self.correct_index} is not one of {len(self.options)} options"
+            )
+        # Two options that read the same make the answer ambiguous (one of them
+        # is marked wrong) — the item is dropped like any malformed question.
+        if len({option.casefold() for option in self.options}) < len(self.options):
+            raise ValueError("options repeat the same answer")
+        return self
 
 
 class EnrichmentData(BaseModel):
-    quiz: list[QuizQuestion] | None = None
-    flashcards: list[Flashcard] | None = None
-    cheat_sheet: list[CodeCheatSheetItem] | None = Field(None, alias="cheatSheet")
-    scenarios: list[ScenarioItem] | None = None
+    """Quiz-only enrichment (pipeline-1min 1d.1): read by quiz_arena tabs and quick_quiz."""
+
+    quiz: list[QuizQuestion] = Field(default_factory=list)
 
     model_config = {"populate_by_name": True}
 
 
-# ── Manifest Stage ──
+# ── Plan Stage ──
+
+# A brief's time point or range, written with the transcript's markers:
+# "1:10", "1:10-2:40", "1:02:05-1:04:00" (en/em dashes accepted, normalized to "-").
+_TIME = r"\d{1,2}(?::\d{2}){1,2}"
+_TIME_RANGE_RE = re.compile(rf"^({_TIME})(?:\s*[-–—]\s*({_TIME}))?$")
+MAX_BRIEF_RANGES = 6
+MAX_PLAN_TERMS = 12
 
 
-class ItemCounts(BaseModel):
-    model_config = {"populate_by_name": True}
+def _normalize_time_range(raw: str) -> str | None:
+    """``"1:10 – 2:40"`` → ``"1:10-2:40"``; ``None`` when it is not a time or range."""
+    match = _TIME_RANGE_RE.match(raw.strip())
+    if match is None:
+        return None
+    start, end = match.groups()
+    return f"{start}-{end}" if end else start
 
-    steps: int = 0
-    spots: int = 0
-    exercises: int = 0
-    ingredients: int = 0
-    songs: int = 0
-    tips: int = 0
-    products: int = 0
-    code_snippets: int = Field(0, alias="codeSnippets")
-    concepts: int = 0
-    quotes: int = 0
 
-    @field_validator("*", mode="before")
+class TabBrief(BaseModel):
+    """What extraction must pull for one planned tab (pipeline-1min Appendix B.2).
+
+    Lenient on purpose: a malformed field becomes its empty value instead of
+    failing the whole plan, and fallback tabs (domain defaults) get the empty
+    brief — a brief steers extraction, it never gates a tab.
+    """
+
+    what: str = ""
+    where: list[str] = Field(default_factory=list)
+    expect: int = 0
+
+    @field_validator("what", mode="before")
     @classmethod
-    def coerce_int(cls, v):
-        if v is None:
+    def coerce_what(cls, v: object) -> str:
+        return v.strip() if isinstance(v, str) else ""
+
+    @field_validator("where", mode="before")
+    @classmethod
+    def keep_time_ranges(cls, v: object) -> list[str]:
+        items = [v] if isinstance(v, str) else v
+        if not isinstance(items, list):
+            return []
+        ranges = [_normalize_time_range(item) for item in items if isinstance(item, str)]
+        return [r for r in ranges if r][:MAX_BRIEF_RANGES]
+
+    @field_validator("expect", mode="before")
+    @classmethod
+    def coerce_expect(cls, v: object) -> int:
+        if isinstance(v, bool):
             return 0
-        return int(v)
+        if isinstance(v, int | float):
+            return max(0, int(v))
+        digits = re.search(r"\d+", v) if isinstance(v, str) else None
+        return int(digits.group()) if digits else 0
 
-
-class ManifestSection(BaseModel):
-    model_config = {"populate_by_name": True}
-
-    title: str = ""
-    start_percent: int = Field(0, alias="startPercent")
-    end_percent: int = Field(100, alias="endPercent")
-    density: str = "medium"
-
-
-class ManifestFlags(BaseModel):
-    model_config = {"populate_by_name": True}
-
-    has_storytelling: bool = Field(False, alias="hasStorytelling")
-    has_budget_discussion: bool = Field(False, alias="hasBudgetDiscussion")
-    has_code_snippets: bool = Field(False, alias="hasCodeSnippets")
-    has_recipe: bool = Field(False, alias="hasRecipe")
-    has_workout: bool = Field(False, alias="hasWorkout")
-    has_product_review: bool = Field(False, alias="hasProductReview")
-    speaker_count: int = Field(1, alias="speakerCount")
-
-
-class ManifestIntent(BaseModel):
-    model_config = {"populate_by_name": True}
-
-    user_goal: str = Field("", alias="userGoal")
-    video_value: str = Field("", alias="videoValue")
-    unique_angle: str = Field("", alias="uniqueAngle")
-    return_reason: str = Field("", alias="returnReason")
-    actionable_data: list[str] = Field([], alias="actionableData")
-
-
-# ── Video DNA models (new manifest output shape) ──
-
-
-class ManifestIdentity(BaseModel):
-    """Creator identity from video_dna."""
-
-    model_config = {"populate_by_name": True}
-
-    creator_type: str = Field("", alias="creatorType")
-    tone: str = ""
-    production: str = ""
-    audience: str = ""
-
-
-class ManifestValue(BaseModel):
-    """Value proposition from video_dna."""
-
-    model_config = {"populate_by_name": True}
-
-    core_promise: str = Field("", alias="corePromise")
-    actionable_data: list[str] = Field([], alias="actionableData")
-    unique_angle: str = Field("", alias="uniqueAngle")
-    return_trigger: str = Field("", alias="returnTrigger")
-    tool_potential: str = Field("", alias="toolPotential")
-
-
-class ManifestVisualContent(BaseModel):
-    """Visual content analysis from video_dna."""
-
-    model_config = {"populate_by_name": True}
-
-    screen_heavy: bool = Field(False, alias="screenHeavy")
-    has_code_on_screen: bool = Field(False, alias="hasCodeOnScreen")
-    has_diagrams: bool = Field(False, alias="hasDiagrams")
-    frame_summary: str = Field("", alias="frameSummary")
-
-
-class ManifestExtractionGuidance(BaseModel):
-    """Strategic extraction guidance from video_dna."""
-
-    model_config = {"populate_by_name": True}
-
-    primary_focus: str = Field("", alias="primaryFocus")
-    quality_bar: str = Field("", alias="qualityBar")
-    watch_out_for: str = Field("", alias="watchOutFor")
-
-
-class ManifestResult(BaseModel):
-    model_config = {"populate_by_name": True}
-
-    summary: str = ""
-    content_type: str = Field("", alias="contentType")
-    main_topics: list[str] = Field([], alias="mainTopics")
-    item_counts: ItemCounts = Field(default_factory=ItemCounts, alias="itemCounts")
-    sections: list[ManifestSection] = []
-    key_names: list[str] = Field([], alias="keyNames")
-    flags: ManifestFlags = Field(default_factory=ManifestFlags)
-
-    # Legacy intent (v1 format)
-    intent: ManifestIntent = Field(default_factory=ManifestIntent)
-
-    # Video DNA fields (v2 format)
-    reasoning: str = ""
-    identity: ManifestIdentity = Field(default_factory=ManifestIdentity)
-    value: ManifestValue = Field(default_factory=ManifestValue)
-    visual_content: ManifestVisualContent = Field(
-        default_factory=ManifestVisualContent, alias="visualContent"
-    )
-    extraction_guidance: ManifestExtractionGuidance = Field(
-        default_factory=ManifestExtractionGuidance, alias="extractionGuidance"
-    )
-
-    @model_validator(mode="before")
     @classmethod
-    def unwrap_nested_format(cls, data):
-        """Support multiple manifest formats with backward compatibility.
-
-        Handles:
-        1. New video_dna format: {reasoning, identity, value, structure, visualContent, extractionGuidance}
-        2. Old nested format: {intent, structure}
-        3. Legacy flat format: {summary, contentType, ...}
-        """
-        if not isinstance(data, dict):
-            return data
-
-        # Unwrap "structure" key (shared by v1 and v2 formats)
-        if "structure" in data:
-            structure = data.pop("structure")
-            if isinstance(structure, dict):
-                for key, val in structure.items():
-                    if key not in data:
-                        data[key] = val
-
-        # Map v2 value fields → legacy intent fields for backward compat
-        if "value" in data and "intent" not in data:
-            v = data.get("value", {})
-            if isinstance(v, dict):
-                data["intent"] = {
-                    "userGoal": v.get("corePromise", ""),
-                    "videoValue": v.get("toolPotential", ""),
-                    "uniqueAngle": v.get("uniqueAngle", ""),
-                    "returnReason": v.get("returnTrigger", ""),
-                    "actionableData": v.get("actionableData", []),
-                }
-
-        return data
+    def from_raw(cls, raw: object) -> TabBrief:
+        """The brief for an LLM value; anything but an object is the empty brief."""
+        return cls.model_validate(raw) if isinstance(raw, dict) else cls()
 
 
-# ── Plan Stage (merged Manifest + Triage) ──
+def _with_brief(tab: dict) -> dict:
+    """A copy of ``tab`` with a normalized ``brief``.
+
+    A copy, never in place: fallback tabs are the process-cached domains.json
+    ``defaultTabs`` dicts.
+    """
+    return {**tab, "brief": TabBrief.from_raw(tab.get("brief")).model_dump()}
 
 
 class PlanIdentity(BaseModel):
@@ -253,7 +161,6 @@ class PlanIdentity(BaseModel):
 
     creator_type: str = Field("", alias="creatorType")
     tone: str = ""
-    audience: str = ""
 
 
 class PlanExtractionGuidance(BaseModel):
@@ -266,23 +173,26 @@ class PlanExtractionGuidance(BaseModel):
 
 
 class PlanResult(BaseModel):
-    """Merged result of the plan pipeline stage (replaces Manifest + Triage).
+    """Result of the plan stage: video analysis + tab design in one call.
 
-    Contains all fields from both ManifestResult and TriageResult in a single
-    model. Provides adapter methods for backward compat with downstream consumers.
+    ``tabs`` stay plain dicts (the triage / SSE / assembly shape); validation
+    gives every tab a normalized ``brief``.
     """
 
     model_config = {"populate_by_name": True}
 
-    # Identity & analysis (from manifest)
-    reasoning: str = ""
+    # Identity & analysis
     identity: PlanIdentity = Field(default_factory=PlanIdentity)
     core_promise: str = Field("", alias="corePromise")
     unique_angle: str = Field("", alias="uniqueAngle")
     extraction_guidance: PlanExtractionGuidance = Field(
         default_factory=PlanExtractionGuidance, alias="extractionGuidance"
     )
-    item_counts: ItemCounts = Field(default_factory=ItemCounts, alias="itemCounts")
+    # Canonical spellings extraction must reuse (people, products, techniques).
+    terms: list[str] = Field(default_factory=list)
+    # Appendix-C evidence: only the keys the planner answered. A missing key is
+    # "no opinion", never False — it must not switch a domain requirement off.
+    evidence: dict[str, bool] = Field(default_factory=dict)
 
     # Triage fields
     content_tags: list[str] = Field(default_factory=lambda: ["learning"], alias="contentTags")
@@ -314,13 +224,37 @@ class PlanResult(BaseModel):
 
     @field_validator("tabs", mode="before")
     @classmethod
-    def coerce_tabs(cls, v):
+    def coerce_tabs(cls, v: object) -> object:
         if not isinstance(v, list):
             return []
-        return v
+        return [_with_brief(tab) if isinstance(tab, dict) else tab for tab in v]
 
-    def to_triage_dict(self) -> dict:
-        """Convert to the triage dict shape expected by SSE events and assembly."""
+    @field_validator("terms", mode="before")
+    @classmethod
+    def clean_terms(cls, v: object) -> list[str]:
+        if not isinstance(v, list):
+            return []
+        terms: list[str] = []
+        for raw in v:
+            term = raw.strip() if isinstance(raw, str) else ""
+            if term and term.casefold() not in {t.casefold() for t in terms}:
+                terms.append(term)
+        return terms[:MAX_PLAN_TERMS]
+
+    @field_validator("evidence", mode="before")
+    @classmethod
+    def keep_known_evidence(cls, v: object) -> dict[str, bool]:
+        if not isinstance(v, dict):
+            return {}
+        return {k: val for k, val in v.items() if k in EVIDENCE_KEYS and isinstance(val, bool)}
+
+    def to_triage_dict(self, content_format: str | None = None) -> dict:
+        """The ``triage_complete`` SSE payload and the persisted ``pipeline.triage``.
+
+        ``content_format`` is the probe's (it is not part of the plan's answer).
+        Evidence + canonical terms ride along for the assembly backfill check
+        (1d.7), reconcile (3.2) and the gate.
+        """
         return {
             "contentTags": self.content_tags,
             "modifiers": self.modifiers,
@@ -328,83 +262,7 @@ class PlanResult(BaseModel):
             "userGoal": self.user_goal,
             "tabs": self.tabs,
             "confidence": self.confidence,
+            "contentFormat": content_format,
+            "evidence": self.evidence,
+            "terms": self.terms,
         }
-
-    def to_video_context_compact(self) -> str:
-        """~300 char summary for extraction/synthesis/enrichment injection."""
-        parts: list[str] = []
-
-        ident = self.identity
-        if ident.creator_type and ident.tone:
-            parts.append(f"Creator: {ident.creator_type} ({ident.tone})")
-        elif ident.creator_type:
-            parts.append(f"Creator: {ident.creator_type}")
-
-        if self.core_promise:
-            parts.append(f"Core promise: {self.core_promise}")
-
-        if self.unique_angle:
-            parts.append(f"Unique angle: {self.unique_angle}")
-
-        eg = self.extraction_guidance
-        if eg.watch_out_for:
-            parts.append(f"Watch out for: {eg.watch_out_for}")
-        if eg.primary_focus:
-            parts.append(f"Focus: {eg.primary_focus}")
-
-        return "\n".join(parts)
-
-    def to_video_context_full(self) -> str:
-        """Full text for logging/debugging."""
-        lines: list[str] = []
-
-        if self.reasoning:
-            lines.append(f"Reasoning: {self.reasoning[:500]}")
-
-        ident = self.identity
-        id_parts = []
-        if ident.creator_type:
-            id_parts.append(f"type={ident.creator_type}")
-        if ident.tone:
-            id_parts.append(f"tone={ident.tone}")
-        if ident.audience:
-            id_parts.append(f"audience={ident.audience}")
-        if id_parts:
-            lines.append(f"Creator: {', '.join(id_parts)}")
-
-        if self.core_promise:
-            lines.append(f"Core promise: {self.core_promise}")
-        if self.unique_angle:
-            lines.append(f"Unique angle: {self.unique_angle}")
-
-        eg = self.extraction_guidance
-        if eg.primary_focus:
-            lines.append(f"Extraction focus: {eg.primary_focus}")
-        if eg.watch_out_for:
-            lines.append(f"Watch out for: {eg.watch_out_for}")
-
-        counts = self.item_counts
-        count_parts: list[str] = []
-        for field_name in (
-            "steps",
-            "spots",
-            "exercises",
-            "ingredients",
-            "songs",
-            "tips",
-            "products",
-            "code_snippets",
-            "concepts",
-            "quotes",
-        ):
-            v = getattr(counts, field_name, 0)
-            if v > 0:
-                count_parts.append(f"{v} {field_name}")
-        if count_parts:
-            lines.append(f"Item counts: {', '.join(count_parts)}")
-
-        lines.append(f"Content tags: {', '.join(self.content_tags)}")
-        lines.append(f"User goal: {self.user_goal}")
-        lines.append(f"Tabs: {len(self.tabs)}")
-
-        return "\n".join(lines)

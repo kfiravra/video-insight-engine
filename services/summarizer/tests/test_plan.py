@@ -1,9 +1,8 @@
-"""Tests for the Plan stage validator — specifically the `outboundLinks` field
-which carries LLM-generated source-language CTA labels for cross-tab navigation.
+"""Tests for the Plan stage tab validator and domain policy.
 
-Walker-level translation tests live in `test_translation.py`; this file focuses
-on the parsing/preservation contract between the LLM JSON output and the
-downstream cross_tab.py consumer.
+`_validate_tabs` normalizes each LLM tab — id, component, dataSource — and
+carries its ``brief`` (pipeline-1min 1b.2: what to pull, where, how many) into
+the shape extraction and assembly read.
 """
 
 from __future__ import annotations
@@ -12,88 +11,46 @@ from src.services.pipeline.plan import _validate_tabs
 from src.shared_config.domain_config import valid_components
 
 
-class TestValidateTabsOutboundLinks:
-    """`_validate_tabs` must preserve the LLM-emitted ``outboundLinks`` map
-    so the assembly stage can hand source-language labels to cross_tab.py."""
+def _tab(**overrides: object) -> dict:
+    return {"id": "steps", "label": "Steps", "component": "step_player", **overrides}
 
-    def test_preserves_outbound_links_when_present(self):
-        tabs = [
-            {
-                "id": "overview",
-                "label": "Overview",
-                "component": "overview",
-                "outboundLinks": {
-                    "concepts": "Learn the concepts",
-                    "quiz": "Test yourself",
-                },
-            },
-        ]
-        result = _validate_tabs(tabs)
-        assert len(result) == 1
-        assert result[0]["outboundLinks"] == {
-            "concepts": "Learn the concepts",
-            "quiz": "Test yourself",
-        }
 
-    def test_defaults_to_empty_dict_when_missing(self):
-        tabs = [{"id": "overview", "label": "Overview", "component": "overview"}]
-        result = _validate_tabs(tabs)
-        assert result[0]["outboundLinks"] == {}
+class TestValidateTabsBrief:
+    """`_validate_tabs` keeps the planner's brief, normalized."""
 
-    def test_drops_non_string_label_values(self):
-        tabs = [
-            {
-                "id": "overview",
-                "label": "Overview",
-                "component": "overview",
-                "outboundLinks": {
-                    "good": "Learn the concepts",
-                    "bad_int": 42,
-                    "bad_empty": "",
-                    "bad_whitespace": "   ",
-                },
-            },
-        ]
-        result = _validate_tabs(tabs)
-        assert result[0]["outboundLinks"] == {"good": "Learn the concepts"}
+    def test_should_keep_brief_when_planner_sends_one(self):
+        brief = {"what": "every step with time", "where": ["1:10-2:40"], "expect": 8}
 
-    def test_drops_non_dict_outbound_links(self):
-        tabs = [
-            {
-                "id": "overview",
-                "label": "Overview",
-                "component": "overview",
-                "outboundLinks": ["not", "a", "dict"],
-            },
-        ]
-        result = _validate_tabs(tabs)
-        assert result[0]["outboundLinks"] == {}
+        result = _validate_tabs([_tab(brief=brief)])
 
-    def test_strips_whitespace_from_labels(self):
-        tabs = [
-            {
-                "id": "overview",
-                "label": "Overview",
-                "component": "overview",
-                "outboundLinks": {"concepts": "  Learn the concepts  "},
-            },
-        ]
-        result = _validate_tabs(tabs)
-        assert result[0]["outboundLinks"] == {"concepts": "Learn the concepts"}
+        assert result[0]["brief"] == brief
 
-    def test_preserves_hebrew_labels(self):
-        """The whole point of this field — labels can be in any language and
-        the walker translates them downstream."""
-        tabs = [
-            {
-                "id": "overview",
-                "label": "סקירה",
-                "component": "overview",
-                "outboundLinks": {"concepts": "ללמוד את המושגים"},
-            },
-        ]
-        result = _validate_tabs(tabs)
-        assert result[0]["outboundLinks"] == {"concepts": "ללמוד את המושגים"}
+    def test_should_give_empty_brief_when_planner_omits_it(self):
+        result = _validate_tabs([_tab()])
+
+        assert result[0]["brief"] == {"what": "", "where": [], "expect": 0}
+
+    def test_should_drop_malformed_ranges_when_normalizing_where(self):
+        brief = {"where": ["1:10 – 2:40", "the middle part", 42, "14:00"]}
+
+        result = _validate_tabs([_tab(brief=brief)])
+
+        assert result[0]["brief"]["where"] == ["1:10-2:40", "14:00"]
+
+    def test_should_read_a_count_when_expect_is_text(self):
+        result = _validate_tabs([_tab(brief={"expect": "~14 items"})])
+
+        assert result[0]["brief"]["expect"] == 14
+
+    def test_should_give_empty_brief_when_brief_is_not_an_object(self):
+        result = _validate_tabs([_tab(brief="all the steps")])
+
+        assert result[0]["brief"] == {"what": "", "where": [], "expect": 0}
+
+    def test_should_not_carry_outbound_links_when_an_old_prompt_sends_them(self):
+        result = _validate_tabs([_tab(outboundLinks={"quiz": "Test yourself"})])
+
+        assert "outboundLinks" not in result[0]
 
 
 class TestVerdictNeverStandalone:
@@ -169,7 +126,7 @@ class TestEnforceDomainPolicy:
 
 class TestRenderPlaybook:
     def test_gaming_unboxing_renders_full_block(self):
-        from src.services.pipeline.plan import _render_playbook
+        from src.services.pipeline.plan_prompt import _render_playbook
 
         block = _render_playbook("gaming", "unboxing")
 
@@ -178,8 +135,15 @@ class TestRenderPlaybook:
         assert "quiz_arena" in block  # listed as forbidden
         assert "Never quiz the viewer" in block
 
+    def test_should_state_required_component_as_conditional_when_rendering(self):
+        from src.services.pipeline.plan_prompt import _render_playbook
+
+        block = _render_playbook("gaming", "unboxing")
+
+        assert "Required components: `tier_list` only when has_ranking is true" in block
+
     def test_no_playbook_renders_empty(self):
-        from src.services.pipeline.plan import _render_playbook
+        from src.services.pipeline.plan_prompt import _render_playbook
 
         assert _render_playbook("cooking", "tutorial") == ""
         assert _render_playbook(None, "unboxing") == ""

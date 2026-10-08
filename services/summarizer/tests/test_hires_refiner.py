@@ -1,12 +1,17 @@
-"""Tests for hi-res refinement of selected scene frames."""
+"""Tests for hi-res refinement of selected scene frames (seeks into the run's 720p file)."""
+
+from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from src.services.media import download_utils
-from src.services.media.hires_prefetch import LocalHiresSource
+import pytest
+
 from src.services.media.hires_refiner import refine_selected_frames
+
+VIDEO_ID = "dQw4w9WgXcQ"
+REFINER = "src.services.media.hires_refiner"
 
 
 def _frame(tmp_path: Path, index: int, timestamp: float) -> dict:
@@ -15,358 +20,114 @@ def _frame(tmp_path: Path, index: int, timestamp: float) -> dict:
     return {"index": index, "path": str(path), "timestamp": timestamp}
 
 
-def _configure(mock_settings, enabled: bool = True, timeout: float = 5.0) -> None:
-    mock_settings.SCENE_HIRES_ENABLED = enabled
-    mock_settings.SCENE_HIRES_CONCURRENCY = 4
-    mock_settings.SCENE_HIRES_TIMEOUT = timeout
-    mock_settings.SCENE_HIRES_FALLBACK_TIMEOUT = timeout
+def _handle(path: Path | None) -> MagicMock:
+    """A LocalHiresSource stand-in whose download resolves to ``path``."""
+    handle = MagicMock()
+    handle.path = AsyncMock(return_value=path)
+    return handle
+
+
+@pytest.fixture
+def local_video(tmp_path: Path) -> Path:
+    video = tmp_path / f"{VIDEO_ID}.mp4"
+    video.write_bytes(b"720p-video")
+    return video
+
+
+@pytest.fixture
+def hires_settings():
+    with patch(f"{REFINER}.settings") as mock_settings:
+        mock_settings.SCENE_HIRES_ENABLED = True
+        mock_settings.SCENE_HIRES_CONCURRENCY = 4
+        mock_settings.SCENE_HIRES_FALLBACK_TIMEOUT = 5.0
+        yield mock_settings
 
 
 class TestRefineSelectedFrames:
-    """Test the second-pass 720p refinement."""
-
-    @patch("src.services.media.hires_refiner.get_video_stream_url", new_callable=AsyncMock)
-    @patch("src.services.media.hires_refiner.settings")
-    async def test_disabled_flag_is_noop(self, mock_settings, mock_stream, tmp_path):
-        _configure(mock_settings, enabled=False)
-        frames = [_frame(tmp_path, 1, 5.0)]
-
-        result = await refine_selected_frames("dQw4w9WgXcQ", frames)
-
-        assert result == 0
-        mock_stream.assert_not_awaited()
-        assert frames[0]["path"].endswith("scene_0001.jpg")
-
-    @patch("src.services.media.hires_refiner.get_video_stream_url", new_callable=AsyncMock)
-    @patch("src.services.media.hires_refiner.settings")
-    async def test_zero_timestamps_skip_stream_fetch(self, mock_settings, mock_stream, tmp_path):
-        """Frames without a parsed timestamp (0.0) cannot be seeked to."""
-        _configure(mock_settings)
-        frames = [_frame(tmp_path, 1, 0.0), _frame(tmp_path, 2, 0.0)]
-
-        result = await refine_selected_frames("dQw4w9WgXcQ", frames)
-
-        assert result == 0
-        mock_stream.assert_not_awaited()
-
-    @patch(
-        "src.services.media.local_video.download_video_720p",
-        new_callable=AsyncMock,
-        return_value=None,
-    )
-    @patch("src.services.media.hires_refiner.extract_frame", new_callable=AsyncMock)
-    @patch(
-        "src.services.media.hires_refiner.get_video_stream_url",
-        new_callable=AsyncMock,
-        return_value=None,
-    )
-    @patch("src.services.media.hires_refiner.settings")
-    async def test_no_stream_url_keeps_lowres_when_fallback_unavailable(
-        self, mock_settings, mock_stream, mock_extract, mock_download, tmp_path
+    async def test_should_seek_every_frame_in_the_local_file(
+        self, hires_settings, local_video, tmp_path
     ):
-        _configure(mock_settings)
-        frames = [_frame(tmp_path, 1, 5.0)]
-
-        result = await refine_selected_frames("dQw4w9WgXcQ", frames)
-
-        assert result == 0
-        mock_download.assert_awaited_once()
-        mock_extract.assert_not_awaited()
-        assert frames[0]["path"].endswith("scene_0001.jpg")
-
-    @patch(
-        "src.services.media.hires_refiner.extract_frame",
-        new_callable=AsyncMock,
-        return_value=b"hiresbytes",
-    )
-    @patch(
-        "src.services.media.hires_refiner.get_video_stream_url",
-        new_callable=AsyncMock,
-        return_value="https://stream.example/video",
-    )
-    @patch("src.services.media.hires_refiner.settings")
-    async def test_success_swaps_paths_in_place(
-        self, mock_settings, mock_stream, mock_extract, tmp_path
-    ):
-        _configure(mock_settings)
-        frames = [_frame(tmp_path, 1, 5.0), _frame(tmp_path, 2, 12.7)]
-
-        result = await refine_selected_frames("dQw4w9WgXcQ", frames)
-
-        assert result == 2
-        for frame in frames:
-            assert frame["path"].endswith(".hires.jpg")
-            assert Path(frame["path"]).read_bytes() == b"hiresbytes"
-        # Seeks use the int-truncated parsed timestamps
-        seeked = sorted(call.args[1] for call in mock_extract.await_args_list)
-        assert seeked == [5, 12]
-
-    @patch(
-        "src.services.media.hires_refiner.extract_frame",
-        new_callable=AsyncMock,
-        side_effect=[b"hiresbytes", None],
-    )
-    @patch(
-        "src.services.media.hires_refiner.get_video_stream_url",
-        new_callable=AsyncMock,
-        return_value="https://stream.example/video",
-    )
-    @patch("src.services.media.hires_refiner.settings")
-    async def test_failed_frame_keeps_original_path(
-        self, mock_settings, mock_stream, mock_extract, tmp_path
-    ):
-        _configure(mock_settings)
         frames = [_frame(tmp_path, 1, 5.0), _frame(tmp_path, 2, 12.0)]
-
-        result = await refine_selected_frames("dQw4w9WgXcQ", frames)
-
-        assert result == 1
-        assert frames[0]["path"].endswith(".hires.jpg")
-        assert frames[1]["path"].endswith("scene_0002.jpg")
-        assert Path(frames[1]["path"]).read_bytes() == b"lowres"
-
-    @patch(
-        "src.services.media.hires_refiner.get_video_stream_url",
-        new_callable=AsyncMock,
-        return_value="https://stream.example/video",
-    )
-    @patch("src.services.media.hires_refiner.settings")
-    async def test_total_timeout_keeps_partial_results(self, mock_settings, mock_stream, tmp_path):
-        """Frames refined before the deadline survive; the rest stay low-res."""
-        _configure(mock_settings, timeout=0.3)
-        frames = [_frame(tmp_path, 1, 1.0), _frame(tmp_path, 2, 2.0)]
-
-        async def fake_extract(url: str, ts: int) -> bytes:
-            if ts == 1:
-                return b"hiresbytes"
-            await asyncio.sleep(10)
-            return b"too-late"
-
-        with patch("src.services.media.hires_refiner.extract_frame", side_effect=fake_extract):
-            result = await refine_selected_frames("dQw4w9WgXcQ", frames)
-
-        assert result == 1
-        assert frames[0]["path"].endswith(".hires.jpg")
-        assert frames[1]["path"].endswith("scene_0002.jpg")
-
-
-class TestLocalDownloadFallback:
-    """CDN-403 recovery: 0/N via stream URL → one local 720p download."""
-
-    @patch("src.services.media.local_video.download_video_720p", new_callable=AsyncMock)
-    @patch(
-        "src.services.media.hires_refiner.get_video_stream_url",
-        new_callable=AsyncMock,
-        return_value="https://stream.example/video",
-    )
-    @patch("src.services.media.hires_refiner.settings")
-    async def test_all_url_seeks_failing_triggers_local_fallback(
-        self, mock_settings, mock_stream, mock_download, tmp_path
-    ):
-        _configure(mock_settings)
-        frames = [_frame(tmp_path, 1, 5.0), _frame(tmp_path, 2, 12.0)]
-
-        local_dir = tmp_path / "vie-hires-download"
-        local_dir.mkdir()
-        local_video = local_dir / "dQw4w9WgXcQ.mp4"
-        local_video.write_bytes(b"720p-video")
-        mock_download.return_value = (local_video, str(local_dir))
 
         async def fake_extract(source: str, ts: int) -> bytes | None:
-            # Plain-ffmpeg CDN seeks 403; the local file works.
             return b"hiresbytes" if source == str(local_video) else None
 
-        with patch("src.services.media.hires_refiner.extract_frame", side_effect=fake_extract):
-            result = await refine_selected_frames("dQw4w9WgXcQ", frames)
+        with patch(f"{REFINER}.extract_frame", side_effect=fake_extract):
+            result = await refine_selected_frames(VIDEO_ID, frames, _handle(local_video))
 
-        assert result == 2
-        mock_download.assert_awaited_once_with("dQw4w9WgXcQ", purpose="refiner")
-        for frame in frames:
-            assert frame["path"].endswith(".hires.jpg")
-            assert Path(frame["path"]).read_bytes() == b"hiresbytes"
-        # The fallback's temp dir is cleaned up.
-        assert not local_dir.exists()
+        assert (result, [Path(f["path"]).read_bytes() for f in frames]) == (
+            2,
+            [b"hiresbytes", b"hiresbytes"],
+        )
 
-    @patch("src.services.media.local_video.download_video_720p", new_callable=AsyncMock)
-    @patch(
-        "src.services.media.hires_refiner.extract_frame",
-        new_callable=AsyncMock,
-        return_value=b"hiresbytes",
-    )
-    @patch(
-        "src.services.media.hires_refiner.get_video_stream_url",
-        new_callable=AsyncMock,
-        return_value="https://stream.example/video",
-    )
-    @patch("src.services.media.hires_refiner.settings")
-    async def test_fallback_skipped_when_url_pass_succeeds(
-        self, mock_settings, mock_stream, mock_extract, mock_download, tmp_path
-    ):
-        _configure(mock_settings)
+    async def test_should_leave_the_runs_file_on_disk(self, hires_settings, local_video, tmp_path):
         frames = [_frame(tmp_path, 1, 5.0)]
 
-        result = await refine_selected_frames("dQw4w9WgXcQ", frames)
+        with patch(f"{REFINER}.extract_frame", AsyncMock(return_value=b"hires")):
+            await refine_selected_frames(VIDEO_ID, frames, _handle(local_video))
 
-        assert result == 1
-        mock_download.assert_not_awaited()
-
-    @patch("src.services.media.local_video.download_video_720p", new_callable=AsyncMock)
-    @patch(
-        "src.services.media.hires_refiner.get_video_stream_url",
-        new_callable=AsyncMock,
-        return_value="https://stream.example/video",
-    )
-    @patch("src.services.media.hires_refiner.settings")
-    async def test_timeout_with_zero_upgrades_triggers_local_fallback(
-        self, mock_settings, mock_stream, mock_download, tmp_path
-    ):
-        """A CDN that stalls every seek must fall back like one that 403s —
-        otherwise the manifest stamps hiresCount=0 and re-extracts every run."""
-        _configure(mock_settings, timeout=0.2)
-        frames = [_frame(tmp_path, 1, 5.0), _frame(tmp_path, 2, 12.0)]
-        local_dir = tmp_path / "vie-hires-download"
-        local_dir.mkdir()
-        local_video = local_dir / "dQw4w9WgXcQ.mp4"
-        local_video.write_bytes(b"720p-video")
-        mock_download.return_value = (local_video, str(local_dir))
-
-        async def fake_extract(source: str, ts: int) -> bytes | None:
-            if source == str(local_video):
-                return b"hiresbytes"
-            await asyncio.sleep(10)  # CDN stalls
-            return None
-
-        with patch("src.services.media.hires_refiner.extract_frame", side_effect=fake_extract):
-            result = await refine_selected_frames("dQw4w9WgXcQ", frames)
-
-        assert result == 2
-        mock_download.assert_awaited_once_with("dQw4w9WgXcQ", purpose="refiner")
-
-    @patch("src.services.media.local_video.download_video_720p", new_callable=AsyncMock)
-    @patch(
-        "src.services.media.hires_refiner.get_video_stream_url",
-        new_callable=AsyncMock,
-        return_value="https://stream.example/video",
-    )
-    @patch("src.services.media.hires_refiner.settings")
-    async def test_timeout_with_partial_upgrades_skips_fallback(
-        self, mock_settings, mock_stream, mock_download, tmp_path
-    ):
-        _configure(mock_settings, timeout=0.2)
-        frames = [_frame(tmp_path, 1, 1.0), _frame(tmp_path, 2, 2.0)]
-
-        async def fake_extract(url: str, ts: int) -> bytes:
-            if ts == 1:
-                return b"hiresbytes"
-            await asyncio.sleep(10)
-            return b"too-late"
-
-        with patch("src.services.media.hires_refiner.extract_frame", side_effect=fake_extract):
-            result = await refine_selected_frames("dQw4w9WgXcQ", frames)
-
-        assert result == 1
-        mock_download.assert_not_awaited()
-
-    @patch(
-        "src.services.media.local_video.download_video_720p",
-        new_callable=AsyncMock,
-        return_value=None,
-    )
-    @patch(
-        "src.services.media.hires_refiner.extract_frame",
-        new_callable=AsyncMock,
-        return_value=None,
-    )
-    @patch(
-        "src.services.media.hires_refiner.get_video_stream_url",
-        new_callable=AsyncMock,
-        return_value="https://stream.example/video",
-    )
-    @patch("src.services.media.hires_refiner.settings")
-    async def test_fallback_download_failure_keeps_lowres(
-        self, mock_settings, mock_stream, mock_extract, mock_download, tmp_path
-    ):
-        _configure(mock_settings)
-        frames = [_frame(tmp_path, 1, 5.0)]
-
-        result = await refine_selected_frames("dQw4w9WgXcQ", frames)
-
-        assert result == 0
-        mock_download.assert_awaited_once()
-        assert frames[0]["path"].endswith("scene_0001.jpg")
-        assert Path(frames[0]["path"]).read_bytes() == b"lowres"
-
-
-class TestProxiedLocalSource:
-    """With a proxy the stream URL is never looked up — frames come from a local file."""
-
-    @patch("src.services.media.local_video.download_video_720p", new_callable=AsyncMock)
-    @patch("src.services.media.hires_refiner.get_video_stream_url", new_callable=AsyncMock)
-    @patch("src.services.media.hires_refiner.settings")
-    async def test_prefetched_source_refines_without_stream_lookup(
-        self, mock_settings, mock_stream, mock_download, tmp_path
-    ):
-        _configure(mock_settings)
-        frames = [_frame(tmp_path, 1, 5.0), _frame(tmp_path, 2, 12.0)]
-        local_video = tmp_path / "dQw4w9WgXcQ.mp4"
-        local_video.write_bytes(b"720p-video")
-        source = LocalHiresSource("dQw4w9WgXcQ", reuse_path=local_video)
-
-        async def fake_extract(src: str, ts: int) -> bytes | None:
-            return b"hiresbytes" if src == str(local_video) else None
-
-        with patch("src.services.media.hires_refiner.extract_frame", side_effect=fake_extract):
-            result = await refine_selected_frames("dQw4w9WgXcQ", frames, local_source=source)
-
-        assert result == 2
-        mock_stream.assert_not_awaited()
-        mock_download.assert_not_awaited()
-        for frame in frames:
-            assert Path(frame["path"]).read_bytes() == b"hiresbytes"
-        # The refiner does not own the source's file.
         assert local_video.exists()
 
-    @patch("src.services.media.hires_refiner.get_video_stream_url", new_callable=AsyncMock)
-    @patch("src.services.media.hires_refiner.settings")
-    async def test_unavailable_prefetch_keeps_lowres_without_seeking(
-        self, mock_settings, mock_stream, tmp_path
-    ):
-        _configure(mock_settings)
+    async def test_should_do_nothing_when_disabled(self, hires_settings, local_video, tmp_path):
+        hires_settings.SCENE_HIRES_ENABLED = False
+        handle = _handle(local_video)
+
+        result = await refine_selected_frames(VIDEO_ID, [_frame(tmp_path, 1, 5.0)], handle)
+
+        assert (result, handle.path.await_count) == (0, 0)
+
+    async def test_should_keep_lowres_without_a_run_file(self, hires_settings, tmp_path):
         frames = [_frame(tmp_path, 1, 5.0)]
 
-        async def failed_download() -> None:
-            return None
+        result = await refine_selected_frames(VIDEO_ID, frames, None)
 
-        source = LocalHiresSource("dQw4w9WgXcQ", task=asyncio.create_task(failed_download()))
+        assert (result, frames[0]["path"].endswith("scene_0001.jpg")) == (0, True)
 
-        result = await refine_selected_frames("dQw4w9WgXcQ", frames, local_source=source)
-
-        assert result == 0
-        mock_stream.assert_not_awaited()
-        assert frames[0]["path"].endswith("scene_0001.jpg")
-
-    @patch("src.services.media.local_video.download_video_720p", new_callable=AsyncMock)
-    @patch("src.services.media.hires_refiner.get_video_stream_url", new_callable=AsyncMock)
-    @patch("src.services.media.hires_refiner.settings")
-    async def test_proxy_without_prefetch_downloads_instead_of_seeking(
-        self, mock_settings, mock_stream, mock_download, tmp_path, monkeypatch
+    async def test_should_not_wait_for_the_download_without_seekable_frames(
+        self, hires_settings, local_video, tmp_path
     ):
-        _configure(mock_settings)
-        monkeypatch.setattr(download_utils.settings, "YOUTUBE_PROXY_URL", "http://u-1:p@h:80")
+        """Frames without a parsed timestamp (0.0) cannot be seeked to."""
+        handle = _handle(local_video)
+
+        await refine_selected_frames(VIDEO_ID, [_frame(tmp_path, 1, 0.0)], handle)
+
+        assert handle.path.await_count == 0
+
+    async def test_should_keep_lowres_when_the_download_failed(self, hires_settings, tmp_path):
         frames = [_frame(tmp_path, 1, 5.0)]
-        local_dir = tmp_path / "vie-hires-download"
-        local_dir.mkdir()
-        local_video = local_dir / "dQw4w9WgXcQ.mp4"
-        local_video.write_bytes(b"720p-video")
-        mock_download.return_value = (local_video, str(local_dir))
+        extract = AsyncMock(return_value=b"hires")
 
-        with patch(
-            "src.services.media.hires_refiner.extract_frame",
-            AsyncMock(return_value=b"hiresbytes"),
-        ):
-            result = await refine_selected_frames("dQw4w9WgXcQ", frames)
+        with patch(f"{REFINER}.extract_frame", extract):
+            result = await refine_selected_frames(VIDEO_ID, frames, _handle(None))
 
-        assert result == 1
-        mock_stream.assert_not_awaited()
-        mock_download.assert_awaited_once_with("dQw4w9WgXcQ", purpose="refiner")
-        assert not local_dir.exists()
+        assert (result, extract.await_count) == (0, 0)
+
+    async def test_should_keep_the_original_path_of_a_failed_seek(
+        self, hires_settings, local_video, tmp_path
+    ):
+        frames = [_frame(tmp_path, 1, 5.0), _frame(tmp_path, 2, 12.0)]
+
+        async def fake_extract(source: str, ts: int) -> bytes | None:
+            return b"hires" if ts == 5 else None
+
+        with patch(f"{REFINER}.extract_frame", side_effect=fake_extract):
+            result = await refine_selected_frames(VIDEO_ID, frames, _handle(local_video))
+
+        assert (result, frames[1]["path"].endswith("scene_0002.jpg")) == (1, True)
+
+    async def test_should_keep_partial_results_when_the_seek_budget_expires(
+        self, hires_settings, local_video, tmp_path
+    ):
+        """Frames refined before the deadline survive; the rest stay low-res."""
+        hires_settings.SCENE_HIRES_FALLBACK_TIMEOUT = 0.05
+        frames = [_frame(tmp_path, 1, 5.0), _frame(tmp_path, 2, 12.0)]
+
+        async def fake_extract(source: str, ts: int) -> bytes | None:
+            if ts == 12:
+                await asyncio.sleep(10)
+            return b"hires"
+
+        with patch(f"{REFINER}.extract_frame", side_effect=fake_extract):
+            result = await refine_selected_frames(VIDEO_ID, frames, _handle(local_video))
+
+        assert (result, frames[1]["path"].endswith("scene_0002.jpg")) == (1, True)

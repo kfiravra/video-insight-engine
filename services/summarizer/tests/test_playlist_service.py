@@ -356,3 +356,136 @@ class TestExtractPlaylistData:
             await extract_playlist_data("PLnonexistent")
 
         assert "Playlist not found" in str(exc_info.value)
+
+
+BOT_CHECK = (
+    "ERROR: [youtube:tab] PLtest123: Sign in to confirm you’re not a bot. "
+    "Use --cookies-from-browser or --cookies for the authentication."
+)
+PLAYLIST_INFO = {"title": "Test Playlist", "entries": [{"id": "video1", "title": "Video 1"}]}
+
+
+def _exit(n: int) -> str:
+    return f"http://user-{n}:pass@p.webshare.io:80"
+
+
+class _FakeFlatYoutubeDL:
+    """YoutubeDL stand-in that answers per proxy exit the way ``ignoreerrors``
+    does: the error line goes to the ``logger`` and extract_info returns None."""
+
+    def __init__(self) -> None:
+        self.errors: dict[str, str] = {}  # exit URL -> logged error line
+        self.raises: dict[str, Exception] = {}  # exit URL -> raised error
+        self.tried: list[str | None] = []
+
+    def build(self, opts: dict) -> MagicMock:
+        proxy = opts.get("proxy")
+        self.tried.append(proxy)
+        ydl = MagicMock()
+        ydl.__enter__ = MagicMock(return_value=ydl)
+        ydl.__exit__ = MagicMock(return_value=False)
+        ydl.extract_info.side_effect = lambda *_a, **_k: self._answer(proxy, opts.get("logger"))
+        return ydl
+
+    def _answer(self, proxy: str | None, ytdlp_logger) -> dict | None:
+        if proxy in self.raises:
+            raise self.raises[proxy]
+        if proxy in self.errors:
+            ytdlp_logger.error(self.errors[proxy])
+            return None
+        return PLAYLIST_INFO
+
+
+class TestPlaylistExitRotation:
+    """A bot check or 429 on one proxy exit moves the playlist lookup to the next."""
+
+    @pytest.fixture
+    def ydl(self, monkeypatch):
+        monkeypatch.setattr(download_utils.settings, "YOUTUBE_PROXY_URL", _exit(1))
+        monkeypatch.setattr(download_utils.settings, "YOUTUBE_PROXY_EXIT_COUNT", 3)
+        fake = _FakeFlatYoutubeDL()
+        with patch("src.services.video.playlist.yt_dlp.YoutubeDL", side_effect=fake.build):
+            yield fake
+
+    def test_should_extract_on_the_next_exit_when_the_first_gets_the_bot_check(self, ydl):
+        ydl.errors[_exit(1)] = BOT_CHECK
+
+        result = _extract_playlist_sync("PLtest123")
+
+        assert (result.title, ydl.tried) == ("Test Playlist", [_exit(1), _exit(2)])
+
+    def test_should_rotate_on_a_raised_429(self, ydl):
+        from yt_dlp.utils import DownloadError
+
+        ydl.raises[_exit(1)] = DownloadError("ERROR: HTTP Error 429: Too Many Requests")
+
+        _extract_playlist_sync("PLtest123")
+
+        assert ydl.tried == [_exit(1), _exit(2)]
+
+    def test_should_fail_with_todays_error_when_every_exit_gets_the_bot_check(self, ydl):
+        ydl.errors.update({_exit(n): BOT_CHECK for n in (1, 2, 3)})
+
+        with pytest.raises(ValueError, match="Playlist not found or unavailable"):
+            _extract_playlist_sync("PLtest123")
+
+        assert ydl.tried == [_exit(1), _exit(2), _exit(3)]
+
+    def test_should_not_rotate_when_the_playlist_does_not_exist(self, ydl):
+        ydl.errors[_exit(1)] = "ERROR: [youtube:tab] PLtest123: The playlist does not exist."
+
+        with pytest.raises(ValueError, match="not found"):
+            _extract_playlist_sync("PLtest123")
+
+        assert ydl.tried == [_exit(1)]
+
+    def test_should_skip_the_blocked_exit_on_the_next_lookup(self, ydl):
+        ydl.errors[_exit(1)] = BOT_CHECK
+        _extract_playlist_sync("PLtest123")
+        ydl.tried.clear()
+
+        _extract_playlist_sync("PLtest123")
+
+        assert ydl.tried == [_exit(2)]
+
+    def test_should_start_another_playlist_on_the_next_exit(self, ydl):
+        _extract_playlist_sync("PLfirst")
+        ydl.tried.clear()
+
+        _extract_playlist_sync("PLsecond")
+
+        assert ydl.tried == [_exit(2)]
+
+    def test_should_not_record_the_exit_as_working_when_the_lookup_is_empty(self, ydl):
+        """An empty result without a block ends the rotation as a failure, not a success."""
+        ydl.errors[_exit(1)] = "ERROR: [youtube:tab] PLtest123: The playlist does not exist."
+
+        with (
+            patch.object(download_utils, "record_working_exit") as working,
+            pytest.raises(ValueError, match="not found"),
+        ):
+            _extract_playlist_sync("PLtest123")
+
+        working.assert_not_called()
+
+    def test_should_make_one_attempt_with_a_single_exit(self, ydl, monkeypatch):
+        from yt_dlp.utils import DownloadError
+
+        monkeypatch.setattr(download_utils.settings, "YOUTUBE_PROXY_EXIT_COUNT", 1)
+        ydl.raises[_exit(1)] = DownloadError(BOT_CHECK)
+
+        with pytest.raises(ValueError, match="Failed to extract playlist"):
+            _extract_playlist_sync("PLtest123")
+
+        assert ydl.tried == [_exit(1)]
+
+
+class TestErrorCapture:
+    def test_should_log_ytdlp_warnings_at_debug_only(self, caplog):
+        """``no_warnings`` is set: a warning line must not reach the WARNING log."""
+        from src.services.video.playlist import _ErrorCapture
+
+        with caplog.at_level("DEBUG", logger="src.services.video.playlist"):
+            _ErrorCapture().warning("Falling back to generic n function search")
+
+        assert [r.levelname for r in caplog.records] == ["DEBUG"]

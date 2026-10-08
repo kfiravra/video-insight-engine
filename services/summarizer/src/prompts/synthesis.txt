@@ -1,5 +1,5 @@
 <role>
-Generate a synthesis summary for a video that has been fully analyzed and extracted.
+You write the closing summary for a video that has already been fully analyzed: a master summary and a one-line SEO description.
 </role>
 
 <video>
@@ -9,36 +9,28 @@ Duration: {duration_minutes} minutes
 Content type: {output_type}
 </video>
 
-<video_context>
 {video_context}
-</video_context>
 
 <extracted_content>
 {extraction_summary}
 </extracted_content>
 
-<instructions>
-Generate a synthesis that captures the video's personality and teases the interactive experience.
-Match the creator's tone — a casual vlogger's summary shouldn't read like a textbook.
+<tabs>
+{tab_labels}
+</tabs>
 
-- tldr: One sentence capturing the video's unique angle, not just the topic (max 150 chars)
-- keyTakeaways: 3-5 actionable items with specific details (numbers, names, measurements)
-- masterSummary: 2-3 paragraphs. Start with what makes THIS video worth watching. Cover all major points. End by teasing the interactive tabs the viewer can explore.
-- seoDescription: SEO-optimized description for social sharing (max 160 chars)
+<instructions>
+Match the creator's tone — a casual vlogger's summary shouldn't read like a textbook. Use only facts from <video_memory> and <extracted_content>; never invent numbers, names or claims.
+
+- masterSummary: 2-3 paragraphs. Start with what makes THIS video worth watching. Cover the major points in the order the video makes them (follow the outline when there is one). End by pointing the viewer to the tabs listed in <tabs>, by their label — never mention a tab that is not listed.
+- seoDescription: one sentence for social sharing, at most 160 characters.
+{hero_fields}
 </instructions>
 
 <example>
 Video: "Restaurant owner reveals carbonara secrets" (cooking, 15 min)
-{{
-  "tldr": "Restaurant owner reveals the 3 mistakes home cooks make with carbonara — and the $2 fix",
-  "keyTakeaways": [
-    "Use pecorino romano, not parmesan — it's the authentic cheese and costs $2 less per pound",
-    "Take the pan completely off heat before adding the egg mixture — residual heat is enough",
-    "Reserve 1 cup of pasta water — it's the key to creamy sauce without cream"
-  ],
-  "masterSummary": "Marco, who has served carbonara at his Roman restaurant for 22 years, walks through the three most common mistakes that turn this simple dish into scrambled eggs with pasta. His secret? Temperature control and the right cheese.\n\nExplore the Ingredients tab to check off your shopping list, follow the 6 Steps tab while cooking, and flip through the Chef Tips for Marco's insider techniques.",
-  "seoDescription": "Learn authentic carbonara from a Roman restaurant owner — 3 common mistakes and how to fix them"
-}}
+{"masterSummary": "Marco, who has served carbonara at his Roman restaurant for 22 years, walks through the three most common mistakes that turn this simple dish into scrambled eggs with pasta. His secret? Temperature control and the right cheese.\n\nExplore the Ingredients tab to check off your shopping list, follow the Steps tab while cooking, and flip through the Chef Tips for Marco's insider techniques.",
+ "seoDescription": "Learn authentic carbonara from a Roman restaurant owner — 3 common mistakes and how to fix them"}
 </example>
 
-Return JSON matching the structure above.
+Return ONLY a JSON object with the keys {output_keys} — no code fences, no text before or after it.

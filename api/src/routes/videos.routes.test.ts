@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { FastifyInstance } from 'fastify';
 import { buildTestApp, createMockContainer, getAuthHeader, type MockContainer } from '../test/helpers.js';
+import { ColdRunForbiddenError } from '../utils/errors.js';
 
 describe('videos routes', () => {
   let app: FastifyInstance;
@@ -515,7 +516,7 @@ describe('videos routes', () => {
 
       expect(response.statusCode).toBe(200);
       expect(mockContainer.videoService.userOwnsVideo).toHaveBeenCalledWith('test-user-id', 'dQw4w9WgXcQ');
-      expect(mockContainer.videoService.getVersions).toHaveBeenCalledWith('dQw4w9WgXcQ', { limit: 10 });
+      expect(mockContainer.videoService.getVersions).toHaveBeenCalledWith('test-user-id', 'dQw4w9WgXcQ', { limit: 10 });
       expect(response.json()).toEqual({ versions: mockVersions });
     });
 
@@ -543,7 +544,7 @@ describe('videos routes', () => {
       });
 
       expect(response.statusCode).toBe(200);
-      expect(mockContainer.videoService.getVersions).toHaveBeenCalledWith('dQw4w9WgXcQ', { limit: 5 });
+      expect(mockContainer.videoService.getVersions).toHaveBeenCalledWith('test-user-id', 'dQw4w9WgXcQ', { limit: 5 });
     });
 
     it('should return 400 for invalid youtubeId format', async () => {
@@ -758,6 +759,53 @@ describe('videos routes', () => {
 
       expect(mockContainer.idempotencyService.reserveHash).not.toHaveBeenCalled();
       expect(mockContainer.idempotencyService.completeHash).not.toHaveBeenCalled();
+    });
+
+    it('should pass cold to createVideo and skip idempotency when cold is true', async () => {
+      mockContainer.costMonitorService.reserveUserCost.mockResolvedValue(null);
+      mockContainer.videoService.createVideo.mockResolvedValue({
+        video: { id: 'uv1', videoSummaryId: 'sum1', status: 'pending' },
+        cached: false,
+      });
+
+      await app.inject({
+        method: 'POST',
+        url: '/api/videos',
+        headers: { authorization: authHeader, 'content-type': 'application/json' },
+        payload: { url: VALID_YT_URL, cold: true },
+      });
+
+      expect(mockContainer.idempotencyService.reserveHash).not.toHaveBeenCalled();
+      expect(mockContainer.videoService.createVideo).toHaveBeenCalledWith(
+        'test-user-id',
+        VALID_YT_URL,
+        expect.objectContaining({ cold: true }),
+      );
+    });
+
+    it('should return 403 when a user who is neither admin nor eval asks for a cold run', async () => {
+      mockContainer.costMonitorService.reserveUserCost.mockResolvedValue(null);
+      mockContainer.videoService.createVideo.mockRejectedValue(new ColdRunForbiddenError());
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/videos',
+        headers: { authorization: authHeader, 'content-type': 'application/json' },
+        payload: { url: VALID_YT_URL, cold: true },
+      });
+
+      expect(response.statusCode).toBe(403);
+    });
+
+    it('should return 400 when cold is not a boolean', async () => {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/videos',
+        headers: { authorization: authHeader, 'content-type': 'application/json' },
+        payload: { url: VALID_YT_URL, cold: 'yes' },
+      });
+
+      expect(response.statusCode).toBe(400);
     });
 
     it('passes the Idempotency-Key HTTP header to computeKey when supplied', async () => {

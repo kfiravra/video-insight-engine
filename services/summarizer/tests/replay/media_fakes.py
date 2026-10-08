@@ -7,9 +7,11 @@ faked here:
 
 * ``asyncio.create_subprocess_exec`` — yt-dlp downloads (low-res pass 1 and
   every 720p download, sized files at the recorded size), ``--get-url``
-  lookups (fail: the recorded runs were proxied), ffprobe, ffmpeg scene
-  detection (recorded frames + ``pts_time`` lines), ffmpeg ``-ss`` seeks
-  (distinct decodable JPEGs). Anything else is refused and reported.
+  lookups (refused and reported: the stream-URL pass is gone), ffmpeg scene
+  detection (recorded frames + ``pts_time`` lines + the ladder's score side
+  file; a ``zero`` cassette exits like ffmpeg 7 on an empty output), ffmpeg
+  ``-ss`` seeks (distinct decodable JPEGs). Anything else is refused and
+  reported.
 * ``S3Client`` — an in-memory store (manifests, frame PUTs, presigned URLs).
 * ``frame_scorer.score_all_frames``/``select_frames`` — CPU-bound scoring:
   recorded scores and the recorded local selection.
@@ -23,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import io
 import random
+import re
 import time
 from collections.abc import Callable, Iterator
 from contextlib import ExitStack, contextmanager
@@ -31,16 +34,24 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
+from src.config import settings
+
 from PIL import Image
 
 from src.services.media.s3_client import S3Client
 from tests.replay.cassette import Cassette, DownloadSpec, FrameRecord
 
 _REPLAY_URL_BASE = "https://replay.invalid/"
-_PASS1_HEIGHT = b"360\n"
 _LOWRES_FORMAT = "worstvideo"
 _HIRES_FORMAT = "height<=720"
 _SCENE_FILTER = "select='gt(scene"
+_SCORE_FILE_RE = re.compile(r"metadata=print:[^,]*?file=([^,:]+)")
+# What ffmpeg 7 prints and returns when the scene pass writes no frame at all.
+_EMPTY_OUTPUT_STDERR = (
+    "[out#0/image2] Nothing was written into output file, because at least one of its "
+    "streams received no packets.\nConversion failed!"
+)
+_EMPTY_OUTPUT_RC = 234
 _JPEG_SIZE = (320, 180)
 
 
@@ -119,6 +130,12 @@ def _arg_after(argv: list[str], flag: str) -> str:
     return argv[argv.index(flag) + 1] if flag in argv else ""
 
 
+def _score_file(video_filter: str) -> Path | None:
+    """The ladder's side file (``metadata=print:...:file=<path>``), if requested."""
+    match = _SCORE_FILE_RE.search(video_filter)
+    return Path(match.group(1)) if match else None
+
+
 class MediaFakes:
     """Recorded-duration media primitives bound to one cassette and speed."""
 
@@ -142,7 +159,7 @@ class MediaFakes:
 
     async def create_subprocess_exec(self, program: str, *args: Any, **kwargs: Any) -> FakeProcess:
         argv = [str(program), *(str(a) for a in args)]
-        handlers = {"yt-dlp": self._ytdlp, "ffmpeg": self._ffmpeg, "ffprobe": self._ffprobe}
+        handlers = {"yt-dlp": self._ytdlp, "ffmpeg": self._ffmpeg}
         handler = handlers.get(Path(argv[0]).name)
         if handler is None:
             self.unexpected_commands.append(" ".join(argv[:3]))
@@ -158,8 +175,8 @@ class MediaFakes:
     def _ytdlp(self, argv: list[str]) -> FakeProcess:
         fmt = _arg_after(argv, "-f") or _arg_after(argv, "--format")
         if "--get-url" in argv:
-            # Recorded runs were proxied: a stream-URL lookup is a regression
-            # the fallback chain must survive, not a path with timings.
+            # Every hi-res seek reads the run's local 720p file since 1a.2: a
+            # stream-URL lookup is a regression, not a path with timings.
             self.unexpected_commands.append("yt-dlp --get-url")
             return FakeProcess(0.0, returncode=1)
         if fmt.startswith(_LOWRES_FORMAT):
@@ -175,36 +192,52 @@ class MediaFakes:
         self._hires_calls += 1
         return spec
 
-    def _ffprobe(self, argv: list[str]) -> FakeProcess:
-        return FakeProcess(0.0, stdout=_PASS1_HEIGHT)
-
     def _ffmpeg(self, argv: list[str]) -> FakeProcess:
         video_filter = _arg_after(argv, "-vf")
         if video_filter.startswith(_SCENE_FILTER):
-            return self._scene_detect(argv[-4])
+            return self._scene_detect(argv[-4], _score_file(video_filter))
         if "-ss" in argv:
+            # Hi-res refiner, moment fill and the ladder's seeks (rung 2 and
+            # uniform sampling) — a distinct decodable JPEG per second.
             seed = 1_000_000 + int(float(_arg_after(argv, "-ss")))
             return FakeProcess(
                 self._seconds("frameSeek"),
                 on_done=lambda: Path(argv[-1]).write_bytes(fake_jpeg(seed)),
             )
-        # Interval sampling (static-camera supplement): recorded runs never got it.
-        return FakeProcess(0.0)
+        self.unexpected_commands.append(f"ffmpeg -vf {video_filter}")
+        return FakeProcess(0.0, returncode=1)
 
-    def _scene_detect(self, output_pattern: str) -> FakeProcess:
+    def _scene_detect(self, output_pattern: str, score_file: Path | None) -> FakeProcess:
+        """Recorded rung-1 frames; a ``zero`` run below every threshold.
+
+        The recorded frames sit above the threshold, so they are also the
+        floor rung's lines. ffmpeg >= 7 exits non-zero when nothing was written.
+        """
         frames_dir = Path(output_pattern).parent
         stamps = self._timestamps if self.cassette.frames.mode != "zero" else []
 
         def write_frames() -> None:
             for index in range(len(stamps)):
                 (frames_dir / f"scene_{index + 1:04d}.jpg").write_bytes(fake_jpeg(index))
+            if score_file is not None:
+                score_file.write_text(
+                    "".join(
+                        f"frame:{i} pts:{i} pts_time:{ts:.6f}\nlavfi.scene_score=0.5\n"
+                        for i, ts in enumerate(stamps)
+                    )
+                )
 
         stderr = "\n".join(
             f"[Parsed_showinfo_1 @ 0x0] n:{i} pts:{i} pts_time:{ts:.6f}"
             for i, ts in enumerate(stamps)
         )
+        if not stamps:
+            stderr = _EMPTY_OUTPUT_STDERR
         return FakeProcess(
-            self._seconds("sceneDetect"), stderr=stderr.encode(), on_done=write_frames
+            self._seconds("sceneDetect"),
+            stderr=stderr.encode(),
+            returncode=0 if stamps else _EMPTY_OUTPUT_RC,
+            on_done=write_frames,
         )
 
     # ─── Frame scoring (CPU-bound; runs in a worker thread) ───
@@ -258,7 +291,7 @@ class MediaFakes:
 
     def scene_manifest(self) -> dict[str, Any] | None:
         """The frame manifest the real extractor wrote (its uploaded selection)."""
-        key = f"videos/{self.cassette.video_id}/scenes-v3/manifest.json"
+        key = f"videos/{self.cassette.video_id}/{settings.SCENE_S3_PREFIX}/manifest.json"
         value = self.s3_objects.get(key)
         return value if isinstance(value, dict) else None
 

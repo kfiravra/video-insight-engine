@@ -1,0 +1,89 @@
+<role>Classify this YouTube video into one domain and one format, and say whether its value depends on watching an on-screen demonstration.</role>
+
+<domains>
+Pick exactly one — this decides what data to extract:
+- learning: Educational, lectures, explanations, commentary, opinion pieces
+- tech: Programming with actual code shown, software walkthroughs, dev tool demos
+- food: Cooking recipes, food preparation, restaurant guides
+- travel: Destinations, itineraries, city tours, travel tips
+- fitness: Workouts, exercises, training routines, yoga
+- music: Song analysis, music production, theory, performances
+- review: Product reviews, comparisons, buying guides, unboxing
+- project: DIY builds, crafts, home improvement, woodworking
+- language: Language learning, pronunciation, grammar, vocabulary, speaking practice
+- science: Science explanations, experiments, physics, chemistry, biology, math
+- podcast: Long-form conversation or interview — guests, segments, quotes (talking-head, audio-first)
+- news: Current-events reporting, journalism — events, named people/orgs, factual claims to verify
+- gaming: Gameplay, playthroughs, esports — highlights, builds/loadouts, walkthroughs, tier rankings
+- sport: Sport matches, highlights, match analysis — match events, lineups/formations, team/player stats
+</domains>
+
+<formats>
+Pick exactly one — this decides presentation style:
+- tutorial: Step-by-step instructions the viewer follows along with
+- commentary: Opinion, analysis, or discussion (no hands-on)
+- reaction: Watching and reacting to other content
+- opinion_rant: Strong personal opinions, hot takes
+- motivational: Inspirational, self-improvement, mindset
+- interview: Conversation between host and guest(s)
+- lecture: Academic or structured educational presentation
+- vlog: Personal diary-style documentation
+- documentary: In-depth investigation or narrative storytelling
+- walkthrough: Guided tour of a process, game, or place
+- podcast: Long-form conversation, often audio-first
+- news: Current events reporting
+- news_commentary: Reacting to or analyzing news
+- entertainment: Comedy, skits, challenges, variety
+- performance: Live music, comedy show, artistic performance
+- comparison: Side-by-side evaluation of products or options
+- story: Narrative-driven content with a personal journey
+- unboxing: Opening sealed products on camera — box breaks, TCG pack openings, hauls; the reveals ARE the content
+</formats>
+
+<classification_guidance>
+- "tech" means the video shows actual code, commands, configs, or software demos
+- A video ABOUT coding that shows no actual code is "learning", not "tech"
+- A video reacting to tech news is "learning" + "news_commentary"
+- A motivational talk by a developer is "learning" + "motivational"
+- "tutorial" means the viewer follows along step-by-step
+- "commentary" means opinions and analysis without hands-on demonstration
+- "podcast" is a conversation/interview where WHO is talking and WHAT they said is the value — not a how-to. Solo monologue long-form also counts.
+- "news" reports on real-world EVENTS and makes verifiable CLAIMS. Choose "news" over "learning" when the content is about what happened and who is accountable, not about teaching a concept.
+- "gaming" is about PLAYING a video game — gameplay, playthroughs, builds, tier lists, esports. A video teaching game development is "tech", not "gaming".
+- TCG / collectible card box openings are "gaming" + "unboxing". Consumer product unboxings (gadgets, fashion) are "review" + "unboxing". Either way the format is "unboxing" — the reveals are the content.
+- TCG / collectible card set, market or price commentary with no opening on camera is "gaming" + "commentary", not "review".
+- "sport" covers real-world sport — match recaps, highlights, tactical/lineup analysis, player/team stats. A fitness workout routine is "fitness", not "sport".
+</classification_guidance>
+
+<has_visual_demo>
+true when the video's value depends on WATCHING something demonstrated on screen: cooking or food preparation, code or commands typed on screen, exercises or body form, builds and crafts, products or cards being handled and revealed, places being toured.
+false when the value is in what is SAID: talking heads, interviews, lectures, opinion, narration over generic footage, slides, or animations and diagrams that illustrate the narration.
+Speech that describes actions ("now add the salt", "watch my elbows", "look at this pull") is strong evidence for true.
+</has_visual_demo>
+
+<output_language>
+Write every JSON value in English, whatever the language of the video, title or transcript. Enum values are the exact lowercase ids listed above.
+</output_language>
+
+<video>
+Title: {title}
+Channel: {channel}
+Duration: {duration_minutes} minutes
+YouTube category: {youtube_category}
+Tags: {tags}
+Description: {description}
+</video>
+
+<transcript_windows>
+[start]
+{window_start}
+[middle]
+{window_mid}
+[end]
+{window_end}
+</transcript_windows>
+
+<output_format>
+Reply with exactly one bare JSON object and nothing else: no code fences, no markdown, no reasoning, no text before or after it. The reply starts with { and ends with }.
+{"domain": "<domain id>", "format": "<format id>", "has_visual_demo": <true or false>, "confidence": <number from 0.0 to 1.0>}
+</output_format>

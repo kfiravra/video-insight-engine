@@ -1,14 +1,67 @@
-import { FastifyInstance } from 'fastify';
+import { FastifyInstance, type FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { ObjectId } from 'mongodb';
 import { config } from '../config.js';
 import { VideoNotFoundError } from '../utils/errors.js';
+import { synthesisCompleteEventSchema } from '../schemas/synthesis-event.schema.js';
 import { handleSSEPreflight, setSSECorsHeaders, setSSEResponseHeaders } from '../utils/cors.js';
 import { disableSocketInactivityTimeout } from '../utils/sse.js';
 
 const videoSummaryIdParamSchema = z.object({
   videoSummaryId: z.string().refine((val) => ObjectId.isValid(val), 'Invalid ID'),
 });
+
+/** One SSE event as relayed from the summarizer — only the fields the API persists are typed. */
+interface RelayedEvent {
+  event?: string;
+  title?: string;
+  channel?: string;
+  thumbnailUrl?: string;
+  duration?: number;
+}
+
+interface RelayContext {
+  fastify: FastifyInstance;
+  req: FastifyRequest;
+  videoSummaryId: string;
+  /** DB writes awaited before the stream closes, so none is lost. */
+  pendingWrites: Promise<unknown>[];
+}
+
+/**
+ * Persist what the API keeps from a relayed event: the metadata (title is
+ * available after a refresh; also broadcast for sidebar sync) and the
+ * synthesis (crash-recovery display: SEO, sharing). Raw triage/output/
+ * enrichment are not stored — the summarizer saves the final meta + tabs.
+ * Both synthesis emissions (memory-done partial, synthesis-done superset) are
+ * merged; the repository keeps a partial from overwriting the superset.
+ */
+function persistRelayedEvent(ctx: RelayContext, event: RelayedEvent): void {
+  const { fastify, req, videoSummaryId, pendingWrites } = ctx;
+  const { videoRepository } = fastify.container;
+  if (event.event === 'metadata' && event.title) {
+    const metadata = {
+      title: event.title,
+      channel: event.channel,
+      thumbnailUrl: event.thumbnailUrl,
+      duration: event.duration,
+    };
+    pendingWrites.push(videoRepository.updateCacheEntry(videoSummaryId, metadata));
+    fastify.broadcast(req.user.userId, {
+      type: 'video.metadata',
+      payload: { videoSummaryId, ...metadata },
+    });
+  }
+
+  if (event.event === 'synthesis_complete') {
+    const synthesis = synthesisCompleteEventSchema.safeParse(event);
+    if (synthesis.success) {
+      pendingWrites.push(videoRepository.mergeSynthesis(videoSummaryId, synthesis.data));
+    } else {
+      req.log.warn({ videoSummaryId, issues: synthesis.error.issues }, 'Invalid synthesis_complete event skipped');
+    }
+  }
+}
 
 export async function streamRoutes(fastify: FastifyInstance) {
   /**
@@ -125,46 +178,8 @@ export async function streamRoutes(fastify: FastifyInstance) {
             if (data === '[DONE]') continue;
 
             try {
-              const event = JSON.parse(data);
-              // Persist metadata to DB when received so title is available after refresh
-              if (event.event === 'metadata' && event.title) {
-                pendingWrites.push(
-                  videoRepository.updateCacheEntry(videoSummaryId, {
-                    title: event.title,
-                    channel: event.channel,
-                    thumbnailUrl: event.thumbnailUrl,
-                    duration: event.duration,
-                  })
-                );
-
-                // Broadcast metadata to frontend via WebSocket for sidebar sync
-                fastify.broadcast(req.user.userId, {
-                  type: 'video.metadata',
-                  payload: {
-                    videoSummaryId,
-                    title: event.title,
-                    channel: event.channel,
-                    thumbnailUrl: event.thumbnailUrl,
-                    duration: event.duration,
-                  },
-                });
-              }
-
-              // ─── Pipeline event persistence ───
-              // Only persist synthesis for crash recovery display (SEO, sharing).
-              // Raw triage/output/enrichment are no longer stored — the Python
-              // summarizer saves the final assembledMeta + assembledTabs via
-              // save_structured_result() at the end of the pipeline.
-              if (event.event === 'synthesis_complete' && event.masterSummary) {
-                pendingWrites.push(
-                  videoRepository.updateSynthesis(videoSummaryId, {
-                    tldr: event.tldr,
-                    keyTakeaways: event.keyTakeaways,
-                    masterSummary: event.masterSummary,
-                    seoDescription: event.seoDescription,
-                  })
-                );
-              }
+              const event: RelayedEvent = JSON.parse(data);
+              persistRelayedEvent({ fastify, req, videoSummaryId, pendingWrites }, event);
             } catch (err) {
               // Log parse errors in development for debugging
               if (process.env.NODE_ENV === 'development') {

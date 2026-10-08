@@ -175,31 +175,6 @@
         "correctIndex": 2,
         "explanation": "Less violet arrives from the sun and our eyes respond to it weakly."
       }
-    ],
-    "flashcards": [
-      {"front": "Rayleigh scattering law", "back": "Intensity ∝ 1/λ⁴ for particles much smaller than the wavelength"},
-      {"front": "Why sunsets are red", "back": "~40x longer optical path scatters the blue away before it reaches you"},
-      {"front": "Rayleigh vs Mie", "back": "Tiny particles → strong wavelength dependence; droplet-sized → white light"}
-    ],
-    "scenarios": [
-      {
-        "question": "You're on Mars, where the thin atmosphere is full of larger dust particles. What color is the daytime sky likely to be?",
-        "emoji": "🔴",
-        "options": [
-          {"text": "Blue, like Earth", "correct": false, "explanation": "Too little gas for strong Rayleigh scattering to dominate."},
-          {"text": "Butterscotch — dust scattering dominates", "correct": true, "explanation": "Larger dust particles scatter in the Mie regime, tinted by iron oxide."},
-          {"text": "Black even at noon", "correct": false, "explanation": "There is still enough atmosphere to scatter some light."}
-        ]
-      },
-      {
-        "question": "A photographer wants the deepest blue sky in shots. When and where should they point the camera?",
-        "emoji": "📷",
-        "options": [
-          {"text": "Near the sun at noon", "correct": false, "explanation": "Forward scattering washes out the blue near the sun."},
-          {"text": "90 degrees away from the sun", "correct": true, "explanation": "Rayleigh scattering (and polarization) peaks at right angles to the light."},
-          {"text": "At the horizon at noon", "correct": false, "explanation": "The long horizontal path adds white multiple-scattered light."}
-        ]
-      }
     ]
   },
   "synthesis_response": {

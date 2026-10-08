@@ -220,8 +220,13 @@ async def validate_video(youtube_id: str) -> VideoValidation:
 
 Two layers, both real code:
 
-- **LLM calls** — LiteLLM `num_retries` (`LLM_NUM_RETRIES`) with provider fallbacks
-  (see [LLM Error Handling](#llm-error-handling)).
+- **LLM calls** — summarizer: `call_llm_with_retry` (`utils/llm_retry.py`) retries
+  transient errors on the same model, then falls back to `LLM_FALLBACK_PROVIDER`
+  (see [LLM Error Handling](#llm-error-handling)); LiteLLM's own retries and
+  fallbacks are off. The assistant keeps LiteLLM `num_retries` (`LLM_NUM_RETRIES`).
+  Chunked extraction runs up to `EXTRACTION_PARALLEL_BATCHES` (6) batches at once per run (× `WORKER_CONCURRENCY` per worker); a
+  batch still rate-limited after its retries re-runs in a sequential second pass
+  (2 s apart). `pipeline.timing` counts 429s per run — drop the setting to 4 if any appear.
 - **Queue jobs** — `services/summarizer/src/worker/runner.py`: a pipeline exception
   with `attempt < WORKER_MAX_RETRIES` (3) waits
   `WORKER_RETRY_BACKOFF_SECONDS × 2^(attempt-1)` (5 → 10 → 20 s, capped 120 s) and
@@ -266,7 +271,7 @@ A caption 429 is IP-scoped, so the retry strategy depends on how many proxy exit
       return _fetch_once(video_id, ytdlp_proxy_url())
   ```
 
-- **`YOUTUBE_PROXY_EXIT_COUNT` > 1** (sticky Webshare exits `USERNAME-1…N`) — `_fetch_rotating_sync` tries the next exit on each 429 instead of waiting (`download_utils.ytdlp_proxy_exit_urls`, at most 3 exits, one shared loop `download_utils.try_proxy_exits`). The metadata-phase timedtext fetch (`youtube._fetch_subtitle_data_sync`) rotates the same way, since its URL is not bound to the exit that produced it. When every exit it tried returned 429, the 15-minute `vie:captions:429` marker is written and the caption API (same exits) is skipped for audio. The marker is also written when the caption API's own rotation ends in 429 on every exit.
+- **`YOUTUBE_PROXY_EXIT_COUNT` > 1** (sticky Webshare exits `USERNAME-1…N`) — `_fetch_rotating_sync` tries the next exit on each 429 instead of waiting (`download_utils.ytdlp_proxy_exit_urls`, at most 3 exits, one shared loop `download_utils.try_proxy_exits`). The same rotation covers YouTube's "Sign in to confirm you're not a bot" check on every proxied call — metadata `extract_info`, the low-res/720p/audio downloads and playlist lookups as well as captions (`download_utils.is_exit_blocked`); other errors never rotate, and when every exit is blocked the call fails with its usual error. The exit that last worked starts the next rotation in that process (`download_utils.record_working_exit`). The metadata-phase timedtext fetch (`youtube._fetch_subtitle_data_sync`) rotates the same way, since its URL is not bound to the exit that produced it. When every exit it tried returned 429, the 15-minute `vie:captions:429` marker is written and the caption API (same exits) is skipped for audio. The marker is also written when the caption API's own rotation ends in 429 on every exit.
 
 Rate limit detection matches the library's `RequestBlocked` by type — the parent of `IpBlocked` (429 / reCAPTCHA), also raised for the "confirm you're not a bot" check. Both lose their "429" / "too many requests" text once a proxy config is attached, so a proxied bot check still rotates exits and writes the marker. Anything else falls back to a text match:
 ```python
@@ -466,48 +471,47 @@ if await get_failed_jobs_count() > 10:
 
 ## LLM Error Handling
 
-### Claude API Errors
+Every summarizer stage calls the LLM through `call_llm_with_retry`
+(`services/summarizer/src/utils/llm_retry.py`). Each attempt is one request to one
+model (LiteLLM `num_retries=0`, no LiteLLM `fallbacks`), so telemetry and the
+Langfuse generation always name the model that actually answered.
 
-| Error                 | Action               |
-| --------------------- | -------------------- |
-| Rate limit (429)      | Retry with backoff   |
-| Server error (500)    | Retry with backoff   |
-| Invalid request (400) | Log, fail job        |
-| Auth error (401)      | Alert, fail all jobs |
+### Errors
 
-### Fallback Strategy
+| Error | Action |
+| --- | --- |
+| Timeout, 429, 5xx, connection error, empty reply | Retry (the stage's `max_retries` budget) |
+| Connection error / LiteLLM `Timeout` in under 1 s (a dropped pooled connection — the request never reached the model) | Re-sent at once, once per call, outside the retry budget |
+| 400 / 401 / 403 / 404 / 422, programming errors | Raise on first occurrence — another attempt cannot fix them |
+| The same, on a **fallback** attempt (e.g. the fallback provider's key is missing) | The call ends with `None` like any other failed attempt — the last resort never turns a recoverable stage failure into a crash |
 
-```python
-# summarizer/src/services/llm.py
+Order per call: attempt 1 → (same-model retries: provider `retry-after-ms` /
+`retry-after` header, capped at 20 s, else a linear backoff 1 s, 2 s, …) → the
+fallback model when one applies (no wait on the switch). A stage that gets `None`
+takes its own fallback; a stage that gets a raised 400 fails unless it catches it.
 
-LLM_CONFIG = {
-    'primary': 'claude-sonnet-4-6',
-    'fallback': 'claude-3-haiku-20240307',  # Cheaper, for retries
-    'max_retries': 3
-}
+**Credit exhaustion is a non-retryable 400.** Anthropic's "Your credit balance is
+too low" arrives as `BadRequestError` (HTTP 400): it is not retried and does not
+fall back cross-provider (LiteLLM's old built-in fallbacks used to mask it with
+gpt-4o), so every Anthropic call fails on its first attempt; stages that catch
+take their fallback, extraction does not, so the run fails (6 of 18 golden-set
+runs on 2026-10-08). Top up the account; whether billing 400s
+should take the cross-provider fallback is an open phase-1 gate decision.
 
-async def call_llm(prompt: str, attempt: int = 1):
-    """Call Claude with fallback."""
+### Fallback
 
-    model = LLM_CONFIG['primary'] if attempt <= 2 else LLM_CONFIG['fallback']
+`LLM_FALLBACK_PROVIDER` (blank = none) names a cross-provider fallback for
+**primary-model** calls: the first try and ONE same-provider retry, then the
+fallback provider's default model for the remaining attempts
+(`max_retries` 1 or 2 → primary, primary, fallback; 3 → primary, primary,
+fallback, fallback; 0 → a single attempt). Fast-model calls never fall back, and
+a fallback on the primary's own provider is ignored. A fallback attempt is tagged
+`fallbackFrom` in the span metadata and counted in `pipeline.timing`.
 
-    try:
-        return await anthropic.messages.create(
-            model=model,
-            max_tokens=4096,
-            messages=[{"role": "user", "content": prompt}]
-        )
-    except RateLimitError:
-        if attempt < LLM_CONFIG['max_retries']:
-            await asyncio.sleep(BACKOFF[attempt])
-            return await call_llm(prompt, attempt + 1)
-        raise
-    except ServerError:
-        if attempt < LLM_CONFIG['max_retries']:
-            await asyncio.sleep(BACKOFF[attempt])
-            return await call_llm(prompt, attempt + 1)
-        raise
-```
+When every attempt fails the wrapper returns `None` and the stage takes its own
+fallback (fallback plan, no memory, metadata tier, …); the parallel batch
+extractor alone asks for the last rate-limit error to be re-raised so it can
+re-run that batch sequentially.
 
 ---
 

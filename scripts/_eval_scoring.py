@@ -5,6 +5,7 @@ expectations. It is the ``quality`` primary metric:
 
   - tabCount    within ±1 of ``expectedTabs``          weight 0.15
   - components  every ``requiredComponents`` appears   weight 0.35
+                (or its assembly promotion target)
   - keyContent  share of ``keyContent`` terms present  weight 0.25
   - emptyTabs   no tab with an empty list prop         weight 0.10
   - forbidden   no ``forbiddenComponents`` present     weight 0.15
@@ -15,6 +16,8 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass
 from typing import Any
+
+from _eval_assertions import promotion_targets
 
 _EMPTY_LIST_KEYS = ("items", "data", "rows", "questions", "cards")
 
@@ -58,6 +61,21 @@ def _coverage(expected: list[str], present: frozenset[str] | str) -> float:
     return sum(1 for e in expected if e.lower() in present) / len(expected)
 
 
+def _component_coverage(required: list[str], present: frozenset[str]) -> float:
+    """Share of ``required`` components rendered (1.0 when nothing is required).
+
+    A component also counts when the tab renders its promotion target —
+    assembly promotes e.g. a long ``step_player`` to ``step_flow_canvas`` — the
+    same rule the ``requiredComponents`` assertion applies, so a promotion never
+    reads as a quality regression.
+    """
+    if not required:
+        return 1.0
+    promotions = promotion_targets()
+    found = sum(1 for r in required if r.lower() in present or promotions.get(r.lower()) in present)
+    return found / len(required)
+
+
 def _empty_tab_count(tabs: list[dict[str, Any]]) -> int:
     # Loose on purpose: only the common list keys, so intentionally short
     # overview tabs don't false-positive.
@@ -84,7 +102,9 @@ class _Observed:
 def _score(expected: dict[str, Any], seen: _Observed) -> EvalResult:
     expected_count = len(expected.get("expectedTabs") or [])
     tab_count_score = max(0.0, 1.0 - abs(seen.tab_count - expected_count) * 0.25)
-    component_coverage = _coverage(expected.get("requiredComponents") or [], seen.components)
+    component_coverage = _component_coverage(
+        expected.get("requiredComponents") or [], seen.components
+    )
     forbidden_hits = [
         c for c in expected.get("forbiddenComponents") or [] if c.lower() in seen.components
     ]

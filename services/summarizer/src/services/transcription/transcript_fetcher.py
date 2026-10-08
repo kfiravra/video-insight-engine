@@ -75,7 +75,7 @@ def _api_label() -> str:
 
 
 async def _mark_timedtext_429(video_data: VideoData) -> None:
-    """Record a metadata-phase timedtext 429 in the caption negative cache.
+    """Record a timedtext 429 from the deferred caption fetch in the caption negative cache.
 
     The timedtext fetch already rotated through the spare proxy exits
     (YOUTUBE_PROXY_EXIT_COUNT), so the flag means every exit it tried was
@@ -119,7 +119,7 @@ def _cached_transcript_data(cached: RawTranscript) -> TranscriptData:
 
 
 def _ytdlp_transcript_data(video_data: VideoData) -> TranscriptData:
-    """Build TranscriptData from the caption track yt-dlp fetched in the metadata phase."""
+    """Build TranscriptData from the caption track the deferred caption fetch filled in."""
     segments = [
         {"text": seg.text, "start": seg.start, "duration": seg.duration}
         for seg in video_data.subtitles
@@ -159,6 +159,7 @@ async def fetch_transcript(
     is_music: bool = False,
     *,
     trail: TranscriptTrail | None = None,
+    skip_cache: bool = False,
 ) -> AsyncGenerator[str | TranscriptData, None]:
     """
     Fetch transcript using the fallback chain:
@@ -174,12 +175,14 @@ async def fetch_transcript(
         is_music: If True, use music-specific transcription prompts
         trail: Provenance trail to fill in as layers run; attached to the yielded
             TranscriptData and kept by the caller even when every layer fails
+        skip_cache: Cold-media benchmark run — don't read the S3 cache (the
+            fresh transcript is still stored there by assembly)
     """
     if trail is None:
         trail = TranscriptTrail()
 
     # Priority 0: S3 cached transcript (avoids all YouTube calls)
-    if S3Client.is_available():
+    if S3Client.is_available() and not skip_cache:
         try:
             cached = await transcript_store.get(youtube_id)
             if cached:
@@ -206,7 +209,7 @@ async def fetch_transcript(
     if isinstance(getattr(video_data, "caption_track", None), str):
         trail.attempted.append("ytdlp")
 
-    # The metadata phase's timedtext fetch just 429'd on every exit it tried:
+    # The deferred timedtext fetch just 429'd on every exit it tried:
     # record it so this run and the next ones stop hammering the throttled
     # endpoints.
     await _mark_timedtext_429(video_data)

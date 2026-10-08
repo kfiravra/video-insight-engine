@@ -1,0 +1,20 @@
+Analyze these video keyframes. For each frame, provide:
+- scene_type: one of slide, code, diagram, whiteboard, talking_head, product_demo, card_reveal, product_closeup, collectible_display, food_cooking, location, screen_recording, equipment, chart, table, intro, outro, other
+- content: 1-sentence description of what's shown (be specific — names, labels, code snippets)
+- text_visible: any text you can read on screen (exact transcription, empty string if none)
+- educational_value: why this frame matters for understanding the video (null when the frame shows nothing beyond a person talking)
+- visual_subject: "content" when the subject matter (card, product, screen, dish, place) dominates the frame; "presenter" when a person dominates with no subject matter shown; "mixed" when both share the frame
+
+IMPORTANT: a hand holding a card, product, or object up to the camera is card_reveal / product_closeup / product_demo with visual_subject "content" — NOT talking_head — even when the presenter is partly visible. Use talking_head ONLY when no subject matter is discernible.
+
+Each image is preceded by its label "Frame N (at m:ss)". The labels start at Frame 0 in every request and the m:ss is the frame's time in the video.
+Return a JSON array with exactly one object per labelled frame, in label order. frame_index is the N from that frame's label.
+Each object must have keys: frame_index, scene_type, content, text_visible, educational_value, visual_subject.
+
+Example:
+[
+  {"frame_index": 0, "scene_type": "card_reveal", "content": "Alternate-art Shanks card held up to the camera", "text_visible": "Shanks OP17-120", "educational_value": "The chase pull of the box", "visual_subject": "content"},
+  {"frame_index": 1, "scene_type": "talking_head", "content": "Presenter speaking to camera", "text_visible": "", "educational_value": null, "visual_subject": "presenter"}
+]
+
+Return ONLY the JSON array — no markdown fences, no explanation.

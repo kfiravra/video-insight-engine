@@ -163,21 +163,34 @@ describe('sse-validators', () => {
       });
     });
 
-    it('should use defaults for missing fields', () => {
-      const data = { event: 'synthesis_complete' };
+    it('should keep masterSummary and seoDescription when the superset arrives', () => {
+      const data = {
+        event: 'synthesis_complete',
+        tldr: 'Final tldr',
+        keyTakeaways: [],
+        masterSummary: 'The full master summary.',
+        seoDescription: 'SEO description.',
+      };
 
       const result = validateSynthesisComplete(data);
 
       expect(result).toEqual({
-        tldr: '',
-        keyTakeaways: [],
+        tldr: 'Final tldr',
+        masterSummary: 'The full master summary.',
+        seoDescription: 'SEO description.',
       });
     });
 
-    it('should return defaults for invalid event', () => {
+    it('should return no fields when the event carries no content', () => {
+      const result = validateSynthesisComplete({ event: 'synthesis_complete', tldr: '' });
+
+      expect(result).toEqual({});
+    });
+
+    it('should return no fields for an invalid event', () => {
       const result = validateSynthesisComplete({ event: 'wrong' });
 
-      expect(result).toEqual({ tldr: '', keyTakeaways: [] });
+      expect(result).toEqual({});
     });
   });
 

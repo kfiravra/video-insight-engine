@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
+from src.services.pipeline.visual_annotations import render_visual_annotations
+from src.services.vector.qdrant_service import COLLECTION_NAME, VectorService
 from src.services.vector.store import (
     store_default_output_chunks,
     store_transcript_chunks,
+    store_visual_chunks,
 )
 
 
@@ -330,3 +333,166 @@ class TestStoreDefaultOutputChunks:
         tab_components = call.args[10]
         assert sorted(tab_ids) == ["checklist_tab", "overview_tab"]
         assert sorted(tab_components) == ["checklist", "overview"]
+
+
+_VISUAL_BLOCK = render_visual_annotations(
+    [
+        {
+            "timestamp_sec": 12,
+            "content": "Code editor with the search loop",
+            "text_visible": "while low <= high:",
+            "scene_type": "code",
+            "original_index": 1,
+        }
+    ],
+    [{"index": 2, "timestamp": 95, "ocr_text": "Binary Search Complexity"}],
+)
+
+
+def _qdrant_backed_service() -> tuple[VectorService, MagicMock]:
+    """A real VectorService over a mocked client, so the upserted payloads are inspectable."""
+    client = MagicMock()
+    collection = MagicMock()
+    collection.name = COLLECTION_NAME
+    client.get_collections.return_value.collections = [collection]
+    service = VectorService(host="localhost", port=6333)
+    service._client = client
+    return service, client
+
+
+class TestStoreVisualChunks:
+    """The rendered <visual_annotations> block indexed as source="visual" points."""
+
+    @patch("src.services.vector.store._get_vector_service")
+    @patch("src.services.vector.store.settings")
+    async def test_should_do_nothing_when_qdrant_is_disabled(self, mock_settings, mock_get_svc):
+        mock_settings.QDRANT_ENABLED = False
+
+        await store_visual_chunks("video123", _VISUAL_BLOCK)
+
+        mock_get_svc.assert_not_called()
+
+    @patch("src.services.vector.store._get_vector_service")
+    @patch("src.services.vector.store.embed_texts")
+    @patch("src.services.vector.store.settings")
+    async def test_should_pre_delete_visual_points_before_upsert(
+        self, mock_settings, mock_embed, mock_get_svc
+    ):
+        mock_settings.QDRANT_ENABLED = True
+        mock_embed.return_value = [[0.1] * 384]
+        call_order: list[tuple[str, str]] = []
+        mock_svc = MagicMock()
+        mock_svc.delete_by_video_and_source.side_effect = lambda _vid, source: call_order.append(
+            ("delete", source)
+        )
+        mock_svc.store_chunks.side_effect = lambda *args: (
+            call_order.append(("store", args[5])) or True
+        )
+        mock_get_svc.return_value = mock_svc
+
+        await store_visual_chunks("video123", _VISUAL_BLOCK)
+
+        assert call_order == [("delete", "visual"), ("store", "visual")]
+
+    @patch("src.services.vector.store._get_vector_service")
+    @patch("src.services.vector.store.embed_texts")
+    @patch("src.services.vector.store.settings")
+    async def test_should_still_clear_stale_visual_points_when_the_block_is_empty(
+        self, mock_settings, mock_embed, mock_get_svc
+    ):
+        mock_settings.QDRANT_ENABLED = True
+        mock_svc = MagicMock()
+        mock_get_svc.return_value = mock_svc
+
+        await store_visual_chunks("video123", "")
+
+        mock_svc.delete_by_video_and_source.assert_called_once_with("video123", "visual")
+        mock_svc.store_chunks.assert_not_called()
+
+    @patch("src.services.vector.store._get_vector_service")
+    @patch("src.services.vector.store.embed_texts")
+    @patch("src.services.vector.store.settings")
+    async def test_should_tag_points_visual_with_frame_timestamps(
+        self, mock_settings, mock_embed, mock_get_svc
+    ):
+        mock_settings.QDRANT_ENABLED = True
+        mock_embed.return_value = [[0.1] * 384]
+        service, client = _qdrant_backed_service()
+        mock_get_svc.return_value = service
+
+        await store_visual_chunks("video123", _VISUAL_BLOCK)
+
+        payload = client.upsert.call_args.kwargs["points"][0].payload
+        assert (payload["source"], payload["timestamp"], payload["end_timestamp"]) == (
+            "visual",
+            12.0,
+            95.0,
+        )
+
+    @patch("src.services.vector.store._get_vector_service")
+    @patch("src.services.vector.store.embed_texts")
+    @patch("src.services.vector.store.settings")
+    async def test_should_label_the_chunk_text_as_on_screen_content(
+        self, mock_settings, mock_embed, mock_get_svc
+    ):
+        mock_settings.QDRANT_ENABLED = True
+        mock_embed.return_value = [[0.1] * 384]
+        service, client = _qdrant_backed_service()
+        mock_get_svc.return_value = service
+
+        await store_visual_chunks("video123", _VISUAL_BLOCK)
+
+        payload = client.upsert.call_args.kwargs["points"][0].payload
+        assert payload["text"] == (
+            "On screen:\n"
+            "[0:12] Code editor with the search loop | while low <= high:\n"
+            "[1:35] | Binary Search Complexity"
+        )
+
+    @patch("src.services.vector.store._get_vector_service")
+    @patch("src.services.vector.store.embed_texts")
+    @patch("src.services.vector.store.settings")
+    async def test_should_never_raise_when_embedding_fails(
+        self, mock_settings, mock_embed, mock_get_svc
+    ):
+        mock_settings.QDRANT_ENABLED = True
+        mock_embed.side_effect = RuntimeError("model not loaded")
+        mock_svc = MagicMock()
+        mock_get_svc.return_value = mock_svc
+
+        await store_visual_chunks("video123", _VISUAL_BLOCK)
+
+        mock_svc.store_chunks.assert_not_called()
+
+    @patch("src.services.vector.store._get_vector_service")
+    @patch("src.services.vector.store.embed_texts")
+    @patch("src.services.vector.store.settings")
+    async def test_should_keep_previous_visual_points_when_embedding_fails(
+        self, mock_settings, mock_embed, mock_get_svc
+    ):
+        mock_settings.QDRANT_ENABLED = True
+        mock_embed.side_effect = RuntimeError("model not loaded")
+        mock_svc = MagicMock()
+        mock_get_svc.return_value = mock_svc
+
+        await store_visual_chunks("video123", _VISUAL_BLOCK)
+
+        mock_svc.delete_by_video_and_source.assert_not_called()
+
+    @patch("src.services.vector.store._get_vector_service")
+    @patch("src.services.vector.store.embed_texts")
+    @patch("src.services.vector.store.settings")
+    async def test_should_embed_before_deleting_the_old_visual_points(
+        self, mock_settings, mock_embed, mock_get_svc
+    ):
+        mock_settings.QDRANT_ENABLED = True
+        call_order: list[str] = []
+        mock_embed.side_effect = lambda texts: call_order.append("embed") or [[0.1] * 384]
+        mock_svc = MagicMock()
+        mock_svc.delete_by_video_and_source.side_effect = lambda *_: call_order.append("delete")
+        mock_svc.store_chunks.side_effect = lambda *_: call_order.append("store") or True
+        mock_get_svc.return_value = mock_svc
+
+        await store_visual_chunks("video123", _VISUAL_BLOCK)
+
+        assert call_order == ["embed", "delete", "store"]

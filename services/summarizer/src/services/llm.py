@@ -7,9 +7,10 @@ for all LLM interactions.
 
 import asyncio
 import logging
-from typing import Any, AsyncGenerator
+from typing import Any
 
 from src.config import settings
+from src.services.llm_messages import UserContent
 from src.services.llm_provider import LLMProvider
 
 logger = logging.getLogger(__name__)
@@ -40,22 +41,34 @@ class LLMService:
         """Get the configured default model name."""
         return self._provider.model
 
+    @property
+    def fallback_model(self) -> str | None:
+        """Cross-provider fallback ``call_llm_with_retry`` may route to, if any."""
+        return self._provider.fallback_model
+
     async def call_llm_fast(
-        self, prompt: str, max_tokens: int = 4096, timeout: float | None = None,
+        self,
+        prompt: UserContent,
+        max_tokens: int = 4096,
+        timeout: float | None = None,
         json_mode: bool = False,
         span_name: str | None = None,
         span_metadata: dict[str, Any] | None = None,
+        temperature: float | None = None,
+        system_prompt: str | None = None,
     ) -> str:
         """Make an async LLM call using the fast model.
 
         Args:
-            prompt: The prompt to send
+            prompt: The prompt to send (string or content blocks, see ``LLMProvider.complete``)
             max_tokens: Maximum tokens in response
             timeout: Per-call timeout override (seconds). Falls back to 15s default.
             json_mode: When True, request JSON-only output from the model.
             span_name: When non-None, record the call as a Langfuse generation
                 span. Best-effort — observability failures are swallowed.
             span_metadata: Extra metadata merged into the generation span.
+            temperature: Sampling temperature; ``None`` sends none (provider default).
+            system_prompt: Optional system prompt (never carries a cache breakpoint).
 
         Returns:
             Generated text content
@@ -63,28 +76,39 @@ class LLMService:
         effective_timeout = timeout if timeout is not None else 15.0
         async with asyncio.timeout(effective_timeout):
             return await self._provider.complete_fast(
-                prompt, max_tokens=max_tokens, timeout=effective_timeout,
+                prompt,
+                max_tokens=max_tokens,
+                timeout=effective_timeout,
                 json_mode=json_mode,
-                span_name=span_name, span_metadata=span_metadata,
+                span_name=span_name,
+                span_metadata=span_metadata,
+                temperature=temperature,
+                system_prompt=system_prompt,
             )
 
     async def call_llm(
-        self, prompt: str, max_tokens: int = 2000, timeout: float | None = None,
-        json_mode: bool = False, cache_static: str | None = None,
+        self,
+        prompt: UserContent,
+        max_tokens: int = 2000,
+        timeout: float | None = None,
+        json_mode: bool = False,
         span_name: str | None = None,
         span_metadata: dict[str, Any] | None = None,
+        temperature: float | None = None,
+        system_prompt: str | None = None,
     ) -> str:
         """Make an async LLM call.
 
         Args:
-            prompt: The prompt to send
+            prompt: The prompt to send (string or content blocks, see ``LLMProvider.complete``)
             max_tokens: Maximum tokens in response
             timeout: Per-call timeout override (seconds). Falls back to LLM_TIMEOUT_SECONDS.
             json_mode: When True, request JSON-only output from the model.
-            cache_static: Static prompt content for Anthropic prompt caching.
             span_name: When non-None, record the call as a Langfuse generation
                 span. Best-effort — observability failures are swallowed.
             span_metadata: Extra metadata merged into the generation span.
+            temperature: Sampling temperature; ``None`` sends none (provider default).
+            system_prompt: Optional system prompt (never carries a cache breakpoint).
 
         Returns:
             Generated text content
@@ -95,28 +119,12 @@ class LLMService:
         effective_timeout = timeout if timeout is not None else settings.LLM_TIMEOUT_SECONDS
         async with asyncio.timeout(effective_timeout):
             return await self._provider.complete(
-                prompt, max_tokens=max_tokens, timeout=effective_timeout,
-                json_mode=json_mode, cache_static=cache_static,
-                span_name=span_name, span_metadata=span_metadata,
+                prompt,
+                max_tokens=max_tokens,
+                timeout=effective_timeout,
+                json_mode=json_mode,
+                span_name=span_name,
+                span_metadata=span_metadata,
+                temperature=temperature,
+                system_prompt=system_prompt,
             )
-
-    async def stream_llm(
-        self, prompt: str, max_tokens: int = 2000
-    ) -> AsyncGenerator[str, None]:
-        """Stream LLM response tokens.
-
-        Args:
-            prompt: The prompt to send to the LLM
-            max_tokens: Maximum tokens in response
-
-        Yields:
-            String tokens as they are generated
-        """
-        try:
-            async for token in self._provider.stream(prompt, max_tokens=max_tokens):
-                yield token
-        except asyncio.CancelledError:
-            logger.debug("LLM streaming cancelled")
-        except Exception as e:
-            logger.error("Error during streaming: %s", e)
-            raise

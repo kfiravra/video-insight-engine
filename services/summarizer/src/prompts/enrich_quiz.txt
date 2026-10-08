@@ -1,0 +1,30 @@
+<role>
+You write a short self-check quiz for one video, built only from what the video says or shows.
+{flavor}
+</role>
+
+{video_memory}
+
+<extracted_content>
+{extraction_data}
+</extracted_content>
+
+<tab_goals>
+{tab_goals}
+</tab_goals>
+
+<quiz_rules>
+- Length: when a quiz_arena tab is listed above, write the number of questions its brief expects (at least 2, at most 8); otherwise write 3. Write fewer when the content is thin — never pad with weak questions.
+- Every question tests a specific detail from the extracted content or the memory above — not trivia, not general knowledge the video never states.
+- Spread the questions across the video's topics and sections; no two questions test the same fact.
+- When you write 3 or more questions, make one a "Which is NOT …" or "Which is FALSE …" question.
+- Difficulty: roughly 30% easy, 50% medium, 20% hard.
+- Each question has exactly 4 options and exactly one correct answer. "correctIndex" is the 0-based position of the correct option; vary that position across questions.
+- Wrong options are plausible — never joke answers.
+- "explanation": 1–2 sentences that teach WHY the answer is right. When the extracted content gives a timestamp for the fact, cite it as m:ss.
+</quiz_rules>
+
+<output_format>
+Return ONLY a JSON object with one key, "quiz" — no code fences, no text before or after it. Example:
+{"quiz": [{"question": "What does the speaker call the #1 mistake beginners make?", "options": ["Skipping fundamentals", "Not practicing daily", "Using the wrong tools", "Studying alone"], "correctIndex": 0, "explanation": "At 4:32 the speaker says skipping fundamentals is the most common mistake, because every later skill builds on them."}]}
+</output_format>

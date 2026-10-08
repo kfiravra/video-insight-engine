@@ -31,7 +31,9 @@ def _reset_langfuse_state(monkeypatch):
     lc._reset_for_tests()
 
 
-def _build_litellm_response(content: str = "hello", model: str = "anthropic/claude-sonnet-4-6") -> MagicMock:
+def _build_litellm_response(
+    content: str = "hello", model: str = "anthropic/claude-sonnet-4-6"
+) -> MagicMock:
     choice = MagicMock()
     choice.finish_reason = "stop"
     choice.message.content = content
@@ -54,8 +56,10 @@ async def test_complete_with_messages_records_generation_when_span_name_set():
     provider = lp.LLMProvider(model="anthropic/claude-sonnet-4-6")
     fake_resp = _build_litellm_response(content="output text")
 
-    with patch("src.services.llm_provider.acompletion", AsyncMock(return_value=fake_resp)), \
-         patch("src.services.llm_telemetry.completion_cost", return_value=0.0042):
+    with (
+        patch("src.services.llm_provider.acompletion", AsyncMock(return_value=fake_resp)),
+        patch("src.services.llm_telemetry.completion_cost", return_value=0.0042),
+    ):
         async with lc.pipeline_trace("vid-1"):
             result = await provider.complete_with_messages(
                 messages=[{"role": "user", "content": "hi"}],
@@ -105,18 +109,20 @@ async def test_complete_fast_records_generation_when_span_name_set():
     )
     fake_resp = _build_litellm_response(content="cls", model="anthropic/claude-haiku-4-5-20251001")
 
-    with patch("src.services.llm_provider.acompletion", AsyncMock(return_value=fake_resp)), \
-         patch("src.services.llm_telemetry.completion_cost", return_value=0.0):
+    with (
+        patch("src.services.llm_provider.acompletion", AsyncMock(return_value=fake_resp)),
+        patch("src.services.llm_telemetry.completion_cost", return_value=0.0),
+    ):
         async with lc.pipeline_trace("vid-1"):
             await provider.complete_fast(
-                prompt="classify this",
-                span_name="classifier",
+                prompt="probe this",
+                span_name="tier_probe",
                 span_metadata={"useFastModel": True},
             )
 
     fake_trace.generation.assert_called_once()
     kwargs = fake_trace.generation.call_args.kwargs
-    assert kwargs["name"] == "classifier"
+    assert kwargs["name"] == "tier_probe"
     assert kwargs["model"] == "anthropic/claude-haiku-4-5-20251001"
 
 
@@ -145,8 +151,12 @@ async def test_cost_lookup_failure_does_not_crash_call():
     provider = lp.LLMProvider(model="anthropic/claude-sonnet-4-6")
     fake_resp = _build_litellm_response()
 
-    with patch("src.services.llm_provider.acompletion", AsyncMock(return_value=fake_resp)), \
-         patch("src.services.llm_telemetry.completion_cost", side_effect=ValueError("unknown model")):
+    with (
+        patch("src.services.llm_provider.acompletion", AsyncMock(return_value=fake_resp)),
+        patch(
+            "src.services.llm_telemetry.completion_cost", side_effect=ValueError("unknown model")
+        ),
+    ):
         async with lc.pipeline_trace("vid-1"):
             result = await provider.complete_with_messages(
                 messages=[{"role": "user", "content": "hi"}],

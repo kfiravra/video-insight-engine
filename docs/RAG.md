@@ -6,12 +6,15 @@ How the assistant retrieves grounded answers from transcripts and assembled tab 
 
 ## Overview
 
-Two content sources are indexed in **one** Qdrant collection (`transcript_chunks`, 384-dim cosine) and filtered apart by the `source` payload field:
+Three content sources are indexed in **one** Qdrant collection (`transcript_chunks`, 384-dim cosine) and filtered apart by the `source` payload field:
 
 | `source` value     | What                                                          | Producer                                      |
 |--------------------|---------------------------------------------------------------|-----------------------------------------------|
 | `transcript`       | Sentence-windowed transcript chunks (raw + optional original-language) | `chunk_transcript()` → `store_transcript_chunks` |
-| `default_output`   | Natural-language strings extracted per tab component          | `chunk_assembled_tabs()` → `store_default_output_chunks` |
+| `default_output`   | Natural-language strings extracted per tab component (the overview included — its fields live in `props.data`) | `chunk_assembled_tabs()` → `store_default_output_chunks` |
+| `visual`           | What the frames showed: the rendered `<visual_annotations>` entries (`[m:ss] caption \| on-screen text`), packed whole into ≤1,000-char chunks labelled `On screen:` with the first/last frame's `timestamp`/`end_timestamp`; stored `language="en"` | `chunk_visual_entries()` → `store_visual_chunks` |
+
+Transcript points are speech only: since pipeline-1min 1c.2 frame annotations never enter `clean_text`, so `visual` points are the only place visual facts are searchable. `/library/search` accepts `sources: ["transcript" | "default_output" | "visual"]` (any other value is a 422); every hit carries its `source`.
 
 Single-video chat (assistant `/chat`) and cross-library search (assistant `/library/search`) both go through the same `RAGService` + `QdrantRepository` path; the only difference is the size of the `video_ids` filter.
 
@@ -24,6 +27,7 @@ Pipeline complete                               (summarizer)
         │
         ├─ asyncio.create_task(store_transcript_chunks)
         ├─ asyncio.create_task(store_default_output_chunks)  ◄── fire-and-forget
+        ├─ asyncio.create_task(store_visual_chunks)
         │
         ├─ SSE emit "done"
         ▼
@@ -34,7 +38,7 @@ Pipeline complete                               (summarizer)
                                           VectorService.store_chunks (upsert)
 ```
 
-Background tasks **never block SSE** — see `services/summarizer/src/services/pipeline/phases/assembly.py:165`.
+Background tasks **never block SSE** — see `_index_in_qdrant` in `services/summarizer/src/services/pipeline/phases/assembly.py`. An eval-user run (`evalRun`, D25) writes no Qdrant points at all (nor the Redis response copy): the collection keeps the users' own result.
 
 ## Output chunker rules
 
@@ -46,7 +50,7 @@ Background tasks **never block SSE** — see `services/summarizer/src/services/p
 | `<6-word` drop                                  | Below this, embeddings encode incidentals more than meaning.   |
 | No raw code / lyrics / URLs / numbers           | Handler picks prose fields by name; structured data is skipped.|
 | `display_section` whitelist                     | Only `text, description, summary, explanation, content, analysis, caption, label, instruction, tip, note` keys are flattened. |
-| Pre-delete by `(video_id, source)` before upsert | Reprocesses with fewer chunks no longer leave orphan points.   |
+| Pre-delete by `(video_id, source)` before upsert | Reprocesses with fewer chunks no longer leave orphan points. `store_visual_chunks` embeds first and deletes after, so a failed embed keeps the previous run's points; an empty block still deletes. |
 
 **Authoritative coverage table:** [reports/chunker-coverage.md](../reports/chunker-coverage.md). All 17 components in `ASSEMBLER_REGISTRY` are covered. Legacy `timeline` and `clip_player` handlers stay until `db.videoSummary.distinct("tabs.component")` no longer returns them.
 
@@ -60,8 +64,8 @@ Each point carries:
 | `text_original`   | string?  | non-EN   | Source-language text aligned by proportional offset  |
 | `video_id`        | string   | both     | YouTube ID — filter scope for retrieval              |
 | `chunk_index`     | int      | both     | Ordering within the source                           |
-| `timestamp`       | string?  | both     | Reserved — **not currently populated** by the summarizer chunker; always `null` at retrieval. Citations omit the `[MM:SS]` prefix until ingest computes it. |
-| `source`          | string   | both     | `transcript` or `default_output`                     |
+| `timestamp` / `end_timestamp` | float? | transcript, visual | Seconds; transcript chunks get them when segments are passed, visual chunks always. `null` on output points and on points written before payload schema v2 (heal on re-ingest). |
+| `source`          | string   | all      | `transcript`, `default_output` or `visual`           |
 | `tab_id`          | string?  | output   | Originating tab (`overview_tab`, `key_moments`, ...) |
 | `tab_component`   | string?  | output   | Originating component (`overview`, `quiz`, ...)      |
 | `prop_path`       | string?  | output   | Dot/bracket path to source field (`spots[3]`, `keyTakeaways[1]`) |

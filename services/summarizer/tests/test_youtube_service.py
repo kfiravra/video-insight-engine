@@ -21,9 +21,11 @@ from src.services.video.youtube import (
     _detect_category,
     _extract_hashtags,
     _fetch_subtitle_data_sync,
+    _extract_video_info_sync,
     _parse_chapters,
     extract_video_context,
     extract_video_data,
+    fetch_video_captions,
 )
 
 
@@ -371,18 +373,21 @@ class TestExtractVideoDataAsync:
             "subtitles": {},
         }
 
-    @patch("src.services.video.youtube._extract_video_data_sync")
+    @patch("src.services.video.youtube._extract_video_info_sync")
     async def test_extracts_video_data(self, mock_extract):
         """Test async extraction wrapper."""
-        mock_extract.return_value = VideoData(
-            video_id="test123",
-            title="Test Video",
-            channel="Test Channel",
-            duration=300,
-            thumbnail_url="https://example.com/thumb.jpg",
-            description="Test",
-            chapters=[],
-            subtitles=[],
+        mock_extract.return_value = (
+            VideoData(
+                video_id="test123",
+                title="Test Video",
+                channel="Test Channel",
+                duration=300,
+                thumbnail_url="https://example.com/thumb.jpg",
+                description="Test",
+                chapters=[],
+                subtitles=[],
+            ),
+            None,
         )
 
         result = await extract_video_data("test123")
@@ -396,10 +401,8 @@ class TestExtractVideoDataAsync:
         """Test error handling for unavailable video."""
         mock_extract.return_value = None
 
-        from src.services.video.youtube import _extract_video_data_sync
-
         with pytest.raises(TranscriptError) as exc_info:
-            _extract_video_data_sync("invalid_id")
+            _extract_video_info_sync("invalid_id")
 
         assert exc_info.value.code == ErrorCode.VIDEO_UNAVAILABLE
 
@@ -408,10 +411,8 @@ class TestExtractVideoDataAsync:
         """Test error handling for live streams."""
         mock_extract.return_value = {"is_live": True}
 
-        from src.services.video.youtube import _extract_video_data_sync
-
         with pytest.raises(TranscriptError) as exc_info:
-            _extract_video_data_sync("live_stream_id")
+            _extract_video_info_sync("live_stream_id")
 
         assert exc_info.value.code == ErrorCode.LIVE_STREAM
 
@@ -424,9 +425,7 @@ class TestExtractVideoDataAsync:
         sample_yt_dlp_info["channel"] = "Fallback Channel"
         mock_extract.return_value = sample_yt_dlp_info
 
-        from src.services.video.youtube import _extract_video_data_sync
-
-        result = _extract_video_data_sync("test123")
+        result, _track = _extract_video_info_sync("test123")
 
         assert result.channel == "Fallback Channel"
         # Should use default YouTube thumbnail URL
@@ -441,10 +440,8 @@ class TestRateLimitHandling:
         """Test that extraction failure wraps in TranscriptError."""
         mock_extract.side_effect = ConnectionError("Connection failed")
 
-        from src.services.video.youtube import _extract_video_data_sync
-
         with pytest.raises(TranscriptError) as exc_info:
-            _extract_video_data_sync("test123")
+            _extract_video_info_sync("test123")
 
         assert exc_info.value.code == ErrorCode.VIDEO_UNAVAILABLE
         assert "Connection failed" in str(exc_info.value)
@@ -558,8 +555,9 @@ class TestYoutubeProxy:
 
 
 class TestCaptionTrackFields:
-    """``_extract_video_data_sync`` records which caption track was picked and
-    how its fetch went, so an empty ``subtitles`` list is explainable."""
+    """The live caption path: ``extract_video_data`` returns the metadata with the
+    picked track on ``caption_url``; ``fetch_video_captions`` fetches it later
+    and records how the fetch went, so an empty ``subtitles`` is explainable."""
 
     @pytest.fixture
     def info_with_track(self):
@@ -578,70 +576,76 @@ class TestCaptionTrackFields:
 
     @patch("src.services.video.youtube._fetch_subtitles_from_url_sync")
     @patch("src.services.video.youtube._extract_with_retry")
-    def test_manual_track_with_segments_records_track_and_no_error(
+    async def test_should_return_info_only_with_the_picked_track_deferred(
         self, mock_extract, mock_fetch, info_with_track
     ):
-        from src.services.video.youtube import _extract_video_data_sync
-
         mock_extract.return_value = info_with_track
-        mock_fetch.return_value = ([SubtitleSegment(text="hi", start=0.0, duration=1.0)], None)
 
-        result = _extract_video_data_sync("test123")
+        result = await extract_video_data("test123")
 
-        assert result.caption_track == "manual"
-        assert result.caption_lang == "ar-SA"
-        assert result.caption_fetch_error is None
-        assert result.captions_rate_limited is False
+        assert (result.subtitles, result.caption_url) == ([], "http://example/timedtext")
+        assert (result.caption_track, result.caption_lang) == ("manual", "ar-SA")
+        mock_fetch.assert_not_called()
 
     @patch("src.services.video.youtube._fetch_subtitles_from_url_sync")
     @patch("src.services.video.youtube._extract_with_retry")
-    def test_http_429_sets_error_and_rate_limited_flag(
+    async def test_should_fill_subtitles_and_clear_the_url_when_captions_are_fetched(
+        self, mock_extract, mock_fetch, info_with_track
+    ):
+        mock_extract.return_value = info_with_track
+        mock_fetch.return_value = ([SubtitleSegment(text="hi", start=0.0, duration=1.0)], None)
+        result = await extract_video_data("test123")
+
+        await fetch_video_captions(result)
+
+        assert [seg.text for seg in result.subtitles] == ["hi"]
+        assert (result.caption_url, result.caption_fetch_error) == (None, None)
+        assert result.captions_rate_limited is False
+        mock_fetch.assert_called_once_with("http://example/timedtext", "test123")
+
+    @patch("src.services.video.youtube._fetch_subtitles_from_url_sync")
+    @patch("src.services.video.youtube._extract_with_retry")
+    async def test_should_set_the_rate_limited_flag_when_the_fetch_429s(
         self, mock_extract, mock_fetch, info_with_track
     ):
         """The legacy rate-limit flag is derived from the error code so the two
         can never disagree."""
-        from src.services.video.youtube import _extract_video_data_sync
-
         mock_extract.return_value = info_with_track
         mock_fetch.return_value = ([], "http_429")
+        result = await extract_video_data("test123")
 
-        result = _extract_video_data_sync("test123")
+        await fetch_video_captions(result)
 
-        assert result.caption_fetch_error == "http_429"
-        assert result.captions_rate_limited is True
+        assert (result.caption_fetch_error, result.captions_rate_limited) == ("http_429", True)
 
     @patch("src.services.video.youtube._fetch_subtitles_from_url_sync")
     @patch("src.services.video.youtube._extract_with_retry")
-    def test_picked_track_with_no_segments_is_labelled_empty(
+    async def test_should_label_a_picked_track_without_segments_empty(
         self, mock_extract, mock_fetch, info_with_track
     ):
         """A track that was offered but held no speech is 'empty' — distinct
         from 'no track' and from a transport failure."""
-        from src.services.video.youtube import _extract_video_data_sync
-
         mock_extract.return_value = info_with_track
         mock_fetch.return_value = ([], None)
+        result = await extract_video_data("test123")
 
-        result = _extract_video_data_sync("test123")
+        await fetch_video_captions(result)
 
-        assert result.caption_fetch_error == "empty"
-        assert result.captions_rate_limited is False
+        assert (result.caption_fetch_error, result.captions_rate_limited) == ("empty", False)
 
     @patch("src.services.video.youtube._fetch_subtitles_from_url_sync")
     @patch("src.services.video.youtube._extract_with_retry")
-    def test_no_tracks_leaves_all_caption_fields_none(
+    async def test_should_leave_every_caption_field_none_without_a_track(
         self, mock_extract, mock_fetch, info_with_track
     ):
-        from src.services.video.youtube import _extract_video_data_sync
-
         info_with_track["subtitles"] = {}
         mock_extract.return_value = info_with_track
+        result = await extract_video_data("test123")
 
-        result = _extract_video_data_sync("test123")
+        await fetch_video_captions(result)
 
-        assert result.caption_track is None
-        assert result.caption_lang is None
-        assert result.caption_fetch_error is None
+        assert (result.caption_track, result.caption_lang, result.caption_url) == (None, None, None)
+        assert (result.subtitles, result.caption_fetch_error) == ([], None)
         mock_fetch.assert_not_called()
 
 

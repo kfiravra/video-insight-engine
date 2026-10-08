@@ -30,7 +30,7 @@ class TestDomainsJsonStructure:
         assert "modifiers" in config
         assert "categoryMap" in config
         assert "components" in config
-        assert "enrichment" in config
+        assert "quizEnrichment" in config
 
     def test_has_expected_domains(self, config):
         expected = {
@@ -183,47 +183,6 @@ class TestDomainConfigModule:
             assert "component" in tab
             assert tab["component"] != ""
 
-    def test_get_enrichment_map(self, config):
-        from src.shared_config.domain_config import get_enrichment_map
-
-        result = get_enrichment_map()
-        assert isinstance(result, dict)
-        assert result == config["enrichment"]
-        assert result["learning"] == "enrich/enrich_study.txt"
-        # 10 enriched domains + podcast + gaming + "default" entry
-        # (news + sport have no enrichment)
-        assert len(result) == 13
-        for domain in [
-            "learning",
-            "tech",
-            "fitness",
-            "food",
-            "music",
-            "travel",
-            "review",
-            "project",
-            "language",
-            "science",
-        ]:
-            assert domain in result
-
-    def test_enrichment_tags_are_valid_domains(self, config):
-        """Every tag in enrichment (except 'default') must be a known domain."""
-        valid_domains = set(config["domains"].keys())
-        for tag in config["enrichment"]:
-            if tag == "default":
-                continue
-            assert tag in valid_domains, f"enrichment tag '{tag}' not in domains"
-
-    def test_enrichment_prompt_files_exist(self, config):
-        """Every enrichment prompt file must exist in prompts/."""
-        prompts_dir = Path(__file__).resolve().parent.parent / "src" / "prompts"
-        for tag, filename in config["enrichment"].items():
-            prompt_path = prompts_dir / filename
-            assert prompt_path.exists(), (
-                f"Enrichment prompt '{filename}' for tag '{tag}' not found at {prompt_path}"
-            )
-
 
 class TestSiblingDataSources:
     """Registry helpers that power the assembly in-domain sibling fallback."""
@@ -338,8 +297,10 @@ class TestVisualCriticalityConfig:
         assert not set(vc["highDomains"]) & set(vc["lowDomains"])
 
 
-class TestEnrichmentPromptsExist:
-    def test_all_enrichment_prompts_exist_on_disk(self, config):
+class TestQuizEnrichmentConfig:
+    def test_every_quiz_domain_is_a_known_domain(self, config):
+        assert set(config["quizEnrichment"]["quizDomains"]) <= set(config["domains"])
+
+    def test_quiz_prompt_exists_on_disk(self):
         prompts_dir = Path(__file__).resolve().parent.parent / "src" / "prompts"
-        for domain, rel in config["enrichment"].items():
-            assert (prompts_dir / rel).exists(), f"{domain} -> {rel} missing"
+        assert (prompts_dir / "enrich_quiz.txt").exists()

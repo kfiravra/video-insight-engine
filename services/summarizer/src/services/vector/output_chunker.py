@@ -133,17 +133,21 @@ def _make(text: str, tab_id: str, component: str, prop_path: str) -> OutputChunk
 
 
 def _h_overview(tab_id: str, component: str, props: dict) -> list[OutputChunk]:
+    """The overview assembler stores its fields under ``props.data`` (A23: never
+    indexed while this read ``props``); a flat ``props`` is still accepted."""
+    data = props.get("data")
+    fields, prefix = (data, "data.") if isinstance(data, dict) else (props, "")
     out: list[OutputChunk] = []
-    master = _norm(props.get("masterSummary"))
+    master = _norm(fields.get("masterSummary"))
     if master:
-        out.append(_make(master, tab_id, component, "masterSummary"))
-    for i, item in enumerate(props.get("keyTakeaways") or []):
+        out.append(_make(master, tab_id, component, f"{prefix}masterSummary"))
+    for i, item in enumerate(fields.get("keyTakeaways") or []):
         text = _norm(item)
         if text:
-            out.append(_make(text, tab_id, component, f"keyTakeaways[{i}]"))
-    tldr = _norm(props.get("tldr"))
+            out.append(_make(text, tab_id, component, f"{prefix}keyTakeaways[{i}]"))
+    tldr = _norm(fields.get("tldr"))
     if tldr:
-        out.append(_make(tldr, tab_id, component, "tldr"))
+        out.append(_make(tldr, tab_id, component, f"{prefix}tldr"))
     return out
 
 

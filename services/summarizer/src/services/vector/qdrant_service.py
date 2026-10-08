@@ -1,9 +1,9 @@
 """Qdrant vector service for transcript chunk storage and retrieval.
 
-Provides semantic search over transcript chunks AND assembled output
-(tabs + props) using cosine similarity. Both content sources live in a
-single ``transcript_chunks`` collection and are filtered apart by the
-``source`` payload field. Gracefully degrades if Qdrant is unavailable —
+Provides semantic search over transcript chunks, assembled output
+(tabs + props) and the frames' visual annotations using cosine similarity.
+All three content sources live in a single ``transcript_chunks`` collection
+and are filtered apart by the ``source`` payload field. Gracefully degrades if Qdrant is unavailable —
 pipeline continues without vector storage.
 """
 
@@ -32,6 +32,8 @@ VECTOR_SIZE = 384  # all-MiniLM-L6-v2 / bge-small-en-v1.5
 
 SOURCE_TRANSCRIPT = "transcript"
 SOURCE_DEFAULT_OUTPUT = "default_output"
+# Rendered <visual_annotations> entries (frame captions + on-screen text).
+SOURCE_VISUAL = "visual"
 
 # Payload schema version stamped on every new point.
 # v2: adds ``timestamp``/``end_timestamp`` (seconds, float) for [MM:SS]
@@ -125,7 +127,7 @@ class VectorService:
             embeddings: Embedding vectors for the chunks.
             language: ISO 639-1 language code.
             original_chunks: Original-language chunks (only for non-English videos).
-            source: ``"transcript"`` (default) or ``"default_output"``.
+            source: ``"transcript"`` (default), ``"default_output"`` or ``"visual"``.
             tab_id: Scalar tab identifier broadcast across all chunks. Ignored
                 when ``tab_ids`` is provided. ``None`` for transcript.
             tab_component: Scalar component name broadcast across all chunks.

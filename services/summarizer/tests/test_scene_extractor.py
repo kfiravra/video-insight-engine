@@ -1,6 +1,7 @@
 """Tests for scene-based frame extraction."""
 
 import asyncio
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -11,11 +12,32 @@ from src.services.media.scene_extractor import (
     _dedupe_refined_frames,
     cleanup_temp_dir,
     extract_scene_keyframes,
+    frames_cached,
     persist_vision_descriptions,
 )
 
 # Expected empty result from the 3-tier return shape
 EMPTY_RESULT = {"all_frames": [], "selected_frames": [], "gallery_frames": []}
+
+
+def _ready_lowres(tmp_path: Path, order: list[str] | None = None) -> MagicMock:
+    """The run's pass-1 handle with its download already on disk."""
+    video = tmp_path / "pass1.mp4"
+    video.write_bytes(b"x" * 2048)
+    handle = MagicMock()
+
+    async def path() -> Path:
+        if order is not None:
+            order.append("lowres-ready")
+        return video
+
+    def closed() -> None:
+        if order is not None:
+            order.append("lowres-closed")
+
+    handle.path = path
+    handle.close = AsyncMock(side_effect=closed)
+    return handle
 
 
 class TestExtractSceneKeyframes:
@@ -149,8 +171,10 @@ class TestExtractSceneKeyframes:
             "gallery_frames": frames[:12],
         }
 
-        result = await extract_scene_keyframes("dQw4w9WgXcQ")
+        lowres_video = MagicMock(close=AsyncMock())
+        result = await extract_scene_keyframes("dQw4w9WgXcQ", lowres_video=lowres_video)
 
+        lowres_video.close.assert_awaited_once()
         assert len(result["all_frames"]) == 15
         assert len(result["gallery_frames"]) == 12
         assert result["all_frames"][3]["timestamp"] == 30.0
@@ -348,10 +372,6 @@ class TestTwoPassExtraction:
 
         video_id = "dQw4w9WgXcQ"
 
-        async def ytdlp_communicate():
-            (tmp_path / f"{video_id}.mp4").write_bytes(b"x" * 2048)
-            return (b"", b"")
-
         async def ffmpeg_communicate():
             for i in (1, 2):
                 (tmp_path / "frames" / f"scene_{i:04d}.jpg").write_bytes(b"jpg")
@@ -360,7 +380,7 @@ class TestTwoPassExtraction:
         def fake_exec(*args, **kwargs):
             proc = AsyncMock()
             proc.returncode = 0
-            proc.communicate = ytdlp_communicate if args[0] == "yt-dlp" else ffmpeg_communicate
+            proc.communicate = ffmpeg_communicate
             return proc
 
         mock_exec.side_effect = fake_exec
@@ -368,12 +388,14 @@ class TestTwoPassExtraction:
         mock_select.side_effect = lambda frames, duration: (frames, frames[:1])
         mock_s3_client.put_json = AsyncMock()
 
-        result = await extract_scene_keyframes(video_id, duration_seconds=120)
+        result = await extract_scene_keyframes(
+            video_id, duration_seconds=120, lowres_video=_ready_lowres(tmp_path)
+        )
 
         # Detection ffmpeg args come from config (never-odd height via :-2)
         ffmpeg_args = next(c.args for c in mock_exec.call_args_list if c.args[0] == "ffmpeg")
         vf_arg = ffmpeg_args[ffmpeg_args.index("-vf") + 1]
-        assert "scale=1024:-2" in vf_arg
+        assert "scale='trunc(min(iw,1024)/2)*2':-2" in vf_arg  # capped, never upscaled
         assert ffmpeg_args[ffmpeg_args.index("-q:v") + 1] == "4"
 
         # Hi-res refinement runs on the selected frames before upload
@@ -561,10 +583,6 @@ class TestReselectHook:
 
         video_id = "dQw4w9WgXcQ"
 
-        async def ytdlp_communicate():
-            (tmp_path / f"{video_id}.mp4").write_bytes(b"x" * 2048)
-            return (b"", b"")
-
         async def ffmpeg_communicate():
             for i in (1, 2, 3):
                 (tmp_path / "frames" / f"scene_{i:04d}.jpg").write_bytes(b"jpg")
@@ -573,7 +591,7 @@ class TestReselectHook:
         def fake_exec(*args, **kwargs):
             proc = AsyncMock()
             proc.returncode = 0
-            proc.communicate = ytdlp_communicate if args[0] == "yt-dlp" else ffmpeg_communicate
+            proc.communicate = ffmpeg_communicate
             return proc
 
         mock_exec.side_effect = fake_exec
@@ -590,68 +608,139 @@ class TestReselectHook:
             duration_seconds=120,
             overselect_count=40,
             reselect_hook=bad_hook,
+            lowres_video=_ready_lowres(tmp_path),
         )
 
         # Local selection survives the hook failure
         assert len(result["selected_frames"]) == 3
 
 
-class TestStaticCameraFallback:
-    async def test_interval_frames_shaped_like_scene_frames(self, tmp_path):
-        from unittest.mock import patch
+class TestLateReselectDecision:
+    """``resolve_reselect`` is asked just before Step 6b (the tier may wait for the probe)."""
 
-        from PIL import Image
+    VIDEO_ID = "dQw4w9WgXcQ"
 
-        from src.services.media.scene_extractor import _sample_interval_frames
-
-        frames_dir = tmp_path / "frames"
-        frames_dir.mkdir()
-
-        async def fake_exec(*args, **kwargs):
-            # Simulate ffmpeg writing interval frames
-            for i in range(1, 5):
-                Image.new("RGB", (16, 16), (i * 40, 0, 0)).save(
-                    frames_dir / f"interval_{i:04d}.jpg", "JPEG"
-                )
+    async def _extract(self, tmp_path, resolve_reselect, order: list[str]) -> dict:
+        def fake_exec(*args, **kwargs):
             proc = AsyncMock()
-            proc.communicate = AsyncMock(return_value=(b"", b""))
             proc.returncode = 0
+
+            async def communicate():
+                for i in (1, 2, 3):
+                    (tmp_path / "frames" / f"scene_{i:04d}.jpg").write_bytes(b"jpg")
+                return (b"", b"pts_time: 1.5\npts_time: 3.0\npts_time: 4.5\n")
+
+            proc.communicate = communicate
             return proc
 
-        with patch("asyncio.create_subprocess_exec", side_effect=fake_exec):
-            frames = await _sample_interval_frames(
-                tmp_path / "v.mp4", frames_dir, 600, str(tmp_path), index_offset=6
+        def fake_select(frames, duration):
+            order.append("select")
+            return frames, frames[:1]
+
+        with (
+            patch(
+                "src.services.media.scene_extractor._check_existing_frames",
+                AsyncMock(return_value=None),
+            ),
+            patch(
+                "src.services.media.scene_extractor._upload_frames_batch",
+                AsyncMock(side_effect=lambda f: f),
+            ),
+            patch("src.services.media.hires_refiner.refine_selected_frames", AsyncMock()),
+            patch("src.services.media.frame_scorer.score_all_frames", side_effect=lambda f: f),
+            patch("src.services.media.frame_scorer.select_frames", side_effect=fake_select),
+            patch("src.services.media.scene_extractor.s3_client") as s3,
+            patch("src.services.media.scene_extractor.tempfile") as tempfile_mod,
+            patch("src.services.media.scene_extractor.settings") as mock_settings,
+            patch("asyncio.create_subprocess_exec", side_effect=fake_exec),
+        ):
+            mock_settings.SCENE_EXTRACTION_ENABLED = True
+            mock_settings.SCENE_THRESHOLD = 0.3
+            mock_settings.SCENE_S3_PREFIX = "scenes-v3"
+            tempfile_mod.mkdtemp.return_value = str(tmp_path)
+            s3.put_json = AsyncMock()
+            return await extract_scene_keyframes(
+                self.VIDEO_ID,
+                duration_seconds=120,
+                lowres_video=_ready_lowres(tmp_path),
+                resolve_reselect=resolve_reselect,
             )
 
-        assert len(frames) == 4
-        assert frames[0]["index"] == 6
-        # Regression: fps=1/step samples window STARTS (frame i at i*step) —
-        # a +step/2 offset here made the hires refiner seek the wrong content.
-        from src.services.media.scene_extractor import _INTERVAL_SAMPLE_COUNT
+    async def test_should_ask_after_selection_and_use_the_returned_hook(self, tmp_path):
+        order: list[str] = []
 
-        step = max(15, 600 // _INTERVAL_SAMPLE_COUNT)
-        assert [f["timestamp"] for f in frames] == [
-            0.0,
-            float(step),
-            float(2 * step),
-            float(3 * step),
-        ]
-        assert all(f["path"].endswith(".jpg") for f in frames)
+        async def keep_first(frames):
+            return frames[:1]
 
-    async def test_ffmpeg_failure_returns_empty(self, tmp_path):
-        from unittest.mock import patch
+        async def resolve():
+            order.append("resolve")
+            return 40, keep_first
 
-        from src.services.media.scene_extractor import _sample_interval_frames
+        result = await self._extract(tmp_path, resolve, order)
 
-        frames_dir = tmp_path / "frames"
-        frames_dir.mkdir()
+        assert (order, len(result["selected_frames"])) == (["select", "resolve"], 1)
 
-        with patch("asyncio.create_subprocess_exec", side_effect=FileNotFoundError):
-            frames = await _sample_interval_frames(
-                tmp_path / "v.mp4", frames_dir, 600, str(tmp_path), index_offset=0
+    async def test_should_keep_the_local_selection_when_the_answer_is_no_reselect(self, tmp_path):
+        async def resolve():
+            return None, None
+
+        result = await self._extract(tmp_path, resolve, [])
+
+        assert len(result["selected_frames"]) == 3
+
+
+class TestZeroCandidatePath:
+    """A static camera with no cut above the threshold still yields uploaded frames."""
+
+    VIDEO_ID = "dQw4w9WgXcQ"
+
+    async def test_should_upload_uniform_frames_when_scene_detection_finds_none(self, tmp_path):
+        def fake_exec(*args, **kwargs):
+            proc = MagicMock()
+            proc.returncode = None
+
+            async def communicate():
+                if "-ss" in args:
+                    Path(args[-1]).write_bytes(b"jpg")
+                    proc.returncode = 0
+                    return (b"", b"")
+                # ffmpeg >= 7 exits 234 when the scene pass writes no frame
+                proc.returncode = 234
+                return (b"", b"Nothing was written into output file, because ...")
+
+            proc.communicate = communicate
+            return proc
+
+        with (
+            patch(
+                "src.services.media.scene_extractor._check_existing_frames",
+                AsyncMock(return_value=None),
+            ),
+            patch(
+                "src.services.media.scene_extractor._upload_frames_batch",
+                AsyncMock(side_effect=lambda f: f),
+            ),
+            patch("src.services.media.hires_refiner.refine_selected_frames", AsyncMock()),
+            patch("src.services.media.frame_scorer.score_all_frames", side_effect=lambda f: f),
+            patch(
+                "src.services.media.frame_scorer.select_frames",
+                side_effect=lambda frames, duration: ([], []),
+            ),
+            patch("src.services.media.scene_extractor.s3_client") as s3,
+            patch("src.services.media.scene_extractor.tempfile") as tempfile_mod,
+            patch("src.services.media.scene_extractor.settings") as mock_settings,
+            patch("asyncio.create_subprocess_exec", side_effect=fake_exec),
+        ):
+            mock_settings.SCENE_EXTRACTION_ENABLED = True
+            mock_settings.SCENE_THRESHOLD = 0.3
+            mock_settings.SCENE_S3_PREFIX = "scenes-v3"
+            tempfile_mod.mkdtemp.return_value = str(tmp_path)
+            s3.put_json = AsyncMock()
+            result = await extract_scene_keyframes(
+                self.VIDEO_ID, duration_seconds=1127, lowres_video=_ready_lowres(tmp_path)
             )
 
-        assert frames == []
+        assert len(result["selected_frames"]) == 25
 
 
 class TestManifestQualityGate:
@@ -695,27 +784,21 @@ class TestManifestQualityGate:
         assert len(entries) == 15
 
 
-class TestProxiedPrefetchLifecycle:
-    """Proxied runs: the 720p prefetch starts after pass 1, feeds the refiner, and is
-    always closed — on success, on a detection failure, and on an exception."""
+class TestRunHiresVideo:
+    """The run's 720p file: extraction refines from it and never closes it — moment fill
+    reads it later, the run closes it. The pass-1 file is closed once detection is done."""
 
     VIDEO_ID = "dQw4w9WgXcQ"
 
-    def _settings(self, mock_settings) -> None:
+    def _settings(self, mock_settings, hires_enabled: bool = True) -> None:
         mock_settings.SCENE_EXTRACTION_ENABLED = True
         mock_settings.SCENE_THRESHOLD = 0.3
         mock_settings.SCENE_DETECT_SCALE_WIDTH = 1024
         mock_settings.SCENE_JPEG_QUALITY = 4
         mock_settings.SCENE_S3_PREFIX = "scenes-v3"
+        mock_settings.SCENE_HIRES_ENABLED = hires_enabled
 
-    def _fake_exec(self, tmp_path, ffmpeg_ok: bool = True):
-        order: list[str] = []
-
-        async def ytdlp_communicate():
-            order.append("yt-dlp")
-            (tmp_path / f"{self.VIDEO_ID}.mp4").write_bytes(b"x" * 2048)
-            return (b"", b"")
-
+    def _fake_exec(self, tmp_path, order: list[str], ffmpeg_ok: bool):
         async def ffmpeg_communicate():
             order.append("ffmpeg")
             if not ffmpeg_ok:
@@ -727,10 +810,10 @@ class TestProxiedPrefetchLifecycle:
         def fake_exec(*args, **kwargs):
             proc = AsyncMock()
             proc.returncode = 0
-            proc.communicate = ytdlp_communicate if args[0] == "yt-dlp" else ffmpeg_communicate
+            proc.communicate = ffmpeg_communicate
             return proc
 
-        return fake_exec, order
+        return fake_exec
 
     async def _run(
         self,
@@ -738,19 +821,16 @@ class TestProxiedPrefetchLifecycle:
         *,
         ffmpeg_ok: bool = True,
         select_raises: bool = False,
-        close_error: type[BaseException] | None = None,
+        hires_enabled: bool = True,
     ):
-        source = MagicMock()
-        source.close = AsyncMock(side_effect=close_error)
-        started_after: list[str] = []
-        fake_exec, order = self._fake_exec(tmp_path, ffmpeg_ok=ffmpeg_ok)
-
-        async def fake_start(video_id, pass1_video):
-            started_after.extend(order)
-            assert pass1_video.exists()
-            return source
+        order: list[str] = []
+        lowres_video = _ready_lowres(tmp_path, order)
+        hires_video = MagicMock()
+        hires_video.close = AsyncMock()
+        hires_video.start = MagicMock(side_effect=lambda: order.append("start-720p"))
 
         def fake_select(frames, duration):
+            order.append("select")
             if select_raises:
                 raise RuntimeError("boom")
             return frames, frames[:1]
@@ -764,7 +844,6 @@ class TestProxiedPrefetchLifecycle:
                 "src.services.media.scene_extractor._upload_frames_batch",
                 AsyncMock(side_effect=lambda f: f),
             ),
-            patch("src.services.media.hires_prefetch.start_local_hires", side_effect=fake_start),
             patch(
                 "src.services.media.hires_refiner.refine_selected_frames", AsyncMock(return_value=1)
             ) as refine,
@@ -773,42 +852,111 @@ class TestProxiedPrefetchLifecycle:
             patch("src.services.media.scene_extractor.s3_client") as s3,
             patch("src.services.media.scene_extractor.tempfile") as tempfile_mod,
             patch("src.services.media.scene_extractor.settings") as mock_settings,
-            patch("asyncio.create_subprocess_exec", side_effect=fake_exec),
+            patch(
+                "asyncio.create_subprocess_exec",
+                side_effect=self._fake_exec(tmp_path, order, ffmpeg_ok),
+            ),
         ):
-            self._settings(mock_settings)
+            self._settings(mock_settings, hires_enabled)
             tempfile_mod.mkdtemp.return_value = str(tmp_path)
             s3.put_json = AsyncMock()
-            result = await extract_scene_keyframes(self.VIDEO_ID, duration_seconds=120)
-        return result, source, refine, started_after
+            result = await extract_scene_keyframes(
+                self.VIDEO_ID,
+                duration_seconds=120,
+                hires_video=hires_video,
+                lowres_video=lowres_video,
+            )
+        return result, hires_video, refine, order, lowres_video
 
-    async def test_should_start_prefetch_after_pass1_and_hand_it_to_the_refiner(self, tmp_path):
-        result, source, refine, started_after = await self._run(tmp_path)
+    async def test_should_start_the_720p_download_before_detection(self, tmp_path):
+        """start() is idempotent: the metadata phase normally started it already."""
+        _, _, _, order, _ = await self._run(tmp_path)
 
-        assert started_after == ["yt-dlp"]  # before scene detection ran
-        assert refine.await_args.kwargs["local_source"] is source
-        assert len(result["selected_frames"]) == 2
+        assert order[:3] == ["start-720p", "lowres-ready", "ffmpeg"]
 
-    async def test_should_close_prefetch_on_success(self, tmp_path):
-        _, source, _, _ = await self._run(tmp_path)
+    async def test_should_refine_from_the_runs_720p_file(self, tmp_path):
+        _, hires_video, refine, _, _ = await self._run(tmp_path)
 
-        source.close.assert_awaited_once()
+        assert refine.await_args.args[2] is hires_video
 
-    async def test_should_close_prefetch_when_scene_detection_fails(self, tmp_path):
-        result, source, refine, _ = await self._run(tmp_path, ffmpeg_ok=False)
+    async def test_should_leave_the_720p_file_open_for_moment_fill(self, tmp_path):
+        _, hires_video, _, _, _ = await self._run(tmp_path)
+
+        hires_video.close.assert_not_awaited()
+
+    async def test_should_keep_the_720p_download_when_no_frame_survives(self, tmp_path):
+        """Zero candidates used to cancel the prefetch; moment fill still needs it."""
+        result, hires_video, refine, _, _ = await self._run(tmp_path, ffmpeg_ok=False)
+
+        assert (result["selected_frames"], refine.await_count) == ([], 0)
+        hires_video.close.assert_not_awaited()
+
+    async def test_should_keep_the_720p_download_when_extraction_raises(self, tmp_path):
+        result, hires_video, _, _, _ = await self._run(tmp_path, select_raises=True)
 
         assert result["selected_frames"] == []
-        refine.assert_not_awaited()
-        source.close.assert_awaited_once()
+        hires_video.close.assert_not_awaited()
 
-    async def test_should_close_prefetch_when_extraction_raises(self, tmp_path):
-        result, source, _, _ = await self._run(tmp_path, select_raises=True)
+    async def test_should_not_start_the_download_when_hires_is_disabled(self, tmp_path):
+        _, hires_video, _, _, _ = await self._run(tmp_path, hires_enabled=False)
 
-        assert result["selected_frames"] == []
-        source.close.assert_awaited_once()
+        hires_video.start.assert_not_called()
 
-    async def test_should_delete_temp_video_when_close_reraises_a_cancel(self, tmp_path):
-        """close() re-raises a cancel aimed at the extraction; the unlink still runs."""
-        with pytest.raises(asyncio.CancelledError):
-            await self._run(tmp_path, close_error=asyncio.CancelledError)
+    async def test_should_close_the_pass1_download_on_exit(self, tmp_path):
+        *_, lowres_video = await self._run(tmp_path, select_raises=True)
 
-        assert not (tmp_path / f"{self.VIDEO_ID}.mp4").exists()
+        lowres_video.close.assert_awaited()
+
+    async def test_should_close_the_pass1_download_as_soon_as_detection_is_done(self, tmp_path):
+        """Regression: the low-res file stayed on disk until the frames phase ended."""
+        _, _, _, order, _ = await self._run(tmp_path)
+
+        assert order.index("lowres-closed") < order.index("select")
+
+
+class TestColdMediaRun:
+    """1a.7: a cold benchmark run never reads the manifest; a normal run still does."""
+
+    @patch("src.services.media.scene_extractor.s3_client")
+    async def test_should_report_no_cached_frames_without_reading_s3_when_skip_cache_is_set(
+        self, mock_s3_client
+    ):
+        mock_s3_client.get_json = AsyncMock(return_value=_valid_manifest())
+
+        cached = await frames_cached("dQw4w9WgXcQ", skip_cache=True)
+
+        assert (cached, mock_s3_client.get_json.await_count) == (False, 0)
+
+    @patch("src.services.media.scene_extractor.settings")
+    @patch("src.services.media.scene_extractor.s3_client")
+    async def test_should_report_cached_frames_when_skip_cache_is_unset(
+        self, mock_s3_client, mock_settings
+    ):
+        mock_settings.SCENE_HIRES_ENABLED = True
+        mock_s3_client.get_json = AsyncMock(return_value=_valid_manifest())
+
+        assert await frames_cached("dQw4w9WgXcQ") is True
+
+    @patch("src.services.media.scene_extractor._do_extraction", new_callable=AsyncMock)
+    @patch("src.services.media.scene_extractor._check_existing_frames", new_callable=AsyncMock)
+    @patch("src.services.media.scene_extractor.settings")
+    async def test_should_extract_fresh_frames_without_a_manifest_lookup_when_skip_cache_is_set(
+        self, mock_settings, mock_check, mock_extract
+    ):
+        mock_settings.SCENE_EXTRACTION_ENABLED = True
+        mock_check.return_value = {
+            "all_frames": [{"index": 0}],
+            "selected_frames": [],
+            "gallery_frames": [],
+        }
+        mock_extract.return_value = {
+            "all_frames": [],
+            "selected_frames": [],
+            "gallery_frames": ["fresh"],
+        }
+
+        result = await extract_scene_keyframes(
+            "dQw4w9WgXcQ", lowres_video=MagicMock(close=AsyncMock()), skip_cache=True
+        )
+
+        assert (result["gallery_frames"], mock_check.await_count) == (["fresh"], 0)

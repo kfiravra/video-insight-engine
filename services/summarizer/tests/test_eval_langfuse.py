@@ -40,7 +40,7 @@ Handler = Callable[[httpx.Request], httpx.Response]
 _TRACE = {
     "id": "tr1",
     "scores": [{"name": "faithfulness", "value": 0.75, "timestamp": "2026-10-07T10:00:00Z"}],
-    "observations": [{"name": "classifier", "output": '{"format": "tutorial"}'}],
+    "observations": [{"name": "tier_probe", "output": '{"format": "tutorial"}'}],
 }
 _TARGET = TraceTarget("vs1", datetime(2026, 10, 7, tzinfo=UTC))
 
@@ -62,7 +62,7 @@ class TestLangfuse:
 
         async with _langfuse(handler) as client:
             signals = await collect_signals(client, {"g1": _TARGET}, sleep=_no_sleep)
-        assert (signals["g1"].faithfulness, signals["g1"].classifier_format) == (0.75, "tutorial")
+        assert (signals["g1"].faithfulness, signals["g1"].probe_format) == (0.75, "tutorial")
 
     async def test_should_search_traces_by_pipeline_summary_id(self) -> None:
         names: list[str] = []
@@ -211,7 +211,7 @@ def _outcome(vid: str, faithfulness: float | None, **extra: Any) -> VideoOutcome
 @pytest.fixture
 def report(tmp_path: Path) -> Path:
     """Pass report: ``a`` lost its Langfuse read, ``b`` has it, ``c`` errored."""
-    skipped = AssertionResult("expectedFormat", None, "classifier format unavailable")
+    skipped = AssertionResult("expectedFormat", None, "probe format unavailable")
     outcomes = [
         _outcome("a", None, assertions=[skipped]),
         _outcome("b", 0.8, trace_id="tr-b"),

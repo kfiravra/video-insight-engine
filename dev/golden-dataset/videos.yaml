@@ -14,7 +14,7 @@
 #   id                 — stable slug used as the Langfuse dataset item ID
 #   url                — YouTube URL the pipeline will fetch
 #   domain             — primary contentTag the pipeline must produce
-#   format             — one of the VALID_FORMATS in classifier.py (tutorial,
+#   format             — one of the VALID_FORMATS in models/probe_types.py (tutorial,
 #                        commentary, reaction, opinion_rant, motivational,
 #                        interview, lecture, vlog, documentary, walkthrough,
 #                        podcast, news, news_commentary, entertainment,
@@ -28,7 +28,7 @@
 #   keyContent         — terms the extraction should mention (80%+ overlap target)
 #   assertions         — optional deterministic per-video checks, validated by
 #                        scripts/_eval_schema.py and gated by scripts/gate.py:
-#                        expectedDomain, expectedFormat (classifier output from
+#                        expectedDomain, expectedFormat (tier-probe output from
 #                        the Langfuse trace), forbiddenComponents,
 #                        requiredComponents, quizAbsentOrLast, minItems,
 #                        minItemsWithField, noTimestampBeyondDuration.
@@ -367,11 +367,6 @@ videos:
         values: [vlog, documentary, walkthrough]
       - type: forbiddenComponents
         components: [step_player, checklist]
-        xfail:
-          # Nondeterministic today: XPASS in baseline r1, XFAIL in r2.
-          reason: "C19 — domain backfill is unconditional (expected to pass at gate 1)"
-          until: "1b.2 / 1d.7"
-          strict: false
       - type: quizAbsentOrLast
       - type: minItems
         component: spot_explorer
@@ -384,8 +379,8 @@ videos:
     # Focaccia", 11:15, category Entertainment, en auto captions (English
     # narration over Italian speech). Opens with the village and the cook's
     # 55-year story before the recipe starts — recipe components must still
-    # appear. Today the plan sees only the first 3,000 transcript chars (the
-    # story), so step_player is missing: xfail until 1b.2.
+    # appear. Until 1b.2 the plan saw only the first 3,000 transcript chars
+    # (the story) and missed step_player; it now reads the full transcript.
     url: https://www.youtube.com/watch?v=wCkLNqy5OHE
     quick: true
     domain: food
@@ -402,9 +397,6 @@ videos:
         values: [tutorial, documentary, story, vlog]
       - type: requiredComponents
         components: [step_player, checklist]
-        xfail:
-          reason: "plan sees 3,000 chars; fixed by 1b.2"
-          until: "1b.2"
       - type: forbiddenComponents
         components: [quiz_arena]
       - type: quizAbsentOrLast
@@ -412,9 +404,6 @@ videos:
         component: step_player
         field: steps
         min: 4
-        xfail:
-          reason: "plan sees 3,000 chars; fixed by 1b.2"
-          until: "1b.2"
       - type: minItems
         component: checklist
         field: items

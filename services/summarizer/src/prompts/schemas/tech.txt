@@ -63,14 +63,8 @@ Extract structured programming/tech content.
   }
 }
 
-SCALING (video is {duration_minutes} minutes):
-- Under 15 min: 2-4 snippets, 1-3 patterns, 3-5 cheatSheet items
-- 15-30 min: 4-8 snippets, 2-5 patterns, 5-8 cheatSheet items
-- Over 30 min: 6-12 snippets, 3-8 patterns, 8-15 cheatSheet items
-- Include all code shown — every function, command, and example
-
 RULES:
-- Include all code snippets and commands shown in the video
+- Include all code snippets and commands shown in the video — every function, command, and example
 - Preserve exact variable names, function names, class names, imports
 - Package names exact: "express" not "Express.js framework"
 - Version numbers preserved: "React 18" not "latest React"

@@ -1,5 +1,5 @@
 {
-  "_comment": "Golden LLM response fixture for the review domain. Hand-built against PlanResult, ReviewData, EnrichmentData, SynthesisResult — a valid per-stage output set for a product comparison review. Drift canary consumed by tests/test_llm_response_fixtures.py.",
+  "_comment": "Golden LLM response fixture for the review domain. Hand-built against PlanResult, ReviewData, SynthesisResult — a valid per-stage output set for a product comparison review. Review forbids quiz_arena, so no quiz call runs and enrichment_response is null. Drift canary consumed by tests/test_llm_response_fixtures.py.",
   "domain": "review",
   "video_meta": {
     "videoId": "fixture-review-001",
@@ -127,32 +127,7 @@
       ]
     }
   },
-  "enrichment_response": {
-    "quiz": [
-      {
-        "question": "How was desk wobble measured in this review?",
-        "options": [
-          "A subjective shake test",
-          "A dial gauge at three heights",
-          "A phone accelerometer app",
-          "Slow-motion video"
-        ],
-        "correctIndex": 1,
-        "explanation": "The reviewer uses a dial gauge at three heights instead of the usual shake test."
-      },
-      {
-        "question": "Which desk wins on warranty?",
-        "options": [
-          "Nimbus X2",
-          "Strider Pro",
-          "Both equal",
-          "Neither offers a warranty"
-        ],
-        "correctIndex": 1,
-        "explanation": "The Strider Pro carries a 10-year warranty versus 5 years on the Nimbus X2."
-      }
-    ]
-  },
+  "enrichment_response": null,
   "synthesis_response": {
     "tldr": "The Nimbus X2 beats the Strider Pro on measured stability and speed; the Strider wins warranty and height range.",
     "keyTakeaways": [
