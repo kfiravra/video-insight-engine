@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Mapping
 from typing import Any
 
 from src.shared_config.domain_config import (
@@ -16,6 +17,7 @@ from src.shared_config.domain_config import (
     domain_requirements,
     effective_requirements,
     quiz_policy,
+    requirement_evidence,
     sibling_datasources,
 )
 from src.utils.data_helpers import is_empty_data
@@ -477,6 +479,10 @@ _REQUIREMENT_EQUIVALENTS: dict[str, frozenset[str]] = {
     "step_player": frozenset({"step_player", "step_flow_canvas"}),
 }
 
+# droppedTabs reason for a required component the plan's evidence ruled out
+# (pipeline-1min 1d.7) — recorded for the audit trail, never a planned tab.
+REQUIREMENT_EVIDENCE_FALSE = "requirement_evidence_false"
+
 
 def _backfill_required_component(
     tabs: list[dict],
@@ -545,6 +551,110 @@ def _backfill_required_component(
     return False
 
 
+def ruled_out_by_evidence(primary_tag: str, evidence: Mapping[str, bool] | None) -> dict[str, str]:
+    """Required component → its evidence key, for each key the plan answered False.
+
+    A food vlog with ``has_ingredients: false`` rules ``checklist`` out: it is
+    neither backfilled nor reached by demotion (D15). A missing key is "no
+    opinion" and rules nothing out.
+    """
+    if not evidence:
+        return {}
+    gates = requirement_evidence().get(primary_tag, {})
+    return {component: key for component, key in gates.items() if evidence.get(key) is False}
+
+
+def demotion_blocked(primary_tag: str, evidence: Mapping[str, bool] | None) -> frozenset[str]:
+    """Components no demotion may land on: the ruled-out ones and their equivalents."""
+    ruled_out = ruled_out_by_evidence(primary_tag, evidence)
+    return frozenset().union(*(_REQUIREMENT_EQUIVALENTS.get(c, frozenset({c})) for c in ruled_out))
+
+
+def count_dropped_tabs(dropped: list[dict]) -> int:
+    """Planned tabs that died. An evidence-skipped requirement is recorded in
+    ``droppedTabs`` for the audit trail but was never a tab, so it is not counted."""
+    return sum(1 for entry in dropped if entry.get("reason") != REQUIREMENT_EVIDENCE_FALSE)
+
+
+def _record_evidence_skip(
+    primary_tag: str, component: str, key: str, dropped_sink: list[dict] | None
+) -> None:
+    logger.info(
+        "Required '%s' for domain '%s' not backfilled: %s=false in the plan's evidence",
+        component,
+        primary_tag,
+        key,
+    )
+    if dropped_sink is not None:
+        dropped_sink.append(
+            {
+                "id": "",
+                "component": component,
+                "dataSource": "",
+                "reason": REQUIREMENT_EVIDENCE_FALSE,
+                "detail": f"{key}=false",
+            }
+        )
+
+
+def _pop_forbidden(
+    tabs: list[dict],
+    forbidden: frozenset[str],
+    primary_tag: str,
+    content_format: str | None,
+    dropped_sink: list[dict] | None,
+) -> None:
+    for idx in reversed(range(len(tabs))):
+        component = tabs[idx].get("component", "")
+        if component not in forbidden:
+            continue
+        popped = tabs.pop(idx)
+        logger.warning(
+            "TAB DROPPED: id=%r component=%r — forbidden for domain=%s format=%s",
+            popped.get("id"),
+            component,
+            primary_tag,
+            content_format,
+        )
+        if dropped_sink is not None:
+            dropped_sink.append(
+                {
+                    "id": popped.get("id", ""),
+                    "component": component,
+                    "dataSource": "",
+                    "reason": "domain_forbidden",
+                }
+            )
+
+
+def _cap_component_counts(
+    tabs: list[dict], limits: dict[str, int], primary_tag: str, dropped_sink: list[dict] | None
+) -> None:
+    for comp, limit in limits.items():
+        indices = [i for i, t in enumerate(tabs) if t.get("component") == comp]
+        if len(indices) <= limit:
+            continue
+        logger.warning(
+            "'%s' appears %dx (max %d for domain '%s') — keeping first %d only",
+            comp,
+            len(indices),
+            limit,
+            primary_tag,
+            limit,
+        )
+        for idx in reversed(indices[limit:]):
+            popped = tabs.pop(idx)
+            if dropped_sink is not None:
+                dropped_sink.append(
+                    {
+                        "id": popped.get("id", ""),
+                        "component": comp,
+                        "dataSource": "",
+                        "reason": "domain_max_cap",
+                    }
+                )
+
+
 def _validate_domain_requirements(
     tabs: list[dict],
     primary_tag: str,
@@ -554,86 +664,44 @@ def _validate_domain_requirements(
     video_meta: dict | None = None,
     dropped_sink: list[dict] | None = None,
     content_format: str | None = None,
+    evidence: Mapping[str, bool] | None = None,
 ) -> None:
     """Validate assembled tabs against domain requirements in-place.
 
     When a required component is missing, attempt to backfill it from the registry
-    defaults using real extraction data before falling back to a warning.
+    defaults using real extraction data before falling back to a warning — unless
+    the plan's ``evidence`` rules it out (recorded as ``requirement_evidence_false``).
     Forbidden components (domain policy + playbook union) are popped — this is
     the backstop behind the plan-time enforcement, covering cached plans,
     backfill paths, and promotion outputs.
     """
     reqs = effective_requirements(primary_tag, content_format)
-    tab_components = [t.get("component", "") for t in tabs]
+    _pop_forbidden(
+        tabs, reqs.get("forbidden") or frozenset(), primary_tag, content_format, dropped_sink
+    )
 
-    forbidden = reqs.get("forbidden") or frozenset()
-    if forbidden:
-        for idx in reversed(range(len(tabs))):
-            component = tabs[idx].get("component", "")
-            if component in forbidden:
-                popped = tabs.pop(idx)
-                logger.warning(
-                    "TAB DROPPED: id=%r component=%r — forbidden for domain=%s format=%s",
-                    popped.get("id"),
-                    component,
-                    primary_tag,
-                    content_format,
-                )
-                if dropped_sink is not None:
-                    dropped_sink.append(
-                        {
-                            "id": popped.get("id", ""),
-                            "component": component,
-                            "dataSource": "",
-                            "reason": "domain_forbidden",
-                        }
-                    )
-        tab_components = [t.get("component", "") for t in tabs]
-
+    ruled_out = ruled_out_by_evidence(primary_tag, evidence)
     for req in reqs.get("required", []):
         accepted = _REQUIREMENT_EQUIVALENTS.get(req, frozenset({req}))
-        if any(c in accepted for c in tab_components):
+        if any(t.get("component", "") in accepted for t in tabs):
             continue
-        if _backfill_required_component(
-            tabs,
-            primary_tag,
-            accepted,
-            extraction,
-            enrichment,
-            synthesis,
-            video_meta,
+        if req in ruled_out:
+            _record_evidence_skip(primary_tag, req, ruled_out[req], dropped_sink)
+        elif not _backfill_required_component(
+            tabs, primary_tag, accepted, extraction, enrichment, synthesis, video_meta
         ):
-            tab_components = [t.get("component", "") for t in tabs]
-        else:
             logger.warning(
                 "Domain '%s' requires '%s' but it's missing from assembled tabs",
                 primary_tag,
                 req,
             )
 
-    for comp, limit in reqs.get("max", {}).items():
-        indices = [i for i, t in enumerate(tabs) if t.get("component") == comp]
-        if len(indices) > limit:
-            logger.warning(
-                "'%s' appears %dx (max %d for domain '%s') — keeping first %d only",
-                comp,
-                len(indices),
-                limit,
-                primary_tag,
-                limit,
-            )
-            for idx in reversed(indices[limit:]):
-                popped = tabs.pop(idx)
-                if dropped_sink is not None:
-                    dropped_sink.append(
-                        {
-                            "id": popped.get("id", ""),
-                            "component": comp,
-                            "dataSource": "",
-                            "reason": "domain_max_cap",
-                        }
-                    )
+    _cap_component_counts(tabs, reqs.get("max", {}), primary_tag, dropped_sink)
+    _check_tab_labels(tabs)
 
+
+def _check_tab_labels(tabs: list[dict]) -> None:
+    """Warn on empty goals/labels; rename placeholder "Untitled Chapter" labels."""
     for tab in tabs:
         if not tab.get("goal"):
             logger.warning("Tab '%s' has empty goal", tab.get("id", "?"))
@@ -1373,6 +1441,10 @@ def assemble_response(
 
     primary_tag = meta["primaryTag"]
     raw_tabs = triage.get("tabs", [])
+    # The plan's Appendix-C booleans (D15): a required component they rule out
+    # is neither backfilled nor reached by demotion.
+    evidence = triage.get("evidence") if isinstance(triage.get("evidence"), dict) else None
+    blocked_rungs = demotion_blocked(primary_tag, evidence)
 
     assembled_tabs: list[dict] = []
     # Response-wide reuse ledger: s3 key -> timestamp of first attachment.
@@ -1518,7 +1590,9 @@ def assemble_response(
         # never demoted.
         degraded_from: str | None = None
         if props is None and not is_empty_data(data):
-            demoted = demote_component(component, tab_with_hints, data, extraction, enrichment)
+            demoted = demote_component(
+                component, tab_with_hints, data, extraction, enrichment, blocked=blocked_rungs
+            )
             if demoted is not None:
                 degraded_from = component
                 component, props = demoted
@@ -1627,6 +1701,7 @@ def assemble_response(
         video_meta,
         dropped_sink=dropped_tabs,
         content_format=triage.get("contentFormat"),
+        evidence=evidence,
     )
 
     # Resolve cross-tab links; each link's text is the target tab's own label.

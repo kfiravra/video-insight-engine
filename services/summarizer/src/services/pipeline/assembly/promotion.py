@@ -212,18 +212,26 @@ def demote_component(
     data: Any,
     extraction: dict | None,
     enrichment: dict | None,
+    blocked: frozenset[str] = frozenset(),
 ) -> tuple[str, dict] | None:
     """Walk the demote ladder for a component whose assembler returned None.
 
     Returns ``(simpler_component, props)`` from the first rung whose assembler
     produces validating props, or None when every rung fails (which for the
     display_section terminal only happens on data that is truly None).
+    Rungs in ``blocked`` are skipped: components the plan's evidence ruled
+    out (e.g. a food vlog's spot list must not degrade into a ``checklist``).
     """
     from .core import _validate_assembled_props  # local import avoids cycle
     from .density import enforce_density
     from .registry import ASSEMBLER_REGISTRY
 
     for target in _DEMOTE_LADDER.get(component, _DEMOTE_DEFAULT):
+        if target in blocked:
+            logger.info(
+                "[assembly] demote %s -> %s skipped: ruled out by evidence", component, target
+            )
+            continue
         assembler = ASSEMBLER_REGISTRY.get(target)
         if assembler is None:
             continue

@@ -367,11 +367,6 @@ videos:
         values: [vlog, documentary, walkthrough]
       - type: forbiddenComponents
         components: [step_player, checklist]
-        xfail:
-          # Nondeterministic today: XPASS in baseline r1, XFAIL in r2.
-          reason: "C19 — domain backfill is unconditional (expected to pass at gate 1)"
-          until: "1b.2 / 1d.7"
-          strict: false
       - type: quizAbsentOrLast
       - type: minItems
         component: spot_explorer

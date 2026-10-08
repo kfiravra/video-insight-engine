@@ -11,6 +11,7 @@ from src.config import settings
 from src.services.cache.response_cache import response_cache
 from src.services.media.s3_client import S3Client
 from src.services.pipeline.assembly import assemble_response
+from src.services.pipeline.assembly.core import count_dropped_tabs
 from src.services.pipeline.assembly.moment_frame_fill import fill_moment_frames
 from src.services.pipeline.phases.metadata import await_description_analysis
 from src.services.pipeline.pipeline_helpers import (
@@ -125,6 +126,8 @@ async def run_phase_assembly(ctx: PipelineContext) -> AsyncGenerator[str, None]:
     # designed-minus-assembled subtraction masked drops and could go negative.
     plan_dropped = ctx.plan_result.dropped_tabs if ctx.plan_result else []
     dropped_tabs = [*plan_dropped, *assembled.get("dropped", [])]
+    # Evidence-skipped requirements are listed but were never tabs (1d.7).
+    tabs_dropped = count_dropped_tabs(dropped_tabs)
     # Designed = what the planner designed. When plan validation left nothing
     # and the domain defaults stand in, only the drops were the planner's.
     plan_fallback = bool(ctx.plan_result and ctx.plan_result.plan_fallback)
@@ -135,7 +138,7 @@ async def run_phase_assembly(ctx: PipelineContext) -> AsyncGenerator[str, None]:
             "video_id": ctx.video_summary_id,
             "tabs_designed": tabs_designed,
             "tabs_assembled": len(assembled.get("tabs", [])),
-            "tabs_dropped": len(dropped_tabs),
+            "tabs_dropped": tabs_dropped,
             "dropped_detail": dropped_tabs,
             "components_used": [t["component"] for t in assembled.get("tabs", [])],
         },
@@ -179,7 +182,7 @@ async def run_phase_assembly(ctx: PipelineContext) -> AsyncGenerator[str, None]:
             "assembly": {
                 "tabsDesigned": tabs_designed,
                 "tabsAssembled": len(assembled.get("tabs", [])),
-                "tabsDropped": len(dropped_tabs),
+                "tabsDropped": tabs_dropped,
                 "droppedTabs": dropped_tabs,
                 **({"planFallback": True} if plan_fallback else {}),
             },
