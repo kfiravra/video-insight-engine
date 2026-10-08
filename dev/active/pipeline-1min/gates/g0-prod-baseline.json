@@ -1,0 +1,705 @@
+{
+ "status": "partial: 3/6 runs; stopped 2026-10-08 00:50 UTC \u2014 YouTube bot check on the primary proxy exit (exits 2-3 pass)",
+ "task": "pipeline-1min 0.10 prod baseline",
+ "deployedCommit": "c57c2a6",
+ "source": "prod Mongo videoSummaryCache.pipeline.timing + llm_usage ledger (read-only)",
+ "trigger": "public demo login + POST /api/videos bypassCache=true, one run at a time",
+ "runs": [
+  {
+   "run": "r1_T1dQhQAm8Tc",
+   "youtubeId": "T1dQhQAm8Tc",
+   "videoSummaryId": "6ac69200d34d6ad2ce612b62",
+   "version": 2,
+   "status": "completed",
+   "degraded": false,
+   "pipelineVersion": "v8",
+   "durationS": 1143,
+   "startedAt": "2026-10-07T18:40:00.242Z",
+   "media": {
+    "transcriptSource": "s3",
+    "transcriptType": "cached",
+    "framesFromS3Manifest": true,
+    "cold": false
+   },
+   "totalMs": 147136,
+   "milestones": {
+    "metadataMs": 6207,
+    "synthesisCompleteMs": 124401,
+    "firstTabReadyMs": 133964,
+    "completeMs": 147112,
+    "doneMs": 147129
+   },
+   "phasesWallMs": {
+    "metadata": 11618,
+    "transcript": 263,
+    "frames": 117,
+    "transcript_frames": 263,
+    "visual_inject": 4,
+    "plan": 38498,
+    "extraction": 68933,
+    "synthesis": 5082,
+    "enrichment": 14639,
+    "synthesis_enrichment": 14643,
+    "assembly": 13174
+   },
+   "phasesStartMs": {
+    "metadata": 0,
+    "transcript": 11618,
+    "frames": 11639,
+    "transcript_frames": 11618,
+    "visual_inject": 11884,
+    "plan": 11888,
+    "extraction": 50386,
+    "synthesis": 119319,
+    "enrichment": 119320,
+    "synthesis_enrichment": 119319,
+    "assembly": 133962
+   },
+   "llm": {
+    "description_analysis": {
+     "calls": 1,
+     "wallMsMax": 5404,
+     "wallMsSum": 5404,
+     "spanMs": 5404,
+     "outputTokens": 272,
+     "cacheReadTokens": 0,
+     "costUsd": 0.000229,
+     "models": [
+      "gpt-4o-mini-2024-07-18"
+     ]
+    },
+    "classifier": {
+     "calls": 1,
+     "wallMsMax": 6485,
+     "wallMsSum": 6485,
+     "spanMs": 6485,
+     "outputTokens": 103,
+     "cacheReadTokens": 0,
+     "costUsd": 0.000307,
+     "models": [
+      "gpt-4o-mini-2024-07-18"
+     ]
+    },
+    "plan": {
+     "calls": 1,
+     "wallMsMax": 31985,
+     "wallMsSum": 31985,
+     "spanMs": 31985,
+     "outputTokens": 1581,
+     "cacheReadTokens": 0,
+     "costUsd": 0.079339,
+     "models": [
+      "claude-sonnet-4-6"
+     ]
+    },
+    "extraction": {
+     "calls": 1,
+     "wallMsMax": 68700,
+     "wallMsSum": 68700,
+     "spanMs": 68700,
+     "outputTokens": 6464,
+     "cacheReadTokens": 0,
+     "costUsd": 0.044349,
+     "models": [
+      "claude-haiku-4-5-20251001"
+     ]
+    },
+    "faithfulness": {
+     "calls": 5,
+     "wallMsMax": 1883,
+     "wallMsSum": 8950,
+     "spanMs": 1885,
+     "outputTokens": 195,
+     "cacheReadTokens": 0,
+     "costUsd": 0.00272,
+     "models": [
+      "gpt-4o-mini-2024-07-18"
+     ]
+    },
+    "synthesis": {
+     "calls": 1,
+     "wallMsMax": 3303,
+     "wallMsSum": 3303,
+     "spanMs": 3303,
+     "outputTokens": 339,
+     "cacheReadTokens": 0,
+     "costUsd": 0.000446,
+     "models": [
+      "gpt-4o-mini-2024-07-18"
+     ]
+    },
+    "enrichment": {
+     "calls": 1,
+     "wallMsMax": 14500,
+     "wallMsSum": 14500,
+     "spanMs": 14500,
+     "outputTokens": 1366,
+     "cacheReadTokens": 0,
+     "costUsd": 0.001289,
+     "models": [
+      "gpt-4o-mini-2024-07-18"
+     ]
+    }
+   },
+   "llmFailures": [
+    {
+     "feature": "summarize:synthesis",
+     "span": "synthesis",
+     "model": "openai/gpt-4o-mini",
+     "startMs": 119320,
+     "wallMs": 770,
+     "attempt": 1,
+     "error": "Timeout",
+     "rateLimited": false
+    }
+   ],
+   "counts": {
+    "llmCalls": 11,
+    "llmFailures": 1,
+    "retries": 1,
+    "rateLimited": 0,
+    "fallbacks": 0,
+    "outputTokens": 10320,
+    "cacheReadTokens": 0,
+    "downloadBytes": 54090438,
+    "tabsPlanned": 5,
+    "tabsAssembled": 6,
+    "tabsEmitted": 6
+   },
+   "costUsdTiming": 0.128679,
+   "costUsdLedger": 0.128679,
+   "ledgerRows": 12,
+   "downloads": [
+    {
+     "kind": "720p",
+     "purpose": "moment_fill",
+     "startMs": 133968,
+     "wallMs": 12010,
+     "mb": 54.1,
+     "ok": true
+    }
+   ],
+   "downloadSummary": {
+    "count": 1,
+    "mb": 54.1,
+    "wallMsSum": 12010,
+    "momentFillWallMs": 12010
+   },
+   "assembly": {
+    "tabsDesigned": 5,
+    "tabsAssembled": 6,
+    "tabsDropped": 0,
+    "droppedTabs": []
+   }
+  },
+  {
+   "run": "r1_jMq8lEu-of0",
+   "youtubeId": "jMq8lEu-of0",
+   "videoSummaryId": "6ac692b7d8075a18bed3b563",
+   "version": 1,
+   "status": "completed",
+   "degraded": false,
+   "pipelineVersion": "v8",
+   "durationS": 1001,
+   "startedAt": "2026-10-07T18:43:03.302Z",
+   "media": {
+    "transcriptSource": "ytdlp",
+    "transcriptType": "manual",
+    "framesFromS3Manifest": false,
+    "cold": true
+   },
+   "totalMs": 201768,
+   "milestones": {
+    "metadataMs": 3834,
+    "synthesisCompleteMs": 191985,
+    "firstTabReadyMs": 201720,
+    "completeMs": 201724,
+    "doneMs": 201738
+   },
+   "phasesWallMs": {
+    "metadata": 3916,
+    "transcript": 192,
+    "frames": 105955,
+    "frames.scene_detect": 14469,
+    "frames.score_select": 9080,
+    "frames.vision_reselect": 55770,
+    "frames.hires": 10999,
+    "frames.upload": 742,
+    "transcript_frames": 105973,
+    "visual_inject": 8,
+    "plan": 26460,
+    "extraction": 51848,
+    "synthesis": 3776,
+    "enrichment": 13504,
+    "synthesis_enrichment": 13509,
+    "assembly": 50
+   },
+   "phasesStartMs": {
+    "metadata": 0,
+    "transcript": 3916,
+    "frames": 3934,
+    "frames.scene_detect": 17918,
+    "frames.score_select": 32388,
+    "frames.vision_reselect": 41468,
+    "frames.hires": 97238,
+    "frames.upload": 108549,
+    "transcript_frames": 3916,
+    "visual_inject": 109892,
+    "plan": 109900,
+    "extraction": 136360,
+    "synthesis": 188209,
+    "enrichment": 188210,
+    "synthesis_enrichment": 188208,
+    "assembly": 201717
+   },
+   "llm": {
+    "vision": {
+     "calls": 1,
+     "wallMsMax": 55755,
+     "wallMsSum": 55755,
+     "spanMs": 55755,
+     "outputTokens": 3434,
+     "cacheReadTokens": 0,
+     "costUsd": 0.147963,
+     "models": [
+      "claude-sonnet-4-6"
+     ]
+    },
+    "classifier": {
+     "calls": 1,
+     "wallMsMax": 1758,
+     "wallMsSum": 1758,
+     "spanMs": 1758,
+     "outputTokens": 125,
+     "cacheReadTokens": 0,
+     "costUsd": 0.00033,
+     "models": [
+      "gpt-4o-mini-2024-07-18"
+     ]
+    },
+    "plan": {
+     "calls": 1,
+     "wallMsMax": 24673,
+     "wallMsSum": 24673,
+     "spanMs": 24673,
+     "outputTokens": 1195,
+     "cacheReadTokens": 14009,
+     "costUsd": 0.026094,
+     "models": [
+      "claude-sonnet-4-6"
+     ]
+    },
+    "extraction": {
+     "calls": 1,
+     "wallMsMax": 51819,
+     "wallMsSum": 51819,
+     "spanMs": 51819,
+     "outputTokens": 5546,
+     "cacheReadTokens": 0,
+     "costUsd": 0.038304,
+     "models": [
+      "claude-haiku-4-5-20251001"
+     ]
+    },
+    "faithfulness": {
+     "calls": 2,
+     "wallMsMax": 1402,
+     "wallMsSum": 2505,
+     "spanMs": 1402,
+     "outputTokens": 95,
+     "cacheReadTokens": 0,
+     "costUsd": 0.001054,
+     "models": [
+      "gpt-4o-mini-2024-07-18"
+     ]
+    },
+    "synthesis": {
+     "calls": 1,
+     "wallMsMax": 3770,
+     "wallMsSum": 3770,
+     "spanMs": 3770,
+     "outputTokens": 342,
+     "cacheReadTokens": 0,
+     "costUsd": 0.000482,
+     "models": [
+      "gpt-4o-mini-2024-07-18"
+     ]
+    },
+    "enrichment": {
+     "calls": 1,
+     "wallMsMax": 13494,
+     "wallMsSum": 13494,
+     "spanMs": 13494,
+     "outputTokens": 1382,
+     "cacheReadTokens": 0,
+     "costUsd": 0.001329,
+     "models": [
+      "gpt-4o-mini-2024-07-18"
+     ]
+    }
+   },
+   "llmFailures": [
+    {
+     "feature": "summarize:metadata",
+     "span": "description_analysis",
+     "model": "openai/gpt-4o-mini",
+     "startMs": 3836,
+     "wallMs": 60,
+     "attempt": 1,
+     "error": "Timeout",
+     "rateLimited": false
+    }
+   ],
+   "counts": {
+    "llmCalls": 8,
+    "llmFailures": 1,
+    "retries": 0,
+    "rateLimited": 0,
+    "fallbacks": 0,
+    "outputTokens": 12119,
+    "cacheReadTokens": 14009,
+    "downloadBytes": 160550355,
+    "tabsPlanned": 4,
+    "tabsAssembled": 5,
+    "tabsEmitted": 5
+   },
+   "costUsdTiming": 0.215556,
+   "costUsdLedger": 0.215556,
+   "ledgerRows": 9,
+   "downloads": [
+    {
+     "kind": "lowres",
+     "purpose": "scene_detect",
+     "startMs": 3990,
+     "wallMs": 13819,
+     "mb": 83.1,
+     "ok": true
+    },
+    {
+     "kind": "720p",
+     "purpose": "prefetch",
+     "startMs": 17919,
+     "wallMs": 19370,
+     "mb": 77.4,
+     "ok": true
+    }
+   ],
+   "downloadSummary": {
+    "count": 2,
+    "mb": 160.5,
+    "wallMsSum": 33189,
+    "momentFillWallMs": null
+   },
+   "assembly": {
+    "tabsDesigned": 4,
+    "tabsAssembled": 5,
+    "tabsDropped": 0,
+    "droppedTabs": []
+   }
+  },
+  {
+   "run": "r1_uC45_4nnEAI",
+   "youtubeId": "uC45_4nnEAI",
+   "videoSummaryId": "6ac6dd56d34d6ad2ce612b65",
+   "version": 2,
+   "status": "completed",
+   "degraded": false,
+   "pipelineVersion": "v8",
+   "durationS": 1127,
+   "startedAt": "2026-10-08T00:01:26.856Z",
+   "media": {
+    "transcriptSource": "s3",
+    "transcriptType": "cached",
+    "framesFromS3Manifest": false,
+    "cold": false
+   },
+   "totalMs": 168630,
+   "milestones": {
+    "metadataMs": 5306,
+    "synthesisCompleteMs": 162975,
+    "firstTabReadyMs": 164235,
+    "completeMs": 168606,
+    "doneMs": 168622
+   },
+   "phasesWallMs": {
+    "metadata": 13064,
+    "transcript": 286,
+    "frames": 58542,
+    "frames.scene_detect": 45358,
+    "transcript_frames": 58564,
+    "visual_inject": 0,
+    "plan": 24171,
+    "extraction": 58508,
+    "synthesis": 8663,
+    "enrichment": 9917,
+    "synthesis_enrichment": 9922,
+    "assembly": 4397
+   },
+   "phasesStartMs": {
+    "metadata": 0,
+    "transcript": 13064,
+    "frames": 13086,
+    "frames.scene_detect": 26264,
+    "transcript_frames": 13064,
+    "visual_inject": 71632,
+    "plan": 71632,
+    "extraction": 95803,
+    "synthesis": 154312,
+    "enrichment": 154313,
+    "synthesis_enrichment": 154311,
+    "assembly": 164233
+   },
+   "llm": {
+    "description_analysis": {
+     "calls": 1,
+     "wallMsMax": 7744,
+     "wallMsSum": 7744,
+     "spanMs": 7744,
+     "outputTokens": 274,
+     "cacheReadTokens": 0,
+     "costUsd": 0.000249,
+     "models": [
+      "gpt-4o-mini-2024-07-18"
+     ]
+    },
+    "classifier": {
+     "calls": 1,
+     "wallMsMax": 2147,
+     "wallMsSum": 2147,
+     "spanMs": 2147,
+     "outputTokens": 143,
+     "cacheReadTokens": 0,
+     "costUsd": 0.000334,
+     "models": [
+      "gpt-4o-mini-2024-07-18"
+     ]
+    },
+    "plan": {
+     "calls": 1,
+     "wallMsMax": 21993,
+     "wallMsSum": 21993,
+     "spanMs": 21993,
+     "outputTokens": 1051,
+     "cacheReadTokens": 0,
+     "costUsd": 0.072133,
+     "models": [
+      "claude-sonnet-4-6"
+     ]
+    },
+    "chapter_detect": {
+     "calls": 1,
+     "wallMsMax": 4197,
+     "wallMsSum": 4197,
+     "spanMs": 4197,
+     "outputTokens": 128,
+     "cacheReadTokens": 0,
+     "costUsd": 0.000407,
+     "models": [
+      "gpt-4o-mini-2024-07-18"
+     ]
+    },
+    "extraction": {
+     "calls": 1,
+     "wallMsMax": 53986,
+     "wallMsSum": 53986,
+     "spanMs": 53986,
+     "outputTokens": 5236,
+     "cacheReadTokens": 0,
+     "costUsd": 0.037812,
+     "models": [
+      "claude-haiku-4-5-20251001"
+     ]
+    },
+    "faithfulness": {
+     "calls": 2,
+     "wallMsMax": 1779,
+     "wallMsSum": 3243,
+     "spanMs": 1779,
+     "outputTokens": 80,
+     "cacheReadTokens": 0,
+     "costUsd": 0.001431,
+     "models": [
+      "gpt-4o-mini-2024-07-18"
+     ]
+    },
+    "synthesis": {
+     "calls": 1,
+     "wallMsMax": 8657,
+     "wallMsSum": 8657,
+     "spanMs": 8657,
+     "outputTokens": 319,
+     "cacheReadTokens": 0,
+     "costUsd": 0.000445,
+     "models": [
+      "gpt-4o-mini-2024-07-18"
+     ]
+    },
+    "enrichment": {
+     "calls": 1,
+     "wallMsMax": 9774,
+     "wallMsSum": 9774,
+     "spanMs": 9774,
+     "outputTokens": 675,
+     "cacheReadTokens": 0,
+     "costUsd": 0.000737,
+     "models": [
+      "gpt-4o-mini-2024-07-18"
+     ]
+    }
+   },
+   "llmFailures": [],
+   "counts": {
+    "llmCalls": 9,
+    "llmFailures": 0,
+    "retries": 0,
+    "rateLimited": 0,
+    "fallbacks": 0,
+    "outputTokens": 7906,
+    "cacheReadTokens": 0,
+    "downloadBytes": 249431420,
+    "tabsPlanned": 3,
+    "tabsAssembled": 4,
+    "tabsEmitted": 4
+   },
+   "costUsdTiming": 0.113548,
+   "costUsdLedger": 0.113548,
+   "ledgerRows": 9,
+   "downloads": [
+    {
+     "kind": "lowres",
+     "purpose": "scene_detect",
+     "startMs": 13169,
+     "wallMs": 12894,
+     "mb": 75.0,
+     "ok": true
+    },
+    {
+     "kind": "720p",
+     "purpose": "prefetch",
+     "startMs": 26270,
+     "wallMs": 21058,
+     "mb": 174.4,
+     "ok": true
+    },
+    {
+     "kind": "720p",
+     "purpose": "moment_fill",
+     "startMs": 164239,
+     "wallMs": 4365,
+     "mb": 0.0,
+     "ok": false
+    }
+   ],
+   "downloadSummary": {
+    "count": 3,
+    "mb": 249.4,
+    "wallMsSum": 38317,
+    "momentFillWallMs": 4365
+   },
+   "assembly": {
+    "tabsDesigned": 3,
+    "tabsAssembled": 4,
+    "tabsDropped": 0,
+    "droppedTabs": []
+   }
+  }
+ ],
+ "mediansPerVideo": {
+  "T1dQhQAm8Tc": {
+   "n": 1,
+   "totalMs": 147136,
+   "firstTabReadyMs": 133964,
+   "completeMs": 147112,
+   "doneMs": 147129,
+   "costUsd": 0.128679,
+   "phasesWallMs": {
+    "metadata": 11618,
+    "transcript": 263,
+    "frames": 117,
+    "transcript_frames": 263,
+    "visual_inject": 4,
+    "plan": 38498,
+    "extraction": 68933,
+    "synthesis": 5082,
+    "enrichment": 14639,
+    "synthesis_enrichment": 14643,
+    "assembly": 13174
+   },
+   "visionWallMs": null,
+   "downloadMb": 54.1,
+   "replayS": 239.0,
+   "coldRuns": 0
+  },
+  "jMq8lEu-of0": {
+   "n": 1,
+   "totalMs": 201768,
+   "firstTabReadyMs": 201720,
+   "completeMs": 201724,
+   "doneMs": 201738,
+   "costUsd": 0.215556,
+   "phasesWallMs": {
+    "metadata": 3916,
+    "transcript": 192,
+    "frames": 105955,
+    "frames.scene_detect": 14469,
+    "frames.score_select": 9080,
+    "frames.vision_reselect": 55770,
+    "frames.hires": 10999,
+    "frames.upload": 742,
+    "transcript_frames": 105973,
+    "visual_inject": 8,
+    "plan": 26460,
+    "extraction": 51848,
+    "synthesis": 3776,
+    "enrichment": 13504,
+    "synthesis_enrichment": 13509,
+    "assembly": 50
+   },
+   "visionWallMs": 55755,
+   "downloadMb": 160.5,
+   "replayS": 261.9,
+   "coldRuns": 1
+  },
+  "uC45_4nnEAI": {
+   "n": 1,
+   "totalMs": 168630,
+   "firstTabReadyMs": 164235,
+   "completeMs": 168606,
+   "doneMs": 168622,
+   "costUsd": 0.113548,
+   "phasesWallMs": {
+    "metadata": 13064,
+    "transcript": 286,
+    "frames": 58542,
+    "frames.scene_detect": 45358,
+    "transcript_frames": 58564,
+    "visual_inject": 0,
+    "plan": 24171,
+    "extraction": 58508,
+    "synthesis": 8663,
+    "enrichment": 9917,
+    "synthesis_enrichment": 9922,
+    "assembly": 4397
+   },
+   "visionWallMs": null,
+   "downloadMb": 249.4,
+   "replayS": 171.1,
+   "coldRuns": 0
+  }
+ },
+ "failedAttempts": [
+  {
+   "attempt": "f1_T1dQhQAm8Tc",
+   "youtubeId": "T1dQhQAm8Tc",
+   "videoSummaryId": "6ac6df9bd34d6ad2ce612b67",
+   "version": 3,
+   "status": "failed",
+   "errorCode": "VIDEO_UNAVAILABLE",
+   "cause": "yt-dlp metadata: YouTube 'Sign in to confirm you're not a bot' on the primary proxy exit",
+   "totalMs": 1798,
+   "costUsdLedger": 0
+  }
+ ],
+ "totalCostUsdLedger": 0.4578,
+ "clientTimingsNote": "client-side SSE offsets omitted: the WSL clock runs ~6% fast vs the server (40 s server = 42.4 s local)"
+}
