@@ -44,6 +44,14 @@ _TABS_ADDED_SINCE_RECORDING: dict[str, list[str]] = {
     "T1dQhQAm8Tc": ["quiz"],
 }
 
+# Tabs the code under test no longer assembles: jMq8lEu-of0's recorded plan put
+# key_moments on learning.timestamps although the plan is food-only; the hotfix
+# 2.1 reconcile guard re-points it to food.steps, whose moments carry step
+# thumbnails, so assembly skips the duplicate "Visual Moments" filmstrip.
+_TABS_REMOVED_SINCE_RECORDING: dict[str, list[str]] = {
+    "jMq8lEu-of0": ["frames-gallery"],
+}
+
 
 # Phases the code under test moved on purpose since T1dQhQAm8Tc was recorded,
 # with the change that moved them; the 10 % fidelity gate holds for the rest.
@@ -57,7 +65,9 @@ _PHASES_CHANGED_SINCE_RECORDING: dict[str, str] = {
 
 
 def _expected_tab_ids(cassette: Cassette) -> list[str]:
-    return [*cassette.recorded.tab_ids, *_TABS_ADDED_SINCE_RECORDING.get(cassette.video_id, [])]
+    removed = set(_TABS_REMOVED_SINCE_RECORDING.get(cassette.video_id, []))
+    recorded = [tab_id for tab_id in cassette.recorded.tab_ids if tab_id not in removed]
+    return [*recorded, *_TABS_ADDED_SINCE_RECORDING.get(cassette.video_id, [])]
 
 
 def _unchanged_rows(result: ReplayResult, cassette: Cassette) -> list[PhaseRow]:

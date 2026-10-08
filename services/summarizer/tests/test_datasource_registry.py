@@ -380,19 +380,35 @@ class TestValidDatasourcesRender:
 
     def test_should_render_every_registered_path_in_registry_order(self):
         rendered = [
-            p.strip()
+            p.strip().split(" [", 1)[0]
             for line in _rendered_toolkit_block().splitlines()
             for p in line.split(":", 1)[1].split(",")
         ]
 
         assert rendered == _ALL_PATHS
 
+    def test_should_mark_each_path_with_its_required_evidence_key(self):
+        marked = {
+            p.strip().split(" [", 1)[0]: p.strip()[:-1].split(" [", 1)[1]
+            for line in _rendered_toolkit_block().splitlines()
+            for p in line.split(":", 1)[1].split(",")
+            if p.strip().endswith("]")
+        }
+
+        assert marked == {
+            path: spec["requiresEvidence"]
+            for path, spec in data_sources().items()
+            if spec["requiresEvidence"]
+        }
+
     def test_should_render_one_domain_prefixed_line_per_domain(self):
         lines = _rendered_toolkit_block().splitlines()
         domains = [ln.split(":", 1)[0] for ln in lines]
 
         assert len(domains) == len(set(domains)) and all(
-            re.fullmatch(rf"{d}: {re.escape(d)}\.\S+(, {re.escape(d)}\.\S+)*", ln)
+            re.fullmatch(
+                rf"{d}: {re.escape(d)}\.\S+( \[\w+\])?(, {re.escape(d)}\.\S+( \[\w+\])?)*", ln
+            )
             for d, ln in zip(domains, lines, strict=True)
         )
 
@@ -402,22 +418,22 @@ class TestValidDatasourcesRender:
         # enrichment.flashcards/scenarios gone with quiz-only enrichment (1d.1).
         expected = "\n".join(
             [
-                "tech: tech.snippets, tech.patterns, tech.cheatSheet, tech.setup.commands, tech.topics",
+                "tech: tech.snippets [has_code], tech.patterns, tech.cheatSheet, tech.setup.commands, tech.topics",
                 "learning: learning.keyPoints, learning.concepts, learning.takeaways, learning.timestamps",
-                "project: project.steps, project.materials, project.tools, project.safetyWarnings",
-                "food: food.ingredients, food.steps, food.tips, food.equipment, food.substitutions",
-                "travel: travel.itinerary, travel.budget, travel.packingList",
-                "review: review.pros, review.cons, review.specs, review.comparisons, review.verdict",
-                "fitness: fitness.exercises, fitness.warmup, fitness.cooldown, fitness.timer, fitness.tips",
-                "music: music.analysis, music.structure, music.lyrics, music.credits",
-                "language: language.phrases, language.rules, language.drills, language.vocabulary",
+                "project: project.steps [has_steps], project.materials [has_materials], project.tools, project.safetyWarnings",
+                "food: food.ingredients [has_ingredients], food.steps [has_steps], food.tips, food.equipment, food.substitutions",
+                "travel: travel.itinerary [has_itinerary], travel.budget, travel.packingList [has_packing]",
+                "review: review.pros, review.cons, review.specs, review.comparisons [has_comparison], review.verdict",
+                "fitness: fitness.exercises [has_drills], fitness.warmup, fitness.cooldown, fitness.timer, fitness.tips",
+                "music: music.analysis, music.structure, music.lyrics [has_lyrics], music.credits",
+                "language: language.phrases, language.rules, language.drills [has_drills], language.vocabulary",
                 "science: science.concepts, science.keyFacts, science.experiments",
                 "podcast: podcast.segments, podcast.guests, podcast.quotes, podcast.topics",
-                "news: news.storyTimeline, news.entities, news.claims, news.context",
-                "gaming: gaming.highlights, gaming.loadout, gaming.walkthrough, gaming.rankings",
-                "sport: sport.matchEvents, sport.formation, sport.statComparison",
+                "news: news.storyTimeline, news.entities, news.claims [has_claims], news.context",
+                "gaming: gaming.highlights, gaming.loadout, gaming.walkthrough, gaming.rankings [has_ranking]",
+                "sport: sport.matchEvents, sport.formation [has_lineup], sport.statComparison",
                 "narrative: narrative.keyMoments, narrative.quotes, narrative.takeaways",
-                "enrichment: enrichment.quiz",
+                "enrichment: enrichment.quiz [is_learnable]",
             ]
         )
 

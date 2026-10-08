@@ -442,11 +442,13 @@ def registered_data_source(data_source: str, component: str) -> str | None:
 def render_valid_datasources() -> str:
     """Render component_toolkit.txt's ``{valid_datasources}`` block from the registry.
 
-    One ``domain: path, path`` line per domain in first-appearance order — the
-    exact format of the list that used to be hardcoded in the toolkit, so the
-    planner sees the same text while the registry stays the single source.
+    One ``domain: path, path`` line per domain in first-appearance order, the
+    registry being the single source. A path with ``requiresEvidence`` carries
+    its key (``tech.snippets [has_code]``) so the planner can follow the rule
+    "never plan a tab on a dataSource whose evidence you marked false".
     """
     by_domain: dict[str, list[str]] = {}
     for path, spec in _registry().items():
-        by_domain.setdefault(spec["domain"], []).append(path)
+        key = spec["requiresEvidence"]
+        by_domain.setdefault(spec["domain"], []).append(f"{path} [{key}]" if key else path)
     return "\n".join(f"{domain}: {', '.join(paths)}" for domain, paths in by_domain.items())

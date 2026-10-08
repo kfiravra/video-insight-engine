@@ -35,8 +35,8 @@ transcript actually contains.
 
 Step 4 — Design 3–6 tabs, only tabs the content supports, using the component toolkit below.
 - First tab: delivers the video's primary value immediately (not an overview)
-- Every tab needs a "goal" explaining what the user DOES with it, and a "brief" telling
-  extraction what to pull for it (see <brief_rules>)
+- Every tab needs a "goal" — one sentence of at most 15 words saying what the user DOES with
+  it — and a "brief" telling extraction what to pull for it (see <brief_rules>)
 - Prefer interactive components (action, learning, exploration, media); maximum 1 display
   component (budget)
 - Tab labels should include specific numbers when you counted them (e.g., "🛒 14 Ingredients"
@@ -70,19 +70,30 @@ still has both. Naming tools or libraries is not code.
 
 <brief_rules>
 Every tab carries a brief — the instructions extraction follows for that tab:
-- what: one line naming exactly what to pull and the details that matter, specific to THIS
-  video ("every ingredient with amount and unit as said; two groups: consommé, tacos"). Not a
-  restatement of the goal.
+- what: at most 25 words naming exactly what to pull and the details that matter, specific to
+  THIS video ("every ingredient with amount and unit as said; two groups: consommé, tacos").
+  Never a restatement of the goal — the goal says why, what says which data.
 - where: 1–4 time ranges "m:ss-m:ss" taken from the transcript markers, covering where this
   tab's content is. Cover the content; don't list every passing mention.
 - expect: how many items you counted in the transcript for this tab — an integer at or below
   the dataSource's cap in <extraction_caps>. An object dataSource (budget, verdict, formation)
   expects 1; a video_filmstrip tab expects the number of scenes worth scrubbing. If you
   counted 0, do not plan the tab.
-terms: up to 12 canonical names extraction must spell the same way everywhere — people,
+terms: at most 12, each at most 48 characters — canonical names extraction must spell the same way everywhere — people,
 products, dishes, techniques, places — with a short note when the captions garble a name or
 the video uses two names for one thing ("guanciale (not pancetta)", "Marco = the chef").
 </brief_rules>
+
+<output_budget>
+Keep the whole answer under 1,000 tokens. Every field is read downstream only up to its limit;
+anything longer is cut and wasted:
+- userGoal: at most 12 words. corePromise, uniqueAngle: at most 20 words each.
+- identity.creatorType, identity.tone: at most 4 words each.
+- extractionGuidance.primaryFocus, extractionGuidance.watchOutFor: at most 20 words each.
+- terms: at most 12, each at most 48 characters.
+- Per tab: goal at most 15 words; brief.what at most 25 words.
+Write the JSON compact on a single line — no markdown fences, no indentation, no line breaks.
+</output_budget>
 
 <output_schema>
 {{
@@ -142,7 +153,7 @@ Video: "Gordon Ramsay's Ultimate Steak Guide" (12 min, cooking tutorial)
     "primaryFocus": "Every temperature, timing, and technique — missing one ruins the steak",
     "watchOutFor": "Ramsay uses visual cues ('when you see it sizzle') — capture these alongside times"
   }},
-  "terms": ["ribeye", "basting = spooning the foaming butter over the steak", "resting = off the heat before slicing"],
+  "terms": ["ribeye", "basting = spooning foaming butter over the steak", "resting = off the heat before slicing"],
   "evidence": {{"has_steps": true, "has_ingredients": true, "has_materials": false, "has_code": false, "has_drills": false, "has_comparison": false, "has_ranking": false, "has_lineup": false, "has_claims": false, "has_lyrics": false, "has_itinerary": false, "has_packing": false, "is_learnable": false}},
   "tabs": [
     {{"id": "ingredients", "label": "🛒 6 Ingredients", "emoji": "🛒", "component": "checklist", "dataSource": "food.ingredients", "goal": "Everything you need — check off as you gather.", "brief": {{"what": "every ingredient with amount as Gordon says it — the cut and its thickness, oil, butter, garlic, thyme, seasoning", "where": ["0:30-1:45"], "expect": 6}}}},
@@ -171,7 +182,7 @@ Video: "React Server Components Explained" (25 min, tech tutorial)
   "terms": ["React Server Components (RSC)", "use client directive", "Suspense boundary", "App Router (not the Pages Router)"],
   "evidence": {{"has_steps": true, "has_ingredients": false, "has_materials": false, "has_code": true, "has_drills": false, "has_comparison": false, "has_ranking": false, "has_lineup": false, "has_claims": false, "has_lyrics": false, "has_itinerary": false, "has_packing": false, "is_learnable": true}},
   "tabs": [
-    {{"id": "code", "label": "💻 8 Code Snippets", "emoji": "💻", "component": "code_playground", "dataSource": "tech.snippets", "goal": "Grab these and paste into your editor. Each builds on the last. Run JS snippets right in the sandbox.", "brief": {{"what": "every snippet verbatim with its filename and why it is written that way; rebuild functions split across screen shares", "where": ["4:10-21:30"], "expect": 8}}}},
+    {{"id": "code", "label": "💻 8 Code Snippets", "emoji": "💻", "component": "code_playground", "dataSource": "tech.snippets", "goal": "Paste these into your editor — each builds on the last.", "brief": {{"what": "every snippet verbatim with its filename and why it is written that way; rebuild functions split across screen shares", "where": ["4:10-21:30"], "expect": 8}}}},
     {{"id": "concepts", "label": "🧠 5 Key Concepts", "emoji": "🧠", "component": "concept_canvas", "dataSource": "learning.concepts", "goal": "Drag concepts around to see how server components, streaming, and suspense connect.", "brief": {{"what": "each RSC concept with a one-line definition and the concepts it connects to — server/client boundary, streaming, Suspense, serialization", "where": ["1:00-4:10", "12:00-15:30"], "expect": 5}}}},
     {{"id": "moments", "label": "🎬 Key Moments", "emoji": "🎬", "component": "moment_track", "dataSource": "learning.timestamps", "goal": "Jump to any concept demonstration in the video.", "brief": {{"what": "chapter jumps plus the start of each live-coding demo", "where": ["0:00-24:30"], "expect": 10}}}},
     {{"id": "quiz", "label": "✅ Test Yourself", "emoji": "✅", "component": "quiz_arena", "dataSource": "enrichment.quiz", "goal": "Check what stuck — streak counter + frame context per question.", "brief": {{"what": "checks on where a component runs (server or client) and why", "where": ["1:00-24:30"], "expect": 5}}}}
@@ -197,7 +208,7 @@ Video: "What Are Transformers?" (28 min, 3Blue1Brown — ML concepts with rich a
   "terms": ["attention head", "embedding", "residual stream", "MLP (multilayer perceptron)", "softmax"],
   "evidence": {{"has_steps": false, "has_ingredients": false, "has_materials": false, "has_code": false, "has_drills": false, "has_comparison": false, "has_ranking": false, "has_lineup": false, "has_claims": false, "has_lyrics": false, "has_itinerary": false, "has_packing": false, "is_learnable": true}},
   "tabs": [
-    {{"id": "concepts", "label": "🧠 12 Core Concepts", "emoji": "🧠", "component": "concept_canvas", "dataSource": "learning.concepts", "goal": "Drag the concepts around — the canvas shows how attention, embeddings, and the residual stream connect.", "brief": {{"what": "every concept the speaker names with a one-sentence definition and the concepts it feeds into", "where": ["0:40-26:50"], "expect": 12}}}},
+    {{"id": "concepts", "label": "🧠 12 Core Concepts", "emoji": "🧠", "component": "concept_canvas", "dataSource": "learning.concepts", "goal": "See how attention, embeddings and the residual stream connect.", "brief": {{"what": "every concept the speaker names with a one-sentence definition and the concepts it feeds into", "where": ["0:40-26:50"], "expect": 12}}}},
     {{"id": "moments", "label": "🎬 10 Demonstrations", "emoji": "🎬", "component": "moment_track", "dataSource": "learning.timestamps", "goal": "Jump to the exact moment each concept is shown on screen.", "brief": {{"what": "the moment each concept is animated on screen, with endSeconds on the animation span", "where": ["0:40-26:50"], "expect": 10}}}},
     {{"id": "quiz", "label": "✅ Test Yourself", "emoji": "✅", "component": "quiz_arena", "dataSource": "enrichment.quiz", "goal": "Five questions to check what stuck — streak counter included.", "brief": {{"what": "checks on what attention computes and why the residual stream matters", "where": ["3:00-26:50"], "expect": 5}}}}
   ]
@@ -267,7 +278,7 @@ Video: "OP-29 Booster Box Opening — Chasing the Alt Art!" (26 min, gaming, unb
   "uniqueAngle": "Real-time pull reactions with card closeups — the frames show the actual cards revealed",
   "identity": {{"creatorType": "TCG content creator", "tone": "hype-casual"}},
   "extractionGuidance": {{
-    "primaryFocus": "Every notable pulled card into rankings (name as item, rarity/value bracket as tier, why it matters as reason) AND highlights (pull moments with timestamps)",
+    "primaryFocus": "Every notable pull ranked by rarity/value with why it matters, plus pull moments with timestamps",
     "watchOutFor": "Market-value and playability comments made mid-reaction — they are the tier reasons"
   }},
   "terms": ["OP-29", "alt art = alternate-art card", "SEC = secret rare", "manga rare"],
@@ -521,10 +532,13 @@ assembler decides them from the actual data after extraction.
 - Every contentTag must have at least one tab using its domain data
 - dataSource must reference a domain in this video's contentTags. NEVER use "learning.timestamps" for a food video or "travel.itinerary" for a tech video. Each dataSource prefix must match one of the contentTags or modifiers you assigned. EXCEPTION: `dataSource: "frames"` is valid for `video_filmstrip` tabs across any domain — frames data is auto-injected.
 - dataSource must be from the valid datasources listed in the component toolkit
+- Never plan a tab on a dataSource whose evidence you marked false (a path marked [key] in the
+  toolkit needs that key true). The dataSource's domain — the part before the dot — must be one
+  of your contentTags or modifiers: no `news.claims` unless `news` is a contentTag.
 - If unsure about content type, use ["learning"] with confidence below 0.6
 - Tab IDs must be unique snake_case
 - evidence: every key in <evidence_rules>, each true or false
-- terms: at most 12
+- terms: at most 12, each at most 48 characters
 - Every tab has a brief with what, where and expect
 
 CRITICAL — Ground tabs in the actual transcript:
@@ -548,5 +562,6 @@ Description: {description}
 {transcript}
 </transcript>
 
-Return only the JSON object described in <output_schema> for this video: terms and evidence
-before the tabs, then 3–6 tabs that each carry a brief.
+Return only the JSON object described in <output_schema> for this video, as compact single-line
+JSON within the output budget above: terms and evidence before the tabs, then 3–6 tabs that each carry a
+brief.

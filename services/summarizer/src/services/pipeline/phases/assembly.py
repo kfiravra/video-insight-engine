@@ -299,6 +299,7 @@ def _result_document(
         "pipelineVersion": settings.PIPELINE_VERSION,
         "pipeline": {
             "triage": ctx.triage_dict,
+            "reconcile": ctx.plan_result.reconcile if ctx.plan_result else [],
             "extraction": extraction_with_drops(ctx.extraction_data, ctx.extraction_dropped),
             "enrichment": ctx.enrichment_data,
             "synthesis": ctx.synthesis_dict,

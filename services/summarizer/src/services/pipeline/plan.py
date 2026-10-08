@@ -27,6 +27,7 @@ from ...utils.json_parsing import parse_json_response
 from ...utils.llm_retry import call_llm_with_retry
 from .assembly import infer_component
 from .plan_prompt import PROMPT_PATH, PlanVideo, render_plan_prompt
+from .plan_reconcile import reconcile_plan_tabs
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
@@ -222,16 +223,29 @@ def _validate_data_sources(tabs: list[dict]) -> tuple[list[dict], list[dict]]:
     return kept, dropped
 
 
+def _plan_modifiers(data: dict) -> list[str]:
+    raw = data.get("modifiers") or []
+    items = [raw] if isinstance(raw, str) else raw if isinstance(raw, list) else []
+    return [m for m in items if isinstance(m, str)]
+
+
+def _plan_evidence(data: dict) -> dict[str, bool]:
+    """The plan's evidence answers as PlanResult will keep them (booleans only)."""
+    raw = data.get("evidence")
+    return {k: v for k, v in raw.items() if isinstance(v, bool)} if isinstance(raw, dict) else {}
+
+
 def _normalize_plan_data(data: dict, content_format: str | None) -> None:
     """Validate tabs and tags in the raw plan dict before PlanResult sees it.
 
     Order matters: dataSources are checked against the registry first, then
     primaryTag is normalized so the forbidden-component policy looks up the
-    right domain. The prompt asks the planner to avoid forbidden components;
-    this is the guarantee (assembly enforces it again for cached plans).
+    right domain, then the reconcile guard re-points or drops tabs whose
+    dataSource the plan's own evidence/domains rule out. The prompt asks the
+    planner to avoid both; this is the guarantee (assembly enforces the
+    forbidden components again for cached plans).
     """
     validated_tabs, dropped_tabs = _validate_data_sources(_validate_tabs(data.get("tabs", [])))
-    data["droppedTabs"] = dropped_tabs
 
     content_tags = data.get("contentTags", [])
     if isinstance(content_tags, str):
@@ -245,7 +259,11 @@ def _normalize_plan_data(data: dict, content_format: str | None) -> None:
         primary_tag = content_tags[0]
     data["primaryTag"] = primary_tag
 
-    data["tabs"] = _enforce_domain_policy(validated_tabs, primary_tag, content_format)
+    reconciled_tabs, reconcile_drops, data["reconcile"] = reconcile_plan_tabs(
+        validated_tabs, content_tags, _plan_modifiers(data), _plan_evidence(data)
+    )
+    data["droppedTabs"] = [*dropped_tabs, *reconcile_drops]
+    data["tabs"] = _enforce_domain_policy(reconciled_tabs, primary_tag, content_format)
     # Fallback tabs if none valid — flagged so assembly does not count the
     # plan's drops on top of a tab set the planner never designed.
     if not data["tabs"]:
