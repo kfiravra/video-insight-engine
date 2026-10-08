@@ -333,6 +333,21 @@ New/changed vars introduced by the yt-dlp-403 fix and the two-pass frame pipelin
 | `STALL_SWEEP_ENABLED` / `STALL_SWEEP_INTERVAL_SECONDS` / `STALL_THRESHOLD_MINUTES` | `true` / `300` / `30` | Summarizer stall sweeper — fails `processing` rows with no progress + no live producer lock, alerts `pipeline_stalled` |
 | `WORKER_RETRY_BACKOFF_SECONDS` | `5` | Worker retry delay, doubled per attempt (5 → 10 → 20 s), capped at 120 s (worker service env, not `x-summarizer-env`) |
 
+### Extraction + vision concurrency (2026-10, pipeline-1min)
+
+All pass through both `x-summarizer-env` anchors with literal defaults equal to `config.py` (a blank boolean would fail settings validation and crash-loop the container). `tests/test_config.py` checks that every compose default matches its `config.py` default.
+
+| Var | Default | Purpose |
+|-----|---------|---------|
+| `EXTRACTION_PARALLEL` | `true` | Chunked extraction batches run in parallel; `false` = one batch at a time |
+| `EXTRACTION_PARALLEL_BATCHES` | `6` | Max extraction LLM calls in flight per run (was 2). `pipeline.timing` counts 429s per run — drop to `4` if any appear |
+| `CHUNKED_EXTRACTION_THRESHOLD` | `900` | Videos longer than this (s) may split the transcript into chapter batches |
+| `MAX_TOKENS_PER_BATCH` / `MAX_MINUTES_PER_BATCH` | `50000` / `40` | Limits of one extraction batch: estimated transcript tokens, minutes of video |
+| `EXTRACTION_FORCE_SPLIT_CHUNKS` | `4` | Sub-batches when a long video's chunked transcript collapses to one batch |
+| `FRAME_VISION_ENABLED` | `true` | Frame descriptions by the vision model; `false` = OCR only |
+| `FRAME_VISION_PARALLEL` | `true` | Vision in parallel batches; `false` = one call with every frame |
+| `LLM_VISION_MODEL` | blank | Vision model override; blank = the primary model (Sonnet), which vision stays on |
+
 ---
 
 ## Network Topology

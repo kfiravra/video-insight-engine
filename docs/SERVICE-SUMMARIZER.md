@@ -204,6 +204,17 @@ YOUTUBE_PROXY_EXIT_COUNT=1             # Sticky exits (USERNAME-1…N) a 429 or 
 YTDLP_PLAYER_CLIENTS=android           # yt-dlp player clients for pass 1 + audio downloads; empty = yt-dlp defaults
 YTDLP_HIRES_PLAYER_CLIENTS=web_embedded,android  # 720p download only (android caps at 360p); retries with the line above
 FRAME_TIER_ENABLED=true                # Adaptive visual tiers (HIGH: overselect + vision reselect before hires)
+FRAME_VISION_ENABLED=true              # Frame descriptions by the vision model; false = OCR only
+FRAME_VISION_PARALLEL=true             # Vision in parallel batches; false = one call with every frame
+LLM_VISION_MODEL=                      # Blank = the primary model (Sonnet), which vision stays on
+
+# Extraction concurrency + chunking
+EXTRACTION_PARALLEL=true               # Chunked batches run in parallel; false = one batch at a time
+EXTRACTION_PARALLEL_BATCHES=6          # Max extraction calls in flight per run; drop to 4 if pipeline.timing records 429s
+CHUNKED_EXTRACTION_THRESHOLD=900       # Videos longer than this (s) may split the transcript into chapter batches
+MAX_TOKENS_PER_BATCH=50000             # One batch's estimated transcript tokens
+MAX_MINUTES_PER_BATCH=40               # One batch's span of video
+EXTRACTION_FORCE_SPLIT_CHUNKS=4        # Sub-batches when a long video's chunked transcript collapses to one batch
 
 # Prompts
 PROMPT_SOURCE=registry                 # registry (Langfuse label wins) | disk (local .txt re-read per call, dev-only; ignored unless ENVIRONMENT is a dev name)
@@ -945,7 +956,7 @@ Fallback chain for splitting transcripts into chapters:
 ### Batched Extraction (`extractor.py`)
 
 - Groups chapters into batches of ≤50K tokens (`batch_chapters()`)
-- Parallel extraction per batch with `asyncio.Semaphore(EXTRACTION_PARALLEL_BATCHES)` (default 2)
+- Parallel extraction per batch with `asyncio.Semaphore(EXTRACTION_PARALLEL_BATCHES)` (default 6); `EXTRACTION_PARALLEL=false` runs one batch at a time
 - Single-batch chunked input is force-split into `EXTRACTION_FORCE_SPLIT_CHUNKS` sub-batches (default 4) so parallelism still engages on long single-chapter videos; falls back to overflow only when the split also yields one chunk
 - Force-split bypasses `batch_chapters()`: `_resolve_strategy` returns `one_chunk_per_batch=True` and `_chunked_extraction` builds `batches=[[c] for c in chunks]` so the sub-batches don't re-collapse under `MAX_TOKENS_PER_BATCH`
 - **Batch-aware prompt** (Phase 6): each batch's prompt carries a `<batch_partial_context>` block built by `_build_batch_context(batch_idx, total_batches, batch, full_duration_seconds)`. The block tells the model it sees only a slice of the video, overrides the base prompt's "no empty arrays" / density rules for partial transcripts, and explicitly instructs `Return EMPTY arrays for fields not present in your segment — other batches cover them`. The placeholder `{batch_context}` lives inside the `<transcript>` block (after the cache-split marker), so per-batch context never invalidates the Anthropic prompt cache
@@ -992,8 +1003,9 @@ Hard character limit per model before every LLM call:
 |---------|---------|---------|
 | `CHUNKED_EXTRACTION_THRESHOLD` | 900 (15 min) | Duration threshold for chunked path |
 | `MAX_TOKENS_PER_BATCH` | 50000 | Max tokens per extraction batch |
-| `CHAPTER_BATCH_SIZE` | 3 | Chapters per batch target |
-| `EXTRACTION_PARALLEL_BATCHES` | 2 | Semaphore bound for parallel chunked batches |
+| `MAX_MINUTES_PER_BATCH` | 40 | Max minutes of video per extraction batch |
+| `EXTRACTION_PARALLEL` | True | Chunked batches run in parallel; False = one batch at a time |
+| `EXTRACTION_PARALLEL_BATCHES` | 6 | Semaphore bound for parallel chunked batches |
 | `EXTRACTION_FORCE_SPLIT_CHUNKS` | 4 | Sub-batches when chunked input collapses to 1 batch |
 | `EXTRACTION_USE_FAST_FIRST` | False | Route extraction first pass to fast model (gated rollout, primary still used on retry) |
 

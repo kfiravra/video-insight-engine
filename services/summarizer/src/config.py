@@ -58,9 +58,9 @@ class Settings(BaseSettings):
     # Defaults reflect the 2026-05-19 fast-tier benchmark winners
     # (reports/fast-model-bench-20260519-074647.md). Override via env to test
     # alternatives without rebuilding.
-    # Only the two stages with material wins (enrichment quality +35%,
-    # vision -67% cost) are pinned, plus the tier probe: the 2026-10-07 A/B
-    # (pipeline-1min gate 0, D21) picked Haiku 4.5 at temperature 0.
+    # Only enrichment (+35% quality) is pinned from that bench, plus the tier
+    # probe: the 2026-10-07 A/B (pipeline-1min gate 0, D21) picked Haiku 4.5
+    # at temperature 0.
     # Translation stays on the default fast tier (gpt-4o-mini); the Gemini
     # Flash-Lite savings were fractions of a cent — not worth adding a third
     # provider dependency.
@@ -70,7 +70,10 @@ class Settings(BaseSettings):
     LLM_SYNTHESIS_MODEL: str | None = None
     LLM_ENRICHMENT_MODEL: str | None = "anthropic/claude-haiku-4-5-20251001"
     LLM_TRANSLATION_MODEL: str | None = None
-    LLM_VISION_MODEL: str | None = "anthropic/claude-haiku-4-5-20251001"
+    # Vision stays on the primary model (Sonnet): frame descriptions drive the
+    # moment gallery and OCR, and Haiku was rejected for them (2026-09-16).
+    # None → the caller's primary model (frame_analyzer).
+    LLM_VISION_MODEL: str | None = None
     # Extraction model override. Default `None` falls through to the primary
     # model (claude-sonnet-4-6 in production), preserving the current cost
     # profile. Set to "anthropic/claude-haiku-4-5-20251001" or another model
@@ -101,12 +104,7 @@ class Settings(BaseSettings):
     LLM_MAX_TOKENS: int = 4096
     LLM_FAST_MAX_TOKENS: int = 4096
 
-    # Token limits for LLM prompts (large safety nets - modern LLMs handle full transcripts)
-    MAX_TRANSCRIPT_CHARS: int = 500000  # ~500K chars = well within all LLM limits
-    MAX_CHAPTER_CHARS: int = 100000  # ~100K chars per chapter
-
     # Chapter-based chunked extraction
-    CHAPTER_BATCH_SIZE: int = 3
     # Videos longer than this run chapter detection + chunked-batch extraction
     # (parallel Sonnet calls). Lowered 1800→900 on 2026-05-24 to halve the
     # wallclock for 15–30 min videos at the cost of a small chapter_detect
@@ -120,17 +118,21 @@ class Settings(BaseSettings):
     # the tail (a 4.5h video produced output only up to 1:34). Bounding span to
     # 40 min keeps each batch densely coverable within the 16K output budget.
     MAX_MINUTES_PER_BATCH: int = 40
-    CHUNKED_EXTRACTION_TIMEOUT: float = 300.0  # 5 min — per-batch timeout for chunked extraction
-    # Parallel concurrency for the chunked extraction batches. Defaults to 2
-    # because production has hit Anthropic 529 (overloaded) at 3 concurrent
-    # Sonnet calls; 2 keeps tail latency stable while still ~halving wall time.
-    EXTRACTION_PARALLEL_BATCHES: int = 2
-    # Force-split target — kept aligned with EXTRACTION_PARALLEL_BATCHES * 2
-    # so a single round of the parallel limit drains half the chunks.
+    # Chunked extraction batches run in parallel; false = one batch at a time
+    # (the switch to rule out concurrency when a run misbehaves).
+    EXTRACTION_PARALLEL: bool = True
+    # Max extraction calls in flight per run. 6 (pipeline-1min D11): prod
+    # extraction runs on Haiku, no 429 has ever been recorded and the rate
+    # limits leave >12x headroom (the old 2 dated from 529s at 3 concurrent
+    # Sonnet calls). pipeline.timing counts 429s per run — back off to 4 if a
+    # run records any.
+    EXTRACTION_PARALLEL_BATCHES: int = 6
+    # Sub-batches when a long video's chunked input collapses to one batch;
+    # they run in one round while EXTRACTION_PARALLEL_BATCHES >= this.
     EXTRACTION_FORCE_SPLIT_CHUNKS: int = 4
     # Phase 4 / P2: route the *first* extraction pass through the fast model.
-    # Default OFF — flip via env after the corpus eval (scripts/eval_extraction_models.py)
-    # confirms quality delta < 0.05 across all primary domains. Retries always
+    # Default OFF — flip via env after a corpus eval confirms quality
+    # delta < 0.05 across all primary domains. Retries always
     # escalate to the primary model regardless of this flag.
     EXTRACTION_USE_FAST_FIRST: bool = False
 
@@ -324,6 +326,9 @@ class Settings(BaseSettings):
     # Sending 8 base64 frames to Sonnet legitimately takes 30-50s under load;
     # HIGH-tier batches (~40 low-res frames) need the larger 90s budget.
     FRAME_VISION_ENABLED: bool = True
+    # Frames go to vision in parallel batches (media/frame_analyzer.py);
+    # false = one call with every frame, the pre-batching path.
+    FRAME_VISION_PARALLEL: bool = True
     FRAME_VISION_MAX_FRAMES: int = 8
     FRAME_VISION_TIMEOUT: float = 90.0
 

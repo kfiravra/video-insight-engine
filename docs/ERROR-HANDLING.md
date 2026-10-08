@@ -224,6 +224,9 @@ Two layers, both real code:
   transient errors on the same model, then falls back to `LLM_FALLBACK_PROVIDER`
   (see [LLM Error Handling](#llm-error-handling)); LiteLLM's own retries and
   fallbacks are off. The assistant keeps LiteLLM `num_retries` (`LLM_NUM_RETRIES`).
+  Chunked extraction runs up to `EXTRACTION_PARALLEL_BATCHES` (6) batches at once; a
+  batch still rate-limited after its retries re-runs in a sequential second pass
+  (2 s apart). `pipeline.timing` counts 429s per run — drop the setting to 4 if any appear.
 - **Queue jobs** — `services/summarizer/src/worker/runner.py`: a pipeline exception
   with `attempt < WORKER_MAX_RETRIES` (3) waits
   `WORKER_RETRY_BACKOFF_SECONDS × 2^(attempt-1)` (5 → 10 → 20 s, capped 120 s) and

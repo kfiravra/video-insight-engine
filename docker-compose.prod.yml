@@ -42,14 +42,21 @@ x-summarizer-env: &summarizer-env
   LLM_FAST_MAX_TOKENS: ${LLM_FAST_MAX_TOKENS:-2048}
   LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-60.0}
   LLM_EXTRACTION_MODEL: ${LLM_EXTRACTION_MODEL:-}
-  # Enrichment: blank = the fast tier of LLM_PROVIDER. Vision: Sonnet on purpose (frame descriptions
-  # drive the moment gallery; owner rejected Haiku for it 2026-09-16). config.py keeps the Haiku dev pins.
+  # Enrichment: blank = the fast tier of LLM_PROVIDER (config.py keeps a Haiku dev pin). Vision: blank =
+  # the primary model, Sonnet on purpose (frame descriptions drive the moment gallery; owner rejected Haiku 2026-09-16).
   LLM_ENRICHMENT_MODEL: ${LLM_ENRICHMENT_MODEL:-}
-  LLM_VISION_MODEL: ${LLM_VISION_MODEL:-anthropic/claude-sonnet-4-6}
+  LLM_VISION_MODEL: ${LLM_VISION_MODEL:-}
   LLM_DESCRIPTION_MODEL: ${LLM_DESCRIPTION_MODEL:-}
   LLM_SYNTHESIS_MODEL: ${LLM_SYNTHESIS_MODEL:-}
   LLM_TRANSLATION_MODEL: ${LLM_TRANSLATION_MODEL:-}
   EXTRACTION_USE_FAST_FIRST: ${EXTRACTION_USE_FAST_FIRST:-false}
+  # Extraction concurrency + chunking (literal defaults = config.py; a blank bool crash-loops)
+  EXTRACTION_PARALLEL: ${EXTRACTION_PARALLEL:-true}
+  EXTRACTION_PARALLEL_BATCHES: ${EXTRACTION_PARALLEL_BATCHES:-6}
+  CHUNKED_EXTRACTION_THRESHOLD: ${CHUNKED_EXTRACTION_THRESHOLD:-900}
+  MAX_TOKENS_PER_BATCH: ${MAX_TOKENS_PER_BATCH:-50000}
+  MAX_MINUTES_PER_BATCH: ${MAX_MINUTES_PER_BATCH:-40}
+  EXTRACTION_FORCE_SPLIT_CHUNKS: ${EXTRACTION_FORCE_SPLIT_CHUNKS:-4}
   ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
   OPENAI_API_KEY: ${OPENAI_API_KEY:-}
   GEMINI_API_KEY: ${GEMINI_API_KEY:-}
@@ -78,6 +85,9 @@ x-summarizer-env: &summarizer-env
   SCENE_HIRES_ENABLED: ${SCENE_HIRES_ENABLED:-true}
   SCENE_S3_PREFIX: ${SCENE_S3_PREFIX:-scenes-v3}
   SCENE_HIRES_FALLBACK_TIMEOUT: ${SCENE_HIRES_FALLBACK_TIMEOUT:-180.0}
+  FRAME_VISION_ENABLED: ${FRAME_VISION_ENABLED:-true}
+  FRAME_VISION_PARALLEL: ${FRAME_VISION_PARALLEL:-true}
+  FRAME_TIER_ENABLED: ${FRAME_TIER_ENABLED:-true}
   # yt-dlp player clients for video/audio downloads — the knob to turn when
   # YouTube shifts which clients' download URLs 403 (2026-08: android only)
   YTDLP_PLAYER_CLIENTS: ${YTDLP_PLAYER_CLIENTS:-android}
