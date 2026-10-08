@@ -180,3 +180,61 @@ async def test_drive_pipeline_forwards_bypass_cache_as_force_refresh():
 
     produce.assert_awaited_once()
     assert produce.await_args.kwargs["force_refresh"] is True
+
+
+# ─── Duplicate runs (A4): a completed row is never re-run ────────────────────
+
+
+async def _drive_with_rows(rows: list[dict]) -> tuple[AsyncMock, AsyncMock, AsyncMock]:
+    """drive_pipeline where each get_video_summary call returns the next row."""
+    mock_client, _mock_db, mock_repo = _patch_common()
+    mock_repo.get_video_summary.side_effect = rows
+    produce, acquire, release = AsyncMock(), AsyncMock(return_value=True), AsyncMock()
+    with (
+        patch.object(worker_pipeline, "get_mongo_client", return_value=mock_client),
+        patch.object(worker_pipeline, "MongoDBVideoRepository", return_value=mock_repo),
+        patch.object(worker_pipeline, "get_llm_provider", return_value=MagicMock()),
+        patch.object(worker_pipeline, "LLMService", return_value=MagicMock()),
+        patch.object(worker_pipeline.pipeline_event_stream, "acquire_lock", new=acquire),
+        patch.object(worker_pipeline.pipeline_event_stream, "release_lock", new=release),
+        patch("src.routes.pipeline_broker.produce_to_broker", new=produce),
+        patch.object(worker_pipeline, "clear_override"),
+    ):
+        await worker_pipeline.drive_pipeline(VALID_PAYLOAD)
+    return produce, acquire, release
+
+
+@pytest.mark.asyncio
+async def test_should_skip_a_job_whose_row_is_already_completed():
+    produce, acquire, _release = await _drive_with_rows([{"_id": "v", "status": "completed"}])
+
+    assert (produce.await_count, acquire.await_count) == (0, 0)
+
+
+@pytest.mark.asyncio
+async def test_should_skip_when_the_row_completed_while_the_lock_was_taken():
+    """Another producer finished between the first read and the lock."""
+    produce, _acquire, release = await _drive_with_rows(
+        [{"_id": "v", "status": "pending"}, {"_id": "v", "status": "completed"}]
+    )
+
+    assert (produce.await_count, release.await_count) == (0, 1)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["pending", "processing", "failed"])
+async def test_should_run_a_row_that_is_not_completed(status: str):
+    produce, _acquire, _release = await _drive_with_rows(
+        [{"_id": "v", "status": status}, {"_id": "v", "status": status}]
+    )
+
+    produce.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_should_run_when_the_recheck_cannot_read_mongo():
+    produce, _acquire, _release = await _drive_with_rows(
+        [{"_id": "v", "status": "pending"}, OSError("mongo hiccup")]
+    )
+
+    produce.assert_awaited_once()
