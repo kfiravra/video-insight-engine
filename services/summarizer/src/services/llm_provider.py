@@ -52,10 +52,15 @@ def _is_fallback_attempt(span_metadata: dict[str, Any] | None) -> bool:
 
 
 def _rejects_temperature(model: str, temperature: float) -> bool:
-    """gpt-5 reasoning models accept only temperature=1; LiteLLM raises on any other value."""
+    """gpt-5 reasoning models accept only temperature=1; LiteLLM raises on any other value.
+
+    Models that support ``reasoning_effort="none"`` (gpt-5.1+) take any temperature while no
+    effort is sent. The check is LiteLLM's own predicate, so the guard cannot drift from the
+    rule that raises ``UnsupportedParamsError``.
+    """
     if temperature == 1 or not OpenAIGPT5Config.is_model_gpt_5_model(model):
         return False
-    return not OpenAIGPT5Config.is_model_gpt_5_1_model(model)
+    return not OpenAIGPT5Config._supports_reasoning_effort_level(model, "none")
 
 
 def _with_sampling(kwargs: dict[str, Any], temperature: float | None) -> dict[str, Any]:
