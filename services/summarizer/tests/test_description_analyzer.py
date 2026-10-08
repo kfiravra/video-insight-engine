@@ -2,7 +2,7 @@
 
 import json
 import logging
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -19,6 +19,13 @@ from src.services.video.description_analyzer import (
     load_prompt,
 )
 from src.utils.json_parsing import parse_json_response as _parse_json_response
+
+
+@pytest.fixture(autouse=True)
+def _no_retry_pause():
+    """The analysis retries through call_llm_with_retry; never sleep in tests."""
+    with patch("src.utils.llm_retry.asyncio.sleep", new=AsyncMock()):
+        yield
 
 
 class TestDescriptionAnalysisDataclass:
@@ -406,3 +413,71 @@ class TestLoadPrompt:
 
         with pytest.raises(FileNotFoundError):
             load_prompt("nonexistent_prompt")
+
+
+class TestDescriptionRetry:
+    """1d.5: the analysis gets one retry and resends a dropped connection at once."""
+
+    _DESCRIPTION = "Chapters: 0:00 intro, 2:10 the sauce, 9:45 baking the lasagna in the oven."
+
+    @staticmethod
+    def _reply() -> MagicMock:
+        response = MagicMock()
+        response.choices = [MagicMock()]
+        response.choices[0].message.content = json.dumps(
+            {"timestamps": [{"time": "2:10", "label": "the sauce"}]}
+        )
+        return response
+
+    @patch("src.services.video.description_analyzer.load_prompt")
+    @patch("src.services.llm_provider.acompletion")
+    async def test_should_recover_on_the_retry_after_a_transient_error(
+        self, mock_acompletion, mock_load_prompt
+    ):
+        import litellm
+
+        mock_load_prompt.return_value = "Analyze: {description}"
+        mock_acompletion.side_effect = [
+            litellm.exceptions.InternalServerError(
+                message="overloaded", llm_provider="openai", model="gpt-4o-mini"
+            ),
+            self._reply(),
+        ]
+
+        result = await _analyze_description_async(self._DESCRIPTION)
+
+        assert [t.label for t in result.timestamps] == ["the sauce"]
+
+    @patch("src.services.video.description_analyzer.load_prompt")
+    @patch("src.services.llm_provider.acompletion")
+    async def test_should_give_up_after_one_retry(self, mock_acompletion, mock_load_prompt):
+        import litellm
+
+        mock_load_prompt.return_value = "Analyze: {description}"
+        mock_acompletion.side_effect = litellm.exceptions.InternalServerError(
+            message="overloaded", llm_provider="openai", model="gpt-4o-mini"
+        )
+
+        await _analyze_description_async(self._DESCRIPTION)
+
+        assert mock_acompletion.await_count == 2
+
+    @patch("src.services.video.description_analyzer.load_prompt")
+    @patch("src.services.llm_provider.acompletion")
+    async def test_should_resend_a_dropped_connection_without_spending_the_retry(
+        self, mock_acompletion, mock_load_prompt
+    ):
+        import litellm
+
+        mock_load_prompt.return_value = "Analyze: {description}"
+        overloaded = litellm.exceptions.InternalServerError(
+            message="overloaded", llm_provider="openai", model="gpt-4o-mini"
+        )
+        dropped = litellm.exceptions.Timeout(
+            message="Connection timed out", model="gpt-4o-mini", llm_provider="openai"
+        )
+        mock_acompletion.side_effect = [dropped, overloaded, self._reply()]
+
+        result = await _analyze_description_async(self._DESCRIPTION)
+
+        assert result.timestamps and mock_acompletion.await_count == 3

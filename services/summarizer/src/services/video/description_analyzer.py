@@ -13,16 +13,18 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import litellm
-
 from src.config import settings
+from src.services.llm import LLMService
 from src.services.llm_provider import LLMProvider
 from src.utils.data_helpers import parse_timestamp_to_seconds
 from src.utils.json_parsing import parse_json_response
+from src.utils.llm_retry import call_llm_with_retry
 
 logger = logging.getLogger(__name__)
 
 PROMPTS_DIR = Path(__file__).parent.parent.parent / "prompts"
+# Optional analysis, so one retry is enough: it runs off the critical path.
+DESCRIPTION_MAX_RETRIES = 1
 
 
 def load_prompt(name: str) -> str:
@@ -136,9 +138,11 @@ async def _analyze_description_async(
 ) -> DescriptionAnalysis:
     """Analyze description asynchronously on the fast model.
 
-    Goes through ``LLMProvider`` like every other stage so the call is a
-    Langfuse generation on the run's trace, lands in ``pipeline.timing``,
-    and is fakeable at the provider's single ``acompletion`` seam.
+    Goes through ``call_llm_with_retry`` like every other stage: a Langfuse
+    generation on the run's trace, in ``pipeline.timing``, fakeable at the
+    provider's single ``acompletion`` seam — and one retry (a dropped
+    connection is re-sent at once on top of it), so a transient error no
+    longer loses the chapter timestamps the long-video path reads.
 
     Args:
         description: The video description text
@@ -160,10 +164,18 @@ async def _analyze_description_async(
         prompt = prompt_template.replace("{description}", description)
 
         model = fast_model or settings.llm_fast_model
-        provider = LLMProvider(model=model, fast_model=model)
-        result_text = await provider.complete_fast(
-            prompt, max_tokens=1500, timeout=30.0, span_name="description_analysis"
+        result_text = await call_llm_with_retry(
+            LLMService(LLMProvider(model=model, fast_model=model)),
+            prompt,
+            max_tokens=1500,
+            timeout=30.0,
+            max_retries=DESCRIPTION_MAX_RETRIES,
+            stage_name="description_analysis",
+            use_fast_model=True,
         )
+        if result_text is None:
+            logger.warning("Description analysis failed after retries; continuing without it")
+            return DescriptionAnalysis()
         data = parse_json_response(result_text)
 
         # Parse into dataclasses
@@ -204,11 +216,6 @@ async def _analyze_description_async(
 
         return analysis
 
-    except litellm.exceptions.APIError as e:
-        # LLMProvider already logged this at the error class's severity; the
-        # analysis is optional, so it only degrades to an empty result here.
-        logger.warning("LLM API error during description analysis: %s", e)
-        return DescriptionAnalysis()
     except Exception as e:
         logger.error("Error analyzing description: %s", e)
         return DescriptionAnalysis()

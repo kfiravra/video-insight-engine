@@ -6,8 +6,10 @@ model, honouring the provider's ``retry-after`` (else linear 1 s, 2 s, …
 backoff); primary-model calls with a cross-provider fallback configured get ONE
 same-provider retry and then go to the fallback model. Each attempt is a single
 request to a single model, so telemetry records the model that actually
-answered. Returns the raw string, or None when every attempt failed; errors
-that another attempt cannot fix (400/401/403/404/422, programming errors)
+answered. A connection error that fails in under a second (a dropped pooled
+connection) is re-sent at once, once per call, outside the retry budget.
+Returns the raw string, or None when every attempt failed; errors that
+another attempt cannot fix (400/401/403/404/422, programming errors)
 propagate on first occurrence.
 """
 
@@ -57,6 +59,13 @@ TRANSIENT_LLM_ERRORS: tuple[type[BaseException], ...] = (
 # Waiting longer than this on one provider costs more than it saves: stage
 # timeouts are 25-240 s and the fallback (when configured) is one step away.
 _RETRY_AFTER_CAP_SECONDS = 20.0
+
+# A connection-level error this fast never reached the model: on prod ~2 % of
+# gpt-4o-mini calls fail as a sub-second LiteLLM "Timeout" (the aiohttp
+# transport dropping a pooled connection). Such a failure is re-sent at once,
+# once per call, without spending the retry budget.
+_DROPPED_CONNECTION_SECONDS = 1.0
+_CONNECTION_ERRORS: tuple[type[BaseException], ...] = (LitellmTimeout, APIConnectionError)
 
 # Conservative character limits per model family (leaves headroom for system overhead).
 # These are safety nets — chunking should prevent them from triggering.
@@ -332,6 +341,11 @@ async def _try_once(
     return None, None
 
 
+def _dropped_connection(error: BaseException | None, elapsed: float) -> bool:
+    """A connection error raised before the request could have reached the model."""
+    return isinstance(error, _CONNECTION_ERRORS) and elapsed < _DROPPED_CONNECTION_SECONDS
+
+
 def _pause_seconds(current: _Attempt, upcoming: _Attempt, error: BaseException | None) -> float:
     """No wait when switching provider; else the provider's retry-after, else linear backoff."""
     if upcoming.model != current.model:
@@ -402,18 +416,38 @@ async def call_llm_with_retry(
         system_prompt=system_prompt,
     )
     attempts = _plan_attempts(llm_service, use_fast_model, max_retries)
-    last_rate_limit: RateLimitError | ServiceUnavailableError | None = None
-    for current, upcoming in zip(attempts, [*attempts[1:], None], strict=True):
-        text, error = await _try_once(current, request)
-        if text is not None:
-            return text
-        if isinstance(error, (RateLimitError, ServiceUnavailableError)):
-            last_rate_limit = error
-        if upcoming is not None:
-            pause = _pause_seconds(current, upcoming, error)
-            logger.info("[%s] Retrying in %.1fs on %s", stage_name, pause, upcoming.model)
-            await asyncio.sleep(pause)
+    text, last_rate_limit = await _run_attempts(attempts, request)
+    if text is not None:
+        return text
     logger.error("[%s] All %d attempts failed", stage_name, len(attempts))
     if propagate_rate_limit and last_rate_limit is not None:
         raise last_rate_limit
     return None
+
+
+async def _run_attempts(
+    attempts: list[_Attempt], request: _Request
+) -> tuple[str | None, RateLimitError | ServiceUnavailableError | None]:
+    """Walk the attempt plan: (reply, None) on success, else (None, last rate-limit error)."""
+    last_rate_limit: RateLimitError | ServiceUnavailableError | None = None
+    resent = False
+    index = 0
+    while index < len(attempts):
+        current = attempts[index]
+        started = time.monotonic()
+        text, error = await _try_once(current, request)
+        if text is not None:
+            return text, None
+        if not resent and _dropped_connection(error, time.monotonic() - started):
+            resent = True
+            logger.info("[%s] Dropped connection — resending at once", request.stage_name)
+            continue
+        if isinstance(error, (RateLimitError, ServiceUnavailableError)):
+            last_rate_limit = error
+        index += 1
+        if index < len(attempts):
+            upcoming = attempts[index]
+            pause = _pause_seconds(current, upcoming, error)
+            logger.info("[%s] Retrying in %.1fs on %s", request.stage_name, pause, upcoming.model)
+            await asyncio.sleep(pause)
+    return None, last_rate_limit

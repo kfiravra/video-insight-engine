@@ -1,4 +1,5 @@
-"""Retry-after, same-provider retry and cross-provider fallback (D4 / C4 / A27, task 1d.5).
+"""Retry-after, same-provider retry, cross-provider fallback and dropped-connection
+resends (D4 / C4 / A27, task 1d.5).
 
 Driven end to end through the real ``LLMService`` → ``LLMProvider`` with a
 scripted ``acompletion`` (``side_effect`` sequences): the provider makes one
@@ -16,10 +17,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 from litellm.exceptions import (
+    APIConnectionError,
     AuthenticationError,
     BadRequestError,
     InternalServerError,
     RateLimitError,
+    Timeout,
 )
 
 from src.config import settings
@@ -266,3 +269,55 @@ class TestFallbackTelemetry:
 
         generation = trace.generation.call_args.kwargs
         assert (generation["model"], generation["metadata"]["fallbackFrom"]) == (_GPT4O, _SONNET)
+
+
+def _dropped() -> Timeout:
+    return Timeout(message="Connection timed out", model="gpt-4o-mini", llm_provider="openai")
+
+
+def _disconnected() -> APIConnectionError:
+    return APIConnectionError(
+        message="Server disconnected", llm_provider="openai", model="gpt-4o-mini"
+    )
+
+
+class TestDroppedConnection:
+    """A sub-second connection error never reached the model: resend at once (1d.5)."""
+
+    @pytest.mark.parametrize("error", [_dropped(), _disconnected()])
+    async def test_should_resend_at_once_outside_the_retry_budget(
+        self, sleep: AsyncMock, error: Exception
+    ) -> None:
+        with _scripted(error, _reply(_HAIKU)) as acompletion:
+            raw = await call_llm_with_retry(
+                _service(None), "p", stage_name="synthesis", use_fast_model=True, max_retries=0
+            )
+
+        assert (raw, acompletion.await_count, sleep.await_count) == ('{"ok": true}', 2, 0)
+
+    async def test_should_resend_only_once_per_call(self, sleep: AsyncMock) -> None:
+        with _scripted(_dropped(), _dropped()) as acompletion:
+            raw = await call_llm_with_retry(
+                _service(None), "p", stage_name="synthesis", use_fast_model=True, max_retries=0
+            )
+
+        assert (raw, acompletion.await_count) == (None, 2)
+
+    async def test_should_back_off_after_a_slow_timeout(
+        self, sleep: AsyncMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(llm_retry, "_DROPPED_CONNECTION_SECONDS", 0.0)
+        with _scripted(_dropped(), _reply(_HAIKU)):
+            await call_llm_with_retry(
+                _service(None), "p", stage_name="synthesis", use_fast_model=True, max_retries=1
+            )
+
+        assert [c.args[0] for c in sleep.await_args_list] == [1.0]
+
+    async def test_should_keep_the_budget_after_a_resend(self, sleep: AsyncMock) -> None:
+        with _scripted(_dropped(), _overloaded(), _reply(_HAIKU)) as acompletion:
+            raw = await call_llm_with_retry(
+                _service(None), "p", stage_name="synthesis", use_fast_model=True, max_retries=1
+            )
+
+        assert (raw, acompletion.await_count) == ('{"ok": true}', 3)
