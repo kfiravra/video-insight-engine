@@ -1,5 +1,5 @@
 {
- "status": "partial: 3/6 runs; stopped 2026-10-08 00:50 UTC \u2014 YouTube bot check on the primary proxy exit (exits 2-3 pass)",
+ "status": "accepted as partial by Kfir 2026-10-08: 3/6 runs; the remaining three are not run",
  "task": "pipeline-1min 0.10 prod baseline",
  "deployedCommit": "c57c2a6",
  "source": "prod Mongo videoSummaryCache.pipeline.timing + llm_usage ledger (read-only)",
@@ -701,5 +701,36 @@
   }
  ],
  "totalCostUsdLedger": 0.4578,
- "clientTimingsNote": "client-side SSE offsets omitted: the WSL clock runs ~6% fast vs the server (40 s server = 42.4 s local)"
+ "clientTimingsNote": "client-side SSE offsets omitted: the WSL clock runs ~6% fast vs the server (40 s server = 42.4 s local)",
+ "coldReference": {
+  "T1dQhQAm8Tc": {
+   "totalS": 240.0,
+   "source": "pre-phase-0 prod run (videoSummaryCache v1, processingTimeMs 239491, created 2026-10-06T09:49Z, no pipeline.timing); phase walls from evidence/A-DIGEST.md",
+   "phasesS": {
+    "frames": 85.7,
+    "vision": 35.8,
+    "classifier": 2.2,
+    "plan": 27.9,
+    "chapter_detect": 3.4,
+    "extraction": 76.0,
+    "synthesis": 4.6,
+    "enrichment": 12.0
+   },
+   "firstTabS": 226,
+   "costUsd": 0.186,
+   "proxyMb": 143
+  },
+  "jMq8lEu-of0": {
+   "totalS": 201.8,
+   "source": "r1 (first prod run, cold media)"
+  },
+  "uC45_4nnEAI": {
+   "totalS": 168.6,
+   "source": "r1 (S3 transcript; scene detect re-runs on the 0-candidate path)"
+  }
+ },
+ "warmRuns": [
+  "r1_T1dQhQAm8Tc"
+ ],
+ "timingSource": "pipeline.timing only (server clock); client SSE offsets dropped \u2014 WSL clock +6%"
 }

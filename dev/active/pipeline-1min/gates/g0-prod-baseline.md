@@ -1,4 +1,4 @@
-# 0.10 Prod baseline — PARTIAL (3/6 runs), stopped 2026-10-08 00:50 UTC
+# 0.10 Prod baseline — accepted as partial (3/6 runs), 2026-10-08
 
 Prod box on `c57c2a6` (PR #22; summarizer/worker/api rebuilt 2026-10-07 18:27 UTC). Source: prod Mongo
 `videoSummaryCache.pipeline.timing` + `llm_usage` ledger (read-only). Raw: `g0-prod-baseline.json`.
@@ -10,17 +10,26 @@ server (40 s server = 42.4 s local). That also applies to any wall time measured
 pending/processing rows before each, ≥ 6 min apart so the prompt cache is cold. jMq8 r1 is the exception:
 it started 3 min after T1d r1, so its plan read 14 k cached tokens ($0.026 vs $0.072–0.079).
 
-| Run | Media | Total | First tab | Meta | Frames (scene / vision / hires) | Plan | Extract | Synth ∥ enrich | Assembly (moment dl) | Cost |
-|---|---|---|---|---|---|---|---|---|---|---|
-| T1d r1 (STANDARD) | S3 transcript + frame manifest | 147.1 | 134.0 | 11.6 | 0.1 (— / restored / —) | 38.5 | 68.9 | 14.6 | 13.2 (12.0) | $0.129 |
-| jMq8 r1 (HIGH) | cold, first prod run | 201.8 | 201.7 | 3.9 ¹ | 106.0 (14.5 / 55.8 / 11.0) | 26.5 | 51.8 | 13.5 | 0.1 (prefetch reused) | $0.216 |
-| uC45 r1 (0 cand.) | S3 transcript; scene detect re-runs (no manifest) | 168.6 | 164.2 | 13.1 | 58.5 (45.4 / — / —) | 24.2 | 58.5 | 9.9 | 4.4 (failed ²) | $0.114 |
-| T1d r2 | **failed** at metadata, 1.8 s, `VIDEO_UNAVAILABLE` (bot check), $0 | | | | | | | | | |
+**Decision (Kfir, 2026-10-08):** accepted as partial; the remaining three runs are not run. Cold
+references below; warm re-runs are reported separately. All timings come from `pipeline.timing` only.
 
-**"Medians" (n = 1 per video) vs replay:** T1d 147.1 s vs 239.0 s. Not comparable: the frames phase was
-restored from cache (0.1 s vs 85.7 s cold); vs the 240 s run: classifier 6.5 vs 2.2, plan call 32.0 vs 27.9,
-extraction 68.9 vs 76, synth ∥ enrich 14.6 vs 12.0.
-uC45 168.6 s vs 171.1 s (−1.5 %). jMq8 201.8 s vs 261.9 s dev cassette (−23 %; frames 106 s, cold).
+**Cold references** (gate targets compare against these)
+| Video | Total | First tab | Meta | Frames (scene / vision / hires) | Plan | Extract | Synth ∥ enrich | Assembly (moment dl) | Cost |
+|---|---|---|---|---|---|---|---|---|---|
+| T1dQhQAm8Tc (STANDARD) ³ | 240.0 | ≈ 226 | — | 85.7 (— / 35.8 / —) | 27.9 + classifier 2.2 + chapters 3.4 | 76.0 | 4.6 ∥ 12.0 | — | $0.186 |
+| jMq8lEu-of0 (HIGH), r1 | 201.8 | 201.7 | 3.9 ¹ | 106.0 (14.5 / 55.8 / 11.0) | 26.5 | 51.8 | 13.5 | 0.1 (prefetch reused) | $0.216 |
+| uC45_4nnEAI (0 cand.), r1 | 168.6 | 164.2 | 13.1 | 58.5 (45.4 / — / —) | 24.2 | 58.5 | 9.9 | 4.4 (failed ²) | $0.114 |
+
+**Warm re-runs** (S3 transcript + frame manifest; not comparable with cold runs)
+| Run | Total | First tab | Meta | Frames | Plan | Extract | Synth ∥ enrich | Assembly (moment dl) | Cost |
+|---|---|---|---|---|---|---|---|---|---|
+| T1dQhQAm8Tc r1 | 147.1 | 134.0 | 11.6 | 0.1 (vision restored) | 38.5 (classifier 6.5) | 68.9 | 14.6 | 13.2 (12.0) | $0.129 |
+| T1dQhQAm8Tc r2 | **failed** at metadata after 1.8 s, `VIDEO_UNAVAILABLE` (bot check), $0 | | | | | | | | |
+
+³ The pre-phase-0 prod run (Mongo v1, `processingTimeMs` 239.5 s, created 2026-10-06 09:49 UTC, no
+`pipeline.timing`). Phase walls from `evidence/A-DIGEST.md`; proxy 143 MB. uC45 counts as cold here:
+the transcript came from S3, but scene detect re-runs on the 0-candidate path.
+Replay comparison: T1d 239.0 vs 240.0; uC45 171.1 vs 168.6 (−1.5 %); jMq8 261.9 dev cassette vs 201.8 (−23 %).
 Every run had `rateLimited` 0 and `fallbacks` 0; tabs planned 5/4/3 → assembled 6/5/4. Downloads:
 T1d 1 file (54 MB); jMq8 2 files (161 MB); uC45 3 files (249 MB, incl. an unused 720p prefetch of 174 MB).
 **Spend $0.458** (ledger = `pipeline.timing.costUsd` on every run).
@@ -35,8 +44,12 @@ T1d 1 file (54 MB); jMq8 2 files (161 MB); uC45 3 files (249 MB, incl. an unused
   00:49 a no-write probe through the app's yt-dlp path fails for all 3 videos on the primary exit and passes
   on exits 2 and 3. `try_proxy_exits` rotates only on 429, so **every new prod submission fails at
   metadata until the exit clears**. These runs downloaded ~460 MB (uC45: 249 MB within 35 s at 00:01), which may
-  have contributed. The remaining 3 runs (T1d r2, jMq8 r2, uC45 r2) were not triggered.
+  have contributed. Kfir switched prod to exit 2 (workers restarted 2026-10-08 04:12 UTC). Follow-up
+  → 1a: rotate on the bot check as on a 429, and choose the exit per job round-robin.
 - **Prod side effects:** T1d's latest version is the failed v3, and the demo library's T1d row points to it.
+  Kfir asked for one T1d re-run with an admin or eval account. **Still open:** prod has no eval user, and
+  no admin login credentials exist locally or on the box (only `ADMIN_API_KEY`, which has no re-run
+  route). It needs Kfir to create the eval user (`env-changes.md`) or supply admin credentials.
   jMq8 v1 is new in the demo library. The demo account (free tier, $1/day) was capped from 18:43 UTC to
   00:00 UTC on 10-07 ($1.05; it was at $0.70 before these runs).
 - Moment fill re-downloads 720p in assembly on warm runs (T1d: 12 s between first tab and `complete`).

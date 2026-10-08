@@ -6,7 +6,7 @@ tables 1c/1d + conflicts C1–C21, brief §1c/§1d + Appendices B.5/B.6/D, and t
 read `git log --oneline c57c2a6..HEAD` and the commits touching your files first.
 
 **Two modes.** DESIGN mode (until the coordinator says GO): read + design only — NO edits to any
-repo file. Write your design to `/tmp/claude-1000/-home-kfir-projects-video-insight-engine/aa158ff0-536b-4af1-a682-696f61adc1a7/scratchpad/design-<ID>.md`
+repo file. Write your design to `dev/active/pipeline-1min/designs/design-<ID>.md` (the only repo file you may write in DESIGN mode)
 (≤ 150 lines: file-by-file changes, interfaces you need/provide, tests, risks, open questions), then
 reply with a ≤ 10-line summary and stop. GO mode: implement, with the stop points below (report per
 agent-rules.md at each; the coordinator commits between stops). Reason for the two modes: a dev

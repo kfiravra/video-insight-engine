@@ -10,3 +10,5 @@
 - 1c.1 (C1): drop outer <video_context> wrapper tags — the block carries its own <video_memory> tags (B.5).
 - D4 brief addition (1d.5): retry sub-second OpenAI 'Timeout' (connection) errors at once incl. description analysis (prod: ~2 % of gpt-4o-mini calls; LiteLLM aiohttp transport).
 - C1 note (from C2): fill {batch_context} BEFORE placing the visual annotations block (on-screen text could contain the literal placeholder).
+- D5 STOP B also: config.py comments — FRAME_VISION_TIMEOUT ('~40 low-res frames' stale under batching), SCENE_DETECT_SCALE_WIDTH is now a max width (D3: no upscale). D3 deletes format_visual_annotation only after C2 step 2 commits. Wiring agent = D4 (first: per-batch vision cassette split → commit with D3).
+- D3 measurement → 360p-native chosen; open for Kfir: hires seek int(timestamp) mismatch (exact seek vs describe shipped 720p frame).
