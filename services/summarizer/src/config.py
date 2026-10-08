@@ -74,15 +74,9 @@ class Settings(BaseSettings):
     # moment gallery and OCR, and Haiku was rejected for them (2026-09-16).
     # None → the caller's primary model (frame_analyzer).
     LLM_VISION_MODEL: str | None = None
-    # Extraction model override. Default `None` falls through to the primary
-    # model (claude-sonnet-4-6 in production), preserving the current cost
-    # profile. Set to "anthropic/claude-haiku-4-5-20251001" or another model
-    # to A/B against Sonnet without rebuilding. Unlike EXTRACTION_USE_FAST_FIRST
-    # (which routes the FIRST pass to the fast tier and escalates retries to
-    # primary), this override pins ALL extraction passes — including retries —
-    # to the chosen model. Use when you want a clean A/B with no escalation
-    # noise; use EXTRACTION_USE_FAST_FIRST when you want a cost-saving first
-    # pass with Sonnet as a safety net on failure.
+    # Extraction model override — pins every extraction call and the memory
+    # stage (pipeline-1min D5). None → the primary model (Sonnet); prod pins
+    # "anthropic/claude-haiku-4-5-20251001" via env.
     LLM_EXTRACTION_MODEL: str | None = None
 
     # Provider API Keys (set for providers you use)
@@ -130,11 +124,6 @@ class Settings(BaseSettings):
     # Sub-batches when a long video's chunked input collapses to one batch;
     # they run in one round while EXTRACTION_PARALLEL_BATCHES >= this.
     EXTRACTION_FORCE_SPLIT_CHUNKS: int = 4
-    # Phase 4 / P2: route the *first* extraction pass through the fast model.
-    # Default OFF — flip via env after a corpus eval confirms quality
-    # delta < 0.05 across all primary domains. Retries always
-    # escalate to the primary model regardless of this flag.
-    EXTRACTION_USE_FAST_FIRST: bool = False
 
     # Timeout constants for pipeline stages
     TRANSCRIPT_FETCH_TIMEOUT: float = 30.0
@@ -280,7 +269,9 @@ class Settings(BaseSettings):
     SCENE_THRESHOLD: float = 0.3
     SCENE_MAX_FRAMES: int = 100
     # Detection pass renders from the worst-quality download; these only shape
-    # the low-res JPEGs used for scoring/OCR (and the fallback if hi-res fails).
+    # the low-res JPEGs used for scoring/OCR/HIGH-tier vision (and the fallback
+    # if hi-res fails). MAX width: frames narrower than this are never upscaled
+    # (upscaling the ~360p file added no pixels, only vision image tokens).
     SCENE_DETECT_SCALE_WIDTH: int = 1024
     SCENE_JPEG_QUALITY: int = 4  # ffmpeg -q:v (2 = near-lossless, 31 = worst)
 
@@ -322,9 +313,10 @@ class Settings(BaseSettings):
     # v3: subject-aware scoring (skin/center-detail) + adaptive vision tiers.
     SCENE_S3_PREFIX: str = "scenes-v3"
 
-    # Vision LLM analysis on top-scored frames.
-    # Sending 8 base64 frames to Sonnet legitimately takes 30-50s under load;
-    # HIGH-tier batches (~40 low-res frames) need the larger 90s budget.
+    # Vision LLM analysis on top-scored frames. FRAME_VISION_MAX_FRAMES = frames
+    # described on the STANDARD tier. FRAME_VISION_TIMEOUT = per-call floor in
+    # seconds; frame_analyzer scales it up per frame in the call, since
+    # 8 base64 frames to Sonnet legitimately take 30-50s under load.
     FRAME_VISION_ENABLED: bool = True
     # Frames go to vision in parallel batches (media/frame_analyzer.py);
     # false = one call with every frame, the pre-batching path.
