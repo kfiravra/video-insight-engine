@@ -1,4 +1,4 @@
-"""Phase 4: Extraction — adaptive structured extraction with count validation."""
+"""Phase 4: Extraction — adaptive structured extraction, then coverage and quality metrics."""
 
 from __future__ import annotations
 
@@ -10,28 +10,17 @@ from llm_common.context import llm_feature_var
 
 from src.config import settings
 from src.models.schemas import ErrorCode, ProcessingStatus
-from src.services.pipeline.extraction_quality import (
-    build_synthesis_fed_retry_prompt,
-    check_extraction_quality,
-    decide_extraction_retry,
-    merge_retry_fields,
-)
+from src.services.pipeline.extraction_quality import check_extraction_quality
 from src.services.pipeline.extractor import extract
 from src.services.pipeline.memory import format_clock
-from src.services.pipeline.pipeline_helpers import (
-    normalize_segments,
-    sse_event,
-    truncate_json_safely,
-)
+from src.services.pipeline.pipeline_helpers import normalize_segments, sse_event
 from src.services.pipeline.post_processor import (
     COVERAGE_CRITICAL_RATIO,
     COVERAGE_GATE_RATIO,
     compute_extraction_coverage,
-    validate_extraction_counts,
 )
 from src.services.pipeline.prompt_builder import format_gallery_frames_for_extraction
 from src.services.pipeline.scene_frames import inject_visual_context
-from src.services.pipeline.synthesis import synthesize
 from src.services.transcript.render import render_transcript
 
 if TYPE_CHECKING:
@@ -119,75 +108,30 @@ def _record_extraction_coverage(
         )
 
 
-async def _attempt_synthesis_fed_retry(
-    ctx: PipelineContext,
-    plan_tabs: list[dict],
-    quality: Any,
-    video_info: dict,
-    chapters: Any,
-    retry_fields: list[str] | None = None,
-) -> None:
-    """Run synthesis early, then re-extract with evidence-based guidance.
+def _record_extraction_quality(ctx: PipelineContext) -> None:
+    """Log the share of planned dataSources the extraction populated (metric only).
 
-    Mutates ctx.extraction_data (if retry improves quality) and ctx.synthesis_dict.
-    When ``retry_fields`` is provided, it replaces ``quality.empty_fields`` in
-    the retry prompt — useful when the caller has merged in hard-miss
-    annotations from count validation.
+    The synthesis-fed retry this score used to gate is gone (pipeline-1min 1c.5):
+    7 firings in 55 runs, 0 of the 3 measurable ones improved. The numbers sit in the
+    message because the stdlib log handler drops ``extra``.
     """
-    if ctx.video_data is None or ctx.triage is None:
-        logger.warning("[pipeline] Cannot retry extraction: missing video_data or triage")
+    if ctx.plan_result is None or not ctx.extraction_data:
         return
-
-    extraction_summary = truncate_json_safely(ctx.extraction_data, 4000)
-    synthesis_result = await synthesize(
-        ctx.llm_service,
-        title=ctx.video_data.title,
-        channel=ctx.video_data.channel,
-        duration=ctx.video_data.duration,
-        output_type=ctx.triage.primary_tag,
-        extraction_summary=extraction_summary,
-        video_context=ctx.video_memory,
+    quality = check_extraction_quality(ctx.plan_result.tabs, ctx.extraction_data)
+    logger.info(
+        "pipeline.extraction_quality score=%.2f populated=%d/%d empty=%s",
+        quality.score,
+        quality.populated,
+        quality.total,
+        quality.empty_fields,
+        extra={
+            "video_id": ctx.video_summary_id,
+            "score": quality.score,
+            "populated": quality.populated,
+            "total": quality.total,
+            "empty_fields": quality.empty_fields,
+        },
     )
-    ctx.synthesis_dict = synthesis_result.model_dump(by_alias=True)
-
-    fields_for_prompt = retry_fields if retry_fields else quality.empty_fields
-    retry_prompt = build_synthesis_fed_retry_prompt(
-        fields_for_prompt,
-        ctx.synthesis_dict,
-    )
-
-    retry_data = None
-    # Synthesis-fed retry always escalates to the primary model — even when
-    # EXTRACTION_USE_FAST_FIRST is on. The first pass already proved the fast
-    # model under-extracted; doubling down on it just burns tokens.
-    async for evt in extract(
-        ctx.llm_service,
-        ctx.triage,
-        build_prompt_transcript(ctx),
-        video_info,
-        chapters=chapters,
-        video_context=ctx.video_memory,
-        extra_instruction=retry_prompt,
-        force_primary_model=True,
-    ):
-        if evt["event"] == "extraction_complete":
-            retry_data = evt.get("data")
-
-    if retry_data:
-        retry_quality = check_extraction_quality(plan_tabs, retry_data)
-        if retry_quality.score > quality.score:
-            ctx.extraction_data = retry_data
-            logger.info(
-                "[pipeline] Extraction retry improved quality: %.2f → %.2f",
-                quality.score,
-                retry_quality.score,
-            )
-        else:
-            logger.info(
-                "[pipeline] Extraction retry did not improve quality (%.2f vs %.2f), keeping original",
-                retry_quality.score,
-                quality.score,
-            )
 
 
 def _segment_dicts(segments: list[Any]) -> list[dict]:
@@ -262,7 +206,7 @@ async def _split_chapters(
 
 
 async def run_phase_extraction(ctx: PipelineContext) -> AsyncGenerator[str, None]:
-    """Run adaptive extraction and optional count-validation retry."""
+    """Run adaptive extraction, then record its coverage and quality metrics."""
     llm_feature_var.set("summarize:extraction")
     assert ctx.triage is not None
     assert ctx.video_data is not None
@@ -350,64 +294,4 @@ async def run_phase_extraction(ctx: PipelineContext) -> AsyncGenerator[str, None
     )
 
     _record_extraction_coverage(ctx, batches_total, batches_succeeded)
-
-    # Quality check + conditional synthesis-fed retry.
-    # Count validation runs alongside the quality check so that a hard miss
-    # on a manifest-planned field (e.g. plan said 6 tips, extraction returned 0)
-    # can trigger a retry even when the overall score is above threshold.
-    if ctx.extraction_data and ctx.triage is not None and ctx.plan_result is not None:
-        plan_tabs = ctx.plan_result.tabs
-        quality = check_extraction_quality(plan_tabs, ctx.extraction_data)
-        count_warnings = validate_extraction_counts(
-            ctx.plan_result,
-            ctx.extraction_data,
-            content_tags=ctx.plan_result.content_tags,
-        )
-        retry_decision = decide_extraction_retry(
-            quality,
-            count_warnings,
-            content_tags=ctx.plan_result.content_tags,
-            content_format=ctx.content_format,
-        )
-
-        logger.info(
-            "pipeline.extraction_quality",
-            extra={
-                "video_id": ctx.video_summary_id,
-                "score": quality.score,
-                "populated": quality.populated,
-                "total": quality.total,
-                "empty_fields": quality.empty_fields,
-                "count_warnings": count_warnings,
-                "hard_miss_fields": retry_decision.hard_miss_fields,
-            },
-        )
-
-        if retry_decision.should_retry:
-            logger.warning(
-                "[pipeline] Extraction retry triggered (%s) for video_id=%s — attempting synthesis-fed retry",
-                retry_decision.reason,
-                ctx.video_summary_id,
-            )
-            retry_fields = merge_retry_fields(
-                quality.empty_fields,
-                retry_decision.hard_miss_fields,
-                count_warnings,
-            )
-            try:
-                await _attempt_synthesis_fed_retry(
-                    ctx,
-                    plan_tabs,
-                    quality,
-                    video_info,
-                    chapters,
-                    retry_fields=retry_fields,
-                )
-            except Exception as e:
-                logger.warning("[pipeline] Extraction retry failed (non-critical): %s", e)
-        elif count_warnings:
-            logger.warning(
-                "[pipeline] Extraction count mismatch (not retried) for video_id=%s: %s",
-                ctx.video_summary_id,
-                count_warnings,
-            )
+    _record_extraction_quality(ctx)

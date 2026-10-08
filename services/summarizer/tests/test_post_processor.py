@@ -7,11 +7,9 @@ from src.services.pipeline.post_processor import (
     assign_section_accents,
     merge_narrative,
     resolve_celebrations,
-    validate_extraction_counts,
     compute_extraction_coverage,
     COVERAGE_GATE_RATIO,
 )
-from src.models.pipeline_types import PlanResult
 
 
 class TestDropEmptyTabs:
@@ -222,24 +220,6 @@ class TestResolveCelebrations:
     def test_empty_tabs(self):
         result = resolve_celebrations([])
         assert result == []
-
-
-class TestValidateExtractionCounts:
-    """The plan stopped counting items (pipeline-1min 1b.2), so the check is a no-op."""
-
-    def test_should_return_no_warnings_when_plan_carries_no_counts(self):
-        plan = PlanResult.model_validate({"contentTags": ["food"], "primaryTag": "food"})
-        data = {"food": {"ingredients": []}}
-
-        assert validate_extraction_counts(plan, data, content_tags=["food"]) == {}
-
-    def test_should_ignore_legacy_item_counts_when_an_old_plan_sends_them(self):
-        plan = PlanResult.model_validate({"itemCounts": {"exercises": 5}})
-
-        assert validate_extraction_counts(plan, {}) == {}
-
-    def test_should_return_no_warnings_when_inputs_are_missing(self):
-        assert validate_extraction_counts(None, None) == {}
 
 
 class TestComputeExtractionCoverage:

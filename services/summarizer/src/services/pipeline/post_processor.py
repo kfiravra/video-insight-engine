@@ -3,12 +3,9 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from ...utils.data_helpers import parse_timestamp_to_seconds
-
-if TYPE_CHECKING:
-    from ...models.pipeline_types import PlanResult
 
 logger = logging.getLogger(__name__)
 
@@ -137,58 +134,8 @@ def resolve_celebrations(tabs: list[dict]) -> list[dict]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Extraction Count Validation (retired — kept as a no-op until 1c.5)
+# Extraction Coverage
 # ─────────────────────────────────────────────────────────────────────────────
-
-# Count field → where its items live in the extraction. The plan no longer
-# counts items, so only ``FIELD_TO_DOMAINS`` is still read: the extraction
-# retry gate filters hard-miss fields by the domains that own them.
-_COUNT_EXTRACTORS: dict[str, list[str]] = {
-    "spots": ["travel.itinerary.*.spots"],
-    "ingredients": ["food.ingredients"],
-    "exercises": ["fitness.exercises"],
-    "steps": ["food.steps", "project.steps"],
-    "songs": ["music.structure"],
-    "tips": ["food.tips", "fitness.tips", "travel.itinerary.*.tips"],
-    "products": ["review.comparisons"],
-}
-
-
-def _derive_field_to_domains(extractors: dict[str, list[str]]) -> dict[str, frozenset[str]]:
-    """Derive {field → {domain, …}} from the path map.
-
-    The first segment of each dot-path is the domain that owns the field.
-    Used to skip retry attempts for fields that no active contentTag schema defines.
-    """
-    return {
-        field: frozenset(path.split(".", 1)[0] for path in paths)
-        for field, paths in extractors.items()
-    }
-
-
-# Maps each count field to the set of domains whose schemas actually define
-# it. A `tech + learning` video should not retry for "steps" or "tips" —
-# those fields exist only in food/project/fitness/travel.
-FIELD_TO_DOMAINS: dict[str, frozenset[str]] = _derive_field_to_domains(_COUNT_EXTRACTORS)
-
-
-def validate_extraction_counts(
-    manifest: PlanResult | None,
-    extraction_data: dict | None,
-    content_tags: list[str] | None = None,
-) -> dict[str, dict]:
-    """Plan-count vs extraction check — always ``{}`` now.
-
-    The plan stopped estimating flat item counts (pipeline-1min 1b.2: each
-    tab's ``brief.expect`` replaced them), so there is nothing to compare and
-    the count-triggered retry can never fire. The signature stays
-    for the extraction quality gate, which 1c.5 removes together with this.
-
-    Returns:
-        An empty warnings dict.
-    """
-    return {}
-
 
 # Ratio below which the extraction is flagged for under-coverage: the latest
 # timestamped item is far short of the video's end (e.g. a 4.5h video whose
