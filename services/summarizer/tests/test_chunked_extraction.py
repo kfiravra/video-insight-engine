@@ -12,15 +12,26 @@ from src.services.pipeline.extractor import (
     _build_batch_context,
     _build_batch_transcript,
     _chunked_extraction,
-    _format_prompt,
     _format_time,
     _percent_for_batch,
     _resolve_strategy,
-    _split_prompt_for_caching,
     SINGLE_THRESHOLD,
 )
 from src.services.pipeline.triage import TriageResult
 from src.services.transcription.transcript_chunker import ChapterChunk
+from src.services.pipeline.extraction_prompt import ExtractionPrompt
+from src.services.llm_messages import TextBlock
+
+_PROMPT = ExtractionPrompt(
+    system="rules",
+    head="<transcript>\n{transcript}\n</transcript>",
+    tail="<your_job>\n{batch_context}JOB\n</your_job>\n{visual_annotations}",
+)
+
+
+def _text(blocks: list[TextBlock]) -> str:
+    """The user content a call sent, as one string."""
+    return "".join(block["text"] for block in blocks)
 
 
 # ---------------------------------------------------------------------------
@@ -381,9 +392,7 @@ class TestChunkedExtractionStreamingProgress:
             ),
         ):
             events = []
-            async for evt in _chunked_extraction(
-                mock_llm, triage, "template {transcript}", chapters
-            ):
+            async for evt in _chunked_extraction(mock_llm, triage, _PROMPT, chapters):
                 events.append(evt)
 
         progress = [
@@ -423,9 +432,7 @@ class TestChunkedExtractionStreamingProgress:
             ),
         ):
             events = []
-            async for evt in _chunked_extraction(
-                mock_llm, triage, "template {transcript}", chapters
-            ):
+            async for evt in _chunked_extraction(mock_llm, triage, _PROMPT, chapters):
                 events.append(evt)
 
         complete = [e for e in events if e["event"] == "extraction_complete"][0]
@@ -464,9 +471,7 @@ class TestChunkedExtractionStreamingProgress:
             ) as mock_warn,
         ):
             events = []
-            async for evt in _chunked_extraction(
-                mock_llm, triage, "template {transcript}", chapters
-            ):
+            async for evt in _chunked_extraction(mock_llm, triage, _PROMPT, chapters):
                 events.append(evt)
 
         complete = [e for e in events if e["event"] == "extraction_complete"][0]
@@ -521,9 +526,7 @@ class TestChunkedExtractionStreamingProgress:
             ),
         ):
             events = []
-            async for evt in _chunked_extraction(
-                mock_llm, triage, "template {transcript}", chapters
-            ):
+            async for evt in _chunked_extraction(mock_llm, triage, _PROMPT, chapters):
                 events.append(evt)
 
         # The sequential fallback must have fired with the dedicated section name
@@ -576,7 +579,7 @@ class TestChunkedExtractionStreamingProgress:
                 1,
             ),
         ):
-            async for _ in _chunked_extraction(mock_llm, triage, "template {transcript}", chapters):
+            async for _ in _chunked_extraction(mock_llm, triage, _PROMPT, chapters):
                 pass
 
         assert max_active == 1, f"Sequential mode should peak at 1, peaked at {max_active}"
@@ -615,9 +618,7 @@ class TestChunkedExtractionStreamingProgress:
             ),
         ):
             events = []
-            async for evt in _chunked_extraction(
-                mock_llm, triage, "template {transcript}", chapters
-            ):
+            async for evt in _chunked_extraction(mock_llm, triage, _PROMPT, chapters):
                 events.append(evt)
 
         # All three slots must have fired their per-batch progress event so
@@ -681,9 +682,7 @@ class TestChunkedExtractionStreamingProgress:
             ),
         ):
             events = []
-            async for evt in _chunked_extraction(
-                mock_llm, triage, "template {transcript}", chapters
-            ):
+            async for evt in _chunked_extraction(mock_llm, triage, _PROMPT, chapters):
                 events.append(evt)
 
         seq_events = [e for e in events if e.get("section") == "chunked-sequential"]
@@ -693,125 +692,6 @@ class TestChunkedExtractionStreamingProgress:
         assert seq_events[1]["percent"] == 85
         # And monotonic non-decreasing within the band.
         assert seq_events[0]["percent"] <= seq_events[1]["percent"]
-
-
-# ---------------------------------------------------------------------------
-# Phase 4 — EXTRACTION_USE_FAST_FIRST flag plumbing
-# ---------------------------------------------------------------------------
-
-
-class TestFastModelFirstFlag:
-    """The flag itself is gated on a corpus eval before flip; these tests
-    verify the plumbing only — that ``use_fast_model`` reaches the LLM call
-    and that retries always escalate."""
-
-    @pytest.mark.asyncio
-    async def test_flag_off_keeps_primary_model(self):
-        mock_llm = AsyncMock()
-        mock_llm.model = "anthropic/claude-sonnet-4-6"
-        mock_llm.fast_model = "anthropic/claude-haiku-4-5-20251001"
-        triage = _make_triage()
-
-        captured: list[bool] = []
-
-        async def capture_call(*_a, **kwargs):
-            captured.append(kwargs.get("use_fast_model", False))
-            return json.dumps({"learning": {"keyPoints": []}})
-
-        with (
-            patch(
-                "src.services.pipeline.extractor.call_llm_with_retry",
-                new=capture_call,
-            ),
-            patch(
-                "src.services.pipeline.extractor.validate_domain_output",
-                return_value={"learning": {"keyPoints": []}},
-            ),
-            patch(
-                "src.services.pipeline.extractor.settings.EXTRACTION_USE_FAST_FIRST",
-                False,
-            ),
-        ):
-            transcript = " ".join(["w"] * 100)  # tiny → single
-            async for _ in extract(mock_llm, triage, transcript, {"title": "t", "duration": 60}):
-                pass
-
-        assert all(v is False for v in captured), f"Expected all primary, got {captured}"
-
-    @pytest.mark.asyncio
-    async def test_flag_on_routes_to_fast_model(self):
-        mock_llm = AsyncMock()
-        mock_llm.model = "anthropic/claude-sonnet-4-6"
-        mock_llm.fast_model = "anthropic/claude-haiku-4-5-20251001"
-        triage = _make_triage()
-
-        captured: list[bool] = []
-
-        async def capture_call(*_a, **kwargs):
-            captured.append(kwargs.get("use_fast_model", False))
-            return json.dumps({"learning": {"keyPoints": []}})
-
-        with (
-            patch(
-                "src.services.pipeline.extractor.call_llm_with_retry",
-                new=capture_call,
-            ),
-            patch(
-                "src.services.pipeline.extractor.validate_domain_output",
-                return_value={"learning": {"keyPoints": []}},
-            ),
-            patch(
-                "src.services.pipeline.extractor.settings.EXTRACTION_USE_FAST_FIRST",
-                True,
-            ),
-        ):
-            transcript = " ".join(["w"] * 100)
-            async for _ in extract(mock_llm, triage, transcript, {"title": "t", "duration": 60}):
-                pass
-
-        assert captured == [True], f"Expected fast model, got {captured}"
-
-    @pytest.mark.asyncio
-    async def test_force_primary_overrides_flag(self):
-        """Retry path must escalate to primary even when the flag is on."""
-        mock_llm = AsyncMock()
-        mock_llm.model = "anthropic/claude-sonnet-4-6"
-        mock_llm.fast_model = "anthropic/claude-haiku-4-5-20251001"
-        triage = _make_triage()
-
-        captured: list[bool] = []
-
-        async def capture_call(*_a, **kwargs):
-            captured.append(kwargs.get("use_fast_model", False))
-            return json.dumps({"learning": {"keyPoints": []}})
-
-        with (
-            patch(
-                "src.services.pipeline.extractor.call_llm_with_retry",
-                new=capture_call,
-            ),
-            patch(
-                "src.services.pipeline.extractor.validate_domain_output",
-                return_value={"learning": {"keyPoints": []}},
-            ),
-            patch(
-                "src.services.pipeline.extractor.settings.EXTRACTION_USE_FAST_FIRST",
-                True,
-            ),
-        ):
-            transcript = " ".join(["w"] * 100)
-            async for _ in extract(
-                mock_llm,
-                triage,
-                transcript,
-                {"title": "t", "duration": 60},
-                force_primary_model=True,
-            ):
-                pass
-
-        assert captured == [False], (
-            f"force_primary_model must override the flag, got use_fast={captured}"
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -860,45 +740,6 @@ class TestBuildBatchContext:
         assert "~10 minutes (0:00–10:00) of the full 100-minute" in ctx
 
 
-class TestPromptHelpersWithBatchContext:
-    """``_format_prompt`` and ``_split_prompt_for_caching`` must replace
-    ``{batch_context}`` per-call so the placeholder never leaks into the
-    actual LLM input."""
-
-    def test_format_prompt_substitutes_both_placeholders(self):
-        template = "Before <transcript>\n{batch_context}{transcript}\n</transcript>"
-        result = _format_prompt(template, transcript="HELLO", batch_context="PARTIAL")
-        assert "{batch_context}" not in result
-        assert "{transcript}" not in result
-        assert "PARTIAL" in result
-        assert "HELLO" in result
-
-    def test_format_prompt_clears_batch_context_when_empty(self):
-        """Single-batch paths default to ``batch_context=""``; the placeholder
-        must still be removed cleanly."""
-        template = "Before <transcript>\n{batch_context}{transcript}\n</transcript>"
-        result = _format_prompt(template, transcript="HELLO")
-        assert "{batch_context}" not in result
-        assert "HELLO" in result
-
-    def test_split_for_caching_keeps_batch_context_in_dynamic_suffix(self):
-        """``{batch_context}`` MUST live in the dynamic (uncached) suffix —
-        otherwise per-batch context differences would invalidate the
-        Anthropic prompt cache on every call."""
-        template = "CACHED_STATIC <transcript>\n{batch_context}{transcript}\n</transcript>"
-        static, dynamic = _split_prompt_for_caching(
-            template,
-            transcript="T",
-            batch_context="B-CTX",
-        )
-        assert "{batch_context}" not in static
-        assert "{transcript}" not in static
-        # Static portion ends at the <transcript> marker; batch context lives below.
-        assert "B-CTX" not in static
-        assert "B-CTX" in dynamic
-        assert "T" in dynamic
-
-
 class TestChunkedExtractionInjectsBatchContext:
     """The chunked extraction orchestrator must pass per-batch context to
     each batch's LLM call so the model treats its input as partial."""
@@ -914,14 +755,12 @@ class TestChunkedExtractionInjectsBatchContext:
         chapters = [_make_chapter(i, token_estimate=60_000) for i in range(3)]
         extraction_data = {"learning": {"keyPoints": []}}
 
-        # Use a template that includes the {batch_context} placeholder so we
-        # can verify the dynamic prompt actually carries the partial-context
-        # block when it reaches call_llm_with_retry.
-        template = "STATIC SCHEMAS HERE\n<transcript>\n{batch_context}{transcript}\n</transcript>"
+        # The prompt's job tail carries {batch_context}: verify the per-batch
+        # partial-context block reaches call_llm_with_retry.
         captured_prompts: list[str] = []
 
         async def capture_call(_llm_service, prompt, *_args, **_kwargs):
-            captured_prompts.append(prompt)
+            captured_prompts.append(_text(prompt))
             return json.dumps(extraction_data)
 
         with (
@@ -934,7 +773,7 @@ class TestChunkedExtractionInjectsBatchContext:
                 return_value=extraction_data,
             ),
         ):
-            async for _ in _chunked_extraction(mock_llm, triage, template, chapters):
+            async for _ in _chunked_extraction(mock_llm, triage, _PROMPT, chapters):
                 pass
 
         assert len(captured_prompts) == 3, "expected one LLM call per batch"
@@ -959,7 +798,6 @@ class TestChunkedExtractionInjectsBatchContext:
 
         triage = _make_triage()
         chapters = [_make_chapter(i, token_estimate=60_000) for i in range(2)]
-        template = "STATIC SCHEMAS HERE\n<transcript>\n{batch_context}{transcript}\n</transcript>"
 
         ok = json.dumps({"learning": {"keyPoints": []}})
         # Batch 0 succeeds, batch 1 raises 429 in parallel pass then succeeds
@@ -977,7 +815,7 @@ class TestChunkedExtractionInjectsBatchContext:
                 )
             stage_name = kwargs.get("stage_name", "")
             if stage_name.endswith("_seq"):
-                captured_seq_prompt.append(prompt)
+                captured_seq_prompt.append(_text(prompt))
             return ok
 
         with (
@@ -994,7 +832,7 @@ class TestChunkedExtractionInjectsBatchContext:
                 0.0,
             ),
         ):
-            async for _ in _chunked_extraction(mock_llm, triage, template, chapters):
+            async for _ in _chunked_extraction(mock_llm, triage, _PROMPT, chapters):
                 pass
 
         assert len(captured_seq_prompt) == 1, "sequential fallback must run once"

@@ -47,6 +47,7 @@ def _ctx(duration: int, segments: list[dict[str, Any]] | None = None) -> SimpleN
         description_analysis=None,
         llm_service=AsyncMock(),
         video_memory="<video_memory>\ndomains: learning\n</video_memory>",
+        visual_annotations="",
         memory=None,
         chapters=None,
         extraction_data=None,
@@ -236,3 +237,20 @@ class TestExtractionPhaseVideoContext:
                 pass
 
         assert captured["video_context"] is ctx.video_memory
+
+    async def test_should_hand_extraction_the_runs_visual_annotations(self):
+        ctx = _ctx(120)
+        ctx.visual_annotations = (
+            "<visual_annotations>\n[0:12] Slide | Agenda\n</visual_annotations>"
+        )
+        captured: dict[str, Any] = {}
+
+        async def _extract(_llm, _triage, _transcript, _video_info, **kwargs):
+            captured.update(kwargs)
+            yield {"event": "extraction_complete", "data": {"learning": {"keyPoints": []}}}
+
+        with patch.object(extraction_phase, "extract", _extract):
+            async for _ in extraction_phase.run_phase_extraction(ctx):
+                pass
+
+        assert captured["visual_annotations"] is ctx.visual_annotations

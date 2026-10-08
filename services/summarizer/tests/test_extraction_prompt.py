@@ -15,6 +15,7 @@ from src.services.pipeline.extraction_prompt import (
     LATE_BOUND_PLACEHOLDERS,
     TEMPLATE_PATH,
     ExtractionPromptInput,
+    build_extraction_prompt,
     build_extraction_template,
     render_tabs_to_serve,
 )
@@ -59,6 +60,12 @@ def _render(**overrides: Any) -> str:
     return build_extraction_template(_input(**overrides))
 
 
+def _sent_text(transcript: str = "TRANSCRIPT", **overrides: Any) -> str:
+    """Everything one call sends: system rules + the bound user blocks, in order."""
+    prompt = build_extraction_prompt(_input(**overrides))
+    return "\n".join([prompt.system, *(block["text"] for block in prompt.user_blocks(transcript))])
+
+
 def _assert_in_order(text: str, *needles: str) -> None:
     positions = [text.index(needle) for needle in needles]
     assert positions == sorted(positions), dict(zip(needles, positions, strict=True))
@@ -66,14 +73,14 @@ def _assert_in_order(text: str, *needles: str) -> None:
 
 class TestLayout:
     def test_should_put_rules_then_video_then_job_when_rendered(self):
-        prompt = _render(visual_annotations=_ANNOTATIONS, frame_context=_KEY_FRAMES)
+        sent = _sent_text(visual_annotations=_ANNOTATIONS, frame_context=_KEY_FRAMES)
 
         _assert_in_order(
-            prompt,
+            sent,
             "<quality_rules>",
             "<output_rules>",
             "<video>",
-            "<transcript>\n{transcript}\n</transcript>",
+            "<transcript>\nTRANSCRIPT\n</transcript>",
             _MEMORY,
             "\n<your_job>\n",
             "<schema>",
@@ -179,9 +186,9 @@ class TestVisualBlocks:
         """On-screen code keeps its braces; they are never read as placeholders."""
         code = "<visual_annotations>\n[0:05] Editor | const x = {tabs_to_serve};\n</visual_annotations>"
 
-        prompt = _render(visual_annotations=code)
+        sent = _sent_text(visual_annotations=code)
 
-        assert "const x = {tabs_to_serve};" in prompt
+        assert "const x = {tabs_to_serve};" in sent
 
 
 class TestTabsToServe:

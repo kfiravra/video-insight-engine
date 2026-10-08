@@ -6,8 +6,11 @@ the planned tabs' briefs and caps, schemas, example, visual annotations, key
 frames). Counts come from the plan's briefs and the registry caps, never from
 the video's duration.
 
-``{transcript}`` and ``{batch_context}`` stay in the rendered template: the
-extractor binds them per call (single call or one per chunked batch).
+Cache layout (A26): the rules go out as the system prompt — byte-identical for
+every video — and the user message is two blocks: ``[video + transcript +
+video_memory]`` carrying the one cache breakpoint, then the job. Everything a
+call varies (batch transcript, batch context, the batch's annotation slice) is
+bound per call, in one pass, so on-screen text is never read as a placeholder.
 """
 
 from __future__ import annotations
@@ -20,9 +23,11 @@ from dataclasses import dataclass
 from ...models.pipeline_types import TabBrief
 from ...shared_config.domain_config import NON_EXTRACTION_DATASOURCES, data_source
 from ...utils.language_utils import ENGLISH_OUTPUT_DIRECTIVE
+from ..llm_messages import TextBlock, text_block
 from ..transcript.render import format_marker
 from .pipeline_helpers import sanitize_for_prompt
 from .prompt_builder import PROMPTS_DIR, load_prompt_text
+from .visual_annotations import CLOSE_TAG, OPEN_TAG, annotation_entries
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +36,11 @@ SCHEMAS_DIR = PROMPTS_DIR / "schemas"
 EXAMPLES_DIR = PROMPTS_DIR / "examples"
 
 # Bound per call by the extractor, never at template-build time.
-LATE_BOUND_PLACEHOLDERS = frozenset({"transcript", "batch_context"})
+LATE_BOUND_PLACEHOLDERS = frozenset({"transcript", "batch_context", "visual_annotations"})
+
+# Section openers, each on its own line: rules end before <video>, the job starts at <your_job>.
+_VIDEO_LINE = "\n<video>\n"
+_JOB_LINE = "\n<your_job>\n"
 
 # Allowed schema/example names — alphanumeric + underscore only (no path traversal)
 _SAFE_NAME_RE = re.compile(r"^[a-z0-9_]+$")
@@ -228,7 +237,81 @@ def build_extraction_template(inp: ExtractionPromptInput) -> str:
         "domain_schemas": _domain_schemas(inp.content_tags, inp.modifiers),
         "primary_tag": primary_tag,
         "domain_example": example,
-        "visual_annotations": inp.visual_annotations,
         "frame_context": inp.frame_context,
     }
     return f"{ENGLISH_OUTPUT_DIRECTIVE}\n\n{_fill(template, values)}"
+
+
+# ─── Sections + per-call binding ───
+
+
+@dataclass(frozen=True)
+class ExtractionPrompt:
+    """One run's extraction prompt in its cache sections.
+
+    ``system`` = the rules (no per-video text); ``head`` = ``<video>`` +
+    ``{transcript}`` + ``<video_memory>``, the cached prefix; ``tail`` = the job
+    with ``{batch_context}`` / ``{visual_annotations}`` open. An empty ``head``
+    means the template lost its section lines: everything is one uncached block.
+    """
+
+    system: str
+    head: str
+    tail: str
+    visual_annotations: str = ""
+
+    def user_blocks(
+        self,
+        transcript: str,
+        batch_context: str = "",
+        visual_annotations: str | None = None,
+    ) -> list[TextBlock]:
+        """The user content for one call; the breakpoint ends the head block."""
+        values = {
+            "transcript": transcript,
+            "batch_context": batch_context,
+            "visual_annotations": (
+                self.visual_annotations if visual_annotations is None else visual_annotations
+            ),
+        }
+        tail = text_block(_fill(self.tail, values))
+        if not self.head:
+            return [tail]
+        return [text_block(_fill(self.head, values), cache=True), tail]
+
+
+def _split_sections(text: str) -> tuple[str, str, str]:
+    video_at = text.find(_VIDEO_LINE)
+    job_at = text.find(_JOB_LINE)
+    if video_at == -1 or job_at < video_at:
+        logger.warning(
+            "Extraction template has no <video>/<your_job> section lines — "
+            "sending it as one uncached user block"
+        )
+        return "", "", text
+    return text[:video_at].rstrip(), text[video_at + 1 : job_at].rstrip(), text[job_at + 1 :]
+
+
+def build_extraction_prompt(inp: ExtractionPromptInput) -> ExtractionPrompt:
+    """The run's prompt, split into system rules / cached head / job tail."""
+    system, head, tail = _split_sections(build_extraction_template(inp))
+    return ExtractionPrompt(system, head, tail, inp.visual_annotations)
+
+
+def slice_visual_annotations(
+    block: str, start_seconds: float | None, end_seconds: float | None
+) -> str:
+    """The entries of a ``<visual_annotations>`` block with ``start <= t < end`` ("" if none).
+
+    ``None`` leaves that side open — the first and last chunked batches keep the
+    frames before the first chapter boundary and at the video's very end.
+    """
+    entries = [
+        entry.text
+        for entry in annotation_entries(block)
+        if (start_seconds is None or entry.seconds >= start_seconds)
+        and (end_seconds is None or entry.seconds < end_seconds)
+    ]
+    if not entries:
+        return ""
+    return "\n".join([OPEN_TAG, *entries, CLOSE_TAG])

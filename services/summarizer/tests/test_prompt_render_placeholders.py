@@ -117,13 +117,13 @@ _ALL_SCHEMA_TAGS = sorted(p.stem for p in (PROMPTS_DIR / "schemas").glob("*.txt"
 class TestExtractionPromptRenders:
     @staticmethod
     def _rendered(tags: list[str], modifiers: list[str]) -> str:
-        """The full prompt a single call sends (late-bound slots filled as the extractor does)."""
+        """Everything a single call sends: system rules + bound user blocks."""
         from src.services.pipeline.extraction_prompt import (
             ExtractionPromptInput,
-            build_extraction_template,
+            build_extraction_prompt,
         )
 
-        template = build_extraction_template(
+        prompt = build_extraction_prompt(
             ExtractionPromptInput(
                 tags,
                 modifiers,
@@ -136,7 +136,8 @@ class TestExtractionPromptRenders:
                 visual_annotations="<visual_annotations>\n[0:12] a frame\n</visual_annotations>",
             )
         )
-        return template.replace("{batch_context}", "").replace("{transcript}", "transcript body")
+        blocks = prompt.user_blocks("transcript body")
+        return "\n".join([prompt.system, *(block["text"] for block in blocks)])
 
     @pytest.mark.parametrize("tag", _ALL_SCHEMA_TAGS)
     def test_single_domain_prompt_has_no_unreplaced_placeholders(self, tag):
@@ -169,7 +170,10 @@ class TestExtractionPromptRenders:
             build_extraction_template,
         )
 
-        template = build_extraction_template(ExtractionPromptInput(["tech"], [], "rules"))
+        annotations = "<visual_annotations>\n[0:01] a slide\n</visual_annotations>"
+        template = build_extraction_template(
+            ExtractionPromptInput(["tech"], [], "rules", visual_annotations=annotations)
+        )
         remaining = {
             tok for tok in _declared_placeholders("base_extraction.txt") if f"{{{tok}}}" in template
         }
