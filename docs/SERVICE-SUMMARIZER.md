@@ -196,7 +196,7 @@ WHISPER_CHUNK_CONCURRENCY=3            # Concurrent chunk transcription (respect
 
 # Frame pipeline (media/)
 SCENE_EXTRACTION_ENABLED=true
-SCENE_S3_PREFIX=scenes-v3              # Versioned frame/manifest prefix — bump to invalidate the frame cache
+SCENE_S3_PREFIX=scenes-v4              # Versioned frame/manifest prefix — bump to invalidate the frame cache
 SCENE_HIRES_ENABLED=true               # Pass-2 720p refinement of the selected frames
 SCENE_HIRES_FALLBACK_TIMEOUT=180.0     # Hi-res seek budget in the run's local 720p file (media/hires_refiner.py)
 YOUTUBE_PROXY_URL=                     # One proxy for every YouTube request (metadata, captions, every download)
@@ -310,7 +310,7 @@ The pipeline uses 3-6 LLM calls with a plan-first architecture:
         │   vision descriptions (cached frames have no local file, so vision can't
         │   re-run); `hiresCount == 0` (every hi-res seek failed) is treated as a
         │   MISS so a 403-era low-res run self-heals on the next reprocess.
-        │   (prefix is versioned via SCENE_S3_PREFIX, default "scenes-v3" — bump to
+        │   (prefix is versioned via SCENE_S3_PREFIX, default "scenes-v4" — bump to
         │    invalidate after quality changes; "scenes" holds pre-hires low-res
         │    frames, "scenes-v2" pre-adaptive-vision frames. NOTE: scene_NNNN keys
         │    are overwritten in place per run.)

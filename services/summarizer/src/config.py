@@ -311,7 +311,7 @@ class Settings(BaseSettings):
     # Versioned S3 prefix — bumping it defeats the frames-already-exist cache
     # so quality changes take effect for reprocessed videos ("scenes" = pre-hires).
     # v3: subject-aware scoring (skin/center-detail) + adaptive vision tiers.
-    SCENE_S3_PREFIX: str = "scenes-v3"
+    SCENE_S3_PREFIX: str = "scenes-v4"
 
     # Vision LLM analysis on top-scored frames. FRAME_VISION_MAX_FRAMES = frames
     # described on the STANDARD tier. FRAME_VISION_TIMEOUT = per-call floor in
