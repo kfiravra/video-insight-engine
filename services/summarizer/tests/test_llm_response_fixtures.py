@@ -28,6 +28,7 @@ from src.models.pipeline_types import EnrichmentData, PlanResult, SynthesisResul
 from src.services.pipeline.assembly import assemble_response
 from src.services.pipeline.assembly.core import _COMPONENT_REQUIRED_LISTS
 from src.services.pipeline.plan import _validate_tabs
+from src.shared_config.domain_config import quiz_enrichment
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures" / "llm_responses"
 
@@ -122,7 +123,8 @@ class TestFixturePayloadsStayValid:
 
     @pytest.mark.parametrize(
         "domain",
-        [d for d in DOMAINS if d != "news"],  # news has no enrichment mapping
+        # Only quiz domains get a quiz call (1d.1); the others carry null.
+        [d for d in DOMAINS if d in quiz_enrichment()["quizDomains"]],
     )
     def test_enrichment_response_validates(self, domain):
         fixture = _load(domain)

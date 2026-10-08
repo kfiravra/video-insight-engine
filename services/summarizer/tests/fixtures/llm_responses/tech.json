@@ -47,14 +47,6 @@
         "component": "quiz_arena",
         "dataSource": "enrichment.quiz",
         "goal": "Check you understood validation and DI before building."
-      },
-      {
-        "id": "flashcards",
-        "label": "Recall",
-        "emoji": "🃏",
-        "component": "flash_deck",
-        "dataSource": "enrichment.flashcards",
-        "goal": "Memorize the commands and status codes."
       }
     ]
   },
@@ -159,17 +151,6 @@
         "correctIndex": 1,
         "explanation": "Dependency injection keeps routes testable without patching globals."
       }
-    ],
-    "flashcards": [
-      {"front": "ASGI server used in the video", "back": "Uvicorn"},
-      {"front": "Status code for successful creation", "back": "201 Created"},
-      {"front": "Where request validation happens", "back": "At the boundary, via Pydantic models in the route signature"},
-      {"front": "URL of the generated API docs", "back": "http://localhost:8000/docs"}
-    ],
-    "cheatSheet": [
-      {"title": "Create venv", "code": "python -m venv .venv", "description": "Isolated environment per project"},
-      {"title": "Optional field", "code": "year: int | None = None", "description": "Pydantic optional with default"},
-      {"title": "POST route", "code": "@app.post(\"/books\", status_code=201)", "description": "Explicit success status code"}
     ]
   },
   "synthesis_response": {

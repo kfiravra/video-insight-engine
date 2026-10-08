@@ -58,7 +58,7 @@ from src.services.media.frame_analyzer import (  # noqa: E402
     VISION_ANALYSIS_PROMPT,
     parse_vision_response,
 )
-from src.services.pipeline.enrichment import enrich  # noqa: E402
+from src.services.pipeline.enrichment import enrich_quiz  # noqa: E402
 from src.services.pipeline.synthesis import synthesize  # noqa: E402
 from src.services.pipeline.translation import _translate_json  # noqa: E402
 # Reaching into transcript_chunker's private function is intentional: the
@@ -346,10 +346,9 @@ async def run_enrichment(case: CorpusCase, model: str, label: str) -> StageRun:
     primary_tag = case.matched_tag or "learning"
     return await _run_with_telemetry(
         "enrichment", case, label,
-        lambda: enrich(
-            svc, primary_tag, case.extraction_data, case.title,
-            content_tags=[primary_tag],
-            synthesis_data=case.synthesis_baseline,
+        lambda: enrich_quiz(
+            svc, primary_tag=primary_tag, extraction_data=case.extraction_data,
+            video_memory="", tabs=[],
         ),
     )
 

@@ -1,5 +1,5 @@
 {
-  "_comment": "Golden LLM response fixture for the food domain. Hand-built against PlanResult, FoodData, EnrichmentData, SynthesisResult — a valid per-stage output set for a recipe video. Drift canary consumed by tests/test_llm_response_fixtures.py.",
+  "_comment": "Golden LLM response fixture for the food domain. Hand-built against PlanResult, FoodData, SynthesisResult — a valid per-stage output set for a recipe video. Food forbids quiz_arena, so no quiz call runs and enrichment_response is null. Drift canary consumed by tests/test_llm_response_fixtures.py.",
   "domain": "food",
   "video_meta": {
     "videoId": "fixture-food-001",
@@ -46,14 +46,6 @@
         "component": "step_player",
         "dataSource": "food.steps",
         "goal": "Cook along step by step with timers."
-      },
-      {
-        "id": "flashcards",
-        "label": "Chef's Cards",
-        "emoji": "🃏",
-        "component": "flash_deck",
-        "dataSource": "enrichment.flashcards",
-        "goal": "Remember the technique cues next time you cook it."
       }
     ]
   },
@@ -97,48 +89,7 @@
       {"nutrient": "Protein", "amount": "19", "unit": "g per serving"}
     ]
   },
-  "enrichment_response": {
-    "quiz": [
-      {
-        "question": "When is the tomato sauce ready for the eggs?",
-        "options": [
-          "As soon as it boils",
-          "When a dragged spoon leaves a trench that holds",
-          "After exactly 20 minutes",
-          "When it turns dark red"
-        ],
-        "correctIndex": 1,
-        "explanation": "The trench test tells you the sauce is thick enough to hold the egg wells."
-      },
-      {
-        "question": "Why bloom the spices in oil before adding tomatoes?",
-        "options": [
-          "It sterilizes the spices",
-          "Fat-soluble flavors release into the oil",
-          "It thickens the sauce",
-          "It prevents sticking"
-        ],
-        "correctIndex": 1,
-        "explanation": "Blooming releases fat-soluble aromatics — the step most recipes skip."
-      },
-      {
-        "question": "How do the egg whites set without overcooking the yolks?",
-        "options": [
-          "High heat, uncovered",
-          "Finishing under a broiler",
-          "Covering the pan so steam cooks from above",
-          "Stirring constantly"
-        ],
-        "correctIndex": 2,
-        "explanation": "A lid traps steam that sets the whites while the yolks stay loose."
-      }
-    ],
-    "flashcards": [
-      {"front": "Sauce-readiness test", "back": "A dragged spoon leaves a trench that holds for two seconds"},
-      {"front": "Spice technique most recipes skip", "back": "Bloom cumin + paprika in the oil for 30 seconds before the tomatoes"},
-      {"front": "Egg-cooking trick", "back": "Cover the pan — steam sets whites, yolks stay loose"}
-    ]
-  },
+  "enrichment_response": null,
   "synthesis_response": {
     "tldr": "One-pan shakshuka in 25 minutes, built on a spice-blooming step and a trench-test sauce.",
     "keyTakeaways": [

@@ -1,4 +1,6 @@
-"""Synthesis and enrichment read the run's ``<video_memory>`` block (pipeline-1min 1b.4).
+"""Synthesis reads the run's ``<video_memory>`` block (pipeline-1min 1b.4).
+
+The quiz call's copy of the block is covered in ``test_phase_enrichment.py``.
 
 The block is rendered once per run (``phases/text.py``) and handed, byte for
 byte, to every ``{video_context}`` slot; the old compact DNA is gone. The
@@ -12,7 +14,6 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from src.models.pipeline_types import SynthesisResult
-from src.services.pipeline.phases import enrichment as enrichment_phase
 from src.services.pipeline.phases import synthesis as synthesis_phase
 
 _VIDEO_MEMORY = "<video_memory>\ndomains: food · goal: Cook lasagna\n</video_memory>"
@@ -54,12 +55,3 @@ async def test_synthesis_should_read_the_video_memory_block() -> None:
         await _drain(synthesis_phase.run_phase_synthesis, _ctx())
 
     assert synthesize.await_args.kwargs["video_context"] is _VIDEO_MEMORY
-
-
-async def test_enrichment_should_read_the_video_memory_block() -> None:
-    enrich = AsyncMock(return_value=None)
-
-    with patch.object(enrichment_phase, "enrich", enrich):
-        await _drain(enrichment_phase.run_phase_enrichment, _ctx())
-
-    assert enrich.await_args.kwargs["video_context"] is _VIDEO_MEMORY

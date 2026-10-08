@@ -1,59 +1,61 @@
-"""Enrichment — quiz, flashcards, cheat sheet generation for eligible output types."""
+"""Quiz enrichment — one demand-driven call that writes the video's self-check quiz.
+
+pipeline-1min 1d.1 (brief Appendix B.6): ``quiz`` is the only enrichment left; a
+planned ``quiz_arena`` tab and the ``quick_quiz`` attachment read it. The call
+runs only when the plan can use it (:func:`needs_quiz`), reads the full
+extraction, the run's ``<video_memory>`` block and the tab goals, and never
+raises: ``None`` means no quiz — a quiz tab is then dropped at assembly and a
+sparse tab falls back to its tip strip, as before.
+"""
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from pydantic import ValidationError
+
 from ...config import settings
-from ...models.pipeline_types import EnrichmentData
-from ...shared_config.domain_config import effective_requirements
+from ...models.pipeline_types import EnrichmentData, PlanResult, QuizQuestion
+from ...shared_config.domain_config import (
+    data_source,
+    effective_requirements,
+    quiz_enrichment,
+    quiz_policy,
+)
 from ...utils.json_parsing import parse_json_response
 from ...utils.language_utils import ENGLISH_OUTPUT_DIRECTIVE
 from ...utils.llm_retry import call_llm_with_retry
-from .pipeline_helpers import sanitize_for_prompt, truncate_json_safely
+from .assembly.attachments import can_host_quick_quiz
+from .pipeline_helpers import sanitize_for_prompt
 from .prompt_builder import load_prompt_text
 
 if TYPE_CHECKING:
     from ...services.llm import LLMService
 
-from ...shared_config.domain_config import get_enrichment_map
-
 logger = logging.getLogger(__name__)
-PROMPTS_DIR = Path(__file__).parent.parent.parent / "prompts"
 
-# Hard caps on enrichment output — applied after LLM validation regardless
-# of video length. The LLM is also instructed to respect these via the
-# scaling_rules section in each enrich_*.txt prompt, but we enforce in code
-# as a backstop: large videos otherwise produce 20+ quiz questions / 25+
-# flashcards that the user will never consume.
-_MAX_QUIZ_QUESTIONS = 12
-_MAX_FLASHCARDS = 15
-_MAX_SCENARIOS = 6
+PROMPT_PATH = Path(__file__).parent.parent.parent / "prompts" / "enrich_quiz.txt"
 
-
-def _load_prompt(prompt_path: str) -> str | None:
-    """Registry-first enrichment prompt loader. Path-traversal safe.
-
-    Resolves the candidate path and rejects anything outside ``PROMPTS_DIR``.
-    Then delegates to :func:`load_prompt_text` which prefers the Langfuse
-    registry version and falls back to the on-disk file via the
-    process-wide ``_read_file_cached`` cache.
-    """
-    p = Path(prompt_path).resolve()
-    if not p.is_relative_to(PROMPTS_DIR.resolve()):
-        logger.error("Prompt path traversal blocked: %s", prompt_path)
-        return None
-    if not p.exists():
-        return None
-    return load_prompt_text(p)
+QUIZ_COMPONENT = "quiz_arena"
+QUIZ_DATA_SOURCE = "enrichment.quiz"
+QUIZ_STAGE = "enrichment"
+QUIZ_MAX_TOKENS = 2048
+# The whole stage, retry included, ends within the brief's 30 s, so the quiz
+# never holds the tabs longer than that; one attempt alone may use 25 s.
+QUIZ_TOTAL_TIMEOUT_S = 30.0
+QUIZ_ATTEMPT_TIMEOUT_S = 25.0
+QUIZ_MAX_RETRIES = 1
+MIN_QUIZ_QUESTIONS = 2
+TAB_TEXT_MAX_CHARS = 300
+EMPTY_VIDEO_MEMORY = "<video_memory>\nNot available\n</video_memory>"
 
 
-# Loaded from domains.json["enrichment"] — maps content tag → prompt filename.
-# Only tags listed there trigger the enrichment stage.
-ENRICHMENT_MAP: dict[str, str] = get_enrichment_map()
+# ─── Demand ───
 
 
 def _is_nonempty(value: Any) -> bool:
@@ -72,140 +74,183 @@ def _has_meaningful_data(extraction: dict) -> bool:
     return any(_is_nonempty(v) for v in extraction.values())
 
 
-def _apply_output_caps(data: EnrichmentData) -> None:
-    """Truncate quiz / flashcards / scenarios to the per-video hard caps in-place.
+def quiz_allowed(domain: str, content_format: str | None = None) -> bool:
+    """True when ``domain`` may carry a quiz (quizEnrichment + quiz_arena not forbidden)."""
+    if domain not in quiz_enrichment()["quizDomains"]:
+        return False
+    return QUIZ_COMPONENT not in effective_requirements(domain, content_format)["forbidden"]
 
-    The LLM is also instructed via scaling_rules, but we enforce here
-    so the saved output is always within budget regardless of prompt drift.
-    Matches the in-place pattern of `_cap_tab_items` in assembly/core.py.
+
+def _is_quiz_tab(tab: Mapping[str, Any]) -> bool:
+    return tab.get("component") == QUIZ_COMPONENT or tab.get("dataSource") == QUIZ_DATA_SOURCE
+
+
+def needs_quiz(plan: PlanResult | None, content_format: str | None = None) -> bool:
+    """Whether this run's plan can use a quiz — the enrichment demand gate (A7).
+
+    A planned quiz tab always demands one (the plan has the final say). Without
+    one, only a quick_quiz strip could show it: that needs a tab able to host
+    the strip and evidence that does not rule learning out (a missing key is
+    "no opinion", not false).
     """
-    if data.quiz and len(data.quiz) > _MAX_QUIZ_QUESTIONS:
-        logger.info("Enrichment: capping quiz from %d → %d", len(data.quiz), _MAX_QUIZ_QUESTIONS)
-        data.quiz = data.quiz[:_MAX_QUIZ_QUESTIONS]
-    if data.flashcards and len(data.flashcards) > _MAX_FLASHCARDS:
-        logger.info(
-            "Enrichment: capping flashcards from %d → %d", len(data.flashcards), _MAX_FLASHCARDS
-        )
-        data.flashcards = data.flashcards[:_MAX_FLASHCARDS]
-    if data.scenarios and len(data.scenarios) > _MAX_SCENARIOS:
-        logger.info(
-            "Enrichment: capping scenarios from %d → %d", len(data.scenarios), _MAX_SCENARIOS
-        )
-        data.scenarios = data.scenarios[:_MAX_SCENARIOS]
+    if plan is None or not quiz_allowed(plan.primary_tag, content_format):
+        return False
+    tabs = [tab for tab in plan.tabs if isinstance(tab, dict)]
+    if any(_is_quiz_tab(tab) for tab in tabs):
+        return True
+    if plan.evidence.get(quiz_policy()["requiresEvidence"]) is False:
+        return False
+    return any(can_host_quick_quiz(str(tab.get("component", ""))) for tab in tabs)
 
 
-async def enrich(
-    llm_service: LLMService,
+# ─── Prompt ───
+
+
+def _clip(value: object) -> str:
+    return sanitize_for_prompt(str(value or ""), max_len=TAB_TEXT_MAX_CHARS).strip()
+
+
+def _tab_line(tab: Mapping[str, Any]) -> str:
+    """``- "label" (component): goal — what: …; expect ~N`` for one planned tab."""
+    line = f'- "{_clip(tab.get("label") or tab.get("id"))}" ({_clip(tab.get("component"))})'
+    line += f": {_clip(tab.get('goal'))}"
+    brief = tab.get("brief")
+    if not isinstance(brief, Mapping):
+        return line
+    what, expect = _clip(brief.get("what")), brief.get("expect")
+    if what:
+        line += f" — what: {what}"
+    if isinstance(expect, int) and not isinstance(expect, bool) and expect > 0:
+        line += f"; expect ~{expect}"
+    return line
+
+
+def render_tab_goals(tabs: Sequence[Mapping[str, Any]]) -> str:
+    """The plan's tabs as the quiz writer reads them (the quiz tab's brief sets the count)."""
+    lines = [_tab_line(tab) for tab in tabs if isinstance(tab, Mapping)]
+    return "\n".join(lines) or "Not specified"
+
+
+def _compact_json(data: Mapping[str, Any]) -> str:
+    # The full extraction, not a prefix (A7): input tokens are cheap, a quiz
+    # that only sees the first minutes misses most of the video.
+    return json.dumps(data, ensure_ascii=False, separators=(",", ":"), default=str)
+
+
+def build_quiz_prompt(
     primary_tag: str,
-    extraction_data: dict,
-    title: str,
-    content_tags: list[str] | None = None,
-    synthesis_data: dict | None = None,
-    video_context: str = "",
-    tab_goals: str = "",
-    content_format: str | None = None,
-) -> EnrichmentData | None:
-    """Generate enrichment content based on primary content tag.
-
-    Falls back to searching all content_tags when primary has no enrichment mapping.
-    When extraction_data is empty, uses synthesis_data as context fallback.
-    Returns None for content tags that don't support enrichment.
-    Returns None on failure (enrichment is non-critical).
-
-    Domains where quiz_arena is forbidden get quiz/scenarios stripped from the
-    parsed result regardless of what the prompt produced (code guardrail —
-    the prompt map already steers those domains to flashcards-only prompts).
-    """
-    prompt_file_name = ENRICHMENT_MAP.get(primary_tag)
-    if not prompt_file_name and content_tags:
-        for tag in content_tags:
-            prompt_file_name = ENRICHMENT_MAP.get(tag)
-            if prompt_file_name:
-                logger.info(
-                    "Enrichment: primary_tag=%r has no mapping; using tag=%r", primary_tag, tag
-                )
-                break
-    if not prompt_file_name:
+    extraction_data: Mapping[str, Any],
+    video_memory: str,
+    tabs: Sequence[Mapping[str, Any]],
+) -> str | None:
+    """Render ``enrich_quiz.txt``; ``None`` when ``primary_tag`` has no flavor line."""
+    flavor = quiz_enrichment()["flavor"].get(primary_tag)
+    if not flavor:
         return None
+    body = (
+        load_prompt_text(PROMPT_PATH)
+        .replace("{flavor}", flavor)
+        .replace("{tab_goals}", render_tab_goals(tabs))
+        .replace("{video_memory}", video_memory or EMPTY_VIDEO_MEMORY)
+        # Last, so text inside the extraction is never mistaken for a placeholder.
+        .replace("{extraction_data}", _compact_json(extraction_data))
+    )
+    return f"{ENGLISH_OUTPUT_DIRECTIVE}\n\n{body}"
 
-    prompt_path = PROMPTS_DIR / prompt_file_name
-    prompt_template = _load_prompt(str(prompt_path))
-    if not prompt_template:
-        logger.warning("Enrichment prompt not found: %s", prompt_path)
-        return None
 
-    try:
-        # Build context: prefer extraction data, fall back to synthesis
-        if _has_meaningful_data(extraction_data):
-            context = truncate_json_safely(extraction_data, 8000)
-        else:
-            logger.warning("Extraction data is empty — using synthesis as enrichment context")
-            if synthesis_data:
-                context = json.dumps(
-                    {
-                        "title": title,
-                        "summary": synthesis_data.get("masterSummary", ""),
-                        "keyTakeaways": synthesis_data.get("keyTakeaways", []),
-                        "tldr": synthesis_data.get("tldr", ""),
-                    },
-                    indent=2,
-                )
-            else:
-                logger.warning("No synthesis data either — enrichment will have minimal context")
-                context = json.dumps({"title": title})
+# ─── Salvage ───
 
-        prompt = (
-            ENGLISH_OUTPUT_DIRECTIVE
-            + "\n\n"
-            + (
-                prompt_template.replace("{title}", sanitize_for_prompt(title))
-                .replace("{extraction_data}", context)
-                .replace("{video_context}", video_context or "Not available")
-                .replace("{tab_goals}", tab_goals or "Not specified")
-            )
+
+def _quiz_items(data: object) -> list[object]:
+    items = data.get("quiz") if isinstance(data, dict) else data
+    return items if isinstance(items, list) else []
+
+
+def parse_quiz(data: object, cap: int) -> list[QuizQuestion]:
+    """Every valid question survives; each broken or repeated one is dropped alone."""
+    questions: list[QuizQuestion] = []
+    seen: set[str] = set()
+    dropped = 0
+    for raw in _quiz_items(data):
+        try:
+            question = QuizQuestion.model_validate(raw)
+        except ValidationError:
+            dropped += 1
+            continue
+        key = question.question.casefold()
+        if key in seen:
+            dropped += 1
+            continue
+        seen.add(key)
+        questions.append(question)
+    if dropped:
+        logger.info(
+            "Quiz: dropped %d invalid or repeated question(s), kept %d", dropped, len(questions)
         )
+    return questions[:cap]
 
+
+def _quiz_cap() -> int:
+    spec = data_source(QUIZ_DATA_SOURCE)
+    if spec is None:
+        raise KeyError(f"{QUIZ_DATA_SOURCE} is missing from the dataSources registry")
+    return spec["cap"]
+
+
+# ─── Stage ───
+
+
+async def _run_quiz(
+    llm_service: LLMService, primary_tag: str, prompt: str
+) -> EnrichmentData | None:
+    async with asyncio.timeout(QUIZ_TOTAL_TIMEOUT_S):
         raw = await call_llm_with_retry(
             llm_service,
             prompt,
-            max_tokens=16384,
-            timeout=90.0,
-            max_retries=2,
-            stage_name="enrichment",
+            max_tokens=QUIZ_MAX_TOKENS,
+            timeout=QUIZ_ATTEMPT_TIMEOUT_S,
+            max_retries=QUIZ_MAX_RETRIES,
+            stage_name=QUIZ_STAGE,
             json_mode=True,
             use_fast_model=True,
-            model_override=settings.get_stage_model("enrichment"),
+            model_override=settings.get_stage_model(QUIZ_STAGE),
         )
-        if not raw:
-            logger.warning("Enrichment LLM call failed after retries for %s", primary_tag)
-            return None
-
-        data = parse_json_response(raw)
-
-        if not data:
-            logger.warning("Empty enrichment response for %s", primary_tag)
-            return None
-
-        result = EnrichmentData.model_validate(data)
-
-        # Code guardrail: a domain that forbids quiz_arena must never carry
-        # quiz/scenario data — even if the (possibly cached/registry) prompt
-        # still produced them.
-        forbidden = effective_requirements(primary_tag, content_format)["forbidden"]
-        if "quiz_arena" in forbidden and (result.quiz or result.scenarios):
-            logger.info(
-                "Enrichment: stripping quiz/scenarios for %s (quiz_arena forbidden)",
-                primary_tag,
-            )
-            result.quiz = []
-            result.scenarios = []
-
-        _apply_output_caps(result)
-        return result
-
-    except (ValueError, json.JSONDecodeError) as e:
-        logger.error("Enrichment failed for %s: %s — skipping", primary_tag, e)
+    if not raw:
+        logger.warning("Quiz LLM call failed after retries for %s", primary_tag)
         return None
-    except Exception as e:
-        logger.error("Enrichment unexpected error for %s: %s — skipping", primary_tag, e)
+    questions = parse_quiz(parse_json_response(raw), _quiz_cap())
+    if len(questions) < MIN_QUIZ_QUESTIONS:
+        logger.warning(
+            "Quiz for %s kept %d valid question(s); skipping", primary_tag, len(questions)
+        )
+        return None
+    return EnrichmentData(quiz=questions)
+
+
+async def enrich_quiz(
+    llm_service: LLMService,
+    *,
+    primary_tag: str,
+    extraction_data: Mapping[str, Any],
+    video_memory: str,
+    tabs: Sequence[Mapping[str, Any]],
+) -> EnrichmentData | None:
+    """Write the quiz (2 to the registry cap of questions); ``None`` on any failure.
+
+    Bounded by ``QUIZ_TOTAL_TIMEOUT_S`` end to end and never raises — the quiz
+    is optional and must not fail or stall the run.
+    """
+    try:
+        prompt = build_quiz_prompt(primary_tag, extraction_data, video_memory, tabs)
+        if prompt is None:
+            logger.info("Quiz: no flavor line for domain %r; skipping", primary_tag)
+            return None
+        return await _run_quiz(llm_service, primary_tag, prompt)
+    except TimeoutError:
+        logger.warning(
+            "Quiz: no answer within %.0f s; continuing without a quiz", QUIZ_TOTAL_TIMEOUT_S
+        )
+        return None
+    except Exception:  # noqa: BLE001 — the quiz is optional; a bug here must not fail the run
+        logger.exception("Quiz stage crashed; continuing without a quiz")
         return None

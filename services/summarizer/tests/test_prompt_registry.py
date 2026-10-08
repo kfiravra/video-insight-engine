@@ -235,7 +235,7 @@ def test_register_prompts_discovers_summarizer_prompts():
     # Sanity checks — these files exist in the repo.
     assert "summarizer:base_extraction" in names
     assert any(n.startswith("summarizer:schema:") for n in names)
-    assert any(n.startswith("summarizer:enrich:") for n in names)
+    assert "summarizer:enrich_quiz" in names
 
 
 def test_register_prompts_naming_uses_subdir_label():

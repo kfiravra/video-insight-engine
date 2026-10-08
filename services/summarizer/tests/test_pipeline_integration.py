@@ -5,16 +5,16 @@ then verifies the full chain produces valid data and correct events.
 """
 
 import json
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
-from unittest.mock import MagicMock, AsyncMock
 
-from src.services.pipeline.triage import TriageResult
+from src.models.domain_types import validate_domain_output
+from src.models.pipeline_types import EnrichmentData, SynthesisResult
+from src.services.pipeline.enrichment import enrich_quiz
 from src.services.pipeline.extractor import extract
-from src.services.pipeline.enrichment import enrich
 from src.services.pipeline.synthesis import synthesize
-from src.models.pipeline_types import SynthesisResult, EnrichmentData
-from src.models.domain_types import DOMAIN_MODELS, validate_domain_output
-
+from src.services.pipeline.triage import TriageResult
 
 # ─────────────────────────────────────────────────────────────────────────────
 # LLM response fixtures per content tag
@@ -259,9 +259,12 @@ _ENRICHMENT_STUDY = {
             "correctIndex": 1,
             "explanation": "A qubit is the quantum equivalent of a classical bit",
         },
-    ],
-    "flashcards": [
-        {"front": "What is superposition?", "back": "Being in multiple states simultaneously"},
+        {
+            "question": "What does superposition let a qubit do?",
+            "options": ["Hold several states at once", "Store a byte", "Run faster", "Skip errors"],
+            "correctIndex": 0,
+            "explanation": "Superposition is being in multiple states simultaneously",
+        },
     ],
 }
 
@@ -356,36 +359,31 @@ class TestPipelineIntegration:
         assert result.master_summary
 
     async def test_enrichment_learning(self, mock_llm):
-        """Test enrichment for learning produces quiz and flashcards."""
+        """Enrichment for a learning video writes the quiz and nothing else."""
         mock_llm.call_llm.return_value = json.dumps(_ENRICHMENT_STUDY)
 
-        result = await enrich(mock_llm, "learning", _EXTRACTION_RESPONSES["learning"], "Test Video")
+        result = await enrich_quiz(
+            mock_llm,
+            primary_tag="learning",
+            extraction_data=_EXTRACTION_RESPONSES["learning"],
+            video_memory="",
+            tabs=[],
+        )
 
         assert isinstance(result, EnrichmentData)
-        assert result.quiz is not None
-        assert len(result.quiz) == 1
-        assert result.flashcards is not None
+        assert len(result.quiz) == 2
 
     @pytest.mark.parametrize("tag", ["food", "fitness", "review", "music", "travel", "project"])
-    async def test_enrichment_runs_for_all_domains(self, mock_llm, tag):
-        """All domains now get enrichment (quiz/flashcards/scenarios)."""
-        mock_llm.call_llm.return_value = json.dumps(
-            {
-                "quiz": [
-                    {
-                        "question": "Test?",
-                        "options": ["A", "B", "C", "D"],
-                        "correctIndex": 0,
-                        "explanation": "A",
-                    }
-                ],
-                "flashcards": [{"front": "Q", "back": "A"}],
-            }
-        )
-        result = await enrich(mock_llm, tag, {}, "Test Video")
+    async def test_quiz_is_not_written_for_quiz_forbidden_domains(self, mock_llm, tag):
+        """Domains that forbid quiz_arena get no quiz call at all."""
+        mock_llm.call_llm.return_value = json.dumps(_ENRICHMENT_STUDY)
 
-        assert result is not None
-        mock_llm.call_llm.assert_called_once()
+        result = await enrich_quiz(
+            mock_llm, primary_tag=tag, extraction_data={}, video_memory="", tabs=[]
+        )
+
+        assert result is None
+        mock_llm.call_llm.assert_not_called()
 
 
 class TestPipelineEdgeCases:
@@ -446,7 +444,9 @@ class TestPipelineEdgeCases:
         """Test that enrichment gracefully returns None on LLM error."""
         mock_llm.call_llm.side_effect = Exception("LLM timeout")
 
-        result = await enrich(mock_llm, "learning", {}, "Test Video")
+        result = await enrich_quiz(
+            mock_llm, primary_tag="learning", extraction_data={}, video_memory="", tabs=[]
+        )
         assert result is None
 
 

@@ -126,7 +126,6 @@ interface DomainsConfig {
   };
   domains: Record<ContentTag, DomainEntry>;
   modifiers: Record<Modifier, ModifierEntry>;
-  enrichment: Record<string, string>;
   categoryMap: Record<string, string>;
   /** Extraction-field registry keyed by dataSource path (e.g. `food.steps`). */
   dataSources?: Record<string, DataSourceEntry>;
@@ -135,8 +134,7 @@ interface DomainsConfig {
   /** Domain → required component → gating evidence key. */
   requirementEvidence?: Record<string, Record<string, string>>;
   quizPolicy?: QuizPolicy;
-  /** Quiz-only enrichment config (the legacy `enrichment` map above is the
-   *  tag → prompt-path map until it is retired). */
+  /** Quiz-only enrichment config: allowed domains + per-domain flavor line. */
   quizEnrichment?: QuizEnrichment;
   grouping?: GroupingConfig;
 }
@@ -210,11 +208,6 @@ export function getTabMeta(tabId: string): TabMeta | undefined {
 }
 
 const DEFAULT_TAG: ContentTag = 'learning';
-
-/** Map of content tag → enrichment prompt filename (tags not listed = no enrichment). */
-export function getEnrichmentMap(): Record<string, string> {
-  return config.enrichment ?? {};
-}
 
 /** Category hint → content tag mapping. Falls back to 'learning'. */
 export function mapCategoryToTag(category: string, fallback: ContentTag = DEFAULT_TAG): ContentTag {

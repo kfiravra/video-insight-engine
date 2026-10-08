@@ -1,5 +1,5 @@
 {
-  "_comment": "Golden LLM response fixture for the travel domain. Hand-built against PlanResult, TravelData, EnrichmentData, SynthesisResult — a valid per-stage output set for a 3-day Kyoto itinerary video. Drift canary consumed by tests/test_llm_response_fixtures.py.",
+  "_comment": "Golden LLM response fixture for the travel domain. Hand-built against PlanResult, TravelData, SynthesisResult — a valid per-stage output set for a 3-day Kyoto itinerary video. Travel forbids quiz_arena, so no quiz call runs and enrichment_response is null. Drift canary consumed by tests/test_llm_response_fixtures.py.",
   "domain": "travel",
   "video_meta": {
     "videoId": "fixture-travel-001",
@@ -54,14 +54,6 @@
         "component": "packing_mission",
         "dataSource": "travel.packingList",
         "goal": "Drag items into the suitcase — weight tally + essential warnings."
-      },
-      {
-        "id": "flashcards",
-        "label": "Trip Cards",
-        "emoji": "🗂️",
-        "component": "flash_deck",
-        "dataSource": "enrichment.flashcards",
-        "goal": "Memorize the key fares and etiquette rules before landing."
       }
     ]
   },
@@ -181,34 +173,7 @@
     ],
     "bestSeason": "Late November for autumn color, or the last week of March for early blossoms"
   },
-  "enrichment_response": {
-    "quiz": [
-      {
-        "question": "What is the flat fare on Kyoto city buses?",
-        "options": ["150 yen", "200 yen", "230 yen", "300 yen"],
-        "correctIndex": 2,
-        "explanation": "City buses charge a 230 yen flat fare; the 700 yen day pass pays off after three rides."
-      },
-      {
-        "question": "When should you arrive at Fushimi Inari to avoid crowds?",
-        "options": ["Before 7am", "Around noon", "At sunset", "After 9pm"],
-        "correctIndex": 0,
-        "explanation": "The creator recommends walking the torii gates before 7am."
-      },
-      {
-        "question": "Which entrance ticket does the video call sufficient at Tenryu-ji?",
-        "options": ["Full temple + garden", "Garden only", "Special exhibition", "Night illumination"],
-        "correctIndex": 1,
-        "explanation": "The 500 yen garden-only ticket covers the highlight."
-      }
-    ],
-    "flashcards": [
-      {"front": "One-day Kyoto bus pass price", "back": "700 yen — breaks even at three rides"},
-      {"front": "JR fare Kyoto station → Inari", "back": "150 yen on the JR Nara line"},
-      {"front": "Etiquette rule in Gion", "back": "Keep cameras down near private teahouses on Hanamikoji"},
-      {"front": "Luggage trick for departure day", "back": "Takkyubin shipping to the airport (~2000 yen)"}
-    ]
-  },
+  "enrichment_response": null,
   "synthesis_response": {
     "tldr": "A costed 3-day Kyoto plan — eastern temples, Arashiyama, and markets — for about 21,500 yen all-in.",
     "keyTakeaways": [

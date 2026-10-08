@@ -225,14 +225,6 @@ def get_tab_meta(tab_id: str) -> tuple[str, str] | None:
     return None
 
 
-def get_enrichment_map() -> dict[str, str]:
-    """Map of content tag → enrichment prompt filename.
-
-    Only tags listed here trigger the enrichment stage.
-    """
-    return dict(get_config().get("enrichment", {}))
-
-
 def build_fallback_tabs(tag: str) -> list[dict]:
     """Build default TabDefinition dicts for a domain.
 

@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import Annotated
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, StringConstraints, field_validator, model_validator
 
 from ..shared_config.domain_config import EVIDENCE_KEYS
 
@@ -39,51 +40,42 @@ class SynthesisResult(BaseModel):
     model_config = {"populate_by_name": True}
 
 
+# Quiz text the UI renders as-is: trimmed, never blank.
+_QuizText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
+MIN_QUIZ_OPTIONS = 2
+MAX_QUIZ_OPTIONS = 6
+
+
 class QuizQuestion(BaseModel):
-    question: str
-    options: list[str]
-    correct_index: int = Field(alias="correctIndex")
-    explanation: str
+    """One multiple-choice question.
+
+    Strict on purpose: the quiz call is salvaged item by item, so a malformed
+    question is dropped instead of shipping a broken answer key.
+    """
+
+    question: _QuizText
+    options: list[_QuizText] = Field(min_length=MIN_QUIZ_OPTIONS, max_length=MAX_QUIZ_OPTIONS)
+    correct_index: int = Field(alias="correctIndex", ge=0)
+    explanation: _QuizText
 
     model_config = {"populate_by_name": True}
 
-
-class Flashcard(BaseModel):
-    front: str
-    back: str
-
-
-class CodeCheatSheetItem(BaseModel):
-    title: str
-    code: str
-    description: str
-
-
-class ScenarioOption(BaseModel):
-    text: str
-    correct: bool = False
-    explanation: str = ""
-
-    @model_validator(mode="before")
-    @classmethod
-    def _coerce_string(cls, data: object) -> object:
-        """LLM sometimes returns plain strings instead of option dicts."""
-        if isinstance(data, str):
-            return {"text": data, "correct": False, "explanation": ""}
-        return data
-
-
-class ScenarioItem(BaseModel):
-    question: str
-    emoji: str = ""
-    options: list[ScenarioOption] = []
+    @model_validator(mode="after")
+    def _answer_is_an_option(self) -> QuizQuestion:
+        # Clamping an out-of-range index (as the quiz_arena normalizer does)
+        # would mark a wrong option correct — the item is rejected instead.
+        if self.correct_index >= len(self.options):
+            raise ValueError(
+                f"correctIndex {self.correct_index} is not one of {len(self.options)} options"
+            )
+        return self
 
 
 class EnrichmentData(BaseModel):
-    quiz: list[QuizQuestion] | None = None
-    flashcards: list[Flashcard] | None = None
-    cheat_sheet: list[CodeCheatSheetItem] | None = Field(None, alias="cheatSheet")
-    scenarios: list[ScenarioItem] | None = None
+    """Quiz-only enrichment (pipeline-1min 1d.1): read by quiz_arena tabs and quick_quiz."""
+
+    quiz: list[QuizQuestion] = Field(default_factory=list)
 
     model_config = {"populate_by_name": True}
 

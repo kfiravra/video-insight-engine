@@ -84,9 +84,9 @@ _COVERED_TEMPLATES: set[str] = {
     "description_analysis.txt",
     "memory.txt",
     "tier_probe.txt",
+    "enrich_quiz.txt",
     *(f"schemas/{p.name}" for p in (PROMPTS_DIR / "schemas").glob("*.txt")),
     *(f"examples/{p.name}" for p in (PROMPTS_DIR / "examples").glob("*.txt")),
-    *(f"enrich/{p.name}" for p in (PROMPTS_DIR / "enrich").glob("*.txt")),
 }
 
 
@@ -239,23 +239,16 @@ async def test_synthesis_prompt_renders_without_placeholders():
     _assert_no_unreplaced(rendered, "synthesis.txt")
 
 
-# ─── Enrichment (enrich/enrich_*.txt, one per mapped tag) ───────────────
-def _enrichment_prompt_files() -> list[tuple[str, str]]:
-    """(tag, template path relative to src/prompts) — one tag per template.
+# ─── Quiz enrichment (enrich_quiz.txt, one flavor line per quiz domain) ──
+def _quiz_domains() -> list[str]:
+    from src.shared_config.domain_config import quiz_enrichment
 
-    ENRICHMENT_MAP values already carry the ``enrich/`` prefix.
-    """
-    from src.services.pipeline.enrichment import ENRICHMENT_MAP
-
-    seen: dict[str, str] = {}
-    for tag, rel_path in sorted(ENRICHMENT_MAP.items()):
-        seen.setdefault(rel_path, tag)
-    return [(tag, rel_path) for rel_path, tag in sorted(seen.items())]
+    return quiz_enrichment()["quizDomains"]
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("tag,rel_path", _enrichment_prompt_files())
-async def test_enrichment_prompt_renders_without_placeholders(tag, rel_path):
+@pytest.mark.parametrize("tag", _quiz_domains())
+async def test_enrich_quiz_prompt_renders_without_placeholders(tag):
     from src.services.pipeline import enrichment as enrichment_mod
 
     llm, mock_call = _capture_llm()
@@ -263,28 +256,16 @@ async def test_enrichment_prompt_renders_without_placeholders(tag, rel_path):
         "key_points": [{"text": "a meaningful extracted point about the topic"}],
     }
     with patch.object(enrichment_mod, "call_llm_with_retry", mock_call):
-        await enrichment_mod.enrich(
-            llm_service=llm,
+        await enrichment_mod.enrich_quiz(
+            llm,
             primary_tag=tag,
             extraction_data=extraction,
-            title="Test Video",
+            video_memory="<video_memory>\ndomains: x\n</video_memory>",
+            tabs=[{"id": "quiz", "label": "Quiz", "component": "quiz_arena", "goal": "Check it"}],
         )
     rendered = _captured_prompt_text(mock_call)
-    assert rendered, f"enrichment for {tag} never reached the LLM call"
-    _assert_no_unreplaced(rendered, rel_path)
-
-
-def test_every_enrich_template_is_reachable_via_map():
-    """Each enrich/*.txt must be mapped, or it can never render (dead prompt)."""
-    from src.services.pipeline.enrichment import ENRICHMENT_MAP
-
-    mapped = set(ENRICHMENT_MAP.values())
-    on_disk = {f"enrich/{p.name}" for p in (PROMPTS_DIR / "enrich").glob("*.txt")}
-    assert on_disk == mapped, (
-        f"enrich templates and ENRICHMENT_MAP drifted: "
-        f"unmapped files {sorted(on_disk - mapped)}, "
-        f"missing files {sorted(mapped - on_disk)}"
-    )
+    assert rendered, f"the quiz for {tag} never reached the LLM call"
+    _assert_no_unreplaced(rendered, "enrich_quiz.txt")
 
 
 # ─── Translation (translate_flat.txt) ───────────────────────────────────

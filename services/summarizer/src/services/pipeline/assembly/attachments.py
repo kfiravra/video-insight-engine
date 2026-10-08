@@ -54,6 +54,16 @@ _NO_QUICK_QUIZ_COMPONENTS = frozenset({"quiz_arena", "quick_quiz"})
 _NO_FRAME_STRIP_DOMAINS = frozenset({"narrative", "music"})
 
 
+def can_host_quick_quiz(component: str) -> bool:
+    """True when a tab rendered as ``component`` may carry a quick_quiz strip.
+
+    A host needs a primary item list (attachments only go on list tabs) and must
+    not be a quiz itself. Also the enrichment demand gate's plan-time view of
+    "an allowed quick_quiz host" (``enrichment.needs_quiz``).
+    """
+    return component in _PRIMARY_LIST_KEY and component not in _NO_QUICK_QUIZ_COMPONENTS
+
+
 def _primary_item_count(component: str, props: dict) -> int | None:
     """Length of the tab's primary list, or None when it has no list."""
     key = _PRIMARY_LIST_KEY.get(component)
@@ -183,7 +193,7 @@ def attach_secondaries(
         if (
             attachment is None
             and "quick_quiz" not in excluded_kinds
-            and component not in _NO_QUICK_QUIZ_COMPONENTS
+            and can_host_quick_quiz(component)
         ):
             attachment = _quick_quiz_attachment(enrichment)
         if attachment is None and "tip_callout" not in excluded_kinds:
