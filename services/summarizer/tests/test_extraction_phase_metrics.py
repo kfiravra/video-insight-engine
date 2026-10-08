@@ -46,6 +46,7 @@ def _ctx(plan_tabs: list[dict[str, Any]] | None = _PLAN_TABS) -> SimpleNamespace
         description_analysis=None,
         llm_service=AsyncMock(),
         video_memory="",
+        visual_annotations="",
         memory=None,
         chapters=None,
         extraction_data=None,
