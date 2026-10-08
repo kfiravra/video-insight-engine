@@ -20,6 +20,19 @@ from src.services.pipeline.phases import translation as translation_phase
 
 
 @pytest.fixture(autouse=True)
+def _no_synthesis_call():
+    """Synthesis runs inside assembly since 1d.3 (∥ moment fill); its own tests cover it."""
+    from src.services.pipeline.phases import assembly as phase
+
+    async def _no_synthesis(_ctx):
+        return
+        yield  # pragma: no cover — makes this an async generator
+
+    with patch.object(phase, "run_phase_synthesis", _no_synthesis):
+        yield
+
+
+@pytest.fixture(autouse=True)
 def _stub_status_callbacks():
     with (
         patch.object(assembly_phase, "send_video_status_background", MagicMock()),
@@ -59,6 +72,8 @@ def _assembly_ctx(eval_run: bool) -> SimpleNamespace:
         transcript_data=None,
         audio_path=None,
         visual_annotations="",
+        memory=None,
+        video_memory="",
         eval_run=eval_run,
     )
 

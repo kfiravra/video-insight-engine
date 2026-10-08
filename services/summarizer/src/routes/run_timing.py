@@ -63,8 +63,8 @@ def log_run_summary(
     log.info(
         "[pipeline] DONE youtube_id=%s in %.0fs | "
         "metadata=%.1fs transcript_frames=%.1fs visual_inject=%.1fs "
-        "plan=%.1fs(%s) memory=%.1fs(%s) extraction=%.1fs synthesis_enrichment=%.1fs(%s) "
-        "assembly=%.1fs | tabs planned=%d assembled=%d emitted=%d",
+        "plan=%.1fs(%s) memory=%.1fs(%s) extraction=%.1fs quiz=%.1fs(%s) "
+        "assembly=%.1fs synthesis=%.1fs | tabs planned=%d assembled=%d emitted=%d",
         ctx.youtube_id,
         timer.elapsed(),
         pt.get("metadata", 0),
@@ -75,13 +75,21 @@ def log_run_summary(
         pt.get("memory", 0),
         "ok" if getattr(ctx, "memory", None) is not None else "FAIL",
         pt.get("extraction", 0),
-        pt.get("synthesis_enrichment", 0),
-        "ok" if ctx.enrichment_data else "FAIL",
+        pt.get("enrichment", 0),
+        _quiz_outcome(ctx, pt),
         pt.get("assembly", 0),
+        pt.get("synthesis", 0),
         planned,
         assembled,
         timing.tabs_emitted,
     )
+
+
+def _quiz_outcome(ctx: PipelineContext, walls: dict[str, float]) -> str:
+    """ok / FAIL (asked, nothing usable) / skip (the plan demanded no quiz)."""
+    if ctx.enrichment_data:
+        return "ok"
+    return "FAIL" if "enrichment" in walls else "skip"
 
 
 def _trace_timing_summary(doc: dict[str, Any]) -> dict[str, Any]:

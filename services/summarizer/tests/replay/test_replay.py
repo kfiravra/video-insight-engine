@@ -25,8 +25,9 @@ _TOP_LEVEL_PHASES = (
     "visual_inject",
     "plan",
     "extraction",
-    "synthesis_enrichment",
     "assembly",
+    "synthesis",
+    "moment_fill",
 )
 _FRAMES_SUBSTEPS = ("frames.scene_detect", "frames.score_select", "frames.hires", "frames.upload")
 _MILESTONES = ("metadataMs", "synthesisCompleteMs", "firstTabReadyMs", "completeMs", "doneMs")
@@ -50,6 +51,7 @@ _PHASES_CHANGED_SINCE_RECORDING: dict[str, str] = {
     "metadata": "1a.1: captions + description analysis run in the background (t=0 group)",
     "assembly": "1a.2: moment fill seeks the kept 720p file (the recording re-downloaded it)",
     "transcript_frames": "1d.4: vision runs as parallel batches (the recording made one call)",
+    "synthesis_enrichment": "1d.1/1d.3: the quiz runs alone; synthesis moved into assembly",
     "total (complete)": "the sum of the changes above",
 }
 

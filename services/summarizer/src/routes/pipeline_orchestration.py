@@ -13,7 +13,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import Callable
 from typing import AsyncGenerator
 
 from src.repositories.mongodb_repository import MongoDBVideoRepository
@@ -28,7 +27,6 @@ from src.services.pipeline.phases import (
     run_phase_extraction,
     run_phase_frames,
     run_phase_metadata,
-    run_phase_synthesis,
     run_phase_text,
 )
 from src.services.pipeline.pipeline_helpers import (
@@ -42,8 +40,6 @@ from src.services.pipeline.visual_annotations import annotation_entries, render_
 from src.services.transcription.transcript_meta import build_transcript_meta
 
 logger = logging.getLogger(__name__)
-
-PhaseFn = Callable[[PipelineContext], AsyncGenerator[str, None]]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -188,13 +184,6 @@ async def _run_phase_two(
         await _record_transcript_outcome(ctx, repository, video_summary_id)
 
 
-def _tail_phases(ctx: PipelineContext) -> list[PhaseFn]:
-    """Synthesis, plus the quiz when the plan demands one (1d.1)."""
-    if needs_quiz(ctx.plan_result, ctx.content_format):
-        return [run_phase_synthesis, run_phase_enrichment]
-    return [run_phase_synthesis]
-
-
 async def _run_phases_in_order(
     ctx: PipelineContext,
     repository: MongoDBVideoRepository,
@@ -247,15 +236,15 @@ async def _run_phases_in_order(
             if spawned is not None:
                 spawned_faithfulness.append(spawned)
 
-        # Phase 5: Synthesis ∥ quiz. The quiz reads the extraction and the
-        # video_memory (never the synthesis), and only a plan that can show a
-        # quiz asks for one (the phase re-checks the same gate).
-        phase_start = time.monotonic()
-        async for event in run_parallel_phases(_tail_phases(ctx), ctx):
-            yield event
-        mark_phase(ctx, timing, "synthesis_enrichment", phase_start)
+        # Phase 5: the quiz, only for a plan that can show one (1d.1; the
+        # phase re-checks the gate). Assembly needs it: the quiz is a tab. The
+        # runner gives it heartbeats and the "enrichment" timing step.
+        if needs_quiz(ctx.plan_result, ctx.content_format):
+            async for event in run_parallel_phases([run_phase_enrichment], ctx):
+                yield event
 
-        # Phase 6: Assembly (needs synthesis + enrichment results)
+        # Phase 6: Assembly — tabs first, then synthesis ∥ moment fill (1d.3),
+        # then the save.
         phase_start = time.monotonic()
         async for event in run_phase_assembly(ctx):
             yield event

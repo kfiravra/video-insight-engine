@@ -1,4 +1,4 @@
-"""Phase 7: Assembly — assemble tabs, save to DB, cache, and emit done."""
+"""Phase 7: Assembly — assemble and emit tabs, synthesis ∥ moment fill, save, cache, done."""
 
 from __future__ import annotations
 
@@ -14,9 +14,11 @@ from src.services.pipeline.assembly import assemble_response
 from src.services.pipeline.assembly.core import count_dropped_tabs
 from src.services.pipeline.assembly.moment_frame_fill import fill_moment_frames
 from src.services.pipeline.phases.metadata import await_description_analysis
+from src.services.pipeline.phases import run_phase_synthesis
+from src.services.pipeline.phases.synthesis import seed_synthesis_dict
 from src.services.pipeline.pipeline_helpers import (
     normalize_segments,
-    run_task_with_heartbeat,
+    run_parallel_phases,
     sse_event,
 )
 from src.services.pipeline.post_processor import coverage_is_degraded
@@ -36,11 +38,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-async def run_phase_assembly(ctx: PipelineContext) -> AsyncGenerator[str, None]:
-    """Assemble response, emit tab_ready events, save to DB, and emit done."""
-    assert ctx.video_data is not None
-    assert ctx.triage is not None
+async def _assemble(ctx: PipelineContext) -> dict:
+    """``assemble_response`` over the run, with memory's hero standing in for synthesis.
 
+    Synthesis runs after the tabs go out (∥ moment fill, 1d.3), so assembly
+    reads ``seed_synthesis_dict`` — memory's tldr/takeaways — and the synthesis
+    phase patches meta + the overview tab in place when it lands. Leaves the
+    result on ``ctx.assembled_tabs`` / ``ctx.assembled_meta`` (+ coverage).
+    """
+    assert ctx.video_data is not None
     video_meta = {
         "videoId": ctx.video_summary_id,
         "title": ctx.video_data.title,
@@ -58,6 +64,7 @@ async def run_phase_assembly(ctx: PipelineContext) -> AsyncGenerator[str, None]:
         and description_analysis.has_content
         else None
     )
+    seed_synthesis_dict(ctx)
     assembled = assemble_response(
         triage=ctx.triage_dict,
         extraction=ctx.extraction_data,
@@ -70,86 +77,107 @@ async def run_phase_assembly(ctx: PipelineContext) -> AsyncGenerator[str, None]:
         all_frames=ctx.scene_frames_all,
         frame_descriptions=ctx.frame_descriptions or None,
     )
-
-    # Store assembled output on ctx for translation phase
+    # Store assembled output on ctx for synthesis + translation (patched in place)
     ctx.assembled_tabs = assembled.get("tabs", [])
     ctx.assembled_meta = assembled.get("meta", {})
+    _flag_coverage(ctx)
+    return assembled
 
-    # Surface the extraction coverage metric (how far the timestamped output
-    # reaches vs. duration, + dropped-batch counts) for per-doc monitoring.
+
+def _flag_coverage(ctx: PipelineContext) -> None:
+    """Coverage metric on meta, plus ``degraded`` for a partial result (FE retry affordance)."""
     coverage = getattr(ctx, "extraction_coverage", None)
-    if coverage and ctx.assembled_meta is not None:
-        ctx.assembled_meta["extractionCoverage"] = coverage
-
-    # Degraded run: dropped extraction batches or critically-low coverage mean
-    # the output is a partial result. Flag it on meta (served to the FE, which
-    # renders the "partial result — retry" affordance) — set only when True so
-    # clean runs carry no extra field.
-    degraded = coverage_is_degraded(coverage)
-    if degraded and ctx.assembled_meta is not None:
+    if not coverage or ctx.assembled_meta is None:
+        return
+    ctx.assembled_meta["extractionCoverage"] = coverage
+    if coverage_is_degraded(coverage):
         ctx.assembled_meta["degraded"] = True
 
-    # Emit tab_ready events (progressive rendering). moment_track tabs are
-    # held back until the exact-timestamp frame fill completes so they stream
-    # WITH their guaranteed images — every other tab renders immediately. Each
-    # event carries its index in the persisted order (`position`) so the
-    # client can slot a late tab where the DB doc will have it, instead of
-    # appending it last and reshuffling once the doc becomes authoritative.
-    # The payload is a copy — the persisted tab dict never gains `position`.
-    all_tabs = assembled.get("tabs", [])
-    hires_video = getattr(ctx, "hires_video", None)
-    moment_positions = [i for i, t in enumerate(all_tabs) if t.get("component") == "moment_track"]
-    for position, tab in enumerate(all_tabs):
-        if position in moment_positions:
-            continue
-        yield sse_event("tab_ready", {**tab, "position": position})
 
-    if moment_positions:
-        # Best-effort image guarantee for the value-moment gallery: extract a
-        # frame at each still-frameless moment's own timestamp (never raises).
-        # Heartbeats keep the SSE hop alive — a run that skipped scene
-        # extraction downloads the 720p file here, and this phase is not
-        # under run_parallel_phases' keepalive.
-        fill_task = asyncio.ensure_future(fill_moment_frames(all_tabs, ctx.youtube_id, hires_video))
-        async for keepalive in run_task_with_heartbeat(fill_task):
-            yield keepalive
-        await fill_task
-        for position in moment_positions:
-            yield sse_event("tab_ready", {**all_tabs[position], "position": position})
-    # Moment fill was the 720p file's last reader — free the disk now.
-    if hires_video is not None:
-        await hires_video.close()
+def _moment_positions(tabs: list[dict]) -> list[int]:
+    return [i for i, t in enumerate(tabs) if t.get("component") == "moment_track"]
 
+
+async def run_phase_moment_fill(ctx: PipelineContext) -> AsyncGenerator[str, None]:
+    """Frame every still-frameless moment at its own timestamp, then stream the moment tabs.
+
+    moment_track tabs are held back until then so they stream WITH their
+    guaranteed images. Best-effort: ``fill_moment_frames`` never raises.
+    """
+    tabs = ctx.assembled_tabs or []
+    positions = _moment_positions(tabs)
+    if positions:
+        await fill_moment_frames(tabs, ctx.youtube_id, getattr(ctx, "hires_video", None))
+    for position in positions:
+        yield sse_event("tab_ready", {**tabs[position], "position": position})
+
+
+def _drop_accounting(ctx: PipelineContext, assembled: dict) -> dict:
+    """``pipeline.assembly`` counts: designed, assembled, dropped (+ the drop list)."""
+    assert ctx.triage is not None
     # Drops = the plan's registry check (unregistered dataSource, no sibling)
-    # + the assembler's per-tab accounting — assembly also
-    # ADDS tabs (overview, backfill, filmstrip, fallbacks), so the old
+    # + the assembler's per-tab accounting — assembly also ADDS tabs
+    # (overview, backfill, filmstrip, fallbacks), so the old
     # designed-minus-assembled subtraction masked drops and could go negative.
     plan_dropped = ctx.plan_result.dropped_tabs if ctx.plan_result else []
     dropped_tabs = [*plan_dropped, *assembled.get("dropped", [])]
-    # Evidence-skipped requirements are listed but were never tabs (1d.7).
-    tabs_dropped = count_dropped_tabs(dropped_tabs)
     # Designed = what the planner designed. When plan validation left nothing
     # and the domain defaults stand in, only the drops were the planner's.
     plan_fallback = bool(ctx.plan_result and ctx.plan_result.plan_fallback)
-    tabs_designed = len(plan_dropped) + (0 if plan_fallback else len(ctx.triage.tabs))
+    accounting = {
+        "tabsDesigned": len(plan_dropped) + (0 if plan_fallback else len(ctx.triage.tabs)),
+        "tabsAssembled": len(assembled.get("tabs", [])),
+        # Evidence-skipped requirements are listed but were never tabs (1d.7).
+        "tabsDropped": count_dropped_tabs(dropped_tabs),
+        "droppedTabs": dropped_tabs,
+        **({"planFallback": True} if plan_fallback else {}),
+    }
     logger.info(
         "pipeline.assembly",
         extra={
             "video_id": ctx.video_summary_id,
-            "tabs_designed": tabs_designed,
-            "tabs_assembled": len(assembled.get("tabs", [])),
-            "tabs_dropped": tabs_dropped,
+            "tabs_designed": accounting["tabsDesigned"],
+            "tabs_assembled": accounting["tabsAssembled"],
+            "tabs_dropped": accounting["tabsDropped"],
             "dropped_detail": dropped_tabs,
             "components_used": [t["component"] for t in assembled.get("tabs", [])],
         },
     )
+    return accounting
 
-    # Emit complete event
+
+async def run_phase_assembly(ctx: PipelineContext) -> AsyncGenerator[str, None]:
+    """Assemble and emit the tabs, then synthesis ∥ moment fill, then save, cache, done."""
+    assert ctx.video_data is not None
+    assert ctx.triage is not None
+    assembled = await _assemble(ctx)
+    degraded = coverage_is_degraded(getattr(ctx, "extraction_coverage", None))
+
+    # Progressive rendering: every tab but the moment tabs right away, each
+    # with its index in the persisted order (``position``) so the client slots
+    # a late tab where the DB doc will have it. The payload is a copy — the
+    # persisted tab dict never gains ``position``.
+    all_tabs = assembled.get("tabs", [])
+    held_back = set(_moment_positions(all_tabs))
+    for position, tab in enumerate(all_tabs):
+        if position not in held_back:
+            yield sse_event("tab_ready", {**tab, "position": position})
+
+    # Synthesis (masterSummary + seo, patches meta + overview, re-sends the
+    # overview) ∥ moment fill; the runner gives both heartbeats.
+    async for event in run_parallel_phases([run_phase_synthesis, run_phase_moment_fill], ctx):
+        yield event
+    # Moment fill was the 720p file's last reader — free the disk now.
+    hires_video = getattr(ctx, "hires_video", None)
+    if hires_video is not None:
+        await hires_video.close()
+
+    accounting = _drop_accounting(ctx, assembled)
     processing_time = int(ctx.timer.elapsed() * 1000)
     yield sse_event(
         "complete",
         {
-            "tabCount": len(assembled.get("tabs", [])),
+            "tabCount": len(all_tabs),
             "processingTimeMs": processing_time,
             "degraded": degraded,
         },
@@ -179,13 +207,7 @@ async def run_phase_assembly(ctx: PipelineContext) -> AsyncGenerator[str, None]:
             "extraction": ctx.extraction_data,
             "enrichment": ctx.enrichment_data,
             "synthesis": ctx.synthesis_dict,
-            "assembly": {
-                "tabsDesigned": tabs_designed,
-                "tabsAssembled": len(assembled.get("tabs", [])),
-                "tabsDropped": tabs_dropped,
-                "droppedTabs": dropped_tabs,
-                **({"planFallback": True} if plan_fallback else {}),
-            },
+            "assembly": accounting,
         },
         "processedAt": datetime.now(timezone.utc),
         "processingTimeMs": processing_time,

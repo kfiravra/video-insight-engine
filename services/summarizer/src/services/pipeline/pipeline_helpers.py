@@ -243,20 +243,6 @@ def sanitize_for_prompt(text: str, max_len: int = 500) -> str:
 _SENTINEL = object()
 
 
-async def run_task_with_heartbeat(task: "asyncio.Future[Any]") -> AsyncGenerator[str, None]:
-    """Yield SSE heartbeats while `task` runs; returns once it is done.
-
-    For a phase that awaits one long silent operation outside
-    run_parallel_phases (e.g. the moment frame fill inside assembly): without
-    keepalives a multi-minute gap trips the API gateway's undici bodyTimeout.
-    The task's result/exception is NOT consumed here — the caller awaits it.
-    """
-    while not task.done():
-        done, _ = await asyncio.wait({task}, timeout=settings.SSE_HEARTBEAT_SECONDS)
-        if not done:
-            yield sse_event("heartbeat", {"ts": time.monotonic()})
-
-
 async def run_parallel_phases(
     phases: list[Callable[["PipelineContext"], AsyncGenerator[str, None]]],
     ctx: "PipelineContext",

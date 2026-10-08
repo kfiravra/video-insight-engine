@@ -21,6 +21,19 @@ import pytest
 from src.services.pipeline.post_processor import coverage_is_degraded
 
 
+@pytest.fixture(autouse=True)
+def _no_synthesis_call():
+    """Synthesis runs inside assembly since 1d.3 (∥ moment fill); its own tests cover it."""
+    from src.services.pipeline.phases import assembly as phase
+
+    async def _no_synthesis(_ctx):
+        return
+        yield  # pragma: no cover — makes this an async generator
+
+    with patch.object(phase, "run_phase_synthesis", _no_synthesis):
+        yield
+
+
 async def _collect(gen) -> list[str]:
     """Collect every SSE chunk an async generator yields."""
     return [chunk async for chunk in gen]
@@ -80,6 +93,8 @@ def _build_ctx(
         timer=timer,
         transcript_data=None,
         audio_path=None,
+        memory=None,
+        video_memory="",
     )
 
 

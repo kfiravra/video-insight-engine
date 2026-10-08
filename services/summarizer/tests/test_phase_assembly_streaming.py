@@ -6,8 +6,8 @@ completes, then streamed last. Two invariants make that safe for the client:
 1. Every tab_ready carries ``position`` (its index in the persisted order) so
    a late moment tab is slotted where the DB doc will have it, and the
    persisted tab dicts never gain that key.
-2. Heartbeats flow while the fill runs — this phase is not under
-   run_parallel_phases' keepalive, and the fill can run for minutes.
+2. Heartbeats flow while the fill runs (it runs ∥ synthesis under
+   run_parallel_phases since 1d.3), and the fill can run for minutes.
 """
 
 from __future__ import annotations
@@ -20,6 +20,19 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from tests.test_phase_assembly_cache import _build_ctx
+
+
+@pytest.fixture(autouse=True)
+def _no_synthesis_call():
+    """Synthesis runs inside assembly since 1d.3 (∥ moment fill); its own tests cover it."""
+    from src.services.pipeline.phases import assembly as phase
+
+    async def _no_synthesis(_ctx):
+        return
+        yield  # pragma: no cover — makes this an async generator
+
+    with patch.object(phase, "run_phase_synthesis", _no_synthesis):
+        yield
 
 
 def _events(chunks: list[str]) -> list[tuple[str, dict]]:

@@ -70,7 +70,6 @@ def _patched_phases():
         patch.object(pipeline_orchestration, "run_phase_metadata", _phase_stub("metadata")),
         patch.object(pipeline_orchestration, "run_parallel_phases", _parallel_stub),
         patch.object(pipeline_orchestration, "run_phase_extraction", _phase_stub("extraction")),
-        patch.object(pipeline_orchestration, "run_phase_synthesis", _phase_stub("synthesis")),
         patch.object(pipeline_orchestration, "run_phase_enrichment", _phase_stub("enrichment")),
         patch.object(pipeline_orchestration, "run_phase_assembly", _phase_stub("assembly")),
         patch.object(pipeline_orchestration, "needs_quiz", lambda *_a: True),
@@ -98,7 +97,7 @@ def _english_ctx(extraction_data: dict) -> SimpleNamespace:
     )
 
 
-_TAIL_NAMES = ("run_phase_extraction", "run_phase_synthesis", "run_phase_enrichment")
+_TAIL_NAMES = ("run_phase_extraction", "run_phase_enrichment")
 
 
 async def _parallel_groups(ctx: SimpleNamespace, *, quiz: bool) -> list[list[str]]:
@@ -127,18 +126,18 @@ async def _parallel_groups(ctx: SimpleNamespace, *, quiz: bool) -> list[list[str
 
 
 @pytest.mark.asyncio
-async def test_should_run_the_quiz_alongside_synthesis_when_the_plan_demands_one() -> None:
-    """1d.1: the quiz reads extraction + video_memory, never the synthesis."""
+async def test_should_run_the_quiz_when_the_plan_demands_one() -> None:
+    """1d.1: the quiz runs before assembly (it is a tab); synthesis moved into assembly."""
     groups = await _parallel_groups(_english_ctx({}), quiz=True)
 
-    assert groups[2] == ["run_phase_synthesis", "run_phase_enrichment"]
+    assert groups[2] == ["run_phase_enrichment"]
 
 
 @pytest.mark.asyncio
-async def test_should_run_synthesis_alone_when_no_quiz_is_demanded() -> None:
+async def test_should_go_straight_to_assembly_when_no_quiz_is_demanded() -> None:
     groups = await _parallel_groups(_english_ctx({}), quiz=False)
 
-    assert groups[2] == ["run_phase_synthesis"]
+    assert len(groups) == 2
 
 
 @pytest.mark.asyncio

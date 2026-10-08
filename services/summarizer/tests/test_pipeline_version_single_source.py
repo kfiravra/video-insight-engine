@@ -25,6 +25,20 @@ from src.config import settings
 from src.repositories.mongodb_repository import MongoDBVideoRepository
 from src.shared_config.pipeline_version import get_pipeline_version
 
+
+@pytest.fixture(autouse=True)
+def _no_synthesis_call():
+    """Synthesis runs inside assembly since 1d.3 (∥ moment fill); its own tests cover it."""
+    from src.services.pipeline.phases import assembly as phase
+
+    async def _no_synthesis(_ctx):
+        return
+        yield  # pragma: no cover — makes this an async generator
+
+    with patch.object(phase, "run_phase_synthesis", _no_synthesis):
+        yield
+
+
 _CANONICAL_JSON = (
     Path(__file__).resolve().parent.parent.parent.parent
     / "packages"
@@ -123,4 +137,6 @@ def _build_assembly_ctx() -> SimpleNamespace:
         timer=timer,
         transcript_data=None,
         audio_path=None,
+        memory=None,
+        video_memory="",
     )

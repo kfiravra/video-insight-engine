@@ -72,6 +72,13 @@ class TestObserveSse:
 
         assert recorder.tabs_emitted == 3
 
+    def test_should_count_a_re_sent_tab_once(self, recorder: PipelineTimingRecorder) -> None:
+        """1d.3: the overview is re-sent once synthesis lands — still one emitted tab."""
+        for _ in range(2):
+            recorder.observe_sse(sse_event("tab_ready", {"id": "overview", "position": 0}))
+
+        assert recorder.tabs_emitted == 1
+
     def test_should_stamp_done_and_complete(self, recorder: PipelineTimingRecorder) -> None:
         recorder.observe_sse(
             sse_event("complete", {"tabCount": 1, "processingTimeMs": 1, "degraded": False})

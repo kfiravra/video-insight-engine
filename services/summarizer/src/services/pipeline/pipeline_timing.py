@@ -13,6 +13,7 @@ timeline can be drawn straight from the document.
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from collections.abc import Iterator
@@ -40,6 +41,16 @@ _MILESTONE_EVENTS: dict[str, str] = {
     "done": "doneMs",
 }
 _SSE_EVENT_PREFIX = 'data: {"event": "'
+
+
+def _tab_id(chunk: str) -> str:
+    """A ``tab_ready`` chunk's tab id; the whole chunk when it cannot be read."""
+    try:
+        payload = json.loads(chunk[len("data: ") :])
+    except ValueError:
+        return chunk
+    tab_id = payload.get("id") if isinstance(payload, dict) else None
+    return str(tab_id) if tab_id is not None else chunk
 
 
 def _usage_int(usage: object, attr: str) -> int:
@@ -78,7 +89,13 @@ class PipelineTimingRecorder:
     llm_failures: list[dict[str, Any]] = field(default_factory=list)
     downloads: list[dict[str, Any]] = field(default_factory=list)
     milestones: dict[str, int] = field(default_factory=dict)
-    tabs_emitted: int = 0
+    # Distinct tab ids streamed: a tab re-sent with new content (the overview
+    # once synthesis lands, 1d.3) is still one tab.
+    emitted_tab_ids: set[str] = field(default_factory=set)
+
+    @property
+    def tabs_emitted(self) -> int:
+        return len(self.emitted_tab_ids)
 
     def offset_ms(self, monotonic_ts: float | None = None) -> int:
         ts = time.monotonic() if monotonic_ts is None else monotonic_ts
@@ -105,7 +122,7 @@ class PipelineTimingRecorder:
             return
         event = chunk[start:end]
         if event == "tab_ready":
-            self.tabs_emitted += 1
+            self.emitted_tab_ids.add(_tab_id(chunk))
         key = _MILESTONE_EVENTS.get(event)
         if key and key not in self.milestones:
             self.milestones[key] = self.offset_ms()

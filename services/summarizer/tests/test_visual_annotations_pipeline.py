@@ -20,6 +20,20 @@ from src.routes import pipeline_orchestration
 from src.services.pipeline.phases import assembly as assembly_phase
 from src.services.pipeline.pipeline_helpers import TranscriptData
 
+
+@pytest.fixture(autouse=True)
+def _no_synthesis_call():
+    """Synthesis runs inside assembly since 1d.3 (∥ moment fill); its own tests cover it."""
+    from src.services.pipeline.phases import assembly as phase
+
+    async def _no_synthesis(_ctx):
+        return
+        yield  # pragma: no cover — makes this an async generator
+
+    with patch.object(phase, "run_phase_synthesis", _no_synthesis):
+        yield
+
+
 _CAPTION = "Zebra-striped whiteboard sketch"
 _OCR = "Quokka slide title text"
 _SPEECH = "we start with the dough then we fold it twice"
@@ -63,6 +77,8 @@ def _ctx(*, eval_run: bool = False) -> SimpleNamespace:
             source="captions",
         ),
         audio_path=None,
+        memory=None,
+        video_memory="",
         eval_run=eval_run,
     )
 

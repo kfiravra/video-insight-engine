@@ -152,7 +152,6 @@ class TestRunnerPersistence:
             patch.object(pipeline_orchestration, "run_phase_metadata", _one),
             patch.object(pipeline_orchestration, "run_parallel_phases", lambda _p, _c: _one()),
             patch.object(pipeline_orchestration, "run_phase_extraction", _one),
-            patch.object(pipeline_orchestration, "run_phase_synthesis", _one),
             patch.object(pipeline_orchestration, "run_phase_enrichment", _one),
             patch.object(pipeline_orchestration, "run_phase_assembly", assembly or _assembly),
             patch.object(pipeline_orchestration, "needs_quiz", lambda *_a: False),
