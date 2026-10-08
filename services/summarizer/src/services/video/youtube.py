@@ -31,6 +31,7 @@ import yt_dlp  # type: ignore[import-untyped]
 from src.exceptions import TranscriptError
 from src.models.schemas import ErrorCode
 from src.services.media.download_utils import (
+    is_exit_blocked,
     try_proxy_exits,
     ytdlp_proxy_exit_urls,
     ytdlp_proxy_url,
@@ -636,9 +637,9 @@ def _http_status_of(exc: BaseException | None) -> int | None:
     return None
 
 
-def _is_http_429(exc: Exception) -> bool:
-    """True for a timedtext rate limit, the IP-scoped failure worth another exit."""
-    return _http_status_of(exc) == 429
+def _is_timedtext_exit_blocked(exc: Exception) -> bool:
+    """True for an IP-scoped timedtext failure worth another exit: a 429 or the bot check."""
+    return _http_status_of(exc) == 429 or is_exit_blocked(exc)
 
 
 def _fetch_subtitle_data_sync(url: str) -> dict:
@@ -648,15 +649,18 @@ def _fetch_subtitle_data_sync(url: str) -> dict:
 
     Never direct when a proxy is set — that would hit timedtext from the host
     IP the proxy exists to hide. With several sticky exits
-    (YOUTUBE_PROXY_EXIT_COUNT) a 429 moves on to the next exit at once — the
-    URL is not bound to the exit that produced it (``ip=0.0.0.0``) — so a 429
-    reaches the caller only when every tried exit returned one. Direct
-    connections and a single exit keep the same-IP retry.
+    (YOUTUBE_PROXY_EXIT_COUNT) a 429 or bot check moves on to the next exit at
+    once — the URL is not bound to the exit that produced it
+    (``ip=0.0.0.0``) — so a 429 reaches the caller only when every tried exit
+    was blocked. Direct connections and a single exit keep the same-IP retry.
     """
     exit_urls = ytdlp_proxy_exit_urls()
     if len(exit_urls) > 1:
         return try_proxy_exits(
-            exit_urls, partial(_get_subtitle_json_sync, url), _is_http_429, "Timedtext fetch"
+            exit_urls,
+            partial(_get_subtitle_json_sync, url),
+            _is_timedtext_exit_blocked,
+            "Timedtext fetch",
         )
     return _fetch_subtitle_single_exit_sync(url)
 
@@ -750,17 +754,34 @@ def _extract_with_retry(url: str, opts: dict[str, Any]) -> dict[str, Any] | None
         return ydl.extract_info(url, download=False)
 
 
+def _extract_info_via_exits(video_id: str) -> dict[str, Any] | None:
+    """``extract_info`` through YOUTUBE_PROXY_URL's exits.
+
+    YouTube's bot check and its 429 are scoped to the exit IP, so with several
+    sticky exits (YOUTUBE_PROXY_EXIT_COUNT) either moves on to the next one;
+    private / removed / age-gated videos fail on the first exit as before.
+    """
+    url = f"https://www.youtube.com/watch?v={video_id}"
+    opts = _build_yt_dlp_opts()
+    exit_urls = ytdlp_proxy_exit_urls()
+    if len(exit_urls) <= 1:
+        return _extract_with_retry(url, opts)
+    return try_proxy_exits(
+        exit_urls,
+        lambda proxy_url: _extract_with_retry(url, {**opts, "proxy": proxy_url}),
+        is_exit_blocked,
+        f"Metadata extract for {video_id}",
+    )
+
+
 def _extract_video_info_sync(video_id: str) -> tuple[VideoData, SubtitleTrack | None]:
     """One yt-dlp ``extract_info`` → metadata + the picked caption track (not yet fetched).
 
     Raises:
         TranscriptError: If video is unavailable, live, or extraction fails
     """
-    url = f"https://www.youtube.com/watch?v={video_id}"
-
-    opts = _build_yt_dlp_opts()
     try:
-        info = _extract_with_retry(url, opts)
+        info = _extract_info_via_exits(video_id)
     except Exception as e:
         raise TranscriptError(
             f"Failed to extract video information: {e}",

@@ -23,6 +23,8 @@ from src.models.schemas import ErrorCode
 __all__ = [
     "classify_download_error",
     "download_youtube_audio",
+    "is_exit_blocked",
+    "proxy_exit_label",
     "ytdlp_client_api_opts",
     "ytdlp_client_cli_args",
     "ytdlp_hires_client_attempts",
@@ -48,6 +50,33 @@ _PROXY_ENV_VARS = ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy")
 _MAX_ROTATED_EXITS = 3
 _STICKY_SUFFIX_RE = re.compile(r"^(?P<base>.*)-(?P<n>\d+)$")
 
+# YouTube's "Sign in to confirm you’re not a bot" wall, as yt-dlp passes it
+# through (YouTube's apostrophe is U+2019). Anchored on "not a bot" because the
+# age gate's "Sign in to confirm your age" shares the prefix and must not match.
+_BOT_CHECK_RE = re.compile(r"confirm\s+you(?:['’]re|\s+are)\s+not\s+a\s+bot", re.IGNORECASE)
+# A throttled request as yt-dlp ("HTTP Error 429: Too Many Requests") and
+# requests ("429 Client Error: Too Many Requests") word it.
+_HTTP_429_RE = re.compile(r"\bHTTP Error 429\b|\bToo Many Requests\b", re.IGNORECASE)
+
+
+def is_exit_blocked(error: BaseException | str) -> bool:
+    """True when a YouTube error (exception or yt-dlp stderr) blocks the proxy exit's IP.
+
+    The bot check and a 429 are both scoped to the exit IP — 2026-10-08 the
+    main Webshare exit got the bot check on every video while exits 2 and 3
+    still worked — so either is worth the next exit. Anything else (private,
+    removed, age gate, 404, format unavailable) fails alike on every exit.
+    """
+    text = str(error)
+    return _BOT_CHECK_RE.search(text) is not None or _HTTP_429_RE.search(text) is not None
+
+
+def proxy_exit_label(proxy_url: str) -> str:
+    """Loggable name of one exit — its sticky ``-N`` session, never the URL."""
+    username = proxy_url.partition("://")[2].rpartition("@")[0].partition(":")[0]
+    match = _STICKY_SUFFIX_RE.match(username)
+    return f"session -{match.group('n')}" if match else "unnamed session"
+
 
 def ytdlp_proxy_url() -> str | None:
     """YOUTUBE_PROXY_URL with whitespace stripped, or None for a direct connection."""
@@ -56,7 +85,7 @@ def ytdlp_proxy_url() -> str | None:
 
 
 def ytdlp_proxy_exit_urls() -> list[str]:
-    """Proxy URLs to try in order for an IP-scoped failure (caption 429).
+    """Proxy URLs to try in order for an IP-scoped failure (429 or bot check).
 
     Empty without a proxy. The configured URL comes first; when
     YOUTUBE_PROXY_EXIT_COUNT > 1 and its username carries a sticky ``-N``
@@ -87,40 +116,51 @@ def ytdlp_proxy_exit_urls() -> list[str]:
 def try_proxy_exits(
     exit_urls: list[str],
     attempt: Callable[[str], _T],
-    is_rate_limited: Callable[[Exception], bool],
+    is_blocked: Callable[[Exception], bool],
     label: str,
 ) -> _T:
     """Run ``attempt`` on each exit of ytdlp_proxy_exit_urls() in turn.
 
-    A 429 is scoped to the exit IP, so a rate-limited attempt moves straight
-    on to the next exit instead of waiting on the same one. Any other error
-    ends the rotation at once; when every exit is rate limited the last error
+    A 429 or a bot check is scoped to the exit IP, so a blocked attempt moves
+    straight on to the next exit instead of waiting on the same one. Any other
+    error ends the rotation at once; when every exit is blocked the last error
     is re-raised. ``label`` is logged — never put a proxy URL in it.
     """
     last_error: Exception | None = None
     for n, proxy_url in enumerate(exit_urls, 1):
         try:
-            return attempt(proxy_url)
+            result = attempt(proxy_url)
         except Exception as e:
-            if not is_rate_limited(e):
+            if not is_blocked(e):
                 raise
             last_error = e
-            logger.warning("%s rate limited on proxy exit %d/%d", label, n, len(exit_urls))
+            logger.warning("%s blocked on proxy exit %d/%d", label, n, len(exit_urls))
+            continue
+        if n > 1:
+            logger.info(
+                "%s succeeded on proxy exit %d/%d (%s)",
+                label,
+                n,
+                len(exit_urls),
+                proxy_exit_label(proxy_url),
+            )
+        return result
     if last_error is None:
         raise ValueError("try_proxy_exits needs at least one exit")
     raise last_error
 
 
-def ytdlp_subprocess_env() -> dict[str, str] | None:
-    """Child env that sends a subprocess yt-dlp through YOUTUBE_PROXY_URL.
+def ytdlp_subprocess_env(proxy_url: str | None = None) -> dict[str, str] | None:
+    """Child env that sends a subprocess yt-dlp through ``proxy_url``.
 
-    The URL carries credentials, so it travels in the environment and never
-    on the command line: Sentry records every subprocess argv as a breadcrumb
-    and span name, and argv is readable through ``ps``. None (inherit the
-    parent env) when no proxy is configured. Pass as ``env=`` next to
-    ytdlp_client_cli_args().
+    ``proxy_url`` is one exit of ytdlp_proxy_exit_urls(); omitted, it is
+    YOUTUBE_PROXY_URL. The URL carries credentials, so it travels in the
+    environment and never on the command line: Sentry records every
+    subprocess argv as a breadcrumb and span name, and argv is readable
+    through ``ps``. None (inherit the parent env) when no proxy is
+    configured. Pass as ``env=`` next to ytdlp_client_cli_args().
     """
-    proxy_url = ytdlp_proxy_url()
+    proxy_url = proxy_url or ytdlp_proxy_url()
     if not proxy_url:
         return None
     return {**os.environ, **dict.fromkeys(_PROXY_ENV_VARS, proxy_url)}
@@ -193,6 +233,26 @@ def classify_download_error(error_msg: str) -> ErrorCode:
     return ErrorCode.DOWNLOAD_ERROR
 
 
+def _ydl_download(url: str, ydl_opts: dict[str, Any]) -> None:
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        ydl.download([url])
+
+
+def _download_via_exits(
+    url: str, ydl_opts: dict[str, Any], exit_urls: list[str], label: str
+) -> None:
+    """One in-process download; a bot check or 429 moves on to the next proxy exit."""
+    if len(exit_urls) <= 1:
+        _ydl_download(url, ydl_opts)
+        return
+    try_proxy_exits(
+        exit_urls,
+        lambda proxy_url: _ydl_download(url, {**ydl_opts, "proxy": proxy_url}),
+        is_exit_blocked,
+        label,
+    )
+
+
 def download_youtube_audio(
     video_id: str,
     ydl_opts: dict[str, Any],
@@ -220,6 +280,8 @@ def download_youtube_audio(
         TranscriptError: If download fails after all retries
     """
     url = f"https://www.youtube.com/watch?v={video_id}"
+    # A caller's own proxy pins the download to it — no exit rotation.
+    exit_urls = [] if "proxy" in ydl_opts else ytdlp_proxy_exit_urls()
     # Route the download through the configured player clients and proxy;
     # a caller's own value for either key wins.
     ydl_opts = {**ytdlp_client_api_opts(), **ydl_opts}
@@ -232,8 +294,7 @@ def download_youtube_audio(
             except OSError:
                 pass
         try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([url])
+            _download_via_exits(url, ydl_opts, exit_urls, f"Audio download for {video_id}")
             last_error = None
             break
         except Exception as e:

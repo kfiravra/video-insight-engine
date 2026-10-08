@@ -8,6 +8,7 @@ audio download — a typo here silently reinstates the 403s everywhere.
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -318,8 +319,17 @@ class TestTryProxyExits:
         with caplog.at_level("WARNING"):
             self._run(attempt)
 
-        assert "Test fetch rate limited on proxy exit 1/3" in caplog.text
+        assert "Test fetch blocked on proxy exit 1/3" in caplog.text
         assert "u-1:p@" not in caplog.text
+
+    def test_should_log_the_exit_that_worked_without_credentials(self, caplog):
+        attempt = MagicMock(side_effect=[_RateLimited(), "ok"])
+
+        with caplog.at_level("INFO"):
+            self._run(attempt)
+
+        assert "Test fetch succeeded on proxy exit 2/3 (session -2)" in caplog.text
+        assert ":p@" not in caplog.text
 
 
 class TestHiresClientAttempts:
@@ -357,3 +367,123 @@ class TestHiresClientAttempts:
 
         field = Settings.model_fields["YTDLP_HIRES_PLAYER_CLIENTS"]
         assert field.default == "web_embedded,android"
+
+
+BOT_CHECK = (
+    "ERROR: [youtube] dQw4w9WgXcQ: Sign in to confirm you’re not a bot. Use "
+    "--cookies-from-browser or --cookies for the authentication. See  "
+    "https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp  "
+    "for how to manually pass cookies."
+)
+
+
+class TestIsExitBlocked:
+    """What counts as a per-exit-IP block worth trying the next proxy exit."""
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            BOT_CHECK,
+            BOT_CHECK.replace("’", "'"),
+            "Sign in to confirm you are not a bot",
+            "ERROR: unable to download video data: HTTP Error 429: Too Many Requests",
+            "429 Client Error: Too Many Requests for url: https://www.youtube.com/api/timedtext",
+        ],
+    )
+    def test_should_be_true_for_a_bot_check_or_a_429(self, message):
+        assert download_utils.is_exit_blocked(message) is True
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "ERROR: [youtube] x: Sign in to confirm your age. "
+            "This video may be inappropriate for some users.",
+            "ERROR: [youtube] x: Private video. Sign in if you've been granted access",
+            "ERROR: [youtube] x: Video unavailable. This video has been removed by the uploader",
+            "ERROR: unable to download video data: HTTP Error 404: Not Found",
+            "ERROR: unable to download video data: HTTP Error 403: Forbidden",
+            "ERROR: [youtube] x: Requested format is not available",
+        ],
+    )
+    def test_should_be_false_for_an_error_every_exit_would_share(self, message):
+        assert download_utils.is_exit_blocked(message) is False
+
+    def test_should_read_an_exception_message(self):
+        assert download_utils.is_exit_blocked(RuntimeError(BOT_CHECK)) is True
+
+
+class TestProxyExitLabel:
+    def test_should_name_the_sticky_session(self):
+        assert download_utils.proxy_exit_label("http://user-3:pa:ss@h:80") == "session -3"
+
+    @pytest.mark.parametrize("url", ["http://user:pass@h:80", "http://h:80"])
+    def test_should_never_echo_the_url_without_a_sticky_suffix(self, url):
+        assert download_utils.proxy_exit_label(url) == "unnamed session"
+
+
+class TestDownloadYoutubeAudioExitRotation:
+    """The in-process audio download rotates exits on a bot check or 429."""
+
+    EXITS = ["http://user-1:pass@p.webshare.io:80", "http://user-2:pass@p.webshare.io:80"]
+
+    @pytest.fixture
+    def ydl(self, monkeypatch):
+        """YoutubeDL stand-in failing per proxy exit; records the proxies tried."""
+        monkeypatch.setattr(download_utils.settings, "YOUTUBE_PROXY_URL", self.EXITS[0])
+        monkeypatch.setattr(download_utils.settings, "YOUTUBE_PROXY_EXIT_COUNT", 2)
+        monkeypatch.setattr(download_utils.settings, "YTDLP_PLAYER_CLIENTS", "android")
+        fake = SimpleNamespace(errors={}, tried=[])
+
+        def _build(opts: dict) -> MagicMock:
+            fake.tried.append(opts.get("proxy"))
+            ydl = MagicMock()
+            ydl.__enter__ = MagicMock(return_value=ydl)
+            ydl.__exit__ = MagicMock(return_value=False)
+            error = fake.errors.get(opts.get("proxy"))
+            if error is not None:
+                ydl.download.side_effect = download_utils.yt_dlp.utils.DownloadError(error)
+            return ydl
+
+        with (
+            patch.object(download_utils.yt_dlp, "YoutubeDL", side_effect=_build),
+            patch.object(download_utils.time, "sleep"),
+        ):
+            yield fake
+
+    def test_should_download_on_the_next_exit_after_a_bot_check(self, ydl, tmp_path):
+        ydl.errors[self.EXITS[0]] = BOT_CHECK
+
+        download_utils.download_youtube_audio("dQw4w9WgXcQ", {}, tmp_path, "audio")
+
+        assert ydl.tried == self.EXITS
+
+    def test_should_raise_todays_error_when_every_exit_gets_the_bot_check(self, ydl, tmp_path):
+        ydl.errors.update(dict.fromkeys(self.EXITS, BOT_CHECK))
+
+        with pytest.raises(download_utils.TranscriptError) as exc_info:
+            download_utils.download_youtube_audio(
+                "dQw4w9WgXcQ", {}, tmp_path, "audio", max_attempts=1
+            )
+
+        assert exc_info.value.code is download_utils.ErrorCode.VIDEO_UNAVAILABLE
+        assert ydl.tried == self.EXITS
+
+    def test_should_not_rotate_on_a_private_video(self, ydl, tmp_path):
+        ydl.errors[self.EXITS[0]] = "ERROR: [youtube] x: Private video"
+
+        with pytest.raises(download_utils.TranscriptError):
+            download_utils.download_youtube_audio(
+                "dQw4w9WgXcQ", {}, tmp_path, "audio", max_attempts=1
+            )
+
+        assert ydl.tried == self.EXITS[:1]
+
+    def test_should_not_rotate_away_from_a_caller_supplied_proxy(self, ydl, tmp_path):
+        ydl.errors["http://caller.example:1"] = BOT_CHECK
+
+        with pytest.raises(download_utils.TranscriptError):
+            download_utils.download_youtube_audio(
+                "dQw4w9WgXcQ", {"proxy": "http://caller.example:1"}, tmp_path, "audio", 1
+            )
+
+        assert ydl.tried == ["http://caller.example:1"]

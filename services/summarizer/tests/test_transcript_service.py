@@ -460,12 +460,14 @@ class TestExitRotation:
         return urls
 
     @staticmethod
-    def _api_that_429s_on(blocked_urls: set[str], mock_api_class) -> None:
+    def _api_that_429s_on(
+        blocked_urls: set[str], mock_api_class, error: Exception | None = None
+    ) -> None:
         def build(proxy_config=None):
             api = MagicMock()
             url = proxy_config.to_requests_dict()["https"] if proxy_config else None
             if url in blocked_urls:
-                api.list.side_effect = Exception("429 Too Many Requests")
+                api.list.side_effect = error or Exception("429 Too Many Requests")
             else:
                 track = MagicMock(language_code="en")
                 track.fetch.return_value = [{"text": "hi", "start": 0.0, "duration": 1.0}]
@@ -480,6 +482,19 @@ class TestExitRotation:
     @patch("src.services.transcription.transcript.YouTubeTranscriptApi")
     async def test_should_succeed_on_the_next_exit_after_a_429(self, mock_api_class):
         self._api_that_429s_on({self.EXITS[0]}, mock_api_class)
+
+        segments, _, _, _ = await get_transcript("vid")
+
+        assert segments[0]["text"] == "hi"
+        assert self._proxied_urls(mock_api_class) == self.EXITS[:2]
+
+    @pytest.mark.usefixtures("exits")
+    @patch("src.services.transcription.transcript.YouTubeTranscriptApi")
+    async def test_should_succeed_on_the_next_exit_after_a_bot_check(self, mock_api_class):
+        """The library raises RequestBlocked for "Sign in to confirm you're not a bot"."""
+        from youtube_transcript_api._errors import RequestBlocked
+
+        self._api_that_429s_on({self.EXITS[0]}, mock_api_class, RequestBlocked("vid"))
 
         segments, _, _, _ = await get_transcript("vid")
 

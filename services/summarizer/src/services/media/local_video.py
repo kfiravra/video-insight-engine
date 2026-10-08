@@ -15,6 +15,7 @@ import logging
 import shutil
 import tempfile
 import time
+from enum import Enum
 from pathlib import Path
 
 from src.services.pipeline.pipeline_timing import record_download
@@ -29,6 +30,14 @@ LOWRES_DOWNLOAD_TIMEOUT = 120.0
 _FORMAT_SPEC = "bestvideo[height<=720][ext=mp4]/best[height<=720][ext=mp4]/best[ext=mp4]"
 # 144p is plenty for scene detection and local scoring and keeps pass 1 fast.
 _LOWRES_FORMAT_SPEC = "worstvideo[ext=mp4]/worst[ext=mp4]/worst"
+
+
+class _Attempt(Enum):
+    """Outcome of one yt-dlp process through one proxy exit."""
+
+    OK = "ok"
+    FAILED = "failed"
+    EXIT_BLOCKED = "exit_blocked"  # bot check or 429: worth the next exit
 
 
 async def _kill_quietly(proc: asyncio.subprocess.Process | None) -> None:
@@ -131,56 +140,94 @@ async def _run_ytdlp(
     timeout: float,
     format_spec: str = _FORMAT_SPEC,
 ) -> bool:
-    """One yt-dlp attempt with the given player clients; True when the file landed.
+    """One yt-dlp download with the given player clients; True when the file landed.
 
     ``clients`` None = YTDLP_PLAYER_CLIENTS (``ytdlp_client_cli_args`` default).
+    YouTube's bot check and a 429 are scoped to the proxy exit's IP, so either
+    moves on to the next sticky exit (``ytdlp_proxy_exit_urls``) within the
+    same ``timeout``; any other failure ends the download.
     """
-    from src.services.media.download_utils import ytdlp_client_cli_args, ytdlp_subprocess_env
+    from src.services.media.download_utils import ytdlp_client_cli_args, ytdlp_proxy_exit_urls
+
+    argv = [
+        "yt-dlp",
+        "-f",
+        format_spec,
+        "--no-playlist",
+        "--no-warnings",
+        *ytdlp_client_cli_args(clients),
+        "-o",
+        str(video_path),
+        f"https://www.youtube.com/watch?v={youtube_id}",
+    ]
+    label = f"{youtube_id} (format={format_spec.split('/', 1)[0]}, clients={clients})"
+    exit_urls: list[str | None] = [*ytdlp_proxy_exit_urls()] or [None]
+    deadline = asyncio.get_running_loop().time() + timeout
+    for n, proxy_url in enumerate(exit_urls, 1):
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining <= 0:
+            return False
+        attempt = await _run_ytdlp_once(argv, video_path, remaining, proxy_url, label)
+        if attempt is not _Attempt.EXIT_BLOCKED:
+            if attempt is _Attempt.OK and n > 1:
+                _log_exit_success(label, n, len(exit_urls), proxy_url)
+            return attempt is _Attempt.OK
+        logger.warning(
+            "yt-dlp download for %s blocked on proxy exit %d/%d", label, n, len(exit_urls)
+        )
+    return False
+
+
+def _log_exit_success(label: str, n: int, total: int, proxy_url: str | None) -> None:
+    from src.services.media.download_utils import proxy_exit_label
+
+    exit_name = proxy_exit_label(proxy_url) if proxy_url else "direct"
+    logger.info(
+        "yt-dlp download for %s succeeded on proxy exit %d/%d (%s)", label, n, total, exit_name
+    )
+
+
+async def _run_ytdlp_once(
+    argv: list[str],
+    video_path: Path,
+    timeout: float,
+    proxy_url: str | None,
+    label: str,
+) -> _Attempt:
+    """One yt-dlp process through one proxy exit (None = YOUTUBE_PROXY_URL / direct)."""
+    from src.services.media.download_utils import is_exit_blocked, ytdlp_subprocess_env
 
     # A failed earlier attempt can leave a .part file (another client's
-    # format) that yt-dlp would resume or treat as already downloaded.
+    # format or another exit's) that yt-dlp would resume or treat as done.
     for leftover in video_path.parent.iterdir():
         leftover.unlink(missing_ok=True)
     proc: asyncio.subprocess.Process | None = None
     try:
         proc = await asyncio.create_subprocess_exec(
-            "yt-dlp",
-            "-f",
-            format_spec,
-            "--no-playlist",
-            "--no-warnings",
-            *ytdlp_client_cli_args(clients),
-            "-o",
-            str(video_path),
-            f"https://www.youtube.com/watch?v={youtube_id}",
+            *argv,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            env=ytdlp_subprocess_env(),
+            env=ytdlp_subprocess_env(proxy_url),
         )
         _, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
     except asyncio.TimeoutError:
-        logger.warning("yt-dlp download timed out for %s (%.0fs)", youtube_id, timeout)
+        logger.warning("yt-dlp download timed out for %s (%.0fs)", label, timeout)
         await _kill_quietly(proc)
-        return False
+        return _Attempt.FAILED
     except FileNotFoundError:
         logger.warning("yt-dlp not found — video download unavailable")
-        return False
+        return _Attempt.FAILED
     except asyncio.CancelledError:
         await _kill_quietly(proc)
         raise
 
     if proc.returncode != 0 or not video_path.exists():
-        tail = stderr.decode("utf-8", errors="replace")[:300] if stderr else ""
+        err = stderr.decode("utf-8", errors="replace") if stderr else ""
         logger.warning(
-            "yt-dlp download failed for %s (format=%s, clients=%s, rc=%s): %s",
-            youtube_id,
-            format_spec.split("/", 1)[0],
-            clients,
-            proc.returncode,
-            tail,
+            "yt-dlp download failed for %s (rc=%s): %s", label, proc.returncode, err[:300]
         )
-        return False
-    return True
+        return _Attempt.EXIT_BLOCKED if is_exit_blocked(err) else _Attempt.FAILED
+    return _Attempt.OK
 
 
 def cleanup_local_video(temp_dir: str) -> None:
