@@ -29,12 +29,22 @@ STEP_FLOW_THRESHOLD = 8  # step_player -> step_flow_canvas (step count)
 INFO_GRID_LONG_VALUE = 120  # info_grid   -> spot_explorer (value length, chars)
 INFO_GRID_LONG_MIN = 2  # need this many long, card-worthy rows to promote
 
+# Each promotable component and the richer sibling it becomes when its rule
+# fires. Public because the golden eval (scripts/_eval_assertions.py) reads it
+# to credit a planned component that renders as its promotion target.
+COMPONENT_PROMOTIONS: dict[str, str] = {
+    "comparison": "comparison_radar",
+    "step_player": "step_flow_canvas",
+    "flash_deck": "concept_canvas",
+    "info_grid": "spot_explorer",
+}
+
 # Domains whose `concepts` extraction carries a connection graph worth rendering
 # as a canvas rather than a flat flashcard deck.
 _CONCEPT_DOMAINS: frozenset[str] = frozenset({"learning", "science"})
 
 
-def _promote_comparison(props: dict) -> tuple[str, dict] | None:
+def _promote_comparison(props: dict) -> dict | None:
     """comparison -> comparison_radar when there are enough scoreable axes.
 
     `comparison_radar` shares the comparison data contract, so the props are
@@ -42,11 +52,11 @@ def _promote_comparison(props: dict) -> tuple[str, dict] | None:
     """
     rows = props.get("comparisons")
     if isinstance(rows, list) and len(rows) >= RADAR_AXIS_THRESHOLD:
-        return "comparison_radar", props
+        return props
     return None
 
 
-def _promote_step_player(props: dict) -> tuple[str, dict] | None:
+def _promote_step_player(props: dict) -> dict | None:
     """step_player -> step_flow_canvas for long procedures.
 
     Same data contract as step_player; the canvas renderer lays the steps out
@@ -54,7 +64,7 @@ def _promote_step_player(props: dict) -> tuple[str, dict] | None:
     """
     steps = props.get("steps")
     if isinstance(steps, list) and len(steps) >= STEP_FLOW_THRESHOLD:
-        return "step_flow_canvas", props
+        return props
     return None
 
 
@@ -80,7 +90,7 @@ def _promote_flash_deck(
     data: Any,
     extraction: dict | None,
     domain: str,
-) -> tuple[str, dict] | None:
+) -> dict | None:
     """flash_deck -> concept_canvas when the concepts form a connection graph."""
     if domain not in _CONCEPT_DOMAINS:
         return None
@@ -94,14 +104,14 @@ def _promote_flash_deck(
         1 for c in props.get("concepts", []) if isinstance(c, dict) and c.get("connections")
     )
     if connected >= CONCEPT_CONNECTION_MIN:
-        return "concept_canvas", props
+        return props
     return None
 
 
 def _promote_info_grid(
     props: dict,
     extraction: dict | None,
-) -> tuple[str, dict] | None:
+) -> dict | None:
     """info_grid -> spot_explorer when rows are description-heavy cards.
 
     A grid of short reference pairs stays a grid; a grid whose values are long
@@ -127,10 +137,7 @@ def _promote_info_grid(
         for it in items
         if isinstance(it, dict)
     ]
-    new_props = assemble_spot_explorer({}, spot_input, extraction or {}, None)
-    if new_props is None:
-        return None
-    return "spot_explorer", new_props
+    return assemble_spot_explorer({}, spot_input, extraction or {}, None)
 
 
 def promote_component(
@@ -143,21 +150,22 @@ def promote_component(
     """Promote a component to a richer sibling when the data supports it.
 
     Returns ``(component, props)`` unchanged when no rule fires. A fired rule
-    always returns re-shaped, render-valid props for the new component.
+    always returns re-shaped, render-valid props for the new component, which
+    is ``COMPONENT_PROMOTIONS[component]``.
     """
-    result: tuple[str, dict] | None = None
+    new_props: dict | None = None
     if component == "comparison":
-        result = _promote_comparison(props)
+        new_props = _promote_comparison(props)
     elif component == "step_player":
-        result = _promote_step_player(props)
+        new_props = _promote_step_player(props)
     elif component == "flash_deck":
-        result = _promote_flash_deck(data, extraction, domain)
+        new_props = _promote_flash_deck(data, extraction, domain)
     elif component == "info_grid":
-        result = _promote_info_grid(props, extraction)
+        new_props = _promote_info_grid(props, extraction)
 
-    if result is None:
+    if new_props is None:
         return component, props
-    new_component, new_props = result
+    new_component = COMPONENT_PROMOTIONS[component]
     logger.info("[assembly] promoted %s -> %s", component, new_component)
     return new_component, new_props
 

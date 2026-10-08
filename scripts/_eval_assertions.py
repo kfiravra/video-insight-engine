@@ -10,13 +10,25 @@ the dataset assertion it came from, so markers are re-read by identity.
 An assertion whose input is unavailable (no tier-probe format on the trace,
 no duration on the response) is reported as *skipped* (``passed=None``) —
 never as a pass, never as a gate failure.
+
+Assembly promotes some planned components to a richer sibling once the
+extracted data supports it (``COMPONENT_PROMOTIONS`` in the summarizer's
+``assembly/promotion.py``, e.g. a long ``step_player`` renders as
+``step_flow_canvas``). ``requiredComponents``, ``minItems`` and
+``minItemsWithField`` accept a component's promotion target in its place and
+say so in the detail (``step_player (as step_flow_canvas)``);
+``forbiddenComponents`` and ``quizAbsentOrLast`` match exactly.
 """
 
 from __future__ import annotations
 
+import ast
+import logging
 import re
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, replace
+from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 from _eval_schema import (
@@ -36,6 +48,23 @@ TIMESTAMP_KEYS: frozenset[str] = frozenset(
     {"timestamp", "seconds", "endSeconds", "startSeconds", "startTime", "endTime"}
 )
 _CLOCK_RE = re.compile(r"^(?:(\d+):)?(\d{1,2}):(\d{2})$")
+
+# Parsed, not imported: importing it would load the whole assembly package
+# into every eval script, and CI runs them on a bare interpreter (pyyaml,
+# pydantic, httpx only).
+PROMOTION_SOURCE = (
+    Path(__file__).resolve().parent.parent
+    / "services"
+    / "summarizer"
+    / "src"
+    / "services"
+    / "pipeline"
+    / "assembly"
+    / "promotion.py"
+)
+_PROMOTION_MAP = "COMPONENT_PROMOTIONS"
+
+logger = logging.getLogger("run_eval.assertions")
 
 # (passed, detail) — passed is None when the input was unavailable.
 _Verdict = tuple[bool | None, str]
@@ -86,12 +115,64 @@ class TraceSignals:
 
 
 # ─── Helpers ───────────────────────────────────────────────────────────
+def read_promotion_map(source: Path) -> dict[str, str]:
+    """The ``COMPONENT_PROMOTIONS`` literal of ``source`` (component -> promoted component)."""
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    for node in tree.body:
+        if (
+            isinstance(node, ast.AnnAssign)
+            and isinstance(node.target, ast.Name)
+            and node.target.id == _PROMOTION_MAP
+            and node.value is not None
+        ):
+            return {str(k): str(v) for k, v in ast.literal_eval(node.value).items()}
+    raise LookupError(f"{_PROMOTION_MAP} not found in {source}")
+
+
+@lru_cache(maxsize=1)
+def promotion_targets() -> dict[str, str]:
+    """The assembler's promotion map; empty (exact matching) when it cannot be read.
+
+    Never raises: scoring runs after the pipeline runs, so a crash here would
+    throw away finished, paid runs. The summarizer suite pins the parse.
+    """
+    try:
+        return read_promotion_map(PROMOTION_SOURCE)
+    except (OSError, SyntaxError, ValueError, LookupError, AttributeError) as e:
+        logger.warning(
+            "Promotion map unreadable (%s: %s); components match exactly", type(e).__name__, e
+        )
+        return {}
+
+
+def _tab_component(tab: dict[str, Any]) -> str:
+    return str(tab.get("component", "")).lower()
+
+
 def _components(tabs: list[dict[str, Any]]) -> list[str]:
-    return [str(t.get("component", "")).lower() for t in tabs]
+    return [_tab_component(t) for t in tabs]
 
 
 def _tabs_with(tabs: list[dict[str, Any]], component: str) -> list[dict[str, Any]]:
-    return [t for t in tabs if str(t.get("component", "")).lower() == component.lower()]
+    """Tabs rendering ``component`` or the component assembly promotes it to."""
+    name = component.lower()
+    accepted = {name, promotion_targets().get(name, name)}
+    return [t for t in tabs if _tab_component(t) in accepted]
+
+
+def _shown_as(component: str, tabs: list[dict[str, Any]]) -> str:
+    """``component``, or ``component (as <target>)`` when a matched tab was promoted."""
+    promoted = sorted({_tab_component(t) for t in tabs} - {component.lower()})
+    return f"{component} (as {', '.join(promoted)})" if promoted else component
+
+
+def _via_promotion(options: list[str], present: set[str]) -> str | None:
+    """``x (as y)`` for the first option ``x`` whose promotion target ``y`` is present."""
+    for option in options:
+        target = promotion_targets().get(option.lower())
+        if target in present:
+            return f"{option} (as {target})"
+    return None
 
 
 def _props_list(tab: dict[str, Any], field: str | None) -> list[Any]:
@@ -152,12 +233,19 @@ def _forbidden(a: ForbiddenComponents, actual: dict[str, Any], _: TraceSignals) 
 
 def _required(a: RequiredComponents, actual: dict[str, Any], _: TraceSignals) -> _Verdict:
     present = set(_components(actual.get("tabs") or []))
-    missing = []
+    missing: list[str | list[str]] = []
+    promoted: list[str] = []
     for entry in a.components:
         options = [entry] if isinstance(entry, str) else entry
-        if not any(o.lower() in present for o in options):
+        if any(o.lower() in present for o in options):
+            continue
+        via = _via_promotion(options, present)
+        if via is None:
             missing.append(entry)
-    return not missing, f"missing: {missing}" if missing else "all present"
+        else:
+            promoted.append(via)
+    detail = f"missing: {missing}" if missing else "all present"
+    return not missing, "; ".join([detail, *promoted])
 
 
 def _quiz_absent_or_last(a: QuizAbsentOrLast, actual: dict[str, Any], _: TraceSignals) -> _Verdict:
@@ -170,12 +258,27 @@ def _quiz_absent_or_last(a: QuizAbsentOrLast, actual: dict[str, Any], _: TraceSi
     return ok, f"quiz at tab positions {positions} of {len(components)}"
 
 
+def _item_count(tab: dict[str, Any], component: str, field: str | None) -> int:
+    """Items in the tab's ``field`` list — or its main list on a re-shaped promotion.
+
+    A promotion that re-shapes props renames the list (info_grid ``items`` ->
+    spot_explorer ``spots``), so a promoted tab without ``field`` is counted
+    like an assertion that names no field.
+    """
+    props = tab.get("props")
+    renamed = (
+        _tab_component(tab) != component.lower() and isinstance(props, dict) and field not in props
+    )
+    return len(_props_list(tab, None if renamed else field))
+
+
 def _min_items(a: MinItems, actual: dict[str, Any], _: TraceSignals) -> _Verdict:
     tabs = _tabs_with(actual.get("tabs") or [], a.component)
     if not tabs:
         return False, f"no {a.component} tab"
-    counts = [len(_props_list(t, a.field)) for t in tabs]
-    return min(counts) >= a.min_items, f"{a.component} items={counts} min={a.min_items}"
+    counts = [_item_count(t, a.component, a.field) for t in tabs]
+    shown = _shown_as(a.component, tabs)
+    return min(counts) >= a.min_items, f"{shown} items={counts} min={a.min_items}"
 
 
 def _min_items_with_field(
@@ -187,7 +290,8 @@ def _min_items_with_field(
     items = [i for t in tabs for i in _props_list(t, None) if isinstance(i, dict)]
     with_field = sum(1 for i in items if any(i.get(f) for f in a.fields))
     ok = with_field >= a.min_items
-    return ok, f"{with_field}/{len(items)} {a.component} items carry {a.fields}"
+    shown = _shown_as(a.component, tabs)
+    return ok, f"{with_field}/{len(items)} {shown} items carry {a.fields}"
 
 
 def _no_timestamp_beyond(
