@@ -263,6 +263,115 @@ def test_register_prompts_already_synced_returns_true_on_match():
     assert mod._already_synced(_FakeClient(), "x", "different") is False
 
 
+# ─── --label / --dry-run (stage prompts without moving `production`) ────
+class _FakeRegistry:
+    """Serves text per label and records every get/create call."""
+
+    def __init__(self, by_label: dict[str, str] | None = None) -> None:
+        self.by_label = by_label or {}
+        self.gets: list[tuple[str, str | None]] = []
+        self.creates: list[dict[str, object]] = []
+
+    def get_prompt(self, name: str, *, label: str | None = None) -> object:
+        self.gets.append((name, label))
+        if label not in self.by_label:
+            raise LookupError(f"no version of {name} carries label {label}")
+        return MagicMock(prompt=self.by_label[label])
+
+    def create_prompt(self, *, name: str, prompt: str, labels: list[str]) -> object:
+        self.creates.append({"name": name, "prompt": prompt, "labels": labels})
+        return MagicMock()
+
+
+def _run_main(monkeypatch, mod, registry: _FakeRegistry, argv: list[str]) -> int:
+    """Run main() over one fake record with the Langfuse client replaced."""
+    record = mod.PromptRecord(name="summarizer:plan", content="NEW", source_path=Path("plan.txt"))
+    monkeypatch.setattr(mod, "discover_prompts", lambda: [record])
+    monkeypatch.setattr(mod, "_build_client", lambda *, dry_run: registry)
+    return mod.main(argv)
+
+
+def test_register_prompts_should_upload_with_requested_label_when_label_given(monkeypatch):
+    mod = _load_register_script()
+    registry = _FakeRegistry(by_label={"production": "OLD"})
+
+    _run_main(monkeypatch, mod, registry, ["--commit", "--label", "pipeline-1min"])
+
+    assert registry.creates == [
+        {"name": "summarizer:plan", "prompt": "NEW", "labels": ["pipeline-1min"]}
+    ]
+
+
+def test_register_prompts_should_compare_against_requested_label_when_label_given(monkeypatch):
+    mod = _load_register_script()
+    registry = _FakeRegistry(by_label={"production": "OLD", "pipeline-1min": "NEW"})
+
+    _run_main(monkeypatch, mod, registry, ["--commit", "--label", "pipeline-1min"])
+
+    assert registry.gets == [("summarizer:plan", "pipeline-1min")]
+    assert registry.creates == []
+
+
+def test_register_prompts_should_upload_with_production_label_when_no_label_given(monkeypatch):
+    mod = _load_register_script()
+    registry = _FakeRegistry(by_label={"production": "OLD"})
+
+    _run_main(monkeypatch, mod, registry, ["--commit"])
+
+    assert registry.gets == [("summarizer:plan", "production")]
+    assert registry.creates[0]["labels"] == ["production"]
+
+
+@pytest.mark.parametrize("argv", [["--dry-run"], [], ["--dry-run", "--label", "pipeline-1min"]])
+def test_register_prompts_should_upload_nothing_when_dry_run(monkeypatch, argv):
+    mod = _load_register_script()
+    registry = _FakeRegistry(by_label={"production": "OLD"})
+
+    assert _run_main(monkeypatch, mod, registry, argv) == 0
+    assert registry.creates == []
+
+
+def test_register_prompts_dry_run_should_report_changes_against_the_label_when_client_given():
+    mod = _load_register_script()
+    registry = _FakeRegistry(by_label={"production": "SAME"})
+    same = mod.PromptRecord(name="a", content="SAME", source_path=Path("a.txt"))
+    changed = mod.PromptRecord(name="b", content="NEW", source_path=Path("b.txt"))
+
+    results = [mod.upload_prompt(registry, r, dry_run=True) for r in (same, changed)]
+
+    assert results == ["unchanged", "would-upload"]
+
+
+def test_register_prompts_dry_run_should_report_would_upload_when_no_client():
+    mod = _load_register_script()
+    record = mod.PromptRecord(name="a", content="X", source_path=Path("a.txt"))
+
+    assert mod.upload_prompt(None, record, dry_run=True) == "would-upload"
+
+
+def test_register_prompts_dry_run_should_skip_langfuse_when_keys_blank(monkeypatch):
+    mod = _load_register_script()
+    monkeypatch.delenv("LANGFUSE_PUBLIC_KEY", raising=False)
+    monkeypatch.delenv("LANGFUSE_SECRET_KEY", raising=False)
+
+    assert mod._build_client(dry_run=True) is None
+
+
+@pytest.mark.parametrize("label", ["latest", "Production", "pipeline 1min", ""])
+def test_register_prompts_should_reject_label_when_reserved_or_malformed(label):
+    mod = _load_register_script()
+
+    with pytest.raises(SystemExit):
+        mod._parse_args(["--commit", "--label", label])
+
+
+def test_register_prompts_should_reject_commit_and_dry_run_together():
+    mod = _load_register_script()
+
+    with pytest.raises(SystemExit):
+        mod._parse_args(["--commit", "--dry-run"])
+
+
 # ─── Safety allowlist for the uploader (added 2026-05-20 sign-off) ──────
 def test_register_prompts_rejects_oversized_file():
     """Files larger than the cap are skipped."""
