@@ -34,8 +34,14 @@ _DONE_COUNTS = re.compile(r"tabs planned=(\d+) assembled=(\d+) emitted=(\d+)")
 _VIDEOS = available_cassettes()
 # Tabs the code under test adds on top of a recording: uC45_4nnEAI was recorded
 # with zero scene frames; since the 1a.3 ladder it has captioned frames, so
-# assembly appends its "Visual Moments" filmstrip.
-_TABS_ADDED_SINCE_RECORDING: dict[str, list[str]] = {"uC45_4nnEAI": ["frames-gallery"]}
+# assembly appends its "Visual Moments" filmstrip. T1dQhQAm8Tc's recorded
+# enrichment answer nested flashcards inside ``quiz`` and the prod run dropped
+# all of it; since 1d.1 the valid quiz items are salvaged and a quiz tab
+# assembles last.
+_TABS_ADDED_SINCE_RECORDING: dict[str, list[str]] = {
+    "uC45_4nnEAI": ["frames-gallery"],
+    "T1dQhQAm8Tc": ["quiz"],
+}
 
 
 # Phases the code under test moved on purpose since T1dQhQAm8Tc was recorded,
@@ -43,6 +49,7 @@ _TABS_ADDED_SINCE_RECORDING: dict[str, list[str]] = {"uC45_4nnEAI": ["frames-gal
 _PHASES_CHANGED_SINCE_RECORDING: dict[str, str] = {
     "metadata": "1a.1: captions + description analysis run in the background (t=0 group)",
     "assembly": "1a.2: moment fill seeks the kept 720p file (the recording re-downloaded it)",
+    "transcript_frames": "1d.4: vision runs as parallel batches (the recording made one call)",
     "total (complete)": "the sum of the changes above",
 }
 
@@ -86,7 +93,8 @@ class TestReplayAtSpeedZero:
         assert replays[video_id].unexpected_commands == []
 
     def test_should_index_output_in_qdrant(self, replays: dict, video_id: str) -> None:
-        assert replays[video_id].qdrant_stores == [video_id, video_id]
+        # transcript, output and visual-annotation points (1c.2)
+        assert replays[video_id].qdrant_stores == [video_id, video_id, video_id]
 
 
 @pytest.mark.parametrize("video_id", _VIDEOS)

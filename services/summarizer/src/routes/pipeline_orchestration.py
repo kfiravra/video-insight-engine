@@ -37,6 +37,7 @@ from src.services.pipeline.pipeline_helpers import (
 )
 from src.services.pipeline.pipeline_timing import PipelineTimingRecorder, start_run_timing
 from src.services.pipeline.post_processor import coverage_is_degraded
+from src.services.pipeline.visual_annotations import annotation_entries, render_visual_annotations
 from src.services.transcription.transcript_meta import build_transcript_meta
 
 logger = logging.getLogger(__name__)
@@ -140,6 +141,20 @@ async def _release_run_media(ctx: PipelineContext) -> None:
             await hires_video.close()
 
 
+def _render_visual_annotations(ctx: PipelineContext) -> None:
+    """Frame captions + OCR → ``ctx.visual_annotations`` once frames are done (1c.2).
+
+    Never written into ``clean_text``: the probe, plan and memory read speech
+    only, and so do the Qdrant transcript points and the faithfulness judge's
+    transcript part. Phase 1's single extraction call waits for the whole
+    phase-2 group, so rendering after it is frames-done for every reader.
+    """
+    ctx.visual_annotations = render_visual_annotations(ctx.frame_descriptions, ctx.scene_frames_all)
+    entries = len(annotation_entries(ctx.visual_annotations))
+    if entries:
+        logger.info("[pipeline] Visual annotations: %d entries", entries)
+
+
 async def _run_phase_two(
     ctx: PipelineContext,
     repository: MongoDBVideoRepository,
@@ -168,30 +183,6 @@ async def _run_phase_two(
     finally:
         mark_phase(ctx, timing, "transcript_frames", phase_start)
         await _record_transcript_outcome(ctx, repository, video_summary_id)
-
-
-def _inject_visual_context(ctx: PipelineContext) -> None:
-    """Phase 2.5: frame annotations into ``clean_text`` (removed by 1c.2).
-
-    Runs after the whole phase-2 group, so the plan, memory and probe — all
-    inside it — never read the annotated text.
-    """
-    if not (ctx.clean_text and (ctx.frame_descriptions or ctx.scene_frames_all)):
-        return
-    from src.services.pipeline.scene_frames import inject_visual_context
-
-    segments = ctx.transcript_data.segments if ctx.transcript_data else None
-    ctx.clean_text = inject_visual_context(
-        ctx.clean_text,
-        segments,
-        ctx.frame_descriptions,
-        ctx.scene_frames_all,
-    )
-    annotation_count = ctx.clean_text.count("[VISUAL at") + ctx.clean_text.count(
-        "[ON-SCREEN TEXT at"
-    )
-    if annotation_count:
-        logger.info("[pipeline] Injected %d visual annotations into transcript", annotation_count)
 
 
 async def _run_phases_in_order(
@@ -225,9 +216,10 @@ async def _run_phases_in_order(
         async for event in _run_phase_two(ctx, repository, video_summary_id, timing):
             yield event
 
-        # Phase 2.5: Inject visual context into transcript (after both phases complete)
+        # Phase 2.5: the <visual_annotations> block (timing name kept so
+        # pipeline.timing stays comparable with the baseline and cassettes).
         phase_start = time.monotonic()
-        _inject_visual_context(ctx)
+        _render_visual_annotations(ctx)
         mark_phase(ctx, timing, "visual_inject", phase_start)
 
         # Phase 4: Extraction (the plan ran inside phase 2)

@@ -21,7 +21,11 @@ from src.services.pipeline.pipeline_helpers import (
 from src.services.pipeline.post_processor import coverage_is_degraded
 from src.services.status_callback import send_video_status_background
 from src.services.transcription.whisper_transcriber import translate_audio_to_english
-from src.services.vector.store import store_default_output_chunks, store_transcript_chunks
+from src.services.vector.store import (
+    store_default_output_chunks,
+    store_transcript_chunks,
+    store_visual_chunks,
+)
 from src.services.video.description_analyzer import DescriptionAnalysis
 from src.utils.language_utils import get_language_name
 
@@ -289,6 +293,15 @@ async def run_phase_assembly(ctx: PipelineContext) -> AsyncGenerator[str, None]:
             name=f"store_output_{ctx.youtube_id}",
         )
         output_task.add_done_callback(_log_qdrant_error)
+
+        # What the frames showed (1c.2): the transcript points above are speech
+        # only, so the rendered annotations get their own "visual" points. Runs
+        # even with no annotations — the store clears a previous run's points.
+        visual_task = asyncio.create_task(
+            store_visual_chunks(ctx.youtube_id, ctx.visual_annotations),
+            name=f"store_visual_{ctx.youtube_id}",
+        )
+        visual_task.add_done_callback(_log_qdrant_error)
 
     # Store raw transcript to S3 (background, non-blocking, best-effort)
     if (

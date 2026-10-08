@@ -104,7 +104,7 @@ class TestBuildPromptTranscript:
 
         assert prompt == ctx.clean_text
 
-    def test_should_keep_visual_annotations_when_frames_were_described(self):
+    def test_should_leave_visual_annotations_out_when_frames_were_described(self):
         ctx = _ctx(60)
         ctx.frame_descriptions = [
             {"timestamp_sec": 30, "content": "whiteboard diagram", "frame_index": 0}
@@ -112,7 +112,7 @@ class TestBuildPromptTranscript:
 
         prompt = extraction_phase.build_prompt_transcript(ctx)
 
-        assert "[VISUAL at 0:30" in prompt
+        assert "whiteboard diagram" not in prompt
 
 
 class TestExtractionPhaseUsesMarkedTranscript:

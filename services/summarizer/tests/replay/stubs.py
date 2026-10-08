@@ -15,8 +15,8 @@ phase logic live (each one is "not provable by replay" until moved down):
   segments under the recorded source label. SponsorBlock → none.
 * OCR — ``process_scene_frames`` (tesseract over every frame + presigned
   URLs) is canned: no OCR text, recorded ``ocr`` sleep.
-* Qdrant — ``store_transcript_chunks``/``store_default_output_chunks``
-  (embeddings + upsert, background tasks in assembly).
+* Qdrant — ``store_transcript_chunks``/``store_default_output_chunks``/
+  ``store_visual_chunks`` (embeddings + upsert, background tasks in assembly).
 * the API status callback (``send_video_status`` / ``..._background``).
 """
 
@@ -204,9 +204,11 @@ def _patch_targets(stubs: ReplayStubs) -> dict[str, Any]:
         "src.services.pipeline.phases.frames.process_scene_frames": stubs.process_scene_frames,
         f"{assembly_mod}.store_transcript_chunks": stubs.store_chunks,
         f"{assembly_mod}.store_default_output_chunks": stubs.store_chunks,
+        f"{assembly_mod}.store_visual_chunks": stubs.store_chunks,
         # The seam itself too, whatever binding assembly ends up calling.
         f"{store_mod}.store_transcript_chunks": stubs.store_chunks,
         f"{store_mod}.store_default_output_chunks": stubs.store_chunks,
+        f"{store_mod}.store_visual_chunks": stubs.store_chunks,
         f"{assembly_mod}.send_video_status_background": _no_status_background,
         "src.routes.pipeline_runner.send_video_status": _no_status,
         "src.services.observability.langfuse_client._client": None,

@@ -183,15 +183,16 @@ def collect_visual_annotations(
 
 
 def render_visual_annotations(
-    frame_descriptions: Sequence[Mapping[str, Any]],
-    all_frames: Sequence[Mapping[str, Any]],
+    frame_descriptions: Sequence[Mapping[str, Any]] | None,
+    all_frames: Sequence[Mapping[str, Any]] | None,
 ) -> str:
     """The ``<visual_annotations>`` block, or ``""`` when no frame has a caption or text.
 
     Called once at frames-done: ``ctx.visual_annotations =
     render_visual_annotations(ctx.frame_descriptions, ctx.scene_frames_all)``.
+    ``None`` (frames skipped or failed) reads as no frames.
     """
-    entries = collect_visual_annotations(frame_descriptions, all_frames)
+    entries = collect_visual_annotations(frame_descriptions or (), all_frames or ())
     if not entries:
         return ""
     body = "\n".join(entry.render() for entry in entries)

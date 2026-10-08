@@ -20,7 +20,6 @@ from src.services.pipeline.post_processor import (
     compute_extraction_coverage,
 )
 from src.services.pipeline.prompt_builder import format_gallery_frames_for_extraction
-from src.services.pipeline.scene_frames import inject_visual_context
 from src.services.transcript.render import render_transcript
 
 if TYPE_CHECKING:
@@ -36,19 +35,11 @@ def build_prompt_transcript(ctx: PipelineContext) -> str:
     and the S3 blob stay unmarked. The segments are ``ctx.prompt_segments``
     (sponsor reads cut), the ones plan and memory read. Metadata-only
     transcripts carry no segments, so they fall back to ``ctx.clean_text``.
+    Speech only: what the frames show travels separately as
+    ``ctx.visual_annotations`` (1c.2).
     """
-    segments = ctx.prompt_segments
-    marked = render_transcript(segments, source_language=ctx.source_language_code)
-    if not marked:
-        return ctx.clean_text
-    # Phase 2.5 annotated clean_text, which this text no longer derives from:
-    # same injection here so extraction keeps today's visual facts (1c.2 moves
-    # both to a <visual_annotations> block).
-    if ctx.frame_descriptions or ctx.scene_frames_all:
-        marked = inject_visual_context(
-            marked, segments, ctx.frame_descriptions, ctx.scene_frames_all
-        )
-    return marked
+    marked = render_transcript(ctx.prompt_segments, source_language=ctx.source_language_code)
+    return marked or ctx.clean_text
 
 
 def _record_extraction_coverage(
