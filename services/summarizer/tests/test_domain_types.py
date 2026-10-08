@@ -746,16 +746,15 @@ class TestSingleTagWrappedOutput:
         assert concept["group"] == "Foundations"
         assert concept["connections"] == [{"to": "Time value of money", "type": "causes"}]
 
-    def test_invalid_data_passes_through_with_warning(self):
-        """Invalid data is passed through (not raised) — validation is lenient."""
-        # validate_domain_output catches errors and passes data through
+    def test_should_keep_the_domain_when_its_only_items_are_invalid(self):
+        """Invalid items are dropped (hotfix 2.1), never raised and never passed through."""
         result = validate_domain_output(
             ["food"],
             [],
             {"steps": [{"number": "not_a_number", "instruction": 123}]},
         )
-        # Should still return data (passed through despite validation issues)
-        assert "food" in result
+
+        assert result["food"]["steps"] == []
 
 
 class TestMultiTagFlatFallbackFailure:

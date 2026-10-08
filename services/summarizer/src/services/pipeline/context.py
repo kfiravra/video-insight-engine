@@ -121,6 +121,9 @@ class PipelineContext:
 
     # Extraction / synthesis / enrichment outputs
     extraction_data: dict[str, Any] | None = None
+    # Items/fields validation dropped from extraction_data ("tech.cheatSheet": 3);
+    # persisted as pipeline.extraction._dropped.
+    extraction_dropped: dict[str, int] = field(default_factory=dict)
     synthesis_dict: dict[str, Any] = field(default_factory=dict)
     enrichment_data: dict[str, Any] | None = None
     # Coverage metric: how far into the video the timestamped extraction

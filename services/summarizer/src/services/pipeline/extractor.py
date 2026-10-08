@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, AsyncGenerator
 from litellm.exceptions import RateLimitError, ServiceUnavailableError
 
 from ...config import settings
-from ...models.domain_types import validate_domain_output
+from ...models.domain_types import validate_domain_output_with_drops
 from ...utils.json_parsing import parse_json_response, strip_markdown_fences
 from ...utils.llm_retry import call_llm_with_retry
 from .extraction_merger import merge_batch_extractions
@@ -325,12 +325,15 @@ async def _single_extraction(
     data = _parse_llm_json(raw)
 
     yield {"event": "extraction_progress", "section": "all", "percent": 80}
-    validated = validate_domain_output(triage_result.content_tags, triage_result.modifiers, data)
+    validated, dropped_items = validate_domain_output_with_drops(
+        triage_result.content_tags, triage_result.modifiers, data
+    )
 
     yield {"event": "extraction_progress", "section": "all", "percent": 100}
     yield {
         "event": "extraction_complete",
         "data": validated,
+        "droppedItems": dropped_items,
     }
 
 
@@ -370,12 +373,15 @@ async def _overflow_extraction(
     data = _parse_llm_json(raw)
 
     yield {"event": "extraction_progress", "section": "all", "percent": 80}
-    validated = validate_domain_output(triage_result.content_tags, triage_result.modifiers, data)
+    validated, dropped_items = validate_domain_output_with_drops(
+        triage_result.content_tags, triage_result.modifiers, data
+    )
 
     yield {"event": "extraction_progress", "section": "all", "percent": 100}
     yield {
         "event": "extraction_complete",
         "data": validated,
+        "droppedItems": dropped_items,
     }
 
 
@@ -707,12 +713,15 @@ async def _chunked_extraction(
     merged = merge_batch_extractions(batch_results, triage_result.content_tags)
 
     yield {"event": "extraction_progress", "section": "validation", "percent": 85}
-    validated = validate_domain_output(triage_result.content_tags, triage_result.modifiers, merged)
+    validated, dropped_items = validate_domain_output_with_drops(
+        triage_result.content_tags, triage_result.modifiers, merged
+    )
 
     yield {"event": "extraction_progress", "section": "all", "percent": 100}
     yield {
         "event": "extraction_complete",
         "data": validated,
+        "droppedItems": dropped_items,
         "batches_total": num_batches,
         "batches_succeeded": successful,
     }

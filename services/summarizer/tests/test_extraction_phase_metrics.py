@@ -133,3 +133,32 @@ class TestExtractionQualityMetric:
             await _run(ctx)
 
         assert _quality_records(caplog) == []
+
+
+def _extract_with_drops(data: dict[str, Any], dropped: dict[str, int]):
+    async def _extract(_llm, _triage, _transcript, _video_info, **_kwargs):
+        yield {"event": "extraction_complete", "data": data, "droppedItems": dropped}
+
+    return _extract
+
+
+async def _chunks_with_drops(ctx: SimpleNamespace, dropped: dict[str, int]) -> list[str]:
+    with patch.object(extraction_phase, "extract", _extract_with_drops(_HALF_FILLED, dropped)):
+        return [chunk async for chunk in extraction_phase.run_phase_extraction(ctx)]
+
+
+class TestDroppedItems:
+    """Validation drops (hotfix 2.1) reach ctx for ``pipeline.extraction._dropped``, not the SSE."""
+
+    async def test_should_store_dropped_counts_on_the_context(self) -> None:
+        ctx = _ctx()
+
+        await _chunks_with_drops(ctx, {"learning.concepts": 2})
+
+        assert ctx.extraction_dropped == {"learning.concepts": 2}
+
+    async def test_should_keep_dropped_counts_out_of_the_sse_event(self) -> None:
+        chunks = await _chunks_with_drops(_ctx(), {"learning.concepts": 2})
+
+        complete = [c for c in chunks if '"extraction_complete"' in c]
+        assert complete and not any("droppedItems" in c for c in complete)

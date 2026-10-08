@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from src.config import settings
+from src.models.domain_validation import extraction_with_drops
 from src.services.cache.response_cache import response_cache
 from src.services.media.s3_client import S3Client
 from src.services.pipeline.assembly import assemble_response
@@ -298,7 +299,7 @@ def _result_document(
         "pipelineVersion": settings.PIPELINE_VERSION,
         "pipeline": {
             "triage": ctx.triage_dict,
-            "extraction": ctx.extraction_data,
+            "extraction": extraction_with_drops(ctx.extraction_data, ctx.extraction_dropped),
             "enrichment": ctx.enrichment_data,
             "synthesis": ctx.synthesis_dict,
             "assembly": accounting,

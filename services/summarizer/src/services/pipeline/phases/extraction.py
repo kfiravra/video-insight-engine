@@ -31,6 +31,9 @@ logger = logging.getLogger(__name__)
 # starts after the plan, so it has nearly always landed. This bounds a
 # straggler: the chunked path then goes on without description timestamps.
 _DESCRIPTION_WAIT_SECONDS = 5.0
+# Extractor event keys that stay server-side: the dropped-item counts go to
+# ``pipeline.extraction._dropped``, never into the SSE contract.
+_INTERNAL_KEYS = frozenset({"event", "droppedItems"})
 
 
 def _record_extraction_coverage(
@@ -244,9 +247,10 @@ async def run_phase_extraction(ctx: PipelineContext) -> AsyncGenerator[str, None
             visual_annotations=ctx.visual_annotations,
         ):
             event_name = evt["event"]
-            yield sse_event(event_name, {k: v for k, v in evt.items() if k != "event"})
+            yield sse_event(event_name, {k: v for k, v in evt.items() if k not in _INTERNAL_KEYS})
             if event_name == "extraction_complete":
                 ctx.extraction_data = evt.get("data")
+                ctx.extraction_dropped = evt.get("droppedItems") or {}
                 batches_total = evt.get("batches_total")
                 batches_succeeded = evt.get("batches_succeeded")
     except (ValueError, asyncio.TimeoutError) as e:
