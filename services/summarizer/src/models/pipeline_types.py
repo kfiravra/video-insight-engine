@@ -203,6 +203,9 @@ class PlanResult(BaseModel):
     # Tabs the plan stage removed (unregistered dataSource, no sibling) — the
     # assembly phase prepends them to the persisted ``droppedTabs``.
     dropped_tabs: list[dict] = Field(default_factory=list, alias="droppedTabs")
+    # Plan-time reconcile decisions (re-pointed or dropped tabs, with the
+    # reason) — persisted as ``pipeline.reconcile``.
+    reconcile: list[dict] = Field(default_factory=list)
     # Plan-time validation left no tab, so ``tabs`` are the domain defaults —
     # assembly then counts only the drops as designed, not drops + defaults.
     plan_fallback: bool = Field(False, alias="planFallback")

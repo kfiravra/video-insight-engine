@@ -1,9 +1,9 @@
 # pipeline-1min — Context
 
-Last Updated: 2026-10-08 — ✅ PHASE 1 CLOSED (gates g1a + g1 written, review fixes committed; awaiting Kfir push word). Next: phase 2. Live docs in the main tree (branch `feat/pipeline-1min`). Phase 0 merged (PR #22).
+Last Updated: 2026-10-08 — ✅ PHASE 1 CLOSED; PR #23 open (CI green). Next: "PR 2 merged" → prod benchmark → phase 2. Live docs in the main tree (branch `feat/pipeline-1min`). Phase 0 merged (PR #22).
 
 ## RESUME HERE (phase 1 run state)
-- **Phase 1 CLOSED (2026-10-08):** all 25 tasks + review fixes committed; `gates/g1a.md` + `gates/g1.md` written; last commit = `p1 review fixes`. Nothing pushed. NEXT = Kfir reviews g1.md (decisions list at its end) and gives the push word for PR 2 (1a+1b) / PR 3 (1c+1d) — the branch holds both groups; then prod deploy (proxy env first, idle queue), prod benchmark 3 × 2 + regression, then phase 2.
+- **2026-10-08 state:** phase 1 merged (PR #23) + deployed. Hotfix 2.1 committed locally (f99f845, be9c600, aab3193 — `gates/g2.1-hotfix.md`, 3 decisions for Kfir), NOT pushed — needs Kfir's push word. After its deploy: the remaining prod benchmark runs as ADMIN with `cold: true` (6 of 7 left: jMq8 ×2, uC45 ×2, T1dQ ×1, EqaMrzd9nZU; one at a time, no visitor run active) → prod table into `gates/g1.md` → then phase 2. Eval user deferred to phase 4.
 - Rules for this run: top of `pipeline-1min-tasks.md` (local commits per task id without asking; never push; never stage CLAUDE.md / .claude/**; main tree only, no worktrees).
 - Execution model (phases 2–4 too): parallel Opus subagents following `agent-rules.md`; the coordinator commits (stage by path; a file shared by two in-flight tasks is staged hunk-wise via `git hash-object -w` + `git update-index --cacheinfo`; TS-only commits with partial files use `--no-verify` so lint-staged doesn't hide other agents' in-flight edits).
 - Phase-1 review artefacts: `review-p1.md` (recipe + 23 groups), `gates/g1-review-findings.md` (findings), `review-fixes-p1.md` (FX1–FX8 briefs). Deferred items for phase 4 are listed at the end of g1.md.

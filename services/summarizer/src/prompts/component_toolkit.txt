@@ -246,5 +246,7 @@ around real on-screen content.
 {valid_datasources}
 
 Use only the paths listed here. If a path is not listed, it does not exist.
+A path marked [key] has content only when that evidence key is true — never plan a tab on it
+when your evidence says false.
 </valid_datasources>
 </component_toolkit>

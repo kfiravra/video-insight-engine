@@ -333,3 +333,66 @@ class TestExamples:
         planned = {tab["component"] for tab in example["tabs"]}
 
         assert all(example["evidence"][key] for comp, key in gated.items() if comp in planned)
+
+
+# ─── Hotfix 2.1: output budget + dataSource rule ───────────────────────
+
+
+def _words(text: object) -> int:
+    return len(str(text).split())
+
+
+@pytest.mark.parametrize("example", _EXAMPLES, ids=_IDS)
+class TestExamplesWithinBudget:
+    """The examples model the budget the planner is asked to keep (≤ 1,000 tokens)."""
+
+    def test_should_keep_brief_what_within_25_words_when_showing_a_plan(
+        self, example: dict
+    ) -> None:
+        assert all(_words(t["brief"]["what"]) <= 25 for t in example["tabs"])
+
+    def test_should_keep_goals_within_15_words_when_showing_a_plan(self, example: dict) -> None:
+        assert all(_words(t["goal"]) <= 15 for t in example["tabs"])
+
+    def test_should_keep_terms_within_the_renderer_cap_when_showing_a_plan(
+        self, example: dict
+    ) -> None:
+        terms = example["terms"]
+
+        assert len(terms) <= 12 and all(len(term) <= 48 for term in terms)
+
+    def test_should_keep_prose_within_20_words_when_showing_a_plan(self, example: dict) -> None:
+        prose = [
+            example["corePromise"],
+            example["uniqueAngle"],
+            *example["extractionGuidance"].values(),
+        ]
+
+        assert all(_words(text) <= 20 for text in prose)
+
+
+class TestOutputBudget:
+    def test_should_cap_the_answer_at_1000_tokens_when_rendering(self) -> None:
+        budget = " ".join(_block(render_plan_prompt(_video()), "output_budget").split())
+
+        assert "under 1,000 tokens" in budget
+
+    def test_should_ask_for_compact_single_line_json_when_rendering(self) -> None:
+        budget = " ".join(_block(render_plan_prompt(_video()), "output_budget").split())
+
+        assert "compact on a single line" in budget
+
+
+class TestDataSourceRule:
+    def test_should_forbid_a_datasource_outside_the_plans_domains_when_rendering(self) -> None:
+        rules = " ".join(_block(render_plan_prompt(_video()), "rules").split())
+
+        assert "must be one of your contentTags or modifiers" in rules
+
+    def test_should_forbid_a_datasource_whose_evidence_is_false_when_rendering(self) -> None:
+        rules = " ".join(_block(render_plan_prompt(_video()), "rules").split())
+
+        assert "Never plan a tab on a dataSource whose evidence you marked false" in rules
+
+    def test_should_mark_evidence_gated_datasources_in_the_toolkit_when_rendering(self) -> None:
+        assert "tech.snippets [has_code]" in render_plan_prompt(_video())

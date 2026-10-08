@@ -64,6 +64,7 @@ def _build_ctx(source_language_code: str | None = None) -> SimpleNamespace:
         plan_result=None,
         content_format=None,
         extraction_data={},
+        extraction_dropped={},
         enrichment_data={},
         synthesis_dict=None,
         description_analysis=None,

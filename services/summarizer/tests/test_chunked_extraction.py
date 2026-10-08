@@ -184,8 +184,8 @@ class TestExtractRouting:
             return_value=json.dumps(extraction_data),
         ):
             with patch(
-                "src.services.pipeline.extractor.validate_domain_output",
-                return_value=extraction_data,
+                "src.services.pipeline.extractor.validate_domain_output_with_drops",
+                return_value=(extraction_data, {}),
             ):
                 events = []
                 async for evt in extract(mock_llm, triage, short_transcript, video_data):
@@ -216,8 +216,8 @@ class TestExtractRouting:
             return_value=json.dumps(extraction_data),
         ):
             with patch(
-                "src.services.pipeline.extractor.validate_domain_output",
-                return_value=extraction_data,
+                "src.services.pipeline.extractor.validate_domain_output_with_drops",
+                return_value=(extraction_data, {}),
             ):
                 events = []
                 async for evt in extract(
@@ -247,8 +247,8 @@ class TestExtractRouting:
             return_value=json.dumps(extraction_data),
         ):
             with patch(
-                "src.services.pipeline.extractor.validate_domain_output",
-                return_value=extraction_data,
+                "src.services.pipeline.extractor.validate_domain_output_with_drops",
+                return_value=(extraction_data, {}),
             ):
                 events = []
                 async for evt in extract(mock_llm, triage, transcript, video_data, chapters=None):
@@ -387,8 +387,8 @@ class TestChunkedExtractionStreamingProgress:
                 return_value=json.dumps(extraction_data),
             ),
             patch(
-                "src.services.pipeline.extractor.validate_domain_output",
-                return_value=extraction_data,
+                "src.services.pipeline.extractor.validate_domain_output_with_drops",
+                return_value=(extraction_data, {}),
             ),
         ):
             events = []
@@ -427,8 +427,8 @@ class TestChunkedExtractionStreamingProgress:
                 return_value=json.dumps(extraction_data),
             ),
             patch(
-                "src.services.pipeline.extractor.validate_domain_output",
-                return_value=extraction_data,
+                "src.services.pipeline.extractor.validate_domain_output_with_drops",
+                return_value=(extraction_data, {}),
             ),
         ):
             events = []
@@ -463,8 +463,8 @@ class TestChunkedExtractionStreamingProgress:
                 new=fake_call,
             ),
             patch(
-                "src.services.pipeline.extractor.validate_domain_output",
-                return_value={"learning": {"keyPoints": []}},
+                "src.services.pipeline.extractor.validate_domain_output_with_drops",
+                return_value=({"learning": {"keyPoints": []}}, {}),
             ),
             patch(
                 "src.services.pipeline.extractor.logger.warning",
@@ -517,8 +517,8 @@ class TestChunkedExtractionStreamingProgress:
                 new=fake_call,
             ),
             patch(
-                "src.services.pipeline.extractor.validate_domain_output",
-                return_value={"learning": {"keyPoints": []}},
+                "src.services.pipeline.extractor.validate_domain_output_with_drops",
+                return_value=({"learning": {"keyPoints": []}}, {}),
             ),
             patch(
                 "src.services.pipeline.extractor._RATE_LIMIT_BACKOFF_SECONDS",
@@ -571,8 +571,8 @@ class TestChunkedExtractionStreamingProgress:
                 new=slow_call,
             ),
             patch(
-                "src.services.pipeline.extractor.validate_domain_output",
-                return_value={"learning": {"keyPoints": []}},
+                "src.services.pipeline.extractor.validate_domain_output_with_drops",
+                return_value=({"learning": {"keyPoints": []}}, {}),
             ),
             patch(
                 "src.services.pipeline.extractor.settings.EXTRACTION_PARALLEL_BATCHES",
@@ -613,8 +613,8 @@ class TestChunkedExtractionStreamingProgress:
                 new=fake_call,
             ),
             patch(
-                "src.services.pipeline.extractor.validate_domain_output",
-                return_value={"learning": {"keyPoints": []}},
+                "src.services.pipeline.extractor.validate_domain_output_with_drops",
+                return_value=({"learning": {"keyPoints": []}}, {}),
             ),
         ):
             events = []
@@ -673,8 +673,8 @@ class TestChunkedExtractionStreamingProgress:
                 new=fake_call,
             ),
             patch(
-                "src.services.pipeline.extractor.validate_domain_output",
-                return_value={"learning": {"keyPoints": []}},
+                "src.services.pipeline.extractor.validate_domain_output_with_drops",
+                return_value=({"learning": {"keyPoints": []}}, {}),
             ),
             patch(
                 "src.services.pipeline.extractor._RATE_LIMIT_BACKOFF_SECONDS",
@@ -769,8 +769,8 @@ class TestChunkedExtractionInjectsBatchContext:
                 new=capture_call,
             ),
             patch(
-                "src.services.pipeline.extractor.validate_domain_output",
-                return_value=extraction_data,
+                "src.services.pipeline.extractor.validate_domain_output_with_drops",
+                return_value=(extraction_data, {}),
             ),
         ):
             async for _ in _chunked_extraction(mock_llm, triage, _PROMPT, chapters):
@@ -824,8 +824,8 @@ class TestChunkedExtractionInjectsBatchContext:
                 new=fake_call,
             ),
             patch(
-                "src.services.pipeline.extractor.validate_domain_output",
-                return_value={"learning": {"keyPoints": []}},
+                "src.services.pipeline.extractor.validate_domain_output_with_drops",
+                return_value=({"learning": {"keyPoints": []}}, {}),
             ),
             patch(
                 "src.services.pipeline.extractor._RATE_LIMIT_BACKOFF_SECONDS",

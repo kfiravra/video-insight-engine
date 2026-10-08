@@ -223,7 +223,7 @@ class TestStrategySelection:
         assert any(e["event"] == "extraction_complete" for e in events)
 
     @pytest.mark.asyncio
-    @patch("src.services.pipeline.extractor.validate_domain_output")
+    @patch("src.services.pipeline.extractor.validate_domain_output_with_drops")
     @patch("src.services.pipeline.extractor.call_llm_with_retry", new_callable=AsyncMock)
     @patch("src.services.pipeline.extractor.build_extraction_prompt", return_value=_PROMPT)
     @patch("src.services.pipeline.extractor._load_prompt", return_value="")
@@ -239,7 +239,7 @@ class TestStrategySelection:
             "timestamps": [],
         }
         mock_llm_retry.return_value = json.dumps(extraction_data)
-        mock_validate.return_value = {"learning": extraction_data}
+        mock_validate.return_value = ({"learning": extraction_data}, {})
 
         events = []
         async for evt in extract(
@@ -256,7 +256,7 @@ class TestStrategySelection:
         )
 
     @pytest.mark.asyncio
-    @patch("src.services.pipeline.extractor.validate_domain_output")
+    @patch("src.services.pipeline.extractor.validate_domain_output_with_drops")
     @patch("src.services.pipeline.extractor.call_llm_with_retry", new_callable=AsyncMock)
     @patch("src.services.pipeline.extractor.build_extraction_prompt", return_value=_PROMPT)
     @patch("src.services.pipeline.extractor._load_prompt", return_value="")
@@ -272,7 +272,7 @@ class TestStrategySelection:
             "timestamps": [],
         }
         mock_llm_retry.return_value = json.dumps(extraction_data)
-        mock_validate.return_value = {"learning": extraction_data}
+        mock_validate.return_value = ({"learning": extraction_data}, {})
 
         events = []
         # Long duration without chapters → force-split into chunks
@@ -289,7 +289,7 @@ class TestStrategySelection:
         )
 
     @pytest.mark.asyncio
-    @patch("src.services.pipeline.extractor.validate_domain_output")
+    @patch("src.services.pipeline.extractor.validate_domain_output_with_drops")
     @patch("src.services.pipeline.extractor.call_llm_with_retry", new_callable=AsyncMock)
     @patch("src.services.pipeline.extractor.build_extraction_prompt", return_value=_PROMPT)
     @patch("src.services.pipeline.extractor._load_prompt", return_value="")
@@ -307,7 +307,7 @@ class TestStrategySelection:
             "timestamps": [],
         }
         mock_llm_retry.return_value = json.dumps(extraction_data)
-        mock_validate.return_value = {"learning": extraction_data}
+        mock_validate.return_value = ({"learning": extraction_data}, {})
 
         events = []
         async for evt in extract(
@@ -382,7 +382,7 @@ class TestOverflowExtraction:
     """Tests for overflow extraction (single call, no retry)."""
 
     @pytest.mark.asyncio
-    @patch("src.services.pipeline.extractor.validate_domain_output")
+    @patch("src.services.pipeline.extractor.validate_domain_output_with_drops")
     @patch("src.services.pipeline.extractor.build_extraction_prompt", return_value=_PROMPT)
     @patch("src.services.pipeline.extractor._load_prompt", return_value="")
     async def test_single_call_on_medium_transcript(
@@ -399,9 +399,10 @@ class TestOverflowExtraction:
                 "timestamps": [],
             }
         )
-        mock_validate.return_value = {
-            "learning": {"keyPoints": [{"emoji": "💡", "title": "Test", "detail": "Detail"}]}
-        }
+        mock_validate.return_value = (
+            {"learning": {"keyPoints": [{"emoji": "💡", "title": "Test", "detail": "Detail"}]}},
+            {},
+        )
 
         events = []
         async for evt in extract(
@@ -560,7 +561,7 @@ class TestExtractionModelOverride:
         assert settings.get_stage_model("extraction") == "anthropic/claude-haiku-4-5-20251001"
 
     @pytest.mark.asyncio
-    @patch("src.services.pipeline.extractor.validate_domain_output")
+    @patch("src.services.pipeline.extractor.validate_domain_output_with_drops")
     @patch("src.services.pipeline.extractor.call_llm_with_retry", new_callable=AsyncMock)
     @patch("src.services.pipeline.extractor.build_extraction_prompt", return_value=_PROMPT)
     @patch("src.services.pipeline.extractor._load_prompt", return_value="")
@@ -581,9 +582,10 @@ class TestExtractionModelOverride:
         mock_llm_retry.return_value = json.dumps(
             {"keyPoints": [], "concepts": [], "takeaways": [], "timestamps": []}
         )
-        mock_validate.return_value = {
-            "learning": {"keyPoints": [], "concepts": [], "takeaways": [], "timestamps": []}
-        }
+        mock_validate.return_value = (
+            {"learning": {"keyPoints": [], "concepts": [], "takeaways": [], "timestamps": []}},
+            {},
+        )
 
         short_transcript = _make_transcript(SINGLE_THRESHOLD - 100)
         async for _ in extract(
@@ -597,7 +599,7 @@ class TestExtractionModelOverride:
         assert kwargs.get("stage_name") == "extraction"
 
     @pytest.mark.asyncio
-    @patch("src.services.pipeline.extractor.validate_domain_output")
+    @patch("src.services.pipeline.extractor.validate_domain_output_with_drops")
     @patch("src.services.pipeline.extractor.call_llm_with_retry", new_callable=AsyncMock)
     @patch("src.services.pipeline.extractor.build_extraction_prompt", return_value=_PROMPT)
     @patch("src.services.pipeline.extractor._load_prompt", return_value="")
@@ -618,9 +620,10 @@ class TestExtractionModelOverride:
         mock_llm_retry.return_value = json.dumps(
             {"keyPoints": [], "concepts": [], "takeaways": [], "timestamps": []}
         )
-        mock_validate.return_value = {
-            "learning": {"keyPoints": [], "concepts": [], "takeaways": [], "timestamps": []}
-        }
+        mock_validate.return_value = (
+            {"learning": {"keyPoints": [], "concepts": [], "takeaways": [], "timestamps": []}},
+            {},
+        )
 
         medium_transcript = _make_transcript(SINGLE_THRESHOLD + 100)
         async for _ in extract(
@@ -633,7 +636,7 @@ class TestExtractionModelOverride:
         assert kwargs.get("model_override") == "openai/gpt-4o-mini"
 
     @pytest.mark.asyncio
-    @patch("src.services.pipeline.extractor.validate_domain_output")
+    @patch("src.services.pipeline.extractor.validate_domain_output_with_drops")
     @patch("src.services.pipeline.extractor.call_llm_with_retry", new_callable=AsyncMock)
     @patch("src.services.pipeline.extractor.build_extraction_prompt", return_value=_PROMPT)
     @patch("src.services.pipeline.extractor._load_prompt", return_value="")
@@ -660,9 +663,10 @@ class TestExtractionModelOverride:
         mock_llm_retry.return_value = json.dumps(
             {"keyPoints": [], "concepts": [], "takeaways": [], "timestamps": []}
         )
-        mock_validate.return_value = {
-            "learning": {"keyPoints": [], "concepts": [], "takeaways": [], "timestamps": []}
-        }
+        mock_validate.return_value = (
+            {"learning": {"keyPoints": [], "concepts": [], "takeaways": [], "timestamps": []}},
+            {},
+        )
 
         very_long_transcript = _make_transcript(OVERFLOW_THRESHOLD + 100, with_sentences=True)
         async for _ in extract(
@@ -680,7 +684,7 @@ class TestExtractionModelOverride:
             )
 
     @pytest.mark.asyncio
-    @patch("src.services.pipeline.extractor.validate_domain_output")
+    @patch("src.services.pipeline.extractor.validate_domain_output_with_drops")
     @patch("src.services.pipeline.extractor.call_llm_with_retry", new_callable=AsyncMock)
     @patch("src.services.pipeline.extractor.build_extraction_prompt", return_value=_PROMPT)
     @patch("src.services.pipeline.extractor._load_prompt", return_value="")
@@ -699,9 +703,10 @@ class TestExtractionModelOverride:
         mock_llm_retry.return_value = json.dumps(
             {"keyPoints": [], "concepts": [], "takeaways": [], "timestamps": []}
         )
-        mock_validate.return_value = {
-            "learning": {"keyPoints": [], "concepts": [], "takeaways": [], "timestamps": []}
-        }
+        mock_validate.return_value = (
+            {"learning": {"keyPoints": [], "concepts": [], "takeaways": [], "timestamps": []}},
+            {},
+        )
 
         short_transcript = _make_transcript(SINGLE_THRESHOLD - 100)
         async for _ in extract(

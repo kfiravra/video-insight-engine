@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections import Counter
 from typing import Any
 
 from pydantic import (
@@ -15,6 +16,7 @@ from pydantic import (
 )
 
 from ..shared_config.domain_config import valid_content_tags, valid_modifiers
+from .domain_validation import validate_block_items
 
 logger = logging.getLogger(__name__)
 
@@ -313,7 +315,7 @@ class ConceptConnection(BaseModel):
     Accepts `name`/`target` as defensive aliases for `to`, and keeps `to`
     defaultable + `type` a free string ON PURPOSE: a malformed item must never
     raise `ValidationError` here, or `validate_domain_output` would drop the whole
-    domain to raw passthrough. The assembler's `_normalize_connections` is the
+    concept it belongs to. The assembler's `_normalize_connections` is the
     single source of relation-enum validation (off-enum → `relatesTo`) and drops
     empty targets, so leniency here is safe.
     """
@@ -1288,16 +1290,20 @@ def _merge_mixed_shape(tag: str, wrapper: dict, flat: dict) -> dict:
     return merged
 
 
-def _validate_block(tag: str, model_cls: type[BaseModel] | None, block: dict) -> dict:
-    """Validate one domain/modifier block; pass it through when it does not fit."""
+def _validate_block(
+    tag: str, model_cls: type[BaseModel] | None, block: dict, dropped: Counter[str]
+) -> dict:
+    """Validate one domain/modifier block item by item (hotfix 2.1).
+
+    Items that fail are dropped and counted in ``dropped``; the rest is kept.
+    Invalid data is never passed through.
+    """
     if model_cls is None:
         logger.warning("No model for tag: %s — data passed through unvalidated", tag)
         return block
-    try:
-        return model_cls.model_validate(block).model_dump(by_alias=True)
-    except ValidationError as e:
-        logger.warning("Validation failed for tag %s, passing data through: %s", tag, e)
-        return block
+    validated, block_dropped = validate_block_items(tag, model_cls, block)
+    dropped.update(block_dropped)
+    return validated
 
 
 def _single_tag_block(tag: str, data: dict) -> dict:
@@ -1355,13 +1361,13 @@ def _validate_flat_fallback(tag: str, data: dict) -> dict | None:
         return None
 
 
-def _validate_multi_tag(content_tags: list[str], data: dict) -> dict:
+def _validate_multi_tag(content_tags: list[str], data: dict, dropped: Counter[str]) -> dict:
     """Wrapped blocks first; flat data only for tags whose own fields are present."""
     validated: dict = {}
     for tag in content_tags:
         block = _multi_tag_wrapped_block(tag, content_tags, data)
         if block is not None:
-            validated[tag] = _validate_block(tag, DOMAIN_MODELS.get(tag), block)
+            validated[tag] = _validate_block(tag, DOMAIN_MODELS.get(tag), block, dropped)
 
     missing_tags = [tag for tag in content_tags if tag not in validated]
     if missing_tags:
@@ -1376,27 +1382,36 @@ def _validate_multi_tag(content_tags: list[str], data: dict) -> dict:
     return validated
 
 
-def validate_domain_output(content_tags: list[str], modifiers: list[str], data: dict) -> dict:
-    """Validate LLM output against domain Pydantic models.
+def validate_domain_output_with_drops(
+    content_tags: list[str], modifiers: list[str], data: dict
+) -> tuple[dict, dict[str, int]]:
+    """Validate LLM output against domain Pydantic models, item by item.
 
     Single tag: flat data validated against DOMAIN_MODELS[tag]; a
     ``{tag}Data``/``{tag}``-wrapped response is unwrapped first.
     Multi-tag: ``{tag}Data`` / ``{tag}`` wrappers first, then the flat data
     for tags whose own fields appear in it.
-    Returns validated dict ready for storage/SSE.
+    Returns the validated dict (ready for storage/SSE) and the counts of
+    items/fields dropped because they failed validation (``{"tech.cheatSheet": 3}``).
     """
+    dropped: Counter[str] = Counter()
     if len(content_tags) == 1:
         tag = content_tags[0]
         block = _single_tag_block(tag, data)
-        validated = {tag: _validate_block(tag, DOMAIN_MODELS.get(tag), block)}
+        validated = {tag: _validate_block(tag, DOMAIN_MODELS.get(tag), block, dropped)}
     else:
-        validated = _validate_multi_tag(content_tags, data)
+        validated = _validate_multi_tag(content_tags, data, dropped)
 
     for modifier in modifiers:
         mod_block = _wrapped_block(data, modifier)
         if mod_block is not None:
             validated[modifier] = _validate_block(
-                modifier, MODIFIER_MODELS.get(modifier), mod_block
+                modifier, MODIFIER_MODELS.get(modifier), mod_block, dropped
             )
 
-    return validated
+    return validated, dict(dropped)
+
+
+def validate_domain_output(content_tags: list[str], modifiers: list[str], data: dict) -> dict:
+    """``validate_domain_output_with_drops`` without the dropped counts."""
+    return validate_domain_output_with_drops(content_tags, modifiers, data)[0]

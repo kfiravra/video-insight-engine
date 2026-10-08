@@ -216,7 +216,10 @@ async def _run_chunked(
 
     with (
         patch("src.services.pipeline.extractor.call_llm_with_retry", new=fake_call),
-        patch("src.services.pipeline.extractor.validate_domain_output", return_value={"food": {}}),
+        patch(
+            "src.services.pipeline.extractor.validate_domain_output_with_drops",
+            return_value=({"food": {}}, {}),
+        ),
     ):
         async for _ in _chunked_extraction(MagicMock(), _triage(), prompt, chapters):
             pass
@@ -295,7 +298,10 @@ class TestChunkedBatches:
 
         with (
             patch("src.services.pipeline.extractor.call_llm_with_retry", new=fake_call),
-            patch("src.services.pipeline.extractor.validate_domain_output", return_value={}),
+            patch(
+                "src.services.pipeline.extractor.validate_domain_output_with_drops",
+                return_value=({}, {}),
+            ),
         ):
             async for _ in _chunked_extraction(
                 MagicMock(), _triage(), _layout_prompt(), [_chapter(i) for i in range(3)]
