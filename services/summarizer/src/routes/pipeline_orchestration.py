@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 from typing import AsyncGenerator
 
 from src.repositories.mongodb_repository import MongoDBVideoRepository
@@ -20,7 +21,7 @@ from src.routes.pipeline_faithfulness import _drain_faithfulness, _launch_faithf
 from src.routes.run_timing import log_run_summary, mark_phase, persist_run_timing
 from src.services.observability import update_trace_metadata
 from src.services.pipeline.context import PipelineContext
-from src.services.pipeline.enrichment import _has_meaningful_data
+from src.services.pipeline.enrichment import needs_quiz
 from src.services.pipeline.phases import (
     run_phase_assembly,
     run_phase_enrichment,
@@ -41,6 +42,8 @@ from src.services.pipeline.visual_annotations import annotation_entries, render_
 from src.services.transcription.transcript_meta import build_transcript_meta
 
 logger = logging.getLogger(__name__)
+
+PhaseFn = Callable[[PipelineContext], AsyncGenerator[str, None]]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -185,6 +188,13 @@ async def _run_phase_two(
         await _record_transcript_outcome(ctx, repository, video_summary_id)
 
 
+def _tail_phases(ctx: PipelineContext) -> list[PhaseFn]:
+    """Synthesis, plus the quiz when the plan demands one (1d.1)."""
+    if needs_quiz(ctx.plan_result, ctx.content_format):
+        return [run_phase_synthesis, run_phase_enrichment]
+    return [run_phase_synthesis]
+
+
 async def _run_phases_in_order(
     ctx: PipelineContext,
     repository: MongoDBVideoRepository,
@@ -222,11 +232,12 @@ async def _run_phases_in_order(
         _render_visual_annotations(ctx)
         mark_phase(ctx, timing, "visual_inject", phase_start)
 
-        # Phase 4: Extraction (the plan ran inside phase 2)
-        phase_start = time.monotonic()
-        async for event in run_phase_extraction(ctx):
+        # Phase 4: Extraction (the plan ran inside phase 2). Through the
+        # parallel runner for its heartbeats: one extraction call can be
+        # silent for minutes, past the API gateway's idle timeout. The runner
+        # also records the "extraction" step in pipeline.timing.
+        async for event in run_parallel_phases([run_phase_extraction], ctx):
             yield event
-        mark_phase(ctx, timing, "extraction", phase_start)
         # Fire-and-forget faithfulness judge once extraction has data. The
         # task copies the current ContextVar state so the Langfuse trace is
         # still attached. We track the task so we can drain it before
@@ -236,20 +247,12 @@ async def _run_phases_in_order(
             if spawned is not None:
                 spawned_faithfulness.append(spawned)
 
-        # Phase 5: Synthesis + Enrichment. Both read only the extraction output,
-        # so they run in parallel — EXCEPT when extraction came back empty:
-        # enrichment then falls back to the synthesis output as its context
-        # (see enrich()), which forces the sequential order.
+        # Phase 5: Synthesis ∥ quiz. The quiz reads the extraction and the
+        # video_memory (never the synthesis), and only a plan that can show a
+        # quiz asks for one (the phase re-checks the same gate).
         phase_start = time.monotonic()
-        if ctx.extraction_data and _has_meaningful_data(ctx.extraction_data):
-            async for event in run_parallel_phases(
-                [run_phase_synthesis, run_phase_enrichment], ctx
-            ):
-                yield event
-        else:
-            for phase in [run_phase_synthesis, run_phase_enrichment]:
-                async for event in phase(ctx):
-                    yield event
+        async for event in run_parallel_phases(_tail_phases(ctx), ctx):
+            yield event
         mark_phase(ctx, timing, "synthesis_enrichment", phase_start)
 
         # Phase 6: Assembly (needs synthesis + enrichment results)

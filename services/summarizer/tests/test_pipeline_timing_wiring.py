@@ -137,9 +137,10 @@ class TestRunnerPersistence:
             assembled_tabs=[1, 2],
             transcript_ready=asyncio.Event(),
             tier_probe_task=None,
+            content_format=None,
         )
 
-    def _patches(self, assembly_events: list[str], extraction: object | None = None) -> list:
+    def _patches(self, assembly_events: list[str], assembly: object | None = None) -> list:
         async def _one(*_a: object, **_k: object):
             yield "data: x\n\n"
 
@@ -150,10 +151,11 @@ class TestRunnerPersistence:
         return [
             patch.object(pipeline_orchestration, "run_phase_metadata", _one),
             patch.object(pipeline_orchestration, "run_parallel_phases", lambda _p, _c: _one()),
-            patch.object(pipeline_orchestration, "run_phase_extraction", extraction or _one),
+            patch.object(pipeline_orchestration, "run_phase_extraction", _one),
             patch.object(pipeline_orchestration, "run_phase_synthesis", _one),
             patch.object(pipeline_orchestration, "run_phase_enrichment", _one),
-            patch.object(pipeline_orchestration, "run_phase_assembly", _assembly),
+            patch.object(pipeline_orchestration, "run_phase_assembly", assembly or _assembly),
+            patch.object(pipeline_orchestration, "needs_quiz", lambda *_a: False),
         ]
 
     async def _drive(
@@ -161,10 +163,10 @@ class TestRunnerPersistence:
         ctx: SimpleNamespace,
         repository: MagicMock,
         events: list[str],
-        extraction: object | None = None,
+        assembly: object | None = None,
     ) -> None:
         timer = MagicMock(elapsed=MagicMock(return_value=1.0))
-        patches = self._patches(events, extraction)
+        patches = self._patches(events, assembly)
         for p in patches:
             p.start()
         try:
@@ -198,11 +200,11 @@ class TestRunnerPersistence:
         repository = MagicMock()
 
         async def _boom(*_a: object, **_k: object):
-            raise RuntimeError("extraction exploded")
+            raise RuntimeError("assembly exploded")
             yield  # pragma: no cover
 
         with pytest.raises(RuntimeError):
-            await self._drive(self._ctx(), repository, [], extraction=_boom)
+            await self._drive(self._ctx(), repository, [], assembly=_boom)
 
         repository.set_pipeline_timing.assert_called_once()
 

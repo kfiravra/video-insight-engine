@@ -21,7 +21,12 @@ from llm_common.context import llm_feature_var
 from src.exceptions import TranscriptError
 from src.models.schemas import ErrorCode, ProcessingStatus
 from src.routes import pipeline_faithfulness, pipeline_orchestration, pipeline_runner
-from src.services.pipeline.pipeline_helpers import TranscriptData, TranscriptTrail
+from src.config import settings
+from src.services.pipeline.pipeline_helpers import (
+    TranscriptData,
+    TranscriptTrail,
+    run_parallel_phases,
+)
 
 
 def _phase_stub(label: str):
@@ -50,6 +55,7 @@ def _non_english_ctx() -> SimpleNamespace:
         triage=SimpleNamespace(tabs=[]),
         transcript_ready=asyncio.Event(),
         tier_probe_task=None,
+        content_format=None,
     )
 
 
@@ -67,6 +73,7 @@ def _patched_phases():
         patch.object(pipeline_orchestration, "run_phase_synthesis", _phase_stub("synthesis")),
         patch.object(pipeline_orchestration, "run_phase_enrichment", _phase_stub("enrichment")),
         patch.object(pipeline_orchestration, "run_phase_assembly", _phase_stub("assembly")),
+        patch.object(pipeline_orchestration, "needs_quiz", lambda *_a: True),
     ]
 
 
@@ -87,91 +94,91 @@ def _english_ctx(extraction_data: dict) -> SimpleNamespace:
         triage=SimpleNamespace(tabs=[]),
         transcript_ready=asyncio.Event(),
         tier_probe_task=None,
+        content_format=None,
     )
 
 
-@pytest.mark.asyncio
-async def test_synthesis_and_enrichment_parallel_when_extraction_has_data() -> None:
-    """Synthesis and enrichment both read only extraction output, so when the
-    extraction produced meaningful data they run through run_parallel_phases
-    (second parallel group after transcript+frames)."""
-    ctx = _english_ctx({"key_points": [{"text": "a claim long enough"}]})
-    timer = MagicMock()
-    timer.elapsed = MagicMock(return_value=1.0)
+_TAIL_NAMES = ("run_phase_extraction", "run_phase_synthesis", "run_phase_enrichment")
 
-    parallel_calls: list[list] = []
+
+async def _parallel_groups(ctx: SimpleNamespace, *, quiz: bool) -> list[list[str]]:
+    """The phases the orchestration hands the parallel runner, by name, in order."""
+    groups: list[list] = []
 
     async def _capture_parallel(phases, _ctx):
-        parallel_calls.append(list(phases))
+        groups.append(list(phases))
         yield "data: parallel\n\n"
 
-    patches = [
-        patch.object(pipeline_orchestration, "run_phase_metadata", _phase_stub("metadata")),
-        patch.object(pipeline_orchestration, "run_parallel_phases", _capture_parallel),
-        patch.object(pipeline_orchestration, "run_phase_extraction", _phase_stub("extraction")),
-        patch.object(pipeline_orchestration, "run_phase_synthesis", _phase_stub("synthesis")),
-        patch.object(pipeline_orchestration, "run_phase_enrichment", _phase_stub("enrichment")),
-        patch.object(pipeline_orchestration, "run_phase_assembly", _phase_stub("assembly")),
-    ]
-    for p in patches:
-        p.start()
-    try:
+    with ExitStack() as stack:
+        for p in _patched_phases():
+            stack.enter_context(p)
+        stack.enter_context(
+            patch.object(pipeline_orchestration, "run_parallel_phases", _capture_parallel)
+        )
+        stack.enter_context(patch.object(pipeline_orchestration, "needs_quiz", lambda *_a: quiz))
+        names = {getattr(pipeline_orchestration, name): name for name in _TAIL_NAMES}
         _ = [
             ev
             async for ev in pipeline_orchestration.run_pipeline_phases(
-                ctx, MagicMock(), "vsid", timer
+                ctx, MagicMock(), "vsid", _timer()
             )
         ]
-        assert len(parallel_calls) == 2, "transcript+frames AND synthesis+enrichment"
-        assert parallel_calls[1] == [
-            pipeline_orchestration.run_phase_synthesis,
-            pipeline_orchestration.run_phase_enrichment,
-        ]
-    finally:
-        for p in patches:
-            p.stop()
+    return [[names.get(phase, getattr(phase, "__name__", "?")) for phase in g] for g in groups]
 
 
 @pytest.mark.asyncio
-async def test_synthesis_enrichment_sequential_when_extraction_empty() -> None:
-    """When extraction came back empty, enrichment falls back to reading the
-    synthesis output as its context — that data dependency forces the
-    sequential order (synthesis strictly before enrichment)."""
-    ctx = _english_ctx({})
-    timer = MagicMock()
-    timer.elapsed = MagicMock(return_value=1.0)
+async def test_should_run_the_quiz_alongside_synthesis_when_the_plan_demands_one() -> None:
+    """1d.1: the quiz reads extraction + video_memory, never the synthesis."""
+    groups = await _parallel_groups(_english_ctx({}), quiz=True)
 
-    parallel_calls: list[list] = []
+    assert groups[2] == ["run_phase_synthesis", "run_phase_enrichment"]
 
-    async def _capture_parallel(phases, _ctx):
-        parallel_calls.append(list(phases))
-        yield "data: parallel\n\n"
 
-    patches = [
-        patch.object(pipeline_orchestration, "run_phase_metadata", _phase_stub("metadata")),
-        patch.object(pipeline_orchestration, "run_parallel_phases", _capture_parallel),
-        patch.object(pipeline_orchestration, "run_phase_extraction", _phase_stub("extraction")),
-        patch.object(pipeline_orchestration, "run_phase_synthesis", _phase_stub("synthesis")),
-        patch.object(pipeline_orchestration, "run_phase_enrichment", _phase_stub("enrichment")),
-        patch.object(pipeline_orchestration, "run_phase_assembly", _phase_stub("assembly")),
-    ]
-    for p in patches:
-        p.start()
-    try:
+@pytest.mark.asyncio
+async def test_should_run_synthesis_alone_when_no_quiz_is_demanded() -> None:
+    groups = await _parallel_groups(_english_ctx({}), quiz=False)
+
+    assert groups[2] == ["run_phase_synthesis"]
+
+
+@pytest.mark.asyncio
+async def test_should_run_extraction_through_the_heartbeat_runner() -> None:
+    groups = await _parallel_groups(_english_ctx({}), quiz=False)
+
+    assert groups[1] == ["run_phase_extraction"]
+
+
+@pytest.mark.asyncio
+async def test_should_send_heartbeats_while_extraction_is_silent() -> None:
+    """1d.5: one extraction call can be silent for minutes (API gateway idle timeout)."""
+
+    async def _slow_extraction(_ctx):
+        await asyncio.sleep(0.05)
+        yield "data: extraction\n\n"
+
+    async def _phase_two(_ctx, *_args):
+        yield "data: phase two\n\n"
+
+    with ExitStack() as stack:
+        for p in _patched_phases():
+            stack.enter_context(p)
+        for name, value in (
+            ("run_parallel_phases", run_parallel_phases),
+            ("_run_phase_two", _phase_two),
+            ("run_phase_extraction", _slow_extraction),
+            ("needs_quiz", lambda *_a: False),
+        ):
+            stack.enter_context(patch.object(pipeline_orchestration, name, value))
+        stack.enter_context(patch.object(settings, "SSE_HEARTBEAT_SECONDS", 0.01))
         events = [
             ev
             async for ev in pipeline_orchestration.run_pipeline_phases(
-                ctx, MagicMock(), "vsid", timer
+                _english_ctx({}), MagicMock(), "vsid", _timer()
             )
         ]
-    finally:
-        for p in patches:
-            p.stop()
 
-    assert len(parallel_calls) == 1, "only transcript+frames should parallelize"
-    synth_idx = next(i for i, ev in enumerate(events) if "synthesis" in ev)
-    enrich_idx = next(i for i, ev in enumerate(events) if "enrichment" in ev)
-    assert synth_idx < enrich_idx, "empty extraction keeps synthesis before enrichment"
+    extraction_at = events.index("data: extraction\n\n")
+    assert any('"heartbeat"' in ev for ev in events[:extraction_at])
 
 
 @pytest.mark.asyncio
@@ -752,8 +759,8 @@ async def test_failed_run_closes_both_downloads_before_persisting_timing() -> No
     timer = MagicMock()
     timer.elapsed = MagicMock(return_value=1.0)
 
-    async def _extraction_fails(_ctx):
-        raise RuntimeError("extraction exploded")
+    async def _assembly_fails(_ctx):
+        raise RuntimeError("assembly exploded")
         yield  # pragma: no cover — makes this an async generator
 
     async def _persist(*_args: object) -> None:
@@ -763,10 +770,10 @@ async def test_failed_run_closes_both_downloads_before_persisting_timing() -> No
         for p in _patched_phases():
             stack.enter_context(p)
         stack.enter_context(
-            patch.object(pipeline_orchestration, "run_phase_extraction", _extraction_fails)
+            patch.object(pipeline_orchestration, "run_phase_assembly", _assembly_fails)
         )
         stack.enter_context(patch.object(pipeline_orchestration, "persist_run_timing", _persist))
-        with pytest.raises(RuntimeError, match="extraction exploded"):
+        with pytest.raises(RuntimeError, match="assembly exploded"):
             _ = [
                 ev
                 async for ev in pipeline_orchestration.run_pipeline_phases(
