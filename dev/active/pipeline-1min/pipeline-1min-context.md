@@ -1,9 +1,9 @@
 # pipeline-1min — Context
 
-Last Updated: 2026-10-08 — ✅ PHASE 1 CLOSED; PR #23 open (CI green). Next: "PR 2 merged" → prod benchmark → phase 2. Live docs in the main tree (branch `feat/pipeline-1min`). Phase 0 merged (PR #22).
+Last Updated: 2026-10-12 — ✅ PHASE 1 CLOSED (PR #23/#24/#25 on prod). Next: phase 2 (2.0 first). Live docs in the main tree (branch `feat/pipeline-1min`). Phase 0 merged (PR #22).
 
 ## RESUME HERE (phase 1 run state)
-- **2026-10-12 state:** phase 1 (PR #23) + hotfix 2.1 (PR #24) on prod; **hotfix 2.2** committed locally (a3c2cb4, ae458c7, ddaae90, 8507577), NOT pushed — waiting for Kfir's push word / PR 2.2. After its deploy: one admin re-run of T1dQhQAm8Tc (tab count) → stop. Then phase 2 (2.1 backend `tab_ready` final/provisional, 2.2 frontend — phase-2 task ids ≠ hotfix 2.1/2.2). Eval user deferred to phase 4. Golden concurrency 2 (WSL OOM); 3–4 possible to cut a pass to ~10 min.
+- **2026-10-12 state: PHASE 1 CLOSED** — PR #23 (phase 1), #24 (hotfix 2.1), #25 (close-out) on prod, main e20240e. T1dQhQAm8Tc prod v8: 4 tabs, 116.7 s, hero 15.7 s. NEXT = phase 2 from tasks.md, starting with **2.0** (plan static block 1h cache + LiteLLM ttl check + static-first synthesis/quiz/description prompts), then 2.1 (incl. Moments tab always exists), 2.2, 2.3 (caption-based non-English RAG); one quick golden after 2.0 and 2.3 (concurrency ≤ 3). Local unpushed: 7d66f33 (flaky DailyLimitCallout test). Eval user deferred to phase 4.
 - Rules for this run: top of `pipeline-1min-tasks.md` (local commits per task id without asking; never push; never stage CLAUDE.md / .claude/**; main tree only, no worktrees).
 - Execution model (phases 2–4 too): parallel Opus subagents following `agent-rules.md`; the coordinator commits (stage by path; a file shared by two in-flight tasks is staged hunk-wise via `git hash-object -w` + `git update-index --cacheinfo`; TS-only commits with partial files use `--no-verify` so lint-staged doesn't hide other agents' in-flight edits).
 - Phase-1 review artefacts: `review-p1.md` (recipe + 23 groups), `gates/g1-review-findings.md` (findings), `review-fixes-p1.md` (FX1–FX8 briefs). Deferred items for phase 4 are listed at the end of g1.md.

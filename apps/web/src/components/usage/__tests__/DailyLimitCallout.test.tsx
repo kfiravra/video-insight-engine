@@ -27,8 +27,9 @@ describe('DailyLimitCallout', () => {
   });
 
   it('should describe the reset window in human terms', () => {
-    // Generous buffer so async render latency doesn't tip "30m → 29m"
-    const futureIso = new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString();
+    // 2h 30m ahead: render latency can only move it to 2h 29m, never past an
+    // hour boundary (an exact 3h made a same-millisecond render print "3h").
+    const futureIso = new Date(Date.now() + 150 * 60 * 1000).toISOString();
     renderCallout({ limitUsd: 2, resetAtIso: futureIso });
 
     expect(screen.getByRole('alert')).toHaveTextContent(/resets in 2h(\s\d+m)?/i);
