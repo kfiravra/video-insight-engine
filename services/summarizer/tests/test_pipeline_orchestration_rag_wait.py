@@ -17,6 +17,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from src.models.pipeline_types import PlanResult
 from src.routes import pipeline_orchestration
 from src.services.pipeline.phases import qdrant_index
 
@@ -33,7 +34,7 @@ def _ctx() -> SimpleNamespace:
         source_language_code=None,
         row_deleted=False,
         phase_times={},
-        plan_result=object(),
+        plan_result=PlanResult(),
         enrichment_data={},
         triage=SimpleNamespace(tabs=[]),
         assembled_tabs=[],

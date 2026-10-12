@@ -1,14 +1,16 @@
-"""The text branch of phase 2 (pipeline-1min 1b.1/1b.3/1b.4, ``phases/text.py``).
+"""The text branch of phase 2 (pipeline-1min 1b.1/1b.3/1b.4/3.2, ``phases/text.py``).
 
 transcript → ``transcript_ready`` (releases the tier probe) → the probe's
-answer → ONE rendered marked transcript → plan ∥ memory → ``<video_memory>``.
-The plan and memory phases are stubbed at the module seam; rendering, the
-probe wait and the parallel runner run as production code.
+answer → ONE rendered marked transcript → plan ∥ memory → reconcile at
+plan-done → ``triage_complete`` + ``meta`` → ``<video_memory>``. The plan and
+memory phases are stubbed at the module seam; rendering, the probe wait, the
+parallel runner and reconcile run as production code.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import AsyncGenerator
 from types import SimpleNamespace
 from typing import Any
@@ -51,6 +53,10 @@ def _ctx(probe_task: asyncio.Future[TierProbe | None] | None = None) -> SimpleNa
         plan_result=None,
         memory=None,
         video_memory="",
+        video_data=SimpleNamespace(title="BA's Best Lasagna"),
+        content_format=None,
+        language="en",
+        is_rtl=False,
     )
 
 
@@ -61,20 +67,33 @@ async def _transcript(_ctx: SimpleNamespace) -> AsyncGenerator[str, None]:
 class _Readers:
     """Plan + memory stand-ins that record what they saw and when."""
 
-    def __init__(self, memory: MemoryResult | None = _MEMORY) -> None:
+    def __init__(self, memory: MemoryResult | None = _MEMORY, plan: PlanResult = _PLAN) -> None:
         self.seen: dict[str, Any] = {}
         self._memory = memory
+        self._plan = plan
 
     async def plan(self, ctx: SimpleNamespace) -> AsyncGenerator[str, None]:
         self.seen["plan"] = (ctx.prompt_transcript, ctx.transcript_ready.is_set(), ctx.probe)
-        ctx.plan_result = _PLAN
-        yield "data: triage_complete\n\n"
+        ctx.plan_result = self._plan
+        return
+        yield  # pragma: no cover — makes this an async generator
 
     async def memory(self, ctx: SimpleNamespace) -> AsyncGenerator[str, None]:
         self.seen["memory"] = ctx.prompt_transcript
         ctx.memory = self._memory
         return
         yield  # pragma: no cover — makes this an async generator
+
+
+def _names(events: list[str]) -> list[str]:
+    """Event names: ``data: name`` stubs as-is, real SSE events by their ``event`` key."""
+    return [
+        json.loads(e[6:])["event"] if e.startswith("data: {") else e[6:].strip() for e in events
+    ]
+
+
+def _payload(events: list[str], name: str) -> dict[str, Any]:
+    return next(json.loads(e[6:]) for e in events if e.startswith(f'data: {{"event": "{name}"'))
 
 
 async def _run(ctx: SimpleNamespace, readers: _Readers, transcript: Any = _transcript) -> list[str]:
@@ -90,7 +109,7 @@ class TestRunPhaseText:
     async def test_should_stream_transcript_then_plan_events(self) -> None:
         events = await _run(_ctx(), _Readers())
 
-        assert events == ["data: transcript_ready\n\n", "data: triage_complete\n\n"]
+        assert _names(events) == ["transcript_ready", "triage_complete", "meta"]
 
     async def test_should_release_the_probe_before_the_readers_start(self) -> None:
         readers = _Readers()
@@ -129,7 +148,7 @@ class TestRunPhaseText:
             plan_started.set()
             await asyncio.wait_for(memory_started.wait(), timeout=1.0)
             ctx.plan_result = _PLAN
-            yield "data: triage_complete\n\n"
+            yield "data: plan_done\n\n"
 
         async def memory(_ctx: SimpleNamespace) -> AsyncGenerator[str, None]:
             memory_started.set()
@@ -142,7 +161,7 @@ class TestRunPhaseText:
 
         events = await _run(_ctx(), readers)
 
-        assert "data: triage_complete\n\n" in events
+        assert "data: plan_done\n\n" in events
 
     async def test_should_render_video_memory_from_plan_and_memory(self) -> None:
         ctx = _ctx()
@@ -169,6 +188,84 @@ class TestRunPhaseText:
             await _run(_ctx(), readers, transcript=failing)
 
         assert "plan" not in readers.seen
+
+
+# ─── Reconcile at plan-done (3.2) ───
+
+
+def _tab(tab_id: str, component: str, data_source: str) -> dict[str, str]:
+    return {"id": tab_id, "label": tab_id, "component": component, "dataSource": data_source}
+
+
+_LEARNING_PLAN = PlanResult.model_validate(
+    {
+        "contentTags": ["learning"],
+        "primaryTag": "learning",
+        "confidence": 0.9,
+        "evidence": {"is_learnable": False},
+        "tabs": [
+            _tab("concepts", "concept_canvas", "learning.concepts"),
+            _tab("quiz", "quiz_arena", "enrichment.quiz"),
+            _tab("takeaways", "checklist", "learning.takeaways"),
+            _tab("moments", "moment_track", "learning.timestamps"),
+        ],
+    }
+)
+_NOT_LEARNABLE = MemoryResult(evidence={"is_learnable": False})
+
+
+class TestPlanDone:
+    async def test_should_emit_meta_after_reconcile(self) -> None:
+        events = await _run(_ctx(), _Readers(_NOT_LEARNABLE, _LEARNING_PLAN))
+
+        labels = [t["id"] for t in _payload(events, "meta")["tabLabels"]]
+
+        assert labels == ["concepts", "takeaways", "moments"]
+
+    async def test_should_send_the_reconciled_tabs_in_triage_complete(self) -> None:
+        events = await _run(_ctx(), _Readers(_NOT_LEARNABLE, _LEARNING_PLAN))
+
+        tabs = [t["id"] for t in _payload(events, "triage_complete")["tabs"]]
+
+        assert tabs == ["concepts", "takeaways", "moments"]
+
+    async def test_should_keep_the_quiz_when_memory_is_silent(self) -> None:
+        ctx = _ctx()
+
+        await _run(ctx, _Readers(MemoryResult(), _LEARNING_PLAN))
+
+        assert [t["id"] for t in ctx.plan_result.tabs][-1] == "quiz"
+
+    async def test_should_give_later_readers_the_doubly_false_view(self) -> None:
+        ctx = _ctx()
+
+        await _run(ctx, _Readers(MemoryResult(), _LEARNING_PLAN))
+
+        assert ctx.plan_result.evidence == {}
+
+    async def test_should_keep_the_readers_own_answers_in_the_triage_dict(self) -> None:
+        ctx = _ctx()
+
+        await _run(ctx, _Readers(_NOT_LEARNABLE, _LEARNING_PLAN))
+
+        assert (ctx.triage_dict["planEvidence"], ctx.triage_dict["memoryEvidence"]) == (
+            {"is_learnable": False},
+            {"is_learnable": False},
+        )
+
+    async def test_should_render_the_readers_own_evidence_in_video_memory(self) -> None:
+        ctx = _ctx()
+
+        await _run(ctx, _Readers(MemoryResult(), _LEARNING_PLAN))
+
+        assert "is_learnable ✗" in ctx.video_memory
+
+    async def test_should_hand_extraction_the_reconciled_tabs(self) -> None:
+        ctx = _ctx()
+
+        await _run(ctx, _Readers(_NOT_LEARNABLE, _LEARNING_PLAN))
+
+        assert [t["id"] for t in ctx.triage.tabs] == ["concepts", "takeaways", "moments"]
 
 
 class TestRenderPromptTranscript:

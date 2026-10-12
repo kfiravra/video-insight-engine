@@ -28,6 +28,7 @@ from src.services.pipeline.phases import (
     run_phase_text,
 )
 from src.services.pipeline.phases.qdrant_index import wait_for_rag_transcript
+from src.services.pipeline.phases.triage import frames_done_events
 from src.services.pipeline.pipeline_helpers import (
     PipelineTimer,
     run_parallel_phases,
@@ -226,10 +227,14 @@ async def _run_phases_in_order(
         async for event in _run_phase_two(ctx, repository, video_summary_id, timing):
             yield event
 
-        # Phase 2.5: the <visual_annotations> block (timing name kept so
-        # pipeline.timing stays comparable with the baseline and cassettes).
+        # Phase 2.5 (frames-done): the <visual_annotations> block, then the code
+        # tabs reconcile deferred at plan-done are decided on what the frames
+        # show (3.2; a fresh meta when that changed the tabs). Timing name kept
+        # so pipeline.timing stays comparable with the baseline and cassettes.
         phase_start = time.monotonic()
         _render_visual_annotations(ctx)
+        for event in frames_done_events(ctx):
+            yield event
         mark_phase(ctx, timing, "visual_inject", phase_start)
 
         # Phase 4: Extraction (the plan ran inside phase 2). Through the

@@ -19,6 +19,7 @@ from litellm.exceptions import (
     NotFoundError,
 )
 
+from src.models.pipeline_types import PlanResult
 from src.repositories.mongodb_repository import MongoDBVideoRepository
 from src.routes import pipeline_orchestration, run_timing
 from src.services.llm_provider import LLMProvider
@@ -131,7 +132,7 @@ class TestRunnerPersistence:
             source_language_code=None,
             row_deleted=False,
             phase_times={},
-            plan_result=object(),
+            plan_result=PlanResult(),
             enrichment_data={"a": 1},
             triage=SimpleNamespace(tabs=[1, 2, 3]),
             assembled_tabs=[1, 2],

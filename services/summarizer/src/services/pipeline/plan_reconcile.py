@@ -1,21 +1,19 @@
-"""Plan-time reconcile — the simple form of phase 3.2, moved up (hotfix 2.1).
+"""Plan-parse guard — the evidence-free half of reconcile (hotfix 2.1, narrowed by 3.2).
 
-After the plan returns, a tab whose dataSource cannot have content is
-re-pointed or dropped before extraction runs:
-
-- ``evidence_false``: the registry's ``requiresEvidence`` key for the
-  dataSource is false in the plan's own evidence;
-- ``inactive_domain``: the dataSource's domain is not one of the plan's
-  contentTags/modifiers (``news.claims`` on a learning/tech video — the
-  extraction is domain-keyed, so that path is never filled).
+Right after the plan returns, a tab whose dataSource's domain is not one of
+the plan's contentTags/modifiers (``inactive_domain``: ``news.claims`` on a
+learning/tech video — the extraction is domain-keyed, so that path is never
+filled) is re-pointed or dropped. Evidence is NOT judged here: the plan's
+answers alone cannot make a key doubly false, so the evidence trigger runs at
+plan-done, once the memory's second opinion is in (``reconcile.py``).
 
 A dataSource rendered by the same component in an active domain replaces it
 (the registry's declared siblings first, then the active domains in plan
 order); otherwise the tab is dropped — except a moment_track tab, which stays
 and is filled by assembly's moment fallback chain. Every decision is recorded
 for ``pipeline.reconcile`` (``action``: repointed / dropped /
-kept_for_moment_fallback); drops also join ``droppedTabs`` so the tab
-accounting stays complete.
+kept_for_moment_fallback, ``stage``: plan_parse); drops also join
+``droppedTabs`` so the tab accounting stays complete.
 """
 
 from __future__ import annotations
@@ -33,24 +31,24 @@ from ...shared_config.domain_config import (
 
 logger = logging.getLogger(__name__)
 
+PLAN_PARSE = "plan_parse"
+INACTIVE_DOMAIN = "inactive_domain"
 
-def _violation(
-    spec: DataSourceSpec | None, active: set[str], evidence: Mapping[str, bool]
-) -> str | None:
-    """Why a registered dataSource cannot have content here; None when it can.
+# A moment_track tab is never dropped (Kfir, phase-1 close): with no same-
+# component source it stays as planned and assembly fills it from the moment
+# fallback chain (memory outline → YouTube chapters → description timestamps).
+NEVER_DROPPED = frozenset({"moment_track"})
 
-    Non-content sources (``enrichment.quiz``) skip the domain check but keep
-    the evidence one. A key the plan did not answer is unknown, not false.
+
+def _inactive(spec: DataSourceSpec | None, active: set[str]) -> bool:
+    """True for a content/modifier path whose domain the plan did not tag.
+
+    Non-content sources (``enrichment.quiz``) and unregistered paths never are.
     """
     if spec is None:
-        return None
+        return False
     domain = spec["domain"]
-    if domain in valid_content_tags() | valid_modifiers() and domain not in active:
-        return "inactive_domain"
-    key = spec.get("requiresEvidence")
-    if key and evidence.get(key) is False:
-        return "evidence_false"
-    return None
+    return domain in valid_content_tags() | valid_modifiers() and domain not in active
 
 
 def _eligible(
@@ -64,7 +62,7 @@ def _eligible(
     )
 
 
-def _replacement(
+def replacement(
     path: str,
     component: str,
     active_order: Sequence[str],
@@ -73,9 +71,12 @@ def _replacement(
 ) -> str | None:
     """The first same-component dataSource in an active domain.
 
-    A source another tab already renders with the SAME component is skipped
-    (a duplicate tab); a different component on the same source is a second
-    view of it (steps in step_player and moment_track) and is allowed.
+    A source whose ``requiresEvidence`` key is False in ``evidence`` is
+    skipped (callers pass the strict doubly-false view, or ``{}`` when no
+    evidence applies). A source another tab already renders with the SAME
+    component is skipped (a duplicate tab); a different component on the same
+    source is a second view of it (steps in step_player and moment_track) and
+    is allowed.
     """
     spec = data_source(path)
     siblings = list(spec.get("siblings") or []) if spec else []
@@ -93,36 +94,39 @@ def _replacement(
     return None
 
 
-# A moment_track tab is never dropped (Kfir, phase-1 close): with no same-
-# component source it stays as planned and assembly fills it from the moment
-# fallback chain (memory outline → YouTube chapters → description timestamps).
-_NEVER_DROPPED = frozenset({"moment_track"})
-
-
-def _decide(
-    tab: dict, reason: str, replacement: str | None
-) -> tuple[str, dict | None, dict | None]:
-    """``(action, kept_tab, dropped_entry)`` for a tab whose dataSource cannot have content."""
-    if replacement is not None:
-        return "repointed", {**tab, "dataSource": replacement}, None
-    if tab["component"] in _NEVER_DROPPED:
+def _decide(tab: dict, target: str | None) -> tuple[str, dict | None, dict | None]:
+    """``(action, kept_tab, dropped_entry)`` for a tab on an inactive domain."""
+    if target is not None:
+        return "repointed", {**tab, "dataSource": target}, None
+    if tab["component"] in NEVER_DROPPED:
         return "kept_for_moment_fallback", tab, None
     entry = {
         "id": tab["id"],
         "component": tab["component"],
         "dataSource": tab.get("dataSource") or "",
-        "reason": f"reconcile_{reason}",
+        "reason": f"reconcile_{INACTIVE_DOMAIN}",
     }
     return "dropped", None, entry
 
 
+def _record(tab: dict, path: str, target: str | None, action: str) -> dict:
+    """One ``pipeline.reconcile`` row — the same shape reconcile.py writes."""
+    return {
+        "tabId": tab["id"],
+        "component": tab["component"],
+        "from": path,
+        "to": target,
+        "reason": INACTIVE_DOMAIN,
+        "action": action,
+        "stage": PLAN_PARSE,
+        "evidence": None,
+    }
+
+
 def reconcile_plan_tabs(
-    tabs: list[dict],
-    content_tags: Sequence[str],
-    modifiers: Sequence[str],
-    evidence: Mapping[str, bool],
+    tabs: list[dict], content_tags: Sequence[str], modifiers: Sequence[str]
 ) -> tuple[list[dict], list[dict], list[dict]]:
-    """Re-point, keep (moment_track) or drop the tabs whose dataSource cannot have content.
+    """Re-point, keep (moment_track) or drop the tabs on a domain the plan did not tag.
 
     Returns ``(kept_tabs, dropped_tabs, records)``: ``dropped_tabs`` in the
     ``droppedTabs`` shape assembly persists, ``records`` for ``pipeline.reconcile``.
@@ -135,36 +139,25 @@ def reconcile_plan_tabs(
     records: list[dict] = []
     for tab in tabs:
         path = tab.get("dataSource") or ""
-        reason = _violation(data_source(path), active, evidence)
-        if reason is None:
+        if not _inactive(data_source(path), active):
             kept.append(tab)
             continue
-        replacement = _replacement(path, tab["component"], active_order, evidence, taken)
-        action, kept_tab, drop = _decide(tab, reason, replacement)
-        records.append(
-            {
-                "tabId": tab["id"],
-                "component": tab["component"],
-                "from": path,
-                "to": replacement,
-                "reason": reason,
-                "action": action,
-            }
-        )
+        target = replacement(path, tab["component"], active_order, {}, taken)
+        action, kept_tab, drop = _decide(tab, target)
+        records.append(_record(tab, path, target, action))
         log = logger.warning if action == "dropped" else logger.info
         log(
-            "Plan tab %r: %s %r — %s %r (active %s)",
+            "Plan tab %r: inactive domain %r — %s %r (active %s)",
             tab["id"],
-            reason,
             path,
             action,
-            replacement,
+            target,
             active_order,
         )
         if kept_tab is not None:
             kept.append(kept_tab)
-        if replacement is not None:
-            taken.add((replacement, tab["component"]))
+        if target is not None:
+            taken.add((target, tab["component"]))
         if drop is not None:
             dropped.append(drop)
     return kept, dropped, records

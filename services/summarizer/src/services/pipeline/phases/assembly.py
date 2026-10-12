@@ -48,7 +48,9 @@ from src.services.pipeline.pipeline_helpers import (
     spawn_background,
     sse_event,
 )
+from src.services.pipeline.plan_reconcile import PLAN_PARSE
 from src.services.pipeline.post_processor import coverage_is_degraded
+from src.services.pipeline.reconcile_pass import ADDED_ACTIONS
 from src.services.pipeline.tab_ledger import tab_id
 from src.services.status_callback import send_video_status_background
 from src.services.video.description_analyzer import DescriptionAnalysis
@@ -138,6 +140,23 @@ async def run_phase_moment_fill(ctx: PipelineContext) -> AsyncGenerator[str, Non
         yield ctx.tab_ledger.event(tabs[position], position)
 
 
+def _tabs_designed(ctx: PipelineContext, plan_dropped: list[dict]) -> int:
+    """What the planner designed: its drops plus its surviving tabs.
+
+    Reconcile (3.2) also adds tabs (required backfill, fill to 3) — never the
+    planner's. When the domain defaults stand in (``planFallback``) only the
+    parse drops were the planner's: later reconcile drops hit default tabs.
+    """
+    assert ctx.triage is not None
+    plan = ctx.plan_result
+    rows = plan.reconcile if plan else []
+    if plan is not None and plan.plan_fallback:
+        later = [r for r in rows if r.get("action") == "dropped" and r.get("stage") != PLAN_PARSE]
+        return len(plan_dropped) - len(later)
+    added = {r.get("tabId") for r in rows if r.get("action") in ADDED_ACTIONS}
+    return len(plan_dropped) + sum(1 for tab in ctx.triage.tabs if tab.get("id") not in added)
+
+
 def _drop_accounting(ctx: PipelineContext, assembled: dict) -> dict:
     """``pipeline.assembly`` counts: designed, assembled, dropped (+ the drop list)."""
     assert ctx.triage is not None
@@ -147,11 +166,9 @@ def _drop_accounting(ctx: PipelineContext, assembled: dict) -> dict:
     # designed-minus-assembled subtraction masked drops and could go negative.
     plan_dropped = ctx.plan_result.dropped_tabs if ctx.plan_result else []
     dropped_tabs = [*plan_dropped, *assembled.get("dropped", [])]
-    # Designed = what the planner designed. When plan validation left nothing
-    # and the domain defaults stand in, only the drops were the planner's.
     plan_fallback = bool(ctx.plan_result and ctx.plan_result.plan_fallback)
     accounting = {
-        "tabsDesigned": len(plan_dropped) + (0 if plan_fallback else len(ctx.triage.tabs)),
+        "tabsDesigned": _tabs_designed(ctx, plan_dropped),
         "tabsAssembled": len(assembled.get("tabs", [])),
         # Evidence-skipped requirements are listed but were never tabs (1d.7).
         "tabsDropped": count_dropped_tabs(dropped_tabs),

@@ -290,7 +290,7 @@ class TestDropAccounting:
         drop = {"id": "tips", "component": "info_grid", "reason": "assembler_returned_none"}
         ctx = SimpleNamespace(
             triage=SimpleNamespace(tabs=[{"id": "tips"}]),
-            plan_result=SimpleNamespace(dropped_tabs=[], plan_fallback=False),
+            plan_result=SimpleNamespace(dropped_tabs=[], plan_fallback=False, reconcile=[]),
             video_summary_id="vsid",
         )
 

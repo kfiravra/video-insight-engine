@@ -236,6 +236,27 @@ async def test_should_count_kept_tabs_plus_drops_when_planner_tabs_survive() -> 
     assert (saved["tabsDesigned"], "planFallback" in saved) == (3, False)
 
 
+async def test_should_not_count_tabs_reconcile_added_as_designed() -> None:
+    rows = [{"tabId": "ingredients", "action": "backfilled", "stage": "plan_done"}]
+    plan = PlanResult.model_validate({"reconcile": rows})
+
+    saved = await _saved_assembly(plan, [{"id": "a"}, {"id": "b"}, {"id": "ingredients"}], [])
+
+    assert saved["tabsDesigned"] == 2
+
+
+async def test_should_not_count_reconcile_drops_of_default_tabs_under_fallback() -> None:
+    drops = [{"id": f"t{i}", "component": "c", "dataSource": "d", "reason": "r"} for i in range(3)]
+    rows = [{"tabId": "t2", "action": "dropped", "stage": "plan_done"}]
+    plan = PlanResult.model_validate(
+        {"droppedTabs": drops, "planFallback": True, "reconcile": rows}
+    )
+
+    saved = await _saved_assembly(plan, [{"id": "a"}, {"id": "b"}], [])
+
+    assert saved["tabsDesigned"] == 2
+
+
 async def test_should_persist_plan_drops_ahead_of_assembly_drops() -> None:
     plan_drop = {"id": "x", "component": "checklist", "dataSource": "food.nope", "reason": "r"}
     assembly_drop = {"id": "y", "component": "info_grid", "dataSource": "food.tips", "reason": "s"}

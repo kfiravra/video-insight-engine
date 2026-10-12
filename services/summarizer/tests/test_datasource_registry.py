@@ -11,7 +11,6 @@ render exactly the registry.
 
 from __future__ import annotations
 
-import json
 import re
 from pathlib import Path
 from types import NoneType, UnionType
@@ -23,6 +22,7 @@ from pydantic import BaseModel
 from src.models.domain_types import DOMAIN_MODELS, MODIFIER_MODELS
 from src.models.pipeline_types import EnrichmentData
 from src.services.pipeline.assembly.core import _MOMENT_CAP_MAX
+from src.services.pipeline.schema_fields import load_domain_schema
 from src.shared_config.domain_config import (
     EVIDENCE_KEYS,
     NON_EXTRACTION_DATASOURCES,
@@ -83,20 +83,10 @@ def _resolve_model_annotation(path: str) -> object | None:
     return current
 
 
-def _schema_skeleton(domain: str) -> dict:
-    """The JSON skeleton (first ``{...}`` block, ``> UI:`` lines removed) of a schema."""
-    text = (PROMPTS_DIR / "schemas" / f"{domain}.txt").read_text()
-    body = "\n".join(ln for ln in text.splitlines() if not ln.lstrip().startswith(">"))
-    start = body.index("\n{") + 1
-    decoder = json.JSONDecoder()
-    skeleton, _ = decoder.raw_decode(body[start:])
-    return skeleton
-
-
 def _resolve_skeleton_value(path: str) -> object:
     """Walk a dataSource path through its schema skeleton; KeyError when it breaks."""
     domain, *keys = path.split(".")
-    current: object = _schema_skeleton(domain)
+    current: object = load_domain_schema(domain).skeleton
     for key in keys:
         assert isinstance(current, dict)
         current = current[key]
@@ -412,13 +402,23 @@ class TestValidDatasourcesRender:
             for d, ln in zip(domains, lines, strict=True)
         )
 
+    def test_should_mark_tech_patterns_cheatsheet_and_setup_commands_has_code(self):
+        """Kfir's gate-2 decision 7: every tech code path needs code evidence."""
+        line = next(ln for ln in _rendered_toolkit_block().splitlines() if ln.startswith("tech:"))
+
+        assert all(
+            f"{path} [has_code]" in line
+            for path in ("tech.patterns", "tech.cheatSheet", "tech.setup.commands")
+        )
+
     def test_should_render_the_pre_registry_list_plus_fitness_tips(self):
         # The hardcoded toolkit block this placeholder replaced (8d52e23^),
-        # with fitness.tips — the one path the registry added — appended and
-        # enrichment.flashcards/scenarios gone with quiz-only enrichment (1d.1).
+        # with fitness.tips — the one path the registry added — appended,
+        # enrichment.flashcards/scenarios gone with quiz-only enrichment (1d.1)
+        # and has_code on every tech code path (3.2, Kfir's decision 7).
         expected = "\n".join(
             [
-                "tech: tech.snippets [has_code], tech.patterns, tech.cheatSheet, tech.setup.commands, tech.topics",
+                "tech: tech.snippets [has_code], tech.patterns [has_code], tech.cheatSheet [has_code], tech.setup.commands [has_code], tech.topics",
                 "learning: learning.keyPoints, learning.concepts, learning.takeaways, learning.timestamps",
                 "project: project.steps [has_steps], project.materials [has_materials], project.tools, project.safetyWarnings",
                 "food: food.ingredients [has_ingredients], food.steps [has_steps], food.tips, food.equipment, food.substitutions",

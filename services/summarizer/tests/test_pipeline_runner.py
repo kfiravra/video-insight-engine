@@ -19,6 +19,7 @@ import pytest
 from llm_common.context import llm_feature_var
 
 from src.exceptions import TranscriptError
+from src.models.pipeline_types import PlanResult
 from src.models.schemas import ErrorCode, ProcessingStatus
 from src.routes import pipeline_faithfulness, pipeline_orchestration, pipeline_runner
 from src.config import settings
@@ -50,7 +51,7 @@ def _non_english_ctx() -> SimpleNamespace:
         source_language_code="he",
         row_deleted=False,
         phase_times={},
-        plan_result=object(),
+        plan_result=PlanResult(),
         enrichment_data={"a": 1},
         triage=SimpleNamespace(tabs=[]),
         transcript_ready=asyncio.Event(),
@@ -86,7 +87,7 @@ def _english_ctx(extraction_data: dict) -> SimpleNamespace:
         source_language_code=None,
         row_deleted=False,
         phase_times={},
-        plan_result=object(),
+        plan_result=PlanResult(),
         enrichment_data={"a": 1},
         triage=SimpleNamespace(tabs=[]),
         transcript_ready=asyncio.Event(),
