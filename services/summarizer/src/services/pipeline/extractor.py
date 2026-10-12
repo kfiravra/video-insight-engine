@@ -325,7 +325,7 @@ async def _single_extraction(
     data = _parse_llm_json(raw)
 
     yield {"event": "extraction_progress", "section": "all", "percent": 80}
-    validated, dropped_items = validate_domain_output_with_drops(
+    validated, validation_report = validate_domain_output_with_drops(
         triage_result.content_tags, triage_result.modifiers, data
     )
 
@@ -333,7 +333,7 @@ async def _single_extraction(
     yield {
         "event": "extraction_complete",
         "data": validated,
-        "droppedItems": dropped_items,
+        "validation": validation_report,
     }
 
 
@@ -373,7 +373,7 @@ async def _overflow_extraction(
     data = _parse_llm_json(raw)
 
     yield {"event": "extraction_progress", "section": "all", "percent": 80}
-    validated, dropped_items = validate_domain_output_with_drops(
+    validated, validation_report = validate_domain_output_with_drops(
         triage_result.content_tags, triage_result.modifiers, data
     )
 
@@ -381,7 +381,7 @@ async def _overflow_extraction(
     yield {
         "event": "extraction_complete",
         "data": validated,
-        "droppedItems": dropped_items,
+        "validation": validation_report,
     }
 
 
@@ -713,7 +713,7 @@ async def _chunked_extraction(
     merged = merge_batch_extractions(batch_results, triage_result.content_tags)
 
     yield {"event": "extraction_progress", "section": "validation", "percent": 85}
-    validated, dropped_items = validate_domain_output_with_drops(
+    validated, validation_report = validate_domain_output_with_drops(
         triage_result.content_tags, triage_result.modifiers, merged
     )
 
@@ -721,7 +721,7 @@ async def _chunked_extraction(
     yield {
         "event": "extraction_complete",
         "data": validated,
-        "droppedItems": dropped_items,
+        "validation": validation_report,
         "batches_total": num_batches,
         "batches_succeeded": successful,
     }

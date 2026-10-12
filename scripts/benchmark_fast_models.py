@@ -62,6 +62,7 @@ from src.services.media.frame_analyzer import (  # noqa: E402
 from src.services.pipeline.enrichment import enrich_quiz, quiz_allowed  # noqa: E402
 from src.services.pipeline.synthesis import synthesize  # noqa: E402
 from src.services.pipeline.translation import translate_to_source  # noqa: E402
+
 # Reaching into transcript_chunker's private function is intentional: the
 # bench needs the AI chapter-detection step in isolation, but the public API
 # (`extract_chapter_chunks`) bundles it with YouTube-chapters detection and
@@ -226,7 +227,10 @@ def _query_one_per_domain(
             doc["__matched_tag"] = tag
             logger.info(
                 "corpus[%s]: matched %s (id=%s tag=%s)",
-                domain_key, doc.get("youtubeId"), doc["_id"], tag,
+                domain_key,
+                doc.get("youtubeId"),
+                doc["_id"],
+                tag,
             )
             return doc
     logger.warning("corpus[%s]: no docs found for any of %s", domain_key, fallback_tags)
@@ -251,7 +255,10 @@ async def hydrate_case(
         return None
 
     triage = (doc.get("pipeline") or {}).get("triage") or {}
-    extraction = (doc.get("pipeline") or {}).get("extraction") or {}
+    stored = (doc.get("pipeline") or {}).get("extraction") or {}
+    # ``_dropped`` / ``_misTargeted`` / ``_defaulted`` are the run's validation
+    # record, not extraction data — keep them out of the benchmark prompts.
+    extraction = {k: v for k, v in stored.items() if not k.startswith("_")}
     synthesis_data = doc.get("synthesis") or {}
     plan_tabs = list(triage.get("tabs") or [])
 
@@ -309,20 +316,29 @@ async def _run_with_telemetry(
 
 # Each stage takes a (case, model_string, model_label) and returns a StageRun.
 
+
 async def run_chapter_detect(case: CorpusCase, model: str, label: str) -> StageRun:
     svc = make_service(model)
     return await _run_with_telemetry(
-        "chapter_detect", case, label,
+        "chapter_detect",
+        case,
+        label,
         lambda: _detect_chapters_with_ai(
-            case.title, case.description, case.transcript, float(case.duration),
-            case.transcript_segments, svc,
+            case.title,
+            case.description,
+            case.transcript,
+            float(case.duration),
+            case.transcript_segments,
+            svc,
         ),
     )
 
 
 async def run_description(case: CorpusCase, model: str, label: str) -> StageRun:
     return await _run_with_telemetry(
-        "description", case, label,
+        "description",
+        case,
+        label,
         lambda: _analyze_description_async(case.description, fast_model=model),
     )
 
@@ -333,9 +349,14 @@ async def run_synthesis(case: CorpusCase, model: str, label: str) -> StageRun:
     # Extraction summary is what synthesis prompt expects — feed cached extraction
     extraction_summary = json.dumps(case.extraction_data)[:6000]
     return await _run_with_telemetry(
-        "synthesis", case, label,
+        "synthesis",
+        case,
+        label,
         lambda: synthesize(
-            svc, case.title, case.channel, case.duration,
+            svc,
+            case.title,
+            case.channel,
+            case.duration,
             output_type=primary_tag,
             extraction_summary=extraction_summary,
         ),
@@ -346,10 +367,15 @@ async def run_enrichment(case: CorpusCase, model: str, label: str) -> StageRun:
     svc = make_service(model)
     primary_tag = case.matched_tag or "learning"
     return await _run_with_telemetry(
-        "enrichment", case, label,
+        "enrichment",
+        case,
+        label,
         lambda: enrich_quiz(
-            svc, primary_tag=primary_tag, extraction_data=case.extraction_data,
-            video_memory="", tabs=[],
+            svc,
+            primary_tag=primary_tag,
+            extraction_data=case.extraction_data,
+            video_memory="",
+            tabs=[],
         ),
     )
 
@@ -396,7 +422,10 @@ async def run_vision(
     try:
         # use_fast_model=False routes to provider._model, which we pinned to candidate
         raw = await provider.complete_with_messages(
-            messages, max_tokens=2000, timeout=120.0, use_fast_model=False,
+            messages,
+            max_tokens=2000,
+            timeout=120.0,
+            use_fast_model=False,
         )
         parsed = parse_vision_response(raw, metadata)
         return StageRun(
@@ -418,6 +447,7 @@ async def run_vision(
 def _list_scene_frames(youtube_id: str, n: int = 8) -> list[dict[str, Any]]:
     """List up to ``n`` scene frame keys from S3 and download to /tmp."""
     import boto3  # type: ignore[import-untyped]
+
     s3 = boto3.client(
         "s3",
         region_name=settings.AWS_REGION,
@@ -438,13 +468,16 @@ def _list_scene_frames(youtube_id: str, n: int = 8) -> list[dict[str, Any]]:
     for i, key in enumerate(keys):
         local = tmpdir / Path(key).name
         s3.download_file(settings.S3_BUCKET, key, str(local))
-        out.append({"index": i, "path": str(local), "s3_key": key, "timestamp": 0.0, "total_score": 1.0})
+        out.append(
+            {"index": i, "path": str(local), "s3_key": key, "timestamp": 0.0, "total_score": 1.0}
+        )
     return out
 
 
 def _build_vision_messages(frames: list[dict]) -> tuple[list[dict], list[dict]]:
     """Mirror frame_analyzer's message builder so multiple model passes share input."""
     import base64
+
     content: list[dict] = [{"type": "text", "text": load_vision_prompt()}]
     meta: list[dict] = []
     for i, frame in enumerate(frames):
@@ -452,7 +485,9 @@ def _build_vision_messages(frames: list[dict]) -> tuple[list[dict], list[dict]]:
             with open(frame["path"], "rb") as f:
                 data = f.read()
             ext = os.path.splitext(frame["path"])[1].lower()
-            mime = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png"}.get(ext, "image/jpeg")
+            mime = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png"}.get(
+                ext, "image/jpeg"
+            )
             data_uri = f"data:{mime};base64,{base64.b64encode(data).decode()}"
         except OSError:
             continue
@@ -469,16 +504,20 @@ def _build_vision_messages(frames: list[dict]) -> tuple[list[dict], list[dict]]:
 
 def fetch_cost_rows(db: Any, prefix: str = BENCH_FEATURE_PREFIX) -> dict[str, dict[str, float]]:
     """Aggregate llm_usage cost / tokens per `feature` tag."""
-    cursor = db["llm_usage"].aggregate([
-        {"$match": {"feature": {"$regex": f"^{prefix}:"}}},
-        {"$group": {
-            "_id": "$feature",
-            "cost_usd": {"$sum": "$cost_usd"},
-            "tokens_in": {"$sum": "$tokens_in"},
-            "tokens_out": {"$sum": "$tokens_out"},
-            "calls": {"$sum": 1},
-        }},
-    ])
+    cursor = db["llm_usage"].aggregate(
+        [
+            {"$match": {"feature": {"$regex": f"^{prefix}:"}}},
+            {
+                "$group": {
+                    "_id": "$feature",
+                    "cost_usd": {"$sum": "$cost_usd"},
+                    "tokens_in": {"$sum": "$tokens_in"},
+                    "tokens_out": {"$sum": "$tokens_out"},
+                    "calls": {"$sum": 1},
+                }
+            },
+        ]
+    )
     out: dict[str, dict[str, float]] = {}
     for row in cursor:
         out[str(row["_id"])] = {
@@ -535,7 +574,9 @@ async def benchmark_stage(stage: str, case: CorpusCase) -> StageBenchResult:
     for label, model in CANDIDATE_MODELS:
         candidates[label] = await runner(case, model, label)
     result = StageBenchResult(
-        stage=stage, case_id=case.video_summary_id, baseline=baseline,
+        stage=stage,
+        case_id=case.video_summary_id,
+        baseline=baseline,
         candidates=candidates,
     )
     scorer = STAGE_SCORERS[stage]
@@ -564,7 +605,9 @@ async def benchmark_vision(case: CorpusCase) -> StageBenchResult | None:
     for label, model in VISION_CANDIDATES:
         candidates[label] = await run_vision(case, model, label, messages, metadata)
     result = StageBenchResult(
-        stage="vision", case_id=case.video_summary_id, baseline=baseline,
+        stage="vision",
+        case_id=case.video_summary_id,
+        baseline=baseline,
         candidates=candidates,
     )
     if baseline.error or not isinstance(baseline.output, list):
@@ -586,14 +629,16 @@ async def benchmark_vision(case: CorpusCase) -> StageBenchResult | None:
 
 
 def pick_winner(
-    stage: str, results_for_stage: list[StageBenchResult],
+    stage: str,
+    results_for_stage: list[StageBenchResult],
 ) -> tuple[str, dict[str, dict[str, float]]]:
     """Average quality/cost/speed per candidate across all videos, then pick."""
     labels = (
-        [l for l, _ in CANDIDATE_MODELS] if stage != "vision"
-        else [l for l, _ in VISION_CANDIDATES]
+        [l for l, _ in CANDIDATE_MODELS] if stage != "vision" else [l for l, _ in VISION_CANDIDATES]
     )
-    agg: dict[str, dict[str, float]] = {l: {"quality": 0.0, "cost": 0.0, "tps": 0.0, "n": 0.0} for l in labels}
+    agg: dict[str, dict[str, float]] = {
+        l: {"quality": 0.0, "cost": 0.0, "tps": 0.0, "n": 0.0} for l in labels
+    }
     for r in results_for_stage:
         for label in labels:
             run = r.candidates.get(label)
@@ -629,6 +674,7 @@ def pick_winner(
 
 def _sample_diff(stage: str, baseline_out: Any, cand_out: Any, model_label: str) -> str:
     """Render a short sample showing baseline vs candidate output for the report."""
+
     def _short(v: Any, limit: int = 300) -> str:
         if v is None:
             return "_(empty)_"
@@ -676,10 +722,19 @@ def render_report(
     out.append("|---|---|---|---|---|")
     for c in corpus:
         title = c.title[:60].replace("|", "\\|")
-        out.append(f"| {c.domain_key} | `{c.youtube_id}` | {title} | {c.duration}s | {c.matched_tag} |")
+        out.append(
+            f"| {c.domain_key} | `{c.youtube_id}` | {title} | {c.duration}s | {c.matched_tag} |"
+        )
     out.append("")
 
-    for stage in ["chapter_detect", "description", "synthesis", "enrichment", "translation", "vision"]:
+    for stage in [
+        "chapter_detect",
+        "description",
+        "synthesis",
+        "enrichment",
+        "translation",
+        "vision",
+    ]:
         if stage not in by_stage:
             continue
         results = by_stage[stage]
@@ -688,7 +743,9 @@ def render_report(
 
         out.append(f"## Stage: `{stage}`")
         out.append("")
-        out.append(f"Tie-break rule: **{TIE_BREAK[stage]}**  |  Quality cluster threshold: {QUALITY_TIE_THRESHOLD}")
+        out.append(
+            f"Tie-break rule: **{TIE_BREAK[stage]}**  |  Quality cluster threshold: {QUALITY_TIE_THRESHOLD}"
+        )
         out.append("")
         out.append("| Model | Quality | $/call | Latency (avg ms) | tok/sec | Errors |")
         out.append("|---|---|---|---|---|---|")
@@ -703,7 +760,9 @@ def render_report(
         )
         for label in labels_for_stage:
             stats = agg[label]
-            errs = sum(1 for r in results if (r.candidates.get(label) and r.candidates[label].error))
+            errs = sum(
+                1 for r in results if (r.candidates.get(label) and r.candidates[label].error)
+            )
             mark = "🏆 " if label == winner_label else ""
             out.append(
                 f"| {mark}`{label}` | {stats['quality']:.4f} | ${stats['cost']:.6f} "
@@ -751,8 +810,10 @@ def render_report(
         delta = new - today
         delta_str = f"-${abs(delta):.6f}" if delta < 0 else f"+${delta:.6f}"
         out.append(f"| {stage} | ${today:.6f} | `{winner_label}` ${new:.6f} | {delta_str} |")
-    out.append(f"| **TOTAL** | **${today_total:.6f}** | **${new_total:.6f}** | "
-               f"**{'-' if new_total < today_total else '+'}${abs(new_total - today_total):.6f}** |")
+    out.append(
+        f"| **TOTAL** | **${today_total:.6f}** | **${new_total:.6f}** | "
+        f"**{'-' if new_total < today_total else '+'}${abs(new_total - today_total):.6f}** |"
+    )
     out.append("")
 
     # Proposed config diff
@@ -783,17 +844,28 @@ def _resolve_model_string(label: str, stage: str) -> str:
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument(
         "--output",
         type=str,
-        default=str(REPORTS_DIR / f"fast-model-bench-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}.md"),
+        default=str(
+            REPORTS_DIR
+            / f"fast-model-bench-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}.md"
+        ),
     )
-    parser.add_argument("--mongo-uri", type=str, default=os.environ.get("MONGODB_URI", "mongodb://localhost:27017"))
-    parser.add_argument("--mongo-db", type=str, default=os.environ.get("MONGODB_DB", "video-insight-engine"))
+    parser.add_argument(
+        "--mongo-uri", type=str, default=os.environ.get("MONGODB_URI", "mongodb://localhost:27017")
+    )
+    parser.add_argument(
+        "--mongo-db", type=str, default=os.environ.get("MONGODB_DB", "video-insight-engine")
+    )
     parser.add_argument("--skip-vision", action="store_true", help="Skip frame vision benchmark")
     parser.add_argument("--dry-run", action="store_true", help="Print corpus selection only")
-    parser.add_argument("--save-json", action="store_true", help="Also save raw results as JSON sidecar")
+    parser.add_argument(
+        "--save-json", action="store_true", help="Also save raw results as JSON sidecar"
+    )
     parser.add_argument("--verbose", "-v", action="store_true")
     return parser.parse_args(argv)
 
@@ -841,7 +913,10 @@ async def amain(args: argparse.Namespace) -> int:
         for stage in stages:
             if not _stage_applies(stage, case):
                 logger.info(
-                    "[%s] skipping stage=%s (no quiz for %s)", case.youtube_id, stage, case.matched_tag
+                    "[%s] skipping stage=%s (no quiz for %s)",
+                    case.youtube_id,
+                    stage,
+                    case.matched_tag,
                 )
                 continue
             logger.info("[%s] running stage=%s", case.youtube_id, stage)
@@ -912,6 +987,7 @@ def _result_to_jsonable(r: StageBenchResult) -> dict[str, Any]:
             "tokens_out": run.tokens_out,
             "tokens_per_sec": run.tokens_per_sec,
         }
+
     return {
         "stage": r.stage,
         "case_id": r.case_id,

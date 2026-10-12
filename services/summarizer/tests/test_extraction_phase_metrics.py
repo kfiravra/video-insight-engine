@@ -135,30 +135,58 @@ class TestExtractionQualityMetric:
         assert _quality_records(caplog) == []
 
 
-def _extract_with_drops(data: dict[str, Any], dropped: dict[str, int]):
+def _extract_with_drops(data: dict[str, Any], dropped: dict[str, dict[str, int]]):
     async def _extract(_llm, _triage, _transcript, _video_info, **_kwargs):
-        yield {"event": "extraction_complete", "data": data, "droppedItems": dropped}
+        yield {
+            "event": "extraction_complete",
+            "data": data,
+            "validation": {"dropped": dropped, "defaulted": 2},
+        }
 
     return _extract
 
 
-async def _chunks_with_drops(ctx: SimpleNamespace, dropped: dict[str, int]) -> list[str]:
+async def _chunks_with_drops(ctx: SimpleNamespace, dropped: dict[str, dict[str, int]]) -> list[str]:
     with patch.object(extraction_phase, "extract", _extract_with_drops(_HALF_FILLED, dropped)):
         return [chunk async for chunk in extraction_phase.run_phase_extraction(ctx)]
 
 
+_CONCEPTS_LOST = {"learning.concepts": {"dropped": 3, "total": 4}}
+
+
 class TestDroppedItems:
-    """Validation drops (hotfix 2.1) reach ctx for ``pipeline.extraction._dropped``, not the SSE."""
+    """The validation report reaches ctx (``pipeline.extraction._dropped/_defaulted/_misTargeted``), not the SSE."""
 
     async def test_should_store_dropped_counts_on_the_context(self) -> None:
         ctx = _ctx()
 
-        await _chunks_with_drops(ctx, {"learning.concepts": 2})
+        await _chunks_with_drops(ctx, _CONCEPTS_LOST)
 
-        assert ctx.extraction_dropped == {"learning.concepts": 2}
+        assert ctx.extraction_dropped == _CONCEPTS_LOST
 
     async def test_should_keep_dropped_counts_out_of_the_sse_event(self) -> None:
-        chunks = await _chunks_with_drops(_ctx(), {"learning.concepts": 2})
+        chunks = await _chunks_with_drops(_ctx(), _CONCEPTS_LOST)
 
         complete = [c for c in chunks if '"extraction_complete"' in c]
-        assert complete and not any("droppedItems" in c for c in complete)
+        assert complete and not any('"validation"' in c for c in complete)
+
+    async def test_should_store_the_defaulted_count_on_the_context(self) -> None:
+        ctx = _ctx()
+
+        await _chunks_with_drops(ctx, _CONCEPTS_LOST)
+
+        assert ctx.extraction_defaulted == 2
+
+    async def test_should_flag_a_planned_field_that_lost_over_half_its_items(self) -> None:
+        ctx = _ctx()
+
+        await _chunks_with_drops(ctx, _CONCEPTS_LOST)
+
+        assert ctx.extraction_mis_targeted == ["learning.concepts"]
+
+    async def test_should_not_flag_a_field_no_tab_planned(self) -> None:
+        ctx = _ctx()
+
+        await _chunks_with_drops(ctx, {"learning.takeaways": {"dropped": 4, "total": 4}})
+
+        assert ctx.extraction_mis_targeted == []

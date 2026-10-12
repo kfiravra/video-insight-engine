@@ -20,7 +20,6 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from src.config import settings
-from src.models.domain_validation import extraction_with_drops
 from src.services.cache.response_cache import response_cache
 from src.services.media.s3_client import S3Client
 from src.services.pipeline.assembly import assemble_response
@@ -28,6 +27,7 @@ from src.services.pipeline.assembly.core import count_dropped_tabs
 from src.services.pipeline.assembly.moment_frame_fill import fill_moment_frames
 from src.services.pipeline.enrichment import needs_quiz
 from src.services.pipeline.phases import run_phase_enrichment, run_phase_synthesis
+from src.services.pipeline.phases.extraction import extraction_record
 from src.services.pipeline.phases.late_quiz import (
     carry_moment_props,
     positions_to_resend,
@@ -93,6 +93,8 @@ def _video_meta(ctx: PipelineContext) -> dict[str, Any]:
             {"start_time": ch.start_time, "end_time": ch.end_time, "title": ch.title}
             for ch in (ctx.video_data.chapters or [])
         ],
+        # moment_track fallback, first rung (outline → chapters → description timestamps).
+        "outline": [s.model_dump() for s in (ctx.memory.outline if ctx.memory else [])],
     }
 
 
@@ -300,7 +302,7 @@ def _result_document(
         "pipeline": {
             "triage": ctx.triage_dict,
             "reconcile": ctx.plan_result.reconcile if ctx.plan_result else [],
-            "extraction": extraction_with_drops(ctx.extraction_data, ctx.extraction_dropped),
+            "extraction": extraction_record(ctx),
             "enrichment": ctx.enrichment_data,
             "synthesis": ctx.synthesis_dict,
             "assembly": accounting,

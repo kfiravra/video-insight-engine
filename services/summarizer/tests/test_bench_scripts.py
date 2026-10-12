@@ -12,6 +12,7 @@ import importlib.util
 import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -103,3 +104,22 @@ class TestScorers:
         candidate = SimpleNamespace(quiz=None)
 
         assert scorers.score_enrichment(baseline, candidate) == 0.0
+
+
+async def test_should_keep_validation_keys_out_of_the_benchmark_extraction() -> None:
+    bench = _load("benchmark_fast_models")
+    store = SimpleNamespace(
+        get=AsyncMock(return_value=SimpleNamespace(segments=[{"text": "hello world"}]))
+    )
+    doc = {
+        "_id": "abc",
+        "youtubeId": "yt1",
+        "pipeline": {
+            "triage": {"tabs": []},
+            "extraction": {"tech": {"topics": ["a"]}, "_dropped": {}, "_defaulted": 2},
+        },
+    }
+
+    case = await bench.hydrate_case("tech", doc, store)
+
+    assert case is not None and case.extraction_data == {"tech": {"topics": ["a"]}}

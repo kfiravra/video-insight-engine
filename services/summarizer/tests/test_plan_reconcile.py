@@ -47,6 +47,7 @@ class TestInactiveDomain:
                 "from": "news.claims",
                 "to": None,
                 "reason": "inactive_domain",
+                "action": "dropped",
             }
         ]
 
@@ -71,7 +72,7 @@ class TestInactiveDomain:
 
         assert (len(kept), records) == (1, [])
 
-    def test_should_drop_a_modifier_path_when_the_modifier_is_not_planned(self) -> None:
+    def test_should_flag_a_modifier_path_when_the_modifier_is_not_planned(self) -> None:
         tab = _tab("moments", "moment_track", "narrative.keyMoments")
 
         _, _, records = reconcile_plan_tabs([tab], ["learning"], [], {})
@@ -136,9 +137,38 @@ class TestEvidenceFalse:
     def test_should_not_replace_with_a_source_whose_evidence_is_false(self) -> None:
         tab = _tab("key_moments", "moment_track", "learning.timestamps")
 
-        kept, _, _ = reconcile_plan_tabs([tab], ["food"], [], {"has_steps": False})
+        _, _, records = reconcile_plan_tabs([tab], ["food"], [], {"has_steps": False})
 
-        assert kept == []
+        assert records[0]["to"] is None
+
+
+class TestMomentTrackNeverDropped:
+    """Kfir, phase-1 close: a moment_track tab stays; assembly fills it from the fallback chain."""
+
+    def test_should_keep_a_moment_tab_no_active_source_can_feed(self) -> None:
+        """T1dQhQAm8Tc (prod 2026-10-09): moments on learning.timestamps for a tech-only video."""
+        tab = _tab("moments", "moment_track", "learning.timestamps")
+
+        kept, dropped, _ = reconcile_plan_tabs([tab], ["tech"], [], {})
+
+        assert (kept, dropped) == ([tab], [])
+
+    def test_should_record_the_kept_moment_tab_for_the_fallback(self) -> None:
+        tab = _tab("moments", "moment_track", "learning.timestamps")
+
+        _, _, records = reconcile_plan_tabs([tab], ["tech"], [], {})
+
+        assert (records[0]["reason"], records[0]["action"]) == (
+            "inactive_domain",
+            "kept_for_moment_fallback",
+        )
+
+    def test_should_still_repoint_a_moment_tab_when_an_active_source_can_feed_it(self) -> None:
+        tab = _tab("moments", "moment_track", "learning.timestamps")
+
+        kept, _, records = reconcile_plan_tabs([tab], ["food"], [], {"has_steps": True})
+
+        assert (kept[0]["dataSource"], records[0]["action"]) == ("food.steps", "repointed")
 
     def test_should_drop_the_quiz_when_the_video_is_not_learnable(self) -> None:
         quiz = _tab("quiz", "quiz_arena", "enrichment.quiz")
@@ -245,8 +275,32 @@ class TestPersistence:
             {
                 "plan_result": PlanResult(),
                 "extraction_data": {"tech": {"topics": ["a"]}},
-                "extraction_dropped": {"tech.cheatSheet": 22},
+                "extraction_dropped": {"tech.patterns": {"dropped": 7, "total": 7}},
+                "extraction_mis_targeted": ["tech.patterns"],
             }
         )
 
-        assert saved["extraction"]["_dropped"] == {"tech.cheatSheet": 22}
+        assert saved["extraction"]["_dropped"] == {"tech.patterns": {"dropped": 7, "total": 7}}
+
+    async def test_should_persist_the_defaulted_count_under_extraction(self) -> None:
+        saved = await _saved_pipeline(
+            {
+                "plan_result": PlanResult(),
+                "extraction_data": {"tech": {"cheatSheet": []}},
+                "extraction_defaulted": 22,
+            }
+        )
+
+        assert saved["extraction"]["_defaulted"] == 22
+
+    async def test_should_persist_mis_targeted_fields_under_extraction(self) -> None:
+        saved = await _saved_pipeline(
+            {
+                "plan_result": PlanResult(),
+                "extraction_data": {"tech": {"topics": ["a"]}},
+                "extraction_dropped": {"tech.patterns": {"dropped": 7, "total": 7}},
+                "extraction_mis_targeted": ["tech.patterns"],
+            }
+        )
+
+        assert saved["extraction"]["_misTargeted"] == ["tech.patterns"]
