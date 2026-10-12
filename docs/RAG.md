@@ -25,10 +25,11 @@ Pipeline complete                               (summarizer)
         │
         ├─ SSE emit "complete"          ◄── consumer unblocks here
         │
-        ├─ asyncio.create_task(store_transcript_chunks)
+        ├─ asyncio.create_task(transcript task)   ◄── non-English: English text first (below)
         ├─ asyncio.create_task(store_default_output_chunks)  ◄── fire-and-forget
         ├─ asyncio.create_task(store_visual_chunks)
         │
+        ├─ (non-English: translation phase)
         ├─ SSE emit "done"
         ▼
                                                 (background tasks finish later)
@@ -38,7 +39,19 @@ Pipeline complete                               (summarizer)
                                           VectorService.store_chunks (upsert)
 ```
 
-Background tasks **never block SSE** — see `_index_in_qdrant` in `services/summarizer/src/services/pipeline/phases/assembly.py`. An eval-user run (`evalRun`, D25) writes no Qdrant points at all (nor the Redis response copy): the collection keeps the users' own result.
+Background tasks **never block SSE** — `index_in_qdrant` in `services/summarizer/src/services/pipeline/phases/qdrant_index.py` creates the three tasks and returns; nothing in it is awaited by the run, so neither the translation phase nor `done` waits on the index. An eval-user run (`evalRun`, D25) writes no Qdrant points at all (nor the Redis response copy): the collection keeps the users' own result.
+
+### Non-English transcripts
+
+The embedding model is English-only, so a non-English video's transcript points embed English text (`text`) and keep the source-language text for display (`text_original`, aligned by proportional offset). The transcript task picks that English first, in this order (pipeline-1min 2.3):
+
+| Case | English text | `text_original` | Timeline |
+|---|---|---|---|
+| This run transcribed the audio with Whisper (no captions, or their fetch failed) | Whisper translate of that cached audio (`translate_audio_to_english`, which also deletes the cached file) — the pre-2.3 path | the transcript | transcript segments |
+| The transcript already reads as English (`transcript.english.is_english_text`: no non-Latin script, langdetect `en`) — YouTube offered an English track: an auto-dub, or the caption picker fell back to English (YouTube labels Hebrew `iw`, which never matches a detected `he`) | the transcript as is | `null` | transcript segments |
+| Any other transcript (captions, an S3 hit, Gemini) | translated on the fast model with the `translate_flat` prompt (`transcript.english.english_blocks`): segments merged into ~200–400-char sentence blocks, ≤ 4,000 source chars per call, 4 calls in flight, a failed call retried once as two halves; span `rag_translation`, ledger feature `summarize:rag_translation`. **No audio download, no Whisper call.** Measured 2026-10-12 on a 31-min Arabic caption track: 6 gpt-4o-mini calls, 18.7 s, $0.005 (≈ $0.0016 and ~10 s per 10 min of speech) | the transcript | the blocks' caption times |
+
+When the translation or Whisper fails, the original text is embedded (`text_original` `null`). YouTube's own English translation of the track (timedtext `tlang=en`) was rejected: the one measuring fetch got HTTP 429 twice on the dev proxy exit, and auto-translated tracks are widely reported to be throttled; a second timedtext request per video would also add to the proxy exits' caption load. Translating raw caption lines one string each was rejected too: subtitle events often hold two lines, gpt-4o-mini returned them as two entries and 4 of 6 calls lost their alignment.
 
 ## Output chunker rules
 
@@ -61,7 +74,7 @@ Each point carries:
 | Field             | Type     | Set on   | Purpose                                              |
 |-------------------|----------|----------|------------------------------------------------------|
 | `text`            | string   | both     | English-language chunk text (the embedded source)    |
-| `text_original`   | string?  | non-EN   | Source-language text aligned by proportional offset  |
+| `text_original`   | string?  | non-EN   | Source-language text aligned by proportional offset; `null` when the transcript was already English or no English text could be made |
 | `video_id`        | string   | both     | YouTube ID — filter scope for retrieval              |
 | `chunk_index`     | int      | both     | Ordering within the source                           |
 | `timestamp` / `end_timestamp` | float? | transcript, visual | Seconds; transcript chunks get them when segments are passed, visual chunks always. `null` on output points and on points written before payload schema v2 (heal on re-ingest). |
@@ -78,7 +91,7 @@ Output chunks let the assistant deep-link a retrieval hit back to the exact tab 
 
 **Why it stays for now:**
 - 384-dim matches the existing Qdrant collection (`VECTOR_SIZE = 384` in `qdrant_service.py:30`). A swap requires recreating collections.
-- `all-MiniLM-L6-v2` is **English-only**. Non-English content is translated to English via Whisper **before** embedding (see `services/summarizer/src/services/pipeline/phases/assembly.py:137` and `services/summarizer/src/services/pipeline/phases/translation.py`). Cross-video failures previously observed in production were due to index corruption from missing pre-deletes — fixed by `VectorService.delete_by_video_and_source` in `vector/store.py`. Do **not** assume the embedding model has cross-lingual ability when evaluating swaps.
+- `all-MiniLM-L6-v2` is **English-only**. Non-English transcripts are embedded as English text (see [Non-English transcripts](#non-english-transcripts)); the assembled output is English-canonical already. Cross-video failures previously observed in production were due to index corruption from missing pre-deletes — fixed by `VectorService.delete_by_video_and_source` in `vector/store.py`. Do **not** assume the embedding model has cross-lingual ability when evaluating swaps.
 - Output chunks are short, prose-only retrieval units (handler-enforced) which is exactly the regime MiniLM handles well.
 
 **Swap candidate:** `BAAI/bge-small-en-v1.5` — same 384 dims, drop-in replacement, generally +5–8% retrieval quality on English benchmarks. Larger candidates (e.g., `bge-base-en-v1.5` at 768 dims) require recreating collections and are out of scope for this task.
