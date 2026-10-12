@@ -376,7 +376,7 @@ class TestGetTranscriptAsync:
         assert segments[0]["text"] == "Hello"
         assert text == "Hello"
         assert transcript_type == "manual"
-        mock_fetch.assert_called_once_with("test123")
+        mock_fetch.assert_called_once_with("test123", None)
 
     @patch("src.services.transcription.transcript._fetch_transcript_sync")
     async def test_propagates_errors(self, mock_fetch):

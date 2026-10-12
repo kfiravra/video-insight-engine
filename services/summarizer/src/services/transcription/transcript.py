@@ -25,6 +25,7 @@ from src.services.media.download_utils import (
     ytdlp_proxy_url,
 )
 from src.services.transcript.cleaner import remove_fillers
+from src.utils.language_utils import normalize_language_code
 
 logger = logging.getLogger(__name__)
 
@@ -63,14 +64,40 @@ def _log_retry(retry_state: tenacity.RetryCallState) -> None:
     )
 
 
-def _select_track(transcript_list: TranscriptList) -> tuple[Transcript | None, str]:
-    """Pick a track: manual English -> generated English -> any language.
+def _spoken_language_track(
+    transcript_list: TranscriptList, spoken_language: str
+) -> tuple[Transcript, str] | None:
+    """Manual, then generated, track whose aliased primary subtag is the spoken language.
+
+    Matched through ``normalize_language_code`` so YouTube's legacy ``iw``
+    finds a Hebrew video's track and ``en-US`` counts as English.
+    """
+    tracks = list(transcript_list)
+    for is_generated, transcript_type in ((False, "manual"), (True, "auto-generated")):
+        for track in tracks:
+            if (
+                track.is_generated == is_generated
+                and normalize_language_code(track.language_code) == spoken_language
+            ):
+                return track, transcript_type
+    return None
+
+
+def _select_track(
+    transcript_list: TranscriptList, spoken_language: str | None = None
+) -> tuple[Transcript | None, str]:
+    """Pick a track: the spoken language (manual, then generated) when it is
+    known, then manual English -> generated English -> any language.
 
     Returns ``(transcript, transcript_type)``; ``transcript`` is ``None``
     when the list is empty. The English lookups label the type by which
     finder succeeded; the any-language fallback reads the track's own
     ``is_generated`` flag so a manual non-English track is not mislabelled.
     """
+    if spoken_language:
+        spoken_track = _spoken_language_track(transcript_list, spoken_language)
+        if spoken_track is not None:
+            return spoken_track
     try:
         return transcript_list.find_manually_created_transcript(["en"]), "manual"
     except (NoTranscriptFound, TranscriptsDisabled):
@@ -100,33 +127,37 @@ def _proxy_config(proxy_url: str | None) -> GenericProxyConfig | None:
     before_sleep=_log_retry,
     reraise=True,
 )
-def _fetch_transcript_sync(video_id: str) -> tuple[list[dict], str, str, str | None]:
+def _fetch_transcript_sync(
+    video_id: str, spoken_language: str | None = None
+) -> tuple[list[dict], str, str, str | None]:
     """Single-exit fetch: same-IP backoff retry on a 429 (direct or one proxy)."""
-    return _fetch_once(video_id, ytdlp_proxy_url())
+    return _fetch_once(video_id, ytdlp_proxy_url(), spoken_language)
 
 
 def _fetch_rotating_sync(
-    video_id: str, exit_urls: list[str]
+    video_id: str, exit_urls: list[str], spoken_language: str | None = None
 ) -> tuple[list[dict], str, str, str | None]:
     """Multi-exit fetch: a 429 is IP-scoped, so move to the next exit instead of
     waiting on the same one. Any other error ends the attempt immediately."""
     return try_proxy_exits(
         exit_urls,
-        partial(_fetch_once, video_id),
+        partial(_fetch_once, video_id, spoken_language=spoken_language),
         _is_rate_limited_code,
         f"Transcript fetch for {video_id}",
     )
 
 
-def _fetch_once(video_id: str, proxy_url: str | None) -> tuple[list[dict], str, str, str | None]:
+def _fetch_once(
+    video_id: str, proxy_url: str | None, spoken_language: str | None = None
+) -> tuple[list[dict], str, str, str | None]:
     """
     Fetch transcript from YouTube (synchronous internal function).
 
     transcript_type is "manual" for a creator-uploaded track and
     "auto-generated" otherwise. The English lookups label it by which
-    finder succeeded; the any-language fallback labels it from the
-    track's own is_generated flag, so a manual non-English track is
-    not mislabelled.
+    finder succeeded; the spoken-language and any-language picks label
+    it from the track's own is_generated flag, so a manual non-English
+    track is not mislabelled.
 
     Returns:
         (segments, full_text, transcript_type, language_code)
@@ -136,7 +167,7 @@ def _fetch_once(video_id: str, proxy_url: str | None) -> tuple[list[dict], str, 
     try:
         # New API: use instance method .list() instead of class method .list_transcripts()
         transcript_list = ytt_api.list(video_id)
-        transcript, transcript_type = _select_track(transcript_list)
+        transcript, transcript_type = _select_track(transcript_list, spoken_language)
         if not transcript:
             raise TranscriptError("No transcript available", ErrorCode.NO_TRANSCRIPT)
 
@@ -258,7 +289,9 @@ def normalize_segments(
     return normalized
 
 
-async def get_transcript(video_id: str) -> tuple[list[dict], str, str, str | None]:
+async def get_transcript(
+    video_id: str, spoken_language: str | None = None
+) -> tuple[list[dict], str, str, str | None]:
     """
     Fetch transcript from YouTube (async wrapper).
 
@@ -269,6 +302,8 @@ async def get_transcript(video_id: str) -> tuple[list[dict], str, str, str | Non
 
     Args:
         video_id: YouTube video ID
+        spoken_language: ISO 639-1 language spoken in the video, when yt-dlp
+            knew it — its tracks are tried before the English-first order
 
     Returns:
         (segments, full_text, transcript_type, language_code)
@@ -280,5 +315,5 @@ async def get_transcript(video_id: str) -> tuple[list[dict], str, str, str | Non
     # round-robin), the same one its yt-dlp calls use.
     exit_urls = ytdlp_proxy_exit_urls(video_id)
     if len(exit_urls) > 1:
-        return await asyncio.to_thread(_fetch_rotating_sync, video_id, exit_urls)
-    return await asyncio.to_thread(_fetch_transcript_sync, video_id)
+        return await asyncio.to_thread(_fetch_rotating_sync, video_id, exit_urls, spoken_language)
+    return await asyncio.to_thread(_fetch_transcript_sync, video_id, spoken_language)

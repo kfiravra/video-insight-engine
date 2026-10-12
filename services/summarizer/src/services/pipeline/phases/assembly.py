@@ -394,7 +394,9 @@ def _store_transcript_in_s3(ctx: PipelineContext) -> None:
     """Raw transcript to S3 (background, best-effort) + ``rawTranscriptRef`` on the row.
 
     Skipped for an S3-hit run: re-storing the blob it just read with
-    source="s3" would decay the recorded origin after one regen.
+    source="s3" would decay the recorded origin after one regen. A yt-dlp
+    transcript records its caption track, so a later run whose picker chooses
+    another track sees the blob as stale; the store replaces the old blob.
     """
     transcript = ctx.transcript_data
     if not S3Client.is_available() or not transcript or transcript.source == "s3":
@@ -402,13 +404,21 @@ def _store_transcript_in_s3(ctx: PipelineContext) -> None:
 
     async def _store() -> None:
         try:
-            from src.services.transcription.transcript_store import transcript_store
+            from src.services.transcription.transcript_store import caption_ref, transcript_store
 
+            video_data = ctx.video_data
+            caption = None
+            if transcript.source == "ytdlp":
+                caption = caption_ref(
+                    getattr(video_data, "caption_lang", None),
+                    getattr(video_data, "caption_track", None),
+                )
             s3_key = await transcript_store.store(
                 youtube_id=ctx.youtube_id,
                 segments=normalize_segments(transcript.segments),
                 source=transcript.source,
                 language=ctx.source_language_code or transcript.language,
+                caption=caption,
             )
             await asyncio.to_thread(
                 ctx.repository._collection.update_one,

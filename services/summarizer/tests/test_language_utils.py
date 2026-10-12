@@ -129,6 +129,21 @@ class TestNormalizeLanguageCode:
         assert normalize_language_code("en_US") == "en"
         assert normalize_language_code("zh_Hans") == "zh"
 
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            ("iw", "he"),
+            ("IW", "he"),
+            ("iw-orig", "he"),
+            ("iw-IL", "he"),
+            ("ji", "yi"),
+            ("in", "id"),
+        ],
+    )
+    def test_should_alias_youtube_legacy_codes_when_normalizing(self, raw: str, expected: str):
+        """YouTube still serves the pre-1989 codes in ``language`` and caption keys."""
+        assert normalize_language_code(raw) == expected
+
 
 class TestDetectLanguageByScript:
     """Tests for detect_language_by_script()."""
@@ -204,5 +219,3 @@ class TestDetectLanguageFromText:
     def test_returns_none_for_short_text(self):
         """Under the 50-char floor, detection returns None regardless of deps."""
         assert detect_language_from_text("hola") is None
-
-

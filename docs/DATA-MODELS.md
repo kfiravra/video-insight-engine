@@ -185,7 +185,11 @@ One row per video **version** (`version`, `isLatest` below); the served row is s
 
   // Legacy, never written by the current pipeline. Transcript text lives in
   // S3 at the deterministic key videos/<youtubeId>/transcript.json
-  // (rawTranscriptRef is NOT set for pipeline rows — see its comment below).
+  // (rawTranscriptRef is NOT set for pipeline rows — see its comment below):
+  // { youtube_id, fetched_at, source, language, segments: [{text, startMs, endMs}],
+  //   caption: { lang, kind } | null }  — caption = the yt-dlp track a "ytdlp" blob holds
+  // (2.4; absent on older blobs). A caption-origin blob whose track differs from a later
+  // run's pick is skipped as stale and overwritten.
   transcript: string | null,
   transcriptSegments: [{
     text: string,
@@ -203,10 +207,10 @@ One row per video **version** (`version`, `isLatest` below); the served row is s
     type: "manual" | "auto-generated" | "asr" | "metadata" | "cached" | null,
     origin: "ytdlp" | "api" | "proxy" | "whisper" | "gemini" | "metadata" | null,          // s3 rows only: layer that produced the cached blob
     captionTrack: "manual" | "auto-generated" | null,   // track THIS run's metadata phase picked (null = no usable json3 track)
-    captionLang: string | null,                          // matched caption key ("ar-SA", "en-en"); differs from the video language on auto-translation
+    captionLang: string | null,                          // matched caption key ("ar-SA", "en-orig", legacy "iw"); since 2.4 a key in the spoken language whenever an untranslated track in it exists — the fallback pick can still differ from the video language (incl. a machine translation, its last resort)
     captionFetchError: "http_429" | "http_403" | "http_<n>" | "request" | "parse" | "empty" | null,  // "parse" = json3 body unparseable → captions discarded, chain continues
     captionApiSkipped: boolean,                          // youtube-transcript-api skipped by the Redis caption-429 marker
-    attempted: string[],                                 // layers that RAN and FAILED before `source`, in order: s3 | ytdlp | api | proxy | whisper | gemini
+    attempted: string[],                                 // layers that RAN and FAILED before `source`, in order: s3 | s3-stale | ytdlp | api | proxy | whisper | gemini — s3-stale = the S3 blob held another caption track than this run's pick (skipped, re-stored)
     segments: number | null,
     chars: number | null,
     fetchWallMs: number | null,                          // wall time of the fetch chain inside the transcript phase (frames run in parallel); set on failed rows too

@@ -507,6 +507,6 @@ class TestTimedtext429Marker:
 
         items = await self._run(False, get_transcript)
 
-        get_transcript.assert_awaited_once_with("vid123")
+        get_transcript.assert_awaited_once_with("vid123", spoken_language=None)
         _stub_caption_negative_cache.mark.assert_not_awaited()
         assert items[-1].transcript_type == "manual"

@@ -170,26 +170,82 @@ _NAME_TO_CODE: dict[str, str] = {name.lower(): code for code, name in _LANGUAGE_
 # caption tracks return three-letter codes; the prior implementation truncated
 # them to invalid two-letter codes ("jpn" → "jp", "chi" → "ch").
 _ALPHA3_TO_ALPHA2: dict[str, str] = {
-    "eng": "en", "heb": "he", "ara": "ar", "per": "fa", "fas": "fa",
-    "urd": "ur", "yid": "yi", "spa": "es", "fre": "fr", "fra": "fr",
-    "ger": "de", "deu": "de", "ita": "it", "por": "pt", "rus": "ru",
-    "jpn": "ja", "kor": "ko", "chi": "zh", "zho": "zh", "hin": "hi",
-    "tur": "tr", "pol": "pl", "dut": "nl", "nld": "nl", "swe": "sv",
-    "dan": "da", "nor": "no", "fin": "fi", "ell": "el", "gre": "el",
-    "cze": "cs", "ces": "cs", "rum": "ro", "ron": "ro", "hun": "hu",
-    "tha": "th", "vie": "vi", "ind": "id", "may": "ms", "msa": "ms",
-    "ukr": "uk", "bul": "bg", "hrv": "hr", "slo": "sk", "slk": "sk",
-    "slv": "sl", "lit": "lt", "lav": "lv", "est": "et", "tam": "ta",
-    "tel": "te", "ben": "bn", "mal": "ml", "mar": "mr", "guj": "gu",
-    "kan": "kn", "swa": "sw", "afr": "af", "cat": "ca", "baq": "eu",
-    "eus": "eu", "glg": "gl", "srp": "sr",
+    "eng": "en",
+    "heb": "he",
+    "ara": "ar",
+    "per": "fa",
+    "fas": "fa",
+    "urd": "ur",
+    "yid": "yi",
+    "spa": "es",
+    "fre": "fr",
+    "fra": "fr",
+    "ger": "de",
+    "deu": "de",
+    "ita": "it",
+    "por": "pt",
+    "rus": "ru",
+    "jpn": "ja",
+    "kor": "ko",
+    "chi": "zh",
+    "zho": "zh",
+    "hin": "hi",
+    "tur": "tr",
+    "pol": "pl",
+    "dut": "nl",
+    "nld": "nl",
+    "swe": "sv",
+    "dan": "da",
+    "nor": "no",
+    "fin": "fi",
+    "ell": "el",
+    "gre": "el",
+    "cze": "cs",
+    "ces": "cs",
+    "rum": "ro",
+    "ron": "ro",
+    "hun": "hu",
+    "tha": "th",
+    "vie": "vi",
+    "ind": "id",
+    "may": "ms",
+    "msa": "ms",
+    "ukr": "uk",
+    "bul": "bg",
+    "hrv": "hr",
+    "slo": "sk",
+    "slk": "sk",
+    "slv": "sl",
+    "lit": "lt",
+    "lav": "lv",
+    "est": "et",
+    "tam": "ta",
+    "tel": "te",
+    "ben": "bn",
+    "mal": "ml",
+    "mar": "mr",
+    "guj": "gu",
+    "kan": "kn",
+    "swa": "sw",
+    "afr": "af",
+    "cat": "ca",
+    "baq": "eu",
+    "eus": "eu",
+    "glg": "gl",
+    "srp": "sr",
 }
+
+# ISO 639-1 codes withdrawn in 1989 that YouTube still serves: Hebrew is
+# ``iw`` in yt-dlp's ``language`` field and caption keys (``iw-orig``), so
+# without the alias every Hebrew signal normalized to None.
+_LEGACY_ALIASES: dict[str, str] = {"iw": "he", "ji": "yi", "in": "id"}
 
 
 def normalize_language_code(raw: str | None) -> str | None:
     """Normalize anything-language-shaped to a supported ISO 639-1 code.
 
     Accepts BCP-47 region tags (``en-US`` → ``en``, ``zh-Hans`` → ``zh``),
+    YouTube's legacy codes (``iw`` → ``he``, ``ji`` → ``yi``, ``in`` → ``id``),
     ISO 639-2/3 three-letter codes (``chi`` → ``zh``, ``jpn`` → ``ja``),
     and language names returned by the Whisper API (``chinese`` → ``zh``,
     ``hebrew`` → ``he``).
@@ -205,6 +261,7 @@ def normalize_language_code(raw: str | None) -> str | None:
         return None
 
     head = s.split("-")[0].split("_")[0]
+    head = _LEGACY_ALIASES.get(head, head)
     if len(head) == 2 and head in SUPPORTED_LANGS:
         return head
     if len(head) == 3 and head in _ALPHA3_TO_ALPHA2:
@@ -224,7 +281,8 @@ def detect_language_from_text(text: str) -> str | None:
         return None
 
     try:
-        from langdetect import detect, DetectorFactory
+        from langdetect import DetectorFactory, detect
+
         DetectorFactory.seed = 0  # Deterministic results
         code = detect(text[:5000])
         return normalize_language_code(code)

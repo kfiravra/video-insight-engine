@@ -25,9 +25,9 @@ from src.services.pipeline.pipeline_helpers import (
     normalized_segments_to_pipeline,
     sse_event,
 )
+from src.services.transcription.cached_transcript import read_cached_transcript
 from src.services.transcription.gemini_transcriber import transcribe_with_gemini
 from src.services.transcription.transcript import get_transcript
-from src.services.transcription.transcript_store import RawTranscript, transcript_store
 from src.services.transcription.whisper_transcriber import transcribe_with_whisper
 from src.services.video.youtube import VideoData
 from src.utils.language_utils import (
@@ -85,39 +85,6 @@ async def _mark_timedtext_429(video_data: VideoData) -> None:
         await caption_negative_cache.mark()
 
 
-def _cached_transcript_data(cached: RawTranscript) -> TranscriptData:
-    """Convert an S3-cached transcript blob (startMs/endMs) to pipeline TranscriptData."""
-    segments = []
-    for seg in cached.segments:
-        start_ms = seg.get("startMs", 0)
-        end_ms = seg.get("endMs", start_ms)
-        segments.append(
-            {
-                "text": seg.get("text", ""),
-                "start": start_ms / 1000.0,
-                "duration": (end_ms - start_ms) / 1000.0,
-            }
-        )
-    raw_text = " ".join(seg["text"] for seg in segments)
-
-    # Detect language from cached transcript if not stored
-    cached_language = cached.language
-    if not cached_language and raw_text:
-        cached_language = detect_language_from_text(raw_text)
-        if not cached_language:
-            cached_language = detect_language_by_script(raw_text)
-        if cached_language:
-            logger.info("Detected language from S3 cache text: %s", cached_language)
-
-    return TranscriptData(
-        segments=segments,
-        raw_text=raw_text,
-        transcript_type=f"cached-{cached.source}",
-        source="s3",
-        language=cached_language,
-    )
-
-
 def _ytdlp_transcript_data(video_data: VideoData) -> TranscriptData:
     """Build TranscriptData from the caption track the deferred caption fetch filled in."""
     segments = [
@@ -145,6 +112,12 @@ def _ytdlp_transcript_data(video_data: VideoData) -> TranscriptData:
         source="ytdlp",
         language=ytdlp_language,
     )
+
+
+def _spoken_language(video_data: VideoData) -> str | None:
+    """yt-dlp's spoken-language signal; callers that predate the field carry no string."""
+    spoken = getattr(video_data, "spoken_language", None)
+    return spoken if isinstance(spoken, str) else None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -183,19 +156,11 @@ async def fetch_transcript(
 
     # Priority 0: S3 cached transcript (avoids all YouTube calls)
     if S3Client.is_available() and not skip_cache:
-        try:
-            cached = await transcript_store.get(youtube_id)
-            if cached:
-                logger.info("Using S3 cached transcript: %d segments", len(cached.segments))
-                yield sse_event("phase", {"phase": "transcript_cached"})
-                trail.origin = cached.source
-                data = _cached_transcript_data(cached)
-                data.trail = trail
-                yield data
-                return
-        except Exception as e:
-            trail.attempted.append("s3")
-            logger.warning("S3 transcript retrieval failed, continuing with fallback chain: %s", e)
+        cached_data = await read_cached_transcript(youtube_id, video_data, trail)
+        if cached_data is not None:
+            yield sse_event("phase", {"phase": "transcript_cached"})
+            yield cached_data
+            return
 
     # Priority 1: yt-dlp subtitles
     if video_data.subtitles:
@@ -235,7 +200,7 @@ async def fetch_transcript(
         api_label = _api_label()
         try:
             segments, raw_text, transcript_type, api_language = await asyncio.wait_for(
-                get_transcript(youtube_id),
+                get_transcript(youtube_id, spoken_language=_spoken_language(video_data)),
                 timeout=settings.TRANSCRIPT_FETCH_TIMEOUT,
             )
             data = TranscriptData(

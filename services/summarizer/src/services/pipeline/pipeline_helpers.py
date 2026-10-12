@@ -105,7 +105,8 @@ class TranscriptTrail:
     """
 
     # Layers that RAN and FAILED before the winning source, in order. Values:
-    # "s3" (lookup raised — a miss is not an attempt), "ytdlp" (a caption
+    # "s3" (lookup raised — a miss is not an attempt), "s3-stale" (the cached
+    # blob holds another caption track than this run's pick), "ytdlp" (a caption
     # track was picked but the timedtext fetch yielded nothing), "api" /
     # "proxy" (youtube-transcript-api, labelled by whether YOUTUBE_PROXY_URL
     # is set), "whisper", "gemini".

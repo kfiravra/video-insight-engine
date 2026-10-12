@@ -88,8 +88,9 @@ services/summarizer/
     │   │   └── pipeline_helpers.py   # SSE events, timer, data classes, run_task_with_heartbeat
     │   │
     │   ├── transcription/        # Transcript fetching & storage
-    │   │   ├── transcript.py         # Transcript cleaning & formatting
+    │   │   ├── transcript.py         # youtube-transcript-api layer + transcript cleaning & formatting
     │   │   ├── transcript_fetcher.py # Multi-source fallback chain
+    │   │   ├── cached_transcript.py  # Chain step 0: the S3 blob (stale when it holds another caption track)
     │   │   ├── transcript_chunker.py # Chapter-aware transcript splitting (chain: see Chunked Extraction)
     │   │   ├── transcript_store.py   # S3 transcript persistence
     │   │   ├── gemini_transcriber.py # Gemini Flash transcription
@@ -114,6 +115,7 @@ services/summarizer/
     │   │
     │   └── video/                # YouTube & metadata
     │       ├── youtube.py            # Video metadata (yt-dlp)
+    │       ├── caption_picker.py     # Caption-track choice: spoken language first, then manual over auto
     │       ├── sponsorblock.py       # Sponsor segment detection
     │       ├── description_analyzer.py # Description analysis
     │       └── playlist.py           # Playlist extraction (yt-dlp)
@@ -312,9 +314,11 @@ A plan-first pipeline: ~6-7 text calls (description analysis, tier probe, plan �
     │   analysis is NOT a member: extraction must not wait for its LLM call (30 s total cap);
     │   its readers (chunked chapter split, assembly) await it for ≤ 5 s and assembly emits its SSE
     ┌─▶ TRANSCRIPT (Multi-Source Fallback Chain)
-    │   └─▶ 0. S3 cached transcript (avoids all YouTube calls)
-    │   └─▶ 1. yt-dlp subtitles (embedded in video metadata)
-    │   └─▶ 2. youtube-transcript-api (with rate limit retry)
+    │   └─▶ 0. S3 cached transcript (avoids all YouTube calls; skipped as stale when it
+    │        holds another caption track than this run's pick)
+    │   └─▶ 1. yt-dlp subtitles (track picked in metadata: spoken language first, then
+    │        manual over auto — caption_picker.py)
+    │   └─▶ 2. youtube-transcript-api (spoken language first; with rate limit retry)
     │   └─▶ 3. Gemini Flash (audio transcription, ~30-90s, ~$0.04/26min)
     │   └─▶ 4. OpenAI Whisper (audio fallback, ~5-15min, ~$0.16/26min)
     │   └─▶ (audio paths 3+4 bypass LiteLLM → emit their own llm_usage cost row +
@@ -881,14 +885,26 @@ The summarizer uses a multi-source fallback chain to maximize transcript availab
 │  0. S3 Cached Transcript                               │
 │     └─▶ Avoids all YouTube calls                       │
 │     └─▶ Source: "s3" (cached-{original_source})        │
+│     └─▶ Skipped as stale ("s3-stale" in attempted)     │
+│         when this run fetched captions and the blob is │
+│         a caption-origin blob of another track (key +  │
+│         bucket; pre-2.4 blobs record none). Whisper /  │
+│         Gemini blobs never go stale                    │
 │                         │                               │
 │                         ▼                               │
 │  1. yt-dlp Subtitles                                   │
-│     └─▶ Extracted during video metadata fetch           │
+│     └─▶ Track picked during video metadata fetch       │
+│         (caption_picker.py): the spoken language       │
+│         (yt-dlp `language`, else the one `-orig` ASR)  │
+│         → manual in it → its untranslated auto track;  │
+│         none → the language waterfall + English pref.  │
+│     └─▶ Legacy codes aliased: iw→he, ji→yi, in→id      │
 │     └─▶ Source: "ytdlp"                                │
 │                         │                               │
 │                         ▼                               │
 │  2. youtube-transcript-api                             │
+│     └─▶ Spoken language first (manual, then generated) │
+│         when yt-dlp knew it, then English-first        │
 │     └─▶ With rate limit retry (tenacity)               │
 │     └─▶ 3 attempts, exponential backoff (4-30s)        │
 │     └─▶ Source: "api" or "proxy"                       │
@@ -1127,6 +1143,8 @@ vie-transcripts (S3 bucket)
 │     └─▶ S3 key: "videos/{youtubeId}/transcript.json"   │
 │     └─▶ Legacy fallback: "transcripts/{youtubeId}.json"│
 │     └─▶ Contains: segments, source, language, fetchedAt│
+│         + caption {lang, kind} for a yt-dlp transcript │
+│     └─▶ Overwritten when a stale blob is replaced      │
 │                                                         │
 │  2. Upload Video Frames                                 │
 │     └─▶ Scene frames: "videos/{id}/scenes-v3/           │

@@ -13,9 +13,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from src.services.pipeline.pipeline_helpers import TranscriptData
 from src.services.transcription import transcript_fetcher
 from src.services.transcription.transcript_fetcher import fetch_transcript
+from src.services.transcription.transcript_store import RawTranscript, transcript_store
 from tests.test_transcript_fetcher import _drain, _video_data_without_captions
 
-_CACHED = SimpleNamespace(
+_CACHED = RawTranscript(
+    youtube_id="dQw4w9WgXcQ",
+    fetched_at="2026-01-01T00:00:00+00:00",
     segments=[{"text": "cached", "startMs": 0, "endMs": 1000}],
     source="whisper",
     language="en",
@@ -35,7 +38,7 @@ async def _fetch(*, skip_cache: bool) -> tuple[TranscriptData, AsyncMock]:
     store_get = AsyncMock(return_value=_CACHED)
     with (
         patch.object(transcript_fetcher.S3Client, "is_available", return_value=True),
-        patch.object(transcript_fetcher.transcript_store, "get", new=store_get),
+        patch.object(transcript_store, "get", new=store_get),
     ):
         items = await _drain(
             fetch_transcript("dQw4w9WgXcQ", _video_data_with_captions(), 600, skip_cache=skip_cache)
