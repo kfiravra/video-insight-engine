@@ -24,9 +24,11 @@ from src.services.pipeline import translation_flat
 from src.services.pipeline.translation import (
     _SKIP_KEYS,
     _collect_strings,
+    translate_text,
     translate_to_source,
 )
 from src.services.pipeline.translation_flat import is_mirror, translate_flat_list
+from src.services.transcript.english import RAG_TRANSLATION_STAGE
 
 # ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -219,6 +221,38 @@ class TestTranslateFlatList:
 
         with patch.object(translation_flat, "call_llm_with_retry", timeout):
             assert await translate_flat_list(AsyncMock(), ["hello"], "en", "he") is None
+
+
+class TestTranslationModel:
+    """``LLM_TRANSLATION_MODEL`` reaches every translation call (gate-2 decision 6)."""
+
+    @staticmethod
+    async def _model_sent(translate: Any) -> str | None:
+        llm = AsyncMock(return_value='{"translations": ["שלום"]}')
+        with (
+            patch.object(translation_flat.settings, "LLM_TRANSLATION_MODEL", "openai/gpt-4.1-mini"),
+            patch.object(translation_flat, "call_llm_with_retry", llm),
+        ):
+            await translate()
+        return llm.call_args.kwargs["model_override"]
+
+    async def test_should_send_the_translation_model_when_the_output_is_translated(self):
+        model = await self._model_sent(
+            lambda: translate_flat_list(AsyncMock(), ["hello"], "en", "he")
+        )
+        assert model == "openai/gpt-4.1-mini"
+
+    async def test_should_send_the_translation_model_when_the_title_is_translated(self):
+        model = await self._model_sent(lambda: translate_text(AsyncMock(), "hello", "en", "he"))
+        assert model == "openai/gpt-4.1-mini"
+
+    async def test_should_send_the_translation_model_when_the_rag_transcript_is_translated(self):
+        model = await self._model_sent(
+            lambda: translate_flat_list(
+                AsyncMock(), ["hello"], "he", "en", stage_name=RAG_TRANSLATION_STAGE
+            )
+        )
+        assert model == "openai/gpt-4.1-mini"
 
 
 # ─── translate_to_source orchestrator ────────────────────────────────────────
