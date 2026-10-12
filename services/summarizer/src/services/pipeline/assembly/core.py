@@ -28,6 +28,7 @@ from .attachments import attach_secondaries
 from .cross_tab import resolve_cross_tab_links
 from .density import enforce_density
 from .normalizers import _chapters_to_moments
+from .item_timestamps import clear_impossible_item_timestamps
 from .moment_fallback import cannot_feed_moments, fallback_moment_props, fallback_moments
 from .promotion import demote_component, promote_component
 from .registry import ASSEMBLER_REGISTRY, infer_component
@@ -1699,6 +1700,9 @@ def assemble_response(
             dropped_tabs,
             refill=lambda: fallback_moment_props(video_meta, description_analysis),
         )
+    clear_impossible_item_timestamps(
+        assembled_tabs, (video_meta or {}).get("duration"), _TIMESTAMP_OVER_DURATION_TOLERANCE
+    )
 
     # Relaxed second-pass thumbnail fill for the moment grid — runs after the
     # strict per-tab injection so exclusivity had first pick.
