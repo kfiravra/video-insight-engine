@@ -22,6 +22,7 @@ from src.services.pipeline.translation_flat import (
     answer_size,
     answer_tokens,
     char_batches,
+    is_batch_echo,
     translate_flat_list,
 )
 
@@ -42,15 +43,41 @@ def _output(count: int, chars: int = 300) -> dict[str, Any]:
     }
 
 
-class _Recorder:
-    """A fake ``translate_flat_list``: records each call, sleeps, answers ``HE: …``."""
+# A food/travel tail batch: 9 strings, 3 of them place names a real
+# translation keeps verbatim, after an intro that fills a batch of its own.
+_PLACE_NAMES = frozenset({"Ma Poule Mouillée", "Montreal Pool Room", "Schwartz's Deli"})
 
-    def __init__(self, fail_above: int | None = None, echo_marker: str | None = None) -> None:
+
+def _travel_output() -> dict[str, Any]:
+    spots = [
+        {
+            "name": name,
+            "description": f"{name} is a local favourite for a late dinner after a show.",
+            "tip": "Go before seven or expect a queue around the block.",
+        }
+        for name in sorted(_PLACE_NAMES)
+    ]
+    intro = "Montreal eats late and well. " * 100
+    props = {"intro": intro, "spots": spots}
+    return {"tabs": [{"id": "t", "component": "spot_explorer", "props": props}], "meta": {}}
+
+
+class _Recorder:
+    """A fake ``translate_flat_list``: records each call, sleeps, answers ``HE: …``
+    (``keep`` strings come back verbatim, as names do)."""
+
+    def __init__(
+        self,
+        fail_above: int | None = None,
+        echo_marker: str | None = None,
+        keep: frozenset[str] = frozenset(),
+    ) -> None:
         self.calls: list[list[str]] = []
         self.in_flight = 0
         self.peak = 0
         self.fail_above = fail_above
         self.echo_marker = echo_marker
+        self.keep = keep
 
     async def __call__(
         self, _llm: Any, strings: list[str], *_a: Any, **_k: Any
@@ -64,7 +91,7 @@ class _Recorder:
             return None
         if self.echo_marker is not None and any(self.echo_marker in s for s in strings):
             return list(strings)
-        return [f"HE: {s}" for s in strings]
+        return [s if s in self.keep else f"HE: {s}" for s in strings]
 
 
 @pytest.fixture
@@ -236,3 +263,51 @@ class TestOutputBatches:
         assert {call.kwargs["stage_name"] for call in llm_call.call_args_list} == {
             "translation_full"
         }
+
+
+class TestSmallBatchEcho:
+    async def test_should_ship_the_translated_prose_of_a_small_batch_that_keeps_names_verbatim(
+        self,
+    ):
+        fake = _Recorder(keep=_PLACE_NAMES)
+
+        with patch.object(translation, "translate_flat_list", new=fake):
+            result = await translation.translate_to_source(MagicMock(), _travel_output(), "ar")
+
+        spots = result["sourceLanguage"]["tabs"][0]["props"]["spots"]
+        assert all(spot["description"].startswith("HE: ") for spot in spots)
+
+    async def test_should_not_retry_a_small_batch_when_only_its_names_are_kept_verbatim(self):
+        fake = _Recorder(keep=_PLACE_NAMES)
+
+        with patch.object(translation, "translate_flat_list", new=fake):
+            await translation.translate_to_source(MagicMock(), _travel_output(), "ar")
+
+        assert len(fake.calls) == 2
+
+    async def test_should_retry_a_fully_echoed_batch_of_fewer_than_10_strings_as_two_halves(
+        self,
+    ):
+        fake = _Recorder(echo_marker="Ma Poule Mouillée")
+
+        with patch.object(translation, "translate_flat_list", new=fake):
+            await translation.translate_to_source(MagicMock(), _travel_output(), "ar")
+
+        assert sum(1 for call in fake.calls if "Ma Poule Mouillée" in call) == 2
+
+
+class TestIsBatchEcho:
+    @pytest.mark.parametrize("size", [1, 2, 9, 12])
+    def test_should_flag_a_fully_echoed_batch_of_any_size(self, size: int):
+        batch = [f"Sentence number {i} about the tour." for i in range(size)]
+
+        assert is_batch_echo(batch, list(batch)) is True
+
+    def test_should_not_flag_a_batch_of_9_that_keeps_3_names_verbatim(self):
+        names = sorted(_PLACE_NAMES)
+        prose = [f"{name} serves smoked meat until late." for name in names] * 2
+        batch = names + prose
+
+        answer = names + [f"AR: {text}" for text in prose]
+
+        assert is_batch_echo(batch, answer) is False

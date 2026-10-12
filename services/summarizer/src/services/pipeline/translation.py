@@ -37,6 +37,7 @@ from ...utils.language_utils import (
 from .translation_flat import (
     TRANSLATION_BATCH_CHARS,
     char_batches,
+    is_batch_echo,
     is_mirror,
     translate_flat_list,
 )
@@ -200,10 +201,11 @@ async def _call(
 ) -> list[str] | None:
     """One ``translation_full`` call, in one of the video's ``slots``; None when it
     failed or echoed its batch, so an echo takes the half retry and is salvaged
-    (masked) rather than shipping English inside the source view."""
+    (masked) rather than shipping English inside the source view. The echo test
+    is the per-batch one: names kept verbatim in a small batch are no echo."""
     async with slots:
         result = await translate_flat_list(llm_service, batch, source_language, target_language)
-    if result is None or is_mirror(batch, result):
+    if result is None or is_batch_echo(batch, result):
         return None
     return result
 

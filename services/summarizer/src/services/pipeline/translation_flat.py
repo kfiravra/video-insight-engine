@@ -3,7 +3,8 @@
 Shared by the translation phase (the English output into the source language,
 ``pipeline.translation``) and the RAG transcript text (a non-English transcript
 into English, ``transcript.english``), together with the batch sizing both use
-(``char_batches``) and the echo check both apply to an answer (``is_mirror``).
+(``char_batches``) and the echo check both apply to an answer (``is_mirror``;
+``is_batch_echo`` for one batch of a larger output).
 """
 
 from __future__ import annotations
@@ -183,6 +184,16 @@ _MIRROR_SMALL_PAYLOAD_FLOOR = 10
 _MIRROR_SMALL_PAYLOAD_THRESHOLD = 0.33
 
 
+def _longest_echoed(originals: list[str], translations: list[str]) -> bool:
+    """True when the 3 longest originals all came back byte-identical."""
+    indices = sorted(range(len(originals)), key=lambda i: -len(originals[i]))[:3]
+    return all(originals[i] == translations[i] for i in indices)
+
+
+def _echo_ratio(originals: list[str], translations: list[str]) -> float:
+    return sum(1 for o, t in zip(originals, translations) if o == t) / len(originals)
+
+
 def is_mirror(originals: list[str], translations: list[str]) -> bool:
     """True when the LLM appears to have echoed source-language strings back.
 
@@ -208,15 +219,26 @@ def is_mirror(originals: list[str], translations: list[str]) -> bool:
     """
     if not originals or len(originals) != len(translations):
         return False
-    overall_mirror_count = sum(1 for o, t in zip(originals, translations) if o == t)
-    overall_ratio = overall_mirror_count / len(originals)
-
+    overall_ratio = _echo_ratio(originals, translations)
     if len(originals) < _MIRROR_SMALL_PAYLOAD_FLOOR:
         # Small payloads: a single threshold; >33% verbatim is the signal.
         return overall_ratio > _MIRROR_SMALL_PAYLOAD_THRESHOLD
+    return _longest_echoed(originals, translations) and overall_ratio > _MIRROR_OVERALL_THRESHOLD
 
-    indices = sorted(range(len(originals)), key=lambda i: -len(originals[i]))[:3]
-    longest_all_mirror = all(originals[i] == translations[i] for i in indices)
-    if not longest_all_mirror:
+
+def is_batch_echo(originals: list[str], translations: list[str]) -> bool:
+    """True when ONE batch of a larger output came back echoed: both signals, any size.
+
+    ``is_mirror``'s small-payload rule is for a whole output. A batch of
+    ``TRANSLATION_BATCH_CHARS`` often holds fewer than 10 strings, and there
+    names kept verbatim are not an echo: 3 place names among 9 strings
+    ("Ma Poule Mouillée", "Montreal Pool Room", …) passed the 1/3 ratio, so the
+    half retry salvaged a translated description as English. A fully echoed
+    batch still trips both signals; the whole output keeps ``is_mirror``.
+    """
+    if not originals or len(originals) != len(translations):
         return False
-    return overall_ratio > _MIRROR_OVERALL_THRESHOLD
+    return (
+        _longest_echoed(originals, translations)
+        and _echo_ratio(originals, translations) > _MIRROR_OVERALL_THRESHOLD
+    )

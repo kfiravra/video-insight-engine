@@ -22,6 +22,14 @@ One fallback per run. A failed audio pass keeps the caption transcript (a
 result beats a failure). Every unusable answer is recorded on the trail as
 ``<source>-unusable``, and a run that continues with one plans without a probe:
 a classification made from garbage steers neither the plan nor the frames tier.
+
+A run that keeps the transcript the probe judged unusable (no fallback, or a
+failed audio pass) also drops its source language, as the sound-only rule
+does: the language is the garbage track's label (``pl`` on English speech), and
+garbage never pays for a translation batch — no translation phase, no language
+toggle, and the RAG index embeds the text as is. A music video keeps its
+language (no fallback runs there, so lyrics are never judged), and an audio
+transcript that replaced the captions brought its own language.
 """
 
 from __future__ import annotations
@@ -36,6 +44,7 @@ from src.services.transcription.transcript_fetcher import audio_fallback_allowed
 
 if TYPE_CHECKING:
     from src.services.pipeline.context import PipelineContext
+    from src.services.pipeline.pipeline_helpers import TranscriptData
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +74,11 @@ def _is_caption_transcript(ctx: PipelineContext) -> bool:
     return data.source == "s3" and trail is not None and trail.origin in CAPTION_SOURCES
 
 
+def _is_music_video(ctx: PipelineContext) -> bool:
+    context = ctx.video_data.context if ctx.video_data else None
+    return context is not None and context.category == "music"
+
+
 def _skip_reason(ctx: PipelineContext) -> str | None:
     """Why an unusable transcript stays (None = the audio path may replace it)."""
     video_data = ctx.video_data
@@ -72,7 +86,7 @@ def _skip_reason(ctx: PipelineContext) -> str | None:
     if not _is_caption_transcript(ctx):
         source = ctx.transcript_data.source if ctx.transcript_data else None
         return f"not a caption transcript (source={source})"
-    if video_data.context is not None and video_data.context.category == "music":
+    if _is_music_video(ctx):
         return "music video"
     if not audio_fallback_allowed(video_data.duration or 0):
         return "no audio layer allowed"
@@ -98,6 +112,20 @@ async def _audio_pass(ctx: PipelineContext) -> AsyncGenerator[str, None]:
         _record_unusable(ctx)
 
 
+def _drop_garbage_language(ctx: PipelineContext, judged: TranscriptData | None) -> None:
+    """No source language for a kept transcript the probe judged unusable (see module doc)."""
+    if ctx.transcript_data is not judged or not ctx.source_language_code:
+        return
+    if _is_music_video(ctx):
+        return
+    logger.warning(
+        "Keeping a transcript judged unusable; dropping source language %r "
+        "(no translation, no language toggle, RAG text embedded as is)",
+        ctx.source_language_code,
+    )
+    ctx.source_language_code = None
+
+
 def _drop_unusable_probe(ctx: PipelineContext) -> None:
     """The plan gets no probe rather than one classified from garbage (frames ignore it too)."""
     if _is_unusable(ctx):
@@ -116,6 +144,7 @@ async def replace_unusable_captions(ctx: PipelineContext) -> AsyncGenerator[str,
     """
     if not _is_unusable(ctx):
         return
+    judged = ctx.transcript_data
     _record_unusable(ctx)
     reason = _skip_reason(ctx)
     if reason is None:
@@ -123,4 +152,5 @@ async def replace_unusable_captions(ctx: PipelineContext) -> AsyncGenerator[str,
             yield event
     else:
         logger.warning("Tier probe judged the transcript unusable; keeping it: %s", reason)
+    _drop_garbage_language(ctx, judged)
     _drop_unusable_probe(ctx)
