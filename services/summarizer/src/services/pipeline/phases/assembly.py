@@ -300,7 +300,9 @@ def _result_document(
         "pipeline": {
             "triage": ctx.triage_dict,
             "reconcile": ctx.plan_result.reconcile if ctx.plan_result else [],
-            "extraction": extraction_with_drops(ctx.extraction_data, ctx.extraction_dropped),
+            "extraction": extraction_with_drops(
+                ctx.extraction_data, ctx.extraction_dropped, ctx.extraction_mis_targeted
+            ),
             "enrichment": ctx.enrichment_data,
             "synthesis": ctx.synthesis_dict,
             "assembly": accounting,

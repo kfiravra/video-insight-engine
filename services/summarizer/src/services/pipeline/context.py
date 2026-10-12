@@ -121,9 +121,12 @@ class PipelineContext:
 
     # Extraction / synthesis / enrichment outputs
     extraction_data: dict[str, Any] | None = None
-    # Items/fields validation dropped from extraction_data ("tech.cheatSheet": 3);
+    # Items/fields validation dropped ("tech.cheatSheet": {"dropped": 3, "total": 22});
     # persisted as pipeline.extraction._dropped.
-    extraction_dropped: dict[str, int] = field(default_factory=dict)
+    extraction_dropped: dict[str, dict[str, int]] = field(default_factory=dict)
+    # Planned dataSources that lost over half their items to validation;
+    # persisted as pipeline.extraction._misTargeted.
+    extraction_mis_targeted: list[str] = field(default_factory=list)
     synthesis_dict: dict[str, Any] = field(default_factory=dict)
     enrichment_data: dict[str, Any] | None = None
     # Coverage metric: how far into the video the timestamped extraction

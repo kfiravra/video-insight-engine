@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from collections import Counter
 from typing import Any
 
 from pydantic import (
@@ -16,7 +15,7 @@ from pydantic import (
 )
 
 from ..shared_config.domain_config import valid_content_tags, valid_modifiers
-from .domain_validation import validate_block_items
+from .domain_validation import DropCounts, merge_drop_counts, validate_block_items
 
 logger = logging.getLogger(__name__)
 
@@ -1291,7 +1290,7 @@ def _merge_mixed_shape(tag: str, wrapper: dict, flat: dict) -> dict:
 
 
 def _validate_block(
-    tag: str, model_cls: type[BaseModel] | None, block: dict, dropped: Counter[str]
+    tag: str, model_cls: type[BaseModel] | None, block: dict, dropped: DropCounts
 ) -> dict:
     """Validate one domain/modifier block item by item (hotfix 2.1).
 
@@ -1302,7 +1301,7 @@ def _validate_block(
         logger.warning("No model for tag: %s — data passed through unvalidated", tag)
         return block
     validated, block_dropped = validate_block_items(tag, model_cls, block)
-    dropped.update(block_dropped)
+    merge_drop_counts(dropped, block_dropped)
     return validated
 
 
@@ -1361,7 +1360,7 @@ def _validate_flat_fallback(tag: str, data: dict) -> dict | None:
         return None
 
 
-def _validate_multi_tag(content_tags: list[str], data: dict, dropped: Counter[str]) -> dict:
+def _validate_multi_tag(content_tags: list[str], data: dict, dropped: DropCounts) -> dict:
     """Wrapped blocks first; flat data only for tags whose own fields are present."""
     validated: dict = {}
     for tag in content_tags:
@@ -1384,17 +1383,17 @@ def _validate_multi_tag(content_tags: list[str], data: dict, dropped: Counter[st
 
 def validate_domain_output_with_drops(
     content_tags: list[str], modifiers: list[str], data: dict
-) -> tuple[dict, dict[str, int]]:
+) -> tuple[dict, DropCounts]:
     """Validate LLM output against domain Pydantic models, item by item.
 
     Single tag: flat data validated against DOMAIN_MODELS[tag]; a
     ``{tag}Data``/``{tag}``-wrapped response is unwrapped first.
     Multi-tag: ``{tag}Data`` / ``{tag}`` wrappers first, then the flat data
     for tags whose own fields appear in it.
-    Returns the validated dict (ready for storage/SSE) and the counts of
-    items/fields dropped because they failed validation (``{"tech.cheatSheet": 3}``).
+    Returns the validated dict (ready for storage/SSE) and, per field that lost
+    items to validation, ``{"tech.cheatSheet": {"dropped": 3, "total": 22}}``.
     """
-    dropped: Counter[str] = Counter()
+    dropped: DropCounts = {}
     if len(content_tags) == 1:
         tag = content_tags[0]
         block = _single_tag_block(tag, data)
@@ -1409,7 +1408,7 @@ def validate_domain_output_with_drops(
                 modifier, MODIFIER_MODELS.get(modifier), mod_block, dropped
             )
 
-    return validated, dict(dropped)
+    return validated, dropped
 
 
 def validate_domain_output(content_tags: list[str], modifiers: list[str], data: dict) -> dict:

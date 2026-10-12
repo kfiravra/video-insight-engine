@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, AsyncGenerator
 from llm_common.context import llm_feature_var
 
 from src.config import settings
+from src.models.domain_validation import mis_targeted_fields
 from src.models.schemas import ErrorCode, ProcessingStatus
 from src.services.pipeline.extraction_quality import check_extraction_quality
 from src.services.pipeline.extractor import extract
@@ -34,6 +35,20 @@ _DESCRIPTION_WAIT_SECONDS = 5.0
 # Extractor event keys that stay server-side: the dropped-item counts go to
 # ``pipeline.extraction._dropped``, never into the SSE contract.
 _INTERNAL_KEYS = frozenset({"event", "droppedItems"})
+
+
+def _record_validation_drops(ctx: PipelineContext, dropped: dict[str, dict[str, int]]) -> None:
+    """Keep the validation drops and flag planned fields that lost over half their items."""
+    ctx.extraction_dropped = dropped
+    planned = [t.get("dataSource") for t in getattr(ctx.plan_result, "tabs", None) or []]
+    ctx.extraction_mis_targeted = mis_targeted_fields(dropped, [p for p in planned if p])
+    if ctx.extraction_mis_targeted:
+        logger.warning(
+            "[pipeline] Extraction mis-targeted planned fields (over half the items dropped) "
+            "for video_id=%s: %s",
+            ctx.video_summary_id,
+            {f: dropped[f] for f in ctx.extraction_mis_targeted},
+        )
 
 
 def _record_extraction_coverage(
@@ -250,7 +265,7 @@ async def run_phase_extraction(ctx: PipelineContext) -> AsyncGenerator[str, None
             yield sse_event(event_name, {k: v for k, v in evt.items() if k not in _INTERNAL_KEYS})
             if event_name == "extraction_complete":
                 ctx.extraction_data = evt.get("data")
-                ctx.extraction_dropped = evt.get("droppedItems") or {}
+                _record_validation_drops(ctx, evt.get("droppedItems") or {})
                 batches_total = evt.get("batches_total")
                 batches_succeeded = evt.get("batches_succeeded")
     except (ValueError, asyncio.TimeoutError) as e:

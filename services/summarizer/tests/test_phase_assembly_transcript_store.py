@@ -83,6 +83,7 @@ def _build_ctx(transcript_data: TranscriptData) -> SimpleNamespace:
         content_format=None,
         extraction_data={},
         extraction_dropped={},
+        extraction_mis_targeted=[],
         enrichment_data={},
         synthesis_dict=None,
         description_analysis=None,
