@@ -1,11 +1,17 @@
 """Message shaping for LLM requests — where prompt-cache breakpoints go, per provider.
 
 Anthropic caches the prompt prefix up to each ``cache_control`` breakpoint. The
-pipeline sets it on one user content block (``text_block(..., cache=True)``);
-the system prompt never carries one. Other providers must never see the
-marker: OpenAI rejects unknown content keys (LiteLLM strips them, but by mutating
-the caller's dicts) and LiteLLM turns it into a billable context-cache resource
-for Gemini/Vertex. So every non-Anthropic request leaves here without it.
+pipeline sets it on user content blocks (``text_block(..., cache=True)``); the
+system prompt never carries one. Other providers must never see the marker:
+OpenAI rejects unknown content keys (LiteLLM strips them, but by mutating the
+caller's dicts) and LiteLLM turns it into a billable context-cache resource for
+Gemini/Vertex. So every non-Anthropic request leaves here without it.
+
+A breakpoint lives 5 minutes unless it names a ``ttl``. A 1-hour entry costs
+2x the base input price to write (5 minutes: 1.25x; reads 0.1x either way), so
+it only pays off for a prefix that other requests reuse more than 5 minutes
+later. In one request every 1-hour breakpoint must come before any 5-minute one
+(Anthropic rejects the request otherwise).
 """
 
 from __future__ import annotations
@@ -24,9 +30,12 @@ class TextBlock(TypedDict):
     cache_control: NotRequired[dict[str, str]]
 
 
-# A user message is either plain text or a list of content blocks; one block may
-# carry the cache breakpoint (see ``text_block``).
+# A user message is either plain text or a list of content blocks; a block may
+# carry a cache breakpoint (see ``text_block``).
 UserContent = str | list[TextBlock]
+
+# Anthropic's cache lifetimes. ``None`` sends no ``ttl`` key: the 5-minute default.
+CacheTTL = Literal["5m", "1h"]
 
 
 class Message(BaseModel):
@@ -36,11 +45,24 @@ class Message(BaseModel):
     content: str
 
 
-def text_block(text: str, *, cache: bool = False) -> TextBlock:
-    """A text content block; ``cache=True`` ends an Anthropic cached prefix after it."""
+def text_block(text: str, *, cache: bool = False, ttl: CacheTTL | None = None) -> TextBlock:
+    """A text content block; ``cache=True`` ends an Anthropic cached prefix after it.
+
+    ``ttl`` names the cache lifetime; without it no ``ttl`` key is sent and
+    Anthropic keeps the entry 5 minutes, so callers that never pass one send
+    exactly what they always did.
+
+    Raises:
+        ValueError: ``ttl`` without ``cache=True`` — a lifetime needs a breakpoint.
+    """
+    if ttl is not None and not cache:
+        raise ValueError("text_block: ttl needs cache=True")
     block: TextBlock = {"type": "text", "text": text}
     if cache:
-        block["cache_control"] = {"type": "ephemeral"}
+        control = {"type": "ephemeral"}
+        if ttl is not None:
+            control["ttl"] = ttl
+        block["cache_control"] = control
     return block
 
 

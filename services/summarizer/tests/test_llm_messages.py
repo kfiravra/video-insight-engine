@@ -11,6 +11,8 @@ import copy
 import json
 from typing import Any
 
+import pytest
+
 from src.services.llm_messages import (
     Message,
     TextBlock,
@@ -43,6 +45,20 @@ class TestTextBlock:
 
     def test_should_carry_no_breakpoint_by_default(self) -> None:
         assert text_block("x") == {"type": "text", "text": "x"}
+
+    def test_should_name_the_lifetime_when_a_ttl_is_given(self) -> None:
+        block = text_block("x", cache=True, ttl="1h")
+
+        assert block.get("cache_control") == {"type": "ephemeral", "ttl": "1h"}
+
+    def test_should_reject_a_ttl_when_no_breakpoint_is_requested(self) -> None:
+        with pytest.raises(ValueError, match="ttl needs cache=True"):
+            text_block("x", ttl="1h")
+
+    def test_should_strip_a_one_hour_breakpoint_when_not_anthropic(self) -> None:
+        messages = [{"role": "user", "content": [text_block("STATIC", cache=True, ttl="1h")]}]
+
+        assert not _has_cache_control(prepare_for_model(messages, _OPENAI))
 
 
 class TestBuildPromptMessages:

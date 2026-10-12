@@ -58,16 +58,21 @@ def _capture_llm(response: str = "") -> tuple[MagicMock, AsyncMock]:
     return MagicMock(), AsyncMock(return_value=response)
 
 
+def _prompt_texts(arg: object) -> list[str]:
+    """The text of one LLM-call argument: a string, or content blocks (``text_block``)."""
+    if isinstance(arg, str):
+        return [arg]
+    if isinstance(arg, list):
+        return [b["text"] for b in arg if isinstance(b, dict) and isinstance(b.get("text"), str)]
+    return []
+
+
 def _captured_prompt_text(mock_call: AsyncMock) -> str:
     """Concatenate every prompt-ish argument passed to the mocked LLM call."""
     parts: list[str] = []
     for call in mock_call.call_args_list:
-        for arg in call.args[1:]:  # args[0] is the llm_service
-            if isinstance(arg, str):
-                parts.append(arg)
-        for value in call.kwargs.values():
-            if isinstance(value, str):
-                parts.append(value)
+        for arg in [*call.args[1:], *call.kwargs.values()]:  # args[0] is the llm_service
+            parts.extend(_prompt_texts(arg))
     return "\n".join(parts)
 
 

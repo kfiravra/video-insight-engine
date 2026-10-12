@@ -188,7 +188,7 @@ class TestRetryWrapperCarriesBlocks:
 
 
 class TestLiteLLMTransforms:
-    """Offline request transforms: what LiteLLM 1.81 itself puts on the wire."""
+    """Offline request transforms: what the installed LiteLLM itself puts on the wire."""
 
     def _messages(self) -> list[Any]:
         return [{"role": "user", "content": _blocks()}]
@@ -203,6 +203,23 @@ class TestLiteLLMTransforms:
         )
 
         assert body["messages"][0]["content"][0]["cache_control"] == _EPHEMERAL
+
+    def test_anthropic_wire_body_should_keep_one_hour_ttl(self) -> None:
+        """2.0: a dropped ttl would silently turn the plan's 1h cache into 5m."""
+        blocks = [text_block("STATIC", cache=True, ttl="1h"), text_block("VIDEO")]
+
+        body = AnthropicConfig().transform_request(
+            model="claude-sonnet-4-6",
+            messages=[{"role": "user", "content": blocks}],
+            optional_params={"max_tokens": 10},
+            litellm_params={},
+            headers={},
+        )
+
+        assert body["messages"][0]["content"][0]["cache_control"] == {
+            "type": "ephemeral",
+            "ttl": "1h",
+        }
 
     def test_openai_wire_body_should_drop_user_block_breakpoint(self) -> None:
         body = OpenAIGPTConfig().transform_request(

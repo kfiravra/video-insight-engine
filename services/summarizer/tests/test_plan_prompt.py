@@ -18,7 +18,7 @@ import pytest
 from src.models.pipeline_types import PlanResult
 from src.services.pipeline import plan_prompt
 from src.services.pipeline.assembly import STEP_FLOW_THRESHOLD
-from src.services.pipeline.plan_prompt import PlanVideo, render_plan_prompt
+from src.services.pipeline.plan_prompt import PlanVideo, render_plan_parts
 from src.shared_config.domain_config import (
     EVIDENCE_KEYS,
     NON_EXTRACTION_DATASOURCES,
@@ -44,6 +44,12 @@ def disk_prompts() -> Iterator[None]:
         ),
     ):
         yield
+
+
+def render_plan_prompt(video: PlanVideo) -> str:
+    """The whole plan prompt the model reads: the cached static half, then the video half."""
+    parts = render_plan_parts(video)
+    return parts.static + parts.video
 
 
 def _video(**overrides: object) -> PlanVideo:

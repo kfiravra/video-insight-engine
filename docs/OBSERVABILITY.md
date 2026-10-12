@@ -63,6 +63,12 @@ In the Langfuse UI:
 - **Metadata**: `attempt`, `useFastModel`, `modelOverride`, `finishReason`, `latencyMs`. `attempt>1` means a retry fired. `promptVersions` maps prompt name → registry version for every prompt that was loaded inside the trace.
 - **Scores**: faithfulness score plus comment "N/M grounded". Below 0.7 = quality regression suspect.
 
+### Prompt cache
+
+- **Langfuse**: an Anthropic generation that wrote or read the prompt cache carries `cacheCreationTokens` / `cacheReadTokens` (and `cacheHit=true` on a read) in its metadata.
+- **`pipeline.timing.llmCalls[]`** (Mongo, timing schema version 2): per call `cacheReadTokens` (Anthropic reads, or OpenAI's automatically cached input), `cacheWriteTokens`, and its lifetime split `cacheWrite1hTokens` / `cacheWrite5mTokens`; `inputTokens` is the whole prompt, cached part included.
+- **Per call type**: `python scripts/cache_hit_rate.py [--days N | --ids …]` aggregates those rows by span and provider — hit rate = reads ÷ (reads + writes) for Anthropic, cached share of input for OpenAI. Gate reports carry it from gate 2 on; the plan's static half is cached for 1 hour (pipeline-1min 2.0). Layout, prices and the 1h-vs-5m rule: [llm-cost-model.md](./llm-cost-model.md#where-cache_control-is-set).
+
 ## Prompt registry
 
 Local `.txt` files in `services/summarizer/src/prompts/**` are the source of truth at build time. `scripts/register_prompts.py` walks the tree and uploads each as a Langfuse prompt with this naming convention:
@@ -200,6 +206,7 @@ services/assistant/src/services/observability/
 
 services/summarizer/src/services/pipeline/faithfulness.py   # LLM-as-Judge
 scripts/register_prompts.py        # sync .txt → Langfuse
+scripts/cache_hit_rate.py          # prompt-cache hit rate per call type (pipeline.timing)
 scripts/build_golden_dataset.py    # upload videos.yaml → Langfuse dataset
 scripts/run_eval.py                # run pipeline on golden + score
 dev/golden-dataset/videos.yaml     # 20 curated entries

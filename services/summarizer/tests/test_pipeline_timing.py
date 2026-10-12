@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 from litellm.exceptions import RateLimitError
+from litellm.types.utils import Usage
 from llm_common.context import llm_feature_var
 
 from src.services.pipeline import pipeline_timing
@@ -222,3 +223,84 @@ class TestToDocument:
         doc = recorder.to_document(tabs_planned=0, tabs_assembled=0)
 
         assert doc["version"] == pipeline_timing.TIMING_SCHEMA_VERSION
+
+
+# Every ``llmCalls`` row, LiteLLM or transcription, carries exactly these keys.
+_LLM_CALL_KEYS = {
+    "feature",
+    "span",
+    "model",
+    "responseModel",
+    "startMs",
+    "wallMs",
+    "inputTokens",
+    "outputTokens",
+    "cacheReadTokens",
+    "cacheWriteTokens",
+    "cacheWrite5mTokens",
+    "cacheWrite1hTokens",
+    "costUsd",
+    "attempt",
+    "fallbackUsed",
+    "finishReason",
+}
+
+
+class TestLlmCallShape:
+    def test_should_record_every_field_when_a_litellm_call_succeeds(
+        self, recorder: PipelineTimingRecorder
+    ) -> None:
+        record_llm_call(
+            span="plan",
+            model="anthropic/claude-sonnet-4-6",
+            response=_response(),
+            start_monotonic=time.monotonic(),
+            latency_ms=1,
+        )
+
+        assert set(recorder.llm_calls[0]) == _LLM_CALL_KEYS
+
+    def test_should_give_a_transcription_row_the_same_fields(
+        self, recorder: PipelineTimingRecorder
+    ) -> None:
+        pipeline_timing.record_transcription_call(
+            feature="summarize:transcript:whisper",
+            provider="openai",
+            model="whisper-1",
+            wall_ms=10,
+            input_tokens=0,
+            output_tokens=0,
+            cost_usd=0.0,
+        )
+
+        assert set(recorder.llm_calls[0]) == _LLM_CALL_KEYS
+
+    def test_should_count_openai_cached_input_as_cache_reads(
+        self, recorder: PipelineTimingRecorder
+    ) -> None:
+        # The usage LiteLLM builds from an OpenAI reply: the cached tokens only
+        # appear in prompt_tokens_details (no cache_read_input_tokens attribute).
+        usage = Usage(
+            prompt_tokens=2006,
+            completion_tokens=300,
+            total_tokens=2306,
+            prompt_tokens_details={"cached_tokens": 1920},
+        )
+        response = SimpleNamespace(
+            usage=usage, model="gpt-4o-mini", choices=[SimpleNamespace(finish_reason="stop")]
+        )
+
+        record_llm_call(
+            span="synthesis",
+            model="openai/gpt-4o-mini",
+            response=response,
+            start_monotonic=time.monotonic(),
+            latency_ms=1,
+        )
+
+        call = recorder.llm_calls[0]
+        assert (call["inputTokens"], call["cacheReadTokens"], call["cacheWriteTokens"]) == (
+            2006,
+            1920,
+            0,
+        )

@@ -1,8 +1,5 @@
 Extract structured information from this YouTube video description.
 
-DESCRIPTION:
-{description}
-
 Return JSON only with these fields:
 
 {{
@@ -33,3 +30,6 @@ RULES:
 - Use empty arrays [] for categories with no matches
 - Do NOT invent or guess URLs - only use what's in the description
 - Keep labels concise (2-5 words max)
+
+DESCRIPTION:
+{description}

@@ -1,0 +1,41 @@
+{
+ "_about": "Raw Anthropic usage objects from the pipeline-1min 2.0 live probe (2026-10-12): three Sonnet 4.6 calls through LLMProvider with one user block marked cache_control {type: ephemeral, ttl: 1h} (2,318 tokens) and an 18-token uncached tail. 1 = first call (1h write), 2 = identical call (read), 3 = same static block, different video (read).",
+ "model": "anthropic/claude-sonnet-4-6",
+ "responseModel": "claude-sonnet-4-6",
+ "write": {
+  "input_tokens": 18,
+  "cache_creation_input_tokens": 2318,
+  "cache_read_input_tokens": 0,
+  "cache_creation": {
+   "ephemeral_5m_input_tokens": 0,
+   "ephemeral_1h_input_tokens": 2318
+  },
+  "output_tokens": 5,
+  "service_tier": "standard",
+  "inference_geo": "global"
+ },
+ "readSameVideo": {
+  "input_tokens": 18,
+  "cache_creation_input_tokens": 0,
+  "cache_read_input_tokens": 2318,
+  "cache_creation": {
+   "ephemeral_5m_input_tokens": 0,
+   "ephemeral_1h_input_tokens": 0
+  },
+  "output_tokens": 5,
+  "service_tier": "standard",
+  "inference_geo": "global"
+ },
+ "readOtherVideo": {
+  "input_tokens": 18,
+  "cache_creation_input_tokens": 0,
+  "cache_read_input_tokens": 2318,
+  "cache_creation": {
+   "ephemeral_5m_input_tokens": 0,
+   "ephemeral_1h_input_tokens": 0
+  },
+  "output_tokens": 5,
+  "service_tier": "standard",
+  "inference_geo": "global"
+ }
+}

@@ -9,6 +9,13 @@ module-level helper is a no-op outside a run (tests, scripts, cache hits).
 
 Offsets (``startMs``/``endMs``) are milliseconds since the run started, so a
 timeline can be drawn straight from the document.
+
+Prompt cache per LLM call: ``cacheReadTokens`` = input tokens the provider
+served from its cache (Anthropic ``cache_read_input_tokens``, OpenAI
+``prompt_tokens_details.cached_tokens``); ``cacheWriteTokens`` = tokens written
+(Anthropic only — OpenAI reports no writes), split by lifetime into
+``cacheWrite5mTokens`` / ``cacheWrite1hTokens`` when the provider reports it.
+``inputTokens`` is the whole prompt, cached tokens included.
 """
 
 from __future__ import annotations
@@ -30,7 +37,9 @@ from llm_common.context import llm_feature_var
 
 logger = logging.getLogger(__name__)
 
-TIMING_SCHEMA_VERSION = 1
+# 2: llmCalls carry the 1h/5m cache-write split, and cacheReadTokens counts
+# OpenAI cached input too (always 0 for OpenAI calls in version 1).
+TIMING_SCHEMA_VERSION = 2
 
 # SSE event name → milestone key. First occurrence wins.
 _MILESTONE_EVENTS: dict[str, str] = {
@@ -57,6 +66,25 @@ def _usage_int(usage: object, attr: str) -> int:
     """``usage.attr`` when it is a real int (MagicMock attributes are not)."""
     value = getattr(usage, attr, 0)
     return int(value) if isinstance(value, int) else 0
+
+
+def _cache_tokens(usage: object) -> dict[str, int]:
+    """One call's prompt-cache reads and writes, as LiteLLM's ``Usage`` reports them.
+
+    Anthropic's reads are ``cache_read_input_tokens``; OpenAI's only appear as
+    ``prompt_tokens_details.cached_tokens``. The write split by lifetime sits
+    in ``prompt_tokens_details.cache_creation_token_details`` (Anthropic's
+    ``usage.cache_creation``); without it both split fields stay 0.
+    """
+    details = getattr(usage, "prompt_tokens_details", None)
+    by_ttl = getattr(details, "cache_creation_token_details", None)
+    return {
+        "cacheReadTokens": _usage_int(usage, "cache_read_input_tokens")
+        or _usage_int(details, "cached_tokens"),
+        "cacheWriteTokens": _usage_int(usage, "cache_creation_input_tokens"),
+        "cacheWrite5mTokens": _usage_int(by_ttl, "ephemeral_5m_input_tokens"),
+        "cacheWrite1hTokens": _usage_int(by_ttl, "ephemeral_1h_input_tokens"),
+    }
 
 
 def _model_tail(model: str | None) -> str:
@@ -241,8 +269,7 @@ def record_llm_call(
                 "wallMs": latency_ms,
                 "inputTokens": _usage_int(usage, "prompt_tokens"),
                 "outputTokens": _usage_int(usage, "completion_tokens"),
-                "cacheReadTokens": _usage_int(usage, "cache_read_input_tokens"),
-                "cacheWriteTokens": _usage_int(usage, "cache_creation_input_tokens"),
+                **_cache_tokens(usage),
                 "costUsd": _call_cost(response),
                 "attempt": attempt,
                 "fallbackUsed": fallback_used or is_fallback_response(model, response_model),
@@ -321,6 +348,8 @@ def record_transcription_call(
             "outputTokens": output_tokens,
             "cacheReadTokens": 0,
             "cacheWriteTokens": 0,
+            "cacheWrite5mTokens": 0,
+            "cacheWrite1hTokens": 0,
             "costUsd": cost_usd,
             "fallbackUsed": False,
             "finishReason": None,
