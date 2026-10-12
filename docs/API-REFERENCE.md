@@ -1360,7 +1360,7 @@ The summarization pipeline uses SSE to stream results progressively, allowing th
 | `extraction_complete` | 4 | Domain extraction finished |
 | `frames` | 2 | Extracted frame set (presigned URLs), from the frames branch of phase 2 |
 | `meta` | 2 | VIEResponseMeta with videoId, contentTags, tab labels — emitted with `triage_complete` |
-| `tab_ready` | 2 + 5 | One tab, with `position` (sort key) and `final`. The provisional Moments tab (`provisional: true`) streams at plan-done, the rest from assembly; a tab id can arrive more than once and the later emission replaces the earlier by id (a tab taking the provisional's place under another id names it in `replaces`). Each tab of the final response gets a `final: true` emission before `complete` — the last final wins — see [tab_ready](#tab_ready) |
+| `tab_ready` | 2 + 5 | One tab, with `position` (sort key) and `final`. The provisional Moments tab (`provisional: true`) streams at plan-done; with `EXTRACTION_PARALLEL` (default) non-final previews stream as each extraction group lands, the rest from assembly; a tab id can arrive more than once and the later emission replaces the earlier by id (a tab taking the provisional's place under another id names it in `replaces`). Each tab of the final response gets a `final: true` emission before `complete` — the last final wins — see [tab_ready](#tab_ready) |
 | `enrichment_complete` | 5 | The quiz landed (only for a plan with a quiz host; runs after the first tabs) |
 | `synthesis_complete` | 2 + 5 | Up to twice: `{tldr, keyTakeaways}` at memory-done (the hero), then the four-field superset after the tabs — see [synthesis_complete](#synthesis_complete) |
 | `heartbeat` | Any | Keep-alive during long-running steps (e.g. moment frame fill) — carries `ts`, safe to ignore |
@@ -1587,7 +1587,8 @@ a minimum-3 fallback tab the quiz made unnecessary). `meta.tabCount`/`tabLabels`
 are the plan's tabs, sent before any `tab_ready`; the always-Moments tab can
 arrive without a label there — `complete.tabIds` is authoritative.
 
-**Emission sequence of a run** (English, the quiz planned):
+**Emission sequence of a run** (English, the quiz planned). The default
+(`EXTRACTION_PARALLEL=true`, the field-group extraction):
 
 1. `metadata` … `triage_complete` + `meta` (the plan) ∥ `synthesis_complete`
    (memory's hero).
@@ -1595,6 +1596,27 @@ arrive without a label there — `complete.tabIds` is authoritative.
    false}` — the Moments tab, with the id, label and goal of the tab that will
    replace it (the plan's first `moment_track` tab, else `key_moments`). Not
    sent when no source has an entry.
+3. Per extraction group: `extraction_progress {section: "groups", batch, of}`,
+   then a **preview** of every planned tab whose fields have all landed —
+   `final: false`, **without `crossTabLinks` and `attachments`**, at the
+   position its plan order gives it (normally its final one); never the
+   overview, a `moment_track` tab or the quiz. A preview is re-sent only when
+   its content changed. One `extraction_complete` once every group landed.
+4. Assembly: `description_analysis`, then a preview (same rules, exact
+   positions) of each tab the client lacks: the **overview**, tabs assembly
+   added (backfills, filmstrip, minimum-3 fallbacks) and tabs the last
+   groups or the frames changed.
+5. Late group, in parallel: the `moment_track` tabs once framed (replacing the
+   provisional by id, or under another id with `replaces`; final when no quiz
+   is pending), `synthesis_complete` (superset), `enrichment_complete` (the
+   quiz call started when the groups holding its domains' fields landed).
+6. The **final re-emit**: every tab not yet received final, `final: true` at
+   its final position, links and attachments included — the overview last.
+7. `complete {tabCount, tabIds}`, then `done` (non-English: after translation).
+
+With `EXTRACTION_PARALLEL=false` (one extraction call after frames-done):
+
+1. – 2. as above.
 3. Assembly: `description_analysis`, then every tab but the `moment_track`
    tabs at its position — `final: false` while the quiz is pending (it can
    change any tab: links, a `quick_quiz` attachment, the overview's count);

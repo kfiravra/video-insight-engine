@@ -14,7 +14,7 @@ from src.services.pipeline.tab_ledger import TabLedger
 
 if TYPE_CHECKING:
     from src.models.memory_types import MemoryResult
-    from src.models.pipeline_types import PlanResult
+    from src.models.pipeline_types import EnrichmentData, PlanResult
     from src.models.probe_types import TierProbe
     from src.repositories.mongodb_repository import MongoDBVideoRepository
     from src.services.llm import LLMService
@@ -147,6 +147,10 @@ class PipelineContext:
     extraction_groups: list[dict[str, Any]] = field(default_factory=list)
     synthesis_dict: dict[str, Any] = field(default_factory=dict)
     enrichment_data: dict[str, Any] | None = None
+    # Split path (3.6): the quiz call, started by the split extraction once the
+    # groups holding its domains' fields landed; assembly's late group awaits
+    # it. None on today's path (the late group makes the call).
+    quiz_task: asyncio.Task[EnrichmentData | None] | None = None
     # Coverage metric: how far into the video the timestamped extraction
     # reaches vs. duration, plus dropped-batch counts. Surfaced into meta.
     extraction_coverage: dict[str, Any] | None = None

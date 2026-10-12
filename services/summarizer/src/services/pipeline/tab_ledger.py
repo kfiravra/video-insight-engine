@@ -26,6 +26,13 @@ patch, every tab of the final response not yet received final goes out final
 at its final position, in order. A tab streamed earlier that the final
 response no longer holds was withdrawn; ``complete.tabIds`` lists the final
 order, so a client drops whatever it holds beyond it.
+
+The split extraction (3.6) streams **previews** while its groups land
+(``groups_pending``) and once more after the final assembly: tabs without
+their links and attachments, at estimated positions — never final (A1). Once
+every group landed the usual rules apply again (``groups_landed``); every tab
+still gets exactly one final emission, and the closing re-emit sends the
+overview (built from every tab and synthesis) last.
 """
 
 from __future__ import annotations
@@ -75,6 +82,10 @@ class TabLedger:
     # Late phases still to land that change already-assembled tabs.
     quiz_pending: bool = False
     synthesis_pending: bool = False
+    # Split extraction (3.6): extraction groups still landing — nothing final.
+    groups_pending: bool = False
+    # Split extraction: the closing re-emit sends the overview last.
+    overview_last: bool = False
     # The provisional tab still on the client, and the response's tab that
     # takes its place under another id (``track_response``).
     provisional: OpenProvisional | None = None
@@ -84,6 +95,15 @@ class TabLedger:
         """Declare what the late group will change before the first tab goes out."""
         self.quiz_pending = quiz
         self.synthesis_pending = synthesis
+
+    def expect_groups(self) -> None:
+        """Tabs will stream per landed extraction group; the overview closes the run."""
+        self.groups_pending = True
+        self.overview_last = True
+
+    def groups_landed(self) -> None:
+        """Every extraction group landed: finals follow the late group's rules again."""
+        self.groups_pending = False
 
     def track_response(self, tabs: list[dict]) -> None:
         """Name the tab of ``tabs`` that takes the open provisional's place under another id.
@@ -101,7 +121,7 @@ class TabLedger:
         )
 
     def _settled(self, tab: dict) -> bool:
-        if self.quiz_pending:
+        if self.quiz_pending or self.groups_pending:
             return False
         return not (self.synthesis_pending and tab.get("component") == _OVERVIEW)
 
@@ -118,9 +138,15 @@ class TabLedger:
         self.provisional, self.superseding_id = None, None
         return open_tab.tab_id
 
-    def event(self, tab: dict, position: int, *, provisional: bool = False) -> str:
-        """The ``tab_ready`` chunk for ``tab`` at ``position``; final when nothing can change it."""
-        final = not provisional and self._settled(tab)
+    def event(
+        self, tab: dict, position: int, *, provisional: bool = False, preview: bool = False
+    ) -> str:
+        """The ``tab_ready`` chunk for ``tab`` at ``position``; final when nothing can change it.
+
+        ``preview``: a tab streamed without its links and attachments (the split
+        path) — never final.
+        """
+        final = not (provisional or preview) and self._settled(tab)
         payload = {**tab, "position": position, "final": final}
         if provisional:
             payload["provisional"] = True
@@ -129,6 +155,11 @@ class TabLedger:
             payload["replaces"] = replaced
         self.sent[tab_id(tab)] = SentTab(position, _fingerprint(tab), final)
         return sse_event("tab_ready", payload)
+
+    def holds(self, tab: dict) -> bool:
+        """Whether the last emission of ``tab``'s id carried this exact content."""
+        sent = self.sent.get(tab_id(tab))
+        return sent is not None and sent.fingerprint == _fingerprint(tab)
 
     def _received_final(self, tab: dict, position: int) -> bool:
         sent = self.sent.get(tab_id(tab))
@@ -140,12 +171,21 @@ class TabLedger:
         return False
 
     def closing_events(self, tabs: list[dict]) -> list[str]:
-        """The final re-emit: every tab of ``tabs`` not yet received final, in order, final."""
+        """The final re-emit: every tab of ``tabs`` not yet received final, in order, final.
+
+        After per-group streaming the overview goes out last: it is the one tab
+        built from all the others and synthesis.
+        """
+        overview_last, self.overview_last = self.overview_last, False
+        self.groups_landed()
         self.expect_late_changes(quiz=False, synthesis=False)
         self.track_response(tabs)
+        order = list(enumerate(tabs))
+        if overview_last:
+            order.sort(key=lambda pair: pair[1].get("component") == _OVERVIEW)
         return [
             self.event(tab, position)
-            for position, tab in enumerate(tabs)
+            for position, tab in order
             if not self._received_final(tab, position)
         ]
 

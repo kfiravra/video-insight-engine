@@ -26,7 +26,9 @@ the group calls are synthesized from the recorded single call
 ``EXTRACTION_PARALLEL_BATCHES`` (the cassettes pin 2); one line per group call
 gives its start, time to first chunk, wall and output tokens (seconds at
 speed 1, from the run start; plan-done and frames-done for reference). Its
-recorded single call is then unused by design (not a divergence).
+recorded single call is then unused by design (not a divergence). The tab
+timeline (3.6) lists every ``tab_ready`` (provisional, per group, final) with
+the extraction, quiz and ``complete`` events between them.
 """
 
 from __future__ import annotations
@@ -109,6 +111,35 @@ def _print_groups(result: ReplayResult) -> None:
     print(f"group output tokens Σ {sum(c['outputTokens'] for c in calls)}")
 
 
+_TIMELINE_EVENTS = ("extraction_complete", "enrichment_complete", "complete")
+
+
+def _tab_label(payload: dict) -> str:
+    if payload.get("provisional"):
+        return "provisional"
+    return "final" if payload.get("final") else "non-final"
+
+
+def _print_tab_timeline(result: ReplayResult) -> None:
+    """Every ``tab_ready`` (id, position, kind) and the milestones between them, at speed 1."""
+    print("tab timeline (s at speed 1):")
+    for record in result.events:
+        offset = _seconds(record.offset_ms, result.speed)
+        if record.event == "tab_ready":
+            payload = record.payload()
+            label = _tab_label(payload)
+            print(f"  {offset}  tab_ready {payload.get('id')} @{payload.get('position')} {label}")
+        elif record.event in _TIMELINE_EVENTS:
+            print(f"  {offset}  {record.event}")
+    quiz = [c for c in (result.timing or {}).get("llmCalls", []) if c.get("span") == "enrichment"]
+    for call in quiz:
+        start, wall = (
+            _seconds(call["startMs"], result.speed),
+            _seconds(call["wallMs"], result.speed),
+        )
+        print(f"  quiz call start {start} s, wall {wall} s")
+
+
 def _configure_logging(verbose: bool) -> None:
     """Pipeline logs only on ``--verbose`` (the summarizer installs its own handlers)."""
     logging.basicConfig(level=logging.INFO)
@@ -147,6 +178,7 @@ def main() -> int:
     print(f"EXTRACTION_PARALLEL={settings.EXTRACTION_PARALLEL}")
     _print_summary(result)
     _print_groups(result)
+    _print_tab_timeline(result)
     rows = phase_rows(result, cassette)
     if args.speed > 0:
         print(format_table(rows))

@@ -6,10 +6,12 @@ tabs read (``field_requests``), cuts them into groups (``field_groups``) and
 fires them over the run's chunks (``extraction_groups``): the text groups at
 once — text1 warms the shared prefix — and the visual group once frames are
 done, cut from the tabs frames-done decided. Each landed group sends an
-``extraction_progress`` (``section="groups"``); each group's answer was
-validated and cut to its own keys as it landed, and when all landed they are
-merged (``group_merge``, 3.5) into ONE ``extraction_complete``. Assembly still
-runs after the whole phase-2 group.
+``extraction_progress`` (``section="groups"``) followed by previews of the
+tabs it completed (``group_emission``, 3.6: non-final; the quiz starts once
+its groups are in); each group's answer was validated and cut to its own keys
+as it landed, and when all landed they are merged (``group_merge``, 3.5) into
+ONE ``extraction_complete``. Assembly runs after the whole phase-2 group and
+sends every tab final.
 """
 
 from __future__ import annotations
@@ -31,11 +33,13 @@ from src.services.pipeline.extractor import _build_prompt
 from src.services.pipeline.field_groups import ExtractionGroup, build_groups, visual_group
 from src.services.pipeline.field_requests import FieldRequest, reads_extraction, requested_fields
 from src.services.pipeline.group_merge import merge_groups, merge_order, requested_quality
+from src.services.pipeline.phases.enrichment import cancel_quiz_task
 from src.services.pipeline.phases.extraction import (
     fail_extraction,
     finish_extraction,
     record_validation,
 )
+from src.services.pipeline.phases.group_emission import GroupLanding
 from src.services.pipeline.pipeline_helpers import sse_event
 from src.services.pipeline.pipeline_timing import timed_step
 from src.services.pipeline.prompt_builder import format_gallery_frames_for_extraction
@@ -161,9 +165,13 @@ def _log_landed(ctx: PipelineContext, outcome: GroupOutcome) -> None:
 async def _land(
     ctx: PipelineContext, run: SplitRun, visual_planned: bool, outcomes: list[GroupOutcome]
 ) -> AsyncGenerator[str, None]:
-    """Fire every call; one progress event per landed call (outcomes collected in order)."""
+    """Fire every call; per landed call one progress event, then the tabs it completed.
+
+    Outcomes are collected in landing order.
+    """
     per_chunk = len(run.text_groups) + int(visual_planned)
     progress = _Progress(of=len(run.chunks) * per_chunk, visual_planned=visual_planned)
+    landing = GroupLanding.for_run(ctx, run.text_groups, len(run.chunks))
     yield progress.event()
     async for outcome in fire_groups(run, _visual_cutter(ctx)):
         if outcome is None:
@@ -172,6 +180,9 @@ async def _land(
         outcomes.append(outcome)
         _log_landed(ctx, outcome)
         yield progress.landed(outcome)
+        assert ctx.plan_result is not None
+        for event in landing.events(outcome, outcomes, _requested(ctx.plan_result)):
+            yield event
 
 
 # ─── Merge ───
@@ -225,14 +236,21 @@ async def _complete(ctx: PipelineContext, outcomes: Sequence[GroupOutcome]) -> l
 
 
 async def run_phase_split_extraction(ctx: PipelineContext) -> AsyncGenerator[str, None]:
-    """From plan-done: fire the field groups, stream their progress, then the merged result."""
+    """From plan-done: fire the field groups, stream their progress + tabs, then the merged result.
+
+    A run that fails or is cancelled here stops the quiz call it started.
+    """
     await ctx.plan_done.wait()
     if ctx.plan_result is None:
         return  # the text branch failed: no plan to extract for (the group is being cancelled)
-    with timed_step("extraction"):
-        run, visual_planned = _split_run(ctx)
-        outcomes: list[GroupOutcome] = []
-        async for event in _land(ctx, run, visual_planned, outcomes):
-            yield event
-        for event in await _complete(ctx, outcomes):
-            yield event
+    try:
+        with timed_step("extraction"):
+            run, visual_planned = _split_run(ctx)
+            outcomes: list[GroupOutcome] = []
+            async for event in _land(ctx, run, visual_planned, outcomes):
+                yield event
+            for event in await _complete(ctx, outcomes):
+                yield event
+    except BaseException:
+        cancel_quiz_task(ctx)
+        raise

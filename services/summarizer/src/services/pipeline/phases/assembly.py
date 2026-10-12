@@ -14,6 +14,13 @@ Order (pipeline-1min 1d.1/1d.3; every ``tab_ready`` through the run's
 5. the final re-emit: every tab not yet sent final, at its final position;
 6. ``complete`` (with the final tab order), the save, the shared artifacts
    (Redis, Qdrant), ``done``.
+
+Split path (3.6): every group has landed, so finals follow the rules above
+again; the tabs already streamed per group as previews (``phases/group_emission``),
+so step 3 previews only what the client lacks — the overview, tabs assembly
+added, tabs the last groups changed — the quiz call the split extraction
+started is awaited in step 4 (cancelled when the plan no longer uses it), and
+step 5 sends the overview last.
 """
 
 from __future__ import annotations
@@ -32,7 +39,9 @@ from src.services.pipeline.assembly.core import count_dropped_tabs
 from src.services.pipeline.assembly.moment_frame_fill import fill_moment_frames
 from src.services.pipeline.enrichment import needs_quiz
 from src.services.pipeline.phases import run_phase_enrichment, run_phase_synthesis
+from src.services.pipeline.phases.enrichment import cancel_quiz_task
 from src.services.pipeline.phases.extraction import extraction_record
+from src.services.pipeline.phases.group_emission import assembled_tab_events
 from src.services.pipeline.phases.late_quiz import carry_moment_props
 from src.services.pipeline.phases.metadata import await_description_analysis
 from src.services.pipeline.phases.moments import video_meta
@@ -218,6 +227,17 @@ def _late_phases(ctx: PipelineContext, synthesized: bool) -> list[PhaseFn]:
     return phases
 
 
+def _start_late_group(ctx: PipelineContext, synthesized: bool) -> list[PhaseFn]:
+    """The late phases, declared to the ledger; a started quiz no late phase awaits stops."""
+    late = _late_phases(ctx, synthesized)
+    if run_phase_enrichment not in late:
+        cancel_quiz_task(ctx)  # e.g. a strip-only quiz whose host frames-done dropped
+    ctx.tab_ledger.expect_late_changes(
+        quiz=run_phase_enrichment in late, synthesis=run_phase_synthesis in late
+    )
+    return late
+
+
 def _add_late_quiz(
     ctx: PipelineContext,
     description: dict[str, Any] | None,
@@ -237,6 +257,8 @@ async def run_phase_assembly(ctx: PipelineContext) -> AsyncGenerator[str, None]:
     """Emit the tabs, run the late group, then save, cache and finish (module docstring)."""
     assert ctx.video_data is not None
     assert ctx.triage is not None
+    split = ctx.tab_ledger.groups_pending  # the split extraction streamed previews
+    ctx.tab_ledger.groups_landed()
     description = await _description_analysis(ctx)
     if description is not None:
         yield sse_event("description_analysis", description)
@@ -251,11 +273,8 @@ async def run_phase_assembly(ctx: PipelineContext) -> AsyncGenerator[str, None]:
         seed_synthesis_dict(ctx)
     synthesis_input = dict(ctx.synthesis_dict or {})
     assembled = _assemble(ctx, description, synthesis_input)
-    late = _late_phases(ctx, synthesized_first)
-    ctx.tab_ledger.expect_late_changes(
-        quiz=run_phase_enrichment in late, synthesis=run_phase_synthesis in late
-    )
-    for event in _first_tab_events(ctx):
+    late = _start_late_group(ctx, synthesized_first)
+    for event in assembled_tab_events(ctx) if split else _first_tab_events(ctx):
         yield event
 
     async for event in run_parallel_phases(late, ctx):
