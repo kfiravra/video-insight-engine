@@ -103,6 +103,14 @@ def _load_schema(name: str) -> str:
     return load_prompt_text(schema_path)
 
 
+def load_schema_text(name: str) -> str:
+    """The schema text this prompt's ``<schema>`` block carries for ``name`` (``""`` if none).
+
+    Public for ``schema_fields``, whose key trees must come from the same text.
+    """
+    return _load_schema(name)
+
+
 def _load_domain_example(tag: str) -> str:
     """The domain's example file; ``""`` when the domain has none.
 
