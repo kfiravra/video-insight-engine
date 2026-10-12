@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 
 from src.shared_config.domain_config import (
@@ -28,6 +28,7 @@ from .attachments import attach_secondaries
 from .cross_tab import resolve_cross_tab_links
 from .density import enforce_density
 from .normalizers import _chapters_to_moments
+from .moment_fallback import cannot_feed_moments, fallback_moment_props, fallback_moments
 from .promotion import demote_component, promote_component
 from .registry import ASSEMBLER_REGISTRY, infer_component
 
@@ -352,12 +353,18 @@ def _drop_impossible_timestamps(tabs: list[dict], video_duration: float | int | 
     return dropped
 
 
-def _drop_emptied_moment_tabs(tabs: list[dict], dropped_sink: list[dict]) -> None:
-    """Remove moment_track tabs whose item list the timestamp hygiene emptied.
+def _drop_emptied_moment_tabs(
+    tabs: list[dict],
+    dropped_sink: list[dict],
+    refill: Callable[[], dict | None] | None = None,
+) -> None:
+    """Refill (or, with no fallback source, remove) moment_track tabs the hygiene emptied.
 
     _validate_assembled_props ran before the drop pass, so without this an
     all-hallucinated moment tab would ship as an empty surface (persisted and
-    cached until the next PIPELINE_VERSION bump).
+    cached until the next PIPELINE_VERSION bump). ``refill`` builds props from
+    the moment fallback chain — a moment_track tab is dropped only when no
+    fallback source has entries either.
     """
     for idx in reversed(range(len(tabs))):
         tab = tabs[idx]
@@ -365,6 +372,14 @@ def _drop_emptied_moment_tabs(tabs: list[dict], dropped_sink: list[dict]) -> Non
             continue
         props = tab.get("props")
         if isinstance(props, dict) and props.get("items"):
+            continue
+        refilled = refill() if refill else None
+        if refilled is not None:
+            logger.warning(
+                "Moment tab %r: every moment was beyond duration — refilled from the fallback chain",
+                tab.get("id"),
+            )
+            tab["props"] = refilled
             continue
         popped = tabs.pop(idx)
         logger.warning(
@@ -1515,27 +1530,15 @@ def assemble_response(
             elif component == "moment_track":
                 data = (extraction.get("learning") or {}).get("timestamps")
 
-        # YouTube chapters fall through to fill *empty* moment_track data only.
-        # Prior behavior (pre-MomentTrack) was the opposite: chapters always
-        # overrode LLM timestamps. We flipped this with the unified MomentTrack
-        # because LLM-extracted moments now carry mood / description / highlight
-        # spans — strictly richer than the {start_time, title} pairs YouTube
-        # exposes. When extraction returns nothing, chapters are still the best
-        # navigation aid we have, so we keep the fallback.
-        if component == "moment_track" and (
-            data is None or (isinstance(data, list) and len(data) == 0)
-        ):
-            yt_chapters = (video_meta or {}).get("chapters", [])
-            if isinstance(yt_chapters, list) and len(yt_chapters) > 0:
-                chapter_dicts = [ch for ch in yt_chapters if isinstance(ch, dict)]
-                if chapter_dicts:
-                    video_duration = video_meta.get("duration") if video_meta else None
-                    try:
-                        video_duration = int(video_duration) if video_duration is not None else None
-                    except (ValueError, TypeError):
-                        video_duration = None
-                    data = _chapters_to_moments(chapter_dicts, video_duration)
-                    data_resolved = True
+        # moment_track is never dropped for lack of data (Kfir, phase-1 close):
+        # when the planned source yields nothing, the moments come from the
+        # memory outline, then the YouTube chapters, then the description's
+        # timestamps. LLM-extracted moments stay first — they are richer.
+        if component == "moment_track" and cannot_feed_moments(data):
+            fallback = fallback_moments(video_meta, description_analysis)
+            if fallback is not None:
+                data = fallback
+                data_resolved = True
 
         # Components that build from synthesis/meta, not extraction data
         _SELF_SUFFICIENT = {"overview", "budget"}
@@ -1595,6 +1598,11 @@ def assemble_response(
             )
             props = None
             drop_reason = "validation_empty_list"
+
+        if props is None and component == "moment_track":
+            props = fallback_moment_props(video_meta, description_analysis)
+            if props is not None:
+                drop_reason = drop_detail = None
 
         # Degrade, never drop: a rich assembler failing on NON-EMPTY data
         # (shape mismatch, min-item gate, exception) walks the demote ladder
@@ -1686,7 +1694,11 @@ def assemble_response(
     # match a frame — drop them before the backfill and post-assembly
     # extraction passes spend effort on them.
     if _drop_impossible_timestamps(assembled_tabs, (video_meta or {}).get("duration")):
-        _drop_emptied_moment_tabs(assembled_tabs, dropped_tabs)
+        _drop_emptied_moment_tabs(
+            assembled_tabs,
+            dropped_tabs,
+            refill=lambda: fallback_moment_props(video_meta, description_analysis),
+        )
 
     # Relaxed second-pass thumbnail fill for the moment grid — runs after the
     # strict per-tab injection so exclusivity had first pick.

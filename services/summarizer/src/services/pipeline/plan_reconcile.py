@@ -11,9 +11,11 @@ re-pointed or dropped before extraction runs:
 
 A dataSource rendered by the same component in an active domain replaces it
 (the registry's declared siblings first, then the active domains in plan
-order); otherwise the tab is dropped. Every decision is recorded for
-``pipeline.reconcile``; drops also join ``droppedTabs`` so the tab accounting
-stays complete.
+order); otherwise the tab is dropped — except a moment_track tab, which stays
+and is filled by assembly's moment fallback chain. Every decision is recorded
+for ``pipeline.reconcile`` (``action``: repointed / dropped /
+kept_for_moment_fallback); drops also join ``droppedTabs`` so the tab
+accounting stays complete.
 """
 
 from __future__ import annotations
@@ -91,13 +93,36 @@ def _replacement(
     return None
 
 
+# A moment_track tab is never dropped (Kfir, phase-1 close): with no same-
+# component source it stays as planned and assembly fills it from the moment
+# fallback chain (memory outline → YouTube chapters → description timestamps).
+_NEVER_DROPPED = frozenset({"moment_track"})
+
+
+def _decide(
+    tab: dict, reason: str, replacement: str | None
+) -> tuple[str, dict | None, dict | None]:
+    """``(action, kept_tab, dropped_entry)`` for a tab whose dataSource cannot have content."""
+    if replacement is not None:
+        return "repointed", {**tab, "dataSource": replacement}, None
+    if tab["component"] in _NEVER_DROPPED:
+        return "kept_for_moment_fallback", tab, None
+    entry = {
+        "id": tab["id"],
+        "component": tab["component"],
+        "dataSource": tab.get("dataSource") or "",
+        "reason": f"reconcile_{reason}",
+    }
+    return "dropped", None, entry
+
+
 def reconcile_plan_tabs(
     tabs: list[dict],
     content_tags: Sequence[str],
     modifiers: Sequence[str],
     evidence: Mapping[str, bool],
 ) -> tuple[list[dict], list[dict], list[dict]]:
-    """Re-point or drop the tabs whose dataSource cannot have content.
+    """Re-point, keep (moment_track) or drop the tabs whose dataSource cannot have content.
 
     Returns ``(kept_tabs, dropped_tabs, records)``: ``dropped_tabs`` in the
     ``droppedTabs`` shape assembly persists, ``records`` for ``pipeline.reconcile``.
@@ -115,6 +140,7 @@ def reconcile_plan_tabs(
             kept.append(tab)
             continue
         replacement = _replacement(path, tab["component"], active_order, evidence, taken)
+        action, kept_tab, drop = _decide(tab, reason, replacement)
         records.append(
             {
                 "tabId": tab["id"],
@@ -122,27 +148,23 @@ def reconcile_plan_tabs(
                 "from": path,
                 "to": replacement,
                 "reason": reason,
+                "action": action,
             }
         )
-        if replacement is None:
-            logger.warning(
-                "Plan tab dropped: id=%r dataSource=%r (%s) — no %s dataSource in %s",
-                tab["id"],
-                path,
-                reason,
-                tab["component"],
-                active_order,
-            )
-            dropped.append(
-                {
-                    "id": tab["id"],
-                    "component": tab["component"],
-                    "dataSource": path,
-                    "reason": f"reconcile_{reason}",
-                }
-            )
-            continue
-        logger.info("Plan tab %r: %s %r -> %r", tab["id"], reason, path, replacement)
-        taken.add((replacement, tab["component"]))
-        kept.append({**tab, "dataSource": replacement})
+        log = logger.warning if action == "dropped" else logger.info
+        log(
+            "Plan tab %r: %s %r — %s %r (active %s)",
+            tab["id"],
+            reason,
+            path,
+            action,
+            replacement,
+            active_order,
+        )
+        if kept_tab is not None:
+            kept.append(kept_tab)
+        if replacement is not None:
+            taken.add((replacement, tab["component"]))
+        if drop is not None:
+            dropped.append(drop)
     return kept, dropped, records

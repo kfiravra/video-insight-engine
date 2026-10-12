@@ -93,6 +93,8 @@ def _video_meta(ctx: PipelineContext) -> dict[str, Any]:
             {"start_time": ch.start_time, "end_time": ch.end_time, "title": ch.title}
             for ch in (ctx.video_data.chapters or [])
         ],
+        # moment_track fallback, first rung (outline → chapters → description timestamps).
+        "outline": [s.model_dump() for s in (ctx.memory.outline if ctx.memory else [])],
     }
 
 
