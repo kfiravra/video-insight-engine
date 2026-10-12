@@ -11,6 +11,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from src.services.pipeline.tab_ledger import TabLedger
+
 if TYPE_CHECKING:
     from src.models.memory_types import MemoryResult
     from src.models.pipeline_types import PlanResult
@@ -138,6 +140,9 @@ class PipelineContext:
     # Assembly outputs (populated by assembly phase)
     assembled_tabs: list[dict] | None = None
     assembled_meta: dict[str, Any] | None = None
+    # Every tab_ready of the run (the provisional Moments tab at plan-done,
+    # assembly's emissions, the final re-emit) — the tab emission contract.
+    tab_ledger: TabLedger = field(default_factory=TabLedger)
 
     # Language support. The pipeline is English-canonical: ALL generation runs
     # in English, so ``language``/``is_rtl`` always describe the English-primary

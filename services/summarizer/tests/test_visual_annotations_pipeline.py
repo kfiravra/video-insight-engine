@@ -20,6 +20,7 @@ from src.routes import pipeline_orchestration
 from src.services.pipeline.phases import assembly as assembly_phase
 from src.services.pipeline.phases import qdrant_index
 from src.services.pipeline.pipeline_helpers import TranscriptData
+from src.services.pipeline.tab_ledger import TabLedger
 
 
 @pytest.fixture(autouse=True)
@@ -84,6 +85,7 @@ def _ctx(*, eval_run: bool = False) -> SimpleNamespace:
         audio_path=None,
         memory=None,
         video_memory="",
+        tab_ledger=TabLedger(),
         eval_run=eval_run,
     )
 

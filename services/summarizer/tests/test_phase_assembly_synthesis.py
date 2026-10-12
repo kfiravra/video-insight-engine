@@ -1,9 +1,10 @@
 """Assembly runs synthesis after the tabs, in parallel with the moment fill (1d.3).
 
-Order on the wire: every eager tab → synthesis ∥ moment fill (the overview
-re-sent with synthesis's text, the moment tab once framed) → ``complete`` →
-save. Assembly itself reads memory's hero (the seeded synthesis dict); the
-saved doc carries synthesis's masterSummary because the save comes last.
+Order on the wire: every eager tab (the overview non-final) → synthesis ∥
+moment fill (the moment tab once framed) → the final re-emit (the overview
+with synthesis's text) → ``complete`` → save. Assembly itself reads memory's
+hero (the seeded synthesis dict); the saved doc carries synthesis's
+masterSummary because the save comes last.
 The synthesis LLM call (``synthesize``) and the frame fill are patched; the
 synthesis phase and the parallel runner run as production code.
 """

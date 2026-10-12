@@ -27,9 +27,14 @@ from .assemblers_overhaul import _normalize_filmstrip_frame
 from .attachments import attach_secondaries
 from .cross_tab import resolve_cross_tab_links
 from .density import enforce_density
-from .normalizers import _chapters_to_moments
 from .item_timestamps import clear_impossible_item_timestamps
-from .moment_fallback import cannot_feed_moments, fallback_moment_props, fallback_moments
+from .moment_fallback import (
+    always_moments_tab,
+    cannot_feed_moments,
+    fallback_moment_props,
+    fallback_moments,
+)
+from .normalizers import _chapters_to_moments
 from .promotion import demote_component, promote_component
 from .registry import ASSEMBLER_REGISTRY, infer_component
 
@@ -456,6 +461,27 @@ def _backfill_moment_thumbnails(
                 filled_before,
                 len(items),
             )
+
+
+def _frame_moment_tab(
+    tab: dict,
+    frames: list[dict] | None,
+    all_frames: list[dict] | None,
+    frame_descriptions: list[dict] | None,
+    frame_used: dict[str, float],
+) -> None:
+    """Thumbnails for a moment tab added after the per-tab pass: strict, then relaxed."""
+    if not frames:
+        return
+    inject_frame_thumbnails(
+        tab["props"]["items"],
+        frames,
+        all_frames=all_frames,
+        frame_descriptions=frame_descriptions,
+        used=frame_used,
+        tab_used=set(),
+    )
+    _backfill_moment_thumbnails([tab], frames, all_frames, frame_descriptions)
 
 
 def find_description_for_frame(
@@ -1733,6 +1759,20 @@ def assemble_response(
         content_format=triage.get("contentFormat"),
         evidence=evidence,
     )
+
+    # A Moments tab always exists (Kfir 2026-10-12): with no moment_track tab
+    # left, the fallback chain's tab joins after the planned and required ones —
+    # after the requirements, so a backfill from extraction data wins.
+    moments = always_moments_tab(
+        assembled_tabs,
+        raw_tabs,
+        video_meta,
+        description_analysis,
+        effective_requirements(primary_tag, triage.get("contentFormat"))["forbidden"],
+    )
+    if moments is not None:
+        _frame_moment_tab(moments, frames, all_frames, frame_descriptions, frame_used)
+        assembled_tabs.append(moments)
 
     # Conditional filmstrip auto-append. The standalone gallery component was
     # retired in the video-to-action overhaul; this surfaces the same frames as

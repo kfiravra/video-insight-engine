@@ -13,10 +13,16 @@ Key design properties:
 - **Late joiners replay from the beginning.** ``XREAD`` with ``last_id="0"``
   returns the full event history retained in the stream, so a reconnect
   receives the same events the first connection saw.
+- **One run per stream.** Winning the lock starts a run, so the same atomic
+  step deletes the previous run's stream: a re-run of the same row (retry,
+  regenerate, stall re-dispatch) never replays the old run's events, and no
+  consumer can attach to them between the lock and the first new event.
 - **Crash safety.** The lock has a TTL; if the worker process dies, the
   lock auto-expires and a future request can pick the work back up. The
   release path uses a Lua compare-and-delete so we never release a lock we
-  no longer own.
+  no longer own. The stream never exists without a TTL either: every event
+  (and the lock heartbeat) renews a running TTL, and ``mark_done`` shortens
+  it to the drain window — a producer that dies mid-run cannot leak it.
 """
 
 from __future__ import annotations
@@ -36,6 +42,17 @@ logger = logging.getLogger(__name__)
 SENTINEL_DONE = "__pipeline_done__"
 
 
+# Lua script for the producer claim: SET NX on the lock key and, only when the
+# claim wins, delete the event stream (KEYS[2]) in the same atomic step — the
+# winner's run starts from an empty stream.
+_ACQUIRE_LOCK_LUA = """
+if redis.call('set', KEYS[1], ARGV[1], 'NX', 'EX', ARGV[2]) then
+    redis.call('del', KEYS[2])
+    return 1
+end
+return 0
+"""
+
 # Lua script for atomic compare-and-delete on the lock key.
 # Prevents a slow worker from deleting a lock that has since been re-acquired
 # by a different worker after TTL expiry.
@@ -47,12 +64,13 @@ else
 end
 """
 
-# Lua script for atomic compare-and-extend (PEXPIRE) on the lock key.
-# Used by the producer's heartbeat to keep the lock alive for as long as
-# its pipeline is running, without ever extending a lock owned by someone
-# else (which would happen with a naive EXPIRE).
+# Lua script for atomic compare-and-extend on the lock key (KEYS[1]) and the
+# run's event stream (KEYS[2]). Used by the producer's heartbeat to keep both
+# alive for as long as its pipeline is running, without ever extending a lock
+# owned by someone else (which would happen with a naive EXPIRE).
 _REFRESH_LOCK_LUA = """
 if redis.call('get', KEYS[1]) == ARGV[1] then
+    redis.call('expire', KEYS[2], ARGV[2])
     return redis.call('expire', KEYS[1], ARGV[2])
 else
     return 0
@@ -69,6 +87,7 @@ class PipelineEventStream:
         # Scripts are registered once on first use and cached. redis-py's
         # Script object handles EVALSHA + NOSCRIPT-fallback to EVAL internally,
         # so the wire payload after the first call is just the SHA.
+        self._acquire_script = None
         self._release_script = None
         self._refresh_script = None
 
@@ -102,6 +121,7 @@ class PipelineEventStream:
             self._release_script is None
             or getattr(self._release_script, "registered_client", None) is not client
         ):
+            self._acquire_script = client.register_script(_ACQUIRE_LOCK_LUA)
             self._release_script = client.register_script(_RELEASE_LOCK_LUA)
             self._refresh_script = client.register_script(_REFRESH_LOCK_LUA)
 
@@ -114,15 +134,18 @@ class PipelineEventStream:
         return f"vie:pipeline:lock:{video_summary_id}"
 
     async def acquire_lock(self, video_summary_id: str, owner: str) -> bool:
-        """Try to claim producer ownership. Returns True if we won the race."""
-        client = self._get_client()
-        result = await client.set(
-            self.lock_key(video_summary_id),
-            owner,
-            nx=True,
-            ex=settings.PIPELINE_LOCK_TTL_SECONDS,
+        """Try to claim producer ownership. Returns True if we won the race.
+
+        A won claim starts a new run: the previous run's event stream is
+        deleted in the same atomic step, before any consumer can attach to it.
+        """
+        self._ensure_scripts()
+        assert self._acquire_script is not None  # set by _ensure_scripts
+        result = await self._acquire_script(
+            keys=[self.lock_key(video_summary_id), self.stream_key(video_summary_id)],
+            args=[owner, str(settings.PIPELINE_LOCK_TTL_SECONDS)],
         )
-        return bool(result)
+        return result == 1
 
     async def purge(self, video_summary_id: str) -> int:
         """Delete the event stream and the producer lock for one run.
@@ -152,7 +175,7 @@ class PipelineEventStream:
             logger.warning("Lock release unexpected error for %s: %s", video_summary_id, e)
 
     async def refresh_lock(self, video_summary_id: str, owner: str) -> bool:
-        """Extend the lock TTL atomically, only if we still own it.
+        """Extend the lock TTL — and the run's stream TTL — atomically, only if we still own it.
 
         Returns True when the lock was extended, False when it had already
         expired / been re-claimed (in which case the producer has effectively
@@ -163,7 +186,7 @@ class PipelineEventStream:
         assert self._refresh_script is not None  # set by _ensure_scripts
         try:
             result = await self._refresh_script(
-                keys=[self.lock_key(video_summary_id)],
+                keys=[self.lock_key(video_summary_id), self.stream_key(video_summary_id)],
                 args=[owner, str(settings.PIPELINE_LOCK_TTL_SECONDS)],
             )
         except (aioredis.ConnectionError, aioredis.TimeoutError) as e:
@@ -185,14 +208,22 @@ class PipelineEventStream:
             return True
 
     async def publish(self, video_summary_id: str, event: str) -> None:
-        """Append an SSE event chunk to the stream."""
-        client = self._get_client()
-        await client.xadd(
-            self.stream_key(video_summary_id),
-            {"data": event},
-            maxlen=settings.PIPELINE_STREAM_MAXLEN,
-            approximate=True,
-        )
+        """Append an SSE event chunk to the stream and renew the stream's running TTL.
+
+        Both in one MULTI/EXEC, so the stream never exists without a TTL — from
+        the run's first event on. The running TTL is the lock's: a producer
+        that dies without ``mark_done`` leaves a stream that expires with it.
+        """
+        key = self.stream_key(video_summary_id)
+        async with self._get_client().pipeline(transaction=True) as pipe:
+            pipe.xadd(
+                key,
+                {"data": event},
+                maxlen=settings.PIPELINE_STREAM_MAXLEN,
+                approximate=True,
+            )
+            pipe.expire(key, settings.PIPELINE_LOCK_TTL_SECONDS)
+            await pipe.execute()
 
     async def mark_done(self, video_summary_id: str) -> None:
         """Append the DONE sentinel and set retention so late joiners can drain."""
@@ -220,7 +251,8 @@ class PipelineEventStream:
         """Yield events from the stream until the DONE sentinel.
 
         Always starts from the beginning (``XREAD`` cursor ``"0"``) — late
-        joiners replay every event the first connection received. The
+        joiners replay every event the first connection received, and only
+        the current run's: the lock claim emptied the stream. The
         frontend stream-registry holds its own replay buffer for cross-
         component fan-out, so we never need a "resume from cursor" path.
         ``XREAD BLOCK`` waits up to ``block_ms`` for new messages; if the

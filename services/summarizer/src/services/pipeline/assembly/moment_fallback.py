@@ -10,18 +10,35 @@ the video's end), the moments come from the first source that has entries:
 
 Every source is converted to the chapter shape ``_chapters_to_moments`` turns
 into MomentTrack spans, so the three read the same in the UI.
+
+A Moments tab always exists (Kfir 2026-10-12, pipeline-1min 2.1): a response
+whose plan designed none gets the always-Moments tab from the same chain
+(``always_moments_tab``), and the plan-done provisional copy
+(``provisional_moments_tab``) carries the id of whichever tab will replace it.
+No source with an entry → no Moments tab: one is never invented.
 """
 
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Iterable, Mapping
 from typing import Any
 
 from .assemblers_primary import assemble_moment_track
 from .normalizers import _chapters_to_moments, _coerce_int
+from .registry import infer_component
 
 logger = logging.getLogger(__name__)
+
+_MOMENT_COMPONENT = "moment_track"
+_QUIZ_COMPONENT = "quiz_arena"
+_OVERVIEW = "overview"
+
+# The Moments tab of a response whose plan designed none.
+_ALWAYS_MOMENTS_ID = "key_moments"
+_ALWAYS_MOMENTS_LABEL = "Key Moments"
+_ALWAYS_MOMENTS_EMOJI = "🎬"
+_ALWAYS_MOMENTS_GOAL = "Jump to any part of the video."
 
 
 def _outline_entries(video_meta: Mapping[str, Any]) -> list[dict]:
@@ -92,3 +109,101 @@ def fallback_moment_props(
 def cannot_feed_moments(data: Any) -> bool:
     """True when resolved moment data is missing or empty."""
     return data is None or (isinstance(data, list) and len(data) == 0)
+
+
+# ─── The Moments tab that always exists ───
+
+
+def tab_component(tab: Mapping[str, Any]) -> str:
+    """The component a plan tab assembles as — assembly's own inference for an unnamed one."""
+    if tab.get("id") == _OVERVIEW:
+        return _OVERVIEW
+    return str(tab.get("component") or infer_component(str(tab.get("id", ""))))
+
+
+def _always_moments_id(taken: Iterable[str]) -> str:
+    """``key_moments`` unless a tab holds it; plan-done and assembly reach the same id."""
+    used = set(taken)
+    candidate, suffix = _ALWAYS_MOMENTS_ID, 2
+    while candidate in used:
+        candidate, suffix = f"{_ALWAYS_MOMENTS_ID}_{suffix}", suffix + 1
+    return candidate
+
+
+def _always_moments_stub(taken: Iterable[str]) -> dict[str, str]:
+    return {
+        "id": _always_moments_id(taken),
+        "label": _ALWAYS_MOMENTS_LABEL,
+        "emoji": _ALWAYS_MOMENTS_EMOJI,
+        "goal": _ALWAYS_MOMENTS_GOAL,
+    }
+
+
+def _moments_tab(stub: Mapping[str, str], props: dict) -> dict:
+    """A tab in assembly's TabEntry shape."""
+    return {**stub, "component": _MOMENT_COMPONENT, "props": props, "crossTabLinks": []}
+
+
+def _tab_ids(tabs: Iterable[Any]) -> list[str]:
+    return [str(t.get("id", "")) for t in tabs if isinstance(t, dict)]
+
+
+def always_moments_tab(
+    tabs: list[dict],
+    plan_tabs: list[Any],
+    video_meta: Mapping[str, Any] | None,
+    description_analysis: Mapping[str, Any] | None,
+    forbidden: Collection[str],
+) -> dict | None:
+    """The fallback-chain Moments tab for a response without a moment_track tab.
+
+    None when ``tabs`` already holds one, when the domain policy forbids the
+    component, or when no fallback source has an entry.
+    """
+    if _MOMENT_COMPONENT in forbidden or any(t.get("component") == _MOMENT_COMPONENT for t in tabs):
+        return None
+    props = fallback_moment_props(video_meta, description_analysis)
+    if props is None:
+        return None
+    taken = [*_tab_ids(plan_tabs), *_tab_ids(tabs)]
+    return _moments_tab(_always_moments_stub(taken), props)
+
+
+def _kept_in_plan_order(tab: Mapping[str, Any]) -> bool:
+    """Assembly puts its own overview first and moves the quiz last; the rest keep plan order."""
+    return tab_component(tab) not in (_OVERVIEW, _QUIZ_COMPONENT)
+
+
+def provisional_moments_tab(
+    plan_tabs: list[Any],
+    video_meta: Mapping[str, Any] | None,
+    description_analysis: Mapping[str, Any] | None,
+    forbidden: Collection[str],
+) -> tuple[dict, int] | None:
+    """The plan-done Moments tab and its estimated position, or None (no source).
+
+    Its id, label, emoji and goal are those of the tab that will replace it:
+    the plan's first moment_track tab, else the always-Moments tab, which
+    assembly adds after the planned tabs. The estimate counts the overview
+    assembly puts first and the planned tabs before it, quiz excluded.
+    """
+    if _MOMENT_COMPONENT in forbidden:
+        return None
+    props = fallback_moment_props(video_meta, description_analysis)
+    if props is None:
+        return None
+    tabs = [t for t in plan_tabs if isinstance(t, dict)]
+    index = next((i for i, t in enumerate(tabs) if tab_component(t) == _MOMENT_COMPONENT), None)
+    if index is None:
+        index, stub = len(tabs), _always_moments_stub(_tab_ids(tabs))
+    else:
+        planned = tabs[index]
+        planned_id = str(planned.get("id", ""))
+        stub = {
+            "id": planned_id,
+            "label": str(planned.get("label", planned_id)),
+            "emoji": str(planned.get("emoji", "")),
+            "goal": str(planned.get("goal", "")),
+        }
+    position = 1 + sum(1 for t in tabs[:index] if _kept_in_plan_order(t))
+    return _moments_tab(stub, props), position

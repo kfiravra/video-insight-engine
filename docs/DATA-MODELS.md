@@ -105,7 +105,8 @@ on `model_dump`):
 - `FrameEvidence.s3Key?: string` — stable S3 key per frame; lets the api re-sign expired presigned URLs on serve (`refresh-frame-urls.ts`).
 - `SpotItem.pronunciation?: string` — travel spots.
 - `MomentItem` carries frame fields (`frameCaption`, `frameEvidence`, `frameOcr`, `frameSceneType`, `s3Key`) filled by assembly frame injection + `moment_frame_fill`.
-- `SSETabReadyEvent.position?: number` — index in the persisted tab order (client splices, never appends).
+- `SSETabReadyEvent` (`packages/types/src/api.ts`, extends `TabEntry`) — `position?: number` = index in the response's tab order, a sort key (exact when `final`, an estimate before); `final?: boolean` = the tab's last emission this run (one per tab of the response); `provisional?: boolean` = the plan-done Moments placeholder, replaced by id. `SSECompleteEvent.tabIds?: string[]` = the final tab order. Contract: `services/summarizer/src/services/pipeline/tab_ledger.py`, API-REFERENCE.md#tab_ready (pipeline-1min 2.1).
+- A `moment_track` tab always exists when a moment source has entries (2.1): without a planned one, assembly adds `key_moments` ("Key Moments") from the memory outline → YouTube chapters → description timestamps; it is stored, cached, RAG-indexed and translated like any tab.
 
 #### Component density gates (`densityGates`) and domain policy
 
@@ -218,18 +219,20 @@ One row per video **version** (`version`, `isLatest` below); the served row is s
   // Offsets are ms since the run started. Mirrored (minus llmCalls) onto the
   // Langfuse trace metadata; each phase is also a Langfuse span.
   "pipeline.timing": {
-    version: 1,
+    version: 2,                     // 2: the 1h/5m cache-write split on llmCalls (pipeline-1min 2.0)
     startedAt: Date,
     totalMs: number,
     phases: [{ name: string, startMs: number, endMs: number, wallMs: number }],  // metadata, transcript_frames (phase 2: text, transcript, plan, memory, frames, frames.* sub-steps incl. frames.tier_wait), visual_inject (name kept: the annotations render), extraction, assembly (moment_fill, synthesis, enrichment = the quiz, run inside it), translation
-    milestones: { metadataMs?, synthesisCompleteMs?, firstTabReadyMs?, completeMs?, doneMs? },
+    milestones: { metadataMs?, synthesisCompleteMs?, firstTabReadyMs?, completeMs?, doneMs? },  // firstTabReadyMs = first tab_ready of any kind — since 2.1 the provisional Moments tab at plan-done
     llmCalls: [{ feature, span, model, responseModel, startMs, wallMs, inputTokens, outputTokens,
-                 cacheReadTokens, cacheWriteTokens, costUsd, attempt, fallbackUsed, finishReason }],  // incl. Whisper/Gemini transcription rows (span "transcription:openai|google")
+                 cacheReadTokens,     // Anthropic cache_read_input_tokens, or OpenAI cached input (prompt_tokens_details.cached_tokens; 0 for OpenAI before v2)
+                 cacheWriteTokens, cacheWrite5mTokens, cacheWrite1hTokens,  // the write split by cache lifetime, when the provider reports it
+                 costUsd, attempt, fallbackUsed, finishReason }],  // incl. Whisper/Gemini transcription rows (span "transcription:openai|google")
     llmFailures: [{ feature, span, model, startMs, wallMs, attempt, error, rateLimited }],
     downloads: [{ kind: "lowres" | "720p" | "audio", purpose: string, startMs, wallMs, bytes: number | null, ok: boolean }],
     costUsd: number,
     counts: { llmCalls, llmFailures, retries, rateLimited, fallbacks, outputTokens, cacheReadTokens,
-              downloadBytes, tabsPlanned, tabsAssembled, tabsEmitted,  // tabsEmitted = distinct tabs streamed
+              downloadBytes, tabsPlanned, tabsAssembled, tabsEmitted,  // tabsEmitted = distinct tab ids streamed (a provisional tab and its replacement count once; a withdrawn one counts)
               truncated }  // answers that stopped at max_tokens (finish_reason=length); DONE log line `llm truncated=N`
   } | absent,
 

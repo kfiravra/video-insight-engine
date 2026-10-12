@@ -24,11 +24,7 @@ from src.models.pipeline_types import SynthesisResult
 from src.services.pipeline.assembly.core import REQUIREMENT_EVIDENCE_FALSE
 from src.services.pipeline.phases import assembly as phase
 from src.services.pipeline.phases import synthesis as synthesis_phase
-from src.services.pipeline.phases.late_quiz import (
-    carry_moment_props,
-    positions_to_resend,
-    withdrawn_tab_ids,
-)
+from src.services.pipeline.phases.late_quiz import carry_moment_props
 from src.services.pipeline.pipeline_helpers import sse_event
 from src.services.video.description_analyzer import DescriptionAnalysis, Resource
 from tests.test_phase_assembly_cache import _build_ctx
@@ -143,6 +139,35 @@ class TestLateQuiz:
         complete = next(p for n, p in events if n == "complete")
         assert complete["tabCount"] == len(_saved(ctx)["tabs"])
 
+    async def test_should_list_the_final_tab_order_on_complete(self) -> None:
+        ctx = _tech_ctx()
+
+        events = await _run(ctx, quiz=True)
+
+        complete = next(p for n, p in events if n == "complete")
+        assert complete["tabIds"] == [t["id"] for t in _saved(ctx)["tabs"]]
+
+    async def test_should_stream_tabs_non_final_while_the_quiz_is_pending(self) -> None:
+        events = await _run(_tech_ctx(), quiz=True)
+
+        quiz_at = [name for name, _ in events].index("enrichment_complete")
+        early = [p for n, p in events[:quiz_at] if n == "tab_ready"]
+        assert early and not any(p["final"] for p in early)
+
+    async def test_should_send_every_saved_tab_final_once_at_its_saved_position(self) -> None:
+        ctx = _tech_ctx()
+
+        events = await _run(ctx, quiz=True)
+
+        finals = [(p["id"], p["position"]) for n, p in events if n == "tab_ready" and p["final"]]
+        assert finals == [(t["id"], i) for i, t in enumerate(_saved(ctx)["tabs"])]
+
+    async def test_should_stream_tabs_final_at_once_without_a_quiz(self) -> None:
+        events = await _run(_tech_ctx(), quiz=False)
+
+        code = [p for n, p in events if n == "tab_ready" and p["id"] == "code"]
+        assert [p["final"] for p in code] == [True]
+
 
 class TestHeroFallback:
     """Regression: a failed memory left assembly without synthesis → no Key Info tab."""
@@ -216,12 +241,6 @@ class TestDropAccounting:
 
 
 class TestLateQuizHelpers:
-    def test_should_resend_new_moved_and_changed_tabs_only(self) -> None:
-        before = [{"id": "a", "v": 1}, {"id": "b", "v": 1}, {"id": "c", "v": 1}]
-        after = [{"id": "a", "v": 1}, {"id": "c", "v": 1}, {"id": "b", "v": 2}, {"id": "q"}]
-
-        assert positions_to_resend(before, after) == [1, 2, 3]
-
     def test_should_keep_the_moment_fill_frames(self) -> None:
         filled = {"items": [{"thumbnailUrl": "https://f/1.jpg"}]}
         before = [{"id": "m", "component": "moment_track", "props": filled}]
@@ -230,8 +249,3 @@ class TestLateQuizHelpers:
         carry_moment_props(before, after)
 
         assert after[0]["props"] is filled
-
-    def test_should_name_streamed_tabs_the_final_response_dropped(self) -> None:
-        before = [{"id": "overview"}, {"id": "key_info"}]
-
-        assert withdrawn_tab_ids(before, [{"id": "overview"}, {"id": "quiz"}]) == ["key_info"]

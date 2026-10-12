@@ -19,6 +19,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.services.pipeline.post_processor import coverage_is_degraded
+from src.services.pipeline.tab_ledger import TabLedger
 
 
 @pytest.fixture(autouse=True)
@@ -99,6 +100,7 @@ def _build_ctx(
         audio_path=None,
         memory=None,
         video_memory="",
+        tab_ledger=TabLedger(),
     )
 
 

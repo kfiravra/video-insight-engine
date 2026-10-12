@@ -6,13 +6,14 @@ synthesis writes them only when memory left one empty, so the stored meta keeps
 what the hero already showed.
 
 Two orders work:
-- before assembly (today's): ``ctx.synthesis_dict`` is complete when
-  ``assemble_response`` reads it;
+- before assembly: ``ctx.synthesis_dict`` is complete when ``assemble_response``
+  reads it;
 - after assembly, in parallel with the moment fill: the caller seeds
   ``ctx.synthesis_dict`` with ``seed_synthesis_dict`` before assembling (meta +
   overview carry memory's hero), emits the tabs, then runs this phase — it
-  patches ``ctx.assembled_meta`` and the overview tab in place and re-sends the
-  overview ``tab_ready``. The caller saves only after this phase finished.
+  patches ``ctx.assembled_meta`` and the overview tab in place. The overview
+  went out non-final, so assembly's final re-emit sends the patched one; the
+  caller saves only after this phase finished.
 """
 
 from __future__ import annotations
@@ -126,21 +127,20 @@ def _patch_overview(data: dict[str, Any], synthesis: dict[str, Any]) -> None:
         data["keyTakeaways"] = synthesis["keyTakeaways"]
 
 
-def apply_synthesis_to_assembled(ctx: PipelineContext) -> int | None:
-    """Patch the assembled meta + overview in place; the overview's position, if patched.
+def apply_synthesis_to_assembled(ctx: PipelineContext) -> None:
+    """Patch the assembled meta + overview in place.
 
-    No-op (``None``) before assembly has run — the before-assembly order.
+    No-op before assembly has run — the before-assembly order.
     """
     if ctx.assembled_meta is None or ctx.assembled_tabs is None or not ctx.synthesis_dict:
-        return None
+        return
     _patch_meta(ctx.assembled_meta, ctx.synthesis_dict)
-    for position, tab in enumerate(ctx.assembled_tabs):
+    for tab in ctx.assembled_tabs:
         props = tab.get("props")
         data = props.get("data") if isinstance(props, dict) else None
         if tab.get("component") == _OVERVIEW and isinstance(data, dict):
             _patch_overview(data, ctx.synthesis_dict)
-            return position
-    return None
+            return
 
 
 # ─── Phase ───
@@ -171,13 +171,10 @@ def _log_synthesis(ctx: PipelineContext) -> None:
 
 
 async def run_phase_synthesis(ctx: PipelineContext) -> AsyncGenerator[str, None]:
-    """Write masterSummary + seo; emit the full ``synthesis_complete`` (+ overview re-send)."""
+    """Write masterSummary + seo; patch what assembly built; emit the full ``synthesis_complete``."""
     llm_feature_var.set("summarize:synthesis")
     result = await _synthesize(ctx)
     ctx.synthesis_dict = build_synthesis_dict(ctx.memory, result)
-    overview_position = apply_synthesis_to_assembled(ctx)
+    apply_synthesis_to_assembled(ctx)
     yield sse_event("synthesis_complete", synthesis_event(ctx.synthesis_dict))
-    if overview_position is not None and ctx.assembled_tabs is not None:
-        overview = ctx.assembled_tabs[overview_position]
-        yield sse_event("tab_ready", {**overview, "position": overview_position})
     _log_synthesis(ctx)

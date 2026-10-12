@@ -162,6 +162,8 @@ async def _run_phase_two(
 
     The text branch runs transcript → probe → plan ∥ memory, so the readers
     work while frames + vision still run; frames reads the probe at Step 6b.
+    At plan-done (plan and memory both in) it streams the provisional Moments
+    tab (2.1), long before extraction can start.
     The description analysis (started at metadata-end) is not a member: no
     reader in this group needs it, and extraction must not wait for its LLM
     call — its readers (chunked chapters, assembly) await it with a cap.
@@ -171,11 +173,12 @@ async def _run_phase_two(
     phase's own finally already stamped ctx.transcript_trail by the time it
     propagates here).
     """
+    from src.services.pipeline.phases.moments import then_provisional_moments
     from src.services.pipeline.phases.probe import start_tier_probe
 
     phase_start = time.monotonic()
     start_tier_probe(ctx)
-    group = [run_phase_text, run_phase_frames]
+    group = [then_provisional_moments(run_phase_text), run_phase_frames]
     try:
         async for event in run_parallel_phases(group, ctx):
             yield event

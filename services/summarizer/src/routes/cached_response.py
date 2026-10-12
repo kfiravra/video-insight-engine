@@ -119,6 +119,30 @@ def resolve_synthesis(entry: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _cached_meta_event(entry: dict[str, Any], tabs: list[dict]) -> dict[str, Any]:
+    """The ``meta`` event of a cached serve, from whichever document shape holds it."""
+    meta = entry.get("meta", {})
+    meta_source = (
+        meta if meta.get("contentTags") else entry.get("assembledMeta") or entry.get("triage", {})
+    )
+    meta_event = {
+        "title": entry.get("title", ""),
+        "contentTags": meta_source.get("contentTags", []),
+        "modifiers": meta_source.get("modifiers", []),
+        "primaryTag": meta_source.get("primaryTag", "learning"),
+        "tabCount": len(tabs),
+        "tabLabels": [
+            {"id": t.get("id", ""), "label": t.get("label", ""), "emoji": t.get("emoji", "")}
+            for t in tabs
+        ],
+    }
+    # Degraded docs stay degraded on cached serves — forward the flag so
+    # the FE retry affordance shows without a separate doc fetch.
+    if meta_source.get("degraded"):
+        meta_event["degraded"] = True
+    return meta_event
+
+
 async def stream_cached_structured(
     video_summary_id: str, entry: dict[str, Any]
 ) -> AsyncGenerator[str, None]:
@@ -128,6 +152,10 @@ async def stream_cached_structured(
     1. New: meta + tabs (clean architecture)
     2. v2: assembledMeta + assembledTabs
     3. Legacy: triage + output + summary
+
+    Each tab goes out once, ``final`` at its ``position`` — the pipeline's
+    tab emission contract (``src/services/pipeline/tab_ledger.py``) with
+    nothing left to change.
     """
     yield sse_event("cached", {"videoSummaryId": video_summary_id})
     yield sse_event(
@@ -144,33 +172,13 @@ async def stream_cached_structured(
     if triage_data:
         yield sse_event("triage_complete", triage_data)
 
-    tabs = resolve_tabs(entry)
-    if tabs:
-        meta = entry.get("meta", {})
-        meta_source = (
-            meta
-            if meta.get("contentTags")
-            else entry.get("assembledMeta") or entry.get("triage", {})
-        )
-        meta_event = {
-            "title": entry.get("title", ""),
-            "contentTags": meta_source.get("contentTags", []),
-            "modifiers": meta_source.get("modifiers", []),
-            "primaryTag": meta_source.get("primaryTag", "learning"),
-            "tabCount": len(tabs),
-            "tabLabels": [
-                {"id": t.get("id", ""), "label": t.get("label", ""), "emoji": t.get("emoji", "")}
-                for t in tabs
-                if isinstance(t, dict)
-            ],
-        }
-        # Degraded docs stay degraded on cached serves — forward the flag so
-        # the FE retry affordance shows without a separate doc fetch.
-        if meta_source.get("degraded"):
-            meta_event["degraded"] = True
-        yield sse_event("meta", meta_event)
-        for tab in tabs:
-            yield sse_event("tab_ready", tab)
+    # Malformed legacy entries (non-dict tabs) are skipped, by meta and tabs alike.
+    stored = [tab for tab in resolve_tabs(entry) if isinstance(tab, dict)]
+    if stored:
+        yield sse_event("meta", _cached_meta_event(entry, stored))
+        # A stored response is final as it stands: every tab once, in order.
+        for position, tab in enumerate(stored):
+            yield sse_event("tab_ready", {**tab, "position": position, "final": True})
 
     yield sse_event("synthesis_complete", resolve_synthesis(entry))
     yield sse_event("done", {"videoSummaryId": video_summary_id, "cached": True})

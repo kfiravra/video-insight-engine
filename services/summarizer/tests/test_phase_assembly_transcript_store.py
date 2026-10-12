@@ -21,6 +21,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.services.pipeline.pipeline_helpers import TranscriptData
+from src.services.pipeline.tab_ledger import TabLedger
 
 
 @pytest.fixture(autouse=True)
@@ -106,6 +107,7 @@ def _build_ctx(transcript_data: TranscriptData) -> SimpleNamespace:
         audio_path=None,
         memory=None,
         video_memory="",
+        tab_ledger=TabLedger(),
     )
 
 

@@ -24,6 +24,7 @@ import pytest
 from src.config import settings
 from src.repositories.mongodb_repository import MongoDBVideoRepository
 from src.shared_config.pipeline_version import get_pipeline_version
+from src.services.pipeline.tab_ledger import TabLedger
 
 
 @pytest.fixture(autouse=True)
@@ -143,4 +144,5 @@ def _build_assembly_ctx() -> SimpleNamespace:
         audio_path=None,
         memory=None,
         video_memory="",
+        tab_ledger=TabLedger(),
     )

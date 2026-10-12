@@ -392,7 +392,9 @@ A plan-first pipeline: ~6-7 text calls (description analysis, tier probe, plan �
     │   never frame annotations
     └─▶ Plan ∥ Memory (pipeline/plan.py + plan_prompt.py, pipeline/memory.py)
     │   └─▶ Plan: primary model (Sonnet), the FULL marked transcript, 3,500 max tokens, 60 s,
-    │   │   1 retry, json_mode, no cache_control (one call per run). Emits contentTags,
+    │   │   1 retry, json_mode. The static half (everything above `<video>`, ~16.4k tokens)
+    │   │   goes as user block 1 with cache_control `{type: ephemeral, ttl: 1h}`
+    │   │   (`PLAN_CACHE_TTL` in plan.py); the video half is uncached. Emits contentTags,
     │   │   modifiers, tabs with briefs ({what, where, expect}), evidence (has_* booleans that
     │   │   gate domain requirements) and terms; truncation is counted (counts.truncated)
     │   └─▶ Memory: LLM_EXTRACTION_MODEL, 25 s, ONE attempt, temperature 0 → outline (4-12
@@ -413,6 +415,13 @@ A plan-first pipeline: ~6-7 text calls (description analysis, tier probe, plan �
     └─▶ `<video_memory>` block (pipeline/video_memory.py) rendered once from plan + memory —
     │   fills every writer's `{video_context}` slot (extraction, synthesis, quiz)
     └─▶ SSE: synthesis_complete (memory-done), triage_complete + meta (plan)
+    └─▶ Plan-done (plan and memory both in): the provisional Moments tab (phases/moments.py,
+    │   pipeline-1min 2.1) — tab_ready `provisional: true, final: false` built from the
+    │   moment fallback chain (memory outline → YouTube chapters → description timestamps,
+    │   the latter only if the analysis already landed), with the id/label/goal of the tab
+    │   that replaces it: the plan's first moment_track tab, else the always-Moments tab
+    │   (`key_moments`, see 6). `position` is an estimate (overview + the planned tabs before
+    │   it, quiz excluded). No source with an entry → no tab
 
  4b. VISUAL ANNOTATIONS (after the whole phase-2 group; code)
     └─▶ Frame captions + OCR → `ctx.visual_annotations` (`<visual_annotations>`, chronological
@@ -464,30 +473,46 @@ A plan-first pipeline: ~6-7 text calls (description analysis, tier probe, plan �
     │   a relaxed second pass (±15s window) backfills still-thumbless moment items
     └─▶ Timestamp hygiene: moment_track items beyond video duration (+10s) are dropped;
     │   a tab emptied by that drop is removed (dropped reason `all_timestamps_impossible`)
+    └─▶ A Moments tab always exists (Kfir 2026-10-12, 2.1): with no moment_track tab left after
+    │   the domain requirements (a podcast's backfilled segments win), the always-Moments tab
+    │   (`key_moments`, "Key Moments"; `key_moments_2`… if a plan tab holds the id) joins after
+    │   the planned/required tabs, built by the moment fallback chain (memory outline →
+    │   YouTube chapters → description timestamps; assembly/moment_fallback.py) and framed
+    │   like any moment tab. A real tab: saved, Redis-cached, RAG-indexed, translated. No
+    │   source with an entry → no tab and no drop record (never invented); never added
+    │   where the domain policy forbids moment_track
     └─▶ Gallery tab: ~12 curated frames from gallery_frames (not all uploaded frames)
     └─▶ Cross-tab links resolved from static LINK_RULES
     └─▶ SSE: tab_ready for every tab but the moment tabs, each with `position` = index in the
-    │   persisted tab order
+    │   persisted tab order — every `tab_ready` goes through the run's TabLedger
+    │   (pipeline/tab_ledger.py, the emission contract): `final: true` when no late phase can
+    │   change the tab (no quiz pending; the overview not while a late synthesis is pending),
+    │   else `final: false`
     └─▶ LATE GROUP (parallel, with heartbeats):
     │   └─▶ Moment fill (assembly/moment_frame_fill.py): a frame AT each still-frameless
     │   │   moment's timestamp by seeking the run's one local ≤720p file (downloaded by the
     │   │   frames phase; a manifest cache hit starts it here for ≥ 3 moments only, inside the
     │   │   budget with 30 s kept for seeks; cap 12 frames, 150 s) → the moment tabs stream
-    │   │   WITH their images; the file is deleted after it (its last reader)
+    │   │   WITH their images (replacing the provisional Moments tab by id); the file is
+    │   │   deleted after it (its last reader)
     │   └─▶ Synthesis (unless it ran first; pipeline/synthesis.py): fast tier, 1,200 tokens,
     │   │   20 s, 1 retry. Input: <video_memory> + compact FINAL extraction (≤ 6,000 chars,
     │   │   every list cut to the first cap of 8/5/3/1 that fits) + the viewer's tab labels.
     │   │   Writes masterSummary + seoDescription (≤ 160 chars); tldr/takeaways only as the
-    │   │   fallback. Patches meta + overview in place → SSE synthesis_complete (superset) +
-    │   │   the overview re-sent. Failure → memory's hero only, masterSummary/seo empty
+    │   │   fallback. Patches meta + overview in place → SSE synthesis_complete (superset);
+    │   │   the patched overview goes out with the final re-emit. Failure → memory's hero
+    │   │   only, masterSummary/seo empty
     │   └─▶ The quiz (phases/enrichment.py, only when needs_quiz: a planned quiz tab, or a
     │       sparse quick_quiz host with evidence that doesn't rule learning out, in a
     │       quizEnrichment domain): one enrich_quiz call, fast tier, 30 s total (14 s per
     │       attempt, 1 retry), ≥ 2 valid questions. When it lands the response is assembled
-    │       again (phases/late_quiz.py): enrichment_complete, the quiz tab last, and every tab
-    │       that is new, moved or changed (quick_quiz host, links, overview count) re-sent at
-    │       its position
-    └─▶ SSE: complete (tabCount, processingTimeMs, degraded) → save
+    │       again (phases/late_quiz.py): enrichment_complete, the quiz tab last; the quick_quiz
+    │       host, links and overview count follow
+    └─▶ SSE: the final re-emit — every tab not yet sent final goes out `final: true` at its
+    │   final position, in order (all tabs when a quiz was pending; else the overview after a
+    │   late synthesis); each tab of the response gets exactly one final emission
+    └─▶ SSE: complete (tabCount, tabIds = the final tab order, processingTimeMs, degraded) →
+    │   save. A tab streamed earlier but missing from tabIds was withdrawn (logged)
     └─▶ Store result to MongoDB + Redis cache (if enabled). Redis response-cache keys are
     │   namespaced by PIPELINE_VERSION (packages/shared/src/config/pipeline-version.json,
     │   currently v8 — bumped v6→v8 by the frame-quality + moment-redesign work).
@@ -683,8 +708,8 @@ list against the model registry.
 | `synthesis_complete` | Up to twice: `{tldr, keyTakeaways}` at memory-done, then the superset `{tldr, keyTakeaways, masterSummary, seoDescription}` after the first tabs; consumers merge (API-REFERENCE.md#synthesis_complete) |
 | `frames` | `{videoId, frames: [{index, timestamp, url, s3Key?, ocrText?}]}` (scene frames) |
 | `meta` | `{title, contentTags, modifiers, primaryTag, tabCount, tabLabels, degraded?, ...}` (progressive meta) |
-| `tab_ready` | `{id, label, emoji, component, props, crossTabLinks?, position?}` (progressive tab; `position` = index in the persisted tab order — held-back moment_track tabs arrive late and are spliced in by it; a tab may be re-sent at the same `position` — the overview after synthesis, the quiz tab (last) and tabs the quiz changed) |
-| `complete` | `{tabCount, processingTimeMs, degraded}` (v2 completion) |
+| `tab_ready` | `{id, label, emoji, component, props, goal?, crossTabLinks?, attachments?, degradedFrom?, position, final, provisional?}` (progressive tab; contract in `pipeline/tab_ledger.py`, API-REFERENCE.md#tab_ready). `position` = index in the response's tab order, exact when `final` (an estimate before); `final: true` = the tab's last emission this run, exactly one per tab of the response; `provisional: true` = the plan-done Moments placeholder, never final, replaced by id. A tab id can arrive several times — clients replace by id and sort by `position`. Cached serves send every tab once, `final: true` |
+| `complete` | `{tabCount, tabIds, processingTimeMs, degraded}` (v2 completion; `tabIds` = the final tab order — a tab streamed but missing here was withdrawn) |
 | `error` | `{message, code?}` — `code` is an `ErrorCode` value (see docs/ERROR-HANDLING.md) |
 | `token` | `{phase, token}` — legacy token streaming; protocol slot kept, no current emitter |
 | `heartbeat` | `{ts}` — keepalive emitted every `SSE_HEARTBEAT_SECONDS` (12s) during long silent phases (e.g. multi-minute Whisper) so the API-gateway SSE proxy does not abort an idle-but-live stream. **Frontend treats it as a no-op.** |
@@ -694,6 +719,18 @@ list against the model registry.
 > `sponsor_segments` was documented here for years but never emitted by any
 > code path — removed 2026-07-12 (project-score-9 4.5c). The `done` event
 > carries no `phase` field (that was a doc-only invention).
+
+**Event broker** (`services/cache/pipeline_event_stream.py`, `routes/pipeline_broker.py`):
+every chunk of a run is appended to the Redis stream `vie:pipeline:events:<videoSummaryId>`;
+SSE consumers replay it from the start (`XREAD` from `0`). Winning the producer lock
+(`vie:pipeline:lock:<id>`, SET NX in a Lua script) deletes the previous run's stream in the
+same atomic step, so a re-run of the same row (retry, regenerate, stall re-dispatch) never
+replays the old run's events (2.1). The stream never exists without a TTL: every event
+renews a running TTL (`PIPELINE_LOCK_TTL_SECONDS`, also renewed by the lock heartbeat) and
+`mark_done` shortens it to `PIPELINE_STREAM_TTL_SECONDS` after the done sentinel — a
+producer that dies mid-run leaves a stream that expires. Streams leaked before 2.1 (no TTL,
+no lock) are swept by `scripts/expire_leaked_pipeline_streams.py` (dry run by default;
+`--apply` sets a TTL, never deletes; usage in the script's docstring).
 
 ### Key Design Decisions
 

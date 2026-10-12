@@ -1,14 +1,19 @@
 """Phase 7: Assembly — tabs first, then synthesis ∥ moment fill ∥ quiz, then save, cache, done.
 
-Order (pipeline-1min 1d.1/1d.3):
+Order (pipeline-1min 1d.1/1d.3; every ``tab_ready`` through the run's
+``TabLedger`` — the emission contract, 2.1):
 
 1. the description analysis (capped wait) — meta + its SSE event;
 2. synthesis FIRST only when memory left the hero empty: the overview and the
    minimum-3 Key Info fallback need its tldr/takeaways;
-3. every tab but the moment tabs streams at once (the quiz is not in yet);
-4. the late group — moment fill, synthesis (unless step 2 ran it), the quiz —
-   each patches or re-sends the tabs it touches (``late_quiz`` for the quiz);
-5. ``complete``, the save, the shared artifacts (Redis, Qdrant), ``done``.
+3. every tab but the moment tabs streams at once (the quiz is not in yet) —
+   final where no late phase can change it;
+4. the late group — the moment fill (streams the moment tabs, framed),
+   synthesis unless step 2 ran it (patches meta + the overview in place), the
+   quiz (the response is assembled again with it, ``late_quiz``);
+5. the final re-emit: every tab not yet sent final, at its final position;
+6. ``complete`` (with the final tab order), the save, the shared artifacts
+   (Redis, Qdrant), ``done``.
 """
 
 from __future__ import annotations
@@ -28,12 +33,9 @@ from src.services.pipeline.assembly.moment_frame_fill import fill_moment_frames
 from src.services.pipeline.enrichment import needs_quiz
 from src.services.pipeline.phases import run_phase_enrichment, run_phase_synthesis
 from src.services.pipeline.phases.extraction import extraction_record
-from src.services.pipeline.phases.late_quiz import (
-    carry_moment_props,
-    positions_to_resend,
-    withdrawn_tab_ids,
-)
+from src.services.pipeline.phases.late_quiz import carry_moment_props
 from src.services.pipeline.phases.metadata import await_description_analysis
+from src.services.pipeline.phases.moments import video_meta
 from src.services.pipeline.phases.qdrant_index import index_in_qdrant
 from src.services.pipeline.phases.synthesis import (
     apply_synthesis_to_assembled,
@@ -47,6 +49,7 @@ from src.services.pipeline.pipeline_helpers import (
     sse_event,
 )
 from src.services.pipeline.post_processor import coverage_is_degraded
+from src.services.pipeline.tab_ledger import tab_id
 from src.services.status_callback import send_video_status_background
 from src.services.video.description_analyzer import DescriptionAnalysis
 
@@ -77,22 +80,6 @@ async def _description_analysis(ctx: PipelineContext) -> dict[str, Any] | None:
     return None
 
 
-def _video_meta(ctx: PipelineContext) -> dict[str, Any]:
-    assert ctx.video_data is not None
-    return {
-        "videoId": ctx.video_summary_id,
-        "title": ctx.video_data.title,
-        "channel": ctx.video_data.channel,
-        "duration": ctx.video_data.duration,
-        "chapters": [
-            {"start_time": ch.start_time, "end_time": ch.end_time, "title": ch.title}
-            for ch in (ctx.video_data.chapters or [])
-        ],
-        # moment_track fallback, first rung (outline → chapters → description timestamps).
-        "outline": [s.model_dump() for s in (ctx.memory.outline if ctx.memory else [])],
-    }
-
-
 def _assemble(
     ctx: PipelineContext, description: dict[str, Any] | None, synthesis: dict[str, Any]
 ) -> dict:
@@ -107,7 +94,7 @@ def _assemble(
         extraction=ctx.extraction_data,
         enrichment=ctx.enrichment_data,
         synthesis=synthesis or None,
-        video_meta=_video_meta(ctx),
+        video_meta=video_meta(ctx),
         description_analysis=description,
         frames=ctx.scene_frames_for_assembly,
         gallery_frames=ctx.scene_frames_gallery,
@@ -145,7 +132,7 @@ async def run_phase_moment_fill(ctx: PipelineContext) -> AsyncGenerator[str, Non
     if positions:
         await fill_moment_frames(tabs, ctx.youtube_id, getattr(ctx, "hires_video", None))
     for position in positions:
-        yield sse_event("tab_ready", {**tabs[position], "position": position})
+        yield ctx.tab_ledger.event(tabs[position], position)
 
 
 def _drop_accounting(ctx: PipelineContext, assembled: dict) -> dict:
@@ -185,16 +172,17 @@ def _drop_accounting(ctx: PipelineContext, assembled: dict) -> dict:
 # ─── Tabs ───
 
 
-def _first_tab_events(tabs: list[dict]) -> list[str]:
-    """Every tab but the moment tabs (they stream once framed), with its ``position``.
+def _first_tab_events(ctx: PipelineContext) -> list[str]:
+    """Every tab but the moment tabs (they stream once framed), at its ``position``.
 
     ``position`` is the tab's index in the persisted order, so the client slots
     a late tab where the DB doc will have it. The payload is a copy — the
-    persisted tab dict never gains ``position``.
+    persisted tab dict never gains ``position`` or ``final``.
     """
+    tabs = ctx.assembled_tabs or []
     held_back = set(_moment_positions(tabs))
     return [
-        sse_event("tab_ready", {**tab, "position": position})
+        ctx.tab_ledger.event(tab, position)
         for position, tab in enumerate(tabs)
         if position not in held_back
     ]
@@ -215,22 +203,14 @@ def _add_late_quiz(
     description: dict[str, Any] | None,
     synthesis_input: dict[str, Any],
     synthesized_first: bool,
-) -> tuple[dict, list[str]]:
-    """Re-assemble with the quiz; (the new assembly, tab events to re-send)."""
+) -> dict:
+    """Re-assemble with the quiz; the final re-emit sends what it changed."""
     before = ctx.assembled_tabs or []
     assembled = _assemble(ctx, description, synthesis_input)
-    after = ctx.assembled_tabs or []
-    carry_moment_props(before, after)
+    carry_moment_props(before, ctx.assembled_tabs or [])
     if not synthesized_first:
         apply_synthesis_to_assembled(ctx)
-    withdrawn = withdrawn_tab_ids(before, after)
-    if withdrawn:
-        logger.info("Quiz re-assembly withdrew streamed tabs %s", withdrawn)
-    events = [
-        sse_event("tab_ready", {**after[position], "position": position})
-        for position in positions_to_resend(before, after)
-    ]
-    return assembled, events
+    return assembled
 
 
 async def run_phase_assembly(ctx: PipelineContext) -> AsyncGenerator[str, None]:
@@ -251,15 +231,19 @@ async def run_phase_assembly(ctx: PipelineContext) -> AsyncGenerator[str, None]:
         seed_synthesis_dict(ctx)
     synthesis_input = dict(ctx.synthesis_dict or {})
     assembled = _assemble(ctx, description, synthesis_input)
-    for event in _first_tab_events(ctx.assembled_tabs or []):
+    late = _late_phases(ctx, synthesized_first)
+    ctx.tab_ledger.expect_late_changes(
+        quiz=run_phase_enrichment in late, synthesis=run_phase_synthesis in late
+    )
+    for event in _first_tab_events(ctx):
         yield event
 
-    async for event in run_parallel_phases(_late_phases(ctx, synthesized_first), ctx):
+    async for event in run_parallel_phases(late, ctx):
         yield event
     if ctx.enrichment_data:
-        assembled, events = _add_late_quiz(ctx, description, synthesis_input, synthesized_first)
-        for event in events:
-            yield event
+        assembled = _add_late_quiz(ctx, description, synthesis_input, synthesized_first)
+    for event in ctx.tab_ledger.closing_events(ctx.assembled_tabs or []):
+        yield event
     # Moment fill was the 720p file's last reader — free the disk now.
     hires_video = getattr(ctx, "hires_video", None)
     if hires_video is not None:
@@ -313,16 +297,29 @@ def _result_document(
     return result
 
 
+def _complete_event(ctx: PipelineContext, processing_time: int, degraded: bool) -> str:
+    """``complete`` with the final tab order — a streamed tab missing from it was withdrawn."""
+    tabs = ctx.assembled_tabs or []
+    withdrawn = ctx.tab_ledger.withdrawn(tabs)
+    if withdrawn:
+        logger.info("Streamed tabs the final response withdrew: %s", withdrawn)
+    return sse_event(
+        "complete",
+        {
+            "tabCount": len(tabs),
+            "tabIds": [tab_id(tab) for tab in tabs],
+            "processingTimeMs": processing_time,
+            "degraded": degraded,
+        },
+    )
+
+
 async def _finish(ctx: PipelineContext, assembled: dict) -> AsyncGenerator[str, None]:
     """``complete``, the save, the shared artifacts, then ``done`` (English only)."""
     degraded = coverage_is_degraded(getattr(ctx, "extraction_coverage", None))
     accounting = _drop_accounting(ctx, assembled)
     processing_time = int(ctx.timer.elapsed() * 1000)
-    tab_count = len(ctx.assembled_tabs or [])
-    yield sse_event(
-        "complete",
-        {"tabCount": tab_count, "processingTimeMs": processing_time, "degraded": degraded},
-    )
+    yield _complete_event(ctx, processing_time, degraded)
 
     result = _result_document(ctx, accounting, processing_time, degraded)
     saved = await asyncio.to_thread(

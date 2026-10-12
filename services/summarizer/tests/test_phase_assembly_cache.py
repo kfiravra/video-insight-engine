@@ -18,6 +18,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.services.pipeline.tab_ledger import TabLedger
+
 
 @pytest.fixture(autouse=True)
 def _no_synthesis_call():
@@ -88,6 +90,7 @@ def _build_ctx(source_language_code: str | None = None) -> SimpleNamespace:
         audio_path=None,
         memory=None,
         video_memory="",
+        tab_ledger=TabLedger(),
     )
 
 

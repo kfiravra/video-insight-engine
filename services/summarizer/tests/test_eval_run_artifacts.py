@@ -18,6 +18,7 @@ from src.routes import pipeline_runner
 from src.services.pipeline.phases import assembly as assembly_phase
 from src.services.pipeline.phases import qdrant_index
 from src.services.pipeline.phases import translation as translation_phase
+from src.services.pipeline.tab_ledger import TabLedger
 
 
 @pytest.fixture(autouse=True)
@@ -79,6 +80,7 @@ def _assembly_ctx(eval_run: bool) -> SimpleNamespace:
         visual_annotations="",
         memory=None,
         video_memory="",
+        tab_ledger=TabLedger(),
         eval_run=eval_run,
     )
 
