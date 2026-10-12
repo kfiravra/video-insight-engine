@@ -208,15 +208,25 @@ class TestPlanDoneFiring:
                 "dataSource": "overview",
             }
         ]
-        ctx = _done(_ctx(["food"], tabs))
+        ctx = _done(_ctx(["tech"], tabs))  # a primary the overview reads no field of
 
         events = await _drain(ctx, _Groups())
 
         assert (ctx.extraction_data, _events(events, "error")) == ({}, [])
 
+    async def test_should_extract_the_primarys_overview_reads_when_only_the_overview_is_planned(
+        self,
+    ) -> None:
+        tabs = [{"id": "overview", "label": "O", "component": "overview", "dataSource": "overview"}]
+        ctx, groups = _done(_ctx(["food"], tabs)), _Groups()
+
+        await _drain(ctx, groups)
+
+        assert groups.fired == ["text1"]
+
     async def test_should_fail_the_run_when_a_tab_reads_a_field_nobody_extracted(self) -> None:
-        tabs = [{"id": "x", "label": "X", "component": "info_grid", "dataSource": "food.notAField"}]
-        ctx = _done(_ctx(["food"], tabs))
+        tabs = [{"id": "x", "label": "X", "component": "info_grid", "dataSource": "tech.notAField"}]
+        ctx = _done(_ctx(["tech"], tabs))  # a primary the overview reads no field of
 
         events = await _drain(ctx, _Groups())
 
@@ -242,6 +252,7 @@ class TestGroupRecords:
         assert [(r["group"], r["chunk"], r["fields"], r["status"]) for r in rows] == [
             ("text1", 0, ["food.ingredients", "food.meta"], "ok"),
             ("text2", 0, ["food.steps"], "failed"),
+            ("text3", 0, ["food.tips"], "ok"),  # the overview's tip read
         ]
 
     def test_should_leave_groups_out_of_pipeline_extraction_on_todays_path(self) -> None:
@@ -259,7 +270,7 @@ class TestGroupRecords:
             await _drain(ctx, _Groups())
 
         [line] = [r.getMessage() for r in caplog.records if "extraction_quality" in r.getMessage()]
-        assert "populated=2/3 empty=['food.meta']" in line
+        assert "populated=2/4 empty=['food.meta', 'food.tips']" in line
 
 
 class TestVisualGroup:

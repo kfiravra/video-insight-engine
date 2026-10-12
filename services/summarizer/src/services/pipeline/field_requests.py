@@ -3,7 +3,9 @@
 ``requested_fields`` is the union over the reconciled tabs of: each tab's
 planned dataSource, the registry ``siblings`` assembly swaps in when it is
 empty ("fallbacks", active domains only), the side reads of the component that
-renders the tab ("upgrades"), and the scalar keys of every requested domain.
+renders the tab ("upgrades"), the overview hero's reads of the primary domain
+(tips + level — the overview is in every response, planned or not), and the
+scalar keys of every requested domain.
 Nothing outside that union is requested — an active modifier no tab reads
 costs no output. ``field_groups`` cuts the result into extraction calls.
 
@@ -28,6 +30,7 @@ from ...shared_config.domain_config import (
     data_sources,
     valid_modifiers,
 )
+from .assembly.normalizers import _TIP_FIELDS
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +98,16 @@ _SIDE_READS: dict[str, _SideRead] = {
     # extraction["learning"]["timestamps"].
     "moment_track": _SideRead(("learning",), ("timestamps",)),
 }
+
+
+# The overview hero — assembly adds it to every response, planned or not — reads the
+# PRIMARY domain directly: assemblers_learning.py `_collect_tips` (its Tips section)
+# over normalizers.py `_TIP_FIELDS`, which attachments.py `_tip_callout_attachment`
+# also reads for the tip_callout attachment, and `_extract_level` (meta.difficulty /
+# meta.level / difficulty / level → the Level pill; the keys below hold them). Only
+# registry tip fields: travel's transportationTips / accommodationTips back core.py
+# tab fallbacks, finance.savingTips is a modifier key (never the primary).
+_OVERVIEW_LEVEL_KEYS = ("meta", "difficulty", "level")
 
 
 @dataclass(frozen=True)
@@ -267,6 +280,22 @@ def _side_reads(
     return drafts
 
 
+def _overview_reads(
+    primary_tag: str | None,
+    content_tags: Sequence[str],
+    registry: Mapping[str, DataSourceSpec],
+    scalars_of: ScalarsOf,
+) -> list[_Draft]:
+    """The primary domain's tip fields and level key, once, with no tab waiting for them."""
+    if primary_tag is None or primary_tag not in content_tags:
+        return []
+    tips = (registry.get(f"{primary_tag}.{name}") for name in _TIP_FIELDS)
+    drafts = [_from_spec(spec, "upgrade", "") for spec in tips if spec is not None]
+    scalars = scalars_of(primary_tag)
+    levels = [key for key in _OVERVIEW_LEVEL_KEYS if key in scalars]
+    return drafts + [_unregistered(primary_tag, key, "scalar", "upgrade", "") for key in levels]
+
+
 def _put(drafts: dict[tuple[str, str], _Draft], draft: _Draft) -> None:
     existing = drafts.get((draft.domain, draft.field))
     if existing is None:
@@ -330,7 +359,8 @@ def requested_fields(
 
     Per tab: its planned field(s), then the planned fields' active siblings,
     then its component's side reads (``primary_tag`` scopes the primary-only
-    ones); finally the scalar keys of every domain that has a requested field.
+    ones); then the overview's reads of the primary domain (``primary_tag``);
+    finally the scalar keys of every domain that has a requested field.
     A field several tabs read is requested once, with all their tab ids and its
     strongest reason.
     """
@@ -343,6 +373,8 @@ def requested_fields(
         upgrades = _side_reads(tab, registry, active, primary_tag)
         for draft in [*planned, *fallbacks, *upgrades]:
             _put(drafts, draft)
+    for draft in _overview_reads(primary_tag, content_tags, registry, scalars_of):
+        _put(drafts, draft)
     for domain in dict.fromkeys([d.domain for d in drafts.values()]):
         for name in scalars_of(domain):
             _put(drafts, _unregistered(domain, name, "scalar", "scalar", ""))

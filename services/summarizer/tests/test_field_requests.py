@@ -174,7 +174,48 @@ class TestFallbacksAndSideReads:
     ) -> None:
         fields = _request([_tab("t", component, source)], tags)
 
-        assert " ".join(f.path for f in fields if f.reason == "upgrade") == upgrades
+        side_reads = [f.path for f in fields if f.reason == "upgrade" and "t" in f.tab_ids]
+        assert " ".join(side_reads) == upgrades
+
+
+class TestOverviewReads:
+    def test_should_request_the_primarys_tip_field_and_level_key_for_the_overview(
+        self,
+    ) -> None:
+        fields = _request([_tab("ing", "checklist", "food.ingredients")], ["food"])
+
+        overview = {f.path for f in fields if f.reason == "upgrade" and not f.tab_ids}
+        assert overview == {"food.tips", "food.meta"}
+
+    def test_should_keep_a_planned_tip_field_planned_for_its_tab(self) -> None:
+        fields = _request([_tab("tips", "checklist", "food.tips")], ["food"])
+
+        tips = _by_path(fields)["food.tips"]
+        assert (tips.reason, tips.tab_ids) == ("planned", ("tips",))
+
+    def test_should_request_the_level_key_when_the_primary_has_no_tip_field(self) -> None:
+        fields = _request([_tab("c", "flash_deck", "learning.concepts")], ["language", "learning"])
+
+        assert _by_path(fields)["language.level"].reason == "upgrade"
+
+    def test_should_not_request_travels_unregistered_tip_fields(self) -> None:
+        fields = _request([_tab("days", "itinerary", "travel.itinerary")], ["travel"])
+
+        assert not {"travel.transportationTips", "travel.accommodationTips"} & set(_by_path(fields))
+
+    def test_should_not_request_the_finance_modifiers_saving_tips(self) -> None:
+        tabs = [_tab("days", "itinerary", "travel.itinerary")]
+
+        fields = _request(tabs, ["travel"], ["finance"])
+
+        assert "finance.savingTips" not in _by_path(fields)
+
+    def test_should_request_no_overview_reads_without_a_primary_tag(self) -> None:
+        tabs = [_tab("ing", "checklist", "food.ingredients")]
+
+        fields = requested_fields(tabs, ["food"], [], scalar_fields)
+
+        assert "food.tips" not in _by_path(fields)
 
 
 class TestModifiersAndScalars:

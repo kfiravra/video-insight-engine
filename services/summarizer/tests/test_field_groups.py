@@ -92,7 +92,10 @@ class TestBuildGroups:
 
         groups = build_groups(_request(tabs, ["food"]), tabs, _config(budget=1))
 
-        assert _layout(groups) == "text1: food.ingredients food.meta | text2: food.steps"
+        # food.tips: the overview's tip read of the primary (no tab waits for it → last)
+        assert _layout(groups) == (
+            "text1: food.ingredients food.meta | text2: food.steps | text3: food.tips"
+        )
 
     def test_should_cap_text_groups_at_max_text_groups_by_merging_the_smallest(self) -> None:
         costs = [("a.a1", 900), ("a.a2", 900), ("a.a3", 200), ("b.b1", 900), ("b.b2", 300)]
@@ -161,11 +164,12 @@ class TestBuildGroups:
 
     def test_should_estimate_a_groups_output_as_the_sum_of_weight_times_expect(self) -> None:
         tabs = [_tab("ing", "checklist", "food.ingredients")]
-        fields = _request(tabs, ["food"])
 
-        (group,) = build_groups(fields, tabs, _config())
+        groups = build_groups(_request(tabs, ["food"]), tabs, _config())
 
-        assert group.est_output_tokens == sum(f.weight * f.expect for f in fields)
+        assert [g.est_output_tokens for g in groups] == [
+            sum(f.weight * f.expect for f in g.fields) for g in groups
+        ]
 
     def test_should_list_the_tabs_each_group_serves(self) -> None:
         tabs = [
@@ -176,7 +180,8 @@ class TestBuildGroups:
 
         groups = build_groups(_request(tabs, ["food"]), tabs, _config(budget=1))
 
-        assert [g.tab_ids for g in groups] == [("cook_steps", "key_moments"), ("ing",)]
+        # the last group holds the overview's food.tips read: no tab waits for it
+        assert [g.tab_ids for g in groups] == [("cook_steps", "key_moments"), ("ing",), ()]
 
     def test_should_put_a_planned_modifier_field_in_its_own_text_group(self) -> None:
         tabs = [
