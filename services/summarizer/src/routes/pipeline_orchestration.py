@@ -27,6 +27,7 @@ from src.services.pipeline.phases import (
     run_phase_metadata,
     run_phase_text,
 )
+from src.services.pipeline.phases.qdrant_index import wait_for_rag_transcript
 from src.services.pipeline.pipeline_helpers import (
     PipelineTimer,
     run_parallel_phases,
@@ -102,16 +103,23 @@ async def run_pipeline_phases(
 
     Every outgoing SSE chunk stamps the recorder's milestones (first
     ``tab_ready``, ``complete``, ``done``); the timing document is persisted
-    once the phases finish or fail.
+    once the phases finish or fail. A run that finished — ``done`` already
+    out — first gives a non-English RAG transcript task a bounded wait, so
+    its translation calls are in the document; a failing run never waits
+    (its error event follows this).
     """
     timing = start_run_timing()
+    finished = False
     try:
         async for event in _run_phases_in_order(ctx, repository, video_summary_id, timer, timing):
             timing.observe_sse(event)
             yield event
+        finished = True
     finally:
         try:
             await _release_run_media(ctx)
+            if finished:
+                await wait_for_rag_transcript(ctx)
         finally:
             await persist_run_timing(ctx, repository, video_summary_id, timing)
 
@@ -162,6 +170,8 @@ async def _run_phase_two(
 
     The text branch runs transcript → probe → plan ∥ memory, so the readers
     work while frames + vision still run; frames reads the probe at Step 6b.
+    At plan-done (plan and memory both in) it streams the provisional Moments
+    tab (2.1), long before extraction can start.
     The description analysis (started at metadata-end) is not a member: no
     reader in this group needs it, and extraction must not wait for its LLM
     call — its readers (chunked chapters, assembly) await it with a cap.
@@ -171,11 +181,12 @@ async def _run_phase_two(
     phase's own finally already stamped ctx.transcript_trail by the time it
     propagates here).
     """
+    from src.services.pipeline.phases.moments import then_provisional_moments
     from src.services.pipeline.phases.probe import start_tier_probe
 
     phase_start = time.monotonic()
     start_tier_probe(ctx)
-    group = [run_phase_text, run_phase_frames]
+    group = [then_provisional_moments(run_phase_text), run_phase_frames]
     try:
         async for event in run_parallel_phases(group, ctx):
             yield event

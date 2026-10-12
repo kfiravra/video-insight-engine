@@ -58,16 +58,21 @@ def _capture_llm(response: str = "") -> tuple[MagicMock, AsyncMock]:
     return MagicMock(), AsyncMock(return_value=response)
 
 
+def _prompt_texts(arg: object) -> list[str]:
+    """The text of one LLM-call argument: a string, or content blocks (``text_block``)."""
+    if isinstance(arg, str):
+        return [arg]
+    if isinstance(arg, list):
+        return [b["text"] for b in arg if isinstance(b, dict) and isinstance(b.get("text"), str)]
+    return []
+
+
 def _captured_prompt_text(mock_call: AsyncMock) -> str:
     """Concatenate every prompt-ish argument passed to the mocked LLM call."""
     parts: list[str] = []
     for call in mock_call.call_args_list:
-        for arg in call.args[1:]:  # args[0] is the llm_service
-            if isinstance(arg, str):
-                parts.append(arg)
-        for value in call.kwargs.values():
-            if isinstance(value, str):
-                parts.append(value)
+        for arg in [*call.args[1:], *call.kwargs.values()]:  # args[0] is the llm_service
+            parts.extend(_prompt_texts(arg))
     return "\n".join(parts)
 
 
@@ -282,11 +287,11 @@ async def test_enrich_quiz_prompt_renders_without_placeholders(tag):
 # ─── Translation (translate_flat.txt) ───────────────────────────────────
 @pytest.mark.asyncio
 async def test_translate_flat_prompt_renders_without_placeholders():
-    from src.services.pipeline import translation as translation_mod
+    from src.services.pipeline import translation_flat as translation_mod
 
     llm, mock_call = _capture_llm()
     with patch.object(translation_mod, "call_llm_with_retry", mock_call):
-        await translation_mod._translate_flat_list(
+        await translation_mod.translate_flat_list(
             llm,
             ["hello world", "second string"],
             "en",
@@ -384,3 +389,57 @@ async def test_tier_probe_prompt_renders_without_placeholders():
     rendered = _captured_prompt_text(mock_call)
     assert rendered, "tier probe never reached the LLM call"
     _assert_no_unreplaced(rendered, "tier_probe.txt")
+
+
+# ─── Literal braces ─────────────────────────────────────────────────────
+# Templates render through str.replace, never str.format, so "{{" is not an
+# escape: it reaches the model verbatim, and a schema or example written with
+# it is not valid JSON — a model that copies it answers unparseable JSON.
+def test_should_carry_no_doubled_open_brace_when_any_template_is_read():
+    doubled = sorted(
+        str(path.relative_to(PROMPTS_DIR))
+        for path in PROMPTS_DIR.rglob("*.txt")
+        if "{{" in path.read_text(encoding="utf-8")
+    )
+
+    assert doubled == []
+
+
+@pytest.mark.asyncio
+async def test_should_send_no_doubled_open_brace_when_rendering_the_plan_prompt():
+    from src.services.pipeline import plan as plan_mod
+
+    llm, mock_call = _capture_llm()
+    with patch.object(plan_mod, "call_llm_with_retry", mock_call):
+        await plan_mod.run_plan(
+            title="Test Video",
+            channel="Test Channel",
+            description="A description of the video.",
+            duration=600,
+            category_hint="food",
+            content_format="tutorial",
+            transcript="[0:00] transcript text",
+            llm_service=llm,
+        )
+
+    assert "{{" not in _captured_prompt_text(mock_call)
+
+
+@pytest.mark.asyncio
+async def test_should_send_no_doubled_open_brace_when_rendering_the_description_analysis():
+    from src.services.video import description_analyzer as da_mod
+
+    llm_call = AsyncMock(return_value="{}")
+    # Read the file directly: the loader's process-wide file cache would leak
+    # the real template into tests that patch Path.read_text.
+    disk_template = (PROMPTS_DIR / "description_analysis.txt").read_text(encoding="utf-8")
+    with (
+        patch.object(da_mod, "call_llm_with_retry", llm_call),
+        patch.object(da_mod, "load_prompt", lambda _name: disk_template),
+    ):
+        await da_mod.analyze_description(
+            "A video description long enough to pass the minimum-length gate.",
+            fast_model="openai/gpt-4o-mini",
+        )
+
+    assert "{{" not in _captured_prompt_text(llm_call)

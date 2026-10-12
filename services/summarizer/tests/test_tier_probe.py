@@ -26,6 +26,7 @@ from src.services.pipeline.tier_probe import (
 from src.services.video.youtube import VideoContext, VideoData
 
 _TEMPLATE = tier_probe.PROMPT_PATH.read_text(encoding="utf-8")
+_CASSETTES = sorted((Path(__file__).parent / "replay" / "cassettes").glob("*.json"))
 _PLACEHOLDER = re.compile(r"\{[a-z_]+\}")
 _HAIKU_TAIL = "\n```\n\n**Reasoning:** The video shows a chef preparing a dish step by"
 
@@ -119,6 +120,33 @@ class TestParseTierProbe:
         assert probe is not None and probe.domain == "food"
 
 
+class TestTranscriptUsable:
+    def test_should_count_the_transcript_usable_when_the_key_is_missing(self) -> None:
+        probe = parse_tier_probe(_answer())
+        assert probe is not None and probe.transcript_usable is True
+
+    def test_should_read_an_explicit_false_as_unusable(self) -> None:
+        probe = parse_tier_probe(_answer(transcript_usable=False))
+        assert probe is not None and probe.transcript_usable is False
+
+    @pytest.mark.parametrize("value", [None, "unclear", 0])
+    def test_should_keep_the_probe_and_the_transcript_when_the_value_is_not_false(
+        self, value: object
+    ) -> None:
+        probe = parse_tier_probe(_answer(transcript_usable=value))
+        assert probe is not None and probe.transcript_usable is True
+
+    def test_should_find_the_replay_cassettes(self) -> None:
+        assert len(_CASSETTES) >= 3
+
+    @pytest.mark.parametrize("path", _CASSETTES, ids=lambda path: path.stem)
+    def test_should_read_a_recorded_replay_answer_as_usable(self, path: Path) -> None:
+        entries = json.loads(path.read_text(encoding="utf-8"))["llm"]
+        answer = next(entry["output"] for entry in entries if entry["span"] == "tier_probe")
+        probe = parse_tier_probe(answer)
+        assert probe is not None and probe.transcript_usable is True
+
+
 # ─── Transcript windows ──────────────────────────────────────────────────────
 
 
@@ -168,6 +196,14 @@ class TestRenderTierProbePrompt:
     def test_should_ask_for_bare_json_without_fences(self) -> None:
         prompt = render_tier_probe_prompt(_TEMPLATE, _input("speech"))
         assert "exactly one bare JSON object" in prompt and "no code fences" in prompt
+
+    def test_should_ask_for_the_transcript_usable_key(self) -> None:
+        prompt = render_tier_probe_prompt(_TEMPLATE, _input("speech"))
+        assert '"transcript_usable": <true or false>}' in prompt
+
+    def test_should_keep_an_unexpected_language_and_a_missing_transcript_usable(self) -> None:
+        section = _TEMPLATE.split("<transcript_usable>")[1].split("</transcript_usable>")[0]
+        assert "a language you did not expect" in section and "(no transcript)" in section
 
     def test_should_put_the_output_format_after_the_video_data(self) -> None:
         prompt = render_tier_probe_prompt(_TEMPLATE, _input("speech"))

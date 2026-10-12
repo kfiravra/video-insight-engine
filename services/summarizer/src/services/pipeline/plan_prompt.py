@@ -4,6 +4,10 @@ Static blocks come from config (toolkit, registry caps, conditional domain
 requirements); the dynamic ``<video>`` block carries title, channel, duration,
 the tier probe's ``Hint:``, the playbook, the description, and then the FULL
 transcript with ``[m:ss]`` markers (pipeline-1min Appendix B.2).
+
+The template is cut at its ``<video>`` line and the part before it is rendered
+without any video input, so that static half is byte-identical for every video
+and can be served from the prompt cache across runs (``PlanPrompt``).
 """
 
 from __future__ import annotations
@@ -35,6 +39,8 @@ COMPONENT_TOOLKIT_PATH = Path(__file__).parent.parent.parent / "prompts" / "comp
 
 _MAX_HINT_CHARS = 300
 _NO_TRANSCRIPT = "(no transcript — plan from the title and description)"
+# The first per-video line of plan.txt; everything above it is static.
+_VIDEO_LINE = "\n<video>\n"
 
 
 @dataclass(frozen=True)
@@ -49,6 +55,20 @@ class PlanVideo:
     content_format: str | None
     transcript: str
     probe_hint: str | None = None
+
+
+@dataclass(frozen=True)
+class PlanPrompt:
+    """The rendered plan prompt in its two halves.
+
+    ``static`` is the language directive plus everything above ``<video>``
+    (rules, toolkit, registry blocks, examples), rendered from config alone;
+    ``video`` is the ``<video>`` block, the transcript and the closing line.
+    ``static`` is empty only when the template has no ``<video>`` line.
+    """
+
+    static: str
+    video: str
 
 
 def _load_plan_prompt() -> str:
@@ -152,11 +172,24 @@ def _render_video(template: str, video: PlanVideo) -> str:
     )
 
 
-def render_plan_prompt(video: PlanVideo) -> str:
-    """The full plan prompt: language directive + static blocks + this video.
+def render_plan_parts(video: PlanVideo) -> PlanPrompt:
+    """The plan prompt split at ``<video>``: the static half never sees ``video``.
+
+    Config blocks are filled in the static half only — nothing below
+    ``<video>`` is a config placeholder. A template without a ``<video>`` line
+    (a registry version that lost it) renders whole into ``video`` with an
+    empty ``static``, and is logged.
 
     Raises:
         FileNotFoundError: plan.txt is missing from disk and the registry.
     """
     template = _load_plan_prompt()
-    return ENGLISH_OUTPUT_DIRECTIVE + "\n\n" + _render_video(_render_static(template), video)
+    head = ENGLISH_OUTPUT_DIRECTIVE + "\n\n"
+    cut = template.find(_VIDEO_LINE) + 1
+    if cut == 0:
+        logger.warning("plan.txt has no <video> line; sending the plan prompt uncached")
+        return PlanPrompt(static="", video=head + _render_video(_render_static(template), video))
+    return PlanPrompt(
+        static=head + _render_static(template[:cut]),
+        video=_render_video(template[cut:], video),
+    )

@@ -40,6 +40,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Iterable, Iterator
+from datetime import datetime, timezone
 from typing import Any
 
 # Primary metrics and the direction that counts as better. Single-sourced
@@ -190,6 +191,7 @@ def _parse_json_object(raw: Any) -> dict[str, Any] | None:
 # recorded before it (the phase-0 baseline, refreshed with --refresh-langfuse)
 # carry the same ``{"format": …}`` answer on the retired ``classifier``.
 _FORMAT_OBSERVATIONS = ("tier_probe", "classifier")
+_OLDEST = datetime.min.replace(tzinfo=timezone.utc)
 
 
 def _observation_format(observation: dict[str, Any]) -> str | None:
@@ -198,13 +200,27 @@ def _observation_format(observation: dict[str, Any]) -> str | None:
     return fmt.strip().lower() if isinstance(fmt, str) and fmt.strip() else None
 
 
+def _started_at(observation: dict[str, Any]) -> datetime:
+    """The observation's ``startTime`` as an aware datetime; absent or unparseable = oldest."""
+    raw = observation.get("startTime")
+    try:
+        started = datetime.fromisoformat(raw) if isinstance(raw, str) else _OLDEST
+    except ValueError:
+        return _OLDEST
+    return started if started.tzinfo else started.replace(tzinfo=timezone.utc)
+
+
 def extract_probe_format(trace: dict[str, Any]) -> str | None:
-    """Return the ``format`` the run's ``tier_probe`` (else ``classifier``) generation produced."""
+    """Return the ``format`` of the run's LATEST ``tier_probe`` (else ``classifier``) generation.
+
+    A run whose caption transcript the probe judged unusable probes twice
+    (pipeline-1min 2.5); the later answer, on the audio transcript, is the one
+    the run used. Observations without a ``startTime`` keep their trace order.
+    """
     observations = [o for o in trace.get("observations") or [] if isinstance(o, dict)]
     for name in _FORMAT_OBSERVATIONS:
-        for observation in observations:
-            if observation.get("name") != name:
-                continue
+        named = [o for o in observations if o.get("name") == name]
+        for observation in sorted(named, key=_started_at, reverse=True):
             fmt = _observation_format(observation)
             if fmt is not None:
                 return fmt

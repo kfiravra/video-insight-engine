@@ -53,7 +53,12 @@ the run's attribution for free. The shared emit helper
 - **Whisper** (`whisper_transcriber.py`) — `unit="audio_seconds"`,
   `audio_seconds=response.duration`, cost via `compute_transcription_cost_usd`
   (`$0.006/min`). Features: `summarize:transcript:whisper` /
-  `:whisper_translate`.
+  `:whisper_translate` — the latter only for the English text of a non-English
+  run that transcribed its own audio with Whisper (its Qdrant points). Every
+  other non-English transcript gets that English text from a fast-model text
+  translation: a LiteLLM call, so an ordinary callback row with feature
+  `summarize:rag_translation` (span `rag_translation`) — see
+  [RAG.md](./RAG.md#non-english-transcripts).
 - **Gemini** (`gemini_transcriber.py`) — `unit="tokens"`, token counts from
   `response.usage_metadata`, cost via the per-token Gemini rate. Feature:
   `summarize:transcript:gemini`.
@@ -106,9 +111,41 @@ billed at the full input rate, so total list-price spend ≈ `cost_usd + cache_s
 
 ## Where cache_control is set
 
-Since pipeline-1min 1c.3 there is **one** breakpoint, on extraction calls only
-(Anthropic models; `services/summarizer/src/services/llm_messages.py` strips the
-marker for every other provider):
+Two calls carry a breakpoint, both on a user content block (Anthropic models
+only; `services/summarizer/src/services/llm_messages.py` strips every marker for
+other providers). `text_block(text, cache=True)` is the 5-minute default (no
+`ttl` key on the wire); `text_block(text, cache=True, ttl="1h")` asks for one
+hour. In one request every 1h breakpoint must come before any 5m one.
+
+**Plan — 1h (pipeline-1min 2.0).** `plan_prompt.render_plan_parts` cuts
+`plan.txt` at its `<video>` line:
+
+- **user block 1** = the English output directive + everything above
+  `<video>` (rules, component toolkit, registry caps and requirements,
+  examples) — rendered from config alone, so byte-identical for every video;
+  ~16.4k tokens on Sonnet 4.6. `cache_control {type: ephemeral, ttl: 1h}`
+  (`plan.PLAN_CACHE_TTL`, `plan.plan_user_content`);
+- **user block 2** = `<video>` (title, channel, duration, probe hint,
+  playbook, description), the full marked transcript, the closing line —
+  uncached.
+
+A run makes one plan call, so a 5-minute entry is never read by its own run —
+only by another video's plan call that starts within 5 minutes (A26); a 1-hour
+entry is read by every plan call — any video — that starts within an hour of
+the previous one. Economics (Sonnet 4.6, $3/MTok input): a 1h write is 2x input
+($6/MTok, ≈ $0.098 per miss vs $0.049 uncached), a read 0.1x ($0.30/MTok,
+≈ $0.005 per hit), so the 1h breakpoint costs **more** than no breakpoint below
+a ~53 % hit rate. A 5m write (1.25x) breaks even at ~22 % — of the 5-minute hit
+rate, which is never above the 1h one (every 5-minute hit is also a 1-hour
+hit). Gate item (Kfir 2026-10-12): read the plan's 1h hit rate with
+`scripts/cache_hit_rate.py` (below) after two weeks of prod traffic. Gate-2
+decision (Kfir 2026-10-12): the plan stays on 1h and there is no switching code —
+the "below 50 %" rule is a reporting rule applied by hand. After a week of prod
+data, none / 5m / 1h are simulated from the `pipeline.timing` arrival times (when
+each plan call started) and the cheapest is picked; `cache_hit_rate.py` alone
+cannot answer it, since the 5m hit rate depends on the gaps between plan calls.
+
+**Extraction — 5m (1c.3).**
 
 - **system** = the rules section of `base_extraction.txt` (everything before
   `<video>`) — byte-identical for every video, **no** breakpoint (`system_prompt`
@@ -119,17 +156,43 @@ marker for every other provider):
 - **user block 2** = the job (planned tabs' briefs + caps, schemas, example,
   visual annotations, key frames, per-batch context) — uncached, bound per call.
 
-The old `cache_static` path (static template half as a cached system message)
-is gone, and so is `cache_control` on the plan: there is one plan call per run,
-so a cache entry would be written and never read (A26). The plan reads the
-**full** `[m:ss]`-marked transcript (1b.2), so its input tokens — and cost —
-grow with the video; memory reads the same string.
+What the extraction breakpoint buys in phases 1–2: little. A short video makes
+one extraction call; a chunked one sends each batch's own transcript slice in
+block 1, so no two calls share the prefix. Haiku also caches nothing under
+4,096 tokens per block. Reads start in phase 3, when several extraction groups
+share one `[video + transcript + memory]` block.
 
-What the breakpoint buys in phase 1: nothing yet. A short video makes one
-extraction call; a chunked one sends each batch's own transcript slice in block
-1, so no two calls share the prefix. Haiku also caches nothing under 4,096
-tokens per block. Reads start in phase 3, when several extraction groups share
-one `[video + transcript + memory]` block.
+The old `cache_static` path (static template half as a cached system message)
+is gone. The plan reads the **full** `[m:ss]`-marked transcript (1b.2), so its
+uncached block — and cost — grows with the video; memory reads the same string.
+
+**OpenAI calls (automatic caching).** OpenAI caches a prompt prefix by itself
+once it is identical to an earlier request's and at least 1,024 tokens long; it
+reports reads (`prompt_tokens_details.cached_tokens`) but no writes, and there
+is nothing to mark. Synthesis, the quiz (`enrich_quiz.txt`) and
+`description_analysis.txt` (all `openai/gpt-4o-mini` in prod and dev) are laid
+out static-first — instructions, schema, example, then the per-video content —
+so two videos share their prefix up to the first per-video byte. Today those
+static prefixes are 355 / 471 / 311 tokens, below the 1,024 minimum, so they do
+not cache across videos yet (a quiz prefix is per quiz domain: its flavor line
+sits in `<role>`).
+
+## How 1h writes are priced
+
+Anthropic returns `usage.cache_creation.{ephemeral_5m_input_tokens,
+ephemeral_1h_input_tokens}`; LiteLLM (1.91) keeps the split in
+`usage.prompt_tokens_details.cache_creation_token_details`, and
+`completion_cost` prices each part at its own rate
+(`cache_creation_input_token_cost` = 1.25x input,
+`cache_creation_input_token_cost_above_1hr` = 2x). So `cost_usd` in the ledger,
+`costUsd` in `pipeline.timing` and the Langfuse generation cost are right for 1h
+writes with no code of ours: `tests/test_cache_usage_1h.py` pins it against the
+published Sonnet 4.6 prices using usage objects recorded from a live call. A
+response without the split (not seen from Anthropic) would be priced entirely at
+the 5m rate. The ledger keeps only the total (`cache_creation_tokens`); the
+per-call 1h / 5m split lives in `pipeline.timing.llmCalls[]`
+(`cacheWrite1hTokens`, `cacheWrite5mTokens`). `cache_savings_usd` counts reads
+only — the write premium is already inside `cost_usd`.
 
 ## How to audit
 
@@ -145,17 +208,40 @@ python scripts/audit_cache_credits.py --json           # machine-readable
 Exit codes:
 - `0` cache hits observed on Anthropic calls
 - `1` no records in window
-- `2` Anthropic calls present but zero cache hits — investigate, **except** in
-  pipeline-1min phases 1–2, where exit 2 is the expected result (no extraction
-  call shares its cached prefix with another; see above) until phase 3's
-  grouped extraction lands
+- `2` Anthropic calls present but zero cache hits — investigate. Since 2.0 the
+  plan's 1h block is read whenever two plan calls start within an hour of each
+  other; a window whose plan calls are all more than an hour apart (and phases
+  1–2 extraction, see above) still legitimately shows no reads.
+
+Per call type, with the 1h / 5m split — the number gate reports carry:
+
+```bash
+python scripts/cache_hit_rate.py                      # runs started in the last 14 days
+python scripts/cache_hit_rate.py --days 1             # the last 24 hours
+python scripts/cache_hit_rate.py --days 1 --include-eval   # ... with eval-user runs
+python scripts/cache_hit_rate.py --ids T1dQhQAm8Tc <summaryId> ...
+python scripts/cache_hit_rate.py --json
+```
+
+It reads `pipeline.timing.llmCalls` (not `llm_usage`) and prints, per `span`
+and provider: calls, input tokens, reads, writes (1h / 5m), hit rate =
+reads ÷ (reads + writes) for Anthropic, and the cached share of input tokens
+(the OpenAI number). Runs timed before `pipeline.timing` version 2 have no
+split and no OpenAI reads; the header counts runs per version. The window
+leaves out eval-user rows (`evalRun: true` — golden passes and dev runs, bursts
+of plan calls minutes apart that would lift the prod hit rate) unless
+`--include-eval`; `--ids` reads the named runs whoever ran them.
 
 ## Common failure modes
 
 1. **Zero hits on Sonnet calls** (from phase 3 on) — usually means the cached
    `[video + transcript + memory]` block is not byte-identical across the calls
    that share it (e.g. a per-call value slipped in before the breakpoint).
-   Everything a call varies must be bound in the job block.
+   Everything a call varies must be bound in the job block. For the plan, a
+   per-video value above `<video>` in `plan.txt` (or in a registry block it
+   renders) splits the cache per video — `tests/test_plan_cache_ttl.py`
+   guards it; a registered `plan.txt` without a `<video>` line is sent
+   uncached and logged.
 2. **`cache.rate_missing` log** — a model alias was added in `config.MODEL_MAP`
    without a corresponding entry in `_CACHE_RATES_USD_PER_M`. Add the
    per-1M-token rates for that model.
@@ -168,10 +254,14 @@ Exit codes:
 
 - ✅ Cache fields on `UsageRecord` (creation/read tokens, hit flag, savings)
 - ✅ Per-model cache rate map with miss-logging fallback
-- ✅ `cache_control: ephemeral` on the extraction `[video + transcript + memory]` user block (plan: none)
-- ✅ Audit script (`scripts/audit_cache_credits.py`)
-- 📋 Live audit meaningful from phase 3 (grouped extraction) — exit 2 is
-      expected before that.
+- ✅ `cache_control: ephemeral` on the extraction `[video + transcript + memory]` user block
+- ✅ `cache_control: ephemeral, ttl 1h` on the plan's static half (2.0); 1h / 5m
+      write split per call in `pipeline.timing`; 1h writes priced at 2x (verified)
+- ✅ Audit script (`scripts/audit_cache_credits.py`) and per-call-type gate tool
+      (`scripts/cache_hit_rate.py`)
+- 📋 Extraction reads from phase 3 (grouped extraction); after two weeks of prod
+      traffic the plan's 1h hit rate decides whether the 1h breakpoint stays —
+      what replaces it below 50 % is Kfir's gate-2 decision (see the plan above).
 
 ## Per-user daily cap
 

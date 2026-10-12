@@ -21,6 +21,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.services.pipeline.pipeline_helpers import TranscriptData
+from src.services.pipeline.tab_ledger import TabLedger
 
 
 @pytest.fixture(autouse=True)
@@ -106,6 +107,7 @@ def _build_ctx(transcript_data: TranscriptData) -> SimpleNamespace:
         audio_path=None,
         memory=None,
         video_memory="",
+        tab_ledger=TabLedger(),
     )
 
 
@@ -179,3 +181,32 @@ async def test_store_skipped_when_s3_unavailable(mock_store: AsyncMock) -> None:
     await _run_assembly(ctx, s3_available=False)
 
     mock_store.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_yt_dlp_transcript_is_stored_with_the_picked_caption_track(
+    mock_store: AsyncMock,
+) -> None:
+    """2.4: the blob records which caption track it holds, so a later run whose
+    picker chooses another track can see it is stale."""
+    from src.services.transcription.transcript_store import CaptionRef
+
+    ctx = _build_ctx(_transcript("ytdlp"))
+    ctx.video_data.caption_lang = "iw"
+    ctx.video_data.caption_track = "auto-generated"
+
+    await _run_assembly(ctx, s3_available=True)
+
+    assert mock_store.await_args.kwargs["caption"] == CaptionRef(lang="iw", kind="auto-generated")
+
+
+@pytest.mark.asyncio
+async def test_audio_transcript_is_stored_without_a_caption_track(mock_store: AsyncMock) -> None:
+    """A Whisper transcript is not a caption track, whatever this run's picker chose."""
+    ctx = _build_ctx(_transcript("whisper"))
+    ctx.video_data.caption_lang = "en"
+    ctx.video_data.caption_track = "manual"
+
+    await _run_assembly(ctx, s3_available=True)
+
+    assert mock_store.await_args.kwargs["caption"] is None

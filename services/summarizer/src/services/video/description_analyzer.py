@@ -187,6 +187,9 @@ async def _request_analysis(description: str, model: str) -> str | None:
                 max_retries=DESCRIPTION_MAX_RETRIES,
                 stage_name=_STAGE,
                 use_fast_model=True,
+                # The prompt ends with up to 5,000 chars of the creator's text;
+                # JSON mode keeps the reply an object whatever that text says.
+                json_mode=True,
             )
     except TimeoutError as e:
         # The cap cancelled an attempt mid-flight, so the provider never saw it

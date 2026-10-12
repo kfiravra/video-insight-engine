@@ -1,6 +1,6 @@
 """Pydantic contracts for every SSE event the pipeline emits.
 
-Mirrors the TS event interfaces in ``packages/types/src/vie-response.ts`` and
+Mirrors the TS event interfaces in ``packages/types/src/api.ts`` and
 the table in ``docs/SERVICE-SUMMARIZER.md`` §SSE Event Protocol. Validated on
 every emission by ``sse_event()`` (``pipeline_helpers.py``):
 
@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from src.config import settings
 
@@ -97,19 +97,52 @@ class MetaEvent(_SSEEvent):
 
 
 class TabReadyEvent(_SSEEvent):
+    """One tab — the emission contract is ``src/services/pipeline/tab_ledger.py``."""
+
     id: str
     component: str | None = None
     props: dict[str, Any] = {}
-    # Index in the persisted tab order — lets the client slot a held-back
-    # tab (moment_track streams last, after its frame fill) where the DB
-    # doc will have it instead of appending it.
+    # Index in the response's tab order: exact on a final emission, an
+    # estimate before (a held-back or provisional tab), so clients sort by it.
     position: int | None = Field(default=None, ge=0)
+    # The tab's last emission this run — nothing later changes its content or
+    # position (should it still change, a corrected final follows: the last
+    # final wins). Absent on legacy emitters.
+    final: bool = False
+    # A placeholder built before extraction (the plan-done Moments tab); a
+    # later tab_ready with the same id replaces it — or one naming it in
+    # ``replaces``.
+    provisional: bool = False
+    # On the first emission of the tab that takes the provisional tab's place
+    # under another id: the provisional id (the client gives it that slot).
+    replaces: str | None = None
+
+    @model_validator(mode="after")
+    def _provisional_is_never_final(self) -> TabReadyEvent:
+        if self.provisional and self.final:
+            raise ValueError("a provisional tab is never final")
+        return self
+
+    @model_validator(mode="after")
+    def _replaces_another_tab(self) -> TabReadyEvent:
+        if self.replaces is not None and (self.provisional or self.replaces == self.id):
+            raise ValueError("replaces names another tab and never rides a provisional one")
+        return self
 
 
 class CompleteEvent(_SSEEvent):
     tab_count: int = Field(alias="tabCount")
     processing_time_ms: int = Field(alias="processingTimeMs")
     degraded: bool = False
+    # The final response's tab ids in order; a tab streamed earlier whose id
+    # is missing was withdrawn.
+    tab_ids: list[str] | None = Field(default=None, alias="tabIds")
+
+    @model_validator(mode="after")
+    def _tab_ids_match_count(self) -> CompleteEvent:
+        if self.tab_ids is not None and len(self.tab_ids) != self.tab_count:
+            raise ValueError("tabIds must list exactly tabCount tabs")
+        return self
 
 
 class HeartbeatEvent(_SSEEvent):

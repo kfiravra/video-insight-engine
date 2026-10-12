@@ -22,7 +22,6 @@ from dataclasses import dataclass, field
 from functools import lru_cache, partial
 from pathlib import Path
 from typing import Any, TypedDict
-from urllib.parse import parse_qs, urlsplit
 
 import requests
 import tenacity
@@ -36,10 +35,7 @@ from src.services.media.download_utils import (
     ytdlp_proxy_exit_urls,
     ytdlp_proxy_url,
 )
-from src.utils.language_utils import (
-    detect_language_by_script,
-    normalize_language_code,
-)
+from src.services.video.caption_picker import SubtitleTrack, choose_caption_track
 
 logger = logging.getLogger(__name__)
 
@@ -420,21 +416,6 @@ class SubtitleSegment:
     duration: float  # seconds
 
 
-@dataclass(frozen=True)
-class SubtitleTrack:
-    """A json3 caption track chosen by ``_pick_subtitle_url``.
-
-    Carries provenance alongside the URL: ``kind`` is the yt-dlp bucket the
-    track came from ("manual" for creator uploads, "auto-generated" for ASR)
-    and ``lang`` the caption key that matched (e.g. ``"ar-SA"``), so the
-    transcript trail can say exactly which track was tried.
-    """
-
-    url: str
-    kind: str  # "manual" | "auto-generated"
-    lang: str
-
-
 @dataclass
 class VideoData:
     """Complete video data extracted from yt-dlp.
@@ -451,6 +432,7 @@ class VideoData:
         upload_date: Upload date in YYYYMMDD format
         context: Video context with category, persona, and tags
         language: Detected primary language (ISO 639-1) or None
+        spoken_language: The spoken-language signal alone (ISO 639-1) or None
         captions_rate_limited: True when the timedtext fetch was HTTP 429
         caption_track: "manual" | "auto-generated" | None (no track picked)
         caption_lang: Caption key of the picked track (e.g. "ar-SA") or None
@@ -467,10 +449,16 @@ class VideoData:
     subtitles: list[SubtitleSegment] = field(default_factory=list)
     upload_date: str | None = None  # YYYYMMDD format
     context: VideoContext | None = None  # Phase 1: Video context extraction
-    # Detected primary language (ISO 639-1) — resolved from yt-dlp's audio-lang
-    # tag, title/description script, or available caption track keys. ``None``
-    # means "no signal" and downstream falls back to English.
+    # Detected primary language (ISO 639-1): the spoken language when the
+    # caption picker found a track in it (that is what the transcript is in),
+    # else the waterfall over yt-dlp's audio-lang tag, title/description script
+    # and caption keys. ``None`` means "no signal" — downstream uses English.
     language: str | None = None
+    # The single original-ASR track's language (it overrides a disagreeing tag
+    # unless the video is dubbed), else yt-dlp's language field; never the
+    # waterfall's guess (which can be ``ar`` for an English video with
+    # community subtitles) — the youtube-transcript-api fallback keys off it.
+    spoken_language: str | None = None
     # True when the timedtext subtitle fetch was HTTP-429 rate-limited. The
     # transcript fetcher uses this to negative-cache the caption endpoints
     # (further caption calls in the window are doomed for the whole IP).
@@ -806,13 +794,8 @@ def _extract_video_info_sync(video_id: str) -> tuple[VideoData, SubtitleTrack | 
     chapters = _parse_chapters(info)
     logger.info("Video %s: found %d chapters", video_id, len(chapters))
 
-    # Resolve the video's primary language *before* picking subtitles. yt-dlp
-    # also offers English auto-translations for every foreign-language video;
-    # picking those would silently mislabel the audio as English.
-    auto_captions = info.get("automatic_captions", {})
-    manual_captions = info.get("subtitles", {})
-    detected_language = resolve_video_language(info, manual_captions, auto_captions)
-    track = _pick_subtitle_url(detected_language, manual_captions, auto_captions)
+    caption_choice = choose_caption_track(video_id, info)
+    track = caption_choice.track
 
     context = extract_video_context(info, description)
     logger.info(
@@ -829,7 +812,8 @@ def _extract_video_info_sync(video_id: str) -> tuple[VideoData, SubtitleTrack | 
         chapters=chapters,
         upload_date=info.get("upload_date"),
         context=context,
-        language=detected_language,
+        language=caption_choice.language,
+        spoken_language=caption_choice.spoken_language,
         caption_track=track.kind if track else None,
         caption_lang=track.lang if track else None,
         caption_url=track.url if track else None,
@@ -887,149 +871,6 @@ def _fetch_picked_track(
         error,
     )
     return subtitles, error
-
-
-def resolve_video_language(
-    info: dict[str, Any],
-    manual_captions: dict[str, Any],
-    auto_captions: dict[str, Any],
-) -> str | None:
-    """Pick the most likely primary language without making any network calls.
-
-    Waterfall, in order of reliability:
-      1. Script-detection on title + first 500 chars of description PLUS
-         agreement with a manual-captions track. Two weak signals agreeing
-         is stronger than either alone — protects against the Arabic-title /
-         English-audio false positive (a creator with an English video and a
-         short Arabic title would otherwise be routed as Arabic).
-      2. First MANUAL-captions key — creator-uploaded tracks are almost always
-         the original audio language.
-      3. Script-detection alone — catches Arabic/Hebrew/CJK/etc. titles when
-         YouTube ships no manual captions. Demoted below manual captions
-         because a 500-char description sample can produce 10% script
-         coverage from a few accent characters and trip the heuristic.
-      4. English in AUTO-captions — for English-audio videos with no manual
-         track. Falls between the heuristics and the YouTube tag because
-         YouTube's tag is unreliable: it falsely labelled Bruno Mars's
-         "The Lazy Song" as Danish.
-      5. yt-dlp's audio-language tag (``info['language']``) — useful but
-         demoted because of the false-positive rate.
-      6. First auto-captions key — last-resort.
-
-    Returns an ISO 639-1 code (e.g. ``"ar"``) or ``None`` when no signal is
-    available. Downstream treats ``None`` as English.
-    """
-    title = info.get("title", "") or ""
-    description = (info.get("description") or "")[:500]
-    script_lang = detect_language_by_script(f"{title} {description}")
-
-    manual_lang: str | None = None
-    for key in manual_captions.keys():
-        cand = normalize_language_code(key)
-        if cand:
-            manual_lang = cand
-            break
-
-    # Two-signal agreement beats either alone. If script-detection and the
-    # first manual-captions track both point to the same language, ship it.
-    if script_lang and manual_lang and script_lang == manual_lang:
-        return script_lang
-
-    # Manual captions on their own are still a strong signal — creator-
-    # uploaded tracks are the original audio language in the vast majority
-    # of cases.
-    if manual_lang:
-        return manual_lang
-
-    # Script-detection alone — last chance before falling back to the less
-    # reliable signals.
-    if script_lang:
-        return script_lang
-
-    for key in auto_captions.keys():
-        if normalize_language_code(key) == "en":
-            return "en"
-
-    lang = normalize_language_code(info.get("language"))
-    if lang:
-        return lang
-
-    for key in auto_captions.keys():
-        cand = normalize_language_code(key)
-        if cand:
-            return cand
-
-    return None
-
-
-def _is_machine_translation(url: str) -> bool:
-    """True for YouTube's on-demand machine translation of another track.
-
-    yt-dlp files those under the target language's key, marked only by a
-    ``tlang`` query parameter on the URL.
-    """
-    return "tlang" in parse_qs(urlsplit(url).query)
-
-
-def _json3_url(fmts: list[dict[str, Any]], *, translated: bool) -> str | None:
-    """URL of the first json3 variant that is (or is not) a machine translation."""
-    for fmt in fmts:
-        url = fmt.get("url")
-        if fmt.get("ext") == "json3" and url and _is_machine_translation(url) == translated:
-            return url
-    return None
-
-
-def _find_track(
-    lang_code: str,
-    sources: tuple[tuple[str, dict[str, Any]], ...],
-    *,
-    translated: bool,
-) -> SubtitleTrack | None:
-    """First json3 track keyed ``lang_code`` or a regional variant (``ar-SA``)."""
-    for kind, captions in sources:
-        for key, fmts in captions.items():
-            if key != lang_code and not key.startswith(lang_code + "-"):
-                continue
-            url = _json3_url(fmts, translated=translated)
-            if url:
-                return SubtitleTrack(url=url, kind=kind, lang=key)
-    return None
-
-
-def _pick_subtitle_url(
-    detected_language: str | None,
-    manual_captions: dict[str, Any],
-    auto_captions: dict[str, Any],
-) -> SubtitleTrack | None:
-    """Pick a json3 subtitle track preferring the detected language.
-
-    Order: detected language, then English. Within a language an original
-    track (manual, then auto) beats a machine translation into it, which is
-    only the last resort. YouTube auto-translates every foreign video to
-    English on demand; without the language preference the pipeline would grab
-    the auto-EN track and pretend the audio was English. Without the
-    original-first rule an auto-dubbed video (one ASR track per dub) would get
-    whichever translation yt-dlp lists first under ``en`` (ar→en, seen in prod)
-    instead of the English ASR track listed after it.
-
-    The returned track records which bucket it came from and the exact caption
-    key that matched (``"ar-SA"`` for detected ``"ar"``), so a later fallback
-    can be attributed to the specific track that failed.
-    """
-    pref_langs: list[str] = []
-    if detected_language and detected_language != "en":
-        pref_langs.append(detected_language)
-    pref_langs += ["en", "en-US", "en-GB"]
-    pref_langs = list(dict.fromkeys(pref_langs))
-
-    sources = (("manual", manual_captions), ("auto-generated", auto_captions))
-    for lang_code in pref_langs:
-        for translated in (False, True):
-            track = _find_track(lang_code, sources, translated=translated)
-            if track:
-                return track
-    return None
 
 
 async def extract_video_data(video_id: str) -> VideoData:

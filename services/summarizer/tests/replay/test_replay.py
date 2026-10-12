@@ -30,7 +30,14 @@ _TOP_LEVEL_PHASES = (
     "moment_fill",
 )
 _FRAMES_SUBSTEPS = ("frames.scene_detect", "frames.score_select", "frames.hires", "frames.upload")
-_MILESTONES = ("metadataMs", "synthesisCompleteMs", "firstTabReadyMs", "completeMs", "doneMs")
+_MILESTONES = (
+    "metadataMs",
+    "synthesisCompleteMs",
+    "firstTabReadyMs",
+    "firstAssembledTabMs",
+    "completeMs",
+    "doneMs",
+)
 _DONE_COUNTS = re.compile(r"tabs planned=(\d+) assembled=(\d+) emitted=(\d+)")
 _VIDEOS = available_cassettes()
 # Tabs the code under test adds on top of a recording: uC45_4nnEAI was recorded

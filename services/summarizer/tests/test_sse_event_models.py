@@ -83,6 +83,21 @@ class TestValidEmissions:
         chunk = sse_event("phase", {"phase": "translation"})
         assert '"phase": "translation"' in chunk
 
+    def test_tab_ready_should_carry_final_and_provisional_flags(self):
+        chunk = sse_event("tab_ready", {"id": "m", "position": 2, "provisional": True})
+        payload = json.loads(chunk.removeprefix("data: ").strip())
+        assert (payload["provisional"], payload["position"]) == (True, 2)
+
+    def test_complete_should_carry_the_final_tab_order(self):
+        chunk = sse_event(
+            "complete", {"tabCount": 2, "tabIds": ["overview", "code"], "processingTimeMs": 1}
+        )
+        assert '"tabIds": ["overview", "code"]' in chunk
+
+    def test_tab_ready_should_carry_the_provisional_id_it_replaces(self):
+        chunk = sse_event("tab_ready", {"id": "segments", "final": True, "replaces": "key_moments"})
+        assert '"replaces": "key_moments"' in chunk
+
 
 class TestInvalidEmissionsRaiseOutsideProduction:
     def test_unknown_event_name_raises(self):
@@ -100,6 +115,22 @@ class TestInvalidEmissionsRaiseOutsideProduction:
     def test_wrong_type_raises(self):
         with pytest.raises(SSEEventValidationError, match="complete"):
             sse_event("complete", {"tabCount": "four", "processingTimeMs": 1})
+
+    def test_provisional_final_tab_raises(self):
+        with pytest.raises(SSEEventValidationError, match="provisional"):
+            sse_event("tab_ready", {"id": "m", "final": True, "provisional": True})
+
+    def test_tab_replacing_itself_raises(self):
+        with pytest.raises(SSEEventValidationError, match="replaces"):
+            sse_event("tab_ready", {"id": "moments", "replaces": "moments"})
+
+    def test_provisional_tab_replacing_another_raises(self):
+        with pytest.raises(SSEEventValidationError, match="replaces"):
+            sse_event("tab_ready", {"id": "m", "provisional": True, "replaces": "x"})
+
+    def test_tab_ids_disagreeing_with_tab_count_raises(self):
+        with pytest.raises(SSEEventValidationError, match="tabIds"):
+            sse_event("complete", {"tabCount": 3, "tabIds": ["a"], "processingTimeMs": 1})
 
 
 class TestProductionFailsOpen:

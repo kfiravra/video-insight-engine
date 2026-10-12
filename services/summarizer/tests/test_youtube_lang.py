@@ -1,5 +1,6 @@
-"""Tests for the language-detection waterfall and subtitle-pick preference
-added to ``services/summarizer/src/services/video/youtube.py``.
+"""Tests for the language-detection waterfall and subtitle-pick preference in
+``services/summarizer/src/services/video/caption_picker.py`` — the fallback
+the spoken-language rule (``test_caption_picker.py``) hands over to.
 
 We deliberately don't hit yt-dlp here — both functions under test accept the
 raw ``info`` dict / caption dicts, so we can construct realistic fixtures
@@ -8,7 +9,7 @@ without any network.
 
 from __future__ import annotations
 
-from src.services.video.youtube import (
+from src.services.video.caption_picker import (
     _pick_subtitle_url,
     resolve_video_language,
 )
@@ -265,3 +266,30 @@ class TestPickOriginalOverTranslation:
 
         assert track is not None
         assert track.url == en_to_he
+
+
+class TestPickSubtitleUrlAliases:
+    """The fallback matches caption keys by their aliased primary subtag too, so
+    a waterfall ``he`` finds the ``iw`` keys YouTube lists (Kfir: alias BEFORE matching)."""
+
+    @staticmethod
+    def _track(url: str) -> list[dict]:
+        return [{"ext": "json3", "url": url}]
+
+    def test_should_pick_a_manual_iw_track_when_the_detected_language_is_he(self):
+        en_from_iw = "https://www.youtube.com/api/timedtext?lang=iw&tlang=en&fmt=json3"
+        manual = {"iw": self._track("iw-manual")}
+        auto = {"en-iw": self._track(en_from_iw)}
+
+        track = _pick_subtitle_url("he", manual, auto)
+
+        assert track is not None
+        assert (track.kind, track.lang) == ("manual", "iw")
+
+    def test_should_keep_the_regional_english_preference_entries_matching(self):
+        manual = {"en-GB": self._track("en-GB-manual")}
+
+        track = _pick_subtitle_url(None, manual, {})
+
+        assert track is not None
+        assert track.lang == "en-GB"

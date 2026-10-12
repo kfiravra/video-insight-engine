@@ -19,6 +19,7 @@ from src.models.schemas import ErrorCode
 from src.services.pipeline.pipeline_helpers import TranscriptData, TranscriptTrail
 from src.services.transcription import transcript_fetcher
 from src.services.transcription.transcript_fetcher import fetch_transcript
+from src.services.transcription.transcript_store import transcript_store
 from tests.test_transcript_fetcher import _drain, _video_data_without_captions
 
 
@@ -227,9 +228,7 @@ class TestTranscriptTrail:
             language="en",
         )
         trail = TranscriptTrail()
-        with patch.object(
-            transcript_fetcher.transcript_store, "get", new=AsyncMock(return_value=cached)
-        ):
+        with patch.object(transcript_store, "get", new=AsyncMock(return_value=cached)):
             items = await self._run(trail, whisper=_whisper_success(), s3_available=True)
 
         data = _yielded_data(items)
@@ -242,7 +241,7 @@ class TestTranscriptTrail:
         """An S3 lookup exception is an attempt (message kept); the chain continues."""
         trail = TranscriptTrail()
         with patch.object(
-            transcript_fetcher.transcript_store,
+            transcript_store,
             "get",
             new=AsyncMock(side_effect=RuntimeError("boom")),
         ):

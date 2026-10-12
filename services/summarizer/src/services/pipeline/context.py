@@ -8,8 +8,9 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from src.services.pipeline.tab_ledger import TabLedger
 
 if TYPE_CHECKING:
     from src.models.memory_types import MemoryResult
@@ -25,6 +26,7 @@ if TYPE_CHECKING:
     )
     from src.services.pipeline.triage import TriageResult
     from src.services.video.description_analyzer import DescriptionAnalysis
+    from src.services.video.sponsorblock import SponsorSegment
     from src.services.video.youtube import VideoData
 
 
@@ -56,6 +58,9 @@ class PipelineContext:
     # SponsorBlock-filtered list when sponsor reads were cut (``clean_text``
     # drops the same reads), else the raw ``transcript_data.segments``.
     prompt_segments: list[dict[str, Any]] = field(default_factory=list)
+    # The run's SponsorBlock segments (None = not fetched yet), fetched once by
+    # the transcript phase; the audio re-run after unusable captions reuses them.
+    sponsor_segments: list[SponsorSegment] | None = None
     # ``prompt_segments`` rendered once with ``[m:ss]`` markers (``clean_text``
     # for a segment-less transcript) at probe-done: plan and memory read the
     # same string.
@@ -138,6 +143,9 @@ class PipelineContext:
     # Assembly outputs (populated by assembly phase)
     assembled_tabs: list[dict] | None = None
     assembled_meta: dict[str, Any] | None = None
+    # Every tab_ready of the run (the provisional Moments tab at plan-done,
+    # assembly's emissions, the final re-emit) — the tab emission contract.
+    tab_ledger: TabLedger = field(default_factory=TabLedger)
 
     # Language support. The pipeline is English-canonical: ALL generation runs
     # in English, so ``language``/``is_rtl`` always describe the English-primary
@@ -148,7 +156,11 @@ class PipelineContext:
     language: str = "en"  # ISO 639-1 code of the primary (English) output
     is_rtl: bool = False  # Whether the primary output is right-to-left (always False)
     source_language_code: str | None = None  # detected original language, or None
-    audio_path: Path | None = None  # Cached audio file for reuse by translation
+    # The non-English RAG transcript task (English text first, then its Qdrant
+    # points; phases/qdrant_index.py). Once ``done`` is out the runner waits for
+    # it, bounded, so its translation calls land in pipeline.timing. None for an
+    # English transcript and for runs that index nothing.
+    rag_transcript_task: asyncio.Task[None] | None = None
 
     # Source-language artifact for non-English videos. The top-level tabs/meta/
     # synthesis on this context are ALWAYS the English-primary payload after

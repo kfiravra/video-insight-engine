@@ -209,10 +209,11 @@ class TestRunPlan:
 
         assert mock_call.call_args.kwargs["max_tokens"] >= 1.5 * 1920
 
-    async def test_should_not_request_prompt_caching_when_planning(self) -> None:
+    async def test_should_cache_the_static_half_for_one_hour_when_planning(self) -> None:
         _, mock_call = await _run(json.dumps(_GOOD_PLAN))
 
-        assert mock_call.call_args.kwargs.get("cache_static") is None
+        static_block = mock_call.call_args.args[1][0]
+        assert static_block.get("cache_control") == {"type": "ephemeral", "ttl": "1h"}
 
     async def test_should_fall_back_with_empty_briefs_when_llm_returns_nothing(self) -> None:
         result, _ = await _run(None)

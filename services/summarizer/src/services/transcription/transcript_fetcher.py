@@ -4,6 +4,10 @@ Provides the async generator ``fetch_transcript`` which tries each
 transcript source in priority order:
   S3 cache -> yt-dlp subtitles -> youtube-transcript-api -> Whisper -> Gemini -> metadata
 
+``fetch_audio_transcript`` is the audio hop alone (Whisper -> Gemini): the
+chain's own fallback, and the text branch's re-run when the tier probe judged
+a caption transcript unusable (``phases/transcript_fallback.py``).
+
 Extracted from ``src.routes.stream`` for maintainability.
 """
 
@@ -25,9 +29,9 @@ from src.services.pipeline.pipeline_helpers import (
     normalized_segments_to_pipeline,
     sse_event,
 )
+from src.services.transcription.cached_transcript import read_cached_transcript
 from src.services.transcription.gemini_transcriber import transcribe_with_gemini
 from src.services.transcription.transcript import get_transcript
-from src.services.transcription.transcript_store import RawTranscript, transcript_store
 from src.services.transcription.whisper_transcriber import transcribe_with_whisper
 from src.services.video.youtube import VideoData
 from src.utils.language_utils import (
@@ -64,6 +68,12 @@ def _audio_fallback_gates(duration: int) -> tuple[bool, bool]:
     return whisper_allowed, gemini_allowed
 
 
+def audio_fallback_allowed(duration: int) -> bool:
+    """True when at least one audio layer (Whisper or Gemini) may run for ``duration`` s."""
+    whisper_allowed, gemini_allowed = _audio_fallback_gates(duration)
+    return whisper_allowed or gemini_allowed
+
+
 def _api_label() -> str:
     """Source label for the youtube-transcript-api layer: "proxy" or "api".
 
@@ -83,39 +93,6 @@ async def _mark_timedtext_429(video_data: VideoData) -> None:
     """
     if getattr(video_data, "captions_rate_limited", False):
         await caption_negative_cache.mark()
-
-
-def _cached_transcript_data(cached: RawTranscript) -> TranscriptData:
-    """Convert an S3-cached transcript blob (startMs/endMs) to pipeline TranscriptData."""
-    segments = []
-    for seg in cached.segments:
-        start_ms = seg.get("startMs", 0)
-        end_ms = seg.get("endMs", start_ms)
-        segments.append(
-            {
-                "text": seg.get("text", ""),
-                "start": start_ms / 1000.0,
-                "duration": (end_ms - start_ms) / 1000.0,
-            }
-        )
-    raw_text = " ".join(seg["text"] for seg in segments)
-
-    # Detect language from cached transcript if not stored
-    cached_language = cached.language
-    if not cached_language and raw_text:
-        cached_language = detect_language_from_text(raw_text)
-        if not cached_language:
-            cached_language = detect_language_by_script(raw_text)
-        if cached_language:
-            logger.info("Detected language from S3 cache text: %s", cached_language)
-
-    return TranscriptData(
-        segments=segments,
-        raw_text=raw_text,
-        transcript_type=f"cached-{cached.source}",
-        source="s3",
-        language=cached_language,
-    )
 
 
 def _ytdlp_transcript_data(video_data: VideoData) -> TranscriptData:
@@ -145,6 +122,12 @@ def _ytdlp_transcript_data(video_data: VideoData) -> TranscriptData:
         source="ytdlp",
         language=ytdlp_language,
     )
+
+
+def _spoken_language(video_data: VideoData) -> str | None:
+    """yt-dlp's spoken-language signal; callers that predate the field carry no string."""
+    spoken = getattr(video_data, "spoken_language", None)
+    return spoken if isinstance(spoken, str) else None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -183,19 +166,11 @@ async def fetch_transcript(
 
     # Priority 0: S3 cached transcript (avoids all YouTube calls)
     if S3Client.is_available() and not skip_cache:
-        try:
-            cached = await transcript_store.get(youtube_id)
-            if cached:
-                logger.info("Using S3 cached transcript: %d segments", len(cached.segments))
-                yield sse_event("phase", {"phase": "transcript_cached"})
-                trail.origin = cached.source
-                data = _cached_transcript_data(cached)
-                data.trail = trail
-                yield data
-                return
-        except Exception as e:
-            trail.attempted.append("s3")
-            logger.warning("S3 transcript retrieval failed, continuing with fallback chain: %s", e)
+        cached_data = await read_cached_transcript(youtube_id, video_data, trail)
+        if cached_data is not None:
+            yield sse_event("phase", {"phase": "transcript_cached"})
+            yield cached_data
+            return
 
     # Priority 1: yt-dlp subtitles
     if video_data.subtitles:
@@ -235,7 +210,7 @@ async def fetch_transcript(
         api_label = _api_label()
         try:
             segments, raw_text, transcript_type, api_language = await asyncio.wait_for(
-                get_transcript(youtube_id),
+                get_transcript(youtube_id, spoken_language=_spoken_language(video_data)),
                 timeout=settings.TRANSCRIPT_FETCH_TIMEOUT,
             )
             data = TranscriptData(
@@ -287,8 +262,80 @@ async def fetch_transcript(
                 "Caption fetch failed (%s); falling back to audio transcription", e.code.value
             )
 
-    # Audio transcription fallback chain: Whisper (detects language) -> Gemini (fast)
-    # Whisper comes first because it natively returns response.language for detection.
+    logger.info("No captions for %s, trying audio transcription", youtube_id)
+    try:
+        async for item in fetch_audio_transcript(youtube_id, duration, is_music, trail=trail):
+            yield item
+        return
+    except TranscriptError:
+        if not is_music:
+            raise
+
+    # Metadata fallback -- only for music videos when all transcript sources fail.
+    # Yields empty segments intentionally: sponsor filtering and AI chapter detection
+    # are skipped for metadata-only transcripts; only raw_text is used downstream.
+    logger.info(
+        "All transcript sources failed for music video %s, using metadata fallback", youtube_id
+    )
+    yield sse_event("phase", {"phase": "metadata_fallback"})
+    data = TranscriptData(
+        segments=[],
+        raw_text=build_metadata_text(video_data),
+        transcript_type="metadata",
+        source="metadata",
+    )
+    data.trail = trail
+    yield data
+
+
+async def fetch_audio_transcript(
+    youtube_id: str,
+    duration: int,
+    is_music: bool = False,
+    *,
+    trail: TranscriptTrail,
+) -> AsyncGenerator[str | TranscriptData, None]:
+    """The audio layers alone: Whisper, then Gemini, within their own gates.
+
+    Yields the ``audio_transcription`` / ``whisper_transcription`` phase events,
+    then the winning ``TranscriptData`` with ``trail`` attached. Every layer that
+    runs and fails is appended to ``trail.attempted``. Raises the Whisper error
+    — or NO_TRANSCRIPT when Whisper never ran — once no allowed layer produced
+    a transcript. Whisper comes first because it natively reports the language.
+    """
+    _warn_long_audio(youtube_id, duration)
+    yield sse_event("phase", {"phase": "audio_transcription"})
+    whisper_allowed, gemini_allowed = _audio_fallback_gates(duration)
+    whisper_error: TranscriptError | None = None
+    if whisper_allowed:
+        yield sse_event("phase", {"phase": "whisper_transcription"})
+        whisper_data, whisper_error = await _try_whisper_transcription(
+            youtube_id, duration, is_music
+        )
+        if whisper_data is not None:
+            whisper_data.trail = trail
+            yield whisper_data
+            return
+        trail.attempted.append("whisper")
+    if gemini_allowed:
+        gemini_data = await _try_gemini_transcription(youtube_id, duration, is_music)
+        if gemini_data is not None:
+            gemini_data.trail = trail
+            yield gemini_data
+            return
+        trail.attempted.append("gemini")
+    if whisper_error is not None:
+        raise whisper_error
+    raise TranscriptError("All transcript sources failed", ErrorCode.NO_TRANSCRIPT)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Internal helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _warn_long_audio(youtube_id: str, duration: int) -> None:
+    """Log the Whisper cost estimate for a video over three hours."""
     duration_min = duration // 60
     if duration_min > 180:
         logger.warning(
@@ -298,65 +345,6 @@ async def fetch_transcript(
             duration_min,
             duration_min * 0.006,
         )
-    logger.info("No captions for %s, trying audio transcription", youtube_id)
-    yield sse_event("phase", {"phase": "audio_transcription"})
-
-    # Try Whisper first -- detects language natively via response.language
-    whisper_allowed, gemini_allowed = _audio_fallback_gates(duration)
-    whisper_data: TranscriptData | None = None
-    whisper_error: TranscriptError | None = None
-    if whisper_allowed:
-        yield sse_event("phase", {"phase": "whisper_transcription"})
-        whisper_data, whisper_error = await _try_whisper_transcription(
-            youtube_id, duration, is_music
-        )
-        if whisper_data is None:
-            trail.attempted.append("whisper")
-    if whisper_data is not None:
-        whisper_data.trail = trail
-        yield whisper_data
-        return
-
-    # Gemini fallback -- faster/cheaper but no language detection
-    gemini_data = (
-        await _try_gemini_transcription(youtube_id, duration, is_music) if gemini_allowed else None
-    )
-    if gemini_allowed and gemini_data is None:
-        trail.attempted.append("gemini")
-    if gemini_data is not None:
-        gemini_data.trail = trail
-        yield gemini_data
-        return
-
-    # Metadata fallback -- only for music videos when all transcript sources fail.
-    # Yields empty segments intentionally: sponsor filtering and AI chapter detection
-    # are skipped for metadata-only transcripts; only raw_text is used downstream.
-    if is_music:
-        logger.info(
-            "All transcript sources failed for music video %s, using metadata fallback", youtube_id
-        )
-        yield sse_event("phase", {"phase": "metadata_fallback"})
-        metadata_text = build_metadata_text(video_data)
-        data = TranscriptData(
-            segments=[],
-            raw_text=metadata_text,
-            transcript_type="metadata",
-            source="metadata",
-        )
-        data.trail = trail
-        yield data
-        return
-
-    # Not a music video -- raise the last error from the fallback chain.
-    # whisper_error is None when Whisper is disabled and Gemini was the only audio path.
-    if whisper_error is not None:
-        raise whisper_error
-    raise TranscriptError("All transcript sources failed", ErrorCode.NO_TRANSCRIPT)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Internal helpers
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 async def _try_gemini_transcription(

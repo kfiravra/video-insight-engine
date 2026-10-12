@@ -3,7 +3,7 @@
 ``score_entry`` scores one assembled response against an entry's
 expectations. It is the ``quality`` primary metric:
 
-  - tabCount    within ±1 of ``expectedTabs``          weight 0.15
+  - tabCount    1 − 0.25 per tab off ``expectedTabs``  weight 0.15
   - components  every ``requiredComponents`` appears   weight 0.35
                 (or its assembly promotion target)
   - keyContent  share of ``keyContent`` terms present  weight 0.25

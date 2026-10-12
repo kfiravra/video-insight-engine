@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 from litellm.exceptions import RateLimitError
+from litellm.types.utils import Usage
 from llm_common.context import llm_feature_var
 
 from src.services.pipeline import pipeline_timing
@@ -76,6 +77,42 @@ class TestObserveSse:
         """1d.3: the overview is re-sent once synthesis lands — still one emitted tab."""
         for _ in range(2):
             recorder.observe_sse(sse_event("tab_ready", {"id": "overview", "position": 0}))
+
+        assert recorder.tabs_emitted == 1
+
+    def test_should_stamp_first_assembled_tab_after_the_provisional_one(
+        self, recorder: PipelineTimingRecorder
+    ) -> None:
+        """R4-5: firstTabReadyMs marks the plan-done preview; firstAssembledTabMs the first real tab."""
+        recorder.observe_sse(
+            sse_event("tab_ready", {"id": "m", "position": 3, "provisional": True})
+        )
+        provisional_only = dict(recorder.milestones)
+        time.sleep(0.01)
+        recorder.observe_sse(sse_event("tab_ready", {"id": "overview", "position": 0}))
+
+        assert (
+            "firstAssembledTabMs" in provisional_only,
+            recorder.milestones["firstAssembledTabMs"] > recorder.milestones["firstTabReadyMs"],
+        ) == (False, True)
+
+    def test_should_not_count_a_provisional_tab_nothing_replaced_by_id(
+        self, recorder: PipelineTimingRecorder
+    ) -> None:
+        recorder.observe_sse(
+            sse_event("tab_ready", {"id": "key_moments", "position": 3, "provisional": True})
+        )
+        recorder.observe_sse(
+            sse_event("tab_ready", {"id": "segments", "position": 2, "replaces": "key_moments"})
+        )
+
+        assert recorder.tabs_emitted == 1
+
+    def test_should_count_a_provisional_tab_once_its_real_one_is_sent(
+        self, recorder: PipelineTimingRecorder
+    ) -> None:
+        for flags in ({"provisional": True}, {"final": True}):
+            recorder.observe_sse(sse_event("tab_ready", {"id": "moments", "position": 2, **flags}))
 
         assert recorder.tabs_emitted == 1
 
@@ -222,3 +259,84 @@ class TestToDocument:
         doc = recorder.to_document(tabs_planned=0, tabs_assembled=0)
 
         assert doc["version"] == pipeline_timing.TIMING_SCHEMA_VERSION
+
+
+# Every ``llmCalls`` row, LiteLLM or transcription, carries exactly these keys.
+_LLM_CALL_KEYS = {
+    "feature",
+    "span",
+    "model",
+    "responseModel",
+    "startMs",
+    "wallMs",
+    "inputTokens",
+    "outputTokens",
+    "cacheReadTokens",
+    "cacheWriteTokens",
+    "cacheWrite5mTokens",
+    "cacheWrite1hTokens",
+    "costUsd",
+    "attempt",
+    "fallbackUsed",
+    "finishReason",
+}
+
+
+class TestLlmCallShape:
+    def test_should_record_every_field_when_a_litellm_call_succeeds(
+        self, recorder: PipelineTimingRecorder
+    ) -> None:
+        record_llm_call(
+            span="plan",
+            model="anthropic/claude-sonnet-4-6",
+            response=_response(),
+            start_monotonic=time.monotonic(),
+            latency_ms=1,
+        )
+
+        assert set(recorder.llm_calls[0]) == _LLM_CALL_KEYS
+
+    def test_should_give_a_transcription_row_the_same_fields(
+        self, recorder: PipelineTimingRecorder
+    ) -> None:
+        pipeline_timing.record_transcription_call(
+            feature="summarize:transcript:whisper",
+            provider="openai",
+            model="whisper-1",
+            wall_ms=10,
+            input_tokens=0,
+            output_tokens=0,
+            cost_usd=0.0,
+        )
+
+        assert set(recorder.llm_calls[0]) == _LLM_CALL_KEYS
+
+    def test_should_count_openai_cached_input_as_cache_reads(
+        self, recorder: PipelineTimingRecorder
+    ) -> None:
+        # The usage LiteLLM builds from an OpenAI reply: the cached tokens only
+        # appear in prompt_tokens_details (no cache_read_input_tokens attribute).
+        usage = Usage(
+            prompt_tokens=2006,
+            completion_tokens=300,
+            total_tokens=2306,
+            prompt_tokens_details={"cached_tokens": 1920},
+        )
+        response = SimpleNamespace(
+            usage=usage, model="gpt-4o-mini", choices=[SimpleNamespace(finish_reason="stop")]
+        )
+
+        record_llm_call(
+            span="synthesis",
+            model="openai/gpt-4o-mini",
+            response=response,
+            start_monotonic=time.monotonic(),
+            latency_ms=1,
+        )
+
+        call = recorder.llm_calls[0]
+        assert (call["inputTokens"], call["cacheReadTokens"], call["cacheWriteTokens"]) == (
+            2006,
+            1920,
+            0,
+        )

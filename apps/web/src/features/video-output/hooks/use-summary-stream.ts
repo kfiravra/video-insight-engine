@@ -15,6 +15,7 @@ import {
   abortStream,
   type StreamEvent,
 } from "@/features/video-output/lib/streaming/stream-registry";
+import type { StreamTab } from "@/features/video-output/lib/streaming/stream-tabs";
 
 import type {
   VideoContext,
@@ -22,7 +23,6 @@ import type {
   EnrichmentData,
   SynthesisResult,
   VIEResponseMeta,
-  TabEntry,
 } from "@vie/types";
 
 export type StreamPhase =
@@ -113,9 +113,14 @@ export interface StreamState {
   domainData: Record<string, unknown> | null;
   enrichment: EnrichmentData | null;
   synthesis: SynthesisResult | null;
-  // Assembled output (component-addressed tabs)
+  // Assembled output (component-addressed tabs), kept sorted by position —
+  // see lib/streaming/stream-tabs.ts for the tab_ready contract.
   meta: VIEResponseMeta | null;
-  tabs: TabEntry[];
+  tabs: StreamTab[];
+  /** `complete.tabIds` — the final tab order; null until `complete`. */
+  finalTabIds: string[] | null;
+  /** Streamed tab id → the id that superseded it (`tab_ready.replaces`). */
+  replacedTabIds: Record<string, string>;
   // Progressive rendering state
   tabCount: number;
   tabLabels: { id: string; label: string; emoji: string }[];
@@ -130,7 +135,7 @@ interface UseSummaryStreamOptions {
   onError?: (error: string) => void;
 }
 
-const initialState: StreamState = {
+export const INITIAL_STREAM_STATE: StreamState = {
   phase: "idle",
   phaseDetail: null,
   metadata: null,
@@ -150,6 +155,8 @@ const initialState: StreamState = {
   // Assembled output
   meta: null,
   tabs: [],
+  finalTabIds: null,
+  replacedTabIds: {},
   // Progressive rendering state
   tabCount: 0,
   tabLabels: [],
@@ -168,7 +175,7 @@ export function useSummaryStream({
   onComplete,
   onError,
 }: UseSummaryStreamOptions): StreamState & { retry: () => void; stop: () => void } {
-  const [state, setState] = useState<StreamState>(initialState);
+  const [state, setState] = useState<StreamState>(INITIAL_STREAM_STATE);
   const accessToken = useAuthStore((s) => s.accessToken);
   // Track if we've restored from cache to avoid double-restoration
   const cacheRestoredRef = useRef(false);
@@ -197,7 +204,7 @@ export function useSummaryStream({
   const subscribe = useCallback((token: string) => {
     if (!videoSummaryId || !token) return;
 
-    setState({ ...initialState, phase: "connecting" });
+    setState({ ...INITIAL_STREAM_STATE, phase: "connecting" });
 
     unsubscribeRef.current?.();
     unsubscribeRef.current = subscribeToStream(videoSummaryId, token, (event: StreamEvent) => {
@@ -242,7 +249,7 @@ export function useSummaryStream({
   // stream-over-cache precedence (resolvedTabs / mergedVideo.title). Without
   // this, navigating from a streamed video to a completed one (enabled=false,
   // so subscribe() never runs) leaves the prior video's content on screen.
-  // `initialState` is a stable module-level constant (not derived from props),
+  // `INITIAL_STREAM_STATE` is a stable module-level constant (not derived from props),
   // so it is intentionally omitted from the deps — there is no stale-closure
   // risk and exhaustive-deps does not require it.
   useEffect(() => {
@@ -250,7 +257,7 @@ export function useSummaryStream({
     // The alternative (key-remount at the page level) would tear down the
     // shared SSE subscription registry, which must survive remounts.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setState(initialState);
+    setState(INITIAL_STREAM_STATE);
     cacheRestoredRef.current = false;
   }, [videoSummaryId]);
 

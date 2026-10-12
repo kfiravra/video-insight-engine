@@ -4,6 +4,7 @@
 
 import type { User } from './user.js';
 import type { ProcessingStatus } from './common.js';
+import type { TabEntry } from './vie-response.js';
 
 // ─────────────────────────────────────────────────────
 // API Responses
@@ -113,24 +114,42 @@ export interface SSEMetaEvent {
   tabLabels: { id: string; label: string; emoji: string }[];
 }
 
-export interface SSETabReadyEvent {
+/** One tab, streamed as it becomes available (emission contract: pipeline-1min
+ *  2.1, docs/API-REFERENCE.md#tab_ready). A tab id can arrive more than once;
+ *  the later emission replaces the earlier one by id. */
+export interface SSETabReadyEvent extends TabEntry {
   event: 'tab_ready';
-  id: string;
-  label: string;
-  emoji: string;
-  component: string;
-  props: Record<string, unknown>;
-  crossTabLinks?: { targetTab: string; label: string }[];
-  /** Index in the persisted tab order. Held-back tabs (moment_track streams
-   *  last, after its frame fill) are spliced in by it so streamed order
-   *  matches the DB doc. */
+  /** The tab's index in the response's tab order — a sort key, never a splice
+   *  index. Exact on a `final` emission; an estimate before it (a provisional
+   *  or held-back tab), so two tabs can share a value until the final one. */
   position?: number;
+  /** This is the tab's last emission of the run: content and position are
+   *  final. Every tab of the final response gets one, before `complete`; a
+   *  cached replay sends every tab final. Should a tab still change, a
+   *  corrected final follows for the same id — the last final wins. Absent =
+   *  may change. */
+  final?: boolean;
+  /** A placeholder built before extraction — the plan-done Moments tab (memory
+   *  outline → YouTube chapters → description timestamps). Never final; the
+   *  real tab with the same id replaces it, or the tab whose `replaces` names
+   *  it. */
+  provisional?: boolean;
+  /** Set on the first emission of the tab that takes the provisional tab's
+   *  place under ANOTHER id (e.g. a required backfill): the provisional id.
+   *  Drop that provisional tab and give this one its slot and focus. A tab
+   *  with the provisional's own id never carries it; `complete.tabIds` still
+   *  withdraws the provisional id. */
+  replaces?: string;
 }
 
 export interface SSECompleteEvent {
   event: 'complete';
   tabCount: number;
   processingTimeMs: number;
+  degraded?: boolean;
+  /** The final response's tab ids in order (pipeline runs). A tab streamed
+   *  earlier whose id is missing here was withdrawn — drop it. */
+  tabIds?: string[];
   cached?: boolean;
 }
 

@@ -1,20 +1,25 @@
 """Tests for pipeline helper dataclasses and utilities."""
 
+import asyncio
+import json
+import logging
+
+import pytest
+
+from src.exceptions import TranscriptError
+from src.models.schemas import ErrorCode
+from src.services.pipeline import pipeline_helpers
 from src.services.pipeline.pipeline_helpers import (
     PipelineTimer,
     TranscriptData,
+    log_background_error,
+    normalize_segments,
     run_parallel_phases,
+    spawn_background,
     sse_event,
     sse_token,
-    normalize_segments,
     validate_duration,
 )
-
-import asyncio
-import json
-import pytest
-from src.exceptions import TranscriptError
-from src.models.schemas import ErrorCode
 
 
 class TestPipelineTimer:
@@ -139,3 +144,89 @@ class TestRunParallelPhases:
         with pytest.raises(TranscriptError):
             async for _ in run_parallel_phases([boom_phase], ctx=None):  # type: ignore[arg-type]
                 pass
+
+
+_HELPERS_LOGGER = "src.services.pipeline.pipeline_helpers"
+
+
+async def _failed_task(name: str) -> asyncio.Task[None]:
+    async def _boom() -> None:
+        raise RuntimeError("qdrant down")
+
+    task = asyncio.create_task(_boom(), name=name)
+    await asyncio.gather(task, return_exceptions=True)
+    return task
+
+
+async def _cancelled_task(name: str) -> asyncio.Task[None]:
+    task = asyncio.create_task(asyncio.sleep(10), name=name)
+    await asyncio.sleep(0)
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+    return task
+
+
+class TestLogBackgroundError:
+    async def test_should_log_one_error_naming_the_task_when_it_raised(self, caplog):
+        task = await _failed_task("store_output_yt1")
+
+        with caplog.at_level(logging.ERROR, logger=_HELPERS_LOGGER):
+            log_background_error(task)
+
+        errors = [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
+        assert errors == ["Background task store_output_yt1 failed: qdrant down"]
+
+    async def test_should_log_the_traceback_when_it_raised(self, caplog):
+        task = await _failed_task("store_output_yt1")
+
+        with caplog.at_level(logging.ERROR, logger=_HELPERS_LOGGER):
+            log_background_error(task)
+
+        assert caplog.records[-1].exc_info is not None
+
+    async def test_should_not_raise_or_log_an_error_when_it_was_cancelled(self, caplog):
+        task = await _cancelled_task("store_visual_yt1")
+
+        with caplog.at_level(logging.DEBUG, logger=_HELPERS_LOGGER):
+            log_background_error(task)
+
+        assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+
+    async def test_should_warn_when_it_was_cancelled(self, caplog):
+        task = await _cancelled_task("store_visual_yt1")
+
+        with caplog.at_level(logging.WARNING, logger=_HELPERS_LOGGER):
+            log_background_error(task)
+
+        assert "store_visual_yt1 was cancelled" in caplog.text
+
+
+class TestSpawnBackground:
+    async def test_should_hold_a_strong_reference_while_the_task_runs(self):
+        release = asyncio.Event()
+        task = spawn_background(release.wait(), name="store_transcript_yt1")
+
+        held = task in pipeline_helpers._BACKGROUND_TASKS
+        release.set()
+        await task
+
+        assert held
+
+    async def test_should_drop_the_reference_once_the_task_ended(self):
+        task = spawn_background(asyncio.sleep(0), name="store_transcript_yt1")
+
+        await task
+        await asyncio.sleep(0)  # done-callbacks run on the next loop pass
+
+        assert task not in pipeline_helpers._BACKGROUND_TASKS
+
+    async def test_should_log_the_failure_of_the_task(self, caplog):
+        async def _boom() -> None:
+            raise RuntimeError("s3 down")
+
+        with caplog.at_level(logging.ERROR, logger=_HELPERS_LOGGER):
+            task = spawn_background(_boom(), name="store_transcript_s3_yt1")
+            await asyncio.gather(task, return_exceptions=True)
+            await asyncio.sleep(0)
+
+        assert "store_transcript_s3_yt1 failed: s3 down" in caplog.text

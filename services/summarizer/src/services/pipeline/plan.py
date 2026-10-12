@@ -25,8 +25,9 @@ from ...shared_config.domain_config import (
 )
 from ...utils.json_parsing import parse_json_response
 from ...utils.llm_retry import call_llm_with_retry
+from ..llm_messages import CacheTTL, UserContent, text_block
 from .assembly import infer_component
-from .plan_prompt import PROMPT_PATH, PlanVideo, render_plan_prompt
+from .plan_prompt import PROMPT_PATH, PlanPrompt, PlanVideo, render_plan_parts
 from .plan_reconcile import reconcile_plan_tabs
 
 if TYPE_CHECKING:
@@ -39,8 +40,20 @@ logger = logging.getLogger(__name__)
 CONFIDENCE_THRESHOLD = 0.6
 
 # The plan sits on the critical path and its fallback plan still ships tabs, so
-# a slow call gets one retry, not two. There is one plan call per run, so a
-# prompt cache would be written and never read (A26): no cache_control.
+# a slow call gets one retry, not two.
+# Prompt cache: the static half (~16k tokens, everything above <video>) is
+# byte-identical for every video, so a 1-hour entry is read by every plan call
+# that starts within an hour of the last one, whichever video it plans. A run
+# makes one plan call, so a 5-minute entry is read only by another video's plan
+# that starts within 5 minutes (A26). A 1h write costs 2x the input price and a
+# read 0.1x, so below a ~53 % hit rate the 1h breakpoint costs more than none;
+# a 5m write (1.25x) pays above ~22 %, on a 5-minute hit rate that can never
+# exceed the 1h one. Kfir's gate-2 decision: 1h, no switching code — the
+# "1h hit rate < 50 % after two weeks of prod" rule is read by hand from
+# scripts/cache_hit_rate.py, and none / 5m / 1h get simulated from a week of
+# prod pipeline.timing arrival times before anything changes
+# (docs/llm-cost-model.md).
+PLAN_CACHE_TTL: CacheTTL = "1h"
 # Sized from measured phase-1 plans: 1,814–1,920 output tokens in 36.7–39.8 s.
 # 2,048 tokens truncated the answer (the JSON repair then silently dropped the
 # trailing tabs) and the brief's 45 s sat ~5 s above the measured wall, so a
@@ -271,6 +284,18 @@ def _normalize_plan_data(data: dict, content_format: str | None) -> None:
         data["planFallback"] = True
 
 
+def plan_user_content(prompt: PlanPrompt) -> UserContent:
+    """The plan's user content: the static half as a cached block, then this video.
+
+    The breakpoint is honoured on Anthropic and stripped for any other
+    provider (the cross-provider fallback); a prompt without a static half is
+    sent as one plain string.
+    """
+    if not prompt.static:
+        return prompt.video
+    return [text_block(prompt.static, cache=True, ttl=PLAN_CACHE_TTL), text_block(prompt.video)]
+
+
 def _plan_from_response(raw: str, video: PlanVideo) -> PlanResult:
     """Parse + validate the planner's JSON; fallback plan on empty or low confidence."""
     data = parse_json_response(raw)
@@ -327,7 +352,7 @@ async def run_plan(
         probe_hint=probe_hint,
     )
     try:
-        prompt = render_plan_prompt(video)
+        prompt = render_plan_parts(video)
     except FileNotFoundError:
         logger.error("Plan prompt not found at %s", PROMPT_PATH)
         return _build_fallback_plan(category_hint)
@@ -335,7 +360,7 @@ async def run_plan(
     try:
         raw = await call_llm_with_retry(
             llm_service,
-            prompt,
+            plan_user_content(prompt),
             max_tokens=PLAN_MAX_TOKENS,
             timeout=PLAN_TIMEOUT_SECONDS,
             max_retries=PLAN_MAX_RETRIES,

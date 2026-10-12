@@ -128,8 +128,9 @@ _CONTAINER_FETCH = """
 import asyncio, json, sys
 from src.services.transcription.transcript import get_transcript
 from src.services.transcription.transcript_store import transcript_store
+from src.services.video.caption_picker import _pick_subtitle_url
 from src.services.video.youtube import (
-    _build_yt_dlp_opts, _extract_with_retry, _fetch_picked_track, _pick_subtitle_url,
+    _build_yt_dlp_opts, _extract_with_retry, _fetch_picked_track,
     extract_video_data, fetch_video_captions)
 
 def golden_track(vid, lang):

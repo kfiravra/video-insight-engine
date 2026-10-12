@@ -13,7 +13,10 @@ Two readers, each with its own wait:
   playbook and its ``Hint:`` line (``probe_for_plan``).
 
 The task never raises (``run_tier_probe`` returns ``None`` on any failure);
-the run's cleanup cancels it when the run ends before it does.
+the run's cleanup cancels it when the run ends before it does. When the probe
+judged a caption transcript unusable and the audio path replaced it
+(``transcript_fallback.py``), ``start_tier_probe`` runs once more: the new
+task replaces the finished one, so frames and the plan read the second answer.
 """
 
 from __future__ import annotations

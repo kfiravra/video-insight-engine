@@ -17,6 +17,15 @@ export interface TranscriptSegment {
 }
 
 /**
+ * The yt-dlp caption track a "ytdlp" transcript blob holds (caption key + bucket).
+ * Mirrors `CaptionRef` in services/summarizer/src/services/transcription/transcript_store.py.
+ */
+export interface CaptionRef {
+  lang: string;                // caption key as yt-dlp lists it, e.g. "iw", "en-US", "en-orig"
+  kind: 'manual' | 'auto-generated';
+}
+
+/**
  * Full transcript stored in S3 for regeneration without re-fetching from YouTube.
  * S3 key format: `videos/{youtubeId}/transcript.json`
  */
@@ -26,6 +35,7 @@ export interface RawTranscript {
   source: TranscriptSource;
   language: string | null;
   segments: TranscriptSegment[];
+  caption?: CaptionRef | null; // absent on blobs stored before 2.4
 }
 
 /**

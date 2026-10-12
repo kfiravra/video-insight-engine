@@ -8,6 +8,7 @@ Contains self-contained utilities:
 - Segment normalization
 - Metadata text builder
 - JSON truncation
+- Background tasks (``spawn_background``: strong reference + failure log)
 """
 
 import asyncio
@@ -15,7 +16,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, AsyncGenerator, Callable
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Callable, Coroutine, TypeVar
 
 if TYPE_CHECKING:
     from .context import PipelineContext
@@ -104,10 +105,16 @@ class TranscriptTrail:
     """
 
     # Layers that RAN and FAILED before the winning source, in order. Values:
-    # "s3" (lookup raised — a miss is not an attempt), "ytdlp" (a caption
+    # "s3" (lookup raised — a miss is not an attempt), "s3-stale" (the cached
+    # blob holds another caption track than this run's pick), "ytdlp" (a caption
     # track was picked but the timedtext fetch yielded nothing), "api" /
     # "proxy" (youtube-transcript-api, labelled by whether YOUTUBE_PROXY_URL
-    # is set), "whisper", "gemini".
+    # is set), "whisper", "gemini", and "<source>-unusable" (e.g. "ytdlp-unusable",
+    # "s3-unusable", "whisper-unusable"), one per tier-probe answer that judged
+    # the transcript that source served not a coherent transcript of speech
+    # (2.5). An audio source after it = the audio path replaced that transcript;
+    # the source still that layer = the run kept it (music, not captions, no
+    # audio layer allowed, or the audio pass failed).
     attempted: list[str] = field(default_factory=list)
     # youtube-transcript-api was skipped by the Redis caption-429 marker.
     caption_api_skipped: bool = False
@@ -115,7 +122,8 @@ class TranscriptTrail:
     # that originally produced the transcript. ``"s3"`` here means the blob
     # had already decayed before the assembly re-store skip landed.
     origin: str | None = None
-    # Wall time of the transcript phase's fetch (frames run in parallel).
+    # Wall time of the transcript phase's fetch (frames run in parallel),
+    # including the audio re-run after an unusable caption transcript.
     fetch_wall_ms: int | None = None
     # ``ErrorCode.value`` of the TranscriptError that ended the fetch, if any.
     error_code: str | None = None
@@ -234,6 +242,38 @@ def sanitize_for_prompt(text: str, max_len: int = 500) -> str:
     """
     sanitized = text.replace("{", "").replace("}", "").replace("<", "‹").replace(">", "›")
     return sanitized[:max_len]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Background Tasks
+# ─────────────────────────────────────────────────────────────────────────────
+
+_T = TypeVar("_T")
+
+# Strong references to the run's fire-and-forget tasks: the event loop keeps
+# only weak ones, so a pending task nobody holds can be garbage-collected
+# mid-flight (the Qdrant stores, the S3 transcript store).
+_BACKGROUND_TASKS: set[asyncio.Task[Any]] = set()
+
+
+def spawn_background(coro: Coroutine[Any, Any, _T], name: str) -> asyncio.Task[_T]:
+    """Start ``coro`` as a task the run does not await: held until it ends, its failure logged."""
+    task = asyncio.create_task(coro, name=name)
+    _BACKGROUND_TASKS.add(task)
+    task.add_done_callback(_BACKGROUND_TASKS.discard)
+    task.add_done_callback(log_background_error)
+    return task
+
+
+def log_background_error(task: asyncio.Task[Any]) -> None:
+    """Done-callback for background tasks: a failure is logged with its traceback, never raised."""
+    if task.cancelled():
+        # Worker shutdown cancels whatever still runs; its store never landed.
+        logger.warning("Background task %s was cancelled before it finished", task.get_name())
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.error("Background task %s failed: %s", task.get_name(), exc, exc_info=exc)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

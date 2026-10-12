@@ -58,6 +58,15 @@ _HARNESS_SETTINGS: dict[str, Any] = {
 class SseRecord:
     offset_ms: int
     event: str
+    chunk: str = ""
+
+    def payload(self) -> dict[str, Any]:
+        """The event's JSON body; empty for the ``[DONE]`` marker."""
+        body = self.chunk.removeprefix(_SSE_PREFIX).strip()
+        if not body or body == "[DONE]":
+            return {}
+        parsed = json.loads(body)
+        return parsed if isinstance(parsed, dict) else {}
 
 
 @dataclass
@@ -83,6 +92,14 @@ class ReplayResult:
 
     def event_names(self) -> list[str]:
         return [record.event for record in self.events]
+
+    def chunks(self) -> list[str]:
+        """Every SSE chunk the run streamed, in order — what the broker publishes."""
+        return [record.chunk for record in self.events]
+
+    def tab_events(self) -> list[dict[str, Any]]:
+        """The ``tab_ready`` payloads, in order."""
+        return [record.payload() for record in self.events if record.event == "tab_ready"]
 
     def downloads(self) -> list[tuple[str, str]]:
         """(kind, purpose) of every download ``pipeline.timing`` recorded."""
@@ -165,7 +182,7 @@ async def _consume(
         force_refresh=True,
     ):
         offset = int((time.monotonic() - started) * 1000)
-        records.append(SseRecord(offset_ms=offset, event=_event_name(chunk)))
+        records.append(SseRecord(offset_ms=offset, event=_event_name(chunk), chunk=chunk))
     return records
 
 

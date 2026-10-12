@@ -48,6 +48,8 @@ async def _heartbeat_lock(video_summary_id: str, owner: str, stop: asyncio.Event
     The lock TTL is sized for crash recovery (10 min default); without a
     heartbeat, a >10-min pipeline (chunked extraction on a long video, plus
     translation) would lose the lock and a parallel producer could spin up.
+    The same refresh renews the run's event-stream TTL, so a phase silent for
+    longer than it cannot let the stream expire under a live producer.
     Heartbeat interval is one-third of the TTL — gives two retries before
     expiry if Redis is briefly unreachable.
     """
@@ -83,9 +85,10 @@ async def produce_to_broker(
     """Run the pipeline and republish each SSE chunk through the broker.
 
     Lifetime is detached from any single SSE connection — clients can
-    abort and reconnect without killing the pipeline. The finally block
-    always sends DONE and releases the lock so consumers exit cleanly
-    even on producer failure.
+    abort and reconnect without killing the pipeline. The caller's lock
+    claim emptied the stream, so this run's events are the only ones in it.
+    The finally block always sends DONE and releases the lock so consumers
+    exit cleanly even on producer failure.
 
     ``force_refresh=True`` (a bypassCache submission) skips the response_cache
     fast path — the whole point of a version bump is a fresh pipeline run, and

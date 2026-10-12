@@ -7,8 +7,9 @@ import {
 } from '@/features/video-output/lib/telemetry';
 import type { StreamState } from '@/features/video-output/hooks/use-summary-stream';
 
-// Mock validators used by the processor
-vi.mock('@/features/video-output/lib/streaming/sse-validators', () => ({
+// Mock validators used by the processor (validateTabReadyEvent stays real).
+vi.mock('@/features/video-output/lib/streaming/sse-validators', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/features/video-output/lib/streaming/sse-validators')>()),
   validateMetadataEvent: vi.fn((event: Record<string, unknown>) => ({
     title: event.title,
     channel: event.channel,
@@ -59,6 +60,8 @@ const initialState: StreamState = {
   tabCount: 0,
   tabLabels: [],
   frames: [],
+  finalTabIds: null,
+  replacedTabIds: {},
 };
 
 /**
@@ -525,7 +528,7 @@ describe('stream-event-processor — Pipeline events', () => {
   // ─────────────────────────────────────────────────────
 
   describe('meta (v2)', () => {
-    it('should update meta, tabCount, tabLabels and reset tabs', () => {
+    it('should update meta, tabCount and tabLabels', () => {
       processEvent(
         {
           event: 'meta',
@@ -553,7 +556,6 @@ describe('stream-event-processor — Pipeline events', () => {
         primaryTag: 'food',
         userGoal: '',
       });
-      expect(state.tabs).toEqual([]);
       expect(state.tabCount).toBe(3);
       expect(state.tabLabels).toHaveLength(3);
       expect(state.tabLabels[0]).toEqual({ id: 'ingredients', label: 'Ingredients', emoji: '🧅' });
@@ -638,25 +640,14 @@ describe('stream-event-processor — Pipeline events', () => {
       expect(mockSetState.getState().tabs.map((t) => t.id)).toEqual(['overview', 'moments', 'facts']);
     });
 
-    it('should append when position is missing or invalid', () => {
+    it('should keep arrival order after positioned tabs when position is missing or invalid', () => {
       const base = { event: 'tab_ready', emoji: '•', component: 'display_section', props: {} };
       processEvent({ ...base, id: 'a', label: 'A' }, mockSetState.setState);
       processEvent({ ...base, id: 'b', label: 'B', position: -1 }, mockSetState.setState);
       processEvent({ ...base, id: 'c', label: 'C', position: 'first' }, mockSetState.setState);
       processEvent({ ...base, id: 'd', label: 'D', position: 99 }, mockSetState.setState);
 
-      expect(mockSetState.getState().tabs.map((t) => t.id)).toEqual(['a', 'b', 'c', 'd']);
-    });
-
-    it('should replace in place (not move) when a positioned tab re-arrives', () => {
-      const base = { event: 'tab_ready', emoji: '•', component: 'display_section', props: {} };
-      processEvent({ ...base, id: 'a', label: 'A', position: 0 }, mockSetState.setState);
-      processEvent({ ...base, id: 'b', label: 'B', position: 1 }, mockSetState.setState);
-      processEvent({ ...base, id: 'a', label: 'A2', position: 1 }, mockSetState.setState);
-
-      const tabs = mockSetState.getState().tabs;
-      expect(tabs.map((t) => t.id)).toEqual(['a', 'b']);
-      expect(tabs[0].label).toBe('A2');
+      expect(mockSetState.getState().tabs.map((t) => t.id)).toEqual(['d', 'a', 'b', 'c']);
     });
   });
 

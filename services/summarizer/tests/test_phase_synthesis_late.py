@@ -2,8 +2,9 @@
 
 The caller seeds ``ctx.synthesis_dict`` with memory's hero, assembles and emits
 the tabs, then runs the synthesis phase: it patches the assembled meta and the
-overview in place and re-sends the overview. The patched output must equal what
-assembling with the final synthesis dict gives — core.py stays untouched.
+overview in place (assembly's final re-emit sends the patched overview, 2.1).
+The patched output must equal what assembling with the final synthesis dict
+gives — core.py stays untouched.
 """
 
 from __future__ import annotations
@@ -107,18 +108,25 @@ def test_apply_should_do_nothing_before_assembly() -> None:
     assert synthesis_phase.apply_synthesis_to_assembled(ctx) is None
 
 
-async def test_phase_after_assembly_should_patch_and_re_send_the_overview() -> None:
+async def test_phase_after_assembly_should_patch_the_overview_in_place() -> None:
+    synthesis_phase.seed_synthesis_dict(ctx := _ctx())
+    assembled = _assemble(ctx.synthesis_dict)
+    ctx.assembled_tabs, ctx.assembled_meta = assembled["tabs"], assembled["meta"]
+
+    await _run(ctx, _SYNTHESIS)
+
+    overview = ctx.assembled_tabs[0]
+    assert overview["props"]["data"]["masterSummary"] == "The full summary."
+
+
+async def test_phase_after_assembly_should_leave_the_overview_to_the_final_re_emit() -> None:
     synthesis_phase.seed_synthesis_dict(ctx := _ctx())
     assembled = _assemble(ctx.synthesis_dict)
     ctx.assembled_tabs, ctx.assembled_meta = assembled["tabs"], assembled["meta"]
 
     events = await _run(ctx, _SYNTHESIS)
 
-    assert [name for name, _ in events] == ["synthesis_complete", "tab_ready"]
-    overview = events[1][1]
-    assert (overview["id"], overview["position"]) == ("overview", 0)
-    assert overview["props"]["data"]["masterSummary"] == "The full summary."
-    assert ctx.assembled_meta["masterSummary"] == "The full summary."
+    assert [name for name, _ in events] == ["synthesis_complete"]
 
 
 async def test_patched_output_should_equal_assembling_with_the_final_synthesis() -> None:
@@ -134,7 +142,7 @@ async def test_patched_output_should_equal_assembling_with_the_final_synthesis()
     assert ctx.assembled_tabs[0] == expected["tabs"][0]
 
 
-async def test_failed_synthesis_after_assembly_should_keep_memorys_hero_and_re_send() -> None:
+async def test_failed_synthesis_after_assembly_should_keep_memorys_hero() -> None:
     synthesis_phase.seed_synthesis_dict(ctx := _ctx())
     seeded = _assemble(ctx.synthesis_dict)
     ctx.assembled_tabs, ctx.assembled_meta = seeded["tabs"], seeded["meta"]

@@ -1,7 +1,8 @@
 """Tests for the Redis Streams pipeline event broker.
 
 The broker fronts a fake aioredis client so the tests don't need a real
-Redis server. We verify the contract that matters in production:
+Redis server (``tests/replay/test_replay_broker.py`` runs the same code on a
+real one). We verify the contract that matters in production:
 
 1. ``acquire_lock`` is single-winner under concurrent calls.
 2. ``release_lock`` only deletes the lock if we still own it.
@@ -10,18 +11,29 @@ Redis server. We verify the contract that matters in production:
 4. The DONE sentinel terminates ``subscribe`` cleanly.
 5. If the producer disappears without DONE (lock TTL expired or crash),
    ``subscribe`` exits instead of hanging forever.
+6. A won lock claim starts the run from an empty stream (2.1).
+7. The stream carries a TTL from its first event on; ``mark_done`` shortens
+   it to the drain window (2.1).
 """
 
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 import pytest
 
+from src.config import settings
 from src.services.cache.pipeline_event_stream import (
+    _ACQUIRE_LOCK_LUA,
+    _REFRESH_LOCK_LUA,
+    _RELEASE_LOCK_LUA,
     SENTINEL_DONE,
     PipelineEventStream,
 )
+
+_NO_KEY = -2
+_NO_EXPIRY = -1
 
 
 class FakeScript:
@@ -46,55 +58,102 @@ class FakeScript:
         )
 
 
+class FakePipeline:
+    """``pipeline(transaction=True)``: queue commands, run them in order on execute."""
+
+    def __init__(self, fake_redis: "FakeRedis") -> None:
+        self._fake = fake_redis
+        self._queued: list[tuple[str, tuple, dict]] = []
+
+    async def __aenter__(self) -> "FakePipeline":
+        return self
+
+    async def __aexit__(self, *_exc: object) -> None:
+        self._queued.clear()
+
+    def xadd(self, *args: Any, **kwargs: Any) -> "FakePipeline":
+        self._queued.append(("xadd", args, kwargs))
+        return self
+
+    def expire(self, *args: Any, **kwargs: Any) -> "FakePipeline":
+        self._queued.append(("expire", args, kwargs))
+        return self
+
+    async def execute(self) -> list:
+        return [await getattr(self._fake, name)(*a, **kw) for name, a, kw in self._queued]
+
+
 class FakeRedis:
     """Minimal in-memory Redis replacement covering the surface the broker uses."""
 
     def __init__(self) -> None:
         self.kv: dict[str, str] = {}
         self.streams: dict[str, list[tuple[str, dict[str, str]]]] = {}
+        self.ttls: dict[str, int] = {}
         self._stream_seq = 0
 
     def register_script(self, source: str) -> FakeScript:
         # SYNC method (matches redis-py); the returned Script's __call__ is async.
         return FakeScript(source, self)
 
-    async def set(
-        self, key: str, value: str, *, nx: bool = False, ex: int | None = None
-    ) -> bool | None:
-        if nx and key in self.kv:
-            return None
-        self.kv[key] = value
-        return True
+    def pipeline(self, transaction: bool = True) -> FakePipeline:
+        return FakePipeline(self)
+
+    def _exists(self, key: str) -> bool:
+        return key in self.kv or key in self.streams
+
+    def _acquire(self, lock: str, stream: str, owner: str, ttl: str) -> int:
+        if lock in self.kv:
+            return 0
+        self.kv[lock] = owner
+        self.ttls[lock] = int(ttl)
+        self.streams.pop(stream, None)
+        self.ttls.pop(stream, None)
+        return 1
+
+    def _release(self, lock: str, owner: str) -> int:
+        if self.kv.get(lock) != owner:
+            return 0
+        self.kv.pop(lock, None)
+        self.ttls.pop(lock, None)
+        return 1
+
+    def _refresh(self, lock: str, stream: str, owner: str, ttl: str) -> int:
+        if self.kv.get(lock) != owner:
+            return 0
+        if stream in self.streams:
+            self.ttls[stream] = int(ttl)
+        self.ttls[lock] = int(ttl)
+        return 1
 
     async def execute_command(self, *args):
-        cmd = args[0]
-        if cmd == "EVAL":
-            # Args layout: EVAL script numkeys key1 ... keyN arg1 ... argN
-            script = args[1]
-            numkeys = int(args[2])
-            keys = list(args[3 : 3 + numkeys])
-            extra = list(args[3 + numkeys :])
-            key, owner = keys[0], extra[0]
-            # Distinguish scripts by their body — the broker only uses two.
-            if "expire" in script:  # refresh_lock: compare-and-extend
-                # Real Redis EXPIRE returns 1 on success; we don't track TTLs,
-                # so "key owned by caller" stands in for "would have extended".
-                return 1 if self.kv.get(key) == owner else 0
-            # release_lock: compare-and-delete
-            if self.kv.get(key) == owner:
-                self.kv.pop(key, None)
-                return 1
-            return 0
-        raise NotImplementedError(cmd)
+        # Args layout: EVAL script numkeys key1 ... keyN arg1 ... argN
+        if args[0] != "EVAL":
+            raise NotImplementedError(args[0])
+        script, numkeys = args[1], int(args[2])
+        keys, extra = list(args[3 : 3 + numkeys]), list(args[3 + numkeys :])
+        if script == _ACQUIRE_LOCK_LUA:
+            return self._acquire(keys[0], keys[1], extra[0], extra[1])
+        if script == _RELEASE_LOCK_LUA:
+            return self._release(keys[0], extra[0])
+        if script == _REFRESH_LOCK_LUA:
+            return self._refresh(keys[0], keys[1], extra[0], extra[1])
+        raise NotImplementedError("unknown script")
 
     async def exists(self, key: str) -> int:
-        return 1 if key in self.kv else 0
+        return 1 if self._exists(key) else 0
+
+    async def ttl(self, key: str) -> int:
+        if not self._exists(key):
+            return _NO_KEY
+        return self.ttls.get(key, _NO_EXPIRY)
 
     async def delete(self, *keys: str) -> int:
         removed = 0
         for key in keys:
             removed += int(self.kv.pop(key, None) is not None)
             removed += int(self.streams.pop(key, None) is not None)
+            self.ttls.pop(key, None)
         return removed
 
     async def xadd(
@@ -112,8 +171,10 @@ class FakeRedis:
             self.streams[key] = self.streams[key][-maxlen:]
         return msg_id
 
-    async def expire(self, key: str, _seconds: int) -> bool:
-        # No-op for tests — our retention checks are cursor-based, not TTL.
+    async def expire(self, key: str, seconds: int) -> bool:
+        if not self._exists(key):
+            return False
+        self.ttls[key] = int(seconds)
         return True
 
     async def xread(
@@ -126,7 +187,7 @@ class FakeRedis:
         result: list = []
         for key, last_id in streams_to_ids.items():
             messages = self.streams.get(key, [])
-            new_messages = [m for m in messages if m[0] > last_id]
+            new_messages = [m for m in messages if _id_key(m[0]) > _id_key(last_id)]
             if new_messages:
                 result.append((key, new_messages[:count]))
         if result:
@@ -137,6 +198,12 @@ class FakeRedis:
 
     async def close(self) -> None:
         pass
+
+
+def _id_key(msg_id: str) -> tuple[int, int]:
+    """Stream ids compare numerically, part by part ("10-0" > "9-0")."""
+    ms, _, seq = msg_id.partition("-")
+    return int(ms), int(seq or 0)
 
 
 @pytest.fixture
@@ -298,3 +365,97 @@ class TestPurge:
     @pytest.mark.asyncio
     async def test_should_return_zero_when_nothing_exists_for_the_run(self, broker):
         assert await broker.purge("vs-missing") == 0
+
+
+async def _replay(broker: PipelineEventStream, video_id: str) -> list[str]:
+    """What a late joiner receives (the stream must be marked done)."""
+    return [event async for event in broker.subscribe(video_id, block_ms=50)]
+
+
+class TestRunReset:
+    """A won lock claim starts the run from an empty stream (pipeline-1min 2.1)."""
+
+    async def test_should_drop_the_previous_runs_events_when_a_new_run_claims(self, broker):
+        await broker.acquire_lock("vid-1", "run-1")
+        await broker.publish("vid-1", "run-1 event")
+        await broker.mark_done("vid-1")
+        await broker.release_lock("vid-1", "run-1")
+
+        await broker.acquire_lock("vid-1", "run-2")
+
+        assert await broker._client.exists(broker.stream_key("vid-1")) == 0
+
+    async def test_should_replay_only_the_new_run_to_a_late_joiner(self, broker):
+        await broker.acquire_lock("vid-1", "run-1")
+        await broker.publish("vid-1", "run-1 event")
+        await broker.mark_done("vid-1")
+        await broker.release_lock("vid-1", "run-1")
+        await broker.acquire_lock("vid-1", "run-2")
+        await broker.publish("vid-1", "run-2 event")
+        await broker.mark_done("vid-1")
+
+        assert await _replay(broker, "vid-1") == ["run-2 event"]
+
+    async def test_should_keep_the_running_stream_when_a_claim_loses(self, broker):
+        await broker.acquire_lock("vid-1", "owner-A")
+        await broker.publish("vid-1", "live event")
+
+        await broker.acquire_lock("vid-1", "owner-B")
+        await broker.mark_done("vid-1")
+
+        assert await _replay(broker, "vid-1") == ["live event"]
+
+
+class TestStreamTTL:
+    """The stream never exists without a TTL (pipeline-1min 2.1, A12)."""
+
+    async def test_should_set_the_running_ttl_with_the_first_event(self, broker):
+        await broker.acquire_lock("vid-1", "owner-A")
+
+        await broker.publish("vid-1", "first")
+
+        ttl = await broker._client.ttl(broker.stream_key("vid-1"))
+        assert ttl == settings.PIPELINE_LOCK_TTL_SECONDS
+
+    async def test_should_leave_a_crashed_runs_stream_expiring(self, broker):
+        await broker.acquire_lock("vid-1", "owner-A")
+        await broker.publish("vid-1", "last event before the crash")
+        await broker.release_lock("vid-1", "owner-A")  # the lock's own TTL in production
+
+        assert await broker._client.ttl(broker.stream_key("vid-1")) > 0
+
+    async def test_should_shorten_the_ttl_to_the_drain_window_when_done(self, broker):
+        await broker.acquire_lock("vid-1", "owner-A")
+        await broker.publish("vid-1", "event")
+
+        await broker.mark_done("vid-1")
+
+        ttl = await broker._client.ttl(broker.stream_key("vid-1"))
+        assert ttl == settings.PIPELINE_STREAM_TTL_SECONDS
+
+    async def test_should_renew_the_stream_ttl_on_the_owners_heartbeat(self, broker):
+        await broker.acquire_lock("vid-1", "owner-A")
+        await broker.publish("vid-1", "event")
+        broker._client.ttls[broker.stream_key("vid-1")] = 5
+
+        await broker.refresh_lock("vid-1", "owner-A")
+
+        ttl = await broker._client.ttl(broker.stream_key("vid-1"))
+        assert ttl == settings.PIPELINE_LOCK_TTL_SECONDS
+
+    async def test_should_not_renew_the_stream_ttl_for_another_owner(self, broker):
+        await broker.acquire_lock("vid-1", "owner-A")
+        await broker.publish("vid-1", "event")
+        broker._client.ttls[broker.stream_key("vid-1")] = 5
+
+        await broker.refresh_lock("vid-1", "owner-B")
+
+        assert await broker._client.ttl(broker.stream_key("vid-1")) == 5
+
+    async def test_should_replay_a_crashed_runs_events_when_the_lock_is_gone(self, broker):
+        """No sentinel, no lock: a reconnect still gets what the run streamed, then exits."""
+        await broker.acquire_lock("vid-1", "owner-A")
+        await broker.publish("vid-1", "e1")
+        await broker.release_lock("vid-1", "owner-A")
+
+        assert await _replay(broker, "vid-1") == ["e1"]

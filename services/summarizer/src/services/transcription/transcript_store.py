@@ -10,12 +10,33 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
-from src.services.media.s3_client import s3_client, S3Client
-from src.models.schemas import TranscriptSource, TranscriptSegment
+from src.models.schemas import TranscriptSegment, TranscriptSource
+from src.services.media.s3_client import S3Client, s3_client
 
 logger = logging.getLogger(__name__)
+
+_AUDIO_SOURCES: frozenset[str] = frozenset({"whisper", "gemini"})
+
+
+class CaptionRef(BaseModel):
+    """A yt-dlp caption track by its caption key and bucket."""
+
+    model_config = ConfigDict(frozen=True)
+
+    lang: str  # caption key as yt-dlp lists it, e.g. "iw", "en-US", "en-orig"
+    kind: str  # "manual" | "auto-generated"
+
+
+def caption_ref(caption_lang: str | None, caption_kind: str | None) -> CaptionRef | None:
+    """The picked track as a ``CaptionRef``; None when no track was picked.
+
+    Anything but two strings (no pick, or a test double's attribute) is no pick.
+    """
+    if isinstance(caption_lang, str) and isinstance(caption_kind, str):
+        return CaptionRef(lang=caption_lang, kind=caption_kind)
+    return None
 
 
 class RawTranscript(BaseModel):
@@ -26,6 +47,21 @@ class RawTranscript(BaseModel):
     source: TranscriptSource
     language: str | None
     segments: list[dict[str, Any]]  # List of {text, startMs, endMs}
+    # The yt-dlp caption track the segments came from. None for every other
+    # source and for blobs stored before the 2.4 caption picker.
+    caption: CaptionRef | None = None
+
+    def holds_other_caption_track(self, picked: CaptionRef | None) -> bool:
+        """True when a caption-origin blob is not the track this run picked.
+
+        The blob is keyed by video id only and read before every other layer,
+        so a video processed before a picker change would otherwise serve its
+        old track forever. Audio transcriptions (Whisper / Gemini) do not
+        depend on the picker and never count as another track.
+        """
+        if self.source in _AUDIO_SOURCES:
+            return False
+        return self.caption != picked
 
 
 class TranscriptStoreService:
@@ -45,15 +81,17 @@ class TranscriptStoreService:
         segments: list[TranscriptSegment | dict[str, Any]],
         source: TranscriptSource,
         language: str | None = None,
+        caption: CaptionRef | None = None,
     ) -> str:
         """
-        Store a transcript in S3.
+        Store a transcript in S3, replacing any blob already at the key.
 
         Args:
             youtube_id: YouTube video ID
             segments: List of transcript segments (Pydantic models or dicts)
             source: Source of the transcript (api, ytdlp, proxy, whisper)
             language: Language code if known
+            caption: The yt-dlp caption track the segments came from (ytdlp only)
 
         Returns:
             S3 key for the stored transcript
@@ -80,6 +118,7 @@ class TranscriptStoreService:
             source=source,
             language=language,
             segments=segment_dicts,
+            caption=caption,
         )
 
         try:

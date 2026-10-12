@@ -148,6 +148,13 @@ class TestResolveTier:
         task = asyncio.create_task(_failing_probe())
         assert await resolve_tier(task, "Perfect pasta", category="cooking") == "high"
 
+    async def test_should_fall_back_to_metadata_when_the_probe_read_an_unusable_transcript(
+        self,
+    ) -> None:
+        garbage = _probe("food", "tutorial", True).model_copy(update={"transcript_usable": False})
+        task = asyncio.create_task(_answer_after(0.0, garbage))
+        assert await resolve_tier(task, "Long chat", category="podcast") == "low"
+
     async def test_should_fall_back_to_metadata_when_no_probe_was_started(self) -> None:
         assert await resolve_tier(None, "Ep 12", tags=["pulls"]) == "high"
 

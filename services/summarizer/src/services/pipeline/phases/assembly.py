@@ -1,14 +1,19 @@
 """Phase 7: Assembly — tabs first, then synthesis ∥ moment fill ∥ quiz, then save, cache, done.
 
-Order (pipeline-1min 1d.1/1d.3):
+Order (pipeline-1min 1d.1/1d.3; every ``tab_ready`` through the run's
+``TabLedger`` — the emission contract, 2.1):
 
 1. the description analysis (capped wait) — meta + its SSE event;
 2. synthesis FIRST only when memory left the hero empty: the overview and the
    minimum-3 Key Info fallback need its tldr/takeaways;
-3. every tab but the moment tabs streams at once (the quiz is not in yet);
-4. the late group — moment fill, synthesis (unless step 2 ran it), the quiz —
-   each patches or re-sends the tabs it touches (``late_quiz`` for the quiz);
-5. ``complete``, the save, the shared artifacts (Redis, Qdrant), ``done``.
+3. every tab but the moment tabs streams at once (the quiz is not in yet) —
+   final where no late phase can change it;
+4. the late group — the moment fill (streams the moment tabs, framed),
+   synthesis unless step 2 ran it (patches meta + the overview in place), the
+   quiz (the response is assembled again with it, ``late_quiz``);
+5. the final re-emit: every tab not yet sent final, at its final position;
+6. ``complete`` (with the final tab order), the save, the shared artifacts
+   (Redis, Qdrant), ``done``.
 """
 
 from __future__ import annotations
@@ -28,12 +33,10 @@ from src.services.pipeline.assembly.moment_frame_fill import fill_moment_frames
 from src.services.pipeline.enrichment import needs_quiz
 from src.services.pipeline.phases import run_phase_enrichment, run_phase_synthesis
 from src.services.pipeline.phases.extraction import extraction_record
-from src.services.pipeline.phases.late_quiz import (
-    carry_moment_props,
-    positions_to_resend,
-    withdrawn_tab_ids,
-)
+from src.services.pipeline.phases.late_quiz import carry_moment_props
 from src.services.pipeline.phases.metadata import await_description_analysis
+from src.services.pipeline.phases.moments import video_meta
+from src.services.pipeline.phases.qdrant_index import index_in_qdrant
 from src.services.pipeline.phases.synthesis import (
     apply_synthesis_to_assembled,
     needs_hero_fallback,
@@ -42,18 +45,13 @@ from src.services.pipeline.phases.synthesis import (
 from src.services.pipeline.pipeline_helpers import (
     normalize_segments,
     run_parallel_phases,
+    spawn_background,
     sse_event,
 )
 from src.services.pipeline.post_processor import coverage_is_degraded
+from src.services.pipeline.tab_ledger import tab_id
 from src.services.status_callback import send_video_status_background
-from src.services.transcription.whisper_transcriber import translate_audio_to_english
-from src.services.vector.store import (
-    store_default_output_chunks,
-    store_transcript_chunks,
-    store_visual_chunks,
-)
 from src.services.video.description_analyzer import DescriptionAnalysis
-from src.utils.language_utils import get_language_name
 
 if TYPE_CHECKING:
     from src.services.pipeline.context import PipelineContext
@@ -82,22 +80,6 @@ async def _description_analysis(ctx: PipelineContext) -> dict[str, Any] | None:
     return None
 
 
-def _video_meta(ctx: PipelineContext) -> dict[str, Any]:
-    assert ctx.video_data is not None
-    return {
-        "videoId": ctx.video_summary_id,
-        "title": ctx.video_data.title,
-        "channel": ctx.video_data.channel,
-        "duration": ctx.video_data.duration,
-        "chapters": [
-            {"start_time": ch.start_time, "end_time": ch.end_time, "title": ch.title}
-            for ch in (ctx.video_data.chapters or [])
-        ],
-        # moment_track fallback, first rung (outline → chapters → description timestamps).
-        "outline": [s.model_dump() for s in (ctx.memory.outline if ctx.memory else [])],
-    }
-
-
 def _assemble(
     ctx: PipelineContext, description: dict[str, Any] | None, synthesis: dict[str, Any]
 ) -> dict:
@@ -112,7 +94,7 @@ def _assemble(
         extraction=ctx.extraction_data,
         enrichment=ctx.enrichment_data,
         synthesis=synthesis or None,
-        video_meta=_video_meta(ctx),
+        video_meta=video_meta(ctx),
         description_analysis=description,
         frames=ctx.scene_frames_for_assembly,
         gallery_frames=ctx.scene_frames_gallery,
@@ -121,6 +103,9 @@ def _assemble(
     )
     ctx.assembled_tabs = assembled.get("tabs", [])
     ctx.assembled_meta = assembled.get("meta", {})
+    # The tab that takes the plan-done provisional's place under another id
+    # carries ``replaces`` on its first emission.
+    ctx.tab_ledger.track_response(ctx.assembled_tabs)
     _flag_coverage(ctx)
     return assembled
 
@@ -150,7 +135,7 @@ async def run_phase_moment_fill(ctx: PipelineContext) -> AsyncGenerator[str, Non
     if positions:
         await fill_moment_frames(tabs, ctx.youtube_id, getattr(ctx, "hires_video", None))
     for position in positions:
-        yield sse_event("tab_ready", {**tabs[position], "position": position})
+        yield ctx.tab_ledger.event(tabs[position], position)
 
 
 def _drop_accounting(ctx: PipelineContext, assembled: dict) -> dict:
@@ -190,16 +175,17 @@ def _drop_accounting(ctx: PipelineContext, assembled: dict) -> dict:
 # ─── Tabs ───
 
 
-def _first_tab_events(tabs: list[dict]) -> list[str]:
-    """Every tab but the moment tabs (they stream once framed), with its ``position``.
+def _first_tab_events(ctx: PipelineContext) -> list[str]:
+    """Every tab but the moment tabs (they stream once framed), at its ``position``.
 
     ``position`` is the tab's index in the persisted order, so the client slots
     a late tab where the DB doc will have it. The payload is a copy — the
-    persisted tab dict never gains ``position``.
+    persisted tab dict never gains ``position`` or ``final``.
     """
+    tabs = ctx.assembled_tabs or []
     held_back = set(_moment_positions(tabs))
     return [
-        sse_event("tab_ready", {**tab, "position": position})
+        ctx.tab_ledger.event(tab, position)
         for position, tab in enumerate(tabs)
         if position not in held_back
     ]
@@ -220,22 +206,14 @@ def _add_late_quiz(
     description: dict[str, Any] | None,
     synthesis_input: dict[str, Any],
     synthesized_first: bool,
-) -> tuple[dict, list[str]]:
-    """Re-assemble with the quiz; (the new assembly, tab events to re-send)."""
+) -> dict:
+    """Re-assemble with the quiz; the final re-emit sends what it changed."""
     before = ctx.assembled_tabs or []
     assembled = _assemble(ctx, description, synthesis_input)
-    after = ctx.assembled_tabs or []
-    carry_moment_props(before, after)
+    carry_moment_props(before, ctx.assembled_tabs or [])
     if not synthesized_first:
         apply_synthesis_to_assembled(ctx)
-    withdrawn = withdrawn_tab_ids(before, after)
-    if withdrawn:
-        logger.info("Quiz re-assembly withdrew streamed tabs %s", withdrawn)
-    events = [
-        sse_event("tab_ready", {**after[position], "position": position})
-        for position in positions_to_resend(before, after)
-    ]
-    return assembled, events
+    return assembled
 
 
 async def run_phase_assembly(ctx: PipelineContext) -> AsyncGenerator[str, None]:
@@ -256,15 +234,19 @@ async def run_phase_assembly(ctx: PipelineContext) -> AsyncGenerator[str, None]:
         seed_synthesis_dict(ctx)
     synthesis_input = dict(ctx.synthesis_dict or {})
     assembled = _assemble(ctx, description, synthesis_input)
-    for event in _first_tab_events(ctx.assembled_tabs or []):
+    late = _late_phases(ctx, synthesized_first)
+    ctx.tab_ledger.expect_late_changes(
+        quiz=run_phase_enrichment in late, synthesis=run_phase_synthesis in late
+    )
+    for event in _first_tab_events(ctx):
         yield event
 
-    async for event in run_parallel_phases(_late_phases(ctx, synthesized_first), ctx):
+    async for event in run_parallel_phases(late, ctx):
         yield event
     if ctx.enrichment_data:
-        assembled, events = _add_late_quiz(ctx, description, synthesis_input, synthesized_first)
-        for event in events:
-            yield event
+        assembled = _add_late_quiz(ctx, description, synthesis_input, synthesized_first)
+    for event in ctx.tab_ledger.closing_events(ctx.assembled_tabs or []):
+        yield event
     # Moment fill was the 720p file's last reader — free the disk now.
     hires_video = getattr(ctx, "hires_video", None)
     if hires_video is not None:
@@ -318,16 +300,29 @@ def _result_document(
     return result
 
 
+def _complete_event(ctx: PipelineContext, processing_time: int, degraded: bool) -> str:
+    """``complete`` with the final tab order — a streamed tab missing from it was withdrawn."""
+    tabs = ctx.assembled_tabs or []
+    withdrawn = ctx.tab_ledger.withdrawn(tabs)
+    if withdrawn:
+        logger.info("Streamed tabs the final response withdrew: %s", withdrawn)
+    return sse_event(
+        "complete",
+        {
+            "tabCount": len(tabs),
+            "tabIds": [tab_id(tab) for tab in tabs],
+            "processingTimeMs": processing_time,
+            "degraded": degraded,
+        },
+    )
+
+
 async def _finish(ctx: PipelineContext, assembled: dict) -> AsyncGenerator[str, None]:
     """``complete``, the save, the shared artifacts, then ``done`` (English only)."""
     degraded = coverage_is_degraded(getattr(ctx, "extraction_coverage", None))
     accounting = _drop_accounting(ctx, assembled)
     processing_time = int(ctx.timer.elapsed() * 1000)
-    tab_count = len(ctx.assembled_tabs or [])
-    yield sse_event(
-        "complete",
-        {"tabCount": tab_count, "processingTimeMs": processing_time, "degraded": degraded},
-    )
+    yield _complete_event(ctx, processing_time, degraded)
 
     result = _result_document(ctx, accounting, processing_time, degraded)
     saved = await asyncio.to_thread(
@@ -373,7 +368,7 @@ async def _write_shared_artifacts(ctx: PipelineContext, result: dict) -> None:
         return
     await _cache_response(ctx, result)
     if settings.QDRANT_ENABLED:
-        await _index_in_qdrant(ctx)
+        await index_in_qdrant(ctx)
 
 
 async def _cache_response(ctx: PipelineContext, result: dict) -> None:
@@ -395,80 +390,13 @@ async def _cache_response(ctx: PipelineContext, result: dict) -> None:
         logger.debug("Redis cache failed (non-critical): %s", e)
 
 
-def _log_background_error(task: asyncio.Task) -> None:
-    if task.cancelled():
-        return
-    exc = task.exception()
-    if exc:
-        logger.error("Background store %s failed: %s", task.get_name(), exc)
-
-
-async def _english_transcript(ctx: PipelineContext) -> tuple[str, str | None]:
-    """(text to embed, original text) — Whisper-translated English for a non-English source.
-
-    Generated content is English, the transcript is still the source language:
-    embeddings live in the model's strongest language, the original is kept for
-    display.
-    """
-    if not ctx.source_language_code:
-        return ctx.clean_text, None
-    try:
-        translated = await translate_audio_to_english(
-            ctx.youtube_id, cached_audio_path=ctx.audio_path
-        )
-    except Exception as e:
-        logger.warning("Whisper translate for Qdrant failed: %s — using original text", e)
-        return ctx.clean_text, None
-    if not translated or len(translated) <= len(ctx.clean_text) * 0.1:
-        logger.warning("Whisper translate too short or failed, using original text for Qdrant")
-        return ctx.clean_text, None
-    logger.info(
-        "Using Whisper-translated English text for Qdrant (%d chars, original %s: %d chars)",
-        len(translated),
-        get_language_name(ctx.source_language_code),
-        len(ctx.clean_text),
-    )
-    return translated, ctx.clean_text
-
-
-async def _index_in_qdrant(ctx: PipelineContext) -> None:
-    """Transcript, assembled output and visual points (background, non-blocking)."""
-    english_text, original_text = await _english_transcript(ctx)
-    tasks = [
-        asyncio.create_task(
-            store_transcript_chunks(
-                ctx.youtube_id,
-                english_text,
-                language=ctx.source_language_code or "en",
-                transcript_original=original_text,
-                segments=ctx.transcript_data.segments if ctx.transcript_data else None,
-            ),
-            name=f"store_transcript_{ctx.youtube_id}",
-        ),
-        # Generation is English-canonical, so the assembled tabs are always
-        # English and indexed for every video — translation only adds the
-        # source-language artifact.
-        asyncio.create_task(
-            store_default_output_chunks(ctx.youtube_id, ctx.assembled_tabs or [], language="en"),
-            name=f"store_output_{ctx.youtube_id}",
-        ),
-        # What the frames showed (1c.2): the transcript points are speech only,
-        # so the rendered annotations get their own "visual" points. Runs even
-        # with no annotations — the store clears a previous run's points.
-        asyncio.create_task(
-            store_visual_chunks(ctx.youtube_id, ctx.visual_annotations),
-            name=f"store_visual_{ctx.youtube_id}",
-        ),
-    ]
-    for task in tasks:
-        task.add_done_callback(_log_background_error)
-
-
 def _store_transcript_in_s3(ctx: PipelineContext) -> None:
     """Raw transcript to S3 (background, best-effort) + ``rawTranscriptRef`` on the row.
 
     Skipped for an S3-hit run: re-storing the blob it just read with
-    source="s3" would decay the recorded origin after one regen.
+    source="s3" would decay the recorded origin after one regen. A yt-dlp
+    transcript records its caption track, so a later run whose picker chooses
+    another track sees the blob as stale; the store replaces the old blob.
     """
     transcript = ctx.transcript_data
     if not S3Client.is_available() or not transcript or transcript.source == "s3":
@@ -476,13 +404,21 @@ def _store_transcript_in_s3(ctx: PipelineContext) -> None:
 
     async def _store() -> None:
         try:
-            from src.services.transcription.transcript_store import transcript_store
+            from src.services.transcription.transcript_store import caption_ref, transcript_store
 
+            video_data = ctx.video_data
+            caption = None
+            if transcript.source == "ytdlp":
+                caption = caption_ref(
+                    getattr(video_data, "caption_lang", None),
+                    getattr(video_data, "caption_track", None),
+                )
             s3_key = await transcript_store.store(
                 youtube_id=ctx.youtube_id,
                 segments=normalize_segments(transcript.segments),
                 source=transcript.source,
                 language=ctx.source_language_code or transcript.language,
+                caption=caption,
             )
             await asyncio.to_thread(
                 ctx.repository._collection.update_one,
@@ -493,5 +429,4 @@ def _store_transcript_in_s3(ctx: PipelineContext) -> None:
         except Exception as e:
             logger.warning("Transcript S3 storage failed (non-critical): %s", e)
 
-    task = asyncio.create_task(_store(), name=f"store_transcript_s3_{ctx.youtube_id}")
-    task.add_done_callback(_log_background_error)
+    spawn_background(_store(), name=f"store_transcript_s3_{ctx.youtube_id}")

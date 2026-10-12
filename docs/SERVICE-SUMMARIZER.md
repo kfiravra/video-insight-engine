@@ -54,7 +54,7 @@ services/summarizer/
     │   ├── status_callback.py    # Status callback
     │   │
     │   ├── pipeline/             # Plan-based summarization pipeline
-    │   │   ├── tier_probe.py         # Tier probe: domain+format+has_visual_demo at transcript-ready (Haiku, temp 0)
+    │   │   ├── tier_probe.py         # Tier probe: domain+format+has_visual_demo+transcript_usable at transcript-ready (Haiku, temp 0)
     │   │   ├── plan.py / plan_prompt.py # Plan (Sonnet): full marked transcript → tabs + briefs,
     │   │   │                         #   evidence, terms (+ _render_playbook, _enforce_domain_policy)
     │   │   ├── memory.py             # Memory (LLM_EXTRACTION_MODEL) ∥ plan: outline, evidence, tldr, takeaways
@@ -71,6 +71,7 @@ services/summarizer/
     │   │   ├── synthesis.py          # masterSummary + seoDescription (hero from memory; fast tier)
     │   │   ├── pipeline_timing.py    # pipeline.timing recorder (phases, LLM calls, downloads, counts)
     │   │   ├── translation.py        # Source-language translation (flat-list batched)
+    │   │   ├── translation_flat.py   # Flat-list translate call, batch sizing, mirror check (shared with RAG English)
     │   │   ├── faithfulness.py       # Faithfulness sampling
     │   │   ├── assembly/             # Assembly package (extraction → component props)
     │   │   │   ├── core.py               # assemble_response + per-tab drop accounting
@@ -80,15 +81,16 @@ services/summarizer/
     │   │   │   ├── moment_frame_fill.py  # Exact-timestamp frame fill for frameless moments
     │   │   │   ├── attachments.py        # Secondary attachments (excluded_kinds dedup)
     │   │   │   ├── normalizers.py, density.py, cross_tab.py, text_utils.py
-    │   │   ├── phases/               # Phase runners (metadata, text, transcript, probe, triage=plan,
-    │   │   │                         #   memory, frames, extraction, enrichment, late_quiz, synthesis,
-    │   │   │                         #   assembly, translation)
+    │   │   ├── phases/               # Phase runners (metadata, text, transcript, transcript_fallback,
+    │   │   │                         #   probe, triage=plan, memory, frames, extraction, enrichment,
+    │   │   │                         #   late_quiz, synthesis, assembly, translation)
     │   │   ├── post_processor.py     # Tab cleanup, celebrations, count validation (tag-aware)
     │   │   └── pipeline_helpers.py   # SSE events, timer, data classes, run_task_with_heartbeat
     │   │
     │   ├── transcription/        # Transcript fetching & storage
-    │   │   ├── transcript.py         # Transcript cleaning & formatting
+    │   │   ├── transcript.py         # youtube-transcript-api layer + transcript cleaning & formatting
     │   │   ├── transcript_fetcher.py # Multi-source fallback chain
+    │   │   ├── cached_transcript.py  # Chain step 0: the S3 blob (stale when it holds another caption track)
     │   │   ├── transcript_chunker.py # Chapter-aware transcript splitting (chain: see Chunked Extraction)
     │   │   ├── transcript_store.py   # S3 transcript persistence
     │   │   ├── gemini_transcriber.py # Gemini Flash transcription
@@ -113,6 +115,7 @@ services/summarizer/
     │   │
     │   └── video/                # YouTube & metadata
     │       ├── youtube.py            # Video metadata (yt-dlp)
+    │       ├── caption_picker.py     # Caption-track choice: spoken language first, then manual over auto
     │       ├── sponsorblock.py       # Sponsor segment detection
     │       ├── description_analyzer.py # Description analysis
     │       └── playlist.py           # Playlist extraction (yt-dlp)
@@ -126,7 +129,7 @@ services/summarizer/
     │   ├── memory.txt            # Memory prompt (outline, evidence, tldr, takeaways)
     │   ├── component_toolkit.txt # Component descriptions + datasource paths (injected into plan/triage). Density table is generated from domains.json `densityGates` via `{density_gates}` placeholder
     │   ├── base_extraction.txt   # Extraction template: <rules> / <video> (cached) / <your_job>
-    │   ├── tier_probe.txt        # Tier-probe prompt (14 domains + 18 formats incl. unboxing, has_visual_demo — domains.json is the source)
+    │   ├── tier_probe.txt        # Tier-probe prompt (14 domains + 18 formats incl. unboxing, has_visual_demo, transcript_usable — domains.json is the source)
     │   ├── chapter_detect.txt    # AI chapter detection prompt (fast model)
     │   ├── quality_rules.txt     # JSON extraction quality rules
     │   ├── enrich_quiz.txt       # The quiz prompt (flavor per quizEnrichment domain)
@@ -311,9 +314,11 @@ A plan-first pipeline: ~6-7 text calls (description analysis, tier probe, plan �
     │   analysis is NOT a member: extraction must not wait for its LLM call (30 s total cap);
     │   its readers (chunked chapter split, assembly) await it for ≤ 5 s and assembly emits its SSE
     ┌─▶ TRANSCRIPT (Multi-Source Fallback Chain)
-    │   └─▶ 0. S3 cached transcript (avoids all YouTube calls)
-    │   └─▶ 1. yt-dlp subtitles (embedded in video metadata)
-    │   └─▶ 2. youtube-transcript-api (with rate limit retry)
+    │   └─▶ 0. S3 cached transcript (avoids all YouTube calls; skipped as stale when it
+    │        holds another caption track than this run's pick)
+    │   └─▶ 1. yt-dlp subtitles (track picked in metadata: spoken language first, then
+    │        manual over auto — caption_picker.py)
+    │   └─▶ 2. youtube-transcript-api (spoken language first; with rate limit retry)
     │   └─▶ 3. Gemini Flash (audio transcription, ~30-90s, ~$0.04/26min)
     │   └─▶ 4. OpenAI Whisper (audio fallback, ~5-15min, ~$0.16/26min)
     │   └─▶ (audio paths 3+4 bypass LiteLLM → emit their own llm_usage cost row +
@@ -383,16 +388,28 @@ A plan-first pipeline: ~6-7 text calls (description analysis, tier probe, plan �
  4. TEXT BRANCH (continues after transcript_ready, while frames run)
     └─▶ Tier probe (pipeline/tier_probe.py, prompt tier_probe.txt; replaces the classifier):
     │   LLM_CLASSIFIER_MODEL (Haiku 4.5, D21), temperature 0, 80 tokens, 4 s, no retry;
-    │   reads metadata + three short transcript windows → domain, format (18 incl. unboxing),
-    │   has_visual_demo. Started at transcript-ready; frames read it at Step 6b (tier), the
+    │   reads metadata + three short NATIVE transcript windows (nothing translates before the
+    │   plan) → domain, format (18 incl. unboxing), has_visual_demo, transcript_usable (missing
+    │   key = true). Started at transcript-ready; frames read it at Step 6b (tier), the
     │   plan for its playbook ("<domain>:<format>") and a hint line. Failure → None: metadata
     │   tier, no hint. Skipped when an admin override is active.
+    └─▶ Garbage captions → audio (phases/transcript_fallback.py, 2.5): transcript_usable false
+    │   (not a coherent transcript of speech — e.g. TNhaISOUy6Q's Polish ASR of English speech)
+    │   on a caption transcript (ytdlp / api / proxy, or an S3 blob they produced), not music,
+    │   an audio layer allowed (WHISPER_ENABLED / GEMINI_API_KEY, the duration cap) → the
+    │   transcript phase re-runs on the audio layers only (Whisper → Gemini; same cleaning,
+    │   SponsorBlock, language detection), pipeline.timing step transcript_audio, then a second
+    │   probe on the new text; once per run. Audio fails → the caption transcript stays.
+    │   Every unusable answer adds "<source>-unusable" to transcriptMeta.attempted; a run that
+    │   goes on with one plans without a probe, and frames treat it as none
     └─▶ The marked transcript, rendered ONCE (`ctx.prompt_transcript`: `[m:ss]` markers,
     │   sponsor reads cut, source-language cleaning) — plan and memory read the same string,
     │   never frame annotations
     └─▶ Plan ∥ Memory (pipeline/plan.py + plan_prompt.py, pipeline/memory.py)
     │   └─▶ Plan: primary model (Sonnet), the FULL marked transcript, 3,500 max tokens, 60 s,
-    │   │   1 retry, json_mode, no cache_control (one call per run). Emits contentTags,
+    │   │   1 retry, json_mode. The static half (everything above `<video>`, ~16.4k tokens)
+    │   │   goes as user block 1 with cache_control `{type: ephemeral, ttl: 1h}`
+    │   │   (`PLAN_CACHE_TTL` in plan.py); the video half is uncached. Emits contentTags,
     │   │   modifiers, tabs with briefs ({what, where, expect}), evidence (has_* booleans that
     │   │   gate domain requirements) and terms; truncation is counted (counts.truncated)
     │   └─▶ Memory: LLM_EXTRACTION_MODEL, 25 s, ONE attempt, temperature 0 → outline (4-12
@@ -413,6 +430,13 @@ A plan-first pipeline: ~6-7 text calls (description analysis, tier probe, plan �
     └─▶ `<video_memory>` block (pipeline/video_memory.py) rendered once from plan + memory —
     │   fills every writer's `{video_context}` slot (extraction, synthesis, quiz)
     └─▶ SSE: synthesis_complete (memory-done), triage_complete + meta (plan)
+    └─▶ Plan-done (plan and memory both in): the provisional Moments tab (phases/moments.py,
+    │   pipeline-1min 2.1) — tab_ready `provisional: true, final: false` built from the
+    │   moment fallback chain (memory outline → YouTube chapters → description timestamps,
+    │   the latter only if the analysis already landed), with the id/label/goal of the tab
+    │   that replaces it: the plan's first moment_track tab, else the always-Moments tab
+    │   (`key_moments`, see 6). `position` is an estimate (overview + the planned tabs before
+    │   it, quiz excluded). No source with an entry → no tab
 
  4b. VISUAL ANNOTATIONS (after the whole phase-2 group; code)
     └─▶ Frame captions + OCR → `ctx.visual_annotations` (`<visual_annotations>`, chronological
@@ -464,30 +488,47 @@ A plan-first pipeline: ~6-7 text calls (description analysis, tier probe, plan �
     │   a relaxed second pass (±15s window) backfills still-thumbless moment items
     └─▶ Timestamp hygiene: moment_track items beyond video duration (+10s) are dropped;
     │   a tab emptied by that drop is removed (dropped reason `all_timestamps_impossible`)
+    └─▶ A Moments tab always exists (Kfir 2026-10-12, 2.1): with no moment_track tab left after
+    │   the domain requirements (a podcast's backfilled segments win), the always-Moments tab
+    │   (`key_moments`, "Key Moments"; `key_moments_2`… if a plan tab holds the id) joins after
+    │   the planned/required tabs, built by the moment fallback chain (memory outline →
+    │   YouTube chapters → description timestamps; assembly/moment_fallback.py) and framed
+    │   like any moment tab. A real tab: saved, Redis-cached, RAG-indexed, translated. No
+    │   source with an entry → no tab and no drop record (never invented); never added
+    │   where the domain policy forbids moment_track
     └─▶ Gallery tab: ~12 curated frames from gallery_frames (not all uploaded frames)
     └─▶ Cross-tab links resolved from static LINK_RULES
     └─▶ SSE: tab_ready for every tab but the moment tabs, each with `position` = index in the
-    │   persisted tab order
+    │   persisted tab order — every `tab_ready` goes through the run's TabLedger
+    │   (pipeline/tab_ledger.py, the emission contract): `final: true` when no late phase can
+    │   change the tab (no quiz pending; the overview not while a late synthesis is pending),
+    │   else `final: false`
     └─▶ LATE GROUP (parallel, with heartbeats):
     │   └─▶ Moment fill (assembly/moment_frame_fill.py): a frame AT each still-frameless
     │   │   moment's timestamp by seeking the run's one local ≤720p file (downloaded by the
     │   │   frames phase; a manifest cache hit starts it here for ≥ 3 moments only, inside the
     │   │   budget with 30 s kept for seeks; cap 12 frames, 150 s) → the moment tabs stream
-    │   │   WITH their images; the file is deleted after it (its last reader)
+    │   │   WITH their images (replacing the provisional Moments tab by id, or under another
+    │   │   id with `replaces: "<provisional id>"`); the file is
+    │   │   deleted after it (its last reader)
     │   └─▶ Synthesis (unless it ran first; pipeline/synthesis.py): fast tier, 1,200 tokens,
     │   │   20 s, 1 retry. Input: <video_memory> + compact FINAL extraction (≤ 6,000 chars,
     │   │   every list cut to the first cap of 8/5/3/1 that fits) + the viewer's tab labels.
     │   │   Writes masterSummary + seoDescription (≤ 160 chars); tldr/takeaways only as the
-    │   │   fallback. Patches meta + overview in place → SSE synthesis_complete (superset) +
-    │   │   the overview re-sent. Failure → memory's hero only, masterSummary/seo empty
+    │   │   fallback. Patches meta + overview in place → SSE synthesis_complete (superset);
+    │   │   the patched overview goes out with the final re-emit. Failure → memory's hero
+    │   │   only, masterSummary/seo empty
     │   └─▶ The quiz (phases/enrichment.py, only when needs_quiz: a planned quiz tab, or a
     │       sparse quick_quiz host with evidence that doesn't rule learning out, in a
     │       quizEnrichment domain): one enrich_quiz call, fast tier, 30 s total (14 s per
     │       attempt, 1 retry), ≥ 2 valid questions. When it lands the response is assembled
-    │       again (phases/late_quiz.py): enrichment_complete, the quiz tab last, and every tab
-    │       that is new, moved or changed (quick_quiz host, links, overview count) re-sent at
-    │       its position
-    └─▶ SSE: complete (tabCount, processingTimeMs, degraded) → save
+    │       again (phases/late_quiz.py): enrichment_complete, the quiz tab last; the quick_quiz
+    │       host, links and overview count follow
+    └─▶ SSE: the final re-emit — every tab not yet sent final goes out `final: true` at its
+    │   final position, in order (all tabs when a quiz was pending; else the overview after a
+    │   late synthesis); each tab of the response gets exactly one final emission
+    └─▶ SSE: complete (tabCount, tabIds = the final tab order, processingTimeMs, degraded) →
+    │   save. A tab streamed earlier but missing from tabIds was withdrawn (logged)
     └─▶ Store result to MongoDB + Redis cache (if enabled). Redis response-cache keys are
     │   namespaced by PIPELINE_VERSION (packages/shared/src/config/pipeline-version.json,
     │   currently v8 — bumped v6→v8 by the frame-quality + moment-redesign work).
@@ -505,16 +546,25 @@ A plan-first pipeline: ~6-7 text calls (description analysis, tier probe, plan �
     │   └─▶ Walks the assembled tree, collects every translatable prose
     │   │   string into one flat list (`_collect_strings` + `_SKIP_KEYS`
     │   │   leaf-only deny-list for structural/asset/enum keys)
-    │   └─▶ Haiku calls via src/prompts/translate_flat.txt (replaces
-    │   │   the deleted src/prompts/translate.txt; flat-list contract
-    │   │   means the model returns a list of equal length, applied
+    │   └─▶ Fast-model calls (`translation_full`; LLM_TRANSLATION_MODEL
+    │   │   when set) via src/prompts/translate_flat.txt (flat-list
+    │   │   contract: the model returns a list of equal length, applied
     │   │   back into a deep copy via `_set_at_path`)
-    │   └─▶ Batching: strings are split into batches of ≤200
-    │   │   (`_MAX_TRANSLATION_BATCH`), up to 4 batches concurrently
-    │   │   (`_MAX_CONCURRENT_TRANSLATION_BATCHES`) — keeps long videos
-    │   │   under the per-call token ceiling and provider rate limits.
+    │   └─▶ Batching: consecutive runs of ≤ 2,500 source characters
+    │   │   (`translation_flat.TRANSLATION_BATCH_CHARS`, shared with the
+    │   │   RAG text translation) and ≤ 100 strings
+    │   │   (`_MAX_TRANSLATION_BATCH`), up to 8 calls in flight, retry
+    │   │   halves included (`_MAX_CONCURRENT_TRANSLATION_BATCHES`). A
+    │   │   batch answers ≈ 800 tokens (≈ 10 s on gpt-4o-mini), so the
+    │   │   phase takes about one batch's time: EqaMrzd9nZU = 7 calls
+    │   │   of ≤ 41 strings, was one 200-string call (4,996 out tokens,
+    │   │   56.5 s) + a 12-string one; +280 prompt tokens per call.
+    │   │   `max_tokens` is sized to the batch (1,024 + its length,
+    │   │   ≤ 16,384), so the 8 calls reserve ≈ 35k tokens against the
+    │   │   provider's per-minute limit, not 8 × 16k.
     │   └─▶ Salvage-on-failure (`_translate_or_salvage`): a batch that
-    │   │   fails (LLM error / length mismatch) is retried once split in
+    │   │   fails (LLM error / length mismatch / echoed its strings —
+    │   │   `is_mirror` per call) is retried once split in
     │   │   half; any half that still fails is salvaged as English
     │   │   (left untranslated) rather than discarding the whole
     │   │   translation. Returns `(strings, salvaged_mask)` — a
@@ -536,8 +586,12 @@ A plan-first pipeline: ~6-7 text calls (description analysis, tier probe, plan �
     │   = {code, name, isRTL, tabs, meta} (tabs/meta deep-copied so a
     │   downstream mutation of ctx.assembled_tabs can't corrupt the
     │   persisted source block).
-    └─▶ Whisper translate (audio → English text) feeds the Qdrant
-    │   embedding path so RAG search works cross-language.
+    └─▶ No Qdrant work here: the transcript points' English text (the
+    │   embedding model is English-only) comes from a background task that
+    │   assembly's save starts — captions translated as text on the fast
+    │   model, Whisper translate only when this run transcribed the audio
+    │   (docs/RAG.md §Non-English transcripts). Once `done` is out, the
+    │   runner waits for it (≤ 60 s) before persisting pipeline.timing.
     └─▶ Owns the Redis response-cache write for non-English videos:
     │   assembly phase intentionally SKIPS the cache write when
     │   ctx.language != "en". Translation then writes the final
@@ -683,8 +737,8 @@ list against the model registry.
 | `synthesis_complete` | Up to twice: `{tldr, keyTakeaways}` at memory-done, then the superset `{tldr, keyTakeaways, masterSummary, seoDescription}` after the first tabs; consumers merge (API-REFERENCE.md#synthesis_complete) |
 | `frames` | `{videoId, frames: [{index, timestamp, url, s3Key?, ocrText?}]}` (scene frames) |
 | `meta` | `{title, contentTags, modifiers, primaryTag, tabCount, tabLabels, degraded?, ...}` (progressive meta) |
-| `tab_ready` | `{id, label, emoji, component, props, crossTabLinks?, position?}` (progressive tab; `position` = index in the persisted tab order — held-back moment_track tabs arrive late and are spliced in by it; a tab may be re-sent at the same `position` — the overview after synthesis, the quiz tab (last) and tabs the quiz changed) |
-| `complete` | `{tabCount, processingTimeMs, degraded}` (v2 completion) |
+| `tab_ready` | `{id, label, emoji, component, props, goal?, crossTabLinks?, attachments?, degradedFrom?, position, final, provisional?, replaces?}` (progressive tab; contract in `pipeline/tab_ledger.py`, API-REFERENCE.md#tab_ready). `position` = index in the response's tab order, exact when `final` (an estimate before); `final: true` = the tab's last emission this run, exactly one per tab of the response; `provisional: true` = the plan-done Moments placeholder, never final, replaced by id (or by the tab whose `replaces` names it). A corrected `final` can follow for the same id — the last final wins. A tab id can arrive several times — clients replace by id and sort by `position`. Cached serves send every tab once, `final: true` |
+| `complete` | `{tabCount, tabIds, processingTimeMs, degraded}` (v2 completion; `tabIds` = the final tab order — a tab streamed but missing here was withdrawn) |
 | `error` | `{message, code?}` — `code` is an `ErrorCode` value (see docs/ERROR-HANDLING.md) |
 | `token` | `{phase, token}` — legacy token streaming; protocol slot kept, no current emitter |
 | `heartbeat` | `{ts}` — keepalive emitted every `SSE_HEARTBEAT_SECONDS` (12s) during long silent phases (e.g. multi-minute Whisper) so the API-gateway SSE proxy does not abort an idle-but-live stream. **Frontend treats it as a no-op.** |
@@ -694,6 +748,18 @@ list against the model registry.
 > `sponsor_segments` was documented here for years but never emitted by any
 > code path — removed 2026-07-12 (project-score-9 4.5c). The `done` event
 > carries no `phase` field (that was a doc-only invention).
+
+**Event broker** (`services/cache/pipeline_event_stream.py`, `routes/pipeline_broker.py`):
+every chunk of a run is appended to the Redis stream `vie:pipeline:events:<videoSummaryId>`;
+SSE consumers replay it from the start (`XREAD` from `0`). Winning the producer lock
+(`vie:pipeline:lock:<id>`, SET NX in a Lua script) deletes the previous run's stream in the
+same atomic step, so a re-run of the same row (retry, regenerate, stall re-dispatch) never
+replays the old run's events (2.1). The stream never exists without a TTL: every event
+renews a running TTL (`PIPELINE_LOCK_TTL_SECONDS`, also renewed by the lock heartbeat) and
+`mark_done` shortens it to `PIPELINE_STREAM_TTL_SECONDS` after the done sentinel — a
+producer that dies mid-run leaves a stream that expires. Streams leaked before 2.1 (no TTL,
+no lock) are swept by `scripts/expire_leaked_pipeline_streams.py` (dry run by default;
+`--apply` sets a TTL, never deletes; usage in the script's docstring).
 
 ### Key Design Decisions
 
@@ -838,14 +904,26 @@ The summarizer uses a multi-source fallback chain to maximize transcript availab
 │  0. S3 Cached Transcript                               │
 │     └─▶ Avoids all YouTube calls                       │
 │     └─▶ Source: "s3" (cached-{original_source})        │
+│     └─▶ Skipped as stale ("s3-stale" in attempted)     │
+│         when this run fetched captions and the blob is │
+│         a caption-origin blob of another track (key +  │
+│         bucket; pre-2.4 blobs record none). Whisper /  │
+│         Gemini blobs never go stale                    │
 │                         │                               │
 │                         ▼                               │
 │  1. yt-dlp Subtitles                                   │
-│     └─▶ Extracted during video metadata fetch           │
+│     └─▶ Track picked during video metadata fetch       │
+│         (caption_picker.py): the spoken language       │
+│         (the one `-orig` ASR, else yt-dlp `language`)  │
+│         → manual in it → its untranslated auto track;  │
+│         none → the language waterfall + English pref.  │
+│     └─▶ Legacy codes aliased: iw→he, ji→yi, in→id      │
 │     └─▶ Source: "ytdlp"                                │
 │                         │                               │
 │                         ▼                               │
 │  2. youtube-transcript-api                             │
+│     └─▶ Spoken language first (manual, then generated) │
+│         when yt-dlp knew it, then English-first        │
 │     └─▶ With rate limit retry (tenacity)               │
 │     └─▶ 3 attempts, exponential backoff (4-30s)        │
 │     └─▶ Source: "api" or "proxy"                       │
@@ -895,6 +973,13 @@ caption API still attempts audio — the audio download is a separate, un-thrott
 endpoint. Audio fallback is additionally gated by `WHISPER_ENABLED` and
 `WHISPER_MAX_DURATION_MINUTES` (the gate lives in
 `transcript_fetcher.py`, constant `_NO_AUDIO_FALLBACK`).
+
+**Unusable captions (2.5).** Captions that fetched fine but that the tier probe
+judges not a coherent transcript of speech (`transcript_usable: false`) re-run
+the audio layers alone (`fetch_audio_transcript`: Whisper → Gemini, the same
+gates; no S3, captions or youtube-transcript-api) once, from the text branch —
+see step 4 above. Never for music; the Whisper transcript lands in S3 through
+assembly, so the next run reads it.
 
 **Caption 429 handling.** A 429 is IP-scoped, so the response depends on the
 proxy setup (`services/cache/caption_negative_cache.py`, Redis key
@@ -1084,6 +1169,8 @@ vie-transcripts (S3 bucket)
 │     └─▶ S3 key: "videos/{youtubeId}/transcript.json"   │
 │     └─▶ Legacy fallback: "transcripts/{youtubeId}.json"│
 │     └─▶ Contains: segments, source, language, fetchedAt│
+│         + caption {lang, kind} for a yt-dlp transcript │
+│     └─▶ Overwritten when a stale blob is replaced      │
 │                                                         │
 │  2. Upload Video Frames                                 │
 │     └─▶ Scene frames: "videos/{id}/scenes-v3/           │

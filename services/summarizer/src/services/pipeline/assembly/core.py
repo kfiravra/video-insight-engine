@@ -27,9 +27,13 @@ from .assemblers_overhaul import _normalize_filmstrip_frame
 from .attachments import attach_secondaries
 from .cross_tab import resolve_cross_tab_links
 from .density import enforce_density
-from .normalizers import _chapters_to_moments
 from .item_timestamps import clear_impossible_item_timestamps
-from .moment_fallback import cannot_feed_moments, fallback_moment_props, fallback_moments
+from .moment_fallback import (
+    always_moments_tab,
+    cannot_feed_moments,
+    fallback_moment_props,
+    fallback_moments,
+)
 from .promotion import demote_component, promote_component
 from .registry import ASSEMBLER_REGISTRY, infer_component
 
@@ -456,6 +460,27 @@ def _backfill_moment_thumbnails(
                 filled_before,
                 len(items),
             )
+
+
+def _frame_moment_tab(
+    tab: dict,
+    frames: list[dict] | None,
+    all_frames: list[dict] | None,
+    frame_descriptions: list[dict] | None,
+    frame_used: dict[str, float],
+) -> None:
+    """Thumbnails for a moment tab added after the per-tab pass: strict, then relaxed."""
+    if not frames:
+        return
+    inject_frame_thumbnails(
+        tab["props"]["items"],
+        frames,
+        all_frames=all_frames,
+        frame_descriptions=frame_descriptions,
+        used=frame_used,
+        tab_used=set(),
+    )
+    _backfill_moment_thumbnails([tab], frames, all_frames, frame_descriptions)
 
 
 def find_description_for_frame(
@@ -1016,6 +1041,10 @@ def _post_process_tabs(tabs: list[dict], video_duration: float | None = None) ->
                                         )
 
 
+# The name for callers outside assembly (the plan-done Moments tab).
+post_process_tabs = _post_process_tabs
+
+
 def _link_tabs(tabs: list[dict], primary_tag: str) -> None:
     """Set every tab's ``crossTabLinks``; each target is linked from one tab only."""
     all_tab_ids = {t["id"] for t in tabs}
@@ -1320,18 +1349,18 @@ def _annotate_overview_item_count(tabs: list[dict]) -> None:
 
 def build_fallback_candidates(
     synthesis: dict | None,
-    video_meta: dict | None,
     existing_components: set[str],
     existing_ids: set[str],
 ) -> list[dict]:
-    """Build fallback tab candidates from synthesis and video metadata.
+    """Build fallback tab candidates from synthesis.
 
-    Priority: overview > info_grid > moment_track.
+    Priority: overview > info_grid. No moment_track candidate: the
+    always-Moments tab (``moment_fallback.always_moments_tab``) already added
+    one from the chapters — or a better source — where the domain allows it.
     Skips candidates that duplicate existing components or IDs.
     """
     candidates: list[dict] = []
     synthesis = synthesis or {}
-    video_meta = video_meta or {}
 
     # Fallback 1: overview from synthesis
     if "overview" not in existing_components and "overview" not in existing_ids:
@@ -1370,31 +1399,6 @@ def build_fallback_candidates(
                     "crossTabLinks": [],
                 }
             )
-
-    # Fallback 3: moment_track from video chapters
-    if "moment_track" not in existing_components and "key_moments" not in existing_ids:
-        chapters = video_meta.get("chapters", [])
-        if isinstance(chapters, list) and len(chapters) >= 2:
-            chapter_dicts = [ch for ch in chapters if isinstance(ch, dict)]
-            if len(chapter_dicts) >= 2:
-                video_duration = video_meta.get("duration")
-                try:
-                    video_duration = int(video_duration) if video_duration is not None else None
-                except (ValueError, TypeError):
-                    video_duration = None
-                items = _chapters_to_moments(chapter_dicts, video_duration)
-                if len(items) >= 2:
-                    candidates.append(
-                        {
-                            "id": "key_moments",
-                            "label": "Key Moments",
-                            "emoji": "🎬",
-                            "component": "moment_track",
-                            "props": {"items": items},
-                            "goal": "Jump to the chapters of this video",
-                            "crossTabLinks": [],
-                        }
-                    )
 
     return candidates
 
@@ -1734,6 +1738,20 @@ def assemble_response(
         evidence=evidence,
     )
 
+    # A Moments tab always exists (Kfir 2026-10-12): with no moment_track tab
+    # left, the fallback chain's tab joins after the planned and required ones —
+    # after the requirements, so a backfill from extraction data wins.
+    moments = always_moments_tab(
+        assembled_tabs,
+        raw_tabs,
+        video_meta,
+        description_analysis,
+        effective_requirements(primary_tag, triage.get("contentFormat"))["forbidden"],
+    )
+    if moments is not None:
+        _frame_moment_tab(moments, frames, all_frames, frame_descriptions, frame_used)
+        assembled_tabs.append(moments)
+
     # Conditional filmstrip auto-append. The standalone gallery component was
     # retired in the video-to-action overhaul; this surfaces the same frames as
     # a `video_filmstrip` scrubber instead.
@@ -1786,6 +1804,8 @@ def assemble_response(
         # surface now (grid view) — an extra filmstrip duplicates it. Keep the
         # filmstrip only when it shows substantially unique material (moment
         # thumbs cover < 50% of the filmstrip-eligible frames).
+        # The always-Moments tab is not counted: a response keeps the filmstrip
+        # it had before that tab existed (Kfir's rule adds a tab, never removes one).
         _moment_thumb_count = max(
             (
                 sum(
@@ -1794,7 +1814,7 @@ def assemble_response(
                     if isinstance(it, dict) and it.get("thumbnailUrl")
                 )
                 for t in assembled_tabs
-                if t.get("component") == "moment_track"
+                if t.get("component") == "moment_track" and t is not moments
             ),
             default=0,
         )
@@ -1858,18 +1878,15 @@ def assemble_response(
                 a["component"] for a in secondaries if a.get("component") in _once_per_response
             }
 
-    # Minimum 3-tab guarantee: add fallback tabs if needed
-    if len(assembled_tabs) < 3:
+    # Minimum 3-tab guarantee: add fallback tabs if needed. The always-Moments
+    # tab does not count — the response gets the fallbacks it got before it.
+    uncounted = 0 if moments is None else 1
+    if len(assembled_tabs) - uncounted < 3:
         existing_components = {t.get("component", "") for t in assembled_tabs}
         existing_ids = {t["id"] for t in assembled_tabs}
-        fallbacks = build_fallback_candidates(
-            synthesis,
-            video_meta,
-            existing_components,
-            existing_ids,
-        )
+        fallbacks = build_fallback_candidates(synthesis, existing_components, existing_ids)
         for fb in fallbacks:
-            if len(assembled_tabs) >= 3:
+            if len(assembled_tabs) - uncounted >= 3:
                 break
             component = fb.get("component", "")
             if not _validate_assembled_props(component, fb.get("props", {})):

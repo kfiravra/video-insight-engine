@@ -114,7 +114,8 @@ connection at its 300s body timeout.
 - **Calls:** `youtube.extract_video_data(youtube_id)` (yt-dlp), then `description_analyzer.analyze_description()`.
 - **Prompt:** `prompts/description_analysis.txt` (fast model — Haiku).
 - **In:** `youtube_id`.
-- **Out:** `ctx.video_data` (title, channel, duration, chapters, subtitles, tags, description, thumbnail), `ctx.description_analysis` (incl. description **timestamps** reused later for chapter detection).
+- **Out:** `ctx.video_data` (title, channel, duration, chapters, subtitles, tags, description, thumbnail, the picked caption track, `language`, `spoken_language`), `ctx.description_analysis` (incl. description **timestamps** reused later for chapter detection).
+- **Caption pick** (`video/caption_picker.py`, one `extract_info`, no extra call): the language first — the one original ASR track's language (`<lang>-orig`; several = an auto-dub, no ASR signal), which overrides a disagreeing uploader tag unless the video is dubbed (audio in several languages), else yt-dlp's `language` field (`en-US` → en, legacy `iw` → he) — then a manual track in it, else its untranslated auto track (a `tlang` machine translation into it does not count). The rule never takes a manual track in another language. No track in the spoken language → the older waterfall (`resolve_video_language`) + English-preference pick, which may still take another language's manual track or, as its last resort, a machine translation (caption keys alias-matched on both sides: `he` finds `iw`). `video_data.language` = the spoken language when the rule picked; `spoken_language` keeps the signal alone for the youtube-transcript-api fallback.
 - **Gate:** `validate_duration()` — rejects too-long / too-short videos.
 - **SSE:** `metadata`, `description_analysis`.
 
@@ -125,10 +126,12 @@ connection at its 300s body timeout.
   S3 cache → yt-dlp subtitles → youtube-transcript-api → Whisper (audio) → Gemini (audio) → metadata-only (music)
   ```
   Whisper is tried *before* Gemini because it natively reports `response.language`.
+  The S3 blob (`cached_transcript.py`) is keyed by video id only: a caption-origin blob is **stale** when this run's caption fetch produced subtitles and the blob's recorded track (`caption {lang, kind}`; pre-2.4 blobs record none) differs from this run's pick — the chain takes the fresh captions and assembly overwrites the blob. Whisper/Gemini blobs never go stale; a failed caption fetch keeps the blob. youtube-transcript-api tries the spoken language (manual, then generated) before its English-first order.
 - Then `clean_transcript()` → `clean_transcript_advanced()` (spaCy + TF-IDF in a process pool, 30s cap) → **SponsorBlock** filtering (`sponsorblock.get_sponsor_segments` + `filter_transcript_segments`).
 - **Language detection:** from the source's own metadata, or `detect_language_from_text` / `detect_language_by_script`. Sets `ctx.source_language_code` (non-English only; **dropped** for sound-only/instrumental music whose "transcript" is hallucinated). **This single field decides whether Phase 8 runs.**
 - **Out:** `ctx.transcript_data` (segments + raw_text + source), `ctx.clean_text`, `ctx.source_language_code`.
-- **Provenance:** the fetcher fills a `TranscriptTrail` (layers that ran and failed — the youtube-transcript-api attempt is labelled `api` or `proxy` by whether `YOUTUBE_PROXY_URL` is set — the caption-429 skip flag, the S3 blob's origin) and attaches it to the yielded `TranscriptData`; the phase times the fetch and stamps `fetch_wall_ms` / `error_code` in a `finally`, so `ctx.transcript_trail` exists even when the chain raises.
+- **Provenance:** the fetcher fills a `TranscriptTrail` (layers that ran and failed — the youtube-transcript-api attempt is labelled `api` or `proxy` by whether `YOUTUBE_PROXY_URL` is set, a skipped stale S3 blob `s3-stale`, a caption transcript the probe judged unusable `<layer>-unusable` — the caption-429 skip flag, the S3 blob's origin) and attaches it to the yielded `TranscriptData`; the phase times the fetch and stamps `fetch_wall_ms` / `error_code` in a `finally`, so `ctx.transcript_trail` exists even when the chain raises.
+- **Unusable captions → audio (2.5, `phases/transcript_fallback.py`):** after the tier probe (which reads the native `clean_text` — nothing translates before the plan) answers `transcript_usable: false` for a caption transcript (`ytdlp` / `api` / `proxy`, or an S3 blob one of them produced), the text branch re-runs this phase on the audio layers only (`run_audio_transcript_pass` → `fetch_audio_transcript`: Whisper → Gemini, same cleaning / SponsorBlock / language detection; `pipeline.timing` step `transcript_audio`), starts a second probe on the new text and plans from it. Not for music (lyrics, `[Music]` tags), not when no audio layer is allowed; once per run; a failed audio pass keeps the captions. Every unusable answer adds `<source>-unusable` to the trail, and a run that goes on with one plans without a probe — the frames tier treats it as no probe too. The audio pass reuses the first pass's SponsorBlock segments (`ctx.sponsor_segments`).
 - **SSE:** `transcript_ready` (+ `phase` events for each fallback hop).
 
 ### Phase 2b — Frames · `phases/frames.py`
@@ -231,7 +234,7 @@ Pydantic models.
 
 ### Phase 8 — Translation · `phases/translation.py` → `pipeline/translation.py` *(non-English only)*
 
-- **Prompt:** `prompts/translate_flat.txt` (batched Haiku calls).
+- **Prompt:** `prompts/translate_flat.txt` — fast model (`LLM_TRANSLATION_MODEL` when set, else gpt-4o-mini), ≤ 2,500-char batches (CJK weighted) run in parallel, each checked for an echo.
 - **Calls:** `translate_to_source()` — walks the **English** assembled output, translates every translatable prose string into `source_language_code`, returns the unchanged English dict with the translated artifact nested under `sourceLanguage`. Plus `_translate_title()` (the one field that travels source→English; original kept under the source block).
 - **On failure / mirror / length mismatch:** the result has no `sourceLanguage` key → phase no-ops, finalizes the doc `completed` English-only (FE renders no toggle).
 - **Out:** `ctx.source_language`; re-saves the Mongo doc with `sourceLanguage` + status `completed`; writes the final Redis payload (English primary + toggle).
@@ -310,7 +313,7 @@ prompt version on the active trace.
 | `synthesis.txt` | synthesis | fast |
 | `enrich/*.txt` | enrichment | fast |
 | `detection/*.txt` | faithfulness judge (background) | fast |
-| `translate_flat.txt` | translation | Haiku (batched) |
+| `translate_flat.txt` | translation | fast model, ≤ 2,500-char parallel batches |
 
 ---
 

@@ -9,8 +9,9 @@ The tier is first needed at Step 6b of scene extraction, long after the
 download starts, so the frames branch waits there for the tier probe
 (``pipeline/tier_probe.py``) for at most ``PROBE_WAIT_CAP_SECONDS``
 (``resolve_tier``). With a probe answer the tier comes from its domain, format
-and ``has_visual_demo`` plus title keywords; without one, from cheap metadata
-(category + title/tag keywords). ``visualCriticality`` in
+and ``has_visual_demo`` plus title keywords; without one — or with one that
+judged its transcript unusable, since it then classified garbage — from cheap
+metadata (category + title/tag keywords). ``visualCriticality`` in
 packages/shared/src/config/domains.json single-sources the tier table.
 """
 
@@ -124,8 +125,15 @@ async def resolve_tier(
     tags: list[str] | None = None,
     cap_seconds: float = PROBE_WAIT_CAP_SECONDS,
 ) -> VisualTier:
-    """Await the probe (capped), then derive the tier; metadata rule on timeout/None."""
+    """Await the probe (capped), then derive the tier; metadata rule on timeout/None.
+
+    A probe that read an unusable transcript counts as no probe: its domain
+    and ``has_visual_demo`` were judged from word salad.
+    """
     probe = await await_probe(probe_task, cap_seconds)
+    if probe is not None and not probe.transcript_usable:
+        logger.info("Tier probe read an unusable transcript — metadata tier")
+        probe = None
     tier = derive_tier(probe, title, tags, category=category)
     logger.info("Visual tier %s from %s", tier, "probe" if probe is not None else "metadata")
     return tier

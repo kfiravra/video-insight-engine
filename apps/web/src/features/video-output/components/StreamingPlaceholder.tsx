@@ -7,6 +7,7 @@ import { EmojiMarker } from '@/components/vie';
 import { DOMAIN_META } from '@/components/vie/cards/domain-meta';
 import { accentStyle } from './output/lib/content-accent';
 import { STREAM_PHASE_LABELS } from '@/features/video-output/hooks/use-summary-stream';
+import { STAGE_INDEX, stagesFor, type StageDef } from '@/features/video-output/lib/stream-stages';
 import type {
   StreamPhase,
   StreamPhaseDetail,
@@ -37,36 +38,6 @@ const CANCEL_REVEAL_MS = 5000;
 
 /** Rotation interval for the feature spotlight. Slow enough to read twice. */
 const SPOTLIGHT_INTERVAL_MS = 6500;
-
-interface StageDef {
-  id: 'metadata' | 'transcript' | 'extraction' | 'building' | 'translation';
-  label: string;
-}
-
-const BASE_STAGES: StageDef[] = [
-  { id: 'metadata', label: 'Read the video' },
-  { id: 'transcript', label: 'Get the transcript' },
-  { id: 'extraction', label: 'Extract the knowledge' },
-  { id: 'building', label: 'Build your tabs' },
-];
-
-/** Where each stream phase lands on the stage timeline. idle/connecting sit
- *  on the first stage — connection is sub-second and doesn't earn a row.
- *  Total over StreamPhase so a new phase can't silently fall back to stage 0:
- *  cancelled/error park on the last stage (callers unmount this component for
- *  both, but the contract accepts any StreamPhase). */
-const STAGE_INDEX: Record<StreamPhase, number> = {
-  idle: 0,
-  connecting: 0,
-  metadata: 0,
-  transcript: 1,
-  extraction: 2,
-  building: 3,
-  translation: 4,
-  done: 5,
-  cancelled: 5,
-  error: 5,
-};
 
 const TRANSCRIPT_DETAIL: Record<StreamPhaseDetail, string> = {
   'captions-cached': 'Reusing a transcript we already have',
@@ -131,16 +102,7 @@ export function StreamingPlaceholder({
     return () => clearTimeout(t);
   }, [onCancel]);
 
-  // Translation is a tail stage that only exists for non-English sources —
-  // append its row the moment the pipeline enters it instead of showing a
-  // permanently-skipped step to everyone else.
-  const stages = useMemo<StageDef[]>(
-    () =>
-      streamPhase === 'translation'
-        ? [...BASE_STAGES, { id: 'translation', label: 'Translate' }]
-        : BASE_STAGES,
-    [streamPhase],
-  );
+  const stages = stagesFor(streamPhase);
   const activeIndex = STAGE_INDEX[streamPhase] ?? 0;
 
   const spotlights = useMemo<Spotlight[]>(() => {

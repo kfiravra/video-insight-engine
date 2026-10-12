@@ -18,6 +18,7 @@ import yaml
 from pydantic import ValidationError
 
 from src.models.probe_types import VALID_FORMATS
+from src.shared_config.domain_config import effective_requirements
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_REPO_ROOT / "scripts"))
@@ -39,6 +40,9 @@ from _eval_schema import GoldenDataset, is_allowed_video_url, parse_assertions  
 _DATASET = _REPO_ROOT / "dev" / "golden-dataset" / "videos.yaml"
 _REGISTRY = _REPO_ROOT / "packages" / "shared" / "src" / "config" / "domains.json"
 _RETIRED = {"verdict", "quiz", "code_explorer", "gallery", "lyrics_player", "exercise_tracker"}
+# expectedTabs holds tab ids only; these are the ids the golden set gives its
+# moment_track tab (``key_moments`` = assembly's always-Moments tab).
+_MOMENTS_TAB_IDS = {"key_moments", "moments", "highlights"}
 
 
 def _record(assertions: list[dict[str, Any]], **overrides: Any) -> dict[str, Any]:
@@ -138,6 +142,22 @@ class TestCommittedDataset:
         live_domains = sorted({v.domain for v in dataset.videos if not v.disabled})
         quick_domains = sorted(v.domain for v in dataset.videos if v.quick)
         assert quick_domains == live_domains
+
+    def test_should_expect_a_moments_tab_when_the_domain_allows_moment_track(
+        self, dataset: GoldenDataset
+    ) -> None:
+        """Kfir 2026-10-12: a Moments tab exists whenever a moment source does.
+
+        Every golden video has captions, so the memory outline is a source;
+        the tab-count score would otherwise read the rule as a regression.
+        """
+        missing = [
+            v.id
+            for v in dataset.videos
+            if "moment_track" not in effective_requirements(v.domain, v.format)["forbidden"]
+            and not _MOMENTS_TAB_IDS & set(v.expected_tabs)
+        ]
+        assert missing == []
 
 
 # ─── Schema rules ──────────────────────────────────────────────────────
@@ -385,6 +405,28 @@ class TestMetrics:
             "observations": [
                 {"name": "classifier", "output": '{"format": "tutorial"}'},
                 {"name": "tier_probe", "output": '{"format": "vlog"}'},
+            ]
+        }
+        assert extract_probe_format(trace) == "vlog"
+
+    def test_should_read_the_latest_probe_when_the_run_probed_twice(self) -> None:
+        trace = {
+            "observations": [
+                {
+                    "name": "tier_probe",
+                    "output": '{"format": "tutorial"}',
+                    "startTime": "2026-10-12T10:00:09.5Z",
+                },
+                {
+                    "name": "tier_probe",
+                    "output": '{"format": "vlog"}',
+                    "startTime": "2026-10-12T10:00:40.25Z",
+                },
+                {
+                    "name": "tier_probe",
+                    "output": '{"format": "lecture"}',
+                    "startTime": "2026-10-12T10:00:03.125Z",
+                },
             ]
         }
         assert extract_probe_format(trace) == "vlog"

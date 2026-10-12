@@ -5,6 +5,9 @@ visual tier (``media/visual_tier.py``) and seeds the plan's playbook and hint.
 Validation is strict on the fields that steer the pipeline (a registry domain,
 a boolean ``has_visual_demo``) and lenient on ``format``, which only refines
 the playbook — the classifier it replaces defaulted an unknown format the same way.
+``transcript_usable`` (2.5) is lenient the other way: only an explicit JSON
+``false`` sends a caption transcript to the audio path, so an older answer, a
+replay cassette or a malformed value keeps the transcript and the probe.
 """
 
 from __future__ import annotations
@@ -52,6 +55,14 @@ class TierProbe(BaseModel):
     format: str
     has_visual_demo: bool
     confidence: float
+    # False = the transcript windows are not a coherent transcript of speech
+    # (e.g. ASR run in the wrong language): the run re-transcribes from audio.
+    transcript_usable: bool = True
+
+    @field_validator("transcript_usable", mode="before")
+    @classmethod
+    def _usable_unless_judged_not(cls, value: object) -> bool:
+        return value is not False
 
     @field_validator("domain", mode="before")
     @classmethod

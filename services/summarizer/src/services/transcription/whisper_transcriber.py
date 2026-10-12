@@ -630,8 +630,12 @@ async def transcribe_with_whisper(
             detected_language,
         )
 
-        # Cache audio for non-English so translate_audio_to_english can reuse it
-        if detected_language and detected_language != "en" and audio_path and audio_path.exists():
+        # Cache audio for non-English so translate_audio_to_english can reuse it.
+        # Whisper names the language ("english"), so compare its code: the raw
+        # name parked every English run's mp3 in the cache, which nothing reads
+        # or deletes because an English source never runs Whisper translate.
+        is_english = normalize_language_code(detected_language) == "en"
+        if detected_language and not is_english and audio_path and audio_path.exists():
             cached = _cached_audio_path(video_id)
             try:
                 import shutil

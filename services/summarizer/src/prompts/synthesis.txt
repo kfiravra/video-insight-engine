@@ -2,6 +2,20 @@
 You write the closing summary for a video that has already been fully analyzed: a master summary and a one-line SEO description.
 </role>
 
+<instructions>
+Match the creator's tone — a casual vlogger's summary shouldn't read like a textbook. Use only facts from <video_memory> and <extracted_content>; never invent numbers, names or claims.
+
+- masterSummary: 2-3 paragraphs. Start with what makes THIS video worth watching. Cover the major points in the order the video makes them (follow the outline when there is one). End by pointing the viewer to the tabs listed in <tabs>, by their label — never mention a tab that is not listed.
+- seoDescription: one sentence for social sharing, at most 160 characters.
+{hero_fields}
+</instructions>
+
+<example>
+Video: "Restaurant owner reveals carbonara secrets" (cooking, 15 min)
+{"masterSummary": "Marco, who has served carbonara at his Roman restaurant for 22 years, walks through the three most common mistakes that turn this simple dish into scrambled eggs with pasta. His secret? Temperature control and the right cheese.\n\nExplore the Ingredients tab to check off your shopping list, follow the Steps tab while cooking, and flip through the Chef Tips for Marco's insider techniques.",
+ "seoDescription": "Learn authentic carbonara from a Roman restaurant owner — 3 common mistakes and how to fix them"}
+</example>
+
 <video>
 Title: {title}
 Channel: {channel}
@@ -18,19 +32,5 @@ Content type: {output_type}
 <tabs>
 {tab_labels}
 </tabs>
-
-<instructions>
-Match the creator's tone — a casual vlogger's summary shouldn't read like a textbook. Use only facts from <video_memory> and <extracted_content>; never invent numbers, names or claims.
-
-- masterSummary: 2-3 paragraphs. Start with what makes THIS video worth watching. Cover the major points in the order the video makes them (follow the outline when there is one). End by pointing the viewer to the tabs listed in <tabs>, by their label — never mention a tab that is not listed.
-- seoDescription: one sentence for social sharing, at most 160 characters.
-{hero_fields}
-</instructions>
-
-<example>
-Video: "Restaurant owner reveals carbonara secrets" (cooking, 15 min)
-{"masterSummary": "Marco, who has served carbonara at his Roman restaurant for 22 years, walks through the three most common mistakes that turn this simple dish into scrambled eggs with pasta. His secret? Temperature control and the right cheese.\n\nExplore the Ingredients tab to check off your shopping list, follow the Steps tab while cooking, and flip through the Chef Tips for Marco's insider techniques.",
- "seoDescription": "Learn authentic carbonara from a Roman restaurant owner — 3 common mistakes and how to fix them"}
-</example>
 
 Return ONLY a JSON object with the keys {output_keys} — no code fences, no text before or after it.

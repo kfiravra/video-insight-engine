@@ -406,10 +406,12 @@ class Settings(BaseSettings):
         "synthesis": "LLM_SYNTHESIS_MODEL",
         "enrichment": "LLM_ENRICHMENT_MODEL",
         "extraction": "LLM_EXTRACTION_MODEL",
-        "translation": "LLM_TRANSLATION_MODEL",
-        "translation_tabs": "LLM_TRANSLATION_MODEL",
-        "translation_meta": "LLM_TRANSLATION_MODEL",
-        "translation_labels": "LLM_TRANSLATION_MODEL",
+        # The stage names the translation calls send (pipeline/translation_flat.py:
+        # the output's source-language pass, and translate_text for the title).
+        "translation_full": "LLM_TRANSLATION_MODEL",
+        "translation_title": "LLM_TRANSLATION_MODEL",
+        # The RAG transcript's English text (transcript/english.py).
+        "rag_translation": "LLM_TRANSLATION_MODEL",
         "vision": "LLM_VISION_MODEL",
     }
 

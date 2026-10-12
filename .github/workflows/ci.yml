@@ -177,6 +177,21 @@ jobs:
   summarizer:
     name: Summarizer Tests
     runs-on: ubuntu-latest
+    # The real-broker replay tests (tests/replay/test_replay_broker.py — the
+    # only test of the broker's Lua/MULTI) and the leaked-stream sweep's Lua
+    # run on scratch db 15; without a Redis they skip.
+    services:
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      REDIS_URL: redis://localhost:6379
     defaults:
       run:
         working-directory: services/summarizer

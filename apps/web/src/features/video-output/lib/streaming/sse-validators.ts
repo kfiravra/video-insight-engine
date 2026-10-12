@@ -17,6 +17,7 @@ import {
   type Resource,
   type RelatedVideo,
   type SocialLink,
+  type TabEntry,
   type VideoContext,
 } from '@vie/types';
 
@@ -156,6 +157,75 @@ export function validateSynthesisComplete(data: unknown): Partial<SynthesisResul
     return {};
   }
   return filledSynthesisFields(result.data);
+}
+
+// ─────────────────────────────────────────────────────
+// tab_ready (emission contract: docs/API-REFERENCE.md#tab_ready)
+// ─────────────────────────────────────────────────────
+
+/** A `tab_ready` event's fields: a TabEntry plus the stream fields. */
+export interface TabReadyFields extends TabEntry {
+  /** Sort key — exact on a final emission, an estimate before it. */
+  position?: number;
+  /** The tab's last emission this run. */
+  final?: boolean;
+  /** The plan-done placeholder, replaced later by the same id. */
+  provisional?: boolean;
+  /** Id of a streamed tab this one supersedes (the provisional Moments tab
+   *  when the real one carries another id). */
+  replaces?: string;
+}
+
+const crossTabLinkSchema = z.object({ targetTab: z.string(), label: z.string() });
+
+const tabAttachmentSchema = z.object({
+  slot: z.enum(['top', 'bottom']),
+  component: z.string(),
+  props: z.record(z.unknown()).catch({}),
+  size: z.enum(['banner', 'strip']).optional().catch(undefined),
+});
+
+/** A list whose malformed entries are dropped — never the whole tab. */
+function parsableItems<S extends z.ZodTypeAny>(item: S) {
+  return z.array(z.unknown()).transform((entries): z.output<S>[] =>
+    entries.flatMap((entry) => {
+      const parsed = item.safeParse(entry);
+      return parsed.success ? [parsed.data] : [];
+    }),
+  );
+}
+
+// Lenient by design: a bad field falls back to its default instead of
+// dropping the tab (props are gated per component by validateTabProps).
+const tabReadyEventSchema = z.object({
+  id: z.string().catch(''),
+  label: z.string().catch(''),
+  emoji: z.string().catch(''),
+  component: z.string().catch(''),
+  props: z.record(z.unknown()).catch({}),
+  goal: z.string().optional().catch(undefined),
+  crossTabLinks: parsableItems(crossTabLinkSchema).optional().catch(undefined),
+  attachments: parsableItems(tabAttachmentSchema).optional().catch(undefined),
+  degradedFrom: z.string().optional().catch(undefined),
+  position: z.number().int().nonnegative().optional().catch(undefined),
+  final: z.boolean().optional().catch(undefined),
+  provisional: z.boolean().optional().catch(undefined),
+  replaces: z.string().min(1).optional().catch(undefined),
+});
+
+const EMPTY_TAB_READY: TabReadyFields = { id: '', label: '', emoji: '', component: '', props: {} };
+
+/**
+ * Validate a tab_ready event from SSE. Never rejects the tab: a malformed
+ * field falls back to its default; a non-object event yields an empty tab.
+ */
+export function validateTabReadyEvent(data: unknown): TabReadyFields {
+  const result = tabReadyEventSchema.safeParse(data);
+  if (!result.success) {
+    reportInvalidEvent('Invalid tab_ready event:', result.error.message);
+    return EMPTY_TAB_READY;
+  }
+  return result.data;
 }
 
 const doneEventSchema = z.object({

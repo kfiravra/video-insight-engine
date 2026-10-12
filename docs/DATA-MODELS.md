@@ -105,7 +105,8 @@ on `model_dump`):
 - `FrameEvidence.s3Key?: string` — stable S3 key per frame; lets the api re-sign expired presigned URLs on serve (`refresh-frame-urls.ts`).
 - `SpotItem.pronunciation?: string` — travel spots.
 - `MomentItem` carries frame fields (`frameCaption`, `frameEvidence`, `frameOcr`, `frameSceneType`, `s3Key`) filled by assembly frame injection + `moment_frame_fill`.
-- `SSETabReadyEvent.position?: number` — index in the persisted tab order (client splices, never appends).
+- `SSETabReadyEvent` (`packages/types/src/api.ts`, extends `TabEntry`) — `position?: number` = index in the response's tab order, a sort key (exact when `final`, an estimate before); `final?: boolean` = the tab's last emission this run (one per tab of the response); `provisional?: boolean` = the plan-done Moments placeholder, replaced by id; `replaces?: string` = on the first emission of the tab that takes the provisional's place under another id, the provisional id (a corrected `final` can follow for an id — the last final wins). `SSECompleteEvent.tabIds?: string[]` = the final tab order. Contract: `services/summarizer/src/services/pipeline/tab_ledger.py`, API-REFERENCE.md#tab_ready (pipeline-1min 2.1).
+- A `moment_track` tab always exists when a moment source has entries (2.1): without a planned one, assembly adds `key_moments` ("Key Moments") from the memory outline → YouTube chapters → description timestamps; it is stored, cached, RAG-indexed and translated like any tab. It only adds: it counts neither toward the minimum-3 fallbacks (a two-tab response still gets Key Info) nor toward the rich-moment-grid gate that skips the auto "Visual Moments" filmstrip, and the minimum-3 fallbacks no longer build a chapters moment_track of their own.
 
 #### Component density gates (`densityGates`) and domain policy
 
@@ -184,7 +185,11 @@ One row per video **version** (`version`, `isLatest` below); the served row is s
 
   // Legacy, never written by the current pipeline. Transcript text lives in
   // S3 at the deterministic key videos/<youtubeId>/transcript.json
-  // (rawTranscriptRef is NOT set for pipeline rows — see its comment below).
+  // (rawTranscriptRef is NOT set for pipeline rows — see its comment below):
+  // { youtube_id, fetched_at, source, language, segments: [{text, startMs, endMs}],
+  //   caption: { lang, kind } | null }  — caption = the yt-dlp track a "ytdlp" blob holds
+  // (2.4; absent on older blobs). A caption-origin blob whose track differs from a later
+  // run's pick is skipped as stale and overwritten.
   transcript: string | null,
   transcriptSegments: [{
     text: string,
@@ -202,13 +207,13 @@ One row per video **version** (`version`, `isLatest` below); the served row is s
     type: "manual" | "auto-generated" | "asr" | "metadata" | "cached" | null,
     origin: "ytdlp" | "api" | "proxy" | "whisper" | "gemini" | "metadata" | null,          // s3 rows only: layer that produced the cached blob
     captionTrack: "manual" | "auto-generated" | null,   // track THIS run's metadata phase picked (null = no usable json3 track)
-    captionLang: string | null,                          // matched caption key ("ar-SA", "en-en"); differs from the video language on auto-translation
+    captionLang: string | null,                          // matched caption key ("ar-SA", "en-orig", legacy "iw"); since 2.4 a key in the spoken language whenever an untranslated track in it exists — the fallback pick can still differ from the video language (incl. a machine translation, its last resort)
     captionFetchError: "http_429" | "http_403" | "http_<n>" | "request" | "parse" | "empty" | null,  // "parse" = json3 body unparseable → captions discarded, chain continues
     captionApiSkipped: boolean,                          // youtube-transcript-api skipped by the Redis caption-429 marker
-    attempted: string[],                                 // layers that RAN and FAILED before `source`, in order: s3 | ytdlp | api | proxy | whisper | gemini
+    attempted: string[],                                 // layers that RAN and FAILED before `source`, in order: s3 | s3-stale | ytdlp | api | proxy | whisper | gemini | <source>-unusable — s3-stale = the S3 blob held another caption track than this run's pick (skipped, re-stored); <source>-unusable (ytdlp-unusable, api-unusable, proxy-unusable, s3-unusable, whisper-unusable, …) = one per tier-probe answer that judged the transcript that source served not a coherent transcript of speech (`transcript_usable: false`, 2.5). An audio `source` (whisper / gemini) after a caption one = the audio path replaced it; `source` still that layer = the run kept it (music, not captions, no audio layer allowed, or the audio pass failed — its failed layers follow the entry). A run that went on with an unusable answer (no replacement, or the second answer unusable too) planned without a probe
     segments: number | null,
     chars: number | null,
-    fetchWallMs: number | null,                          // wall time of the fetch chain inside the transcript phase (frames run in parallel); set on failed rows too
+    fetchWallMs: number | null,                          // wall time of the fetch chain inside the transcript phase (frames run in parallel), incl. the audio re-run after an unusable caption transcript; set on failed rows too
     errorCode: string | null                             // failed rows: TranscriptError code (NO_TRANSCRIPT, RATE_LIMITED, …), UNKNOWN_ERROR (unexpected exception) or CANCELLED (producer torn down mid-fetch)
   } | absent,
 
@@ -218,18 +223,20 @@ One row per video **version** (`version`, `isLatest` below); the served row is s
   // Offsets are ms since the run started. Mirrored (minus llmCalls) onto the
   // Langfuse trace metadata; each phase is also a Langfuse span.
   "pipeline.timing": {
-    version: 1,
+    version: 2,                     // 2: the 1h/5m cache-write split on llmCalls (pipeline-1min 2.0)
     startedAt: Date,
     totalMs: number,
-    phases: [{ name: string, startMs: number, endMs: number, wallMs: number }],  // metadata, transcript_frames (phase 2: text, transcript, plan, memory, frames, frames.* sub-steps incl. frames.tier_wait), visual_inject (name kept: the annotations render), extraction, assembly (moment_fill, synthesis, enrichment = the quiz, run inside it), translation
-    milestones: { metadataMs?, synthesisCompleteMs?, firstTabReadyMs?, completeMs?, doneMs? },
+    phases: [{ name: string, startMs: number, endMs: number, wallMs: number }],  // metadata, transcript_frames (phase 2: text, transcript, transcript_audio = the audio re-run after the tier probe judged the captions unusable (2.5; that run also has a second tier_probe llmCall), plan, memory, frames, frames.* sub-steps incl. frames.tier_wait), visual_inject (name kept: the annotations render), extraction, assembly (moment_fill, synthesis, enrichment = the quiz, run inside it), translation
+    milestones: { metadataMs?, synthesisCompleteMs?, firstTabReadyMs?, firstAssembledTabMs?, completeMs?, doneMs? },  // firstTabReadyMs = first tab_ready of any kind — since 2.1 the provisional Moments tab at plan-done; firstAssembledTabMs = first non-provisional tab_ready (the first tab assembly built)
     llmCalls: [{ feature, span, model, responseModel, startMs, wallMs, inputTokens, outputTokens,
-                 cacheReadTokens, cacheWriteTokens, costUsd, attempt, fallbackUsed, finishReason }],  // incl. Whisper/Gemini transcription rows (span "transcription:openai|google")
+                 cacheReadTokens,     // Anthropic cache_read_input_tokens, or OpenAI cached input (prompt_tokens_details.cached_tokens; 0 for OpenAI before v2)
+                 cacheWriteTokens, cacheWrite5mTokens, cacheWrite1hTokens,  // the write split by cache lifetime, when the provider reports it
+                 costUsd, attempt, fallbackUsed, finishReason }],  // incl. Whisper/Gemini transcription rows (span "transcription:openai|google")
     llmFailures: [{ feature, span, model, startMs, wallMs, attempt, error, rateLimited }],
     downloads: [{ kind: "lowres" | "720p" | "audio", purpose: string, startMs, wallMs, bytes: number | null, ok: boolean }],
     costUsd: number,
     counts: { llmCalls, llmFailures, retries, rateLimited, fallbacks, outputTokens, cacheReadTokens,
-              downloadBytes, tabsPlanned, tabsAssembled, tabsEmitted,  // tabsEmitted = distinct tabs streamed
+              downloadBytes, tabsPlanned, tabsAssembled, tabsEmitted,  // tabsEmitted = distinct tab ids streamed non-provisional (a provisional tab replaced by id counts once; one withdrawn or replaced under another id never counts; an assembled tab withdrawn later still counts)
               truncated }  // answers that stopped at max_tokens (finish_reason=length); DONE log line `llm truncated=N`
   } | absent,
 

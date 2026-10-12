@@ -61,6 +61,11 @@ false when the value is in what is SAID: talking heads, interviews, lectures, op
 Speech that describes actions ("now add the salt", "watch my elbows", "look at this pull") is strong evidence for true.
 </has_visual_demo>
 
+<transcript_usable>
+false ONLY when most of the text across the three windows is not a coherent transcript of speech: word salad, unrelated fragments strung together, mis-recognised gibberish. One odd window is not enough.
+true for everything else, including unpunctuated or lower-case auto-captions, some mis-heard words in otherwise followable speech, odd or informal style, disfluencies, lyrics, slang, jargon, a language you did not expect, sound or music tags only ([Музыка], [música], ♪ …) with no speech at all, a short or sparse transcript, and (no transcript).
+</transcript_usable>
+
 <output_language>
 Write every JSON value in English, whatever the language of the video, title or transcript. Enum values are the exact lowercase ids listed above.
 </output_language>
@@ -85,5 +90,5 @@ Description: {description}
 
 <output_format>
 Reply with exactly one bare JSON object and nothing else: no code fences, no markdown, no reasoning, no text before or after it. The reply starts with { and ends with }.
-{"domain": "<domain id>", "format": "<format id>", "has_visual_demo": <true or false>, "confidence": <number from 0.0 to 1.0>}
+{"domain": "<domain id>", "format": "<format id>", "has_visual_demo": <true or false>, "confidence": <number from 0.0 to 1.0>, "transcript_usable": <true or false>}
 </output_format>

@@ -73,6 +73,16 @@ class TestTierGate:
 
         assert gate.tier == "standard"
 
+    async def test_should_use_the_metadata_rule_when_the_probe_read_garbage(self) -> None:
+        garbage = _probe("podcast", visual_demo=False).model_copy(
+            update={"transcript_usable": False}
+        )
+        gate = frames_phase._TierGate(_ctx(_done(garbage), category="cooking"))
+
+        await gate.reselect()
+
+        assert gate.tier == "high"
+
     async def test_should_use_the_metadata_rule_when_no_probe_was_started(self) -> None:
         gate = frames_phase._TierGate(_ctx(None, category="cooking"))
 
