@@ -137,7 +137,11 @@ class TestExtractionQualityMetric:
 
 def _extract_with_drops(data: dict[str, Any], dropped: dict[str, dict[str, int]]):
     async def _extract(_llm, _triage, _transcript, _video_info, **_kwargs):
-        yield {"event": "extraction_complete", "data": data, "droppedItems": dropped}
+        yield {
+            "event": "extraction_complete",
+            "data": data,
+            "validation": {"dropped": dropped, "defaulted": 2},
+        }
 
     return _extract
 
@@ -151,7 +155,7 @@ _CONCEPTS_LOST = {"learning.concepts": {"dropped": 3, "total": 4}}
 
 
 class TestDroppedItems:
-    """Validation drops reach ctx for ``pipeline.extraction._dropped``/``_misTargeted``, not the SSE."""
+    """The validation report reaches ctx (``pipeline.extraction._dropped/_defaulted/_misTargeted``), not the SSE."""
 
     async def test_should_store_dropped_counts_on_the_context(self) -> None:
         ctx = _ctx()
@@ -164,7 +168,14 @@ class TestDroppedItems:
         chunks = await _chunks_with_drops(_ctx(), _CONCEPTS_LOST)
 
         complete = [c for c in chunks if '"extraction_complete"' in c]
-        assert complete and not any("droppedItems" in c for c in complete)
+        assert complete and not any('"validation"' in c for c in complete)
+
+    async def test_should_store_the_defaulted_count_on_the_context(self) -> None:
+        ctx = _ctx()
+
+        await _chunks_with_drops(ctx, _CONCEPTS_LOST)
+
+        assert ctx.extraction_defaulted == 2
 
     async def test_should_flag_a_planned_field_that_lost_over_half_its_items(self) -> None:
         ctx = _ctx()

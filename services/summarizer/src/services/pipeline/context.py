@@ -127,6 +127,8 @@ class PipelineContext:
     # Planned dataSources that lost over half their items to validation;
     # persisted as pipeline.extraction._misTargeted.
     extraction_mis_targeted: list[str] = field(default_factory=list)
+    # Fields validation reset to their default — pipeline.extraction._defaulted.
+    extraction_defaulted: int = 0
     synthesis_dict: dict[str, Any] = field(default_factory=dict)
     enrichment_data: dict[str, Any] | None = None
     # Coverage metric: how far into the video the timestamped extraction

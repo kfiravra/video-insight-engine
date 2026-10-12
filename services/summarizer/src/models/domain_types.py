@@ -15,7 +15,7 @@ from pydantic import (
 )
 
 from ..shared_config.domain_config import valid_content_tags, valid_modifiers
-from .domain_validation import DropCounts, merge_drop_counts, validate_block_items
+from .domain_validation import ValidationReport, merge_report, validate_block_items
 
 logger = logging.getLogger(__name__)
 
@@ -1290,18 +1290,18 @@ def _merge_mixed_shape(tag: str, wrapper: dict, flat: dict) -> dict:
 
 
 def _validate_block(
-    tag: str, model_cls: type[BaseModel] | None, block: dict, dropped: DropCounts
+    tag: str, model_cls: type[BaseModel] | None, block: dict, report: ValidationReport
 ) -> dict:
     """Validate one domain/modifier block item by item (hotfix 2.1).
 
-    Items that fail are dropped and counted in ``dropped``; the rest is kept.
+    Items that fail are dropped and counted in ``report``; the rest is kept.
     Invalid data is never passed through.
     """
     if model_cls is None:
         logger.warning("No model for tag: %s — data passed through unvalidated", tag)
         return block
-    validated, block_dropped = validate_block_items(tag, model_cls, block)
-    merge_drop_counts(dropped, block_dropped)
+    validated, block_dropped, block_defaulted = validate_block_items(tag, model_cls, block)
+    merge_report(report, block_dropped, block_defaulted)
     return validated
 
 
@@ -1360,13 +1360,13 @@ def _validate_flat_fallback(tag: str, data: dict) -> dict | None:
         return None
 
 
-def _validate_multi_tag(content_tags: list[str], data: dict, dropped: DropCounts) -> dict:
+def _validate_multi_tag(content_tags: list[str], data: dict, report: ValidationReport) -> dict:
     """Wrapped blocks first; flat data only for tags whose own fields are present."""
     validated: dict = {}
     for tag in content_tags:
         block = _multi_tag_wrapped_block(tag, content_tags, data)
         if block is not None:
-            validated[tag] = _validate_block(tag, DOMAIN_MODELS.get(tag), block, dropped)
+            validated[tag] = _validate_block(tag, DOMAIN_MODELS.get(tag), block, report)
 
     missing_tags = [tag for tag in content_tags if tag not in validated]
     if missing_tags:
@@ -1383,32 +1383,34 @@ def _validate_multi_tag(content_tags: list[str], data: dict, dropped: DropCounts
 
 def validate_domain_output_with_drops(
     content_tags: list[str], modifiers: list[str], data: dict
-) -> tuple[dict, DropCounts]:
+) -> tuple[dict, ValidationReport]:
     """Validate LLM output against domain Pydantic models, item by item.
 
     Single tag: flat data validated against DOMAIN_MODELS[tag]; a
     ``{tag}Data``/``{tag}``-wrapped response is unwrapped first.
     Multi-tag: ``{tag}Data`` / ``{tag}`` wrappers first, then the flat data
     for tags whose own fields appear in it.
-    Returns the validated dict (ready for storage/SSE) and, per field that lost
-    items to validation, ``{"tech.cheatSheet": {"dropped": 3, "total": 22}}``.
+    Returns the validated dict (ready for storage/SSE) and the validation
+    report: ``dropped`` per field that lost items
+    (``{"tech.cheatSheet": {"dropped": 3, "total": 22}}``) and ``defaulted``,
+    the number of fields reset to their default.
     """
-    dropped: DropCounts = {}
+    report: ValidationReport = {"dropped": {}, "defaulted": 0}
     if len(content_tags) == 1:
         tag = content_tags[0]
         block = _single_tag_block(tag, data)
-        validated = {tag: _validate_block(tag, DOMAIN_MODELS.get(tag), block, dropped)}
+        validated = {tag: _validate_block(tag, DOMAIN_MODELS.get(tag), block, report)}
     else:
-        validated = _validate_multi_tag(content_tags, data, dropped)
+        validated = _validate_multi_tag(content_tags, data, report)
 
     for modifier in modifiers:
         mod_block = _wrapped_block(data, modifier)
         if mod_block is not None:
             validated[modifier] = _validate_block(
-                modifier, MODIFIER_MODELS.get(modifier), mod_block, dropped
+                modifier, MODIFIER_MODELS.get(modifier), mod_block, report
             )
 
-    return validated, dropped
+    return validated, report
 
 
 def validate_domain_output(content_tags: list[str], modifiers: list[str], data: dict) -> dict:

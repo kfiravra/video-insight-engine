@@ -55,6 +55,7 @@ def _assembly_ctx(eval_run: bool) -> SimpleNamespace:
         extraction_data={},
         extraction_dropped={},
         extraction_mis_targeted=[],
+        extraction_defaulted=0,
         enrichment_data={},
         synthesis_dict=None,
         description_analysis=None,

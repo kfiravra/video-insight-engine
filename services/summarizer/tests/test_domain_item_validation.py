@@ -53,18 +53,23 @@ class TestNullOnDefaultedField:
         assert {item["code"] for item in validated["tech"]["cheatSheet"]} == {""}
 
     def test_should_report_no_drops_for_the_t1dq_shape(self) -> None:
-        _, dropped = validate_domain_output_with_drops(["tech"], [], _t1dq_tech_block())
+        _, report = validate_domain_output_with_drops(["tech"], [], _t1dq_tech_block())
 
-        assert dropped == {}
+        assert report["dropped"] == {}
+
+    def test_should_count_each_defaulted_field(self) -> None:
+        _, report = validate_domain_output_with_drops(["tech"], [], _t1dq_tech_block())
+
+        assert report["defaulted"] == 22
 
 
 class TestNullOnRequiredField:
     def test_should_drop_an_item_whose_required_field_is_null(self) -> None:
         block = {"cheatSheet": [_cheat("a"), _cheat(None), _cheat("c")]}
 
-        validated, dropped = validate_domain_output_with_drops(["tech"], [], block)
+        validated, report = validate_domain_output_with_drops(["tech"], [], block)
 
-        assert ([i["title"] for i in validated["tech"]["cheatSheet"]], dropped) == (
+        assert ([i["title"] for i in validated["tech"]["cheatSheet"]], report["dropped"]) == (
             ["a", "c"],
             {"tech.cheatSheet": {"dropped": 1, "total": 3}},
         )
@@ -86,9 +91,9 @@ class TestFixableValues:
         """Dev golden 2026-10-12: 12/12 fitness exercises came back with duration=30 (int)."""
         block = {"exercises": [_exercise(duration=30) for _ in range(12)]}
 
-        validated, dropped = validate_domain_output_with_drops(["fitness"], [], block)
+        validated, report = validate_domain_output_with_drops(["fitness"], [], block)
 
-        assert (len(validated["fitness"]["exercises"]), dropped) == (12, {})
+        assert (len(validated["fitness"]["exercises"]), report["dropped"]) == (12, {})
 
     def test_should_keep_the_number_as_text(self) -> None:
         validated, _ = validate_domain_output_with_drops(
@@ -100,19 +105,20 @@ class TestFixableValues:
     def test_should_reset_a_bad_optional_field_and_keep_the_item(self) -> None:
         block = {"exercises": [_exercise(rest=["10s"]), _exercise()]}
 
-        validated, dropped = validate_domain_output_with_drops(["fitness"], [], block)
+        validated, report = validate_domain_output_with_drops(["fitness"], [], block)
 
         assert (
             [e["rest"] for e in validated["fitness"]["exercises"]],
-            dropped,
-        ) == ([None, None], {"fitness.exercises.rest": {"dropped": 1, "total": 1}})
+            report["dropped"],
+            report["defaulted"],
+        ) == ([None, None], {}, 1)
 
     def test_should_drop_an_item_whose_required_field_has_a_bad_value(self) -> None:
         block = {"exercises": [_exercise(name={"en": "x"}), _exercise()]}
 
-        validated, dropped = validate_domain_output_with_drops(["fitness"], [], block)
+        validated, report = validate_domain_output_with_drops(["fitness"], [], block)
 
-        assert (len(validated["fitness"]["exercises"]), dropped) == (
+        assert (len(validated["fitness"]["exercises"]), report["dropped"]) == (
             1,
             {"fitness.exercises": {"dropped": 1, "total": 2}},
         )
@@ -120,9 +126,9 @@ class TestFixableValues:
 
 class TestTitleNameAliases:
     def test_should_take_title_from_name_when_title_is_missing(self) -> None:
-        validated, dropped = validate_domain_output_with_drops(["tech"], [], _t1dq_patterns_block())
+        validated, report = validate_domain_output_with_drops(["tech"], [], _t1dq_patterns_block())
 
-        assert ([p["title"] for p in validated["tech"]["patterns"]], dropped) == (
+        assert ([p["title"] for p in validated["tech"]["patterns"]], report["dropped"]) == (
             [f"step {i}" for i in range(7)],
             {},
         )
@@ -137,9 +143,9 @@ class TestTitleNameAliases:
     def test_should_drop_an_item_with_neither_title_nor_name(self) -> None:
         block = {"patterns": [{"title": "keep"}, {"description": "no title, no name"}]}
 
-        validated, dropped = validate_domain_output_with_drops(["tech"], [], block)
+        validated, report = validate_domain_output_with_drops(["tech"], [], block)
 
-        assert ([p["title"] for p in validated["tech"]["patterns"]], dropped) == (
+        assert ([p["title"] for p in validated["tech"]["patterns"]], report["dropped"]) == (
             ["keep"],
             {"tech.patterns": {"dropped": 1, "total": 2}},
         )
@@ -149,9 +155,9 @@ class TestItemLevelPruning:
     def test_should_drop_an_invalid_item_inside_a_nested_list(self) -> None:
         block = {"setup": {"commands": ["npm i", {"cmd": "bad"}, "npm test"]}}
 
-        validated, dropped = validate_domain_output_with_drops(["tech"], [], block)
+        validated, report = validate_domain_output_with_drops(["tech"], [], block)
 
-        assert (validated["tech"]["setup"]["commands"], dropped) == (
+        assert (validated["tech"]["setup"]["commands"], report["dropped"]) == (
             ["npm i", "npm test"],
             {"tech.setup.commands": {"dropped": 1, "total": 3}},
         )
@@ -159,12 +165,12 @@ class TestItemLevelPruning:
     def test_should_reset_a_wrong_type_field_to_its_default(self) -> None:
         block = {"topics": 5, "languages": ["Go"]}
 
-        validated, dropped = validate_domain_output_with_drops(["tech"], [], block)
+        validated, report = validate_domain_output_with_drops(["tech"], [], block)
 
-        assert (validated["tech"]["topics"], validated["tech"]["languages"], dropped) == (
+        assert (validated["tech"]["topics"], validated["tech"]["languages"], report["dropped"]) == (
             [],
             ["Go"],
-            {"tech.topics": {"dropped": 1, "total": 1}},
+            {},
         )
 
     def test_should_drop_invalid_food_steps_instead_of_passing_them_through(self) -> None:
@@ -182,12 +188,12 @@ class TestMultiTag:
             "techData": {"cheatSheet": [_cheat("a"), _cheat(None)]},
         }
 
-        validated, dropped = validate_domain_output_with_drops(["learning", "tech"], [], data)
+        validated, report = validate_domain_output_with_drops(["learning", "tech"], [], data)
 
         assert (
             validated["learning"]["takeaways"],
             [i["title"] for i in validated["tech"]["cheatSheet"]],
-            dropped,
+            report["dropped"],
         ) == (["one", "two"], ["a"], {"tech.cheatSheet": {"dropped": 1, "total": 2}})
 
 
@@ -225,7 +231,7 @@ class TestValidateBlockItems:
     def test_should_drop_the_deepest_failing_item_not_its_parent(self) -> None:
         block = {"items": [{"title": "keep", "inner": [{"value": 1}, {"value": "x"}]}]}
 
-        validated, dropped = validate_block_items("doc", _Doc, block)
+        validated, dropped, _ = validate_block_items("doc", _Doc, block)
 
         assert (validated["items"][0]["inner"], dropped) == (
             [{"value": 1}],
@@ -235,12 +241,12 @@ class TestValidateBlockItems:
     def test_should_drop_a_parent_item_whose_own_field_fails(self) -> None:
         block = {"items": [{"inner": []}, {"title": "ok"}]}
 
-        validated, _ = validate_block_items("doc", _Doc, block)
+        validated, _, _ = validate_block_items("doc", _Doc, block)
 
         assert [i["title"] for i in validated["items"]] == ["ok"]
 
     def test_should_return_defaults_when_the_block_is_not_an_object(self) -> None:
-        validated, dropped = validate_block_items("doc", _Doc, ["not", "a", "dict"])  # type: ignore[arg-type]
+        validated, dropped, _ = validate_block_items("doc", _Doc, ["not", "a", "dict"])  # type: ignore[arg-type]
 
         assert (validated, dropped) == ({"items": []}, {"doc.*": {"dropped": 1, "total": 1}})
 
@@ -258,7 +264,7 @@ class TestExtractionWithDrops:
 
         record = extraction_with_drops({"tech": {}}, counts)
 
-        assert record == {"tech": {}, "_dropped": counts}
+        assert record == {"tech": {}, "_defaulted": 0, "_dropped": counts}
 
     def test_should_add_mis_targeted_fields_when_set(self) -> None:
         counts = {"tech.patterns": {"dropped": 7, "total": 7}}
@@ -267,7 +273,7 @@ class TestExtractionWithDrops:
 
         assert record and record["_misTargeted"] == ["tech.patterns"]
 
-    def test_should_leave_the_extraction_unchanged_when_nothing_was_dropped(self) -> None:
-        extraction = {"tech": {"topics": ["a"]}}
+    def test_should_write_the_defaulted_count_on_every_run(self) -> None:
+        record = extraction_with_drops({"tech": {"topics": ["a"]}}, {}, None, 3)
 
-        assert extraction_with_drops(extraction, {}) is extraction
+        assert record == {"tech": {"topics": ["a"]}, "_defaulted": 3}

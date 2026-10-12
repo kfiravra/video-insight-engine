@@ -282,6 +282,17 @@ class TestPersistence:
 
         assert saved["extraction"]["_dropped"] == {"tech.patterns": {"dropped": 7, "total": 7}}
 
+    async def test_should_persist_the_defaulted_count_under_extraction(self) -> None:
+        saved = await _saved_pipeline(
+            {
+                "plan_result": PlanResult(),
+                "extraction_data": {"tech": {"cheatSheet": []}},
+                "extraction_defaulted": 22,
+            }
+        )
+
+        assert saved["extraction"]["_defaulted"] == 22
+
     async def test_should_persist_mis_targeted_fields_under_extraction(self) -> None:
         saved = await _saved_pipeline(
             {

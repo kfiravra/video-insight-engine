@@ -15,8 +15,9 @@ is now repaired or narrowed to the item it belongs to:
 
 The rest of the block is validated again and kept; a block that still fails
 becomes the model defaults. ``{"tag.field": {"dropped": n, "total": m}}`` is
-persisted as ``pipeline.extraction._dropped``, and a planned field that lost
-more than half of its items as ``pipeline.extraction._misTargeted``.
+persisted as ``pipeline.extraction._dropped``, a planned field that lost more
+than half of its items as ``pipeline.extraction._misTargeted``, and the number
+of fields reset to their default as ``pipeline.extraction._defaulted``.
 """
 
 from __future__ import annotations
@@ -27,7 +28,7 @@ import re
 import types
 from collections import Counter
 from collections.abc import Iterable, Mapping
-from typing import Any, Union, get_args, get_origin
+from typing import Any, TypedDict, Union, get_args, get_origin
 
 from pydantic import AliasChoices, BaseModel, ValidationError
 from pydantic.fields import FieldInfo
@@ -39,11 +40,19 @@ logger = logging.getLogger(__name__)
 MAX_PRUNE_ROUNDS = 6
 DROPPED_KEY = "_dropped"
 MIS_TARGETED_KEY = "_misTargeted"
+DEFAULTED_KEY = "_defaulted"
 _TITLE_ALIASES = {"title": "name", "name": "title"}
 
 PathSegment = str | int
 Path = tuple[PathSegment, ...]
 DropCounts = dict[str, dict[str, int]]
+
+
+class ValidationReport(TypedDict, total=False):
+    """What validation removed from one extraction: dropped items/fields, defaulted fields."""
+
+    dropped: DropCounts
+    defaulted: int
 
 
 # ─── loc → data ───
@@ -159,7 +168,7 @@ def _repair(
     model_cls: type[BaseModel],
     error: Mapping[str, Any],
     tag: str,
-    dropped: Counter[str],
+    defaulted: Counter[str],
 ) -> bool:
     """Fix one error in place; True when the data changed.
 
@@ -167,7 +176,7 @@ def _repair(
     - a number in a string field → the number as text (Pydantic does not
       coerce int → str; no data lost);
     - any other bad value (``null`` included) on a field with a default → the
-      field is removed so the default applies (counted under the field's label);
+      field is removed so the default applies (counted in ``defaulted``);
     - a failing required field is not repaired — its item is dropped.
     """
     loc = tuple(error["loc"])
@@ -192,8 +201,7 @@ def _repair(
     if info is None or info.is_required():
         return False
     del holder[actual_key]
-    if value is not None:
-        dropped[_label(tag, _fields(loc))] += 1
+    defaulted[_label(tag, _fields(loc))] += 1
     return True
 
 
@@ -261,15 +269,17 @@ def _defaults(model_cls: type[BaseModel]) -> dict:
 
 def validate_block_items(
     tag: str, model_cls: type[BaseModel], block: dict
-) -> tuple[dict, DropCounts]:
+) -> tuple[dict, DropCounts, int]:
     """Validate ``block``: repair what can be repaired, drop the items that fail.
 
-    Returns the validated dict and ``{"tag.field.path": {"dropped": n, "total": m}}``.
-    Never returns unvalidated data: a block that still fails after pruning
-    becomes the model defaults.
+    Returns the validated dict, ``{"tag.field.path": {"dropped": n, "total": m}}``
+    and the number of field values reset to their default. Never returns
+    unvalidated data: a block that still fails after pruning becomes the model
+    defaults.
     """
     data = copy.deepcopy(block)
     dropped: Counter[str] = Counter()
+    defaulted: Counter[str] = Counter()
     for _ in range(MAX_PRUNE_ROUNDS):
         try:
             validated = model_cls.model_validate(data).model_dump(by_alias=True)
@@ -277,26 +287,36 @@ def validate_block_items(
             if not isinstance(data, dict):
                 break
             errors = exc.errors()
-            if sum(_repair(data, model_cls, err, tag, dropped) for err in errors):
+            if sum(_repair(data, model_cls, err, tag, defaulted) for err in errors):
                 continue
             targets = {t for err in errors if (t := _target(data, err["loc"])) is not None}
             if not targets:
                 break
             _remove(data, targets, tag, dropped)
             continue
-        if dropped:
-            logger.warning("Validation for tag %s dropped invalid items: %s", tag, dict(dropped))
-        return validated, _with_totals(tag, block, dropped)
+        if dropped or defaulted:
+            logger.warning(
+                "Validation for tag %s dropped %s, defaulted %s",
+                tag,
+                dict(dropped),
+                dict(defaulted),
+            )
+        return validated, _with_totals(tag, block, dropped), sum(defaulted.values())
     logger.error("Validation for tag %s still failing after pruning — block reset to defaults", tag)
     dropped[f"{tag}.*"] += 1
-    return _defaults(model_cls), _with_totals(tag, block, dropped)
+    return _defaults(model_cls), _with_totals(tag, block, dropped), sum(defaulted.values())
 
 
-def merge_drop_counts(into: DropCounts, more: Mapping[str, Mapping[str, int]]) -> None:
-    for label, counts in more.items():
-        current = into.setdefault(label, {"dropped": 0, "total": 0})
+def merge_report(
+    into: ValidationReport, dropped: Mapping[str, Mapping[str, int]], defaulted: int
+) -> None:
+    """Add one block's drops and defaulted count to the extraction's report."""
+    totals = into.setdefault("dropped", {})
+    for label, counts in dropped.items():
+        current = totals.setdefault(label, {"dropped": 0, "total": 0})
         current["dropped"] += counts["dropped"]
         current["total"] += counts["total"]
+    into["defaulted"] = into.get("defaulted", 0) + defaulted
 
 
 def mis_targeted_fields(
@@ -317,11 +337,16 @@ def extraction_with_drops(
     extraction: dict[str, Any] | None,
     dropped: Mapping[str, Any],
     mis_targeted: list[str] | None = None,
+    defaulted: int = 0,
 ) -> dict[str, Any] | None:
-    """``pipeline.extraction``: the validated data, plus ``_dropped`` / ``_misTargeted`` when set."""
-    if not isinstance(extraction, dict) or not (dropped or mis_targeted):
+    """``pipeline.extraction``: the validated data plus the run's validation record.
+
+    ``_defaulted`` (fields reset to their default) is written on every run;
+    ``_dropped`` / ``_misTargeted`` only when set.
+    """
+    if not isinstance(extraction, dict):
         return extraction
-    record: dict[str, Any] = {**extraction}
+    record: dict[str, Any] = {**extraction, DEFAULTED_KEY: defaulted}
     if dropped:
         record[DROPPED_KEY] = dict(dropped)
     if mis_targeted:

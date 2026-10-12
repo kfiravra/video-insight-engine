@@ -9,7 +9,11 @@ from typing import TYPE_CHECKING, Any, AsyncGenerator
 from llm_common.context import llm_feature_var
 
 from src.config import settings
-from src.models.domain_validation import mis_targeted_fields
+from src.models.domain_validation import (
+    ValidationReport,
+    extraction_with_drops,
+    mis_targeted_fields,
+)
 from src.models.schemas import ErrorCode, ProcessingStatus
 from src.services.pipeline.extraction_quality import check_extraction_quality
 from src.services.pipeline.extractor import extract
@@ -32,14 +36,16 @@ logger = logging.getLogger(__name__)
 # starts after the plan, so it has nearly always landed. This bounds a
 # straggler: the chunked path then goes on without description timestamps.
 _DESCRIPTION_WAIT_SECONDS = 5.0
-# Extractor event keys that stay server-side: the dropped-item counts go to
-# ``pipeline.extraction._dropped``, never into the SSE contract.
-_INTERNAL_KEYS = frozenset({"event", "droppedItems"})
+# Extractor event keys that stay server-side: the validation report goes to
+# ``pipeline.extraction._dropped/_defaulted``, never into the SSE contract.
+_INTERNAL_KEYS = frozenset({"event", "validation"})
 
 
-def _record_validation_drops(ctx: PipelineContext, dropped: dict[str, dict[str, int]]) -> None:
-    """Keep the validation drops and flag planned fields that lost over half their items."""
+def _record_validation(ctx: PipelineContext, report: ValidationReport) -> None:
+    """Keep the validation report and flag planned fields that lost over half their items."""
+    dropped = report.get("dropped") or {}
     ctx.extraction_dropped = dropped
+    ctx.extraction_defaulted = report.get("defaulted", 0)
     planned = [t.get("dataSource") for t in getattr(ctx.plan_result, "tabs", None) or []]
     ctx.extraction_mis_targeted = mis_targeted_fields(dropped, [p for p in planned if p])
     if ctx.extraction_mis_targeted:
@@ -49,6 +55,16 @@ def _record_validation_drops(ctx: PipelineContext, dropped: dict[str, dict[str, 
             ctx.video_summary_id,
             {f: dropped[f] for f in ctx.extraction_mis_targeted},
         )
+
+
+def extraction_record(ctx: PipelineContext) -> dict[str, Any] | None:
+    """``pipeline.extraction``: the data plus this run's validation record."""
+    return extraction_with_drops(
+        ctx.extraction_data,
+        ctx.extraction_dropped,
+        ctx.extraction_mis_targeted,
+        ctx.extraction_defaulted,
+    )
 
 
 def _record_extraction_coverage(
@@ -265,7 +281,7 @@ async def run_phase_extraction(ctx: PipelineContext) -> AsyncGenerator[str, None
             yield sse_event(event_name, {k: v for k, v in evt.items() if k not in _INTERNAL_KEYS})
             if event_name == "extraction_complete":
                 ctx.extraction_data = evt.get("data")
-                _record_validation_drops(ctx, evt.get("droppedItems") or {})
+                _record_validation(ctx, evt.get("validation") or {})
                 batches_total = evt.get("batches_total")
                 batches_succeeded = evt.get("batches_succeeded")
     except (ValueError, asyncio.TimeoutError) as e:
