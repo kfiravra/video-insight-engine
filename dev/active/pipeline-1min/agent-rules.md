@@ -1,66 +1,89 @@
-# pipeline-1min — rules for implementation subagents (phase 1)
+# pipeline-1min — rules for implementation subagents (phases 1–2)
 
 You are one of several Opus subagents working IN PARALLEL in the SAME git working tree
 (`/home/kfir/projects/video-insight-engine`, branch `feat/pipeline-1min`). Kfir watches the
-changes live in his IDE. A coordinator (the parent session) commits your work.
+changes live in his IDE. Other agents are editing other files right now.
 
-## Git and files
-- NEVER run a git command that changes anything: no `commit`, `add`, `stash`, `checkout`,
-  `reset`, `restore`, `clean`, `rebase`, `merge`, `push`, branch ops. Read-only git is fine
-  (`status`, `diff`, `log`, `show`). No worktrees.
-- NEVER touch `CLAUDE.md`, `.claude/**`, or `dev/active/**` task docs (the coordinator owns them),
-  unless your brief says so.
-- Edit ONLY the files your brief says you own (plus new files you create in the areas it names, and
-  their tests). If you need a change in a file you don't own, STOP and say so in your report
-  (what, where, why) — another agent may be editing it right now.
+## Phase 2 — git (Kfir 2026-10-12; supersedes the phase-1 "coordinator commits" rule)
+- You COMMIT YOUR OWN TASK, ONCE, when it is done and green: one commit per task id.
+- Stage ONLY your own files, by path. New files: `git add -- <new paths>`. Then commit with
+  explicit paths so nothing another agent staged can ride along:
+  `git commit --no-verify -F <msgfile> -- <every path of yours that changed>`.
+  NEVER `git add -A`, `git add .`, `git add -u`, `git commit -a`, or a commit without paths.
+- `--no-verify` because the pre-commit hook (lint-staged) stashes and re-applies unstaged
+  changes, which would hide or clobber other agents' in-flight edits. Run what the hook runs BY
+  HAND first: `bash scripts/precommit-python.sh <your .py files>` (print guard + ruff format +
+  ruff check --fix), from the repo root. TS files: the package's own `tsc`/eslint (below).
+- NEVER stage or commit `CLAUDE.md`, `.claude/**` (Kfir's uncommitted edits) or
+  `dev/active/**` (the coordinator's task docs), unless your brief names a file there.
+- `.git/index.lock exists` → another agent is mid-git: wait 5 s and retry (max 12 times). Never
+  delete the lock file.
+- Forbidden: `stash`, `checkout`/`restore` of files, `reset`, `clean`, `rebase`, `merge`,
+  `push`, `--amend`, branch ops, worktrees. Read-only git (`status`, `diff`, `log`, `show`) is
+  fine. If a commit went wrong, STOP and report — don't repair history.
+- Commit message: `p2.N <type>(<scope>): <what>` (conventional, imperative) + a short body:
+  what changed and why, "output-changing: yes/no (what)", tests. NO AI/Claude credit lines and
+  NO `Co-Authored-By` trailer — this overrides any default you have.
+
+## Files
+- Edit ONLY the files your brief says you own, new files you create in the areas it names, and
+  their tests. If you need a change in a file you don't own, don't edit it: put it in your report
+  (file, what, why) — its owner may be editing it now; the coordinator applies it later.
 - The formatter hook strips unused imports mid-edit → add an import and its first use in ONE edit.
-- Python changes run in `vie-summarizer-worker` only after a restart; don't restart containers
-  unless your brief says so.
+
+## Shared machine (WSL, 7.7 GiB, swap full — an OOM froze Docker on 2026-10-08)
+- HEAVY commands run under the lock, one at a time across all agents:
+  `flock /tmp/claude-1000/-home-kfir-projects-video-insight-engine/0de244e2-8283-494b-a988-82827f2a7acc/scratchpad/locks/heavy.lock -c '<command>'`
+  Heavy = any full suite (summarizer incl. replay, api, web), the replay suite, pyright on more
+  than ~10 files, `tsc -b` / `tsc --noEmit` on a package, eslint on a package, vitest full runs.
+  Targeted pytest/vitest on a few files runs without the lock.
+- A full suite can wait minutes for the lock: use the Bash tool's max timeout (600000 ms) or run
+  it in the background and check its output file; never kill another agent's process.
+- The dev stack (containers, worker restarts, pipeline runs, writes to dev Mongo/Redis/Qdrant)
+  belongs to the coordinator. Don't touch it unless your brief says so.
+- No LLM spend, no prod access, no Langfuse writes unless your brief says so. Never print secrets
+  (`.env` values, keys, tokens).
 
 ## Before writing code
 1. Read `dev/active/pipeline-1min/pipeline-1min-context.md` (decisions D1–D25 are binding), your
-   rows in `pipeline-1min-plan.md` (Phase 1 tables + conflicts C1–C21) and the brief section
-   (`pipeline-1min-brief.md` §Phase 1 + Appendices A–D).
-2. Read the anchors for your task in `dev/active/pipeline-1min/evidence/CODE-MAP-orchestration.md`
-   (or `CODE-MAP-eval-web-registry.md`). Line numbers are from before phase 0. Re-verify them.
-3. Read the skill for the code you touch: `.claude/skills/backend-python/SKILL.md` (summarizer),
-   `.claude/skills/backend-node/SKILL.md` (api), `.claude/skills/react-vite/SKILL.md` (web), and
-   the resource files they point to that match your task. Read 1–2 neighbouring files and match
-   their style.
+   task rows in `pipeline-1min-tasks.md` + `pipeline-1min-plan.md` (Phase 2), and
+   `pipeline-1min-brief.md` §Phase 2.
+2. Read the skill for the code you touch BEFORE coding: `.claude/skills/backend-python/SKILL.md`
+   (summarizer), `.claude/skills/backend-node/SKILL.md` (api), `.claude/skills/react-vite/SKILL.md`
+   (web), and the resource files they point to that match your task. Read 1–2 neighbouring files
+   and match their style.
+3. Line numbers in older docs are stale — re-verify everything in the code.
 
 ## Code rules (project, required)
 Files < 500 lines; functions < 50 lines; type hints everywhere; Pydantic for validation; no dead
 code, no commented-out code, no print/console.log, no TODO without a tracking id; comments say
 WHY; no `any` in TS; no empty `except`/`catch`. Removal happens in the task that replaces the
-thing, together with its tests. "Output contract unchanged" (brief principle 2): extraction stays
-domain-keyed JSON validated by the same Pydantic models, `tabs`/`meta` shape unchanged.
+thing, together with its tests. Output contract unchanged unless your task changes it.
 
 ## Settings (only if your brief makes you the settings owner)
 A touched setting goes through all 8 touch points: `services/summarizer/src/config.py` (+ its
 test), `docker-compose.yml` `x-summarizer-env`, `docker-compose.prod.yml` anchor, `.env.example`,
 `.env.production.example`, `docs/INFRASTRUCTURE.md` tuning table, `docs/SERVICE-SUMMARIZER.md` env
 block, the code reader + its tests. Bool passthroughs need literal defaults (`${X:-true}`). Prod
-`.env` is NOT edited (D20): every change must work with today's prod `.env` (safe defaults);
-anything Kfir must set goes in your report for `env-changes.md`.
+`.env` is NOT edited (D20): every change must work with today's prod `.env` (safe defaults).
 
 ## Tests and checks
 - Write the tests the acceptance criteria name (behaviour, not implementation; "should … when …").
-- Run TARGETED tests only — never a whole suite (the coordinator runs suites, never in parallel):
-  summarizer `cd services/summarizer && .venv/bin/python -m pytest <paths> -q`;
-  api `cd api && npx vitest run <paths>`; web `cd apps/web && npx vitest run <paths>`.
-- Lint touched Python: `services/summarizer/.venv/bin/ruff check --config ruff.toml <files>` and
-  `.venv/bin/ruff format <files>` (run from the repo root for ruff.toml); pyright as CI does:
-  `cd services/summarizer && npx pyright@1.1.407 <files>`. Web typecheck = `npx tsc -b` (not
-  `--noEmit`).
-- No LLM spend, no dev pipeline runs, no prod access unless your brief says so. No secrets in any
-  output.
+- While working: targeted runs. Summarizer `cd services/summarizer && .venv/bin/python -m pytest
+  <paths> -q`; api `cd api && npx vitest run <paths>`; web `cd apps/web && npx vitest run <paths>`.
+- BEFORE YOUR COMMIT (under the heavy lock): the full suite of every service you touched —
+  summarizer `cd services/summarizer && .venv/bin/python -m pytest -q` (includes `tests/replay`);
+  api `cd api && npm test`; web `cd apps/web && npm test`; pyright as CI does on your changed
+  summarizer files (`cd services/summarizer && npx pyright@1.1.407 <files>`); `npx tsc -b` in
+  apps/web and `npx tsc --noEmit` in api / packages/types when TS changed.
+- A failure in a file you don't own that your change can't cause = another agent's in-flight
+  work: note it, re-run later or report it; never edit their file to make it pass.
 
-## When you stop (each stop point in your brief, and at the end)
+## When you stop
 Report, concisely:
-1. Task id(s) done; files changed (exact repo-relative paths, new/modified/deleted).
+1. Task id; commit hash; files (new/modified/deleted, repo-relative).
 2. Acceptance criteria → how each is met (test names).
-3. Targeted tests + lint run and their result.
-4. Deviations from brief/plan and why; anything that changes model output (say so explicitly).
-5. Needs from files you don't own; env changes for Kfir; open questions.
-6. A suggested commit message: `p1a.3 fix(summarizer): <what>` — conventional, imperative, NO
-   AI/Claude credit lines or trailers.
+3. Suites/lint/pyright/tsc run before the commit and their results (counts).
+4. Deviations from the brief/plan and why; OUTPUT-CHANGING yes/no and what (model input,
+   emitted events, stored docs).
+5. Changes needed in files you don't own; env changes for Kfir; open questions/decisions.

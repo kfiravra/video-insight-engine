@@ -1,11 +1,11 @@
 # pipeline-1min — Context
 
-Last Updated: 2026-10-12 — ✅ PHASE 1 CLOSED (PR #23/#24/#25 on prod). Next: phase 2 (2.0 first). Live docs in the main tree (branch `feat/pipeline-1min`). Phase 0 merged (PR #22).
+Last Updated: 2026-10-12 — 🔄 PHASE 2 IN PROGRESS (2.0 ∥ 2.1 ∥ 2.3, then 2.2). Phase 1 closed (PR #23/#24/#25 on prod; PR #26 test+docs on main bf4406a, not deployed — CI cancelled). Live docs in the main tree (branch `feat/pipeline-1min`). Phase 0 merged (PR #22).
 
-## RESUME HERE (phase 1 run state)
-- **2026-10-12 state: PHASE 1 CLOSED** — PR #23 (phase 1), #24 (hotfix 2.1), #25 (close-out) on prod, main e20240e. T1dQhQAm8Tc prod v8: 4 tabs, 116.7 s, hero 15.7 s. NEXT = phase 2 from tasks.md, starting with **2.0** (plan static block 1h cache + LiteLLM ttl check + static-first synthesis/quiz/description prompts), then 2.1 (incl. Moments tab always exists), 2.2, 2.3 (caption-based non-English RAG); one quick golden after 2.0 and 2.3 (concurrency ≤ 3). Local unpushed: 7d66f33 (flaky DailyLimitCallout test). Eval user deferred to phase 4.
-- Rules for this run: top of `pipeline-1min-tasks.md` (local commits per task id without asking; never push; never stage CLAUDE.md / .claude/**; main tree only, no worktrees).
-- Execution model (phases 2–4 too): parallel Opus subagents following `agent-rules.md`; the coordinator commits (stage by path; a file shared by two in-flight tasks is staged hunk-wise via `git hash-object -w` + `git update-index --cacheinfo`; TS-only commits with partial files use `--no-verify` so lint-staged doesn't hide other agents' in-flight edits).
+## RESUME HERE (phase 2 run state)
+- **2026-10-12: PHASE 2 RUNNING** — rules at the top of `pipeline-1min-tasks.md` (Kfir: all four tasks to the end; 2.0/2.1/2.3 parallel, 2.2 after 2.1's commit; one commit per task id; quick golden alone at concurrency 3; then `/review` on all local commits since `origin/feat/pipeline-1min` → fixes → suites + replay → `gates/g2.md`; review-fixes + g2.md = last commit; STOP — no push/PR/phase 3). Progress = tasks.md log. Eval user deferred to phase 4.
+- Execution model, phase 2 (Kfir 2026-10-12): parallel Opus subagents following `agent-rules.md` (phase-2 section); EACH AGENT COMMITS ITS OWN TASK ID (stage own paths, `git commit --no-verify -- <paths>` after running `scripts/precommit-python.sh` by hand — lint-staged's stash would hide other agents' in-flight edits); the coordinator commits docs, the review fixes and g2.md, runs the dev stack (worker restarts, dev runs, golden) and registers prompts. File ownership per task is in each brief; a file needed by two tasks has ONE owner, the other reports the change. Heavy commands (full suites, replay suite, pyright on many files, `tsc -b`, dev runs) run under `flock` on `<scratchpad>/locks/heavy.lock` — never two at once (WSL memory).
+- Phase 1 execution model (kept for reference): the coordinator committed (stage by path; a file shared by two in-flight tasks staged hunk-wise via `git hash-object -w` + `git update-index --cacheinfo`; partial-tree commits with `--no-verify`).
 - Phase-1 review artefacts: `review-p1.md` (recipe + 23 groups), `gates/g1-review-findings.md` (findings), `review-fixes-p1.md` (FX1–FX8 briefs). Deferred items for phase 4 are listed at the end of g1.md.
 
 ## Why this task exists
