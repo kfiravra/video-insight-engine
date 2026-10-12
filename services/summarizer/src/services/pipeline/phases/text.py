@@ -17,9 +17,9 @@ still do (pipeline-1min 1b, brief §2):
 5. reconcile at plan-done (3.2): the memory's second opinion over the planned
    tabs, then ``triage_complete`` + ``meta`` on the reconciled plan;
 6. the ``<video_memory>`` block, rendered once for every writer's
-   ``{video_context}`` slot from the reconciled tabs.
-
-Extraction still waits for the whole group (plan AND frames).
+   ``{video_context}`` slot from the reconciled tabs — then ``ctx.plan_done``:
+   the split extraction's text groups fire from here (3.4); today's single
+   call still waits for the whole group (plan AND frames).
 """
 
 from __future__ import annotations
@@ -63,7 +63,20 @@ def _with_reader_evidence(plan: PlanResult) -> PlanResult:
 
 
 async def run_phase_text(ctx: PipelineContext) -> AsyncGenerator[str, None]:
-    """Transcript, then the probe, then plan ∥ memory, reconcile, ``ctx.video_memory``."""
+    """Transcript, then the probe, then plan ∥ memory, reconcile, ``ctx.video_memory``.
+
+    ``ctx.plan_done`` is set however the branch ends, so nothing waiting on it
+    (the frames-done hook, the split extraction) can hang; a branch that failed
+    leaves no plan, and the group is being cancelled by then anyway.
+    """
+    try:
+        async for event in _text_branch(ctx):
+            yield event
+    finally:
+        ctx.plan_done.set()
+
+
+async def _text_branch(ctx: PipelineContext) -> AsyncGenerator[str, None]:
     with timed_step("transcript"):
         async for event in after_captions(run_phase_transcript)(ctx):
             yield event

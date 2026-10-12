@@ -20,7 +20,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any, overload
@@ -202,6 +202,13 @@ class _Request:
     json_mode: bool
     temperature: float | None
     system_prompt: str | None
+    # Streams every attempt (the split extraction's warm-up call); fast-model
+    # calls are never streamed, so asking for it there is a programming error.
+    on_first_chunk: Callable[[], None] | None = None
+
+    def __post_init__(self) -> None:
+        if self.on_first_chunk is not None and self.use_fast_model:
+            raise ValueError("call_llm_with_retry: on_first_chunk needs a primary-model call")
 
 
 @dataclass(frozen=True)
@@ -296,6 +303,8 @@ async def _send(attempt: _Attempt, request: _Request) -> str:
         "temperature": request.temperature,
         "system_prompt": request.system_prompt,
     }
+    if request.on_first_chunk is not None:
+        common["on_first_chunk"] = request.on_first_chunk
     if request.use_fast_model:
         return await attempt.service.call_llm_fast(prompt, **common)
     return await attempt.service.call_llm(prompt, **common)
@@ -383,6 +392,7 @@ async def call_llm_with_retry(
     model_override: str | None = None,
     temperature: float | None = None,
     system_prompt: str | None = None,
+    on_first_chunk: Callable[[], None] | None = None,
 ) -> str | None:
     """Call LLM with timeout, retry and cross-provider fallback. Returns raw string or None.
 
@@ -407,6 +417,7 @@ async def call_llm_with_retry(
             the ``model_override`` and fallback paths); ``None`` sends none.
         system_prompt: System text; it never carries a cache breakpoint (a
             caller that wants one marks a user block, ``llm_messages.text_block``).
+        on_first_chunk: Stream every attempt, calling this at its first chunk.
 
     Returns:
         Raw LLM response string, or None if all attempts failed.
@@ -423,6 +434,7 @@ async def call_llm_with_retry(
         json_mode=json_mode,
         temperature=temperature,
         system_prompt=system_prompt,
+        on_first_chunk=on_first_chunk,
     )
     attempts = _plan_attempts(llm_service, use_fast_model, max_retries)
     text, last_rate_limit = await _run_attempts(attempts, request)

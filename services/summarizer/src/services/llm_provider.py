@@ -8,7 +8,7 @@ attempt is recorded under the model that actually answered.
 
 import logging
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any
 
 from litellm import acompletion
@@ -29,6 +29,7 @@ from src.services.llm_messages import (
     prepare_for_model,
     to_message_dicts,
 )
+from src.services.llm_streaming import stream_completion
 from src.services.llm_telemetry import record_generation, stopwatch_ms_since
 from src.services.pipeline.pipeline_timing import record_llm_call, record_llm_failure
 
@@ -195,6 +196,34 @@ class LLMProvider:
         else:
             logger.error("LLM call failed%s (%s): %s", ctx, type(e).__name__, e)
 
+    async def _send(
+        self,
+        kwargs: dict[str, Any],
+        on_first_chunk: Callable[[], None] | None,
+        *,
+        context: str,
+        span_name: str | None,
+        attempt: int,
+    ) -> tuple[Any, int | None]:
+        """One request and its time to first chunk (only known when streamed).
+
+        Streamed only when the caller asked for its first chunk; every other
+        request goes out as the plain ``acompletion(**kwargs)`` it always was.
+        """
+        logged: dict[str, Any] = {
+            "model": kwargs["model"],
+            "timeout_value": kwargs["timeout"],
+            "context": context,
+            "span_name": span_name,
+            "attempt": attempt,
+        }
+        if on_first_chunk is None:
+            return await self._call_with_error_logging(acompletion(**kwargs), **logged), None
+        streamed = await self._call_with_error_logging(
+            stream_completion(acompletion, kwargs, on_first_chunk), **logged
+        )
+        return streamed.response, streamed.ttft_ms
+
     async def _run_completion(
         self,
         kwargs: dict[str, Any],
@@ -202,19 +231,15 @@ class LLMProvider:
         span_name: str | None,
         span_metadata: dict[str, Any] | None,
         context: str = "",
+        on_first_chunk: Callable[[], None] | None = None,
     ) -> str:
         """Send one ``acompletion`` request; record timing and the Langfuse generation."""
         model = kwargs["model"]
         kwargs["messages"] = prepare_for_model(kwargs["messages"], model)
         attempt = _attempt_of(span_metadata)
         start_monotonic = time.monotonic()
-        response = await self._call_with_error_logging(
-            acompletion(**kwargs),
-            model=model,
-            timeout_value=kwargs["timeout"],
-            context=context,
-            span_name=span_name,
-            attempt=attempt,
+        response, ttft_ms = await self._send(
+            kwargs, on_first_chunk, context=context, span_name=span_name, attempt=attempt
         )
         latency_ms = stopwatch_ms_since(start_monotonic)
         record_llm_call(
@@ -225,6 +250,7 @@ class LLMProvider:
             latency_ms=latency_ms,
             attempt=attempt,
             fallback_used=_is_fallback_attempt(span_metadata),
+            ttft_ms=ttft_ms,
         )
         choice = response.choices[0]
         if choice.finish_reason == "length":
@@ -259,6 +285,7 @@ class LLMProvider:
         span_name: str | None = None,
         span_metadata: dict[str, Any] | None = None,
         temperature: float | None = None,
+        on_first_chunk: Callable[[], None] | None = None,
     ) -> str:
         """Generate completion from prompt.
 
@@ -272,6 +299,8 @@ class LLMProvider:
             metadata: Optional metadata for tracking (user_id, feature, etc.)
             json_mode: Request JSON-only output
             temperature: Sampling temperature; ``None`` sends none (provider default).
+            on_first_chunk: Stream the reply and call this at its first chunk
+                (``llm_streaming``); ``None`` sends the request unstreamed.
 
         Returns:
             Generated text content
@@ -286,6 +315,7 @@ class LLMProvider:
             span_name=span_name,
             span_metadata=span_metadata,
             temperature=temperature,
+            on_first_chunk=on_first_chunk,
         )
 
     async def complete_fast(
@@ -346,8 +376,9 @@ class LLMProvider:
         span_name: str | None = None,
         span_metadata: dict[str, Any] | None = None,
         temperature: float | None = None,
+        on_first_chunk: Callable[[], None] | None = None,
     ) -> str:
-        """Generate completion from message list.
+        """Generate completion from message list; returns the generated text.
 
         Args:
             messages: List of messages (dict or Message objects). Content may be
@@ -363,9 +394,7 @@ class LLMProvider:
                 failures are swallowed.
             span_metadata: Extra metadata merged into the generation span.
             temperature: Sampling temperature; ``None`` sends none (provider default).
-
-        Returns:
-            Generated text content
+            on_first_chunk: Stream the reply, calling this at its first chunk.
         """
         effective_model = self._fast_model if use_fast_model else self._model
         kwargs: dict[str, Any] = {
@@ -383,6 +412,7 @@ class LLMProvider:
             _with_sampling(kwargs, temperature),
             span_name=span_name,
             span_metadata=span_metadata,
+            on_first_chunk=on_first_chunk,
         )
 
 

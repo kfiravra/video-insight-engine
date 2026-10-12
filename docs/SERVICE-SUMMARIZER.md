@@ -129,6 +129,7 @@ services/summarizer/
     │   ├── memory.txt            # Memory prompt (outline, evidence, tldr, takeaways)
     │   ├── component_toolkit.txt # Component descriptions + datasource paths (injected into plan/triage). Density table is generated from domains.json `densityGates` via `{density_gates}` placeholder
     │   ├── base_extraction.txt   # Extraction template: <rules> / <video> (cached) / <your_job>
+    │   ├── extraction_group_job.txt # Split extraction (EXTRACTION_PARALLEL): one field group's <your_job> (emit-only keys + shape, tabs it serves; visual group: annotations + key frames)
     │   ├── tier_probe.txt        # Tier-probe prompt (14 domains + 18 formats incl. unboxing, has_visual_demo, transcript_usable — domains.json is the source)
     │   ├── chapter_detect.txt    # AI chapter detection prompt (fast model)
     │   ├── quality_rules.txt     # JSON extraction quality rules
@@ -223,7 +224,7 @@ FRAME_VISION_PARALLEL=true             # Vision in parallel batches; false = one
 LLM_VISION_MODEL=                      # Blank = the primary model (Sonnet), which vision stays on
 
 # Extraction concurrency + chunking
-EXTRACTION_PARALLEL=true               # Chunked batches run in parallel; false = one batch at a time
+EXTRACTION_PARALLEL=true               # Field groups (text at plan-done, visual at frames-done); false = today's single call / chunked batches one at a time
 EXTRACTION_PARALLEL_BATCHES=6          # Max extraction calls in flight per run (× WORKER_CONCURRENCY per worker); drop to 4 if pipeline.timing records 429s
 CHUNKED_EXTRACTION_THRESHOLD=900       # Videos longer than this (s) may split the transcript into chapter batches
 MAX_TOKENS_PER_BATCH=50000             # One batch's estimated transcript tokens
@@ -445,6 +446,15 @@ A plan-first pipeline: ~6-7 text calls (description analysis, tier probe, plan �
     │   judge's transcript part read speech only. Readers: extraction (sliced per batch),
     │   the faithfulness judge, `source="visual"` Qdrant points. Timing step `visual_inject`
     │   (name kept). Replaces Phase 2.5 `inject_visual_context`.
+    │   Split path (`EXTRACTION_PARALLEL`, 3.4): extraction is a member of the phase-2 group
+    │   (`phases/split_extraction.py` — text groups at plan-done, the visual group at
+    │   frames-done; `phases/frames_done.py` renders the annotations + decides deferred code
+    │   tabs once frames AND plan are done). `pipeline.timing` then reads: `transcript_frames`
+    │   spans the extraction too; `split_extraction` = the member (from the group's start),
+    │   `extraction` = plan-done → last group landed (the DONE log's `extraction=`); `frames`
+    │   includes its wait for plan-done and the `visual_inject` step; group calls are
+    │   `llmCalls` spans `extraction_<group>` (`_c<k>` per later chunk), the streamed warm-up
+    │   call with `ttftMs`.
 
  5. EXTRACTION (one pass, json_mode; LLM_EXTRACTION_MODEL)
     └─▶ Prompt (pipeline/extraction_prompt.py): system = the rules (no per-video text);
@@ -1076,8 +1086,8 @@ Chapters from 1–3 longer than `MAX_MINUTES_PER_BATCH` are subdivided.
 ### Batched Extraction (`extractor.py`)
 
 - Groups chapters into batches of ≤50K tokens (`batch_chapters()`)
-- Parallel extraction per batch with `asyncio.Semaphore(EXTRACTION_PARALLEL_BATCHES)` (default 6); `EXTRACTION_PARALLEL=false` runs one batch at a time
-- Single-batch chunked input is force-split into `EXTRACTION_FORCE_SPLIT_CHUNKS` sub-batches (default 4) so parallelism still engages on long single-chapter videos; falls back to overflow only when the split also yields one chunk
+- `extractor.py` serves only today's path (`EXTRACTION_PARALLEL=false`), and there the batches run one at a time; `true` runs the phase-3 field groups instead (`phases/split_extraction.py`), whose calls share the run's `EXTRACTION_PARALLEL_BATCHES` semaphore
+- Single-batch chunked input is force-split into `EXTRACTION_FORCE_SPLIT_CHUNKS` sub-batches (default 4) so a long single-chapter video is not one huge call (on this path they run one after another); falls back to overflow only when the split also yields one chunk
 - Force-split bypasses `batch_chapters()`: `_resolve_strategy` returns `one_chunk_per_batch=True` and `_chunked_extraction` builds `batches=[[c] for c in chunks]` so the sub-batches don't re-collapse under `MAX_TOKENS_PER_BATCH`
 - **Batch-aware prompt**: each batch sends its own transcript slice in the cached head block and, in the job block, a `<batch_partial_context>` block from `_build_batch_context(batch_idx, total_batches, batch, full_duration_seconds)` — it tells the model it sees only a slice of the video and to `Return EMPTY arrays for fields not present in your segment — other batches cover them` — plus the batch's own slice of the visual annotations (no guide block when the slice is empty). Different slices mean batches share no cached prefix
 - Per-batch progress streamed via `asyncio.Queue` → SSE `extraction_progress` with `batch`/`of`
@@ -1125,8 +1135,8 @@ Hard character limit per model before every LLM call:
 | `CHUNKED_EXTRACTION_THRESHOLD` | 900 (15 min) | Duration threshold for chunked path |
 | `MAX_TOKENS_PER_BATCH` | 50000 | Max tokens per extraction batch |
 | `MAX_MINUTES_PER_BATCH` | 40 | Max minutes of video per extraction batch |
-| `EXTRACTION_PARALLEL` | True | Chunked batches run in parallel; False = one batch at a time |
-| `EXTRACTION_PARALLEL_BATCHES` | 6 | Semaphore bound for parallel chunked batches — per run, so a worker holds up to this × `WORKER_CONCURRENCY` calls |
+| `EXTRACTION_PARALLEL` | True | True: field groups (text groups at plan-done, the visual group at frames-done); False: today's single call / chunked batches one at a time |
+| `EXTRACTION_PARALLEL_BATCHES` | 6 | Max split-extraction group calls in flight — per run, so a worker holds up to this × `WORKER_CONCURRENCY` calls (today's path runs its batches one at a time) |
 | `EXTRACTION_FORCE_SPLIT_CHUNKS` | 4 | Sub-batches when chunked input collapses to 1 batch |
 
 ### Key Files

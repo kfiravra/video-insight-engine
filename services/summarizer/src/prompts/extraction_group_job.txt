@@ -1,0 +1,24 @@
+<your_job>
+{batch_context}{emit_only}
+Each key follows its schema in <schema>; other calls extract every other key.
+Tabs you serve:
+{tabs_to_serve}
+{content_emphasis}
+An empty array is correct when the video has no such content.
+</your_job>
+
+<visual_context_guide>
+<visual_annotations> lists what was on screen, one line per frame: [m:ss] caption | on-screen text — on the same clock as the transcript markers.
+- Use it for content the speaker references but doesn't fully verbalize
+- For code tutorials the on-screen text carries the actual code — extract it
+- If the speaker and the screen conflict, trust the screen
+</visual_context_guide>
+
+{visual_annotations}
+
+<key_frames>
+Captioned keyframes sampled from the video (timestamp — caption [scene type]).
+Use these to ground visual claims, name on-screen artifacts, and decide whether a
+filmstrip / diagram is warranted. Do NOT invent frames that aren't listed.
+{frame_context}
+</key_frames>

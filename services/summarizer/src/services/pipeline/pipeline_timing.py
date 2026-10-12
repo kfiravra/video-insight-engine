@@ -15,7 +15,9 @@ served from its cache (Anthropic ``cache_read_input_tokens``, OpenAI
 ``prompt_tokens_details.cached_tokens``); ``cacheWriteTokens`` = tokens written
 (Anthropic only — OpenAI reports no writes), split by lifetime into
 ``cacheWrite5mTokens`` / ``cacheWrite1hTokens`` when the provider reports it.
-``inputTokens`` is the whole prompt, cached tokens included.
+``inputTokens`` is the whole prompt, cached tokens included. ``ttftMs`` = time
+to the first streamed chunk (the split extraction's warm-up call); null for
+every unstreamed call.
 """
 
 from __future__ import annotations
@@ -39,7 +41,8 @@ logger = logging.getLogger(__name__)
 
 # 2: llmCalls carry the 1h/5m cache-write split, and cacheReadTokens counts
 # OpenAI cached input too (always 0 for OpenAI calls in version 1).
-TIMING_SCHEMA_VERSION = 2
+# 3: llmCalls carry ttftMs (pipeline-1min 3.4).
+TIMING_SCHEMA_VERSION = 3
 
 # SSE event name → milestone key. First occurrence wins. firstTabReadyMs is
 # the first tab_ready of any kind (since 2.1 the provisional Moments tab).
@@ -258,11 +261,13 @@ def record_llm_call(
     latency_ms: int,
     attempt: int = 1,
     fallback_used: bool = False,
+    ttft_ms: int | None = None,
 ) -> None:
     """Record one successful completion. Never raises.
 
     ``fallback_used`` marks an answer from the cross-provider fallback model
     (``model`` is then the fallback — the model that actually answered).
+    ``ttft_ms``: time to the first chunk of a streamed call (None otherwise).
     """
     recorder = _recorder_var.get()
     if recorder is None:
@@ -286,10 +291,19 @@ def record_llm_call(
                 "attempt": attempt,
                 "fallbackUsed": fallback_used or is_fallback_response(model, response_model),
                 "finishReason": getattr(choices[0], "finish_reason", None),
+                "ttftMs": ttft_ms,
             }
         )
     except Exception as exc:  # noqa: BLE001 — timing must never break a call
         logger.debug("Timing LLM record skipped (span=%s): %s", span, exc)
+
+
+def span_output_tokens(span: str) -> int:
+    """Output tokens the run's successful calls under ``span`` produced (0 outside a run)."""
+    recorder = _recorder_var.get()
+    if recorder is None:
+        return 0
+    return sum(c.get("outputTokens", 0) for c in recorder.llm_calls if c.get("span") == span)
 
 
 def record_llm_failure(
@@ -365,6 +379,7 @@ def record_transcription_call(
             "costUsd": cost_usd,
             "fallbackUsed": False,
             "finishReason": None,
+            "ttftMs": None,
         }
     )
 

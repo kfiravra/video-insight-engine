@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 
 import pytest
 
+from src.models.pipeline_types import PlanResult
 from src.services.pipeline.field_groups import ExtractionGroup, build_groups, visual_group
 from src.services.pipeline.field_requests import FieldReason, FieldRequest, requested_fields
+from src.services.pipeline.plan import _normalize_plan_data
+from src.services.pipeline.reconcile import reconcile_plan
 from src.services.pipeline.schema_fields import scalar_fields
 from src.shared_config.domain_config import GroupingConfig, grouping_config
+from src.utils.json_parsing import parse_json_response
 from tests.test_field_requests import _request, _tab
 
 
@@ -221,24 +224,21 @@ class TestVisualGroup:
 
 _CASSETTES = Path(__file__).parent / "replay" / "cassettes"
 
-# Plan-parse re-point (plan_reconcile, design §4): jMq8's key_moments reads
-# learning.timestamps on a food-only plan → food.steps. Hard-coded while plan.py
-# is 3.2's in-flight file; 3.4 switches this to `_normalize_plan_data` + reconcile.
-_PLAN_PARSE_REPOINTS: dict[str, dict[str, str]] = {"jMq8lEu-of0": {"key_moments": "food.steps"}}
+
+def _span_output(cassette: dict, span: str) -> str:
+    return next(e["output"] for e in cassette["llm"] if e["span"] == span)
 
 
-def _recorded_plan(video_id: str) -> dict:
-    """The cassette's recorded plan JSON with the plan-parse re-point applied to its tabs."""
+def _reconciled_plan(video_id: str) -> PlanResult:
+    """The cassette's recorded plan through today's parse (``_normalize_plan_data``: registry
+    check + plan-parse guard, e.g. jMq8's key_moments re-pointed to food.steps) and reconcile
+    at plan-done, with the probe's recorded format. The recorded memory carries no evidence,
+    which reconcile reads as no opinion — the same as no memory."""
     cassette = json.loads((_CASSETTES / f"{video_id}.json").read_text())
-    output = next(e["output"] for e in cassette["llm"] if e["span"] == "plan")
-    match = re.search(r"\{.*\}", output, re.S)
-    assert match is not None
-    plan = json.loads(match.group())
-    repoint = _PLAN_PARSE_REPOINTS.get(video_id, {})
-    plan["tabs"] = [
-        {**t, "dataSource": repoint.get(t["id"], t["dataSource"])} for t in plan["tabs"]
-    ]
-    return plan
+    content_format = json.loads(_span_output(cassette, "tier_probe"))["format"]
+    data = parse_json_response(_span_output(cassette, "plan"))
+    _normalize_plan_data(data, content_format)
+    return reconcile_plan(PlanResult.model_validate(data), None, content_format)
 
 
 class TestCassetteCompositions:
@@ -263,15 +263,15 @@ class TestCassetteCompositions:
         ],
     )
     def test_should_group_the_recorded_plan_as_designed(self, video_id: str, expected: str) -> None:
-        plan = _recorded_plan(video_id)
+        plan = _reconciled_plan(video_id)
         fields = requested_fields(
-            plan["tabs"],
-            plan["contentTags"],
-            plan.get("modifiers") or [],
+            plan.tabs,
+            plan.content_tags,
+            plan.modifiers,
             scalar_fields,
-            primary_tag=plan["primaryTag"],
+            primary_tag=plan.primary_tag,
         )
 
-        groups = build_groups(fields, plan["tabs"], grouping_config())
+        groups = build_groups(fields, plan.tabs, grouping_config())
 
         assert _layout(groups) == expected

@@ -7,6 +7,7 @@ for all LLM interactions.
 
 import asyncio
 import logging
+from collections.abc import Callable
 from typing import Any
 
 from src.config import settings
@@ -96,6 +97,7 @@ class LLMService:
         span_metadata: dict[str, Any] | None = None,
         temperature: float | None = None,
         system_prompt: str | None = None,
+        on_first_chunk: Callable[[], None] | None = None,
     ) -> str:
         """Make an async LLM call.
 
@@ -109,6 +111,8 @@ class LLMService:
             span_metadata: Extra metadata merged into the generation span.
             temperature: Sampling temperature; ``None`` sends none (provider default).
             system_prompt: Optional system prompt (never carries a cache breakpoint).
+            on_first_chunk: Stream the reply, calling this at its first chunk;
+                ``timeout`` bounds the whole stream.
 
         Returns:
             Generated text content
@@ -117,6 +121,10 @@ class LLMService:
             TimeoutError: If LLM call exceeds timeout
         """
         effective_timeout = timeout if timeout is not None else settings.LLM_TIMEOUT_SECONDS
+        # Forwarded only when set, so every other call reaches the provider unchanged.
+        streamed: dict[str, Any] = (
+            {"on_first_chunk": on_first_chunk} if on_first_chunk is not None else {}
+        )
         async with asyncio.timeout(effective_timeout):
             return await self._provider.complete(
                 prompt,
@@ -127,4 +135,5 @@ class LLMService:
                 span_metadata=span_metadata,
                 temperature=temperature,
                 system_prompt=system_prompt,
+                **streamed,
             )

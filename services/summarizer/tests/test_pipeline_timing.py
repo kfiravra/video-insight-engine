@@ -22,6 +22,7 @@ from src.services.pipeline.pipeline_timing import (
     record_download,
     record_llm_call,
     record_llm_failure,
+    span_output_tokens,
     start_run_timing,
     timed_step,
 )
@@ -184,6 +185,54 @@ class TestRecordLlmCall:
         assert (call["cacheReadTokens"], call["attempt"], call["wallMs"]) == (800, 2, 2500)
 
 
+class TestStreamedCalls:
+    """3.4: the split extraction's warm-up call is streamed (schema v3)."""
+
+    def test_should_record_ttft_ms_when_the_call_was_streamed(
+        self, recorder: PipelineTimingRecorder
+    ) -> None:
+        record_llm_call(
+            span="extraction_text1",
+            model="anthropic/claude-haiku-4-5",
+            response=_response(),
+            start_monotonic=time.monotonic(),
+            latency_ms=9000,
+            ttft_ms=840,
+        )
+
+        assert recorder.llm_calls[0]["ttftMs"] == 840
+
+    def test_should_record_a_null_ttft_when_the_call_was_not_streamed(
+        self, recorder: PipelineTimingRecorder
+    ) -> None:
+        record_llm_call(
+            span="plan", model="m", response=_response(), start_monotonic=0.0, latency_ms=1
+        )
+
+        assert recorder.llm_calls[0]["ttftMs"] is None
+
+    def test_should_sum_a_spans_output_tokens_when_it_answered_twice(
+        self, recorder: PipelineTimingRecorder
+    ) -> None:
+        for completion in (30, 12):
+            record_llm_call(
+                span="extraction_text2",
+                model="m",
+                response=_response(completion=completion),
+                start_monotonic=0.0,
+                latency_ms=1,
+            )
+
+        assert span_output_tokens("extraction_text2") == 42
+
+    def test_should_count_no_output_tokens_outside_a_run(self) -> None:
+        token = pipeline_timing._recorder_var.set(None)
+        try:
+            assert span_output_tokens("extraction_text1") == 0
+        finally:
+            pipeline_timing._recorder_var.reset(token)
+
+
 class TestRecordFailureAndDownload:
     def test_should_count_rate_limits(self, recorder: PipelineTimingRecorder) -> None:
         record_llm_failure(
@@ -279,6 +328,7 @@ _LLM_CALL_KEYS = {
     "attempt",
     "fallbackUsed",
     "finishReason",
+    "ttftMs",
 }
 
 

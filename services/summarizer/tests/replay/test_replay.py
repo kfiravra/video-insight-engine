@@ -15,7 +15,9 @@ import pytest
 from src.services.pipeline import prompt_builder
 from src.services.transcription import transcript_chunker
 from tests.replay.cassette import Cassette, available_cassettes
+from tests.replay.conftest import SPLIT_EXTRACTION
 from tests.replay.driver import ReplayResult, run_replay
+from tests.replay.group_synth import EXTRACTION_KEY
 from tests.replay.report import PhaseRow, out_of_tolerance, phase_rows
 
 _REFERENCE_VIDEO = "T1dQhQAm8Tc"
@@ -28,6 +30,8 @@ _TOP_LEVEL_PHASES = (
     "assembly",
     "synthesis",
     "moment_fill",
+    # The split extraction is a phase-2 member (3.4); "extraction" is its firing.
+    *(("split_extraction",) if SPLIT_EXTRACTION else ()),
 )
 _FRAMES_SUBSTEPS = ("frames.scene_detect", "frames.score_select", "frames.hires", "frames.upload")
 _MILESTONES = (
@@ -68,7 +72,15 @@ _PHASES_CHANGED_SINCE_RECORDING: dict[str, str] = {
     "transcript_frames": "1d.4: vision runs as parallel batches (the recording made one call)",
     "synthesis_enrichment": "1d.1/1d.3: the quiz runs alone; synthesis moved into assembly",
     "total (complete)": "the sum of the changes above",
+    **(
+        {"extraction": "3.4: field groups from plan-done replace the single call (synthesized)"}
+        if SPLIT_EXTRACTION
+        else {}
+    ),
 }
+# Split mode answers every group from the recorded single call, which is then
+# never requested itself (the identity test replays it with the flag off).
+_UNUSED_BY_DESIGN = [EXTRACTION_KEY.label()] if SPLIT_EXTRACTION else []
 
 
 def _expected_tab_ids(cassette: Cassette) -> list[str]:
@@ -94,7 +106,7 @@ class TestReplayAtSpeedZero:
         assert replays[video_id].llm_misses == []
 
     def test_should_use_every_recorded_llm_call(self, replays: dict, video_id: str) -> None:
-        assert replays[video_id].llm_unused == []
+        assert replays[video_id].llm_unused == _UNUSED_BY_DESIGN
 
     def test_should_request_recorded_models(self, replays: dict, video_id: str) -> None:
         assert replays[video_id].llm_model_mismatches == []
@@ -129,8 +141,10 @@ class TestPipelineTimingRecord:
     def test_should_record_one_llm_call_per_cassette_entry(
         self, replays: dict, cassettes: dict, video_id: str
     ) -> None:
-        calls = (replays[video_id].timing or {}).get("llmCalls", [])
-        assert len(calls) == len(cassettes[video_id].llm)
+        result = replays[video_id]
+        calls = (result.timing or {}).get("llmCalls", [])
+        expected = len(cassettes[video_id].llm) - len(_UNUSED_BY_DESIGN) + result.group_calls
+        assert len(calls) == expected
 
     def test_should_record_lowres_download(self, replays: dict, video_id: str) -> None:
         downloads = (replays[video_id].timing or {}).get("downloads", [])

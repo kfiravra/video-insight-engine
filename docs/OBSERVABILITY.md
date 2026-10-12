@@ -66,7 +66,7 @@ In the Langfuse UI:
 ### Prompt cache
 
 - **Langfuse**: an Anthropic generation that wrote or read the prompt cache carries `cacheCreationTokens` / `cacheReadTokens` (and `cacheHit=true` on a read) in its metadata.
-- **`pipeline.timing.llmCalls[]`** (Mongo, timing schema version 2): per call `cacheReadTokens` (Anthropic reads, or OpenAI's automatically cached input), `cacheWriteTokens`, and its lifetime split `cacheWrite1hTokens` / `cacheWrite5mTokens`; `inputTokens` is the whole prompt, cached part included.
+- **`pipeline.timing.llmCalls[]`** (Mongo, timing schema version 3): per call `cacheReadTokens` (Anthropic reads, or OpenAI's automatically cached input), `cacheWriteTokens`, and its lifetime split `cacheWrite1hTokens` / `cacheWrite5mTokens`; `inputTokens` is the whole prompt, cached part included; `ttftMs` = ms to the first streamed chunk (only the split extraction's warm-up call, `extraction_text1`, is streamed; null otherwise).
 - **Per call type**: `python scripts/cache_hit_rate.py [--days N | --ids …]` aggregates those rows by span and provider — hit rate = reads ÷ (reads + writes) for Anthropic, cached share of input for OpenAI. Gate reports carry it from gate 2 on; the plan's static half is cached for 1 hour (pipeline-1min 2.0). Layout, prices and the 1h-vs-5m rule: [llm-cost-model.md](./llm-cost-model.md#where-cache_control-is-set).
 
 ## Prompt registry
@@ -76,6 +76,7 @@ Local `.txt` files in `services/summarizer/src/prompts/**` are the source of tru
 | Local path | Langfuse name |
 | --- | --- |
 | `prompts/base_extraction.txt` | `summarizer:base_extraction` |
+| `prompts/extraction_group_job.txt` | `summarizer:extraction_group_job` |
 | `prompts/schemas/food.txt` | `summarizer:schema:food` |
 | `prompts/enrich_quiz.txt` | `summarizer:enrich_quiz` |
 | `prompts/vision.txt` | `summarizer:vision` |

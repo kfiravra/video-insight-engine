@@ -47,6 +47,7 @@ def _ctx(probe_task: asyncio.Future[TierProbe | None] | None = None) -> SimpleNa
         clean_text="Hi, I'm Chris. Today, lasagna.",
         source_language_code=None,
         transcript_ready=asyncio.Event(),
+        plan_done=asyncio.Event(),
         tier_probe_task=probe_task,
         probe=None,
         prompt_transcript="",
@@ -105,7 +106,27 @@ async def _run(ctx: SimpleNamespace, readers: _Readers, transcript: Any = _trans
         return [event async for event in text_phase.run_phase_text(ctx)]  # type: ignore[arg-type]
 
 
+async def _no_transcript(_ctx: SimpleNamespace) -> AsyncGenerator[str, None]:
+    raise RuntimeError("every transcript layer failed")
+    yield  # pragma: no cover — makes this an async generator
+
+
 class TestRunPhaseText:
+    async def test_should_set_plan_done_once_the_branch_finished(self) -> None:
+        ctx = _ctx()
+
+        await _run(ctx, _Readers())
+
+        assert ctx.plan_done.is_set()
+
+    async def test_should_set_plan_done_even_when_the_branch_failed(self) -> None:
+        ctx = _ctx()
+
+        with pytest.raises(RuntimeError):
+            await _run(ctx, _Readers(), transcript=_no_transcript)
+
+        assert ctx.plan_done.is_set()
+
     async def test_should_stream_transcript_then_plan_events(self) -> None:
         events = await _run(_ctx(), _Readers())
 

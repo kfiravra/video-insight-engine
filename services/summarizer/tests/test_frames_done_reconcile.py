@@ -101,6 +101,8 @@ async def _drive(ctx: SimpleNamespace, frames: Callable[..., Any]) -> tuple[list
     seen: list[list[str]] = []
     timer = MagicMock(elapsed=MagicMock(return_value=1.0))
     with ExitStack() as stack:
+        # Today's visual_inject step (the split path's hook: test_split_extraction.py).
+        stack.enter_context(patch.object(settings, "EXTRACTION_PARALLEL", False))
         stack.enter_context(patch.object(probe_phase, "start_tier_probe", lambda _ctx: None))
         stack.enter_context(patch.object(moments_phase, "then_provisional_moments", lambda p: p))
         for name, stub in (

@@ -223,15 +223,16 @@ One row per video **version** (`version`, `isLatest` below); the served row is s
   // Offsets are ms since the run started. Mirrored (minus llmCalls) onto the
   // Langfuse trace metadata; each phase is also a Langfuse span.
   "pipeline.timing": {
-    version: 2,                     // 2: the 1h/5m cache-write split on llmCalls (pipeline-1min 2.0)
+    version: 3,                     // 2: the 1h/5m cache-write split on llmCalls (pipeline-1min 2.0); 3: ttftMs on llmCalls (3.4)
     startedAt: Date,
     totalMs: number,
-    phases: [{ name: string, startMs: number, endMs: number, wallMs: number }],  // metadata, transcript_frames (phase 2: text, transcript, transcript_audio = the audio re-run after the tier probe judged the captions unusable (2.5; that run also has a second tier_probe llmCall), plan, memory, frames, frames.* sub-steps incl. frames.tier_wait), visual_inject (name kept: the annotations render), extraction, assembly (moment_fill, synthesis, enrichment = the quiz, run inside it), translation
+    phases: [{ name: string, startMs: number, endMs: number, wallMs: number }],  // metadata, transcript_frames (phase 2: text, transcript, transcript_audio = the audio re-run after the tier probe judged the captions unusable (2.5; that run also has a second tier_probe llmCall), plan, memory, frames, frames.* sub-steps incl. frames.tier_wait), visual_inject (name kept: the annotations render), extraction, split_extraction (EXTRACTION_PARALLEL: the group-extraction member of phase 2, which then also spans transcript_frames; extraction = plan-done → last group), assembly (moment_fill, synthesis, enrichment = the quiz, run inside it), translation
     milestones: { metadataMs?, synthesisCompleteMs?, firstTabReadyMs?, firstAssembledTabMs?, completeMs?, doneMs? },  // firstTabReadyMs = first tab_ready of any kind — since 2.1 the provisional Moments tab at plan-done; firstAssembledTabMs = first non-provisional tab_ready (the first tab assembly built)
     llmCalls: [{ feature, span, model, responseModel, startMs, wallMs, inputTokens, outputTokens,
                  cacheReadTokens,     // Anthropic cache_read_input_tokens, or OpenAI cached input (prompt_tokens_details.cached_tokens; 0 for OpenAI before v2)
                  cacheWriteTokens, cacheWrite5mTokens, cacheWrite1hTokens,  // the write split by cache lifetime, when the provider reports it
-                 costUsd, attempt, fallbackUsed, finishReason }],  // incl. Whisper/Gemini transcription rows (span "transcription:openai|google")
+                 costUsd, attempt, fallbackUsed, finishReason,
+                 ttftMs }],  // ms to the first streamed chunk — the split extraction's warm-up call (span extraction_text1); null otherwise. Incl. Whisper/Gemini transcription rows (span "transcription:openai|google")
     llmFailures: [{ feature, span, model, startMs, wallMs, attempt, error, rateLimited }],
     downloads: [{ kind: "lowres" | "720p" | "audio", purpose: string, startMs, wallMs, bytes: number | null, ok: boolean }],
     costUsd: number,

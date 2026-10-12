@@ -190,13 +190,25 @@ def _reads_extraction(tab: Mapping[str, object]) -> bool:
     return tab.get("component") not in _SKIPPED_COMPONENTS and _tab_id(tab) != "overview"
 
 
+def reads_extraction(tab: Mapping[str, object]) -> bool:
+    """Whether the tab renders an extraction field (not the overview, frames or the quiz)."""
+    source = str(tab.get("dataSource") or "")
+    domain = source.partition(".")[0]
+    return (
+        _reads_extraction(tab)
+        and bool(source)
+        and source not in NON_EXTRACTION_DATASOURCES
+        and domain not in _SKIPPED_DOMAINS
+    )
+
+
 def _planned(
     tab: Mapping[str, object], registry: Mapping[str, DataSourceSpec], scalars_of: ScalarsOf
 ) -> list[_Draft]:
     """The fields a tab's own dataSource names."""
     source = str(tab.get("dataSource") or "")
     domain, _, rest = source.partition(".")
-    if not source or source in NON_EXTRACTION_DATASOURCES or domain in _SKIPPED_DOMAINS:
+    if not reads_extraction(tab):
         return []
     if rest in ("", "*"):
         return _whole_domain(domain, registry, scalars_of, _tab_id(tab))

@@ -115,8 +115,10 @@ class Settings(BaseSettings):
     # the tail (a 4.5h video produced output only up to 1:34). Bounding span to
     # 40 min keeps each batch densely coverable within the 16K output budget.
     MAX_MINUTES_PER_BATCH: int = 40
-    # Chunked extraction batches run in parallel; false = one batch at a time
-    # (the switch to rule out concurrency when a run misbehaves).
+    # true: field groups (pipeline-1min phase 3) — text groups fire at plan-done,
+    # the visual group at frames-done, under EXTRACTION_PARALLEL_BATCHES.
+    # false: today's single extraction call (chunked batches one at a time for
+    # long videos) after frames — the rollback lever, byte-identical to v8.
     EXTRACTION_PARALLEL: bool = True
     # Max extraction calls in flight per RUN (the semaphore is per run, not per
     # process): a worker holds up to EXTRACTION_PARALLEL_BATCHES ×

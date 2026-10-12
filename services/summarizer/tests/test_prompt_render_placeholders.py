@@ -90,6 +90,7 @@ _COVERED_TEMPLATES: set[str] = {
     "memory.txt",
     "tier_probe.txt",
     "enrich_quiz.txt",
+    "extraction_group_job.txt",
     *(f"schemas/{p.name}" for p in (PROMPTS_DIR / "schemas").glob("*.txt")),
     *(f"examples/{p.name}" for p in (PROMPTS_DIR / "examples").glob("*.txt")),
 }
@@ -183,6 +184,52 @@ class TestExtractionPromptRenders:
             tok for tok in _declared_placeholders("base_extraction.txt") if f"{{{tok}}}" in template
         }
         assert remaining == LATE_BOUND_PLACEHOLDERS
+
+
+# ─── Split extraction (base_extraction cut into blocks + extraction_group_job) ──
+class TestExtractionGroupJobRenders:
+    @staticmethod
+    def _rendered(*, visual: bool) -> str:
+        """Every block one group call sends (3.4)."""
+        from src.services.pipeline.extraction_chunks import ExtractionChunk
+        from src.services.pipeline.extraction_group_prompt import GroupJob, build_group_messages
+        from src.services.pipeline.extraction_prompt import (
+            ExtractionPromptInput,
+            build_extraction_prompt,
+        )
+        from src.services.pipeline.field_groups import ExtractionGroup
+        from src.services.pipeline.field_requests import FieldRequest
+
+        tab = {
+            "id": "steps",
+            "label": "Steps",
+            "component": "step_player",
+            "dataSource": "food.steps",
+        }
+        steps = FieldRequest("food", "steps", "list", "planned", ("steps",), 25, 8, 120, visual)
+        group = ExtractionGroup("visual" if visual else "text1", (steps,), visual, 960, ("steps",))
+        prompt = build_extraction_prompt(
+            ExtractionPromptInput(["food"], [], "quality rules text", title="T", tabs=[tab])
+        )
+        job = GroupJob(
+            [tab],
+            ["food"],
+            "food",
+            visual_annotations="<visual_annotations>\n[0:12] a frame\n</visual_annotations>",
+            frame_context="0:12 — a frame",
+        )
+        blocks = build_group_messages(prompt, group, ExtractionChunk(0, "transcript body"), job)
+        return "\n".join(block["text"] for block in blocks)
+
+    @pytest.mark.parametrize("visual", [False, True])
+    def test_group_call_has_no_unreplaced_placeholders(self, visual):
+        _assert_no_unreplaced(
+            self._rendered(visual=visual),
+            "base_extraction.txt",
+            "extraction_group_job.txt",
+            "quality_rules.txt",
+            "schemas/food.txt",
+        )
 
 
 # ─── Plan (plan.txt + component_toolkit.txt) ────────────────────────────

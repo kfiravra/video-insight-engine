@@ -1,4 +1,10 @@
-"""Phase 4: Extraction — adaptive structured extraction, then coverage and quality metrics."""
+"""Phase 4: Extraction — adaptive structured extraction, then coverage and quality metrics.
+
+Today's path (``EXTRACTION_PARALLEL=false``): one call, or chunked batches for
+long videos. The split path (``phases/split_extraction.py``) shares the
+post-call helpers: ``record_validation``, ``fail_extraction`` and
+``finish_extraction``.
+"""
 
 from __future__ import annotations
 
@@ -41,7 +47,7 @@ _DESCRIPTION_WAIT_SECONDS = 5.0
 _INTERNAL_KEYS = frozenset({"event", "validation"})
 
 
-def _record_validation(ctx: PipelineContext, report: ValidationReport) -> None:
+def record_validation(ctx: PipelineContext, report: ValidationReport) -> None:
     """Keep the validation report and flag planned fields that lost over half their items."""
     dropped = report.get("dropped") or {}
     ctx.extraction_dropped = dropped
@@ -281,7 +287,7 @@ async def run_phase_extraction(ctx: PipelineContext) -> AsyncGenerator[str, None
             yield sse_event(event_name, {k: v for k, v in evt.items() if k not in _INTERNAL_KEYS})
             if event_name == "extraction_complete":
                 ctx.extraction_data = evt.get("data")
-                _record_validation(ctx, evt.get("validation") or {})
+                record_validation(ctx, evt.get("validation") or {})
                 batches_total = evt.get("batches_total")
                 batches_succeeded = evt.get("batches_succeeded")
     except (ValueError, asyncio.TimeoutError) as e:
@@ -293,36 +299,47 @@ async def run_phase_extraction(ctx: PipelineContext) -> AsyncGenerator[str, None
         )
 
     if not ctx.extraction_data:
-        logger.error("[pipeline] Extraction produced no data for video_id=%s", ctx.video_summary_id)
-        await asyncio.to_thread(
-            ctx.repository.update_status,
-            ctx.video_summary_id,
-            ProcessingStatus.FAILED,
-            "Extraction failed",
-            ErrorCode.LLM_ERROR,
-        )
-        yield sse_event(
-            "error",
-            {"message": "Extraction failed to produce data", "code": ErrorCode.LLM_ERROR.value},
-        )
+        yield await fail_extraction(ctx)
         return
+    finish_extraction(ctx, batches_total, batches_succeeded)
 
+
+async def fail_extraction(ctx: PipelineContext) -> str:
+    """No extraction data: the row is marked failed; the run's ``error`` event."""
+    logger.error("[pipeline] Extraction produced no data for video_id=%s", ctx.video_summary_id)
+    await asyncio.to_thread(
+        ctx.repository.update_status,
+        ctx.video_summary_id,
+        ProcessingStatus.FAILED,
+        "Extraction failed",
+        ErrorCode.LLM_ERROR,
+    )
+    return sse_event(
+        "error",
+        {"message": "Extraction failed to produce data", "code": ErrorCode.LLM_ERROR.value},
+    )
+
+
+def _log_extraction(ctx: PipelineContext) -> None:
+    data = ctx.extraction_data if isinstance(ctx.extraction_data, dict) else {}
     logger.info(
         "pipeline.extraction",
         extra={
             "video_id": ctx.video_summary_id,
-            "domains_extracted": list(ctx.extraction_data.keys())
-            if isinstance(ctx.extraction_data, dict)
-            else [],
+            "domains_extracted": list(data.keys()),
             "items_per_domain": {
                 k: sum(1 for v in d.values() if isinstance(v, list) and len(v) > 0)
-                for k, d in ctx.extraction_data.items()
+                for k, d in data.items()
                 if isinstance(d, dict)
-            }
-            if isinstance(ctx.extraction_data, dict)
-            else {},
+            },
         },
     )
 
+
+def finish_extraction(
+    ctx: PipelineContext, batches_total: int | None, batches_succeeded: int | None
+) -> None:
+    """After a run's extraction data landed: the summary log, coverage and quality metrics."""
+    _log_extraction(ctx)
     _record_extraction_coverage(ctx, batches_total, batches_succeeded)
     _record_extraction_quality(ctx)

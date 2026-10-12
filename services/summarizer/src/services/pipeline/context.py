@@ -100,6 +100,14 @@ class PipelineContext:
     # Rendered <visual_annotations> block (descriptions + OCR), set at frames-done (1c.2).
     visual_annotations: str = ""
 
+    # Split extraction (3.4, EXTRACTION_PARALLEL): the text branch sets
+    # ``plan_done`` once the tabs are reconciled and ``video_memory`` rendered
+    # (the text groups fire); the frames-done hook sets ``frames_done`` once the
+    # annotations are rendered and the deferred code tabs decided (the visual
+    # group is cut). Today's path sets ``plan_done`` too; nothing waits on it.
+    plan_done: asyncio.Event = field(default_factory=asyncio.Event)
+    frames_done: asyncio.Event = field(default_factory=asyncio.Event)
+
     # Memory stage (1b.3; None = failed or not run) and the <video_memory>
     # block rendered once from plan + memory (1b.4) for every writer's
     # ``{video_context}`` slot.
