@@ -6,9 +6,10 @@ tabs read (``field_requests``), cuts them into groups (``field_groups``) and
 fires them over the run's chunks (``extraction_groups``): the text groups at
 once — text1 warms the shared prefix — and the visual group once frames are
 done, cut from the tabs frames-done decided. Each landed group sends an
-``extraction_progress`` (``section="groups"``); when all landed, the outcomes
-are merged and validated with today's functions (3.5 replaces them) into ONE
-``extraction_complete``. Assembly still runs after the whole phase-2 group.
+``extraction_progress`` (``section="groups"``); each group's answer was
+validated and cut to its own keys as it landed, and when all landed they are
+merged (``group_merge``, 3.5) into ONE ``extraction_complete``. Assembly still
+runs after the whole phase-2 group.
 """
 
 from __future__ import annotations
@@ -18,7 +19,6 @@ from collections.abc import AsyncGenerator, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from src.models.domain_types import validate_domain_output_with_drops
 from src.services.pipeline.extraction_chunks import plan_chunks
 from src.services.pipeline.extraction_group_prompt import GroupJob
 from src.services.pipeline.extraction_groups import (
@@ -27,10 +27,10 @@ from src.services.pipeline.extraction_groups import (
     VisualCut,
     fire_groups,
 )
-from src.services.pipeline.extraction_merger import merge_batch_extractions
 from src.services.pipeline.extractor import _build_prompt
 from src.services.pipeline.field_groups import ExtractionGroup, build_groups, visual_group
 from src.services.pipeline.field_requests import FieldRequest, reads_extraction, requested_fields
+from src.services.pipeline.group_merge import merge_groups, merge_order, requested_quality
 from src.services.pipeline.phases.extraction import (
     fail_extraction,
     finish_extraction,
@@ -87,7 +87,15 @@ def _split_run(ctx: PipelineContext) -> tuple[SplitRun, bool]:
         frame_context="",
         visual_annotations="",
     )
-    run = SplitRun(ctx.llm_service, prompt, _job(plan), tuple(plan_chunks(ctx)), text_groups)
+    run = SplitRun(
+        ctx.llm_service,
+        prompt,
+        _job(plan),
+        tuple(plan_chunks(ctx)),
+        text_groups,
+        tuple(plan.content_tags),
+        tuple(plan.modifiers),
+    )
     return run, len(groups) > len(text_groups)
 
 
@@ -166,14 +174,22 @@ async def _land(
         yield progress.landed(outcome)
 
 
-# ─── Merge (interim: today's merger + validation, 3.5 replaces) ───
+# ─── Merge ───
 
 
-def _ordered(run: SplitRun, outcomes: Sequence[GroupOutcome]) -> list[GroupOutcome]:
-    """Chunk-major, then text1..textN, the visual group last."""
-    rank = {group.group_id: i for i, group in enumerate(run.text_groups)}
-    last = len(rank)
-    return sorted(outcomes, key=lambda o: (o.chunk, rank.get(o.group.group_id, last)))
+def _group_rows(outcomes: Sequence[GroupOutcome]) -> list[dict[str, Any]]:
+    """``pipeline.extraction._groups``: one row per group call, in merge order."""
+    return [
+        {
+            "group": o.group.group_id,
+            "chunk": o.chunk,
+            "fields": [f.path for f in o.group.fields],
+            "status": o.status,
+            "outputTokens": o.output_tokens,
+            "wallMs": o.wall_ms,
+        }
+        for o in merge_order(outcomes)
+    ]
 
 
 def _nothing_to_extract(ctx: PipelineContext) -> bool:
@@ -182,16 +198,15 @@ def _nothing_to_extract(ctx: PipelineContext) -> bool:
     return plan is not None and not any(reads_extraction(tab) for tab in plan.tabs)
 
 
-async def _complete(
-    ctx: PipelineContext, run: SplitRun, outcomes: Sequence[GroupOutcome]
-) -> list[str]:
+async def _complete(ctx: PipelineContext, outcomes: Sequence[GroupOutcome]) -> list[str]:
     """ONE ``extraction_complete`` from every landed group; today's error when none landed.
 
     No call fired is only an empty extraction when no planned tab reads one:
     it stays ``{}`` (no faithfulness judge over a defaults skeleton). The
-    groups count as batches, so a failed group marks the run degraded.
+    groups count as batches, so a failed group marks the run degraded; the
+    quality score counts the fields the groups were asked for.
     """
-    landed = [o for o in _ordered(run, outcomes) if o.status == "ok" and o.data is not None]
+    landed = [o for o in outcomes if o.status == "ok" and o.data is not None]
     empty_by_design = not outcomes and _nothing_to_extract(ctx)
     if not landed and not empty_by_design:
         logger.error(
@@ -200,18 +215,13 @@ async def _complete(
             ctx.video_summary_id,
         )
         return [await fail_extraction(ctx)]
-    triage = ctx.triage
-    assert triage is not None
-    validated: dict[str, Any] = {}
-    if landed:
-        merged = merge_batch_extractions([o.data for o in landed], triage.content_tags)
-        validated, report = validate_domain_output_with_drops(
-            triage.content_tags, triage.modifiers, merged
-        )
-        record_validation(ctx, report)
-    ctx.extraction_data = validated
-    finish_extraction(ctx, len(outcomes), len(landed))
-    return [sse_event("extraction_complete", {"data": validated})]
+    merged, report = merge_groups(outcomes)
+    record_validation(ctx, report)
+    ctx.extraction_data = merged
+    ctx.extraction_groups = _group_rows(outcomes)
+    quality = requested_quality([f for o in outcomes for f in o.group.fields], merged)
+    finish_extraction(ctx, len(outcomes), len(landed), quality=quality)
+    return [sse_event("extraction_complete", {"data": merged})]
 
 
 async def run_phase_split_extraction(ctx: PipelineContext) -> AsyncGenerator[str, None]:
@@ -224,5 +234,5 @@ async def run_phase_split_extraction(ctx: PipelineContext) -> AsyncGenerator[str
         outcomes: list[GroupOutcome] = []
         async for event in _land(ctx, run, visual_planned, outcomes):
             yield event
-        for event in await _complete(ctx, run, outcomes):
+        for event in await _complete(ctx, outcomes):
             yield event

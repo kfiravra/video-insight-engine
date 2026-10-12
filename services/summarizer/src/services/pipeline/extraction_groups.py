@@ -11,9 +11,11 @@ group waits for frames-done, is re-cut from what no text group asked for
 of the run's ``EXTRACTION_PARALLEL_BATCHES`` semaphore; the text1 calls are
 started first, so they take the first slots. Outcomes stream back as they land.
 
-A group call that fails (no answer after its retry, unparseable JSON, an
-error) is a ``failed`` outcome — today's chunked-batch handling: the other
-groups still land, the caller decides what an all-failed run means.
+A landed answer is validated and cut to the group's own keys
+(``group_merge.validate_group``, 3.5) before it is reported. A group call that
+fails (no answer after its retry, unparseable JSON, an answer holding none of
+its keys, an error) is a ``failed`` outcome — today's chunked-batch handling:
+the other groups still land, the caller decides what an all-failed run means.
 """
 
 from __future__ import annotations
@@ -21,7 +23,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -35,6 +37,7 @@ from .extraction_chunks import ExtractionChunk
 from .extraction_group_prompt import GroupJob, build_group_messages
 from .extraction_prompt import ExtractionPrompt
 from .field_groups import ExtractionGroup
+from .group_merge import validate_group
 from .pipeline_timing import span_output_tokens
 
 if TYPE_CHECKING:
@@ -47,6 +50,8 @@ GROUP_RELEASE_FALLBACK_S = 1.5
 GROUP_MAX_TOKENS = 16384
 GROUP_TIMEOUT_S = 120.0
 GROUP_MAX_RETRIES = 1
+# How many of a rejected answer's top-level keys the warning lists.
+_LOGGED_KEYS = 20
 
 GroupStatus = Literal["ok", "failed"]
 # The visual group cut at frames-done from the fields no text group asked for.
@@ -75,7 +80,8 @@ class GroupCall:
 
 @dataclass(frozen=True)
 class GroupOutcome:
-    """A landed group call. ``validation`` stays empty until per-group validation (3.5)."""
+    """A landed group call: ``data`` = its validated own keys, domain-keyed (None when it
+    failed); ``validation`` = what validating them dropped or defaulted."""
 
     group: ExtractionGroup
     chunk: int
@@ -95,24 +101,11 @@ class SplitRun:
     job: GroupJob  # the text groups' job inputs (plan-done tabs)
     chunks: tuple[ExtractionChunk, ...]
     text_groups: tuple[ExtractionGroup, ...]
+    content_tags: tuple[str, ...]  # which model validates a group's domain
+    modifiers: tuple[str, ...]
 
 
 # ─── One call ───
-
-
-def _domains(group: ExtractionGroup) -> list[str]:
-    return list(dict.fromkeys(f.domain for f in group.fields))
-
-
-def _wrapped(data: dict[str, Any], group: ExtractionGroup) -> dict[str, Any]:
-    """A one-domain group's flat answer under its domain key, so groups merge by domain."""
-    domains = _domains(group)
-    if len(domains) != 1:
-        return data
-    domain = domains[0]
-    if domain in data or f"{domain}Data" in data:
-        return data
-    return {domain: data}
 
 
 def _parsed(raw: str | None, call: GroupCall) -> dict[str, Any] | None:
@@ -122,15 +115,20 @@ def _parsed(raw: str | None, call: GroupCall) -> dict[str, Any] | None:
     if not isinstance(data, dict) or not data:
         logger.warning("[%s] group answer is not a JSON object (len=%d)", call.stage_name, len(raw))
         return None
-    return _wrapped(data, call.group)
+    return data
 
 
-def _outcome(call: GroupCall, data: dict[str, Any] | None, started: float) -> GroupOutcome:
+def _outcome(
+    call: GroupCall,
+    data: dict[str, Any] | None,
+    started: float,
+    validation: ValidationReport | None = None,
+) -> GroupOutcome:
     return GroupOutcome(
         group=call.group,
         chunk=call.chunk.index,
         data=data,
-        validation={"dropped": {}, "defaulted": 0},
+        validation=validation or {"dropped": {}, "defaulted": 0},
         status="ok" if data is not None else "failed",
         wall_ms=int((time.monotonic() - started) * 1000),
         output_tokens=span_output_tokens(call.stage_name),
@@ -140,7 +138,10 @@ def _outcome(call: GroupCall, data: dict[str, Any] | None, started: float) -> Gr
 async def run_group_call(
     call: GroupCall, run: SplitRun, *, on_first_chunk: Callable[[], None] | None = None
 ) -> GroupOutcome:
-    """One group call: its own feature + span, Haiku, JSON; streamed for a warm-up call."""
+    """One group call: its own feature + span, Haiku, JSON; streamed for a warm-up call.
+
+    The answer is validated and cut to the group's own keys before it is reported.
+    """
     llm_feature_var.set(call.feature)
     started = time.monotonic()
     raw = await call_llm_with_retry(
@@ -154,7 +155,18 @@ async def run_group_call(
         model_override=settings.get_stage_model("extraction"),
         on_first_chunk=on_first_chunk,
     )
-    return _outcome(call, _parsed(raw, call), started)
+    parsed = _parsed(raw, call)
+    if parsed is None:
+        return _outcome(call, None, started)
+    data, report = validate_group(parsed, call.group, run.content_tags, run.modifiers)
+    if not data:
+        logger.warning(
+            "[%s] group answer kept none of its keys — failed (answer keys: %s)",
+            call.stage_name,
+            sorted(parsed)[:_LOGGED_KEYS],
+        )
+        return _outcome(call, None, started, report)
+    return _outcome(call, data, started, report)
 
 
 async def _guarded(
@@ -268,7 +280,9 @@ def _start(
     return [asyncio.ensure_future(coro) for coro in [*first, *later]]
 
 
-async def fire_groups(run: SplitRun, cut_visual: VisualCut) -> AsyncIterator[GroupOutcome | None]:
+async def fire_groups(
+    run: SplitRun, cut_visual: VisualCut
+) -> AsyncGenerator[GroupOutcome | None, None]:
     """Fire every chunk × group; yield each outcome as it lands, ``None`` per unfired visual group.
 
     Yields exactly one item per call task (``len(chunks) × (text groups + 1)``).

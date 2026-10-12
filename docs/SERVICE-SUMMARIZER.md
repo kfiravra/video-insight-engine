@@ -454,7 +454,13 @@ A plan-first pipeline: ~6-7 text calls (description analysis, tier probe, plan �
     │   `extraction` = plan-done → last group landed (the DONE log's `extraction=`); `frames`
     │   includes its wait for plan-done and the `visual_inject` step; group calls are
     │   `llmCalls` spans `extraction_<group>` (`_c<k>` per later chunk), the streamed warm-up
-    │   call with `ttftMs`.
+    │   call with `ttftMs`. Each answer is validated as it lands (`group_merge.py`, 3.5): only
+    │   the group's requested keys the model filled are kept (field-name spellings mapped to
+    │   the registry key, no model defaults for unrequested/omitted keys; an answer holding
+    │   none of them = a failed group), then ONE merge — chunk-major, text1..N, visual; lists
+    │   concatenate (later duplicates by name/label/term/title/ingredient/tool/location
+    │   dropped), first non-empty scalar wins, number/step/order/index renumbered only when
+    │   1..n in every list. Quality = requested fields filled; `pipeline.extraction._groups`.
 
  5. EXTRACTION (one pass, json_mode; LLM_EXTRACTION_MODEL)
     └─▶ Prompt (pipeline/extraction_prompt.py): system = the rules (no per-video text);
@@ -1145,7 +1151,8 @@ Hard character limit per model before every LLM call:
 |------|---------|
 | `src/services/transcription/transcript_chunker.py` | Chapter splitting with fallback chain |
 | `src/services/pipeline/phases/extraction.py` | `_split_chapters`: description timestamps + memory outline into the chain |
-| `src/services/pipeline/extraction_merger.py` | Per-domain merge + dedup |
+| `src/services/pipeline/extraction_merger.py` | Per-domain merge + dedup (today's path, `EXTRACTION_PARALLEL=false`) |
+| `src/services/pipeline/group_merge.py` | Split path: per-group validation + key filter, the deterministic group merge, requested-field quality |
 | `src/prompts/chapter_detect.txt` | AI chapter detection prompt |
 | `src/utils/llm_retry.py` | Fast model routing + prompt truncation |
 

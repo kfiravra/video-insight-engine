@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from collections.abc import AsyncGenerator, Iterator
 from contextlib import ExitStack
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -21,6 +22,7 @@ from src.services.pipeline.extraction_groups import GroupCall, GroupOutcome, Spl
 from src.services.pipeline.phases import frames_done as frames_done_phase
 from src.services.pipeline.phases import moments as moments_phase
 from src.services.pipeline.phases import probe as probe_phase
+from src.services.pipeline.phases.extraction import extraction_record
 from src.services.pipeline.phases.frames_done import then_frames_done
 from src.services.pipeline.phases.split_extraction import run_phase_split_extraction
 from src.services.pipeline.pipeline_helpers import PipelineTimer
@@ -71,7 +73,9 @@ _ITEMS: dict[str, list[Any]] = {
 
 
 def _plan(tags: list[str], tabs: list[dict]) -> PlanResult:
-    return PlanResult(contentTags=tags, primaryTag=tags[0], tabs=tabs, confidence=0.9)
+    return PlanResult.model_validate(
+        {"contentTags": tags, "primaryTag": tags[0], "tabs": tabs, "confidence": 0.9}
+    )
 
 
 def _ctx(tags: list[str], tabs: list[dict]) -> PipelineContext:
@@ -172,6 +176,20 @@ class TestPlanDoneFiring:
 
         assert (_events(events, "error")[0]["code"], ctx.extraction_data) == ("LLM_ERROR", None)
 
+    async def test_should_fail_the_run_as_today_when_no_group_answer_holds_its_keys(
+        self,
+    ) -> None:
+        ctx = _done(_ctx(["food"], _FOOD_TABS))
+        llm = AsyncMock(return_value='{"recipe": [{"name": "eggs"}]}')
+
+        with (
+            patch.object(extraction_groups, "call_llm_with_retry", llm),
+            patch.object(extraction_groups, "build_group_messages", return_value=[]),
+        ):
+            events = [event async for event in run_phase_split_extraction(ctx)]
+
+        assert (_events(events, "error")[0]["code"], ctx.extraction_data) == ("LLM_ERROR", None)
+
     async def test_should_mark_the_run_degraded_when_one_group_failed(self) -> None:
         ctx = _done(_ctx(["learning"], _LEARNING_TABS))
 
@@ -210,6 +228,38 @@ class TestPlanDoneFiring:
         await _drain(_done(_ctx(["food"], _FOOD_TABS)), _Groups())
 
         assert [phase["name"] for phase in recorder.phases] == ["extraction"]
+
+
+class TestGroupRecords:
+    async def test_should_record_one_groups_row_per_group_call_in_pipeline_extraction(
+        self,
+    ) -> None:
+        ctx = _done(_ctx(["food"], _FOOD_TABS))
+
+        await _drain(ctx, _Groups(fail_fields=frozenset({"steps"})))
+
+        rows = (extraction_record(ctx) or {})["_groups"]
+        assert [(r["group"], r["chunk"], r["fields"], r["status"]) for r in rows] == [
+            ("text1", 0, ["food.ingredients", "food.meta"], "ok"),
+            ("text2", 0, ["food.steps"], "failed"),
+        ]
+
+    def test_should_leave_groups_out_of_pipeline_extraction_on_todays_path(self) -> None:
+        ctx = _ctx(["food"], _FOOD_TABS)
+        ctx.extraction_data = {"food": {"ingredients": []}}
+
+        assert "_groups" not in (extraction_record(ctx) or {})
+
+    async def test_should_score_quality_on_the_requested_fields(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        ctx = _done(_ctx(["food"], _FOOD_TABS))
+
+        with caplog.at_level(logging.INFO):
+            await _drain(ctx, _Groups())
+
+        [line] = [r.getMessage() for r in caplog.records if "extraction_quality" in r.getMessage()]
+        assert "populated=2/3 empty=['food.meta']" in line
 
 
 class TestVisualGroup:
@@ -335,7 +385,7 @@ def _orchestration_ctx() -> SimpleNamespace:
         source_language_code=None,
         row_deleted=False,
         phase_times={},
-        plan_result=PlanResult(),
+        plan_result=PlanResult.model_validate({}),
         enrichment_data={"a": 1},
         triage=SimpleNamespace(tabs=[]),
         transcript_ready=asyncio.Event(),

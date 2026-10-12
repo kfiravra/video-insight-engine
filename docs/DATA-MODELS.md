@@ -294,9 +294,11 @@ One row per video **version** (`version`, `isLatest` below); the served row is s
   // ({what, where[], expect}), evidence ({has_steps, has_ingredients, … : bool},
   // the plan's own read; drives conditional domain requirements and the
   // assembly backfill check) and terms (≤12 canonical spellings);
-  // pipeline.extraction / .enrichment / .synthesis / .assembly (tab drop
-  // accounting: tabsDesigned, tabsAssembled, tabsDropped, droppedTabs[],
-  // planFallback?); pipeline.timing (above).
+  // pipeline.extraction (the validated data + _defaulted, _dropped?,
+  // _misTargeted?; split path only: _groups = [{group, chunk, fields[],
+  // status, outputTokens, wallMs}], one row per group call) / .enrichment /
+  // .synthesis / .assembly (tab drop accounting: tabsDesigned, tabsAssembled,
+  // tabsDropped, droppedTabs[], planFallback?); pipeline.timing (above).
   pipeline: { triage, extraction, enrichment, synthesis, assembly, timing } | absent,
 
   // Domain-keyed extraction data

@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Iterator
+import logging
+from collections.abc import AsyncGenerator, Awaitable, Callable, Iterator
 from dataclasses import dataclass, field
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -41,6 +42,8 @@ def _run(*group_ids: str, chunks: int = 1) -> SplitRun:
         job=_JOB,
         chunks=tuple(ExtractionChunk(i, f"chunk {i}") for i in range(chunks)),
         text_groups=tuple(_group(g) for g in group_ids),
+        content_tags=("food",),
+        modifiers=(),
     )
 
 
@@ -246,11 +249,11 @@ class TestCancellation:
     async def test_should_cancel_the_calls_in_flight_when_a_sibling_phase_fails(self) -> None:
         calls = _Calls(slow={"text1": 30.0})
 
-        async def groups_member(_ctx: Any) -> Any:
+        async def groups_member(_ctx: Any) -> AsyncGenerator[str, None]:
             async for _ in fire_groups(_run("text1"), _no_visual):
                 yield "data: landed\n\n"
 
-        async def failing_member(_ctx: Any) -> Any:
+        async def failing_member(_ctx: Any) -> AsyncGenerator[str, None]:
             await asyncio.sleep(0.05)
             raise RuntimeError("frames broke")
             yield
@@ -266,6 +269,12 @@ class TestCancellation:
 
 def _call(group_id: str = "text2", chunk: int = 0) -> GroupCall:
     return GroupCall(_group(group_id), ExtractionChunk(chunk, "t"), _JOB)
+
+
+def _ingredients_call() -> GroupCall:
+    request = FieldRequest("food", "ingredients", "list", "planned", (), 30, 5, 40, False)
+    group = ExtractionGroup("text1", (request,), False, 200, ())
+    return GroupCall(group, ExtractionChunk(0, "t"), _JOB)
 
 
 @pytest.fixture
@@ -307,7 +316,7 @@ class TestRunGroupCall:
     async def test_should_carry_no_system_prompt(self, llm: AsyncMock) -> None:
         await asyncio.create_task(run_group_call(_call(), _run()))
 
-        assert ("system_prompt" in llm.seen, len(llm.await_args.args[1])) == (False, 3)
+        assert ("system_prompt" in llm.seen, len(llm.await_args_list[-1].args[1])) == (False, 3)
 
     async def test_should_call_the_extraction_model_with_the_group_limits(
         self, llm: AsyncMock
@@ -326,14 +335,48 @@ class TestRunGroupCall:
 
         assert (outcome.status, outcome.data) == ("failed", None)
 
-    async def test_should_wrap_a_flat_single_domain_answer_under_its_domain(
+    async def test_should_validate_a_flat_single_domain_answer_under_its_domain(
         self, llm: AsyncMock
     ) -> None:
-        llm.answer.reply = '{"text2": [{"name": "eggs"}]}'
+        llm.answer.reply = '{"ingredients": [{"name": "eggs"}], "steps": []}'
 
-        outcome = await asyncio.create_task(run_group_call(_call(), _run()))
+        outcome = await asyncio.create_task(run_group_call(_ingredients_call(), _run()))
 
-        assert outcome.data == {"food": {"text2": [{"name": "eggs"}]}}
+        assert (
+            list(outcome.data or {}),
+            (outcome.data or {})["food"]["ingredients"][0]["amount"],
+        ) == (
+            ["food"],
+            0.0,
+        )
+
+    async def test_should_mark_the_group_failed_when_its_answer_holds_none_of_its_keys(
+        self, llm: AsyncMock
+    ) -> None:
+        llm.answer.reply = '{"recipe": [{"name": "eggs"}]}'
+
+        outcome = await asyncio.create_task(run_group_call(_ingredients_call(), _run()))
+
+        assert (outcome.status, outcome.data) == ("failed", None)
+
+    async def test_should_log_the_answer_keys_when_it_holds_none_of_its_keys(
+        self, llm: AsyncMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        llm.answer.reply = '{"recipe": [{"name": "eggs"}]}'
+
+        with caplog.at_level(logging.WARNING, logger=extraction_groups.__name__):
+            await asyncio.create_task(run_group_call(_ingredients_call(), _run()))
+
+        assert any("['recipe']" in r.getMessage() for r in caplog.records)
+
+    async def test_should_report_what_validating_the_groups_keys_dropped(
+        self, llm: AsyncMock
+    ) -> None:
+        llm.answer.reply = '{"food": {"ingredients": [{"name": "eggs"}, {"amount": 2}]}}'
+
+        outcome = await asyncio.create_task(run_group_call(_ingredients_call(), _run()))
+
+        assert outcome.validation.get("dropped") == {"food.ingredients": {"dropped": 1, "total": 2}}
 
     async def test_should_mark_the_group_failed_when_the_call_raises(self) -> None:
         async def broken(*_args: Any, **_kwargs: Any) -> GroupOutcome:

@@ -3,7 +3,8 @@
 Today's path (``EXTRACTION_PARALLEL=false``): one call, or chunked batches for
 long videos. The split path (``phases/split_extraction.py``) shares the
 post-call helpers: ``record_validation``, ``fail_extraction`` and
-``finish_extraction``.
+``finish_extraction``; its group calls are recorded as
+``pipeline.extraction._groups``.
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ from src.models.domain_validation import (
     mis_targeted_fields,
 )
 from src.models.schemas import ErrorCode, ProcessingStatus
-from src.services.pipeline.extraction_quality import check_extraction_quality
+from src.services.pipeline.extraction_quality import ExtractionQuality, check_extraction_quality
 from src.services.pipeline.extractor import extract
 from src.services.pipeline.memory import format_clock
 from src.services.pipeline.phases.metadata import await_description_analysis
@@ -45,6 +46,8 @@ _DESCRIPTION_WAIT_SECONDS = 5.0
 # Extractor event keys that stay server-side: the validation report goes to
 # ``pipeline.extraction._dropped/_defaulted``, never into the SSE contract.
 _INTERNAL_KEYS = frozenset({"event", "validation"})
+# The split path's group calls (3.5); absent on today's path.
+GROUPS_KEY = "_groups"
 
 
 def record_validation(ctx: PipelineContext, report: ValidationReport) -> None:
@@ -64,13 +67,19 @@ def record_validation(ctx: PipelineContext, report: ValidationReport) -> None:
 
 
 def extraction_record(ctx: PipelineContext) -> dict[str, Any] | None:
-    """``pipeline.extraction``: the data plus this run's validation record."""
-    return extraction_with_drops(
+    """``pipeline.extraction``: the data plus this run's validation record (and, on the
+    split path, one ``_groups`` row per group call)."""
+    record = extraction_with_drops(
         ctx.extraction_data,
         ctx.extraction_dropped,
         ctx.extraction_mis_targeted,
         ctx.extraction_defaulted,
     )
+    # getattr: the readers' lightweight contexts (tests, eval) predate the split path.
+    groups = getattr(ctx, "extraction_groups", None)
+    if isinstance(record, dict) and groups:
+        record[GROUPS_KEY] = [dict(row) for row in groups]
+    return record
 
 
 def _record_extraction_coverage(
@@ -130,8 +139,11 @@ def _record_extraction_coverage(
         )
 
 
-def _record_extraction_quality(ctx: PipelineContext) -> None:
-    """Log the share of planned dataSources the extraction populated (metric only).
+def _record_extraction_quality(
+    ctx: PipelineContext, quality: ExtractionQuality | None = None
+) -> None:
+    """Log the share of planned dataSources the extraction populated (metric only);
+    the split path passes its score over the requested fields instead.
 
     The synthesis-fed retry this score used to gate is gone (pipeline-1min 1c.5):
     7 firings in 55 runs, 0 of the 3 measurable ones improved. The numbers sit in the
@@ -139,7 +151,8 @@ def _record_extraction_quality(ctx: PipelineContext) -> None:
     """
     if ctx.plan_result is None or not ctx.extraction_data:
         return
-    quality = check_extraction_quality(ctx.plan_result.tabs, ctx.extraction_data)
+    if quality is None:
+        quality = check_extraction_quality(ctx.plan_result.tabs, ctx.extraction_data)
     logger.info(
         "pipeline.extraction_quality score=%.2f populated=%d/%d empty=%s",
         quality.score,
@@ -337,9 +350,14 @@ def _log_extraction(ctx: PipelineContext) -> None:
 
 
 def finish_extraction(
-    ctx: PipelineContext, batches_total: int | None, batches_succeeded: int | None
+    ctx: PipelineContext,
+    batches_total: int | None,
+    batches_succeeded: int | None,
+    *,
+    quality: ExtractionQuality | None = None,
 ) -> None:
-    """After a run's extraction data landed: the summary log, coverage and quality metrics."""
+    """After a run's extraction data landed: the summary log, coverage and quality metrics
+    (``quality`` given = the split path's score over its requested fields)."""
     _log_extraction(ctx)
     _record_extraction_coverage(ctx, batches_total, batches_succeeded)
-    _record_extraction_quality(ctx)
+    _record_extraction_quality(ctx, quality)

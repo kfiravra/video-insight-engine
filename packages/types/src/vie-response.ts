@@ -993,9 +993,16 @@ export interface SSETriageCompleteEvent {
   confidence: number;
 }
 
+type ExtractionCompleteDomain =
+  'travel' | 'food' | 'tech' | 'fitness' | 'music' | 'learning' | 'review' | 'project';
+
 export interface SSEDomainExtractionCompleteEvent {
   event: 'extraction_complete';
-  data: Partial<Pick<VIEResponse, 'travel' | 'food' | 'tech' | 'fitness' | 'music' | 'learning' | 'review' | 'project'>>;
+  /**
+   * Domain-keyed. The split extraction (EXTRACTION_PARALLEL, pipeline-1min 3.5)
+   * sends only the keys its field groups requested, so each domain object is partial.
+   */
+  data: { [K in ExtractionCompleteDomain]?: Partial<NonNullable<VIEResponse[K]>> };
 }
 
 // ─────────────────────────────────────────────────────

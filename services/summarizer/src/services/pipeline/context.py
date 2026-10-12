@@ -142,6 +142,9 @@ class PipelineContext:
     extraction_mis_targeted: list[str] = field(default_factory=list)
     # Fields validation reset to their default — pipeline.extraction._defaulted.
     extraction_defaulted: int = 0
+    # Split path: one row per group call ({group, chunk, fields, status, outputTokens,
+    # wallMs}) — pipeline.extraction._groups; empty on today's path.
+    extraction_groups: list[dict[str, Any]] = field(default_factory=list)
     synthesis_dict: dict[str, Any] = field(default_factory=dict)
     enrichment_data: dict[str, Any] | None = None
     # Coverage metric: how far into the video the timestamped extraction
