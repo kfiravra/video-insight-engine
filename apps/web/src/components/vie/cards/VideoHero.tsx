@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useState } from 'react';
 import { motion } from 'motion/react';
 import { Check } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -16,6 +16,8 @@ import type { TabDefinition, ContentTag } from '@vie/types';
 
 interface VideoHeroTab extends TabDefinition {
   preview?: string;
+  /** An early placeholder the stream will replace — marked in the strip. */
+  provisional?: boolean;
 }
 
 interface VideoHeroProps {
@@ -42,9 +44,9 @@ interface VideoHeroProps {
    *  real stream state so a completed video with an empty brief doesn't
    *  render skeletons forever. */
   isStreaming?: boolean;
-  /** Planned tabs announced by the stream before any content lands. Rendered
-   *  as inert pills in the exact position of the final tab strip so the
-   *  placeholder mirrors the finished layout. Ignored when `tabs` exist. */
+  /** Planned tabs announced by the stream that haven't landed yet. Rendered
+   *  as inert pills while streaming: before any tab exists, in the exact
+   *  geometry of the final strip; once tabs exist, after the live ones. */
   pendingTabs?: { id: string; label: string; emoji: string }[];
   className?: string;
 }
@@ -88,29 +90,27 @@ export const VideoHero = memo(function VideoHero({
   // Requires the explicit prop: legacy callers that omit it get the skeleton
   // treatment from `isStreaming`'s tldr heuristic but never the strip.
   const showPendingStrip = !hasTabs && isStreaming && isStreamingProp !== undefined;
+  // Once tabs exist, the planned ones still to come trail the live strip.
+  const trailingPending = hasTabs && isStreaming && isStreamingProp !== undefined ? pendingTabs ?? [] : [];
 
   // Key takeaways open on load — they ARE the landing summary. They step aside
   // (auto-collapse, once) the first time the user engages the player, because
   // watching displaces reading as the primary activity. No persistence: every
   // load is a fresh read-first arrival.
-  const [takeawaysOpen, setTakeawaysOpen] = useState(true);
-  const userToggledRef = useRef(false);
-  const autoCollapsedRef = useRef(false);
+  // `userOpen` null = untouched; a manual toggle takes permanent ownership.
+  const [userOpen, setUserOpen] = useState<boolean | null>(null);
+  const [autoCollapsed, setAutoCollapsed] = useState(false);
+  // One-shot auto-collapse on first engagement (seek or player open), adjusted
+  // during render. While streaming it waits until the stream settles so
+  // content isn't yanked mid-arrival.
+  if (!autoCollapsed && userOpen === null && hasEngaged && !isStreaming) {
+    setAutoCollapsed(true);
+  }
+  const takeawaysOpen = userOpen ?? !autoCollapsed;
 
   const toggleTakeaways = useCallback(() => {
-    userToggledRef.current = true;
-    setTakeawaysOpen((prev) => !prev);
-  }, []);
-
-  // One-shot auto-collapse on first engagement (seek or player open). A manual
-  // toggle at any point takes permanent ownership; while streaming the collapse
-  // waits until the stream settles so content isn't yanked mid-arrival.
-  useEffect(() => {
-    if (!hasEngaged || isStreaming) return;
-    if (autoCollapsedRef.current || userToggledRef.current) return;
-    autoCollapsedRef.current = true;
-    setTakeawaysOpen(false);
-  }, [hasEngaged, isStreaming]);
+    setUserOpen(!takeawaysOpen);
+  }, [takeawaysOpen]);
 
   // Identity strip pieces — laid out as a single row, separated by dots so the
   // metadata reads as one cohesive line instead of a stack of chips.
@@ -372,6 +372,15 @@ export const VideoHero = memo(function VideoHero({
                     </span>
                   )}
                   <span>{label}</span>
+                  {tab.provisional && (
+                    <>
+                      <span
+                        aria-hidden="true"
+                        className="size-1.5 shrink-0 rounded-full bg-current opacity-60 animate-pulse motion-reduce:animate-none"
+                      />
+                      <span className="sr-only">(early preview)</span>
+                    </>
+                  )}
                   {isCompleted && !isActive && (
                     <Check className="h-3.5 w-3.5 shrink-0 text-success" aria-label="Completed" />
                   )}
@@ -387,6 +396,21 @@ export const VideoHero = memo(function VideoHero({
                 </Tooltip>
               );
             })}
+            {trailingPending.map((tab) => (
+              <span
+                key={tab.id}
+                aria-hidden="true"
+                data-stream-tab-pill
+                className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-xl border border-dashed border-border/60 px-3.5 py-2 text-sm font-medium text-muted-foreground/60"
+              >
+                {tab.emoji && (
+                  <span aria-hidden="true" className="text-[0.95rem] leading-none opacity-70">
+                    {tab.emoji}
+                  </span>
+                )}
+                <span>{stripLeadingEmoji(tab.label)}</span>
+              </span>
+            ))}
           </div>
         </TooltipProvider>
       )}

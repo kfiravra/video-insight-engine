@@ -1,5 +1,6 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen, fireEvent, act } from '@testing-library/react';
+import { describe, it, expect, beforeEach } from 'vitest';
+import { render, screen, fireEvent } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { TabCoordinationProvider, useTabCoordination } from '../TabCoordinationContext';
 
 function TestConsumer() {
@@ -113,5 +114,49 @@ describe('TabCoordinationContext', () => {
   it('should return null when used outside provider', () => {
     render(<TestConsumer />);
     expect(screen.getByTestId('no-provider')).toHaveTextContent('no provider');
+  });
+
+  describe('sticky initial tab', () => {
+    function renderWith(initialTab: string, replacedTabIds?: Record<string, string>) {
+      return (
+        <TabCoordinationProvider videoId="v1" initialTab={initialTab} replacedTabIds={replacedTabIds}>
+          <TestConsumer />
+        </TabCoordinationProvider>
+      );
+    }
+
+    it('should keep the first initial tab active when a tab streamed in ahead of it changes initialTab', () => {
+      const { rerender } = render(renderWith('moments'));
+
+      rerender(renderWith('steps'));
+
+      expect(screen.getByTestId('active-tab')).toHaveTextContent('moments');
+    });
+
+    it('should apply the first non-empty initialTab when the provider mounted before any tab', () => {
+      const { rerender } = render(renderWith(''));
+
+      rerender(renderWith('moments'));
+
+      expect(screen.getByTestId('active-tab')).toHaveTextContent('moments');
+    });
+
+    it("should keep the user's choice when initialTab changes later", async () => {
+      const user = userEvent.setup();
+      const { rerender } = render(renderWith('overview'));
+      await user.click(screen.getByRole('button', { name: /go to quiz/i }));
+
+      rerender(renderWith('steps'));
+
+      expect(screen.getByTestId('active-tab')).toHaveTextContent('quiz');
+    });
+
+    it('should move focus to the replacing tab when the active tab was superseded', () => {
+      const { rerender } = render(renderWith('key_moments'));
+
+      rerender(renderWith('key_moments', { key_moments: 'chapters' }));
+
+      expect(screen.getByTestId('active-tab')).toHaveTextContent('chapters');
+    });
   });
 });

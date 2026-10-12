@@ -1,17 +1,12 @@
-import { useMemo, useRef } from 'react';
+import { useMemo } from 'react';
 import { isContentTag } from '@vie/types';
-import type { TabEntry, SynthesisResult, ContentTag, VIEResponseMeta, TriageResult } from '@vie/types';
+import type { SynthesisResult, ContentTag, VIEResponseMeta, TriageResult } from '@vie/types';
 import { getDomainGradient } from '@vie/shared/config';
-import { TabLayout, type TabLayoutHandle } from './output/TabLayout';
-import {
-  TabCoordinationProvider,
-  useTabCoordination,
-} from './output/TabCoordinationContext';
+import { TabCoordinationProvider } from './output/TabCoordinationContext';
+import { CommandDeck, TabPanel, type PendingTabLabel, type ShellTabDef } from './output/OutputTabShell';
 import { TabStateProvider } from '@/features/video-output/contexts/TabStateContext';
 import { GlassCard } from './output/GlassCard';
-import { ComposableOutput } from './output/ComposableOutput';
-import { ErrorBoundary } from '@/components/ui/error-boundary';
-import { VideoHero } from '@/components/vie';
+import type { StreamTab } from '@/features/video-output/lib/streaming/stream-tabs';
 import { StreamingPlaceholder, StreamErrorCard } from './StreamingPlaceholder';
 import { stripLeadingEmoji } from '@/lib/string-utils';
 import { DirectionProvider } from '@/contexts/DirectionContext';
@@ -23,17 +18,21 @@ import type {
   ExtractionProgressInfo,
   FrameInfo,
 } from '@/features/video-output/hooks/use-summary-stream';
-import { STREAM_PHASE_LABELS } from '@/features/video-output/hooks/use-summary-stream';
 
 interface OutputRouterProps {
   title: string;
   videoSummaryId: string;
-  tabs: TabEntry[] | null;
+  /** Streamed or DB tabs; streamed ones carry the stream flags (provisional). */
+  tabs: StreamTab[] | null;
   meta: VIEResponseMeta | null;
   synthesis: SynthesisResult | null;
   isStreaming?: boolean;
   tabCount?: number;
-  tabLabels?: { id: string; label: string; emoji: string }[];
+  tabLabels?: PendingTabLabel[];
+  /** The stream holds the run's final tab set — nothing more will land. */
+  tabsSettled?: boolean;
+  /** Streamed tab id → its successor (`tab_ready.replaces`); focus follows. */
+  replacedTabIds?: Record<string, string>;
   youtubeId?: string;
   creator?: string;
   duration?: number | null;
@@ -93,6 +92,8 @@ export function OutputRouter({
   isStreaming,
   tabCount = 0,
   tabLabels = [],
+  tabsSettled = false,
+  replacedTabIds,
   youtubeId,
   creator,
   duration,
@@ -149,7 +150,7 @@ export function OutputRouter({
     });
   }, [tabs]);
 
-  const tabDefs = useMemo(() => {
+  const tabDefs = useMemo((): ShellTabDef[] => {
     if (!orderedTabs || orderedTabs.length === 0) return [];
     return orderedTabs.map(t => ({
       id: t.id,
@@ -157,8 +158,20 @@ export function OutputRouter({
       emoji: t.emoji,
       dataSource: '',
       preview: tabPreviews[t.id],
+      provisional: t.provisional === true,
     }));
   }, [orderedTabs, tabPreviews]);
+
+  // Planned tabs (meta.tabLabels) that haven't streamed yet: inert pills in
+  // the strip and the provisional notice's count. Nothing is pending once the
+  // final tab set is known (e.g. during the translation tail).
+  const pendingTabs = useMemo((): PendingTabLabel[] => {
+    if (!isStreaming || tabsSettled) return [];
+    const arrived = new Set((tabs ?? []).map((t) => t.id));
+    return tabLabels.filter(
+      (l) => l.id !== 'overview' && !arrived.has(l.id) && !(replacedTabIds && l.id in replacedTabIds),
+    );
+  }, [isStreaming, tabsSettled, tabs, tabLabels, replacedTabIds]);
 
   const hasData = orderedTabs != null && orderedTabs.length > 0;
   const domainGradient = useMemo(() => getDomainGradient(primaryTag), [primaryTag]);
@@ -182,22 +195,30 @@ export function OutputRouter({
         {languageToggle ? (
           <div dir="ltr" className="flex justify-end">{languageToggle}</div>
         ) : null}
-        {hasData && tabDefs.length > 0 ? (
-          <TabCoordinationProvider key={videoSummaryId} videoId={videoSummaryId} initialTab={initialTab}>
-            <TabStateProvider videoId={videoSummaryId}>
-              <CommandDeck
-                title={title}
-                creator={creator}
-                duration={duration}
-                tldr={synthesis?.tldr}
-                keyTakeaways={synthesis?.keyTakeaways}
-                masterSummary={synthesis?.masterSummary}
-                youtubeId={youtubeId}
-                tabDefs={tabDefs}
-                domainGradient={domainGradient}
-                primaryTag={primaryTag}
-                isStreaming={isStreaming}
-              />
+        {/* One tree from the first event to the last: the hero (and its inline
+            player) never remounts when the first tab lands, and the initial
+            tab is chosen once (sticky — a tab streamed in ahead of it never
+            steals focus). */}
+        <TabCoordinationProvider
+          key={videoSummaryId}
+          videoId={videoSummaryId}
+          initialTab={initialTab}
+          replacedTabIds={replacedTabIds}
+        >
+          <TabStateProvider videoId={videoSummaryId}>
+            <CommandDeck
+              title={title}
+              creator={creator}
+              duration={duration}
+              synthesis={synthesis}
+              youtubeId={youtubeId}
+              tabDefs={tabDefs}
+              pendingTabs={hasData ? pendingTabs : tabLabels}
+              domainGradient={domainGradient}
+              primaryTag={primaryTag}
+              isStreaming={isStreaming}
+            />
+            {hasData ? (
               <TabPanel
                 tabDefs={tabDefs}
                 tabs={orderedTabs}
@@ -206,25 +227,10 @@ export function OutputRouter({
                 tabCount={adjustedTabCount}
                 streamPhase={streamPhase}
                 videoSummaryId={videoSummaryId}
+                pendingTabCount={pendingTabs.length}
+                onCancel={onCancelStream}
               />
-            </TabStateProvider>
-          </TabCoordinationProvider>
-        ) : (
-          <>
-            <VideoHero
-              title={title}
-              creator={creator}
-              duration={duration}
-              tldr={synthesis?.tldr}
-              keyTakeaways={synthesis?.keyTakeaways}
-              masterSummary={synthesis?.masterSummary}
-              youtubeId={youtubeId}
-              primaryTag={primaryTag}
-              domainGradient={domainGradient}
-              isStreaming={isStreaming}
-              pendingTabs={tabLabels}
-            />
-            {isStreaming ? (
+            ) : isStreaming ? (
               <StreamingPlaceholder
                 streamPhase={streamPhase}
                 phaseDetail={phaseDetail}
@@ -251,8 +257,8 @@ export function OutputRouter({
                 </p>
               </GlassCard>
             )}
-          </>
-        )}
+          </TabStateProvider>
+        </TabCoordinationProvider>
 
         <p className="text-center text-xs text-muted-foreground/60">
           AI-generated summary. Verify important details with the original video.
@@ -261,108 +267,3 @@ export function OutputRouter({
     </DirectionProvider>
   );
 }
-
-interface CommandDeckProps {
-  title: string;
-  creator?: string;
-  duration?: number | null;
-  tldr?: string;
-  keyTakeaways?: string[];
-  masterSummary?: string;
-  youtubeId?: string;
-  tabDefs: Array<{ id: string; label: string; emoji: string; preview?: string; dataSource: string }>;
-  domainGradient: string;
-  primaryTag: ContentTag;
-  isStreaming?: boolean;
-}
-
-/** Reads active-tab state from coordination context and renders the hero with
- *  the embedded tab bar. A thin wrapper so the hero doesn't need the context
- *  imported into it (keeps VideoHero reusable). */
-function CommandDeck({
-  title,
-  creator,
-  duration,
-  tldr,
-  keyTakeaways,
-  masterSummary,
-  youtubeId,
-  tabDefs,
-  domainGradient,
-  primaryTag,
-  isStreaming,
-}: CommandDeckProps) {
-  // CommandDeck is only rendered inside <TabCoordinationProvider> (see parent
-  // render). Context must be present — fail loud if a future refactor breaks
-  // that invariant instead of silently showing a non-interactive tab bar.
-  const coordination = useTabCoordination();
-  if (!coordination) {
-    throw new Error('CommandDeck must be rendered inside TabCoordinationProvider');
-  }
-  const { activeTab: activeTabId, setActiveTab, completedTabs } = coordination;
-
-  return (
-    <VideoHero
-      title={title}
-      creator={creator}
-      duration={duration}
-      tldr={tldr}
-      keyTakeaways={keyTakeaways}
-      masterSummary={masterSummary}
-      youtubeId={youtubeId}
-      tabs={tabDefs}
-      activeTabId={activeTabId}
-      onTabSelect={setActiveTab}
-      completedTabs={completedTabs}
-      domainGradient={domainGradient}
-      primaryTag={primaryTag}
-      isStreaming={isStreaming}
-    />
-  );
-}
-
-interface TabPanelProps {
-  tabDefs: Array<{ id: string; label: string; emoji: string; preview?: string; dataSource: string }>;
-  tabs: TabEntry[] | null;
-  primaryTag: ContentTag;
-  isStreaming?: boolean;
-  tabCount: number;
-  streamPhase?: StreamPhase;
-  videoSummaryId: string;
-}
-
-function TabPanel({ tabDefs, tabs, primaryTag, isStreaming, tabCount, streamPhase, videoSummaryId }: TabPanelProps) {
-  const tabLayoutRef = useRef<TabLayoutHandle>(null);
-  return (
-    <TabLayout
-      ref={tabLayoutRef}
-      tabs={tabDefs}
-      primaryTag={primaryTag}
-      isStreaming={isStreaming}
-      totalCount={tabCount}
-      phaseLabel={streamPhase ? STREAM_PHASE_LABELS[streamPhase] : undefined}
-    >
-      {(activeTabId, onNavigateTab) => (
-        <ErrorBoundary
-          fallback={
-            <GlassCard>
-              <p className="text-sm text-muted-foreground text-center py-6">
-                Something went wrong rendering this tab. Try switching to another tab.
-              </p>
-            </GlassCard>
-          }
-        >
-          <ComposableOutput
-            response={null}
-            tabs={tabs}
-            activeTab={activeTabId}
-            onNavigateTab={onNavigateTab}
-            primaryTag={primaryTag}
-            videoSummaryId={videoSummaryId}
-          />
-        </ErrorBoundary>
-      )}
-    </TabLayout>
-  );
-}
-

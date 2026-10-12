@@ -17,6 +17,7 @@ import { Confetti } from "@/components/ui/Confetti";
 import { buildSynthesisFromMeta } from "@/features/video-output/lib/synthesis-utils";
 import { shouldOpenStreamForStatus } from "@/features/video-output/lib/streaming/should-open-stream";
 import { resolveDisplayTabs } from "@/features/video-output/lib/streaming/resolve-display-tabs";
+import { isStreamSettled, type StreamTab } from "@/features/video-output/lib/streaming/stream-tabs";
 import type { TabEntry } from "@vie/types";
 
 // localStorage key for the cross-video language preference. Scoped under
@@ -86,6 +87,9 @@ export function VideoDetailPage() {
     metadata: streamMetadata,
     duration: streamDuration,
     tabs: streamTabs,
+    finalTabIds,
+    replacedTabIds,
+    isCached: streamIsCached,
     meta: streamMeta,
     synthesis: streamSynthesis,
     tabCount,
@@ -180,9 +184,11 @@ export function VideoDetailPage() {
   // direction wrapping LTR-English streamed content.
   const useOriginal = !isProcessing && showOriginal && canToggleLanguage;
 
-  // Completed DB doc beats a (possibly partial) streamed set — a dropped SSE
-  // connection must not pin a subset of tabs after the pipeline finished.
-  const resolvedTabs = useMemo((): TabEntry[] | null => {
+  // A completed DB doc beats an unsettled streamed set (a dropped connection
+  // must not pin a subset); a settled one — the run's final tabs, all final —
+  // keeps its tab objects where the DB copy renders the same.
+  const streamSettled = isStreamSettled({ tabs: streamTabs, finalTabIds, isCached: streamIsCached, phase });
+  const resolvedTabs = useMemo((): StreamTab[] | null => {
     const englishTabs = video?.tabs;
     const dbTabs = useOriginal && sourceLanguage
       ? sourceLanguage.tabs
@@ -194,10 +200,11 @@ export function VideoDetailPage() {
     // be cross-language — drop the stream side entirely in that mode.
     return resolveDisplayTabs({
       streamTabs: useOriginal ? [] : streamTabs,
+      streamSettled: !useOriginal && streamSettled,
       dbTabs,
       videoStatus: video?.status,
     });
-  }, [streamTabs, useOriginal, sourceLanguage, video?.tabs, video?.status]);
+  }, [streamTabs, streamSettled, useOriginal, sourceLanguage, video?.tabs, video?.status]);
 
   const resolvedMeta = useMemo(() => {
     const dbMeta = useOriginal && sourceLanguage ? sourceLanguage.meta : (video?.meta ?? null);
@@ -448,6 +455,8 @@ export function VideoDetailPage() {
             isStreaming={isStreaming}
             tabCount={tabCount}
             tabLabels={tabLabels}
+            tabsSettled={streamSettled}
+            replacedTabIds={replacedTabIds}
             youtubeId={video.youtubeId}
             creator={mergedVideo.creator ?? undefined}
             duration={mergedVideo.duration}

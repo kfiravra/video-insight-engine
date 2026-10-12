@@ -1,6 +1,8 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import type { TabEntry } from '@vie/types';
+import type { StreamTab } from '@/features/video-output/lib/streaming/stream-tabs';
 
 import { OutputRouter } from '../OutputRouter';
 
@@ -74,3 +76,115 @@ describe('OutputRouter tab filtering', () => {
     expect(screen.queryByText('Overview')).toBeNull();
   });
 });
+
+describe('OutputRouter while tabs stream in', () => {
+  const provisionalMoments: StreamTab = {
+    ...momentTab(makeMomentItems(4, 0)),
+    position: 3,
+    provisional: true,
+  };
+  const stepsTab: StreamTab = {
+    id: 'steps',
+    label: 'Steps',
+    emoji: '👣',
+    component: 'display_section',
+    props: { data: {} },
+    position: 1,
+  };
+  const plannedLabels = [
+    { id: 'steps', label: 'Steps', emoji: '👣' },
+    { id: 'moments', label: 'Moments', emoji: '🎬' },
+    { id: 'quiz', label: 'Quiz', emoji: '🧪' },
+  ];
+
+  function streamingRouter(
+    tabs: StreamTab[] | null,
+    extra: { tabsSettled?: boolean; onCancelStream?: () => void } = {},
+  ) {
+    return (
+      <OutputRouter
+        title="Test video"
+        videoSummaryId="vid-1"
+        tabs={tabs}
+        meta={null}
+        synthesis={null}
+        isStreaming
+        streamPhase="extraction"
+        tabCount={3}
+        tabLabels={plannedLabels}
+        onCancelStream={() => {}}
+        {...extra}
+      />
+    );
+  }
+
+  it('should keep Cancel visible once the first tab has landed', () => {
+    render(streamingRouter([provisionalMoments]));
+
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
+  });
+
+  it('should keep the stage timeline visible once the first tab has landed', () => {
+    render(streamingRouter([provisionalMoments]));
+
+    expect(screen.getByRole('list', { name: 'Processing stages' })).toBeInTheDocument();
+  });
+
+  it('should show the planned tabs that have not landed as pending pills', () => {
+    render(streamingRouter([provisionalMoments]));
+
+    expect(screen.getByText('Quiz')).toBeInTheDocument();
+  });
+
+  it('should drop the pending pills once the final tab set is known', () => {
+    render(streamingRouter([provisionalMoments], { tabsSettled: true }));
+
+    expect(screen.queryByText('Quiz')).toBeNull();
+  });
+
+  it('should cancel the stream when Cancel is clicked while tabs exist', async () => {
+    const user = userEvent.setup();
+    const onCancelStream = vi.fn();
+    render(streamingRouter([provisionalMoments], { onCancelStream }));
+
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    expect(onCancelStream).toHaveBeenCalledTimes(1);
+  });
+
+  it('should count the planned tabs still to come in the early-preview notice', () => {
+    render(streamingRouter([provisionalMoments]));
+
+    expect(screen.getByText(/2 more tabs are on the way/)).toBeInTheDocument();
+  });
+
+  it('should mark a provisional tab with the early-preview notice', () => {
+    render(streamingRouter([provisionalMoments]));
+
+    expect(screen.getByText('Early preview')).toBeInTheDocument();
+  });
+
+  it('should label a provisional tab as an early preview in the tab strip', () => {
+    render(streamingRouter([provisionalMoments]));
+
+    expect(screen.getByRole('tab', { name: /moments \(early preview\)/i })).toBeInTheDocument();
+  });
+
+  it('should not remount the hero when the first tab lands', () => {
+    const { rerender } = render(streamingRouter(null));
+    const heading = screen.getByRole('heading', { name: 'Test video' });
+
+    rerender(streamingRouter([provisionalMoments]));
+
+    expect(screen.getByRole('heading', { name: 'Test video' })).toBe(heading);
+  });
+
+  it('should keep focus on the first tab when a tab with an earlier position arrives', () => {
+    const { rerender } = render(streamingRouter([provisionalMoments]));
+
+    rerender(streamingRouter([stepsTab, provisionalMoments]));
+
+    expect(screen.getByRole('tab', { selected: true })).toHaveAccessibleName(/moments/i);
+  });
+});
+

@@ -10,12 +10,15 @@ import {
   validateDoneEvent,
   validateErrorEvent,
   validatePhaseEvent,
+  validateTabReadyEvent,
 } from "@/features/video-output/lib/streaming/sse-validators";
-import type { SSEPhase } from "@/features/video-output/lib/streaming/sse-validators";
+import type { SSEPhase, TabReadyFields } from "@/features/video-output/lib/streaming/sse-validators";
 import { getUserFriendlyError } from "@/features/video-output/lib/streaming/stream-error-messages";
+import { upsertStreamTab, withdrawUnlisted } from "@/features/video-output/lib/streaming/stream-tabs";
+import type { StreamTab } from "@/features/video-output/lib/streaming/stream-tabs";
 import { validateTabProps } from "@/features/video-output/lib/tab-prop-schemas";
 import type { StreamState, FrameInfo, StreamPhase, StreamPhaseDetail } from "@/features/video-output/hooks/use-summary-stream";
-import type { ContentTag, TabDefinition, TabEntry, VIEResponseMeta, EnrichmentData, QuizQuestion, Flashcard, CodeCheatSheetItem, ScenarioItem, Modifier, SynthesisResult } from "@vie/types";
+import type { ContentTag, TabDefinition, VIEResponseMeta, EnrichmentData, QuizQuestion, Flashcard, CodeCheatSheetItem, ScenarioItem, Modifier, SynthesisResult } from "@vie/types";
 import { filledSynthesisFields } from "@vie/types";
 
 type SetState = Dispatch<SetStateAction<StreamState>>;
@@ -40,12 +43,6 @@ function isValidTabLabel(v: unknown): v is { id: string; label: string; emoji: s
   if (typeof v !== "object" || v === null) return false;
   const obj = v as Record<string, unknown>;
   return typeof obj.id === "string" && typeof obj.label === "string" && typeof obj.emoji === "string";
-}
-
-function isValidCrossTabLink(v: unknown): v is { targetTab: string; label: string } {
-  if (typeof v !== "object" || v === null) return false;
-  const obj = v as Record<string, unknown>;
-  return typeof obj.targetTab === "string" && typeof obj.label === "string";
 }
 
 // ─── Event Handlers (grouped by domain) ───
@@ -229,9 +226,11 @@ function handleMetaEvent(event: Record<string, unknown>, setState: SetState): vo
   // meta fires at PLAN time (triage phase), not assembly — setting phase
   // "building" here made the UI jump ahead and then regress on the first
   // extraction_progress. Leave the phase alone; triage_complete already set
-  // "extraction" and the real enrichment/synthesis phase events advance it.
-  // Keep the tabs reset — it protects reconnects and cached replay.
-  setState((prev) => ({ ...prev, meta, tabs: [], tabCount, tabLabels }));
+  // "extraction" and the first assembled tab advances it.
+  // Never touches tabs: a (re)subscribe starts from a reset state and
+  // replace-by-id makes a replayed tab_ready idempotent, so a wipe here could
+  // only lose tabs that already streamed.
+  setState((prev) => ({ ...prev, meta, tabCount, tabLabels }));
 }
 
 /** Strip React-specific dangerous keys from SSE props to prevent injection. */
@@ -242,51 +241,62 @@ function sanitizeTabProps(raw: Record<string, unknown>): Record<string, unknown>
   return safe;
 }
 
-// Streamed tabs are validated per-event here (project-score-9 4.4); the same
-// shared gate re-runs over the merged tab list in ComposableOutput so cached
-// DB tabs converge on one contract. See validateTabProps in tab-prop-schemas.
-function handleTabReady(event: Record<string, unknown>, setState: SetState): void {
-  const rawProps = (typeof event.props === "object" && event.props !== null) ? event.props as Record<string, unknown> : {};
-  const validated = validateTabProps(
-    typeof event.component === "string" ? event.component : "",
-    sanitizeTabProps(rawProps),
-  );
-  // An id-less tab must not collapse into the previous id-less tab via the
-  // replace-by-id dedupe below — synthesize a per-position id and always
-  // append. The position suffix keeps two id-less tabs with the same
-  // component+label from sharing a React key / DOM id / selection target.
-  const rawId = typeof event.id === "string" && event.id ? event.id : null;
-  const label = typeof event.label === "string" ? event.label : "";
-  const base: Omit<TabEntry, "id"> = {
-    label,
-    emoji: typeof event.emoji === "string" ? event.emoji : "",
+/** The StreamTab of one validated tab_ready, with only the fields it carries. */
+function toStreamTab(fields: TabReadyFields, id: string): StreamTab {
+  // Streamed tabs are validated per-event here (project-score-9 4.4); the same
+  // shared gate re-runs over the merged tab list in ComposableOutput so cached
+  // DB tabs converge on one contract. See validateTabProps in tab-prop-schemas.
+  const validated = validateTabProps(fields.component, sanitizeTabProps(fields.props));
+  const tab: StreamTab = {
+    id,
+    label: fields.label,
+    emoji: fields.emoji,
     component: validated.component,
     props: validated.props,
-    crossTabLinks: Array.isArray(event.crossTabLinks)
-      ? event.crossTabLinks.filter(isValidCrossTabLink)
-      : undefined,
   };
-  // Index in the persisted tab order. moment_track tabs are held back by the
-  // backend (they stream last, after their frame fill); splicing by position
-  // keeps the streamed order equal to the DB doc's, so nothing reshuffles once
-  // the doc becomes authoritative on completion.
-  const position =
-    typeof event.position === "number" && Number.isInteger(event.position) && event.position >= 0
-      ? event.position
-      : null;
+  if (fields.goal !== undefined) tab.goal = fields.goal;
+  if (fields.crossTabLinks) tab.crossTabLinks = fields.crossTabLinks;
+  if (fields.attachments) {
+    tab.attachments = fields.attachments.map((a) => ({ ...a, props: sanitizeTabProps(a.props) }));
+  }
+  if (fields.degradedFrom !== undefined) tab.degradedFrom = fields.degradedFrom;
+  if (fields.position !== undefined) tab.position = fields.position;
+  if (fields.final === true) tab.final = true;
+  if (fields.provisional === true) tab.provisional = true;
+  return tab;
+}
+
+// Assembly emits no phase event: its first real tab is the "building" signal.
+// The provisional Moments tab lands at plan-done, before extraction even starts.
+const BEFORE_BUILDING: ReadonlySet<StreamPhase> = new Set(["idle", "connecting", "metadata", "transcript", "extraction"]);
+
+function handleTabReady(event: Record<string, unknown>, setState: SetState): void {
+  const fields = validateTabReadyEvent(event);
   setState((prev) => {
-    const id = rawId ?? `${validated.component || "tab"}-${label}-${prev.tabs.length}`.trim();
-    const tab: TabEntry = { id, ...base };
-    const existingIdx = rawId !== null ? prev.tabs.findIndex(t => t.id === tab.id) : -1;
-    if (existingIdx >= 0) {
-      const updated = [...prev.tabs];
-      updated[existingIdx] = tab;
-      return { ...prev, tabs: updated };
-    }
-    const tabs = [...prev.tabs];
-    tabs.splice(position === null ? tabs.length : Math.min(position, tabs.length), 0, tab);
-    return { ...prev, tabs };
+    // An id-less tab must not collapse into the previous id-less tab via
+    // replace-by-id — synthesize a per-arrival id. The count suffix keeps two
+    // id-less tabs with the same component+label from sharing a React key /
+    // DOM id / selection target.
+    const id = fields.id || `${fields.component || "tab"}-${fields.label}-${prev.tabs.length}`.trim();
+    const tab = toStreamTab(fields, id);
+    const next = upsertStreamTab(
+      { tabs: prev.tabs, replacedTabIds: prev.replacedTabIds },
+      tab,
+      fields.replaces,
+    );
+    const building = !tab.provisional && BEFORE_BUILDING.has(prev.phase);
+    if (next.tabs === prev.tabs && !building) return prev;
+    return {
+      ...prev,
+      tabs: next.tabs,
+      replacedTabIds: next.replacedTabIds,
+      ...(building ? { phase: "building" as const, phaseDetail: null } : {}),
+    };
   });
+}
+
+function parseTabIds(value: unknown): string[] | null {
+  return Array.isArray(value) && value.every((id) => typeof id === "string") ? value : null;
 }
 
 function handleCompleteEvent(event: Record<string, unknown>, setState: SetState): void {
@@ -295,11 +305,16 @@ function handleCompleteEvent(event: Record<string, unknown>, setState: SetState)
   // The complete event carries the ASSEMBLED tab count — replace the plan-time
   // count from meta so the "N of M" denominator stops promising dropped tabs.
   const tabCount = typeof event.tabCount === "number" ? event.tabCount : null;
+  // tabIds = the final response's order: a streamed tab missing from it was
+  // withdrawn (a minimum-3 fallback the quiz made unnecessary, a superseded
+  // provisional tab that carried no `replaces`).
+  const tabIds = parseTabIds(event.tabIds);
   setState((prev) => ({
     ...prev,
     processingTimeMs,
     degraded: prev.degraded || degraded,
     ...(tabCount !== null ? { tabCount } : {}),
+    ...(tabIds !== null ? { finalTabIds: tabIds, tabs: withdrawUnlisted(prev.tabs, tabIds) } : {}),
   }));
 }
 

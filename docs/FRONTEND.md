@@ -697,6 +697,7 @@ Layer 4: Shell        (features/video-output/components/output/) — State coord
 | `CrossTabLink` | Navigates between related tabs |
 | `VideoHero` (+ `VideoPlayerContext`) | Hosts the **inline** YouTube player (the old `CollapsibleVideoPlayer` was deleted). Context exposes `seekTo`, `registerPlayerAnchor` (scroll-into-view on seek), a `hasEngaged` latch, and Escape-to-close (capture-aware, skips typing targets). |
 | `StreamingPlaceholder` / `StreamErrorCard` | Pre-tab streaming states and stream-failure card with retry (replaced `OutputSkeleton`) |
+| `TabProgressStrip` / `ProvisionalTabNotice` | In-tab streaming chrome: progress, stage row and Cancel above the panel; the "Early preview" header of a provisional tab |
 | `RecipePlayer` | Cooking mode: ingredient panel + step-by-step player |
 
 ### COMPONENT_REGISTRY (29 Renderers)
@@ -766,21 +767,50 @@ renderers. Dependency: `@dagrejs/dagre` (^3.0.0).
 
 ```
 1. SSE triage_complete → domain accent binds, pending-tab strip appears (VideoHero)
-2. SSE tab_ready[]     → each tab rendered progressively, spliced by `position`
-                         (moment_track tabs are held back server-side while
-                         exact-timestamp frames are filled, then stream last)
-3. SSE complete        → celebration, final state
+2. SSE tab_ready[]     → tabs render progressively (contract: API-REFERENCE.md#tab_ready):
+                         plan-done → the provisional Moments tab ("Early preview"
+                         notice + a dot in the strip); assembly → the rest,
+                         non-final while a late quiz is pending; the framed
+                         Moments tab replaces the provisional by id; the final
+                         re-emit sends every tab `final: true` at its exact position
+3. SSE complete        → `tabIds` = the final order; streamed tabs missing from it
+                         are withdrawn
+4. SSE done            → celebration; the page refetches the doc
 ```
 
-On page load, `lib/streaming/resolve-display-tabs.ts` decides between the DB
-document and the live stream: a **completed DB doc beats a partial streamed
-set**; the stream only wins on a completed video if it holds more tabs.
+The reducer (`lib/streaming/stream-event-processor.ts` + `stream-tabs.ts`)
+keys tabs by id and keeps them sorted by (`position`, final first, arrival) —
+`position` is a sort key, never a splice index. A later emission replaces the
+earlier one; a final tab is replaced only by a later final one, never by a
+non-final or provisional replay. `tab_ready.replaces` (optional) names a tab
+the incoming one supersedes under another id: it takes that tab's slot and its
+focus. `meta` never touches tabs. The first non-provisional tab moves the
+timeline to "Build" (assembly sends no phase event).
+
+While streaming, the page keeps one tree (hero + tab strip mounted from the
+first event, so nothing remounts when tabs land): before the first tab the
+`StreamingPlaceholder` card; after it `TabProgressStrip` (Generating N of M,
+the stages in one row, Cancel) above the panel, and the planned tabs that
+haven't landed as inert pills after the live ones.
+
+`lib/streaming/resolve-display-tabs.ts` decides between the DB document and
+the stream by the stream's `final` state, not tab count: while processing the
+stream wins; on a completed video an **unsettled** stream (dropped connection,
+a withdrawn tab still held) yields to the DB doc, and a **settled** stream
+(`complete.tabIds` all received final, or a cached replay all final at `done`)
+keeps its tab objects wherever the DB copy renders the same content — frame-URL
+signatures aside, since every DB serve re-signs them and swapping would reload
+every frame image. Anything the DB holds differently comes from the DB. The
+original-language toggle always reads `video.sourceLanguage` (DB only).
 
 ### Tab Coordination
 
 `TabCoordinationContext` manages:
-- Active tab state (persisted in sessionStorage per videoId)
-- Completed tabs tracking
+- Active tab state — the initial tab is sticky: the first one chosen stays
+  active while later tabs stream in ahead of it (a late tab never steals
+  focus); focus on a tab superseded via `replaces` follows its successor; a
+  withdrawn active tab falls back to the first visible tab (`TabLayout`)
+- Completed tabs tracking (persisted in sessionStorage per videoId)
 - Cross-tab navigation via `CrossTabLink`
 
 ---

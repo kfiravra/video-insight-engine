@@ -6,6 +6,7 @@ import {
   validateDoneEvent,
   validateErrorEvent,
   validatePhaseEvent,
+  validateTabReadyEvent,
 } from '../sse-validators';
 
 // Mock the sse-logger to avoid console output during tests
@@ -326,6 +327,60 @@ describe('sse-validators', () => {
       const result = validatePhaseEvent({ event: 'wrong', phase: 'metadata' });
 
       expect(result).toBeNull();
+    });
+  });
+
+  // ─────────────────────────────────────────────────────
+  // validateTabReadyEvent Tests
+  // ─────────────────────────────────────────────────────
+
+  describe('validateTabReadyEvent', () => {
+    const base = { event: 'tab_ready', id: 'moments', label: 'Moments', emoji: '🎬', component: 'moment_track', props: {} };
+
+    it('should keep the stream fields when they are well-formed', () => {
+      const result = validateTabReadyEvent({ ...base, position: 2, final: true, replaces: 'key_moments' });
+
+      expect(result).toEqual(expect.objectContaining({ position: 2, final: true, replaces: 'key_moments' }));
+    });
+
+    it('should keep the provisional flag', () => {
+      const result = validateTabReadyEvent({ ...base, provisional: true });
+
+      expect(result.provisional).toBe(true);
+    });
+
+    it('should drop a negative or fractional position instead of the tab', () => {
+      const result = validateTabReadyEvent({ ...base, position: 1.5 });
+
+      expect(result).toEqual(expect.objectContaining({ id: 'moments', position: undefined }));
+    });
+
+    it('should drop an empty replaces id', () => {
+      const result = validateTabReadyEvent({ ...base, replaces: '' });
+
+      expect(result.replaces).toBeUndefined();
+    });
+
+    it('should default non-object props to an empty object', () => {
+      const result = validateTabReadyEvent({ ...base, props: ['not', 'a', 'record'] });
+
+      expect(result.props).toEqual({});
+    });
+
+    it('should drop malformed cross-tab links and attachments but keep the valid ones', () => {
+      const result = validateTabReadyEvent({
+        ...base,
+        crossTabLinks: [{ targetTab: 'quiz', label: 'Quiz' }, { targetTab: 3 }],
+        attachments: [{ slot: 'top', component: 'tip_callout', props: { text: 'Tip' } }, { slot: 'side' }],
+      });
+
+      expect([result.crossTabLinks?.length, result.attachments?.length]).toEqual([1, 1]);
+    });
+
+    it('should return an empty tab for a non-object event', () => {
+      const result = validateTabReadyEvent('not an event');
+
+      expect(result).toEqual({ id: '', label: '', emoji: '', component: '', props: {} });
     });
   });
 });

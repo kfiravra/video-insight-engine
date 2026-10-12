@@ -33,6 +33,8 @@ const initialState: StreamState = {
   tabCount: 0,
   tabLabels: [],
   frames: [],
+  finalTabIds: null,
+  replacedTabIds: {},
 };
 
 /** Runs events through processEvent the way React applies the updaters. */
