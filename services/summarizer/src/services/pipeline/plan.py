@@ -48,9 +48,11 @@ CONFIDENCE_THRESHOLD = 0.6
 # that starts within 5 minutes (A26). A 1h write costs 2x the input price and a
 # read 0.1x, so below a ~53 % hit rate the 1h breakpoint costs more than none;
 # a 5m write (1.25x) pays above ~22 %, on a 5-minute hit rate that can never
-# exceed the 1h one. If the 1h hit rate stays under 50 % after two weeks of
-# prod traffic, dropping the breakpoint (``cache=False``) or 5m is Kfir's
-# gate-2 decision (docs/llm-cost-model.md, scripts/cache_hit_rate.py).
+# exceed the 1h one. Kfir's gate-2 decision: 1h, no switching code — the
+# "1h hit rate < 50 % after two weeks of prod" rule is read by hand from
+# scripts/cache_hit_rate.py, and none / 5m / 1h get simulated from a week of
+# prod pipeline.timing arrival times before anything changes
+# (docs/llm-cost-model.md).
 PLAN_CACHE_TTL: CacheTTL = "1h"
 # Sized from measured phase-1 plans: 1,814–1,920 output tokens in 36.7–39.8 s.
 # 2,048 tokens truncated the answer (the JSON repair then silently dropped the

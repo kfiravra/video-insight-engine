@@ -138,11 +138,12 @@ the previous one. Economics (Sonnet 4.6, $3/MTok input): a 1h write is 2x input
 a ~53 % hit rate. A 5m write (1.25x) breaks even at ~22 % — of the 5-minute hit
 rate, which is never above the 1h one (every 5-minute hit is also a 1-hour
 hit). Gate item (Kfir 2026-10-12): read the plan's 1h hit rate with
-`scripts/cache_hit_rate.py` (below) after two weeks of prod traffic. Below 50 %,
-the choice between dropping the breakpoint (`cache=False`: never dearer than
-uncached) and 5m (cheaper only if ≥ ~22 % of plan calls start within 5 minutes
-of the previous one — the script does not measure that) is Kfir's gate-2
-decision; the code keeps 1h until he makes it.
+`scripts/cache_hit_rate.py` (below) after two weeks of prod traffic. Gate-2
+decision (Kfir 2026-10-12): the plan stays on 1h and there is no switching code —
+the "below 50 %" rule is a reporting rule applied by hand. After a week of prod
+data, none / 5m / 1h are simulated from the `pipeline.timing` arrival times (when
+each plan call started) and the cheapest is picked; `cache_hit_rate.py` alone
+cannot answer it, since the 5m hit rate depends on the gaps between plan calls.
 
 **Extraction — 5m (1c.3).**
 

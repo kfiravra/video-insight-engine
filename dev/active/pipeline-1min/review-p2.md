@@ -33,3 +33,12 @@ End with one line: `files reviewed: N; still-present findings: C=<n> W=<n>`.
 - R3 p2.3 → 8c124ee → non-English RAG text from the transcript (`transcript/english.py`, `translate_flat` prompt, `rag_translation` span), `index_in_qdrant` awaits nothing. Known, confirm + fix line: `english.py` imports private `_translate_flat_list` / `_is_mirror` from `pipeline/translation.py`; `ctx.audio_path` never set (dead)
 - R4 p2.1 → (sha when committed) → emission contract: TabLedger, per-tab `tab_ready` final/provisional/position, provisional Moments at plan-done, always-Moments, final re-emit, `complete.tabIds`, Redis stream reset + TTL at start, leaked-stream script, API relay + `packages/types`
 - R5 p2.2 → (sha when committed) → web reducer rules, DB-vs-stream resolution, provisional state, SSE phases, Playwright smoke
+- R6 p2.4 → the UNCOMMITTED 2.4 diff in the working tree (`git diff -- <paths>` + new files; the
+  coordinator lists the paths) → caption picker (spec + coordinator reading in `brief-2.4.md`):
+  legacy-code aliases, spoken language first (yt-dlp `language`, else the single `-orig` auto
+  language), manual → auto in it, today's fallback only when nothing matches; stale S3 caption blobs
+  yield to the fresh pick; youtube-transcript-api fallback prefers the spoken language. Check the
+  rule against every row of the probe table in the brief, the alias on both sides, untranslated-only
+  matching, `video_data.language` consistency with the picked track, the S3 rule (whisper / gemini
+  kept, failed caption fetch → blob, re-store overwrites, cold unchanged), and test coverage of each.
+
