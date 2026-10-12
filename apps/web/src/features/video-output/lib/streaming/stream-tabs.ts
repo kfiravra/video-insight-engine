@@ -103,17 +103,16 @@ interface StreamSettleInput {
   tabs: StreamTab[];
   /** `complete.tabIds`, once received. */
   finalTabIds: string[] | null;
-  isCached: boolean;
-  phase: string;
 }
 
 /**
- * True when the stream holds the run's final tab set: `complete` listed the
- * final order and every tab of it arrived final — or, for a cached replay
- * (which sends no `complete`), `done` came with every tab final.
+ * True when the stream holds a live run's final tab set: `complete` listed the
+ * final order and every tab of it arrived final. A cached replay sends no
+ * `complete` and is never settled: its frame URLs were signed for the run that
+ * produced the doc (they may have expired), and an instant replay has no
+ * progressive render to keep — the DB doc, re-signed on serve, wins.
  */
-export function isStreamSettled({ tabs, finalTabIds, isCached, phase }: StreamSettleInput): boolean {
-  if (tabs.length === 0 || !tabs.every((t) => t.final === true)) return false;
-  if (finalTabIds) return finalTabIds.length === tabs.length;
-  return isCached && phase === "done";
+export function isStreamSettled({ tabs, finalTabIds }: StreamSettleInput): boolean {
+  if (!finalTabIds || tabs.length === 0 || !tabs.every((t) => t.final === true)) return false;
+  return finalTabIds.length === tabs.length;
 }

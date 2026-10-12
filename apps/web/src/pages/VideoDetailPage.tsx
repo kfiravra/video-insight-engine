@@ -89,7 +89,6 @@ export function VideoDetailPage() {
     tabs: streamTabs,
     finalTabIds,
     replacedTabIds,
-    isCached: streamIsCached,
     meta: streamMeta,
     synthesis: streamSynthesis,
     tabCount,
@@ -104,6 +103,7 @@ export function VideoDetailPage() {
     confettiCount,
     degraded: streamDegraded,
     stop: stopStream,
+    retry: retryStream,
   } = useSummaryStream({
     videoSummaryId,
     // Stream is enabled only when the backend says we're processing AND the
@@ -185,9 +185,9 @@ export function VideoDetailPage() {
   const useOriginal = !isProcessing && showOriginal && canToggleLanguage;
 
   // A completed DB doc beats an unsettled streamed set (a dropped connection
-  // must not pin a subset); a settled one — the run's final tabs, all final —
+  // must not pin a subset); a settled live run — its final tabs, all final —
   // keeps its tab objects where the DB copy renders the same.
-  const streamSettled = isStreamSettled({ tabs: streamTabs, finalTabIds, isCached: streamIsCached, phase });
+  const streamSettled = isStreamSettled({ tabs: streamTabs, finalTabIds });
   const resolvedTabs = useMemo((): StreamTab[] | null => {
     const englishTabs = video?.tabs;
     const dbTabs = useOriginal && sourceLanguage
@@ -470,8 +470,9 @@ export function VideoDetailPage() {
             thumbnailUrl={mergedVideo.thumbnailUrl ?? undefined}
             warnings={streamWarnings}
             streamError={phase === "error" ? streamError : null}
-            onRetryStream={handleRetry}
-            retryingStream={retryVideo.isPending}
+            // A stream error (often a dropped connection) reattaches: the run
+            // keeps going server-side and the stream replays from its start.
+            onRetryStream={retryStream}
             onCancelStream={isStreaming ? handleCancelStream : undefined}
             languageToggle={
               canToggleLanguage && sourceLanguage ? (

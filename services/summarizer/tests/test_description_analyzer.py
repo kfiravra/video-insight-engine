@@ -369,6 +369,19 @@ class TestDescriptionGoesThroughProvider:
 
         assert [c["span"] for c in recorder.llm_calls] == ["description_analysis"]
 
+    @patch("src.services.video.description_analyzer.load_prompt")
+    @patch("src.services.llm_provider.acompletion")
+    async def test_should_request_a_json_object_when_analyzing(
+        self, mock_acompletion, mock_load_prompt
+    ):
+        """The description sits last and is up to 5,000 chars of untrusted text."""
+        mock_load_prompt.return_value = "Analyze: {description}"
+        mock_acompletion.return_value = self._response()
+
+        await _analyze_description_async("A description long enough to analyze, with links.")
+
+        assert mock_acompletion.call_args.kwargs["response_format"] == {"type": "json_object"}
+
 
 class TestAnalyzeDescription:
     """Tests for the main analyze_description function."""

@@ -125,7 +125,9 @@ export function TabPanel({
             </GlassCard>
           }
         >
-          {provisionalIds.has(activeTabId) && <ProvisionalTabNotice pendingTabCount={pendingTabCount} />}
+          {provisionalIds.has(activeTabId) && (
+            <ProvisionalTabNotice pendingTabCount={pendingTabCount} isLive={isStreaming === true} />
+          )}
           <ComposableOutput
             response={null}
             tabs={tabs}

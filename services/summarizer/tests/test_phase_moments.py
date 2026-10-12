@@ -12,7 +12,10 @@ from collections.abc import AsyncGenerator
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
+
 from src.models.memory_types import MemoryResult, OutlineSection
+from src.models.sse_events import SSEEventValidationError
 from src.services.pipeline.phases import moments
 from src.services.pipeline.pipeline_helpers import sse_event
 from src.services.pipeline.tab_ledger import TabLedger
@@ -110,3 +113,31 @@ class TestThenProvisionalMoments:
 
     def test_should_keep_the_phase_name_for_pipeline_timing(self) -> None:
         assert moments.then_provisional_moments(_text_branch).__name__ == "_text_branch"
+
+    async def test_should_keep_the_text_branch_when_building_the_preview_fails(
+        self, monkeypatch, caplog
+    ) -> None:
+        """R4-8: the preview is best-effort — a malformed source never fails phase two."""
+
+        def _broken(*_args: object) -> None:
+            raise KeyError("start_time")
+
+        monkeypatch.setattr(moments, "provisional_moments_tab", _broken)
+        wrapped = moments.then_provisional_moments(_text_branch)
+
+        chunks = [c async for c in wrapped(_ctx([_PLANNED]))]  # type: ignore[arg-type]
+
+        assert ([_payload(c)["event"] for c in chunks], "Provisional Moments" in caplog.text) == (
+            ["phase"],
+            True,
+        )
+
+    async def test_should_still_raise_an_sse_contract_violation(self, monkeypatch) -> None:
+        def _drifted(*_args: object, **_kwargs: object) -> str:
+            raise SSEEventValidationError("tab_ready: bad payload")
+
+        monkeypatch.setattr(moments, "provisional_moments_event", _drifted)
+        wrapped = moments.then_provisional_moments(_text_branch)
+
+        with pytest.raises(SSEEventValidationError):
+            _ = [c async for c in wrapped(_ctx([_PLANNED]))]  # type: ignore[arg-type]

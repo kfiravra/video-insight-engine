@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from src.services.pipeline.tab_ledger import TabLedger
@@ -153,7 +152,11 @@ class PipelineContext:
     language: str = "en"  # ISO 639-1 code of the primary (English) output
     is_rtl: bool = False  # Whether the primary output is right-to-left (always False)
     source_language_code: str | None = None  # detected original language, or None
-    audio_path: Path | None = None  # Cached audio file for reuse by translation
+    # The non-English RAG transcript task (English text first, then its Qdrant
+    # points; phases/qdrant_index.py). Once ``done`` is out the runner waits for
+    # it, bounded, so its translation calls land in pipeline.timing. None for an
+    # English transcript and for runs that index nothing.
+    rag_transcript_task: asyncio.Task[None] | None = None
 
     # Source-language artifact for non-English videos. The top-level tabs/meta/
     # synthesis on this context are ALWAYS the English-primary payload after

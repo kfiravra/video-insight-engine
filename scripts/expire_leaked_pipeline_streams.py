@@ -12,7 +12,10 @@ Redis expires the stream.
 
 Dry run by default — prints each leaked stream (entries, time of its last
 event, whether it ended with the done sentinel) and changes nothing.
-``--apply`` sets the TTL (``EXPIRE … NX``: a TTL set meanwhile is kept).
+``--apply`` sets the TTL in one atomic Lua step per stream that checks again
+that it still has no TTL and that no producer has claimed its lock since the
+scan — a TTL set meanwhile is kept and a run that started meanwhile is left
+alone, so the sweep is safe while pre-2.1 producers still run.
 
 Dev (dev Redis on localhost:6379)::
 
@@ -45,6 +48,15 @@ SENTINEL_DONE = "__pipeline_done__"
 DEFAULT_TTL_SECONDS = 120  # PIPELINE_STREAM_TTL_SECONDS
 NO_EXPIRY = -1  # TTL reply for a key that has none
 
+# KEYS[1] = the stream, KEYS[2] = its producer lock, ARGV[1] = the TTL.
+# Returns 1 when the TTL was set, 0 when the stream is no longer leaked.
+EXPIRE_IF_STILL_LEAKED = """
+if redis.call('TTL', KEYS[1]) == -1 and redis.call('EXISTS', KEYS[2]) == 0 then
+  return redis.call('EXPIRE', KEYS[1], ARGV[1])
+end
+return 0
+"""
+
 
 class StreamClient(Protocol):
     """The sync redis-py surface the sweep uses (``decode_responses=True``)."""
@@ -54,7 +66,7 @@ class StreamClient(Protocol):
     def exists(self, *names: str) -> Any: ...
     def xlen(self, name: str) -> Any: ...
     def xrevrange(self, name: str, count: int) -> Any: ...
-    def expire(self, name: str, time: int, nx: bool) -> Any: ...
+    def eval(self, script: str, numkeys: int, *keys_and_args: Any) -> Any: ...
 
 
 @dataclass(frozen=True)
@@ -63,6 +75,10 @@ class LeakedStream:
     entries: int
     last_event_at: str  # ISO time of the last entry, "" for an empty stream
     ended: bool  # the last entry is the done sentinel
+
+
+def _lock_key(stream_key: str) -> str:
+    return LOCK_PREFIX + stream_key.removeprefix(STREAM_PREFIX)
 
 
 def _last_entry(client: StreamClient, key: str) -> tuple[str, bool]:
@@ -82,7 +98,7 @@ def find_leaked(client: StreamClient) -> list[LeakedStream]:
     for key in client.scan_iter(match=f"{STREAM_PREFIX}*", count=500):
         if client.ttl(key) != NO_EXPIRY:
             continue
-        if client.exists(LOCK_PREFIX + key.removeprefix(STREAM_PREFIX)):
+        if client.exists(_lock_key(key)):
             continue
         last_event_at, ended = _last_entry(client, key)
         leaked.append(LeakedStream(key, int(client.xlen(key)), last_event_at, ended))
@@ -90,8 +106,12 @@ def find_leaked(client: StreamClient) -> list[LeakedStream]:
 
 
 def expire_leaked(client: StreamClient, leaked: list[LeakedStream], ttl: int) -> int:
-    """Set ``ttl`` on each leaked stream that still has none; how many were set."""
-    return sum(1 for stream in leaked if client.expire(stream.key, ttl, nx=True))
+    """Set ``ttl`` on each stream still leaked at apply time; how many were set."""
+    return sum(
+        1
+        for stream in leaked
+        if client.eval(EXPIRE_IF_STILL_LEAKED, 2, stream.key, _lock_key(stream.key), ttl)
+    )
 
 
 def describe(stream: LeakedStream) -> str:

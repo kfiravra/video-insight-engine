@@ -141,7 +141,6 @@ def _build_assembly_ctx() -> SimpleNamespace:
         repository=repo,
         timer=timer,
         transcript_data=None,
-        audio_path=None,
         memory=None,
         video_memory="",
         tab_ledger=TabLedger(),

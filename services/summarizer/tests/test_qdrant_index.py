@@ -6,7 +6,10 @@ background — Whisper translate of the audio only when this run transcribed it
 (cached, today's path), the transcript as is when it already reads as English,
 otherwise a text translation of the transcript (captions, S3 hits, Gemini:
 never an audio download or a Whisper call) — and embeds the original text when
-that fails.
+that fails. Chunk times follow the text: the SponsorBlock-cut segments for the
+transcript's own text, the whole recording's for Whisper's translation. The
+non-English task is kept on ``ctx.rag_transcript_task`` for the runner's
+bounded wait.
 """
 
 from __future__ import annotations
@@ -62,7 +65,6 @@ def _ctx(
         clean_text=text,
         transcript_data=transcript,
         prompt_segments=list(_PROMPT_SEGMENTS),
-        audio_path=_AUDIO,
         llm_service=MagicMock(name="llm_service"),
         assembled_tabs=[],
         visual_annotations="",
@@ -121,8 +123,33 @@ class TestEnglishSource:
             "text": _ENGLISH_DUB,
             "language": "en",
             "transcript_original": None,
-            "segments": _RAW_SEGMENTS,
+            "segments": _PROMPT_SEGMENTS,
         }
+
+    async def test_should_time_the_points_on_the_segments_the_text_was_built_from(
+        self, stores, translate
+    ):
+        # clean_text drops the SponsorBlock read; the raw segments still hold it.
+        await _index(_ctx(language=None, text=_ENGLISH_DUB))
+
+        assert _stored(stores)["segments"] == _PROMPT_SEGMENTS
+
+    async def test_should_time_the_points_on_the_transcript_without_prompt_segments(
+        self, stores, translate
+    ):
+        ctx = _ctx(language=None, text=_ENGLISH_DUB)
+        ctx.prompt_segments = []
+
+        await _index(ctx)
+
+        assert _stored(stores)["segments"] == _RAW_SEGMENTS
+
+    async def test_should_keep_no_transcript_task_for_the_runner(self, stores, translate):
+        ctx = _ctx(language=None, text=_ENGLISH_DUB)
+
+        await _index(ctx)
+
+        assert getattr(ctx, "rag_transcript_task", None) is None
 
     async def test_should_hand_the_store_over_before_index_returns(self, stores, translate):
         before = asyncio.all_tasks()
@@ -157,7 +184,7 @@ class TestTranscriptAlreadyEnglish:
             "text": _ENGLISH_DUB,
             "language": "he",
             "transcript_original": None,
-            "segments": _RAW_SEGMENTS,
+            "segments": _PROMPT_SEGMENTS,
         }
 
     async def test_should_neither_translate_nor_touch_the_audio(self, stores, translate, audio):
@@ -180,6 +207,13 @@ class TestTranslatedAsText:
         await _index(_ctx())
 
         assert _stored(stores)["transcript_original"] == _ARABIC
+
+    async def test_should_keep_the_transcript_task_for_the_runner(self, stores, translate):
+        ctx = _ctx()
+
+        await _index(ctx)
+
+        assert ctx.rag_transcript_task.get_name() == "store_transcript_ytid"
 
     async def test_should_tag_the_points_with_the_source_language(self, stores, translate):
         await _index(_ctx())
@@ -252,7 +286,7 @@ class TestEnglishTextFailure:
         assert (stored["text"], stored["transcript_original"], stored["segments"]) == (
             _ARABIC,
             None,
-            _RAW_SEGMENTS,
+            _PROMPT_SEGMENTS,
         )
 
     async def test_should_embed_the_original_when_the_translation_raises(self, stores, translate):
@@ -295,9 +329,12 @@ class TestTranscribedFromTheAudio:
 
     @staticmethod
     async def _run(audio: SimpleNamespace, whisper_text: str) -> None:
-        """The run's audio is cached on disk; Whisper translate answers ``whisper_text``."""
+        """The run's audio sits in Whisper's cache; Whisper translate answers ``whisper_text``."""
         audio.whisper.return_value = {"text": whisper_text, "segments": [], "duration": 9.0}
-        with patch.object(Path, "exists", return_value=True):
+        with (
+            patch.object(whisper_transcriber, "_cached_audio_path", return_value=_AUDIO),
+            patch.object(Path, "exists", return_value=True),
+        ):
             await _index(_ctx(source="whisper"))
 
     async def test_should_whisper_translate_the_cached_audio_without_a_new_download(
@@ -319,9 +356,84 @@ class TestTranscribedFromTheAudio:
             0,
         )
 
-    async def test_should_embed_the_original_when_whisper_returns_too_little(
+    async def test_should_time_the_whisper_english_on_the_whole_recording(
+        self, stores, translate, audio
+    ):
+        # Whisper translates the whole audio, the sponsor read included.
+        await self._run(audio, "Whisper English " * 20)
+
+        assert _stored(stores)["segments"] == _RAW_SEGMENTS
+
+    async def test_should_translate_the_transcript_when_whisper_returns_too_little(
         self, stores, translate, audio
     ):
         await self._run(audio, "Hi")
 
+        assert (_stored(stores)["text"], _stored(stores)["transcript_original"]) == (
+            _ENGLISH.text,
+            _ARABIC,
+        )
+
+    async def test_should_translate_the_transcript_when_whisper_translate_fails(
+        self, stores, translate, audio
+    ):
+        # > 25 MB, or the re-download failed: translate_audio_to_english answers None.
+        audio.whisper.side_effect = RuntimeError("413 file too large")
+        with (
+            patch.object(whisper_transcriber, "_cached_audio_path", return_value=_AUDIO),
+            patch.object(Path, "exists", return_value=True),
+        ):
+            await _index(_ctx(source="whisper"))
+
+        assert _stored(stores)["text"] == _ENGLISH.text
+
+    async def test_should_embed_the_original_when_whisper_and_the_translation_fail(
+        self, stores, translate, audio
+    ):
+        translate.return_value = None
+
+        await self._run(audio, "Hi")
+
         assert (_stored(stores)["text"], _stored(stores)["transcript_original"]) == (_ARABIC, None)
+
+
+class TestWaitForRagTranscript:
+    """The runner's bounded wait, after ``done``, for the non-English transcript task."""
+
+    async def test_should_return_once_the_transcript_points_are_stored(self, stores, translate):
+        before = asyncio.all_tasks()
+        ctx = _ctx()
+
+        await qdrant_index.index_in_qdrant(ctx)  # type: ignore[arg-type]
+        await qdrant_index.wait_for_rag_transcript(ctx)  # type: ignore[arg-type]
+        stored = stores.transcript.call_count
+        await asyncio.gather(*(asyncio.all_tasks() - before))
+
+        assert stored == 1
+
+    async def test_should_stop_at_the_bound_without_cancelling_the_task(
+        self, stores, translate, monkeypatch
+    ):
+        release = asyncio.Event()
+
+        async def _slow(*_args: Any) -> EnglishTranscript:
+            await release.wait()
+            return _ENGLISH
+
+        translate.side_effect = _slow
+        monkeypatch.setattr(qdrant_index, "RAG_TRANSCRIPT_WAIT_S", 0.01)
+        before = asyncio.all_tasks()
+        ctx = _ctx()
+
+        await qdrant_index.index_in_qdrant(ctx)  # type: ignore[arg-type]
+        await qdrant_index.wait_for_rag_transcript(ctx)  # type: ignore[arg-type]
+        running = not ctx.rag_transcript_task.done()
+        release.set()
+        await asyncio.gather(*(asyncio.all_tasks() - before))
+
+        assert (running, stores.transcript.call_count) == (True, 1)
+
+    async def test_should_return_at_once_without_a_transcript_task(self):
+        ctx = SimpleNamespace(youtube_id="ytid")
+
+        await asyncio.wait_for(qdrant_index.wait_for_rag_transcript(ctx), timeout=1.0)  # type: ignore[arg-type]

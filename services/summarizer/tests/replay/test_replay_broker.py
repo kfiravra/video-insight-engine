@@ -8,7 +8,7 @@ subscriber receives them; a re-run (or a crashed run) on the same id never
 replays the previous run's events; the stream has a TTL from its first event.
 
 Runs against ``settings.REDIS_URL`` on scratch db 15 and purges its keys;
-skipped when no Redis answers (CI's summarizer job has none).
+skipped when no Redis answers (CI's summarizer job runs a Redis service).
 """
 
 from __future__ import annotations

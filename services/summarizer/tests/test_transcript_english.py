@@ -7,12 +7,17 @@ each block's time span, and translates the blocks on the fast model with the
 
 from __future__ import annotations
 
+import asyncio
+import re
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.config import settings
+from src.services.pipeline import translation_flat
 from src.services.transcript import english
 from src.services.transcript.english import (
     RAG_TRANSLATION_STAGE,
@@ -36,6 +41,12 @@ def _segments(count: int) -> list[dict[str, Any]]:
     return [_seg(_sentence(i), start=i * 3.0) for i in range(count)]
 
 
+_ENGLISH_LINE = "Our AI agent just returned eight thousand bags to the customer instead of eighty. "
+_SPANISH_LINE = "Nuestro agente acaba de devolver ocho mil bolsas al cliente en lugar de ochenta. "
+# Bidi control characters: LRM/RLM, the embeddings/overrides, the isolates.
+_BIDI_LITERAL = re.compile("[\u200e\u200f\u202a-\u202e\u2066-\u2069]")
+
+
 async def _to_english(_llm: Any, texts: list[str], *_args: Any, **_kwargs: Any) -> list[str]:
     return [f"English {i}: {len(text)} chars" for i, text in enumerate(texts)]
 
@@ -43,7 +54,7 @@ async def _to_english(_llm: Any, texts: list[str], *_args: Any, **_kwargs: Any) 
 @pytest.fixture
 def translator() -> Iterator[MagicMock]:
     """The one LLM call, faked; tests swap its side effect."""
-    with patch.object(english, "_translate_flat_list") as fake:
+    with patch.object(english, "translate_flat_list") as fake:
         fake.side_effect = _to_english
         yield fake
 
@@ -69,8 +80,15 @@ class TestBlocks:
 
         assert [len(b["text"].split()) for b in blocks] == [80, 80, 40]
 
+    def test_should_keep_bidi_controls_escaped_in_the_source(self):
+        # A literal override character can hide code from a reviewer (Trojan Source).
+        source = Path(english.__file__).read_text(encoding="utf-8")
+
+        assert not _BIDI_LITERAL.search(source)
+
     def test_should_strip_the_bidi_marks_around_subtitle_lines(self):
-        segments = [_seg("‫שורה ראשונה‬ ‫שורה שנייה‬", 0.0)]
+        # RLE ... PDF around each line, as YouTube's timedtext sends them.
+        segments = [_seg("\u202bשורה ראשונה\u202c \u202bשורה שנייה\u202c", 0.0)]
 
         assert _blocks(segments)[0]["text"] == "שורה ראשונה שורה שנייה"
 
@@ -170,6 +188,45 @@ class TestEnglishBlocks:
     async def test_should_return_none_without_speech(self, translator):
         assert await english_blocks(MagicMock(), [_seg("", 0.0)], "ar") is None
 
+    async def test_should_keep_retry_halves_within_the_call_limit(self, translator, monkeypatch):
+        # Two ~220-char blocks per batch → 8 batches, each retried as two halves.
+        monkeypatch.setattr(english, "_BATCH_CHARS", 500)
+        in_flight = peak = 0
+
+        async def _count(_llm: Any, texts: list[str], *a: Any, **k: Any) -> list[str] | None:
+            nonlocal in_flight, peak
+            in_flight += 1
+            peak = max(peak, in_flight)
+            await asyncio.sleep(0.01)
+            in_flight -= 1
+            return None if len(texts) > 1 else await _to_english(_llm, texts)
+
+        translator.side_effect = _count
+
+        await english_blocks(MagicMock(), _segments(64), "ar")
+
+        assert peak == english._CONCURRENCY
+
+
+class TestTranslationModel:
+    async def test_should_run_on_the_translation_model_when_it_is_set(self, monkeypatch):
+        monkeypatch.setattr(settings, "LLM_TRANSLATION_MODEL", "openai/gpt-4o-mini")
+        llm_call = AsyncMock(return_value=None)
+
+        with patch.object(translation_flat, "call_llm_with_retry", llm_call):
+            await english_blocks(MagicMock(), _segments(3), "ar")
+
+        assert llm_call.call_args.kwargs["model_override"] == "openai/gpt-4o-mini"
+
+    async def test_should_run_on_the_fast_model_when_no_translation_model_is_set(self):
+        llm_call = AsyncMock(return_value=None)
+
+        with patch.object(translation_flat, "call_llm_with_retry", llm_call):
+            await english_blocks(MagicMock(), _segments(3), "ar")
+
+        kwargs = llm_call.call_args.kwargs
+        assert (kwargs["model_override"], kwargs["use_fast_model"]) == (None, True)
+
 
 class TestIsEnglishText:
     def test_should_accept_an_english_transcript(self):
@@ -187,3 +244,10 @@ class TestIsEnglishText:
 
     def test_should_reject_text_too_short_to_judge(self):
         assert not is_english_text("Hello there")
+
+    def test_should_accept_a_long_english_transcript(self):
+        assert is_english_text(_ENGLISH_LINE * 150)
+
+    def test_should_reject_a_spanish_transcript_behind_an_english_intro(self):
+        # The ~5.9k-char intro fills langdetect's whole 5,000-char sample.
+        assert not is_english_text(_ENGLISH_LINE * 70 + _SPANISH_LINE * 300)

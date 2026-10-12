@@ -790,17 +790,21 @@ timeline to "Build" (assembly sends no phase event).
 While streaming, the page keeps one tree (hero + tab strip mounted from the
 first event, so nothing remounts when tabs land): before the first tab the
 `StreamingPlaceholder` card; after it `TabProgressStrip` (Generating N of M,
-the stages in one row, Cancel) above the panel, and the planned tabs that
-haven't landed as inert pills after the live ones.
+the stages in one row, Cancel — rendered only while the stream is live) above
+the panel, and the planned tabs that haven't landed as inert pills after the
+live ones. A stream error after tabs landed (e.g. a dropped connection) shows
+`StreamErrorCard` above the tabs; its Retry reattaches to the stream (the run
+keeps going server-side and the stream replays from its first event).
 
 `lib/streaming/resolve-display-tabs.ts` decides between the DB document and
 the stream by the stream's `final` state, not tab count: while processing the
 stream wins; on a completed video an **unsettled** stream (dropped connection,
-a withdrawn tab still held) yields to the DB doc, and a **settled** stream
-(`complete.tabIds` all received final, or a cached replay all final at `done`)
-keeps its tab objects wherever the DB copy renders the same content — frame-URL
-signatures aside, since every DB serve re-signs them and swapping would reload
-every frame image. Anything the DB holds differently comes from the DB. The
+a withdrawn tab still held, any cached replay) yields to the DB doc, and a
+**settled** live run (`complete.tabIds` all received final) keeps its tab
+objects wherever the DB copy renders the same content — frame-URL signatures
+aside (both non-empty), since every DB serve re-signs them and swapping would
+reload every frame image. A cached replay never settles: its frame URLs were
+signed for the run that produced the doc and may have expired. Anything the DB holds differently comes from the DB. The
 original-language toggle always reads `video.sourceLanguage` (DB only).
 
 ### Tab Coordination

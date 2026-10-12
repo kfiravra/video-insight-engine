@@ -2,7 +2,8 @@
 
 final = the tab's last emission this run; a tab a late phase may still change
 goes out non-final; a provisional tab is never final; the closing re-emit sends
-every tab not yet received final, once, at its final position.
+every tab not yet received final, once, at its final position. The tab that
+takes the provisional's place under another id names it in ``replaces``.
 """
 
 from __future__ import annotations
@@ -134,6 +135,65 @@ class TestClosingEvents:
         finals = [_payload(c)["id"] for c in sent if _payload(c)["final"]]
 
         assert finals == ["overview", "code"]
+
+
+def _with_provisional(provisional_id: str = "key_moments") -> TabLedger:
+    ledger = _ledger()
+    ledger.event(_tab(provisional_id, "moment_track"), 2, provisional=True)
+    return ledger
+
+
+class TestReplaces:
+    def test_should_name_the_provisional_on_the_tab_taking_its_place_under_another_id(
+        self,
+    ) -> None:
+        ledger = _with_provisional()
+        response = [_tab("overview", "overview"), _tab("segments", "moment_track")]
+        ledger.track_response(response)
+
+        payload = _payload(ledger.event(response[1], 1))
+
+        assert payload["replaces"] == "key_moments"
+
+    def test_should_name_it_on_the_first_emission_only(self) -> None:
+        ledger = _with_provisional()
+        segments = _tab("segments", "moment_track")
+        ledger.track_response([segments])
+        ledger.event(segments, 0)
+
+        later = _payload(ledger.event(segments, 0))
+
+        assert "replaces" not in later
+
+    def test_should_name_nothing_when_a_tab_keeps_the_provisional_id(self) -> None:
+        ledger = _with_provisional("moments")
+        response = [_tab("moments", "moment_track"), _tab("segments", "moment_track")]
+        ledger.track_response(response)
+
+        sent = [_payload(ledger.event(tab, i)) for i, tab in enumerate(response)]
+
+        assert [p.get("replaces") for p in sent] == [None, None]
+
+    def test_should_name_nothing_on_a_tab_of_another_component(self) -> None:
+        ledger = _with_provisional()
+        facts = _tab("facts")
+        ledger.track_response([facts])
+
+        assert "replaces" not in _payload(ledger.event(facts, 0))
+
+    def test_should_name_nothing_without_a_provisional_tab(self) -> None:
+        ledger = _ledger()
+        segments = _tab("segments", "moment_track")
+        ledger.track_response([segments])
+
+        assert "replaces" not in _payload(ledger.event(segments, 0))
+
+    def test_should_name_it_in_the_final_re_emit_when_the_tab_first_comes_there(self) -> None:
+        ledger = _with_provisional()
+
+        closing = [_payload(c) for c in ledger.closing_events([_tab("segments", "moment_track")])]
+
+        assert (closing[0]["id"], closing[0]["replaces"]) == ("segments", "key_moments")
 
 
 class TestWithdrawn:

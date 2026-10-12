@@ -138,6 +138,19 @@ describe("resolveDisplayTabs", () => {
       expect(result?.[0]).toBe(db);
     });
 
+    it("should take the DB tab when the streamed copy's frame URL is empty", () => {
+      const db = momentTab("https://s3/frame_1.jpg?X-Amz-Signature=serve");
+
+      const result = resolveDisplayTabs({
+        streamTabs: streamed([momentTab("")]),
+        streamSettled: true,
+        dbTabs: [db],
+        videoStatus: "completed",
+      });
+
+      expect(result?.[0]).toBe(db);
+    });
+
     it("should follow the DB doc's order and membership even when the stream is settled", () => {
       const db = tabs(3, "t");
 

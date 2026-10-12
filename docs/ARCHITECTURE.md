@@ -215,7 +215,8 @@ Content type is determined by a **plan phase** that runs a classifier (fast mode
 │     │   `sourceLanguage = {code, name, isRTL, tabs, meta}`                 │
 │     ├── OWNS the Redis response-cache write for non-English videos         │
 │     │   (assembly skips Redis when ctx.language != "en")                    │
-│     └── English Qdrant embeddings for cross-language RAG search            │
+│     └── no Qdrant work: the RAG transcript's English starts at              │
+│         the save, in the background (docs/RAG.md)                           │
 │                                                                             │
 │  9. SAVE + STREAM COMPLETE                                                 │
 │     ├── SSE: tab_ready events (progressive; each carries `position` —     │
@@ -290,7 +291,8 @@ The pipeline uses Server-Sent Events (SSE) to stream results progressively with 
 │                                                                             │
 │  PHASE 7.5: TRANSLATION (non-English only, ~5-15s)                         │
 │    → Translates tabs + synthesis to English for bilingual storage           │
-│    → Whisper translate for English Qdrant embeddings                        │
+│    → no Qdrant work: the RAG transcript's English is a background           │
+│      task started at the save (docs/RAG.md §Non-English)                    │
 │    → Stores language/isRTL metadata on document                             │
 │    → Owns the terminal transition: assembly left the doc "processing"        │
 │      and DEFERRED `done`; translation writes status="completed" and emits    │

@@ -43,9 +43,9 @@ from src.services.pipeline.phases.synthesis import (
     seed_synthesis_dict,
 )
 from src.services.pipeline.pipeline_helpers import (
-    log_background_error,
     normalize_segments,
     run_parallel_phases,
+    spawn_background,
     sse_event,
 )
 from src.services.pipeline.post_processor import coverage_is_degraded
@@ -103,6 +103,9 @@ def _assemble(
     )
     ctx.assembled_tabs = assembled.get("tabs", [])
     ctx.assembled_meta = assembled.get("meta", {})
+    # The tab that takes the plan-done provisional's place under another id
+    # carries ``replaces`` on its first emission.
+    ctx.tab_ledger.track_response(ctx.assembled_tabs)
     _flag_coverage(ctx)
     return assembled
 
@@ -416,5 +419,4 @@ def _store_transcript_in_s3(ctx: PipelineContext) -> None:
         except Exception as e:
             logger.warning("Transcript S3 storage failed (non-critical): %s", e)
 
-    task = asyncio.create_task(_store(), name=f"store_transcript_s3_{ctx.youtube_id}")
-    task.add_done_callback(log_background_error)
+    spawn_background(_store(), name=f"store_transcript_s3_{ctx.youtube_id}")

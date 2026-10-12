@@ -27,6 +27,7 @@ from src.services.pipeline.phases import (
     run_phase_metadata,
     run_phase_text,
 )
+from src.services.pipeline.phases.qdrant_index import wait_for_rag_transcript
 from src.services.pipeline.pipeline_helpers import (
     PipelineTimer,
     run_parallel_phases,
@@ -102,16 +103,23 @@ async def run_pipeline_phases(
 
     Every outgoing SSE chunk stamps the recorder's milestones (first
     ``tab_ready``, ``complete``, ``done``); the timing document is persisted
-    once the phases finish or fail.
+    once the phases finish or fail. A run that finished — ``done`` already
+    out — first gives a non-English RAG transcript task a bounded wait, so
+    its translation calls are in the document; a failing run never waits
+    (its error event follows this).
     """
     timing = start_run_timing()
+    finished = False
     try:
         async for event in _run_phases_in_order(ctx, repository, video_summary_id, timer, timing):
             timing.observe_sse(event)
             yield event
+        finished = True
     finally:
         try:
             await _release_run_media(ctx)
+            if finished:
+                await wait_for_rag_transcript(ctx)
         finally:
             await persist_run_timing(ctx, repository, video_summary_id, timing)
 

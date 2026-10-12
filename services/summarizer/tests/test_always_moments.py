@@ -123,6 +123,51 @@ class TestAlwaysMomentsInAssembly:
         assert [t["id"] for t in _moment_tabs(result)] == ["segments"]
 
 
+# ─── It adds a tab, never takes one: the v8 filmstrip + minimum-3 fallbacks stay (R4-1, R4-3) ───
+
+_TEN_SECTIONS = [{"start": i * 30, "end": i * 30 + 30, "title": f"Section {i}"} for i in range(10)]
+_FRAMED_META = {"duration": 600, "outline": _TEN_SECTIONS, "chapters": []}
+# One OCR'd frame per section start: the Moments grid gets a thumbnail on all ten.
+_FRAMES = [{"timestamp": float(i * 30), "s3_url": f"https://f/{i}.jpg", "index": i,
+            "ocr_text": f"Slide {i}"} for i in range(12)]  # fmt: skip
+_SYNTHESIS = {"masterSummary": "A talk", "tldr": "T", "keyTakeaways": ["k1", "k2", "k3"]}
+_CHAPTERS_META = {"duration": 600, "outline": [], "chapters": [
+    {"title": "Intro", "start_time": 0, "end_time": 60},
+    {"title": "Main", "start_time": 60, "end_time": 300},
+]}  # fmt: skip
+
+
+class TestAlwaysMomentsAddsWithoutTaking:
+    def test_should_keep_the_auto_filmstrip_when_its_grid_is_rich(self) -> None:
+        result = assemble_response(
+            _triage(_CODE_TAB), _EXTRACTION, None, None, video_meta=_FRAMED_META,
+            frames=_FRAMES, gallery_frames=_FRAMES,
+        )  # fmt: skip
+
+        assert {"key_moments", "frames-gallery"} <= set(_ids(result))
+
+    def test_should_keep_the_key_info_fallback_of_a_two_tab_response(self) -> None:
+        result = assemble_response(
+            _triage(_CODE_TAB), _EXTRACTION, None, _SYNTHESIS, video_meta=_META
+        )
+
+        assert _ids(result) == ["overview", "code", "key_moments", "key_info"]
+
+    def test_should_add_no_chapter_moments_where_the_domain_forbids_moment_track(self) -> None:
+        """R4-3: the minimum-3 fallbacks no longer offer a chapters moment_track of their own."""
+
+        def _forbidding(domain: str, content_format: str | None = None) -> dict:
+            policy = effective_requirements(domain, content_format)
+            return {**policy, "forbidden": policy["forbidden"] | {"moment_track"}}
+
+        with patch.object(assembly_core, "effective_requirements", _forbidding):
+            result = assemble_response(
+                _triage(_CODE_TAB), _EXTRACTION, None, None, video_meta=_CHAPTERS_META
+            )
+
+        assert _moment_tabs(result) == []
+
+
 class TestAlwaysMomentsTab:
     def test_should_return_none_when_a_moment_tab_already_exists(self) -> None:
         tabs = [{"id": "moments", "component": "moment_track"}]

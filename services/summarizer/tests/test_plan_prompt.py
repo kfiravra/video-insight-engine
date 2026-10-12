@@ -274,7 +274,7 @@ class TestRemovedInstructions:
 def _examples() -> list[dict]:
     text = plan_prompt.PROMPT_PATH.read_text()
     bodies = re.findall(r"<example>\n[^\n]*\n(.*?)\n</example>", text, flags=re.DOTALL)
-    return [json.loads(body.replace("{{", "{").replace("}}", "}")) for body in bodies]
+    return [json.loads(body) for body in bodies]
 
 
 _EXAMPLES = _examples()
@@ -283,6 +283,16 @@ _IDS = [ex["tabs"][0]["id"] + "-" + ex["primaryTag"] for ex in _EXAMPLES]
 
 def test_should_ship_six_examples_when_prompt_is_read() -> None:
     assert len(_EXAMPLES) == 6
+
+
+def test_should_send_the_output_schema_as_valid_json_when_rendering() -> None:
+    """plan.txt renders by str.replace, so a doubled brace would reach the model as is."""
+    prompt = render_plan_prompt(_video())
+    # The first block: the closing line names <output_schema> after it.
+    start = prompt.index("<output_schema>\n") + len("<output_schema>\n")
+    schema = json.loads(prompt[start : prompt.index("</output_schema>", start)])
+
+    assert set(schema["evidence"]) == set(EVIDENCE_KEYS)
 
 
 @pytest.mark.parametrize("example", _EXAMPLES, ids=_IDS)

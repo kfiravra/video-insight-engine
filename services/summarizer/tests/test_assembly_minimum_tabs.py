@@ -11,7 +11,6 @@ class TestBuildFallbackCandidates:
     def test_overview_from_synthesis(self):
         candidates = build_fallback_candidates(
             synthesis={"masterSummary": "Great video", "keyTakeaways": ["t1"]},
-            video_meta={},
             existing_components=set(),
             existing_ids=set(),
         )
@@ -22,7 +21,6 @@ class TestBuildFallbackCandidates:
     def test_info_grid_from_takeaways(self):
         candidates = build_fallback_candidates(
             synthesis={"keyTakeaways": ["t1", "t2", "t3"]},
-            video_meta={},
             existing_components={"overview"},
             existing_ids={"overview"},
         )
@@ -30,24 +28,9 @@ class TestBuildFallbackCandidates:
         assert len(grid_candidates) == 1
         assert len(grid_candidates[0]["props"]["items"]) == 3
 
-    def test_moment_track_from_chapters(self):
-        candidates = build_fallback_candidates(
-            synthesis={},
-            video_meta={"chapters": [
-                {"title": "Intro", "start_time": 0, "end_time": 60},
-                {"title": "Main", "start_time": 60, "end_time": 300},
-            ]},
-            existing_components={"overview", "info_grid"},
-            existing_ids={"overview", "key_info"},
-        )
-        moment_candidates = [c for c in candidates if c["component"] == "moment_track"]
-        assert len(moment_candidates) == 1
-        assert len(moment_candidates[0]["props"]["items"]) == 2
-
     def test_skips_existing_components(self):
         candidates = build_fallback_candidates(
             synthesis={"masterSummary": "test", "keyTakeaways": ["t1", "t2"]},
-            video_meta={},
             existing_components={"overview"},
             existing_ids=set(),
         )
@@ -56,16 +39,14 @@ class TestBuildFallbackCandidates:
     def test_skips_existing_ids(self):
         candidates = build_fallback_candidates(
             synthesis={"masterSummary": "test"},
-            video_meta={},
             existing_components=set(),
             existing_ids={"overview"},
         )
         assert all(c["id"] != "overview" for c in candidates)
 
-    def test_empty_synthesis_and_meta(self):
+    def test_empty_synthesis(self):
         candidates = build_fallback_candidates(
             synthesis={},
-            video_meta={},
             existing_components=set(),
             existing_ids=set(),
         )
@@ -74,28 +55,14 @@ class TestBuildFallbackCandidates:
     def test_insufficient_takeaways_no_info_grid(self):
         candidates = build_fallback_candidates(
             synthesis={"keyTakeaways": ["only_one"]},
-            video_meta={},
             existing_components={"overview"},
             existing_ids=set(),
         )
         assert all(c["component"] != "info_grid" for c in candidates)
 
-    def test_single_chapter_no_moment_track(self):
-        candidates = build_fallback_candidates(
-            synthesis={},
-            video_meta={"chapters": [{"title": "Solo", "start_time": 0, "end_time": 60}]},
-            existing_components=set(),
-            existing_ids=set(),
-        )
-        assert all(c["component"] != "moment_track" for c in candidates)
-
     def test_fallbacks_pass_validation(self):
         candidates = build_fallback_candidates(
             synthesis={"masterSummary": "test", "keyTakeaways": ["t1", "t2"]},
-            video_meta={"chapters": [
-                {"title": "A", "start_time": 0, "end_time": 60},
-                {"title": "B", "start_time": 60, "end_time": 120},
-            ]},
             existing_components=set(),
             existing_ids=set(),
         )
@@ -115,11 +82,28 @@ class TestAssembleResponseMinTabs:
 
     def test_3_plus_tabs_no_fallbacks(self):
         """3+ assembled tabs should not get fallbacks."""
-        triage = self._base_triage([
-            {"id": "t1", "label": "Tab 1", "dataSource": "learning.keyPoints", "component": "overview"},
-            {"id": "t2", "label": "Tab 2", "dataSource": "learning.concepts", "component": "flash_deck"},
-            {"id": "t3", "label": "Tab 3", "dataSource": "learning.takeaways", "component": "checklist"},
-        ])
+        triage = self._base_triage(
+            [
+                {
+                    "id": "t1",
+                    "label": "Tab 1",
+                    "dataSource": "learning.keyPoints",
+                    "component": "overview",
+                },
+                {
+                    "id": "t2",
+                    "label": "Tab 2",
+                    "dataSource": "learning.concepts",
+                    "component": "flash_deck",
+                },
+                {
+                    "id": "t3",
+                    "label": "Tab 3",
+                    "dataSource": "learning.takeaways",
+                    "component": "checklist",
+                },
+            ]
+        )
         extraction = {
             "learning": {
                 "keyPoints": [{"title": "p1", "emoji": "📌", "detail": "d1"}],
@@ -134,10 +118,22 @@ class TestAssembleResponseMinTabs:
 
     def test_2_tabs_with_synthesis_adds_overview(self):
         """2 assembled tabs + synthesis should get overview fallback."""
-        triage = self._base_triage([
-            {"id": "concepts", "label": "Concepts", "dataSource": "learning.concepts", "component": "flash_deck"},
-            {"id": "takeaways", "label": "Takeaways", "dataSource": "learning.takeaways", "component": "checklist"},
-        ])
+        triage = self._base_triage(
+            [
+                {
+                    "id": "concepts",
+                    "label": "Concepts",
+                    "dataSource": "learning.concepts",
+                    "component": "flash_deck",
+                },
+                {
+                    "id": "takeaways",
+                    "label": "Takeaways",
+                    "dataSource": "learning.takeaways",
+                    "component": "checklist",
+                },
+            ]
+        )
         extraction = {
             "learning": {
                 "concepts": [{"name": "c1", "definition": "d1"}],
@@ -152,9 +148,16 @@ class TestAssembleResponseMinTabs:
 
     def test_1_tab_gets_multiple_fallbacks(self):
         """1 assembled tab should get 2 fallbacks to reach 3."""
-        triage = self._base_triage([
-            {"id": "concepts", "label": "Concepts", "dataSource": "learning.concepts", "component": "flash_deck"},
-        ])
+        triage = self._base_triage(
+            [
+                {
+                    "id": "concepts",
+                    "label": "Concepts",
+                    "dataSource": "learning.concepts",
+                    "component": "flash_deck",
+                },
+            ]
+        )
         extraction = {
             "learning": {
                 "concepts": [{"name": "c1", "definition": "d1"}],
@@ -165,25 +168,41 @@ class TestAssembleResponseMinTabs:
         assert len(result["tabs"]) >= 3
 
     def test_0_tabs_with_chapters_gets_moment_track(self):
-        """0 assembled tabs + no synthesis + chapters should get moment_track."""
-        triage = self._base_triage([
-            {"id": "empty", "label": "Empty", "dataSource": "learning.nonexistent", "component": "info_grid"},
-        ])
+        """0 assembled tabs + no synthesis + chapters → the always-Moments tab, from the chapters."""
+        triage = self._base_triage(
+            [
+                {
+                    "id": "empty",
+                    "label": "Empty",
+                    "dataSource": "learning.nonexistent",
+                    "component": "info_grid",
+                },
+            ]
+        )
         extraction = {"learning": {}}
-        video_meta = {"chapters": [
-            {"title": "Intro", "start_time": 0, "end_time": 60},
-            {"title": "Main", "start_time": 60, "end_time": 300},
-            {"title": "End", "start_time": 300, "end_time": 600},
-        ]}
+        video_meta = {
+            "chapters": [
+                {"title": "Intro", "start_time": 0, "end_time": 60},
+                {"title": "Main", "start_time": 60, "end_time": 300},
+                {"title": "End", "start_time": 300, "end_time": 600},
+            ]
+        }
         result = assemble_response(triage, extraction, None, None, video_meta=video_meta)
         tab_components = [t["component"] for t in result["tabs"]]
         assert "moment_track" in tab_components
 
     def test_no_duplicate_components_in_fallbacks(self):
         """Fallbacks should not duplicate existing component types."""
-        triage = self._base_triage([
-            {"id": "my_overview", "label": "My Overview", "dataSource": "meta", "component": "overview"},
-        ])
+        triage = self._base_triage(
+            [
+                {
+                    "id": "my_overview",
+                    "label": "My Overview",
+                    "dataSource": "meta",
+                    "component": "overview",
+                },
+            ]
+        )
         extraction = {"learning": {}}
         synthesis = {"tldr": "test", "keyTakeaways": ["k1", "k2"], "masterSummary": "summary"}
         result = assemble_response(triage, extraction, None, synthesis)
@@ -198,22 +217,31 @@ class TestAssembleResponseMinTabs:
         """A required component backfilled from real extraction data counts as a
         real tab — the min-3 guarantee should see it and add fewer synth fillers."""
         triage = {
-            "contentTags": ["tech"], "modifiers": [], "primaryTag": "tech",
+            "contentTags": ["tech"],
+            "modifiers": [],
+            "primaryTag": "tech",
             "userGoal": "Learn the code",
             "tabs": [
-                {"id": "key_claims", "label": "Claims", "dataSource": "tech.topics",
-                 "component": "info_grid", "goal": "claims"},
+                {
+                    "id": "key_claims",
+                    "label": "Claims",
+                    "dataSource": "tech.topics",
+                    "component": "info_grid",
+                    "goal": "claims",
+                },
             ],
         }
         # Only snippets are populated; the planned info_grid field is empty, so
         # the sole planned tab drops — code_playground must be backfilled.
-        extraction = {"tech": {
-            "snippets": [
-                {"filename": "a.py", "language": "python", "code": "a = 1", "explanation": "x"},
-                {"filename": "b.py", "language": "python", "code": "b = 2", "explanation": "y"},
-            ],
-            "topics": [],
-        }}
+        extraction = {
+            "tech": {
+                "snippets": [
+                    {"filename": "a.py", "language": "python", "code": "a = 1", "explanation": "x"},
+                    {"filename": "b.py", "language": "python", "code": "b = 2", "explanation": "y"},
+                ],
+                "topics": [],
+            }
+        }
         synthesis = {"masterSummary": "A talk", "keyTakeaways": ["k1", "k2", "k3"]}
         result = assemble_response(triage, extraction, None, synthesis)
 

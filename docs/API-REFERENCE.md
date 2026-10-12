@@ -1360,7 +1360,7 @@ The summarization pipeline uses SSE to stream results progressively, allowing th
 | `extraction_complete` | 4 | Domain extraction finished |
 | `frames` | 2 | Extracted frame set (presigned URLs), from the frames branch of phase 2 |
 | `meta` | 2 | VIEResponseMeta with videoId, contentTags, tab labels — emitted with `triage_complete` |
-| `tab_ready` | 2 + 5 | One tab, with `position` (sort key) and `final`. The provisional Moments tab (`provisional: true`) streams at plan-done, the rest from assembly; a tab id can arrive more than once and the later emission replaces the earlier by id. Each tab of the final response gets exactly one `final: true` emission, before `complete` — see [tab_ready](#tab_ready) |
+| `tab_ready` | 2 + 5 | One tab, with `position` (sort key) and `final`. The provisional Moments tab (`provisional: true`) streams at plan-done, the rest from assembly; a tab id can arrive more than once and the later emission replaces the earlier by id (a tab taking the provisional's place under another id names it in `replaces`). Each tab of the final response gets a `final: true` emission before `complete` — the last final wins — see [tab_ready](#tab_ready) |
 | `enrichment_complete` | 5 | The quiz landed (only for a plan with a quiz host; runs after the first tabs) |
 | `synthesis_complete` | 2 + 5 | Up to twice: `{tldr, keyTakeaways}` at memory-done (the hero), then the four-field superset after the tabs — see [synthesis_complete](#synthesis_complete) |
 | `heartbeat` | Any | Keep-alive during long-running steps (e.g. moment frame fill) — carries `ts`, safe to ignore |
@@ -1527,7 +1527,7 @@ VIEResponseMeta with video identity and synthesis results.
 ### tab_ready
 
 One tab: a `TabEntry` (`id, label, emoji, component, props, goal?, crossTabLinks?,
-attachments?, degradedFrom?`) plus three stream fields. Typed as `SSETabReadyEvent`
+attachments?, degradedFrom?`) plus four stream fields. Typed as `SSETabReadyEvent`
 (`packages/types/src/api.ts`); emitted through `TabLedger`
 (`services/summarizer/src/services/pipeline/tab_ledger.py`, pipeline-1min 2.1).
 
@@ -1553,14 +1553,25 @@ attachments?, degradedFrom?`) plus three stream fields. Typed as `SSETabReadyEve
   before it (a provisional or held-back tab), so two tabs may briefly share a
   value — a final emission wins over a non-final one at the same value.
 - **`final`**: `true` = this is the tab's **last** emission of the run: its
-  content and position will not change. Every tab of the final response gets
-  **exactly one** final emission, before `complete`; nothing follows it for
-  that id. `false` = a later `tab_ready` with the same id may replace it.
-  Absent only on pre-2.1 emitters (treat as `false`).
+  content and position will not change. Every tab of the final response gets a
+  final emission before `complete`, normally exactly one. Should a tab still
+  change after it (a contract slip the summarizer logs as an error), a
+  **corrected final follows for the same id: the last final wins** — never
+  freeze a tab on its first final. `false` = a later `tab_ready` with the same
+  id may replace it. Absent only on pre-2.1 emitters (treat as `false`).
 - **`provisional`** (optional, only ever `true`): a placeholder built before
   extraction — the **Moments tab at plan-done**, from the memory outline →
   YouTube chapters → description timestamps. Never final; the real tab with
-  the **same id** replaces it (render it in a "provisional" state).
+  the **same id** replaces it, or the tab whose `replaces` names it (render it
+  in a "provisional" state).
+- **`replaces`** (optional): on the **first** emission of the tab that takes
+  the provisional tab's place under **another id** — the provisional id. It
+  happens when the tab the plan-done copy named does not survive assembly
+  (e.g. podcast's required `moment_track` is backfilled as `segments` while
+  plan-done streamed `key_moments`). The client drops the provisional tab and
+  gives this tab its slot (and focus, if the provisional had it). Never on a
+  provisional tab, never naming the tab's own id; a tab with the provisional's
+  own id carries none (it replaces by id).
 - **`attachments`** (optional): secondary components rendered around the
   primary (`stat_banner`, `tip_callout`, `summary_header`, `diagram_card`,
   `frame_strip`, `quick_quiz`).
@@ -1568,13 +1579,13 @@ attachments?, degradedFrom?`) plus three stream fields. Typed as `SSETabReadyEve
   demote ladder downgraded the tab (e.g. `step_player` → `checklist`).
 
 **Client rules.** Keep tabs in a map by `id`; a later `tab_ready` for an id
-replaces the earlier one (content, position, flags). Order by `position`. A tab
-streamed earlier whose id is missing from `complete.tabIds` was **withdrawn** —
-drop it (rare: the provisional Moments tab when the final Moments tab came from
-a demoted or backfilled tab under another id; a minimum-3 fallback tab the
-quiz made unnecessary). `meta.tabCount`/`tabLabels` are the plan's tabs, sent
-before any `tab_ready`; the always-Moments tab can arrive without a label
-there — `complete.tabIds` is authoritative.
+replaces the earlier one (content, position, flags) — a later final included
+(last final wins). A tab carrying `replaces` removes the tab it names and takes
+its slot. Order by `position`. A tab streamed earlier whose id is missing from
+`complete.tabIds` was **withdrawn** — drop it (the fallback for `replaces`; also
+a minimum-3 fallback tab the quiz made unnecessary). `meta.tabCount`/`tabLabels`
+are the plan's tabs, sent before any `tab_ready`; the always-Moments tab can
+arrive without a label there — `complete.tabIds` is authoritative.
 
 **Emission sequence of a run** (English, the quiz planned):
 
@@ -1590,8 +1601,8 @@ there — `complete.tabIds` is authoritative.
    without a quiz `final: true`, except the overview while a late synthesis
    is pending.
 4. Late group, in parallel: the `moment_track` tabs once framed (replacing the
-   provisional by id; final when no quiz is pending), `synthesis_complete`
-   (superset), `enrichment_complete`.
+   provisional by id, or under another id with `replaces`; final when no quiz
+   is pending), `synthesis_complete` (superset), `enrichment_complete`.
 5. The **final re-emit**: every tab not yet received final, in order, `final:
    true` at its final position — with a quiz, every tab of the response
    including the new quiz tab (last); without one, typically just the
@@ -1757,9 +1768,11 @@ export function useSummaryStream(videoSummaryId: string | null) {
 
         case 'tab_ready': {
           // Replace by id, order by `position` (a sort key, see #tab_ready):
-          // the provisional Moments tab and non-final tabs arrive again.
+          // the provisional Moments tab and non-final tabs arrive again (the
+          // last final wins); `replaces` names a provisional tab to drop.
           setState(s => {
             const byId = { ...(s.tabsById || {}), [data.id]: data };
+            if (data.replaces) delete byId[data.replaces];
             const tabs = Object.values(byId).sort((a, b) => a.position - b.position);
             return { ...s, tabsById: byId, tabs };
           });

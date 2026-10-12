@@ -19,7 +19,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from src.models.memory_types import MemoryResult
+from src.models.memory_types import MemoryResult, OutlineSection
 from src.models.pipeline_types import SynthesisResult
 from src.services.pipeline.assembly.core import REQUIREMENT_EVIDENCE_FALSE
 from src.services.pipeline.phases import assembly as phase
@@ -167,6 +167,65 @@ class TestLateQuiz:
 
         code = [p for n, p in events if n == "tab_ready" and p["id"] == "code"]
         assert [p["final"] for p in code] == [True]
+
+
+# ─── The provisional Moments tab replaced under another id (R4-x) ───
+
+_PROVISIONAL = {"id": "key_moments", "label": "Key Moments", "component": "moment_track",
+                "props": {"items": [{"label": "Outline section", "timestamp": 0}]}}  # fmt: skip
+
+
+def _podcast_ctx() -> Any:
+    """Plan-done streamed ``key_moments``; podcast requires moment_track, so assembly
+    backfills ``segments`` from the extraction and adds no always-Moments tab."""
+    ctx = _build_ctx()
+    ctx.memory = _MEMORY
+    ctx.llm_service = MagicMock()
+    ctx.video_data.duration = 900
+    ctx.triage.primary_tag = "podcast"
+    ctx.triage_dict = {"contentTags": ["podcast"], "primaryTag": "podcast", "tabs": [
+        {"id": "topics", "label": "Topics", "component": "info_grid",
+         "dataSource": "podcast.topics", "goal": "Topics"},
+    ]}  # fmt: skip
+    ctx.extraction_data = {"podcast": {
+        "segments": [{"title": "Intro", "summary": "Hi", "timestamp": 0},
+                     {"title": "Deep dive", "summary": "Raft", "timestamp": 480}],
+        "topics": [{"topic": "Raft", "detail": "Consensus"},
+                   {"topic": "CAP", "detail": "Trade-offs"}],
+    }}  # fmt: skip
+    ctx.tab_ledger.event(_PROVISIONAL, 2, provisional=True)
+    return ctx
+
+
+def _replacing(events: list[tuple[str, dict]]) -> list[tuple[str, str]]:
+    return [(p["id"], p["replaces"]) for n, p in events if n == "tab_ready" and "replaces" in p]
+
+
+class TestProvisionalReplacedUnderAnotherId:
+    async def test_should_name_the_provisional_on_the_tab_that_takes_its_place(self) -> None:
+        events = await _run(_podcast_ctx())
+
+        assert _replacing(events) == [("segments", "key_moments")]
+
+    async def test_should_still_withdraw_the_provisional_id_on_complete(self) -> None:
+        events = await _run(_podcast_ctx())
+
+        complete = next(p for n, p in events if n == "complete")
+        assert "key_moments" not in complete["tabIds"]
+
+    async def test_should_name_nothing_when_the_real_tab_keeps_the_provisional_id(self) -> None:
+        ctx = _tech_ctx()
+        ctx.video_data.duration = 900
+        ctx.memory = MemoryResult(
+            tldr="Memory tldr.",
+            takeaways=["m1", "m2", "m3"],
+            outline=[OutlineSection(start=0, end=300, title="The stack")],
+        )
+        ctx.tab_ledger.event(_PROVISIONAL, 2, provisional=True)
+
+        events = await _run(ctx)
+
+        assert (_replacing(events), "key_moments" in _tab_ids(events)) == ([], True)
 
 
 class TestHeroFallback:

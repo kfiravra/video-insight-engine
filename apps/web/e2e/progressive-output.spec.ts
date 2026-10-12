@@ -46,14 +46,16 @@ function tabEntry(id: string, label: string, component: string, props: Record<st
   return { id, label, emoji: "•", component, props, crossTabLinks: [] };
 }
 
-/** The saved response, in order — what `complete.tabIds` and the DB doc hold. */
-function savedTabs(signature: string) {
+/** The saved response, in order — what `complete.tabIds` and the DB doc hold.
+ *  The DB serve also renames the quiz: one visible field proving the page
+ *  took the DB doc at `done` (the other tabs match their streamed copies). */
+function savedTabs(signature: string, quizLabel = "Quiz") {
   return [
     tabEntry("overview", "Overview", "overview", { brief: "A talk about the stack." }),
     tabEntry("stack_overview", "Stack overview", "display_section", { data: { tools: 10 } }),
     tabEntry("workflow_steps", "Workflow steps", "display_section", { data: { steps: 4 } }),
     tabEntry("moments", "Moments", "moment_track", { items: momentItems(signature) }),
-    tabEntry("quiz", "Quiz", "display_section", { data: { questions: 5 } }),
+    tabEntry("quiz", quizLabel, "display_section", { data: { questions: 5 } }),
   ];
 }
 
@@ -94,7 +96,7 @@ async function routeApi(page: Page, detail: DetailState): Promise<void> {
         folderId: null,
         meta: detail.completed ? { videoTitle: "Progressive output video", contentTags: ["tech"], primaryTag: "tech" } : null,
         // Every DB serve re-signs frame URLs (api refresh-frame-urls.ts).
-        tabs: detail.completed ? savedTabs("serve") : null,
+        tabs: detail.completed ? savedTabs("serve", "Final quiz") : null,
       }),
     }),
   );
@@ -140,7 +142,7 @@ test.describe("Progressive output — scripted stream", () => {
     const moments = strip(page).getByRole("tab", { name: /moments/i });
     await expect(moments).toBeVisible();
     await expect(page.getByText("Early preview", { exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Cancel" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Cancel processing" })).toBeVisible();
     await expect(page.getByRole("list", { name: "Processing stages" })).toBeVisible();
     await expect(page.locator("[data-stream-tab-pill]")).toHaveCount(3);
     await page.evaluate(() => {
@@ -164,9 +166,15 @@ test.describe("Progressive output — scripted stream", () => {
     );
     await expect(strip(page).getByRole("tab")).toHaveCount(4);
     detail.completed = true;
+    const servedCompleted = page.waitForResponse(
+      (res) => res.url().endsWith(`/api/videos/${VIDEO_ID}`) && res.request().method() === "GET",
+    );
     await push(page, { event: "done", processingTimeMs: 138600 });
     await page.evaluate(() => (window as unknown as InstrumentedWindow).__vieSse.close());
-    await expect(page.getByRole("button", { name: "Cancel" })).toHaveCount(0);
+    await servedCompleted;
+    // The DB doc is on screen (its renamed quiz), and Cancel left with the run.
+    await expect(strip(page).getByRole("tab", { name: /final quiz/i })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Cancel processing" })).toHaveCount(0);
 
     const after = await page.evaluate(() => {
       const w = window as unknown as InstrumentedWindow & { __viePanel: Element | null };
@@ -180,7 +188,7 @@ test.describe("Progressive output — scripted stream", () => {
     expect(after.removed).toEqual([]);
     expect(after.frame).toBe(frameUrl(0, "run"));
     await expect(strip(page).getByRole("tab", { selected: true })).toHaveAccessibleName(/moments/i);
-    await expect(strip(page).getByRole("tab")).toHaveText([/stack overview/i, /workflow steps/i, /moments/i, /quiz/i]);
+    await expect(strip(page).getByRole("tab")).toHaveText([/stack overview/i, /workflow steps/i, /moments/i, /final quiz/i]);
   });
 });
 
@@ -218,13 +226,19 @@ base.describe("Progressive output — live dev run", () => {
     baseExpect(body.cached, "the API served a cached result — the run must be fresh").toBeFalsy();
 
     await page.goto(`/video/${body.video?.id}`);
+    // done, then the doc refetch it triggers answering "completed" (both
+    // logged by the fetch tap) — the DB swap has been handed to React.
     await page.waitForFunction(
-      () => (window as unknown as InstrumentedWindow).__vieSseLog?.some((e) => e.event === "done"),
+      () => {
+        const log = (window as unknown as InstrumentedWindow).__vieSseLog ?? [];
+        const done = log.find((e) => e.event === "done");
+        return !!done && log.some((e) => e.event === "__detail:completed" && e.t > done.t);
+      },
       null,
       { timeout: LIVE_PIPELINE_TIMEOUT_MS, polling: 1000 },
     );
-    // The page refetches the doc on done; give the DB swap time to land.
-    await page.waitForTimeout(3000);
+    await baseExpect(page.getByRole("button", { name: "Cancel processing" })).toHaveCount(0);
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
 
     const run = await page.evaluate(() => {
       const w = window as unknown as InstrumentedWindow;

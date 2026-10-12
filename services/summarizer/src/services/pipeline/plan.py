@@ -41,13 +41,16 @@ CONFIDENCE_THRESHOLD = 0.6
 
 # The plan sits on the critical path and its fallback plan still ships tabs, so
 # a slow call gets one retry, not two.
-# Prompt cache: a run makes one plan call, so a 5-minute entry is written and
-# never read (A26). The static half (~16k tokens, everything above <video>) is
+# Prompt cache: the static half (~16k tokens, everything above <video>) is
 # byte-identical for every video, so a 1-hour entry is read by every plan call
-# that starts within an hour of the last one, whichever video it plans. A 1h
-# write costs 2x the input price and a read 0.1x: cheaper than no cache once
-# more than ~53 % of plan calls hit. Gate rule (Kfir): below 50 % after two
-# weeks of prod traffic, switch to "5m".
+# that starts within an hour of the last one, whichever video it plans. A run
+# makes one plan call, so a 5-minute entry is read only by another video's plan
+# that starts within 5 minutes (A26). A 1h write costs 2x the input price and a
+# read 0.1x, so below a ~53 % hit rate the 1h breakpoint costs more than none;
+# a 5m write (1.25x) pays above ~22 %, on a 5-minute hit rate that can never
+# exceed the 1h one. If the 1h hit rate stays under 50 % after two weeks of
+# prod traffic, dropping the breakpoint (``cache=False``) or 5m is Kfir's
+# gate-2 decision (docs/llm-cost-model.md, scripts/cache_hit_rate.py).
 PLAN_CACHE_TTL: CacheTTL = "1h"
 # Sized from measured phase-1 plans: 1,814–1,920 output tokens in 36.7–39.8 s.
 # 2,048 tokens truncated the answer (the JSON repair then silently dropped the

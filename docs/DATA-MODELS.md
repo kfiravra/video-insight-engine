@@ -105,8 +105,8 @@ on `model_dump`):
 - `FrameEvidence.s3Key?: string` — stable S3 key per frame; lets the api re-sign expired presigned URLs on serve (`refresh-frame-urls.ts`).
 - `SpotItem.pronunciation?: string` — travel spots.
 - `MomentItem` carries frame fields (`frameCaption`, `frameEvidence`, `frameOcr`, `frameSceneType`, `s3Key`) filled by assembly frame injection + `moment_frame_fill`.
-- `SSETabReadyEvent` (`packages/types/src/api.ts`, extends `TabEntry`) — `position?: number` = index in the response's tab order, a sort key (exact when `final`, an estimate before); `final?: boolean` = the tab's last emission this run (one per tab of the response); `provisional?: boolean` = the plan-done Moments placeholder, replaced by id. `SSECompleteEvent.tabIds?: string[]` = the final tab order. Contract: `services/summarizer/src/services/pipeline/tab_ledger.py`, API-REFERENCE.md#tab_ready (pipeline-1min 2.1).
-- A `moment_track` tab always exists when a moment source has entries (2.1): without a planned one, assembly adds `key_moments` ("Key Moments") from the memory outline → YouTube chapters → description timestamps; it is stored, cached, RAG-indexed and translated like any tab.
+- `SSETabReadyEvent` (`packages/types/src/api.ts`, extends `TabEntry`) — `position?: number` = index in the response's tab order, a sort key (exact when `final`, an estimate before); `final?: boolean` = the tab's last emission this run (one per tab of the response); `provisional?: boolean` = the plan-done Moments placeholder, replaced by id; `replaces?: string` = on the first emission of the tab that takes the provisional's place under another id, the provisional id (a corrected `final` can follow for an id — the last final wins). `SSECompleteEvent.tabIds?: string[]` = the final tab order. Contract: `services/summarizer/src/services/pipeline/tab_ledger.py`, API-REFERENCE.md#tab_ready (pipeline-1min 2.1).
+- A `moment_track` tab always exists when a moment source has entries (2.1): without a planned one, assembly adds `key_moments` ("Key Moments") from the memory outline → YouTube chapters → description timestamps; it is stored, cached, RAG-indexed and translated like any tab. It only adds: it counts neither toward the minimum-3 fallbacks (a two-tab response still gets Key Info) nor toward the rich-moment-grid gate that skips the auto "Visual Moments" filmstrip, and the minimum-3 fallbacks no longer build a chapters moment_track of their own.
 
 #### Component density gates (`densityGates`) and domain policy
 
@@ -223,7 +223,7 @@ One row per video **version** (`version`, `isLatest` below); the served row is s
     startedAt: Date,
     totalMs: number,
     phases: [{ name: string, startMs: number, endMs: number, wallMs: number }],  // metadata, transcript_frames (phase 2: text, transcript, plan, memory, frames, frames.* sub-steps incl. frames.tier_wait), visual_inject (name kept: the annotations render), extraction, assembly (moment_fill, synthesis, enrichment = the quiz, run inside it), translation
-    milestones: { metadataMs?, synthesisCompleteMs?, firstTabReadyMs?, completeMs?, doneMs? },  // firstTabReadyMs = first tab_ready of any kind — since 2.1 the provisional Moments tab at plan-done
+    milestones: { metadataMs?, synthesisCompleteMs?, firstTabReadyMs?, firstAssembledTabMs?, completeMs?, doneMs? },  // firstTabReadyMs = first tab_ready of any kind — since 2.1 the provisional Moments tab at plan-done; firstAssembledTabMs = first non-provisional tab_ready (the first tab assembly built)
     llmCalls: [{ feature, span, model, responseModel, startMs, wallMs, inputTokens, outputTokens,
                  cacheReadTokens,     // Anthropic cache_read_input_tokens, or OpenAI cached input (prompt_tokens_details.cached_tokens; 0 for OpenAI before v2)
                  cacheWriteTokens, cacheWrite5mTokens, cacheWrite1hTokens,  // the write split by cache lifetime, when the provider reports it
@@ -232,7 +232,7 @@ One row per video **version** (`version`, `isLatest` below); the served row is s
     downloads: [{ kind: "lowres" | "720p" | "audio", purpose: string, startMs, wallMs, bytes: number | null, ok: boolean }],
     costUsd: number,
     counts: { llmCalls, llmFailures, retries, rateLimited, fallbacks, outputTokens, cacheReadTokens,
-              downloadBytes, tabsPlanned, tabsAssembled, tabsEmitted,  // tabsEmitted = distinct tab ids streamed (a provisional tab and its replacement count once; a withdrawn one counts)
+              downloadBytes, tabsPlanned, tabsAssembled, tabsEmitted,  // tabsEmitted = distinct tab ids streamed non-provisional (a provisional tab replaced by id counts once; one withdrawn or replaced under another id never counts; an assembled tab withdrawn later still counts)
               truncated }  // answers that stopped at max_tokens (finish_reason=length); DONE log line `llm truncated=N`
   } | absent,
 

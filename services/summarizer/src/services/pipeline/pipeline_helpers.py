@@ -8,6 +8,7 @@ Contains self-contained utilities:
 - Segment normalization
 - Metadata text builder
 - JSON truncation
+- Background tasks (``spawn_background``: strong reference + failure log)
 """
 
 import asyncio
@@ -15,7 +16,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, AsyncGenerator, Callable
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Callable, Coroutine, TypeVar
 
 if TYPE_CHECKING:
     from .context import PipelineContext
@@ -236,13 +237,36 @@ def sanitize_for_prompt(text: str, max_len: int = 500) -> str:
     return sanitized[:max_len]
 
 
-def log_background_error(task: asyncio.Task) -> None:
-    """Done-callback for fire-and-forget stores: a failure is logged, never raised."""
+# ─────────────────────────────────────────────────────────────────────────────
+# Background Tasks
+# ─────────────────────────────────────────────────────────────────────────────
+
+_T = TypeVar("_T")
+
+# Strong references to the run's fire-and-forget tasks: the event loop keeps
+# only weak ones, so a pending task nobody holds can be garbage-collected
+# mid-flight (the Qdrant stores, the S3 transcript store).
+_BACKGROUND_TASKS: set[asyncio.Task[Any]] = set()
+
+
+def spawn_background(coro: Coroutine[Any, Any, _T], name: str) -> asyncio.Task[_T]:
+    """Start ``coro`` as a task the run does not await: held until it ends, its failure logged."""
+    task = asyncio.create_task(coro, name=name)
+    _BACKGROUND_TASKS.add(task)
+    task.add_done_callback(_BACKGROUND_TASKS.discard)
+    task.add_done_callback(log_background_error)
+    return task
+
+
+def log_background_error(task: asyncio.Task[Any]) -> None:
+    """Done-callback for background tasks: a failure is logged with its traceback, never raised."""
     if task.cancelled():
+        # Worker shutdown cancels whatever still runs; its store never landed.
+        logger.warning("Background task %s was cancelled before it finished", task.get_name())
         return
     exc = task.exception()
-    if exc:
-        logger.error("Background store %s failed: %s", task.get_name(), exc)
+    if exc is not None:
+        logger.error("Background task %s failed: %s", task.get_name(), exc, exc_info=exc)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

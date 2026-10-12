@@ -2,23 +2,23 @@ Extract structured information from this YouTube video description.
 
 Return JSON only with these fields:
 
-{{
+{
   "links": [
-    {{"url": "https://...", "type": "github|documentation|article|tool|course|other", "label": "brief description"}}
+    {"url": "https://...", "type": "github|documentation|article|tool|course|other", "label": "brief description"}
   ],
   "resources": [
-    {{"name": "Resource name", "url": "https://..."}}
+    {"name": "Resource name", "url": "https://..."}
   ],
   "relatedVideos": [
-    {{"title": "Video title", "url": "youtube.com/watch?v=..."}}
+    {"title": "Video title", "url": "youtube.com/watch?v=..."}
   ],
   "timestamps": [
-    {{"time": "0:00", "label": "Section name"}}
+    {"time": "0:00", "label": "Section name"}
   ],
   "socialLinks": [
-    {{"platform": "twitter|discord|github|linkedin|patreon|other", "url": "..."}}
+    {"platform": "twitter|discord|github|linkedin|patreon|other", "url": "..."}
   ]
-}}
+}
 
 RULES:
 - Only extract actual URLs found in the description text
@@ -33,3 +33,5 @@ RULES:
 
 DESCRIPTION:
 {description}
+
+Return only the JSON object described above, nothing else.

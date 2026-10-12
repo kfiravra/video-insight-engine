@@ -287,11 +287,11 @@ async def test_enrich_quiz_prompt_renders_without_placeholders(tag):
 # ─── Translation (translate_flat.txt) ───────────────────────────────────
 @pytest.mark.asyncio
 async def test_translate_flat_prompt_renders_without_placeholders():
-    from src.services.pipeline import translation as translation_mod
+    from src.services.pipeline import translation_flat as translation_mod
 
     llm, mock_call = _capture_llm()
     with patch.object(translation_mod, "call_llm_with_retry", mock_call):
-        await translation_mod._translate_flat_list(
+        await translation_mod.translate_flat_list(
             llm,
             ["hello world", "second string"],
             "en",
@@ -389,3 +389,57 @@ async def test_tier_probe_prompt_renders_without_placeholders():
     rendered = _captured_prompt_text(mock_call)
     assert rendered, "tier probe never reached the LLM call"
     _assert_no_unreplaced(rendered, "tier_probe.txt")
+
+
+# ─── Literal braces ─────────────────────────────────────────────────────
+# Templates render through str.replace, never str.format, so "{{" is not an
+# escape: it reaches the model verbatim, and a schema or example written with
+# it is not valid JSON — a model that copies it answers unparseable JSON.
+def test_should_carry_no_doubled_open_brace_when_any_template_is_read():
+    doubled = sorted(
+        str(path.relative_to(PROMPTS_DIR))
+        for path in PROMPTS_DIR.rglob("*.txt")
+        if "{{" in path.read_text(encoding="utf-8")
+    )
+
+    assert doubled == []
+
+
+@pytest.mark.asyncio
+async def test_should_send_no_doubled_open_brace_when_rendering_the_plan_prompt():
+    from src.services.pipeline import plan as plan_mod
+
+    llm, mock_call = _capture_llm()
+    with patch.object(plan_mod, "call_llm_with_retry", mock_call):
+        await plan_mod.run_plan(
+            title="Test Video",
+            channel="Test Channel",
+            description="A description of the video.",
+            duration=600,
+            category_hint="food",
+            content_format="tutorial",
+            transcript="[0:00] transcript text",
+            llm_service=llm,
+        )
+
+    assert "{{" not in _captured_prompt_text(mock_call)
+
+
+@pytest.mark.asyncio
+async def test_should_send_no_doubled_open_brace_when_rendering_the_description_analysis():
+    from src.services.video import description_analyzer as da_mod
+
+    llm_call = AsyncMock(return_value="{}")
+    # Read the file directly: the loader's process-wide file cache would leak
+    # the real template into tests that patch Path.read_text.
+    disk_template = (PROMPTS_DIR / "description_analysis.txt").read_text(encoding="utf-8")
+    with (
+        patch.object(da_mod, "call_llm_with_retry", llm_call),
+        patch.object(da_mod, "load_prompt", lambda _name: disk_template),
+    ):
+        await da_mod.analyze_description(
+            "A video description long enough to pass the minimum-length gate.",
+            fast_model="openai/gpt-4o-mini",
+        )
+
+    assert "{{" not in _captured_prompt_text(llm_call)

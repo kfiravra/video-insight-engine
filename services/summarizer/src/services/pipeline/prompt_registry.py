@@ -1,8 +1,9 @@
 """Registry side of the prompt loader — fetch, placeholder guard, trace link.
 
 Templates render through chained ``str.replace("{name}", value)`` calls, so a
-template's slots are its ``{lower_snake}`` tokens. ``{{``/``}}`` are the
-templates' literal-brace convention (JSON examples) and never name a slot.
+template's slots are its ``{lower_snake}`` tokens. JSON examples use single
+literal braces: a ``.replace`` render would send ``{{`` to the model verbatim. The
+guard still ignores ``{{``/``}}`` so a legacy registry copy compares on its slots.
 
 The placeholder guard exists for deploy order: the code ships with the ``.txt``
 it renders, while the registry's ``production`` label moves on its own
@@ -64,7 +65,7 @@ def record_registered_prompt(langfuse_name: str, prompt_obj: object) -> None:
 
 @lru_cache(maxsize=64)
 def declared_placeholders(text: str) -> frozenset[str]:
-    """The ``{name}`` slots ``text`` declares; ``{{``/``}}`` escapes are literal braces.
+    """The ``{name}`` slots ``text`` declares (``{{``/``}}`` pairs ignored — legacy copies).
 
     Cached because the same registry/disk texts are re-checked on every load.
     """

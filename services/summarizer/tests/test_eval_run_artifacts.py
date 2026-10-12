@@ -76,7 +76,6 @@ def _assembly_ctx(eval_run: bool) -> SimpleNamespace:
         repository=repo,
         timer=MagicMock(elapsed=MagicMock(return_value=1.0)),
         transcript_data=None,
-        audio_path=None,
         visual_annotations="",
         memory=None,
         video_memory="",

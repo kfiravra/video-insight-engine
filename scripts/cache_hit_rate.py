@@ -2,8 +2,10 @@
 """Prompt-cache hit rate per LLM call type, read from ``pipeline.timing``.
 
 The gate tool behind pipeline-1min's cache rule (Kfir 2026-10-12): gate
-reports carry the cache hit rate per call type, and if the plan's 1-hour hit
-rate stays below 50 % after two weeks of prod traffic the plan switches to 5m.
+reports carry the cache hit rate per call type, and the plan's 1-hour hit rate
+after two weeks of prod traffic decides whether the plan keeps its 1h
+breakpoint — below ~53 % a 1h write costs more than no breakpoint; what
+replaces it under 50 % is Kfir's gate-2 decision (``docs/llm-cost-model.md``).
 
 Reads the ``pipeline.timing.llmCalls`` rows of a set of runs from MongoDB
 ``videoSummaryCache`` and prints, per call type (the call's ``span``: plan,
@@ -17,12 +19,16 @@ extraction, synthesis …) and provider:
 
 Runs timed before ``pipeline.timing`` version 2 have no 1h / 5m split and no
 OpenAI reads. Transcription rows (Whisper / Gemini, no prompt cache) are
-skipped. Read-only.
+skipped. The window leaves out eval-user runs (golden passes, dev runs —
+``evalRun: true``) unless ``--include-eval``; ``--ids`` reads the named runs
+whoever ran them. Read-only.
 
 Usage::
 
     python scripts/cache_hit_rate.py                     # runs started in the last 14 days
     python scripts/cache_hit_rate.py --days 1            # the last 24 hours
+    python scripts/cache_hit_rate.py --days 1 --include-eval
+                                                         # ... with eval-user runs too
     python scripts/cache_hit_rate.py --ids T1dQhQAm8Tc 6702f0c1a2b3c4d5e6f70809
                                                          # YouTube ids and/or summary _ids
     python scripts/cache_hit_rate.py --json
@@ -119,10 +125,19 @@ def timing_versions(timings: Iterable[Mapping[str, Any]]) -> dict[str, int]:
     return dict(Counter(str(timing.get("version", "?")) for timing in timings))
 
 
-def build_query(ids: list[str] | None, days: float, now: datetime) -> dict[str, Any]:
-    """Runs by id (24-hex summary ``_id`` or YouTube id), else those started in the window."""
+def build_query(
+    ids: list[str] | None, days: float, now: datetime, *, include_eval: bool = False
+) -> dict[str, Any]:
+    """Runs by id (24-hex summary ``_id`` or YouTube id), else those started in the window.
+
+    The window leaves out eval-user rows (``evalRun``, D25) unless
+    ``include_eval``: a golden pass or a dev-run batch is a burst of plan calls
+    minutes apart, so it would lift the plan's 1h hit rate above what prod
+    traffic earns. Rows named by id are always read.
+    """
     if not ids:
-        return {"pipeline.timing.startedAt": {"$gte": now - timedelta(days=days)}}
+        window = {"pipeline.timing.startedAt": {"$gte": now - timedelta(days=days)}}
+        return window if include_eval else {**window, "evalRun": {"$ne": True}}
     object_ids = [ObjectId(i) for i in ids if _OBJECT_ID.match(i)]
     youtube_ids = [i for i in ids if not _OBJECT_ID.match(i)]
     return {
@@ -164,13 +179,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--mongo-db", default=os.environ.get("MONGODB_DB", "video-insight-engine"))
     parser.add_argument("--days", type=float, default=14.0, help="Window in days (default 14)")
     parser.add_argument("--ids", nargs="+", help="Summary _ids and/or YouTube ids (no window)")
+    parser.add_argument(
+        "--include-eval",
+        action="store_true",
+        help="Count eval-user runs (golden passes, dev runs) in the window; --ids always does",
+    )
     parser.add_argument("--json", action="store_true", help="Emit JSON instead of a table")
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    query = build_query(args.ids, args.days, datetime.now(UTC))
+    query = build_query(args.ids, args.days, datetime.now(UTC), include_eval=args.include_eval)
     with MongoClient(args.mongo_uri) as client:
         docs = client[args.mongo_db]["videoSummaryCache"].find(query, {"pipeline.timing": 1})
         timings = [doc["pipeline"]["timing"] for doc in docs]

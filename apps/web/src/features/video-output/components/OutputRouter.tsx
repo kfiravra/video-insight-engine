@@ -51,10 +51,11 @@ interface OutputRouterProps {
   thumbnailUrl?: string;
   /** Non-fatal pipeline warnings streamed so far. */
   warnings?: string[];
-  /** User-friendly stream error. When set (and not streaming), the content
-   *  area renders an error card with a retry affordance instead of the
-   *  generic "extraction incomplete" message. */
+  /** User-friendly stream error. When set (and not streaming), an error card
+   *  with a retry affordance renders — instead of the generic "extraction
+   *  incomplete" message before any tab, above the tabs once some landed. */
   streamError?: string | null;
+  /** Reattach to the stream (the run keeps going server-side). */
   onRetryStream?: () => void;
   retryingStream?: boolean;
   /** Abort the in-flight stream. When provided, the streaming placeholder
@@ -218,6 +219,11 @@ export function OutputRouter({
               primaryTag={primaryTag}
               isStreaming={isStreaming}
             />
+            {/* A stream that failed after tabs landed (a dropped connection
+                mid-run) keeps the tabs and says so, with a way back in. */}
+            {hasData && !isStreaming && streamError && (
+              <StreamErrorCard message={streamError} onRetry={onRetryStream} retrying={retryingStream} />
+            )}
             {hasData ? (
               <TabPanel
                 tabDefs={tabDefs}

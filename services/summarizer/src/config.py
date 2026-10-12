@@ -410,6 +410,8 @@ class Settings(BaseSettings):
         "translation_tabs": "LLM_TRANSLATION_MODEL",
         "translation_meta": "LLM_TRANSLATION_MODEL",
         "translation_labels": "LLM_TRANSLATION_MODEL",
+        # The RAG transcript's English text (transcript/english.py).
+        "rag_translation": "LLM_TRANSLATION_MODEL",
         "vision": "LLM_VISION_MODEL",
     }
 

@@ -110,10 +110,27 @@ class TestAggregate:
 class TestBuildQuery:
     _NOW = datetime(2026, 10, 12, tzinfo=UTC)
 
-    def test_should_select_runs_started_in_the_window_when_no_ids(self) -> None:
+    def test_should_select_non_eval_runs_started_in_the_window_when_no_ids(self) -> None:
+        """Golden passes and dev runs are eval-user bursts: they would inflate the prod hit rate."""
         query = cache_hit_rate.build_query(None, 14, self._NOW)
 
+        assert query == {
+            "pipeline.timing.startedAt": {"$gte": self._NOW - timedelta(days=14)},
+            "evalRun": {"$ne": True},
+        }
+
+    def test_should_keep_eval_runs_in_the_window_when_asked_to(self) -> None:
+        query = cache_hit_rate.build_query(None, 14, self._NOW, include_eval=True)
+
         assert query == {"pipeline.timing.startedAt": {"$gte": self._NOW - timedelta(days=14)}}
+
+    def test_should_not_filter_eval_runs_when_ids_given(self) -> None:
+        query = cache_hit_rate.build_query(["T1dQhQAm8Tc"], 14, self._NOW)
+
+        assert "evalRun" not in query
+
+    def test_should_parse_the_include_eval_flag(self) -> None:
+        assert cache_hit_rate.parse_args(["--include-eval"]).include_eval is True
 
     def test_should_match_summary_ids_and_youtube_ids_when_ids_given(self) -> None:
         summary_id = "6702f0c1a2b3c4d5e6f70809"

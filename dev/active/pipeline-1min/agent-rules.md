@@ -13,7 +13,9 @@ changes live in his IDE. Other agents are editing other files right now.
 - `--no-verify` because the pre-commit hook (lint-staged) stashes and re-applies unstaged
   changes, which would hide or clobber other agents' in-flight edits. Run what the hook runs BY
   HAND first: `bash scripts/precommit-python.sh <your .py files>` (print guard + ruff format +
-  ruff check --fix), from the repo root. TS files: the package's own `tsc`/eslint (below).
+  ruff check --fix), from the repo root. TS files run what each package's lint-staged runs:
+  api `cd api && bash ../scripts/precommit-no-debug.sh <src files> && npx eslint --fix <src files>`;
+  web `cd apps/web && npx eslint --fix <src files>` (packages/types has no hook — `tsc` only).
 - NEVER stage or commit `CLAUDE.md`, `.claude/**` (Kfir's uncommitted edits) or
   `dev/active/**` (the coordinator's task docs), unless your brief names a file there.
 - `.git/index.lock exists` → another agent is mid-git: wait 5 s and retry (max 12 times). Never
@@ -33,7 +35,7 @@ changes live in his IDE. Other agents are editing other files right now.
 
 ## Shared machine (WSL, 7.7 GiB, swap full — an OOM froze Docker on 2026-10-08)
 - HEAVY commands run under the lock, one at a time across all agents:
-  `flock /tmp/claude-1000/-home-kfir-projects-video-insight-engine/0de244e2-8283-494b-a988-82827f2a7acc/scratchpad/locks/heavy.lock -c '<command>'`
+  `flock /tmp/claude-1000/-home-kfir-projects-video-insight-engine/afdac26f-4bd5-4149-b4a2-394ff4ee0f52/scratchpad/locks/heavy.lock -c '<command>'`
   Heavy = any full suite (summarizer incl. replay, api, web), the replay suite, pyright on more
   than ~10 files, `tsc -b` / `tsc --noEmit` on a package, eslint on a package, vitest full runs.
   Targeted pytest/vitest on a few files runs without the lock.

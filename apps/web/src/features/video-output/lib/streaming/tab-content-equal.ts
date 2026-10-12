@@ -34,6 +34,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0;
+}
+
 /** Keys with a defined value — a key set to `undefined` counts as absent. */
 function definedKeys(obj: Record<string, unknown>): string[] {
   return Object.keys(obj).filter((key) => obj[key] !== undefined);
@@ -53,9 +57,7 @@ function recordsEqual(
   const signedFrame = ignoreFrameSignatures && isSameSignedFrame(a, b);
   return keys.every((key) => {
     if (b[key] === undefined) return false;
-    if (signedFrame && SIGNED_URL_KEYS.has(key)) {
-      return typeof a[key] === "string" && typeof b[key] === "string";
-    }
+    if (signedFrame && SIGNED_URL_KEYS.has(key)) return isNonEmptyString(a[key]) && isNonEmptyString(b[key]);
     return valuesEqual(a[key], b[key], ignoreFrameSignatures);
   });
 }

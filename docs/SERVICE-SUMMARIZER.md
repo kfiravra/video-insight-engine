@@ -71,6 +71,7 @@ services/summarizer/
     │   │   ├── synthesis.py          # masterSummary + seoDescription (hero from memory; fast tier)
     │   │   ├── pipeline_timing.py    # pipeline.timing recorder (phases, LLM calls, downloads, counts)
     │   │   ├── translation.py        # Source-language translation (flat-list batched)
+    │   │   ├── translation_flat.py   # Flat-list translate call + mirror check (shared with RAG English)
     │   │   ├── faithfulness.py       # Faithfulness sampling
     │   │   ├── assembly/             # Assembly package (extraction → component props)
     │   │   │   ├── core.py               # assemble_response + per-tab drop accounting
@@ -493,7 +494,8 @@ A plan-first pipeline: ~6-7 text calls (description analysis, tier probe, plan �
     │   │   moment's timestamp by seeking the run's one local ≤720p file (downloaded by the
     │   │   frames phase; a manifest cache hit starts it here for ≥ 3 moments only, inside the
     │   │   budget with 30 s kept for seeks; cap 12 frames, 150 s) → the moment tabs stream
-    │   │   WITH their images (replacing the provisional Moments tab by id); the file is
+    │   │   WITH their images (replacing the provisional Moments tab by id, or under another
+    │   │   id with `replaces: "<provisional id>"`); the file is
     │   │   deleted after it (its last reader)
     │   └─▶ Synthesis (unless it ran first; pipeline/synthesis.py): fast tier, 1,200 tokens,
     │   │   20 s, 1 retry. Input: <video_memory> + compact FINAL extraction (≤ 6,000 chars,
@@ -561,8 +563,12 @@ A plan-first pipeline: ~6-7 text calls (description analysis, tier probe, plan �
     │   = {code, name, isRTL, tabs, meta} (tabs/meta deep-copied so a
     │   downstream mutation of ctx.assembled_tabs can't corrupt the
     │   persisted source block).
-    └─▶ Whisper translate (audio → English text) feeds the Qdrant
-    │   embedding path so RAG search works cross-language.
+    └─▶ No Qdrant work here: the transcript points' English text (the
+    │   embedding model is English-only) comes from a background task that
+    │   assembly's save starts — captions translated as text on the fast
+    │   model, Whisper translate only when this run transcribed the audio
+    │   (docs/RAG.md §Non-English transcripts). Once `done` is out, the
+    │   runner waits for it (≤ 60 s) before persisting pipeline.timing.
     └─▶ Owns the Redis response-cache write for non-English videos:
     │   assembly phase intentionally SKIPS the cache write when
     │   ctx.language != "en". Translation then writes the final
@@ -708,7 +714,7 @@ list against the model registry.
 | `synthesis_complete` | Up to twice: `{tldr, keyTakeaways}` at memory-done, then the superset `{tldr, keyTakeaways, masterSummary, seoDescription}` after the first tabs; consumers merge (API-REFERENCE.md#synthesis_complete) |
 | `frames` | `{videoId, frames: [{index, timestamp, url, s3Key?, ocrText?}]}` (scene frames) |
 | `meta` | `{title, contentTags, modifiers, primaryTag, tabCount, tabLabels, degraded?, ...}` (progressive meta) |
-| `tab_ready` | `{id, label, emoji, component, props, goal?, crossTabLinks?, attachments?, degradedFrom?, position, final, provisional?}` (progressive tab; contract in `pipeline/tab_ledger.py`, API-REFERENCE.md#tab_ready). `position` = index in the response's tab order, exact when `final` (an estimate before); `final: true` = the tab's last emission this run, exactly one per tab of the response; `provisional: true` = the plan-done Moments placeholder, never final, replaced by id. A tab id can arrive several times — clients replace by id and sort by `position`. Cached serves send every tab once, `final: true` |
+| `tab_ready` | `{id, label, emoji, component, props, goal?, crossTabLinks?, attachments?, degradedFrom?, position, final, provisional?, replaces?}` (progressive tab; contract in `pipeline/tab_ledger.py`, API-REFERENCE.md#tab_ready). `position` = index in the response's tab order, exact when `final` (an estimate before); `final: true` = the tab's last emission this run, exactly one per tab of the response; `provisional: true` = the plan-done Moments placeholder, never final, replaced by id (or by the tab whose `replaces` names it). A corrected `final` can follow for the same id — the last final wins. A tab id can arrive several times — clients replace by id and sort by `position`. Cached serves send every tab once, `final: true` |
 | `complete` | `{tabCount, tabIds, processingTimeMs, degraded}` (v2 completion; `tabIds` = the final tab order — a tab streamed but missing here was withdrawn) |
 | `error` | `{message, code?}` — `code` is an `ErrorCode` value (see docs/ERROR-HANDLING.md) |
 | `token` | `{phase, token}` — legacy token streaming; protocol slot kept, no current emitter |

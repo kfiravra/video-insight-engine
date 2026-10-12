@@ -53,7 +53,12 @@ the run's attribution for free. The shared emit helper
 - **Whisper** (`whisper_transcriber.py`) — `unit="audio_seconds"`,
   `audio_seconds=response.duration`, cost via `compute_transcription_cost_usd`
   (`$0.006/min`). Features: `summarize:transcript:whisper` /
-  `:whisper_translate`.
+  `:whisper_translate` — the latter only for the English text of a non-English
+  run that transcribed its own audio with Whisper (its Qdrant points). Every
+  other non-English transcript gets that English text from a fast-model text
+  translation: a LiteLLM call, so an ordinary callback row with feature
+  `summarize:rag_translation` (span `rag_translation`) — see
+  [RAG.md](./RAG.md#non-english-transcripts).
 - **Gemini** (`gemini_transcriber.py`) — `unit="tokens"`, token counts from
   `response.usage_metadata`, cost via the per-token Gemini rate. Feature:
   `summarize:transcript:gemini`.
@@ -124,15 +129,20 @@ hour. In one request every 1h breakpoint must come before any 5m one.
   playbook, description), the full marked transcript, the closing line —
   uncached.
 
-A run makes one plan call, so a 5-minute entry would be written and never read
-(A26); a 1-hour entry is read by every plan call — any video — that starts
-within an hour of the previous one. Economics (Sonnet 4.6, $3/MTok input): a
-1h write is 2x input ($6/MTok, ≈ $0.098 per miss vs $0.049 uncached), a read
-0.1x ($0.30/MTok, ≈ $0.005 per hit), so the 1h cache costs less than no cache
-once more than ~53 % of plan calls hit (a 5m cache breaks even at ~22 %).
-Gate rule (Kfir 2026-10-12): if the plan's 1h hit rate is below 50 % after two
-weeks of prod traffic, the plan switches to 5m — read it with
-`scripts/cache_hit_rate.py` (below).
+A run makes one plan call, so a 5-minute entry is never read by its own run —
+only by another video's plan call that starts within 5 minutes (A26); a 1-hour
+entry is read by every plan call — any video — that starts within an hour of
+the previous one. Economics (Sonnet 4.6, $3/MTok input): a 1h write is 2x input
+($6/MTok, ≈ $0.098 per miss vs $0.049 uncached), a read 0.1x ($0.30/MTok,
+≈ $0.005 per hit), so the 1h breakpoint costs **more** than no breakpoint below
+a ~53 % hit rate. A 5m write (1.25x) breaks even at ~22 % — of the 5-minute hit
+rate, which is never above the 1h one (every 5-minute hit is also a 1-hour
+hit). Gate item (Kfir 2026-10-12): read the plan's 1h hit rate with
+`scripts/cache_hit_rate.py` (below) after two weeks of prod traffic. Below 50 %,
+the choice between dropping the breakpoint (`cache=False`: never dearer than
+uncached) and 5m (cheaper only if ≥ ~22 % of plan calls start within 5 minutes
+of the previous one — the script does not measure that) is Kfir's gate-2
+decision; the code keeps 1h until he makes it.
 
 **Extraction — 5m (1c.3).**
 
@@ -207,6 +217,7 @@ Per call type, with the 1h / 5m split — the number gate reports carry:
 ```bash
 python scripts/cache_hit_rate.py                      # runs started in the last 14 days
 python scripts/cache_hit_rate.py --days 1             # the last 24 hours
+python scripts/cache_hit_rate.py --days 1 --include-eval   # ... with eval-user runs
 python scripts/cache_hit_rate.py --ids T1dQhQAm8Tc <summaryId> ...
 python scripts/cache_hit_rate.py --json
 ```
@@ -215,7 +226,10 @@ It reads `pipeline.timing.llmCalls` (not `llm_usage`) and prints, per `span`
 and provider: calls, input tokens, reads, writes (1h / 5m), hit rate =
 reads ÷ (reads + writes) for Anthropic, and the cached share of input tokens
 (the OpenAI number). Runs timed before `pipeline.timing` version 2 have no
-split and no OpenAI reads; the header counts runs per version.
+split and no OpenAI reads; the header counts runs per version. The window
+leaves out eval-user rows (`evalRun: true` — golden passes and dev runs, bursts
+of plan calls minutes apart that would lift the prod hit rate) unless
+`--include-eval`; `--ids` reads the named runs whoever ran them.
 
 ## Common failure modes
 
@@ -244,8 +258,9 @@ split and no OpenAI reads; the header counts runs per version.
       write split per call in `pipeline.timing`; 1h writes priced at 2x (verified)
 - ✅ Audit script (`scripts/audit_cache_credits.py`) and per-call-type gate tool
       (`scripts/cache_hit_rate.py`)
-- 📋 Extraction reads from phase 3 (grouped extraction); the plan's 1h hit rate
-      decides 1h vs 5m after two weeks of prod traffic.
+- 📋 Extraction reads from phase 3 (grouped extraction); after two weeks of prod
+      traffic the plan's 1h hit rate decides whether the 1h breakpoint stays —
+      what replaces it below 50 % is Kfir's gate-2 decision (see the plan above).
 
 ## Per-user daily cap
 

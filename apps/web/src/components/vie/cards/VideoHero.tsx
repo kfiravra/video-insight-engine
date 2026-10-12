@@ -10,6 +10,7 @@ import { YouTubePlayer } from '@/components/videos/YouTubePlayer';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { FadeIn } from '@/components/vie';
 import { CollapsibleSection } from './CollapsibleSection';
+import { PendingTabPill } from './PendingTabPill';
 import { PlayCloseGlyph } from './PlayCloseGlyph';
 import { DOMAIN_META } from './domain-meta';
 import type { TabDefinition, ContentTag } from '@vie/types';
@@ -302,19 +303,7 @@ export const VideoHero = memo(function VideoHero({
         >
           {pendingTabs && pendingTabs.length > 0
             ? pendingTabs.map((tab, i) => (
-                <div
-                  key={tab.id}
-                  data-stream-tab-pill
-                  style={{ '--stagger-i': i } as React.CSSProperties}
-                  className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-xl border border-border/50 bg-muted/20 px-3.5 py-2 text-sm font-medium text-muted-foreground/80"
-                >
-                  {tab.emoji && (
-                    <span aria-hidden="true" className="text-[0.95rem] leading-none">
-                      {tab.emoji}
-                    </span>
-                  )}
-                  <span>{stripLeadingEmoji(tab.label)}</span>
-                </div>
+                <PendingTabPill key={tab.id} label={tab.label} emoji={tab.emoji} index={i} />
               ))
             : [88, 104, 72, 96].map((width, i) => (
                 <div
@@ -396,20 +385,8 @@ export const VideoHero = memo(function VideoHero({
                 </Tooltip>
               );
             })}
-            {trailingPending.map((tab) => (
-              <span
-                key={tab.id}
-                aria-hidden="true"
-                data-stream-tab-pill
-                className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-xl border border-dashed border-border/60 px-3.5 py-2 text-sm font-medium text-muted-foreground/60"
-              >
-                {tab.emoji && (
-                  <span aria-hidden="true" className="text-[0.95rem] leading-none opacity-70">
-                    {tab.emoji}
-                  </span>
-                )}
-                <span>{stripLeadingEmoji(tab.label)}</span>
-              </span>
+            {trailingPending.map((tab, i) => (
+              <PendingTabPill key={tab.id} label={tab.label} emoji={tab.emoji} index={i} upcoming />
             ))}
           </div>
         </TooltipProvider>

@@ -80,6 +80,42 @@ class TestObserveSse:
 
         assert recorder.tabs_emitted == 1
 
+    def test_should_stamp_first_assembled_tab_after_the_provisional_one(
+        self, recorder: PipelineTimingRecorder
+    ) -> None:
+        """R4-5: firstTabReadyMs marks the plan-done preview; firstAssembledTabMs the first real tab."""
+        recorder.observe_sse(
+            sse_event("tab_ready", {"id": "m", "position": 3, "provisional": True})
+        )
+        provisional_only = dict(recorder.milestones)
+        time.sleep(0.01)
+        recorder.observe_sse(sse_event("tab_ready", {"id": "overview", "position": 0}))
+
+        assert (
+            "firstAssembledTabMs" in provisional_only,
+            recorder.milestones["firstAssembledTabMs"] > recorder.milestones["firstTabReadyMs"],
+        ) == (False, True)
+
+    def test_should_not_count_a_provisional_tab_nothing_replaced_by_id(
+        self, recorder: PipelineTimingRecorder
+    ) -> None:
+        recorder.observe_sse(
+            sse_event("tab_ready", {"id": "key_moments", "position": 3, "provisional": True})
+        )
+        recorder.observe_sse(
+            sse_event("tab_ready", {"id": "segments", "position": 2, "replaces": "key_moments"})
+        )
+
+        assert recorder.tabs_emitted == 1
+
+    def test_should_count_a_provisional_tab_once_its_real_one_is_sent(
+        self, recorder: PipelineTimingRecorder
+    ) -> None:
+        for flags in ({"provisional": True}, {"final": True}):
+            recorder.observe_sse(sse_event("tab_ready", {"id": "moments", "position": 2, **flags}))
+
+        assert recorder.tabs_emitted == 1
+
     def test_should_stamp_done_and_complete(self, recorder: PipelineTimingRecorder) -> None:
         recorder.observe_sse(
             sse_event("complete", {"tabCount": 1, "processingTimeMs": 1, "degraded": False})

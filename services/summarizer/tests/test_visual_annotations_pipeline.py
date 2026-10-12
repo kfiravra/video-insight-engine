@@ -82,7 +82,6 @@ def _ctx(*, eval_run: bool = False) -> SimpleNamespace:
             transcript_type="captions",
             source="captions",
         ),
-        audio_path=None,
         memory=None,
         video_memory="",
         tab_ledger=TabLedger(),

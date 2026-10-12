@@ -21,7 +21,8 @@ export interface InstrumentedWindow {
     push: (event: Record<string, unknown>) => void;
     close: () => void;
   };
-  /** Tee'd copy of the real SSE stream (live mode). */
+  /** Tee'd copy of the real SSE stream (live mode), plus one
+   *  `__detail:<status>` entry per video-doc response. */
   __vieSseLog: Array<{
     event?: string;
     id?: string;
@@ -97,7 +98,8 @@ export function scriptSseStream(): void {
 }
 
 /** Tee the real `/videos/:id/stream` response into `window.__vieSseLog` with
- *  arrival times, leaving the app's copy untouched (live mode). */
+ *  arrival times, leaving the app's copy untouched, and log each video-doc
+ *  response's status — the refetch after `done` is the DB swap (live mode). */
 export function tapSseStream(): void {
   const w = window as unknown as InstrumentedWindow;
   w.__vieSseLog = [];
@@ -131,9 +133,22 @@ export function tapSseStream(): void {
       }
     }
   };
+  const logDoc = (res: Response): void => {
+    res
+      .clone()
+      .json()
+      .then((doc: { status?: string }) => {
+        w.__vieSseLog.push({ event: `__detail:${doc.status ?? "unknown"}`, t: performance.now() });
+      })
+      .catch((err: unknown) => {
+        w.__vieSseLog.push({ event: `__detail_error:${String(err)}`, t: performance.now() });
+      });
+  };
   window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const res = await realFetch(input, init);
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    const method = (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
+    if (method === "GET" && /\/api\/videos\/[^/?]+$/.test(url)) logDoc(res);
     if (!/\/videos\/[^/]+\/stream$/.test(url) || !res.body) return res;
     const [forApp, forLog] = res.body.tee();
     record(forLog).catch((err: unknown) => {

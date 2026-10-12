@@ -1,6 +1,6 @@
 """Pydantic contracts for every SSE event the pipeline emits.
 
-Mirrors the TS event interfaces in ``packages/types/src/vie-response.ts`` and
+Mirrors the TS event interfaces in ``packages/types/src/api.ts`` and
 the table in ``docs/SERVICE-SUMMARIZER.md`` §SSE Event Protocol. Validated on
 every emission by ``sse_event()`` (``pipeline_helpers.py``):
 
@@ -106,16 +106,27 @@ class TabReadyEvent(_SSEEvent):
     # estimate before (a held-back or provisional tab), so clients sort by it.
     position: int | None = Field(default=None, ge=0)
     # The tab's last emission this run — nothing later changes its content or
-    # position. Absent on legacy emitters.
+    # position (should it still change, a corrected final follows: the last
+    # final wins). Absent on legacy emitters.
     final: bool = False
     # A placeholder built before extraction (the plan-done Moments tab); a
-    # later tab_ready with the same id replaces it.
+    # later tab_ready with the same id replaces it — or one naming it in
+    # ``replaces``.
     provisional: bool = False
+    # On the first emission of the tab that takes the provisional tab's place
+    # under another id: the provisional id (the client gives it that slot).
+    replaces: str | None = None
 
     @model_validator(mode="after")
     def _provisional_is_never_final(self) -> TabReadyEvent:
         if self.provisional and self.final:
             raise ValueError("a provisional tab is never final")
+        return self
+
+    @model_validator(mode="after")
+    def _replaces_another_tab(self) -> TabReadyEvent:
+        if self.replaces is not None and (self.provisional or self.replaces == self.id):
+            raise ValueError("replaces names another tab and never rides a provisional one")
         return self
 
 

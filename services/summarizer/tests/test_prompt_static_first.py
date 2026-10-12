@@ -114,7 +114,9 @@ class TestDescriptionAnalysisStaticFirst:
 
         assert "Keep labels concise (2-5 words max)" in _shared_prefix(first, second)
 
-    async def test_should_put_the_description_last(self) -> None:
+    async def test_should_follow_the_description_with_only_the_closing_line(self) -> None:
+        """The description is untrusted and up to 5,000 chars: the instruction comes after it."""
         prompt = await _description_prompt("Chapters: 0:00 intro, 2:30 setup " * 3)
 
-        assert prompt.rstrip().endswith("2:30 setup")
+        tail = prompt[prompt.rindex("2:30 setup") + len("2:30 setup") :]
+        assert tail.strip() == "Return only the JSON object described above, nothing else."

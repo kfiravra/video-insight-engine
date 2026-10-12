@@ -20,7 +20,12 @@
 #                        podcast, news, news_commentary, entertainment,
 #                        performance, comparison, story, unboxing)
 #   language           — ISO-639-1 (en, es, fr, ja, …) — drives translation
-#   expectedTabs       — tabs the pipeline SHOULD emit (count target ±1)
+#   expectedTabs       — tabs the pipeline SHOULD emit; scored by count only
+#                        (1 − 0.25 per tab off, weight 0.15). Lists a
+#                        Moments tab (`key_moments`, or the planned
+#                        `moments`/`highlights`): assembly adds one whenever
+#                        a moment source exists (Kfir 2026-10-12) — every
+#                        captioned video — unless the domain forbids it.
 #   requiredComponents — components every successful run must include
 #   forbiddenComponents— components that must NEVER appear for this video
 #                        (hard product bugs — scored at weight 0.15, any hit
@@ -107,7 +112,7 @@ videos:
     domain: tech
     format: tutorial
     language: en
-    expectedTabs: [overview, code, patterns, cheat_sheet]
+    expectedTabs: [overview, code, patterns, cheat_sheet, key_moments]
     requiredComponents: [overview, code_playground]
     keyContent: [useState, useEffect, dependency array, custom hook, render]
 
@@ -116,7 +121,7 @@ videos:
     domain: tech
     format: tutorial
     language: en
-    expectedTabs: [overview, setup, code, cheat_sheet]
+    expectedTabs: [overview, setup, code, cheat_sheet, key_moments]
     requiredComponents: [overview, step_player, code_playground]
     keyContent: [Dockerfile, container, image, layer, volume]
 
@@ -126,7 +131,7 @@ videos:
     domain: food
     format: tutorial
     language: en
-    expectedTabs: [overview, ingredients, steps, tips]
+    expectedTabs: [overview, ingredients, steps, tips, key_moments]
     requiredComponents: [overview, info_grid, step_player]
     forbiddenComponents: [quiz_arena]
     keyContent: [knife, technique, julienne, chef, grip]
@@ -137,7 +142,7 @@ videos:
     domain: food
     format: tutorial
     language: en
-    expectedTabs: [overview, ingredients, steps, tips]
+    expectedTabs: [overview, ingredients, steps, tips, key_moments]
     requiredComponents: [overview, info_grid, step_player]
     forbiddenComponents: [quiz_arena]
     keyContent: [sourdough, hydration, autolyse, bulk fermentation, scoring]
@@ -148,7 +153,7 @@ videos:
     domain: food
     format: tutorial
     language: en
-    expectedTabs: [overview, ingredients, steps]
+    expectedTabs: [overview, ingredients, steps, key_moments]
     requiredComponents: [overview, step_player]
     forbiddenComponents: [quiz_arena]
     keyContent: [tonkotsu, broth, simmer, aromatic, pork bones]
@@ -160,7 +165,7 @@ videos:
     domain: language
     format: tutorial
     language: en
-    expectedTabs: [phrases, rules, drills, vocabulary]
+    expectedTabs: [phrases, rules, drills, vocabulary, key_moments]
     requiredComponents: [spot_explorer, info_grid, flash_deck]
     keyContent: [ser, estar, gendered noun, conjugation, accent]
 
@@ -170,7 +175,7 @@ videos:
     domain: language
     format: lecture
     language: en
-    expectedTabs: [phrases, rules, drills, vocabulary]
+    expectedTabs: [phrases, rules, drills, vocabulary, key_moments]
     requiredComponents: [spot_explorer, info_grid, flash_deck]
     keyContent: [wa, ga, ni, particle, topic marker]
 
@@ -193,7 +198,7 @@ videos:
     domain: science
     format: lecture
     language: en
-    expectedTabs: [overview, concepts, key_facts, experiments]
+    expectedTabs: [overview, concepts, key_facts, experiments, key_moments]
     requiredComponents: [overview, concept_canvas]
     keyContent: [interference, wave function, observer, quantum, particle]
 
@@ -203,7 +208,7 @@ videos:
     domain: science
     format: lecture
     language: en
-    expectedTabs: [concepts, key_facts, experiments]
+    expectedTabs: [concepts, key_facts, experiments, key_moments]
     requiredComponents: [overview, spot_explorer, info_grid]
     keyContent: [crispr, cas9, guide rna, gene edit, double strand]
 
@@ -212,7 +217,7 @@ videos:
     domain: science
     format: lecture
     language: en
-    expectedTabs: [concepts, key_facts, takeaways]
+    expectedTabs: [concepts, key_facts, takeaways, key_moments]
     requiredComponents: [overview, spot_explorer]
     keyContent: [event horizon, singularity, schwarzschild, gravity, time]
 
@@ -234,7 +239,7 @@ videos:
     domain: travel
     format: vlog
     language: en
-    expectedTabs: [overview, itinerary, packing, budget]
+    expectedTabs: [overview, itinerary, packing, budget, key_moments]
     requiredComponents: [overview, spot_explorer, info_grid]
     forbiddenComponents: [quiz_arena]
     keyContent: [shibuya, shinjuku, jr pass, tsukiji, asakusa]
@@ -245,7 +250,7 @@ videos:
     domain: travel
     format: walkthrough
     language: en
-    expectedTabs: [overview, itinerary, packing, budget]
+    expectedTabs: [overview, itinerary, packing, budget, key_moments]
     requiredComponents: [overview, spot_explorer, info_grid]
     forbiddenComponents: [quiz_arena]
     keyContent: [ring road, vik, jokulsarlon, reykjavik, waterfall]
@@ -256,7 +261,7 @@ videos:
     domain: fitness
     format: tutorial
     language: en
-    expectedTabs: [overview, exercises, tips]
+    expectedTabs: [overview, exercises, tips, key_moments]
     requiredComponents: [overview, workout_room]
     forbiddenComponents: [quiz_arena]
     keyContent: [scapula, elbow, plank, descent, lockout]
@@ -267,7 +272,7 @@ videos:
     domain: fitness
     format: tutorial
     language: en
-    expectedTabs: [overview, exercises, timer]
+    expectedTabs: [overview, exercises, timer, key_moments]
     requiredComponents: [overview, workout_room]
     forbiddenComponents: [quiz_arena]
     keyContent: [hip flexor, thoracic, ankle, mobility, range of motion]
@@ -279,7 +284,7 @@ videos:
     domain: review
     format: commentary
     language: en
-    expectedTabs: [overview, pros_cons, specs, comparison]
+    expectedTabs: [overview, pros_cons, specs, comparison, key_moments]
     requiredComponents: [overview, comparison, info_grid]
     forbiddenComponents: [quiz_arena]
     keyContent: [transparency, anc, battery, fit, sound stage]
@@ -296,7 +301,7 @@ videos:
     domain: review
     format: commentary
     language: en
-    expectedTabs: [overview, pros_cons, specs, comparison]
+    expectedTabs: [overview, pros_cons, specs, comparison, key_moments]
     requiredComponents: [overview, comparison, info_grid]
     forbiddenComponents: [quiz_arena]
     keyContent: [transparency, noise cancel, battery, h2, case]
@@ -314,7 +319,7 @@ videos:
     domain: review
     format: commentary
     language: en
-    expectedTabs: [overview, pros_cons, specs, comparison]
+    expectedTabs: [overview, pros_cons, specs, comparison, key_moments]
     requiredComponents: [overview, comparison, info_grid]
     forbiddenComponents: [quiz_arena]
     keyContent: [camera, a18, battery life, display, button]
@@ -326,7 +331,7 @@ videos:
     domain: music
     format: commentary
     language: en
-    expectedTabs: [overview, analysis, structure]
+    expectedTabs: [overview, analysis, structure, key_moments]
     requiredComponents: [overview, spot_explorer]
     forbiddenComponents: [quiz_arena]
     keyContent: [opera, ballad, key change, freddie mercury, harmony]
@@ -386,7 +391,7 @@ videos:
     domain: food
     format: tutorial
     language: en
-    expectedTabs: [overview, ingredients, steps, tips]
+    expectedTabs: [overview, ingredients, steps, tips, key_moments]
     requiredComponents: [overview, checklist, step_player]
     forbiddenComponents: [quiz_arena]
     keyContent: [focaccia, dough, onion, anchov, olive oil]
@@ -445,7 +450,7 @@ videos:
     domain: fitness
     format: tutorial
     language: en
-    expectedTabs: [overview, workout, tips]
+    expectedTabs: [overview, workout, tips, key_moments]
     requiredComponents: [overview, workout_room]
     forbiddenComponents: [quiz_arena]
     keyContent: [jumping jack, wall sit, push-up, plank, squat]

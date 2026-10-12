@@ -152,6 +152,12 @@ describe('stream-event-processor — tab_ready contract', () => {
       expect(state.replacedTabIds).toEqual({ key_moments: 'chapters' });
     });
 
+    it('should replace the existing tab and drop the superseded one when the incoming id already streamed', () => {
+      const state = run([provisional, tab('chapters', 2), tab('chapters', 2, { final: true, replaces: 'key_moments' })]);
+
+      expect(state.tabs.map((t) => [t.id, t.final === true])).toEqual([['chapters', true]]);
+    });
+
     it('should ignore replaces when the named tab is final', () => {
       const state = run([tab('a', 0, { final: true }), tab('b', 1, { replaces: 'a' })]);
 
@@ -236,14 +242,16 @@ describe('stream-event-processor — tab_ready contract', () => {
       expect(isStreamSettled(state)).toBe(false);
     });
 
-    it('should be settled after a cached replay ends with every tab final', () => {
+    it('should not be settled after a cached replay even when every tab is final', () => {
+      // Its frame URLs were signed for the run that produced the doc — the DB
+      // serve (re-signed) must win.
       const state = run([
         { event: 'cached' },
         tab('a', 0, { final: true }),
         { event: 'done', processingTimeMs: 5 },
       ]);
 
-      expect(isStreamSettled(state)).toBe(true);
+      expect(isStreamSettled(state)).toBe(false);
     });
   });
 

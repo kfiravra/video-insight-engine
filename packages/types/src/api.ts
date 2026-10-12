@@ -124,13 +124,22 @@ export interface SSETabReadyEvent extends TabEntry {
    *  or held-back tab), so two tabs can share a value until the final one. */
   position?: number;
   /** This is the tab's last emission of the run: content and position are
-   *  final. Every tab of the final response gets exactly one, before
-   *  `complete`; a cached replay sends every tab final. Absent = may change. */
+   *  final. Every tab of the final response gets one, before `complete`; a
+   *  cached replay sends every tab final. Should a tab still change, a
+   *  corrected final follows for the same id — the last final wins. Absent =
+   *  may change. */
   final?: boolean;
   /** A placeholder built before extraction — the plan-done Moments tab (memory
    *  outline → YouTube chapters → description timestamps). Never final; the
-   *  real tab with the same id replaces it. */
+   *  real tab with the same id replaces it, or the tab whose `replaces` names
+   *  it. */
   provisional?: boolean;
+  /** Set on the first emission of the tab that takes the provisional tab's
+   *  place under ANOTHER id (e.g. a required backfill): the provisional id.
+   *  Drop that provisional tab and give this one its slot and focus. A tab
+   *  with the provisional's own id never carries it; `complete.tabIds` still
+   *  withdraws the provisional id. */
+  replaces?: string;
 }
 
 export interface SSECompleteEvent {

@@ -96,7 +96,7 @@ Write the JSON compact on a single line — no markdown fences, no indentation, 
 </output_budget>
 
 <output_schema>
-{{
+{
   "contentTags": ["travel"],
   "modifiers": ["finance"],
   "primaryTag": "travel",
@@ -104,43 +104,43 @@ Write the JSON compact on a single line — no markdown fences, no indentation, 
   "userGoal": "Plan and book a 7-day Japan trip under $1000",
   "corePromise": "Specific verb + object. e.g., 'Cook birria tacos for 6 people this weekend'",
   "uniqueAngle": "What makes THIS video different",
-  "identity": {{
+  "identity": {
     "creatorType": "professional chef | indie dev | travel vlogger | fitness coach | etc.",
     "tone": "casual-funny | professional-authoritative | enthusiastic-fast | calm-educational | etc."
-  }},
-  "extractionGuidance": {{
+  },
+  "extractionGuidance": {
     "primaryFocus": "What extraction must get right — be specific",
     "watchOutFor": "Common mistakes for this content type"
-  }},
+  },
   "terms": ["Suica = the IC transit card", "Shibuya Sky (not Shibuya Scramble)"],
-  "evidence": {{
+  "evidence": {
     "has_steps": false, "has_ingredients": false, "has_materials": false, "has_code": false,
     "has_drills": false, "has_comparison": false, "has_ranking": false, "has_lineup": false,
     "has_claims": false, "has_lyrics": false, "has_itinerary": true, "has_packing": true,
     "is_learnable": false
-  }},
+  },
   "tabs": [
-    {{
+    {
       "id": "daily_itinerary",
       "label": "📅 7 Days in Tokyo",
       "emoji": "📅",
       "component": "spot_explorer",
       "dataSource": "travel.itinerary",
       "goal": "Browsable day-by-day plan with spots, costs, and map links",
-      "brief": {{
+      "brief": {
         "what": "each day as one item: every spot with its area, cost and the tip given for it",
         "where": ["2:10-14:30"],
         "expect": 7
-      }}
-    }}
+      }
+    }
   ]
-}}
+}
 </output_schema>
 
 <examples>
 <example>
 Video: "Gordon Ramsay's Ultimate Steak Guide" (12 min, cooking tutorial)
-{{
+{
   "contentTags": ["food"],
   "modifiers": [],
   "primaryTag": "food",
@@ -148,25 +148,25 @@ Video: "Gordon Ramsay's Ultimate Steak Guide" (12 min, cooking tutorial)
   "userGoal": "Cook a perfect steak tonight",
   "corePromise": "Cook restaurant-quality steak at home using 4 different methods",
   "uniqueAngle": "Celebrity chef showing the actual pan technique close-up, not just telling",
-  "identity": {{"creatorType": "celebrity chef", "tone": "professional-authoritative"}},
-  "extractionGuidance": {{
+  "identity": {"creatorType": "celebrity chef", "tone": "professional-authoritative"},
+  "extractionGuidance": {
     "primaryFocus": "Every temperature, timing, and technique — missing one ruins the steak",
     "watchOutFor": "Ramsay uses visual cues ('when you see it sizzle') — capture these alongside times"
-  }},
+  },
   "terms": ["ribeye", "basting = spooning foaming butter over the steak", "resting = off the heat before slicing"],
-  "evidence": {{"has_steps": true, "has_ingredients": true, "has_materials": false, "has_code": false, "has_drills": false, "has_comparison": false, "has_ranking": false, "has_lineup": false, "has_claims": false, "has_lyrics": false, "has_itinerary": false, "has_packing": false, "is_learnable": false}},
+  "evidence": {"has_steps": true, "has_ingredients": true, "has_materials": false, "has_code": false, "has_drills": false, "has_comparison": false, "has_ranking": false, "has_lineup": false, "has_claims": false, "has_lyrics": false, "has_itinerary": false, "has_packing": false, "is_learnable": false},
   "tabs": [
-    {{"id": "ingredients", "label": "🛒 6 Ingredients", "emoji": "🛒", "component": "checklist", "dataSource": "food.ingredients", "goal": "Everything you need — check off as you gather.", "brief": {{"what": "every ingredient with amount as Gordon says it — the cut and its thickness, oil, butter, garlic, thyme, seasoning", "where": ["0:30-1:45"], "expect": 6}}}},
-    {{"id": "cook_steps", "label": "👨‍🍳 8 Steps", "emoji": "👨‍🍳", "component": "step_player", "dataSource": "food.steps", "goal": "Follow along with Gordon, step by step. Timers included.", "brief": {{"what": "every step in order with pan heat, time per side and the visual cue Gordon names", "where": ["1:45-10:20"], "expect": 8}}}},
-    {{"id": "tips", "label": "🔥 Chef Tips", "emoji": "🔥", "component": "info_grid", "dataSource": "food.tips", "goal": "Gordon's pro tips for nailing the perfect sear every time.", "brief": {{"what": "his technique tips — when to season, how long to rest, testing doneness by touch", "where": ["3:10-4:00", "10:20-11:40"], "expect": 5}}}},
-    {{"id": "highlights", "label": "🎬 Key Moments", "emoji": "🎬", "component": "moment_track", "dataSource": "food.steps", "goal": "Watch Gordon demonstrate each technique up close.", "brief": {{"what": "the demo spans worth re-watching — the sear, the butter baste, the slice — with endSeconds", "where": ["2:30-9:50"], "expect": 6}}}}
+    {"id": "ingredients", "label": "🛒 6 Ingredients", "emoji": "🛒", "component": "checklist", "dataSource": "food.ingredients", "goal": "Everything you need — check off as you gather.", "brief": {"what": "every ingredient with amount as Gordon says it — the cut and its thickness, oil, butter, garlic, thyme, seasoning", "where": ["0:30-1:45"], "expect": 6}},
+    {"id": "cook_steps", "label": "👨‍🍳 8 Steps", "emoji": "👨‍🍳", "component": "step_player", "dataSource": "food.steps", "goal": "Follow along with Gordon, step by step. Timers included.", "brief": {"what": "every step in order with pan heat, time per side and the visual cue Gordon names", "where": ["1:45-10:20"], "expect": 8}},
+    {"id": "tips", "label": "🔥 Chef Tips", "emoji": "🔥", "component": "info_grid", "dataSource": "food.tips", "goal": "Gordon's pro tips for nailing the perfect sear every time.", "brief": {"what": "his technique tips — when to season, how long to rest, testing doneness by touch", "where": ["3:10-4:00", "10:20-11:40"], "expect": 5}},
+    {"id": "highlights", "label": "🎬 Key Moments", "emoji": "🎬", "component": "moment_track", "dataSource": "food.steps", "goal": "Watch Gordon demonstrate each technique up close.", "brief": {"what": "the demo spans worth re-watching — the sear, the butter baste, the slice — with endSeconds", "where": ["2:30-9:50"], "expect": 6}}
   ]
-}}
+}
 </example>
 
 <example>
 Video: "React Server Components Explained" (25 min, tech tutorial)
-{{
+{
   "contentTags": ["tech", "learning"],
   "modifiers": [],
   "primaryTag": "tech",
@@ -174,25 +174,25 @@ Video: "React Server Components Explained" (25 min, tech tutorial)
   "userGoal": "Implement React Server Components in my Next.js project",
   "corePromise": "Understand and implement React Server Components in a Next.js app",
   "uniqueAngle": "Builds a real example from scratch showing the mental model, not just syntax",
-  "identity": {{"creatorType": "senior developer", "tone": "calm-educational"}},
-  "extractionGuidance": {{
+  "identity": {"creatorType": "senior developer", "tone": "calm-educational"},
+  "extractionGuidance": {
     "primaryFocus": "Every code snippet verbatim with filenames — viewers will copy-paste these",
     "watchOutFor": "Code split across screen shares — reconstruct complete functions"
-  }},
+  },
   "terms": ["React Server Components (RSC)", "use client directive", "Suspense boundary", "App Router (not the Pages Router)"],
-  "evidence": {{"has_steps": true, "has_ingredients": false, "has_materials": false, "has_code": true, "has_drills": false, "has_comparison": false, "has_ranking": false, "has_lineup": false, "has_claims": false, "has_lyrics": false, "has_itinerary": false, "has_packing": false, "is_learnable": true}},
+  "evidence": {"has_steps": true, "has_ingredients": false, "has_materials": false, "has_code": true, "has_drills": false, "has_comparison": false, "has_ranking": false, "has_lineup": false, "has_claims": false, "has_lyrics": false, "has_itinerary": false, "has_packing": false, "is_learnable": true},
   "tabs": [
-    {{"id": "code", "label": "💻 8 Code Snippets", "emoji": "💻", "component": "code_playground", "dataSource": "tech.snippets", "goal": "Paste these into your editor — each builds on the last.", "brief": {{"what": "every snippet verbatim with its filename and why it is written that way; rebuild functions split across screen shares", "where": ["4:10-21:30"], "expect": 8}}}},
-    {{"id": "concepts", "label": "🧠 5 Key Concepts", "emoji": "🧠", "component": "concept_canvas", "dataSource": "learning.concepts", "goal": "Drag concepts around to see how server components, streaming, and suspense connect.", "brief": {{"what": "each RSC concept with a one-line definition and the concepts it connects to — server/client boundary, streaming, Suspense, serialization", "where": ["1:00-4:10", "12:00-15:30"], "expect": 5}}}},
-    {{"id": "moments", "label": "🎬 Key Moments", "emoji": "🎬", "component": "moment_track", "dataSource": "learning.timestamps", "goal": "Jump to any concept demonstration in the video.", "brief": {{"what": "chapter jumps plus the start of each live-coding demo", "where": ["0:00-24:30"], "expect": 10}}}},
-    {{"id": "quiz", "label": "✅ Test Yourself", "emoji": "✅", "component": "quiz_arena", "dataSource": "enrichment.quiz", "goal": "Check what stuck — streak counter + frame context per question.", "brief": {{"what": "checks on where a component runs (server or client) and why", "where": ["1:00-24:30"], "expect": 5}}}}
+    {"id": "code", "label": "💻 8 Code Snippets", "emoji": "💻", "component": "code_playground", "dataSource": "tech.snippets", "goal": "Paste these into your editor — each builds on the last.", "brief": {"what": "every snippet verbatim with its filename and why it is written that way; rebuild functions split across screen shares", "where": ["4:10-21:30"], "expect": 8}},
+    {"id": "concepts", "label": "🧠 5 Key Concepts", "emoji": "🧠", "component": "concept_canvas", "dataSource": "learning.concepts", "goal": "Drag concepts around to see how server components, streaming, and suspense connect.", "brief": {"what": "each RSC concept with a one-line definition and the concepts it connects to — server/client boundary, streaming, Suspense, serialization", "where": ["1:00-4:10", "12:00-15:30"], "expect": 5}},
+    {"id": "moments", "label": "🎬 Key Moments", "emoji": "🎬", "component": "moment_track", "dataSource": "learning.timestamps", "goal": "Jump to any concept demonstration in the video.", "brief": {"what": "chapter jumps plus the start of each live-coding demo", "where": ["0:00-24:30"], "expect": 10}},
+    {"id": "quiz", "label": "✅ Test Yourself", "emoji": "✅", "component": "quiz_arena", "dataSource": "enrichment.quiz", "goal": "Check what stuck — streak counter + frame context per question.", "brief": {"what": "checks on where a component runs (server or client) and why", "where": ["1:00-24:30"], "expect": 5}}
   ]
-}}
+}
 </example>
 
 <example>
 Video: "What Are Transformers?" (28 min, 3Blue1Brown — ML concepts with rich animations)
-{{
+{
   "contentTags": ["learning"],
   "modifiers": [],
   "primaryTag": "learning",
@@ -200,24 +200,24 @@ Video: "What Are Transformers?" (28 min, 3Blue1Brown — ML concepts with rich a
   "userGoal": "Build intuition for the transformer architecture",
   "corePromise": "Build a mental model for how transformers attend across tokens",
   "uniqueAngle": "Diagrams that *show* attention happening, not just describe it",
-  "identity": {{"creatorType": "math educator", "tone": "calm-educational"}},
-  "extractionGuidance": {{
+  "identity": {"creatorType": "math educator", "tone": "calm-educational"},
+  "extractionGuidance": {
     "primaryFocus": "Every concept the speaker names (attention, embedding, residual stream, MLP, etc.) with one-sentence definition",
     "watchOutFor": "Many concepts have visual demonstrations — capture the timestamp of each demo so frames can attach"
-  }},
+  },
   "terms": ["attention head", "embedding", "residual stream", "MLP (multilayer perceptron)", "softmax"],
-  "evidence": {{"has_steps": false, "has_ingredients": false, "has_materials": false, "has_code": false, "has_drills": false, "has_comparison": false, "has_ranking": false, "has_lineup": false, "has_claims": false, "has_lyrics": false, "has_itinerary": false, "has_packing": false, "is_learnable": true}},
+  "evidence": {"has_steps": false, "has_ingredients": false, "has_materials": false, "has_code": false, "has_drills": false, "has_comparison": false, "has_ranking": false, "has_lineup": false, "has_claims": false, "has_lyrics": false, "has_itinerary": false, "has_packing": false, "is_learnable": true},
   "tabs": [
-    {{"id": "concepts", "label": "🧠 12 Core Concepts", "emoji": "🧠", "component": "concept_canvas", "dataSource": "learning.concepts", "goal": "See how attention, embeddings and the residual stream connect.", "brief": {{"what": "every concept the speaker names with a one-sentence definition and the concepts it feeds into", "where": ["0:40-26:50"], "expect": 12}}}},
-    {{"id": "moments", "label": "🎬 10 Demonstrations", "emoji": "🎬", "component": "moment_track", "dataSource": "learning.timestamps", "goal": "Jump to the exact moment each concept is shown on screen.", "brief": {{"what": "the moment each concept is animated on screen, with endSeconds on the animation span", "where": ["0:40-26:50"], "expect": 10}}}},
-    {{"id": "quiz", "label": "✅ Test Yourself", "emoji": "✅", "component": "quiz_arena", "dataSource": "enrichment.quiz", "goal": "Five questions to check what stuck — streak counter included.", "brief": {{"what": "checks on what attention computes and why the residual stream matters", "where": ["3:00-26:50"], "expect": 5}}}}
+    {"id": "concepts", "label": "🧠 12 Core Concepts", "emoji": "🧠", "component": "concept_canvas", "dataSource": "learning.concepts", "goal": "See how attention, embeddings and the residual stream connect.", "brief": {"what": "every concept the speaker names with a one-sentence definition and the concepts it feeds into", "where": ["0:40-26:50"], "expect": 12}},
+    {"id": "moments", "label": "🎬 10 Demonstrations", "emoji": "🎬", "component": "moment_track", "dataSource": "learning.timestamps", "goal": "Jump to the exact moment each concept is shown on screen.", "brief": {"what": "the moment each concept is animated on screen, with endSeconds on the animation span", "where": ["0:40-26:50"], "expect": 10}},
+    {"id": "quiz", "label": "✅ Test Yourself", "emoji": "✅", "component": "quiz_arena", "dataSource": "enrichment.quiz", "goal": "Five questions to check what stuck — streak counter included.", "brief": {"what": "checks on what attention computes and why the residual stream matters", "where": ["3:00-26:50"], "expect": 5}}
   ]
-}}
+}
 </example>
 
 <example>
 Video: "7-Day Tokyo Trip — Packing + Itinerary" (18 min, travel)
-{{
+{
   "contentTags": ["travel"],
   "modifiers": ["finance"],
   "primaryTag": "travel",
@@ -225,25 +225,25 @@ Video: "7-Day Tokyo Trip — Packing + Itinerary" (18 min, travel)
   "userGoal": "Pack a 7-day Tokyo trip and follow a day-by-day plan",
   "corePromise": "Pack the right things and have a day-by-day plan for Tokyo this week",
   "uniqueAngle": "Explicit weight tally + essential warnings, not a generic checklist",
-  "identity": {{"creatorType": "travel vlogger", "tone": "casual-funny"}},
-  "extractionGuidance": {{
+  "identity": {"creatorType": "travel vlogger", "tone": "casual-funny"},
+  "extractionGuidance": {
     "primaryFocus": "Every packing item with category + weight + essential flag; every itinerary spot with map link and timestamp",
     "watchOutFor": "Items the vlogger holds up on camera mid-video — capture their timestamps so frames attach"
-  }},
+  },
   "terms": ["Asakusa", "Shibuya", "Suica = the IC transit card", "JR Pass"],
-  "evidence": {{"has_steps": false, "has_ingredients": false, "has_materials": false, "has_code": false, "has_drills": false, "has_comparison": false, "has_ranking": false, "has_lineup": false, "has_claims": false, "has_lyrics": false, "has_itinerary": true, "has_packing": true, "is_learnable": false}},
+  "evidence": {"has_steps": false, "has_ingredients": false, "has_materials": false, "has_code": false, "has_drills": false, "has_comparison": false, "has_ranking": false, "has_lineup": false, "has_claims": false, "has_lyrics": false, "has_itinerary": true, "has_packing": true, "is_learnable": false},
   "tabs": [
-    {{"id": "packing", "label": "🎒 22 Packing Items", "emoji": "🎒", "component": "packing_mission", "dataSource": "travel.packingList", "goal": "Drag each item into the suitcase. Weight tally updates as you go — essentials flagged.", "brief": {{"what": "every item with its category, the weight when she says it, and whether she calls it essential", "where": ["0:50-6:10"], "expect": 22}}}},
-    {{"id": "itinerary", "label": "📅 7 Days in Tokyo", "emoji": "📅", "component": "spot_explorer", "dataSource": "travel.itinerary", "goal": "Day-by-day plan with costs and map links. Tap any spot for details.", "brief": {{"what": "each day as one item: its spots with area, cost and the tip she gives for each", "where": ["6:10-15:40"], "expect": 7}}}},
-    {{"id": "filmstrip", "label": "🎞️ Tokyo Scenes", "emoji": "🎞️", "component": "video_filmstrip", "dataSource": "frames", "goal": "Scrub through the trip — hover a frame for the caption, click to seek.", "brief": {{"what": "the scene changes worth scrubbing — neon Shibuya, quiet Asakusa, ramen counters, train interiors", "where": ["6:10-15:40"], "expect": 12}}}},
-    {{"id": "budget", "label": "💰 Daily Budget", "emoji": "💰", "component": "budget", "dataSource": "travel.budget", "goal": "Adjust the daily spend sliders to fit your trip style.", "brief": {{"what": "the daily spend by category — lodging, food, transit — and the total she quotes", "where": ["15:40-17:30"], "expect": 1}}}}
+    {"id": "packing", "label": "🎒 22 Packing Items", "emoji": "🎒", "component": "packing_mission", "dataSource": "travel.packingList", "goal": "Drag each item into the suitcase. Weight tally updates as you go — essentials flagged.", "brief": {"what": "every item with its category, the weight when she says it, and whether she calls it essential", "where": ["0:50-6:10"], "expect": 22}},
+    {"id": "itinerary", "label": "📅 7 Days in Tokyo", "emoji": "📅", "component": "spot_explorer", "dataSource": "travel.itinerary", "goal": "Day-by-day plan with costs and map links. Tap any spot for details.", "brief": {"what": "each day as one item: its spots with area, cost and the tip she gives for each", "where": ["6:10-15:40"], "expect": 7}},
+    {"id": "filmstrip", "label": "🎞️ Tokyo Scenes", "emoji": "🎞️", "component": "video_filmstrip", "dataSource": "frames", "goal": "Scrub through the trip — hover a frame for the caption, click to seek.", "brief": {"what": "the scene changes worth scrubbing — neon Shibuya, quiet Asakusa, ramen counters, train interiors", "where": ["6:10-15:40"], "expect": 12}},
+    {"id": "budget", "label": "💰 Daily Budget", "emoji": "💰", "component": "budget", "dataSource": "travel.budget", "goal": "Adjust the daily spend sliders to fit your trip style.", "brief": {"what": "the daily spend by category — lodging, food, transit — and the total she quotes", "where": ["15:40-17:30"], "expect": 1}}
   ]
-}}
+}
 </example>
 
 <example>
 Video: "20-Minute HIIT — Full Body" (22 min, fitness)
-{{
+{
   "contentTags": ["fitness"],
   "modifiers": [],
   "primaryTag": "fitness",
@@ -251,24 +251,24 @@ Video: "20-Minute HIIT — Full Body" (22 min, fitness)
   "userGoal": "Follow the HIIT workout end-to-end with no scrubbing",
   "corePromise": "Do a 20-minute HIIT workout with form cues and rest timers handled for you",
   "uniqueAngle": "Coach demonstrates every exercise with on-camera form corrections — frames let you see what right looks like",
-  "identity": {{"creatorType": "fitness coach", "tone": "enthusiastic-fast"}},
-  "extractionGuidance": {{
+  "identity": {"creatorType": "fitness coach", "tone": "enthusiastic-fast"},
+  "extractionGuidance": {
     "primaryFocus": "Every exercise with name, sets, reps OR duration, rest, formCues[], and timestamp",
     "watchOutFor": "Modifications announced verbally (\"easier version: do it on your knees\") — capture those"
-  }},
+  },
   "terms": ["burpee", "mountain climber", "Tabata = 20 s on, 10 s off"],
-  "evidence": {{"has_steps": false, "has_ingredients": false, "has_materials": false, "has_code": false, "has_drills": true, "has_comparison": false, "has_ranking": false, "has_lineup": false, "has_claims": false, "has_lyrics": false, "has_itinerary": false, "has_packing": false, "is_learnable": false}},
+  "evidence": {"has_steps": false, "has_ingredients": false, "has_materials": false, "has_code": false, "has_drills": true, "has_comparison": false, "has_ranking": false, "has_lineup": false, "has_claims": false, "has_lyrics": false, "has_itinerary": false, "has_packing": false, "is_learnable": false},
   "tabs": [
-    {{"id": "exercises", "label": "💪 12 Exercises", "emoji": "💪", "component": "workout_room", "dataSource": "fitness.exercises", "goal": "Full-bleed card per exercise — set counter, rest timer with audio cue, form-cue frame loop.", "brief": {{"what": "every exercise with sets, reps or duration, rest, form cues and the easier modification", "where": ["2:00-20:30"], "expect": 12}}}},
-    {{"id": "moments", "label": "🎬 Form Cues", "emoji": "🎬", "component": "moment_track", "dataSource": "fitness.exercises", "goal": "Jump back to any exercise demo. The expanded view shows the on-screen form check.", "brief": {{"what": "the demo span of each exercise where the coach checks form on camera", "where": ["2:00-20:30"], "expect": 12}}}},
-    {{"id": "form_tips", "label": "🧭 Coach's Tips", "emoji": "🧭", "component": "info_grid", "dataSource": "fitness.tips", "goal": "The coach's form and breathing rules, one glance each.", "brief": {{"what": "the general form, breathing and pacing tips, one short cell each", "where": ["0:30-2:00", "20:30-21:40"], "expect": 4}}}}
+    {"id": "exercises", "label": "💪 12 Exercises", "emoji": "💪", "component": "workout_room", "dataSource": "fitness.exercises", "goal": "Full-bleed card per exercise — set counter, rest timer with audio cue, form-cue frame loop.", "brief": {"what": "every exercise with sets, reps or duration, rest, form cues and the easier modification", "where": ["2:00-20:30"], "expect": 12}},
+    {"id": "moments", "label": "🎬 Form Cues", "emoji": "🎬", "component": "moment_track", "dataSource": "fitness.exercises", "goal": "Jump back to any exercise demo. The expanded view shows the on-screen form check.", "brief": {"what": "the demo span of each exercise where the coach checks form on camera", "where": ["2:00-20:30"], "expect": 12}},
+    {"id": "form_tips", "label": "🧭 Coach's Tips", "emoji": "🧭", "component": "info_grid", "dataSource": "fitness.tips", "goal": "The coach's form and breathing rules, one glance each.", "brief": {"what": "the general form, breathing and pacing tips, one short cell each", "where": ["0:30-2:00", "20:30-21:40"], "expect": 4}}
   ]
-}}
+}
 </example>
 
 <example>
 Video: "OP-29 Booster Box Opening — Chasing the Alt Art!" (26 min, gaming, unboxing)
-{{
+{
   "contentTags": ["gaming"],
   "modifiers": [],
   "primaryTag": "gaming",
@@ -276,19 +276,19 @@ Video: "OP-29 Booster Box Opening — Chasing the Alt Art!" (26 min, gaming, unb
   "userGoal": "Relive the box break and know exactly which pulls matter",
   "corePromise": "See every notable pull from the box, ranked by rarity and value, with jump-to moments",
   "uniqueAngle": "Real-time pull reactions with card closeups — the frames show the actual cards revealed",
-  "identity": {{"creatorType": "TCG content creator", "tone": "hype-casual"}},
-  "extractionGuidance": {{
+  "identity": {"creatorType": "TCG content creator", "tone": "hype-casual"},
+  "extractionGuidance": {
     "primaryFocus": "Every notable pull ranked by rarity/value with why it matters, plus pull moments with timestamps",
     "watchOutFor": "Market-value and playability comments made mid-reaction — they are the tier reasons"
-  }},
+  },
   "terms": ["OP-29", "alt art = alternate-art card", "SEC = secret rare", "manga rare"],
-  "evidence": {{"has_steps": false, "has_ingredients": false, "has_materials": false, "has_code": false, "has_drills": false, "has_comparison": false, "has_ranking": true, "has_lineup": false, "has_claims": false, "has_lyrics": false, "has_itinerary": false, "has_packing": false, "is_learnable": false}},
+  "evidence": {"has_steps": false, "has_ingredients": false, "has_materials": false, "has_code": false, "has_drills": false, "has_comparison": false, "has_ranking": true, "has_lineup": false, "has_claims": false, "has_lyrics": false, "has_itinerary": false, "has_packing": false, "is_learnable": false},
   "tabs": [
-    {{"id": "pulls", "label": "🃏 The Pulls", "emoji": "🃏", "component": "tier_list", "dataSource": "gaming.rankings", "goal": "Every notable card ranked by rarity/value — the reason field says why each pull matters.", "brief": {{"what": "every notable pulled card: name as item, rarity or value bracket as tier, why it matters as reason", "where": ["3:00-24:30"], "expect": 20}}}},
-    {{"id": "highlights", "label": "🎬 Pull Moments", "emoji": "🎬", "component": "moment_track", "dataSource": "gaming.highlights", "goal": "Jump to each big reveal — the frame shows the card held up to camera.", "brief": {{"what": "each big reveal with the card held up to camera", "where": ["3:00-24:30"], "expect": 10}}}},
-    {{"id": "set_facts", "label": "📋 Set Facts", "emoji": "📋", "component": "info_grid", "dataSource": "gaming.loadout", "goal": "Box odds, set details, and chase-card checklist at a glance.", "brief": {{"what": "box odds, set details and the chase cards he names, one short cell each", "where": ["0:20-3:00"], "expect": 6}}}}
+    {"id": "pulls", "label": "🃏 The Pulls", "emoji": "🃏", "component": "tier_list", "dataSource": "gaming.rankings", "goal": "Every notable card ranked by rarity/value — the reason field says why each pull matters.", "brief": {"what": "every notable pulled card: name as item, rarity or value bracket as tier, why it matters as reason", "where": ["3:00-24:30"], "expect": 20}},
+    {"id": "highlights", "label": "🎬 Pull Moments", "emoji": "🎬", "component": "moment_track", "dataSource": "gaming.highlights", "goal": "Jump to each big reveal — the frame shows the card held up to camera.", "brief": {"what": "each big reveal with the card held up to camera", "where": ["3:00-24:30"], "expect": 10}},
+    {"id": "set_facts", "label": "📋 Set Facts", "emoji": "📋", "component": "info_grid", "dataSource": "gaming.loadout", "goal": "Box odds, set details, and chase-card checklist at a glance.", "brief": {"what": "box odds, set details and the chase cards he names, one short cell each", "where": ["0:20-3:00"], "expect": 6}}
   ]
-}}
+}
 </example>
 </examples>
 

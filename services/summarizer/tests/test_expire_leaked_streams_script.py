@@ -1,23 +1,31 @@
 """scripts/expire_leaked_pipeline_streams.py — the one-off sweep for no-TTL streams (2.1, A12).
 
 A leaked stream = no TTL and no producer lock (a held lock is a live run on
-pre-2.1 code). Dry run by default; ``--apply`` sets a TTL, never deletes.
+pre-2.1 code). Dry run by default; ``--apply`` sets a TTL, never deletes, in
+one Lua step per stream that re-checks both conditions (the fake mirrors it;
+``TestApplyScriptOnRedis`` runs the real script on scratch db 15).
 """
 
 from __future__ import annotations
 
 import importlib.util
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 from types import ModuleType
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 import pytest
+import redis
+from bson import ObjectId
 
+from src.config import settings
 from src.services.cache.pipeline_event_stream import SENTINEL_DONE, PipelineEventStream
 
 _SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "expire_leaked_pipeline_streams.py"
 _NO_EXPIRY = -1
+_SCRATCH_DB = 15
 
 
 @pytest.fixture(scope="module")
@@ -61,11 +69,13 @@ class FakeRedis:
     def xrevrange(self, name: str, count: int) -> list[Any]:
         return list(reversed(self.streams[name]))[:count]
 
-    def expire(self, name: str, time: int, nx: bool) -> bool:
-        if nx and name in self.ttls:
-            return False
-        self.ttls[name] = time
-        return True
+    def eval(self, script: str, numkeys: int, *keys_and_args: Any) -> int:
+        """The sweep's one script: TTL only while the stream has none and no lock exists."""
+        (stream, lock), (ttl,) = keys_and_args[:numkeys], keys_and_args[numkeys:]
+        if stream not in self.streams or stream in self.ttls or lock in self.locks:
+            return 0
+        self.ttls[stream] = int(ttl)
+        return 1
 
 
 def test_should_list_a_stream_without_ttl_and_without_a_producer(sweep: ModuleType) -> None:
@@ -112,6 +122,18 @@ def test_should_keep_a_ttl_set_between_the_scan_and_the_expire(sweep: ModuleType
     assert client.ttl(key) == 600
 
 
+def test_should_leave_a_run_that_claimed_the_stream_after_the_scan(sweep: ModuleType) -> None:
+    """R4-7: a pre-2.1 producer claiming between the scan and the apply keeps its live stream."""
+    client = FakeRedis()
+    key = client.add_stream("vid-1", "e1")
+    leaked = sweep.find_leaked(client)
+    client.locks.add(PipelineEventStream.lock_key("vid-1"))
+
+    changed = sweep.expire_leaked(client, leaked, 120)
+
+    assert (changed, client.ttl(key)) == (0, _NO_EXPIRY)
+
+
 def test_should_change_nothing_on_a_dry_run(sweep: ModuleType, monkeypatch, capsys) -> None:
     client = FakeRedis()
     key = client.add_stream("vid-1", "e1")
@@ -147,3 +169,57 @@ def test_should_match_the_brokers_keys_and_sentinel(sweep: ModuleType) -> None:
         PipelineEventStream.lock_key("x"),
         SENTINEL_DONE,
     ) == (f"{sweep.STREAM_PREFIX}x", f"{sweep.LOCK_PREFIX}x", sweep.SENTINEL_DONE)
+
+
+# ─── The apply script on a real Redis (scratch db 15) ───
+
+
+def _scratch_url() -> str:
+    parts = urlsplit(settings.REDIS_URL)
+    return urlunsplit((parts.scheme, parts.netloc, f"/{_SCRATCH_DB}", "", ""))
+
+
+@pytest.fixture
+def scratch_redis() -> Iterator[tuple[redis.Redis, str]]:
+    """A real client on scratch db 15 and a fresh video id; its keys are deleted afterwards."""
+    client = redis.Redis.from_url(_scratch_url(), decode_responses=True, socket_timeout=2)
+    try:
+        client.ping()
+    except (OSError, redis.RedisError) as exc:
+        client.close()
+        pytest.skip(f"no Redis answers on the configured REDIS_URL: {type(exc).__name__}")
+    video_id = str(ObjectId())
+    try:
+        yield client, video_id
+    finally:
+        client.delete(
+            PipelineEventStream.stream_key(video_id), PipelineEventStream.lock_key(video_id)
+        )
+        client.close()
+
+
+class TestApplyScriptOnRedis:
+    def test_should_set_the_ttl_on_a_stream_still_leaked(
+        self, sweep: ModuleType, scratch_redis: tuple[redis.Redis, str]
+    ) -> None:
+        client, video_id = scratch_redis
+        key = PipelineEventStream.stream_key(video_id)
+        client.xadd(key, {"data": "e1"})
+        leaked = [s for s in sweep.find_leaked(client) if s.key == key]
+
+        changed = sweep.expire_leaked(client, leaked, 120)
+
+        assert (changed, 0 < int(client.ttl(key)) <= 120) == (1, True)
+
+    def test_should_leave_a_stream_whose_lock_was_claimed_after_the_scan(
+        self, sweep: ModuleType, scratch_redis: tuple[redis.Redis, str]
+    ) -> None:
+        client, video_id = scratch_redis
+        key = PipelineEventStream.stream_key(video_id)
+        client.xadd(key, {"data": "e1"})
+        leaked = [s for s in sweep.find_leaked(client) if s.key == key]
+        client.set(PipelineEventStream.lock_key(video_id), "pre-2.1-producer", ex=60)
+
+        changed = sweep.expire_leaked(client, leaked, 120)
+
+        assert (changed, int(client.ttl(key))) == (0, _NO_EXPIRY)

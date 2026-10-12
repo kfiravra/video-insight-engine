@@ -25,12 +25,13 @@ Pipeline complete                               (summarizer)
         │
         ├─ SSE emit "complete"          ◄── consumer unblocks here
         │
-        ├─ asyncio.create_task(transcript task)   ◄── non-English: English text first (below)
-        ├─ asyncio.create_task(store_default_output_chunks)  ◄── fire-and-forget
-        ├─ asyncio.create_task(store_visual_chunks)
+        ├─ spawn_background(transcript task)   ◄── non-English: English text first (below)
+        ├─ spawn_background(store_default_output_chunks)  ◄── fire-and-forget
+        ├─ spawn_background(store_visual_chunks)
         │
         ├─ (non-English: translation phase)
         ├─ SSE emit "done"
+        ├─ (non-English: wait ≤ 60 s for the transcript task, then persist pipeline.timing)
         ▼
                                                 (background tasks finish later)
         store_*  ─► chunker  ─► embed  ─► VectorService.delete_by_video_and_source
@@ -39,7 +40,7 @@ Pipeline complete                               (summarizer)
                                           VectorService.store_chunks (upsert)
 ```
 
-Background tasks **never block SSE** — `index_in_qdrant` in `services/summarizer/src/services/pipeline/phases/qdrant_index.py` creates the three tasks and returns; nothing in it is awaited by the run, so neither the translation phase nor `done` waits on the index. An eval-user run (`evalRun`, D25) writes no Qdrant points at all (nor the Redis response copy): the collection keeps the users' own result.
+Background tasks **never block SSE** — `index_in_qdrant` in `services/summarizer/src/services/pipeline/phases/qdrant_index.py` creates the three tasks and returns; nothing in it is awaited by the run, so neither the translation phase nor `done` waits on the index. The tasks go through `pipeline_helpers.spawn_background`: a strong reference until each ends (the event loop holds tasks only weakly), a failure logged with its traceback, a cancellation at worker shutdown logged as a warning. A non-English transcript task is also kept on `ctx.rag_transcript_task`: once `done` is out, `run_pipeline_phases` waits for it at most 60 s (`qdrant_index.RAG_TRANSCRIPT_WAIT_S`) before persisting `pipeline.timing`, so its translation calls are in `llmCalls`/`costUsd`; past the bound it runs on, uncancelled. A failed run never waits. An eval-user run (`evalRun`, D25) writes no Qdrant points at all (nor the Redis response copy): the collection keeps the users' own result.
 
 ### Non-English transcripts
 
@@ -47,11 +48,11 @@ The embedding model is English-only, so a non-English video's transcript points 
 
 | Case | English text | `text_original` | Timeline |
 |---|---|---|---|
-| This run transcribed the audio with Whisper (no captions, or their fetch failed) | Whisper translate of that cached audio (`translate_audio_to_english`, which also deletes the cached file) — the pre-2.3 path | the transcript | transcript segments |
-| The transcript already reads as English (`transcript.english.is_english_text`: no non-Latin script, langdetect `en`) — YouTube offered an English track: an auto-dub, or the caption picker fell back to English (YouTube labels Hebrew `iw`, which never matches a detected `he`) | the transcript as is | `null` | transcript segments |
-| Any other transcript (captions, an S3 hit, Gemini) | translated on the fast model with the `translate_flat` prompt (`transcript.english.english_blocks`): segments merged into ~200–400-char sentence blocks, ≤ 4,000 source chars per call, 4 calls in flight, a failed call retried once as two halves; span `rag_translation`, ledger feature `summarize:rag_translation`. **No audio download, no Whisper call.** Measured 2026-10-12 on a 31-min Arabic caption track: 6 gpt-4o-mini calls, 18.7 s, $0.005 (≈ $0.0016 and ~10 s per 10 min of speech) | the transcript | the blocks' caption times |
+| This run transcribed the audio with Whisper (no captions, or their fetch failed) | Whisper translate of that cached audio (`translate_audio_to_english`, which also deletes the cached file) — the pre-2.3 path. When it fails (a file past Whisper's 25 MB limit, a failed re-download), the transcript is translated as text (last row) | the transcript | the whole recording's segments (Whisper translates the sponsor read too) |
+| The transcript already reads as English (`transcript.english.is_english_text`: no non-Latin script and langdetect `en` in each of three 3,000-char windows — start, middle, end — so an English intro on a non-English video does not pass) — YouTube offered an English track: an auto-dub, or the caption picker fell back to English (YouTube labels Hebrew `iw`, which never matches a detected `he`) | the transcript as is | `null` | the segments the text was built from (SponsorBlock-cut) |
+| Any other transcript (captions, an S3 hit, Gemini) | translated on the fast model — `LLM_TRANSLATION_MODEL` when set — with the `translate_flat` prompt (`transcript.english.english_blocks`): the SponsorBlock-cut segments merged into ~200–400-char sentence blocks, ≤ 4,000 source chars per call, 4 calls in flight (a retry half takes a slot like any call), a failed call retried once as two halves; span and stage `rag_translation`, ledger feature `summarize:rag_translation`. **No audio download, no Whisper call.** Measured 2026-10-12 on a 31-min Arabic caption track: 6 gpt-4o-mini calls, 18.7 s, $0.005 (≈ $0.0016 and ~10 s per 10 min of speech) | the transcript | the blocks' caption times |
 
-When the translation or Whisper fails, the original text is embedded (`text_original` `null`). YouTube's own English translation of the track (timedtext `tlang=en`) was rejected: the one measuring fetch got HTTP 429 twice on the dev proxy exit, and auto-translated tracks are widely reported to be throttled; a second timedtext request per video would also add to the proxy exits' caption load. Translating raw caption lines one string each was rejected too: subtitle events often hold two lines, gpt-4o-mini returned them as two entries and 4 of 6 calls lost their alignment.
+When no English could be made, the original text is embedded (`text_original` `null`) on the segments it was built from. An English video's transcript points also take the SponsorBlock-cut segments, so citations after a cut sponsor read are not shifted. YouTube's own English translation of the track (timedtext `tlang=en`) was rejected: the one measuring fetch got HTTP 429 twice on the dev proxy exit, and auto-translated tracks are widely reported to be throttled; a second timedtext request per video would also add to the proxy exits' caption load. Translating raw caption lines one string each was rejected too: subtitle events often hold two lines, gpt-4o-mini returned them as two entries and 4 of 6 calls lost their alignment.
 
 ## Output chunker rules
 

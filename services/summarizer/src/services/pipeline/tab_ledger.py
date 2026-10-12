@@ -5,12 +5,19 @@ stamps ``position`` and ``final`` and remembers what was sent:
 
 - ``final: true`` — the tab's last emission this run: nothing later changes
   its content or its position. Every tab of the final response gets exactly
-  one, before ``complete``.
+  one, before ``complete``. Should a tab still change after it (a contract
+  slip, logged as an error), a corrected final follows for the same id — the
+  last final wins.
 - ``final: false`` — a later phase may still change the tab, so it comes
   again (same id): the quiz re-assembly can touch every tab (cross-tab links,
   a quick_quiz attachment, the overview's tab count) and a late synthesis
   patches the overview. ``provisional: true`` marks a placeholder built before
   extraction (the plan-done Moments tab) — never final.
+- ``replaces`` — on the first ``tab_ready`` of the tab that takes the
+  provisional tab's place under ANOTHER id (a required backfill or a demoted
+  tab instead of the one the plan-done copy named): the provisional id. The
+  client gives that tab the provisional's slot; a tab with the provisional's
+  own id replaces it by id and carries nothing.
 - ``position`` — the tab's index in the response's tab order: exact on a final
   emission, an estimate before it.
 
@@ -52,6 +59,14 @@ class SentTab:
     final: bool
 
 
+@dataclass(frozen=True)
+class OpenProvisional:
+    """The provisional tab the client shows until a ``tab_ready`` takes its place."""
+
+    tab_id: str
+    component: str
+
+
 @dataclass
 class TabLedger:
     """Per-run record of the tabs streamed, keyed by tab id."""
@@ -60,16 +75,48 @@ class TabLedger:
     # Late phases still to land that change already-assembled tabs.
     quiz_pending: bool = False
     synthesis_pending: bool = False
+    # The provisional tab still on the client, and the response's tab that
+    # takes its place under another id (``track_response``).
+    provisional: OpenProvisional | None = None
+    superseding_id: str | None = None
 
     def expect_late_changes(self, *, quiz: bool, synthesis: bool) -> None:
         """Declare what the late group will change before the first tab goes out."""
         self.quiz_pending = quiz
         self.synthesis_pending = synthesis
 
+    def track_response(self, tabs: list[dict]) -> None:
+        """Name the tab of ``tabs`` that takes the open provisional's place under another id.
+
+        Nobody when ``tabs`` still holds the provisional id (that tab replaces
+        it by id) or holds no tab of its component (``complete.tabIds``
+        withdraws it). Called with every (re-)assembled response.
+        """
+        self.superseding_id = None
+        open_tab = self.provisional
+        if open_tab is None or any(tab_id(t) == open_tab.tab_id for t in tabs):
+            return
+        self.superseding_id = next(
+            (tab_id(t) for t in tabs if t.get("component") == open_tab.component), None
+        )
+
     def _settled(self, tab: dict) -> bool:
         if self.quiz_pending:
             return False
         return not (self.synthesis_pending and tab.get("component") == _OVERVIEW)
+
+    def _replaced_provisional(self, tab: dict) -> str | None:
+        """The provisional id ``tab`` replaces under another id; closes the provisional."""
+        open_tab = self.provisional
+        if open_tab is None:
+            return None
+        if tab_id(tab) == open_tab.tab_id:
+            self.provisional = None  # replaced by id
+            return None
+        if tab_id(tab) != self.superseding_id:
+            return None
+        self.provisional, self.superseding_id = None, None
+        return open_tab.tab_id
 
     def event(self, tab: dict, position: int, *, provisional: bool = False) -> str:
         """The ``tab_ready`` chunk for ``tab`` at ``position``; final when nothing can change it."""
@@ -77,6 +124,9 @@ class TabLedger:
         payload = {**tab, "position": position, "final": final}
         if provisional:
             payload["provisional"] = True
+            self.provisional = OpenProvisional(tab_id(tab), str(tab.get("component", "")))
+        elif (replaced := self._replaced_provisional(tab)) is not None:
+            payload["replaces"] = replaced
         self.sent[tab_id(tab)] = SentTab(position, _fingerprint(tab), final)
         return sse_event("tab_ready", payload)
 
@@ -92,6 +142,7 @@ class TabLedger:
     def closing_events(self, tabs: list[dict]) -> list[str]:
         """The final re-emit: every tab of ``tabs`` not yet received final, in order, final."""
         self.expect_late_changes(quiz=False, synthesis=False)
+        self.track_response(tabs)
         return [
             self.event(tab, position)
             for position, tab in enumerate(tabs)

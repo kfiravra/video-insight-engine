@@ -90,14 +90,14 @@ const TabLayoutInner = forwardRef<TabLayoutHandle, TabLayoutProps>(
     const visibleTabs = tabs.filter(t => !t.hidden);
     const renderedCount = visibleTabs.length;
     const expectedCount = Math.max(totalCount, renderedCount);
-    const showProgress = isStreaming || (renderedCount > 0 && renderedCount < totalCount);
     const isFreshArrival = useFreshArrival(activeTab);
 
     return (
       <div className={cn('flex flex-col gap-4', className)} data-domain={primaryTag} style={domainAccent}>
-        {showProgress && (
+        {/* Live runs only: a run that stopped (error, cancel) must not read
+            as "N of M ready" — the stream error card speaks for it. */}
+        {isStreaming && (
           <TabProgressStrip
-            isStreaming={isStreaming}
             renderedCount={renderedCount}
             expectedCount={expectedCount}
             streamPhase={streamPhase}
