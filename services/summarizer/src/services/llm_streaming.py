@@ -13,10 +13,17 @@ token. ``LLMProvider`` routes a call here only when its caller passes
 The chunks are rebuilt into one response (``litellm.stream_chunk_builder``)
 so the timing record, the Langfuse generation and the usage ledger read the
 same shape as for a non-streamed call; ``include_usage`` makes the last chunk
-carry the token counts, cache reads and writes included. Anthropic sends the
-1-hour / 5-minute write split only in ``message_start`` and LiteLLM keeps the
-LAST usage chunk's prompt details, so the split is carried forward onto the
-later usages LiteLLM holds before it rebuilds the stream (:func:`_carry_cache_split`).
+carry the token counts, cache reads and writes included. Two fixes are applied
+to the chunks LiteLLM keeps (``.chunks``) before its end-of-stream rebuild, and
+the first to our own list before ours:
+
+- order: the rebuild sorts the chunks by a ``time.time()`` stamp taken as each
+  one is made. A wall clock that steps back (the WSL2 dev box rewinds ~2 s every
+  30 s) stamps later chunks earlier, and the sort interleaves two stretches of
+  the answer — scrambled text, unparseable JSON (:func:`_keep_arrival_order`);
+- the 1-hour / 5-minute write split: Anthropic sends it only in
+  ``message_start`` and LiteLLM keeps the LAST usage chunk's prompt details, so
+  it is carried onto the later usages (:func:`_carry_cache_split`).
 The total timeout is the caller's: ``LLMService.call_llm`` bounds the whole
 call with ``asyncio.timeout`` exactly as it bounds a non-streamed one.
 """
@@ -49,22 +56,38 @@ def streaming_request(kwargs: dict[str, Any]) -> dict[str, Any]:
     return {**kwargs, "stream": True, "stream_options": {"include_usage": True}}
 
 
+# The key ``stream_chunk_builder`` sorts a stream's chunks by (LiteLLM 1.91).
+_CREATED_AT = "created_at"
+
+
+def _keep_arrival_order(chunks: list[Any]) -> None:
+    """Raise each chunk's ``created_at`` stamp to the highest stamp before it in ``chunks``.
+
+    The stamps then never decrease along the list, so LiteLLM's (stable) sort
+    keeps the order the chunks arrived in, whatever the wall clock did. A chunk
+    without a stamp is left alone.
+    """
+    latest = float("-inf")
+    for chunk in chunks:
+        params = getattr(chunk, "_hidden_params", None)
+        if not isinstance(params, dict):
+            continue
+        stamp = params.get(_CREATED_AT)
+        if not isinstance(stamp, int | float):
+            continue
+        if stamp < latest:
+            params[_CREATED_AT] = latest
+        else:
+            latest = stamp
+
+
 def _cache_split(usage: object) -> object | None:
     details = getattr(usage, "prompt_tokens_details", None)
     return getattr(details, "cache_creation_token_details", None)
 
 
-def _carry_cache_split(stream: object) -> None:
-    """Copy the write split of the stream's first usage onto its later usages lacking one.
-
-    Reads the usages LiteLLM's ``CustomStreamWrapper`` keeps (``.chunks``);
-    called at the chunk carrying the finish reason, before LiteLLM sends the
-    usage chunk and builds the response its success callbacks (the ledger)
-    receive. Any other stream object is left alone.
-    """
-    chunks = getattr(stream, "chunks", None)
-    if not isinstance(chunks, list):
-        return
+def _carry_cache_split(chunks: list[Any]) -> None:
+    """Copy the write split of the first usage in ``chunks`` onto the later usages lacking one."""
     usages = [u for u in (getattr(c, "usage", None) for c in chunks) if u is not None]
     split = next((s for s in map(_cache_split, usages) if s is not None), None)
     if split is None:
@@ -73,6 +96,21 @@ def _carry_cache_split(stream: object) -> None:
         details = getattr(usage, "prompt_tokens_details", None)
         if details is not None and _cache_split(usage) is None:
             details.cache_creation_token_details = split
+
+
+def _fix_kept_chunks(stream: object) -> None:
+    """Order and complete the chunks LiteLLM's ``CustomStreamWrapper`` keeps (``.chunks``).
+
+    Called at the chunk carrying the finish reason: LiteLLM has kept every
+    chunk by then and rebuilds them (the Langfuse output, the ledger's usage,
+    the usage chunk it sends us last) when it is asked for the next one. Any
+    other stream object is left alone.
+    """
+    kept = getattr(stream, "chunks", None)
+    if not isinstance(kept, list):
+        return
+    _keep_arrival_order(kept)
+    _carry_cache_split(kept)
 
 
 def _finishes(chunk: Any) -> bool:
@@ -108,10 +146,11 @@ async def stream_completion(
                 ttft_ms = int((time.monotonic() - started) * 1000)
                 on_first_chunk()
             if _finishes(chunk):
-                _carry_cache_split(stream)
+                _fix_kept_chunks(stream)
             chunks.append(chunk)
     finally:
         await _close(stream)
+    _keep_arrival_order(chunks)
     response = litellm.stream_chunk_builder(chunks, messages=request["messages"])
     if ttft_ms is None or not isinstance(response, litellm.ModelResponse):
         raise APIError(
