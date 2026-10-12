@@ -233,7 +233,7 @@ Pydantic models.
 
 ### Phase 8 — Translation · `phases/translation.py` → `pipeline/translation.py` *(non-English only)*
 
-- **Prompt:** `prompts/translate_flat.txt` (batched Haiku calls).
+- **Prompt:** `prompts/translate_flat.txt` — fast model (`LLM_TRANSLATION_MODEL` when set, else gpt-4o-mini), ≤ 2,500-char batches (CJK weighted) run in parallel, each checked for an echo.
 - **Calls:** `translate_to_source()` — walks the **English** assembled output, translates every translatable prose string into `source_language_code`, returns the unchanged English dict with the translated artifact nested under `sourceLanguage`. Plus `_translate_title()` (the one field that travels source→English; original kept under the source block).
 - **On failure / mirror / length mismatch:** the result has no `sourceLanguage` key → phase no-ops, finalizes the doc `completed` English-only (FE renders no toggle).
 - **Out:** `ctx.source_language`; re-saves the Mongo doc with `sourceLanguage` + status `completed`; writes the final Redis payload (English primary + toggle).
@@ -312,7 +312,7 @@ prompt version on the active trace.
 | `synthesis.txt` | synthesis | fast |
 | `enrich/*.txt` | enrichment | fast |
 | `detection/*.txt` | faithfulness judge (background) | fast |
-| `translate_flat.txt` | translation | Haiku (batched) |
+| `translate_flat.txt` | translation | fast model, ≤ 2,500-char parallel batches |
 
 ---
 

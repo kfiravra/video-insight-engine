@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import pytest
 
+from src.utils import language_utils
 from src.utils.language_utils import (
     RTL_LANGUAGES,
     detect_language_by_script,
     detect_language_from_text,
     get_language_name,
+    has_hebrew_arabic_or_cjk,
     is_rtl,
     normalize_language_code,
 )
@@ -219,3 +221,50 @@ class TestDetectLanguageFromText:
     def test_returns_none_for_short_text(self):
         """Under the 50-char floor, detection returns None regardless of deps."""
         assert detect_language_from_text("hola") is None
+
+
+class TestHasHebrewArabicOrCjk:
+    """The script check of the RAG per-block retry: any one character counts."""
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "שלום",
+            "\ufb20",  # Hebrew presentation form
+            "مرحبا",
+            "\u0750",  # Arabic supplement
+            "\ufee3\ufeae\ufea3\ufe92\ufe8e",  # Arabic presentation forms B
+            "你好",
+            "こんにちは",
+            "カタカナ",
+            "안녕하세요",
+        ],
+        ids=[
+            "hebrew",
+            "hebrew-presentation-form",
+            "arabic",
+            "arabic-supplement",
+            "arabic-presentation-forms",
+            "han",
+            "hiragana",
+            "katakana",
+            "hangul",
+        ],
+    )
+    def test_should_detect_the_script_when_the_text_holds_it(self, text):
+        assert has_hebrew_arabic_or_cjk(text)
+
+    def test_should_detect_a_single_hebrew_word_in_english(self):
+        assert has_hebrew_arabic_or_cjk("We met at the שוק this morning, as planned.")
+
+    @pytest.mark.parametrize(
+        "text",
+        ["Plain English, 42 numbers.", "Español: ¿qué tal?", "Привет мир", "\ufeffHello"],
+        ids=["english", "spanish", "cyrillic", "byte-order-mark"],
+    )
+    def test_should_not_detect_the_script_when_the_text_has_none(self, text):
+        assert not has_hebrew_arabic_or_cjk(text)
+
+    def test_should_keep_the_script_ranges_escaped_in_the_source(self):
+        # NFC normalization maps literal U+FB1D / U+F900 range ends to other code points.
+        assert language_utils._HEBREW_ARABIC_CJK_RE.pattern.isascii()

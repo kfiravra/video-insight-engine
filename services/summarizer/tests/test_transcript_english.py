@@ -8,6 +8,7 @@ each block's time span, and translates the blocks on the fast model with the
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 from collections.abc import Iterator
 from pathlib import Path
@@ -21,11 +22,11 @@ from src.services.pipeline import translation_flat
 from src.services.transcript import english
 from src.services.transcript.english import (
     RAG_TRANSLATION_STAGE,
-    _batches,
     _blocks,
     english_blocks,
     is_english_text,
 )
+from src.utils.language_utils import has_hebrew_arabic_or_cjk
 
 
 def _seg(text: str, start: float, duration: float = 2.0) -> dict[str, Any]:
@@ -103,18 +104,6 @@ class TestBlocks:
         assert (_blocks(segments)[0]["startMs"], _blocks(segments)[0]["endMs"]) == (4000, 6500)
 
 
-class TestBatches:
-    def test_should_keep_every_batch_within_the_character_budget(self):
-        texts = ["x" * 900] * 10
-
-        assert all(sum(len(t) for t in batch) <= 4000 for batch in _batches(texts))
-
-    def test_should_keep_the_texts_in_order(self):
-        texts = [f"{i}" * 700 for i in range(10)]
-
-        assert [t for batch in _batches(texts) for t in batch] == texts
-
-
 class TestEnglishBlocks:
     async def test_should_return_english_blocks_with_the_source_spans(self, translator):
         segments = _segments(8)
@@ -170,7 +159,10 @@ class TestEnglishBlocks:
         translator.side_effect = None
         translator.return_value = None
 
-        assert await english_blocks(MagicMock(), _segments(8), "ar") is None
+        result = await english_blocks(MagicMock(), _segments(8), "ar")
+
+        # One batch call and its two halves; no block-by-block retry when no batch answered.
+        assert (result, translator.call_count) == (None, 3)
 
     async def test_should_count_an_echoed_batch_as_untranslated(self, translator):
         async def _echo(_llm: Any, texts: list[str], *a: Any, **k: Any) -> list[str]:
@@ -190,7 +182,7 @@ class TestEnglishBlocks:
 
     async def test_should_keep_retry_halves_within_the_call_limit(self, translator, monkeypatch):
         # Two ~220-char blocks per batch → 8 batches, each retried as two halves.
-        monkeypatch.setattr(english, "_BATCH_CHARS", 500)
+        monkeypatch.setattr(english, "TRANSLATION_BATCH_CHARS", 500)
         in_flight = peak = 0
 
         async def _count(_llm: Any, texts: list[str], *a: Any, **k: Any) -> list[str] | None:
@@ -206,6 +198,214 @@ class TestEnglishBlocks:
         await english_blocks(MagicMock(), _segments(64), "ar")
 
         assert peak == english._CONCURRENCY
+
+
+def _hebrew_segments(count: int) -> list[dict[str, Any]]:
+    """Unpunctuated Hebrew ASR lines (~33 chars), as YouTube's ``iw`` track sends them."""
+    return [_seg(f"זה משפט מספר {i} בתמלול של הסרטון", start=i * 3.0) for i in range(count)]
+
+
+def _spanish_segments(count: int) -> list[dict[str, Any]]:
+    """~62-character Spanish sentences: four to a block."""
+    return [
+        _seg(f"Esta es la frase número {i} del texto traducido del video.", start=i * 3.0)
+        for i in range(count)
+    ]
+
+
+_INPUT = re.compile(r"<input>\s*(\[.*\])\s*</input>", re.DOTALL)
+
+
+def _short_when(marker: str) -> Any:
+    """The model answering a call of several blocks one entry short when it holds
+    ``marker``; everything else, and a single block, answered whole."""
+
+    async def _answer(_llm: Any, prompt: str, **_kwargs: Any) -> str:
+        match = _INPUT.search(prompt)
+        assert match is not None
+        sent = json.loads(match.group(1))
+        answer = [f"English sentence {i}." for i in range(len(sent))]
+        short = len(sent) > 1 and any(marker in text for text in sent)
+        return json.dumps({"translations": answer[:-1] if short else answer})
+
+    return _answer
+
+
+def _leaves_in_batches(marker: str, remnant: str) -> Any:
+    """A translator that keeps ``remnant`` in the block holding ``marker`` when it
+    comes with others, and translates it whole when it comes alone."""
+
+    async def _answer(_llm: Any, texts: list[str], *a: Any, **k: Any) -> list[str]:
+        return [
+            f"We met there, {remnant}." if marker in text and len(texts) > 1 else f"English {i}."
+            for i, text in enumerate(texts)
+        ]
+
+    return _answer
+
+
+def _calls_with(translator: MagicMock, marker: str) -> int:
+    return sum(1 for call in translator.call_args_list if any(marker in t for t in call.args[1]))
+
+
+class TestUntranslatedBlocks:
+    """Blocks left untranslated by their batch are retried once, one block per call."""
+
+    async def test_should_translate_every_block_when_its_batch_is_answered_short(self):
+        # 10 blocks in two batches of 5; the first batch and its first half miscount.
+        short = _short_when("מספר 0 ")
+
+        with patch.object(translation_flat, "call_llm_with_retry", side_effect=short):
+            result = await english_blocks(MagicMock(), _hebrew_segments(120), "he")
+
+        assert result is not None
+        assert not any(has_hebrew_arabic_or_cjk(block["text"]) for block in result.blocks)
+
+    async def test_should_retry_a_block_whose_english_keeps_a_single_hebrew_word(self, translator):
+        translator.side_effect = _leaves_in_batches("מספר 20 ", "at the שוק")
+
+        result = await english_blocks(MagicMock(), _hebrew_segments(24), "he")
+
+        assert result is not None
+        assert not any(has_hebrew_arabic_or_cjk(block["text"]) for block in result.blocks)
+
+    @pytest.mark.parametrize(
+        "remnant",
+        ["مرحبا", "\ufee3\ufeae\ufea3\ufe92\ufe8e", "你好", "こんにちは", "안녕하세요"],
+        ids=["arabic", "arabic-presentation-forms", "han", "kana", "hangul"],
+    )
+    async def test_should_retry_a_block_whose_english_keeps_arabic_or_cjk(
+        self, translator, remnant
+    ):
+        translator.side_effect = _leaves_in_batches("رقم 5 ", remnant)
+
+        result = await english_blocks(MagicMock(), _segments(8), "ar")
+
+        assert result is not None and remnant not in result.blocks[1]["text"]
+
+    async def test_should_not_retry_a_block_twice_when_its_retry_is_still_hebrew(self, translator):
+        translator.side_effect = self._always_hebrew("מספר 20 ")
+
+        await english_blocks(MagicMock(), _hebrew_segments(24), "he")
+
+        assert _calls_with(translator, "מספר 20 ") == 2
+
+    async def test_should_keep_the_batch_answer_of_a_block_still_hebrew_after_its_retry(
+        self, translator
+    ):
+        translator.side_effect = self._always_hebrew("מספר 20 ")
+
+        result = await english_blocks(MagicMock(), _hebrew_segments(24), "he")
+
+        assert result is not None and result.blocks[1]["text"] == "English, but שוק (2)"
+
+    async def test_should_count_the_blocks_left_untranslated_in_one_log_line(
+        self, translator, caplog
+    ):
+        translator.side_effect = self._always_hebrew("מספר 20 ")
+
+        with caplog.at_level("INFO", logger=english.__name__):
+            await english_blocks(MagicMock(), _hebrew_segments(24), "he")
+
+        assert [r.getMessage() for r in caplog.records if "one by one" in r.getMessage()] == [
+            "RAG translation retried 1/2 blocks one by one (0 past the cap of 8 not retried): "
+            "1 still untranslated, kept as they were"
+        ]
+
+    async def test_should_retry_a_latin_block_that_came_back_as_its_source_text(self, translator):
+        async def _echo_in_batches(_llm: Any, texts: list[str], *a: Any, **k: Any) -> list[str]:
+            return [
+                text if "número 5 " in text and len(texts) > 1 else f"English {i}."
+                for i, text in enumerate(texts)
+            ]
+
+        translator.side_effect = _echo_in_batches
+
+        result = await english_blocks(MagicMock(), _spanish_segments(16), "es")
+
+        assert result is not None and result.blocks[1]["text"] == "English 0."
+
+    async def test_should_make_one_call_per_batch_when_every_block_comes_back_english(
+        self, translator
+    ):
+        await english_blocks(MagicMock(), _segments(8), "ar")
+
+        assert translator.call_count == 1
+
+    async def test_should_keep_single_block_retries_within_the_call_limit(self, translator):
+        in_flight = peak = 0
+
+        async def _count(_llm: Any, texts: list[str], *a: Any, **k: Any) -> list[str] | None:
+            nonlocal in_flight, peak
+            in_flight += 1
+            peak = max(peak, in_flight)
+            await asyncio.sleep(0.01)
+            in_flight -= 1
+            return None if len(texts) > 1 else await _to_english(_llm, texts)
+
+        translator.side_effect = _count
+
+        await english_blocks(MagicMock(), _segments(64), "ar")
+
+        assert peak == english._CONCURRENCY
+
+    async def test_should_retry_at_most_half_the_blocks_when_more_are_untranslated(
+        self, translator
+    ):
+        # 40 blocks, every one answered with Arabic left in it: the cap is 20.
+        async def _arabic_left(_llm: Any, texts: list[str], *a: Any, **k: Any) -> list[str]:
+            return ["We met there, مرحبا." if len(texts) > 1 else "English." for _ in texts]
+
+        translator.side_effect = _arabic_left
+
+        await english_blocks(MagicMock(), _segments(160), "ar")
+
+        assert sum(1 for call in translator.call_args_list if len(call.args[1]) == 1) == 20
+
+    async def test_should_retry_a_batch_blocks_before_a_slower_batch_returns(
+        self, translator, monkeypatch
+    ):
+        # Two blocks per batch: blocks 0-1 (sentences 0-7), blocks 2-3 (8-15).
+        monkeypatch.setattr(english, "TRANSLATION_BATCH_CHARS", 500)
+        events: list[str] = []
+
+        async def _answer(_llm: Any, texts: list[str], *a: Any, **k: Any) -> list[str]:
+            if len(texts) > 1 and any("رقم 9 " in t for t in texts):
+                await asyncio.sleep(0.2)
+                events.append("slow batch answered")
+            if len(texts) == 1:
+                events.append("early block retried")
+            return [
+                "We met there, مرحبا." if "رقم 1 " in t and len(texts) > 1 else f"English {i}."
+                for i, t in enumerate(texts)
+            ]
+
+        translator.side_effect = _answer
+
+        await english_blocks(MagicMock(), _segments(16), "ar")
+
+        assert events == ["early block retried", "slow batch answered"]
+
+    async def test_should_send_the_single_block_retries_as_rag_calls(self, translator):
+        translator.side_effect = _leaves_in_batches("رقم 5 ", "مرحبا")
+
+        await english_blocks(MagicMock(), _segments(8), "ar")
+
+        assert {call.kwargs["stage_name"] for call in translator.call_args_list} == {
+            RAG_TRANSLATION_STAGE
+        }
+
+    @staticmethod
+    def _always_hebrew(marker: str) -> Any:
+        """A translator that never translates the block holding ``marker`` fully."""
+
+        async def _answer(_llm: Any, texts: list[str], *a: Any, **k: Any) -> list[str]:
+            return [
+                f"English, but שוק ({len(texts)})" if marker in text else f"English {i}."
+                for i, text in enumerate(texts)
+            ]
+
+        return _answer
 
 
 class TestTranslationModel:

@@ -343,3 +343,26 @@ def detect_language_by_script(text: str) -> str | None:
             return lang
 
     return None
+
+
+# Hebrew (with its presentation forms), Arabic (with the supplement,
+# extended-A and both presentation-form blocks; not U+FEFF, the BOM) and CJK
+# (Han with extension A and the compatibility ideographs, kana, Hangul
+# syllables and jamo). Wider than the detection patterns above, which only
+# need the common letters to pass their 10 % share. Escaped, never literal: NFC
+# normalization maps U+FB1D and the U+F900 ideographs to other code points.
+_HEBREW_ARABIC_CJK_RE = re.compile(
+    r"[\u0590-\u05FF\uFB1D-\uFB4F"
+    r"\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFC"
+    r"\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF"
+    r"\u1100-\u11FF\u3130-\u318F\uAC00-\uD7AF]"
+)
+
+
+def has_hebrew_arabic_or_cjk(text: str) -> bool:
+    """True when ``text`` holds a single Hebrew, Arabic or CJK character.
+
+    One is enough, unlike ``detect_language_by_script``'s share: an English
+    translation with one such word left in it is partly untranslated.
+    """
+    return _HEBREW_ARABIC_CJK_RE.search(text) is not None

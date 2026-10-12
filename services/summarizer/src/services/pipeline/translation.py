@@ -7,10 +7,11 @@ swap the whole surface. The English top-level is returned unchanged.
 
 It walks the output tree recursively, collects every translatable prose string
 into a flat list (filtered by a leaf-only deny-list of structural, asset, and
-enum-shaped keys), translates them in batched Haiku calls (so a large video is
-fully translated rather than capped), and applies the translations back into a
-deep copy that becomes the ``sourceLanguage`` artifact ({code, name, isRTL,
-tabs, meta}).
+enum-shaped keys), translates them on the fast model in small batches run in
+parallel (``TRANSLATION_BATCH_CHARS`` source characters each, so the phase
+takes about one small call's time and a large video is fully translated rather
+than capped), and applies the translations back into a deep copy that becomes
+the ``sourceLanguage`` artifact ({code, name, isRTL, tabs, meta}).
 
 On any failure (LLM error, length mismatch, mirror detection): returns the
 input unchanged (no ``sourceLanguage`` key) so the FE simply renders no toggle.
@@ -33,7 +34,12 @@ from ...utils.language_utils import (
     get_native_name,
     is_rtl,
 )
-from .translation_flat import is_mirror, translate_flat_list
+from .translation_flat import (
+    TRANSLATION_BATCH_CHARS,
+    char_batches,
+    is_mirror,
+    translate_flat_list,
+)
 
 if TYPE_CHECKING:
     from ...services.llm import LLMService
@@ -110,19 +116,19 @@ _MIN_TRANSLATABLE_LEN = 3
 _MAX_COLLECTED_STRINGS = 5000
 _MAX_RECURSION_DEPTH = 32
 
-# Strings per LLM translation call. Collected strings are split into batches of
-# this size and translated concurrently, then concatenated — this removes the
-# old fail-closed "too many strings" abort while keeping each call within the
-# fast model's output budget.
-_MAX_TRANSLATION_BATCH = 200
+# Strings per call, next to the character budget (``TRANSLATION_BATCH_CHARS``):
+# every entry adds its JSON quoting to the answer and one more way to miscount
+# the list, so a long run of short labels is cut by count instead.
+_MAX_TRANSLATION_BATCH = 100
 
-# Cap on how many translation batches run at once. A long video can produce
-# enough strings to fan out into many batches; without a bound, ``gather``
-# would launch them all and risk tripping the LLM provider's concurrency/rate
-# limits — and since translation is all-or-nothing, one rate-limited batch
-# discards the whole source-language artifact. 4 keeps throughput high while
-# staying comfortably under provider limits.
-_MAX_CONCURRENT_TRANSLATION_BATCHES = 4
+# Calls in flight per video, retry halves included. One output's batches
+# (7 on EqaMrzd9nZU) all start at once, so the phase takes about one batch's
+# time; a longer output queues. The provider reserves each request's prompt
+# plus ``max_tokens`` against its tokens-per-minute limit when the request
+# starts: these 8 and the RAG text translation's 4 alongside hold ≈ 55k tokens
+# at peak (``max_tokens`` sized to the batch; ≈ 150k with the old flat 16,384),
+# per pipeline run — a worker runs WORKER_CONCURRENCY of them (prod 1, dev 2).
+_MAX_CONCURRENT_TRANSLATION_BATCHES = 8
 
 # JSON path — alternating dict keys (str) and list indices (int).
 JsonPath = tuple[str | int, ...]
@@ -185,11 +191,29 @@ def _set_at_path(root: Any, path: JsonPath, value: str) -> None:
 # ─── Orchestrator ────────────────────────────────────────────────────────────
 
 
+async def _call(
+    llm_service: LLMService,
+    batch: list[str],
+    source_language: str,
+    target_language: str,
+    slots: asyncio.Semaphore,
+) -> list[str] | None:
+    """One ``translation_full`` call, in one of the video's ``slots``; None when it
+    failed or echoed its batch, so an echo takes the half retry and is salvaged
+    (masked) rather than shipping English inside the source view."""
+    async with slots:
+        result = await translate_flat_list(llm_service, batch, source_language, target_language)
+    if result is None or is_mirror(batch, result):
+        return None
+    return result
+
+
 async def _translate_or_salvage(
     llm_service: LLMService,
     batch: list[str],
     source_language: str,
     target_language: str,
+    slots: asyncio.Semaphore,
 ) -> tuple[list[str], list[bool]]:
     """Translate ``batch``; on failure retry once at half size, then salvage.
 
@@ -200,16 +224,11 @@ async def _translate_or_salvage(
     translated). The mask lets the caller exclude salvaged strings from the
     ``is_mirror`` echo check — they are English by construction and would
     otherwise inflate the mirror ratio. A count mismatch on a large batch
-    ("expected 200, got 72") usually means the model truncated its output, so a
+    ("expected 40, got 23") usually means the model truncated its output, so a
     half-size retry typically fits within the budget; only a half that still
     fails is salvaged as English.
     """
-    result = await translate_flat_list(
-        llm_service,
-        batch,
-        source_language,
-        target_language,
-    )
+    result = await _call(llm_service, batch, source_language, target_language, slots)
     if result is not None:
         return result, [False] * len(result)
     if len(batch) <= 1:
@@ -218,10 +237,7 @@ async def _translate_or_salvage(
     mid = len(batch) // 2
     halves_src = (batch[:mid], batch[mid:])
     halves_res = await asyncio.gather(
-        *(
-            translate_flat_list(llm_service, half, source_language, target_language)
-            for half in halves_src
-        )
+        *(_call(llm_service, half, source_language, target_language, slots) for half in halves_src)
     )
     out: list[str] = []
     salvaged_mask: list[bool] = []
@@ -249,7 +265,7 @@ async def _translate_in_batches(
     source_language: str,
     target_language: str,
 ) -> tuple[list[str], list[bool]] | None:
-    """Translate ``strings`` in concurrent batches and concatenate in order.
+    """Translate ``strings`` in concurrent size-bounded batches, concatenated in order.
 
     Resilient to a single bad batch: a batch that fails (LLM error or a count
     mismatch) is retried once split in half, and any half that still fails falls
@@ -266,22 +282,16 @@ async def _translate_in_batches(
     """
     if not strings:
         return [], []
-    batches = [
-        strings[i : i + _MAX_TRANSLATION_BATCH]
-        for i in range(0, len(strings), _MAX_TRANSLATION_BATCH)
-    ]
-    semaphore = asyncio.Semaphore(_MAX_CONCURRENT_TRANSLATION_BATCHES)
-
-    async def _bounded(batch: list[str]) -> tuple[list[str], list[bool]]:
-        async with semaphore:
-            return await _translate_or_salvage(
-                llm_service,
-                batch,
-                source_language,
-                target_language,
-            )
-
-    results = await asyncio.gather(*(_bounded(batch) for batch in batches))
+    batches = char_batches(strings, TRANSLATION_BATCH_CHARS, _MAX_TRANSLATION_BATCH)
+    # Each call takes a slot, not each batch: a batch retrying as two halves
+    # holds none while it waits, so retries never push past the cap.
+    slots = asyncio.Semaphore(_MAX_CONCURRENT_TRANSLATION_BATCHES)
+    results = await asyncio.gather(
+        *(
+            _translate_or_salvage(llm_service, batch, source_language, target_language, slots)
+            for batch in batches
+        )
+    )
     out: list[str] = []
     salvaged_mask: list[bool] = []
     for chunk, chunk_mask in results:
@@ -309,7 +319,7 @@ async def translate_to_source(
     """Translate the English ``output`` INTO ``target_lang`` for the source view.
 
     Args:
-        llm_service: LLM service for the Haiku calls.
+        llm_service: LLM service for the fast-model calls.
         output: English-primary dict, shape ``{"tabs": [...], "meta": {...}}``.
         target_lang: ISO 639-1 code of the source language to translate into
             (e.g. ``"he"``).

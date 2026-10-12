@@ -71,7 +71,7 @@ services/summarizer/
     │   │   ├── synthesis.py          # masterSummary + seoDescription (hero from memory; fast tier)
     │   │   ├── pipeline_timing.py    # pipeline.timing recorder (phases, LLM calls, downloads, counts)
     │   │   ├── translation.py        # Source-language translation (flat-list batched)
-    │   │   ├── translation_flat.py   # Flat-list translate call + mirror check (shared with RAG English)
+    │   │   ├── translation_flat.py   # Flat-list translate call, batch sizing, mirror check (shared with RAG English)
     │   │   ├── faithfulness.py       # Faithfulness sampling
     │   │   ├── assembly/             # Assembly package (extraction → component props)
     │   │   │   ├── core.py               # assemble_response + per-tab drop accounting
@@ -536,16 +536,25 @@ A plan-first pipeline: ~6-7 text calls (description analysis, tier probe, plan �
     │   └─▶ Walks the assembled tree, collects every translatable prose
     │   │   string into one flat list (`_collect_strings` + `_SKIP_KEYS`
     │   │   leaf-only deny-list for structural/asset/enum keys)
-    │   └─▶ Haiku calls via src/prompts/translate_flat.txt (replaces
-    │   │   the deleted src/prompts/translate.txt; flat-list contract
-    │   │   means the model returns a list of equal length, applied
+    │   └─▶ Fast-model calls (`translation_full`; LLM_TRANSLATION_MODEL
+    │   │   when set) via src/prompts/translate_flat.txt (flat-list
+    │   │   contract: the model returns a list of equal length, applied
     │   │   back into a deep copy via `_set_at_path`)
-    │   └─▶ Batching: strings are split into batches of ≤200
-    │   │   (`_MAX_TRANSLATION_BATCH`), up to 4 batches concurrently
-    │   │   (`_MAX_CONCURRENT_TRANSLATION_BATCHES`) — keeps long videos
-    │   │   under the per-call token ceiling and provider rate limits.
+    │   └─▶ Batching: consecutive runs of ≤ 2,500 source characters
+    │   │   (`translation_flat.TRANSLATION_BATCH_CHARS`, shared with the
+    │   │   RAG text translation) and ≤ 100 strings
+    │   │   (`_MAX_TRANSLATION_BATCH`), up to 8 calls in flight, retry
+    │   │   halves included (`_MAX_CONCURRENT_TRANSLATION_BATCHES`). A
+    │   │   batch answers ≈ 800 tokens (≈ 10 s on gpt-4o-mini), so the
+    │   │   phase takes about one batch's time: EqaMrzd9nZU = 7 calls
+    │   │   of ≤ 41 strings, was one 200-string call (4,996 out tokens,
+    │   │   56.5 s) + a 12-string one; +280 prompt tokens per call.
+    │   │   `max_tokens` is sized to the batch (1,024 + its length,
+    │   │   ≤ 16,384), so the 8 calls reserve ≈ 35k tokens against the
+    │   │   provider's per-minute limit, not 8 × 16k.
     │   └─▶ Salvage-on-failure (`_translate_or_salvage`): a batch that
-    │   │   fails (LLM error / length mismatch) is retried once split in
+    │   │   fails (LLM error / length mismatch / echoed its strings —
+    │   │   `is_mirror` per call) is retried once split in
     │   │   half; any half that still fails is salvaged as English
     │   │   (left untranslated) rather than discarding the whole
     │   │   translation. Returns `(strings, salvaged_mask)` — a

@@ -2,8 +2,8 @@
 
 Shared by the translation phase (the English output into the source language,
 ``pipeline.translation``) and the RAG transcript text (a non-English transcript
-into English, ``transcript.english``), together with the echo check both apply
-to an answer (``is_mirror``).
+into English, ``transcript.english``), together with the batch sizing both use
+(``char_batches``) and the echo check both apply to an answer (``is_mirror``).
 """
 
 from __future__ import annotations
@@ -11,6 +11,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
+import re
+from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -29,6 +32,61 @@ FLAT_PROMPT_PATH = Path(__file__).parent.parent.parent / "prompts" / "translate_
 
 # Keys JSON-mode small models wrap the answer array in.
 _WRAPPER_KEYS = ("translations", "items", "strings", "translated", "output", "result", "data")
+
+
+# ─── Batches ─────────────────────────────────────────────────────────────────
+
+
+# Source characters per call, both directions, measured by ``answer_size``.
+# gpt-4o-mini answers ≈ 0.32 tokens per alphabetic or abjad character either
+# way at ≈ 88 tokens/s (EqaMrzd9nZU, 2026-10-12: 15,435 English chars → 4,996
+# Hebrew tokens in 56.5 s; 8,139 Hebrew chars → ≈ 10.3k English chars, ≈ 2.6k
+# tokens), so a full batch answers ≈ 800 tokens in ≈ 10 s and the callers run
+# their batches in parallel. Fewer strings per call also miscount less. The
+# prompt costs 280 input tokens per call.
+TRANSLATION_BATCH_CHARS = 2500
+
+# A Han character answers about one English word, ≈ 2.5 alphabetic
+# characters' worth; kana and Hangul ≈ 1.5 (Japanese and Korean spell more
+# per word). Escaped: a normalizing editor maps U+F900 ideographs to others.
+_HAN = re.compile(r"[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]")
+_KANA_HANGUL = re.compile(r"[\u3040-\u30FF\u1100-\u11FF\u3130-\u318F\uAC00-\uD7AF]")
+
+# Answer budget of one call: ≈ 1 token per weighted source character (3× the
+# measured rate) on top of the JSON wrapper, so a full batch reserves ≈ 3.5k
+# tokens — not a flat 16k — against the provider's tokens-per-minute limit.
+_ANSWER_TOKENS_BASE = 1024
+_ANSWER_TOKENS_MAX = 16384
+
+
+def answer_size(text: str) -> float:
+    """``text``'s length in alphabetic characters of answer: Han ×2.5, kana / Hangul ×1.5."""
+    return len(text) + 1.5 * len(_HAN.findall(text)) + 0.5 * len(_KANA_HANGUL.findall(text))
+
+
+def char_batches(
+    texts: Sequence[str], max_chars: int, max_count: int | None = None
+) -> list[list[str]]:
+    """Consecutive runs of ``texts`` within ``max_chars`` (``answer_size``) and
+    ``max_count`` strings when given; a longer string goes alone."""
+    batches: list[list[str]] = []
+    current: list[str] = []
+    size = 0.0
+    for text in texts:
+        text_size = answer_size(text)
+        if current and (size + text_size > max_chars or len(current) == max_count):
+            batches.append(current)
+            current, size = [], 0.0
+        current.append(text)
+        size += text_size
+    if current:
+        batches.append(current)
+    return batches
+
+
+def answer_tokens(strings: Sequence[str]) -> int:
+    """``max_tokens`` for translating ``strings``: sized to them, never above 16,384."""
+    return min(_ANSWER_TOKENS_MAX, _ANSWER_TOKENS_BASE + math.ceil(sum(map(answer_size, strings))))
 
 
 # ─── LLM call ────────────────────────────────────────────────────────────────
@@ -86,7 +144,7 @@ async def translate_flat_list(
         raw = await call_llm_with_retry(
             llm_service,
             prompt,
-            max_tokens=16384,
+            max_tokens=answer_tokens(strings),
             timeout=90.0,
             max_retries=2,
             stage_name=stage_name,
