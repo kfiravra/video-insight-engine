@@ -1,8 +1,10 @@
 """Tests for the spoken-language caption rule (``caption_picker``, 2.4).
 
-The rule: choose the language first — yt-dlp's ``language`` field, else the
-language of the one original ASR track (``<lang>-orig``) — then a manual track
-in it, else its untranslated auto track. A manual track in another language is
+The rule: choose the language first — the one original ASR track's language
+(``<lang>-orig``), which overrides a disagreeing ``language`` tag unless the
+video is dubbed (round 3), else yt-dlp's ``language`` field; several ``-orig``
+languages leave the tag alone — then a manual track in it, else its
+untranslated auto track. A manual track in another language is
 never chosen over the spoken language; today's waterfall runs only when the
 rule finds nothing. Fixtures are synthetic dicts shaped like the dev probe of
 2026-10-12 (yt-dlp metadata only); each video id names the shape it mirrors.
@@ -36,6 +38,7 @@ def _info(
     manual: dict[str, Any] | None = None,
     auto: dict[str, Any] | None = None,
     title: str = "A video",
+    audio_languages: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     return {
         "language": language,
@@ -43,6 +46,7 @@ def _info(
         "description": "",
         "subtitles": manual or {},
         "automatic_captions": auto or {},
+        "formats": [{"acodec": "opus", "language": lang} for lang in audio_languages],
     }
 
 
@@ -76,8 +80,51 @@ class TestSpokenLanguage:
 
         assert spoken_language({}, auto) == "en"
 
-    def test_should_fall_back_to_the_original_asr_when_the_field_is_unsupported(self):
+    def test_should_take_the_original_asr_language_whatever_the_field_says(self):
         assert spoken_language({"language": "xx"}, {"pl-orig": _orig("pl")}) == "pl"
+
+    def test_should_report_no_signal_when_the_field_is_unsupported_and_there_is_no_asr(self):
+        assert spoken_language({"language": "xx"}, {}) is None
+
+    def test_should_report_no_signal_when_the_one_asr_is_in_an_unsupported_language(self):
+        """A single ASR names the audio; a tag that disagrees with it never wins."""
+        assert spoken_language({"language": "en"}, {"fil-orig": _orig("fil")}) is None
+
+    def test_should_override_the_tag_with_regional_asr_keys_of_one_language(self):
+        auto = {"en-orig": _orig("en"), "en-US-orig": _orig("en")}
+
+        assert spoken_language({"language": "da"}, auto) == "en"
+
+    def test_should_keep_the_tag_when_the_asr_set_holds_an_unsupported_language(self):
+        """uC45_4nnEAI shape: one of several dub ASRs is ``pa``."""
+        auto = {"pa-orig": _orig("pa"), "en-orig": _orig("en")}
+
+        assert spoken_language({"language": "en-US"}, auto) == "en"
+
+    def test_should_keep_the_tag_when_a_dubbed_video_lists_only_a_dub_asr(self):
+        """Dubbed (two audio languages) with the original's ASR missing: the one
+        ``-orig`` is a dub's, so it never overrides the tag."""
+        info = _info("iw", audio_languages=("iw", "en-US"))
+
+        assert spoken_language(info, {"en-US-orig": _orig("en-US")}) == "he"
+
+    def test_should_take_the_one_asr_of_a_dubbed_video_when_there_is_no_tag(self):
+        info = _info(None, audio_languages=("iw", "en-US"))
+
+        assert spoken_language(info, {"en-US-orig": _orig("en-US")}) == "en"
+
+    def test_should_take_the_original_asr_language_when_the_tag_names_another(self):
+        """The uploader-tag guard: an English song tagged Danish."""
+        assert spoken_language({"language": "da"}, {"en-orig": _orig("en")}) == "en"
+
+    def test_should_keep_the_tag_when_it_agrees_with_the_original_asr(self):
+        assert spoken_language({"language": "pl"}, {"pl-orig": _orig("pl")}) == "pl"
+
+    def test_should_keep_the_tag_when_several_original_asr_tracks_are_listed(self):
+        """An auto-dubbed video names no single ASR, so it cannot override the tag."""
+        auto = {"ar-orig": _orig("ar"), "en-orig": _orig("en")}
+
+        assert spoken_language({"language": "fr"}, auto) == "fr"
 
 
 class TestChooseCaptionTrackProbeShapes:
@@ -174,18 +221,36 @@ class TestChooseCaptionTrackSignals:
         )
 
     def test_should_fall_back_to_the_waterfall_when_the_spoken_language_has_no_track(self):
-        """``da`` field, only an English ASR: today's pick, the spoken signal kept."""
-        auto = {"en-orig": _orig("en"), "en": _orig("en")}
+        """``da`` field, no ``-orig`` key, an English auto track: today's pick, the spoken
+        signal kept."""
+        auto = {"en": _orig("en")}
 
         choice = choose_caption_track("vid", _info("da", auto=auto))
 
-        assert (choice.track.lang if choice.track else None, choice.language) == ("en-orig", "en")
+        assert (choice.track.lang if choice.track else None, choice.language) == ("en", "en")
         assert choice.spoken_language == "da"
 
-    def test_should_not_take_a_translation_into_the_spoken_language_as_its_track(self):
-        auto = {"he": _translated("en", "he"), "en-orig": _orig("en")}
+    def test_should_pick_the_asr_language_track_when_the_tag_names_another(self):
+        """The Lazy-Song shape: ``da`` tag + a manual ``da`` track + an English ASR."""
+        manual = {"da": _orig("da"), "en": _orig("en")}
+        auto = {"en-orig": _orig("en"), "en": _orig("en")}
 
-        assert _picked(_info("he", auto=auto)) == ("auto-generated", "en-orig", "en")
+        assert _picked(_info("da", manual=manual, auto=auto)) == ("manual", "en", "en")
+
+    def test_should_not_take_a_translation_into_the_spoken_language_as_its_track(self):
+        """The ``he`` key holds only a machine translation: no track in the spoken
+        language, so the waterfall picks."""
+        auto = {"he": _translated("en", "he"), "en": _orig("en")}
+
+        choice = choose_caption_track("vid", _info("he", auto=auto))
+
+        assert choice.track is not None
+        assert (choice.track.kind, choice.track.lang, choice.language) == (
+            "auto-generated",
+            "en",
+            "en",
+        )
+        assert choice.spoken_language == "he"
 
     def test_should_match_a_legacy_iw_key_when_the_field_is_he(self):
         assert _picked(_info("he", auto={"iw": _orig("iw")})) == ("auto-generated", "iw", "he")
@@ -243,7 +308,12 @@ class TestVideoDataCarriesThePick:
         assert (video_data.caption_track, video_data.caption_lang) == ("manual", "en")
         assert (video_data.language, video_data.spoken_language) == ("en", "en")
 
-    async def test_should_keep_the_waterfall_language_and_the_spoken_signal_on_fallback(self):
+    async def test_should_hand_the_asr_language_to_the_api_fallback_when_the_tag_disagrees(self):
         video_data = await self._video_data(_info("da", auto={"en-orig": _orig("en")}))
+
+        assert (video_data.language, video_data.spoken_language) == ("en", "en")
+
+    async def test_should_keep_the_waterfall_language_and_the_spoken_signal_on_fallback(self):
+        video_data = await self._video_data(_info("da", auto={"en": _orig("en")}))
 
         assert (video_data.language, video_data.spoken_language) == ("en", "da")

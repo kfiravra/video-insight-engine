@@ -895,7 +895,7 @@ The summarizer uses a multi-source fallback chain to maximize transcript availab
 │  1. yt-dlp Subtitles                                   │
 │     └─▶ Track picked during video metadata fetch       │
 │         (caption_picker.py): the spoken language       │
-│         (yt-dlp `language`, else the one `-orig` ASR)  │
+│         (the one `-orig` ASR, else yt-dlp `language`)  │
 │         → manual in it → its untranslated auto track;  │
 │         none → the language waterfall + English pref.  │
 │     └─▶ Legacy codes aliased: iw→he, ji→yi, in→id      │

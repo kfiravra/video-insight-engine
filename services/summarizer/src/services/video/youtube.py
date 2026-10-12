@@ -454,8 +454,9 @@ class VideoData:
     # else the waterfall over yt-dlp's audio-lang tag, title/description script
     # and caption keys. ``None`` means "no signal" — downstream uses English.
     language: str | None = None
-    # yt-dlp's language field, else the single original-ASR track's language;
-    # never the waterfall's guess (which can be ``ar`` for an English video with
+    # The single original-ASR track's language (it overrides a disagreeing tag
+    # unless the video is dubbed), else yt-dlp's language field; never the
+    # waterfall's guess (which can be ``ar`` for an English video with
     # community subtitles) — the youtube-transcript-api fallback keys off it.
     spoken_language: str | None = None
     # True when the timedtext subtitle fetch was HTTP-429 rate-limited. The

@@ -7,16 +7,19 @@ original) and ASR + on-demand machine translations under
 videos their Arabic or Dutch community subtitles, so the language is chosen
 first — the language spoken in the video — and only then manual over auto.
 
-The spoken language is yt-dlp's ``language`` field, else the language of the
-one original ASR track (the ``<lang>-orig`` key yt-dlp adds only for an ASR
-track). An auto-dubbed video carries one ASR track per dub audio, so several
-``-orig`` languages without a ``language`` field are no signal at all.
-
-The ``language`` tag comes first on purpose (gate-2 decision 4, Kfir
-2026-10-12), although the fallback waterfall below demotes that same tag for
-its false positives (an English song tagged Danish). Known consequence: a
-wrong uploader tag plus a track in that language beats a correct ASR track
-in another language.
+The spoken language is yt-dlp's ``language`` field (gate-2 decision 4, Kfir
+2026-10-12) unless the one original ASR track — the ``<lang>-orig`` key yt-dlp
+adds only for an ASR track — names another language: then the ASR's language
+wins (Kfir, round 3). The tag is the uploader's setting and can be wrong (an
+English song tagged Danish, the reason the fallback waterfall below demotes
+it); the ASR language is what YouTube processed the audio as, which is right
+more often but can carry the same mistake (TNhaISOUy6Q: tagged Polish, Polish
+ASR of English speech — then neither signal helps). No field → that ASR's
+language; one ASR in an unsupported language → no spoken language.
+A dubbed video (audio formats in more than one language) carries one ASR per
+dub audio, so its ASR keys — several, or a dub's alone when the original's is
+missing — never override the field; without a field, several ``-orig``
+languages are no signal at all.
 
 Only untranslated json3 formats count: a machine translation INTO the spoken
 language is not a track in that language. When the spoken language is unknown
@@ -88,25 +91,39 @@ def json3_url(fmts: list[dict[str, Any]], *, translated: bool) -> str | None:
 # ─── Spoken-language rule ───────────────────────────────────────────────────
 
 
-def _original_asr_language(auto_captions: dict[str, Any]) -> str | None:
-    """Language of the video's single original ASR track, if there is exactly one."""
-    languages = {
+def _original_asr_languages(auto_captions: dict[str, Any]) -> set[str | None]:
+    """Languages of the original ASR tracks; ``None`` stands for an unsupported one."""
+    return {
         normalize_language_code(key.removesuffix(_ORIG_SUFFIX))
         for key in auto_captions
         if key.endswith(_ORIG_SUFFIX)
     }
-    if len(languages) != 1:
-        return None
-    return languages.pop()
+
+
+def _is_dubbed(info: dict[str, Any]) -> bool:
+    """Audio formats in more than one language: a dubbed (multi-audio) video."""
+    languages = {
+        normalize_language_code(fmt.get("language")) or fmt.get("language")
+        for fmt in info.get("formats") or []
+        if fmt.get("acodec") not in (None, "none") and fmt.get("language")
+    }
+    return len(languages) > 1
 
 
 def spoken_language(info: dict[str, Any], auto_captions: dict[str, Any]) -> str | None:
     """The language spoken in the video, as a supported ISO 639-1 code, or None.
 
-    yt-dlp's ``language`` field wins (``en-US`` → ``en``, ``iw`` → ``he``);
-    an absent or unsupported field falls back to the original ASR track.
+    The one original ASR track's language when there is exactly one and the
+    video is not dubbed — it agrees with yt-dlp's ``language`` field or
+    overrides a wrong one; ``None`` when that ASR's language is unsupported.
+    Otherwise the field (``en-US`` → ``en``, ``iw`` → ``he``), and without a
+    field the one ASR's language (2.4).
     """
-    return normalize_language_code(info.get("language")) or _original_asr_language(auto_captions)
+    asr = _original_asr_languages(auto_captions)
+    tag = normalize_language_code(info.get("language"))
+    if len(asr) == 1 and (tag is None or not _is_dubbed(info)):
+        return next(iter(asr))
+    return tag
 
 
 def _untranslated_track(language: str, kind: str, captions: dict[str, Any]) -> SubtitleTrack | None:
@@ -307,11 +324,12 @@ def choose_caption_track(video_id: str, info: dict[str, Any]) -> CaptionChoice:
         language = resolve_video_language(info, manual_captions, auto_captions)
         track = _pick_subtitle_url(language, manual_captions, auto_captions)
     logger.info(
-        "Video %s: caption pick %s by the %s rule (spoken=%s, language=%s)",
+        "Video %s: caption pick %s by the %s rule (spoken=%s, tag=%s, language=%s)",
         video_id,
         f"{track.kind}/{track.lang}" if track else "none",
         rule,
         spoken or "unknown",
+        normalize_language_code(info.get("language")) or "none",
         language or "unknown",
     )
     return CaptionChoice(language=language, spoken_language=spoken, track=track)
