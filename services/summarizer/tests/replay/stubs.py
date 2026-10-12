@@ -190,6 +190,7 @@ def _patch_targets(stubs: ReplayStubs) -> dict[str, Any]:
     from src.services.pipeline.phases import transcript as transcript_phase
 
     assembly_mod = "src.services.pipeline.phases.assembly"
+    qdrant_mod = "src.services.pipeline.phases.qdrant_index"
     store_mod = "src.services.vector.store"
     return {
         "src.services.video.youtube.extract_video_data": stubs.extract_video_data,
@@ -199,10 +200,10 @@ def _patch_targets(stubs: ReplayStubs) -> dict[str, Any]:
         ),
         f"{transcript_phase.__name__}.get_sponsor_segments": _no_sponsors,
         "src.services.pipeline.phases.frames.process_scene_frames": stubs.process_scene_frames,
-        f"{assembly_mod}.store_transcript_chunks": stubs.store_chunks,
-        f"{assembly_mod}.store_default_output_chunks": stubs.store_chunks,
-        f"{assembly_mod}.store_visual_chunks": stubs.store_chunks,
-        # The seam itself too, whatever binding assembly ends up calling.
+        f"{qdrant_mod}.store_transcript_chunks": stubs.store_chunks,
+        f"{qdrant_mod}.store_default_output_chunks": stubs.store_chunks,
+        f"{qdrant_mod}.store_visual_chunks": stubs.store_chunks,
+        # The seam itself too, whatever binding the indexer ends up calling.
         f"{store_mod}.store_transcript_chunks": stubs.store_chunks,
         f"{store_mod}.store_default_output_chunks": stubs.store_chunks,
         f"{store_mod}.store_visual_chunks": stubs.store_chunks,

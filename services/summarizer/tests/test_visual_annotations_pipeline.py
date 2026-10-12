@@ -18,6 +18,7 @@ import pytest
 
 from src.routes import pipeline_orchestration
 from src.services.pipeline.phases import assembly as assembly_phase
+from src.services.pipeline.phases import qdrant_index
 from src.services.pipeline.pipeline_helpers import TranscriptData
 
 
@@ -113,9 +114,9 @@ def _stub_status_callback() -> Iterator[None]:
 def stores() -> Iterator[SimpleNamespace]:
     """The three Qdrant writers + the S3 transcript store, all stubbed."""
     with (
-        patch.object(assembly_phase, "store_transcript_chunks", new=AsyncMock()) as transcript,
-        patch.object(assembly_phase, "store_default_output_chunks", new=AsyncMock()) as output,
-        patch.object(assembly_phase, "store_visual_chunks", new=AsyncMock()) as visual,
+        patch.object(qdrant_index, "store_transcript_chunks", new=AsyncMock()) as transcript,
+        patch.object(qdrant_index, "store_default_output_chunks", new=AsyncMock()) as output,
+        patch.object(qdrant_index, "store_visual_chunks", new=AsyncMock()) as visual,
         patch("src.services.transcription.transcript_store.transcript_store") as s3,
     ):
         s3.store = AsyncMock(return_value="videos/ytid/transcript.json")

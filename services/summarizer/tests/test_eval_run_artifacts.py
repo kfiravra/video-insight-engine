@@ -16,6 +16,7 @@ import pytest
 
 from src.routes import pipeline_runner
 from src.services.pipeline.phases import assembly as assembly_phase
+from src.services.pipeline.phases import qdrant_index
 from src.services.pipeline.phases import translation as translation_phase
 
 
@@ -95,9 +96,9 @@ async def _assemble(ctx: SimpleNamespace) -> dict[str, Any]:
         patch.object(assembly_phase, "assemble_response", return_value={"tabs": [], "meta": {}}),
         patch.object(assembly_phase, "settings", settings),
         patch.object(assembly_phase, "response_cache") as cache,
-        patch.object(assembly_phase, "store_transcript_chunks", stores["transcript"]),
-        patch.object(assembly_phase, "store_default_output_chunks", stores["output"]),
-        patch.object(assembly_phase, "store_visual_chunks", stores["visual"]),
+        patch.object(qdrant_index, "store_transcript_chunks", stores["transcript"]),
+        patch.object(qdrant_index, "store_default_output_chunks", stores["output"]),
+        patch.object(qdrant_index, "store_visual_chunks", stores["visual"]),
         patch("src.routes.cached_response.build_frontend_response", return_value={}),
     ):
         cache.set_response = stores["redis"]

@@ -236,6 +236,15 @@ def sanitize_for_prompt(text: str, max_len: int = 500) -> str:
     return sanitized[:max_len]
 
 
+def log_background_error(task: asyncio.Task) -> None:
+    """Done-callback for fire-and-forget stores: a failure is logged, never raised."""
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc:
+        logger.error("Background store %s failed: %s", task.get_name(), exc)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Parallel Phase Runner
 # ─────────────────────────────────────────────────────────────────────────────
