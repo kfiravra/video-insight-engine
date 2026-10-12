@@ -210,10 +210,10 @@ One row per video **version** (`version`, `isLatest` below); the served row is s
     captionLang: string | null,                          // matched caption key ("ar-SA", "en-orig", legacy "iw"); since 2.4 a key in the spoken language whenever an untranslated track in it exists — the fallback pick can still differ from the video language (incl. a machine translation, its last resort)
     captionFetchError: "http_429" | "http_403" | "http_<n>" | "request" | "parse" | "empty" | null,  // "parse" = json3 body unparseable → captions discarded, chain continues
     captionApiSkipped: boolean,                          // youtube-transcript-api skipped by the Redis caption-429 marker
-    attempted: string[],                                 // layers that RAN and FAILED before `source`, in order: s3 | s3-stale | ytdlp | api | proxy | whisper | gemini — s3-stale = the S3 blob held another caption track than this run's pick (skipped, re-stored)
+    attempted: string[],                                 // layers that RAN and FAILED before `source`, in order: s3 | s3-stale | ytdlp | api | proxy | whisper | gemini | <source>-unusable — s3-stale = the S3 blob held another caption track than this run's pick (skipped, re-stored); <source>-unusable (ytdlp-unusable, api-unusable, proxy-unusable, s3-unusable, whisper-unusable, …) = one per tier-probe answer that judged the transcript that source served not a coherent transcript of speech (`transcript_usable: false`, 2.5). An audio `source` (whisper / gemini) after a caption one = the audio path replaced it; `source` still that layer = the run kept it (music, not captions, no audio layer allowed, or the audio pass failed — its failed layers follow the entry). A run that went on with an unusable answer (no replacement, or the second answer unusable too) planned without a probe
     segments: number | null,
     chars: number | null,
-    fetchWallMs: number | null,                          // wall time of the fetch chain inside the transcript phase (frames run in parallel); set on failed rows too
+    fetchWallMs: number | null,                          // wall time of the fetch chain inside the transcript phase (frames run in parallel), incl. the audio re-run after an unusable caption transcript; set on failed rows too
     errorCode: string | null                             // failed rows: TranscriptError code (NO_TRANSCRIPT, RATE_LIMITED, …), UNKNOWN_ERROR (unexpected exception) or CANCELLED (producer torn down mid-fetch)
   } | absent,
 
@@ -226,7 +226,7 @@ One row per video **version** (`version`, `isLatest` below); the served row is s
     version: 2,                     // 2: the 1h/5m cache-write split on llmCalls (pipeline-1min 2.0)
     startedAt: Date,
     totalMs: number,
-    phases: [{ name: string, startMs: number, endMs: number, wallMs: number }],  // metadata, transcript_frames (phase 2: text, transcript, plan, memory, frames, frames.* sub-steps incl. frames.tier_wait), visual_inject (name kept: the annotations render), extraction, assembly (moment_fill, synthesis, enrichment = the quiz, run inside it), translation
+    phases: [{ name: string, startMs: number, endMs: number, wallMs: number }],  // metadata, transcript_frames (phase 2: text, transcript, transcript_audio = the audio re-run after the tier probe judged the captions unusable (2.5; that run also has a second tier_probe llmCall), plan, memory, frames, frames.* sub-steps incl. frames.tier_wait), visual_inject (name kept: the annotations render), extraction, assembly (moment_fill, synthesis, enrichment = the quiz, run inside it), translation
     milestones: { metadataMs?, synthesisCompleteMs?, firstTabReadyMs?, firstAssembledTabMs?, completeMs?, doneMs? },  // firstTabReadyMs = first tab_ready of any kind — since 2.1 the provisional Moments tab at plan-done; firstAssembledTabMs = first non-provisional tab_ready (the first tab assembly built)
     llmCalls: [{ feature, span, model, responseModel, startMs, wallMs, inputTokens, outputTokens,
                  cacheReadTokens,     // Anthropic cache_read_input_tokens, or OpenAI cached input (prompt_tokens_details.cached_tokens; 0 for OpenAI before v2)

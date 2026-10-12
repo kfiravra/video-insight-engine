@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     )
     from src.services.pipeline.triage import TriageResult
     from src.services.video.description_analyzer import DescriptionAnalysis
+    from src.services.video.sponsorblock import SponsorSegment
     from src.services.video.youtube import VideoData
 
 
@@ -57,6 +58,9 @@ class PipelineContext:
     # SponsorBlock-filtered list when sponsor reads were cut (``clean_text``
     # drops the same reads), else the raw ``transcript_data.segments``.
     prompt_segments: list[dict[str, Any]] = field(default_factory=list)
+    # The run's SponsorBlock segments (None = not fetched yet), fetched once by
+    # the transcript phase; the audio re-run after unusable captions reuses them.
+    sponsor_segments: list[SponsorSegment] | None = None
     # ``prompt_segments`` rendered once with ``[m:ss]`` markers (``clean_text``
     # for a segment-less transcript) at probe-done: plan and memory read the
     # same string.

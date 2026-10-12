@@ -409,6 +409,28 @@ class TestMetrics:
         }
         assert extract_probe_format(trace) == "vlog"
 
+    def test_should_read_the_latest_probe_when_the_run_probed_twice(self) -> None:
+        trace = {
+            "observations": [
+                {
+                    "name": "tier_probe",
+                    "output": '{"format": "tutorial"}',
+                    "startTime": "2026-10-12T10:00:09.5Z",
+                },
+                {
+                    "name": "tier_probe",
+                    "output": '{"format": "vlog"}',
+                    "startTime": "2026-10-12T10:00:40.25Z",
+                },
+                {
+                    "name": "tier_probe",
+                    "output": '{"format": "lecture"}',
+                    "startTime": "2026-10-12T10:00:03.125Z",
+                },
+            ]
+        }
+        assert extract_probe_format(trace) == "vlog"
+
     def test_should_return_none_when_no_generation_has_a_format(self) -> None:
         trace = {"observations": [{"name": "plan", "output": '{"format": "vlog"}'}]}
         assert extract_probe_format(trace) is None

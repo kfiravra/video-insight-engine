@@ -5,7 +5,9 @@ metadata plus three short clean transcript windows, so it answers in about a
 second. The frames branch waits for it at most 3 s before Step 6b
 (``media/visual_tier.resolve_tier``); the plan uses it for the playbook and a
 hint line. Any failure returns ``None`` — every consumer has a fallback (the
-metadata tier, no hint), so the probe never raises into the pipeline.
+metadata tier, no hint), so the probe never raises into the pipeline. Its
+``transcript_usable`` judgement (2.5) lets the text branch replace a garbage
+caption transcript with the audio path (``phases/transcript_fallback.py``).
 """
 
 from __future__ import annotations
@@ -32,6 +34,10 @@ logger = logging.getLogger(__name__)
 
 PROMPT_PATH = Path(__file__).parent.parent.parent / "prompts" / "tier_probe.txt"
 STAGE_NAME = "tier_probe"
+# Gate 0 measured Haiku's real 4-key answer at 47–49 output tokens (fenced +
+# pretty-printed, gates/g0-tier-probe-ab.json); the 5th key adds ≈ 9–11, so
+# ≈ 56–60 of 80. Haiku fills the rest with reasoning after the object (ignored),
+# so a higher cap would only add latency on the probe's critical path.
 PROBE_MAX_TOKENS = 80
 # Haiku answers in ~1 s (A/B max 1.6 s). One attempt, no retry: a stalled
 # probe is cheaper to drop (metadata tier, no hint) than to wait out again.
@@ -177,10 +183,12 @@ async def run_tier_probe(probe_input: TierProbeInput, llm_service: LLMService) -
     probe = parse_tier_probe(raw)
     if probe is not None:
         logger.info(
-            "Tier probe: domain=%s format=%s has_visual_demo=%s confidence=%.2f",
+            "Tier probe: domain=%s format=%s has_visual_demo=%s confidence=%.2f "
+            "transcript_usable=%s",
             probe.domain,
             probe.format,
             probe.has_visual_demo,
             probe.confidence,
+            probe.transcript_usable,
         )
     return probe

@@ -54,7 +54,7 @@ services/summarizer/
     │   ├── status_callback.py    # Status callback
     │   │
     │   ├── pipeline/             # Plan-based summarization pipeline
-    │   │   ├── tier_probe.py         # Tier probe: domain+format+has_visual_demo at transcript-ready (Haiku, temp 0)
+    │   │   ├── tier_probe.py         # Tier probe: domain+format+has_visual_demo+transcript_usable at transcript-ready (Haiku, temp 0)
     │   │   ├── plan.py / plan_prompt.py # Plan (Sonnet): full marked transcript → tabs + briefs,
     │   │   │                         #   evidence, terms (+ _render_playbook, _enforce_domain_policy)
     │   │   ├── memory.py             # Memory (LLM_EXTRACTION_MODEL) ∥ plan: outline, evidence, tldr, takeaways
@@ -81,9 +81,9 @@ services/summarizer/
     │   │   │   ├── moment_frame_fill.py  # Exact-timestamp frame fill for frameless moments
     │   │   │   ├── attachments.py        # Secondary attachments (excluded_kinds dedup)
     │   │   │   ├── normalizers.py, density.py, cross_tab.py, text_utils.py
-    │   │   ├── phases/               # Phase runners (metadata, text, transcript, probe, triage=plan,
-    │   │   │                         #   memory, frames, extraction, enrichment, late_quiz, synthesis,
-    │   │   │                         #   assembly, translation)
+    │   │   ├── phases/               # Phase runners (metadata, text, transcript, transcript_fallback,
+    │   │   │                         #   probe, triage=plan, memory, frames, extraction, enrichment,
+    │   │   │                         #   late_quiz, synthesis, assembly, translation)
     │   │   ├── post_processor.py     # Tab cleanup, celebrations, count validation (tag-aware)
     │   │   └── pipeline_helpers.py   # SSE events, timer, data classes, run_task_with_heartbeat
     │   │
@@ -129,7 +129,7 @@ services/summarizer/
     │   ├── memory.txt            # Memory prompt (outline, evidence, tldr, takeaways)
     │   ├── component_toolkit.txt # Component descriptions + datasource paths (injected into plan/triage). Density table is generated from domains.json `densityGates` via `{density_gates}` placeholder
     │   ├── base_extraction.txt   # Extraction template: <rules> / <video> (cached) / <your_job>
-    │   ├── tier_probe.txt        # Tier-probe prompt (14 domains + 18 formats incl. unboxing, has_visual_demo — domains.json is the source)
+    │   ├── tier_probe.txt        # Tier-probe prompt (14 domains + 18 formats incl. unboxing, has_visual_demo, transcript_usable — domains.json is the source)
     │   ├── chapter_detect.txt    # AI chapter detection prompt (fast model)
     │   ├── quality_rules.txt     # JSON extraction quality rules
     │   ├── enrich_quiz.txt       # The quiz prompt (flavor per quizEnrichment domain)
@@ -388,10 +388,20 @@ A plan-first pipeline: ~6-7 text calls (description analysis, tier probe, plan �
  4. TEXT BRANCH (continues after transcript_ready, while frames run)
     └─▶ Tier probe (pipeline/tier_probe.py, prompt tier_probe.txt; replaces the classifier):
     │   LLM_CLASSIFIER_MODEL (Haiku 4.5, D21), temperature 0, 80 tokens, 4 s, no retry;
-    │   reads metadata + three short transcript windows → domain, format (18 incl. unboxing),
-    │   has_visual_demo. Started at transcript-ready; frames read it at Step 6b (tier), the
+    │   reads metadata + three short NATIVE transcript windows (nothing translates before the
+    │   plan) → domain, format (18 incl. unboxing), has_visual_demo, transcript_usable (missing
+    │   key = true). Started at transcript-ready; frames read it at Step 6b (tier), the
     │   plan for its playbook ("<domain>:<format>") and a hint line. Failure → None: metadata
     │   tier, no hint. Skipped when an admin override is active.
+    └─▶ Garbage captions → audio (phases/transcript_fallback.py, 2.5): transcript_usable false
+    │   (not a coherent transcript of speech — e.g. TNhaISOUy6Q's Polish ASR of English speech)
+    │   on a caption transcript (ytdlp / api / proxy, or an S3 blob they produced), not music,
+    │   an audio layer allowed (WHISPER_ENABLED / GEMINI_API_KEY, the duration cap) → the
+    │   transcript phase re-runs on the audio layers only (Whisper → Gemini; same cleaning,
+    │   SponsorBlock, language detection), pipeline.timing step transcript_audio, then a second
+    │   probe on the new text; once per run. Audio fails → the caption transcript stays.
+    │   Every unusable answer adds "<source>-unusable" to transcriptMeta.attempted; a run that
+    │   goes on with one plans without a probe, and frames treat it as none
     └─▶ The marked transcript, rendered ONCE (`ctx.prompt_transcript`: `[m:ss]` markers,
     │   sponsor reads cut, source-language cleaning) — plan and memory read the same string,
     │   never frame annotations
@@ -963,6 +973,13 @@ caption API still attempts audio — the audio download is a separate, un-thrott
 endpoint. Audio fallback is additionally gated by `WHISPER_ENABLED` and
 `WHISPER_MAX_DURATION_MINUTES` (the gate lives in
 `transcript_fetcher.py`, constant `_NO_AUDIO_FALLBACK`).
+
+**Unusable captions (2.5).** Captions that fetched fine but that the tier probe
+judges not a coherent transcript of speech (`transcript_usable: false`) re-run
+the audio layers alone (`fetch_audio_transcript`: Whisper → Gemini, the same
+gates; no S3, captions or youtube-transcript-api) once, from the text branch —
+see step 4 above. Never for music; the Whisper transcript lands in S3 through
+assembly, so the next run reads it.
 
 **Caption 429 handling.** A 429 is IP-scoped, so the response depends on the
 proxy setup (`services/cache/caption_negative_cache.py`, Redis key

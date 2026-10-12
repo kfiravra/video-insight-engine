@@ -109,7 +109,12 @@ class TranscriptTrail:
     # blob holds another caption track than this run's pick), "ytdlp" (a caption
     # track was picked but the timedtext fetch yielded nothing), "api" /
     # "proxy" (youtube-transcript-api, labelled by whether YOUTUBE_PROXY_URL
-    # is set), "whisper", "gemini".
+    # is set), "whisper", "gemini", and "<source>-unusable" (e.g. "ytdlp-unusable",
+    # "s3-unusable", "whisper-unusable"), one per tier-probe answer that judged
+    # the transcript that source served not a coherent transcript of speech
+    # (2.5). An audio source after it = the audio path replaced that transcript;
+    # the source still that layer = the run kept it (music, not captions, no
+    # audio layer allowed, or the audio pass failed).
     attempted: list[str] = field(default_factory=list)
     # youtube-transcript-api was skipped by the Redis caption-429 marker.
     caption_api_skipped: bool = False
@@ -117,7 +122,8 @@ class TranscriptTrail:
     # that originally produced the transcript. ``"s3"`` here means the blob
     # had already decayed before the assembly re-store skip landed.
     origin: str | None = None
-    # Wall time of the transcript phase's fetch (frames run in parallel).
+    # Wall time of the transcript phase's fetch (frames run in parallel),
+    # including the audio re-run after an unusable caption transcript.
     fetch_wall_ms: int | None = None
     # ``ErrorCode.value`` of the TranscriptError that ended the fetch, if any.
     error_code: str | None = None
