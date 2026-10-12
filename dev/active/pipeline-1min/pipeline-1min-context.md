@@ -1,6 +1,6 @@
 # pipeline-1min — Context
 
-Last Updated: 2026-10-12 — ⏸ PHASE 2 DONE incl. the gate-2 decisions + ROUND 3 (c7f8659 tag guard, 840fb97 translation batches, 1f706ab 2.5 garbage captions; g2.md updated) → STOP; Kfir's push word follows. Phase 1 closed (PR #23/#24/#25 on prod; PR #26 test+docs on main bf4406a). Live docs in the main tree (branch `feat/pipeline-1min`). Phase 0 merged (PR #22).
+Last Updated: 2026-10-12 — PHASE 2 ON PROD (PR #27 merged + deployed → 519a43a): prompts promoted (dry run vs prod production: 44 unchanged, 0 differing); admin cold runs T1dQhQAm8Tc (30.6 s provisional, 5 tabs incl. Moments, 108.9 s, $0.213) + EqaMrzd9nZU (36.0 s, 4 tabs incl. Moments, done 113.6 s, $0.149, 8 sub-second stale-connection timeouts all recovered) → g2.md §Post-deploy. STOP. Phase 1 closed; Phase 0 merged.
 
 ## RESUME HERE (phase 2 run state)
 - **2026-10-12 ~20:50 ROUND 3 DONE → STOPPED (push word follows).** 14 local commits since origin (NOT pushed), last = the round-3 report commit; g2.md §Round 3 + "open after round 3" (R8-4 Whisper cap exposure). Next: Kfir's push word → PR 4 = phase 2 (merge `origin/main` first, D14) → prod: stage prompts `--label pipeline-1min` (plan, description_analysis, tier_probe, synthesis, enrich_quiz, translate_flat), after deploy `expire_leaked_pipeline_streams.py` dry-run → `--apply`. History below.
