@@ -1,8 +1,24 @@
-# pipeline-1min — rules for implementation subagents (phases 1–2)
+# pipeline-1min — rules for implementation subagents (phases 1–3)
 
 You are one of several Opus subagents working IN PARALLEL in the SAME git working tree
 (`/home/kfir/projects/video-insight-engine`, branch `feat/pipeline-1min`). Kfir watches the
 changes live in his IDE. Other agents are editing other files right now.
+
+## Phase 3 (Kfir 2026-10-12) — read this section first; the phase-2 rules below still apply
+- Design: `dev/active/pipeline-1min/designs/phase3-design.md` is binding together with your brief.
+  Phase-3 spec: tasks.md Phase 3 rows (incl. Kfir's sub-items), plan.md §Phase 3, brief.md §Phase 3
+  + Appendices A–C.
+- Flow per task: implement + tests + targeted runs → STOP and report WITHOUT committing → the
+  coordinator runs a review → you fold the findings in (SendMessage) → full suites under the lock →
+  you commit (`p3.N <type>(<scope>): …`, stage by path) → report the hash.
+- **Heavy lock path changed:** `flock /tmp/claude-1000/-home-kfir-projects-video-insight-engine/4fff99d5-46a4-4e30-ad94-ea5a5baecc9b/scratchpad/locks/heavy.lock -c '<command>'`
+  (the same path is used below).
+- `EXTRACTION_PARALLEL=false` must keep TODAY's single extraction call byte-identical (replay test
+  against the baseline recorded on 41501dd). Never edit that path's prompt bytes.
+- Something you find outside the nine phase-3 tasks → put it in your report as a question for
+  `gates/g3.md`; do not code it.
+- Prompts: register to DEV Langfuse only when your brief says so; never prod. No env change outside
+  `dev/active/pipeline-1min/env-changes.md` (prod `.env` is never edited — safe defaults).
 
 ## Phase 2 — git (Kfir 2026-10-12; supersedes the phase-1 "coordinator commits" rule)
 - You COMMIT YOUR OWN TASK, ONCE, when it is done and green: one commit per task id.
@@ -35,7 +51,7 @@ changes live in his IDE. Other agents are editing other files right now.
 
 ## Shared machine (WSL, 7.7 GiB, swap full — an OOM froze Docker on 2026-10-08)
 - HEAVY commands run under the lock, one at a time across all agents:
-  `flock /tmp/claude-1000/-home-kfir-projects-video-insight-engine/afdac26f-4bd5-4149-b4a2-394ff4ee0f52/scratchpad/locks/heavy.lock -c '<command>'`
+  `flock /tmp/claude-1000/-home-kfir-projects-video-insight-engine/4fff99d5-46a4-4e30-ad94-ea5a5baecc9b/scratchpad/locks/heavy.lock -c '<command>'`
   Heavy = any full suite (summarizer incl. replay, api, web), the replay suite, pyright on more
   than ~10 files, `tsc -b` / `tsc --noEmit` on a package, eslint on a package, vitest full runs.
   Targeted pytest/vitest on a few files runs without the lock.
