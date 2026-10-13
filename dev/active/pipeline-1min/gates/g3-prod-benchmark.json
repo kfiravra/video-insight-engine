@@ -1,0 +1,3242 @@
+{
+ "prodCommit": "8d83977",
+ "pipelineVersion": "v9",
+ "mode": "admin, cold:true, sequential",
+ "runs": [
+  {
+   "ytid": "T1dQhQAm8Tc",
+   "label": "r1",
+   "at": "2026-10-13T07:27:13Z",
+   "videoSummaryId": "6acddd517f927aa2159d9570",
+   "doc": {
+    "status": "completed",
+    "version": 10,
+    "pv": "v9",
+    "degraded": null,
+    "tabs": [
+     [
+      "overview",
+      "overview"
+     ],
+     [
+      "stack_overview",
+      "info_grid"
+     ],
+     [
+      "key_moments",
+      "moment_track"
+     ],
+     [
+      "quiz",
+      "quiz_arena"
+     ]
+    ],
+    "milestones": {
+     "metadataMs": 4039,
+     "synthesisCompleteMs": 14259,
+     "firstTabReadyMs": 27705,
+     "firstAssembledTabMs": 31724,
+     "completeMs": 37194,
+     "doneMs": 37213
+    },
+    "costUsd": 0.152477,
+    "counts": {
+     "llmCalls": 7,
+     "llmFailures": 0,
+     "retries": 0,
+     "rateLimited": 0,
+     "fallbacks": 0,
+     "outputTokens": 2816,
+     "cacheReadTokens": 0,
+     "downloadBytes": 0,
+     "tabsPlanned": 2,
+     "tabsAssembled": 4,
+     "tabsEmitted": 4,
+     "truncated": 0
+    },
+    "totalMs": 37336,
+    "llmFailures": [],
+    "phases": [
+     [
+      "metadata",
+      0,
+      4109
+     ],
+     [
+      "transcript",
+      4237,
+      392
+     ],
+     [
+      "memory",
+      6050,
+      8208
+     ],
+     [
+      "plan",
+      5910,
+      21434
+     ],
+     [
+      "text",
+      4207,
+      23142
+     ],
+     [
+      "visual_inject",
+      27687,
+      2
+     ],
+     [
+      "frames",
+      4237,
+      23452
+     ],
+     [
+      "extraction",
+      27349,
+      4369
+     ],
+     [
+      "split_extraction",
+      4244,
+      27474
+     ],
+     [
+      "transcript_frames",
+      4131,
+      27597
+     ],
+     [
+      "moment_fill",
+      31749,
+      44
+     ],
+     [
+      "synthesis",
+      31749,
+      2898
+     ],
+     [
+      "quiz_call",
+      31669,
+      5514
+     ],
+     [
+      "enrichment",
+      31790,
+      5393
+     ],
+     [
+      "assembly",
+      31735,
+      5601
+     ]
+    ],
+    "llm": [
+     {
+      "f": "summarize:tier_probe",
+      "span": "tier_probe",
+      "model": "anthropic/claude-haiku-4-5-20251001",
+      "rm": "claude-haiku-4-5-20251001",
+      "s": 4677,
+      "w": 1215,
+      "ttft": null,
+      "in": 2207,
+      "out": 45,
+      "cr": 0,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.0024319999999999997,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:metadata",
+      "span": "description_analysis",
+      "model": "openai/gpt-4o-mini",
+      "rm": "gpt-4o-mini-2024-07-18",
+      "s": 4100,
+      "w": 3853,
+      "ttft": null,
+      "in": 441,
+      "out": 176,
+      "cr": 0,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.00017174999999999997,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:memory",
+      "span": "memory",
+      "model": "anthropic/claude-haiku-4-5-20251001",
+      "rm": "claude-haiku-4-5-20251001",
+      "s": 6101,
+      "w": 8144,
+      "ttft": null,
+      "in": 6244,
+      "out": 719,
+      "cr": 0,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.009839,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:plan",
+      "span": "plan",
+      "model": "anthropic/claude-sonnet-4-6",
+      "rm": "claude-sonnet-4-6",
+      "s": 6050,
+      "w": 21271,
+      "ttft": null,
+      "in": 21466,
+      "out": 918,
+      "cr": 0,
+      "cw": 16290,
+      "cw1h": 16290,
+      "cw5m": 0,
+      "usd": 0.127038,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:extraction:text1",
+      "span": "extraction_text1",
+      "model": "anthropic/claude-haiku-4-5-20251001",
+      "rm": "claude-haiku-4-5-20251001",
+      "s": 27693,
+      "w": 3958,
+      "ttft": 611,
+      "in": 8594,
+      "out": 316,
+      "cr": 0,
+      "cw": 8409,
+      "cw1h": 0,
+      "cw5m": 8409,
+      "usd": 0.01227625,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:synthesis",
+      "span": "synthesis",
+      "model": "openai/gpt-4o-mini",
+      "rm": "gpt-4o-mini-2024-07-18",
+      "s": 31790,
+      "w": 2853,
+      "ttft": null,
+      "in": 962,
+      "out": 225,
+      "cr": 0,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.0002793,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:enrichment",
+      "span": "enrichment",
+      "model": "openai/gpt-4o-mini",
+      "rm": "gpt-4o-mini-2024-07-18",
+      "s": 31715,
+      "w": 5462,
+      "ttft": null,
+      "in": 1269,
+      "out": 417,
+      "cr": 0,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.00044055,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     }
+    ],
+    "downloads": [
+     [
+      "lowres",
+      "scene_detect",
+      5324,
+      null,
+      false
+     ],
+     [
+      "720p",
+      "prefetch",
+      13190,
+      null,
+      false
+     ]
+    ],
+    "tm": {
+     "outcome": "ok",
+     "source": "ytdlp",
+     "type": "auto-generated",
+     "origin": null,
+     "captionTrack": "auto-generated",
+     "captionLang": "en",
+     "captionFetchError": null,
+     "captionApiSkipped": false,
+     "attempted": [],
+     "segments": 541,
+     "chars": 20617,
+     "fetchWallMs": 46,
+     "errorCode": null
+    },
+    "src": null,
+    "error": null
+   },
+   "log429": {
+    "vie-summarizer": "0",
+    "vie-summarizer-worker": "0",
+    "vie-api": "0"
+   }
+  },
+  {
+   "ytid": "jMq8lEu-of0",
+   "label": "r1",
+   "at": "2026-10-13T07:29:02Z",
+   "videoSummaryId": "6acdddbe7f927aa2159d9572",
+   "doc": {
+    "status": "completed",
+    "version": 4,
+    "pv": "v9",
+    "degraded": null,
+    "tabs": [
+     [
+      "overview",
+      "overview"
+     ],
+     [
+      "ingredients",
+      "checklist"
+     ],
+     [
+      "cook_steps",
+      "step_flow_canvas"
+     ],
+     [
+      "tips",
+      "spot_explorer"
+     ],
+     [
+      "moments",
+      "moment_track"
+     ]
+    ],
+    "milestones": {
+     "metadataMs": 2582,
+     "synthesisCompleteMs": 11386,
+     "firstTabReadyMs": 28370,
+     "firstAssembledTabMs": 40783,
+     "completeMs": 63998,
+     "doneMs": 64029
+    },
+    "costUsd": 0.084371,
+    "counts": {
+     "llmCalls": 13,
+     "llmFailures": 0,
+     "retries": 0,
+     "rateLimited": 0,
+     "fallbacks": 0,
+     "outputTokens": 7793,
+     "cacheReadTokens": 43566,
+     "downloadBytes": 0,
+     "tabsPlanned": 4,
+     "tabsAssembled": 5,
+     "tabsEmitted": 5,
+     "truncated": 0
+    },
+    "totalMs": 64107,
+    "llmFailures": [],
+    "phases": [
+     [
+      "metadata",
+      0,
+      2648
+     ],
+     [
+      "transcript",
+      2799,
+      342
+     ],
+     [
+      "memory",
+      4285,
+      7100
+     ],
+     [
+      "plan",
+      4156,
+      23904
+     ],
+     [
+      "text",
+      2764,
+      25300
+     ],
+     [
+      "visual_inject",
+      28358,
+      0
+     ],
+     [
+      "frames",
+      2799,
+      25559
+     ],
+     [
+      "extraction",
+      28064,
+      30343
+     ],
+     [
+      "split_extraction",
+      2807,
+      55600
+     ],
+     [
+      "transcript_frames",
+      2677,
+      55736
+     ],
+     [
+      "moment_fill",
+      58467,
+      136
+     ],
+     [
+      "synthesis",
+      58467,
+      5522
+     ],
+     [
+      "assembly",
+      58421,
+      5685
+     ]
+    ],
+    "llm": [
+     {
+      "f": "summarize:tier_probe",
+      "span": "tier_probe",
+      "model": "anthropic/claude-haiku-4-5-20251001",
+      "rm": "claude-haiku-4-5-20251001",
+      "s": 3184,
+      "w": 960,
+      "ttft": null,
+      "in": 2249,
+      "out": 45,
+      "cr": 0,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.0024739999999999996,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:metadata",
+      "span": "description_analysis",
+      "model": "openai/gpt-4o-mini",
+      "rm": "gpt-4o-mini-2024-07-18",
+      "s": 2637,
+      "w": 3771,
+      "ttft": null,
+      "in": 639,
+      "out": 177,
+      "cr": 0,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.00020205,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:memory",
+      "span": "memory",
+      "model": "anthropic/claude-haiku-4-5-20251001",
+      "rm": "claude-haiku-4-5-20251001",
+      "s": 4334,
+      "w": 7043,
+      "ttft": null,
+      "in": 5135,
+      "out": 811,
+      "cr": 0,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.00919,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:plan",
+      "span": "plan",
+      "model": "anthropic/claude-sonnet-4-6",
+      "rm": "claude-sonnet-4-6",
+      "s": 4285,
+      "w": 23754,
+      "ttft": null,
+      "in": 20357,
+      "out": 991,
+      "cr": 16290,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.031952999999999995,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:extraction:text1",
+      "span": "extraction_text1",
+      "model": "anthropic/claude-haiku-4-5-20251001",
+      "rm": "claude-haiku-4-5-20251001",
+      "s": 28361,
+      "w": 12400,
+      "ttft": 706,
+      "in": 7715,
+      "out": 1509,
+      "cr": 0,
+      "cw": 7494,
+      "cw1h": 0,
+      "cw5m": 7494,
+      "usd": 0.017133500000000003,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:extraction:text3",
+      "span": "extraction_text3",
+      "model": "anthropic/claude-haiku-4-5-20251001",
+      "rm": "claude-haiku-4-5-20251001",
+      "s": 29072,
+      "w": 13180,
+      "ttft": null,
+      "in": 7721,
+      "out": 1241,
+      "cr": 7494,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.0071814,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:extraction:text2",
+      "span": "extraction_text2",
+      "model": "anthropic/claude-haiku-4-5-20251001",
+      "rm": "claude-haiku-4-5-20251001",
+      "s": 29069,
+      "w": 29310,
+      "ttft": null,
+      "in": 7874,
+      "out": 2621,
+      "cr": 7494,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.014234400000000001,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:faithfulness",
+      "span": "faithfulness",
+      "model": "openai/gpt-4o-mini",
+      "rm": "gpt-4o-mini-2024-07-18",
+      "s": 58431,
+      "w": 987,
+      "ttft": null,
+      "in": 3200,
+      "out": 34,
+      "cr": 0,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.0005003999999999999,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:faithfulness",
+      "span": "faithfulness",
+      "model": "openai/gpt-4o-mini",
+      "rm": "gpt-4o-mini-2024-07-18",
+      "s": 58430,
+      "w": 1356,
+      "ttft": null,
+      "in": 3192,
+      "out": 31,
+      "cr": 3072,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.000267,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:faithfulness",
+      "span": "faithfulness",
+      "model": "openai/gpt-4o-mini",
+      "rm": "gpt-4o-mini-2024-07-18",
+      "s": 58430,
+      "w": 1382,
+      "ttft": null,
+      "in": 3184,
+      "out": 30,
+      "cr": 3072,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.0002652,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:faithfulness",
+      "span": "faithfulness",
+      "model": "openai/gpt-4o-mini",
+      "rm": "gpt-4o-mini-2024-07-18",
+      "s": 58435,
+      "w": 1776,
+      "ttft": null,
+      "in": 3204,
+      "out": 46,
+      "cr": 3072,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.00027780000000000003,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:faithfulness",
+      "span": "faithfulness",
+      "model": "openai/gpt-4o-mini",
+      "rm": "gpt-4o-mini-2024-07-18",
+      "s": 58436,
+      "w": 2497,
+      "ttft": null,
+      "in": 3204,
+      "out": 29,
+      "cr": 3072,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.0002676,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:synthesis",
+      "span": "synthesis",
+      "model": "openai/gpt-4o-mini",
+      "rm": "gpt-4o-mini-2024-07-18",
+      "s": 58589,
+      "w": 5391,
+      "ttft": null,
+      "in": 1916,
+      "out": 228,
+      "cr": 0,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.0004242,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     }
+    ],
+    "downloads": [
+     [
+      "lowres",
+      "scene_detect",
+      2221,
+      null,
+      false
+     ],
+     [
+      "720p",
+      "prefetch",
+      11244,
+      null,
+      false
+     ]
+    ],
+    "tm": {
+     "outcome": "ok",
+     "source": "ytdlp",
+     "type": "manual",
+     "origin": null,
+     "captionTrack": "manual",
+     "captionLang": "en-US-cvfXDfbeED0",
+     "captionFetchError": null,
+     "captionApiSkipped": false,
+     "attempted": [],
+     "segments": 347,
+     "chars": 12777,
+     "fetchWallMs": 40,
+     "errorCode": null
+    },
+    "src": null,
+    "error": null
+   },
+   "log429": {
+    "vie-summarizer": "0",
+    "vie-summarizer-worker": "0",
+    "vie-api": "0"
+   }
+  },
+  {
+   "ytid": "uC45_4nnEAI",
+   "label": "r1",
+   "at": "2026-10-13T07:31:17Z",
+   "videoSummaryId": "6acdde457f927aa2159d9574",
+   "doc": {
+    "status": "completed",
+    "version": 4,
+    "pv": "v9",
+    "degraded": null,
+    "tabs": [
+     [
+      "overview",
+      "overview"
+     ],
+     [
+      "pulls",
+      "tier_list"
+     ],
+     [
+      "highlights",
+      "moment_track"
+     ],
+     [
+      "set_facts",
+      "info_grid"
+     ]
+    ],
+    "milestones": {
+     "metadataMs": 4821,
+     "synthesisCompleteMs": 15516,
+     "firstTabReadyMs": 25800,
+     "firstAssembledTabMs": 40343,
+     "completeMs": 88558,
+     "doneMs": 88576
+    },
+    "costUsd": 0.155115,
+    "counts": {
+     "llmCalls": 15,
+     "llmFailures": 0,
+     "retries": 0,
+     "rateLimited": 0,
+     "fallbacks": 0,
+     "outputTokens": 8916,
+     "cacheReadTokens": 51730,
+     "downloadBytes": 249431420,
+     "tabsPlanned": 3,
+     "tabsAssembled": 4,
+     "tabsEmitted": 4,
+     "truncated": 0
+    },
+    "totalMs": 88609,
+    "llmFailures": [],
+    "phases": [
+     [
+      "metadata",
+      0,
+      4833
+     ],
+     [
+      "transcript",
+      4845,
+      739
+     ],
+     [
+      "memory",
+      6539,
+      8976
+     ],
+     [
+      "plan",
+      6536,
+      19108
+     ],
+     [
+      "text",
+      4845,
+      20806
+     ],
+     [
+      "frames.scene_detect",
+      18352,
+      24675
+     ],
+     [
+      "frames.scene_ladder",
+      43027,
+      2361
+     ],
+     [
+      "frames.score_select",
+      45397,
+      1221
+     ],
+     [
+      "frames.tier_wait",
+      46618,
+      0
+     ],
+     [
+      "frames.vision_reselect",
+      46618,
+      17785
+     ],
+     [
+      "frames.hires",
+      64404,
+      6093
+     ],
+     [
+      "frames.upload",
+      70640,
+      978
+     ],
+     [
+      "visual_inject",
+      71959,
+      0
+     ],
+     [
+      "frames",
+      4845,
+      67114
+     ],
+     [
+      "extraction",
+      25651,
+      60423
+     ],
+     [
+      "split_extraction",
+      4846,
+      81228
+     ],
+     [
+      "transcript_frames",
+      4833,
+      81246
+     ],
+     [
+      "moment_fill",
+      86107,
+      1973
+     ],
+     [
+      "synthesis",
+      86107,
+      2442
+     ],
+     [
+      "assembly",
+      86082,
+      2527
+     ]
+    ],
+    "llm": [
+     {
+      "f": "summarize:tier_probe",
+      "span": "tier_probe",
+      "model": "anthropic/claude-haiku-4-5-20251001",
+      "rm": "claude-haiku-4-5-20251001",
+      "s": 5586,
+      "w": 933,
+      "ttft": null,
+      "in": 2245,
+      "out": 47,
+      "cr": 0,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.00248,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:metadata",
+      "span": "description_analysis",
+      "model": "openai/gpt-4o-mini",
+      "rm": "gpt-4o-mini-2024-07-18",
+      "s": 4832,
+      "w": 4060,
+      "ttft": null,
+      "in": 561,
+      "out": 235,
+      "cr": 0,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.00022514999999999997,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:memory",
+      "span": "memory",
+      "model": "anthropic/claude-haiku-4-5-20251001",
+      "rm": "claude-haiku-4-5-20251001",
+      "s": 6539,
+      "w": 8964,
+      "ttft": null,
+      "in": 7212,
+      "out": 844,
+      "cr": 0,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.011432000000000001,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:plan",
+      "span": "plan",
+      "model": "anthropic/claude-sonnet-4-6",
+      "rm": "claude-sonnet-4-6",
+      "s": 6538,
+      "w": 19070,
+      "ttft": null,
+      "in": 22567,
+      "out": 765,
+      "cr": 16290,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.035193,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:extraction:text1",
+      "span": "extraction_text1",
+      "model": "anthropic/claude-haiku-4-5-20251001",
+      "rm": "claude-haiku-4-5-20251001",
+      "s": 25785,
+      "w": 14526,
+      "ttft": 731,
+      "in": 8894,
+      "out": 1389,
+      "cr": 0,
+      "cw": 8696,
+      "cw1h": 0,
+      "cw5m": 8696,
+      "usd": 0.018013,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:extraction:text2",
+      "span": "extraction_text2",
+      "model": "anthropic/claude-haiku-4-5-20251001",
+      "rm": "claude-haiku-4-5-20251001",
+      "s": 26518,
+      "w": 13895,
+      "ttft": null,
+      "in": 8906,
+      "out": 1363,
+      "cr": 8696,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.007894600000000002,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:frames",
+      "span": "frame_vision",
+      "model": "anthropic/claude-sonnet-4-6",
+      "rm": "claude-sonnet-4-6",
+      "s": 46770,
+      "w": 16483,
+      "ttft": null,
+      "in": 3059,
+      "out": 887,
+      "cr": 0,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.022482000000000002,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:frames",
+      "span": "frame_vision",
+      "model": "anthropic/claude-sonnet-4-6",
+      "rm": "claude-sonnet-4-6",
+      "s": 46768,
+      "w": 16885,
+      "ttft": null,
+      "in": 3059,
+      "out": 855,
+      "cr": 0,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.022002,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:frames",
+      "span": "frame_vision",
+      "model": "anthropic/claude-sonnet-4-6",
+      "rm": "claude-sonnet-4-6",
+      "s": 46769,
+      "w": 17622,
+      "ttft": null,
+      "in": 3059,
+      "out": 970,
+      "cr": 0,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.023726999999999998,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:extraction:visual",
+      "span": "extraction_visual",
+      "model": "anthropic/claude-haiku-4-5-20251001",
+      "rm": "claude-haiku-4-5-20251001",
+      "s": 71963,
+      "w": 14092,
+      "ttft": null,
+      "in": 10811,
+      "out": 1170,
+      "cr": 8696,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.0088346,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:faithfulness",
+      "span": "faithfulness",
+      "model": "openai/gpt-4o-mini",
+      "rm": "gpt-4o-mini-2024-07-18",
+      "s": 86084,
+      "w": 1086,
+      "ttft": null,
+      "in": 6119,
+      "out": 30,
+      "cr": 6016,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.00048465,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:faithfulness",
+      "span": "faithfulness",
+      "model": "openai/gpt-4o-mini",
+      "rm": "gpt-4o-mini-2024-07-18",
+      "s": 86084,
+      "w": 1190,
+      "ttft": null,
+      "in": 6110,
+      "out": 40,
+      "cr": 0,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.0009405,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:faithfulness",
+      "span": "faithfulness",
+      "model": "openai/gpt-4o-mini",
+      "rm": "gpt-4o-mini-2024-07-18",
+      "s": 86083,
+      "w": 1524,
+      "ttft": null,
+      "in": 6115,
+      "out": 49,
+      "cr": 6016,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.0004954499999999999,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:faithfulness",
+      "span": "faithfulness",
+      "model": "openai/gpt-4o-mini",
+      "rm": "gpt-4o-mini-2024-07-18",
+      "s": 86083,
+      "w": 1658,
+      "ttft": null,
+      "in": 6110,
+      "out": 38,
+      "cr": 6016,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.0004881,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:synthesis",
+      "span": "synthesis",
+      "model": "openai/gpt-4o-mini",
+      "rm": "gpt-4o-mini-2024-07-18",
+      "s": 86108,
+      "w": 2436,
+      "ttft": null,
+      "in": 1885,
+      "out": 234,
+      "cr": 0,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.00042314999999999996,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     }
+    ],
+    "downloads": [
+     [
+      "lowres",
+      "scene_detect",
+      13518,
+      75009862,
+      true
+     ],
+     [
+      "720p",
+      "prefetch",
+      14356,
+      174421558,
+      true
+     ]
+    ],
+    "tm": {
+     "outcome": "ok",
+     "source": "ytdlp",
+     "type": "auto-generated",
+     "origin": null,
+     "captionTrack": "auto-generated",
+     "captionLang": "en",
+     "captionFetchError": null,
+     "captionApiSkipped": false,
+     "attempted": [],
+     "segments": 538,
+     "chars": 20382,
+     "fetchWallMs": 0,
+     "errorCode": null
+    },
+    "src": null,
+    "error": null
+   },
+   "log429": {
+    "vie-summarizer": "0",
+    "vie-summarizer-worker": "0",
+    "vie-api": "0"
+   }
+  },
+  {
+   "ytid": "EqaMrzd9nZU",
+   "label": "r1",
+   "at": "2026-10-13T07:33:57Z",
+   "videoSummaryId": "6acddee77f927aa2159d9576",
+   "doc": {
+    "status": "completed",
+    "version": 3,
+    "pv": "v9",
+    "degraded": null,
+    "tabs": [
+     [
+      "overview",
+      "overview"
+     ],
+     [
+      "concepts",
+      "concept_canvas"
+     ],
+     [
+      "moments",
+      "moment_track"
+     ],
+     [
+      "code",
+      "code_playground"
+     ],
+     [
+      "quiz",
+      "quiz_arena"
+     ]
+    ],
+    "milestones": {
+     "metadataMs": 3352,
+     "synthesisCompleteMs": 12506,
+     "firstTabReadyMs": 24650,
+     "firstAssembledTabMs": 49664,
+     "completeMs": 73794,
+     "doneMs": 85394
+    },
+    "costUsd": 0.157396,
+    "counts": {
+     "llmCalls": 25,
+     "llmFailures": 2,
+     "retries": 0,
+     "rateLimited": 0,
+     "fallbacks": 0,
+     "outputTokens": 18733,
+     "cacheReadTokens": 40046,
+     "downloadBytes": 39743681,
+     "tabsPlanned": 4,
+     "tabsAssembled": 5,
+     "tabsEmitted": 5,
+     "truncated": 0
+    },
+    "totalMs": 85397,
+    "llmFailures": [
+     {
+      "span": "tier_probe",
+      "model": "anthropic/claude-haiku-4-5-20251001",
+      "startMs": 4017,
+      "wallMs": 28,
+      "attempt": 1,
+      "error": "Timeout",
+      "rateLimited": false
+     },
+     {
+      "span": "tier_probe",
+      "model": "anthropic/claude-haiku-4-5-20251001",
+      "startMs": 4046,
+      "wallMs": 19,
+      "attempt": 1,
+      "error": "Timeout",
+      "rateLimited": false
+     }
+    ],
+    "phases": [
+     [
+      "metadata",
+      0,
+      3358
+     ],
+     [
+      "transcript",
+      3364,
+      652
+     ],
+     [
+      "memory",
+      4095,
+      8409
+     ],
+     [
+      "frames.scene_detect",
+      7467,
+      8054
+     ],
+     [
+      "frames.scene_ladder",
+      15521,
+      2260
+     ],
+     [
+      "frames.score_select",
+      17783,
+      1198
+     ],
+     [
+      "frames.tier_wait",
+      18981,
+      1
+     ],
+     [
+      "frames.hires",
+      18982,
+      4186
+     ],
+     [
+      "frames.upload",
+      23393,
+      594
+     ],
+     [
+      "plan",
+      4090,
+      20327
+     ],
+     [
+      "text",
+      3364,
+      21057
+     ],
+     [
+      "visual_inject",
+      37727,
+      1
+     ],
+     [
+      "frames",
+      3365,
+      34363
+     ],
+     [
+      "quiz_call",
+      49529,
+      5188
+     ],
+     [
+      "extraction",
+      24421,
+      47125
+     ],
+     [
+      "split_extraction",
+      3365,
+      68181
+     ],
+     [
+      "transcript_frames",
+      3358,
+      68193
+     ],
+     [
+      "enrichment",
+      71574,
+      1
+     ],
+     [
+      "moment_fill",
+      71569,
+      1680
+     ],
+     [
+      "synthesis",
+      71569,
+      2210
+     ],
+     [
+      "assembly",
+      71554,
+      2247
+     ],
+     [
+      "translation",
+      73801,
+      11596
+     ]
+    ],
+    "llm": [
+     {
+      "f": "summarize:metadata",
+      "span": "description_analysis",
+      "model": "openai/gpt-4o-mini",
+      "rm": "gpt-4o-mini-2024-07-18",
+      "s": 3357,
+      "w": 8043,
+      "ttft": null,
+      "in": 1003,
+      "out": 532,
+      "cr": 0,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.00046965,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:memory",
+      "span": "memory",
+      "model": "anthropic/claude-haiku-4-5-20251001",
+      "rm": "claude-haiku-4-5-20251001",
+      "s": 4100,
+      "w": 8391,
+      "ttft": null,
+      "in": 7682,
+      "out": 775,
+      "cr": 0,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.011557,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:plan",
+      "span": "plan",
+      "model": "anthropic/claude-sonnet-4-6",
+      "rm": "claude-sonnet-4-6",
+      "s": 4095,
+      "w": 20298,
+      "ttft": null,
+      "in": 22882,
+      "out": 861,
+      "cr": 16290,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.037578,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:frames",
+      "span": "frame_vision",
+      "model": "anthropic/claude-sonnet-4-6",
+      "rm": "claude-sonnet-4-6",
+      "s": 23992,
+      "w": 11269,
+      "ttft": null,
+      "in": 5391,
+      "out": 464,
+      "cr": 0,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.023133,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:frames",
+      "span": "frame_vision",
+      "model": "anthropic/claude-sonnet-4-6",
+      "rm": "claude-sonnet-4-6",
+      "s": 23992,
+      "w": 13530,
+      "ttft": null,
+      "in": 5391,
+      "out": 601,
+      "cr": 0,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.025188000000000002,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:extraction:text2",
+      "span": "extraction_text2",
+      "model": "anthropic/claude-haiku-4-5-20251001",
+      "rm": "claude-haiku-4-5-20251001",
+      "s": 25251,
+      "w": 14947,
+      "ttft": null,
+      "in": 10415,
+      "out": 1425,
+      "cr": 10214,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.0083474,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:extraction:text1",
+      "span": "extraction_text1",
+      "model": "anthropic/claude-haiku-4-5-20251001",
+      "rm": "claude-haiku-4-5-20251001",
+      "s": 24643,
+      "w": 24844,
+      "ttft": 606,
+      "in": 10419,
+      "out": 2388,
+      "cr": 0,
+      "cw": 10214,
+      "cw1h": 0,
+      "cw5m": 10214,
+      "usd": 0.024912500000000004,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:enrichment",
+      "span": "enrichment",
+      "model": "openai/gpt-4o-mini",
+      "rm": "gpt-4o-mini-2024-07-18",
+      "s": 49654,
+      "w": 5054,
+      "ttft": null,
+      "in": 3698,
+      "out": 432,
+      "cr": 0,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.0008139,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:extraction:visual",
+      "span": "extraction_visual",
+      "model": "anthropic/claude-haiku-4-5-20251001",
+      "rm": "claude-haiku-4-5-20251001",
+      "s": 37738,
+      "w": 33788,
+      "ttft": null,
+      "in": 11301,
+      "out": 3160,
+      "cr": 10214,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.0179084,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:faithfulness",
+      "span": "faithfulness",
+      "model": "openai/gpt-4o-mini",
+      "rm": "gpt-4o-mini-2024-07-18",
+      "s": 71554,
+      "w": 1034,
+      "ttft": null,
+      "in": 3408,
+      "out": 29,
+      "cr": 3328,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.000279,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:faithfulness",
+      "span": "faithfulness",
+      "model": "openai/gpt-4o-mini",
+      "rm": "gpt-4o-mini-2024-07-18",
+      "s": 71555,
+      "w": 1185,
+      "ttft": null,
+      "in": 3418,
+      "out": 52,
+      "cr": 0,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.0005438999999999999,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:synthesis",
+      "span": "synthesis",
+      "model": "openai/gpt-4o-mini",
+      "rm": "gpt-4o-mini-2024-07-18",
+      "s": 71574,
+      "w": 2198,
+      "ttft": null,
+      "in": 2031,
+      "out": 227,
+      "cr": 0,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.00044085,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:translation",
+      "span": "translation_full",
+      "model": "openai/gpt-4o-mini",
+      "rm": "gpt-4o-mini-2024-07-18",
+      "s": 73967,
+      "w": 991,
+      "ttft": null,
+      "in": 300,
+      "out": 29,
+      "cr": 0,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 6.24e-05,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:rag_translation",
+      "span": "rag_translation",
+      "model": "openai/gpt-4o-mini",
+      "rm": "gpt-4o-mini-2024-07-18",
+      "s": 73920,
+      "w": 3721,
+      "ttft": null,
+      "in": 882,
+      "out": 469,
+      "cr": 0,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.0004137,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:rag_translation",
+      "span": "rag_translation",
+      "model": "openai/gpt-4o-mini",
+      "rm": "gpt-4o-mini-2024-07-18",
+      "s": 73914,
+      "w": 4578,
+      "ttft": null,
+      "in": 1043,
+      "out": 602,
+      "cr": 0,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.0005176499999999999,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:rag_translation",
+      "span": "rag_translation",
+      "model": "openai/gpt-4o-mini",
+      "rm": "gpt-4o-mini-2024-07-18",
+      "s": 73913,
+      "w": 4788,
+      "ttft": null,
+      "in": 1055,
+      "out": 623,
+      "cr": 0,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.00053205,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:rag_translation",
+      "span": "rag_translation",
+      "model": "openai/gpt-4o-mini",
+      "rm": "gpt-4o-mini-2024-07-18",
+      "s": 73908,
+      "w": 5112,
+      "ttft": null,
+      "in": 1062,
+      "out": 650,
+      "cr": 0,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.0005493,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:translation",
+      "span": "translation_full",
+      "model": "openai/gpt-4o-mini",
+      "rm": "gpt-4o-mini-2024-07-18",
+      "s": 73934,
+      "w": 8879,
+      "ttft": null,
+      "in": 796,
+      "out": 709,
+      "cr": 0,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.0005448,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:translation",
+      "span": "translation_full",
+      "model": "openai/gpt-4o-mini",
+      "rm": "gpt-4o-mini-2024-07-18",
+      "s": 73955,
+      "w": 9274,
+      "ttft": null,
+      "in": 797,
+      "out": 740,
+      "cr": 0,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.00056355,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:translation",
+      "span": "translation_full",
+      "model": "openai/gpt-4o-mini",
+      "rm": "gpt-4o-mini-2024-07-18",
+      "s": 73940,
+      "w": 9862,
+      "ttft": null,
+      "in": 817,
+      "out": 780,
+      "cr": 0,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.00059055,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:translation",
+      "span": "translation_full",
+      "model": "openai/gpt-4o-mini",
+      "rm": "gpt-4o-mini-2024-07-18",
+      "s": 73956,
+      "w": 9965,
+      "ttft": null,
+      "in": 797,
+      "out": 746,
+      "cr": 0,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.00056715,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:translation",
+      "span": "translation_full",
+      "model": "openai/gpt-4o-mini",
+      "rm": "gpt-4o-mini-2024-07-18",
+      "s": 73953,
+      "w": 10123,
+      "ttft": null,
+      "in": 808,
+      "out": 802,
+      "cr": 0,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.0006024,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:translation",
+      "span": "translation_full",
+      "model": "openai/gpt-4o-mini",
+      "rm": "gpt-4o-mini-2024-07-18",
+      "s": 73945,
+      "w": 10779,
+      "ttft": null,
+      "in": 836,
+      "out": 794,
+      "cr": 0,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.0006018,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:translation",
+      "span": "translation_full",
+      "model": "openai/gpt-4o-mini",
+      "rm": "gpt-4o-mini-2024-07-18",
+      "s": 73946,
+      "w": 10852,
+      "ttft": null,
+      "in": 865,
+      "out": 831,
+      "cr": 0,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.00062835,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:translation",
+      "span": "translation_title",
+      "model": "openai/gpt-4o-mini",
+      "rm": "gpt-4o-mini-2024-07-18",
+      "s": 84806,
+      "w": 552,
+      "ttft": null,
+      "in": 289,
+      "out": 12,
+      "cr": 0,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 5.0549999999999995e-05,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     }
+    ],
+    "downloads": [
+     [
+      "lowres",
+      "scene_detect",
+      4106,
+      19467193,
+      true
+     ],
+     [
+      "720p",
+      "prefetch",
+      10152,
+      20276488,
+      true
+     ]
+    ],
+    "tm": {
+     "outcome": "ok",
+     "source": "ytdlp",
+     "type": "auto-generated",
+     "origin": null,
+     "captionTrack": "auto-generated",
+     "captionLang": "iw",
+     "captionFetchError": null,
+     "captionApiSkipped": false,
+     "attempted": [],
+     "segments": 214,
+     "chars": 8160,
+     "fetchWallMs": 0,
+     "errorCode": null
+    },
+    "src": "he",
+    "error": null
+   },
+   "log429": {
+    "vie-summarizer": "0",
+    "vie-summarizer-worker": "0",
+    "vie-api": "0"
+   }
+  },
+  {
+   "ytid": "T1dQhQAm8Tc",
+   "label": "r2",
+   "at": "2026-10-13T07:36:38Z",
+   "videoSummaryId": "6acddf847f927aa2159d9578",
+   "doc": {
+    "status": "completed",
+    "version": 11,
+    "pv": "v9",
+    "degraded": null,
+    "tabs": [
+     [
+      "overview",
+      "overview"
+     ],
+     [
+      "stack_overview",
+      "info_grid"
+     ],
+     [
+      "key_moments",
+      "moment_track"
+     ],
+     [
+      "quiz",
+      "quiz_arena"
+     ]
+    ],
+    "milestones": {
+     "metadataMs": 5598,
+     "synthesisCompleteMs": 15582,
+     "firstTabReadyMs": 29843,
+     "firstAssembledTabMs": 34184,
+     "completeMs": 59285,
+     "doneMs": 59301
+    },
+    "costUsd": 0.098069,
+    "counts": {
+     "llmCalls": 9,
+     "llmFailures": 0,
+     "retries": 0,
+     "rateLimited": 0,
+     "fallbacks": 0,
+     "outputTokens": 3826,
+     "cacheReadTokens": 16290,
+     "downloadBytes": 106595763,
+     "tabsPlanned": 2,
+     "tabsAssembled": 4,
+     "tabsEmitted": 4,
+     "truncated": 0
+    },
+    "totalMs": 59335,
+    "llmFailures": [],
+    "phases": [
+     [
+      "metadata",
+      0,
+      5612
+     ],
+     [
+      "transcript",
+      5628,
+      790
+     ],
+     [
+      "memory",
+      7555,
+      8025
+     ],
+     [
+      "plan",
+      7551,
+      22263
+     ],
+     [
+      "text",
+      5628,
+      24191
+     ],
+     [
+      "frames.scene_detect",
+      14674,
+      15762
+     ],
+     [
+      "frames.score_select",
+      30437,
+      2721
+     ],
+     [
+      "frames.tier_wait",
+      33158,
+      0
+     ],
+     [
+      "quiz_call",
+      34155,
+      4031
+     ],
+     [
+      "frames.hires",
+      33158,
+      5188
+     ],
+     [
+      "frames.upload",
+      38632,
+      773
+     ],
+     [
+      "visual_inject",
+      57001,
+      6
+     ],
+     [
+      "frames",
+      5628,
+      51379
+     ],
+     [
+      "extraction",
+      29819,
+      27193
+     ],
+     [
+      "split_extraction",
+      5628,
+      51384
+     ],
+     [
+      "transcript_frames",
+      5612,
+      51402
+     ],
+     [
+      "enrichment",
+      57024,
+      0
+     ],
+     [
+      "moment_fill",
+      57022,
+      119
+     ],
+     [
+      "synthesis",
+      57022,
+      2252
+     ],
+     [
+      "assembly",
+      57017,
+      2317
+     ]
+    ],
+    "llm": [
+     {
+      "f": "summarize:metadata",
+      "span": "description_analysis",
+      "model": "openai/gpt-4o-mini",
+      "rm": "gpt-4o-mini-2024-07-18",
+      "s": 5611,
+      "w": 1773,
+      "ttft": null,
+      "in": 441,
+      "out": 107,
+      "cr": 0,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.00013035,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:tier_probe",
+      "span": "tier_probe",
+      "model": "anthropic/claude-haiku-4-5-20251001",
+      "rm": "claude-haiku-4-5-20251001",
+      "s": 6419,
+      "w": 1116,
+      "ttft": null,
+      "in": 2207,
+      "out": 45,
+      "cr": 0,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.0024319999999999997,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:memory",
+      "span": "memory",
+      "model": "anthropic/claude-haiku-4-5-20251001",
+      "rm": "claude-haiku-4-5-20251001",
+      "s": 7555,
+      "w": 8011,
+      "ttft": null,
+      "in": 6244,
+      "out": 804,
+      "cr": 0,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.010263999999999999,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:plan",
+      "span": "plan",
+      "model": "anthropic/claude-sonnet-4-6",
+      "rm": "claude-sonnet-4-6",
+      "s": 7554,
+      "w": 22231,
+      "ttft": null,
+      "in": 21466,
+      "out": 915,
+      "cr": 16290,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.034140000000000004,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:extraction:text1",
+      "span": "extraction_text1",
+      "model": "anthropic/claude-haiku-4-5-20251001",
+      "rm": "claude-haiku-4-5-20251001",
+      "s": 29831,
+      "w": 4209,
+      "ttft": 704,
+      "in": 8599,
+      "out": 303,
+      "cr": 0,
+      "cw": 8411,
+      "cw1h": 0,
+      "cw5m": 8411,
+      "usd": 0.012216750000000002,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:enrichment",
+      "span": "enrichment",
+      "model": "openai/gpt-4o-mini",
+      "rm": "gpt-4o-mini-2024-07-18",
+      "s": 34156,
+      "w": 3999,
+      "ttft": null,
+      "in": 1421,
+      "out": 316,
+      "cr": 0,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.00040275,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:frames",
+      "span": "frame_vision",
+      "model": "anthropic/claude-sonnet-4-6",
+      "rm": "claude-sonnet-4-6",
+      "s": 39410,
+      "w": 12954,
+      "ttft": null,
+      "in": 3597,
+      "out": 472,
+      "cr": 0,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.017871,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:frames",
+      "span": "frame_vision",
+      "model": "anthropic/claude-sonnet-4-6",
+      "rm": "claude-sonnet-4-6",
+      "s": 39410,
+      "w": 17396,
+      "ttft": null,
+      "in": 3597,
+      "out": 636,
+      "cr": 0,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.020331000000000002,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:synthesis",
+      "span": "synthesis",
+      "model": "openai/gpt-4o-mini",
+      "rm": "gpt-4o-mini-2024-07-18",
+      "s": 57023,
+      "w": 2246,
+      "ttft": null,
+      "in": 960,
+      "out": 228,
+      "cr": 0,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.0002808,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     }
+    ],
+    "downloads": [
+     [
+      "lowres",
+      "scene_detect",
+      9054,
+      52505325,
+      true
+     ],
+     [
+      "720p",
+      "prefetch",
+      10577,
+      54090438,
+      true
+     ]
+    ],
+    "tm": {
+     "outcome": "ok",
+     "source": "ytdlp",
+     "type": "auto-generated",
+     "origin": null,
+     "captionTrack": "auto-generated",
+     "captionLang": "en",
+     "captionFetchError": null,
+     "captionApiSkipped": false,
+     "attempted": [],
+     "segments": 541,
+     "chars": 20617,
+     "fetchWallMs": 0,
+     "errorCode": null
+    },
+    "src": null,
+    "error": null
+   },
+   "log429": {
+    "vie-summarizer": "0",
+    "vie-summarizer-worker": "0",
+    "vie-api": "0"
+   }
+  },
+  {
+   "ytid": "jMq8lEu-of0",
+   "label": "r2",
+   "at": "2026-10-13T07:38:48Z",
+   "videoSummaryId": "6acde0087f927aa2159d957a",
+   "doc": {
+    "status": "completed",
+    "version": 5,
+    "pv": "v9",
+    "degraded": null,
+    "tabs": [
+     [
+      "overview",
+      "overview"
+     ],
+     [
+      "ingredients",
+      "checklist"
+     ],
+     [
+      "cook_steps",
+      "step_flow_canvas"
+     ],
+     [
+      "tips",
+      "spot_explorer"
+     ],
+     [
+      "moments",
+      "moment_track"
+     ]
+    ],
+    "milestones": {
+     "metadataMs": 5097,
+     "synthesisCompleteMs": 15141,
+     "firstTabReadyMs": 29266,
+     "firstAssembledTabMs": 40058,
+     "completeMs": 71673,
+     "doneMs": 71690
+    },
+    "costUsd": 0.180374,
+    "counts": {
+     "llmCalls": 15,
+     "llmFailures": 2,
+     "retries": 0,
+     "rateLimited": 0,
+     "fallbacks": 0,
+     "outputTokens": 11479,
+     "cacheReadTokens": 42620,
+     "downloadBytes": 160550355,
+     "tabsPlanned": 4,
+     "tabsAssembled": 5,
+     "tabsEmitted": 5,
+     "truncated": 0
+    },
+    "totalMs": 71744,
+    "llmFailures": [
+     {
+      "span": "tier_probe",
+      "model": "anthropic/claude-haiku-4-5-20251001",
+      "startMs": 5813,
+      "wallMs": 22,
+      "attempt": 1,
+      "error": "Timeout",
+      "rateLimited": false
+     },
+     {
+      "span": "tier_probe",
+      "model": "anthropic/claude-haiku-4-5-20251001",
+      "startMs": 5836,
+      "wallMs": 20,
+      "attempt": 1,
+      "error": "Timeout",
+      "rateLimited": false
+     }
+    ],
+    "phases": [
+     [
+      "metadata",
+      0,
+      5102
+     ],
+     [
+      "transcript",
+      5109,
+      703
+     ],
+     [
+      "memory",
+      5888,
+      9248
+     ],
+     [
+      "plan",
+      5883,
+      23354
+     ],
+     [
+      "text",
+      5109,
+      24132
+     ],
+     [
+      "frames.scene_detect",
+      21692,
+      17535
+     ],
+     [
+      "frames.score_select",
+      39229,
+      4045
+     ],
+     [
+      "frames.tier_wait",
+      43274,
+      0
+     ],
+     [
+      "frames.vision_reselect",
+      43275,
+      14405
+     ],
+     [
+      "frames.hires",
+      57680,
+      10489
+     ],
+     [
+      "frames.upload",
+      68472,
+      791
+     ],
+     [
+      "visual_inject",
+      69687,
+      1
+     ],
+     [
+      "frames",
+      5109,
+      64579
+     ],
+     [
+      "extraction",
+      29241,
+      40451
+     ],
+     [
+      "split_extraction",
+      5110,
+      64582
+     ],
+     [
+      "transcript_frames",
+      5102,
+      64591
+     ],
+     [
+      "moment_fill",
+      69721,
+      853
+     ],
+     [
+      "synthesis",
+      69721,
+      1940
+     ],
+     [
+      "assembly",
+      69696,
+      2048
+     ]
+    ],
+    "llm": [
+     {
+      "f": "summarize:metadata",
+      "span": "description_analysis",
+      "model": "openai/gpt-4o-mini",
+      "rm": "gpt-4o-mini-2024-07-18",
+      "s": 5101,
+      "w": 2454,
+      "ttft": null,
+      "in": 639,
+      "out": 171,
+      "cr": 0,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.00019845,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:memory",
+      "span": "memory",
+      "model": "anthropic/claude-haiku-4-5-20251001",
+      "rm": "claude-haiku-4-5-20251001",
+      "s": 5891,
+      "w": 9220,
+      "ttft": null,
+      "in": 5135,
+      "out": 1028,
+      "cr": 0,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.010275,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:plan",
+      "span": "plan",
+      "model": "anthropic/claude-sonnet-4-6",
+      "rm": "claude-sonnet-4-6",
+      "s": 5888,
+      "w": 23314,
+      "ttft": null,
+      "in": 20335,
+      "out": 981,
+      "cr": 16290,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.031737,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:extraction:text3",
+      "span": "extraction_text3",
+      "model": "anthropic/claude-haiku-4-5-20251001",
+      "rm": "claude-haiku-4-5-20251001",
+      "s": 29865,
+      "w": 10160,
+      "ttft": null,
+      "in": 7762,
+      "out": 898,
+      "cr": 7533,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.0054723,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:extraction:text1",
+      "span": "extraction_text1",
+      "model": "anthropic/claude-haiku-4-5-20251001",
+      "rm": "claude-haiku-4-5-20251001",
+      "s": 29255,
+      "w": 13627,
+      "ttft": 604,
+      "in": 7774,
+      "out": 1630,
+      "cr": 0,
+      "cw": 7533,
+      "cw1h": 0,
+      "cw5m": 7533,
+      "usd": 0.017807250000000004,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:frames",
+      "span": "frame_vision",
+      "model": "anthropic/claude-sonnet-4-6",
+      "rm": "claude-sonnet-4-6",
+      "s": 43280,
+      "w": 12072,
+      "ttft": null,
+      "in": 3059,
+      "out": 649,
+      "cr": 0,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.018911999999999998,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:frames",
+      "span": "frame_vision",
+      "model": "anthropic/claude-sonnet-4-6",
+      "rm": "claude-sonnet-4-6",
+      "s": 43279,
+      "w": 12705,
+      "ttft": null,
+      "in": 3059,
+      "out": 670,
+      "cr": 0,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.019227,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:frames",
+      "span": "frame_vision",
+      "model": "anthropic/claude-sonnet-4-6",
+      "rm": "claude-sonnet-4-6",
+      "s": 43280,
+      "w": 12928,
+      "ttft": null,
+      "in": 3059,
+      "out": 685,
+      "cr": 0,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.019451999999999997,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:frames",
+      "span": "frame_vision",
+      "model": "anthropic/claude-sonnet-4-6",
+      "rm": "claude-sonnet-4-6",
+      "s": 43280,
+      "w": 13953,
+      "ttft": null,
+      "in": 3059,
+      "out": 704,
+      "cr": 0,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.019736999999999998,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:frames",
+      "span": "frame_vision",
+      "model": "anthropic/claude-sonnet-4-6",
+      "rm": "claude-sonnet-4-6",
+      "s": 43279,
+      "w": 14393,
+      "ttft": null,
+      "in": 3059,
+      "out": 715,
+      "cr": 0,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.019902,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:extraction:text2",
+      "span": "extraction_text2",
+      "model": "anthropic/claude-haiku-4-5-20251001",
+      "rm": "claude-haiku-4-5-20251001",
+      "s": 29861,
+      "w": 31868,
+      "ttft": null,
+      "in": 7869,
+      "out": 3008,
+      "cr": 7533,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.016129300000000003,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:faithfulness",
+      "span": "faithfulness",
+      "model": "openai/gpt-4o-mini",
+      "rm": "gpt-4o-mini-2024-07-18",
+      "s": 69698,
+      "w": 901,
+      "ttft": null,
+      "in": 4182,
+      "out": 41,
+      "cr": 3072,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.00042149999999999995,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:faithfulness",
+      "span": "faithfulness",
+      "model": "openai/gpt-4o-mini",
+      "rm": "gpt-4o-mini-2024-07-18",
+      "s": 69697,
+      "w": 1089,
+      "ttft": null,
+      "in": 4196,
+      "out": 62,
+      "cr": 4096,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.00035939999999999995,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:faithfulness",
+      "span": "faithfulness",
+      "model": "openai/gpt-4o-mini",
+      "rm": "gpt-4o-mini-2024-07-18",
+      "s": 69697,
+      "w": 1334,
+      "ttft": null,
+      "in": 4173,
+      "out": 31,
+      "cr": 4096,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.00033735,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:synthesis",
+      "span": "synthesis",
+      "model": "openai/gpt-4o-mini",
+      "rm": "gpt-4o-mini-2024-07-18",
+      "s": 69723,
+      "w": 1933,
+      "ttft": null,
+      "in": 1887,
+      "out": 206,
+      "cr": 0,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.00040664999999999994,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     }
+    ],
+    "downloads": [
+     [
+      "720p",
+      "prefetch",
+      13899,
+      77424899,
+      true
+     ],
+     [
+      "lowres",
+      "scene_detect",
+      16587,
+      83125456,
+      true
+     ]
+    ],
+    "tm": {
+     "outcome": "ok",
+     "source": "ytdlp",
+     "type": "manual",
+     "origin": null,
+     "captionTrack": "manual",
+     "captionLang": "en-US-cvfXDfbeED0",
+     "captionFetchError": null,
+     "captionApiSkipped": false,
+     "attempted": [],
+     "segments": 347,
+     "chars": 12777,
+     "fetchWallMs": 0,
+     "errorCode": null
+    },
+    "src": null,
+    "error": null
+   },
+   "log429": {
+    "vie-summarizer": "0",
+    "vie-summarizer-worker": "0",
+    "vie-api": "0"
+   }
+  },
+  {
+   "ytid": "uC45_4nnEAI",
+   "label": "r2",
+   "at": "2026-10-13T07:41:12Z",
+   "videoSummaryId": "6acde0977f927aa2159d957c",
+   "doc": {
+    "status": "completed",
+    "version": 5,
+    "pv": "v9",
+    "degraded": null,
+    "tabs": [
+     [
+      "overview",
+      "overview"
+     ],
+     [
+      "pulls",
+      "tier_list"
+     ],
+     [
+      "highlights",
+      "moment_track"
+     ],
+     [
+      "set_facts",
+      "spot_explorer"
+     ]
+    ],
+    "milestones": {
+     "metadataMs": 5274,
+     "firstAssembledTabMs": 41704,
+     "firstTabReadyMs": 41704,
+     "synthesisCompleteMs": 90260,
+     "completeMs": 92822,
+     "doneMs": 92842
+    },
+    "costUsd": 0.141225,
+    "counts": {
+     "llmCalls": 12,
+     "llmFailures": 4,
+     "retries": 0,
+     "rateLimited": 0,
+     "fallbacks": 0,
+     "outputTokens": 8236,
+     "cacheReadTokens": 49494,
+     "downloadBytes": 249431420,
+     "tabsPlanned": 3,
+     "tabsAssembled": 4,
+     "tabsEmitted": 4,
+     "truncated": 0
+    },
+    "totalMs": 92882,
+    "llmFailures": [
+     {
+      "span": "tier_probe",
+      "model": "anthropic/claude-haiku-4-5-20251001",
+      "startMs": 6125,
+      "wallMs": 20,
+      "attempt": 1,
+      "error": "Timeout",
+      "rateLimited": false
+     },
+     {
+      "span": "tier_probe",
+      "model": "anthropic/claude-haiku-4-5-20251001",
+      "startMs": 6146,
+      "wallMs": 19,
+      "attempt": 1,
+      "error": "Timeout",
+      "rateLimited": false
+     },
+     {
+      "span": "memory",
+      "model": "anthropic/claude-haiku-4-5-20251001",
+      "startMs": 6207,
+      "wallMs": 22,
+      "attempt": 1,
+      "error": "Timeout",
+      "rateLimited": false
+     },
+     {
+      "span": "memory",
+      "model": "anthropic/claude-haiku-4-5-20251001",
+      "startMs": 6230,
+      "wallMs": 23,
+      "attempt": 1,
+      "error": "Timeout",
+      "rateLimited": false
+     }
+    ],
+    "phases": [
+     [
+      "metadata",
+      0,
+      5280
+     ],
+     [
+      "transcript",
+      5288,
+      836
+     ],
+     [
+      "memory",
+      6203,
+      69
+     ],
+     [
+      "plan",
+      6199,
+      20061
+     ],
+     [
+      "text",
+      5288,
+      20978
+     ],
+     [
+      "frames.scene_detect",
+      21829,
+      23652
+     ],
+     [
+      "frames.scene_ladder",
+      45481,
+      2226
+     ],
+     [
+      "frames.score_select",
+      47709,
+      977
+     ],
+     [
+      "frames.tier_wait",
+      48686,
+      0
+     ],
+     [
+      "frames.vision_reselect",
+      48686,
+      17941
+     ],
+     [
+      "frames.hires",
+      66627,
+      5679
+     ],
+     [
+      "frames.upload",
+      72450,
+      475
+     ],
+     [
+      "visual_inject",
+      73190,
+      0
+     ],
+     [
+      "frames",
+      5288,
+      67903
+     ],
+     [
+      "extraction",
+      26266,
+      60792
+     ],
+     [
+      "split_extraction",
+      5289,
+      81769
+     ],
+     [
+      "transcript_frames",
+      5280,
+      81783
+     ],
+     [
+      "synthesis",
+      87081,
+      3179
+     ],
+     [
+      "moment_fill",
+      90267,
+      2544
+     ],
+     [
+      "assembly",
+      87065,
+      5817
+     ]
+    ],
+    "llm": [
+     {
+      "f": "summarize:metadata",
+      "span": "description_analysis",
+      "model": "openai/gpt-4o-mini",
+      "rm": "gpt-4o-mini-2024-07-18",
+      "s": 5280,
+      "w": 2333,
+      "ttft": null,
+      "in": 561,
+      "out": 141,
+      "cr": 0,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.00016875,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:plan",
+      "span": "plan",
+      "model": "anthropic/claude-sonnet-4-6",
+      "rm": "claude-sonnet-4-6",
+      "s": 6203,
+      "w": 20000,
+      "ttft": null,
+      "in": 22412,
+      "out": 775,
+      "cr": 16290,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.034878,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:extraction:text1",
+      "span": "extraction_text1",
+      "model": "anthropic/claude-haiku-4-5-20251001",
+      "rm": "claude-haiku-4-5-20251001",
+      "s": 26282,
+      "w": 15379,
+      "ttft": 644,
+      "in": 8694,
+      "out": 1442,
+      "cr": 0,
+      "cw": 8474,
+      "cw1h": 0,
+      "cw5m": 8474,
+      "usd": 0.0180225,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:extraction:text2",
+      "span": "extraction_text2",
+      "model": "anthropic/claude-haiku-4-5-20251001",
+      "rm": "claude-haiku-4-5-20251001",
+      "s": 26927,
+      "w": 16069,
+      "ttft": null,
+      "in": 8659,
+      "out": 1496,
+      "cr": 8474,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.0085124,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:frames",
+      "span": "frame_vision",
+      "model": "anthropic/claude-sonnet-4-6",
+      "rm": "claude-sonnet-4-6",
+      "s": 48695,
+      "w": 17240,
+      "ttft": null,
+      "in": 3059,
+      "out": 943,
+      "cr": 0,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.023322,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:frames",
+      "span": "frame_vision",
+      "model": "anthropic/claude-sonnet-4-6",
+      "rm": "claude-sonnet-4-6",
+      "s": 48694,
+      "w": 17436,
+      "ttft": null,
+      "in": 3059,
+      "out": 874,
+      "cr": 0,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.022287,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:frames",
+      "span": "frame_vision",
+      "model": "anthropic/claude-sonnet-4-6",
+      "rm": "claude-sonnet-4-6",
+      "s": 48695,
+      "w": 17924,
+      "ttft": null,
+      "in": 3059,
+      "out": 935,
+      "cr": 0,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.023202,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:extraction:visual",
+      "span": "extraction_visual",
+      "model": "anthropic/claude-haiku-4-5-20251001",
+      "rm": "claude-haiku-4-5-20251001",
+      "s": 73194,
+      "w": 13841,
+      "ttft": null,
+      "in": 10616,
+      "out": 1143,
+      "cr": 8474,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.008704400000000001,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:faithfulness",
+      "span": "faithfulness",
+      "model": "openai/gpt-4o-mini",
+      "rm": "gpt-4o-mini-2024-07-18",
+      "s": 87066,
+      "w": 904,
+      "ttft": null,
+      "in": 6152,
+      "out": 30,
+      "cr": 4224,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.000624,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:faithfulness",
+      "span": "faithfulness",
+      "model": "openai/gpt-4o-mini",
+      "rm": "gpt-4o-mini-2024-07-18",
+      "s": 87067,
+      "w": 954,
+      "ttft": null,
+      "in": 6146,
+      "out": 34,
+      "cr": 6016,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.0004911,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:faithfulness",
+      "span": "faithfulness",
+      "model": "openai/gpt-4o-mini",
+      "rm": "gpt-4o-mini-2024-07-18",
+      "s": 87067,
+      "w": 1269,
+      "ttft": null,
+      "in": 6150,
+      "out": 54,
+      "cr": 6016,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.0005036999999999999,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     },
+     {
+      "f": "summarize:synthesis",
+      "span": "synthesis",
+      "model": "openai/gpt-4o-mini",
+      "rm": "gpt-4o-mini-2024-07-18",
+      "s": 87082,
+      "w": 3173,
+      "ttft": null,
+      "in": 1921,
+      "out": 369,
+      "cr": 0,
+      "cw": 0,
+      "cw1h": 0,
+      "cw5m": 0,
+      "usd": 0.00050955,
+      "att": 1,
+      "fb": false,
+      "fin": "stop"
+     }
+    ],
+    "downloads": [
+     [
+      "lowres",
+      "scene_detect",
+      16546,
+      75009862,
+      true
+     ],
+     [
+      "720p",
+      "prefetch",
+      25516,
+      174421558,
+      true
+     ]
+    ],
+    "tm": {
+     "outcome": "ok",
+     "source": "ytdlp",
+     "type": "auto-generated",
+     "origin": null,
+     "captionTrack": "auto-generated",
+     "captionLang": "en",
+     "captionFetchError": null,
+     "captionApiSkipped": false,
+     "attempted": [],
+     "segments": 538,
+     "chars": 20382,
+     "fetchWallMs": 0,
+     "errorCode": null
+    },
+    "src": null,
+    "error": null
+   },
+   "log429": {
+    "vie-summarizer": "0",
+    "vie-summarizer-worker": "0",
+    "vie-api": "0"
+   }
+  }
+ ]
+}
