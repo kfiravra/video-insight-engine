@@ -3,6 +3,7 @@ import { RecipeIngredientPanel } from './RecipeIngredientPanel';
 import { FlowContextPanel } from './FlowContextPanel';
 import {
   findComponent,
+  findStepTab,
   stripCountPrefix,
   makeStepRenderer,
   exercisesToSteps,
@@ -53,9 +54,8 @@ interface FlowModeDef {
 
 /**
  * Cooking — the original behavior, migrated verbatim. Context = the checklist
- * (ingredients) rendered through RecipeIngredientPanel; sequence = the
- * step_player steps rendered through RecipeStepView. Detection and props match
- * the previous hardcoded `cookingModeData` exactly.
+ * (ingredients) rendered through RecipeIngredientPanel; sequence = the steps of
+ * the step_player / step_flow_canvas tab rendered through RecipeStepView.
  */
 const COOKING: FlowModeDef = {
   id: 'cooking',
@@ -67,7 +67,7 @@ const COOKING: FlowModeDef = {
   detect: (tabs, primaryTag) => {
     if (primaryTag !== 'food') return false;
     const checklist = findComponent(tabs, 'checklist');
-    const step = findComponent(tabs, 'step_player');
+    const step = findStepTab(tabs);
     return Boolean(
       Array.isArray(checklist?.props?.items) &&
       Array.isArray(step?.props?.steps),
@@ -75,7 +75,7 @@ const COOKING: FlowModeDef = {
   },
   resolve: (tabs) => {
     const checklistTab = findComponent(tabs, 'checklist');
-    const stepTab = findComponent(tabs, 'step_player');
+    const stepTab = findStepTab(tabs);
     const ingredients = checklistContext(checklistTab);
     const steps = (stepTab?.props?.steps as StepItem[] | undefined) ?? [];
     if (ingredients.length === 0 || steps.length === 0) return null;
@@ -150,8 +150,8 @@ const WORKOUT: FlowModeDef = {
 };
 
 /**
- * Build — context = materials checklist + code snippets; sequence = step_player
- * steps. Covers tech/project domains.
+ * Build — context = materials checklist + code snippets; sequence = the
+ * step_player / step_flow_canvas steps. Covers tech/project domains.
  */
 const BUILD: FlowModeDef = {
   id: 'build',
@@ -162,11 +162,11 @@ const BUILD: FlowModeDef = {
   completionMessage: 'Build complete! Nicely done!',
   detect: (tabs, primaryTag) => {
     if (primaryTag !== 'tech' && primaryTag !== 'project') return false;
-    const step = findComponent(tabs, 'step_player');
+    const step = findStepTab(tabs);
     return Array.isArray(step?.props?.steps) && (step!.props!.steps as unknown[]).length > 0;
   },
   resolve: (tabs) => {
-    const stepTab = findComponent(tabs, 'step_player');
+    const stepTab = findStepTab(tabs);
     const steps = (stepTab?.props?.steps as StepItem[] | undefined) ?? [];
     if (steps.length === 0) return null;
     const checklistTab = findComponent(tabs, 'checklist');
@@ -291,7 +291,7 @@ const EXPLORE: FlowModeDef = {
 
 /**
  * Practice — language domain. Context = phrases/vocabulary; sequence = drills
- * run as step_player steps.
+ * run as step_player / step_flow_canvas steps.
  */
 const PRACTICE: FlowModeDef = {
   id: 'practice',
@@ -302,11 +302,11 @@ const PRACTICE: FlowModeDef = {
   completionMessage: 'Practice complete! Keep it up!',
   detect: (tabs, primaryTag) => {
     if (primaryTag !== 'language') return false;
-    const drills = findComponent(tabs, 'step_player');
+    const drills = findStepTab(tabs);
     return Array.isArray(drills?.props?.steps) && (drills!.props!.steps as unknown[]).length > 0;
   },
   resolve: (tabs) => {
-    const drillTab = findComponent(tabs, 'step_player');
+    const drillTab = findStepTab(tabs);
     const steps = (drillTab?.props?.steps as StepItem[] | undefined) ?? [];
     if (steps.length === 0) return null;
     // Vocabulary/phrases live in a flash_deck, spot_explorer, or info_grid tab.

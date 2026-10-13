@@ -38,6 +38,15 @@ export function findComponent(tabs: TabEntry[], component: string): TabEntry | u
   return tabs.find((t) => t.component === component);
 }
 
+/** The tab carrying an ordered step sequence. Assembly promotes step_player to
+ *  step_flow_canvas at 8+ steps (and the planner picks the canvas directly for
+ *  8+ stages) — same `steps` contract — so a mode keyed on step_player alone
+ *  disappears for nearly every real recipe or build. step_player wins when both
+ *  exist so outputs that already resolved a mode keep the same sequence. */
+export function findStepTab(tabs: TabEntry[]): TabEntry | undefined {
+  return findComponent(tabs, 'step_player') ?? findComponent(tabs, 'step_flow_canvas');
+}
+
 /** Strip an assembler-produced count prefix ("8 Steps" → "Steps"). Mirrors the
  *  helper in component-registry so context labels read cleanly. */
 export function stripCountPrefix(label: string): string {
