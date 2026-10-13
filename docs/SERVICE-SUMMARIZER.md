@@ -563,7 +563,7 @@ A plan-first pipeline: ~6-7 text calls (description analysis, tier probe, plan �
     │   save. A tab streamed earlier but missing from tabIds was withdrawn (logged)
     └─▶ Store result to MongoDB + Redis cache (if enabled). Redis response-cache keys are
     │   namespaced by PIPELINE_VERSION (packages/shared/src/config/pipeline-version.json,
-    │   currently v8 — bumped v6→v8 by the frame-quality + moment-redesign work).
+    │   currently v9 — bumped v8→v9 by the pipeline-1min split extraction).
     │   bypassCache=true submissions arrive with force_refresh (worker payload) OR the
     │   `forceRefresh` flag stamped on the videoSummaryCache version row by the api —
     │   either skips the Redis response cache; the flag is $unset on completion.

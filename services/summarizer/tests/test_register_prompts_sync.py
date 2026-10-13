@@ -106,6 +106,18 @@ class TestLookupFailure:
         assert _run_main(monkeypatch, mod, registry, ["--commit"]) == 1
 
 
+class TestDiscovery:
+    def test_should_register_extraction_group_job(self) -> None:
+        """The split path's per-group tail (pipeline-1min 3.4) syncs under its runtime name."""
+        mod = _load_script()
+        source = _SCRIPT.parents[1] / "services/summarizer/src/prompts/extraction_group_job.txt"
+
+        records = {record.name: record for record in mod.discover_prompts()}
+
+        record = records.get("summarizer:extraction_group_job")
+        assert record is not None and record.content == source.read_text(encoding="utf-8")
+
+
 class TestMissingSdk:
     @pytest.fixture(autouse=True)
     def _keys_set_sdk_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
