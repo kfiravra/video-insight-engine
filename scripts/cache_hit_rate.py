@@ -8,8 +8,10 @@ breakpoint — below ~53 % a 1h write costs more than no breakpoint; what
 replaces it under 50 % is Kfir's gate-2 decision (``docs/llm-cost-model.md``).
 
 Reads the ``pipeline.timing.llmCalls`` rows of a set of runs from MongoDB
-``videoSummaryCache`` and prints, per call type (the call's ``span``: plan,
-extraction, synthesis …) and provider:
+``videoSummaryCache`` — and, from timing version 4, the ``llmFailures`` rows of
+refused calls (``error: "Refusal"``: billed, cache tokens included) — and
+prints, per call type (the call's ``span``: plan, extraction, synthesis …) and
+provider:
 
 - calls, input tokens, cache reads, cache writes and their 1h / 5m split;
 - hit rate = reads ÷ (reads + writes), in tokens — Anthropic only, the
@@ -43,7 +45,7 @@ import json
 import os
 import re
 from collections import Counter
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -53,6 +55,7 @@ from pymongo import MongoClient
 
 _OBJECT_ID = re.compile(r"^[0-9a-f]{24}$")
 _TRANSCRIPTION_SPAN = "transcription:"
+_REFUSAL = "Refusal"
 
 
 @dataclass
@@ -107,11 +110,17 @@ def _provider(call: Mapping[str, Any]) -> str:
     return model.split("/", 1)[0] if "/" in model else "unknown"
 
 
+def _billed_calls(timing: Mapping[str, Any]) -> Iterator[Mapping[str, Any]]:
+    """Every answered call, then every refused one (a refusal reads and writes the cache too)."""
+    yield from timing.get("llmCalls") or []
+    yield from (f for f in timing.get("llmFailures") or [] if f.get("error") == _REFUSAL)
+
+
 def aggregate(timings: Iterable[Mapping[str, Any]]) -> list[CallTypeStats]:
-    """Per (span, provider) cache totals over every LLM call of the given timing docs."""
+    """Per (span, provider) cache totals over every billed LLM call of the given timing docs."""
     groups: dict[tuple[str, str], CallTypeStats] = {}
     for timing in timings:
-        for call in timing.get("llmCalls") or []:
+        for call in _billed_calls(timing):
             span = str(call.get("span") or call.get("feature") or "unknown")
             if span.startswith(_TRANSCRIPTION_SPAN):
                 continue

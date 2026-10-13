@@ -159,6 +159,7 @@ class TestCallLlmWithRetry:
             },
             temperature=None,
             system_prompt=None,
+            effort="low",
         )
 
     @pytest.mark.asyncio

@@ -12,7 +12,9 @@ Returns the raw string, or None when every attempt failed; errors that
 another attempt cannot fix (400/401/403/404/422, programming errors)
 propagate on first occurrence — except on the fallback model, the last resort,
 where such an error (a key missing on that provider, a request it rejects) ends
-the call with None like any other failed attempt.
+the call with None like any other failed attempt. A refusal (``LLMRefusalError``:
+the provider's one re-send on the previous model got no answer) ends the call —
+no retry, no cross-provider fallback; ``propagate_refusal`` hands it to the caller.
 """
 
 from __future__ import annotations
@@ -27,19 +29,22 @@ from typing import TYPE_CHECKING, Any, overload
 
 from litellm.exceptions import (
     APIConnectionError,
-    APIError as LitellmAPIError,
     BadGatewayError,
     InternalServerError,
     RateLimitError,
     ServiceUnavailableError,
-    Timeout as LitellmTimeout,
 )
+from litellm.exceptions import APIError as LitellmAPIError
+from litellm.exceptions import Timeout as LitellmTimeout
 
+from src.services.llm_call import raise_for_caller
+from src.services.llm_model_rules import DEFAULT_EFFORT, LLMRefusalError
 from src.services.pipeline.pipeline_timing import record_llm_failure
 
 if TYPE_CHECKING:
     from src.services.llm import LLMService
     from src.services.llm_messages import TextBlock, UserContent
+    from src.services.llm_model_rules import Effort
 
 logger = logging.getLogger(__name__)
 
@@ -205,6 +210,7 @@ class _Request:
     # Streams every attempt (the split extraction's warm-up call); fast-model
     # calls are never streamed, so asking for it there is a programming error.
     on_first_chunk: Callable[[], None] | None = None
+    effort: Effort = DEFAULT_EFFORT
 
     def __post_init__(self) -> None:
         if self.on_first_chunk is not None and self.use_fast_model:
@@ -302,6 +308,7 @@ async def _send(attempt: _Attempt, request: _Request) -> str:
         "span_metadata": _span_metadata(attempt, request),
         "temperature": request.temperature,
         "system_prompt": request.system_prompt,
+        "effort": request.effort,
     }
     if request.on_first_chunk is not None:
         common["on_first_chunk"] = request.on_first_chunk
@@ -338,6 +345,9 @@ async def _try_once(
     start = time.monotonic()
     try:
         raw = await _send(attempt, request)
+    except LLMRefusalError as e:
+        _log_attempt(logging.WARNING, attempt, stage, start, str(e))
+        return None, e
     except asyncio.TimeoutError as e:
         # The outer asyncio.timeout cancels the provider coroutine, so the
         # provider never sees this failure — record it here.
@@ -393,6 +403,8 @@ async def call_llm_with_retry(
     temperature: float | None = None,
     system_prompt: str | None = None,
     on_first_chunk: Callable[[], None] | None = None,
+    effort: Effort = DEFAULT_EFFORT,
+    propagate_refusal: bool = False,
 ) -> str | None:
     """Call LLM with timeout, retry and cross-provider fallback. Returns raw string or None.
 
@@ -410,6 +422,7 @@ async def call_llm_with_retry(
             ``RateLimitError`` / ``ServiceUnavailableError`` once every attempt
             failed instead of returning ``None``. Used by the parallel batch
             extractor to route rate-limited batches into its sequential path.
+            A call that ended on a refusal never raises it (``raise_for_caller``).
         model_override: When non-None, wrap ``llm_service`` with a one-off
             provider pinned to this model (stages pass
             ``settings.get_stage_model(stage_name)``).
@@ -418,6 +431,8 @@ async def call_llm_with_retry(
         system_prompt: System text; it never carries a cache breakpoint (a
             caller that wants one marks a user block, ``llm_messages.text_block``).
         on_first_chunk: Stream every attempt, calling this at its first chunk.
+        effort: Effort for a model that takes one (``llm_model_rules``; default low).
+        propagate_refusal: Raise the ``LLMRefusalError`` that ended the call instead of None.
 
     Returns:
         Raw LLM response string, or None if all attempts failed.
@@ -435,21 +450,22 @@ async def call_llm_with_retry(
         temperature=temperature,
         system_prompt=system_prompt,
         on_first_chunk=on_first_chunk,
+        effort=effort,
     )
     attempts = _plan_attempts(llm_service, use_fast_model, max_retries)
-    text, last_rate_limit = await _run_attempts(attempts, request)
-    if text is not None:
-        return text
-    logger.error("[%s] All %d attempts failed", stage_name, len(attempts))
-    if propagate_rate_limit and last_rate_limit is not None:
-        raise last_rate_limit
-    return None
+    text, ended_by = await _run_attempts(attempts, request)
+    if text is None:
+        logger.error("[%s] All %d attempts failed", stage_name, len(attempts))
+        raise_for_caller(
+            ended_by, propagate_rate_limit=propagate_rate_limit, propagate_refusal=propagate_refusal
+        )
+    return text
 
 
 async def _run_attempts(
     attempts: list[_Attempt], request: _Request
-) -> tuple[str | None, RateLimitError | ServiceUnavailableError | None]:
-    """Walk the attempt plan: (reply, None) on success, else (None, last rate-limit error)."""
+) -> tuple[str | None, BaseException | None]:
+    """Walk the attempt plan: (reply, None), else (None, the refusal or last rate-limit error)."""
     last_rate_limit: RateLimitError | ServiceUnavailableError | None = None
     resent = False
     index = 0
@@ -463,6 +479,8 @@ async def _run_attempts(
             resent = True
             logger.info("[%s] Dropped connection — resending at once", request.stage_name)
             continue
+        if isinstance(error, LLMRefusalError):
+            return None, error
         if isinstance(error, (RateLimitError, ServiceUnavailableError)):
             last_rate_limit = error
         if error is not None and not isinstance(error, TRANSIENT_LLM_ERRORS):

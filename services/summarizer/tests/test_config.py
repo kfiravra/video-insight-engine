@@ -10,7 +10,7 @@ import pytest
 import yaml
 from pydantic import TypeAdapter
 
-from src.config import Settings, settings
+from src.config import PREVIOUS_MODEL, Settings, settings
 
 _COMPOSE_FILES = ("docker-compose.yml", "docker-compose.prod.yml")
 # Passed through both x-summarizer-env anchors (pipeline-1min 1d.6). A setting
@@ -152,3 +152,22 @@ class TestComposePassthrough:
         self, compose_file: str, name: str
     ) -> None:
         assert name not in _summarizer_env(compose_file)
+
+
+class TestPreviousModel:
+    """The refusal fallback table (pipeline-1min 4.0b)."""
+
+    @pytest.mark.parametrize(
+        ("model", "previous"),
+        [
+            ("anthropic/claude-haiku-5-5", "anthropic/claude-haiku-4-5-20251001"),
+            ("anthropic/claude-sonnet-5-5", "anthropic/claude-sonnet-4-6"),
+            ("openai/gpt-6-luna", "openai/gpt-4o-mini"),
+        ],
+    )
+    def test_should_fall_back_to_the_model_it_replaced(self, model: str, previous: str) -> None:
+        assert PREVIOUS_MODEL[model] == previous
+
+    @pytest.mark.parametrize(("model", "previous"), list(PREVIOUS_MODEL.items()))
+    def test_should_stay_on_the_provider_and_never_chain(self, model: str, previous: str) -> None:
+        assert (previous.split("/")[0], previous in PREVIOUS_MODEL) == (model.split("/")[0], False)

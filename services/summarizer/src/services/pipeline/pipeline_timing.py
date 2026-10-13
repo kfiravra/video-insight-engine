@@ -18,6 +18,12 @@ served from its cache (Anthropic ``cache_read_input_tokens``, OpenAI
 ``inputTokens`` is the whole prompt, cached tokens included. ``ttftMs`` = time
 to the first streamed chunk (the split extraction's warm-up call); null for
 every unstreamed call.
+
+Refusals (4.0b): a declined answer is an ``llmFailures`` row ``error: "Refusal"``
+(category, tokens, cache tokens, cost — ``costUsd`` counts it); every row of
+its one re-send on the previous model is stamped ``refusedModel``. ``counts``:
+``refusals`` (calls refused), ``refusalFallbacks`` (answered by the previous
+model), ``refusalsUnanswered``; ``fallbacks`` = cross-provider only.
 """
 
 from __future__ import annotations
@@ -35,14 +41,20 @@ from typing import Any
 
 from litellm.cost_calculator import completion_cost
 from litellm.exceptions import RateLimitError
-from llm_common.context import llm_feature_var
+from llm_common.context import llm_feature_var, llm_refused_model_var
 
 logger = logging.getLogger(__name__)
 
 # 2: llmCalls carry the 1h/5m cache-write split, and cacheReadTokens counts
 # OpenAI cached input too (always 0 for OpenAI calls in version 1).
 # 3: llmCalls carry ttftMs (pipeline-1min 3.4).
-TIMING_SCHEMA_VERSION = 3
+# 4: refusals — "Refusal" failure rows (tokens, cache tokens, cost), refusedModel
+# on the re-send's rows, counts refusals / refusalFallbacks / refusalsUnanswered,
+# fallbacks = cross-provider only (pipeline-1min 4.0b).
+TIMING_SCHEMA_VERSION = 4
+_REFUSAL = "Refusal"
+# Stamped on every row of a refused answer's re-send: the model that refused.
+_REFUSED = "refusedModel"
 
 # SSE event name → milestone key. First occurrence wins. firstTabReadyMs is
 # the first tab_ready of any kind (since 2.1 the provisional Moments tab).
@@ -176,10 +188,24 @@ class PipelineTimingRecorder:
             "llmFailures": len(self.llm_failures),
             "retries": sum(1 for c in self.llm_calls if c.get("attempt", 1) > 1),
             "rateLimited": sum(1 for f in self.llm_failures if f.get("rateLimited")),
-            "fallbacks": sum(1 for c in self.llm_calls if c.get("fallbackUsed")),
+            "fallbacks": sum(
+                1 for c in self.llm_calls if c.get("fallbackUsed") and _REFUSED not in c
+            ),
+            **self._refusal_counts(),
             "outputTokens": sum(c.get("outputTokens", 0) for c in self.llm_calls),
             "cacheReadTokens": sum(c.get("cacheReadTokens", 0) for c in self.llm_calls),
             "downloadBytes": sum(d.get("bytes") or 0 for d in self.downloads),
+        }
+
+    def _refusal_counts(self) -> dict[str, int]:
+        refused = sum(
+            1 for f in self.llm_failures if f.get("error") == _REFUSAL and _REFUSED not in f
+        )
+        answered = sum(1 for c in self.llm_calls if _REFUSED in c)
+        return {
+            "refusals": refused,
+            "refusalFallbacks": answered,
+            "refusalsUnanswered": refused - answered,
         }
 
     def to_document(self, *, tabs_planned: int, tabs_assembled: int) -> dict[str, Any]:
@@ -193,7 +219,9 @@ class PipelineTimingRecorder:
             "llmCalls": list(self.llm_calls),
             "llmFailures": list(self.llm_failures),
             "downloads": list(self.downloads),
-            "costUsd": round(sum(c.get("costUsd", 0.0) for c in self.llm_calls), 6),
+            "costUsd": round(
+                sum(c.get("costUsd", 0.0) for c in (*self.llm_calls, *self.llm_failures)), 6
+            ),
             "counts": {
                 **self._counts(),
                 "tabsPlanned": tabs_planned,
@@ -262,11 +290,14 @@ def record_llm_call(
     attempt: int = 1,
     fallback_used: bool = False,
     ttft_ms: int | None = None,
+    refused_model: str | None = None,
+    refusal_category: str | None = None,
 ) -> None:
     """Record one successful completion. Never raises.
 
-    ``fallback_used`` marks an answer from the cross-provider fallback model
-    (``model`` is then the fallback — the model that actually answered).
+    ``fallback_used`` marks an answer from a fallback model — the cross-provider
+    one, or the previous model after ``refused_model`` declined (its category
+    in ``refusal_category``); ``model`` is the model that actually answered.
     ``ttft_ms``: time to the first chunk of a streamed call (None otherwise).
     """
     recorder = _recorder_var.get()
@@ -276,6 +307,11 @@ def record_llm_call(
         usage = getattr(response, "usage", None)
         choices = getattr(response, "choices", None) or [None]
         response_model = getattr(response, "model", None)
+        refusal = (
+            {_REFUSED: refused_model, "refusalCategory": refusal_category}
+            if refused_model is not None
+            else {}
+        )
         recorder.llm_calls.append(
             {
                 "feature": llm_feature_var.get(),
@@ -292,6 +328,7 @@ def record_llm_call(
                 "fallbackUsed": fallback_used or is_fallback_response(model, response_model),
                 "finishReason": getattr(choices[0], "finish_reason", None),
                 "ttftMs": ttft_ms,
+                **refusal,
             }
         )
     except Exception as exc:  # noqa: BLE001 — timing must never break a call
@@ -313,8 +350,12 @@ def record_llm_failure(
     error: BaseException,
     start_monotonic: float,
     attempt: int,
+    refused_model: str | None = None,
 ) -> None:
-    """Record one failed attempt (timeout, 429, provider error). Never raises."""
+    """Record one failed attempt (timeout, 429, provider error). Never raises.
+
+    Stamped ``refusedModel`` during a refusal's re-send (the ContextVar, or ``refused_model``).
+    """
     recorder = _recorder_var.get()
     if recorder is None:
         return
@@ -328,6 +369,47 @@ def record_llm_failure(
             "attempt": attempt,
             "error": type(error).__name__,
             "rateLimited": isinstance(error, RateLimitError),
+            **_refused_stamp(refused_model),
+        }
+    )
+
+
+def _refused_stamp(refused_model: str | None) -> dict[str, str]:
+    refused = refused_model or llm_refused_model_var.get()
+    return {_REFUSED: refused} if refused else {}
+
+
+def record_llm_refusal(
+    *,
+    span: str,
+    model: str,
+    response: Any,
+    start_monotonic: float,
+    attempt: int,
+    category: str | None,
+    refused_model: str | None = None,
+) -> None:
+    """Record one declined answer as a failed attempt, with what it was billed. Never raises."""
+    recorder = _recorder_var.get()
+    if recorder is None:
+        return
+    usage = getattr(response, "usage", None)
+    recorder.llm_failures.append(
+        {
+            "feature": llm_feature_var.get(),
+            "span": span,
+            "model": model,
+            "startMs": recorder.offset_ms(start_monotonic),
+            "wallMs": recorder.offset_ms() - recorder.offset_ms(start_monotonic),
+            "attempt": attempt,
+            "error": _REFUSAL,
+            "rateLimited": False,
+            "refusalCategory": category,
+            "inputTokens": _usage_int(usage, "prompt_tokens"),
+            "outputTokens": _usage_int(usage, "completion_tokens"),
+            **_cache_tokens(usage),
+            "costUsd": _call_cost(response),
+            **_refused_stamp(refused_model),
         }
     )
 

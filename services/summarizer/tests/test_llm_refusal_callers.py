@@ -1,0 +1,160 @@
+"""A refusal as its callers see it (pipeline-1min 4.0b, review R4b) — zero spend.
+
+Nobody may re-send a refused call to the model that refused it: not the split
+extraction's lost-answer re-ask, not the chunked extractor's rate-limit path,
+not the retry wrapper when the call's deadline hits the one re-send. Real
+plumbing and real LiteLLM; only the HTTP send is faked (``tests.llm_wire``).
+"""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import Iterator
+from typing import Any
+from unittest.mock import patch
+
+import httpx
+import pytest
+
+from src.services.llm import LLMService
+from src.services.llm_provider import LLMProvider
+from src.services.pipeline import extraction_groups, pipeline_timing
+from src.services.pipeline.extraction_chunks import ExtractionChunk
+from src.services.pipeline.extraction_group_prompt import GroupJob
+from src.services.pipeline.extraction_groups import GroupCall, SplitRun, run_group_call
+from src.services.pipeline.field_groups import ExtractionGroup
+from src.services.pipeline.field_requests import FieldRequest
+from src.services.pipeline.pipeline_timing import PipelineTimingRecorder, start_run_timing
+from src.utils.llm_retry import call_llm_with_retry
+from tests.llm_wire import (
+    anthropic_message,
+    anthropic_stream,
+    as_json,
+    as_stream,
+    offline_http,
+    set_fake_keys,
+    text,
+)
+
+HAIKU_45 = "anthropic/claude-haiku-4-5-20251001"
+HAIKU_55 = "anthropic/claude-haiku-5-5"
+
+
+@pytest.fixture(autouse=True)
+def _offline(monkeypatch: pytest.MonkeyPatch, fresh_litellm_callbacks: None) -> None:
+    set_fake_keys(monkeypatch)
+
+
+@pytest.fixture
+def recorder() -> Iterator[PipelineTimingRecorder]:
+    token = pipeline_timing._recorder_var.set(None)
+    try:
+        yield start_run_timing()
+    finally:
+        pipeline_timing._recorder_var.reset(token)
+
+
+def _service() -> LLMService:
+    return LLMService(LLMProvider(model=HAIKU_55, fallback_models=["openai/gpt-4o"]))
+
+
+def _refusal(body: dict[str, Any]) -> httpx.Response:
+    blocks = [text("I won't")]
+    if body.get("stream"):
+        return as_stream(anthropic_stream(blocks, stop_reason="refusal", model=body["model"]))
+    return as_json(anthropic_message(blocks, stop_reason="refusal", model=body["model"]))
+
+
+def _rate_limited_then_refused() -> Any:
+    """Haiku 5.5: a 429 (retry-after 0), then refusals; every other model refuses."""
+    sent: list[str] = []
+
+    def reply(body: dict[str, Any]) -> httpx.Response:
+        sent.append(body["model"])
+        if sent.count("claude-haiku-5-5") == 1 and body["model"] == "claude-haiku-5-5":
+            error = {"type": "error", "error": {"type": "rate_limit_error", "message": "slow"}}
+            return httpx.Response(429, headers={"retry-after": "0"}, json=error)
+        return _refusal(body)
+
+    return reply
+
+
+def _group_call() -> tuple[GroupCall, SplitRun]:
+    request = FieldRequest("food", "text1", "list", "planned", (), 10, 5, 100, False)
+    group = ExtractionGroup("text1", (request,), False, 500, ())
+    job = GroupJob([], ["food"], "food")
+    run = SplitRun(
+        llm_service=_service(),
+        prompt=None,  # type: ignore[arg-type]  # build_group_messages is patched
+        job=job,
+        chunks=(ExtractionChunk(0, "chunk"),),
+        text_groups=(group,),
+        content_tags=("food",),
+        modifiers=(),
+    )
+    return GroupCall(group, run.chunks[0], job), run
+
+
+class TestRefusedWarmUp:
+    async def test_should_send_exactly_two_calls_when_the_warm_up_stream_is_refused(self) -> None:
+        call, run = _group_call()
+        released: list[int] = []
+        blocks = [text("rules"), text("chunk"), text("job")]
+
+        with (
+            patch.object(extraction_groups, "build_group_messages", return_value=blocks),
+            offline_http(_refusal) as wire,
+        ):
+            outcome = await asyncio.create_task(
+                run_group_call(call, run, on_first_chunk=lambda: released.append(1))
+            )
+
+        assert (wire.models, outcome.status, released != []) == (
+            ["claude-haiku-5-5", "claude-haiku-4-5-20251001"],
+            "failed",
+            True,
+        )
+
+
+class TestRefusalAfterARateLimit:
+    async def test_should_not_raise_the_earlier_rate_limit_when_the_call_ends_on_a_refusal(
+        self,
+    ) -> None:
+        with offline_http(_rate_limited_then_refused()) as wire:
+            raw = await call_llm_with_retry(
+                _service(), "hi", max_retries=2, stage_name="extraction", propagate_rate_limit=True
+            )
+
+        assert (raw, wire.models) == (
+            None,
+            ["claude-haiku-5-5", "claude-haiku-5-5", "claude-haiku-4-5-20251001"],
+        )
+
+
+class TestDeadlineDuringTheReSend:
+    async def test_should_not_send_a_third_call_when_the_previous_model_outlasts_the_deadline(
+        self, recorder: PipelineTimingRecorder
+    ) -> None:
+        with offline_http(_refusal, delays={"claude-haiku-4-5-20251001": 5.0}) as wire:
+            raw = await call_llm_with_retry(_service(), "hi", timeout=0.3, max_retries=2)
+
+        timed_out = recorder.llm_failures[-1]
+        assert (raw, wire.models, timed_out["model"], timed_out["refusedModel"]) == (
+            None,
+            ["claude-haiku-5-5", "claude-haiku-4-5-20251001"],
+            HAIKU_45,
+            HAIKU_55,
+        )
+
+    async def test_should_count_the_refusal_as_unanswered_when_the_deadline_hits_the_re_send(
+        self, recorder: PipelineTimingRecorder
+    ) -> None:
+        with offline_http(_refusal, delays={"claude-haiku-4-5-20251001": 5.0}):
+            await call_llm_with_retry(_service(), "hi", timeout=0.3, max_retries=2)
+
+        counts = recorder.to_document(tabs_planned=0, tabs_assembled=0)["counts"]
+        assert (counts["refusals"], counts["refusalsUnanswered"], counts["llmFailures"]) == (
+            1,
+            1,
+            2,
+        )

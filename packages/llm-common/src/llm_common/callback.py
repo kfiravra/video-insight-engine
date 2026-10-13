@@ -27,12 +27,14 @@ from llm_common.alerts import deliver_alert
 from llm_common.buffer import AsyncBuffer, SyncBuffer
 from llm_common.context import (
     llm_feature_var,
+    llm_refused_model_var,
     llm_request_id_var,
     llm_user_id_var,
     llm_video_id_var,
     llm_video_summary_id_var,
 )
 from llm_common.models import UsageRecord, compute_cache_savings_usd, extract_provider
+from llm_common.refusal import refusal_of
 
 
 def _safe_int(obj: object, attr: str) -> int:
@@ -238,6 +240,7 @@ class MongoDBUsageCallback(CustomLogger):
                 cache_hit = True
 
             cache_savings_usd = compute_cache_savings_usd(model, cache_read_tokens)
+            refusal = refusal_of(response_obj)
 
             record = UsageRecord(
                 model=model,
@@ -262,6 +265,9 @@ class MongoDBUsageCallback(CustomLogger):
                 cache_read_tokens=cache_read_tokens,
                 cache_savings_usd=cache_savings_usd,
                 litellm_version=getattr(litellm, "version", ""),
+                refusal=refusal is not None,
+                refusal_category=refusal.category if refusal is not None else None,
+                fallback_from=llm_refused_model_var.get(),
             )
             return record.model_dump()
         except Exception as e:

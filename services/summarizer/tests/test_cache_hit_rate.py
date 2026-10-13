@@ -96,6 +96,20 @@ class TestAggregate:
 
         assert cache_hit_rate.aggregate(runs) == []
 
+    def test_should_count_a_refused_calls_cache_tokens_when_aggregating(self) -> None:
+        refused = {**_call("plan", _SONNET, input=20_000, write=16_000), "error": "Refusal"}
+        timeout = {**_call("plan", _SONNET, input=20_000, write=9_999), "error": "Timeout"}
+        runs = [
+            {
+                "llmCalls": [_call("plan", _SONNET, input=20_000, read=16_000)],
+                "llmFailures": [refused, timeout],
+            }
+        ]
+
+        plan = _only(cache_hit_rate.aggregate(runs))
+
+        assert (plan.calls, plan.reads, plan.writes) == (2, 16_000, 16_000)
+
     def test_should_have_no_hit_rate_when_nothing_was_cached(self) -> None:
         runs = [{"llmCalls": [_call("tier_probe", _SONNET, input=3_000)]}]
 

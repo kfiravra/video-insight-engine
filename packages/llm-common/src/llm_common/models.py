@@ -40,6 +40,12 @@ class UsageRecord(BaseModel):
     cache_savings_usd: float = 0.0
     litellm_version: str = ""
     error_message: str | None = None
+    # A call the model declined (HTTP 200, see ``llm_common.refusal``), and the
+    # call that answered for a refused model on its previous model (the refused
+    # model's id). Additive: rows written before them read as no refusal.
+    refusal: bool = False
+    refusal_category: str | None = None
+    fallback_from: str | None = None
 
 
 # Per-model input pricing (USD per 1M tokens) for the cache-savings estimate.
