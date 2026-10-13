@@ -13,9 +13,9 @@ interface DegradedNoticeProps {
 /**
  * Partial-result banner for degraded pipeline runs.
  *
- * Shown when the summarizer flagged the run `degraded` (extraction dropped
- * batches or coverage was critical — see meta.degraded / the SSE terminal
- * events). Offers a one-click retry wired to the existing
+ * Shown when the summarizer flagged the run `degraded` (an extraction batch
+ * or field group failed, or coverage was critical — see meta.degraded / the
+ * SSE terminal events). Offers a one-click retry wired to the existing
  * `?bypassCache=true` re-summarization path.
  */
 export function DegradedNotice({ onRetry, retrying = false, className }: DegradedNoticeProps) {

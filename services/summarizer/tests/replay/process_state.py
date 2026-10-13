@@ -35,6 +35,7 @@ _LAZY_PIPELINE_MODULES = (
     "src.services.pipeline.phases.probe",
     "src.services.pipeline.video_memory",
     "src.services.pipeline.phases.extraction",
+    "src.services.pipeline.phases.split_extraction",
     "src.services.pipeline.phases.synthesis",
     "src.services.pipeline.phases.enrichment",
     "src.services.pipeline.phases.assembly",

@@ -19,6 +19,7 @@ from litellm.exceptions import (
     NotFoundError,
 )
 
+from src.models.pipeline_types import PlanResult
 from src.repositories.mongodb_repository import MongoDBVideoRepository
 from src.routes import pipeline_orchestration, run_timing
 from src.services.llm_provider import LLMProvider
@@ -131,7 +132,7 @@ class TestRunnerPersistence:
             source_language_code=None,
             row_deleted=False,
             phase_times={},
-            plan_result=object(),
+            plan_result=PlanResult(),
             enrichment_data={"a": 1},
             triage=SimpleNamespace(tabs=[1, 2, 3]),
             assembled_tabs=[1, 2],
@@ -205,6 +206,20 @@ class TestRunnerPersistence:
 
         repository.set_pipeline_timing.assert_called_once()
 
+    async def test_should_cancel_the_started_quiz_when_assembly_fails(self) -> None:
+        ctx = self._ctx()
+        ctx.quiz_task = asyncio.create_task(asyncio.sleep(60))
+
+        async def _boom(*_a: object, **_k: object):
+            raise RuntimeError("assembly exploded")
+            yield  # pragma: no cover
+
+        with pytest.raises(RuntimeError):
+            await self._drive(ctx, MagicMock(), [], assembly=_boom)
+        await asyncio.gather(ctx.quiz_task, return_exceptions=True)
+
+        assert ctx.quiz_task.cancelled()
+
     async def test_should_skip_persist_when_row_was_purged(self) -> None:
         repository = MagicMock()
         ctx = self._ctx()
@@ -264,6 +279,37 @@ class TestTruncatedCalls:
             run_timing.log_run_summary(ctx, timer, self._recorder("length"), log)  # type: ignore[arg-type]
 
         assert "llm truncated=1" in caplog.text
+
+
+class TestDoneLineQuiz:
+    """The split path starts the quiz early: its call wall is ``quiz_call``, not the wait."""
+
+    @staticmethod
+    def _done_line(caplog: pytest.LogCaptureFixture, *phases: tuple[str, float]) -> str:
+        ctx = SimpleNamespace(
+            youtube_id="vid",
+            phase_times=dict(phases),
+            triage=None,
+            assembled_tabs=None,
+            plan_result=None,
+            memory=None,
+            enrichment_data={"quiz": [{}]},
+        )
+        timer = MagicMock(elapsed=MagicMock(return_value=1.0))
+        log = logging.getLogger("test.quiz")
+        with caplog.at_level(logging.INFO, logger="test.quiz"):
+            run_timing.log_run_summary(ctx, timer, PipelineTimingRecorder(), log)  # type: ignore[arg-type]
+        return caplog.text
+
+    def test_should_print_the_started_quiz_calls_wall(self, caplog: pytest.LogCaptureFixture):
+        text = self._done_line(caplog, ("enrichment", 2.1), ("quiz_call", 12.0))
+
+        assert "quiz=12.0s(ok)" in text
+
+    def test_should_print_the_late_groups_quiz_wall_without_a_started_call(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        assert "quiz=9.5s(ok)" in self._done_line(caplog, ("enrichment", 9.5))
 
 
 class TestRepositoryWrite:

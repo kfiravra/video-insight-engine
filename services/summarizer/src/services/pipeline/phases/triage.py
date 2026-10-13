@@ -4,6 +4,13 @@ Replaces the old manifest + triage 2-call flow with a single plan call. The
 tier probe (started with phase 2, ``phases/probe.py``) steers it: a confident
 probe domain picks the playbook, its format refines it, and its answer is the
 plan's one ``Hint:`` line.
+
+The plan phase only plans. Once plan ∥ memory are both in, the text branch
+reconciles the tabs (:func:`plan_done_events`, 3.2) and only then emits
+``triage_complete`` + ``meta``, so ``meta`` never lists a tab reconcile already
+dropped; the code tabs and code requirement it deferred are decided at
+frames-done (:func:`frames_done_events`), which sends a fresh ``meta`` when
+that changed the tabs.
 """
 
 from __future__ import annotations
@@ -16,6 +23,7 @@ from llm_common.context import llm_feature_var
 from src.services.override_state import check_override
 from src.services.pipeline.pipeline_helpers import sse_event
 from src.services.pipeline.plan import run_plan
+from src.services.pipeline.reconcile import reconcile_plan, resolve_deferred
 from src.services.pipeline.triage import TriageResult
 
 if TYPE_CHECKING:
@@ -67,12 +75,11 @@ def _store_plan_result(ctx: PipelineContext, plan_result: PlanResult) -> None:
     ctx.triage_dict = plan_result.to_triage_dict(ctx.content_format)
 
 
-def _meta_payload(
-    ctx: PipelineContext, video_data: VideoData, plan_result: PlanResult
-) -> dict[str, object]:
+def _meta_payload(ctx: PipelineContext, plan_result: PlanResult) -> dict[str, object]:
     """The ``meta`` SSE event — tab labels for progressive rendering."""
+    assert ctx.video_data is not None
     return {
-        "title": video_data.title,
+        "title": ctx.video_data.title,
         "contentTags": plan_result.content_tags,
         "modifiers": plan_result.modifiers,
         "primaryTag": plan_result.primary_tag,
@@ -115,10 +122,7 @@ async def run_phase_plan(ctx: PipelineContext) -> AsyncGenerator[str, None]:
         probe_hint=probe_hint(probe) if probe is not None and not ctx.override else None,
     )
 
-    _store_plan_result(ctx, plan_result)
-    yield sse_event("triage_complete", ctx.triage_dict)
-    yield sse_event("meta", _meta_payload(ctx, video_data, plan_result))
-
+    ctx.plan_result = plan_result
     logger.info(
         "pipeline.plan",
         extra={
@@ -132,6 +136,45 @@ async def run_phase_plan(ctx: PipelineContext) -> AsyncGenerator[str, None]:
             "probe_confidence": probe.confidence if probe else None,
         },
     )
+    # Still an async generator (run_parallel_phases streams its members);
+    # the plan's events go out at plan-done, after reconcile.
+    return
+    yield
+
+
+def plan_done_events(ctx: PipelineContext) -> list[str]:
+    """Reconcile the plan against the memory, store it, then ``triage_complete`` + ``meta``."""
+    assert ctx.plan_result is not None
+    _store_plan_result(ctx, reconcile_plan(ctx.plan_result, ctx.memory, ctx.content_format))
+    return [
+        sse_event("triage_complete", ctx.triage_dict),
+        sse_event("meta", _meta_payload(ctx, ctx.plan_result)),
+    ]
+
+
+def _tab_heads(plan: PlanResult) -> list[tuple[str, str]]:
+    return [(tab["id"], tab["label"]) for tab in plan.tabs]
+
+
+def frames_done_events(ctx: PipelineContext) -> list[str]:
+    """Frames-done: decide the code tabs and code requirement reconcile deferred,
+    on what the frames show.
+
+    A fresh ``meta`` goes out when that changed the tab list, so the client
+    drops a pending pill for a tab that will never come (and shows one for a
+    backfilled code tab). Called by every path at frames-done (today's: the
+    orchestrator's ``visual_inject`` step; the split path's: before the visual
+    group is cut).
+    """
+    plan = ctx.plan_result
+    if plan is None or not plan.awaits_screen:
+        return []
+    frames = (ctx.frame_descriptions or [], ctx.scene_frames_all or [])
+    _store_plan_result(ctx, resolve_deferred(plan, *frames, ctx.content_format))
+    assert ctx.plan_result is not None
+    if _tab_heads(ctx.plan_result) == _tab_heads(plan):
+        return []
+    return [sse_event("meta", _meta_payload(ctx, ctx.plan_result))]
 
 
 # Backward-compat alias

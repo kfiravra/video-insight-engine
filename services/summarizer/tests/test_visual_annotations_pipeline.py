@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.routes import pipeline_orchestration
+from src.services.pipeline.phases import frames_done
 from src.services.pipeline.phases import assembly as assembly_phase
 from src.services.pipeline.phases import qdrant_index
 from src.services.pipeline.pipeline_helpers import TranscriptData
@@ -99,10 +99,10 @@ async def _fake_frames(ctx: SimpleNamespace) -> AsyncGenerator[str, None]:
 
 
 async def _frames_done(ctx: SimpleNamespace) -> None:
-    """The frames phase, then the orchestration's Phase 2.5 render."""
+    """The frames phase, then the frames-done render (both paths)."""
     async for _ in _fake_frames(ctx):
         pass
-    pipeline_orchestration._render_visual_annotations(ctx)  # type: ignore[arg-type]
+    frames_done.render_frame_annotations(ctx)  # type: ignore[arg-type]
 
 
 @pytest.fixture(autouse=True)

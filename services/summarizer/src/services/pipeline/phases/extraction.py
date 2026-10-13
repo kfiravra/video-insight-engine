@@ -1,4 +1,11 @@
-"""Phase 4: Extraction — adaptive structured extraction, then coverage and quality metrics."""
+"""Phase 4: Extraction — adaptive structured extraction, then coverage and quality metrics.
+
+Today's path (``EXTRACTION_PARALLEL=false``): one call, or chunked batches for
+long videos. The split path (``phases/split_extraction.py``) shares the
+post-call helpers: ``record_validation``, ``fail_extraction`` and
+``finish_extraction``; its group calls are recorded as
+``pipeline.extraction._groups``.
+"""
 
 from __future__ import annotations
 
@@ -15,7 +22,7 @@ from src.models.domain_validation import (
     mis_targeted_fields,
 )
 from src.models.schemas import ErrorCode, ProcessingStatus
-from src.services.pipeline.extraction_quality import check_extraction_quality
+from src.services.pipeline.extraction_quality import ExtractionQuality, check_extraction_quality
 from src.services.pipeline.extractor import extract
 from src.services.pipeline.memory import format_clock
 from src.services.pipeline.phases.metadata import await_description_analysis
@@ -39,9 +46,11 @@ _DESCRIPTION_WAIT_SECONDS = 5.0
 # Extractor event keys that stay server-side: the validation report goes to
 # ``pipeline.extraction._dropped/_defaulted``, never into the SSE contract.
 _INTERNAL_KEYS = frozenset({"event", "validation"})
+# The split path's group calls (3.5); absent on today's path.
+GROUPS_KEY = "_groups"
 
 
-def _record_validation(ctx: PipelineContext, report: ValidationReport) -> None:
+def record_validation(ctx: PipelineContext, report: ValidationReport) -> None:
     """Keep the validation report and flag planned fields that lost over half their items."""
     dropped = report.get("dropped") or {}
     ctx.extraction_dropped = dropped
@@ -58,13 +67,20 @@ def _record_validation(ctx: PipelineContext, report: ValidationReport) -> None:
 
 
 def extraction_record(ctx: PipelineContext) -> dict[str, Any] | None:
-    """``pipeline.extraction``: the data plus this run's validation record."""
-    return extraction_with_drops(
+    """``pipeline.extraction``: the data plus this run's validation record (and, on the
+    split path, one ``_groups`` row per group call — alone when no group landed)."""
+    record = extraction_with_drops(
         ctx.extraction_data,
         ctx.extraction_dropped,
         ctx.extraction_mis_targeted,
         ctx.extraction_defaulted,
     )
+    # getattr: the readers' lightweight contexts (tests, eval) predate the split path.
+    groups = getattr(ctx, "extraction_groups", None)
+    if groups:
+        record = record if isinstance(record, dict) else {}
+        record[GROUPS_KEY] = [dict(row) for row in groups]
+    return record
 
 
 def _record_extraction_coverage(
@@ -124,8 +140,11 @@ def _record_extraction_coverage(
         )
 
 
-def _record_extraction_quality(ctx: PipelineContext) -> None:
-    """Log the share of planned dataSources the extraction populated (metric only).
+def _record_extraction_quality(
+    ctx: PipelineContext, quality: ExtractionQuality | None = None
+) -> None:
+    """Log the share of planned dataSources the extraction populated (metric only);
+    the split path passes its score over the requested fields instead.
 
     The synthesis-fed retry this score used to gate is gone (pipeline-1min 1c.5):
     7 firings in 55 runs, 0 of the 3 measurable ones improved. The numbers sit in the
@@ -133,7 +152,8 @@ def _record_extraction_quality(ctx: PipelineContext) -> None:
     """
     if ctx.plan_result is None or not ctx.extraction_data:
         return
-    quality = check_extraction_quality(ctx.plan_result.tabs, ctx.extraction_data)
+    if quality is None:
+        quality = check_extraction_quality(ctx.plan_result.tabs, ctx.extraction_data)
     logger.info(
         "pipeline.extraction_quality score=%.2f populated=%d/%d empty=%s",
         quality.score,
@@ -281,7 +301,7 @@ async def run_phase_extraction(ctx: PipelineContext) -> AsyncGenerator[str, None
             yield sse_event(event_name, {k: v for k, v in evt.items() if k not in _INTERNAL_KEYS})
             if event_name == "extraction_complete":
                 ctx.extraction_data = evt.get("data")
-                _record_validation(ctx, evt.get("validation") or {})
+                record_validation(ctx, evt.get("validation") or {})
                 batches_total = evt.get("batches_total")
                 batches_succeeded = evt.get("batches_succeeded")
     except (ValueError, asyncio.TimeoutError) as e:
@@ -293,36 +313,52 @@ async def run_phase_extraction(ctx: PipelineContext) -> AsyncGenerator[str, None
         )
 
     if not ctx.extraction_data:
-        logger.error("[pipeline] Extraction produced no data for video_id=%s", ctx.video_summary_id)
-        await asyncio.to_thread(
-            ctx.repository.update_status,
-            ctx.video_summary_id,
-            ProcessingStatus.FAILED,
-            "Extraction failed",
-            ErrorCode.LLM_ERROR,
-        )
-        yield sse_event(
-            "error",
-            {"message": "Extraction failed to produce data", "code": ErrorCode.LLM_ERROR.value},
-        )
+        yield await fail_extraction(ctx)
         return
+    finish_extraction(ctx, batches_total, batches_succeeded)
 
+
+async def fail_extraction(ctx: PipelineContext) -> str:
+    """No extraction data: the row is marked failed; the run's ``error`` event."""
+    logger.error("[pipeline] Extraction produced no data for video_id=%s", ctx.video_summary_id)
+    await asyncio.to_thread(
+        ctx.repository.update_status,
+        ctx.video_summary_id,
+        ProcessingStatus.FAILED,
+        "Extraction failed",
+        ErrorCode.LLM_ERROR,
+    )
+    return sse_event(
+        "error",
+        {"message": "Extraction failed to produce data", "code": ErrorCode.LLM_ERROR.value},
+    )
+
+
+def _log_extraction(ctx: PipelineContext) -> None:
+    data = ctx.extraction_data if isinstance(ctx.extraction_data, dict) else {}
     logger.info(
         "pipeline.extraction",
         extra={
             "video_id": ctx.video_summary_id,
-            "domains_extracted": list(ctx.extraction_data.keys())
-            if isinstance(ctx.extraction_data, dict)
-            else [],
+            "domains_extracted": list(data.keys()),
             "items_per_domain": {
                 k: sum(1 for v in d.values() if isinstance(v, list) and len(v) > 0)
-                for k, d in ctx.extraction_data.items()
+                for k, d in data.items()
                 if isinstance(d, dict)
-            }
-            if isinstance(ctx.extraction_data, dict)
-            else {},
+            },
         },
     )
 
+
+def finish_extraction(
+    ctx: PipelineContext,
+    batches_total: int | None,
+    batches_succeeded: int | None,
+    *,
+    quality: ExtractionQuality | None = None,
+) -> None:
+    """After a run's extraction data landed: the summary log, coverage and quality metrics
+    (``quality`` given = the split path's score over its requested fields)."""
+    _log_extraction(ctx)
     _record_extraction_coverage(ctx, batches_total, batches_succeeded)
-    _record_extraction_quality(ctx)
+    _record_extraction_quality(ctx, quality)

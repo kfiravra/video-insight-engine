@@ -212,3 +212,12 @@ class TestReleaseBackgroundWork:
         await asyncio.gather(pending, return_exceptions=True)
 
         assert pending.cancelled()
+
+    async def test_should_cancel_the_split_paths_started_quiz(self):
+        quiz = asyncio.create_task(asyncio.sleep(60))
+        ctx = SimpleNamespace(caption_task=None, description_task=None, quiz_task=quiz)
+
+        metadata.release_background_work(ctx)  # type: ignore[arg-type]
+        await asyncio.gather(quiz, return_exceptions=True)
+
+        assert quiz.cancelled()

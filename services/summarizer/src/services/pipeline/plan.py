@@ -242,21 +242,16 @@ def _plan_modifiers(data: dict) -> list[str]:
     return [m for m in items if isinstance(m, str)]
 
 
-def _plan_evidence(data: dict) -> dict[str, bool]:
-    """The plan's evidence answers as PlanResult will keep them (booleans only)."""
-    raw = data.get("evidence")
-    return {k: v for k, v in raw.items() if isinstance(v, bool)} if isinstance(raw, dict) else {}
-
-
 def _normalize_plan_data(data: dict, content_format: str | None) -> None:
     """Validate tabs and tags in the raw plan dict before PlanResult sees it.
 
     Order matters: dataSources are checked against the registry first, then
     primaryTag is normalized so the forbidden-component policy looks up the
-    right domain, then the reconcile guard re-points or drops tabs whose
-    dataSource the plan's own evidence/domains rule out. The prompt asks the
-    planner to avoid both; this is the guarantee (assembly enforces the
-    forbidden components again for cached plans).
+    right domain, then the guard re-points or drops tabs on a domain the plan
+    did not tag. The prompt asks the planner to avoid both; this is the
+    guarantee (assembly enforces the forbidden components again for cached
+    plans). Evidence is judged later, at plan-done, once the memory's second
+    opinion is in (``reconcile.py``, 3.2).
     """
     validated_tabs, dropped_tabs = _validate_data_sources(_validate_tabs(data.get("tabs", [])))
 
@@ -273,7 +268,7 @@ def _normalize_plan_data(data: dict, content_format: str | None) -> None:
     data["primaryTag"] = primary_tag
 
     reconciled_tabs, reconcile_drops, data["reconcile"] = reconcile_plan_tabs(
-        validated_tabs, content_tags, _plan_modifiers(data), _plan_evidence(data)
+        validated_tabs, content_tags, _plan_modifiers(data)
     )
     data["droppedTabs"] = [*dropped_tabs, *reconcile_drops]
     data["tabs"] = _enforce_domain_policy(reconciled_tabs, primary_tag, content_format)

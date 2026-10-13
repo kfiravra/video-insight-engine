@@ -20,7 +20,7 @@ import asyncio
 import functools
 import logging
 from collections.abc import AsyncGenerator, Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from llm_common.context import llm_feature_var
 
@@ -144,12 +144,13 @@ def after_captions(phase: PhaseFn) -> PhaseFn:
 
 
 def release_background_work(ctx: PipelineContext) -> None:
-    """Cancel the t=0 tasks a failed or cancelled run never joined.
+    """Cancel the t=0 tasks — and the split path's early quiz call — a failed or
+    cancelled run never joined.
 
     A finished task's exception is retrieved so asyncio never logs it as lost.
     """
-    for name in ("caption_task", "description_task"):
-        task: asyncio.Task[None] | None = getattr(ctx, name, None)
+    for name in ("caption_task", "description_task", "quiz_task"):
+        task: asyncio.Task[Any] | None = getattr(ctx, name, None)
         if task is None:
             continue
         if not task.done():

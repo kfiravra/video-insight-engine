@@ -14,7 +14,7 @@ from src.services.pipeline.tab_ledger import TabLedger
 
 if TYPE_CHECKING:
     from src.models.memory_types import MemoryResult
-    from src.models.pipeline_types import PlanResult
+    from src.models.pipeline_types import EnrichmentData, PlanResult
     from src.models.probe_types import TierProbe
     from src.repositories.mongodb_repository import MongoDBVideoRepository
     from src.services.llm import LLMService
@@ -100,6 +100,14 @@ class PipelineContext:
     # Rendered <visual_annotations> block (descriptions + OCR), set at frames-done (1c.2).
     visual_annotations: str = ""
 
+    # Split extraction (3.4, EXTRACTION_PARALLEL): the text branch sets
+    # ``plan_done`` once the tabs are reconciled and ``video_memory`` rendered
+    # (the text groups fire); the frames-done hook sets ``frames_done`` once the
+    # annotations are rendered and the deferred code tabs decided (the visual
+    # group is cut). Today's path sets ``plan_done`` too; nothing waits on it.
+    plan_done: asyncio.Event = field(default_factory=asyncio.Event)
+    frames_done: asyncio.Event = field(default_factory=asyncio.Event)
+
     # Memory stage (1b.3; None = failed or not run) and the <video_memory>
     # block rendered once from plan + memory (1b.4) for every writer's
     # ``{video_context}`` slot.
@@ -134,8 +142,15 @@ class PipelineContext:
     extraction_mis_targeted: list[str] = field(default_factory=list)
     # Fields validation reset to their default — pipeline.extraction._defaulted.
     extraction_defaulted: int = 0
+    # Split path: one row per group call ({group, chunk, fields, status, outputTokens,
+    # wallMs}) — pipeline.extraction._groups; empty on today's path.
+    extraction_groups: list[dict[str, Any]] = field(default_factory=list)
     synthesis_dict: dict[str, Any] = field(default_factory=dict)
     enrichment_data: dict[str, Any] | None = None
+    # Split path (3.6): the quiz call, started by the split extraction once the
+    # groups holding its domains' fields landed; assembly's late group awaits
+    # it. None on today's path (the late group makes the call).
+    quiz_task: asyncio.Task[EnrichmentData | None] | None = None
     # Coverage metric: how far into the video the timestamped extraction
     # reaches vs. duration, plus dropped-batch counts. Surfaced into meta.
     extraction_coverage: dict[str, Any] | None = None

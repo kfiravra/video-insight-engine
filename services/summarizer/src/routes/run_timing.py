@@ -17,6 +17,7 @@ from typing import Any
 from src.repositories.mongodb_repository import MongoDBVideoRepository
 from src.services.observability import log_span, update_trace_metadata
 from src.services.pipeline.context import PipelineContext
+from src.services.pipeline.phases.enrichment import QUIZ_CALL_STEP
 from src.services.pipeline.pipeline_helpers import PipelineTimer
 from src.services.pipeline.pipeline_timing import PipelineTimingRecorder
 
@@ -85,7 +86,8 @@ def log_run_summary(
         pt.get("memory", 0),
         "ok" if getattr(ctx, "memory", None) is not None else "FAIL",
         pt.get("extraction", 0),
-        pt.get("enrichment", 0),
+        # The split path starts the quiz early: "enrichment" is then only the wait.
+        pt.get(QUIZ_CALL_STEP, pt.get("enrichment", 0)),
         _quiz_outcome(ctx, pt),
         pt.get("assembly", 0),
         pt.get("synthesis", 0),

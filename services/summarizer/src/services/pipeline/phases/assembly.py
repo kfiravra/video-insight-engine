@@ -14,6 +14,13 @@ Order (pipeline-1min 1d.1/1d.3; every ``tab_ready`` through the run's
 5. the final re-emit: every tab not yet sent final, at its final position;
 6. ``complete`` (with the final tab order), the save, the shared artifacts
    (Redis, Qdrant), ``done``.
+
+Split path (3.6): every group has landed, so finals follow the rules above
+again; the tabs already streamed per group as previews (``phases/group_emission``),
+so step 3 previews only what the client lacks — the overview, tabs assembly
+added, tabs the last groups changed — the quiz call the split extraction
+started is awaited in step 4 (cancelled when the plan no longer uses it), and
+step 5 sends the overview last.
 """
 
 from __future__ import annotations
@@ -31,8 +38,11 @@ from src.services.pipeline.assembly import assemble_response
 from src.services.pipeline.assembly.core import count_dropped_tabs
 from src.services.pipeline.assembly.moment_frame_fill import fill_moment_frames
 from src.services.pipeline.enrichment import needs_quiz
+from src.services.pipeline.group_failures import group_drops
 from src.services.pipeline.phases import run_phase_enrichment, run_phase_synthesis
+from src.services.pipeline.phases.enrichment import cancel_quiz_task
 from src.services.pipeline.phases.extraction import extraction_record
+from src.services.pipeline.phases.group_emission import assembled_tab_events
 from src.services.pipeline.phases.late_quiz import carry_moment_props
 from src.services.pipeline.phases.metadata import await_description_analysis
 from src.services.pipeline.phases.moments import video_meta
@@ -48,7 +58,9 @@ from src.services.pipeline.pipeline_helpers import (
     spawn_background,
     sse_event,
 )
+from src.services.pipeline.plan_reconcile import PLAN_PARSE
 from src.services.pipeline.post_processor import coverage_is_degraded
+from src.services.pipeline.reconcile_pass import ADDED_ACTIONS
 from src.services.pipeline.tab_ledger import tab_id
 from src.services.status_callback import send_video_status_background
 from src.services.video.description_analyzer import DescriptionAnalysis
@@ -138,6 +150,23 @@ async def run_phase_moment_fill(ctx: PipelineContext) -> AsyncGenerator[str, Non
         yield ctx.tab_ledger.event(tabs[position], position)
 
 
+def _tabs_designed(ctx: PipelineContext, plan_dropped: list[dict]) -> int:
+    """What the planner designed: its drops plus its surviving tabs.
+
+    Reconcile (3.2) also adds tabs (required backfill, fill to 3) — never the
+    planner's. When the domain defaults stand in (``planFallback``) only the
+    parse drops were the planner's: later reconcile drops hit default tabs.
+    """
+    assert ctx.triage is not None
+    plan = ctx.plan_result
+    rows = plan.reconcile if plan else []
+    if plan is not None and plan.plan_fallback:
+        later = [r for r in rows if r.get("action") == "dropped" and r.get("stage") != PLAN_PARSE]
+        return len(plan_dropped) - len(later)
+    added = {r.get("tabId") for r in rows if r.get("action") in ADDED_ACTIONS}
+    return len(plan_dropped) + sum(1 for tab in ctx.triage.tabs if tab.get("id") not in added)
+
+
 def _drop_accounting(ctx: PipelineContext, assembled: dict) -> dict:
     """``pipeline.assembly`` counts: designed, assembled, dropped (+ the drop list)."""
     assert ctx.triage is not None
@@ -145,13 +174,12 @@ def _drop_accounting(ctx: PipelineContext, assembled: dict) -> dict:
     # + the assembler's per-tab accounting — assembly also ADDS tabs
     # (overview, backfill, filmstrip, fallbacks), so the old
     # designed-minus-assembled subtraction masked drops and could go negative.
+    # A tab a failed extraction group cost says so (3.8).
     plan_dropped = ctx.plan_result.dropped_tabs if ctx.plan_result else []
-    dropped_tabs = [*plan_dropped, *assembled.get("dropped", [])]
-    # Designed = what the planner designed. When plan validation left nothing
-    # and the domain defaults stand in, only the drops were the planner's.
+    dropped_tabs = [*plan_dropped, *group_drops(ctx, assembled.get("dropped", []))]
     plan_fallback = bool(ctx.plan_result and ctx.plan_result.plan_fallback)
     accounting = {
-        "tabsDesigned": len(plan_dropped) + (0 if plan_fallback else len(ctx.triage.tabs)),
+        "tabsDesigned": _tabs_designed(ctx, plan_dropped),
         "tabsAssembled": len(assembled.get("tabs", [])),
         # Evidence-skipped requirements are listed but were never tabs (1d.7).
         "tabsDropped": count_dropped_tabs(dropped_tabs),
@@ -201,6 +229,17 @@ def _late_phases(ctx: PipelineContext, synthesized: bool) -> list[PhaseFn]:
     return phases
 
 
+def _start_late_group(ctx: PipelineContext, synthesized: bool) -> list[PhaseFn]:
+    """The late phases, declared to the ledger; a started quiz no late phase awaits stops."""
+    late = _late_phases(ctx, synthesized)
+    if run_phase_enrichment not in late:
+        cancel_quiz_task(ctx)  # e.g. a strip-only quiz whose host frames-done dropped
+    ctx.tab_ledger.expect_late_changes(
+        quiz=run_phase_enrichment in late, synthesis=run_phase_synthesis in late
+    )
+    return late
+
+
 def _add_late_quiz(
     ctx: PipelineContext,
     description: dict[str, Any] | None,
@@ -220,6 +259,8 @@ async def run_phase_assembly(ctx: PipelineContext) -> AsyncGenerator[str, None]:
     """Emit the tabs, run the late group, then save, cache and finish (module docstring)."""
     assert ctx.video_data is not None
     assert ctx.triage is not None
+    split = ctx.tab_ledger.groups_pending  # the split extraction streamed previews
+    ctx.tab_ledger.groups_landed()
     description = await _description_analysis(ctx)
     if description is not None:
         yield sse_event("description_analysis", description)
@@ -234,11 +275,8 @@ async def run_phase_assembly(ctx: PipelineContext) -> AsyncGenerator[str, None]:
         seed_synthesis_dict(ctx)
     synthesis_input = dict(ctx.synthesis_dict or {})
     assembled = _assemble(ctx, description, synthesis_input)
-    late = _late_phases(ctx, synthesized_first)
-    ctx.tab_ledger.expect_late_changes(
-        quiz=run_phase_enrichment in late, synthesis=run_phase_synthesis in late
-    )
-    for event in _first_tab_events(ctx):
+    late = _start_late_group(ctx, synthesized_first)
+    for event in assembled_tab_events(ctx) if split else _first_tab_events(ctx):
         yield event
 
     async for event in run_parallel_phases(late, ctx):

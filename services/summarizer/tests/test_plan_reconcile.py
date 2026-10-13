@@ -1,4 +1,5 @@
-"""Plan-time reconcile guard (hotfix 2.1): re-point or drop tabs whose dataSource cannot have content."""
+"""Plan-parse guard (hotfix 2.1, narrowed by 3.2): re-point or drop tabs on a domain
+the plan did not tag. Evidence is judged at plan-done (``test_reconcile.py``)."""
 
 from __future__ import annotations
 
@@ -9,10 +10,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from src.models.pipeline_types import PlanResult
 from src.services.pipeline import plan as plan_mod
 from src.services.pipeline import plan_prompt
-from src.services.pipeline.plan_reconcile import reconcile_plan_tabs
+from src.services.pipeline.plan_reconcile import reconcile_plan_tabs, replacement
 from tests.test_phase_assembly_cache import _build_ctx
-
-_EVIDENCE_ALL_TRUE = {"has_code": True, "has_claims": True, "is_learnable": True}
 
 
 def _tab(tab_id: str, component: str, data_source: str) -> dict:
@@ -31,14 +30,12 @@ def _9vng_tabs() -> list[dict]:
 
 class TestInactiveDomain:
     def test_should_drop_a_tab_whose_domain_is_not_a_content_tag(self) -> None:
-        kept, _, _ = reconcile_plan_tabs(_9vng_tabs(), ["learning", "tech"], [], _EVIDENCE_ALL_TRUE)
+        kept, _, _ = reconcile_plan_tabs(_9vng_tabs(), ["learning", "tech"], [])
 
         assert [t["id"] for t in kept] == ["concepts", "moments", "quiz"]
 
     def test_should_record_the_drop_for_pipeline_reconcile(self) -> None:
-        _, _, records = reconcile_plan_tabs(
-            _9vng_tabs(), ["learning", "tech"], [], _EVIDENCE_ALL_TRUE
-        )
+        _, _, records = reconcile_plan_tabs(_9vng_tabs(), ["learning", "tech"], [])
 
         assert records == [
             {
@@ -48,13 +45,13 @@ class TestInactiveDomain:
                 "to": None,
                 "reason": "inactive_domain",
                 "action": "dropped",
+                "stage": "plan_parse",
+                "evidence": None,
             }
         ]
 
     def test_should_list_the_drop_in_the_dropped_tabs_shape(self) -> None:
-        _, dropped, _ = reconcile_plan_tabs(
-            _9vng_tabs(), ["learning", "tech"], [], _EVIDENCE_ALL_TRUE
-        )
+        _, dropped, _ = reconcile_plan_tabs(_9vng_tabs(), ["learning", "tech"], [])
 
         assert dropped == [
             {
@@ -68,53 +65,16 @@ class TestInactiveDomain:
     def test_should_count_modifiers_as_active_domains(self) -> None:
         tab = _tab("moments", "moment_track", "narrative.keyMoments")
 
-        kept, _, records = reconcile_plan_tabs([tab], ["learning"], ["narrative"], {})
+        kept, _, records = reconcile_plan_tabs([tab], ["learning"], ["narrative"])
 
         assert (len(kept), records) == (1, [])
 
     def test_should_flag_a_modifier_path_when_the_modifier_is_not_planned(self) -> None:
         tab = _tab("moments", "moment_track", "narrative.keyMoments")
 
-        _, _, records = reconcile_plan_tabs([tab], ["learning"], [], {})
+        _, _, records = reconcile_plan_tabs([tab], ["learning"], [])
 
         assert records[0]["reason"] == "inactive_domain"
-
-
-class TestEvidenceFalse:
-    def test_should_swap_in_a_same_component_sibling_when_evidence_is_false(self) -> None:
-        tab = _tab("code", "code_playground", "tech.snippets")
-
-        kept, _, records = reconcile_plan_tabs([tab], ["tech"], [], {"has_code": False})
-
-        assert (kept[0]["dataSource"], records[0]["to"], records[0]["reason"]) == (
-            "tech.patterns",
-            "tech.patterns",
-            "evidence_false",
-        )
-
-    def test_should_drop_the_tab_when_no_same_component_source_is_eligible(self) -> None:
-        tab = _tab("claims", "claims_tracker", "news.claims")
-
-        kept, dropped, _ = reconcile_plan_tabs([tab], ["news"], [], {"has_claims": False})
-
-        assert (kept, dropped[0]["reason"]) == ([], "reconcile_evidence_false")
-
-    def test_should_keep_the_tab_when_the_plan_did_not_answer_the_key(self) -> None:
-        tab = _tab("code", "code_playground", "tech.snippets")
-
-        kept, _, records = reconcile_plan_tabs([tab], ["tech"], [], {})
-
-        assert (kept[0]["dataSource"], records) == ("tech.snippets", [])
-
-    def test_should_skip_a_source_another_tab_renders_with_the_same_component(self) -> None:
-        tabs = [
-            _tab("code", "code_playground", "tech.snippets"),
-            _tab("patterns", "code_playground", "tech.patterns"),
-        ]
-
-        kept, _, _ = reconcile_plan_tabs(tabs, ["tech"], [], {"has_code": False})
-
-        assert [t["dataSource"] for t in kept] == ["tech.cheatSheet", "tech.patterns"]
 
     def test_should_reuse_a_source_another_tab_renders_with_another_component(self) -> None:
         """jMq8lEu-of0 replay: moments planned on learning.timestamps for a food-only video."""
@@ -123,23 +83,62 @@ class TestEvidenceFalse:
             _tab("key_moments", "moment_track", "learning.timestamps"),
         ]
 
-        kept, _, records = reconcile_plan_tabs(tabs, ["food"], [], {"has_steps": True})
+        kept, _, records = reconcile_plan_tabs(tabs, ["food"], [])
 
         assert (kept[1]["dataSource"], records[0]["reason"]) == ("food.steps", "inactive_domain")
 
+
+class TestEvidenceWaitsForPlanDone:
+    """The plan's own ``false`` cannot make a key doubly false — the parse keeps the tab."""
+
+    def test_should_keep_a_tab_whose_evidence_the_plan_marked_false(self) -> None:
+        tab = _tab("code", "code_playground", "tech.snippets")
+
+        kept, _, records = reconcile_plan_tabs([tab], ["tech"], [])
+
+        assert (kept, records) == ([tab], [])
+
+    def test_should_keep_the_quiz_whatever_the_plan_said_about_learnability(self) -> None:
+        quiz = _tab("quiz", "quiz_arena", "enrichment.quiz")
+
+        kept, _, _ = reconcile_plan_tabs([quiz], ["learning"], [])
+
+        assert kept == [quiz]
+
+    def test_should_leave_unregistered_sources_alone(self) -> None:
+        tab = _tab("filmstrip", "video_filmstrip", "frames")
+
+        kept, _, records = reconcile_plan_tabs([tab], ["learning"], [])
+
+        assert (kept, records) == ([tab], [])
+
+
+class TestReplacement:
+    """``replacement`` — the same-component re-point reconcile also uses at plan-done."""
+
+    def test_should_swap_in_a_same_component_sibling_when_evidence_is_false(self) -> None:
+        target = replacement("tech.snippets", "code_playground", ["tech"], {}, set())
+
+        assert target == "tech.patterns"
+
+    def test_should_skip_a_source_whose_evidence_is_false(self) -> None:
+        target = replacement(
+            "tech.snippets", "code_playground", ["tech"], {"has_code": False}, set()
+        )
+
+        assert target is None
+
+    def test_should_skip_a_source_another_tab_renders_with_the_same_component(self) -> None:
+        taken = {("tech.snippets", "code_playground"), ("tech.patterns", "code_playground")}
+
+        target = replacement("tech.snippets", "code_playground", ["tech"], {}, taken)
+
+        assert target == "tech.cheatSheet"
+
     def test_should_accept_a_replacement_whose_evidence_key_is_unanswered(self) -> None:
-        tab = _tab("key_moments", "moment_track", "learning.timestamps")
+        target = replacement("learning.timestamps", "moment_track", ["food"], {}, set())
 
-        kept, _, _ = reconcile_plan_tabs([tab], ["food"], [], {})
-
-        assert kept[0]["dataSource"] == "food.steps"
-
-    def test_should_not_replace_with_a_source_whose_evidence_is_false(self) -> None:
-        tab = _tab("key_moments", "moment_track", "learning.timestamps")
-
-        _, _, records = reconcile_plan_tabs([tab], ["food"], [], {"has_steps": False})
-
-        assert records[0]["to"] is None
+        assert target == "food.steps"
 
 
 class TestMomentTrackNeverDropped:
@@ -149,14 +148,14 @@ class TestMomentTrackNeverDropped:
         """T1dQhQAm8Tc (prod 2026-10-09): moments on learning.timestamps for a tech-only video."""
         tab = _tab("moments", "moment_track", "learning.timestamps")
 
-        kept, dropped, _ = reconcile_plan_tabs([tab], ["tech"], [], {})
+        kept, dropped, _ = reconcile_plan_tabs([tab], ["tech"], [])
 
         assert (kept, dropped) == ([tab], [])
 
     def test_should_record_the_kept_moment_tab_for_the_fallback(self) -> None:
         tab = _tab("moments", "moment_track", "learning.timestamps")
 
-        _, _, records = reconcile_plan_tabs([tab], ["tech"], [], {})
+        _, _, records = reconcile_plan_tabs([tab], ["tech"], [])
 
         assert (records[0]["reason"], records[0]["action"]) == (
             "inactive_domain",
@@ -166,49 +165,29 @@ class TestMomentTrackNeverDropped:
     def test_should_still_repoint_a_moment_tab_when_an_active_source_can_feed_it(self) -> None:
         tab = _tab("moments", "moment_track", "learning.timestamps")
 
-        kept, _, records = reconcile_plan_tabs([tab], ["food"], [], {"has_steps": True})
+        kept, _, records = reconcile_plan_tabs([tab], ["food"], [])
 
         assert (kept[0]["dataSource"], records[0]["action"]) == ("food.steps", "repointed")
 
-    def test_should_drop_the_quiz_when_the_video_is_not_learnable(self) -> None:
-        quiz = _tab("quiz", "quiz_arena", "enrichment.quiz")
 
-        kept, _, records = reconcile_plan_tabs([quiz], ["learning"], [], {"is_learnable": False})
-
-        assert (kept, records[0]["reason"]) == ([], "evidence_false")
-
-    def test_should_keep_the_quiz_outside_the_content_domains(self) -> None:
-        quiz = _tab("quiz", "quiz_arena", "enrichment.quiz")
-
-        kept, _, _ = reconcile_plan_tabs([quiz], ["learning"], [], {"is_learnable": True})
-
-        assert kept == [quiz]
-
-    def test_should_leave_unregistered_sources_alone(self) -> None:
-        tab = _tab("filmstrip", "video_filmstrip", "frames")
-
-        kept, _, records = reconcile_plan_tabs([tab], ["learning"], [], {})
-
-        assert (kept, records) == ([tab], [])
-
-
-def _plan_json(tabs: list[dict]) -> str:
+def _plan_json(tabs: list[dict], evidence: dict[str, bool]) -> str:
     return json.dumps(
         {
             "contentTags": ["learning", "tech"],
             "primaryTag": "learning",
             "confidence": 0.9,
-            "evidence": {"has_claims": True, "is_learnable": True},
+            "evidence": evidence,
             "tabs": tabs,
         }
     )
 
 
-async def _run_plan_with(tabs: list[dict]) -> PlanResult:
+async def _run_plan_with(tabs: list[dict], evidence: dict[str, bool] | None = None) -> PlanResult:
+    answer = _plan_json(tabs, evidence or {"has_claims": True, "is_learnable": True})
     with (
         patch.object(plan_prompt, "_load_plan_prompt", return_value="<video>{title}</video>"),
         patch.object(plan_prompt, "_load_component_toolkit", return_value=""),
-        patch.object(plan_mod, "call_llm_with_retry", AsyncMock(return_value=_plan_json(tabs))),
+        patch.object(plan_mod, "call_llm_with_retry", AsyncMock(return_value=answer)),
     ):
         return await plan_mod.run_plan(
             title="T",
@@ -239,6 +218,14 @@ class TestRunPlan:
         result = await _run_plan_with(_9vng_tabs())
 
         assert [d["reason"] for d in result.dropped_tabs] == ["reconcile_inactive_domain"]
+
+    async def test_should_keep_a_tab_the_plans_own_evidence_rules_out(self) -> None:
+        tabs = [_tab("concepts", "concept_canvas", "learning.concepts")]
+        tabs.append(_tab("code", "code_playground", "tech.snippets"))
+
+        result = await _run_plan_with(tabs, evidence={"has_code": False})
+
+        assert [t["id"] for t in result.tabs] == ["concepts", "code"]
 
 
 async def _saved_pipeline(ctx_updates: dict) -> dict:

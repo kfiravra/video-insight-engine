@@ -14,6 +14,7 @@ from typing import Any
 from src.shared_config.domain_config import (
     assembler_item_caps,
     build_fallback_tabs,
+    default_tab_id,
     domain_requirements,
     effective_requirements,
     quiz_policy,
@@ -612,7 +613,7 @@ def count_dropped_tabs(dropped: list[dict]) -> int:
 
 
 def _record_evidence_skip(
-    primary_tag: str, component: str, key: str, dropped_sink: list[dict] | None
+    primary_tag: str, component: str, key: str, dropped_sink: list[dict] | None, live: set[str]
 ) -> None:
     logger.info(
         "Required '%s' for domain '%s' not backfilled: %s=false in the plan's evidence",
@@ -623,7 +624,7 @@ def _record_evidence_skip(
     if dropped_sink is not None:
         dropped_sink.append(
             {
-                "id": "",
+                "id": default_tab_id(primary_tag, component, live),
                 "component": component,
                 "dataSource": "",
                 "reason": REQUIREMENT_EVIDENCE_FALSE,
@@ -721,7 +722,8 @@ def _validate_domain_requirements(
         if any(t.get("component", "") in accepted for t in tabs):
             continue
         if req in ruled_out:
-            _record_evidence_skip(primary_tag, req, ruled_out[req], dropped_sink)
+            live = {str(t.get("id", "")) for t in tabs}
+            _record_evidence_skip(primary_tag, req, ruled_out[req], dropped_sink, live)
         elif not _backfill_required_component(
             tabs, primary_tag, accepted, extraction, enrichment, synthesis, video_meta
         ):

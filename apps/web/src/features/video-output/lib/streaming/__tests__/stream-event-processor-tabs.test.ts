@@ -214,6 +214,26 @@ describe('stream-event-processor — tab_ready contract', () => {
 
       expect(state.phase).toBe('translation');
     });
+
+    it('should keep building when extraction_progress follows an assembled tab', () => {
+      const state = run([
+        { event: 'phase', phase: 'extraction' },
+        tab('a', 1),
+        { event: 'extraction_progress', section: 'groups', percent: 65, batch: 2, of: 3 },
+      ]);
+
+      expect(state.phase).toBe('building');
+    });
+
+    it('should still record the progress of a later group while building', () => {
+      const state = run([
+        { event: 'phase', phase: 'extraction' },
+        tab('a', 1),
+        { event: 'extraction_progress', section: 'groups', percent: 65, batch: 2, of: 3 },
+      ]);
+
+      expect(state.extractionProgress).toEqual({ section: 'groups', percent: 65, batch: 2, of: 3 });
+    });
   });
 
   describe('isStreamSettled', () => {
@@ -252,6 +272,57 @@ describe('stream-event-processor — tab_ready contract', () => {
       ]);
 
       expect(isStreamSettled(state)).toBe(false);
+    });
+  });
+
+  describe('a split run (EXTRACTION_PARALLEL, jMq8lEu-of0 shape)', () => {
+    const progress = (batch: number): Event => ({ event: 'extraction_progress', section: 'groups', percent: 5 + 30 * batch, batch, of: 3 });
+    const closing = ['ingredients', 'cook_steps', 'chef_tips', 'overview'];
+    const positions: Record<string, number> = { overview: 0, ingredients: 1, cook_steps: 2, chef_tips: 3, key_moments: 4 };
+    const events: Event[] = [
+      tab('key_moments', 4, { provisional: true }),
+      progress(1),
+      tab('ingredients', 1),
+      progress(2),
+      tab('cook_steps', 2),
+      progress(3),
+      tab('chef_tips', 3),
+      tab('overview', 0),
+      tab('cook_steps', 2, { label: 'cook_steps framed' }),
+      tab('key_moments', 4, { final: true }),
+      ...closing.map((id) => tab(id, positions[id], { final: true })),
+      { event: 'complete', tabCount: 5, tabIds: ['overview', 'ingredients', 'cook_steps', 'chef_tips', 'key_moments'], processingTimeMs: 116800 },
+    ];
+
+    it('should hold every per-group preview non-final until the closing re-emit', () => {
+      const state = run(events.slice(0, 7));
+
+      expect(state.tabs.filter((t) => !t.provisional).map((t) => [t.id, t.final === true])).toEqual([
+        ['ingredients', false],
+        ['cook_steps', false],
+        ['chef_tips', false],
+      ]);
+    });
+
+    it('should show the overview preview first while the late group runs', () => {
+      const state = run(events.slice(0, 8));
+
+      expect(ids(state)).toEqual(['overview', 'ingredients', 'cook_steps', 'chef_tips', 'key_moments']);
+    });
+
+    it('should end settled in the saved order with the overview final last', () => {
+      const state = run(events);
+
+      expect([ids(state), isStreamSettled(state)]).toEqual([
+        ['overview', 'ingredients', 'cook_steps', 'chef_tips', 'key_moments'],
+        true,
+      ]);
+    });
+
+    it('should keep the building phase across the groups once a tab arrived', () => {
+      const state = run([{ event: 'phase', phase: 'extraction' }, ...events.slice(0, 6)]);
+
+      expect(state.phase).toBe('building');
     });
   });
 

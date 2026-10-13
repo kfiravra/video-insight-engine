@@ -435,3 +435,63 @@ async def test_update_trace_metadata_merges_on_active_trace(monkeypatch):
 def test_update_trace_metadata_no_op_outside_trace():
     """No trace open → silent no-op."""
     lc.update_trace_metadata({"cacheHit": True})  # must not raise
+
+
+# ─── Prompt registry misses (pipeline-1min R40 B1) ───
+
+
+class _Clock:
+    """``lc.time`` stand-in: a monotonic clock the test moves."""
+
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def monotonic(self) -> float:
+        return self.now
+
+
+def _registry(monkeypatch, get_prompt: MagicMock) -> _Clock:
+    monkeypatch.setattr(lc, "_client", MagicMock(get_prompt=get_prompt))
+    clock = _Clock()
+    monkeypatch.setattr(lc, "time", clock)
+    return clock
+
+
+class TestPromptMisses:
+    def test_should_not_refetch_a_missing_prompt_within_the_miss_ttl(self, monkeypatch):
+        get_prompt = MagicMock(side_effect=RuntimeError("404 prompt not found"))
+        clock = _registry(monkeypatch, get_prompt)
+        lc.fetch_prompt_with_obj("summarizer:extraction_group_job")
+        clock.now += lc.PROMPT_MISS_TTL_S - 1
+
+        lc.fetch_prompt_with_obj("summarizer:extraction_group_job")
+
+        assert get_prompt.call_count == 1
+
+    def test_should_refetch_a_missing_prompt_once_the_miss_ttl_passed(self, monkeypatch):
+        get_prompt = MagicMock(side_effect=RuntimeError("404 prompt not found"))
+        clock = _registry(monkeypatch, get_prompt)
+        lc.fetch_prompt_with_obj("summarizer:extraction_group_job")
+        clock.now += lc.PROMPT_MISS_TTL_S
+
+        lc.fetch_prompt_with_obj("summarizer:extraction_group_job")
+
+        assert get_prompt.call_count == 2
+
+    def test_should_still_fetch_other_prompts_while_one_is_missing(self, monkeypatch):
+        found = MagicMock(prompt="TEXT")
+        get_prompt = MagicMock(side_effect=[RuntimeError("404"), found])
+        _registry(monkeypatch, get_prompt)
+        lc.fetch_prompt_with_obj("summarizer:extraction_group_job")
+
+        assert lc.fetch_prompt_with_obj("summarizer:plan") is found
+
+    def test_should_ask_the_sdk_for_a_found_prompt_on_every_load(self, monkeypatch):
+        """Hits keep the SDK's own cache (60 s TTL, background refresh)."""
+        get_prompt = MagicMock(return_value=MagicMock(prompt="TEXT"))
+        _registry(monkeypatch, get_prompt)
+        lc.fetch_prompt_with_obj("summarizer:plan")
+
+        lc.fetch_prompt_with_obj("summarizer:plan")
+
+        assert get_prompt.call_count == 2

@@ -124,10 +124,11 @@ function handleExtractionProgress(event: Record<string, unknown>, setState: SetS
   // They are optional so legacy single/overflow events still parse.
   const batch = typeof event.batch === "number" ? event.batch : undefined;
   const of = typeof event.of === "number" ? event.of : undefined;
+  // The split extraction streams tabs between its groups' progress events:
+  // once a tab moved the timeline to "building", progress never moves it back.
   setState((prev) => ({
     ...prev,
-    phase: "extraction",
-    phaseDetail: null,
+    ...(BEFORE_BUILDING.has(prev.phase) ? { phase: "extraction" as const, phaseDetail: null } : {}),
     extractionProgress: { section, percent, batch, of },
   }));
 }

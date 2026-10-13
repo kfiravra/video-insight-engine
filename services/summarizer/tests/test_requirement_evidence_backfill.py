@@ -35,6 +35,20 @@ _FOOD = json.loads(
     (Path(__file__).parent / "fixtures" / "llm_responses" / "food.json").read_text()
 )["extraction_response"]
 _NO_RECIPE = {"has_ingredients": False, "has_steps": False}
+# The defaultTab a backfill of each gated requirement would add.
+_WOULD_ADD = {
+    ("fitness", "workout_room"): "exercises",
+    ("food", "checklist"): "ingredients",
+    ("food", "step_player"): "steps",
+    ("gaming", "tier_list"): "tier_list",
+    ("news", "claims_tracker"): "claims",
+    ("project", "checklist"): "materials",
+    ("project", "step_player"): "steps",
+    ("review", "comparison"): "pros_cons",
+    ("sport", "formation_diagram"): "formation",
+    ("tech", "code_playground"): "code",
+    ("travel", "spot_explorer"): "itinerary",
+}
 
 
 def _backfill_attempts(
@@ -80,12 +94,20 @@ class TestBackfillGate:
 
         assert not any(component in accepted for accepted in attempts)
         assert {
-            "id": "",
+            "id": _WOULD_ADD[(domain, component)],
             "component": component,
             "dataSource": "",
             "reason": REQUIREMENT_EVIDENCE_FALSE,
             "detail": f"{key}=false",
         } in dropped
+
+    def test_should_not_name_a_live_tab_in_the_skip_entry(self) -> None:
+        """A planned ``code`` tab demoted to info_grid keeps its id (R41 W2)."""
+        demoted = [{"id": "code", "component": "info_grid"}]
+
+        _, dropped = _backfill_attempts("tech", {"has_code": False}, demoted)
+
+        assert [d["id"] for d in dropped if d["reason"] == REQUIREMENT_EVIDENCE_FALSE] == [""]
 
     @pytest.mark.parametrize(("domain", "component", "key"), _GATES)
     def test_should_backfill_a_requirement_when_its_evidence_is_true(

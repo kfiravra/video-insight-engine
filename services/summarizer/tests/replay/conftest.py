@@ -6,8 +6,14 @@ import asyncio
 
 import pytest
 
+from src.config import settings
 from tests.replay.cassette import Cassette, available_cassettes, load_cassette
 from tests.replay.driver import ReplayResult, run_replay
+
+# The replays run in the process's mode (cassettes pin neither): the suite is
+# green both ways — ``EXTRACTION_PARALLEL=false`` in the environment replays
+# today's single call, the default the field groups (3.4).
+SPLIT_EXTRACTION = settings.EXTRACTION_PARALLEL
 
 
 @pytest.fixture(scope="package")

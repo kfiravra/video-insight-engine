@@ -4,6 +4,8 @@ final = the tab's last emission this run; a tab a late phase may still change
 goes out non-final; a provisional tab is never final; the closing re-emit sends
 every tab not yet received final, once, at its final position. The tab that
 takes the provisional's place under another id names it in ``replaces``.
+After per-group streaming (3.6) nothing is final before the closing re-emit,
+which sends the overview last.
 """
 
 from __future__ import annotations
@@ -21,9 +23,11 @@ def _payload(chunk: str) -> dict:
     return json.loads(chunk.removeprefix("data: "))
 
 
-def _ledger(*, quiz: bool = False, synthesis: bool = False) -> TabLedger:
+def _ledger(*, quiz: bool = False, synthesis: bool = False, groups: bool = False) -> TabLedger:
     ledger = TabLedger()
     ledger.expect_late_changes(quiz=quiz, synthesis=synthesis)
+    if groups:
+        ledger.expect_groups()
     return ledger
 
 
@@ -135,6 +139,103 @@ class TestClosingEvents:
         finals = [_payload(c)["id"] for c in sent if _payload(c)["final"]]
 
         assert finals == ["overview", "code"]
+
+
+class TestPerGroupStreaming:
+    def test_should_mark_a_tab_non_final_while_groups_are_pending(self) -> None:
+        assert _payload(_ledger(groups=True).event(_tab("facts"), 1))["final"] is False
+
+    def test_should_never_mark_a_preview_final(self) -> None:
+        assert _payload(_ledger().event(_tab("facts"), 1, preview=True))["final"] is False
+
+    def test_should_follow_the_late_group_rules_once_every_group_landed(self) -> None:
+        ledger = _ledger(groups=True)
+
+        ledger.groups_landed()
+
+        assert _payload(ledger.event(_tab("moments", "moment_track"), 3))["final"] is True
+
+    def test_should_send_every_previewed_tab_final_at_the_closing_re_emit(self) -> None:
+        ledger = _ledger(groups=True)
+        tabs = [_tab("overview", "overview"), _tab("facts"), _tab("tips")]
+        for position, tab in enumerate(tabs):
+            ledger.event(tab, position, preview=True)
+
+        closing = [_payload(c) for c in ledger.closing_events(tabs)]
+
+        assert sorted((p["id"], p["final"]) for p in closing) == [
+            ("facts", True),
+            ("overview", True),
+            ("tips", True),
+        ]
+
+    def test_should_send_the_overview_last_at_its_final_position(self) -> None:
+        ledger = _ledger(groups=True)
+        ledger.groups_landed()
+        tabs = [_tab("overview", "overview"), _tab("facts"), _tab("tips")]
+
+        closing = [_payload(c) for c in ledger.closing_events(tabs)]
+
+        assert [(p["id"], p["position"]) for p in closing] == [
+            ("facts", 1),
+            ("tips", 2),
+            ("overview", 0),
+        ]
+
+    def test_should_keep_position_order_when_no_group_streamed(self) -> None:
+        tabs = [_tab("overview", "overview"), _tab("facts")]
+
+        closing = [_payload(c)["id"] for c in _ledger(quiz=True).closing_events(tabs)]
+
+        assert closing == ["overview", "facts"]
+
+    def test_should_skip_a_tab_sent_final_once_every_group_landed(self) -> None:
+        ledger = _ledger(groups=True)
+        moments = _tab("moments", "moment_track")
+        ledger.groups_landed()
+        ledger.event(moments, 1)
+
+        closing = [
+            _payload(c)["id"]
+            for c in ledger.closing_events([_tab("overview", "overview"), moments])
+        ]
+
+        assert closing == ["overview"]
+
+    def test_should_send_each_tab_final_once_over_a_per_group_run(self) -> None:
+        ledger = _ledger(groups=True, quiz=True)
+        tabs = [_tab("overview", "overview"), _tab("facts")]
+        sent = [ledger.event(tabs[1], 1, preview=True), ledger.event(tabs[0], 0, preview=True)]
+        ledger.groups_landed()
+        sent += ledger.closing_events(tabs)
+        sent += ledger.closing_events(tabs)
+
+        finals = [_payload(c)["id"] for c in sent if _payload(c)["final"]]
+
+        assert sorted(finals) == ["facts", "overview"]
+
+
+class TestHolds:
+    def test_should_hold_a_tab_sent_with_the_same_content(self) -> None:
+        ledger = _ledger(groups=True)
+        ledger.event(_tab("facts"), 1)
+
+        assert ledger.holds(_tab("facts")) is True
+
+    def test_should_hold_it_whatever_position_it_was_sent_at(self) -> None:
+        ledger = _ledger(groups=True)
+        ledger.event(_tab("facts"), 4)
+
+        assert ledger.holds(_tab("facts")) is True
+
+    def test_should_not_hold_a_tab_whose_content_changed(self) -> None:
+        ledger = _ledger(groups=True)
+        ledger.event(_tab("facts"), 1)
+
+        assert ledger.holds(_tab("facts", label="new")) is False
+
+    def test_should_not_hold_a_tab_never_sent(self) -> None:
+        assert _ledger().holds(_tab("facts")) is False
 
 
 def _with_provisional(provisional_id: str = "key_moments") -> TabLedger:

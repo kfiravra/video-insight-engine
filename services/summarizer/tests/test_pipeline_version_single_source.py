@@ -23,8 +23,8 @@ import pytest
 
 from src.config import settings
 from src.repositories.mongodb_repository import MongoDBVideoRepository
-from src.shared_config.pipeline_version import get_pipeline_version
 from src.services.pipeline.tab_ledger import TabLedger
+from src.shared_config.pipeline_version import get_pipeline_version
 
 
 @pytest.fixture(autouse=True)
@@ -78,27 +78,34 @@ class TestMongoDocStamping:
     async def test_assembly_stamps_pipeline_version_on_saved_doc(self):
         """The persisted result dict built by the assembly phase must stamp
         the canonical version so the api's serve path can version-check it."""
-        from src.services.pipeline.phases import assembly as phase
+        assert await _stamp_on_saved_doc("vtest") == "vtest"
 
-        ctx = _build_assembly_ctx()
-        with (
-            patch.object(phase, "assemble_response", return_value={"tabs": [], "meta": {}}),
-            patch.object(
-                phase,
-                "settings",
-                SimpleNamespace(
-                    REDIS_ENABLED=False,
-                    QDRANT_ENABLED=False,
-                    PIPELINE_VERSION="vtest",
-                ),
-            ),
-            patch.object(phase, "response_cache"),
-        ):
-            async for _ in phase.run_phase_assembly(ctx):  # type: ignore[arg-type]
-                pass
+    @pytest.mark.asyncio
+    async def test_should_report_v9_on_new_docs(self):
+        """pipeline-1min 3.9 bumps the canonical file to v9 (the split extraction
+        changes output); docs saved now carry the value settings read from it.
+        Pins the bump — the next bump updates this literal."""
+        assert await _stamp_on_saved_doc(settings.PIPELINE_VERSION) == "v9"
 
-        saved = ctx.repository.save_structured_result.call_args.args[1]
-        assert saved["pipelineVersion"] == "vtest"
+
+async def _stamp_on_saved_doc(version: str) -> str:
+    """Run the assembly phase with ``version`` as the setting; return the saved doc's stamp."""
+    from src.services.pipeline.phases import assembly as phase
+
+    ctx = _build_assembly_ctx()
+    with (
+        patch.object(phase, "assemble_response", return_value={"tabs": [], "meta": {}}),
+        patch.object(
+            phase,
+            "settings",
+            SimpleNamespace(REDIS_ENABLED=False, QDRANT_ENABLED=False, PIPELINE_VERSION=version),
+        ),
+        patch.object(phase, "response_cache"),
+    ):
+        async for _ in phase.run_phase_assembly(ctx):  # type: ignore[arg-type]
+            pass
+
+    return ctx.repository.save_structured_result.call_args.args[1]["pipelineVersion"]
 
 
 def _build_assembly_ctx() -> SimpleNamespace:

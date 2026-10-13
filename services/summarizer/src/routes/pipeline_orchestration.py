@@ -13,8 +13,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 
+from src.config import settings
 from src.repositories.mongodb_repository import MongoDBVideoRepository
 from src.routes.pipeline_faithfulness import _drain_faithfulness, _launch_faithfulness_check
 from src.routes.run_timing import log_run_summary, mark_phase, persist_run_timing
@@ -27,6 +28,7 @@ from src.services.pipeline.phases import (
     run_phase_metadata,
     run_phase_text,
 )
+from src.services.pipeline.phases.frames_done import frames_done_step
 from src.services.pipeline.phases.qdrant_index import wait_for_rag_transcript
 from src.services.pipeline.pipeline_helpers import (
     PipelineTimer,
@@ -35,7 +37,6 @@ from src.services.pipeline.pipeline_helpers import (
 )
 from src.services.pipeline.pipeline_timing import PipelineTimingRecorder, start_run_timing
 from src.services.pipeline.post_processor import coverage_is_degraded
-from src.services.pipeline.visual_annotations import annotation_entries, render_visual_annotations
 from src.services.transcription.transcript_meta import build_transcript_meta
 
 logger = logging.getLogger(__name__)
@@ -146,18 +147,26 @@ async def _release_run_media(ctx: PipelineContext) -> None:
             await hires_video.close()
 
 
-def _render_visual_annotations(ctx: PipelineContext) -> None:
-    """Frame captions + OCR → ``ctx.visual_annotations`` once frames are done (1c.2).
+PhaseFn = Callable[[PipelineContext], AsyncGenerator[str, None]]
 
-    Never written into ``clean_text``: the probe, plan and memory read speech
-    only, and so do the Qdrant transcript points and the faithfulness judge's
-    transcript part. Phase 1's single extraction call waits for the whole
-    phase-2 group, so rendering after it is frames-done for every reader.
+
+def _phase_two_members(split: bool) -> list[PhaseFn]:
+    """Text ∥ frames; the split path adds the frames-done hook and the field groups.
+
+    Split (``EXTRACTION_PARALLEL``, 3.4): the frames phase ends with the
+    frames-done step (annotations + deferred code tabs) inside the group, and
+    the extraction member fires its text groups at plan-done and its visual
+    group at frames-done — extraction no longer waits for the whole group.
     """
-    ctx.visual_annotations = render_visual_annotations(ctx.frame_descriptions, ctx.scene_frames_all)
-    entries = len(annotation_entries(ctx.visual_annotations))
-    if entries:
-        logger.info("[pipeline] Visual annotations: %d entries", entries)
+    from src.services.pipeline.phases.moments import then_provisional_moments
+
+    text = then_provisional_moments(run_phase_text)
+    if not split:
+        return [text, run_phase_frames]
+    from src.services.pipeline.phases.frames_done import then_frames_done
+    from src.services.pipeline.phases.split_extraction import run_phase_split_extraction
+
+    return [text, then_frames_done(run_phase_frames), run_phase_split_extraction]
 
 
 async def _run_phase_two(
@@ -165,8 +174,9 @@ async def _run_phase_two(
     repository: MongoDBVideoRepository,
     video_summary_id: str,
     timing: PipelineTimingRecorder,
+    split: bool = False,
 ) -> AsyncGenerator[str, None]:
-    """Text branch ∥ frames, with the tier probe started alongside.
+    """Text branch ∥ frames (∥ the field groups when ``split``), the tier probe alongside.
 
     The text branch runs transcript → probe → plan ∥ memory, so the readers
     work while frames + vision still run; frames reads the probe at Step 6b.
@@ -181,18 +191,38 @@ async def _run_phase_two(
     phase's own finally already stamped ctx.transcript_trail by the time it
     propagates here).
     """
-    from src.services.pipeline.phases.moments import then_provisional_moments
     from src.services.pipeline.phases.probe import start_tier_probe
 
     phase_start = time.monotonic()
     start_tier_probe(ctx)
-    group = [then_provisional_moments(run_phase_text), run_phase_frames]
     try:
-        async for event in run_parallel_phases(group, ctx):
+        async for event in run_parallel_phases(_phase_two_members(split), ctx):
             yield event
     finally:
+        # On the split path this wall spans the field groups too (SERVICE-SUMMARIZER.md, 4b).
         mark_phase(ctx, timing, "transcript_frames", phase_start)
         await _record_transcript_outcome(ctx, repository, video_summary_id)
+
+
+async def _frames_done_then_extraction(
+    ctx: PipelineContext, timing: PipelineTimingRecorder
+) -> AsyncGenerator[str, None]:
+    """Today's path after the whole phase-2 group: the frames-done step, then ONE extraction.
+
+    Frames-done: the ``<visual_annotations>`` block, then the code tabs
+    reconcile deferred at plan-done decided on what the frames show (3.2; a
+    fresh meta when that changed the tabs). Timing name kept so
+    pipeline.timing stays comparable with the baseline and cassettes.
+    Extraction goes through the parallel runner for its heartbeats: one
+    extraction call can be silent for minutes, past the API gateway's idle
+    timeout. The runner also records the "extraction" step in pipeline.timing.
+    """
+    phase_start = time.monotonic()
+    for event in frames_done_step(ctx):
+        yield event
+    mark_phase(ctx, timing, "visual_inject", phase_start)
+    async for event in run_parallel_phases([run_phase_extraction], ctx):
+        yield event
 
 
 async def _run_phases_in_order(
@@ -222,22 +252,15 @@ async def _run_phases_in_order(
         mark_phase(ctx, timing, "metadata", phase_start)
 
         # Phase 2: text branch (transcript → tier probe → plan ∥ memory) ∥
-        # frames; extraction waits for both.
-        async for event in _run_phase_two(ctx, repository, video_summary_id, timing):
+        # frames. EXTRACTION_PARALLEL (3.4): the field groups run inside the
+        # group (text at plan-done, visual at frames-done); false: today's
+        # frames-done step, then ONE extraction after the whole group.
+        split = settings.EXTRACTION_PARALLEL
+        async for event in _run_phase_two(ctx, repository, video_summary_id, timing, split):
             yield event
-
-        # Phase 2.5: the <visual_annotations> block (timing name kept so
-        # pipeline.timing stays comparable with the baseline and cassettes).
-        phase_start = time.monotonic()
-        _render_visual_annotations(ctx)
-        mark_phase(ctx, timing, "visual_inject", phase_start)
-
-        # Phase 4: Extraction (the plan ran inside phase 2). Through the
-        # parallel runner for its heartbeats: one extraction call can be
-        # silent for minutes, past the API gateway's idle timeout. The runner
-        # also records the "extraction" step in pipeline.timing.
-        async for event in run_parallel_phases([run_phase_extraction], ctx):
-            yield event
+        if not split:
+            async for event in _frames_done_then_extraction(ctx, timing):
+                yield event
         # Fire-and-forget faithfulness judge once extraction has data. The
         # task copies the current ContextVar state so the Langfuse trace is
         # still attached. We track the task so we can drain it before

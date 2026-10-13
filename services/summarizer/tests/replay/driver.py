@@ -89,6 +89,8 @@ class ReplayResult:
     qdrant_stores: list[str] = field(default_factory=list)
     unexpected_commands: list[str] = field(default_factory=list)
     frame_manifest: dict[str, Any] | None = None
+    # Split-extraction group calls the fake answered from the recorded single call.
+    group_calls: int = 0
 
     def event_names(self) -> list[str]:
         return [record.event for record in self.events]
@@ -152,9 +154,9 @@ def _capture_done_line() -> Iterator[_DoneLineHandler]:
 
 
 @contextmanager
-def replay_settings(cassette: Cassette) -> Iterator[None]:
-    """Patch ``settings`` with the recorded run's knobs + harness invariants."""
-    overrides = {**cassette.settings, **_HARNESS_SETTINGS}
+def replay_settings(cassette: Cassette, extra: dict[str, Any] | None = None) -> Iterator[None]:
+    """Patch ``settings`` with the recorded run's knobs + harness invariants (+ ``extra``)."""
+    overrides = {**cassette.settings, **_HARNESS_SETTINGS, **(extra or {})}
     unknown = sorted(name for name in overrides if not hasattr(settings, name))
     if unknown:
         raise ValueError(f"Cassette {cassette.video_id} sets unknown settings: {unknown}")
@@ -194,13 +196,20 @@ async def _drain_background(timeout: float) -> None:
         await asyncio.wait(pending, timeout=timeout)
 
 
-async def run_replay(cassette: Cassette, *, speed: float = 1.0) -> ReplayResult:
-    """Replay ``cassette`` at ``speed`` (1 = recorded walls, 0 = no sleeps)."""
+async def run_replay(
+    cassette: Cassette, *, speed: float = 1.0, settings_overrides: dict[str, Any] | None = None
+) -> ReplayResult:
+    """Replay ``cassette`` at ``speed`` (1 = recorded walls, 0 = no sleeps).
+
+    ``settings_overrides`` win over the cassette's settings (``scripts/replay.py``
+    runs the groups at the prod ``EXTRACTION_PARALLEL_BATCHES``; the identity
+    test pins ``EXTRACTION_PARALLEL=False``).
+    """
     repository = InMemoryRepository()
     with (
         preserved_process_state(),
         block_network() as attempts,
-        replay_settings(cassette),
+        replay_settings(cassette, settings_overrides),
         external_stubs(cassette, speed) as stubs,
         replay_llm(cassette.llm, speed=speed, video_id=cassette.video_id) as fake,
         _capture_done_line() as done,
@@ -226,4 +235,5 @@ async def run_replay(cassette: Cassette, *, speed: float = 1.0) -> ReplayResult:
         qdrant_stores=list(stubs.qdrant_stores),
         unexpected_commands=list(stubs.media.unexpected_commands),
         frame_manifest=stubs.media.scene_manifest(),
+        group_calls=len(fake.group_calls),
     )

@@ -66,7 +66,7 @@ In the Langfuse UI:
 ### Prompt cache
 
 - **Langfuse**: an Anthropic generation that wrote or read the prompt cache carries `cacheCreationTokens` / `cacheReadTokens` (and `cacheHit=true` on a read) in its metadata.
-- **`pipeline.timing.llmCalls[]`** (Mongo, timing schema version 2): per call `cacheReadTokens` (Anthropic reads, or OpenAI's automatically cached input), `cacheWriteTokens`, and its lifetime split `cacheWrite1hTokens` / `cacheWrite5mTokens`; `inputTokens` is the whole prompt, cached part included.
+- **`pipeline.timing.llmCalls[]`** (Mongo, timing schema version 3): per call `cacheReadTokens` (Anthropic reads, or OpenAI's automatically cached input), `cacheWriteTokens`, and its lifetime split `cacheWrite1hTokens` / `cacheWrite5mTokens`; `inputTokens` is the whole prompt, cached part included; `ttftMs` = ms to the first streamed chunk (only the split extraction's warm-up call, `extraction_text1`, is streamed; null otherwise).
 - **Per call type**: `python scripts/cache_hit_rate.py [--days N | --ids …]` aggregates those rows by span and provider — hit rate = reads ÷ (reads + writes) for Anthropic, cached share of input for OpenAI. Gate reports carry it from gate 2 on; the plan's static half is cached for 1 hour (pipeline-1min 2.0). Layout, prices and the 1h-vs-5m rule: [llm-cost-model.md](./llm-cost-model.md#where-cache_control-is-set).
 
 ## Prompt registry
@@ -76,13 +76,14 @@ Local `.txt` files in `services/summarizer/src/prompts/**` are the source of tru
 | Local path | Langfuse name |
 | --- | --- |
 | `prompts/base_extraction.txt` | `summarizer:base_extraction` |
+| `prompts/extraction_group_job.txt` | `summarizer:extraction_group_job` |
 | `prompts/schemas/food.txt` | `summarizer:schema:food` |
 | `prompts/enrich_quiz.txt` | `summarizer:enrich_quiz` |
 | `prompts/vision.txt` | `summarizer:vision` |
 | `prompts/examples/learning.txt` | `summarizer:example:learning` |
 | `services/assistant/src/utils/prompt_templates.py::RAG_HEADER` | `assistant:rag_header` |
 
-Every pipeline phase loads its prompt through `load_prompt_text` (in `services/summarizer/src/services/pipeline/prompt_builder.py`), which is registry-first with file fallback. A successful registry fetch records the prompt's version in the active trace's `promptVersions` map — every subsequent generation span carries the link in its metadata so a "this batch was wrong" investigation can pin the exact prompt that ran. Paths outside `PROMPTS_DIR` bypass the registry, so ad-hoc files (tmp tests, dev fixtures) never get looked up.
+Every pipeline phase loads its prompt through `load_prompt_text` (in `services/summarizer/src/services/pipeline/prompt_builder.py`), which is registry-first with file fallback. A successful registry fetch records the prompt's version in the active trace's `promptVersions` map — every subsequent generation span carries the link in its metadata so a "this batch was wrong" investigation can pin the exact prompt that ran. Paths outside `PROMPTS_DIR` bypass the registry, so ad-hoc files (tmp tests, dev fixtures) never get looked up. The SDK caches hits (60 s, background refresh) but never a miss, so `fetch_prompt_with_obj` remembers a miss (unregistered name, unreachable server) for `PROMPT_MISS_TTL_S` = 60 s per name: a prompt not yet registered (e.g. a deploy ahead of `vie-langfuse-init`) costs one synchronous GET + its backoff per minute, not one per load.
 
 **Dev switch — `PROMPT_SOURCE=disk`.** Setting `PROMPT_SOURCE=disk` (default `registry`) makes `load_prompt_with_fallback` skip the registry entirely and read the local `.txt` fresh on every call (no process cache, chapter-detect prompt included), so a prompt edit applies to the next run without re-registering or restarting the worker. It is honoured only when `ENVIRONMENT` is a dev name (`""`, `development`, `dev`, `test`, `local`) — any other value (`production`, `prd`, `demo`, …) logs a warning once and keeps the registry. In disk mode no Prompt object is fetched, so traces carry **no `promptVersions`** and generations have no prompt link; never compare disk-mode traces against registry-mode ones by prompt version.
 

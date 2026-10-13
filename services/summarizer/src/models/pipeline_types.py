@@ -190,9 +190,16 @@ class PlanResult(BaseModel):
     )
     # Canonical spellings extraction must reuse (people, products, techniques).
     terms: list[str] = Field(default_factory=list)
-    # Appendix-C evidence: only the keys the planner answered. A missing key is
-    # "no opinion", never False — it must not switch a domain requirement off.
+    # Appendix-C evidence. As parsed: only the keys the planner answered (a
+    # missing key is "no opinion", never False — it must not switch a domain
+    # requirement off). After reconcile at plan-done (3.2): the strict view
+    # every reader shares — true when either reader said true, false only when
+    # the plan AND the memory answered false.
     evidence: dict[str, bool] = Field(default_factory=dict)
+    # The readers' own answers, kept when reconcile replaces ``evidence`` with
+    # the view (None before reconcile; ``memory_evidence`` None = memory failed).
+    plan_evidence: dict[str, bool] | None = Field(None, alias="planEvidence")
+    memory_evidence: dict[str, bool] | None = Field(None, alias="memoryEvidence")
 
     # Triage fields
     content_tags: list[str] = Field(default_factory=lambda: ["learning"], alias="contentTags")
@@ -203,9 +210,16 @@ class PlanResult(BaseModel):
     # Tabs the plan stage removed (unregistered dataSource, no sibling) — the
     # assembly phase prepends them to the persisted ``droppedTabs``.
     dropped_tabs: list[dict] = Field(default_factory=list, alias="droppedTabs")
-    # Plan-time reconcile decisions (re-pointed or dropped tabs, with the
-    # reason) — persisted as ``pipeline.reconcile``.
+    # Reconcile decisions (plan parse, plan-done, frames-done: re-pointed,
+    # demoted, dropped, backfilled … tabs, with reason, stage and evidence) —
+    # persisted as ``pipeline.reconcile``.
     reconcile: list[dict] = Field(default_factory=list)
+    # Tab ids reconcile left for the frames-done screen check: code tabs whose
+    # has_code is doubly false in the transcript readers (3.2).
+    deferred_tabs: list[str] = Field(default_factory=list, alias="deferredTabs")
+    # Required components (the primary's code_playground) whose backfill waits
+    # for that screen check too: has_code doubly false and no tab planned for it.
+    deferred_requirements: list[str] = Field(default_factory=list, alias="deferredRequirements")
     # Plan-time validation left no tab, so ``tabs`` are the domain defaults —
     # assembly then counts only the drops as designed, not drops + defaults.
     plan_fallback: bool = Field(False, alias="planFallback")
@@ -251,12 +265,19 @@ class PlanResult(BaseModel):
             return {}
         return {k: val for k, val in v.items() if k in EVIDENCE_KEYS and isinstance(val, bool)}
 
+    @property
+    def awaits_screen(self) -> bool:
+        """Frames-done may still change the tabs: reconcile left a code tab or a code
+        requirement for the screen check."""
+        return bool(self.deferred_tabs or self.deferred_requirements)
+
     def to_triage_dict(self, content_format: str | None = None) -> dict:
         """The ``triage_complete`` SSE payload and the persisted ``pipeline.triage``.
 
         ``content_format`` is the probe's (it is not part of the plan's answer).
-        Evidence + canonical terms ride along for the assembly backfill check
-        (1d.7), reconcile (3.2) and the gate.
+        Evidence (the reconciled view) + canonical terms ride along for the
+        assembly backfill check (1d.7) and the gate; the readers' own answers
+        for the audit trail (3.2).
         """
         return {
             "contentTags": self.content_tags,
@@ -267,5 +288,7 @@ class PlanResult(BaseModel):
             "confidence": self.confidence,
             "contentFormat": content_format,
             "evidence": self.evidence,
+            "planEvidence": self.plan_evidence,
+            "memoryEvidence": self.memory_evidence,
             "terms": self.terms,
         }

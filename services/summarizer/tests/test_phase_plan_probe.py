@@ -54,6 +54,8 @@ def _ctx(
         probe=probe,
         language="en",
         is_rtl=False,
+        memory=None,
+        plan_result=None,
     )
 
 
@@ -126,6 +128,7 @@ async def test_should_record_the_probe_format_in_the_triage_dict() -> None:
     ctx = _ctx(_probe())
 
     await _plan_kwargs(ctx)
+    phase.plan_done_events(ctx)  # type: ignore[arg-type]
 
     assert ctx.triage_dict["contentFormat"] == "tutorial"
 
@@ -158,8 +161,20 @@ async def test_should_carry_the_plans_evidence_and_terms_in_the_triage_dict() ->
         patch.object(phase, "run_plan", AsyncMock(return_value=plan)),
     ):
         _ = [event async for event in phase.run_phase_plan(ctx)]  # type: ignore[arg-type]
+    phase.plan_done_events(ctx)  # type: ignore[arg-type]
 
     assert (ctx.triage_dict["evidence"], ctx.triage_dict["terms"]) == (
         {"has_steps": True},
         ["guanciale"],
     )
+
+
+async def test_should_emit_no_plan_events_before_plan_done() -> None:
+    ctx = _ctx(None)
+    with (
+        patch.object(phase, "check_override", return_value=None),
+        patch.object(phase, "run_plan", AsyncMock(return_value=PlanResult())),
+    ):
+        events = [event async for event in phase.run_phase_plan(ctx)]  # type: ignore[arg-type]
+
+    assert events == []

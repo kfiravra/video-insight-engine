@@ -226,7 +226,7 @@ LONG    (2 h+):         chapters → 3–5 batch calls → hierarchical synthesi
 3. **Redis dispatch guard** (L0 above) catches the narrow API-replica race. Fail-open; the summarizer's per-video **pipeline lock** is the final backstop.
 
 ### PIPELINE_VERSION
-Single-sourced from `packages/shared/src/config/pipeline-version.json` (**currently `v8`**), baked into **both** the idempotency hash and the dedupKey. **Bump it on any change that alters output for the same input** (prompt rewrites, schema changes, model swaps, assembly/cross-tab-link changes). Do **not** bump for logging/perf/frontend-only/non-output fixes. Bumping atomically invalidates all stale keys in both layers; schema changes additionally require clearing the DB cache. **`DISPATCH_GUARD_TTL_SECONDS` (900) must exceed the summarizer's `PIPELINE_LOCK_TTL_SECONDS` (600).** Caching is **versioned, not time-based**.
+Single-sourced from `packages/shared/src/config/pipeline-version.json` (**currently `v9`**), baked into **both** the idempotency hash and the dedupKey. **Bump it on any change that alters output for the same input** (prompt rewrites, schema changes, model swaps, assembly/cross-tab-link changes). Do **not** bump for logging/perf/frontend-only/non-output fixes. Bumping atomically invalidates all stale keys in both layers; schema changes additionally require clearing the DB cache. **`DISPATCH_GUARD_TTL_SECONDS` (900) must exceed the summarizer's `PIPELINE_LOCK_TTL_SECONDS` (600).** Caching is **versioned, not time-based**.
 
 ---
 

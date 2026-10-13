@@ -108,7 +108,8 @@ def load_prompt_with_fallback(*, langfuse_name: str, fallback_path: Path) -> str
       * When ``PROMPT_SOURCE=disk`` (dev-only), the registry is never asked
         and the file is re-read on every call (edits apply without a restart).
       * When Langfuse is disabled (no keys), the local file is used.
-      * When the prompt isn't registered yet, the local file is used.
+      * When the prompt isn't registered yet, the local file is used (the miss
+        is remembered for a minute per name — ``fetch_prompt_with_obj``).
       * Any SDK exception is swallowed by ``fetch_prompt_with_obj``.
       * When the registry version's ``{placeholder}`` set differs from the
         local file's, the local file is used (warned once per name), so the

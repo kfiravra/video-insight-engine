@@ -10,7 +10,9 @@ then plan ∥ memory from probe-done — so the readers no longer wait for frame
 
 from __future__ import annotations
 
-from tests.replay.conftest import SCALED_SPEED
+import pytest
+
+from tests.replay.conftest import SCALED_SPEED, SPLIT_EXTRACTION
 from tests.replay.driver import ReplayResult
 
 _METADATA_BUDGET_MS = 6000
@@ -68,10 +70,25 @@ def test_memory_should_run_alongside_the_plan(scaled_reference: ReplayResult) ->
     assert memory["startMs"] < plan["endMs"] and plan["startMs"] < memory["endMs"]
 
 
+@pytest.mark.skipif(SPLIT_EXTRACTION, reason="today's path (EXTRACTION_PARALLEL=false)")
 def test_extraction_should_wait_for_frames(scaled_reference: ReplayResult) -> None:
-    """Phase 1 keeps ONE extraction call, fed the frame annotations (until 1c.2)."""
+    """Today's ONE extraction call is fed the frame annotations, so it waits for frames."""
     frames_end = _phase(scaled_reference, "frames")["endMs"]
     assert _phase(scaled_reference, "extraction")["startMs"] >= frames_end
+
+
+@pytest.mark.skipif(not SPLIT_EXTRACTION, reason="the split path (EXTRACTION_PARALLEL=true)")
+def test_split_text1_should_fire_at_plan_done(scaled_reference: ReplayResult) -> None:
+    """3.4: the warm-up group fires once plan and memory are in, frames or not."""
+    plan_done = max(_phase(scaled_reference, name)["endMs"] for name in ("plan", "memory"))
+    assert 0 <= _llm_call(scaled_reference, "extraction_text1")["startMs"] - plan_done <= 50
+
+
+@pytest.mark.skipif(not SPLIT_EXTRACTION, reason="the split path (EXTRACTION_PARALLEL=true)")
+def test_split_visual_group_should_fire_after_frames(scaled_reference: ReplayResult) -> None:
+    """3.4: only the visual group reads the annotations, so only it waits for frames."""
+    frames_end = _phase(scaled_reference, "frames")["endMs"]
+    assert _llm_call(scaled_reference, "extraction_visual")["startMs"] >= frames_end
 
 
 def test_hero_should_land_at_memory_done_before_frames(scaled_reference: ReplayResult) -> None:

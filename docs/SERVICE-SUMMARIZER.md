@@ -58,6 +58,9 @@ services/summarizer/
     │   │   ├── plan.py / plan_prompt.py # Plan (Sonnet): full marked transcript → tabs + briefs,
     │   │   │                         #   evidence, terms (+ _render_playbook, _enforce_domain_policy)
     │   │   ├── memory.py             # Memory (LLM_EXTRACTION_MODEL) ∥ plan: outline, evidence, tldr, takeaways
+    │   │   ├── plan_reconcile.py     # Plan-parse guard: unregistered path, inactive domain
+    │   │   ├── reconcile.py          # Plan-done reconcile: doubly-false view, step 1, screen-code check
+    │   │   ├── reconcile_pass.py     # Reconcile steps 2–5 (backfill, quiz, dedupe, 3–6) + row writer
     │   │   ├── video_memory.py       # <video_memory> block (plan + memory) for every {video_context} slot
     │   │   ├── visual_annotations.py # Frame captions + OCR → <visual_annotations> block (never clean_text)
     │   │   ├── triage.py             # Triage validation/fallback (TriageResult model + tab validation)
@@ -129,6 +132,7 @@ services/summarizer/
     │   ├── memory.txt            # Memory prompt (outline, evidence, tldr, takeaways)
     │   ├── component_toolkit.txt # Component descriptions + datasource paths (injected into plan/triage). Density table is generated from domains.json `densityGates` via `{density_gates}` placeholder
     │   ├── base_extraction.txt   # Extraction template: <rules> / <video> (cached) / <your_job>
+    │   ├── extraction_group_job.txt # Split extraction (EXTRACTION_PARALLEL): one field group's <your_job> (emit-only keys + shape, tabs it serves; visual group: annotations + key frames)
     │   ├── tier_probe.txt        # Tier-probe prompt (14 domains + 18 formats incl. unboxing, has_visual_demo, transcript_usable — domains.json is the source)
     │   ├── chapter_detect.txt    # AI chapter detection prompt (fast model)
     │   ├── quality_rules.txt     # JSON extraction quality rules
@@ -223,7 +227,7 @@ FRAME_VISION_PARALLEL=true             # Vision in parallel batches; false = one
 LLM_VISION_MODEL=                      # Blank = the primary model (Sonnet), which vision stays on
 
 # Extraction concurrency + chunking
-EXTRACTION_PARALLEL=true               # Chunked batches run in parallel; false = one batch at a time
+EXTRACTION_PARALLEL=true               # Field groups (text at plan-done, visual at frames-done); false = today's single call / chunked batches one at a time (extraction only: reconcile, evidence ranges, toolkit markers, v9 stay)
 EXTRACTION_PARALLEL_BATCHES=6          # Max extraction calls in flight per run (× WORKER_CONCURRENCY per worker); drop to 4 if pipeline.timing records 429s
 CHUNKED_EXTRACTION_THRESHOLD=900       # Videos longer than this (s) may split the transcript into chapter batches
 MAX_TOKENS_PER_BATCH=50000             # One batch's estimated transcript tokens
@@ -427,9 +431,31 @@ A plan-first pipeline: ~6-7 text calls (description analysis, tier probe, plan �
     │   └─▶ Post-validation `_enforce_domain_policy()` strips forbidden components before
     │   │   extraction (quiz_arena only for quizEnrichment domains)
     │   └─▶ Fallback: category-based plan when the call fails or confidence < 0.6
+    └─▶ Plan-done reconcile (pipeline/reconcile.py + reconcile_pass.py, 3.2) once plan AND memory
+    │   are in. Evidence view: a has_* key is true when either reader said true, false only when
+    │   BOTH answered false (doubly false), absent otherwise (one silent, or memory failed); it
+    │   replaces the plan's evidence for every reader (`evidence` in triage_complete /
+    │   pipeline.triage; each reader's own answers as `planEvidence` / `memoryEvidence`).
+    │   Steps: (1) a tab whose dataSource `requiresEvidence` is doubly false → re-pointed, kept
+    │   (moment_track), demoted onto a free eligible source, else dropped — a `has_code` tab is
+    │   deferred to frames-done instead (`deferred_to_frames`); (2) the primary's required
+    │   components backfilled from its defaultTabs unless doubly false (`not_backfilled`, under
+    │   the defaultTab id it would have added) — tech's has_code-gated code_playground with no
+    │   tab planned for it is deferred too; (3) quiz dropped outside quizDomains or when
+    │   is_learnable is doubly false, else moved last; (4) dedupe (dataSource, component);
+    │   (5) 3–6 tabs. Every decision → `pipeline.reconcile` (row shape: DATA-MODELS.md); drops →
+    │   droppedTabs `reconcile_<reason>`. The plan-parse guard (plan_reconcile.py) keeps only
+    │   registry validity + `inactive_domain`.
+    │   Frames-done (both paths — split: before the visual group is cut; today's: the
+    │   `visual_inject` step, before extraction): when anything was deferred, the screen decides
+    │   (vision `scene_type: code`, or code-shaped on-screen text). Code → the tabs are kept
+    │   (`kept_screen_code`), has_code turns true and the deferred requirement is backfilled (its
+    │   tech.snippets joins the visual group — no latency cost); no code, or no vision/OCR → the
+    │   step-1 chain and `not_backfilled`; then steps 2, 3 and 5 re-run. A changed tab list
+    │   sends a fresh `meta`.
     └─▶ `<video_memory>` block (pipeline/video_memory.py) rendered once from plan + memory —
     │   fills every writer's `{video_context}` slot (extraction, synthesis, quiz)
-    └─▶ SSE: synthesis_complete (memory-done), triage_complete + meta (plan)
+    └─▶ SSE: synthesis_complete (memory-done); triage_complete + meta at plan-done, after reconcile
     └─▶ Plan-done (plan and memory both in): the provisional Moments tab (phases/moments.py,
     │   pipeline-1min 2.1) — tab_ready `provisional: true, final: false` built from the
     │   moment fallback chain (memory outline → YouTube chapters → description timestamps,
@@ -445,6 +471,33 @@ A plan-first pipeline: ~6-7 text calls (description analysis, tier probe, plan �
     │   judge's transcript part read speech only. Readers: extraction (sliced per batch),
     │   the faithfulness judge, `source="visual"` Qdrant points. Timing step `visual_inject`
     │   (name kept). Replaces Phase 2.5 `inject_visual_context`.
+    │   Split path (`EXTRACTION_PARALLEL`, 3.4): extraction is a member of the phase-2 group
+    │   (`phases/split_extraction.py` — text groups at plan-done, the visual group at
+    │   frames-done; `phases/frames_done.py` renders the annotations + decides deferred code
+    │   tabs once frames AND plan are done). `pipeline.timing` then reads: `transcript_frames`
+    │   spans the extraction too; `split_extraction` = the member (from the group's start),
+    │   `extraction` = plan-done → last group landed (the DONE log's `extraction=`); `frames`
+    │   includes its wait for plan-done and the `visual_inject` step; group calls are
+    │   `llmCalls` spans `extraction_<group>` (`_c<k>` per later chunk), the streamed warm-up
+    │   call with `ttftMs`; each call's timeout follows its estimate (Σ outputWeight × expect
+    │   ÷ 60 tok/s + 30 s, 120–300 s), and the group-job template is read once per run. Each answer is validated as it lands (`group_merge.py`, 3.5): only
+    │   the group's requested keys the model filled are kept (field-name spellings mapped to
+    │   the registry key, no model defaults for unrequested/omitted keys), then ONE merge —
+    │   chunk-major, text1..N, visual; lists concatenate (later duplicates by
+    │   name/label/term/title/ingredient/tool/location dropped), first non-empty scalar wins,
+    │   number/step/order/index renumbered only when 1..n in every list. Quality = requested
+    │   fields filled; `pipeline.extraction._groups`.
+    │   Failure paths (3.8, `group_failures.py`): `{}` or the group's keys answered `null`/`{}`
+    │   = an empty group that landed (a later chunk's window, a video without that content).
+    │   A lost answer — not a JSON object, no key of the group, content validation dropped or
+    │   reset, or the warm-up stream raising / bringing nothing — gets ONE more call under the
+    │   same span, unstreamed, `max_retries=0` (≤ 2 calls; the row records `retried`
+    │   `parse`/`empty`/`stream`); still nothing → `failed`. A failed group's fields count as
+    │   landed (no tab waits), assembly drops/demotes its tabs through today's fallbacks
+    │   (`droppedTabs` reason `extraction_group_failed`) and the run is `degraded`. Every
+    │   group of every chunk failed → today's error (`FAILED`, `LLM_ERROR`, "Extraction
+    │   failed to produce data"). A failed plan call → the fallback plan's default tabs are
+    │   requested unchanged.
 
  5. EXTRACTION (one pass, json_mode; LLM_EXTRACTION_MODEL)
     └─▶ Prompt (pipeline/extraction_prompt.py): system = the rules (no per-video text);
@@ -458,8 +511,11 @@ A plan-first pipeline: ~6-7 text calls (description analysis, tier probe, plan �
     │   parallel — see Chunked Extraction
     └─▶ Pydantic validation on all output; extraction_complete
     └─▶ Coverage (meta.extractionCoverage, `degraded`) and quality (share of planned
-    │   dataSources populated) are METRICS: logged, never a retry. The synthesis-fed retry,
-    │   RETRY_SCORE_THRESHOLD and validate_extraction_counts are gone (1c.5)
+    │   dataSources populated) are METRICS: logged, never a retry. `degraded` = a dropped
+    │   batch (split path: a failed field group) or critical coverage; a split run without a
+    │   timestamped field records the call counts alone (`meta.extractionCoverage` =
+    │   `{batchesTotal, batchesSucceeded, batchesDropped}`, `flag_failed_groups`). The
+    │   synthesis-fed retry, RETRY_SCORE_THRESHOLD and validate_extraction_counts are gone (1c.5)
     └─▶ Faithfulness judge fires in the background (transcript + annotations; informational)
 
  6. ASSEMBLY → LATE GROUP → SAVE (phases/assembly.py)
@@ -478,9 +534,14 @@ A plan-first pipeline: ~6-7 text calls (description analysis, tier probe, plan �
     │   video_filmstrip, lyrics_karaoke, frame_strip.
     └─▶ Per-tab drop accounting: assemble_response returns {"meta", "tabs", "dropped"} — drop
     │   reasons: assembler_raised, validation_empty_list, assembler_returned_none,
-    │   domain_forbidden, domain_max_cap, all_timestamps_impossible (feeds tabsDropped/droppedTabs
-    │   telemetry instead of the old designed−assembled subtraction). The plan stage's drops are
-    │   prepended: reason `invalid_datasource` = an unregistered dataSource with no same-domain
+    │   domain_forbidden, domain_max_cap, all_timestamps_impossible, and on the split path
+    │   extraction_group_failed (one of the first three for a tab that waited for a failed
+    │   group's field — assembly's own reason kept in `detail`) (feeds tabsDropped/droppedTabs
+    │   telemetry instead of the old designed−assembled subtraction); the backstop's
+    │   `requirement_evidence_false` entry (a required component the evidence rules out, `id` =
+    │   the defaultTab it would have added, `""` when a live tab holds it) is listed, never
+    │   counted. The plan stage's drops are prepended (reconcile's as `reconcile_<reason>`, see
+    │   4): reason `invalid_datasource` = an unregistered dataSource with no same-domain
     │   registry path for the tab's component (plan.py `_validate_data_sources`); when that
     │   leaves no tab, the domain defaults stand in, `planFallback: true` is persisted and
     │   tabsDesigned counts only the plan's drops
@@ -531,7 +592,7 @@ A plan-first pipeline: ~6-7 text calls (description analysis, tier probe, plan �
     │   save. A tab streamed earlier but missing from tabIds was withdrawn (logged)
     └─▶ Store result to MongoDB + Redis cache (if enabled). Redis response-cache keys are
     │   namespaced by PIPELINE_VERSION (packages/shared/src/config/pipeline-version.json,
-    │   currently v8 — bumped v6→v8 by the frame-quality + moment-redesign work).
+    │   currently v9 — bumped v8→v9 by the pipeline-1min split extraction).
     │   bypassCache=true submissions arrive with force_refresh (worker payload) OR the
     │   `forceRefresh` flag stamped on the videoSummaryCache version row by the api —
     │   either skips the Redis response cache; the flag is $unset on completion.
@@ -1076,8 +1137,8 @@ Chapters from 1–3 longer than `MAX_MINUTES_PER_BATCH` are subdivided.
 ### Batched Extraction (`extractor.py`)
 
 - Groups chapters into batches of ≤50K tokens (`batch_chapters()`)
-- Parallel extraction per batch with `asyncio.Semaphore(EXTRACTION_PARALLEL_BATCHES)` (default 6); `EXTRACTION_PARALLEL=false` runs one batch at a time
-- Single-batch chunked input is force-split into `EXTRACTION_FORCE_SPLIT_CHUNKS` sub-batches (default 4) so parallelism still engages on long single-chapter videos; falls back to overflow only when the split also yields one chunk
+- `extractor.py` serves only today's path (`EXTRACTION_PARALLEL=false`), and there the batches run one at a time; `true` runs the phase-3 field groups instead (`phases/split_extraction.py`), whose calls share the run's `EXTRACTION_PARALLEL_BATCHES` semaphore
+- Single-batch chunked input is force-split into `EXTRACTION_FORCE_SPLIT_CHUNKS` sub-batches (default 4) so a long single-chapter video is not one huge call (on this path they run one after another); falls back to overflow only when the split also yields one chunk
 - Force-split bypasses `batch_chapters()`: `_resolve_strategy` returns `one_chunk_per_batch=True` and `_chunked_extraction` builds `batches=[[c] for c in chunks]` so the sub-batches don't re-collapse under `MAX_TOKENS_PER_BATCH`
 - **Batch-aware prompt**: each batch sends its own transcript slice in the cached head block and, in the job block, a `<batch_partial_context>` block from `_build_batch_context(batch_idx, total_batches, batch, full_duration_seconds)` — it tells the model it sees only a slice of the video and to `Return EMPTY arrays for fields not present in your segment — other batches cover them` — plus the batch's own slice of the visual annotations (no guide block when the slice is empty). Different slices mean batches share no cached prefix
 - Per-batch progress streamed via `asyncio.Queue` → SSE `extraction_progress` with `batch`/`of`
@@ -1125,8 +1186,8 @@ Hard character limit per model before every LLM call:
 | `CHUNKED_EXTRACTION_THRESHOLD` | 900 (15 min) | Duration threshold for chunked path |
 | `MAX_TOKENS_PER_BATCH` | 50000 | Max tokens per extraction batch |
 | `MAX_MINUTES_PER_BATCH` | 40 | Max minutes of video per extraction batch |
-| `EXTRACTION_PARALLEL` | True | Chunked batches run in parallel; False = one batch at a time |
-| `EXTRACTION_PARALLEL_BATCHES` | 6 | Semaphore bound for parallel chunked batches — per run, so a worker holds up to this × `WORKER_CONCURRENCY` calls |
+| `EXTRACTION_PARALLEL` | True | True: field groups (text groups at plan-done, the visual group at frames-done); False: today's single call / chunked batches one at a time, byte-identical request for the same plan — an extraction-only lever (reconcile, `<video_memory>` evidence ranges, toolkit markers and v9 stay; full rollback = redeploy the previous main) |
+| `EXTRACTION_PARALLEL_BATCHES` | 6 | Max split-extraction group calls in flight — per run, so a worker holds up to this × `WORKER_CONCURRENCY` calls (today's path runs its batches one at a time) |
 | `EXTRACTION_FORCE_SPLIT_CHUNKS` | 4 | Sub-batches when chunked input collapses to 1 batch |
 
 ### Key Files
@@ -1135,7 +1196,8 @@ Hard character limit per model before every LLM call:
 |------|---------|
 | `src/services/transcription/transcript_chunker.py` | Chapter splitting with fallback chain |
 | `src/services/pipeline/phases/extraction.py` | `_split_chapters`: description timestamps + memory outline into the chain |
-| `src/services/pipeline/extraction_merger.py` | Per-domain merge + dedup |
+| `src/services/pipeline/extraction_merger.py` | Per-domain merge + dedup (today's path, `EXTRACTION_PARALLEL=false`) |
+| `src/services/pipeline/group_merge.py` | Split path: per-group validation + key filter, the deterministic group merge, requested-field quality |
 | `src/prompts/chapter_detect.txt` | AI chapter detection prompt |
 | `src/utils/llm_retry.py` | Fast model routing + prompt truncation |
 

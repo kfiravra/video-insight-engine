@@ -19,9 +19,11 @@ import pytest
 from llm_common.context import llm_feature_var
 
 from src.exceptions import TranscriptError
+from src.models.pipeline_types import PlanResult
 from src.models.schemas import ErrorCode, ProcessingStatus
 from src.routes import pipeline_faithfulness, pipeline_orchestration, pipeline_runner
 from src.config import settings
+from src.services.pipeline.phases import frames_done
 from src.services.pipeline.pipeline_helpers import (
     TranscriptData,
     TranscriptTrail,
@@ -50,7 +52,7 @@ def _non_english_ctx() -> SimpleNamespace:
         source_language_code="he",
         row_deleted=False,
         phase_times={},
-        plan_result=object(),
+        plan_result=PlanResult(),
         enrichment_data={"a": 1},
         triage=SimpleNamespace(tabs=[]),
         transcript_ready=asyncio.Event(),
@@ -86,7 +88,7 @@ def _english_ctx(extraction_data: dict) -> SimpleNamespace:
         source_language_code=None,
         row_deleted=False,
         phase_times={},
-        plan_result=object(),
+        plan_result=PlanResult(),
         enrichment_data={"a": 1},
         triage=SimpleNamespace(tabs=[]),
         transcript_ready=asyncio.Event(),
@@ -96,6 +98,14 @@ def _english_ctx(extraction_data: dict) -> SimpleNamespace:
 
 
 _TAIL_NAMES = ("run_phase_extraction",)
+
+
+@pytest.fixture(autouse=True)
+def _todays_extraction_path():
+    """These tests pin today's orchestration (EXTRACTION_PARALLEL=false); the split
+    path's members are covered in test_split_extraction.py."""
+    with patch.object(settings, "EXTRACTION_PARALLEL", False):
+        yield
 
 
 async def _parallel_groups(ctx: SimpleNamespace) -> list[list[str]]:
@@ -149,7 +159,7 @@ async def test_should_render_visual_annotations_before_extraction_starts() -> No
             patch.object(pipeline_orchestration, "run_parallel_phases", _capture_parallel)
         )
         stack.enter_context(
-            patch.object(pipeline_orchestration, "render_visual_annotations", lambda *_a: rendered)
+            patch.object(frames_done, "render_visual_annotations", lambda *_a: rendered)
         )
         _ = [
             ev

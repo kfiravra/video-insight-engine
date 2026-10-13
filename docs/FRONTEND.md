@@ -769,10 +769,14 @@ renderers. Dependency: `@dagrejs/dagre` (^3.0.0).
 1. SSE triage_complete → domain accent binds, pending-tab strip appears (VideoHero)
 2. SSE tab_ready[]     → tabs render progressively (contract: API-REFERENCE.md#tab_ready):
                          plan-done → the provisional Moments tab ("Early preview"
-                         notice + a dot in the strip); assembly → the rest,
-                         non-final while a late quiz is pending; the framed
-                         Moments tab replaces the provisional by id; the final
-                         re-emit sends every tab `final: true` at its exact position
+                         notice + a dot in the strip); split extraction (default)
+                         → a non-final preview per tab as its extraction group
+                         lands (no links/attachments yet), then the overview and
+                         whatever assembly added; EXTRACTION_PARALLEL=false →
+                         assembly sends the rest, non-final while a late quiz is
+                         pending; the framed Moments tab replaces the provisional
+                         by id; the final re-emit sends every tab `final: true`
+                         at its exact position (split path: the overview last)
 3. SSE complete        → `tabIds` = the final order; streamed tabs missing from it
                          are withdrawn
 4. SSE done            → celebration; the page refetches the doc
@@ -785,7 +789,8 @@ earlier one; a final tab is replaced only by a later final one, never by a
 non-final or provisional replay. `tab_ready.replaces` (optional) names a tab
 the incoming one supersedes under another id: it takes that tab's slot and its
 focus. `meta` never touches tabs. The first non-provisional tab moves the
-timeline to "Build" (assembly sends no phase event).
+timeline to "Build" (assembly sends no phase event); a later group's
+`extraction_progress` updates the progress but never moves it back.
 
 While streaming, the page keeps one tree (hero + tab strip mounted from the
 first event, so nothing remounts when tabs land): before the first tab the
