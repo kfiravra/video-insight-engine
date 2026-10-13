@@ -6,10 +6,12 @@ import math
 
 import pytest
 
+from src.models.domain_types import FinanceData, LearningData, NarrativeData
 from src.services.pipeline.field_requests import (
     SCALAR_DOMAIN_WEIGHT,
     UNREGISTERED_FIELD_WEIGHT,
     FieldRequest,
+    active_domain_model,
     requested_fields,
 )
 from src.services.pipeline.schema_fields import scalar_fields
@@ -176,6 +178,83 @@ class TestFallbacksAndSideReads:
 
         side_reads = [f.path for f in fields if f.reason == "upgrade" and "t" in f.tab_ids]
         assert " ".join(side_reads) == upgrades
+
+
+class TestInactiveDomains:
+    """The plan-parse guard keeps a moment_track tab on an inactive domain for the moment
+    fallback chain (dev run T1dQhQAm8Tc, 2026-10-13: tags ``tech``, moments ←
+    learning.timestamps); validation discards an inactive domain, so nothing is asked of it."""
+
+    def test_should_not_request_an_inactive_domains_field_when_a_moment_tab_was_kept(
+        self,
+    ) -> None:
+        tabs = [
+            _tab("code", "code_playground", "tech.snippets"),
+            _tab("moments", "moment_track", "learning.timestamps"),
+        ]
+
+        fields = _request(tabs, ["tech"])
+
+        assert {f.domain for f in fields} == {"tech"}
+
+    def test_should_request_nothing_for_a_kept_moment_tab_when_it_is_the_only_tab(self) -> None:
+        assert _request([_tab("moments", "moment_track", "learning.timestamps")], ["tech"]) == []
+
+    def test_should_not_request_an_inactive_domains_scalars(self) -> None:
+        fields = _request([_tab("moments", "moment_track", "learning.timestamps")], ["tech"])
+
+        assert not {"learning.keyQuestion", "learning.summary"} & set(_by_path(fields))
+
+    def test_should_not_request_an_inactive_sibling_of_an_inactive_planned_field(self) -> None:
+        fields = _request([_tab("moments", "moment_track", "learning.timestamps")], ["tech"])
+
+        assert "narrative.keyMoments" not in _by_path(fields)
+
+    def test_should_request_an_active_sibling_when_the_planned_fields_domain_is_inactive(
+        self,
+    ) -> None:
+        tabs = [_tab("moments", "moment_track", "learning.timestamps")]
+
+        fields = _by_path(_request(tabs, ["tech"], ["narrative"]))
+
+        assert (set(fields) & {"learning.timestamps"}, fields["narrative.keyMoments"].reason) == (
+            set(),
+            "fallback",
+        )
+
+    def test_should_not_request_a_primary_only_side_read_when_the_primary_is_inactive(
+        self,
+    ) -> None:
+        tabs = [_tab("cards", "flash_deck", "language.vocabulary")]
+
+        fields = requested_fields(tabs, ["language"], [], scalar_fields, primary_tag="learning")
+
+        assert {f.domain for f in fields} == {"language"}
+
+    @pytest.mark.parametrize(
+        ("domain", "tags", "modifiers", "model"),
+        [
+            ("learning", ["learning"], [], LearningData),
+            ("finance", ["travel"], ["finance"], FinanceData),
+            ("learning", ["tech"], [], None),
+            ("finance", ["travel"], [], None),
+            ("narrative", ["tech", "narrative"], ["narrative"], NarrativeData),
+        ],
+    )
+    def test_should_name_the_validation_model_only_when_the_domain_is_active(
+        self, domain: str, tags: list[str], modifiers: list[str], model: type | None
+    ) -> None:
+        assert active_domain_model(domain, tags, modifiers) is model
+
+    def test_should_not_request_a_modifier_key_when_the_modifier_is_inactive(self) -> None:
+        tabs = [
+            _tab("days", "itinerary", "travel.itinerary"),
+            _tab("costs", "info_grid", "finance.costs"),
+        ]
+
+        fields = _request(tabs, ["travel"])
+
+        assert "finance" not in {f.domain for f in fields}
 
 
 class TestOverviewReads:

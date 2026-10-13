@@ -35,11 +35,10 @@ from typing import TYPE_CHECKING, Any, Union, get_args, get_origin
 from pydantic import AliasChoices, BaseModel
 from pydantic.fields import FieldInfo
 
-from ...models.domain_types import DOMAIN_MODELS, MODIFIER_MODELS
 from ...models.domain_validation import ValidationReport, merge_report, validate_block_items
 from .extraction_quality import ExtractionQuality
 from .field_groups import ExtractionGroup
-from .field_requests import FieldRequest
+from .field_requests import FieldRequest, active_domain_model
 from .schema_fields import keep_requested, load_domain_schema
 
 if TYPE_CHECKING:
@@ -169,16 +168,6 @@ def _kept_paths(
     return _filled(block, fields)
 
 
-def _model_for(
-    domain: str, content_tags: Sequence[str], modifiers: Sequence[str]
-) -> type[BaseModel] | None:
-    if domain in content_tags:
-        return DOMAIN_MODELS.get(domain)
-    if domain in modifiers:
-        return MODIFIER_MODELS.get(domain)
-    return None
-
-
 def _validate_domain(
     domain: str,
     model_cls: type[BaseModel],
@@ -212,12 +201,14 @@ def validate_group(
     """One group's answer → its validated keys, domain-keyed, and the validation report.
 
     A domain of the group that is not an active content tag or modifier with a
-    model is discarded (logged) — never passed through unvalidated.
+    model is discarded (logged) — never passed through unvalidated. The rule is
+    ``field_requests.active_domain_model``, which keeps such a domain out of
+    every request too.
     """
     report = _empty_report()
     validated: dict[str, Any] = {}
     for domain in _domains(group):
-        model_cls = _model_for(domain, content_tags, modifiers)
+        model_cls = active_domain_model(domain, content_tags, modifiers)
         if model_cls is None:
             logger.warning(
                 "[group_merge] %s: %r is not an active domain with a model — keys discarded",

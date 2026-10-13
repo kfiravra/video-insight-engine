@@ -35,7 +35,11 @@ from src.services.pipeline.extraction_groups import (
 )
 from src.services.pipeline.extractor import _build_prompt
 from src.services.pipeline.field_groups import ExtractionGroup, build_groups, visual_group
-from src.services.pipeline.field_requests import FieldRequest, reads_extraction, requested_fields
+from src.services.pipeline.field_requests import (
+    FieldRequest,
+    reads_active_extraction,
+    requested_fields,
+)
 from src.services.pipeline.group_failures import flag_failed_groups
 from src.services.pipeline.group_merge import merge_groups, merge_order, requested_quality
 from src.services.pipeline.phases.enrichment import cancel_quiz_task
@@ -223,9 +227,13 @@ def _group_rows(outcomes: Sequence[GroupOutcome]) -> list[dict[str, Any]]:
 
 
 def _nothing_to_extract(ctx: PipelineContext) -> bool:
-    """No call fired because no planned tab reads an extraction field (overview, quiz, frames)."""
+    """No call fired because no planned tab reads an active domain's extraction field
+    (overview, quiz, frames, a moment_track tab kept on an untagged domain)."""
     plan = ctx.plan_result
-    return plan is not None and not any(reads_extraction(tab) for tab in plan.tabs)
+    if plan is None:
+        return False
+    tags, modifiers = plan.content_tags, plan.modifiers
+    return not any(reads_active_extraction(tab, tags, modifiers) for tab in plan.tabs)
 
 
 async def _complete(ctx: PipelineContext, outcomes: Sequence[GroupOutcome]) -> list[str]:

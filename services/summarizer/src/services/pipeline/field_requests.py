@@ -7,7 +7,12 @@ renders the tab ("upgrades"), the overview hero's reads of the primary domain
 (tips + level — the overview is in every response, planned or not), and the
 scalar keys of every requested domain.
 Nothing outside that union is requested — an active modifier no tab reads
-costs no output. ``field_groups`` cuts the result into extraction calls.
+costs no output — and nothing of an inactive domain: ``active_domain_model``
+is the one rule both this request and ``group_merge.validate_group`` apply, so
+no group asks for keys its validation would discard (today's single call
+emits only the active domains too). A moment_track tab the plan-parse guard
+kept on an untagged domain therefore requests nothing; assembly's moment
+fallback chain fills it. ``field_groups`` cuts the result into extraction calls.
 
 Pure: registry values (cap, outputWeight, waitsForVisual, siblings) come from
 domains.json through ``domain_config``; ``scalars_of`` is injected
@@ -22,7 +27,9 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal, get_args
 
-from ...models.domain_types import MODIFIER_MODELS
+from pydantic import BaseModel
+
+from ...models.domain_types import DOMAIN_MODELS, MODIFIER_MODELS
 from ...models.pipeline_types import TabBrief
 from ...shared_config.domain_config import (
     NON_EXTRACTION_DATASOURCES,
@@ -195,6 +202,30 @@ def _whole_domain(
     ]
 
 
+# ─── Active domains ───
+
+
+def active_domain_model(
+    domain: str, content_tags: Sequence[str], modifiers: Sequence[str]
+) -> type[BaseModel] | None:
+    """The model ``domain``'s extraction validates with; None when it is not an active
+    content tag or modifier with a model (its keys are neither requested nor kept).
+
+    A modifier the planner also wrote into contentTags (nothing filters it) still
+    resolves to its modifier model, as the single call's modifier loop validates it.
+    """
+    model = DOMAIN_MODELS.get(domain) if domain in content_tags else None
+    if model is None and domain in modifiers:
+        model = MODIFIER_MODELS.get(domain)
+    return model
+
+
+def _active_domains(content_tags: Sequence[str], modifiers: Sequence[str]) -> list[str]:
+    """The run's active domains, content tags first, each once."""
+    tagged = dict.fromkeys([*content_tags, *modifiers])
+    return [d for d in tagged if active_domain_model(d, content_tags, modifiers) is not None]
+
+
 def _tab_id(tab: Mapping[str, object]) -> str:
     return str(tab.get("id") or "")
 
@@ -213,6 +244,16 @@ def reads_extraction(tab: Mapping[str, object]) -> bool:
         and source not in NON_EXTRACTION_DATASOURCES
         and domain not in _SKIPPED_DOMAINS
     )
+
+
+def reads_active_extraction(
+    tab: Mapping[str, object], content_tags: Sequence[str], modifiers: Sequence[str]
+) -> bool:
+    """Whether the tab renders an extraction field of an active domain — a moment_track
+    tab kept on an untagged domain reads none (the moment fallback chain fills it)."""
+    domain = str(tab.get("dataSource") or "").partition(".")[0]
+    active = active_domain_model(domain, content_tags, modifiers) is not None
+    return reads_extraction(tab) and active
 
 
 def _planned(
@@ -296,7 +337,11 @@ def _overview_reads(
     return drafts + [_unregistered(primary_tag, key, "scalar", "upgrade", "") for key in levels]
 
 
-def _put(drafts: dict[tuple[str, str], _Draft], draft: _Draft) -> None:
+def _put(drafts: dict[tuple[str, str], _Draft], draft: _Draft, active: Sequence[str]) -> None:
+    """Request ``draft`` (merged into an earlier request of its key) — never for an
+    inactive domain, whatever the reason: its group's validation would discard it."""
+    if draft.domain not in active:
+        return
     existing = drafts.get((draft.domain, draft.field))
     if existing is None:
         drafts[(draft.domain, draft.field)] = draft
@@ -362,20 +407,20 @@ def requested_fields(
     ones); then the overview's reads of the primary domain (``primary_tag``);
     finally the scalar keys of every domain that has a requested field.
     A field several tabs read is requested once, with all their tab ids and its
-    strongest reason.
+    strongest reason. Only active domains' fields (``active_domain_model``).
     """
     registry = data_sources()
-    active = list(dict.fromkeys([*content_tags, *modifiers]))
+    active = _active_domains(content_tags, modifiers)
     drafts: dict[tuple[str, str], _Draft] = {}
     for tab in (t for t in tabs if _reads_extraction(t)):
         planned = _planned(tab, registry, scalars_of)
         fallbacks = _fallbacks(planned, registry, active, _tab_id(tab))
         upgrades = _side_reads(tab, registry, active, primary_tag)
         for draft in [*planned, *fallbacks, *upgrades]:
-            _put(drafts, draft)
+            _put(drafts, draft, active)
     for draft in _overview_reads(primary_tag, content_tags, registry, scalars_of):
-        _put(drafts, draft)
+        _put(drafts, draft, active)
     for domain in dict.fromkeys([d.domain for d in drafts.values()]):
         for name in scalars_of(domain):
-            _put(drafts, _unregistered(domain, name, "scalar", "scalar", ""))
+            _put(drafts, _unregistered(domain, name, "scalar", "scalar", ""), active)
     return _freeze(list(drafts.values()))

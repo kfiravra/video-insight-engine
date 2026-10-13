@@ -33,6 +33,7 @@ from src.services.pipeline.phases.split_extraction import run_phase_split_extrac
 from src.services.pipeline.phases.triage import plan_done_events, run_phase_plan
 from src.services.pipeline.pipeline_helpers import PipelineTimer
 from src.services.pipeline.triage import TriageResult
+from src.services.video.youtube import Chapter
 from src.shared_config.domain_config import build_fallback_tabs, valid_content_tags
 from tests.test_group_failures import SCRAMBLED, Model, patched
 from tests.test_phase_assembly_order import _run, _saved
@@ -54,12 +55,13 @@ def _isolated() -> Iterator[None]:
         yield
 
 
-def _food_ctx(tags: tuple[str, ...] = ("food",)) -> PipelineContext:
+def _food_ctx(tags: tuple[str, ...] = ("food",), tabs: list[dict] | None = None) -> PipelineContext:
     ctx = PipelineContext("vsid", "yt", {}, MagicMock(), MagicMock(), PipelineTimer())
+    tabs = tabs if tabs is not None else _FOOD_TABS
     ctx.plan_result = PlanResult.model_validate(
-        {"contentTags": list(tags), "primaryTag": "food", "tabs": _FOOD_TABS, "confidence": 0.9}
+        {"contentTags": list(tags), "primaryTag": "food", "tabs": tabs, "confidence": 0.9}
     )
-    ctx.triage = TriageResult(content_tags=list(tags), primary_tag="food", tabs=_FOOD_TABS)
+    ctx.triage = TriageResult(content_tags=list(tags), primary_tag="food", tabs=tabs)
     ctx.triage_dict = ctx.plan_result.to_triage_dict(None)
     ctx.video_data = SimpleNamespace(  # type: ignore[assignment]
         title="Omelette", channel="A cook", description="", duration=600, chapters=None,
@@ -81,9 +83,14 @@ async def _member(ctx: PipelineContext, model: Model) -> list[dict[str, Any]]:
         return _payloads([event async for event in run_phase_split_extraction(ctx)])
 
 
-async def _food_run(model: Model, tags: tuple[str, ...] = ("food",)) -> SimpleNamespace:
+async def _food_run(
+    model: Model, tags: tuple[str, ...] = ("food",), tabs: list[dict] | None = None
+) -> SimpleNamespace:
+    return await _whole_run(_food_ctx(tags, tabs), model)
+
+
+async def _whole_run(ctx: PipelineContext, model: Model) -> SimpleNamespace:
     """The split member, then assembly and the save (run after an error too, as today)."""
-    ctx = _food_ctx(tags)
     streamed = await _member(ctx, model)
     events = await _run(ctx, quiz=False)
     saved = _saved(ctx)
@@ -189,6 +196,59 @@ class TestSideReadFailed:
 
     async def test_should_mark_the_run_degraded(self, side_read_failed: SimpleNamespace) -> None:
         assert side_read_failed.saved.get("degraded") is True
+
+
+# ─── A moment tab kept on an inactive domain ───
+
+
+# The plan-parse guard kept moments ← learning.timestamps on a run that did not tag
+# learning (dev run T1dQhQAm8Tc, 2026-10-13); the model would answer it correctly.
+_KEPT_MOMENTS_TABS = [
+    *_FOOD_TABS,
+    {"id": "moments", "label": "Moments", "component": "moment_track",
+     "dataSource": "learning.timestamps"},
+]  # fmt: skip
+
+
+@pytest.fixture
+async def kept_moments() -> SimpleNamespace:
+    return await _food_run(Model(), tabs=_KEPT_MOMENTS_TABS)
+
+
+@pytest.fixture
+async def kept_moments_with_chapters() -> SimpleNamespace:
+    """The same run on a video with YouTube chapters — the moment fallback's second rung."""
+    ctx = _food_ctx(tabs=_KEPT_MOMENTS_TABS)
+    assert ctx.video_data is not None
+    ctx.video_data.chapters = [Chapter(0, 240, "Whisk"), Chapter(240, 600, "Fold and serve")]
+    return await _whole_run(ctx, Model())
+
+
+class TestKeptMomentTabOnAnInactiveDomain:
+    async def test_should_fire_no_group_for_the_inactive_domain(
+        self, kept_moments: SimpleNamespace
+    ) -> None:
+        asked = {path for call in kept_moments.model.calls for path in call["paths"]}
+
+        assert {path for path in asked if path.startswith("learning.")} == set()
+
+    async def test_should_record_no_failed_group(self, kept_moments: SimpleNamespace) -> None:
+        rows = kept_moments.saved["pipeline"]["extraction"]["_groups"]
+
+        assert {r["status"] for r in rows} == {"ok"}
+
+    async def test_should_not_mark_the_run_degraded(self, kept_moments: SimpleNamespace) -> None:
+        complete = next(p for n, p in kept_moments.events if n == "complete")
+
+        assert (complete["degraded"], bool(kept_moments.saved.get("degraded"))) == (False, False)
+
+    async def test_should_ship_the_tab_from_the_moment_fallback_when_the_video_has_chapters(
+        self, kept_moments_with_chapters: SimpleNamespace
+    ) -> None:
+        run = kept_moments_with_chapters
+        dropped_ids = [tab_id for tab_id, _ in _dropped(run)]
+
+        assert ("moments" in _saved_ids(run), "moments" in dropped_ids) == (True, False)
 
 
 # ─── Every group fails ───

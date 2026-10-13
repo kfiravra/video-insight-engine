@@ -47,6 +47,7 @@ ITEMS: dict[str, list[Any]] = {
     "food.steps": [{"number": 1, "instruction": "whisk"}, {"number": 2, "instruction": "fold"}],
     "food.tips": [{"text": "keep the heat low"}],
     "project.steps": [{"number": 1, "instruction": "cut"}, {"number": 2, "instruction": "glue"}],
+    "learning.timestamps": [{"time": "5:00", "seconds": 300, "label": "the demo"}],
 }
 SCRAMBLED = 'eggs" : "name ingredients": food'  # deltas out of order: not a JSON object
 _PER_FIELD = ""  # ``Model(reply=...)`` unset: each group answered from ``ITEMS``

@@ -26,8 +26,8 @@ from src.services.pipeline.phases.extraction import extraction_record
 from src.services.pipeline.phases.frames_done import then_frames_done
 from src.services.pipeline.phases.split_extraction import run_phase_split_extraction
 from src.services.pipeline.pipeline_helpers import PipelineTimer
-from src.services.pipeline.post_processor import coverage_is_degraded
 from src.services.pipeline.pipeline_timing import PipelineTimingRecorder, start_run_timing
+from src.services.pipeline.post_processor import coverage_is_degraded
 from src.services.pipeline.triage import TriageResult
 
 _FOOD_TABS = [
@@ -213,6 +213,16 @@ class TestPlanDoneFiring:
         events = await _drain(ctx, _Groups())
 
         assert (ctx.extraction_data, _events(events, "error")) == ({}, [])
+
+    async def test_should_extract_nothing_without_an_error_when_only_a_kept_moment_tab_is_planned(
+        self,
+    ) -> None:
+        # The plan-parse guard kept it on an untagged domain; the moment fallback fills it.
+        ctx, groups = _done(_ctx(["tech"], _LEARNING_TABS[:1])), _Groups()
+
+        events = await _drain(ctx, groups)
+
+        assert (groups.fired, ctx.extraction_data, _events(events, "error")) == ([], {}, [])
 
     async def test_should_extract_the_primarys_overview_reads_when_only_the_overview_is_planned(
         self,
