@@ -17,11 +17,15 @@ sends every tab final.
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncGenerator, Sequence
+from collections.abc import AsyncGenerator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from src.services.pipeline.extraction_chunks import plan_chunks
+from src.services.pipeline.extraction_chunks import (
+    ExtractionChunk,
+    key_frames_by_chunk,
+    plan_chunks,
+)
 from src.services.pipeline.extraction_group_prompt import GroupJob
 from src.services.pipeline.extraction_groups import (
     GroupOutcome,
@@ -65,22 +69,31 @@ def _requested(plan: PlanResult) -> list[FieldRequest]:
     )
 
 
-def _job(plan: PlanResult, visual_annotations: str = "", frame_context: str = "") -> GroupJob:
+def _job(
+    plan: PlanResult,
+    visual_annotations: str = "",
+    frame_context: str = "",
+    chunk_frame_context: Mapping[int, str] | None = None,
+) -> GroupJob:
     return GroupJob(
         tabs=list(plan.tabs),
         active=[*plan.content_tags, *plan.modifiers],
         primary_tag=plan.primary_tag,
         visual_annotations=visual_annotations,
         frame_context=frame_context,
+        chunk_frame_context=chunk_frame_context or {},
     )
 
 
-def _split_run(ctx: PipelineContext) -> tuple[SplitRun, bool]:
+async def _split_run(ctx: PipelineContext) -> tuple[SplitRun, bool]:
     """The run's calls at plan-done, and whether a visual group is planned.
 
+    The chunks come first (a long video's chapter chain can wait on the
+    description or chapter_detect), the groups from the tabs as they are then.
     The prompt is today's, built without frame inputs: blocks 1 and 2 never
     carry them; the visual group's job binds them at frames-done.
     """
+    chunks = await plan_chunks(ctx)
     plan, triage, video = ctx.plan_result, ctx.triage, ctx.video_data
     assert plan is not None and triage is not None and video is not None
     groups = build_groups(_requested(plan), plan.tabs, grouping_config())
@@ -96,7 +109,7 @@ def _split_run(ctx: PipelineContext) -> tuple[SplitRun, bool]:
         ctx.llm_service,
         prompt,
         _job(plan),
-        tuple(plan_chunks(ctx)),
+        tuple(chunks),
         text_groups,
         tuple(plan.content_tags),
         tuple(plan.modifiers),
@@ -104,8 +117,11 @@ def _split_run(ctx: PipelineContext) -> tuple[SplitRun, bool]:
     return run, len(groups) > len(text_groups)
 
 
-def _visual_cutter(ctx: PipelineContext) -> VisualCut:
-    """At frames-done (deferred code tabs already decided): the fields no text group asked for."""
+def _visual_cutter(ctx: PipelineContext, chunks: Sequence[ExtractionChunk]) -> VisualCut:
+    """At frames-done (deferred code tabs already decided): the fields no text group asked for.
+
+    A long video's chunks each get the key frames of their own window.
+    """
 
     async def cut(fired: frozenset[str]) -> tuple[ExtractionGroup, GroupJob] | None:
         await ctx.frames_done.wait()
@@ -114,10 +130,10 @@ def _visual_cutter(ctx: PipelineContext) -> VisualCut:
         group = visual_group(_requested(plan), fired)
         if group is None:
             return None
-        frames = format_gallery_frames_for_extraction(
-            ctx.scene_frames_gallery, ctx.frame_descriptions
-        )
-        return group, _job(plan, ctx.visual_annotations, frames)
+        gallery, descriptions = ctx.scene_frames_gallery, ctx.frame_descriptions
+        frames = format_gallery_frames_for_extraction(gallery, descriptions)
+        per_chunk = key_frames_by_chunk(gallery, descriptions, chunks)
+        return group, _job(plan, ctx.visual_annotations, frames, per_chunk)
 
     return cut
 
@@ -174,7 +190,7 @@ async def _land(
     progress = _Progress(of=len(run.chunks) * per_chunk, visual_planned=visual_planned)
     landing = GroupLanding.for_run(ctx, run.text_groups, len(run.chunks))
     yield progress.event()
-    async for outcome in fire_groups(run, _visual_cutter(ctx)):
+    async for outcome in fire_groups(run, _visual_cutter(ctx, run.chunks)):
         if outcome is None:
             progress.skipped()
             continue
@@ -251,7 +267,7 @@ async def run_phase_split_extraction(ctx: PipelineContext) -> AsyncGenerator[str
         return  # the text branch failed: no plan to extract for (the group is being cancelled)
     try:
         with timed_step("extraction"):
-            run, visual_planned = _split_run(ctx)
+            run, visual_planned = await _split_run(ctx)
             outcomes: list[GroupOutcome] = []
             async for event in _land(ctx, run, visual_planned, outcomes):
                 yield event

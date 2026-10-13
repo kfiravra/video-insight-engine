@@ -10,7 +10,7 @@ output, which stays unmodified:
    ``<video_memory>`` — the same bytes for every group of a chunk;
 3. the group's job (``extraction_group_job.txt``, uncached): the emit-only
    line + output shape, the tabs it serves, the primary's emphasis; the visual
-   group adds the annotation guide, the chunk's annotations and the key frames.
+   group adds the annotation guide and the chunk's annotations and key frames.
 
 The 1-hour breakpoint precedes the 5-minute one (Anthropic rejects the other
 order): two breakpoints of the four allowed. The schema and example are cut
@@ -21,7 +21,7 @@ on-screen text (late-bound) can sit between the tags there.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from ..llm_messages import CacheTTL, TextBlock, text_block
 from .extraction_chunks import ExtractionChunk, chunk_annotations
@@ -54,13 +54,18 @@ _LABEL_MAX_CHARS = 80
 @dataclass(frozen=True)
 class GroupJob:
     """What a group's job block reads besides the group: the tabs it was cut from,
-    the run's domains, and — the visual group only — the frame inputs."""
+    the run's domains, and — the visual group only — the frame inputs.
+
+    ``frame_context`` = the whole video's key frames; a long video's chunk listed
+    in ``chunk_frame_context`` reads its own window's instead.
+    """
 
     tabs: Sequence[Mapping[str, object]]
     active: Sequence[str]  # content tags + modifiers
     primary_tag: str
     visual_annotations: str = ""
     frame_context: str = ""
+    chunk_frame_context: Mapping[int, str] = field(default_factory=dict)
 
 
 # ─── Block 1 + 2 ───
@@ -193,7 +198,9 @@ def job_block(group: ExtractionGroup, chunk: ExtractionChunk, job: GroupJob) -> 
         "visual_annotations": (
             chunk_annotations(job.visual_annotations, chunk) if group.visual else ""
         ),
-        "frame_context": job.frame_context if group.visual else "",
+        "frame_context": (
+            job.chunk_frame_context.get(chunk.index, job.frame_context) if group.visual else ""
+        ),
     }
     # Today's binding: the visual elements leave with empty inputs, and the
     # single pass never re-reads inserted text (on-screen code) for placeholders.
