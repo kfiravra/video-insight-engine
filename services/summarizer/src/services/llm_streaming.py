@@ -4,11 +4,11 @@ Anthropic makes a prompt-cache entry readable only once the response that
 writes it has begun. The split extraction streams ONE call per transcript
 chunk (its text1 group): its first chunk tells the chunk's other group calls
 they can read the shared prefix instead of writing it again. With LiteLLM
-1.91 the consumer never sees ``message_start`` (an empty chunk once its usage
-is stripped), so that first chunk — and ``ttftMs`` — is the first content
-token. ``LLMProvider`` routes a call here only when its caller passes
-``on_first_chunk``; every other request is sent exactly as before, with no
-``stream`` key.
+1.91–1.105.0 (re-verified 2026-10-13) the consumer never sees ``message_start``
+(an empty chunk once its usage is stripped), so that first chunk — and
+``ttftMs`` — is the first content token. ``LLMProvider`` routes a call here
+only when its caller passes ``on_first_chunk``; every other request is sent
+exactly as before, with no ``stream`` key.
 
 The chunks are rebuilt into one response twice, both with
 ``litellm.stream_chunk_builder``: OURS feeds the timing record and the Langfuse
@@ -58,7 +58,8 @@ def streaming_request(kwargs: dict[str, Any]) -> dict[str, Any]:
     return {**kwargs, "stream": True, "stream_options": {"include_usage": True}}
 
 
-# The key ``stream_chunk_builder`` sorts a stream's chunks by (LiteLLM 1.91).
+# The key ``stream_chunk_builder`` sorts a stream's chunks by (LiteLLM 1.91–1.105.0,
+# re-verified 2026-10-13).
 _CREATED_AT = "created_at"
 
 

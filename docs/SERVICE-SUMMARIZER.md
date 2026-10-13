@@ -16,7 +16,7 @@ Python service that processes YouTube videos into structured summaries.
 | yt-dlp | Video metadata + chapters |
 | LiteLLM | Multi-provider LLM abstraction (Anthropic, OpenAI, Gemini) |
 | pymongo | MongoDB driver |
-| aioboto3 | Async S3 client (transcripts + frame storage) |
+| aiobotocore | Async S3 client (transcripts + frame storage); boto3 signs presigned URLs |
 | Pydantic | Validation & Settings |
 | google-genai | Gemini native SDK (audio transcription) |
 | structlog | Structured logging |
@@ -1264,7 +1264,7 @@ vie-transcripts (S3 bucket)
 | Presigned URLs | All access via signed URLs | Security: private bucket, time-limited access |
 | `s3_key` in MongoDB | Store key, not URL | URLs change (expiry), key is permanent |
 | Sync presigning | No async for URL generation | Local crypto operation (HMAC-SHA256), no network call |
-| Lazy S3 initialization | aioboto3 imported on first use | Container starts without S3 dependency |
+| Lazy S3 initialization | aiobotocore imported on first use | Container starts without S3 dependency |
 | Graceful degradation | S3 failure doesn't block summarization | Core functionality works without S3 |
 
 ### Migration Scripts

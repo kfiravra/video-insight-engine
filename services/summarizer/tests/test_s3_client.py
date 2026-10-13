@@ -1,9 +1,16 @@
 """Tests for S3 client service — put_bytes, presigned URLs, dev URLs."""
 
+import sys
+from collections.abc import AsyncIterator
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
+from aiobotocore.response import AioHttpxStreamingBody
+from aiobotocore.session import get_session
+from aiobotocore.stub import AioStubber
 
+from src.services.media import s3_client as s3_module
 from src.services.media.s3_client import S3Client
 
 
@@ -22,6 +29,14 @@ def s3_client_instance():
         yield client
 
 
+def _session_with(s3: object) -> MagicMock:
+    """aiobotocore-shaped session whose create_client() context yields ``s3``."""
+    mock_session = MagicMock()
+    mock_session.create_client.return_value.__aenter__ = AsyncMock(return_value=s3)
+    mock_session.create_client.return_value.__aexit__ = AsyncMock(return_value=False)
+    return mock_session
+
+
 class TestPutBytes:
     """Tests for put_bytes method."""
 
@@ -30,10 +45,7 @@ class TestPutBytes:
         mock_s3 = AsyncMock()
         mock_s3.put_object = AsyncMock()
 
-        mock_session = MagicMock()
-        mock_session.client.return_value.__aenter__ = AsyncMock(return_value=mock_s3)
-        mock_session.client.return_value.__aexit__ = AsyncMock(return_value=False)
-        s3_client_instance._session = mock_session
+        s3_client_instance._session = _session_with(mock_s3)
 
         await s3_client_instance.put_bytes(
             "videos/abc/frames/30.jpg", b"jpeg-data", content_type="image/jpeg"
@@ -51,10 +63,7 @@ class TestPutBytes:
         mock_s3 = AsyncMock()
         mock_s3.put_object = AsyncMock()
 
-        mock_session = MagicMock()
-        mock_session.client.return_value.__aenter__ = AsyncMock(return_value=mock_s3)
-        mock_session.client.return_value.__aexit__ = AsyncMock(return_value=False)
-        s3_client_instance._session = mock_session
+        s3_client_instance._session = _session_with(mock_s3)
 
         await s3_client_instance.put_bytes("some/key", b"data")
 
@@ -124,10 +133,7 @@ def _paged_session(pages: list[dict]) -> tuple[MagicMock, AsyncMock]:
     mock_s3 = AsyncMock()
     mock_s3.list_objects_v2 = AsyncMock(side_effect=pages)
     mock_s3.delete_objects = AsyncMock(return_value={})
-    mock_session = MagicMock()
-    mock_session.client.return_value.__aenter__ = AsyncMock(return_value=mock_s3)
-    mock_session.client.return_value.__aexit__ = AsyncMock(return_value=False)
-    return mock_session, mock_s3
+    return _session_with(mock_s3), mock_s3
 
 
 class TestDeletePrefix:
@@ -200,3 +206,123 @@ class TestDeletePrefix:
     async def test_should_refuse_prefixes_outside_one_video(self, s3_client_instance, prefix):
         with pytest.raises(ValueError):
             await s3_client_instance.delete_prefix(prefix)
+
+
+class TestAiobotocoreSession:
+    """The async client comes from one aiobotocore session, opened with the S3 config."""
+
+    @pytest.mark.asyncio
+    async def test_should_open_s3_client_with_configured_endpoint_and_credentials(
+        self, s3_client_instance
+    ):
+        session = _session_with(AsyncMock())
+        with patch("aiobotocore.session.get_session", return_value=session):
+            await s3_client_instance.put_bytes("some/key", b"data")
+
+        session.create_client.assert_called_once_with(
+            "s3",
+            region_name="us-east-1",
+            endpoint_url="http://localhost:4566",
+            aws_access_key_id="test-key",
+            aws_secret_access_key="test-secret",
+        )
+
+    @pytest.mark.asyncio
+    async def test_should_reuse_one_session_when_called_twice(self, s3_client_instance):
+        session = _session_with(AsyncMock())
+        with patch("aiobotocore.session.get_session", return_value=session) as get_session:
+            await s3_client_instance.put_bytes("a", b"1")
+            await s3_client_instance.delete("b")
+
+        get_session.assert_called_once_with()
+        assert session.create_client.call_count == 2
+
+
+class TestAiobotocoreMissing:
+    """Without aiobotocore, S3 reports unavailable instead of crashing callers."""
+
+    @pytest.fixture
+    def without_aiobotocore(self, monkeypatch):
+        monkeypatch.setattr(s3_module, "_aiobotocore_available", None)
+        with patch.dict(sys.modules, {"aiobotocore": None, "aiobotocore.session": None}):
+            yield
+
+    def test_should_report_unavailable_when_aiobotocore_is_missing(self, without_aiobotocore):
+        assert S3Client.is_available() is False
+
+    @pytest.mark.asyncio
+    async def test_should_return_unavailable_health_when_aiobotocore_is_missing(
+        self, s3_client_instance, without_aiobotocore
+    ):
+        health = await s3_client_instance.health_check()
+
+        assert health == {
+            "status": "unavailable",
+            "bucket": "vie-transcripts",
+            "error": "aiobotocore not installed",
+        }
+
+    @pytest.mark.asyncio
+    async def test_should_raise_when_s3_is_used_without_aiobotocore(
+        self, s3_client_instance, without_aiobotocore
+    ):
+        with pytest.raises(RuntimeError, match="aiobotocore not available"):
+            await s3_client_instance.put_bytes("some/key", b"data")
+
+
+_KEY = "videos/abc/transcript.json"
+_OBJECT = {"Bucket": "vie-transcripts", "Key": _KEY}
+
+
+async def _in_two_chunks(data: bytes) -> AsyncIterator[bytes]:
+    """An unread HTTP body arriving in two pieces, split inside a multi-byte character."""
+    middle = len(data) - 3
+    yield data[:middle]
+    yield data[middle:]
+
+
+@pytest.fixture
+async def stubbed_s3(s3_client_instance):
+    """A REAL aiobotocore S3 client behind AioStubber (no network), served by the session."""
+    async with get_session().create_client(
+        "s3", region_name="us-east-1", aws_access_key_id="x", aws_secret_access_key="y"
+    ) as client:
+        with AioStubber(client) as stubber:
+            s3_client_instance._session = _session_with(client)
+            yield s3_client_instance, stubber
+            stubber.assert_no_pending_responses()
+
+
+class TestAiobotocoreResponses:
+    """aiobotocore/botocore's own error parsing and body streaming, as S3 would answer."""
+
+    @pytest.mark.asyncio
+    async def test_should_return_false_when_head_object_is_404(self, stubbed_s3):
+        client, stubber = stubbed_s3
+        stubber.add_client_error(
+            "head_object", service_error_code="404", http_status_code=404, expected_params=_OBJECT
+        )
+
+        assert await client.exists(_KEY) is False
+
+    @pytest.mark.asyncio
+    async def test_should_return_none_when_get_object_is_no_such_key(self, stubbed_s3):
+        client, stubber = stubbed_s3
+        stubber.add_client_error(
+            "get_object",
+            service_error_code="NoSuchKey",
+            http_status_code=404,
+            expected_params=_OBJECT,
+        )
+
+        assert await client.get_json(_KEY) is None
+
+    @pytest.mark.asyncio
+    async def test_should_parse_the_streamed_body_when_get_object_succeeds(self, stubbed_s3):
+        client, stubber = stubbed_s3
+        payload = '{"language": "he", "text": "שלום"}'.encode()
+        raw = httpx.Response(200, content=_in_two_chunks(payload))
+        body = AioHttpxStreamingBody(raw, len(payload))
+        stubber.add_response("get_object", {"Body": body}, expected_params=_OBJECT)
+
+        assert await client.get_json(_KEY) == {"language": "he", "text": "שלום"}

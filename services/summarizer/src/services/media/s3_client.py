@@ -1,10 +1,9 @@
 """S3 client service for media storage.
 
-Provides async S3 operations using aioboto3 for storing and retrieving
-transcripts, frames, and other media. Uses AWS S3 for storing transcripts,
-frames, and other media.
+Async S3 operations (aiobotocore) for storing and retrieving transcripts,
+frames, and other media; a sync boto3 client only signs presigned URLs.
 
-Note: aioboto3 is imported lazily to allow graceful degradation if not installed.
+Note: aiobotocore is imported lazily to allow graceful degradation if not installed.
 """
 
 import json
@@ -23,8 +22,8 @@ from src.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Track if aioboto3 is available
-_aioboto3_available: bool | None = None
+# Track if aiobotocore is available
+_aiobotocore_available: bool | None = None
 
 
 def _is_retryable_s3_error(exc: BaseException) -> bool:
@@ -39,18 +38,18 @@ def _is_retryable_s3_error(exc: BaseException) -> bool:
         return False
 
 
-def _check_aioboto3() -> bool:
-    """Check if aioboto3 is available (lazy check)."""
-    global _aioboto3_available
-    if _aioboto3_available is None:
+def _check_aiobotocore() -> bool:
+    """Check if aiobotocore is available (lazy check)."""
+    global _aiobotocore_available
+    if _aiobotocore_available is None:
         try:
-            import aioboto3  # noqa: F401
+            import aiobotocore.session  # noqa: F401
 
-            _aioboto3_available = True
+            _aiobotocore_available = True
         except ImportError:
-            logger.warning("aioboto3 not installed - S3 storage will be disabled")
-            _aioboto3_available = False
-    return _aioboto3_available
+            logger.warning("aiobotocore not installed - S3 storage will be disabled")
+            _aiobotocore_available = False
+    return _aiobotocore_available
 
 
 # Only one video's own prefix may be bulk-deleted. A caller bug must fail
@@ -69,13 +68,13 @@ class S3Client:
         self._bucket = settings.S3_BUCKET
 
     def _ensure_session(self) -> Any:
-        """Lazily initialize the aioboto3 session."""
+        """Lazily initialize the aiobotocore session (reused for every client)."""
         if self._session is None:
-            if not _check_aioboto3():
-                raise RuntimeError("aioboto3 not available - cannot use S3 storage")
-            import aioboto3
+            if not _check_aiobotocore():
+                raise RuntimeError("aiobotocore not available - cannot use S3 storage")
+            from aiobotocore.session import get_session
 
-            self._session = aioboto3.Session()
+            self._session = get_session()
         return self._session
 
     def _get_client_config(self) -> dict[str, Any]:
@@ -100,7 +99,7 @@ class S3Client:
         from botocore.exceptions import ClientError
 
         session = self._ensure_session()
-        async with session.client("s3", **self._get_client_config()) as s3:
+        async with session.create_client("s3", **self._get_client_config()) as s3:
             try:
                 await s3.head_bucket(Bucket=self._bucket)
                 logger.debug("S3 bucket exists: %s", self._bucket)
@@ -141,7 +140,7 @@ class S3Client:
             ClientError: If upload fails after retries
         """
         session = self._ensure_session()
-        async with session.client("s3", **self._get_client_config()) as s3:
+        async with session.create_client("s3", **self._get_client_config()) as s3:
             body = json.dumps(data, ensure_ascii=False)
             await s3.put_object(
                 Bucket=self._bucket,
@@ -173,7 +172,7 @@ class S3Client:
             content_type: MIME type (default: application/octet-stream)
         """
         session = self._ensure_session()
-        async with session.client("s3", **self._get_client_config()) as s3:
+        async with session.create_client("s3", **self._get_client_config()) as s3:
             await s3.put_object(
                 Bucket=self._bucket,
                 Key=key,
@@ -264,7 +263,7 @@ class S3Client:
         from botocore.exceptions import ClientError
 
         session = self._ensure_session()
-        async with session.client("s3", **self._get_client_config()) as s3:
+        async with session.create_client("s3", **self._get_client_config()) as s3:
             try:
                 response = await s3.get_object(Bucket=self._bucket, Key=key)
                 async with response["Body"] as stream:
@@ -290,7 +289,7 @@ class S3Client:
         from botocore.exceptions import ClientError
 
         session = self._ensure_session()
-        async with session.client("s3", **self._get_client_config()) as s3:
+        async with session.create_client("s3", **self._get_client_config()) as s3:
             try:
                 await s3.head_object(Bucket=self._bucket, Key=key)
                 return True
@@ -311,7 +310,7 @@ class S3Client:
             ClientError: If deletion fails
         """
         session = self._ensure_session()
-        async with session.client("s3", **self._get_client_config()) as s3:
+        async with session.create_client("s3", **self._get_client_config()) as s3:
             await s3.delete_object(Bucket=self._bucket, Key=key)
             logger.debug("Deleted from S3: %s", key)
 
@@ -340,7 +339,7 @@ class S3Client:
             raise ValueError(f"Refusing to delete outside a single video prefix: {prefix!r}")
         deleted = 0
         session = self._ensure_session()
-        async with session.client("s3", **self._get_client_config()) as s3:
+        async with session.create_client("s3", **self._get_client_config()) as s3:
             token: str | None = None
             while True:
                 page = await s3.list_objects_v2(**self._list_args(prefix, token))
@@ -386,18 +385,18 @@ class S3Client:
         Returns:
             Health check result with status and details
         """
-        if not _check_aioboto3():
+        if not _check_aiobotocore():
             return {
                 "status": "unavailable",
                 "bucket": self._bucket,
-                "error": "aioboto3 not installed",
+                "error": "aiobotocore not installed",
             }
 
         from botocore.exceptions import ClientError
 
         try:
             session = self._ensure_session()
-            async with session.client("s3", **self._get_client_config()) as s3:
+            async with session.create_client("s3", **self._get_client_config()) as s3:
                 await s3.head_bucket(Bucket=self._bucket)
                 return {
                     "status": "healthy",
@@ -422,8 +421,8 @@ class S3Client:
 
     @staticmethod
     def is_available() -> bool:
-        """Check if S3 storage is available (aioboto3 installed)."""
-        return _check_aioboto3()
+        """Check if S3 storage is available (aiobotocore installed)."""
+        return _check_aiobotocore()
 
 
 # Singleton instance

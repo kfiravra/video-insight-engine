@@ -58,7 +58,7 @@ async def run_migration(dry_run: bool = True, batch_size: int | None = None) -> 
 
     # Check if S3 is available
     if not S3Client.is_available():
-        logger.error("S3 storage is not available (aioboto3 not installed)")
+        logger.error("S3 storage is not available (aiobotocore not installed)")
         return {"status": "error", "message": "S3 not available"}
 
     # Connect to MongoDB

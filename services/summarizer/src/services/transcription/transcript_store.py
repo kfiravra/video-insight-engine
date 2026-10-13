@@ -100,7 +100,7 @@ class TranscriptStoreService:
             RuntimeError: If S3 storage is not available
         """
         if not S3Client.is_available():
-            raise RuntimeError("S3 storage is not available (aioboto3 not installed)")
+            raise RuntimeError("S3 storage is not available (aiobotocore not installed)")
 
         key = self._get_key(youtube_id)
 

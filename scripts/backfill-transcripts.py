@@ -51,13 +51,14 @@ def run_migration(dry_run: bool = True, batch_size: int | None = None) -> dict[s
     """
     # Import inside function to avoid import errors outside container
     from pymongo import MongoClient
+
     from src.config import settings
-    from src.services.s3_client import s3_client, S3Client
+    from src.services.s3_client import S3Client, s3_client
     from src.services.transcript_store import transcript_store
 
     # Check if S3 is available
     if not S3Client.is_available():
-        logger.error("S3 storage is not available (aioboto3 not installed)")
+        logger.error("S3 storage is not available (aiobotocore not installed)")
         return {"status": "error", "message": "S3 not available"}
 
     # Connect to MongoDB
