@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict
-from statistics import mean
+from statistics import mean, median
 from typing import Any
 
 from _model_ab_scores import REPORT_METRICS, compare_to_a, score_answer
@@ -86,6 +86,14 @@ def _metric_lists(
     return counts
 
 
+def true_median(values: Sequence[float]) -> float:
+    """The median (mean of the two middle values for an even count); 0.0 for none.
+
+    Round 1 reported the nearest-rank p50 — the lower middle value of an even count.
+    """
+    return float(median(values)) if values else 0.0
+
+
 def _calls_summary(rows: Sequence[Row]) -> dict[str, Any]:
     answered = [r for r in rows if not r["error"]]
     latencies = [float(r["latency_ms"]) for r in answered]
@@ -96,9 +104,9 @@ def _calls_summary(rows: Sequence[Row]) -> dict[str, Any]:
         "calls": len(rows),
         "errors": len(rows) - len(answered),
         "refusals": sum(bool(r["refusal"]) for r in rows),
-        "latency_p50_ms": percentile(latencies, 50),
+        "latency_p50_ms": true_median(latencies),
         "latency_max_ms": max(latencies, default=0.0),
-        "ttft_p50_ms": percentile(ttfts, 50) if ttfts else None,
+        "ttft_p50_ms": true_median(ttfts) if ttfts else None,
         "over_timeout": sum(bool(r["over_timeout"]) for r in answered),
         "truncated": sum(bool(r["truncated"]) for r in answered),
         "input_tokens_max": max((int(r["input_tokens"]) for r in answered), default=0),
@@ -238,6 +246,21 @@ def _picks_lines(picks: Sequence[Mapping[str, str]]) -> list[str]:
     return lines
 
 
+def _median_s(summary: Mapping[str, Any], call_type: str, arm: str) -> str:
+    entry = (summary.get(call_type) or {}).get(arm)
+    return f"{entry['latency_p50_ms'] / 1000:.1f}" if entry else "–"
+
+
+def _picks_note(summary: Mapping[str, Any]) -> list[str]:
+    """The picks' evidence was written with the nearest-rank p50 (before ``true_median``)."""
+    return [
+        "",
+        "p50s in this section are round 1's nearest-rank values; true medians are in the tables "
+        f"(plan {_median_s(summary, 'plan', 'A')} vs {_median_s(summary, 'plan', 'B-medium')} s, "
+        f"vision {_median_s(summary, 'vision', 'A')} vs {_median_s(summary, 'vision', 'C')} s).",
+    ]
+
+
 def render_markdown(report: Mapping[str, Any]) -> str:
     """The gate table: one section per call type, then prompt sizes and spend."""
     summary = report["summary"]
@@ -270,4 +293,9 @@ def render_markdown(report: Mapping[str, Any]) -> str:
         f"tokens vs the {projection['price_tier_tokens']:,}-token price tier.",
     ]
     lines += _picks_lines(report.get("picks") or [])
+    lines += _picks_note(summary) if report.get("picks") else []
+    # Round 2 (D30) is appended as rendered when it ran (``model_ab_r2_offline.py report``).
+    round2 = (report.get("round2") or {}).get("markdown")
+    if round2:
+        lines += ["", round2.rstrip("\n")]
     return "\n".join(lines) + "\n"

@@ -20,13 +20,13 @@ import json
 import logging
 import sys
 import time
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 import litellm
-from _model_ab_cost import PlannedCall
+from _model_ab_cost import CacheLedger, PlannedCall, estimate_call
 from _model_ab_types import CallResult, request_for_arm
 
 from llm_common.refusal import refusal_of
@@ -144,24 +144,61 @@ def is_answered(done: Answered, call: PlannedCall) -> bool:
     return saved is None or saved == request_sha256(arm_request(call))
 
 
-async def run_calls(planned: Iterable[PlannedCall], answers_path: Path) -> list[CallResult]:
+def spent_usd(answers_path: Path) -> float:
+    """Every row's cost in ``answers_path`` (errored and re-sent rows included)."""
+    if not answers_path.exists():
+        return 0.0
+    lines = answers_path.read_text(encoding="utf-8").splitlines()
+    return sum(float(json.loads(line).get("cost_usd") or 0.0) for line in lines if line)
+
+
+def ledger_estimator() -> Callable[[PlannedCall], float]:
+    """The dry-run estimate of each call, in send order (one cache ledger for the run)."""
+    ledger = CacheLedger()
+    return lambda call: estimate_call(call, ledger).cost_usd
+
+
+async def run_calls(
+    planned: Iterable[PlannedCall],
+    answers_path: Path,
+    *,
+    ceiling_usd: float | None = None,
+    estimate: Callable[[PlannedCall], float] | None = None,
+) -> list[CallResult]:
     """Send every planned call in order, appending each row to ``answers_path`` as it lands.
 
     A row already answered there with the same request bytes (a rerun after an
-    interruption) is not sent again; an errored or changed one is.
+    interruption) is not sent again; an errored or changed one is. With
+    ``ceiling_usd``, a call goes out only while the cumulative spend (every row
+    in ``answers_path``) plus its ``estimate`` (default: the dry-run estimate)
+    stays within the ceiling; the first call that would cross it stops the run.
     """
     litellm.success_callback, litellm.failure_callback, litellm.callbacks = [], [], []
     done = answered(answers_path)
+    spent = spent_usd(answers_path)
+    cost_of = estimate or ledger_estimator()
     results: list[CallResult] = []
     for call in planned:
         key = (call.request.request_id, call.arm.name, call.repeat)
         if is_answered(done, call):
             continue
+        expected = cost_of(call)
+        if ceiling_usd is not None and spent + expected > ceiling_usd:
+            print(
+                f"STOP: spent ${spent:.4f} + next call ≈ ${expected:.4f} would cross the "
+                f"${ceiling_usd:.2f} ceiling",
+                file=sys.stderr,
+            )
+            break
         result = await send(call)
         with answers_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(asdict(result), ensure_ascii=False) + "\n")
+        spent += result.cost_usd
         status = result.error or f"{result.latency_ms} ms ${result.cost_usd:.4f}"
-        print(f"{key[0]} {key[1]}#{key[2]} {result.model}: {status}", file=sys.stderr)
+        print(
+            f"{key[0]} {key[1]}#{key[2]} {result.model}: {status} (spent ${spent:.4f})",
+            file=sys.stderr,
+        )
         results.append(result)
     return results
 

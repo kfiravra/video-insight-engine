@@ -82,6 +82,7 @@ from _model_ab_runner import (  # noqa: E402
     load_answers,
     request_sha256,
     run_calls,
+    spent_usd,
 )
 from _model_ab_types import CALL_TYPES, AbRequest, CallResult, arms_for, reshaped_keys  # noqa: E402
 from _model_ab_wire import wire_check  # noqa: E402
@@ -228,11 +229,6 @@ def _pending(requests: Sequence[AbRequest], args: argparse.Namespace) -> list[Pl
     ]
 
 
-def _spent(answers_path: Path) -> float:
-    """What the A/B has spent so far (every saved row, errors included)."""
-    return sum(r.cost_usd for r in load_answers(answers_path)) if answers_path.exists() else 0.0
-
-
 def _estimate(
     planned: Sequence[PlannedCall], requests: Sequence[AbRequest], args: argparse.Namespace
 ) -> list[CallEstimate]:
@@ -291,6 +287,8 @@ _META_KEYS = (
     "requests",
     "longest_chunk_projection",
     "picks",
+    # Round 2 (D30) lives in its own block (its rows included); a rescore keeps it.
+    "round2",
 )
 
 
@@ -326,7 +324,7 @@ def _live(
 ) -> int:
     load_env_keys(_PROVIDER_KEYS)
     answers = args.cache_dir / "answers.jsonl"
-    asyncio.run(run_calls(planned, answers))
+    asyncio.run(run_calls(planned, answers, ceiling_usd=args.ceiling))
     previous = json.loads(args.out_json.read_text("utf-8")) if args.out_json.exists() else {}
     runs = _runs(args, previous, estimate_usd)
     medium = _medium(args) | frozenset(previous.get("medium") or ())
@@ -390,7 +388,7 @@ def main(argv: list[str] | None = None) -> int:
     planned = _pending(requests, args)
     estimates = _estimate(planned, requests, args)
     estimate_usd = sum(e.cost_usd for e in estimates)
-    remaining = args.ceiling - _spent(args.cache_dir / "answers.jsonl")
+    remaining = args.ceiling - spent_usd(args.cache_dir / "answers.jsonl")
     print(f"budget: ${args.ceiling:.2f} total, ${remaining:.4f} left for this run")
     if over_ceiling(estimates, remaining):
         print(f"ABORT: estimate ${estimate_usd:.4f} is above the ${remaining:.4f} left")

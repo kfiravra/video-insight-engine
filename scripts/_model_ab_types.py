@@ -13,6 +13,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from _model_ab_variants import apply_variant
+
 from src.services.llm_model_rules import Effort, request_for_model
 
 HAIKU_45 = "anthropic/claude-haiku-4-5-20251001"
@@ -70,11 +72,16 @@ DEFAULT_EFFORT: Effort = "low"
 
 @dataclass(frozen=True)
 class Arm:
-    """One side of the A/B for a call type: a model at an effort."""
+    """One side of the A/B for a call type: a model at an effort.
+
+    ``variant`` (round 2) names a prompt change every arm with it sends alike
+    (``_model_ab_variants``), applied before the model's request rules.
+    """
 
     name: str
     model: str
     effort: Effort = DEFAULT_EFFORT
+    variant: str | None = None
 
 
 def arms_for(call_type: str, *, medium: frozenset[str] = frozenset()) -> tuple[Arm, ...]:
@@ -143,14 +150,15 @@ def provider_of(model: str) -> str:
 
 
 def request_for_arm(captured: dict[str, Any], arm: Arm) -> dict[str, Any]:
-    """``captured`` as ``arm`` sends it: only the model and the params it implies change.
+    """``captured`` as ``arm`` sends it: its variant's prompt, then the model's params.
 
     The arm's model must be on the captured model's provider: a request
     captured for OpenAI has lost its Anthropic cache breakpoints.
     """
     if provider_of(arm.model) != provider_of(str(captured["model"])):
         raise ValueError(f"{arm.model} is not on the provider {captured['model']} was captured for")
-    base = {key: value for key, value in captured.items() if key != "temperature"}
+    prompted = apply_variant(captured, arm.variant)
+    base = {key: value for key, value in prompted.items() if key != "temperature"}
     base["model"] = arm.model
     return request_for_model(base, temperature=captured.get("temperature"), effort=arm.effort)
 

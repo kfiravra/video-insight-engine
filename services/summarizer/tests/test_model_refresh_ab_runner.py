@@ -23,6 +23,7 @@ from tests.llm_wire import anthropic_stream, as_stream, offline_http, set_fake_k
 _SCRIPTS_DIR = Path(__file__).resolve().parents[3] / "scripts"
 sys.path.insert(0, str(_SCRIPTS_DIR))
 
+import _model_ab_runner  # noqa: E402
 import model_refresh_ab  # noqa: E402
 from _model_ab_cost import PlannedCall  # noqa: E402
 from _model_ab_runner import (  # noqa: E402
@@ -32,7 +33,9 @@ from _model_ab_runner import (  # noqa: E402
     is_answered,
     load_answers,
     request_sha256,
+    run_calls,
     send,
+    spent_usd,
 )
 from _model_ab_types import (  # noqa: E402
     GPT_4O_MINI,
@@ -134,6 +137,57 @@ class TestSavedRows:
     def test_should_keep_the_last_row_when_a_call_was_answered_twice(self, tmp_path: Path) -> None:
         path = _write(tmp_path / "a.jsonl", [self._row(raw="first"), self._row(raw="second")])
         assert [r.raw for r in load_answers(path)] == ["second"]
+
+
+class TestSpendGuard:
+    _CALLS = [PlannedCall(_request(), Arm("A", HAIKU_45), repeat) for repeat in range(4)]
+
+    @pytest.fixture
+    def priced(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Every (offline) call costs $0.30."""
+
+        async def fake_send(call: PlannedCall) -> CallResult:
+            return CallResult(
+                "r1", "extraction", "A", HAIKU_45, "low", call.repeat, 10, cost_usd=0.3
+            )
+
+        monkeypatch.setattr(_model_ab_runner, "send", fake_send)
+
+    @staticmethod
+    def _estimate(_call: PlannedCall) -> float:
+        return 0.3
+
+    async def test_should_stay_within_the_ceiling_when_the_next_call_would_cross_it(
+        self, priced: None, tmp_path: Path
+    ) -> None:
+        answers = tmp_path / "a.jsonl"
+        sent = await run_calls(self._CALLS, answers, ceiling_usd=0.5, estimate=self._estimate)
+        assert (len(sent), spent_usd(answers) <= 0.5) == (1, True)
+
+    async def test_should_send_up_to_the_ceiling_when_the_calls_fit_exactly(
+        self, priced: None, tmp_path: Path
+    ) -> None:
+        answers = tmp_path / "a.jsonl"
+        sent = await run_calls(self._CALLS, answers, ceiling_usd=0.6, estimate=self._estimate)
+        assert (len(sent), round(spent_usd(answers), 2)) == (2, 0.6)
+
+    async def test_should_send_nothing_when_earlier_rows_already_spent_the_ceiling(
+        self, priced: None, tmp_path: Path
+    ) -> None:
+        earlier = CallResult("r0", "plan", "A", HAIKU_45, "low", 0, 10, cost_usd=0.5)
+        answers = _write(tmp_path / "a.jsonl", [earlier])
+        assert await run_calls(self._CALLS, answers, ceiling_usd=0.5, estimate=self._estimate) == []
+
+    async def test_should_send_every_call_when_no_ceiling_is_set(
+        self, priced: None, tmp_path: Path
+    ) -> None:
+        assert len(await run_calls(self._CALLS, tmp_path / "a.jsonl")) == 4
+
+    def test_should_count_every_saved_row_when_a_call_was_sent_twice(self, tmp_path: Path) -> None:
+        rows = [
+            CallResult("r1", "plan", "A", HAIKU_45, "low", 0, 10, cost_usd=c) for c in (0.1, 0.2)
+        ]
+        assert round(spent_usd(_write(tmp_path / "a.jsonl", rows)), 2) == 0.3
 
 
 class TestRescore:

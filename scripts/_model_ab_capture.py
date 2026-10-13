@@ -28,7 +28,7 @@ from dataclasses import asdict
 from typing import Any
 from unittest.mock import patch
 
-from _model_ab_types import AbRequest
+from _model_ab_types import GPT_4O_MINI, HAIKU_45, SONNET_46, TODAY, AbRequest
 from litellm import ModelResponse
 from tests.replay import fake_llm
 from tests.replay.cassette import load_cassette
@@ -46,6 +46,23 @@ CASSETTE_VIDEOS: tuple[str, ...] = ("T1dQhQAm8Tc", "jMq8lEu-of0", "uC45_4nnEAI")
 # here so its real requests are captured (the fake then misses, which the
 # judge swallows — nothing else in the run changes).
 _CAPTURE_SETTINGS: dict[str, Any] = {"LANGFUSE_FAITHFULNESS_SAMPLE_RATE": 1.0}
+# Round 1's TODAY models, pinned: since bac879b the config defaults are the
+# 4.0d picks (plan Sonnet 5.5 at effort medium …), and a request captured for a
+# 5.5 model would carry its thinking / effort params. The cassettes record the
+# same values; the pin keeps a capture from depending on them.
+TODAY_SETTINGS: dict[str, Any] = {
+    "LLM_MODEL": SONNET_46,
+    "LLM_FAST_MODEL": GPT_4O_MINI,
+    "LLM_CLASSIFIER_MODEL": HAIKU_45,
+    "LLM_EXTRACTION_MODEL": HAIKU_45,
+    "LLM_VISION_MODEL": SONNET_46,
+    "LLM_ENRICHMENT_MODEL": GPT_4O_MINI,
+    "LLM_DESCRIPTION_MODEL": None,
+    "LLM_TRANSLATION_MODEL": None,
+}
+# Params only a model's request rules add — never part of a captured request.
+_MODEL_PARAMS = frozenset({"thinking", "output_config", "reasoning_effort"})
+_CAPTURE_OVERRIDES: dict[str, Any] = {**_CAPTURE_SETTINGS, **TODAY_SETTINGS}
 
 _FEATURE_CALL_TYPES: dict[str, str] = {
     "summarize:metadata": "description",
@@ -195,9 +212,18 @@ async def _capture_video(video_id: str) -> list[AbRequest]:
     recorder = _Recorder(video_id, cassette.video.duration)
     with ExitStack() as stack:
         _recording_patches(recorder, stack)
-        await run_replay(cassette, speed=0.0, settings_overrides=_CAPTURE_SETTINGS)
+        await run_replay(cassette, speed=0.0, settings_overrides=_CAPTURE_OVERRIDES)
     requests = [_to_request(recorder, row) for row in recorder.rows]
     return [request for request in requests if request is not None]
+
+
+def check_model_agnostic(requests: list[AbRequest]) -> None:
+    """Raise when a captured request is not TODAY's model or carries a model's own params."""
+    for request in requests:
+        model = request.kwargs.get("model")
+        extra = sorted(_MODEL_PARAMS & set(request.kwargs))
+        if model != TODAY[request.call_type] or extra:
+            raise ValueError(f"{request.request_id}: captured for {model} with {extra}")
 
 
 def capture_cassettes(videos: tuple[str, ...] = CASSETTE_VIDEOS) -> list[AbRequest]:
@@ -205,6 +231,7 @@ def capture_cassettes(videos: tuple[str, ...] = CASSETTE_VIDEOS) -> list[AbReque
     captured: list[AbRequest] = []
     for video_id in videos:
         captured.extend(asyncio.run(_capture_video(video_id)))
+    check_model_agnostic(captured)
     return captured
 
 

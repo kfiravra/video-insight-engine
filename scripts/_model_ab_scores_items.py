@@ -16,8 +16,10 @@ from typing import Any
 
 from _model_ab_capture import group_from_json
 
+from src.models.domain_validation import ValidationReport
 from src.services.media.frame_analyzer import _decode_items, parse_vision_response
 from src.services.pipeline.extraction_groups import _empty_object
+from src.services.pipeline.field_groups import ExtractionGroup
 from src.services.pipeline.group_failures import answer_lost
 from src.services.pipeline.group_merge import requested_quality, validate_group
 from src.services.pipeline.phases.frames import _is_presenter_frame
@@ -54,15 +56,26 @@ def _dropped(report: Mapping[str, Any]) -> int:
     return sum(sum(per_key.values()) for per_key in drops.values())
 
 
-def score_extraction(raw: str, context: Mapping[str, Any]) -> Score:
-    """One group answer as ``extraction_groups._read`` sees it: parse, validate, fill."""
+def read_group_answer(
+    raw: str, context: Mapping[str, Any]
+) -> tuple[ExtractionGroup, Any, dict[str, Any], ValidationReport] | None:
+    """(group, parsed, validated, report) as ``extraction_groups._read`` reads the answer;
+    None when it does not parse."""
     group = group_from_json(context["group"])
     text = strip_markdown_fences(raw)
     parsed = parse_json_response(text)
     if not parsed and not _empty_object(text):
+        return None
+    validated, report = validate_group(parsed, group, context["content_tags"], context["modifiers"])
+    return group, parsed, validated, report
+
+
+def score_extraction(raw: str, context: Mapping[str, Any]) -> Score:
+    """One group answer as ``extraction_groups._read`` sees it: parse, validate, fill."""
+    read = read_group_answer(raw, context)
+    if read is None:
         return {"parsed": False}
-    tags, modifiers = context["content_tags"], context["modifiers"]
-    validated, report = validate_group(parsed, group, tags, modifiers)
+    group, parsed, validated, report = read
     quality = requested_quality(group.fields, validated)
     counts = _item_counts(validated)
     return {
