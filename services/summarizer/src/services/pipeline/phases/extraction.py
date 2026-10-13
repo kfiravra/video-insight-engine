@@ -68,7 +68,7 @@ def record_validation(ctx: PipelineContext, report: ValidationReport) -> None:
 
 def extraction_record(ctx: PipelineContext) -> dict[str, Any] | None:
     """``pipeline.extraction``: the data plus this run's validation record (and, on the
-    split path, one ``_groups`` row per group call)."""
+    split path, one ``_groups`` row per group call — alone when no group landed)."""
     record = extraction_with_drops(
         ctx.extraction_data,
         ctx.extraction_dropped,
@@ -77,7 +77,8 @@ def extraction_record(ctx: PipelineContext) -> dict[str, Any] | None:
     )
     # getattr: the readers' lightweight contexts (tests, eval) predate the split path.
     groups = getattr(ctx, "extraction_groups", None)
-    if isinstance(record, dict) and groups:
+    if groups:
+        record = record if isinstance(record, dict) else {}
         record[GROUPS_KEY] = [dict(row) for row in groups]
     return record
 

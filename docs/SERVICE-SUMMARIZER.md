@@ -456,11 +456,22 @@ A plan-first pipeline: ~6-7 text calls (description analysis, tier probe, plan �
     │   `llmCalls` spans `extraction_<group>` (`_c<k>` per later chunk), the streamed warm-up
     │   call with `ttftMs`. Each answer is validated as it lands (`group_merge.py`, 3.5): only
     │   the group's requested keys the model filled are kept (field-name spellings mapped to
-    │   the registry key, no model defaults for unrequested/omitted keys; an answer holding
-    │   none of them = a failed group), then ONE merge — chunk-major, text1..N, visual; lists
-    │   concatenate (later duplicates by name/label/term/title/ingredient/tool/location
-    │   dropped), first non-empty scalar wins, number/step/order/index renumbered only when
-    │   1..n in every list. Quality = requested fields filled; `pipeline.extraction._groups`.
+    │   the registry key, no model defaults for unrequested/omitted keys), then ONE merge —
+    │   chunk-major, text1..N, visual; lists concatenate (later duplicates by
+    │   name/label/term/title/ingredient/tool/location dropped), first non-empty scalar wins,
+    │   number/step/order/index renumbered only when 1..n in every list. Quality = requested
+    │   fields filled; `pipeline.extraction._groups`.
+    │   Failure paths (3.8, `group_failures.py`): `{}` or the group's keys answered `null`/`{}`
+    │   = an empty group that landed (a later chunk's window, a video without that content).
+    │   A lost answer — not a JSON object, no key of the group, content validation dropped or
+    │   reset, or the warm-up stream raising / bringing nothing — gets ONE more call under the
+    │   same span, unstreamed, `max_retries=0` (≤ 2 calls; the row records `retried`
+    │   `parse`/`empty`/`stream`); still nothing → `failed`. A failed group's fields count as
+    │   landed (no tab waits), assembly drops/demotes its tabs through today's fallbacks
+    │   (`droppedTabs` reason `extraction_group_failed`) and the run is `degraded`. Every
+    │   group of every chunk failed → today's error (`FAILED`, `LLM_ERROR`, "Extraction
+    │   failed to produce data"). A failed plan call → the fallback plan's default tabs are
+    │   requested unchanged.
 
  5. EXTRACTION (one pass, json_mode; LLM_EXTRACTION_MODEL)
     └─▶ Prompt (pipeline/extraction_prompt.py): system = the rules (no per-video text);
@@ -474,8 +485,11 @@ A plan-first pipeline: ~6-7 text calls (description analysis, tier probe, plan �
     │   parallel — see Chunked Extraction
     └─▶ Pydantic validation on all output; extraction_complete
     └─▶ Coverage (meta.extractionCoverage, `degraded`) and quality (share of planned
-    │   dataSources populated) are METRICS: logged, never a retry. The synthesis-fed retry,
-    │   RETRY_SCORE_THRESHOLD and validate_extraction_counts are gone (1c.5)
+    │   dataSources populated) are METRICS: logged, never a retry. `degraded` = a dropped
+    │   batch (split path: a failed field group) or critical coverage; a split run without a
+    │   timestamped field records the call counts alone (`meta.extractionCoverage` =
+    │   `{batchesTotal, batchesSucceeded, batchesDropped}`, `flag_failed_groups`). The
+    │   synthesis-fed retry, RETRY_SCORE_THRESHOLD and validate_extraction_counts are gone (1c.5)
     └─▶ Faithfulness judge fires in the background (transcript + annotations; informational)
 
  6. ASSEMBLY → LATE GROUP → SAVE (phases/assembly.py)
@@ -494,7 +508,9 @@ A plan-first pipeline: ~6-7 text calls (description analysis, tier probe, plan �
     │   video_filmstrip, lyrics_karaoke, frame_strip.
     └─▶ Per-tab drop accounting: assemble_response returns {"meta", "tabs", "dropped"} — drop
     │   reasons: assembler_raised, validation_empty_list, assembler_returned_none,
-    │   domain_forbidden, domain_max_cap, all_timestamps_impossible (feeds tabsDropped/droppedTabs
+    │   domain_forbidden, domain_max_cap, all_timestamps_impossible, and on the split path
+    │   extraction_group_failed (one of the first three for a tab that waited for a failed
+    │   group's field — assembly's own reason kept in `detail`) (feeds tabsDropped/droppedTabs
     │   telemetry instead of the old designed−assembled subtraction). The plan stage's drops are
     │   prepended: reason `invalid_datasource` = an unregistered dataSource with no same-domain
     │   registry path for the tab's component (plan.py `_validate_data_sources`); when that

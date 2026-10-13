@@ -323,7 +323,8 @@ class TestRunGroupCall:
     ) -> None:
         await asyncio.create_task(run_group_call(_call(), _run()))
 
-        sent = {k: llm.seen[k] for k in ("max_tokens", "timeout", "max_retries", "json_mode")}
+        first = llm.await_args_list[0].kwargs  # the fixture's answer is retried (3.8)
+        sent = {k: first[k] for k in ("max_tokens", "timeout", "max_retries", "json_mode")}
         assert sent == {"max_tokens": 16384, "timeout": 120.0, "max_retries": 1, "json_mode": True}
 
     async def test_should_mark_the_group_failed_when_its_answer_is_not_json(

@@ -12,19 +12,26 @@ of the run's ``EXTRACTION_PARALLEL_BATCHES`` semaphore; the text1 calls are
 started first, so they take the first slots. Outcomes stream back as they land.
 
 A landed answer is validated and cut to the group's own keys
-(``group_merge.validate_group``, 3.5) before it is reported. A group call that
-fails (no answer after its retry, unparseable JSON, an answer holding none of
-its keys, an error) is a ``failed`` outcome — today's chunked-batch handling:
-the other groups still land, the caller decides what an all-failed run means.
+(``group_merge.validate_group``, 3.5) before it is reported; one that says the
+group has nothing here (``{}``, its keys ``null``) lands empty. A lost answer —
+not a JSON object, no key of the group, content validation dropped, or a
+warm-up stream that raised or brought nothing — is asked for ONCE more (3.8),
+unstreamed (a broken stream can never cost a group) and with no retry budget
+of its own; the outcome records why it ``retried``. A group still without data
+(or with no answer after its own retry, or that raised) is a ``failed``
+outcome — today's chunked-batch handling: the other groups still land, the
+caller decides what an all-failed run means (``group_failures`` names what a
+failed group costs).
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
-from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
-from dataclasses import dataclass
+from collections.abc import AsyncGenerator, Awaitable, Callable
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Literal
 
 from llm_common.context import llm_feature_var
@@ -37,6 +44,7 @@ from .extraction_chunks import ExtractionChunk
 from .extraction_group_prompt import GroupJob, build_group_messages
 from .extraction_prompt import ExtractionPrompt
 from .field_groups import ExtractionGroup
+from .group_failures import answer_lost
 from .group_merge import validate_group
 from .pipeline_timing import span_output_tokens
 
@@ -50,10 +58,16 @@ GROUP_RELEASE_FALLBACK_S = 1.5
 GROUP_MAX_TOKENS = 16384
 GROUP_TIMEOUT_S = 120.0
 GROUP_MAX_RETRIES = 1
+# The one more call an unusable answer gets: a single attempt (3.8).
+UNUSABLE_ANSWER_RETRIES = 0
 # How many of a rejected answer's top-level keys the warning lists.
 _LOGGED_KEYS = 20
 
 GroupStatus = Literal["ok", "failed"]
+# Why a group was asked once more: its answer was not a JSON object ("parse"),
+# validation kept none of the content it held ("empty"), or the warm-up's
+# stream raised or brought nothing back ("stream").
+RetryCause = Literal["parse", "empty", "stream"]
 # The visual group cut at frames-done from the fields no text group asked for.
 VisualCut = Callable[[frozenset[str]], Awaitable[tuple[ExtractionGroup, GroupJob] | None]]
 
@@ -81,7 +95,8 @@ class GroupCall:
 @dataclass(frozen=True)
 class GroupOutcome:
     """A landed group call: ``data`` = its validated own keys, domain-keyed (None when it
-    failed); ``validation`` = what validating them dropped or defaulted."""
+    failed); ``validation`` = what validating them dropped or defaulted; ``retried`` =
+    why its first answer was unusable (None when it was not asked again)."""
 
     group: ExtractionGroup
     chunk: int
@@ -90,6 +105,7 @@ class GroupOutcome:
     status: GroupStatus
     wall_ms: int
     output_tokens: int
+    retried: RetryCause | None = None
 
 
 @dataclass(frozen=True)
@@ -108,31 +124,115 @@ class SplitRun:
 # ─── One call ───
 
 
-def _parsed(raw: str | None, call: GroupCall) -> dict[str, Any] | None:
-    if not raw:
-        return None
-    data = parse_json_response(strip_markdown_fences(raw))
-    if not isinstance(data, dict) or not data:
-        logger.warning("[%s] group answer is not a JSON object (len=%d)", call.stage_name, len(raw))
-        return None
-    return data
+def _empty_object(text: str) -> bool:
+    """A bare ``{}`` answer (``parse_json_response`` returns ``{}`` for unparseable text too)."""
+    try:
+        return json.loads(text) == {}
+    except ValueError:
+        return False
+
+
+def _parsed(raw: str, call: GroupCall) -> dict[str, Any] | None:
+    text = strip_markdown_fences(raw)
+    data = parse_json_response(text)
+    if data or _empty_object(text):
+        return data
+    logger.warning("[%s] group answer is not a JSON object (len=%d)", call.stage_name, len(raw))
+    return None
+
+
+@dataclass(frozen=True)
+class _Answer:
+    """One call's answer read for its group: the validated own keys — ``{}`` when it says
+    the group has nothing here, None when nothing usable came back."""
+
+    data: dict[str, Any] | None
+    report: ValidationReport | None
+    unusable: RetryCause | None  # why it is worth asking for once more
+
+
+_NO_ANSWER = _Answer(None, None, None)
+
+
+def _read(raw: str | None, call: GroupCall, run: SplitRun) -> _Answer:
+    """``raw`` validated and cut to the group's keys. No answer at all is not "unusable":
+    the call's own retry is already spent."""
+    if raw is None:
+        return _NO_ANSWER
+    parsed = _parsed(raw, call)
+    if parsed is None:
+        return _Answer(None, None, "parse")
+    data, report = validate_group(parsed, call.group, run.content_tags, run.modifiers)
+    if data:
+        return _Answer(data, report, None)
+    if not answer_lost(parsed, call.group, report):
+        return _Answer({}, report, None)  # e.g. a later chunk's window without the content
+    logger.warning(
+        "[%s] group answer kept none of its keys (answer keys: %s)",
+        call.stage_name,
+        sorted(parsed)[:_LOGGED_KEYS],
+    )
+    return _Answer(None, report, "empty")
 
 
 def _outcome(
-    call: GroupCall,
-    data: dict[str, Any] | None,
-    started: float,
-    validation: ValidationReport | None = None,
+    call: GroupCall, answer: _Answer, started: float, retried: RetryCause | None
 ) -> GroupOutcome:
     return GroupOutcome(
         group=call.group,
         chunk=call.chunk.index,
-        data=data,
-        validation=validation or {"dropped": {}, "defaulted": 0},
-        status="ok" if data is not None else "failed",
+        data=answer.data,
+        validation=answer.report or {"dropped": {}, "defaulted": 0},
+        status="ok" if answer.data is not None else "failed",
         wall_ms=int((time.monotonic() - started) * 1000),
         output_tokens=span_output_tokens(call.stage_name),
+        retried=retried,
     )
+
+
+async def _ask(
+    call: GroupCall, run: SplitRun, retries: int, on_first_chunk: Callable[[], None] | None
+) -> str | None:
+    return await call_llm_with_retry(
+        run.llm_service,
+        build_group_messages(run.prompt, call.group, call.chunk, call.job),
+        max_tokens=GROUP_MAX_TOKENS,
+        timeout=GROUP_TIMEOUT_S,
+        max_retries=retries,
+        stage_name=call.stage_name,
+        json_mode=True,
+        model_override=settings.get_stage_model("extraction"),
+        on_first_chunk=on_first_chunk,
+    )
+
+
+async def _first_answer(
+    call: GroupCall, run: SplitRun, on_first_chunk: Callable[[], None] | None
+) -> _Answer:
+    """The first call's answer. A warm-up stream that raises or brings nothing back is
+    worth one more call too ("stream"); a plain call's error goes to ``_guarded``."""
+    if on_first_chunk is None:
+        return _read(await _ask(call, run, GROUP_MAX_RETRIES, None), call, run)
+    try:
+        raw = await _ask(call, run, GROUP_MAX_RETRIES, on_first_chunk)
+    except Exception:
+        logger.exception("[%s] streamed group call failed", call.stage_name)
+        return _Answer(None, None, "stream")
+    if raw is None:
+        return _Answer(None, None, "stream")
+    return _read(raw, call, run)
+
+
+async def _second_answer(call: GroupCall, run: SplitRun, first: _Answer) -> _Answer:
+    """One attempt, unstreamed; an error is no answer. Without a report of its own the
+    answer keeps the first one's."""
+    try:
+        raw = await _ask(call, run, UNUSABLE_ANSWER_RETRIES, None)
+    except Exception:
+        logger.exception("[%s] the group's extra call failed", call.stage_name)
+        raw = None
+    second = _read(raw, call, run)
+    return second if second.report is not None else replace(second, report=first.report)
 
 
 async def run_group_call(
@@ -140,33 +240,27 @@ async def run_group_call(
 ) -> GroupOutcome:
     """One group call: its own feature + span, Haiku, JSON; streamed for a warm-up call.
 
-    The answer is validated and cut to the group's own keys before it is reported.
+    The answer is validated and cut to the group's own keys before it is
+    reported. A lost answer (``group_failures.answer_lost``; not a JSON object;
+    a warm-up stream that raised or brought nothing) is asked for once more
+    under the same span — one attempt, never streamed, so a broken stream
+    cannot lose the group: at most two calls. A warm-up releases the groups
+    waiting on it first instead of holding them through the retry.
     """
     llm_feature_var.set(call.feature)
     started = time.monotonic()
-    raw = await call_llm_with_retry(
-        run.llm_service,
-        build_group_messages(run.prompt, call.group, call.chunk, call.job),
-        max_tokens=GROUP_MAX_TOKENS,
-        timeout=GROUP_TIMEOUT_S,
-        max_retries=GROUP_MAX_RETRIES,
-        stage_name=call.stage_name,
-        json_mode=True,
-        model_override=settings.get_stage_model("extraction"),
-        on_first_chunk=on_first_chunk,
+    first = await _first_answer(call, run, on_first_chunk)
+    if first.unusable is None:
+        return _outcome(call, first, started, None)
+    if on_first_chunk is not None:
+        on_first_chunk()
+    logger.warning(
+        "[%s] unusable group answer (%s) — asking once more, unstreamed",
+        call.stage_name,
+        first.unusable,
     )
-    parsed = _parsed(raw, call)
-    if parsed is None:
-        return _outcome(call, None, started)
-    data, report = validate_group(parsed, call.group, run.content_tags, run.modifiers)
-    if not data:
-        logger.warning(
-            "[%s] group answer kept none of its keys — failed (answer keys: %s)",
-            call.stage_name,
-            sorted(parsed)[:_LOGGED_KEYS],
-        )
-        return _outcome(call, None, started, report)
-    return _outcome(call, data, started, report)
+    second = await _second_answer(call, run, first)
+    return _outcome(call, second, started, first.unusable)
 
 
 async def _guarded(
@@ -178,7 +272,7 @@ async def _guarded(
         return await run_group_call(call, run, on_first_chunk=on_first_chunk)
     except Exception:
         logger.exception("[%s] group call failed", call.stage_name)
-        return _outcome(call, None, started)
+        return _outcome(call, _NO_ANSWER, started, None)
 
 
 # ─── Release + slots ───

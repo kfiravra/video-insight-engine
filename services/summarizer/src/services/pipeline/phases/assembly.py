@@ -38,6 +38,7 @@ from src.services.pipeline.assembly import assemble_response
 from src.services.pipeline.assembly.core import count_dropped_tabs
 from src.services.pipeline.assembly.moment_frame_fill import fill_moment_frames
 from src.services.pipeline.enrichment import needs_quiz
+from src.services.pipeline.group_failures import group_drops
 from src.services.pipeline.phases import run_phase_enrichment, run_phase_synthesis
 from src.services.pipeline.phases.enrichment import cancel_quiz_task
 from src.services.pipeline.phases.extraction import extraction_record
@@ -173,8 +174,9 @@ def _drop_accounting(ctx: PipelineContext, assembled: dict) -> dict:
     # + the assembler's per-tab accounting — assembly also ADDS tabs
     # (overview, backfill, filmstrip, fallbacks), so the old
     # designed-minus-assembled subtraction masked drops and could go negative.
+    # A tab a failed extraction group cost says so (3.8).
     plan_dropped = ctx.plan_result.dropped_tabs if ctx.plan_result else []
-    dropped_tabs = [*plan_dropped, *assembled.get("dropped", [])]
+    dropped_tabs = [*plan_dropped, *group_drops(ctx, assembled.get("dropped", []))]
     plan_fallback = bool(ctx.plan_result and ctx.plan_result.plan_fallback)
     accounting = {
         "tabsDesigned": _tabs_designed(ctx, plan_dropped),

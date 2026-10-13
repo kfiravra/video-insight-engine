@@ -296,7 +296,8 @@ One row per video **version** (`version`, `isLatest` below); the served row is s
   // assembly backfill check) and terms (≤12 canonical spellings);
   // pipeline.extraction (the validated data + _defaulted, _dropped?,
   // _misTargeted?; split path only: _groups = [{group, chunk, fields[],
-  // status, outputTokens, wallMs}], one row per group call) / .enrichment /
+  // status, outputTokens, wallMs, retried?: "parse" | "empty" | "stream"}], one
+  // row per group call — alone when no group landed) / .enrichment /
   // .synthesis / .assembly (tab drop accounting: tabsDesigned, tabsAssembled,
   // tabsDropped, droppedTabs[], planFallback?); pipeline.timing (above).
   pipeline: { triage, extraction, enrichment, synthesis, assembly, timing } | absent,

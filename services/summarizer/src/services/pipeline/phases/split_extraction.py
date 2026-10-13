@@ -32,6 +32,7 @@ from src.services.pipeline.extraction_groups import (
 from src.services.pipeline.extractor import _build_prompt
 from src.services.pipeline.field_groups import ExtractionGroup, build_groups, visual_group
 from src.services.pipeline.field_requests import FieldRequest, reads_extraction, requested_fields
+from src.services.pipeline.group_failures import flag_failed_groups
 from src.services.pipeline.group_merge import merge_groups, merge_order, requested_quality
 from src.services.pipeline.phases.enrichment import cancel_quiz_task
 from src.services.pipeline.phases.extraction import (
@@ -198,6 +199,8 @@ def _group_rows(outcomes: Sequence[GroupOutcome]) -> list[dict[str, Any]]:
             "status": o.status,
             "outputTokens": o.output_tokens,
             "wallMs": o.wall_ms,
+            # 3.8: asked once more after a lost answer ("parse" | "empty" | "stream").
+            **({"retried": o.retried} if o.retried else {}),
         }
         for o in merge_order(outcomes)
     ]
@@ -215,10 +218,14 @@ async def _complete(ctx: PipelineContext, outcomes: Sequence[GroupOutcome]) -> l
     No call fired is only an empty extraction when no planned tab reads one:
     it stays ``{}`` (no faithfulness judge over a defaults skeleton). The
     groups count as batches, so a failed group marks the run degraded; the
-    quality score counts the fields the groups were asked for.
+    quality score counts the fields the groups were asked for. The group rows
+    and the degraded flag are kept either way: assembly names the tabs failed
+    groups cost (3.8).
     """
     landed = [o for o in outcomes if o.status == "ok" and o.data is not None]
     empty_by_design = not outcomes and _nothing_to_extract(ctx)
+    ctx.extraction_groups = _group_rows(outcomes)
+    flag_failed_groups(ctx, len(outcomes), len(landed))
     if not landed and not empty_by_design:
         logger.error(
             "[pipeline] Split extraction landed no group (%d fired) for %s",
@@ -229,7 +236,6 @@ async def _complete(ctx: PipelineContext, outcomes: Sequence[GroupOutcome]) -> l
     merged, report = merge_groups(outcomes)
     record_validation(ctx, report)
     ctx.extraction_data = merged
-    ctx.extraction_groups = _group_rows(outcomes)
     quality = requested_quality([f for o in outcomes for f in o.group.fields], merged)
     finish_extraction(ctx, len(outcomes), len(landed), quality=quality)
     return [sse_event("extraction_complete", {"data": merged})]
