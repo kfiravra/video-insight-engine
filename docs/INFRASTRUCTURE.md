@@ -245,7 +245,7 @@ LLM_FALLBACK_PROVIDER=          # Optional: cross-provider fallback after one sa
 
 # Provider API Keys (set for providers you use)
 ANTHROPIC_API_KEY=sk-ant-api03-xxxxxxxxxxxxx
-OPENAI_API_KEY=                 # Required if using OpenAI
+OPENAI_API_KEY=                 # Needed by the openai/* stage defaults (description, quiz, translation)
 GEMINI_API_KEY=                 # Required if using Gemini
 
 # ────────────────────────────────────────────────────
@@ -313,21 +313,22 @@ ADMIN_API_KEY=change-this-admin-key
 
 | Var | Default | Purpose |
 |-----|---------|---------|
-| `LLM_PROVIDER` | `anthropic` | Primary provider (`anthropic` / `openai` / `gemini`); its default model (`MODEL_MAP` in `config.py`) is the primary model |
-| `LLM_FAST_PROVIDER` | blank | Provider of the fast tier; blank = `LLM_PROVIDER` |
+| `LLM_PROVIDER` | `anthropic` | Primary provider (`anthropic` / `openai` / `gemini`); its default model (`MODEL_MAP` in `config.py`; anthropic: `anthropic/claude-sonnet-5-5`) is the primary model. In the summarizer only the plan (at effort medium, `PLAN_EFFORT` in `plan.py`) and `/health` read it — every other stage has its own model below or runs on the fast tier |
+| `LLM_FAST_PROVIDER` | blank | Provider of the fast tier (synthesis, chapter_detect, the faithfulness judge); blank = `LLM_PROVIDER` (anthropic: Haiku 4.5), `openai` = `gpt-4o-mini` |
 | `LLM_FALLBACK_PROVIDER` | blank | Cross-provider fallback for primary-model calls after one same-provider retry (`call_llm_with_retry`): that provider's default model. Fast-tier calls never fall back; blank = none |
-| `LLM_MODEL` | blank | Primary-model override; blank = `LLM_PROVIDER`'s default model |
+| `LLM_MODEL` | blank | Primary-model override (the plan; vie-assistant reads it too); blank = `LLM_PROVIDER`'s default model |
 | `LLM_FAST_MODEL` | blank | Fast-tier override; blank = the fast provider's fast model |
 | `LLM_TIMEOUT_SECONDS` | `60.0` | Per-call timeout for calls that set none themselves |
-| `LLM_MAX_TOKENS` / `LLM_FAST_MAX_TOKENS` | `4096` / `2048` | Dead — no reader (call sites and the LLM service use their own `max_tokens`); removed in pipeline-1min 4.0d |
-| `LLM_EXTRACTION_MODEL` | blank | Every extraction call (field groups, batches) and the memory call; blank = the primary model |
-| `LLM_ENRICHMENT_MODEL` | blank | The quiz call; blank = the fast tier (the compose blank wins over `config.py`'s own default in containers) |
-| `LLM_DESCRIPTION_MODEL` | blank | Description analysis; blank = the fast tier |
+| `LLM_EXTRACTION_MODEL` | `anthropic/claude-haiku-4-5-20251001` | Every extraction call (field groups, batches) and the memory call (D5) |
+| `LLM_ENRICHMENT_MODEL` | `openai/gpt-4o-mini` | The quiz call |
+| `LLM_DESCRIPTION_MODEL` | `openai/gpt-6-luna` | Description analysis |
 | `LLM_SYNTHESIS_MODEL` | blank | Synthesis (master summary, SEO description); blank = the fast tier |
-| `LLM_TRANSLATION_MODEL` | blank | Output and title translation, and the RAG transcript's English text; blank = the fast tier |
-| `LLM_VISION_MODEL` | blank | Vision model override; blank = the primary model (Sonnet), which vision stays on |
-| `LLM_CLASSIFIER_MODEL` | `anthropic/claude-haiku-4-5-20251001` | Tier-probe model (D21; the name predates the probe). Literal default in both anchors — a blank passthrough would route the probe to the fast tier |
-| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY` | blank | Provider keys, read by LiteLLM. `OPENAI_API_KEY` also enables the Whisper audio fallback; a `GEMINI_API_KEY` alone enables the Gemini audio fallback |
+| `LLM_TRANSLATION_MODEL` | `openai/gpt-6-luna` | Output and title translation, and the RAG transcript's English text |
+| `LLM_VISION_MODEL` | `anthropic/claude-sonnet-5-5` | Frame descriptions |
+| `LLM_CLASSIFIER_MODEL` | `anthropic/claude-haiku-4-5-20251001` | Tier-probe model (D21; the name predates the probe) |
+| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY` | blank | Provider keys, read by LiteLLM. `OPENAI_API_KEY` is needed by the `openai/*` stage defaults (description, quiz, translation) and an `openai` fast tier, and enables the Whisper audio fallback; a `GEMINI_API_KEY` alone enables the Gemini audio fallback |
+
+The per-stage defaults are the pipeline-1min 4.0d model A/B picks (rule: quality within noise first, then latency, then cost; evidence in `dev/active/pipeline-1min/gates/g4-model-ab.md`), carried as the same literal default by `config.py` and both anchors — a blank `.env` line keeps the pick; only `LLM_SYNTHESIS_MODEL` defaults blank (the fast tier). The plan (the primary, via `MODEL_MAP`) and vision moved to Sonnet 5.5 (p50 11.3 vs 23.6 s and 8.6 vs 16.8 s against Sonnet 4.6; for vision Haiku 5.5 labelled chef-at-work frames `talking_head`), description analysis and every translation to `gpt-6-luna` (no invented URLs; RAG batches parse 4/4 vs 3/4). Extraction, memory and the tier probe stay on Haiku 4.5 (Haiku 5.5 lost real recipe steps; the probe matched 16/18 visual-demo labels vs 18/18), the quiz on `gpt-4o-mini` (`gpt-6-luna` as usable, p50 10.5 s vs 5.2 s), and the faithfulness judge, synthesis and chapter_detect on the fast tier.
 
 **Extraction + vision concurrency (2026-10, pipeline-1min)**
 

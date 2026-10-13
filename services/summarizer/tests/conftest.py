@@ -27,11 +27,13 @@ _STAGE_OVERRIDE_ATTRS = (
 def _disable_stage_model_overrides(monkeypatch):
     """Force every per-stage LLM override to None for the duration of the test.
 
-    `src/config.py` pins `LLM_CLASSIFIER_MODEL` and `LLM_ENRICHMENT_MODEL` to
-    Haiku 4.5, and the env can pin any other stage (prod pins extraction).
-    Without this fixture, any test that calls a stage function with a
-    `MagicMock` for `llm_service` would trigger `call_llm_with_retry` to
-    replace the mock with a real `LLMService` and make a live API call.
+    `src/config.py` gives every stage but synthesis and chapter_detect a model
+    by default (the 4.0d picks: Haiku 4.5, Sonnet 5.5, gpt-6-luna, gpt-4o-mini),
+    and the env can set those two as well. Without this fixture, any test that
+    calls a stage function with a `MagicMock` for `llm_service` (or for the
+    vision provider) would have it replaced by a real one pinned to that model
+    (`call_llm_with_retry`, `frame_analyzer._vision_provider`) and make a live
+    API call.
     """
     for attr in _STAGE_OVERRIDE_ATTRS:
         monkeypatch.setattr(_settings, attr, None)
