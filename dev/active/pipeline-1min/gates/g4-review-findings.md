@@ -72,3 +72,12 @@
   unknown; briefing MODEL_MAP is the summarizer's (assistant keeps Sonnet 4.6); fast tier = Haiku 4.5 by default,
   gpt-4o-mini via LLM_FAST_PROVIDER=openai; DEPLOY missing-key blast radius; 16,290-token plan block; uC45 median of 2,
   EqaMrzd9nZU = regression video, not a benchmark.
+
+## R4d2 — 4.0d A/B round 2 (tool + report) — 0 C / 10 W, folded before the commit
+- spend guard let the ceiling-crossing call go out (check spent + estimate before send); round-1 CLI still used the
+  deduplicated `_spent` and no per-call ceiling; memory round-2 repeats byte-identical (temp 0) → noise floor = round 1 vs
+  round 2 (mean 0.974, min 0.923); A+rule.0's invented T1dQ visual answer inflates the reference filled_share and 8 of every
+  run's T1dQ "lacks"; Picks prose quotes nearest-rank p50s; hard-coded header facts; circular keep-rule test + no tests for
+  verdict gates / stack cost; Eqa downstream without memory; round-1 correction wording (A.0 only) + "dup / split" label;
+  stack 1 priced on Haiku 5.5 low. g4 question: does the keep-rule "no" stand (rests on jMq8 0.170 vs 0.162, one noise pair,
+  and the distance there is mostly removed invented oven steps)?

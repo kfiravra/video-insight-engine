@@ -117,7 +117,7 @@ _Gate reports from gate 2 on (Kfir 2026-10-12): cache hit rate per call type = r
 - [x] GATE 3 — `gates/g3.md` (2026-10-13): PASS on golden / HIGH cooking 59.6 s / text-only 54.4 s / hero / 429 / identity; NOT MET first extracted tab ≤ 35 s; cost partly → Kfir questions → STOP. Was: GATE 3 (HIGH cooking ≈ 55–60 s, text-only ≤ 55 s, hero ≤ 30 s, cost below baseline, 429 = 0, duplicates ≤ baseline; cache hit rate per call type) → STOP
 
 ## Phase 4 — model refresh, sweep, docs, report (0/4)
-- [ ] 4.0 — 4.0a **bca07ff**, 4.0b **f79f0c1**, 4.0d **bac879b** (A/B $1.087 → picks); 4.0e (full golden, dev cold runs ×4, replay ×3) HELD for Kfir's go — Model refresh (Kfir 2026-10-13) — after phase 3 is on prod, before 4.1. Targets per call type, decided by an offline A/B — quality within noise or better first, then latency, then cost:
+- [ ] 4.0 — 4.0a **bca07ff**, 4.0b **f79f0c1**, 4.0d **bac879b** (A/B $1.087 → picks) + round 2 **03eb572** (A/B $1.225: completeness rule, plan high, memory noise, stack cost — picks pending Kfir, v10 in the picks commit); 4.0e (full golden, dev cold runs ×4, replay ×3) HELD for Kfir's go — Model refresh (Kfir 2026-10-13) — after phase 3 is on prod, before 4.1. Targets per call type, decided by an offline A/B — quality within noise or better first, then latency, then cost:
   - plan: Sonnet 4.6 → `claude-sonnet-5-5`
   - vision: Sonnet 4.6 → `claude-haiku-5-5`, A/B against `claude-sonnet-5-5` with the D3 script (selection overlap, card-text reading on uC45, latency); Sonnet 5.5 if Haiku misreads screen text
   - extraction groups, memory, tier probe: Haiku 4.5 → `claude-haiku-5-5`

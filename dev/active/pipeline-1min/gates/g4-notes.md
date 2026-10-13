@@ -176,3 +176,11 @@
 - g4 question (4.2 part 2 agent): the assistant routing docs (PROJECT-BRIEFING.md:368, SERVICE-ASSISTANT.md) describe a
   `cross_reference` tool and a keyword intent router that don't exist in `services/assistant/src` (`tool_router.py` maps
   action names only) — rewrite those sections?
+- DECIDED (Kfir, D30): tier probe stays Haiku 4.5 — final (drop the probe question from g4); PIPELINE_VERSION → v10 in the
+  picks commit, not before. A/B round 2 ordered (see context.md D30).
+- **CORRECTION (A/B round 2, blind transcript review, 2026-10-14):** round 1's claim "Haiku 5.5 lost real recipe steps on
+  jMq8 (preheat, 375 °F covered bake)" is WRONG. The jMq8 transcript never mentions 375 °F, preheating, foil or a covered
+  bake (grep: 0 hits); the only oven steps are the sauce "into a 225-degree oven" with the lid ajar [8:21] and the lasagna
+  "in the oven at 425, just to crisp the top up" [14:40]. The blind reviewer (job 5) classed "preheat 375" and "covered
+  foil bake 375 / 425" as PADDING (a 425 preheat = unclear). Round 1 took Haiku 4.5's output as ground truth; those steps
+  were Haiku 4.5's inventions. The round-1 extraction verdict and the coordinator's 4.0d answer to Kfir both repeated it.
