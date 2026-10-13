@@ -21,6 +21,7 @@ changes live in his IDE. Other agents are editing other files right now.
     model env lines AND every other edit in `docker-compose.yml` / `docker-compose.prod.yml`,
     `dev/active/pipeline-1min/env-changes.md`, the replay identity test, the A/B script(s), and
     their tests.
+  - **Web full suite = `cd apps/web && npx vitest run`** (`npm test` starts watch mode and holds the heavy lock).
   - **4.1 sweep:** the leftover code/tests in its list (pipeline modules, prompts, scripts) — never
     the 4.0 files above (config / compose removals → report them); `.env.example`,
     `.env.production.example`, `docs/INFRASTRUCTURE.md` (model names only after 4.0 picks them).
@@ -31,7 +32,7 @@ changes live in his IDE. Other agents are editing other files right now.
 - Flow per task: implement + tests + targeted runs → STOP and report WITHOUT committing → the
   coordinator runs a review → you fold the findings in (SendMessage) → full suites under the lock →
   you commit (stage by path, `--no-verify` after the hook's commands by hand) → report the hash.
-- **Heavy lock path changed:** `flock /tmp/claude-1000/-home-kfir-projects-video-insight-engine/af60d8e4-09b5-430c-92c1-3a4b950e7ba0/scratchpad/locks/heavy.lock -c '<command>'`
+- **Heavy lock path changed (2026-10-13, after the WSL crash):** `flock /tmp/vie-heavy.lock -c '<command>'` (`$VIE_HEAVY_LOCK` overrides); run wrappers live in `dev/active/pipeline-1min/tools/`
   (use this path wherever the sections below name the phase-3 one).
 - Something outside the phase-4 tasks → a QUESTION for `gates/g4.md` in your report; never code.
 - `EXTRACTION_PARALLEL=false` stays today's single call: prompt bytes byte-identical (the identity

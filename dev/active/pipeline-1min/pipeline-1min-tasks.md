@@ -117,7 +117,7 @@ _Gate reports from gate 2 on (Kfir 2026-10-12): cache hit rate per call type = r
 - [x] GATE 3 — `gates/g3.md` (2026-10-13): PASS on golden / HIGH cooking 59.6 s / text-only 54.4 s / hero / 429 / identity; NOT MET first extracted tab ≤ 35 s; cost partly → Kfir questions → STOP. Was: GATE 3 (HIGH cooking ≈ 55–60 s, text-only ≤ 55 s, hero ≤ 30 s, cost below baseline, 429 = 0, duplicates ≤ baseline; cache hit rate per call type) → STOP
 
 ## Phase 4 — model refresh, sweep, docs, report (0/4)
-- [ ] 4.0 Model refresh (Kfir 2026-10-13) — after phase 3 is on prod, before 4.1. Targets per call type, decided by an offline A/B — quality within noise or better first, then latency, then cost:
+- [ ] 4.0 — 4.0a **bca07ff**, 4.0b **f79f0c1**, 4.0d **bac879b** (A/B $1.087 → picks); 4.0e (full golden, dev cold runs ×4, replay ×3) HELD for Kfir's go — Model refresh (Kfir 2026-10-13) — after phase 3 is on prod, before 4.1. Targets per call type, decided by an offline A/B — quality within noise or better first, then latency, then cost:
   - plan: Sonnet 4.6 → `claude-sonnet-5-5`
   - vision: Sonnet 4.6 → `claude-haiku-5-5`, A/B against `claude-sonnet-5-5` with the D3 script (selection overlap, card-text reading on uC45, latency); Sonnet 5.5 if Haiku misreads screen text
   - extraction groups, memory, tier probe: Haiku 4.5 → `claude-haiku-5-5`
@@ -140,8 +140,8 @@ _Gate reports from gate 2 on (Kfir 2026-10-12): cache hit rate per call type = r
     - The identity test today hashes every request kwarg, `model` included (`tests/replay/test_replay_extraction_identity.py`, `canonical_request`). e changes its canonical form to the prompt bytes (messages + `cache_control`), so neither a model change nor b's thinking/effort params break it.
     - Assistant prefill: none found in the summarizer / llm-common request builders (grep 2026-10-13). b adds a guard test.
     - Block 1 today ≈ 2.6–3.4k cl100k tokens on the benchmark domain sets (measured offline 2026-10-13). +30 % ≈ 3.4–4.5k, so it may cross a 4,096 minimum on the new tokenizer; c checks Haiku 5.5's minimum.
-- [ ] 4.1 Sweep leftovers (list in plan 4.1) + `.env.example` / `.env.production.example` (carrying 4.0's model names) + `docs/INFRASTRUCTURE.md` flags table
-- [ ] 4.2 Docs: summarizer docs stale lines; `docs/summarizer-workflow.md` v9 flow; README numbers; eval "twice a month" after first scheduled run
+- [x] 4.1 — **fe0867d** (part 1, R4.1 6 W folded) + **5dd60cc** (part 2, env templates + INFRASTRUCTURE on the 4.0d picks, R4.1b 5 W folded) — Sweep leftovers (list in plan 4.1) + `.env.example` / `.env.production.example` (carrying 4.0's model names) + `docs/INFRASTRUCTURE.md` flags table
+- [ ] 4.2 — **92c49d3** (part 1) + **b14dc91** (part 2: 4.0 models, request rules + refusals, timing v4; R4.2b 11 W folded); README cost line HELD for gate-4.0 numbers — Docs: summarizer docs stale lines; `docs/summarizer-workflow.md` v9 flow; README numbers; eval "twice a month" after first scheduled run
 - [ ] 4.3 Report: before/after per phase; what each phase bought; levers not taken with projected gain — on the final (4.0) models
 - [ ] Demo library re-run (moved from 3.9, Kfir 2026-10-13) — once, after phase 4 is on prod, on the 4.0 models: `scripts/demo_rerun.py` (dry run first, then `--limit 1`, then `--apply`); state the spend before running; demo user's daily limits first (g3 Q-demo)
 - [ ] Move task to `dev/completed/` with ARCHIVED note
