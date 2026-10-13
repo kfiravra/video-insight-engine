@@ -117,8 +117,11 @@ class Settings(BaseSettings):
     MAX_MINUTES_PER_BATCH: int = 40
     # true: field groups (pipeline-1min phase 3) — text groups fire at plan-done,
     # the visual group at frames-done, under EXTRACTION_PARALLEL_BATCHES.
-    # false: today's single extraction call (chunked batches one at a time for
-    # long videos) after frames — the rollback lever, byte-identical to v8.
+    # false: today's single extraction call after frames (chunked batches one at
+    # a time for long videos) — the same request bytes for the same plan. An
+    # extraction-only lever: the plan-done/frames-done reconcile, the
+    # <video_memory> evidence ranges, the toolkit markers and v9 stay either way;
+    # a full rollback is a redeploy of the previous main.
     EXTRACTION_PARALLEL: bool = True
     # Max extraction calls in flight per RUN (the semaphore is per run, not per
     # process): a worker holds up to EXTRACTION_PARALLEL_BATCHES ×

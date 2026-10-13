@@ -131,12 +131,29 @@ class TestQuizStart:
         assert ctx.quiz_task is None
 
 
-def _strip_only(*, deferred: bool) -> tuple:
-    ctx = _ctx(_STRIP_ONLY_TABS, tags=("learning", "tech"))
+def _strip_only(
+    *, deferred: bool, requirement: bool = False, tabs: list[dict] | None = None
+) -> tuple:
+    ctx = _ctx(tabs or _STRIP_ONLY_TABS, tags=("learning", "tech"))
     assert ctx.plan_result is not None
     ctx.plan_result.deferred_tabs = ["code"] if deferred else []
+    ctx.plan_result.deferred_requirements = ["code_playground"] if requirement else []
     text1, visual = _group("text1", _CONCEPTS), _group("visual", _SNIPPETS)
     return ctx, _Run(ctx, [text1, visual]), text1, visual
+
+
+def _full_plan() -> list[dict]:
+    """Six tabs: a frames-done backfill would trim one — maybe the sparse host."""
+    extra = [
+        {
+            "id": f"tip{i}",
+            "label": f"Tip {i}",
+            "component": "info_grid",
+            "dataSource": "tech.topics",
+        }
+        for i in range(4)
+    ]
+    return [*_STRIP_ONLY_TABS, *extra]
 
 
 class TestStripOnlyQuiz:
@@ -164,6 +181,24 @@ class TestStripOnlyQuiz:
         run.land(_outcome(text1), (_CONCEPTS, _SNIPPETS))
 
         assert ctx.quiz_task is not None
+
+    async def test_should_start_it_at_once_when_only_the_code_requirement_is_deferred(
+        self, quiz_call
+    ) -> None:
+        ctx, run, text1, _ = _strip_only(deferred=False, requirement=True)
+
+        run.land(_outcome(text1), (_CONCEPTS, _SNIPPETS))
+
+        assert ctx.quiz_task is not None
+
+    async def test_should_hold_it_when_a_deferred_backfill_would_trim_a_full_plan(
+        self, quiz_call
+    ) -> None:
+        ctx, run, text1, _ = _strip_only(deferred=False, requirement=True, tabs=_full_plan())
+
+        run.land(_outcome(text1), (_CONCEPTS, _SNIPPETS))
+
+        assert ctx.quiz_task is None
 
 
 # ─── The member stops the quiz it started ───

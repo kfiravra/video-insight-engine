@@ -188,8 +188,21 @@ def tabs_to_serve(group: ExtractionGroup, job: GroupJob) -> str:
     return "\n".join(lines) or render_tabs_to_serve([], job.active)
 
 
-def job_block(group: ExtractionGroup, chunk: ExtractionChunk, job: GroupJob) -> TextBlock:
-    """Block 3: the group's job; only the visual group carries frame text."""
+def load_job_template() -> str:
+    """The group-job template, registry first — read once per run (``SplitRun``)."""
+    return load_prompt_text(JOB_TEMPLATE_PATH)
+
+
+def job_block(
+    group: ExtractionGroup,
+    chunk: ExtractionChunk,
+    job: GroupJob,
+    template: str | None = None,
+) -> TextBlock:
+    """Block 3: the group's job; only the visual group carries frame text.
+
+    ``template`` = the run's job template (None → read it now).
+    """
     values = {
         "batch_context": chunk.batch_context,
         "emit_only": emit_only(group),
@@ -204,12 +217,21 @@ def job_block(group: ExtractionGroup, chunk: ExtractionChunk, job: GroupJob) -> 
     }
     # Today's binding: the visual elements leave with empty inputs, and the
     # single pass never re-reads inserted text (on-screen code) for placeholders.
-    template = _drop_absent_visual_blocks(load_prompt_text(JOB_TEMPLATE_PATH), values)
-    return text_block(_fill(template, values).rstrip() + "\n")
+    raw = template if template is not None else load_job_template()
+    bound = _drop_absent_visual_blocks(raw, values)
+    return text_block(_fill(bound, values).rstrip() + "\n")
 
 
 def build_group_messages(
-    prompt: ExtractionPrompt, group: ExtractionGroup, chunk: ExtractionChunk, job: GroupJob
+    prompt: ExtractionPrompt,
+    group: ExtractionGroup,
+    chunk: ExtractionChunk,
+    job: GroupJob,
+    template: str | None = None,
 ) -> list[TextBlock]:
     """The user content of one group call: block 1 (1h), block 2 (5m), the job."""
-    return [prefix_block(prompt), head_block(prompt, chunk), job_block(group, chunk, job)]
+    return [
+        prefix_block(prompt),
+        head_block(prompt, chunk),
+        job_block(group, chunk, job, template),
+    ]

@@ -10,7 +10,7 @@ from __future__ import annotations
 import copy
 import json
 import logging
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal, TypedDict
@@ -229,6 +229,20 @@ def build_fallback_tabs(tag: str) -> list[dict]:
     cfg = get_config()
     domain = cfg["domains"].get(tag, cfg["domains"].get("learning", {}))
     return list(domain.get("defaultTabs", []))
+
+
+def default_tab_id(tag: str, component: str, live: Collection[str] = ()) -> str:
+    """The id of ``tag``'s first defaultTab rendering ``component`` ("" when none).
+
+    The tab a required backfill of ``component`` adds — named by the records of
+    a backfill the evidence ruled out (reconcile's ``not_backfilled`` row,
+    assembly's ``requirement_evidence_false`` drop entry). "" as well when a
+    ``live`` tab already holds that id (e.g. a planned ``code`` tab demoted to
+    another component): the record must not name a tab that is still there.
+    """
+    tabs = build_fallback_tabs(tag)
+    found = next((str(t.get("id", "")) for t in tabs if t.get("component") == component), "")
+    return "" if found in live else found
 
 
 def datasources_for_component(tag: str, component: str) -> list[str]:

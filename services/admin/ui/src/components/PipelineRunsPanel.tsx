@@ -28,13 +28,14 @@ function RegenBadge({ ordinal }: RegenBadgeProps) {
   );
 }
 
-/** Partial-result marker: the run's doc is flagged degraded (dropped
- *  extraction batches or critical coverage — see summarizer 3.6). */
+/** Partial-result marker: the run's doc is flagged degraded (a failed
+ *  extraction field group, a dropped chunked batch or critical coverage —
+ *  the same flag the web app's DegradedNotice shows). */
 function DegradedBadge() {
   return (
     <span
       className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wide bg-[var(--color-danger-soft)] text-[var(--color-danger)]"
-      title="Degraded run: extraction dropped batches or coverage was critical — the stored output is a partial result"
+      title="Degraded run: an extraction field group failed, a chunked batch was dropped, or coverage was critical — the stored output is a partial result"
     >
       degraded
     </span>

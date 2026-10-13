@@ -1355,11 +1355,11 @@ The summarization pipeline uses SSE to stream results progressively, allowing th
 | `sponsor_segments` | 1 | SponsorBlock segments |
 | `transcript_ready` | 2 | Transcript extraction complete (authoritative `duration`) |
 | `description_analysis` | 5 | Links, resources extracted from description — emitted at assembly (assembly waits ≤ 5 s for the analysis started at metadata-end; past that, nothing) |
-| `triage_complete` | 2 | Content tags, tab layout, confidence, `contentFormat`, `evidence`, `terms` from the plan (runs ∥ memory inside phase 2) |
+| `triage_complete` | 2 | Content tags, tab layout, confidence, `contentFormat`, `evidence` (the reconciled view), `planEvidence` / `memoryEvidence`, `terms` — at plan-done (plan ∥ memory both in, after reconcile) |
 | `extraction_progress` | 4 | Chunked-extraction progress for long videos |
 | `extraction_complete` | 4 | Domain extraction finished |
 | `frames` | 2 | Extracted frame set (presigned URLs), from the frames branch of phase 2 |
-| `meta` | 2 | VIEResponseMeta with videoId, contentTags, tab labels — emitted with `triage_complete` |
+| `meta` | 2 | VIEResponseMeta with videoId, contentTags, tab labels — emitted with `triage_complete`; again at frames-done when the screen-code check changed the tab list |
 | `tab_ready` | 2 + 5 | One tab, with `position` (sort key) and `final`. The provisional Moments tab (`provisional: true`) streams at plan-done; with `EXTRACTION_PARALLEL` (default) non-final previews stream as each extraction group lands, the rest from assembly; a tab id can arrive more than once and the later emission replaces the earlier by id (a tab taking the provisional's place under another id names it in `replaces`). Each tab of the final response gets a `final: true` emission before `complete` — the last final wins — see [tab_ready](#tab_ready) |
 | `enrichment_complete` | 5 | The quiz landed (only for a plan with a quiz host; runs after the first tabs) |
 | `synthesis_complete` | 2 + 5 | Up to twice: `{tldr, keyTakeaways}` at memory-done (the hero), then the four-field superset after the tabs — see [synthesis_complete](#synthesis_complete) |
@@ -1487,7 +1487,9 @@ and `VALID_SSE_PHASES` in `sse-validators.ts`.
 
 ### triage_complete
 
-Emitted after the plan stage determines content tags and tab layout.
+Emitted at plan-done — plan and memory both in, the tabs reconciled (re-pointed, demoted,
+dropped, backfilled, quiz last, 3–6 tabs; `pipeline.reconcile` in
+[DATA-MODELS](./DATA-MODELS.md) lists every decision).
 
 ```json
 {
@@ -1495,13 +1497,30 @@ Emitted after the plan stage determines content tags and tab layout.
   "contentTags": ["tech", "learning"],
   "modifiers": [],
   "primaryTag": "tech",
+  "userGoal": "Learn React Hooks patterns",
   "tabs": [
-    { "id": "overview", "label": "Overview", "emoji": "📋", "dataSource": "tech.overview" },
-    { "id": "code", "label": "Code", "emoji": "💻", "dataSource": "tech.codeSnippets" }
+    { "id": "code", "label": "Code", "emoji": "💻", "component": "code_playground",
+      "dataSource": "tech.snippets", "brief": { "what": "", "where": [], "expect": 0 } }
   ],
-  "confidence": 0.88
+  "confidence": 0.88,
+  "contentFormat": "tutorial",
+  "evidence": { "has_code": true, "is_learnable": true },
+  "planEvidence": { "has_code": false, "is_learnable": true },
+  "memoryEvidence": { "has_code": true, "is_learnable": true },
+  "terms": ["useState", "useEffect"]
 }
 ```
+
+- **`evidence`** — the view every reader shares: a key is `true` when the plan OR the video
+  memory said true, `false` only when BOTH answered false, absent otherwise (neither said true
+  and one was silent, or memory failed). It gates the domain requirements, the quiz and
+  `<video_memory>`.
+- **`planEvidence` / `memoryEvidence`** — each reader's own answers (`memoryEvidence: null` =
+  memory failed).
+
+A `has_code` key that is false in both readers defers the code tabs (and tech's required
+`code_playground` when no tab was planned for it) to frames-done, where the screen decides; the
+tab list can then change, announced by a fresh `meta` (see the emission sequence).
 
 ### meta
 
@@ -1590,12 +1609,18 @@ arrive without a label there — `complete.tabIds` is authoritative.
 **Emission sequence of a run** (English, the quiz planned). The default
 (`EXTRACTION_PARALLEL=true`, the field-group extraction):
 
-1. `metadata` … `triage_complete` + `meta` (the plan) ∥ `synthesis_complete`
-   (memory's hero).
-2. Plan-done (plan and memory both in): `tab_ready {provisional: true, final:
-   false}` — the Moments tab, with the id, label and goal of the tab that will
-   replace it (the plan's first `moment_track` tab, else `key_moments`). Not
-   sent when no source has an entry.
+1. `metadata` … `synthesis_complete` (memory's hero) ∥ the plan.
+2. Plan-done (plan and memory both in, the tabs reconciled): `triage_complete` +
+   `meta`, then `tab_ready {provisional: true, final: false}` — the Moments tab,
+   with the id, label and goal of the tab that will replace it (the plan's
+   first `moment_track` tab, else `key_moments`). Not sent when no source has
+   an entry.
+
+   2½. Frames-done (frames and plan-done both reached; it can fall between any
+   two groups of step 3): when reconcile deferred a code tab or tech's
+   `code_playground`, the screen decides — a fresh `meta` when that changed the
+   tab list (a code tab dropped or demoted, or `code_playground` added); the
+   visual group is cut after it.
 3. Per extraction group: `extraction_progress {section: "groups", batch, of}`,
    then a **preview** of every planned tab whose fields have all landed —
    `final: false`, **without `crossTabLinks` and `attachments`**, at the
@@ -1617,6 +1642,9 @@ arrive without a label there — `complete.tabIds` is authoritative.
 With `EXTRACTION_PARALLEL=false` (one extraction call after frames-done):
 
 1. – 2. as above.
+
+   2½. Frames-done, before extraction starts: the same screen-code decision and
+   fresh `meta` as above.
 3. Assembly: `description_analysis`, then every tab but the `moment_track`
    tabs at its position — `final: false` while the quiz is pending (it can
    change any tab: links, a `quick_quiz` attachment, the overview's count);

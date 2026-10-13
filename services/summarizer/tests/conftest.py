@@ -46,6 +46,29 @@ def _fresh_exit_memory(monkeypatch):
     monkeypatch.setattr(_download_utils, "_EXIT_MEMORY", _download_utils._ExitMemory())
 
 
+# Every LiteLLM callback list a call copies ``litellm.callbacks`` into
+# (deduplicated by class), plus the source list itself.
+LITELLM_CALLBACK_LISTS = (
+    "callbacks",
+    "input_callback",
+    "_async_input_callback",
+    "success_callback",
+    "_async_success_callback",
+    "failure_callback",
+    "_async_failure_callback",
+)
+
+
+@pytest.fixture
+def fresh_litellm_callbacks(monkeypatch):
+    """Empty LiteLLM callback lists for one test, restored afterwards — a logger a
+    test registers never leaks into another test's calls."""
+    import litellm
+
+    for name in LITELLM_CALLBACK_LISTS:
+        monkeypatch.setattr(litellm, name, [])
+
+
 def _utc_now() -> datetime:
     """Get current UTC time."""
     return datetime.now(timezone.utc)

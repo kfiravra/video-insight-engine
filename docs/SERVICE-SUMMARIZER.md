@@ -58,6 +58,9 @@ services/summarizer/
     │   │   ├── plan.py / plan_prompt.py # Plan (Sonnet): full marked transcript → tabs + briefs,
     │   │   │                         #   evidence, terms (+ _render_playbook, _enforce_domain_policy)
     │   │   ├── memory.py             # Memory (LLM_EXTRACTION_MODEL) ∥ plan: outline, evidence, tldr, takeaways
+    │   │   ├── plan_reconcile.py     # Plan-parse guard: unregistered path, inactive domain
+    │   │   ├── reconcile.py          # Plan-done reconcile: doubly-false view, step 1, screen-code check
+    │   │   ├── reconcile_pass.py     # Reconcile steps 2–5 (backfill, quiz, dedupe, 3–6) + row writer
     │   │   ├── video_memory.py       # <video_memory> block (plan + memory) for every {video_context} slot
     │   │   ├── visual_annotations.py # Frame captions + OCR → <visual_annotations> block (never clean_text)
     │   │   ├── triage.py             # Triage validation/fallback (TriageResult model + tab validation)
@@ -224,7 +227,7 @@ FRAME_VISION_PARALLEL=true             # Vision in parallel batches; false = one
 LLM_VISION_MODEL=                      # Blank = the primary model (Sonnet), which vision stays on
 
 # Extraction concurrency + chunking
-EXTRACTION_PARALLEL=true               # Field groups (text at plan-done, visual at frames-done); false = today's single call / chunked batches one at a time
+EXTRACTION_PARALLEL=true               # Field groups (text at plan-done, visual at frames-done); false = today's single call / chunked batches one at a time (extraction only: reconcile, evidence ranges, toolkit markers, v9 stay)
 EXTRACTION_PARALLEL_BATCHES=6          # Max extraction calls in flight per run (× WORKER_CONCURRENCY per worker); drop to 4 if pipeline.timing records 429s
 CHUNKED_EXTRACTION_THRESHOLD=900       # Videos longer than this (s) may split the transcript into chapter batches
 MAX_TOKENS_PER_BATCH=50000             # One batch's estimated transcript tokens
@@ -428,9 +431,31 @@ A plan-first pipeline: ~6-7 text calls (description analysis, tier probe, plan �
     │   └─▶ Post-validation `_enforce_domain_policy()` strips forbidden components before
     │   │   extraction (quiz_arena only for quizEnrichment domains)
     │   └─▶ Fallback: category-based plan when the call fails or confidence < 0.6
+    └─▶ Plan-done reconcile (pipeline/reconcile.py + reconcile_pass.py, 3.2) once plan AND memory
+    │   are in. Evidence view: a has_* key is true when either reader said true, false only when
+    │   BOTH answered false (doubly false), absent otherwise (one silent, or memory failed); it
+    │   replaces the plan's evidence for every reader (`evidence` in triage_complete /
+    │   pipeline.triage; each reader's own answers as `planEvidence` / `memoryEvidence`).
+    │   Steps: (1) a tab whose dataSource `requiresEvidence` is doubly false → re-pointed, kept
+    │   (moment_track), demoted onto a free eligible source, else dropped — a `has_code` tab is
+    │   deferred to frames-done instead (`deferred_to_frames`); (2) the primary's required
+    │   components backfilled from its defaultTabs unless doubly false (`not_backfilled`, under
+    │   the defaultTab id it would have added) — tech's has_code-gated code_playground with no
+    │   tab planned for it is deferred too; (3) quiz dropped outside quizDomains or when
+    │   is_learnable is doubly false, else moved last; (4) dedupe (dataSource, component);
+    │   (5) 3–6 tabs. Every decision → `pipeline.reconcile` (row shape: DATA-MODELS.md); drops →
+    │   droppedTabs `reconcile_<reason>`. The plan-parse guard (plan_reconcile.py) keeps only
+    │   registry validity + `inactive_domain`.
+    │   Frames-done (both paths — split: before the visual group is cut; today's: the
+    │   `visual_inject` step, before extraction): when anything was deferred, the screen decides
+    │   (vision `scene_type: code`, or code-shaped on-screen text). Code → the tabs are kept
+    │   (`kept_screen_code`), has_code turns true and the deferred requirement is backfilled (its
+    │   tech.snippets joins the visual group — no latency cost); no code, or no vision/OCR → the
+    │   step-1 chain and `not_backfilled`; then steps 2, 3 and 5 re-run. A changed tab list
+    │   sends a fresh `meta`.
     └─▶ `<video_memory>` block (pipeline/video_memory.py) rendered once from plan + memory —
     │   fills every writer's `{video_context}` slot (extraction, synthesis, quiz)
-    └─▶ SSE: synthesis_complete (memory-done), triage_complete + meta (plan)
+    └─▶ SSE: synthesis_complete (memory-done); triage_complete + meta at plan-done, after reconcile
     └─▶ Plan-done (plan and memory both in): the provisional Moments tab (phases/moments.py,
     │   pipeline-1min 2.1) — tab_ready `provisional: true, final: false` built from the
     │   moment fallback chain (memory outline → YouTube chapters → description timestamps,
@@ -454,7 +479,8 @@ A plan-first pipeline: ~6-7 text calls (description analysis, tier probe, plan �
     │   `extraction` = plan-done → last group landed (the DONE log's `extraction=`); `frames`
     │   includes its wait for plan-done and the `visual_inject` step; group calls are
     │   `llmCalls` spans `extraction_<group>` (`_c<k>` per later chunk), the streamed warm-up
-    │   call with `ttftMs`. Each answer is validated as it lands (`group_merge.py`, 3.5): only
+    │   call with `ttftMs`; each call's timeout follows its estimate (Σ outputWeight × expect
+    │   ÷ 60 tok/s + 30 s, 120–300 s), and the group-job template is read once per run. Each answer is validated as it lands (`group_merge.py`, 3.5): only
     │   the group's requested keys the model filled are kept (field-name spellings mapped to
     │   the registry key, no model defaults for unrequested/omitted keys), then ONE merge —
     │   chunk-major, text1..N, visual; lists concatenate (later duplicates by
@@ -511,8 +537,11 @@ A plan-first pipeline: ~6-7 text calls (description analysis, tier probe, plan �
     │   domain_forbidden, domain_max_cap, all_timestamps_impossible, and on the split path
     │   extraction_group_failed (one of the first three for a tab that waited for a failed
     │   group's field — assembly's own reason kept in `detail`) (feeds tabsDropped/droppedTabs
-    │   telemetry instead of the old designed−assembled subtraction). The plan stage's drops are
-    │   prepended: reason `invalid_datasource` = an unregistered dataSource with no same-domain
+    │   telemetry instead of the old designed−assembled subtraction); the backstop's
+    │   `requirement_evidence_false` entry (a required component the evidence rules out, `id` =
+    │   the defaultTab it would have added, `""` when a live tab holds it) is listed, never
+    │   counted. The plan stage's drops are prepended (reconcile's as `reconcile_<reason>`, see
+    │   4): reason `invalid_datasource` = an unregistered dataSource with no same-domain
     │   registry path for the tab's component (plan.py `_validate_data_sources`); when that
     │   leaves no tab, the domain defaults stand in, `planFallback: true` is persisted and
     │   tabsDesigned counts only the plan's drops
@@ -1157,7 +1186,7 @@ Hard character limit per model before every LLM call:
 | `CHUNKED_EXTRACTION_THRESHOLD` | 900 (15 min) | Duration threshold for chunked path |
 | `MAX_TOKENS_PER_BATCH` | 50000 | Max tokens per extraction batch |
 | `MAX_MINUTES_PER_BATCH` | 40 | Max minutes of video per extraction batch |
-| `EXTRACTION_PARALLEL` | True | True: field groups (text groups at plan-done, the visual group at frames-done); False: today's single call / chunked batches one at a time |
+| `EXTRACTION_PARALLEL` | True | True: field groups (text groups at plan-done, the visual group at frames-done); False: today's single call / chunked batches one at a time, byte-identical request for the same plan — an extraction-only lever (reconcile, `<video_memory>` evidence ranges, toolkit markers and v9 stay; full rollback = redeploy the previous main) |
 | `EXTRACTION_PARALLEL_BATCHES` | 6 | Max split-extraction group calls in flight — per run, so a worker holds up to this × `WORKER_CONCURRENCY` calls (today's path runs its batches one at a time) |
 | `EXTRACTION_FORCE_SPLIT_CHUNKS` | 4 | Sub-batches when chunked input collapses to 1 batch |
 

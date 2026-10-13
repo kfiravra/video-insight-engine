@@ -21,6 +21,7 @@ from src.services.pipeline.extraction_groups import (
     GroupOutcome,
     SplitRun,
     fire_groups,
+    group_timeout,
     run_group_call,
 )
 from src.services.pipeline.field_groups import ExtractionGroup
@@ -387,3 +388,37 @@ class TestRunGroupCall:
             items = [item async for item in fire_groups(_run("text1"), _no_visual)]
 
         assert [o.status for o in items if o] == ["failed"]
+
+
+# ─── The call's timeout (R40 B2) ───
+
+
+def _alone(request: FieldRequest) -> ExtractionGroup:
+    return ExtractionGroup("text1", (request,), False, request.est_output_tokens, request.tab_ids)
+
+
+# travel.itinerary × 8 alone: ≈ 11k output tokens, more than 120 s land at 83–91 tok/s.
+_ITINERARY = FieldRequest("travel", "itinerary", "list", "planned", ("stops",), 25, 8, 1387, False)
+
+
+class TestGroupTimeout:
+    def test_should_derive_a_heavy_single_field_groups_timeout_from_its_estimate(self) -> None:
+        assert group_timeout(_alone(_ITINERARY)) == pytest.approx(8 * 1387 / 60 + 30)
+
+    def test_should_keep_120_s_for_a_small_group(self) -> None:
+        assert group_timeout(_group("text2")) == 120.0
+
+    def test_should_cap_the_timeout_at_300_s(self) -> None:
+        lyrics = FieldRequest("music", "lyrics", "list", "planned", (), 200, 200, 100, False)
+
+        assert group_timeout(_alone(lyrics)) == 300.0
+
+    async def test_should_give_the_streamed_warm_up_call_its_groups_timeout(
+        self, llm: AsyncMock
+    ) -> None:
+        llm.answer.reply = '{"travel": {"itinerary": []}}'
+        call = GroupCall(_alone(_ITINERARY), ExtractionChunk(0, "t"), _JOB)
+
+        await asyncio.create_task(run_group_call(call, _run(), on_first_chunk=lambda: None))
+
+        assert llm.await_args_list[0].kwargs["timeout"] == pytest.approx(8 * 1387 / 60 + 30)

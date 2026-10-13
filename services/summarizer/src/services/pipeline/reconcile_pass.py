@@ -6,7 +6,10 @@
 that shape the tab list once the evidence is settled:
 
 2. required — the primary domain's required components are backfilled from
-   its defaultTabs unless their ``requirementEvidence`` key is doubly false;
+   its defaultTabs unless their ``requirementEvidence`` key is doubly false
+   (``not_backfilled``, naming the defaultTab it would have added); a key the
+   screen can still answer (``has_code``) defers the decision to frames-done
+   (``deferred_to_frames``) instead;
 3. quiz — dropped outside ``quizDomains`` or when ``is_learnable`` is doubly
    false; otherwise moved last;
 4. dedupe — one tab per ``(dataSource, component)``, the first wins;
@@ -26,6 +29,7 @@ from ...models.pipeline_types import TabBrief
 from ...shared_config.domain_config import (
     build_fallback_tabs,
     data_source,
+    default_tab_id,
     effective_requirements,
     quiz_enrichment,
     quiz_policy,
@@ -54,6 +58,8 @@ class ReconcileOutcome:
     records: list[dict]  # ``pipeline.reconcile`` rows
     evidence: dict[str, bool]
     deferred: tuple[str, ...]  # tab ids awaiting the screen-code check
+    # Required components whose backfill awaits it (no tab planned for them).
+    deferred_requirements: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -79,9 +85,16 @@ class ReconcilePass:
     readers: dict[str, Mapping[str, bool]]
     primary: str = ""
     content_format: str | None = None
+    # A required component its doubly-false key rules out: plan-done defers it
+    # when the screen can still answer the key (``defer_keys``); frames-done
+    # records only the keys the screen answered (``recheck_keys``) — every other
+    # rule-out was recorded at plan-done and nothing about it changed.
+    defer_keys: frozenset[str] = frozenset()
+    recheck_keys: frozenset[str] | None = None
     dropped: list[dict] = field(default_factory=list)
     records: list[dict] = field(default_factory=list)
     deferred: list[str] = field(default_factory=list)
+    deferred_requirements: list[str] = field(default_factory=list)
 
     def outcome(self) -> ReconcileOutcome:
         ids = {tab["id"] for tab in self.tabs}
@@ -91,6 +104,7 @@ class ReconcilePass:
             records=self.records,
             evidence=self.evidence,
             deferred=tuple(tab_id for tab_id in self.deferred if tab_id in ids),
+            deferred_requirements=tuple(self.deferred_requirements),
         )
 
 
@@ -195,6 +209,21 @@ def _default_tab(
 # ─── Step 2: required components ───
 
 
+def _rule_out(run: ReconcilePass, component: str, key: str) -> None:
+    """A missing required component its doubly-false ``key`` rules out: deferred to
+    the screen check, else recorded with the defaultTab it would have added."""
+    if key in run.defer_keys:
+        run.deferred_requirements.append(component)
+        name = "deferred_to_frames"
+    elif run.recheck_keys is None or key in run.recheck_keys:
+        name = "not_backfilled"
+    else:
+        return
+    live = {tab["id"] for tab in run.tabs}
+    would_add = {"id": default_tab_id(run.primary, component, live), "component": component}
+    record(run, would_add, Action(name, "evidence_false", key=key), added=True)
+
+
 def required_step(run: ReconcilePass) -> None:
     """Backfill each missing required component unless its evidence is doubly false."""
     reqs = effective_requirements(run.primary, run.content_format)
@@ -205,6 +234,7 @@ def required_step(run: ReconcilePass) -> None:
         if any(t["component"] in accepted for t in run.tabs):
             continue
         if key and run.evidence.get(key) is False:
+            _rule_out(run, component, key)
             continue
         tab = _default_tab(run, accepted, reqs["forbidden"], fresh=False)
         if tab is None:

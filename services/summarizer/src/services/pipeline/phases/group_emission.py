@@ -44,6 +44,7 @@ from src.services.pipeline.enrichment import QUIZ_COMPONENT, QUIZ_DATA_SOURCE
 from src.services.pipeline.group_merge import merge_groups
 from src.services.pipeline.phases.enrichment import start_quiz_task
 from src.services.pipeline.phases.moments import video_meta
+from src.services.pipeline.reconcile_pass import MAX_TABS
 from src.services.pipeline.synthesis import build_synthesis_dict
 from src.services.pipeline.tab_ledger import tab_id
 from src.shared_config.domain_config import quiz_enrichment
@@ -240,6 +241,8 @@ class GroupLanding:
     quiz_owners: frozenset[str]  # empty → the visual group owns the quiz
     group_calls: Counter[str] = field(default_factory=Counter)
     path_calls: Counter[str] = field(default_factory=Counter)
+    # The landed fields the last partial assembly saw.
+    assembled_over: frozenset[str] = frozenset()
 
     @classmethod
     def for_run(
@@ -258,12 +261,15 @@ class GroupLanding:
         return outcome.group.visual and self._all_landed(outcome.group.group_id)
 
     def _quiz_host_settled(self) -> bool:
-        """A strip-only quiz (no quiz tab) shows on a sparse host: none of the deferred
-        code tabs frames-done may still drop can be that host any more."""
+        """A strip-only quiz (no quiz tab) shows on a sparse host: frames-done can no
+        longer drop a deferred code tab that is that host. A deferred code requirement
+        alone only adds a tab (no brief, never a sparse host) — unless the plan is full
+        and that backfill trims a planned tab, which may be the host."""
         plan = self.ctx.plan_result
-        if plan is None or _plans_quiz_tab(plan.tabs):
+        if plan is None or _plans_quiz_tab(plan.tabs) or self.ctx.frames_done.is_set():
             return True
-        return self.ctx.frames_done.is_set() or not plan.deferred_tabs
+        full = len(plan.tabs) >= MAX_TABS  # no quiz tab here: every tab counts
+        return not (plan.deferred_tabs or (plan.deferred_requirements and full))
 
     def _quiz_due(self, outcome: GroupOutcome) -> bool:
         return self._owners_landed(outcome) and self._quiz_host_settled()
@@ -282,11 +288,21 @@ class GroupLanding:
         ``outcomes`` = every call landed so far (``outcome`` included);
         ``fields`` = what the run's tabs request now (frames-done may have
         re-pointed a tab). A quiz whose groups brought nothing usable is tried
-        again as later groups land (else the late group makes the call).
+        again as later groups land (else the late group makes the call). A
+        call that completes no field (a long video's earlier chunks) changes
+        no tab: nothing is merged or assembled for it unless the quiz is due.
         """
         self.group_calls[outcome.group.group_id] += 1
         self.path_calls.update(f.path for f in outcome.group.fields)
+        landed = self.landed()
+        grew = landed != self.assembled_over
+        quiz_due = self.ctx.quiz_task is None and self._quiz_due(outcome)
+        if not grew and not quiz_due:
+            return []
         merged, _ = merge_groups(outcomes)
-        if self.ctx.quiz_task is None and self._quiz_due(outcome):
+        if quiz_due:
             start_quiz_task(self.ctx, merged)
-        return _safe_ready_tab_events(self.ctx, fields, self.landed(), merged)
+        if not grew:
+            return []
+        self.assembled_over = landed
+        return _safe_ready_tab_events(self.ctx, fields, landed, merged)

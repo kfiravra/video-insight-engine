@@ -16,7 +16,7 @@ import pytest
 from src.config import settings
 from src.models.pipeline_types import PlanResult
 from src.routes import pipeline_orchestration
-from src.services.pipeline import extraction_groups, pipeline_timing
+from src.services.pipeline import extraction_group_prompt, extraction_groups, pipeline_timing
 from src.services.pipeline.context import PipelineContext
 from src.services.pipeline.extraction_groups import GroupCall, GroupOutcome, SplitRun
 from src.services.pipeline.phases import frames_done as frames_done_phase
@@ -241,6 +241,20 @@ class TestPlanDoneFiring:
         events = await _drain(ctx, _Groups())
 
         assert _events(events, "error")[0]["code"] == "LLM_ERROR"
+
+    async def test_should_read_the_group_job_template_once_per_run(self) -> None:
+        """A registry miss must not cost every group call a fetch (R40 B1)."""
+        ctx = _done(_ctx(["food"], _FOOD_TABS))
+        reads = MagicMock(wraps=extraction_group_prompt.load_prompt_text)
+        llm = AsyncMock(return_value="{}")
+
+        with (
+            patch.object(extraction_group_prompt, "load_prompt_text", reads),
+            patch.object(extraction_groups, "call_llm_with_retry", llm),
+        ):
+            _ = [event async for event in run_phase_split_extraction(ctx)]
+
+        assert (llm.await_count, reads.call_count) == (3, 1)
 
     async def test_should_record_the_extraction_step_in_the_timing(
         self, recorder: PipelineTimingRecorder

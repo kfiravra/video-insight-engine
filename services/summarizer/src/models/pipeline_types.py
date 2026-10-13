@@ -217,6 +217,9 @@ class PlanResult(BaseModel):
     # Tab ids reconcile left for the frames-done screen check: code tabs whose
     # has_code is doubly false in the transcript readers (3.2).
     deferred_tabs: list[str] = Field(default_factory=list, alias="deferredTabs")
+    # Required components (the primary's code_playground) whose backfill waits
+    # for that screen check too: has_code doubly false and no tab planned for it.
+    deferred_requirements: list[str] = Field(default_factory=list, alias="deferredRequirements")
     # Plan-time validation left no tab, so ``tabs`` are the domain defaults —
     # assembly then counts only the drops as designed, not drops + defaults.
     plan_fallback: bool = Field(False, alias="planFallback")
@@ -261,6 +264,12 @@ class PlanResult(BaseModel):
         if not isinstance(v, dict):
             return {}
         return {k: val for k, val in v.items() if k in EVIDENCE_KEYS and isinstance(val, bool)}
+
+    @property
+    def awaits_screen(self) -> bool:
+        """Frames-done may still change the tabs: reconcile left a code tab or a code
+        requirement for the screen check."""
+        return bool(self.deferred_tabs or self.deferred_requirements)
 
     def to_triage_dict(self, content_format: str | None = None) -> dict:
         """The ``triage_complete`` SSE payload and the persisted ``pipeline.triage``.

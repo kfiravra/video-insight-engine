@@ -110,7 +110,8 @@ class TestDoublyFalseTable:
 
         outcome = reconcile_at_plan_done(plan, memory, None)
 
-        assert _action(outcome, "ingredients") == (None if (p, m) == ("f", "f") else "backfilled")
+        expected = "not_backfilled" if (p, m) == ("f", "f") else "backfilled"
+        assert _action(outcome, "ingredients") == expected
 
     @pytest.mark.parametrize(("p", "m"), _COMBINATIONS, ids=_IDS)
     def test_should_drop_the_quiz_only_when_both_readers_say_not_learnable(self, p, m):
@@ -201,10 +202,8 @@ class TestCodeEvidence:
     def test_should_keep_the_workflow_tab_when_a_frames_scene_type_is_code(self):
         plan = resolve_deferred(_t1dq(), [_TALKING_HEAD, _CODE_FRAME], [], None)
 
-        assert (plan.reconcile[-1]["action"], "workflow" in _ids(plan.tabs)) == (
-            "kept_screen_code",
-            True,
-        )
+        decided = [r["action"] for r in plan.reconcile if r["stage"] == "frames_done"]
+        assert (decided[0], "workflow" in _ids(plan.tabs)) == ("kept_screen_code", True)
 
     def test_should_keep_the_workflow_tab_when_ocr_shows_a_shell_command(self):
         plan = resolve_deferred(_t1dq(), [], [_ocr("$ npm install effect@4.0")], None)
@@ -396,6 +395,7 @@ class TestFallBack:
 
 class TestRecords:
     def test_should_record_stage_and_evidence_in_pipeline_reconcile(self):
+        no_code = {"key": "has_code", "plan": False, "memory": False}
         assert _t1dq().reconcile == [
             {
                 "tabId": "workflow",
@@ -405,8 +405,18 @@ class TestRecords:
                 "reason": "evidence_false",
                 "action": "deferred_to_frames",
                 "stage": "plan_done",
-                "evidence": {"key": "has_code", "plan": False, "memory": False},
-            }
+                "evidence": no_code,
+            },
+            {
+                "tabId": "code",
+                "component": "code_playground",
+                "from": None,
+                "to": None,
+                "reason": "evidence_false",
+                "action": "deferred_to_frames",
+                "stage": "plan_done",
+                "evidence": no_code,
+            },
         ]
 
     def test_should_append_plan_done_records_after_the_parse_records(self):
@@ -416,7 +426,11 @@ class TestRecords:
 
         reconciled = reconcile_plan(plan, MemoryResult(evidence={"has_code": False}), None)
 
-        assert [r["stage"] for r in reconciled.reconcile] == ["plan_parse", "plan_done"]
+        assert [r["stage"] for r in reconciled.reconcile] == [
+            "plan_parse",
+            "plan_done",
+            "plan_done",
+        ]
 
     def test_should_keep_the_readers_own_answers(self):
         plan = _t1dq()

@@ -10,12 +10,14 @@ token. ``LLMProvider`` routes a call here only when its caller passes
 ``on_first_chunk``; every other request is sent exactly as before, with no
 ``stream`` key.
 
-The chunks are rebuilt into one response (``litellm.stream_chunk_builder``)
-so the timing record, the Langfuse generation and the usage ledger read the
-same shape as for a non-streamed call; ``include_usage`` makes the last chunk
-carry the token counts, cache reads and writes included. Two fixes are applied
-to the chunks LiteLLM keeps (``.chunks``) before its end-of-stream rebuild, and
-the first to our own list before ours:
+The chunks are rebuilt into one response twice, both with
+``litellm.stream_chunk_builder``: OURS feeds the timing record and the Langfuse
+generation; LiteLLM's own end-of-stream rebuild feeds its success callbacks
+(the usage ledger) and the usage chunk it sends last — so every reader sees
+the same shape as for a non-streamed call; ``include_usage`` makes the last
+chunk carry the token counts, cache reads and writes included. Two fixes are
+applied to the chunks LiteLLM keeps (``.chunks``) before its rebuild, and the
+first to our own list before ours:
 
 - order: the rebuild sorts the chunks by a ``time.time()`` stamp taken as each
   one is made. A wall clock that steps back (the WSL2 dev box rewinds ~2 s every
@@ -102,9 +104,10 @@ def _fix_kept_chunks(stream: object) -> None:
     """Order and complete the chunks LiteLLM's ``CustomStreamWrapper`` keeps (``.chunks``).
 
     Called at the chunk carrying the finish reason: LiteLLM has kept every
-    chunk by then and rebuilds them (the Langfuse output, the ledger's usage,
-    the usage chunk it sends us last) when it is asked for the next one. Any
-    other stream object is left alone.
+    chunk by then and rebuilds them when it is asked for the next one — the
+    response its success callbacks get (the usage ledger) and the final usage
+    chunk it sends us. Langfuse logs OUR rebuild, not this one. Any other
+    stream object is left alone.
     """
     kept = getattr(stream, "chunks", None)
     if not isinstance(kept, list):

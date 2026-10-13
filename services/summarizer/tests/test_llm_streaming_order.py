@@ -4,7 +4,8 @@ LiteLLM 1.91 sorts a stream's chunks by a ``time.time()`` stamp before it
 rebuilds them into one response. The WSL2 dev box's wall clock steps back ~2 s
 every 30 s, and on 2026-10-13 that interleaved two stretches of long streamed
 extraction answers (``extraction_text1``) into unparseable JSON — in our
-rebuild and in the one LiteLLM logs to Langfuse.
+rebuild (what Langfuse logs) and in LiteLLM's (what its success callbacks,
+the usage ledger, get).
 """
 
 from __future__ import annotations
@@ -158,10 +159,8 @@ class _LoggedAnswers(CustomLogger):
 
 
 @pytest.fixture
-def logged(monkeypatch: pytest.MonkeyPatch) -> _LoggedAnswers:
+def logged(fresh_litellm_callbacks: None) -> _LoggedAnswers:
     callback = _LoggedAnswers()
-    for name in ("callbacks", "success_callback", "_async_success_callback"):
-        monkeypatch.setattr(litellm, name, [])
     litellm.callbacks.append(callback)
     return callback
 

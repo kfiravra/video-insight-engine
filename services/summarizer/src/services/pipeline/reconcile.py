@@ -14,10 +14,16 @@ moment_track (assembly's moment fallback chain fills it), else demoted down
 ``demoteTo`` onto an eligible source no other tab reads, else dropped.
 ``has_code`` paths are read off the screen and wait for frames anyway, so they
 are deferred and decided at frames-done (:func:`resolve_screen_code`): code on
-screen keeps them; with no vision or OCR the transcript readers decide alone;
-a tab that changed there re-runs the backfill, quiz and 3–6 steps. Steps 2–5 (required backfill, quiz, dedupe, 3–6 tabs) live in
-``reconcile_pass``. The plan-parse guard (``plan_reconcile``) keeps the checks
-that need no evidence (unregistered path, inactive domain).
+screen keeps them; with no vision or OCR the transcript readers decide alone.
+The same goes for a required component ``has_code`` gates (tech's
+``code_playground``) that no tab was planned for: its backfill is deferred
+too — code on screen adds it, else it is recorded ``not_backfilled``; its field
+waits for frames as well, so it joins the visual group at no latency cost.
+Whenever something was deferred, frames-done re-runs the backfill, quiz and
+3–6 steps over the decided tabs. Steps 2–5 (required backfill, quiz, dedupe,
+3–6 tabs) live in ``reconcile_pass``. The plan-parse guard
+(``plan_reconcile``) keeps the checks that need no evidence (unregistered
+path, inactive domain).
 """
 
 from __future__ import annotations
@@ -228,6 +234,7 @@ def _evidence_step(run: ReconcilePass) -> None:
 
 
 _PLAN_DONE_STEPS = (_evidence_step, required_step, quiz_step, dedupe_step, size_step)
+_SCREEN_KEYS = frozenset({SCREEN_KEY})
 
 
 # ─── Entry points ───
@@ -250,6 +257,7 @@ def reconcile_at_plan_done(
         readers={"plan": plan.evidence, "memory": memory_evidence or {}},
         primary=plan.primary_tag,
         content_format=content_format,
+        defer_keys=_SCREEN_KEYS,
     )
     for step in _PLAN_DONE_STEPS:
         step(run)
@@ -267,10 +275,11 @@ def resolve_screen_code(
 ) -> ReconcileOutcome:
     """Frames-done: keep ``plan``'s deferred code tabs when the screen shows code,
     else fall them back as step 1 would — no frames or vision = the transcript
-    decides. A tab that changed re-runs steps 2, 3 and 5 (backfill, quiz last,
-    3–6) over the new set."""
+    decides. Then steps 2, 3 and 5 (backfill, quiz last, 3–6) re-run over the
+    decided tabs whenever something was deferred: code on screen backfills a
+    deferred code requirement, none records it ``not_backfilled``."""
     deferred = set(plan.deferred_tabs)
-    shows = bool(deferred) and screen_shows_code(frame_descriptions, all_frames)
+    shows = plan.awaits_screen and screen_shows_code(frame_descriptions, all_frames)
     run = ReconcilePass(
         tabs=list(plan.tabs),
         active=_active(plan),
@@ -279,6 +288,7 @@ def resolve_screen_code(
         readers={"screen": {SCREEN_KEY: shows}},
         primary=plan.primary_tag,
         content_format=content_format,
+        recheck_keys=_SCREEN_KEYS,
     )
     slots: list[dict | None] = list(run.tabs)
     for index, tab in enumerate(slots):
@@ -289,7 +299,7 @@ def resolve_screen_code(
             continue
         slots[index] = _fall_back(run, tab, SCREEN_KEY, _others(slots, index))
     run.tabs = [tab for tab in slots if tab is not None]
-    if deferred and not shows:
+    if plan.awaits_screen:
         for step in _FRAMES_DONE_STEPS:
             step(run)
     return run.outcome()
@@ -302,6 +312,7 @@ def apply_outcome(plan: PlanResult, outcome: ReconcileOutcome) -> PlanResult:
             "tabs": outcome.tabs,
             "evidence": outcome.evidence,
             "deferred_tabs": list(outcome.deferred),
+            "deferred_requirements": list(outcome.deferred_requirements),
             "reconcile": [*plan.reconcile, *outcome.records],
             "dropped_tabs": [*plan.dropped_tabs, *outcome.dropped],
         }
@@ -327,8 +338,9 @@ def resolve_deferred(
     all_frames: Sequence[Mapping[str, Any]],
     content_format: str | None,
 ) -> PlanResult:
-    """``plan`` with its deferred code tabs decided on the screen (unchanged when none)."""
-    if not plan.deferred_tabs:
+    """``plan`` with its deferred code tabs and requirements decided on the screen
+    (unchanged when nothing was deferred)."""
+    if not plan.awaits_screen:
         return plan
     outcome = resolve_screen_code(plan, frame_descriptions, all_frames, content_format)
     return apply_outcome(plan, outcome)

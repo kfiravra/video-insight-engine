@@ -96,7 +96,9 @@ def _phase(label: str, seen: list[list[str]] | None = None) -> Callable[..., Any
     return _gen
 
 
-async def _drive(ctx: SimpleNamespace, frames: Callable[..., Any]) -> tuple[list[str], list]:
+async def _drive(
+    ctx: SimpleNamespace, frames: Callable[..., Any], text: Callable[..., Any] = _text
+) -> tuple[list[str], list]:
     """The whole orchestration with stubbed phases; returns events + tabs extraction saw."""
     seen: list[list[str]] = []
     timer = MagicMock(elapsed=MagicMock(return_value=1.0))
@@ -107,7 +109,7 @@ async def _drive(ctx: SimpleNamespace, frames: Callable[..., Any]) -> tuple[list
         stack.enter_context(patch.object(moments_phase, "then_provisional_moments", lambda p: p))
         for name, stub in (
             ("run_phase_metadata", _phase("metadata")),
-            ("run_phase_text", _text),
+            ("run_phase_text", text),
             ("run_phase_frames", frames),
             ("run_phase_extraction", _phase("extraction", seen)),
             ("run_phase_assembly", _phase("assembly")),

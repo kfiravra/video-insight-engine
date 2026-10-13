@@ -26,7 +26,7 @@ from src.services.pipeline.extraction_chunks import (
     key_frames_by_chunk,
     plan_chunks,
 )
-from src.services.pipeline.extraction_group_prompt import GroupJob
+from src.services.pipeline.extraction_group_prompt import GroupJob, load_job_template
 from src.services.pipeline.extraction_groups import (
     GroupOutcome,
     SplitRun,
@@ -95,7 +95,8 @@ async def _split_run(ctx: PipelineContext) -> tuple[SplitRun, bool]:
     The chunks come first (a long video's chapter chain can wait on the
     description or chapter_detect), the groups from the tabs as they are then.
     The prompt is today's, built without frame inputs: blocks 1 and 2 never
-    carry them; the visual group's job binds them at frames-done.
+    carry them; the visual group's job binds them at frames-done. The job
+    template is read here once for every call of the run.
     """
     chunks = await plan_chunks(ctx)
     plan, triage, video = ctx.plan_result, ctx.triage, ctx.video_data
@@ -117,6 +118,7 @@ async def _split_run(ctx: PipelineContext) -> tuple[SplitRun, bool]:
         text_groups,
         tuple(plan.content_tags),
         tuple(plan.modifiers),
+        job_template=load_job_template(),
     )
     return run, len(groups) > len(text_groups)
 

@@ -282,22 +282,9 @@ class _Ledger(CustomLogger):
         self.splits.append(getattr(details, "cache_creation_token_details", None))
 
 
-# LiteLLM copies ``callbacks`` into these lists on a call (deduplicated by class):
-# fresh lists per test, restored afterwards, so no test's logger leaks into another.
-_CALLBACK_LISTS = (
-    "callbacks",
-    "success_callback",
-    "failure_callback",
-    "_async_success_callback",
-    "_async_failure_callback",
-)
-
-
 @pytest.fixture
-def ledger(monkeypatch: pytest.MonkeyPatch) -> _Ledger:
+def ledger(fresh_litellm_callbacks: None) -> _Ledger:
     callback = _Ledger()
-    for name in _CALLBACK_LISTS:
-        monkeypatch.setattr(litellm, name, [])
     litellm.callbacks.append(callback)
     return callback
 

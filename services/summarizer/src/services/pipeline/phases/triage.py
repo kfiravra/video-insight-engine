@@ -8,9 +8,9 @@ plan's one ``Hint:`` line.
 The plan phase only plans. Once plan ∥ memory are both in, the text branch
 reconciles the tabs (:func:`plan_done_events`, 3.2) and only then emits
 ``triage_complete`` + ``meta``, so ``meta`` never lists a tab reconcile already
-dropped; code tabs it deferred are decided at frames-done
-(:func:`frames_done_events`), which sends a fresh ``meta`` when that changed
-the tabs.
+dropped; the code tabs and code requirement it deferred are decided at
+frames-done (:func:`frames_done_events`), which sends a fresh ``meta`` when
+that changed the tabs.
 """
 
 from __future__ import annotations
@@ -157,14 +157,17 @@ def _tab_heads(plan: PlanResult) -> list[tuple[str, str]]:
 
 
 def frames_done_events(ctx: PipelineContext) -> list[str]:
-    """Frames-done: decide the code tabs reconcile deferred, on what the frames show.
+    """Frames-done: decide the code tabs and code requirement reconcile deferred,
+    on what the frames show.
 
     A fresh ``meta`` goes out when that changed the tab list, so the client
-    drops a pending pill for a tab that will never come. Called by every path
-    at frames-done (today's: the orchestrator's ``visual_inject`` step).
+    drops a pending pill for a tab that will never come (and shows one for a
+    backfilled code tab). Called by every path at frames-done (today's: the
+    orchestrator's ``visual_inject`` step; the split path's: before the visual
+    group is cut).
     """
     plan = ctx.plan_result
-    if plan is None or not plan.deferred_tabs:
+    if plan is None or not plan.awaits_screen:
         return []
     frames = (ctx.frame_descriptions or [], ctx.scene_frames_all or [])
     _store_plan_result(ctx, resolve_deferred(plan, *frames, ctx.content_format))

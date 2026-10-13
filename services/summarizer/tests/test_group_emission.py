@@ -257,6 +257,43 @@ class TestReadyTabs:
         assert withdrawn == ["takeaways"]
 
 
+class TestCallsThatCompleteNoField:
+    """A long video's earlier chunk calls complete no field: nothing to re-assemble (R40 B4)."""
+
+    def _three_chunks(self, spy: str) -> tuple[_Run, ExtractionGroup, MagicMock]:
+        text1 = _group("text1", *_FIELDS)
+        real = getattr(group_emission, spy)
+        return _Run(_ctx(), [text1], chunks=3), text1, MagicMock(wraps=real)
+
+    async def test_should_not_assemble_for_a_call_that_completes_no_field(self, quiz_call) -> None:
+        run, text1, assembly = self._three_chunks("assemble_response")
+
+        with patch.object(group_emission, "assemble_response", assembly):
+            run.land(_outcome(text1, chunk=0))
+            run.land(_outcome(text1, chunk=1))
+
+        assert assembly.call_count == 0
+
+    async def test_should_not_merge_for_a_call_that_completes_no_field(self, quiz_call) -> None:
+        run, text1, merge = self._three_chunks("merge_groups")
+
+        with patch.object(group_emission, "merge_groups", merge):
+            run.land(_outcome(text1, chunk=0))
+
+        assert merge.call_count == 0
+
+    async def test_should_assemble_once_when_the_last_chunk_completes_the_fields(
+        self, quiz_call
+    ) -> None:
+        run, text1, assembly = self._three_chunks("assemble_response")
+
+        with patch.object(group_emission, "assemble_response", assembly):
+            for chunk in range(3):
+                run.land(_outcome(text1, chunk=chunk))
+
+        assert assembly.call_count == 1
+
+
 # ─── What a streamed tab carries ───
 
 

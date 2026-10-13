@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import time
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from datetime import datetime
@@ -91,6 +92,12 @@ _latest_prompt_obj: ContextVar[Any | None] = ContextVar(
     "langfuse_latest_prompt_obj",
     default=None,
 )
+# The SDK caches the prompts it found, never a miss: an unregistered name (or
+# an unreachable server) would cost every load a synchronous GET, its retry and
+# a backoff sleep on the event loop. A miss is remembered this long per name.
+PROMPT_MISS_TTL_S = 60.0
+# Prompt name → ``time.monotonic()`` of its last miss.
+_prompt_misses: dict[str, float] = {}
 
 
 # ─── Init / teardown ────────────────────────────────────────────────────
@@ -156,6 +163,7 @@ def _reset_for_tests() -> None:
     """Clear module state. ONLY for test fixtures."""
     global _client
     _client = None
+    _prompt_misses.clear()
 
 
 # ─── Trace lifecycle ────────────────────────────────────────────────────
@@ -397,13 +405,20 @@ def fetch_prompt_with_obj(name: str) -> Any | None:
     Returning the object (not just its text) lets callers pass it to
     :func:`record_active_prompt` so the generation span gets the native
     Langfuse link to a specific prompt version. The object has at least
-    ``.prompt`` (str) and ``.version`` (int) attributes.
+    ``.prompt`` (str) and ``.version`` (int) attributes. A name that missed
+    is not asked for again within ``PROMPT_MISS_TTL_S`` (``None`` meanwhile).
     """
     client = _client
     if client is None:
         return None
+    missed = _prompt_misses.get(name)
+    if missed is not None and time.monotonic() - missed < PROMPT_MISS_TTL_S:
+        return None
     try:
-        return client.get_prompt(name)
+        prompt = client.get_prompt(name)
     except Exception as exc:  # noqa: BLE001
+        _prompt_misses[name] = time.monotonic()
         logger.debug("Langfuse prompt fetch failed (name=%s): %s", name, exc)
         return None
+    _prompt_misses.pop(name, None)
+    return prompt

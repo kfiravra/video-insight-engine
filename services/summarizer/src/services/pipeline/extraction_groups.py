@@ -56,7 +56,13 @@ logger = logging.getLogger(__name__)
 # Released without text1's first chunk after this long (Kfir round 3: "or 1.5 s").
 GROUP_RELEASE_FALLBACK_S = 1.5
 GROUP_MAX_TOKENS = 16384
-GROUP_TIMEOUT_S = 120.0
+# A group call's time budget follows its estimated answer (Σ outputWeight ×
+# expect) at a pace below Haiku's measured 83–91 tok/s, plus the request's
+# fixed cost; the old flat 120 s stays the floor, 300 s the ceiling.
+GROUP_TIMEOUT_FLOOR_S = 120.0
+GROUP_TIMEOUT_CAP_S = 300.0
+_TIMEOUT_TOKENS_PER_S = 60.0
+_TIMEOUT_OVERHEAD_S = 30.0
 GROUP_MAX_RETRIES = 1
 # The one more call an unusable answer gets: a single attempt (3.8).
 UNUSABLE_ANSWER_RETRIES = 0
@@ -119,9 +125,18 @@ class SplitRun:
     text_groups: tuple[ExtractionGroup, ...]
     content_tags: tuple[str, ...]  # which model validates a group's domain
     modifiers: tuple[str, ...]
+    # The group-job template, read once at plan-done (a registry miss must not
+    # cost every call a fetch); None = each call reads it.
+    job_template: str | None = None
 
 
 # ─── One call ───
+
+
+def group_timeout(group: ExtractionGroup) -> float:
+    """Seconds one call of ``group`` may take — streamed warm-up and extra call included."""
+    estimate = group.est_output_tokens / _TIMEOUT_TOKENS_PER_S + _TIMEOUT_OVERHEAD_S
+    return min(max(estimate, GROUP_TIMEOUT_FLOOR_S), GROUP_TIMEOUT_CAP_S)
 
 
 def _empty_object(text: str) -> bool:
@@ -195,9 +210,9 @@ async def _ask(
 ) -> str | None:
     return await call_llm_with_retry(
         run.llm_service,
-        build_group_messages(run.prompt, call.group, call.chunk, call.job),
+        build_group_messages(run.prompt, call.group, call.chunk, call.job, run.job_template),
         max_tokens=GROUP_MAX_TOKENS,
-        timeout=GROUP_TIMEOUT_S,
+        timeout=group_timeout(call.group),
         max_retries=retries,
         stage_name=call.stage_name,
         json_mode=True,

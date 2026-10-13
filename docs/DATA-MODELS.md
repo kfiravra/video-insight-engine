@@ -291,16 +291,41 @@ One row per video **version** (`version`, `isLatest` below); the served row is s
   // The summarizer's own copy of each stage's answer (allowlisted $set in
   // save_structured_result): pipeline.triage = the triage_complete payload —
   // the fields above + userGoal, contentFormat (the tier probe's), tab briefs
-  // ({what, where[], expect}), evidence ({has_steps, has_ingredients, … : bool},
-  // the plan's own read; drives conditional domain requirements and the
-  // assembly backfill check) and terms (≤12 canonical spellings);
+  // ({what, where[], expect}), evidence ({has_steps, has_ingredients, … : bool}
+  // = the reconciled view every reader shares — true when the plan OR the
+  // video memory said true, false only when BOTH answered false, absent
+  // otherwise (neither said true and one was silent or failed); has_code
+  // turns true at frames-done when the screen shows code; drives conditional domain
+  // requirements, the quiz gate, <video_memory> and the assembly backfill
+  // check), planEvidence / memoryEvidence (each reader's own answers;
+  // memoryEvidence null = memory failed) and terms (≤12 canonical spellings);
+  // pipeline.reconcile = every tab decision of the plan-parse guard and the
+  // plan-done / frames-done reconcile, in order: [{tabId, component, from
+  // (the planned dataSource; null for a tab reconcile added or would have
+  // added), to (the new dataSource or null), toComponent? (a demotion's rung),
+  // reason, action, stage: "plan_parse" | "plan_done" | "frames_done",
+  // evidence: {key, plan, memory} (plan-done) | {key, screen} (frames-done) |
+  // null}]. Actions: repointed, kept_for_moment_fallback, demoted, dropped,
+  // deferred_to_frames (a has_code tab — or tech's required code_playground
+  // when no tab was planned for it — waits for the screen check),
+  // kept_screen_code, backfilled (required_missing), not_backfilled (a
+  // required component its doubly-false key rules out; tabId = the defaultTab
+  // it would have added, "" when a live tab holds that id), filled
+  // (under_min), moved_last (quiz_policy).
+  // Reasons: evidence_false, screen_code, required_missing, under_min,
+  // quiz_policy, plus the drop reasons — duplicate, over_max, quiz_domain,
+  // evidence_false, inactive_domain — which droppedTabs lists as
+  // reconcile_<reason>;
   // pipeline.extraction (the validated data + _defaulted, _dropped?,
   // _misTargeted?; split path only: _groups = [{group, chunk, fields[],
   // status, outputTokens, wallMs, retried?: "parse" | "empty" | "stream"}], one
   // row per group call — alone when no group landed) / .enrichment /
   // .synthesis / .assembly (tab drop accounting: tabsDesigned, tabsAssembled,
-  // tabsDropped, droppedTabs[], planFallback?); pipeline.timing (above).
-  pipeline: { triage, extraction, enrichment, synthesis, assembly, timing } | absent,
+  // tabsDropped, droppedTabs[{id, component, dataSource, reason, detail?}] —
+  // a requirement_evidence_false entry is assembly's backstop record of a
+  // ruled-out required component (id = the defaultTab it would have added, ""
+  // when a live tab holds it; never counted in tabsDropped) — planFallback?); pipeline.timing (above).
+  pipeline: { triage, reconcile, extraction, enrichment, synthesis, assembly, timing } | absent,
 
   // Domain-keyed extraction data
   output: Record<string, unknown> | null,

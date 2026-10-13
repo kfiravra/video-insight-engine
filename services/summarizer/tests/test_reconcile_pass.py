@@ -15,6 +15,7 @@ from tests.test_reconcile import (
     _plan,
     _tab,
 )
+from tests.test_requirement_evidence_backfill import _WOULD_ADD
 
 # ─── Step 2: required components, every domain ───
 
@@ -66,6 +67,21 @@ class TestRequiredBackfill:
         outcome = reconcile_at_plan_done(plan, MemoryResult(evidence={key: False}), None)
 
         assert component not in _backfilled(outcome)
+
+    @pytest.mark.parametrize(("domain", "component", "key"), _GATED)
+    def test_should_record_a_ruled_out_requirement_under_the_default_tab_it_would_add(
+        self, domain, component, key
+    ):
+        plan = _plan(domain, _fillers(), {key: False})
+
+        outcome = reconcile_at_plan_done(plan, MemoryResult(evidence={key: False}), None)
+
+        # has_code waits for the screen (frames-done decides); the rest are decided here.
+        action = "deferred_to_frames" if key == "has_code" else "not_backfilled"
+        rows = [
+            (r["tabId"], r["action"], (r["evidence"] or {}).get("key")) for r in outcome.records
+        ]
+        assert (_WOULD_ADD[(domain, component)], action, key) in rows
 
 
 # ─── Steps 3–5: quiz, dedupe, size ───
