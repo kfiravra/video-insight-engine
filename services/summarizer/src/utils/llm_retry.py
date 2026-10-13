@@ -79,6 +79,11 @@ _CONNECTION_ERRORS: tuple[type[BaseException], ...] = (LitellmTimeout, APIConnec
 MODEL_CHAR_LIMITS: dict[str, int] = {
     "anthropic/claude-sonnet-4-6": 600_000,
     "anthropic/claude-haiku-4-5-20251001": 600_000,
+    # 4.0 models: the 4.x net (≈ 195K tokens on the 5.5 tokenizer). Haiku 5.5's
+    # 100K price tier is chunking's job (4.0d); truncating to it drops content.
+    "anthropic/claude-sonnet-5-5": 600_000,
+    "anthropic/claude-haiku-5-5": 600_000,
+    "openai/gpt-6-luna": 600_000,
     "openai/gpt-4o": 380_000,
     "openai/gpt-4o-mini": 380_000,
     "openai/gpt-5-mini": 380_000,

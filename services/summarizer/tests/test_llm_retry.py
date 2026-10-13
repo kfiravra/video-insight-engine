@@ -384,6 +384,15 @@ class TestTruncatePromptIfNeeded:
         assert len(result) < 400_000
         assert result.endswith("[TRANSCRIPT TRUNCATED DUE TO LENGTH]")
 
+    @pytest.mark.parametrize(
+        "model", ["anthropic/claude-sonnet-5-5", "anthropic/claude-haiku-5-5", "openai/gpt-6-luna"]
+    )
+    def test_should_keep_a_prompt_the_4x_models_keep_when_the_model_is_a_4_0_pick(
+        self, model: str
+    ) -> None:
+        prompt = "x" * 500_000  # above the 300K default, within the 4.x models' 600K
+        assert truncate_prompt_if_needed(prompt, model) == prompt
+
     def test_gemini_has_large_limit(self):
         prompt = "x" * 500_000
         result = truncate_prompt_if_needed(prompt, "gemini/gemini-2.5-flash")

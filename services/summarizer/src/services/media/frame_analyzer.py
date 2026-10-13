@@ -260,9 +260,8 @@ def load_vision_prompt() -> str:
 
 
 def _vision_provider(llm_provider: LLMProvider) -> LLMProvider:
-    """The caller's provider (primary model), unless LLM_VISION_MODEL pins one.
+    """A provider on LLM_VISION_MODEL (default Sonnet 5.5, 4.0d); blank → the caller's primary.
 
-    Vision stays on the primary model (Sonnet) — pipeline-1min principle 5.
     Tests rely on the autouse ``_disable_stage_model_overrides`` fixture in
     ``tests/conftest.py`` so MagicMock providers reach the call unmodified.
     """

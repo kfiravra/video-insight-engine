@@ -1,6 +1,7 @@
 """Tests for llm_common.callback — MongoDBUsageCallback."""
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -581,3 +582,38 @@ class TestCostThresholdFromEnv:
             MagicMock(), service="summarizer", mode="sync", cost_threshold=0.1
         )
         assert cb._cost_threshold == 0.1
+
+
+class TestCacheSavingsLookup:
+    """The rate map is keyed ``provider/model``; LiteLLM 1.105 passes the bare model (4.0d)."""
+
+    def _record(self, kwargs: dict, response: object) -> dict:
+        cb = MongoDBUsageCallback(MagicMock(), service="summarizer", mode="sync")
+        with patch("llm_common.callback.litellm") as mock_litellm:
+            mock_litellm.completion_cost.return_value = 0.0
+            mock_litellm.version = "1.105.0"
+            return cb._build_record(kwargs, response, datetime.now(UTC), datetime.now(UTC))
+
+    def test_should_price_cache_reads_when_the_model_arrives_without_its_provider(self) -> None:
+        kwargs = {"model": "claude-sonnet-5-5", "custom_llm_provider": "anthropic"}
+        record = self._record(kwargs, MockResponse(cache_read_input_tokens=1_000_000))
+        # (2.00 - 0.20) per 1M tokens; the stored model name is left as LiteLLM sent it.
+        assert (record["cache_savings_usd"], record["model"]) == (
+            pytest.approx(1.80),
+            "claude-sonnet-5-5",
+        )
+
+    def test_should_count_openai_cached_tokens_when_the_anthropic_field_is_none(self) -> None:
+        usage = SimpleNamespace(
+            prompt_tokens=2_000_000,
+            completion_tokens=10,
+            cache_creation_input_tokens=None,
+            cache_read_input_tokens=None,
+            prompt_tokens_details=SimpleNamespace(cached_tokens=1_000_000),
+        )
+        response = SimpleNamespace(usage=usage, _hidden_params={})
+        record = self._record({"model": "gpt-6-luna", "custom_llm_provider": "openai"}, response)
+        assert (record["cache_read_tokens"], record["cache_savings_usd"]) == (
+            1_000_000,
+            pytest.approx(0.09),
+        )

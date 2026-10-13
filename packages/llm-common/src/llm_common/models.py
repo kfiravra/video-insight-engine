@@ -56,6 +56,11 @@ _CACHE_RATES_USD_PER_M: dict[str, dict[str, float]] = {
     "anthropic/claude-sonnet-4-5": {"input": 3.00, "cache_read": 0.30},
     "anthropic/claude-haiku-4-5-20251001": {"input": 1.00, "cache_read": 0.10},
     "anthropic/claude-haiku-4-5": {"input": 1.00, "cache_read": 0.10},
+    # The pipeline-1min 4.0 models at their docs prices (Haiku 5.5: the ≤ 100K
+    # prompt tier, where every pipeline call sits — 4.0d).
+    "anthropic/claude-sonnet-5-5": {"input": 2.00, "cache_read": 0.20},
+    "anthropic/claude-haiku-5-5": {"input": 0.10, "cache_read": 0.01},
+    "openai/gpt-6-luna": {"input": 0.10, "cache_read": 0.01},
 }
 
 

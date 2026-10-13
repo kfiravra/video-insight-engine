@@ -52,6 +52,27 @@ def _safe_int(obj: object, attr: str) -> int:
     return 0
 
 
+def _cache_read_tokens(usage: object) -> int:
+    """Prompt-cache reads: Anthropic's ``cache_read_input_tokens``, else OpenAI's
+    ``prompt_tokens_details.cached_tokens`` (LiteLLM leaves the former None there)."""
+    reads = _safe_int(usage, "cache_read_input_tokens")
+    if reads:
+        return reads
+    return _safe_int(getattr(usage, "prompt_tokens_details", None), "cached_tokens")
+
+
+def _rate_key(kwargs: dict, model: str) -> str:
+    """The cache-rate map's key for ``model``: LiteLLM 1.105 hands the callback the
+    bare name ("claude-sonnet-5-5") with the provider apart (``custom_llm_provider``)."""
+    if "/" in model:
+        return model
+    params = kwargs.get("litellm_params")
+    provider = kwargs.get("custom_llm_provider") or (
+        params.get("custom_llm_provider") if isinstance(params, dict) else None
+    )
+    return f"{provider}/{model}" if isinstance(provider, str) and provider else model
+
+
 logger = structlog.get_logger(__name__)
 
 DEFAULT_COST_THRESHOLD = 0.50
@@ -213,7 +234,7 @@ class MongoDBUsageCallback(CustomLogger):
                 # Anthropic prompt cache fields. Surfaced under these names by
                 # both the native Anthropic SDK and LiteLLM's translation.
                 cache_creation_tokens = _safe_int(usage, "cache_creation_input_tokens")
-                cache_read_tokens = _safe_int(usage, "cache_read_input_tokens")
+                cache_read_tokens = _cache_read_tokens(usage)
 
             # Calculate cost
             cost = 0.0
@@ -239,7 +260,9 @@ class MongoDBUsageCallback(CustomLogger):
             if not cache_hit and cache_read_tokens > 0:
                 cache_hit = True
 
-            cache_savings_usd = compute_cache_savings_usd(model, cache_read_tokens)
+            cache_savings_usd = compute_cache_savings_usd(
+                _rate_key(kwargs, model), cache_read_tokens
+            )
             refusal = refusal_of(response_obj)
 
             record = UsageRecord(

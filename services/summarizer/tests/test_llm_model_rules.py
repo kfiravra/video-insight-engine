@@ -59,6 +59,15 @@ class TestTodaysModels:
         assert request_for_model(_request(model), temperature=None, effort="low") == _request(model)
 
     @pytest.mark.parametrize("model", TODAYS_MODELS)
+    def test_should_send_the_callers_request_unchanged_when_the_effort_is_medium(
+        self, model: str
+    ) -> None:
+        # The plan asks for medium (4.0d); its fallbacks are today's models.
+        assert request_for_model(_request(model), temperature=None, effort="medium") == _request(
+            model
+        )
+
+    @pytest.mark.parametrize("model", TODAYS_MODELS)
     def test_should_add_only_the_temperature_when_one_is_set(self, model: str) -> None:
         assert _added(model, temperature=0.0) == {"temperature": 0.0}
 

@@ -7,6 +7,7 @@ import pytest
 
 from llm_common.models import (
     UsageRecord,
+    compute_cache_savings_usd,
     compute_transcription_cost_usd,
     extract_provider,
 )
@@ -126,3 +127,17 @@ def test_unmapped_transcription_model_yields_zero_and_logs_once():
         assert mock_logger.info.call_args.args[0] == "transcription.rate_missing"
     finally:
         _LOGGED_MISSING_TRANSCRIPTION_MODELS.discard(unknown)
+
+
+@pytest.mark.parametrize(
+    ("model", "saved_per_million"),
+    [
+        ("anthropic/claude-sonnet-5-5", 1.80),
+        ("anthropic/claude-haiku-5-5", 0.09),
+        ("openai/gpt-6-luna", 0.09),
+    ],
+)
+def test_cache_savings_should_credit_the_4_0_models_at_their_docs_rates(
+    model: str, saved_per_million: float
+) -> None:
+    assert compute_cache_savings_usd(model, 1_000_000) == pytest.approx(saved_per_million)

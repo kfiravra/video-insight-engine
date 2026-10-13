@@ -28,6 +28,10 @@ _PASSED_THROUGH = (
     "FRAME_TIER_ENABLED",
     "LLM_VISION_MODEL",
     "LLM_CLASSIFIER_MODEL",
+    "LLM_ENRICHMENT_MODEL",
+    "LLM_DESCRIPTION_MODEL",
+    "LLM_TRANSLATION_MODEL",
+    "LLM_EXTRACTION_MODEL",
     "TRANSCRIPT_CLEANING_ENABLED",
 )
 # Deleted settings must not linger in config.py or either compose anchor.
@@ -36,6 +40,10 @@ _DELETED = (
     "CHUNKED_EXTRACTION_TIMEOUT",
     "MAX_CHAPTER_CHARS",
     "MAX_TRANSCRIPT_CHARS",
+    # No reader (pipeline-1min 4.1 sweep, removed in 4.0d).
+    "LLM_MAX_TOKENS",
+    "LLM_FAST_MAX_TOKENS",
+    "SCENE_MAX_FRAMES",
 )
 _COMPOSE_PASSTHROUGH = re.compile(r"^\$\{(?P<name>\w+):-(?P<default>.*)\}$")
 
@@ -129,11 +137,56 @@ class TestConcurrencyDefaults:
     ) -> None:
         assert Settings().get_stage_model("tier_probe") == "anthropic/claude-haiku-4-5-20251001"
 
-    def test_should_route_vision_to_the_primary_model_when_no_override_is_set(
+
+class TestStageModelDefaults:
+    """Per-call-type defaults picked by the 4.0d model A/B (gates/g4-model-ab.md)."""
+
+    @pytest.mark.parametrize(
+        ("stage", "model"),
+        [
+            ("vision", "anthropic/claude-sonnet-5-5"),
+            ("description_analysis", "openai/gpt-6-luna"),
+            ("enrichment", "openai/gpt-4o-mini"),
+            ("translation_full", "openai/gpt-6-luna"),
+            ("translation_title", "openai/gpt-6-luna"),
+            ("rag_translation", "openai/gpt-6-luna"),
+            ("tier_probe", "anthropic/claude-haiku-4-5-20251001"),
+            ("extraction", "anthropic/claude-haiku-4-5-20251001"),
+        ],
+    )
+    def test_should_route_the_stage_to_its_picked_model_when_env_is_unset(
+        self, isolated_env: pytest.MonkeyPatch, stage: str, model: str
+    ) -> None:
+        assert Settings().get_stage_model(stage) == model
+
+    @pytest.mark.parametrize(
+        ("stage", "setting"),
+        [
+            ("synthesis", "LLM_SYNTHESIS_MODEL"),
+            ("chapter_detect", "LLM_CHAPTER_DETECT_MODEL"),
+        ],
+    )
+    def test_should_leave_the_stage_unpinned_when_the_ab_kept_its_model(
+        self, isolated_env: pytest.MonkeyPatch, stage: str, setting: str
+    ) -> None:
+        # None → synthesis and chapter_detect stay on the fast tier.
+        isolated_env.delenv(setting, raising=False)
+        assert Settings().get_stage_model(stage) is None
+
+    def test_should_keep_the_fast_tier_model_when_env_is_unset(
         self, isolated_env: pytest.MonkeyPatch
     ) -> None:
-        # None → frame_analyzer keeps the caller's primary-model provider.
-        assert Settings().get_stage_model("vision") is None
+        for name in ("LLM_FAST_MODEL", "LLM_FAST_PROVIDER", "LLM_PROVIDER"):
+            isolated_env.delenv(name, raising=False)
+        assert Settings().llm_fast_model == "anthropic/claude-haiku-4-5-20251001"
+
+    def test_should_run_the_primary_model_on_sonnet_5_5_when_env_is_unset(
+        self, isolated_env: pytest.MonkeyPatch
+    ) -> None:
+        # The primary serves the plan only: every other stage is pinned above.
+        for name in ("LLM_MODEL", "LLM_PROVIDER"):
+            isolated_env.delenv(name, raising=False)
+        assert Settings().llm_model == "anthropic/claude-sonnet-5-5"
 
 
 class TestComposePassthrough:

@@ -15,7 +15,9 @@ _DEFAULT_INTERNAL_SECRET = "dev-internal-secret-change-me"
 # Model mapping for each provider
 MODEL_MAP = {
     "anthropic": {
-        "default": "anthropic/claude-sonnet-4-6",
+        # The primary model — the plan, at effort medium (4.0d A/B: p50 11.3 vs
+        # 23.6 s, tab choice within noise); every other stage is pinned per stage.
+        "default": "anthropic/claude-sonnet-5-5",
         "fast": "anthropic/claude-haiku-4-5-20251001",
     },
     "openai": {
@@ -65,33 +67,33 @@ class Settings(BaseSettings):
     LLM_MODEL: str | None = None  # Override default model (e.g., "anthropic/claude-sonnet-4-6")
     LLM_FAST_MODEL: str | None = None  # Override fast model
 
-    # Per-stage model overrides (None → fall back to LLM_FAST_MODEL).
-    # Defaults reflect the 2026-05-19 fast-tier benchmark winners
-    # (reports/fast-model-bench-20260519-074647.md). Override via env to test
-    # alternatives without rebuilding.
-    # Only enrichment (+35% quality) is pinned from that bench, plus the tier
-    # probe: the 2026-10-07 A/B (pipeline-1min gate 0, D21) picked Haiku 4.5
-    # at temperature 0.
-    # Translation stays on the default fast tier (gpt-4o-mini); the Gemini
-    # Flash-Lite savings were fractions of a cent — not worth adding a third
-    # provider dependency.
-    # The tier probe's model (stage "tier_probe"; the name predates the probe).
-    # Both composes pass it through with this same literal default, so a blank
-    # .env never routes the probe to the fast tier.
+    # Per-stage model overrides (None → the fast tier; extraction + memory → primary).
+    # Defaults from the pipeline-1min 4.0d model A/B (gates/g4-model-ab.md;
+    # rule: quality first, then latency, then cost). Both composes pass each
+    # pinned one through with the same literal default, so a blank .env line
+    # keeps it. Haiku 4.5 and Sonnet 4.6 stay as the refusal fallbacks
+    # (PREVIOUS_MODEL).
+    # The tier probe's model (stage "tier_probe"; the name predates the probe):
+    # Haiku 4.5 at temperature 0 (0.8's A/B, D21); Haiku 5.5 matched fewer
+    # visual-demo labels and was slower in 4.0d.
     LLM_CLASSIFIER_MODEL: str | None = "anthropic/claude-haiku-4-5-20251001"
     LLM_CHAPTER_DETECT_MODEL: str | None = None
-    LLM_DESCRIPTION_MODEL: str | None = None
+    # Description analysis and every translation (output, title, RAG text):
+    # gpt-6-luna, reasoning off (4.0b) — no invented URLs, RAG batches parse
+    # more often, cheaper. The quiz stays on gpt-4o-mini: luna's questions were
+    # as usable but its p50 doubled (5.2 → 10.5 s, one call past the 14 s attempt).
+    LLM_DESCRIPTION_MODEL: str | None = "openai/gpt-6-luna"
     LLM_SYNTHESIS_MODEL: str | None = None
-    LLM_ENRICHMENT_MODEL: str | None = "anthropic/claude-haiku-4-5-20251001"
-    LLM_TRANSLATION_MODEL: str | None = None
-    # Vision stays on the primary model (Sonnet): frame descriptions drive the
-    # moment gallery and OCR, and Haiku was rejected for them (2026-09-16).
-    # None → the caller's primary model (frame_analyzer).
-    LLM_VISION_MODEL: str | None = None
-    # Extraction model override — pins every extraction call and the memory
-    # stage (pipeline-1min D5). None → the primary model (Sonnet); prod pins
-    # "anthropic/claude-haiku-4-5-20251001" via env.
-    LLM_EXTRACTION_MODEL: str | None = None
+    LLM_ENRICHMENT_MODEL: str | None = "openai/gpt-4o-mini"
+    LLM_TRANSLATION_MODEL: str | None = "openai/gpt-6-luna"
+    # Vision: Sonnet 5.5 — reads the card text Sonnet 4.6 reads, at half the
+    # wall time; Haiku 5.5 mislabelled cooking frames as talking heads, which
+    # drops them from the selection.
+    LLM_VISION_MODEL: str | None = "anthropic/claude-sonnet-5-5"
+    # Every extraction call and the memory stage (pipeline-1min D5): Haiku 4.5
+    # — Haiku 5.5 lost real recipe steps beyond its own noise (4.0d). Pinned so
+    # neither follows the primary model (the plan's, Sonnet 5.5).
+    LLM_EXTRACTION_MODEL: str | None = "anthropic/claude-haiku-4-5-20251001"
 
     # Provider API Keys (set for providers you use)
     ANTHROPIC_API_KEY: str | None = None
@@ -109,8 +111,6 @@ class Settings(BaseSettings):
     MAX_VIDEO_DURATION_MINUTES: int = 600
     MIN_VIDEO_DURATION_SECONDS: int = 60
     LLM_TIMEOUT_SECONDS: float = 60.0
-    LLM_MAX_TOKENS: int = 4096
-    LLM_FAST_MAX_TOKENS: int = 4096
 
     # Chapter-based chunked extraction
     # Videos longer than this run chapter detection + chunked-batch extraction
@@ -290,7 +290,6 @@ class Settings(BaseSettings):
     # Scene-based frame extraction (additive to timestamp extraction)
     SCENE_EXTRACTION_ENABLED: bool = True
     SCENE_THRESHOLD: float = 0.3
-    SCENE_MAX_FRAMES: int = 100
     # Detection pass renders from the worst-quality download; these only shape
     # the low-res JPEGs used for scoring/OCR/HIGH-tier vision (and the fallback
     # if hi-res fails). MAX width: frames narrower than this are never upscaled
