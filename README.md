@@ -169,13 +169,13 @@ Deploy is CI-gated: after a green CI run on `main`, a workflow deploys to a sing
 
 ## Run locally
 
-Requires Docker and one LLM API key.
+Requires Docker plus an Anthropic and an OpenAI API key: the default stage models use both providers (Claude for the plan, vision and extraction; OpenAI for description analysis, translation, the quiz and — with `LLM_FAST_PROVIDER=openai`, which `.env.example` sets — the fast tier).
 
 ```bash
 git clone https://github.com/kfiravra/video-insight-engine.git
 cd video-insight-engine
 
-cp .env.example .env        # set ANTHROPIC_API_KEY (or OPENAI_API_KEY / GEMINI_API_KEY)
+cp .env.example .env        # set ANTHROPIC_API_KEY and OPENAI_API_KEY (GEMINI_API_KEY optional)
 docker compose up -d
 
 curl http://localhost:3000/health    # API gateway

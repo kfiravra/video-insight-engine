@@ -219,10 +219,10 @@ One row per video **version** (`version`, `isLatest` below); the served row is s
   // Per-run timing — written by pipeline_orchestration (run_timing.persist_run_timing) when the phases finish OR
   // fail (dotted `$set` after assembly's save; absent on Redis-served rows).
   // Eval-user runs (evalRun) write it too — it is how benchmarks are read.
-  // Offsets are ms since the run started. Mirrored (minus llmCalls) onto the
-  // Langfuse trace metadata; each phase is also a Langfuse span.
+  // Offsets are ms since the run started. Mirrored (minus llmCalls / llmFailures)
+  // onto the Langfuse trace metadata; each phase is also a Langfuse span.
   "pipeline.timing": {
-    version: 3,                     // 2: the 1h/5m cache-write split on llmCalls (pipeline-1min 2.0); 3: ttftMs on llmCalls (3.4)
+    version: 4,                     // 2: the 1h/5m cache-write split on llmCalls (pipeline-1min 2.0); 3: ttftMs on llmCalls (3.4); 4: refusals (4.0b) — "Refusal" llmFailures rows, refusedModel stamps, counts.refusals / refusalFallbacks / refusalsUnanswered, fallbacks = cross-provider + model swaps only, costUsd incl. refused calls
     startedAt: Date,
     totalMs: number,
     phases: [{ name: string, startMs: number, endMs: number, wallMs: number }],  // metadata, transcript_frames (phase 2: text, transcript, transcript_audio = the audio re-run after the tier probe judged the captions unusable (2.5; that run also has a second tier_probe llmCall), plan, memory, frames, frames.* sub-steps incl. frames.tier_wait), visual_inject (name kept: the annotations render), extraction, split_extraction (EXTRACTION_PARALLEL: the group-extraction member of phase 2, which then also spans transcript_frames; extraction = plan-done → last group; quiz_call = the quiz call it started once the quiz's groups landed), assembly (moment_fill, synthesis, enrichment = the quiz, run inside it), translation
@@ -230,15 +230,32 @@ One row per video **version** (`version`, `isLatest` below); the served row is s
     llmCalls: [{ feature, span, model, responseModel, startMs, wallMs, inputTokens, outputTokens,
                  cacheReadTokens,     // Anthropic cache_read_input_tokens, or OpenAI cached input (prompt_tokens_details.cached_tokens; 0 for OpenAI before v2)
                  cacheWriteTokens, cacheWrite5mTokens, cacheWrite1hTokens,  // the write split by cache lifetime, when the provider reports it
-                 costUsd, attempt, fallbackUsed, finishReason,
-                 ttftMs }],  // ms to the first streamed chunk — the split extraction's warm-up call (span extraction_text1); null otherwise. Incl. Whisper/Gemini transcription rows (span "transcription:openai|google")
-    llmFailures: [{ feature, span, model, startMs, wallMs, attempt, error, rateLimited }],
+                 costUsd, attempt,
+                 fallbackUsed,        // answered by a fallback: the cross-provider one (D4), the previous model after a refusal, or a provider-side model swap
+                 finishReason,
+                 ttftMs,              // ms to the first streamed chunk — the split extraction's warm-up call (span extraction_text1); null otherwise
+                 refusedModel?, refusalCategory? }],  // v4, only on the previous model's answer to a refused call: the model that refused + its stop_details category (always null on LiteLLM 1.105, which drops stop_details)
+                 // Incl. Whisper/Gemini transcription rows (span "transcription:openai|google")
+    llmFailures: [{ feature, span, model, startMs, wallMs, attempt,
+                    error,            // exception class name, or "Refusal" — a declined answer (HTTP 200; llm_common.refusal)
+                    rateLimited,
+                    refusedModel?,    // v4: any row recorded during a refused call's one re-send on the previous model (its refusal, error or timeout) — a timeout only under call_deadline (LLMService calls); a re-send cancelled by frame vision's wait_for or the description's 30 s cap is a plain TimeoutError row under the refused model, without refusedModel
+                    // error "Refusal" rows only — what the declined answer was billed:
+                    refusalCategory?, inputTokens?, outputTokens?, cacheReadTokens?, cacheWriteTokens?, cacheWrite5mTokens?, cacheWrite1hTokens?, costUsd? }],
     downloads: [{ kind: "lowres" | "720p" | "audio", purpose: string, startMs, wallMs, bytes: number | null, ok: boolean }],
-    costUsd: number,
-    counts: { llmCalls, llmFailures, retries, rateLimited, fallbacks, outputTokens, cacheReadTokens,
+    costUsd: number,                // Σ costUsd over llmCalls + llmFailures — refused calls included (v4)
+    counts: { llmCalls, llmFailures, retries, rateLimited,
+              fallbacks,            // answers with fallbackUsed and no refusedModel: the cross-provider fallback + provider-side model swaps
+              refusals,             // v4: calls refused — "Refusal" rows without refusedModel
+              refusalFallbacks,     // v4: refused calls the previous model answered — llmCalls with refusedModel
+              refusalsUnanswered,   // v4: refusals − refusalFallbacks
+              outputTokens, cacheReadTokens,  // Σ over llmCalls only (refused answers excluded)
               downloadBytes, tabsPlanned, tabsAssembled, tabsEmitted,  // tabsEmitted = distinct tab ids streamed non-provisional (a provisional tab replaced by id counts once; one withdrawn or replaced under another id never counts; an assembled tab withdrawn later still counts)
               truncated }  // answers that stopped at max_tokens (finish_reason=length); DONE log line `llm truncated=N`
   } | absent,
+  // The usage ledger (`llm_usage`, one row per LiteLLM call) tags the same events:
+  // refusal / refusal_category on a declined answer's row, fallback_from = the refused
+  // model on the previous model's row — llm-cost-model.md §Schema.
 
   // Processed summary (legacy v1 format — kept for backward compat,
   // new pipeline populates assembledMeta/assembledTabs instead)

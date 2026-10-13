@@ -46,8 +46,10 @@ services/summarizer/
     │   └── purge.py              # POST /internal/videos/{id}/purge (global video delete)
     │
     ├── services/
-    │   ├── llm.py                # LLMService (call_llm + call_llm_fast)
-    │   ├── llm_provider.py       # LiteLLM multi-provider abstraction
+    │   ├── llm.py                # LLMService (call_llm + call_llm_fast, each under call_deadline)
+    │   ├── llm_provider.py       # LiteLLM multi-provider abstraction; a refusal → one re-send on PREVIOUS_MODEL
+    │   ├── llm_model_rules.py    # Per-model request rules: thinking off + effort, sampling params, no prefill
+    │   ├── llm_call.py           # ProviderCall / ModelAnswer, call_deadline, how a refusal reaches the caller
     │   ├── usage_tracker.py      # LLM usage tracking
     │   ├── override_state.py     # In-memory override state
     │   ├── video_purge.py        # Qdrant + S3 prefix + Redis purge for one video (per-store warnings)
@@ -55,7 +57,7 @@ services/summarizer/
     │   │
     │   ├── pipeline/             # Plan-based summarization pipeline
     │   │   ├── tier_probe.py         # Tier probe: domain+format+has_visual_demo+transcript_usable at transcript-ready (Haiku, temp 0)
-    │   │   ├── plan.py / plan_prompt.py # Plan (Sonnet): full marked transcript → tabs + briefs,
+    │   │   ├── plan.py / plan_prompt.py # Plan (Sonnet 5.5, effort medium): full marked transcript → tabs + briefs,
     │   │   │                         #   evidence, terms (+ _render_playbook, _enforce_domain_policy)
     │   │   ├── memory.py             # Memory (LLM_EXTRACTION_MODEL) ∥ plan: outline, evidence, tldr, takeaways
     │   │   ├── plan_reconcile.py     # Plan-parse guard: unregistered path, inactive domain
@@ -81,7 +83,7 @@ services/summarizer/
     │   │   ├── extraction_merger.py  # Per-domain merge + dedup for chunked extraction (EXTRACTION_PARALLEL=false)
     │   │   ├── enrichment.py         # The quiz only (quizEnrichment domains, demand-gated by the plan)
     │   │   ├── synthesis.py          # masterSummary + seoDescription (hero from memory; fast tier)
-    │   │   ├── pipeline_timing.py    # pipeline.timing recorder (phases, LLM calls, downloads, counts)
+    │   │   ├── pipeline_timing.py    # pipeline.timing recorder v4 (phases, LLM calls, failures incl. refusals, downloads, counts)
     │   │   ├── translation.py        # Source-language translation (flat-list batched)
     │   │   ├── translation_flat.py   # Flat-list translate call, batch sizing, mirror check (shared with RAG English)
     │   │   ├── faithfulness.py       # Faithfulness sampling
@@ -114,7 +116,7 @@ services/summarizer/
     │   ├── media/                # Frame extraction, vision & S3 storage
     │   │   ├── scene_extractor.py    # Scene keyframe extraction (yt-dlp + FFmpeg) + manifest-v2 cache
     │   │   ├── frame_scorer.py       # Frame scoring (visual, face, skin, center-detail, text, uniqueness)
-    │   │   ├── frame_analyzer.py     # Vision (primary model) in ≤5 parallel batches of ≤8 frames (vision.txt)
+    │   │   ├── frame_analyzer.py     # Vision (LLM_VISION_MODEL, Sonnet 5.5) in ≤5 parallel batches of ≤8 frames (vision.txt)
     │   │   ├── visual_tier.py        # Adaptive visual tier (high/standard/low from metadata)
     │   │   ├── scene_detect.py       # Scene detection + zero-candidate ladder (0.3 → 0.15 → uniform seeks)
     │   │   ├── hires_refiner.py      # Pass-2 720p re-extraction of selected frames (local file seeks)
@@ -191,15 +193,26 @@ MONGODB_URI=mongodb://vie-mongodb:27017/video-insight-engine
 
 # LLM Provider Configuration
 LLM_PROVIDER=anthropic          # anthropic, openai, or gemini
-LLM_FAST_PROVIDER=              # Optional: separate provider for fast model
-LLM_FALLBACK_PROVIDER=          # Optional: cross-provider fallback after one same-provider retry (primary-model calls)
-LLM_MODEL=                      # Optional: override default model
-LLM_FAST_MODEL=                 # Optional: override fast model
-LLM_CLASSIFIER_MODEL=anthropic/claude-haiku-4-5-20251001  # Tier-probe model (D21); both composes pass it with this literal default
+LLM_FAST_PROVIDER=              # Optional: separate provider for the fast tier (prod + .env.example: openai → gpt-4o-mini; blank → Haiku 4.5)
+LLM_FALLBACK_PROVIDER=          # Optional: cross-provider fallback after one same-provider retry (primary-model calls; openai → gpt-4o)
+LLM_MODEL=                      # Optional: override the primary model (blank = MODEL_MAP default, anthropic/claude-sonnet-5-5 — in this service only the plan + /health read it; vie-assistant reads it too)
+LLM_FAST_MODEL=                 # Optional: override the fast-tier model (synthesis, faithfulness judge, chapter detect, blank stage settings; vie-assistant's quiz tool too)
+
+# Per-stage models (pipeline-1min 4.0d A/B, gates/g4-model-ab.md). config.py and both
+# compose anchors carry the same literal default, so a blank .env line keeps it.
+LLM_CLASSIFIER_MODEL=anthropic/claude-haiku-4-5-20251001   # Tier probe (D21)
+LLM_EXTRACTION_MODEL=anthropic/claude-haiku-4-5-20251001   # Extraction (groups + single call) and memory (D5)
+LLM_DESCRIPTION_MODEL=openai/gpt-6-luna                    # Description analysis (reasoning off)
+LLM_TRANSLATION_MODEL=openai/gpt-6-luna                    # Output, title and RAG transcript translation (reasoning off)
+LLM_ENRICHMENT_MODEL=openai/gpt-4o-mini                    # The quiz
+LLM_SYNTHESIS_MODEL=                                       # Blank = the fast tier
+# LLM_CHAPTER_DETECT_MODEL exists in config.py (blank = fast tier) but no compose anchor passes it
+# A refused answer is asked once of config.PREVIOUS_MODEL (Sonnet 5.5 → Sonnet 4.6,
+# Haiku 5.5 → Haiku 4.5, gpt-6-luna → gpt-4o-mini) — not an env setting.
 
 # Provider API Keys (set for providers you use)
 ANTHROPIC_API_KEY=sk-ant-...
-OPENAI_API_KEY=                 # Required if using OpenAI or Whisper
+OPENAI_API_KEY=sk-...           # Required: the openai/* stage defaults (description, quiz, translation) + an openai fast tier; also Whisper
 GEMINI_API_KEY=                 # Enables Gemini audio transcription (faster than Whisper)
 GOOGLE_API_KEY=                 # Required if using Gemini as LLM provider
 
@@ -235,7 +248,7 @@ YTDLP_HIRES_PLAYER_CLIENTS=web_embedded,android  # 720p download only (android c
 FRAME_TIER_ENABLED=true                # Adaptive visual tiers (HIGH: overselect + vision reselect before hires)
 FRAME_VISION_ENABLED=true              # Frame descriptions by the vision model; false = OCR only
 FRAME_VISION_PARALLEL=true             # Vision in parallel batches; false = one call with every frame
-LLM_VISION_MODEL=                      # Blank = the primary model (Sonnet), which vision stays on
+LLM_VISION_MODEL=anthropic/claude-sonnet-5-5  # 4.0d pick (both composes default to it); empty outside compose = the primary model
 
 # Extraction concurrency + chunking
 EXTRACTION_PARALLEL=true               # Field groups (text at plan-done, visual at frames-done); false = today's single call / chunked batches one at a time (extraction only: reconcile, evidence ranges, toolkit markers, v9 stay)
@@ -392,7 +405,7 @@ A plan-first pipeline (v9): description analysis, tier probe, plan ∥ memory, t
         └─▶ OCR + Vision LLM analysis run in parallel:
             ├─▶ OCR: Tesseract on text-heavy frames
             └─▶ Vision (media/frame_analyzer.py, prompt vision.txt): top FRAME_VISION_MAX_FRAMES (8)
-                frames → the primary model (Sonnet; LLM_VISION_MODEL overrides) in parallel
+                frames → LLM_VISION_MODEL (Sonnet 5.5) in parallel
                 batches — ≤ 4 frames = one call, else ≤ 8 per call over ≥ 2 calls, ≤ 5 in flight
                 (FRAME_VISION_PARALLEL=false → one call), frames strided by time across calls;
                 output ceiling per frame type (250 tokens, 500 for text-heavy frames); per-call
@@ -425,13 +438,15 @@ A plan-first pipeline (v9): description analysis, tier probe, plan ∥ memory, t
     │   sponsor reads cut, source-language cleaning) — plan and memory read the same string,
     │   never frame annotations
     └─▶ Plan ∥ Memory (pipeline/plan.py + plan_prompt.py, pipeline/memory.py)
-    │   └─▶ Plan: primary model (Sonnet), the FULL marked transcript, 3,500 max tokens, 60 s,
-    │   │   1 retry, json_mode. The static half (everything above `<video>`, ~16.4k tokens)
-    │   │   goes as user block 1 with cache_control `{type: ephemeral, ttl: 1h}`
-    │   │   (`PLAN_CACHE_TTL` in plan.py); the video half is uncached. Emits contentTags,
-    │   │   modifiers, tabs with briefs ({what, where, expect}), evidence (has_* booleans that
-    │   │   gate domain requirements) and terms; truncation is counted (counts.truncated)
-    │   └─▶ Memory: LLM_EXTRACTION_MODEL, 25 s, ONE attempt, temperature 0 → outline (4-12
+    │   └─▶ Plan: primary model (Sonnet 5.5) at effort medium (`PLAN_EFFORT`), the FULL
+    │   │   marked transcript, 3,500 max tokens, 60 s, 1 retry, json_mode. The static half
+    │   │   (everything above `<video>`: 16,290 tokens on Sonnet 4.6, gates/g3.md §Prod;
+    │   │   ≈ 22.1k on Sonnet 5.5's tokenizer, gates/g4-model-ab.md) goes as user block 1
+    │   │   with cache_control `{type: ephemeral, ttl: 1h}` (`PLAN_CACHE_TTL` in plan.py); the
+    │   │   video half is uncached. Emits contentTags, modifiers, tabs with briefs ({what,
+    │   │   where, expect}), evidence (has_* booleans that gate domain requirements) and
+    │   │   terms; truncation is counted (counts.truncated)
+    │   └─▶ Memory: LLM_EXTRACTION_MODEL (Haiku 4.5), 25 s, ONE attempt, temperature 0 → outline (4-12
     │   │   contiguous sections; dropped when it stops short of the duration), evidence, tldr,
     │   │   takeaways. No timed transcript → no call. Its tldr + takeaways go out at once as the
     │   │   first synthesis_complete (the hero). Failure → None; every reader has a fallback
@@ -657,8 +672,8 @@ A plan-first pipeline (v9): description analysis, tier probe, plan ∥ memory, t
     │   │   only, masterSummary/seo empty
     │   └─▶ The quiz (phases/enrichment.py, only when needs_quiz: a planned quiz tab, or a
     │       sparse quick_quiz host with evidence that doesn't rule learning out, in a
-    │       quizEnrichment domain): one enrich_quiz call, fast tier, 30 s total (14 s per
-    │       attempt, 1 retry), ≥ 2 valid questions — on the field-group path the call already
+    │       quizEnrichment domain): one enrich_quiz call on LLM_ENRICHMENT_MODEL (gpt-4o-mini),
+    │       30 s total (14 s per attempt, 1 retry), ≥ 2 valid questions — on the field-group path the call already
     │       started when its groups landed (5) and this step awaits it (cancelled when the plan
     │       no longer uses a quiz). When it lands the response is assembled
     │       again (phases/late_quiz.py): enrichment_complete, the quiz tab last; the quick_quiz
@@ -687,8 +702,9 @@ A plan-first pipeline (v9): description analysis, tier probe, plan ∥ memory, t
     │   └─▶ Walks the assembled tree, collects every translatable prose
     │   │   string into one flat list (`_collect_strings` + `_SKIP_KEYS`
     │   │   leaf-only deny-list for structural/asset/enum keys)
-    │   └─▶ Fast-model calls (`translation_full`; LLM_TRANSLATION_MODEL
-    │   │   when set) via src/prompts/translate_flat.txt (flat-list
+    │   └─▶ Fast-model calls (`translation_full`) on LLM_TRANSLATION_MODEL
+    │   │   (default openai/gpt-6-luna, reasoning off) via
+    │   │   src/prompts/translate_flat.txt (flat-list
     │   │   contract: the model returns a list of equal length, applied
     │   │   back into a deep copy via `_set_at_path`)
     │   └─▶ Batching: consecutive runs of ≤ 2,500 source characters
@@ -729,8 +745,9 @@ A plan-first pipeline (v9): description analysis, tier probe, plan ∥ memory, t
     │   persisted source block).
     └─▶ No Qdrant work here: the transcript points' English text (the
     │   embedding model is English-only) comes from a background task that
-    │   assembly's save starts — captions translated as text on the fast
-    │   model, Whisper translate only when this run transcribed the audio
+    │   assembly's save starts — captions translated as text on
+    │   LLM_TRANSLATION_MODEL (gpt-6-luna, reasoning off; stage
+    │   `rag_translation`), Whisper translate only when this run transcribed the audio
     │   (docs/RAG.md §Non-English transcripts). Once `done` is out, the
     │   runner waits for it (≤ 60 s) before persisting pipeline.timing.
     └─▶ Owns the Redis response-cache write for non-English videos:
@@ -769,11 +786,20 @@ class LLMService:
     def __init__(self, provider: LLMProvider):
         self._provider = provider
 
-    async def call_llm(self, prompt: str, max_tokens: int = 2000, timeout: float | None = None) -> str:
-        effective_timeout = timeout or settings.LLM_TIMEOUT_SECONDS
-        async with asyncio.timeout(effective_timeout):
-            return await self._provider.complete(prompt, max_tokens=max_tokens, timeout=effective_timeout)
+    async def call_llm(self, prompt, max_tokens=2000, timeout=None, *, ..., effort="low") -> str:
+        effective_timeout = timeout if timeout is not None else settings.LLM_TIMEOUT_SECONDS
+        # asyncio.timeout that also bounds a refused answer's one re-send: hitting it
+        # there raises LLMRefusalError instead of a timeout the retry would re-send
+        async with call_deadline(effective_timeout):
+            return await self._provider.complete(prompt, max_tokens=max_tokens, ..., effort=effort)
 ```
+
+`LLMProvider` (`llm_provider.py`) keeps a call model-agnostic (`llm_call.ProviderCall`)
+and shapes it for the model it goes to only when it sends it
+(`llm_model_rules.request_for_model`: thinking off + effort, the sampling params the
+model accepts, no assistant prefill). A refused answer is recorded and the same call
+asked once of `config.PREVIOUS_MODEL[model]` with that model's params; no answer →
+`LLMRefusalError` (ERROR-HANDLING.md §Refusals).
 
 ### LLM Retry Utility
 
@@ -781,20 +807,27 @@ class LLMService:
 # src/utils/llm_retry.py — All pipeline stages use this instead of calling llm_service directly
 async def call_llm_with_retry(
     llm_service, prompt, *, max_tokens=4096, timeout=60.0, max_retries=2, stage_name="unknown",
-    system_prompt=None, temperature=None, model_override=None, ...
+    use_fast_model=False, json_mode=False, propagate_rate_limit=False, model_override=None,
+    temperature=None, system_prompt=None, on_first_chunk=None, effort="low",
+    propagate_refusal=False,
 ) -> str | None:
     """Retry transient errors (retry-after aware), then the cross-provider fallback;
-    None when every attempt failed. 400-class errors raise (see ERROR-HANDLING.md)."""
+    None when every attempt failed. 400-class errors raise (see ERROR-HANDLING.md).
+    A refusal (LLMRefusalError: the previous model's one re-send got no answer) ends
+    the call — no retry, no fallback — as None, or raised with propagate_refusal."""
 
-# Stage-specific configurations (per attempt):
-# Tier probe:  4s,   retries=0  (Haiku, temperature 0)
-# Plan:        60s,  retries=1  (Sonnet, 3,500 tokens)
-# Memory:      25s,  retries=0  (LLM_EXTRACTION_MODEL, temperature 0)
-# Extraction groups: 120-300s from the group's estimate, retries=1 (+ one more call for a lost answer)
+# Stage-specific configurations (per attempt; models = config.py / compose defaults):
+# Tier probe:  4s,   retries=0  (LLM_CLASSIFIER_MODEL = Haiku 4.5, temperature 0)
+# Plan:        60s,  retries=1  (primary = Sonnet 5.5, effort medium, 3,500 tokens)
+# Memory:      25s,  retries=0  (LLM_EXTRACTION_MODEL = Haiku 4.5, temperature 0)
+# Extraction groups: 120-300s from the group's estimate, retries=1 (+ one more call for a lost answer;
+#              Haiku 4.5; the warm-up passes propagate_refusal — a refused warm-up is not re-asked)
 # Extraction (EXTRACTION_PARALLEL=false): 240s single / dynamic overflow / 300s per batch, retries=2
-# Synthesis:   20s,  retries=1  (fast, 1,200 tokens)
-# Quiz:        14s per attempt, 30s total, retries=1 (fast)
-# Description: 25s per attempt, 30s total, retries=1 (fast)
+# Synthesis:   20s,  retries=1  (fast tier, 1,200 tokens)
+# Quiz:        14s per attempt, 30s total, retries=1 (LLM_ENRICHMENT_MODEL = gpt-4o-mini)
+# Description: 25s per attempt, 30s total, retries=1 (LLM_DESCRIPTION_MODEL = gpt-6-luna)
+# Every call but the plan runs at the default effort "low" (frame vision on Sonnet 5.5 included);
+# effort only reaches Haiku 5.5 / Sonnet 5.5 (llm_model_rules).
 ```
 
 ### Pipeline Modules
@@ -807,7 +840,8 @@ async def call_llm_with_retry(
 
 # src/services/pipeline/plan.py
 async def run_plan(llm_service, transcript, video_data, ...) -> PlanResult | None
-# Single Sonnet call over the full marked transcript: tabs + briefs, evidence, terms
+# Single primary-model call (Sonnet 5.5, PLAN_EFFORT = "medium") over the full marked
+# transcript: tabs + briefs, evidence, terms
 
 # src/services/pipeline/memory.py
 async def run_memory(llm_service, MemoryInput) -> MemoryResult | None
@@ -831,11 +865,23 @@ async def synthesize(llm_service, title, channel, duration, output_type, extract
 **Model mapping (config.py):**
 ```python
 MODEL_MAP = {
-    "anthropic": {"default": "anthropic/claude-sonnet-4-6", "fast": "anthropic/claude-haiku-4-5-20251001"},
+    "anthropic": {"default": "anthropic/claude-sonnet-5-5", "fast": "anthropic/claude-haiku-4-5-20251001"},
     "openai": {"default": "openai/gpt-4o", "fast": "openai/gpt-4o-mini"},
     "gemini": {"default": "gemini/gemini-2.5-flash", "fast": "gemini/gemini-2.5-flash-lite"},
 }
+
+# The model a refusal falls back to — once, same call, same provider, never chained (4.0b).
+# Haiku 4.5 and Sonnet 4.6 stay configured for this.
+PREVIOUS_MODEL = {
+    "anthropic/claude-haiku-5-5": "anthropic/claude-haiku-4-5-20251001",
+    "anthropic/claude-sonnet-5-5": "anthropic/claude-sonnet-4-6",
+    "openai/gpt-6-luna": "openai/gpt-4o-mini",
+}
 ```
+
+The primary (`default`) model only reaches the plan and `/health`: every other stage
+is pinned per stage (Environment Variables above). Picks and evidence per call type:
+`dev/active/pipeline-1min/gates/g4-model-ab.md` §Picks.
 
 ---
 
@@ -1260,20 +1306,31 @@ transcript) plus the compact final extraction (≤ 6,000 chars), whatever the le
 
 ### Fast Model Routing
 
-Model routing by stage:
-- Plan: Sonnet (primary model, 60s timeout, 1 retry, 3,500 tokens)
-- Tier probe (replaced the classifier): `LLM_CLASSIFIER_MODEL` = Haiku 4.5 (4s, no retry)
-- Memory: `LLM_EXTRACTION_MODEL` (25s, single attempt)
-- Synthesis: `use_fast_model=True` (20s, 1 retry)
-- Quiz (enrichment): `use_fast_model=True` (14s per attempt, 30s total)
-- Frame vision (`frame_analyzer.analyze_frames_with_vision`, ≤ 5 parallel batches): **primary (Sonnet)**. Originally routed to fast in Phase 1B / P3, reverted 2026-05-14 after a 5-frame spot-check (`scripts/spotcheck_frame_vision.py`) found `openai/gpt-4o-mini` was only ~20% cheaper *and* hallucinated OCR on dense-text frames
-- AI chapter detection (`transcript_chunker._detect_chapters_with_ai`): `use_fast_model=True`, scoped under its own `llm_feature_var.set("summarize:chapter_detect")` context so cost is attributed correctly in `llm_usage` (was previously absorbed by the outer `summarize:extraction` tag)
-- Extraction runs on `LLM_EXTRACTION_MODEL` (blank → primary); the fast-first path and the synthesis-fed retry were removed in pipeline-1min 1c.3/1c.5.
+Model routing by stage (defaults from the pipeline-1min 4.0d A/B — rule: quality within
+noise first, then latency, then cost; evidence per call type in
+`dev/active/pipeline-1min/gates/g4-model-ab.md` §Picks). The tier probe, description,
+quiz and translation calls pass `use_fast_model=True` + `model_override` (fast-model
+calls: no cross-provider fallback); memory and extraction pass `model_override` alone —
+primary-model calls with an override, so the cross-provider fallback applies wherever
+retries are allowed (extraction: P P F; memory's single attempt has none).
+A setting left out of the environment keeps the compose / `config.py` default; the
+"empty →" fallbacks below apply only to an empty value outside compose:
+- Plan: primary model = Sonnet 5.5 at effort medium (60s timeout, 1 retry, 3,500 tokens; the cross-provider fallback applies). At effort low it flipped `is_learnable` on T1dQhQAm8Tc in both A/B runs (the quiz tab dropped)
+- Tier probe (replaced the classifier): `LLM_CLASSIFIER_MODEL` = Haiku 4.5 (4s, no retry). Haiku 5.5 matched 16/18 golden visual-demo labels vs 18/18
+- Memory: `LLM_EXTRACTION_MODEL` = Haiku 4.5 (25s, single attempt; a primary-model call with an override)
+- Synthesis: the fast tier (`LLM_SYNTHESIS_MODEL` blank; 20s, 1 retry)
+- Quiz (enrichment): `LLM_ENRICHMENT_MODEL` = gpt-4o-mini (14s per attempt, 30s total). gpt-6-luna was as usable, at twice the p50
+- Description analysis: `LLM_DESCRIPTION_MODEL` = gpt-6-luna (25s per attempt, 30s total)
+- Translation (output, title, RAG transcript): `LLM_TRANSLATION_MODEL` = gpt-6-luna
+- Frame vision (`frame_analyzer.analyze_frames_with_vision`, ≤ 5 parallel batches; its own provider and retry): `LLM_VISION_MODEL` = Sonnet 5.5 (empty → the primary model). History: routed to fast in Phase 1B / P3, reverted 2026-05-14 after a 5-frame spot-check (`scripts/spotcheck_frame_vision.py`) found `openai/gpt-4o-mini` was only ~20% cheaper *and* hallucinated OCR on dense-text frames; in 4.0d Haiku 5.5 labelled cooking frames `talking_head` (dropped as presenter filler), Sonnet 5.5 read the card text Sonnet 4.6 reads at half the wall time
+- AI chapter detection (`transcript_chunker._detect_chapters_with_ai`): the fast tier (`LLM_CHAPTER_DETECT_MODEL` is not passed by compose), scoped under its own `llm_feature_var.set("summarize:chapter_detect")` context so cost is attributed correctly in `llm_usage` (was previously absorbed by the outer `summarize:extraction` tag)
+- Faithfulness judge: the fast tier (no stage setting)
+- Extraction runs on `LLM_EXTRACTION_MODEL` = Haiku 4.5 (empty → primary; a primary-model call with an override, like memory: the cross-provider fallback applies, P P F): Haiku 5.5 kept 0.72 of Haiku 4.5's items vs its own run-to-run 0.86 and lost real recipe steps. The fast-first path and the synthesis-fed retry were removed in pipeline-1min 1c.3/1c.5.
 
 ### Prompt Safety Net (`llm_retry.py`)
 
-Hard character limit per model before every LLM call:
-- Anthropic: 600K chars, OpenAI: 380K chars, Gemini: 3M chars
+Hard character limit per model before every LLM call (`MODEL_CHAR_LIMITS`):
+- Sonnet 4.6 / 5.5, Haiku 4.5 / 5.5, gpt-6-luna: 600K chars; gpt-4o / gpt-4o-mini / gpt-5-mini: 380K; Gemini: 3M; any other model 300K
 - Warning log when truncation triggers
 - Prevents context overflow even without chunking
 
@@ -1297,7 +1354,7 @@ Hard character limit per model before every LLM call:
 | `src/services/pipeline/extraction_merger.py` | Per-domain merge + dedup (today's path, `EXTRACTION_PARALLEL=false`) |
 | `src/services/pipeline/group_merge.py` | Split path: per-group validation + key filter, the deterministic group merge, requested-field quality |
 | `src/prompts/chapter_detect.txt` | AI chapter detection prompt |
-| `src/utils/llm_retry.py` | Fast model routing + prompt truncation |
+| `src/utils/llm_retry.py` | Retry / cross-provider fallback per call (a refusal ends it), stage model overrides, prompt truncation |
 
 ---
 
@@ -1536,14 +1593,15 @@ Override detected category during active pipeline processing. Affects remaining 
 
 ### GET /health
 
-Health check endpoint.
+Health check endpoint. `model` = the primary model (`settings.llm_model`) — the plan's; the
+other stages' models are the per-stage settings.
 
 **Response:**
 ```json
 {
   "status": "healthy",
   "service": "summarizer",
-  "model": "anthropic/claude-sonnet-4-6",
+  "model": "anthropic/claude-sonnet-5-5",
   "database": "connected",
   "s3": "healthy"
 }

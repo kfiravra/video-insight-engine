@@ -1866,22 +1866,22 @@ export function useSummaryStream(videoSummaryId: string | null) {
 
 ## LLM Calls Summary
 
-Per run (v9 pipeline; the default `EXTRACTION_PARALLEL=true`):
+Per run (v9 pipeline; the default `EXTRACTION_PARALLEL=true`; models = the `config.py` / compose defaults, 4.0d — under compose a blank `.env` line keeps them; "Fast" = the fast tier: Haiku 4.5 by default, gpt-4o-mini with `LLM_FAST_PROVIDER=openai` as both `.env` templates and prod set):
 
 | Stage | Model | Calls | Parallel? |
 |-------|-------|-------|-----------|
-| Description analysis | Fast | 1 | Background from metadata-end |
+| Description analysis | gpt-6-luna (`LLM_DESCRIPTION_MODEL`) | 1 | Background from metadata-end |
 | Tier probe | Haiku 4.5 (`LLM_CLASSIFIER_MODEL`) | 1 | At transcript-ready, ∥ frames |
-| Plan | Primary (Sonnet) | 1 | ∥ Memory |
-| Memory | `LLM_EXTRACTION_MODEL` (blank = primary) | 1 (none without timed transcript) | ∥ Plan |
-| Frame vision | Primary (Sonnet) | 1-5 batches (none on LOW tier / manifest hit) | ∥ text branch |
+| Plan | Primary (Sonnet 5.5, effort medium) | 1 | ∥ Memory |
+| Memory | Haiku 4.5 (`LLM_EXTRACTION_MODEL`) | 1 (none without timed transcript) | ∥ Plan |
+| Frame vision | Sonnet 5.5 (`LLM_VISION_MODEL`) | 1-5 batches (none on LOW tier / manifest hit) | ∥ text branch |
 | Chapter detect | Fast | 0-1 (videos past one extraction batch — over `MAX_MINUTES_PER_BATCH` or `MAX_TOKENS_PER_BATCH` — with no listed chapters, no description timestamps and no usable memory outline) | No — before the field groups fire |
-| Extraction field groups | `LLM_EXTRACTION_MODEL` | 1-5 text groups + 0-1 visual group, per chunk (`grouping` in domains.json: `maxTextGroups` 5, `groupOutputBudget` 1,500 tokens; a long video has one chunk per chapter batch). A lost answer gets one more call | Text groups at plan-done (text1 first, the rest on its first streamed chunk), the visual group at frames-done; ≤ `EXTRACTION_PARALLEL_BATCHES` in flight |
-| Extraction (`EXTRACTION_PARALLEL=false`) | `LLM_EXTRACTION_MODEL` | 1, or one per chapter batch | After frames-done; batches one at a time |
+| Extraction field groups | Haiku 4.5 (`LLM_EXTRACTION_MODEL`) | 1-5 text groups + 0-1 visual group, per chunk (`grouping` in domains.json: `maxTextGroups` 5, `groupOutputBudget` 1,500 tokens; a long video has one chunk per chapter batch). A lost answer gets one more call | Text groups at plan-done (text1 first, the rest on its first streamed chunk), the visual group at frames-done; ≤ `EXTRACTION_PARALLEL_BATCHES` in flight |
+| Extraction (`EXTRACTION_PARALLEL=false`) | Haiku 4.5 (`LLM_EXTRACTION_MODEL`) | 1, or one per chapter batch | After frames-done; batches one at a time |
 | Synthesis | Fast | 1 | ∥ moment fill ∥ quiz, after the first tabs (before them when memory left the hero empty) |
-| Quiz (enrichment) | Fast | 0-1 (plan with a quiz host) | ∥ moment fill ∥ synthesis; split path: started once the groups holding its domains' fields landed |
+| Quiz (enrichment) | gpt-4o-mini (`LLM_ENRICHMENT_MODEL`) | 0-1 (plan with a quiz host) | ∥ moment fill ∥ synthesis; split path: started once the groups holding its domains' fields landed |
 | Faithfulness judge | Fast tier | 0-6 (`LANGFUSE_FAITHFULNESS_SAMPLE_RATE` of the extracted claims, ≤ 6) | Background, after extraction; never blocks |
-| Translation | `LLM_TRANSLATION_MODEL` (blank = fast tier) | Non-English only: output batches (≤ 2,500 chars, ≤ 100 strings) + the title; RAG transcript batches (`rag_translation`) | ≤ 8 output batches in flight; RAG in the background |
+| Translation | gpt-6-luna (`LLM_TRANSLATION_MODEL`) | Non-English only: output batches (≤ 2,500 chars, ≤ 100 strings) + the title; RAG transcript batches (`rag_translation`) | ≤ 8 output batches in flight; RAG in the background |
 | Assembly | None (code; moment frame fill does frame I/O with heartbeats) | 0 | — |
 
-**Total** for a video one extraction batch covers: description analysis, tier probe, plan, memory, 1-6 extraction group calls, synthesis and the quiz when planned — plus 0-5 vision batches and ≤ 6 sampled judge calls. A long video multiplies the group calls by its chunks; a non-English video adds the translation batches.
+**Total** for a video one extraction batch covers: description analysis, tier probe, plan, memory, 1-6 extraction group calls, synthesis and the quiz when planned — plus 0-5 vision batches and ≤ 6 sampled judge calls. A long video multiplies the group calls by its chunks; a non-English video adds the translation batches. A refused answer adds one call on the refused model's previous model ([ERROR-HANDLING.md](./ERROR-HANDLING.md#refusals)).

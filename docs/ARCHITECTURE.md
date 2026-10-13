@@ -160,7 +160,7 @@ User sends message about video
 
 ## Pipeline Flow
 
-Content type and tab layout come from the **plan** (primary model), which reads the full `[m:ss]`-marked transcript once the **tier probe** (`LLM_CLASSIFIER_MODEL`) has guessed domain and format; the **memory** call (`LLM_EXTRACTION_MODEL`) reads the same transcript in parallel. Extraction is cut into field groups that fire as soon as the plan (text groups) and the frames (visual group) are done. Phase order lives in `routes/pipeline_orchestration.py`; the call order with file anchors is in [summarizer-workflow.md](./summarizer-workflow.md).
+Content type and tab layout come from the **plan** (primary model, Sonnet 5.5), which reads the full `[m:ss]`-marked transcript once the **tier probe** (`LLM_CLASSIFIER_MODEL`) has guessed domain and format; the **memory** call (`LLM_EXTRACTION_MODEL`) reads the same transcript in parallel. Extraction is cut into field groups that fire as soon as the plan (text groups) and the frames (visual group) are done. Phase order lives in `routes/pipeline_orchestration.py`; the call order with file anchors is in [summarizer-workflow.md](./summarizer-workflow.md).
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -169,15 +169,15 @@ Content type and tab layout come from the **plan** (primary model), which reads 
 │                                                                             │
 │  1. METADATA (one yt-dlp extract_info + validate_duration)                  │
 │     └── Starts the t=0 group in the background: caption fetch,              │
-│         description analysis (fast tier), low-res + one ≤720p download      │
+│         description analysis (gpt-6-luna), low-res + one ≤720p download     │
 │         (none on a frame-manifest cache hit)                                │
 │                                                                             │
 │  2. TEXT BRANCH ∥ FRAMES ∥ FIELD GROUPS (one parallel group)                │
 │     ├── Text: transcript (S3 → yt-dlp → transcript-api → Whisper →          │
 │     │   Gemini → metadata, music only) → tier probe (domain, format,        │
 │     │   has_visual_demo, transcript_usable; unusable captions → audio       │
-│     │   pass) → plan (primary model, full [m:ss] transcript) ∥ memory       │
-│     │   (LLM_EXTRACTION_MODEL: outline, evidence, tldr → the early hero)    │
+│     │   pass) → plan (Sonnet 5.5, full [m:ss] transcript) ∥ memory          │
+│     │   (Haiku 4.5: outline, evidence, tldr → the early hero)               │
 │     ├── 14 primary tags + 2 modifiers (narrative, finance); domain          │
 │     │   playbooks ("<domain>:<format>") injected into the plan prompt;      │
 │     │   forbidden components stripped after it                              │
@@ -200,8 +200,8 @@ Content type and tab layout come from the **plan** (primary model), which reads 
 │     ├── Domain forbidden/max policy + degrade-never-drop demote ladder      │
 │     ├── Frame thumbnail injection (+ ±15s backfill)                         │
 │     ├── Late group, parallel: moment fill (exact-timestamp frames) ∥        │
-│     │   synthesis (masterSummary + SEO, fast tier) ∥ the quiz (fast         │
-│     │   tier; only for a plan with a quiz host)                             │
+│     │   synthesis (masterSummary + SEO, fast tier) ∥ the quiz (gpt-4o-mini; │
+│     │   only for a plan with a quiz host)                                   │
 │     └── Cross-tab links; final re-emit: every tab final once, the           │
 │         overview last                                                       │
 │                                                                             │
@@ -215,8 +215,8 @@ Content type and tab layout come from the **plan** (primary model), which reads 
 │                                                                             │
 │  5. TRANSLATION (conditional — non-English only)                            │
 │     ├── translate_to_source(): flat-list batches (≤ 2,500 chars,            │
-│     │   ≤ 100 strings, ≤ 8 in flight) on LLM_TRANSLATION_MODEL (blank →     │
-│     │   fast tier), mirror detection, deep copy into sourceLanguage         │
+│     │   ≤ 100 strings, ≤ 8 in flight) on LLM_TRANSLATION_MODEL              │
+│     │   (gpt-6-luna), mirror detection, deep copy into sourceLanguage       │
 │     ├── English stays the top-level tabs/meta; the original-language        │
 │     │   artifact goes under `sourceLanguage = {code, name, isRTL, tabs,     │
 │     │   meta}`                                                              │
@@ -318,24 +318,26 @@ The pipeline uses Server-Sent Events (SSE) to stream results progressively with 
 
 ### LLM Calls Summary
 
-Per run, default path (`EXTRACTION_PARALLEL=true`). The model column names the routing setting (`config.py`; blank → the primary model or the fast tier, as noted):
+Per run, default path (`EXTRACTION_PARALLEL=true`). The model column names the routing setting and its default (`config.py` = both compose anchors; picked by the 4.0d model A/B, `dev/active/pipeline-1min/gates/g4-model-ab.md` §Picks). Under compose a blank or missing `.env` line keeps the default (`${LLM_X:-<default>}`); to change a stage, set a model (e.g. `openai/gpt-4o-mini`). Only `LLM_SYNTHESIS_MODEL` defaults blank, which means the fast tier. The fast tier is Haiku 4.5 by default (code and compose) and gpt-4o-mini with `LLM_FAST_PROVIDER=openai`, as both `.env` templates and prod set:
 
 | Stage | Model | Calls | Timeout |
 |-------|-------|-------|---------|
-| Description analysis | `LLM_DESCRIPTION_MODEL` (blank → fast tier) | 1 | 25s per attempt, 30s total |
-| Tier probe | `LLM_CLASSIFIER_MODEL` | 1 (a second one after an unusable-captions audio pass) | 4s, no retry |
-| Plan | Primary model | 1 | 60s, 1 retry |
-| Memory | `LLM_EXTRACTION_MODEL` (blank → primary) | 0-1 (none without a timed transcript) | 25s, no retry |
-| Frame vision | `LLM_VISION_MODEL` (blank → primary) | 0-5 batches of ≤ 8 frames (none on LOW tier / manifest hit) | 2× the expected wall, within 30s–`FRAME_VISION_TIMEOUT` |
-| Chapter detect | `LLM_CHAPTER_DETECT_MODEL` (blank → fast tier) | 0-1 (long videos only) | 25s |
-| Extraction field groups | `LLM_EXTRACTION_MODEL` (blank → primary) | 1-5 text + 0-1 visual, per chunk | 120-300s, from the group's estimated output |
+| Description analysis | `LLM_DESCRIPTION_MODEL` = gpt-6-luna | 1 | 25s per attempt, 30s total |
+| Tier probe | `LLM_CLASSIFIER_MODEL` = Haiku 4.5 | 1 (a second one after an unusable-captions audio pass) | 4s, no retry |
+| Plan | Primary model = Sonnet 5.5, effort medium | 1 | 60s, 1 retry |
+| Memory | `LLM_EXTRACTION_MODEL` = Haiku 4.5 | 0-1 (none without a timed transcript) | 25s, no retry |
+| Frame vision | `LLM_VISION_MODEL` = Sonnet 5.5 | 0-5 batches of ≤ 8 frames (none on LOW tier / manifest hit) | 2× the expected wall, within 30s–`FRAME_VISION_TIMEOUT` |
+| Chapter detect | Fast tier (`LLM_CHAPTER_DETECT_MODEL` is not passed by compose) | 0-1 (long videos only) | 25s |
+| Extraction field groups | `LLM_EXTRACTION_MODEL` = Haiku 4.5 | 1-5 text + 0-1 visual, per chunk | 120-300s, from the group's estimated output |
 | Synthesis | `LLM_SYNTHESIS_MODEL` (blank → fast tier) | 1 | 20s |
-| Quiz (enrichment) | `LLM_ENRICHMENT_MODEL` | 0-1 (a plan with a quiz host) | 14s per attempt, 30s total |
+| Quiz (enrichment) | `LLM_ENRICHMENT_MODEL` = gpt-4o-mini | 0-1 (a plan with a quiz host) | 14s per attempt, 30s total |
 | Faithfulness judge | Fast tier | 0-6 (sampled claims, background) | 20s |
-| Translation | `LLM_TRANSLATION_MODEL` (blank → fast tier) | non-English only: output + title + RAG transcript batches | 90s per batch |
+| Translation | `LLM_TRANSLATION_MODEL` = gpt-6-luna | non-English only: output + title + RAG transcript batches | 90s per batch |
 | Assembly | None (code only) | 0 | instant, unless moment frame fill runs (60s + 150s budgets) |
 
-**Total** varies per video: description analysis, tier probe, plan, memory, the extraction field groups (1–5 text + ≤ 1 visual, times the chunks of a long video), synthesis and the quiz when planned — plus 0–5 vision batches and ≤ 6 sampled judge calls; a non-English video adds the translation batches. The last measured cost on record is v8's: about $0.29 for a ~20-minute video with captions (`llm_usage` ledger); the Whisper fallback adds roughly $0.14 when captions are unavailable.
+Every request is shaped for its model (thinking off + effort, accepted sampling params, no prefill), and a refused answer is asked once of the previous model (`config.PREVIOUS_MODEL`: Sonnet 5.5 → Sonnet 4.6, gpt-6-luna → gpt-4o-mini) — [ERROR-HANDLING.md](./ERROR-HANDLING.md#llm-error-handling).
+
+**Total** varies per video: description analysis, tier probe, plan, memory, the extraction field groups (1–5 text + ≤ 1 visual, times the chunks of a long video), synthesis and the quiz when planned — plus 0–5 vision batches and ≤ 6 sampled judge calls; a non-English video adds the translation batches. The last measurement on prod is v9 **before** the 4.0 model refresh (`dev/active/pipeline-1min/gates/g3.md` §Prod, 2026-10-13, runs with frames; the 3 benchmarks + the Hebrew regression video): $0.098–0.180 per video (T1dQhQAm8Tc $0.098 — a run that writes the plan's hourly cache entry adds ≈ $0.10 —, jMq8lEu-of0 $0.180, uC45_4nnEAI $0.148 (median of 2), Hebrew regression EqaMrzd9nZU $0.157; the others one run each), 9–25 LLM calls, `complete` at 59–93 s; prod v8 (g0) cost $0.114–0.216 and took 169–240 s on the first three. The Whisper fallback adds roughly $0.14 when captions are unavailable.
 
 The plan starts once the tier probe answered (it waits at most the probe's 4 s budget + 1 s, `phases/probe.PLAN_PROBE_WAIT_SECONDS`); plan and memory then run concurrently. The plan's `PlanResult` (contentTags, tabs with briefs, evidence, terms) is reconciled against the memory at plan-done and rendered with the memory's outline / tldr / takeaways into `<video_memory>` — the `{video_context}` of every writer (extraction, synthesis, quiz).
 

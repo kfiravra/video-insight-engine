@@ -16,15 +16,18 @@ in the hot loop.
 
 | Field                     | Source                                              | Notes |
 |---------------------------|-----------------------------------------------------|-------|
-| `model`                   | `kwargs["model"]`                                   | LiteLLM model string, e.g. `anthropic/claude-sonnet-4-6` |
-| `provider`                | derived from `model`                                | `anthropic` / `openai` / `gemini` / `unknown` |
+| `model`                   | `kwargs["model"]`                                   | The model string LiteLLM hands the callback — on 1.105 the bare name (`claude-sonnet-5-5`), the provider kept apart in `custom_llm_provider` |
+| `provider`                | derived from `model`'s `provider/` prefix           | `anthropic` / `openai` / `gemini` / `unknown` — a bare name has no prefix, so LiteLLM 1.105 rows read `unknown` (the cache-rate lookup below was fixed for the same cause; this field was not) |
 | `tokens_in`               | `response.usage.prompt_tokens`                      | Includes uncached + cache-create + cache-read |
 | `tokens_out`              | `response.usage.completion_tokens`                  | |
 | `cost_usd`                | `litellm.completion_cost(response)`                 | Provider-billed cost, already net of cache discount |
 | `cache_creation_tokens`   | `usage.cache_creation_input_tokens`                 | Tokens that wrote into the cache this call |
-| `cache_read_tokens`       | `usage.cache_read_input_tokens`                     | Tokens served from the cache this call |
+| `cache_read_tokens`       | `usage.cache_read_input_tokens`, else `usage.prompt_tokens_details.cached_tokens` | Tokens served from the cache this call — Anthropic reads, or OpenAI's automatically cached input (read since p4.0d) |
 | `cache_hit`               | `_hidden_params.cache_hit` or `cache_read > 0`      | Either signal triggers True |
-| `cache_savings_usd`       | `compute_cache_savings_usd(model, cache_read)`      | See below |
+| `cache_savings_usd`       | `compute_cache_savings_usd(<provider>/<model>, cache_read)` | See below |
+| `refusal`                 | `llm_common.refusal.refusal_of(response)`           | True on a declined answer (HTTP 200: Anthropic `stop_reason: "refusal"` → `finish_reason="content_filter"`, OpenAI `message.refusal`). The row stays `success: true` and priced (p4.0b) |
+| `refusal_category`        | the refusal's `stop_details.category`               | Always `None` on LiteLLM 1.105 (its chat path drops `stop_details`) |
+| `fallback_from`           | `llm_refused_model_var`                             | The refused model's id, on the row of its one re-send on the previous model (`config.PREVIOUS_MODEL`); `None` otherwise — the cross-provider fallback (D4) is not tagged here (`pipeline.timing` `fallbackUsed` covers both) |
 | `feature` / `video_id`    | `llm_feature_var` / `llm_video_id_var`              | Set by call sites via context vars |
 | `user_id`                 | `llm_user_id_var`                                   | Owner of the run; the key per-user reconciliation matches on. `None` on legacy rows |
 | `video_summary_id`        | `llm_video_summary_id_var`                          | The Mongo `videoSummaryCache` id for this run |
@@ -55,8 +58,8 @@ the run's attribution for free. The shared emit helper
   (`$0.006/min`). Features: `summarize:transcript:whisper` /
   `:whisper_translate` — the latter only for the English text of a non-English
   run that transcribed its own audio with Whisper (its Qdrant points). Every
-  other non-English transcript gets that English text from a fast-model text
-  translation: a LiteLLM call, so an ordinary callback row with feature
+  other non-English transcript gets that English text from a text translation
+  on `LLM_TRANSLATION_MODEL` (gpt-6-luna): a LiteLLM call, so an ordinary callback row with feature
   `summarize:rag_translation` (span `rag_translation`) — see
   [RAG.md](./RAG.md#non-english-transcripts).
 - **Gemini** (`gemini_transcriber.py`) — `unit="tokens"`, token counts from
@@ -101,13 +104,38 @@ delta = rates["input"] - rates["cache_read"]
 savings = (cache_read_tokens / 1_000_000) * delta
 ```
 
-The rate map lives in `_CACHE_RATES_USD_PER_M`. When a model lacks a mapping,
-savings are reported as `0.0` and the missing model is logged once
-(`cache.rate_missing`) — under-reporting is preferred over inventing numbers.
+The rate map lives in `_CACHE_RATES_USD_PER_M` (`models.py`), keyed by the
+provider-prefixed model. Input / cached-read rates per MTok:
+
+| Model | Input | Cached read | Source |
+|-------|-------|-------------|--------|
+| `anthropic/claude-sonnet-4-6`, `anthropic/claude-sonnet-4-5` | $3.00 | $0.30 | published prices |
+| `anthropic/claude-haiku-4-5-20251001`, `anthropic/claude-haiku-4-5` | $1.00 | $0.10 | published prices |
+| `anthropic/claude-sonnet-5-5` | $2.00 | $0.20 | docs prices (pipeline-1min 4.0c), = LiteLLM 1.105.0's bundled map |
+| `anthropic/claude-haiku-5-5` | $0.10 | $0.01 | docs prices, the ≤ 100K-token prompt tier where every pipeline call sits ($0.50 / $0.05 above it; only the ≤ 100K rate is in this map) |
+| `openai/gpt-6-luna` | $0.10 | $0.01 | LiteLLM 1.105.0's bundled map |
+
+gpt-4o-mini and gpt-4o are not in the map: their OpenAI cache reads are counted
+in `cache_read_tokens` but save `0.0`. When a model lacks a mapping, savings are
+reported as `0.0`, and an `anthropic/` model is logged once (`cache.rate_missing`)
+— under-reporting is preferred over inventing numbers.
+
+**The lookup key (fixed in p4.0d).** LiteLLM hands the callback the bare model
+name (`claude-sonnet-5-5`, provider in `custom_llm_provider`), while the map is
+keyed `anthropic/claude-sonnet-5-5`; `callback._rate_key` now re-adds the
+provider prefix before the lookup. Before it a bare name missed the map, so rows
+written before p4.0d under-report `cache_savings_usd` (0).
 
 `cost_usd` is the provider-billed cost (already net of the cache discount).
 `cache_savings_usd` is what we *would* have paid had the read tokens been
 billed at the full input rate, so total list-price spend ≈ `cost_usd + cache_savings_usd`.
+
+`cost_usd` (and `pipeline.timing` `costUsd`, and the Langfuse generation cost)
+is priced from LiteLLM's model map: the remote map LiteLLM fetches at import,
+else its bundled copy (the project does not set `LITELLM_LOCAL_MODEL_COST_MAP`,
+so the source can differ between processes), plus the Claude Haiku 5.5 entry the
+summarizer registers when the loaded map lacks it (`llm_model_rules`, docs prices
+incl. the above-100K tier; the assistant process does not register it).
 
 ## Where cache_control is set
 
@@ -124,7 +152,10 @@ hour. In one request every 1h breakpoint must come before any 5m one.
 - **user block 1** = the English output directive + everything above
   `<video>` (rules, component toolkit, registry caps and requirements,
   examples) — rendered from config alone, so byte-identical for every video;
-  ~16.4k tokens on Sonnet 4.6. `cache_control {type: ephemeral, ttl: 1h}`
+  ≈ 16.3k tokens on Sonnet 4.6 (16,290 written on prod, `dev/active/pipeline-1min/gates/g3.md`
+  §Prod), ≈ 22.1k on Sonnet 5.5 (its tokenizer; 22,070 written in the 4.0d A/B,
+  `dev/active/pipeline-1min/gates/g4-model-ab.md`).
+  `cache_control {type: ephemeral, ttl: 1h}`
   (`plan.PLAN_CACHE_TTL`, `plan.plan_user_content`);
 - **user block 2** = `<video>` (title, channel, duration, probe hint,
   playbook, description), the full marked transcript, the closing line —
@@ -138,7 +169,10 @@ the previous one. Economics (Sonnet 4.6, $3/MTok input): a 1h write is 2x input
 ≈ $0.005 per hit), so the 1h breakpoint costs **more** than no breakpoint below
 a ~53 % hit rate. A 5m write (1.25x) breaks even at ~22 % — of the 5-minute hit
 rate, which is never above the 1h one (every 5-minute hit is also a 1-hour
-hit). Gate item (Kfir 2026-10-12): read the plan's 1h hit rate with
+hit). On Sonnet 5.5, the plan's model since 4.0d ($2/MTok input, 1h write $4,
+read $0.20), the ≈ 22.1k-token block costs ≈ $0.088 per miss vs $0.044
+uncached and ≈ $0.004 per hit — the same multiples, so the same break-even
+rates. Gate item (Kfir 2026-10-12): read the plan's 1h hit rate with
 `scripts/cache_hit_rate.py` (below) after two weeks of prod traffic. Gate-2
 decision (Kfir 2026-10-12): the plan stays on 1h and there is no switching code —
 the "below 50 %" rule is a reporting rule applied by hand. After a week of prod
@@ -175,6 +209,8 @@ block 1 measures ≈ 2.6–3.4k cl100k tokens on the benchmark domain sets (offl
 so no 1h entry is written (`cacheWrite1hTokens` 0) and the 5m entry text1 writes holds blocks 1 + 2;
 text2 / text3 / visual read it at a 100 % hit rate. The 1h marker on block 1
 stays in the request, so a prefix at or above the model's minimum caches for an hour.
+Extraction stays on Haiku 4.5 after the 4.0d picks, so this holds; Haiku 5.5's
+minimum is 512 tokens (pipeline-1min context.md, "4.0c docs facts").
 
 **Extraction, `EXTRACTION_PARALLEL=false` — 5m (1c.3).** The single call (one
 per chapter batch on a long video) the groups replaced — byte-identical to the
@@ -202,9 +238,10 @@ uncached block — and cost — grows with the video; memory reads the same stri
 **OpenAI calls (automatic caching).** OpenAI caches a prompt prefix by itself
 once it is identical to an earlier request's and at least 1,024 tokens long; it
 reports reads (`prompt_tokens_details.cached_tokens`) but no writes, and there
-is nothing to mark. Synthesis, the quiz (`enrich_quiz.txt`) and
-`description_analysis.txt` (all `openai/gpt-4o-mini` in prod and dev) are laid
-out static-first — instructions, schema, example, then the per-video content —
+is nothing to mark. Synthesis (the fast tier — `openai/gpt-4o-mini` with
+`LLM_FAST_PROVIDER=openai`, as both templates and prod set), the quiz
+(`enrich_quiz.txt`, `openai/gpt-4o-mini`) and `description_analysis.txt`
+(`openai/gpt-6-luna` since 4.0d) are laid out static-first — instructions, schema, example, then the per-video content —
 so two videos share their prefix up to the first per-video byte. Today those
 static prefixes are 355 / 471 / 311 tokens, below the 1,024 minimum, so they do
 not cache across videos yet (a quiz prefix is per quiz domain: its flavor line
@@ -220,7 +257,10 @@ ephemeral_1h_input_tokens}`; LiteLLM (1.91, and 1.105.0 since p4.0a) keeps the s
 `cache_creation_input_token_cost_above_1hr` = 2x). So `cost_usd` in the ledger,
 `costUsd` in `pipeline.timing` and the Langfuse generation cost are right for 1h
 writes with no code of ours: `tests/test_cache_usage_1h.py` pins it against the
-published Sonnet 4.6 prices using usage objects recorded from a live call. A
+published Sonnet 4.6 prices using usage objects recorded from a live call.
+Sonnet 5.5's entry in LiteLLM 1.105.0's bundled map carries both write rates
+($2.50 5m, $4.00 1h per MTok), and the Haiku 5.5 entry the summarizer registers
+carries 1.25x / 2x of its input rate. A
 response without the split (not seen from Anthropic) would be priced entirely at
 the 5m rate. The ledger keeps only the total (`cache_creation_tokens`); the
 per-call 1h / 5m split lives in `pipeline.timing.llmCalls[]`
@@ -237,6 +277,13 @@ python scripts/audit_cache_credits.py --hours 1        # last hour
 python scripts/audit_cache_credits.py --video-id <id>  # one video
 python scripts/audit_cache_credits.py --json           # machine-readable
 ```
+
+**Caveat (LiteLLM 1.105):** the script groups `llm_usage` rows by model and keeps
+the ones whose stored `provider` is `anthropic` (`derive_verdict`). Callback rows
+now store `provider: "unknown"` (see §Schema), so a window of such rows ends "No
+Anthropic calls in window." (exit 1) until that field is fixed. Use
+`scripts/cache_hit_rate.py` (below) meanwhile — it reads `pipeline.timing`, which
+records the provider-prefixed model.
 
 Exit codes:
 - `0` cache hits observed on Anthropic calls
@@ -258,7 +305,9 @@ python scripts/cache_hit_rate.py --ids T1dQhQAm8Tc <summaryId> ...
 python scripts/cache_hit_rate.py --json
 ```
 
-It reads `pipeline.timing.llmCalls` (not `llm_usage`) and prints, per `span`
+It reads `pipeline.timing.llmCalls` (not `llm_usage`) — plus, from timing
+version 4, the refused calls' `llmFailures` rows (`error: "Refusal"`, billed and
+cache-reading like any call) — and prints, per `span`
 and provider: calls, input tokens, reads, writes (1h / 5m), hit rate =
 reads ÷ (reads + writes) for Anthropic, and the cached share of input tokens
 (the OpenAI number). Runs timed before `pipeline.timing` version 2 have no
@@ -280,8 +329,8 @@ of plan calls minutes apart that would lift the prod hit rate) unless
    guards it; a registered `plan.txt` without a `<video>` line is sent
    uncached and logged.
 2. **`cache.rate_missing` log** — a model alias was added in `config.MODEL_MAP`
-   without a corresponding entry in `_CACHE_RATES_USD_PER_M`. Add the
-   per-1M-token rates for that model.
+   (or a stage setting) without a corresponding entry in `_CACHE_RATES_USD_PER_M`.
+   Add the per-1M-token rates for that model, keyed `provider/model`.
 3. **`cost_usd = 0`** — LiteLLM doesn't know the price for a custom-named
    model (e.g. a date-stamped Anthropic preview). Map the alias to a known
    model in LiteLLM's pricing table or accept zero cost reporting until the
@@ -290,7 +339,8 @@ of plan calls minutes apart that would lift the prod hit rate) unless
 ## Status of P1 work
 
 - ✅ Cache fields on `UsageRecord` (creation/read tokens, hit flag, savings)
-- ✅ Per-model cache rate map with miss-logging fallback
+- ✅ Per-model cache rate map with miss-logging fallback (provider-prefixed lookup
+      and the 4.0 models since p4.0d)
 - ✅ `cache_control: ephemeral` on the extraction `[video + transcript + memory]` user block
 - ✅ `cache_control: ephemeral, ttl 1h` on the plan's static half (2.0); 1h / 5m
       write split per call in `pipeline.timing`; 1h writes priced at 2x (verified)
@@ -306,7 +356,8 @@ of plan calls minutes apart that would lift the prod hit rate) unless
 
 `llm_usage` rows (Python schema) are aggregated per-user into the `userCosts`
 collection by `CostMonitorService.reconcileUserDay` /
-`reconcileAllUsersForDay`. The aggregate feeds two gates:
+`reconcileAllUsersForDay` — every row's `cost_usd` for the day, a refused
+answer's row and its previous-model re-send included. The aggregate feeds two gates:
 
 1. **POST /api/videos** — `reserveUserCost(userId, tier)` atomically increments
    the day's `totalCostUsd` by an over-estimate, then refunds-and-throws

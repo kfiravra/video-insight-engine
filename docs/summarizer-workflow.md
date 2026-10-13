@@ -181,12 +181,12 @@ In order (each step's module in brackets):
    S3 cache → yt-dlp subtitles → youtube-transcript-api → Whisper (audio) → Gemini (audio) → metadata-only (music)
    ```
    Whisper is tried *before* Gemini because it natively reports the language. The S3 blob (`cached_transcript.py`) is skipped as **stale** when this run fetched captions and the blob holds another caption track (`s3-stale`). Then basic cleaning (`clean_transcript`, English fillers included; the spaCy + TF-IDF pass only with `TRANSCRIPT_CLEANING_ENABLED`) and **SponsorBlock**, which cuts sponsor reads from `clean_text` **and** `prompt_segments`. Language detection sets `ctx.source_language_code` (non-English only; dropped for sound-only music) — **this single field decides whether translation runs**. The fetcher's `TranscriptTrail` records every layer that ran and failed. **SSE:** `phase` per fallback hop, `transcript_ready`. Then `ctx.transcript_ready` is set.
-2. **Tier probe** [`pipeline/tier_probe.py`, prompt `tier_probe.txt`]: one call on `LLM_CLASSIFIER_MODEL`, temperature 0, 80 tokens, 4 s, no retry, over metadata + three short windows of the NATIVE `clean_text` (nothing translates before the plan) → domain, format, `has_visual_demo`, `transcript_usable`. The text branch waits for it (`probe_for_plan`, ≤ 5 s); frames read it separately at their Step 6b. Failure → `None`: the metadata rule decides.
+2. **Tier probe** [`pipeline/tier_probe.py`, prompt `tier_probe.txt`]: one call on `LLM_CLASSIFIER_MODEL` (Haiku 4.5), temperature 0, 80 tokens, 4 s, no retry, over metadata + three short windows of the NATIVE `clean_text` (nothing translates before the plan) → domain, format, `has_visual_demo`, `transcript_usable`. The text branch waits for it (`probe_for_plan`, ≤ 5 s); frames read it separately at their Step 6b. Failure → `None`: the metadata rule decides.
 3. **Unusable captions** [`phases/transcript_fallback.py:replace_unusable_captions`]: `transcript_usable: false` on a caption transcript (not music, an audio layer allowed) → the transcript phase re-runs on the audio layers only (`run_audio_transcript_pass`: Whisper → Gemini), a second probe runs on the new text; once per run. A run that goes on with an unusable answer plans without a probe.
 4. **The marked transcript**, rendered ONCE: `ctx.prompt_transcript = render_prompt_transcript(ctx)` — `[m:ss]` markers over `prompt_segments` (`transcript/render.py`), `clean_text` for a segment-less (metadata) transcript. Plan and memory read the same string; neither ever sees frame annotations.
 5. **Plan ∥ memory** (`run_parallel_phases([run_phase_plan, run_phase_memory])`):
-   - **Plan** [`phases/triage.py:run_phase_plan` → `pipeline/plan.py:run_plan`, prompt `plan.txt` + `component_toolkit.txt` via `plan_prompt.render_plan_parts`]: primary model, the FULL marked transcript, 3,500 max tokens, 60 s, 1 retry, JSON mode. The probe sets the playbook (`<domain>:<format>`, its domain only above 0.6 confidence) and the one `Hint:` line. Everything above `<video>` is one cached user block (`cache_control` ttl 1h). Out: `PlanResult` — `contentTags`, `modifiers`, `primaryTag`, `userGoal`, tabs `{id, label, emoji, component, dataSource, goal, brief {what, where, expect}}`, `evidence` (has_* booleans), `terms`. Unregistered dataSources → same-component sibling or dropped (`invalid_datasource`). Failure / confidence < 0.6 → `_build_fallback_plan()` (the domain's default tabs).
-   - **Memory** [`phases/memory.py` → `pipeline/memory.py`, prompt `memory.txt`]: `LLM_EXTRACTION_MODEL`, 25 s, one attempt, temperature 0 → outline (4–12 sections), evidence, tldr, takeaways. No timed segments → no call. Its tldr + takeaways go out at once as the first `synthesis_complete` — **the hero**.
+   - **Plan** [`phases/triage.py:run_phase_plan` → `pipeline/plan.py:run_plan`, prompt `plan.txt` + `component_toolkit.txt` via `plan_prompt.render_plan_parts`]: primary model (Sonnet 5.5) at effort medium (`plan.PLAN_EFFORT`), the FULL marked transcript, 3,500 max tokens, 60 s, 1 retry, JSON mode. The probe sets the playbook (`<domain>:<format>`, its domain only above 0.6 confidence) and the one `Hint:` line. Everything above `<video>` is one cached user block (`cache_control` ttl 1h). Out: `PlanResult` — `contentTags`, `modifiers`, `primaryTag`, `userGoal`, tabs `{id, label, emoji, component, dataSource, goal, brief {what, where, expect}}`, `evidence` (has_* booleans), `terms`. Unregistered dataSources → same-component sibling or dropped (`invalid_datasource`). Failure / confidence < 0.6 → `_build_fallback_plan()` (the domain's default tabs).
+   - **Memory** [`phases/memory.py` → `pipeline/memory.py`, prompt `memory.txt`]: `LLM_EXTRACTION_MODEL` (Haiku 4.5), 25 s, one attempt, temperature 0 → outline (4–12 sections), evidence, tldr, takeaways. No timed segments → no call. Its tldr + takeaways go out at once as the first `synthesis_complete` — **the hero**.
 6. **Plan-done** [`phases/triage.py:plan_done_events` → `pipeline/reconcile.py:reconcile_plan`, `reconcile_pass.py`]: the memory's second opinion. One evidence view (true if either reader said true, false only when BOTH answered false); a tab whose `requiresEvidence` key is doubly false is re-pointed, kept (moment_track), demoted onto a free eligible source, or dropped; `has_code` tabs are **deferred to frames-done**; the domain's required components are backfilled; quiz policy; dedupe; 3–6 tabs. Every decision → `pipeline.reconcile`. **SSE:** `triage_complete` + `meta` on the reconciled plan.
 7. **`<video_memory>`** [`pipeline/video_memory.py:render_video_memory`]: rendered once from the reconciled plan + memory — identity, terms, outline, evidence with its `[m:ss]` ranges. It fills every writer's `{video_context}` slot (extraction, synthesis, quiz). Then `ctx.plan_done` is set (in a `finally`: whatever happens, nothing waiting on it hangs).
 8. **Provisional Moments tab** [`phases/moments.py`]: built from the moment fallback chain (memory outline → YouTube chapters → description timestamps, the latter only if the analysis already landed) with the id, label and position estimate of the tab that will replace it (the plan's first `moment_track` tab, else the always-Moments `key_moments`). **SSE:** `tab_ready {provisional: true, final: false}`. No source with an entry → nothing.
@@ -195,7 +195,7 @@ In order (each step's module in brackets):
 
 - **Calls:** `scene_extractor.extract_scene_keyframes()` — the frame manifest at `videos/{id}/{SCENE_S3_PREFIX}/manifest.json` first (skipped for `coldMedia`; `hiresCount == 0` counts as a miss); on a miss: FFmpeg scene detection on the run's low-res file (`ctx.lowres_video`), local scoring, time-slot selection, the **visual tier** decided once at Step 6b (`_TierGate` → `media/visual_tier.resolve_tier`, waits ≤ 3 s for the probe; HIGH over-selects and vision-describes the candidates **before** the hi-res pass, dropping presenter shots; LOW skips vision), then 720p refinement of the selected frames by seeking the run's one local ≤720p file (`ctx.hires_video`), S3 upload — then **in parallel**:
   - `scene_frames.process_scene_frames()` — OCR + presigned URLs,
-  - `_run_vision_analysis()` → `frame_analyzer.analyze_frames_with_vision()` (prompt `vision.txt`; `LLM_VISION_MODEL`, blank → primary; ≤ 8 frames per call, ≤ 5 calls in flight). Fresh descriptions are persisted into the manifest.
+  - `_run_vision_analysis()` → `frame_analyzer.analyze_frames_with_vision()` (prompt `vision.txt`; `LLM_VISION_MODEL`, Sonnet 5.5; ≤ 8 frames per call, ≤ 5 calls in flight). Fresh descriptions are persisted into the manifest.
 - **Out:** `ctx.scene_frames_all`, `ctx.scene_frames_gallery`, `ctx.scene_frames_for_assembly`, `ctx.frame_descriptions`. **SSE:** `frames`.
 - **Non-critical:** any failure logs a warning and the run continues without frames.
 - **Frames-done** (`frames_done.frames_done_step`; split path: `then_frames_done`, which first waits for `plan_done`): renders `ctx.visual_annotations` — the `<visual_annotations>` block, chronological `[m:ss] caption | on-screen text` (`pipeline/visual_annotations.py`), **never** written into `clean_text` — then `triage.frames_done_events` decides the code tabs reconcile deferred: code on screen (vision `scene_type: code`, or code-shaped OCR) keeps them and backfills tech's `code_playground`; no code → the step-1 chain. A changed tab list sends a fresh **`meta`**. Then `ctx.frames_done` is set. Timing step `visual_inject` (name kept from the old Phase 2.5).
@@ -208,8 +208,8 @@ The most expensive stage, and the one v9 changed. It waits for `ctx.plan_done`, 
 2. **Requested fields** [`pipeline/field_requests.py:requested_fields`]: the union over the reconciled tabs of each planned dataSource, its registry siblings (active domains only), the rendering component's side reads, the overview's tip/level reads, and every requested domain's scalars — nothing of an inactive domain, no unplanned modifier output.
 3. **Groups** [`pipeline/field_groups.py:build_groups`, `domains.json` `grouping`]: text fields bucketed by domain, split by field when Σ `outputWeight × expect` exceeds `groupOutputBudget` (1,500), at most `maxTextGroups` (5) text groups ordered by the first tab they serve — **text1** holds the first planned tab; every `waitsForVisual` field forms ONE **visual** group.
 4. **Prompt** [`extractor._build_prompt` cut by `pipeline/extraction_group_prompt.py:build_group_messages`]: three content blocks, no system prompt — block 1 (ttl 1h) = the rules + every requested domain's full schema + the primary's example; block 2 (5 min) = `<video>` + the chunk's transcript + `<video_memory>`; block 3 (uncached) = the group's job from `extraction_group_job.txt` ("emit ONLY these keys" + their shape, the tabs it serves; the visual group adds the chunk's annotations and key frames).
-5. **Firing** [`pipeline/extraction_groups.py:fire_groups`]: per chunk, text1 is the only **streamed** call — its first chunk releases the chunk's other text groups (or `GROUP_RELEASE_FALLBACK_S` = 1.5 s), so they read blocks 1 + 2 instead of writing them. The visual group waits for `ctx.frames_done`, is re-cut from what no text group asked for (nothing left → not fired) and binds the annotations + key frames then. Every call holds a slot of the run's `EXTRACTION_PARALLEL_BATCHES` semaphore; model `LLM_EXTRACTION_MODEL`, JSON mode, 16,384 max tokens, timeout from the group's estimate (120–300 s), 1 retry. Spans `extraction_<group>` (`_c<k>` for chunk k ≥ 1), ledger feature `summarize:extraction:<group>`.
-6. **Landing** [`pipeline/group_merge.py:validate_group`, `pipeline/group_failures.py`]: each answer is validated without default materialization and cut to the group's own keys as it lands. A lost answer (not JSON, no key of the group, content validation dropped, a warm-up stream that broke) gets ONE more unstreamed call; still nothing → `failed` (its fields count as landed, so no tab waits for ever). **SSE per landed call:** `extraction_progress {section: "groups", batch, of}`, then a **preview** `tab_ready` of every planned tab whose requested fields have all landed (`phases/group_emission.py:GroupLanding`): non-final, without cross-tab links and attachments, at its plan-order position — never the overview, a moment tab or the quiz. The **quiz task** starts here (`enrichment.start_quiz_task`, `ctx.quiz_task`) once the text groups holding a `quizDomains` field have landed.
+5. **Firing** [`pipeline/extraction_groups.py:fire_groups`]: per chunk, text1 is the only **streamed** call — its first chunk releases the chunk's other text groups (or `GROUP_RELEASE_FALLBACK_S` = 1.5 s), so they read blocks 1 + 2 instead of writing them. The visual group waits for `ctx.frames_done`, is re-cut from what no text group asked for (nothing left → not fired) and binds the annotations + key frames then. Every call holds a slot of the run's `EXTRACTION_PARALLEL_BATCHES` semaphore; model `LLM_EXTRACTION_MODEL` (Haiku 4.5), JSON mode, 16,384 max tokens, timeout from the group's estimate (120–300 s), 1 retry. Spans `extraction_<group>` (`_c<k>` for chunk k ≥ 1), ledger feature `summarize:extraction:<group>`.
+6. **Landing** [`pipeline/group_merge.py:validate_group`, `pipeline/group_failures.py`]: each answer is validated without default materialization and cut to the group's own keys as it lands. A lost answer (not JSON, no key of the group, content validation dropped, a warm-up stream that broke) gets ONE more unstreamed call; a refused warm-up does not (`propagate_refusal` — asking again would reach the model that refused): it releases the waiting groups and fails; still nothing → `failed` (its fields count as landed, so no tab waits for ever). **SSE per landed call:** `extraction_progress {section: "groups", batch, of}`, then a **preview** `tab_ready` of every planned tab whose requested fields have all landed (`phases/group_emission.py:GroupLanding`): non-final, without cross-tab links and attachments, at its plan-order position — never the overview, a moment tab or the quiz. The **quiz task** starts here (`enrichment.start_quiz_task`, `ctx.quiz_task`) once the text groups holding a `quizDomains` field have landed.
 7. **Merge** [`group_merge.merge_groups`]: ONE deterministic merge — chunk-major, text1..N then visual; lists concatenate with later duplicates dropped, first non-empty scalar wins. `ctx.extraction_data`, `pipeline.extraction._groups` (one row per call), coverage + quality on the requested fields (`finish_extraction`). Every failed group marks the run `degraded`; when no group landed at all → `fail_extraction` (status `FAILED`, `LLM_ERROR`, an `error` event; the orchestrator still runs assembly afterwards). **SSE:** `extraction_complete`.
 
 ### Today's single extraction (`EXTRACTION_PARALLEL=false`) · `pipeline_orchestration._frames_done_then_extraction` → `phases/extraction.py` → `pipeline/extractor.py`
@@ -229,7 +229,7 @@ test). It reverts **extraction only**: the plan-done / frames-done reconcile,
 Once `ctx.extraction_data` exists (after the phase-2 group on the split path), the
 orchestrator spawns a **fire-and-forget judge**: sampled claims
 (`LANGFUSE_FAITHFULNESS_SAMPLE_RATE`, ≤ 6 per video) checked against the transcript +
-the rendered visual annotations, fast tier, logged as a Langfuse score
+the rendered visual annotations, fast tier (gpt-4o-mini with `LLM_FAST_PROVIDER=openai`), logged as a Langfuse score
 (`summarize:faithfulness`). Informational — never blocks or gates the run. Drained
 (≤ 25 s) before the trace flushes.
 
@@ -241,10 +241,10 @@ Where all the streams *converge* into the final shape. Order:
 2. **Synthesis FIRST** only when memory left the tldr or takeaways empty (`synthesis.needs_hero_fallback`): the overview and the minimum-3 Key Info fallback need them. Otherwise memory's hero seeds `synthesis_dict`.
 3. **Assemble** (pure code, no LLM): per planned tab, `resolve_data_source()` maps its `dataSource` to the extracted data with cascading fallbacks; the matching assembler from `ASSEMBLER_REGISTRY` builds the props; promotion, density caps, the degrade-never-drop demote ladder, domain forbidden / max policy, timestamp hygiene, the always-Moments tab, frame thumbnails, cross-tab links, the minimum-3 fallback. A tab a failed extraction group cost is recorded as `extraction_group_failed`.
 4. **First tab emissions**: on the split path a **preview** of each tab the client still lacks (the overview, tabs assembly added, tabs the last groups or frames changed — `group_emission.assembled_tab_events`); on today's path every tab but the moment tabs, `final` where no late phase can change it. Every `tab_ready` goes through the run's `TabLedger` (`pipeline/tab_ledger.py`, the emission contract).
-5. **Late group**, in parallel with heartbeats: **moment fill** (`assembly/moment_frame_fill.py`: a frame at each frameless moment's timestamp from the run's ≤720p file → the moment tabs stream framed, replacing the provisional tab by id or with `replaces`), **synthesis** unless it ran first (`synthesis.txt`, fast tier: masterSummary + seoDescription; patches meta + the overview; **SSE:** `synthesis_complete` superset), the **quiz** when `needs_quiz` (`enrich_quiz.txt`, fast tier; the split path awaits the task it already started; **SSE:** `enrichment_complete`). A landed quiz re-assembles the response (`phases/late_quiz.py`): the quiz tab last, a sparse host's quick_quiz strip, links and the overview's count follow.
+5. **Late group**, in parallel with heartbeats: **moment fill** (`assembly/moment_frame_fill.py`: a frame at each frameless moment's timestamp from the run's ≤720p file → the moment tabs stream framed, replacing the provisional tab by id or with `replaces`), **synthesis** unless it ran first (`synthesis.txt`, fast tier: masterSummary + seoDescription; patches meta + the overview; **SSE:** `synthesis_complete` superset), the **quiz** when `needs_quiz` (`enrich_quiz.txt`, `LLM_ENRICHMENT_MODEL` = gpt-4o-mini; the split path awaits the task it already started; **SSE:** `enrichment_complete`). A landed quiz re-assembles the response (`phases/late_quiz.py`): the quiz tab last, a sparse host's quick_quiz strip, links and the overview's count follow.
 6. **Closing re-emit** (`TabLedger.closing_events`): every tab not yet received final goes out `final: true` at its final position, in order — the overview last after per-group streaming. Then the 720p file is deleted.
 7. **`complete`** (`tabCount`, `tabIds` = the final order — a streamed tab missing there was withdrawn, `processingTimeMs`, `degraded`), then **save** (`repository.save_structured_result`: `tabs`, `meta`, the `pipeline` record — triage, reconcile, extraction, enrichment, synthesis, assembly accounting — `pipelineVersion`, status `completed` for English, **`processing`** for non-English).
-8. **Shared artifacts**: Redis `response_cache.set_response()` — **English only**, awaited before `done`, best-effort; Qdrant (`phases/qdrant_index.py:index_in_qdrant`, background tasks): transcript, default-output and visual points — a non-English transcript first gets its English (Whisper translate when this run transcribed the audio, else the fast model block by block, `rag_translation`). An eval-user run writes neither Redis nor Qdrant. The S3 raw transcript (`transcript_store.store()`, background) is written either way, unless the transcript came from S3. Bug: its `rawTranscriptRef` write-back filters on the string id where Mongo stores an `ObjectId`, so it matches no row and the field stays unset.
+8. **Shared artifacts**: Redis `response_cache.set_response()` — **English only**, awaited before `done`, best-effort; Qdrant (`phases/qdrant_index.py:index_in_qdrant`, background tasks): transcript, default-output and visual points — a non-English transcript first gets its English (Whisper translate when this run transcribed the audio, else `LLM_TRANSLATION_MODEL` (gpt-6-luna) block by block, `rag_translation`). An eval-user run writes neither Redis nor Qdrant. The S3 raw transcript (`transcript_store.store()`, background) is written either way, unless the transcript came from S3. Bug: its `rawTranscriptRef` write-back filters on the string id where Mongo stores an `ObjectId`, so it matches no row and the field stays unset.
 9. **SSE:** `done` + `[DONE]` (English only).
 
 ### Transcript provenance write · `routes/pipeline_orchestration.py:_record_transcript_outcome`
@@ -255,7 +255,7 @@ Where all the streams *converge* into the final shape. Order:
 
 ### Translation · `phases/translation.py` → `pipeline/translation.py` *(non-English only)*
 
-- **Prompt:** `prompts/translate_flat.txt` — `LLM_TRANSLATION_MODEL` (blank → fast tier), ≤ 2,500-char batches (CJK weighted) of ≤ 100 strings, up to 8 in flight, each checked for an echo; a failed batch retried once as two halves, a half that still fails kept in English.
+- **Prompt:** `prompts/translate_flat.txt` — `LLM_TRANSLATION_MODEL` (gpt-6-luna, reasoning off), ≤ 2,500-char batches (CJK weighted) of ≤ 100 strings, up to 8 in flight, each checked for an echo; a failed batch retried once as two halves, a half that still fails kept in English.
 - **Calls:** `translate_to_source()` — walks the **English** assembled output, translates every translatable prose string into `source_language_code`, returns the unchanged English dict with the translated artifact nested under `sourceLanguage`. Plus the title (the one field that travels source → English; original kept under the source block).
 - **On failure / mirror / length mismatch:** no `sourceLanguage` key → the phase finalizes the doc `completed` English-only (the FE renders no toggle).
 - **Out:** `ctx.source_language`; re-saves the Mongo doc with `sourceLanguage` + status `completed`; writes the final Redis payload (English primary + toggle).
@@ -266,10 +266,23 @@ Where all the streams *converge* into the final shape. Order:
 Every phase and sub-step (`text`, `transcript`, `plan`, `memory`, `frames`, `frames.*`,
 `visual_inject`, `split_extraction`, `extraction`, `assembly`, `moment_fill`,
 `synthesis`, `enrichment`, `quiz_call`, `translation`, …), every LLM call (tokens, cache
-reads / 1h / 5m writes, cost, retries, fallbacks, `ttftMs` for the streamed warm-up) and
-every download lands in `pipeline.timing` (schema version 3, DATA-MODELS.md) and a
-one-line `DONE` log (`log_run_summary`). On the split path the `transcript_frames` wall
-spans the extraction too; `extraction` = plan-done → last group landed.
+reads / 1h / 5m writes, cost, retries, fallbacks, `ttftMs` for the streamed warm-up), every
+failed attempt and every download lands in `pipeline.timing` (schema version 4,
+DATA-MODELS.md) and a one-line `DONE` log (`log_run_summary`). On the split path the
+`transcript_frames` wall spans the extraction too; `extraction` = plan-done → last group
+landed.
+
+Version 4 (4.0b) records refusals: a declined answer is an `llmFailures` row with
+`error: "Refusal"`, `refusalCategory` and what it was billed (`inputTokens`,
+`outputTokens`, the four cache-token fields, `costUsd`); every row of its one re-send on
+the previous model — the answer in `llmCalls`, or a refusal / error / timeout in
+`llmFailures` — carries `refusedModel` (the answer also `refusalCategory`); a timeout
+gets it only under `call_deadline` (`LLMService` calls): a re-send cancelled by frame
+vision's `asyncio.wait_for` or the description analysis' 30 s cap is a plain
+`TimeoutError` row under the refused model, without `refusedModel`. `counts`
+gains `refusals` (calls refused), `refusalFallbacks` (answered by the previous model) and
+`refusalsUnanswered`; `counts.fallbacks` counts only the cross-provider fallback and
+provider-side model swaps; the run's `costUsd` includes refused calls.
 
 ---
 
@@ -342,29 +355,40 @@ All prompts load through `prompt_builder.load_prompt_text()`, which is
 **registry-first**: it tries the Langfuse-registered version (`summarizer:<name>`)
 and falls back to the on-disk `.txt`, recording the prompt version on the active trace
 (`PROMPT_SOURCE=disk` reads the `.txt` on dev; OBSERVABILITY.md). Model routing: the
-**primary** model is `LLM_MODEL`, else the `LLM_PROVIDER` default; the **fast tier** is
-`LLM_FAST_MODEL`, else the fast model of `LLM_FAST_PROVIDER` (or `LLM_PROVIDER`); a blank
-stage setting falls back as shown.
+**primary** model is `LLM_MODEL`, else the `LLM_PROVIDER` default (`MODEL_MAP`; anthropic:
+`anthropic/claude-sonnet-5-5`) — with the stage defaults below only the plan (and
+`/health`) reads it; the **fast tier** is `LLM_FAST_MODEL`, else the fast model of
+`LLM_FAST_PROVIDER` (or `LLM_PROVIDER`) — `openai/gpt-4o-mini` with
+`LLM_FAST_PROVIDER=openai` (prod, `.env.example`), Haiku 4.5 without. A stage setting's
+default is in `config.py` and in both compose anchors as the same literal, so a blank
+`.env` line keeps it; an empty value outside compose falls back as shown. The defaults
+come from the 4.0d model A/B (`dev/active/pipeline-1min/gates/g4-model-ab.md` §Picks).
 
-| Prompt file | Stage | Loaded by | Model |
+| Prompt file | Stage | Loaded by | Model (default) |
 |-------------|-------|-----------|-------|
-| `description_analysis.txt` | metadata (t=0, background) | `video/description_analyzer.py` | `LLM_DESCRIPTION_MODEL` → fast tier |
-| `tier_probe.txt` | tier probe | `pipeline/tier_probe.py` | `LLM_CLASSIFIER_MODEL` |
-| `plan.txt` + `component_toolkit.txt` | plan | `pipeline/plan_prompt.py` | primary (static half cached 1h) |
-| `memory.txt` | memory (∥ plan) | `pipeline/memory.py` | `LLM_EXTRACTION_MODEL` → primary |
-| `vision.txt` | frames (vision) | `media/frame_analyzer.py` | `LLM_VISION_MODEL` → primary |
-| `chapter_detect.txt` | long-video chunking — > 1 batch and no usable outline | `transcription/transcript_chunker.py` | `LLM_CHAPTER_DETECT_MODEL` → fast tier |
-| `base_extraction.txt` + `schemas/*.txt` + `quality_rules.txt` + `examples/*.txt` | extraction (both paths) | `pipeline/extraction_prompt.py`, `extractor._build_prompt` | `LLM_EXTRACTION_MODEL` → primary |
+| `description_analysis.txt` | metadata (t=0, background) | `video/description_analyzer.py` | `LLM_DESCRIPTION_MODEL` = `openai/gpt-6-luna` → fast tier |
+| `tier_probe.txt` | tier probe | `pipeline/tier_probe.py` | `LLM_CLASSIFIER_MODEL` = `anthropic/claude-haiku-4-5-20251001` → fast tier |
+| `plan.txt` + `component_toolkit.txt` | plan | `pipeline/plan_prompt.py` | primary = `anthropic/claude-sonnet-5-5`, effort medium (static half cached 1h) |
+| `memory.txt` | memory (∥ plan) | `pipeline/memory.py` | `LLM_EXTRACTION_MODEL` = `anthropic/claude-haiku-4-5-20251001` → primary |
+| `vision.txt` | frames (vision) | `media/frame_analyzer.py` | `LLM_VISION_MODEL` = `anthropic/claude-sonnet-5-5` → primary |
+| `chapter_detect.txt` | long-video chunking — > 1 batch and no usable outline | `transcription/transcript_chunker.py` | fast tier (`LLM_CHAPTER_DETECT_MODEL` exists in `config.py`, but no compose anchor passes it) |
+| `base_extraction.txt` + `schemas/*.txt` + `quality_rules.txt` + `examples/*.txt` | extraction (both paths) | `pipeline/extraction_prompt.py`, `extractor._build_prompt` | `LLM_EXTRACTION_MODEL` = `anthropic/claude-haiku-4-5-20251001` → primary |
 | `extraction_group_job.txt` | split extraction: each group's job block | `pipeline/extraction_group_prompt.py` | (as extraction) |
-| `synthesis.txt` | synthesis | `pipeline/synthesis.py` | `LLM_SYNTHESIS_MODEL` → fast tier |
-| `enrich_quiz.txt` | the quiz | `pipeline/enrichment.py` | `LLM_ENRICHMENT_MODEL` → fast tier |
-| `translate_flat.txt` | output translation + the RAG transcript's English | `pipeline/translation_flat.py` | `LLM_TRANSLATION_MODEL` → fast tier |
+| `synthesis.txt` | synthesis | `pipeline/synthesis.py` | `LLM_SYNTHESIS_MODEL` (blank) → fast tier |
+| `enrich_quiz.txt` | the quiz | `pipeline/enrichment.py` | `LLM_ENRICHMENT_MODEL` = `openai/gpt-4o-mini` → fast tier |
+| `translate_flat.txt` | output translation + title + the RAG transcript's English | `pipeline/translation_flat.py` | `LLM_TRANSLATION_MODEL` = `openai/gpt-6-luna` → fast tier |
 | (inline `_JUDGE_PROMPT`) | faithfulness judge (background) | `pipeline/faithfulness.py` | fast tier |
 
 `prompts/detection/category_rules.json` is not an LLM prompt: the metadata category
 rules (`video/youtube.py`) behind the visual-tier fallback and the plan's category hint.
 `LLM_FALLBACK_PROVIDER` (when set) gives primary-model calls a cross-provider fallback
-after one same-provider retry (`utils/llm_retry.call_llm_with_retry`).
+after one same-provider retry (`utils/llm_retry.call_llm_with_retry`; the provider's
+`MODEL_MAP` default — `openai` → `openai/gpt-4o`). Every request is shaped for the model it goes to
+(`services/llm_model_rules.request_for_model`: thinking off + effort, only the sampling
+params the model accepts, no assistant prefill), and an answer a model refuses is asked
+for once more on its previous model (`config.PREVIOUS_MODEL`: Sonnet 5.5 → Sonnet 4.6,
+Haiku 5.5 → Haiku 4.5, gpt-6-luna → gpt-4o-mini) — ERROR-HANDLING.md
+§LLM Error Handling.
 
 ---
 

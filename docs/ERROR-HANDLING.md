@@ -232,7 +232,8 @@ Two layers, both real code:
 - **LLM calls** — summarizer: `call_llm_with_retry` (`utils/llm_retry.py`) retries
   transient errors on the same model, then falls back to `LLM_FALLBACK_PROVIDER`
   (see [LLM Error Handling](#llm-error-handling)); LiteLLM's own retries and
-  fallbacks are off. The assistant keeps LiteLLM `num_retries` (`LLM_NUM_RETRIES`).
+  fallbacks are off. A refused answer is never retried: it is asked once of the
+  previous model ([Refusals](#refusals)). The assistant keeps LiteLLM `num_retries` (`LLM_NUM_RETRIES`).
   The extraction field groups run up to `EXTRACTION_PARALLEL_BATCHES` (6) calls at once per run (× `WORKER_CONCURRENCY` per worker);
   a group whose answer is lost (not JSON, none of its keys, a broken warm-up stream) gets one
   more call, then counts as failed — its tabs drop or demote and the run is `degraded`; only
@@ -484,9 +485,38 @@ if await get_failed_jobs_count() > 10:
 ## LLM Error Handling
 
 Every summarizer stage calls the LLM through `call_llm_with_retry`
-(`services/summarizer/src/utils/llm_retry.py`). Each attempt is one request to one
-model (LiteLLM `num_retries=0`, no LiteLLM `fallbacks`), so telemetry and the
-Langfuse generation always name the model that actually answered.
+(`services/summarizer/src/utils/llm_retry.py`); frame vision runs its own retry
+with the same error classes (`TRANSIENT_LLM_ERRORS`). Each attempt is one request
+to one model (LiteLLM `num_retries=0`, no LiteLLM `fallbacks`), so telemetry and
+the Langfuse generation always name the model that actually answered.
+
+### Request rules (per model)
+
+Every request passes `llm_model_rules.request_for_model` on its way to LiteLLM
+(`LLMProvider._ask`, the one `acompletion` seam), keyed by the model it goes to,
+never by call site:
+
+- **Thinking off + effort.** Claude Haiku 5.5 gets `thinking: {"type": "disabled"}`,
+  Claude Sonnet 5.5 `{"type": "between_tools"}` (the only off shape it accepts;
+  any other model rejects it), each with `output_config.effort` — `low` by
+  default, a caller may pass `effort` (the plan sends `medium`,
+  `plan.PLAN_EFFORT`). An OpenAI gpt-5 / gpt-6 reasoning model whose LiteLLM map
+  entry supports it (gpt-6-luna) gets `reasoning_effort="none"`. Only the answer's
+  text blocks are read (`message.content`), never thinking blocks.
+- **Sampling.** `temperature` / `top_p` / `top_k` are dropped, with a warning, for a
+  model that rejects them — by LiteLLM's own predicates on the effort the request
+  carries: an Anthropic model whose map says `supports_sampling_params: false`
+  (the 5.5 models), a gpt-5 / gpt-6 model unless its effort resolves to `none`
+  (gpt-6-luna at `none` keeps it). `temperature=1` always passes.
+- **No assistant prefill.** A request whose last message is the assistant's raises
+  `AssistantPrefillError` before LiteLLM (a programming error — the 5.x models
+  reject prefill; a reply format belongs in `response_format`). None exists today.
+
+Haiku 4.5, Sonnet 4.6, gpt-4o-mini and gpt-4o match none of these rules: their
+requests are byte-identical to the pre-4.0b ones. `llm_model_rules` also registers
+a Haiku 5.5 entry in LiteLLM's model map when the loaded map lacks one (1.105.0's
+bundled map does): LiteLLM keys the thinking / effort mapping, the sampling gate
+and `completion_cost` on it.
 
 ### Errors
 
@@ -494,8 +524,9 @@ Langfuse generation always name the model that actually answered.
 | --- | --- |
 | Timeout, 429, 5xx, connection error, empty reply | Retry (the stage's `max_retries` budget) |
 | Connection error / LiteLLM `Timeout` in under 1 s (a dropped pooled connection — the request never reached the model) | Re-sent at once, once per call, outside the retry budget |
-| 400 / 401 / 403 / 404 / 422, programming errors | Raise on first occurrence — another attempt cannot fix them |
+| 400 / 401 / 403 / 404 / 422, programming errors (`AssistantPrefillError` included) | Raise on first occurrence — another attempt cannot fix them |
 | The same, on a **fallback** attempt (e.g. the fallback provider's key is missing) | The call ends with `None` like any other failed attempt — the last resort never turns a recoverable stage failure into a crash |
+| Refusal (HTTP 200, the model declined) | Asked once of the previous model inside the same attempt; no answer → `LLMRefusalError` ends the call — no retry, no cross-provider fallback ([Refusals](#refusals)) |
 
 Order per call: attempt 1 → (same-model retries: provider `retry-after-ms` /
 `retry-after` header, capped at 20 s, else a linear backoff 1 s, 2 s, …) → the
@@ -518,12 +549,62 @@ fallback provider's default model for the remaining attempts
 (`max_retries` 1 or 2 → primary, primary, fallback; 3 → primary, primary,
 fallback, fallback; 0 → a single attempt). Fast-model calls never fall back, and
 a fallback on the primary's own provider is ignored. A fallback attempt is tagged
-`fallbackFrom` in the span metadata and counted in `pipeline.timing`.
+`fallbackFrom` in the span metadata and counted in `pipeline.timing`
+(`counts.fallbacks`).
 
 When every attempt fails the wrapper returns `None` and the stage takes its own
 fallback (fallback plan, no memory, metadata tier, …); the parallel batch
-extractor alone asks for the last rate-limit error to be re-raised so it can
-re-run that batch sequentially.
+extractor alone asks for the last rate-limit error to be re-raised
+(`propagate_rate_limit`) so it can re-run that batch sequentially — never when
+the call ended on a refusal, which would send it back to the model that refused.
+
+### Refusals
+
+A refusal is an HTTP 200 whose answer the model declined: Anthropic
+`stop_reason: "refusal"` (LiteLLM: `finish_reason="content_filter"`), OpenAI's
+non-streamed `message.refusal`, or any provider's `content_filter` finish
+(`llm_common.refusal.refusal_of`). In `LLMProvider._run_completion`:
+
+1. The declined answer is recorded (a `pipeline.timing` `llmFailures` row
+   `error: "Refusal"` with its tokens and cost, a Langfuse generation with
+   `refusal: true`, a warning log).
+2. The **same call** is asked once of the refused model's previous model
+   (`config.PREVIOUS_MODEL`: `claude-sonnet-5-5` → `claude-sonnet-4-6`,
+   `claude-haiku-5-5` → `claude-haiku-4-5-20251001`, `gpt-6-luna` →
+   `gpt-4o-mini`), shaped by that model's own request rules, within the same
+   attempt and the call's deadline (`call_deadline` — see below for the stages
+   it does not cover). Never chained, never back to the refused
+   model. Its answer is the call's answer (`fallbackUsed`, `refusedModel` in
+   `pipeline.timing`; `fallback_from` in `llm_usage`).
+3. No previous model configured (every model but those three — Haiku 4.5,
+   Sonnet 4.6, gpt-4o-mini, gpt-4o, Gemini), the previous model refuses too, its
+   request errors, or the call's deadline passes during the re-send
+   (`llm_call.call_deadline` turns that timeout into the refusal) →
+   `LLMRefusalError(model, category)`.
+
+`call_deadline` bounds only calls made through `LLMService.call_llm` /
+`call_llm_fast` (`llm.py`). A stage cap that sits outside it — frame vision's
+`asyncio.wait_for` (`frame_analyzer._send_batch`) and the description analysis'
+30 s total cap (`description_analyzer._request_analysis`) — cancels a re-send in
+flight as a plain timeout: it is recorded under the refused model, without
+`refusedModel`, and the stage treats it as its own timeout.
+
+`LLMRefusalError` is not transient: `call_llm_with_retry` ends the call there —
+no same-model retry, no cross-provider fallback — and returns `None` (the stage's
+own fallback), or raises it when the caller passes `propagate_refusal=True`. The
+split extraction's warm-up call (each chunk's text1) is the one caller that does:
+a refused warm-up releases the waiting groups and counts as failed instead of
+taking the extra call a broken stream gets. Frame vision counts the batch as
+failed (not retried).
+
+Not detectable today: an OpenAI refusal on a **streamed** call (LiteLLM 1.105.0
+drops the refusal deltas, so it reads as an empty answer and is retried on the
+same model). Under the default config no pipeline OpenAI call streams — the one
+streamed call, the split extraction's warm-up, goes to Anthropic; but
+`on_first_chunk` streams every attempt, so with `LLM_FALLBACK_PROVIDER=openai`
+the warm-up's cross-provider fallback attempt streams on `gpt-4o`. Refused attempts are billed and
+priced: they count in `pipeline.timing.costUsd` and in the per-user daily cap
+(their `llm_usage` rows are `success: true`).
 
 ---
 

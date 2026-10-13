@@ -24,29 +24,31 @@ To run **without** Langfuse: leave the keys blank. The pipeline behaves identica
 
 ## Trace structure
 
-One pipeline run = one trace named `pipeline:{videoSummaryId}`, tagged with `youtubeId`, `videoSummaryId`, and `requestId` (when present). Each LLM call attaches as a child generation with `usage` (input/output/total/cost) and `metadata` (attempt, useFastModel, modelOverride, latencyMs). Whisper/Gemini transcription bypasses LiteLLM, so it emits its own `transcription:<provider>` generation (and `llm_usage` row) via `services/summarizer/src/services/transcription/usage.py` — Whisper carries `audioSeconds` in metadata (duration-priced), Gemini carries token counts; see [llm-cost-model.md](./llm-cost-model.md#transcription-cost-tracking).
+One pipeline run = one trace named `pipeline:{videoSummaryId}`, tagged with `youtubeId`, `videoSummaryId`, and `requestId` (when present). Each LLM call attaches as a child generation with `usage` (input/output/total/cost), `modelParameters` (what the request actually sent after the model's request rules — `temperature`, `reasoning_effort`, the `thinking` type, `effort`; `llm_call.model_parameters`) and `metadata` (attempt, useFastModel, modelOverride, latencyMs). Models below are the `config.py` / compose defaults (4.0d, `dev/active/pipeline-1min/gates/g4-model-ab.md`); "fast tier" = gpt-4o-mini with `LLM_FAST_PROVIDER=openai` (both `.env` templates and prod), Haiku 4.5 by default. Whisper/Gemini transcription bypasses LiteLLM, so it emits its own `transcription:<provider>` generation (and `llm_usage` row) via `services/summarizer/src/services/transcription/usage.py` — Whisper carries `audioSeconds` in metadata (duration-priced), Gemini carries token counts; see [llm-cost-model.md](./llm-cost-model.md#transcription-cost-tracking).
 
 ```
 Trace: pipeline:{videoSummaryId}
 ├── generation: transcription:openai  model=whisper-1         audioSeconds cost  (audio-fallback only)
 ├── generation: transcription:google  model=gemini-…          tokens   cost      (audio-fallback only)
-├── generation: description_analysis  model=fast tier
+├── generation: description_analysis  model=gpt-6-luna        (LLM_DESCRIPTION_MODEL; reasoning off)
 ├── generation: tier_probe            model=haiku-4.5         (LLM_CLASSIFIER_MODEL)
-├── generation: plan                  model=sonnet            tokens   cost  latency
-├── generation: memory                model=LLM_EXTRACTION_MODEL (∥ plan)
-├── generation: frame_vision          model=sonnet            (1-5 batches; none on LOW tier / manifest hit)
+├── generation: plan                  model=sonnet-5.5        (the primary model, effort medium) tokens  cost  latency
+├── generation: memory                model=haiku-4.5         (LLM_EXTRACTION_MODEL; ∥ plan)
+├── generation: frame_vision          model=sonnet-5.5        (LLM_VISION_MODEL; 1-5 batches; none on LOW tier / manifest hit)
 ├── generation: chapter_detect        model=fast tier         (long videos past one batch, without listed chapters, description timestamps or a usable memory outline)
-├── generation: extraction_text1      model=LLM_EXTRACTION_MODEL  the split path's warm-up group call: streamed, `ttftMs` in pipeline.timing
+├── generation: extraction_text1      model=haiku-4.5         (LLM_EXTRACTION_MODEL) the split path's warm-up group call: streamed, `ttftMs` in pipeline.timing
 ├── generation: extraction_text2…N    (released on text1's first chunk; ≤ 5 text groups)
 ├── generation: extraction_visual     (fired at frames-done; absent when no tab needs it)
 │   └── (long videos: the same names + `_c<k>` for chunk k ≥ 1, e.g. `extraction_text1_c1`;
 │        ledger feature `summarize:extraction:<group>`. EXTRACTION_PARALLEL=false: one `extraction`
 │        generation, or one `extraction_batchN` per chapter batch + `_seq` for the rate-limited second pass)
 ├── generation: synthesis             model=fast tier
-├── generation: enrichment            model=fast tier         (the quiz; only for a plan with a quiz host)
+├── generation: enrichment            model=gpt-4o-mini       (LLM_ENRICHMENT_MODEL; the quiz; only for a plan with a quiz host)
 ├── generation: faithfulness          model=fast tier         (judge calls, ≤ 6 sampled claims, background)
-├── generation: translation_full      (non-English video: the output, in batches) + translation_title
-├── generation: rag_translation       (non-English caption / S3 / Gemini transcript → English for Qdrant)
+├── generation: translation_full      model=gpt-6-luna        (LLM_TRANSLATION_MODEL; non-English video: the output, in batches) + translation_title
+├── generation: rag_translation       model=gpt-6-luna        (LLM_TRANSLATION_MODEL; non-English caption / S3 / Gemini transcript → English for Qdrant)
+├── generation: <span> (refused)      a declined answer: metadata refusal=true, refusalCategory; the previous model's
+│                                     answer follows under the same span with refusedModel + refusalCategory
 ├── span: phase:<name>                one per `pipeline.timing.phases` entry, real start/end (run_timing._log_phase_spans)
 ├── score: faithfulness               0.0–1.0  (sampled, see below)
 └── (assembly itself makes no LLM call — pure code; synthesis, the quiz and moment fill run inside its `phase:assembly` wall)
@@ -67,14 +69,26 @@ In the Langfuse UI:
 - **Top of trace**: total cost, total latency, model mix, tags — open this first when triaging. Trace-level `cacheHit` metadata distinguishes Redis-served fast-path runs from full pipeline runs. Full runs also carry `transcriptSource`, `transcriptType`, `transcriptAttempted`, and `transcriptOutcome` (set by the runner right after the transcript phase, for failed runs too), so traces can be filtered by which transcript layer won and why paid ASR ran.
 - **Generations panel**: the per-stage breakdown. Sort by latency or cost to find the bottleneck.
 - **Input / Output panels** of a generation: the actual prompt and response, after redaction (emails, phone-shaped runs, plus a short allowlist of token formats — see below) and truncation (50KB cap with `[TRUNCATED]` marker; original length is not encoded, on purpose).
-- **Metadata**: `attempt`, `useFastModel`, `modelOverride`, `finishReason`, `latencyMs`. `attempt>1` means a retry fired. `promptVersions` maps prompt name → registry version for every prompt that was loaded inside the trace.
+- **Metadata**: `attempt`, `useFastModel`, `modelOverride`, `finishReason`, `latencyMs`. `attempt>1` means a retry fired; `fallbackFrom` marks the cross-provider fallback; `refusal: true` marks a declined answer and `refusedModel` the previous model's answer for it (below). `promptVersions` maps prompt name → registry version for every prompt that was loaded inside the trace.
 - **Scores**: faithfulness score plus comment "N/M grounded". Below 0.7 = quality regression suspect.
 
 ### Prompt cache
 
 - **Langfuse**: an Anthropic generation that wrote or read the prompt cache carries `cacheCreationTokens` / `cacheReadTokens` (and `cacheHit=true` on a read) in its metadata.
-- **`pipeline.timing.llmCalls[]`** (Mongo, timing schema version 3): per call `cacheReadTokens` (Anthropic reads, or OpenAI's automatically cached input), `cacheWriteTokens`, and its lifetime split `cacheWrite1hTokens` / `cacheWrite5mTokens`; `inputTokens` is the whole prompt, cached part included; `ttftMs` = ms to the first streamed chunk (only the split extraction's warm-up call, `extraction_text1`, is streamed; null otherwise).
-- **Per call type**: `python scripts/cache_hit_rate.py [--days N | --ids …]` aggregates those rows by span and provider — hit rate = reads ÷ (reads + writes) for Anthropic, cached share of input for OpenAI. Gate reports carry it from gate 2 on; the plan's static half is cached for 1 hour (pipeline-1min 2.0). Layout, prices and the 1h-vs-5m rule: [llm-cost-model.md](./llm-cost-model.md#where-cache_control-is-set).
+- **`pipeline.timing.llmCalls[]`** (Mongo, timing schema version 4): per call `cacheReadTokens` (Anthropic reads, or OpenAI's automatically cached input), `cacheWriteTokens`, and its lifetime split `cacheWrite1hTokens` / `cacheWrite5mTokens`; `inputTokens` is the whole prompt, cached part included; `ttftMs` = ms to the first streamed chunk (only the split extraction's warm-up call, `extraction_text1`, is streamed; null otherwise).
+- **Per call type**: `python scripts/cache_hit_rate.py [--days N | --ids …]` aggregates those rows by span and provider — and, from timing version 4, the refused calls' `llmFailures` rows (billed, cache tokens included) — hit rate = reads ÷ (reads + writes) for Anthropic, cached share of input for OpenAI. Gate reports carry it from gate 2 on; the plan's static half is cached for 1 hour (pipeline-1min 2.0). Layout, prices and the 1h-vs-5m rule: [llm-cost-model.md](./llm-cost-model.md#where-cache_control-is-set).
+
+### Refusals (pipeline-1min 4.0b)
+
+A refusal is an HTTP 200 whose answer the model declined (`llm_common.refusal.refusal_of`: Anthropic `stop_reason: "refusal"` arrives as `finish_reason="content_filter"`; OpenAI's non-streamed `message.refusal`; any provider's `content_filter`). The call is asked once more on the refused model's previous model (`config.PREVIOUS_MODEL`) and never again on the refused one ([ERROR-HANDLING.md](./ERROR-HANDLING.md#refusals)). Where it shows:
+
+- **Langfuse**: the declined answer's generation (`refusal: true`, `refusalCategory`), then the previous model's under the same span (`refusedModel`, `refusalCategory`); a warning log `<model> refused (span=…, category=…)`.
+- **`pipeline.timing`** (version 4): the declined answer is an `llmFailures` row `error: "Refusal"` with its tokens, cache tokens and `costUsd` (counted in the run's `costUsd`); every row of the re-send carries `refusedModel` (but see the stage caps below); `counts.refusals` / `refusalFallbacks` / `refusalsUnanswered` ([DATA-MODELS.md](./DATA-MODELS.md)).
+- **`llm_usage`**: `refusal: true` (+ `refusal_category`) on the declined answer's row, `fallback_from` = the refused model on the re-send's row ([llm-cost-model.md](./llm-cost-model.md#schema)). Both rows are `success: true` and priced.
+
+`refusalCategory` / `refusal_category` stay null on LiteLLM 1.105.0: its chat path drops Anthropic's `stop_details`, and OpenAI sends no category. A streamed OpenAI refusal cannot be told from an empty answer through LiteLLM (its refusal deltas are dropped). Under the default config no pipeline OpenAI call streams — only the split extraction's warm-up streams, on Anthropic; with `LLM_FALLBACK_PROVIDER=openai` its cross-provider fallback attempt streams on gpt-4o (`on_first_chunk` streams every attempt).
+
+The re-send rows carry `refusedModel` only under `call_deadline` (`LLMService.call_llm` / `call_llm_fast`). Frame vision's `asyncio.wait_for` and the description analysis' 30 s cap sit outside it: a re-send they cancel is recorded as a plain `TimeoutError` under the refused model, without `refusedModel`.
 
 ## Prompt registry
 
@@ -122,9 +136,9 @@ python3 scripts/register_prompts.py --commit
 
 ## Faithfulness judge
 
-After extraction completes, a fire-and-forget task samples 20% of extracted items (capped at 6 per video, deterministic by `youtubeId`) and asks a Haiku-tier LLM "is this claim supported by the transcript?" — the excerpt may end with the rendered `<visual_annotations>` block, so on-screen facts count as support (frame text no longer sits in the transcript). The aggregate `grounded / total` ratio is logged as a Langfuse score named `faithfulness`.
+After extraction completes, a fire-and-forget task samples 20% of extracted items (capped at 6 per video, deterministic by `youtubeId`) and asks the fast-tier model (gpt-4o-mini with `LLM_FAST_PROVIDER=openai`, else Haiku 4.5; the judge has no stage setting) "is this claim supported by the transcript?" — the excerpt may end with the rendered `<visual_annotations>` block, so on-screen facts count as support (frame text no longer sits in the transcript). The aggregate `grounded / total` ratio is logged as a Langfuse score named `faithfulness`.
 
-The check is **informational only** — it never blocks the pipeline or fails a video. Use the Langfuse dashboards to track drift over time. A run below 0.7 is logged at warning level but otherwise ignored.
+The check is **informational only** — it never blocks the pipeline or fails a video. Use the Langfuse dashboards to track drift over time. A run below 0.7 is logged at warning level but otherwise ignored. The judge model is part of the score: in the 4.0d model A/B gpt-6-luna graded 0.44 of the same 18 claims grounded vs gpt-4o-mini's 0.89 (8 flipped, never the reverse — `dev/active/pipeline-1min/gates/g4-model-ab.md`), so it stays on gpt-4o-mini and a judge change needs a re-baselined golden.
 
 **Claim-localized context (not a head slice).** Transcripts within the 80K-char judged-context budget pass through whole. Longer transcripts are split into ~4K-char windows; per claim, the top BM25-style (IDF-weighted lexical overlap) windows are packed into the budget in document order with gaps marked, plus immediate neighbors of scoring windows. A claim from hour 3 of a long video is therefore judged against hour-3 text — the old fixed 80K-char head slice mis-verdicted tail claims of 3h+ videos as hallucinations. Falls back to the head slice only when a claim shares zero vocabulary with the transcript. See `_select_claim_context` in `faithfulness.py`; regression tests in `tests/test_faithfulness.py` include a synthetic tail-claim case past the 80K boundary.
 
@@ -134,7 +148,7 @@ The check is **informational only** — it never blocks the pipeline or fails a 
 cd services/summarizer && LIVE_EVAL=1 .venv/bin/python -m pytest -q tests/test_faithfulness_live_eval.py -s
 ```
 
-(~20 Haiku calls ≈ $0.02; the fixture's structural checks run in the normal suite for free.)
+(~20 calls on the environment's fast tier — ≈ $0.02 on Haiku 4.5 in 2026-07; the fixture's structural checks run in the normal suite for free.)
 
 Tuning:
 
