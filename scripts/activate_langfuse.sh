@@ -130,9 +130,9 @@ cat <<EOF
 
 Next steps (do these in the Langfuse UI at $HOST_VALUE):
 
-  1. Open the Prompts tab → confirm ~14 entries appeared
-     (summarizer:plan, summarizer:base_extraction, summarizer:enrich:enrich_*,
-      summarizer:detection:language_detect, assistant:rag_system).
+  1. Open the Prompts tab → confirm 45 entries appeared
+     (summarizer:plan, summarizer:schema:food, summarizer:enrich_quiz,
+      assistant:rag_header).
 
   2. Process one short test video at http://localhost:5173 → Generate.
      Open the Traces tab → expect ONE trace with nested spans for:

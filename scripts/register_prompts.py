@@ -6,9 +6,9 @@ Walks the summarizer's `prompts/` tree plus the assistant's
 
     summarizer:base_extraction
     summarizer:schema:food
-    summarizer:enrich:enrich_study
-    summarizer:detection:language_detect
-    assistant:rag_system
+    summarizer:example:food
+    summarizer:enrich_quiz
+    assistant:rag_header
 
 Idempotency strategy
 --------------------
@@ -68,9 +68,7 @@ PROMPT_ROOTS: dict[str, Path] = {
 
 _SUBDIR_LABEL: dict[str, str] = {
     "schemas": "schema",
-    "enrich": "enrich",
     "examples": "example",
-    "detection": "detection",
 }
 
 # Defensive guardrails to keep accidental files (renamed .env, secrets,

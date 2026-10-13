@@ -209,6 +209,18 @@ class TestPlanChunks:
 
         detect.assert_awaited_once()
 
+    async def test_should_hand_the_chapter_chain_the_videos_description(self) -> None:
+        ctx = _ctx(outline=False)
+        assert ctx.video_data is not None
+        ctx.video_data.description = "0:00 Intro\n30:00 Deep dive"
+        split = AsyncMock(return_value=[])
+
+        with patch.object(transcript_chunker, "split_transcript_into_chapters", split):
+            await plan_chunks(ctx)
+
+        video_data = split.await_args.kwargs["video_data"]
+        assert video_data["description"] == "0:00 Intro\n30:00 Deep dive"
+
     async def test_should_cut_on_the_creators_chapters_ahead_of_the_outline(self) -> None:
         creator = [Chapter(s, s + 1800, f"Creator {s // 1800 + 1}") for s in range(0, 5400, 1800)]
 

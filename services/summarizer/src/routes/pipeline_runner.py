@@ -61,7 +61,7 @@ def _persist_cache_hit(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Main Streaming Generator (Triage-Driven Pipeline)
+# Main Streaming Generator
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -72,7 +72,12 @@ async def stream_summarization(
     llm_service: LLMService,
     force_refresh: bool = False,
 ) -> AsyncGenerator[str, None]:
-    """Triage-driven pipeline: Triage -> Extract -> Enrich -> Synthesize (4-7 LLM calls).
+    """One pipeline run: metadata -> text branch (transcript -> tier probe -> plan ∥
+    memory) ∥ frames [∥ field groups] -> extraction -> quiz ∥ synthesis -> assembly ->
+    translation (non-English sources); the phases run in
+    :mod:`src.routes.pipeline_orchestration`. The extraction call count varies per video:
+    field groups × transcript chunks, or one call per batch with
+    ``EXTRACTION_PARALLEL=false``.
 
     ``force_refresh=True`` skips the response_cache fast path so a fresh run
     always executes — used by the dev-tools override flow that wants to

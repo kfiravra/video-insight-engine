@@ -334,7 +334,6 @@ def _dedupe_refined_frames(frames: list[dict]) -> list[dict]:
 async def extract_scene_keyframes(
     video_id: str,
     scene_threshold: float | None = None,
-    max_frames: int | None = None,
     duration_seconds: int | None = None,
     overselect_count: int | None = None,
     reselect_hook: ReselectHook | None = None,
@@ -351,7 +350,6 @@ async def extract_scene_keyframes(
     Args:
         video_id: YouTube video ID.
         scene_threshold: FFmpeg scene change threshold (0.0-1.0).
-        max_frames: Maximum frames to extract from FFmpeg. Default from settings.
         duration_seconds: Video duration in seconds.
         hires_video: The run's 720p file; refined from and left open for
             moment fill (the run closes it). Started here if nothing has.

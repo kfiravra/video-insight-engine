@@ -38,7 +38,6 @@ export interface VideoContext {
   youtubeCategory: string;    // Raw YouTube category
   tags: string[];
   displayTags: string[];
-  categoryConfidence?: number; // Detection confidence (0.0-1.0), used internally
 }
 
 // ─────────────────────────────────────────────────────

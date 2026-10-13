@@ -3,8 +3,9 @@
 Generation is English-canonical, so the assembled tabs/meta are already the
 English primary. This phase calls ``translate_to_source`` which walks that
 English output, translates every translatable prose string into the detected
-source language (batched Haiku calls), and returns the unchanged English dict
-with the translated artifact nested under ``sourceLanguage``. On any failure
+source language (batched calls on the translation stage's model), and returns
+the unchanged English dict with the translated artifact nested under
+``sourceLanguage``. On any failure
 (LLM error, mirror, length mismatch) the returned dict has no ``sourceLanguage``
 key and the phase no-ops — the FE then simply renders no language toggle.
 """

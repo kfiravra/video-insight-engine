@@ -338,27 +338,16 @@ describe('stream-event-processor — Pipeline events', () => {
       expect(mockSetState.getState().enrichment).toEqual({ quiz });
     });
 
-    it('should update enrichment with flashcards data', () => {
-      const flashcards = [{ front: 'What is JSX?', back: 'A syntax extension for JavaScript' }];
-
-      processEvent({ event: 'enrichment_complete', flashcards }, mockSetState.setState);
-      expect(mockSetState.getState().enrichment).toEqual({ flashcards });
-    });
-
-    it('should update enrichment with cheatSheet data', () => {
-      const cheatSheet = [{ title: 'useState', code: 'const [x, setX] = useState(0)', description: 'State hook' }];
-
-      processEvent({ event: 'enrichment_complete', cheatSheet }, mockSetState.setState);
-      expect(mockSetState.getState().enrichment).toEqual({ cheatSheet });
-    });
-
-    it('should handle all enrichment fields together', () => {
+    it('should keep only the quiz when the event carries retired enrichment keys', () => {
       const quiz = [{ question: 'Q?', options: ['A', 'B'], correctIndex: 0, explanation: 'E' }];
-      const flashcards = [{ front: 'F', back: 'B' }];
-      const cheatSheet = [{ title: 'T', code: 'C', description: 'D' }];
+      const retired = {
+        flashcards: [{ front: 'F', back: 'B' }],
+        cheatSheet: [{ title: 'T', code: 'C', description: 'D' }],
+        scenarios: [{ scenario: 'S', options: [] }],
+      };
 
-      processEvent({ event: 'enrichment_complete', quiz, flashcards, cheatSheet }, mockSetState.setState);
-      expect(mockSetState.getState().enrichment).toEqual({ quiz, flashcards, cheatSheet });
+      processEvent({ event: 'enrichment_complete', quiz, ...retired }, mockSetState.setState);
+      expect(mockSetState.getState().enrichment).toEqual({ quiz });
     });
 
     it('should produce empty enrichment when no arrays are provided', () => {
@@ -367,14 +356,9 @@ describe('stream-event-processor — Pipeline events', () => {
     });
 
     it('should ignore non-array quiz field', () => {
-      processEvent(
-        { event: 'enrichment_complete', quiz: 'not an array', flashcards: [{ front: 'A', back: 'B' }] },
-        mockSetState.setState,
-      );
+      processEvent({ event: 'enrichment_complete', quiz: 'not an array' }, mockSetState.setState);
 
-      const state = mockSetState.getState();
-      expect(state.enrichment?.quiz).toBeUndefined();
-      expect(state.enrichment?.flashcards).toHaveLength(1);
+      expect(mockSetState.getState().enrichment?.quiz).toBeUndefined();
     });
   });
 

@@ -246,7 +246,7 @@ LLM_FALLBACK_PROVIDER=          # Optional: cross-provider fallback after one sa
 # Provider API Keys (set for providers you use)
 ANTHROPIC_API_KEY=sk-ant-api03-xxxxxxxxxxxxx
 OPENAI_API_KEY=                 # Required if using OpenAI
-GOOGLE_API_KEY=                 # Required if using Gemini
+GEMINI_API_KEY=                 # Required if using Gemini
 
 # ────────────────────────────────────────────────────
 # JWT Authentication
@@ -305,38 +305,31 @@ ADMIN_API_KEY=change-this-admin-key
 
 > This block is a condensed copy — **`.env.example` at the repo root is authoritative** and carries the full commented list (Sentry, eval account, tuning knobs).
 
-### Frame pipeline & summarizer tuning (2026-08)
+### Summarizer settings passed through compose
 
-New/changed vars introduced by the yt-dlp-403 fix and the two-pass frame pipeline. All are passed through the compose `x-summarizer-env` block (both `docker-compose.yml` and `docker-compose.prod.yml`):
+`vie-summarizer` and `vie-summarizer-worker` get their environment from the `x-summarizer-env` anchor of each compose file (`docker-compose.yml` on dev, `docker-compose.prod.yml` on the server) plus a few service-level lines. **Only what is listed here reaches the containers**: a `config.py` setting without a compose line keeps its code default however `.env` sets it (list after the tables). Each passthrough is `${VAR:-default}`; the Default column is that compose default — "dev / prod" when the two files differ, *required* = `${VAR:?}` (compose refuses to start without it), "prod only" = dev compose does not pass it (the container keeps the `config.py` default). Booleans carry literal defaults: a blank boolean fails settings validation and crash-loops the container. `tests/test_config.py` checks the compose defaults of the tuning settings against `config.py`.
+
+**LLM providers and models**
 
 | Var | Default | Purpose |
 |-----|---------|---------|
-| `YTDLP_PLAYER_CLIENTS` | `android` | yt-dlp player clients for pass-1 video and all audio downloads (the 720p download uses `YTDLP_HIRES_PLAYER_CLIENTS`). YouTube 403s the web client's URLs from some environments. **Never mix in `default`** — a merged format list lets bestvideo pick a 403ing web DASH format. Metadata/subtitle extraction deliberately doesn't use it. |
-| `SCENE_HIRES_ENABLED` | `true` | Pass-2 720p refinement of selected frames |
-| `YTDLP_HIRES_PLAYER_CLIENTS` | `web_embedded,android` | Player clients for the run's one local 720p download only (hi-res frames + moment fill). `android` alone caps at 640×360; measured 2026-10-06 with real downloads, `web_embedded`/`tv_embedded` get 720p. A failed download retries once with `YTDLP_PLAYER_CLIENTS` |
-| `SCENE_S3_PREFIX` | `scenes-v4` | Versioned frame-cache prefix — bump to invalidate the S3 frame cache |
-| `SCENE_HIRES_FALLBACK_TIMEOUT` | `180` | Seek budget (s) for the hi-res frames in the run's one local ≤720p download |
-| `YOUTUBE_PROXY_URL` | — | Proxy for every YouTube request (`http://user:pass@host:port`). Every run downloads one ≤720p file (through the proxy when set); hi-res frames and moment fills seek it — there are no stream-URL seeks |
-| `YOUTUBE_PROXY_EXIT_COUNT` | `1` | Sticky exits behind the proxy gateway (Webshare `USERNAME-1…N`). >1 lets a 429 or YouTube's "Sign in to confirm you're not a bot" check move to the next exit (at most 3) on every proxied call — metadata, timedtext and caption fetches, the low-res/720p/audio downloads, playlist lookups — and lets a caption 429 retry there before the 15-min caption marker is written. The exit that last worked starts the next rotation (per process). Set it to the plan's exit count, or one blocked exit takes the service down |
-| `FRAME_TIER_ENABLED` | `true` | Adaptive visual tiers (high/standard/low from `domains.json` `visualCriticality`) |
-| `PROMPT_SOURCE` | `registry` | Where prompt templates load from: `registry` (the Langfuse `production` label wins over the local `.txt` whenever keys are set) or `disk` (always the local `.txt`, re-read on every call — dev-only, for prompt edits without re-registering or restarting; honoured only when `ENVIRONMENT` is `""`/`development`/`dev`/`test`/`local`, ignored otherwise; traces carry no `promptVersions`) |
-| `TRANSCRIPT_CLEANING_ENABLED` | `false` | spaCy + TF-IDF pass over the stored transcript text (Qdrant chunks, faithfulness, S3 blob). No prompt reads that text (prompts render `[m:ss]` segments), so it is off by default — it only added wall time before `transcript_ready` |
-| `TRANSCRIPT_CLEANING_TIMEOUT` | `30` | Budget (s) for that pass; the first call per process pays the spaCy cold start |
-| `HF_TOKEN` | empty | Optional Hugging Face Hub token for SentenceTransformer pulls |
-| `S3_PRESIGNED_URL_EXPIRY` | `21600` (was 3600) | Must stay ≥ api `FRAME_URL_TTL_SECONDS` |
-| `EVAL_USER_EMAIL` / `EVAL_USER_PASSWORD` | `eval@vie.local` / none | Eval-runner local account — auto-registered on first run; no default password by design (also a CI secret) |
-| `SENTRY_DSN` / `SENTRY_ENVIRONMENT` / `SENTRY_RELEASE` | empty | Optional Sentry error reporting (see [OBSERVABILITY.md](./OBSERVABILITY.md)) |
-| `VITE_SENTRY_DSN` / `VITE_SENTRY_RELEASE` | empty | Browser Sentry — compose **build args**, baked into the web bundle (rebuild `vie-web` after changing) |
-| `ALERT_WEBHOOK_URL` | empty | Every `llm_alerts` row is also POSTed here as JSON (Slack/Discord/ntfy). Empty = Mongo-only, nothing pushes |
-| `ALERT_COST_THRESHOLD_USD` | `0.50` | Per-call `high_cost_call` alert threshold (`llm_common/callback.py`) |
-| `QDRANT_URL` (vie-admin) | `http://vie-qdrant:6333` | Admin health poller's Qdrant `/readyz` probe |
-| `BACKUP_KEEP` / `BACKUP_MAX_AGE_HOURS` | `14` / `26` | Backups retained by `scripts/backup.sh` / the `vie-backup-cron` sidecar; age past which vie-admin's `backup_stale` dead-man's switch trips |
-| `STALL_SWEEP_ENABLED` / `STALL_SWEEP_INTERVAL_SECONDS` / `STALL_THRESHOLD_MINUTES` | `true` / `300` / `30` | Summarizer stall sweeper — fails `processing` rows with no progress + no live producer lock, alerts `pipeline_stalled` |
-| `WORKER_RETRY_BACKOFF_SECONDS` | `5` | Worker retry delay, doubled per attempt (5 → 10 → 20 s), capped at 120 s (worker service env, not `x-summarizer-env`) |
+| `LLM_PROVIDER` | `anthropic` | Primary provider (`anthropic` / `openai` / `gemini`); its default model (`MODEL_MAP` in `config.py`) is the primary model |
+| `LLM_FAST_PROVIDER` | blank | Provider of the fast tier; blank = `LLM_PROVIDER` |
+| `LLM_FALLBACK_PROVIDER` | blank | Cross-provider fallback for primary-model calls after one same-provider retry (`call_llm_with_retry`): that provider's default model. Fast-tier calls never fall back; blank = none |
+| `LLM_MODEL` | blank | Primary-model override; blank = `LLM_PROVIDER`'s default model |
+| `LLM_FAST_MODEL` | blank | Fast-tier override; blank = the fast provider's fast model |
+| `LLM_TIMEOUT_SECONDS` | `60.0` | Per-call timeout for calls that set none themselves |
+| `LLM_MAX_TOKENS` / `LLM_FAST_MAX_TOKENS` | `4096` / `2048` | Dead — no reader (call sites and the LLM service use their own `max_tokens`); removed in pipeline-1min 4.0d |
+| `LLM_EXTRACTION_MODEL` | blank | Every extraction call (field groups, batches) and the memory call; blank = the primary model |
+| `LLM_ENRICHMENT_MODEL` | blank | The quiz call; blank = the fast tier (the compose blank wins over `config.py`'s own default in containers) |
+| `LLM_DESCRIPTION_MODEL` | blank | Description analysis; blank = the fast tier |
+| `LLM_SYNTHESIS_MODEL` | blank | Synthesis (master summary, SEO description); blank = the fast tier |
+| `LLM_TRANSLATION_MODEL` | blank | Output and title translation, and the RAG transcript's English text; blank = the fast tier |
+| `LLM_VISION_MODEL` | blank | Vision model override; blank = the primary model (Sonnet), which vision stays on |
+| `LLM_CLASSIFIER_MODEL` | `anthropic/claude-haiku-4-5-20251001` | Tier-probe model (D21; the name predates the probe). Literal default in both anchors — a blank passthrough would route the probe to the fast tier |
+| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY` | blank | Provider keys, read by LiteLLM. `OPENAI_API_KEY` also enables the Whisper audio fallback; a `GEMINI_API_KEY` alone enables the Gemini audio fallback |
 
-### Extraction + vision concurrency (2026-10, pipeline-1min)
-
-All pass through both `x-summarizer-env` anchors with literal defaults equal to `config.py` (a blank boolean would fail settings validation and crash-loop the container). `tests/test_config.py` checks that every compose default matches its `config.py` default.
+**Extraction + vision concurrency (2026-10, pipeline-1min)**
 
 | Var | Default | Purpose |
 |-----|---------|---------|
@@ -347,8 +340,87 @@ All pass through both `x-summarizer-env` anchors with literal defaults equal to 
 | `EXTRACTION_FORCE_SPLIT_CHUNKS` | `4` | Sub-batches when a long video's chunked transcript collapses to one batch |
 | `FRAME_VISION_ENABLED` | `true` | Frame descriptions by the vision model; `false` = OCR only |
 | `FRAME_VISION_PARALLEL` | `true` | Vision in parallel batches; `false` = one call with every frame |
-| `LLM_VISION_MODEL` | blank | Vision model override; blank = the primary model (Sonnet), which vision stays on |
-| `LLM_CLASSIFIER_MODEL` | `anthropic/claude-haiku-4-5-20251001` | Tier-probe model (D21; the name predates the probe). Literal default in both anchors — a blank passthrough would route the probe to the fast tier |
+
+**Frames and YouTube downloads**
+
+| Var | Default | Purpose |
+|-----|---------|---------|
+| `SCENE_EXTRACTION_ENABLED` | `true` | Scene-based frames (detection, scoring, OCR, vision); `false` = the run has no frames |
+| `SCENE_HIRES_ENABLED` | `true` | Pass-2 720p refinement of selected frames |
+| `SCENE_HIRES_FALLBACK_TIMEOUT` | `180` | Seek budget (s) for the hi-res frames in the run's one local ≤720p download |
+| `SCENE_S3_PREFIX` | `scenes-v4` | Versioned frame-cache prefix — bump to invalidate the S3 frame cache |
+| `FRAME_TIER_ENABLED` | `true` | Adaptive visual tiers (high/standard/low from `domains.json` `visualCriticality`) |
+| `YTDLP_PLAYER_CLIENTS` | `android` | yt-dlp player clients for pass-1 video and all audio downloads (the 720p download uses `YTDLP_HIRES_PLAYER_CLIENTS`). YouTube 403s the web client's URLs from some environments. **Never mix in `default`** — a merged format list lets bestvideo pick a 403ing web DASH format. Metadata/subtitle extraction deliberately doesn't use it. |
+| `YTDLP_HIRES_PLAYER_CLIENTS` | `web_embedded,android` | Player clients for the run's one local 720p download only (hi-res frames + moment fill). `android` alone caps at 640×360; measured 2026-10-06 with real downloads, `web_embedded`/`tv_embedded` get 720p. A failed download retries once with `YTDLP_PLAYER_CLIENTS` |
+| `YOUTUBE_PROXY_URL` | — | Proxy for every YouTube request (`http://user:pass@host:port`). Every run downloads one ≤720p file (through the proxy when set); hi-res frames and moment fills seek it — there are no stream-URL seeks |
+| `YOUTUBE_PROXY_EXIT_COUNT` | `1` | Sticky exits behind the proxy gateway (Webshare `USERNAME-1…N`). >1 lets a 429 or YouTube's "Sign in to confirm you're not a bot" check move to the next exit (at most 3) on every proxied call — metadata, timedtext and caption fetches, the low-res/720p/audio downloads, playlist lookups — and lets a caption 429 retry there before the 15-min caption marker is written. The exit that last worked starts the next rotation (per process). Set it to the plan's exit count, or one blocked exit takes the service down |
+
+**Transcript**
+
+| Var | Default | Purpose |
+|-----|---------|---------|
+| `TRANSCRIPT_CLEANING_ENABLED` | `false` | spaCy + TF-IDF pass over the stored transcript text (Qdrant chunks, faithfulness, S3 blob). No prompt reads that text (prompts render `[m:ss]` segments), so it is off by default — it only added wall time before `transcript_ready` |
+| `TRANSCRIPT_CLEANING_TIMEOUT` | `30` | Budget (s) for that pass; the first call per process pays the spaCy cold start |
+| `HF_TOKEN` | empty | Optional Hugging Face Hub token for SentenceTransformer pulls |
+
+**Storage (S3)**
+
+| Var | Default | Purpose |
+|-----|---------|---------|
+| `S3_BUCKET` | `vie-transcripts` | Bucket for frames, transcripts and audio (the server template sets its own production bucket — never share it with dev) |
+| `S3_PRESIGNED_URL_EXPIRY` | `21600` (was 3600) | Must stay ≥ api `FRAME_URL_TTL_SECONDS` |
+| `AWS_REGION` | `us-east-1` / *required* | Region of `S3_BUCKET`; presigned frame URLs break when it is wrong |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | blank | Static keys, only where no instance role supplies credentials (the EC2 role does on the server) |
+| `AWS_ENDPOINT_URL` | blank | Custom S3 endpoint (LocalStack); must be browser-reachable, because the api re-signs frame URLs against it |
+
+**Observability and alerts**
+
+| Var | Default | Purpose |
+|-----|---------|---------|
+| `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | blank | Langfuse tracing and the prompt registry; tracing is off unless both are set |
+| `LANGFUSE_BASE_URL` | `https://cloud.langfuse.com` | Langfuse host |
+| `LANGFUSE_FAITHFULNESS_SAMPLE_RATE` | `0.2` | Share of extracted items the faithfulness judge checks; `0` disables the judge |
+| `LANGFUSE_USER_ID_MODE` / `LANGFUSE_USER_ID_HASH_SALT` | `identity` / `hash`; blank salt | How user ids reach traces (`identity`, `hash` = salted SHA-256, `omit`) and the salt of the hash mode |
+| `PROMPT_SOURCE` | `registry` | Where prompt templates load from: `registry` (the Langfuse `production` label wins over the local `.txt` whenever keys are set) or `disk` (always the local `.txt`, re-read on every call — dev-only, for prompt edits without re-registering or restarting; honoured only when `ENVIRONMENT` is `""`/`development`/`dev`/`test`/`local`, ignored otherwise; traces carry no `promptVersions`) |
+| `SENTRY_DSN` / `SENTRY_ENVIRONMENT` / `SENTRY_RELEASE` | empty (`SENTRY_ENVIRONMENT`: empty / `production`) | Optional Sentry error reporting (see [OBSERVABILITY.md](./OBSERVABILITY.md)) |
+| `SENTRY_TRACES_SAMPLE_RATE` | `0.1` | Share of transactions Sentry traces; `0` disables tracing (errors still report) |
+| `ALERT_WEBHOOK_URL` | empty | Every `llm_alerts` row is also POSTed here as JSON (Slack/Discord/ntfy). Empty = Mongo-only, nothing pushes |
+| `ALERT_COST_THRESHOLD_USD` | `0.50` | Per-call `high_cost_call` alert threshold (`llm_common/callback.py`) |
+
+**Runtime**
+
+| Var | Default | Purpose |
+|-----|---------|---------|
+| `PYTHONUNBUFFERED` | `"1"` (literal) | Unbuffered stdout/stderr, so logs reach `docker logs` at once |
+| `LOG_LEVEL` | `info` | Log verbosity |
+| `INTERNAL_SECRET` | dev placeholder / *required* | Shared secret for internal calls between vie-api, the summarizer, the worker and the assistant |
+| `ENVIRONMENT` | prod only: `production` | `production` arms the default-`INTERNAL_SECRET` refusal and the SSE soft-fail and keeps `PROMPT_SOURCE=disk` off; dev keeps `config.py`'s `""` (a dev name) |
+| `LOG_FORMAT` | prod only: `json` | `json` = CloudWatch-parseable logs; dev keeps `console` |
+| `API_URL` | prod only: `http://vie-api:3000` | Target of the `/internal/status` callbacks (dev keeps the same `config.py` default) |
+| `MAX_VIDEO_DURATION_MINUTES` / `WHISPER_MAX_DURATION_MINUTES` | prod only: `600` / `600` | Longest accepted video, and longest video allowed onto the paid audio fallback (the server template sets the demo's 30 / 30) |
+| `STALL_SWEEP_ENABLED` / `STALL_SWEEP_INTERVAL_SECONDS` / `STALL_THRESHOLD_MINUTES` | `true` / `300` / `30` | Summarizer stall sweeper — fails `processing` rows with no progress + no live producer lock, alerts `pipeline_stalled` |
+
+**Service-level lines (not the anchor)**
+
+| Var | Default | Purpose |
+|-----|---------|---------|
+| `MONGODB_URI` / `REDIS_URL` | literal compose URLs (prod: built from `MONGO_ROOT_*` / `REDIS_PASSWORD`) | MongoDB and Redis of the compose network |
+| `QDRANT_HOST` / `QDRANT_PORT` | `vie-qdrant` / `6333` (literal) | Qdrant for the RAG chunks |
+| `RABBITMQ_URL` (worker) | built from `RABBITMQ_DEFAULT_USER/PASS` (dev) / `RABBITMQ_USER/PASS` (prod) | Job queue the worker consumes |
+| `WORKER_CONCURRENCY` (worker) | `2` | Pipeline runs one worker process holds at once; every per-run cap multiplies by it (the env templates set `1`) |
+| `WORKER_MAX_RETRIES` (worker) | `3` | Re-publishes of a failed job before it is dead-lettered |
+| `WORKER_RETRY_BACKOFF_SECONDS` (worker) | `5` | Worker retry delay, doubled per attempt (5 → 10 → 20 s), capped at 120 s |
+
+**Not passed through — `config.py` defaults only.** Setting any of these in `.env` changes nothing in the containers until both anchors pass it: `LLM_CHAPTER_DETECT_MODEL` (chapter_detect therefore runs on the fast tier), `MIN_VIDEO_DURATION_SECONDS`, `TRANSCRIPT_FETCH_TIMEOUT`, `SPONSORBLOCK_TIMEOUT`, `MUSIC_LANGUAGE_FORCE_EN_WPS`, `CAPTION_429_NEG_TTL_SECONDS`, `WHISPER_ENABLED`, `WHISPER_CLIENT_TIMEOUT_SECONDS`, `WHISPER_MAX_RETRIES`, `WHISPER_CHUNK_CONCURRENCY`, `GEMINI_UPLOAD_TIMEOUT`, `SCENE_THRESHOLD`, `SCENE_DETECT_SCALE_WIDTH`, `SCENE_JPEG_QUALITY`, `SCENE_HIRES_CONCURRENCY`, `FRAME_VISION_MAX_FRAMES`, `FRAME_VISION_TIMEOUT`, `FRAME_OVERSELECT_COUNT`, `FRAME_RESELECT_FLOOR`, `QDRANT_ENABLED`, `EMBEDDING_MODEL_NAME`, `REDIS_ENABLED`, `REDIS_CACHE_TTL`, `PIPELINE_LOCK_TTL_SECONDS`, `PIPELINE_STREAM_TTL_SECONDS`, `PIPELINE_STREAM_MAXLEN`, `SSE_HEARTBEAT_SECONDS`, `WORKER_PREFETCH`.
+
+### Other tuning vars
+
+| Var | Default | Purpose |
+|-----|---------|---------|
+| `EVAL_USER_EMAIL` / `EVAL_USER_PASSWORD` | `eval@vie.local` / none | Eval-runner local account — auto-registered on first run; no default password by design (also a CI secret) |
+| `VITE_SENTRY_DSN` / `VITE_SENTRY_RELEASE` | empty | Browser Sentry — compose **build args**, baked into the web bundle (rebuild `vie-web` after changing) |
+| `QDRANT_URL` (vie-admin) | `http://vie-qdrant:6333` | Admin health poller's Qdrant `/readyz` probe |
+| `BACKUP_KEEP` / `BACKUP_MAX_AGE_HOURS` | `14` / `26` | Backups retained by `scripts/backup.sh` / the `vie-backup-cron` sidecar; age past which vie-admin's `backup_stale` dead-man's switch trips |
 
 ---
 

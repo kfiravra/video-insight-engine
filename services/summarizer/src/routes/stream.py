@@ -24,6 +24,8 @@ from src.models.schemas import ProcessingStatus, ProviderConfig
 from src.repositories.mongodb_repository import MongoDBVideoRepository
 from src.routes.cached_response import (
     build_frontend_response,  # noqa: F401 — re-exported for backward compat
+)
+from src.routes.cached_response import (
     stream_cached_structured as _stream_cached_structured,
 )
 from src.routes.pipeline_broker import (
@@ -68,13 +70,8 @@ async def stream_summary(
     """
     Stream video summarization via Server-Sent Events.
 
-    Triage-driven pipeline delivers content in phases:
-    1. INSTANT (~1 sec): Metadata from yt-dlp
-    2. TRANSCRIPT: Fetch and clean transcript
-    3. TRIAGE: Determine content domains and tab layout
-    4. EXTRACTION: Adaptive structured extraction (1-3 calls)
-    5. ENRICHMENT: Quiz/flashcards/cheat sheet (conditional)
-    6. SYNTHESIS: TLDR, takeaways, master summary
+    The run itself is ``stream_summarization`` (:mod:`src.routes.pipeline_runner`);
+    its phases and their order live in :mod:`src.routes.pipeline_orchestration`.
 
     Concurrency model: a Redis lock makes the first connection the
     pipeline producer; every subsequent connection (StrictMode reconnect,
@@ -139,7 +136,9 @@ async def stream_summary(
         # Surface 503 so the client knows to retry instead of silently producing
         # duplicate runs (which the broker exists to prevent).
         logger.error(
-            "Redis lock acquisition failed for %s: %s", video_summary_id, e,
+            "Redis lock acquisition failed for %s: %s",
+            video_summary_id,
+            e,
         )
         raise HTTPException(
             status_code=503,
@@ -168,11 +167,13 @@ async def stream_summary(
 
 class RegenerateRequest(BaseModel):
     """Request body for regeneration endpoint."""
+
     force: bool = False
 
 
 class RegenerateResponse(BaseModel):
     """Response for regeneration endpoint."""
+
     status: str
     video_summary_id: str
     message: str
