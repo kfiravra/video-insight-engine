@@ -31,28 +31,28 @@ The block-based content system was replaced by the composable output system (v2)
 
 # Content Tag System (v2)
 
-The triage pipeline determines content tags from video metadata and transcript manifest. Tags drive schema selection, tab layout, and enrichment.
+The plan determines content tags from the video metadata and the full transcript (steered by the tier probe's domain); reconcile corrects the tabs at plan-done. Tags drive schema selection, tab layout, the extraction field groups, and the quiz.
 
 ### 14 Primary Content Tags + 2 Modifiers
 
-Enrichment prompts come from the `domains.json` `enrichment` map (every domain has one; `enrich_recall.txt` domains get flashcards only — no quiz/scenarios).
+Enrichment is the quiz only (`enrich_quiz.txt`, pipeline-1min 1d.1): it runs for the `domains.json` `quizEnrichment.quizDomains` (learning, language, tech, science), and only when the plan has a quiz host (`enrichment.needs_quiz`); the domain sets the quiz's flavor line. The per-domain `enrich_*.txt` prompts, flashcards and scenarios are gone.
 
-| ContentTag | Domain Schema | Enrichment prompt |
-|------------|---------------|-------------------|
-| `learning` | `schemas/learning.txt` | `enrich_study.txt` |
-| `tech` | `schemas/tech.txt` | `enrich_tech.txt` |
-| `fitness` | `schemas/fitness.txt` | `enrich_fitness.txt` |
-| `food` | `schemas/food.txt` | `enrich_food.txt` |
-| `music` | `schemas/music.txt` | `enrich_music.txt` |
-| `travel` | `schemas/travel.txt` | `enrich_travel.txt` |
-| `review` | `schemas/review.txt` | `enrich_review.txt` |
-| `project` | `schemas/project.txt` | `enrich_project.txt` |
-| `language` | `schemas/language.txt` | `enrich_language.txt` |
-| `science` | `schemas/science.txt` | `enrich_science.txt` |
-| `gaming` | `schemas/gaming.txt` | `enrich_recall.txt` (flashcards only) |
-| `news` | `schemas/news.txt` | default (`enrich_study.txt`) |
-| `podcast` | `schemas/podcast.txt` | `enrich_recall.txt` (flashcards only) |
-| `sport` | `schemas/sport.txt` | default (`enrich_study.txt`) |
+| ContentTag | Domain Schema | Quiz |
+|------------|---------------|------|
+| `learning` | `schemas/learning.txt` | yes (when planned) |
+| `tech` | `schemas/tech.txt` | yes (when planned) |
+| `fitness` | `schemas/fitness.txt` | - |
+| `food` | `schemas/food.txt` | - |
+| `music` | `schemas/music.txt` | - |
+| `travel` | `schemas/travel.txt` | - |
+| `review` | `schemas/review.txt` | - |
+| `project` | `schemas/project.txt` | - |
+| `language` | `schemas/language.txt` | yes (when planned) |
+| `science` | `schemas/science.txt` | yes (when planned) |
+| `gaming` | `schemas/gaming.txt` | - |
+| `news` | `schemas/news.txt` | - |
+| `podcast` | `schemas/podcast.txt` | - |
+| `sport` | `schemas/sport.txt` | - |
 | `narrative` | `schemas/narrative.txt` | Modifier only |
 | `finance` | `schemas/finance.txt` | Modifier only |
 
@@ -135,11 +135,10 @@ interface VideoContext {
   youtubeCategory: string;     // Raw YouTube category
   tags: string[];              // Raw tags from YouTube
   displayTags: string[];       // Cleaned for UI display
-  categoryConfidence?: number; // Detection confidence
 }
 ```
 
-Category serves as a fallback when triage confidence < 0.6. The triage LLM now determines content tags directly from manifest + metadata.
+A failed plan or plan confidence < 0.6 → the category's default tabs (`plan._build_fallback_plan`; the category hint is a confident tier probe's domain, else this metadata category). The plan reads metadata + the `[m:ss]`-marked transcript.
 
 ---
 
@@ -226,7 +225,7 @@ One row per video **version** (`version`, `isLatest` below); the served row is s
     version: 3,                     // 2: the 1h/5m cache-write split on llmCalls (pipeline-1min 2.0); 3: ttftMs on llmCalls (3.4)
     startedAt: Date,
     totalMs: number,
-    phases: [{ name: string, startMs: number, endMs: number, wallMs: number }],  // metadata, transcript_frames (phase 2: text, transcript, transcript_audio = the audio re-run after the tier probe judged the captions unusable (2.5; that run also has a second tier_probe llmCall), plan, memory, frames, frames.* sub-steps incl. frames.tier_wait), visual_inject (name kept: the annotations render), extraction, split_extraction (EXTRACTION_PARALLEL: the group-extraction member of phase 2, which then also spans transcript_frames; extraction = plan-done → last group), assembly (moment_fill, synthesis, enrichment = the quiz, run inside it), translation
+    phases: [{ name: string, startMs: number, endMs: number, wallMs: number }],  // metadata, transcript_frames (phase 2: text, transcript, transcript_audio = the audio re-run after the tier probe judged the captions unusable (2.5; that run also has a second tier_probe llmCall), plan, memory, frames, frames.* sub-steps incl. frames.tier_wait), visual_inject (name kept: the annotations render), extraction, split_extraction (EXTRACTION_PARALLEL: the group-extraction member of phase 2, which then also spans transcript_frames; extraction = plan-done → last group; quiz_call = the quiz call it started once the quiz's groups landed), assembly (moment_fill, synthesis, enrichment = the quiz, run inside it), translation
     milestones: { metadataMs?, synthesisCompleteMs?, firstTabReadyMs?, firstAssembledTabMs?, completeMs?, doneMs? },  // firstTabReadyMs = first tab_ready of any kind — since 2.1 the provisional Moments tab at plan-done; firstAssembledTabMs = first non-provisional tab_ready (the first tab assembly built)
     llmCalls: [{ feature, span, model, responseModel, startMs, wallMs, inputTokens, outputTokens,
                  cacheReadTokens,     // Anthropic cache_read_input_tokens, or OpenAI cached input (prompt_tokens_details.cached_tokens; 0 for OpenAI before v2)
@@ -330,7 +329,8 @@ One row per video **version** (`version`, `isLatest` below); the served row is s
   // Domain-keyed extraction data
   output: Record<string, unknown> | null,
 
-  // Enrichment (quiz, flashcards, scenarios)
+  // Enrichment — legacy top-level copy. The pipeline writes pipeline.enrichment = {quiz}
+  // (the quiz only, when the plan demanded one; flashcards/scenarios were removed in pipeline-1min 1d.1)
   enrichment: Record<string, unknown> | null,
 
   // Synthesis (TLDR, takeaways, master summary) — written by the API relay
@@ -428,6 +428,8 @@ One row per video **version** (`version`, `isLatest` below); the served row is s
   forceRefresh: true | absent,      // bypassCache: summarizer skips its Redis response cache; $unset on save
   coldMedia: true | absent,         // POST /videos `cold` (admin/eval only): the run also skips the
                                     // S3 transcript + scene-frame caches
+  degraded: true | absent,          // top-level mirror of meta.degraded (admin run badge): a failed
+                                    // extraction group, a dropped chunked batch, or critical coverage
   pipelineVersion: string | absent, // PIPELINE_VERSION stamp of the run that saved the row; a stale
                                     // stamp re-runs on the user's next submission (and the worker
                                     // skips a queued job only when the row is completed by the
@@ -449,7 +451,7 @@ One row per video **version** (`version`, `isLatest` below); the served row is s
   rawTranscriptRef: string | null,  // S3 key "videos/{youtubeId}/transcript.json". Only set by
                                     // scripts/backfill-transcripts.py / migrate-s3-keys.py: the
                                     // assembly-phase write-back is a no-op (string _id filter,
-                                    // see summarizer-workflow.md Phase 7). Prefer the deterministic key.
+                                    // see summarizer-workflow.md §Assembly). Prefer the deterministic key.
 
   // Generation metadata (for regeneration)
   generation: {

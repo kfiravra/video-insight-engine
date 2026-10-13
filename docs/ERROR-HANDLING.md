@@ -76,7 +76,7 @@ See [docs/SECURITY.md](./SECURITY.md#rate-limiting) for implementation.
 | Code                | Message                                  | When               |
 | ------------------- | ---------------------------------------- | ------------------ |
 | `NO_TRANSCRIPT`     | No transcript available for this video   | Captions disabled  |
-| `VIDEO_TOO_LONG`    | Video exceeds maximum duration (3 hours) | > 180 minutes      |
+| `VIDEO_TOO_LONG`    | Video exceeds maximum duration           | > `MAX_VIDEO_DURATION_MINUTES` (summarizer; config default 600 min, the `.env` templates set 30) |
 | `VIDEO_TOO_SHORT`   | Video too short to summarize             | < 60 seconds       |
 | `VIDEO_UNAVAILABLE` | Video is private or unavailable          | Can't access       |
 | `VIDEO_RESTRICTED`  | Age-restricted video not supported       | Requires auth      |
@@ -129,8 +129,8 @@ URL submitted
          │
          ▼
 ┌─────────────────┐
-│ Check duration  │──── > 3h ──────► VIDEO_TOO_LONG
-└────────┬────────┘     < 1m ──────► VIDEO_TOO_SHORT
+│ Check duration  │──── > MAX_VIDEO_DURATION_MINUTES ► VIDEO_TOO_LONG
+└────────┬────────┘     < MIN_VIDEO_DURATION_SECONDS ► VIDEO_TOO_SHORT
          │
          ▼
 ┌─────────────────┐
@@ -147,20 +147,21 @@ URL submitted
          │
          ▼
 ┌─────────────────┐
-│ Classifier      │──── LLM classifies domain + format
+│ Tier probe      │──── LLM guesses domain + format (+ transcript_usable)
 └────────┬────────┘
          │
          ▼
 ┌─────────────────┐
-│ Plan stage      │──── LLM designs tab layout + content tags
+│ Plan ∥ memory   │──── LLM designs tab layout + content tags; reconcile at plan-done
 └────────┬────────┘
          │
          ▼
-   Extraction → Assembly → Synthesis → Enrichment
+   Field-group extraction → Assembly (+ moment fill ∥ synthesis ∥ quiz) → Translation
 ```
 
-> **Note:** Classification happens via an LLM classifier (`classifier.py`) and plan stage (`plan.py`),
-> not the legacy "persona detection" system which has been removed.
+> **Note:** Domain and format come from the tier probe (`pipeline/tier_probe.py`) and the plan
+> (`pipeline/plan.py`); the old classifier and the legacy "persona detection" system are gone.
+> Call order: [summarizer-workflow.md](./summarizer-workflow.md).
 
 ### Implementation
 
@@ -180,10 +181,11 @@ async def validate_video(youtube_id: str) -> VideoValidation:
     if metadata.is_live:
         return ValidationError("LIVE_STREAM")
 
-    # Check duration
-    if metadata.duration > 180 * 60:  # 3 hours
+    # Check duration — the real check is pipeline_helpers.validate_duration (summarizer
+    # metadata phase; the API does not check duration): it raises a TranscriptError
+    if metadata.duration > settings.MAX_VIDEO_DURATION_MINUTES * 60:  # config default 600
         return ValidationError("VIDEO_TOO_LONG")
-    if metadata.duration < 60:  # 1 minute
+    if metadata.duration < settings.MIN_VIDEO_DURATION_SECONDS:  # 60
         return ValidationError("VIDEO_TOO_SHORT")
 
     # Check transcript
@@ -203,14 +205,21 @@ async def validate_video(youtube_id: str) -> VideoValidation:
 
 ### User-Facing Messages
 
-| Error             | User Message                                                                                 |
-| ----------------- | -------------------------------------------------------------------------------------------- |
-| NO_TRANSCRIPT     | "This video doesn't have captions. We can only summarize videos with available transcripts." |
-| VIDEO_TOO_LONG    | "This video is over 3 hours. Please try a shorter video."                                    |
-| VIDEO_TOO_SHORT   | "This video is too short to summarize meaningfully."                                         |
-| VIDEO_UNAVAILABLE | "This video is private or has been removed."                                                 |
-| VIDEO_RESTRICTED  | "Age-restricted videos aren't supported."                                                    |
-| LIVE_STREAM       | "Live streams can't be summarized. Please wait until the stream ends."                       |
+The SSE stream's messages come from `CODE_MESSAGES` in
+`apps/web/src/features/video-output/lib/streaming/stream-error-messages.ts`
+(`getUserFriendlyError(message, code)`):
+
+| Error             | User Message |
+| ----------------- | ------------ |
+| NO_TRANSCRIPT     | "This video doesn't have captions available. Videos need captions or subtitles to be summarized." |
+| VIDEO_TOO_LONG    | "This video is too long to summarize. Maximum duration is 4 hours." |
+| VIDEO_TOO_SHORT   | "This video is too short to summarize. Minimum duration is 30 seconds." |
+| VIDEO_UNAVAILABLE | "This video is unavailable. It may be private, deleted, or region-restricted." |
+| VIDEO_RESTRICTED  | "This video has restrictions that prevent it from being processed." |
+| LIVE_STREAM       | "Live streams cannot be summarized. Please wait until the stream ends." |
+
+The "4 hours" / "30 seconds" in these texts do not match the summarizer's limits
+(`MAX_VIDEO_DURATION_MINUTES`, `MIN_VIDEO_DURATION_SECONDS` = 60).
 
 ---
 
@@ -224,9 +233,12 @@ Two layers, both real code:
   transient errors on the same model, then falls back to `LLM_FALLBACK_PROVIDER`
   (see [LLM Error Handling](#llm-error-handling)); LiteLLM's own retries and
   fallbacks are off. The assistant keeps LiteLLM `num_retries` (`LLM_NUM_RETRIES`).
-  Chunked extraction runs up to `EXTRACTION_PARALLEL_BATCHES` (6) batches at once per run (× `WORKER_CONCURRENCY` per worker); a
-  batch still rate-limited after its retries re-runs in a sequential second pass
-  (2 s apart). `pipeline.timing` counts 429s per run — drop the setting to 4 if any appear.
+  The extraction field groups run up to `EXTRACTION_PARALLEL_BATCHES` (6) calls at once per run (× `WORKER_CONCURRENCY` per worker);
+  a group whose answer is lost (not JSON, none of its keys, a broken warm-up stream) gets one
+  more call, then counts as failed — its tabs drop or demote and the run is `degraded`; only
+  every group failing is an `LLM_ERROR` failure. With `EXTRACTION_PARALLEL=false` chunked
+  batches run one at a time, and a batch still rate-limited after its retries re-runs in a
+  sequential second pass (2 s apart). `pipeline.timing` counts 429s per run — drop the setting to 4 if any appear.
 - **Queue jobs** — `services/summarizer/src/worker/runner.py`: a pipeline exception
   with `attempt < WORKER_MAX_RETRIES` (3) waits
   `WORKER_RETRY_BACKOFF_SECONDS × 2^(attempt-1)` (5 → 10 → 20 s, capped 120 s) and
@@ -576,34 +588,12 @@ class ApiClient {
 
 ### User Notifications
 
-```typescript
-// web/src/utils/errors.ts
-
-const ERROR_MESSAGES: Record<string, string> = {
-  // Video errors
-  NO_TRANSCRIPT: "This video doesn't have captions available.",
-  VIDEO_TOO_LONG: "Video is too long (max 3 hours).",
-  VIDEO_TOO_SHORT: "Video is too short to summarize.",
-  VIDEO_UNAVAILABLE: "This video is private or unavailable.",
-  VIDEO_RESTRICTED: "Age-restricted videos aren't supported.",
-  LIVE_STREAM: "Live streams can't be summarized yet.",
-
-  // Auth errors
-  UNAUTHORIZED: "Please log in to continue.",
-  TOKEN_EXPIRED: "Your session expired. Please log in again.",
-
-  // Rate limit
-  RATE_LIMITED: "Too many requests. Please wait a moment.",
-
-  // Default
-  default: "Something went wrong. Please try again.",
-};
-
-export function handleError(error: ApiError) {
-  const message = ERROR_MESSAGES[error.code] || ERROR_MESSAGES.default;
-  toast.error(message);
-}
-```
+Stream errors are mapped by `getUserFriendlyError(message, code)`
+(`apps/web/src/features/video-output/lib/streaming/stream-error-messages.ts`): the
+`ErrorCode` first (`CODE_MESSAGES`, see [User-Facing Messages](#user-facing-messages)),
+then regex `PATTERNS` over the raw message (timeout, rate limit, network, missing
+captions, unavailable video, 401, 5xx), else a default ("Something went wrong while
+processing this video. Please try again.").
 
 ---
 

@@ -35,14 +35,21 @@ Trace: pipeline:{videoSummaryId}
 ├── generation: plan                  model=sonnet            tokens   cost  latency
 ├── generation: memory                model=LLM_EXTRACTION_MODEL (∥ plan)
 ├── generation: frame_vision          model=sonnet            (1-5 batches; none on LOW tier / manifest hit)
-├── generation: chapter_detect        model=fast tier         (long videos without listed chapters or a memory outline)
-├── generation: extraction            model=LLM_EXTRACTION_MODEL tokens cost latency
-│   └── (chunked: one `extraction_batchN` generation per batch; `_seq` for the rate-limited second pass)
+├── generation: chapter_detect        model=fast tier         (long videos past one batch, without listed chapters, description timestamps or a usable memory outline)
+├── generation: extraction_text1      model=LLM_EXTRACTION_MODEL  the split path's warm-up group call: streamed, `ttftMs` in pipeline.timing
+├── generation: extraction_text2…N    (released on text1's first chunk; ≤ 5 text groups)
+├── generation: extraction_visual     (fired at frames-done; absent when no tab needs it)
+│   └── (long videos: the same names + `_c<k>` for chunk k ≥ 1, e.g. `extraction_text1_c1`;
+│        ledger feature `summarize:extraction:<group>`. EXTRACTION_PARALLEL=false: one `extraction`
+│        generation, or one `extraction_batchN` per chapter batch + `_seq` for the rate-limited second pass)
 ├── generation: synthesis             model=fast tier
 ├── generation: enrichment            model=fast tier         (the quiz; only for a plan with a quiz host)
-├── generation: translation_*         (if non-English video)
+├── generation: faithfulness          model=fast tier         (judge calls, ≤ 6 sampled claims, background)
+├── generation: translation_full      (non-English video: the output, in batches) + translation_title
+├── generation: rag_translation       (non-English caption / S3 / Gemini transcript → English for Qdrant)
+├── span: phase:<name>                one per `pipeline.timing.phases` entry, real start/end (run_timing._log_phase_spans)
 ├── score: faithfulness               0.0–1.0  (sampled, see below)
-└── (assembly has no generations — pure code)
+└── (assembly itself makes no LLM call — pure code; synthesis, the quiz and moment fill run inside its `phase:assembly` wall)
 ```
 
 For the assistant, one chat session = one trace named `chat:{videoId}` keyed by `userId`/`sessionId`. Tool runs attach as named spans (`tool:concept_explain`, `tool:quiz_generator`, …); the agentic loop's LLM calls are `library_generation` (answer) and `library_agent` (tool-selection) spans/generations — the same names for single-video RAG chat and library chat, since both run `run_agentic_loop`. Query translation logs as `query_translate`. `/action` dispatch opens its own session trace with an `action:{action}` span. The tool router owns the per-tool `llm_feature_var` (`assistant:tool:<name>`, set/reset around dispatch so siblings aren't mislabelled); endpoints set `assistant:rag_chat` / `assistant:library_chat` / `assistant:action:<action>` plus `user_id` / `video_id` / `request_id` so assistant `llm_usage` rows are attributable.

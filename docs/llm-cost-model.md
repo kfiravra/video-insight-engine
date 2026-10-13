@@ -111,9 +111,10 @@ billed at the full input rate, so total list-price spend ≈ `cost_usd + cache_s
 
 ## Where cache_control is set
 
-Two calls carry a breakpoint, both on a user content block (Anthropic models
-only; `services/summarizer/src/services/llm_messages.py` strips every marker for
-other providers). `text_block(text, cache=True)` is the 5-minute default (no
+Three call types carry breakpoints — the plan, the extraction field groups and
+the `EXTRACTION_PARALLEL=false` single extraction call — always on user content
+blocks (Anthropic models only; `services/summarizer/src/services/llm_messages.py`
+strips every marker for other providers). `text_block(text, cache=True)` is the 5-minute default (no
 `ttl` key on the wire); `text_block(text, cache=True, ttl="1h")` asks for one
 hour. In one request every 1h breakpoint must come before any 5m one.
 
@@ -145,7 +146,39 @@ data, none / 5m / 1h are simulated from the `pipeline.timing` arrival times (whe
 each plan call started) and the cheapest is picked; `cache_hit_rate.py` alone
 cannot answer it, since the 5m hit rate depends on the gaps between plan calls.
 
-**Extraction — 5m (1c.3).**
+**Extraction field groups — 1h + 5m (pipeline-1min 3.4; the default,
+`EXTRACTION_PARALLEL=true`).** `extraction_group_prompt.build_group_messages`
+sends three user blocks and no system prompt, cut from the same
+`build_extraction_prompt` output the single call below uses:
+
+- **block 1** = the rules + `<schema>` (every requested domain's full schema)
+  + `<extraction_example>` (the primary domain's) — the same bytes for every
+  group and chunk of a run, and for any run with the same domain set;
+  `cache_control {type: ephemeral, ttl: 1h}` (`extraction_group_prompt.PREFIX_TTL`);
+- **block 2** = `<video>` + the chunk's transcript + `<video_memory>` — the
+  same bytes for every group of a chunk; the 5-minute breakpoint;
+- **block 3** = the group's job (`extraction_group_job.txt`: the emit-only keys
+  and their output shape, the tabs it serves, the primary's emphasis; the
+  visual group adds the annotation guide, the chunk's annotations and key
+  frames) — uncached.
+
+The 1h breakpoint precedes the 5m one: two of the four Anthropic allows.
+**Warm-first** (`extraction_groups.fire_groups`): an entry becomes readable only
+once the response writing it has begun, so per chunk text1 (the group holding
+the first planned tab) is the one streamed call, and its first chunk releases
+the chunk's other groups, which then read blocks 1 + 2 instead of writing them
+again. `GROUP_RELEASE_FALLBACK_S` (1.5 s) releases them without that chunk; a
+text1 that fails before its first chunk releases them at once. Measured
+(`dev/active/pipeline-1min/gates/g3.md` §Cache hit rate, dev end runs and prod):
+block 1 measures ≈ 2.6–3.4k cl100k tokens on the benchmark domain sets (offline,
+`pipeline-1min-tasks.md` 3.4 / 4.0); g3: 1h write 0 (< Haiku 4.5's 4,096-token minimum),
+so no 1h entry is written (`cacheWrite1hTokens` 0) and the 5m entry text1 writes holds blocks 1 + 2;
+text2 / text3 / visual read it at a 100 % hit rate. The 1h marker on block 1
+stays in the request, so a prefix at or above the model's minimum caches for an hour.
+
+**Extraction, `EXTRACTION_PARALLEL=false` — 5m (1c.3).** The single call (one
+per chapter batch on a long video) the groups replaced — byte-identical to the
+pre-split request for the same plan (`tests/replay/test_replay_extraction_identity.py`):
 
 - **system** = the rules section of `base_extraction.txt` (everything before
   `<video>`) — byte-identical for every video, **no** breakpoint (`system_prompt`
@@ -156,11 +189,11 @@ cannot answer it, since the 5m hit rate depends on the gaps between plan calls.
 - **user block 2** = the job (planned tabs' briefs + caps, schemas, example,
   visual annotations, key frames, per-batch context) — uncached, bound per call.
 
-What the extraction breakpoint buys in phases 1–2: little. A short video makes
-one extraction call; a chunked one sends each batch's own transcript slice in
-block 1, so no two calls share the prefix. Haiku also caches nothing under
-4,096 tokens per block. Reads start in phase 3, when several extraction groups
-share one `[video + transcript + memory]` block.
+What that breakpoint buys: little — the reason phases 1–2 saw no extraction
+reads. A short video makes one extraction call; a chunked one sends each batch's
+own transcript slice in block 1, so no two calls share the prefix. Haiku also
+caches nothing under 4,096 tokens per block. Reads started in phase 3, when
+several field groups share one `[video + transcript + memory]` block.
 
 The old `cache_static` path (static template half as a cached system message)
 is gone. The plan reads the **full** `[m:ss]`-marked transcript (1b.2), so its
@@ -180,7 +213,7 @@ sits in `<role>`).
 ## How 1h writes are priced
 
 Anthropic returns `usage.cache_creation.{ephemeral_5m_input_tokens,
-ephemeral_1h_input_tokens}`; LiteLLM (1.91) keeps the split in
+ephemeral_1h_input_tokens}`; LiteLLM (1.91, and 1.105.0 since p4.0a) keeps the split in
 `usage.prompt_tokens_details.cache_creation_token_details`, and
 `completion_cost` prices each part at its own rate
 (`cache_creation_input_token_cost` = 1.25x input,
@@ -210,8 +243,10 @@ Exit codes:
 - `1` no records in window
 - `2` Anthropic calls present but zero cache hits — investigate. Since 2.0 the
   plan's 1h block is read whenever two plan calls start within an hour of each
-  other; a window whose plan calls are all more than an hour apart (and phases
-  1–2 extraction, see above) still legitimately shows no reads.
+  other, and since phase 3 every field group after a chunk's text1 reads the
+  shared prefix; a window of single-group runs whose plan calls are all more
+  than an hour apart (or `EXTRACTION_PARALLEL=false` extraction, see above)
+  still legitimately shows no reads.
 
 Per call type, with the 1h / 5m split — the number gate reports carry:
 
@@ -234,10 +269,12 @@ of plan calls minutes apart that would lift the prod hit rate) unless
 
 ## Common failure modes
 
-1. **Zero hits on Sonnet calls** (from phase 3 on) — usually means the cached
-   `[video + transcript + memory]` block is not byte-identical across the calls
-   that share it (e.g. a per-call value slipped in before the breakpoint).
-   Everything a call varies must be bound in the job block. For the plan, a
+1. **Zero hits on text2 / text3 / visual group calls** (phase 3 on) — usually
+   means block 1 or 2 is not byte-identical across the calls that share it
+   (e.g. a per-group value slipped in before the 5m breakpoint) or the warm-up
+   did not release them (`ttftMs` on `extraction_text1`). Everything a call
+   varies must be bound in the job block — `tests/test_extraction_group_prompt.py`
+   and `tests/test_extraction_cache_layout.py` hash the shared blocks. For the plan, a
    per-video value above `<video>` in `plan.txt` (or in a registry block it
    renders) splits the cache per video — `tests/test_plan_cache_ttl.py`
    guards it; a registered `plan.txt` without a `<video>` line is sent
@@ -259,9 +296,11 @@ of plan calls minutes apart that would lift the prod hit rate) unless
       write split per call in `pipeline.timing`; 1h writes priced at 2x (verified)
 - ✅ Audit script (`scripts/audit_cache_credits.py`) and per-call-type gate tool
       (`scripts/cache_hit_rate.py`)
-- 📋 Extraction reads from phase 3 (grouped extraction); after two weeks of prod
-      traffic the plan's 1h hit rate decides whether the 1h breakpoint stays —
-      what replaces it below 50 % is Kfir's gate-2 decision (see the plan above).
+- ✅ Extraction reads from phase 3: field groups share blocks 1 + 2, warm-first
+      (3.4; 100 % hit rate after text1 — `gates/g3.md`)
+- 📋 After two weeks of prod traffic the plan's 1h hit rate decides whether the
+      1h breakpoint stays — what replaces it below 50 % is Kfir's gate-2 decision
+      (see the plan above).
 
 ## Per-user daily cap
 

@@ -36,7 +36,7 @@ The unit of output is a **VIEResponse**: video-level `meta` + an array of **tabs
 
 **Everything is clickable into the video.** A `VideoPlayerContext.seekTo` wires timestamps (steps, filmstrip frames, moment Jump buttons) to an **inline** YouTube player hosted in the video hero (the old collapsible player was deleted); the player scrolls into view on seek. Moment cards deliberately open a Lightbox instead of seeking — jumping is always explicit.
 
-**Who uses it:** students (lecture → quiz/flashcards/scenarios), developers (talks → code explorers), home cooks (timed cooking mode), researchers/creators (folders + RAG chat + share links), teams (training videos as interactive knowledge bases).
+**Who uses it:** students (lecture → concept map, flash cards, quiz), developers (talks → code explorers), home cooks (timed cooking mode), researchers/creators (folders + RAG chat + share links), teams (training videos as interactive knowledge bases).
 
 ---
 
@@ -74,10 +74,10 @@ A Docker-Compose monorepo. 4 application services + an admin dashboard + 4 backi
             │ HTTP / AMQP                         │ HTTP + SSE
             ↓                                     ↓
 ┌──── vie-summarizer (Python) ────┐     ┌──── vie-assistant (Python) ───┐
-│  metadata → [transcript+frames] │     │  RAG: embed query → Qdrant    │
-│  → visual injection → plan      │     │  retrieve → LLM → SSE stream  │
-│  → extraction → synthesis       │     │  tools: note/quiz/navigate/.. │
-│  → enrichment → assembly        │     └───────────────┬───────────────┘
+│  metadata → [transcript → probe │     │  RAG: embed query → Qdrant    │
+│  → plan ∥ memory] ∥ frames      │     │  retrieve → LLM → SSE stream  │
+│  ∥ field-group extraction       │     │  tools: note/quiz/navigate/.. │
+│  → assembly → late group        │     └───────────────┬───────────────┘
 │  → [translation]                │                     │
 │  LiteLLM · yt-dlp · FFmpeg ·    │                     │
 │  OpenCV · Tesseract · spaCy ·S3 │                     │
@@ -105,7 +105,7 @@ video-insight-engine/
 └── docker-compose.yml
 ```
 
-**Shared config, one source of truth:** `packages/shared/src/config/domains.json` defines, per domain: `label`, `schemas[]`, `components[]`, `enrichment(bool)`, plus top-level `components` (planner-selectable set), `componentTiers`, and `densityGates`. **Python** reads it via `domain_config.py`; **TypeScript** via `@vie/shared/config`. One config, two runtimes. The plan prompt is generated from it — `plan.txt` `{valid_components}` + `component_toolkit.txt` `{density_gates}` come from config (no hardcoded prompt lists), so editing `domains.json` changes what the planner LLM can pick.
+**Shared config, one source of truth:** `packages/shared/src/config/domains.json` defines, per domain: `label`, `emoji`, `gradient`, `defaultTabs`, plus top-level `components` (planner-selectable set), `componentTiers`, `densityGates`, `domainRequirements`, `playbooks`, `visualCriticality`, the `dataSources` registry (caps, `outputWeight`, `requiresEvidence`, `waitsForVisual`), `quizEnrichment` and `grouping`. **Python** reads it via `domain_config.py`; **TypeScript** via `@vie/shared/config`. One config, two runtimes. The plan prompt is generated from it — `plan.txt` `{valid_components}` + `component_toolkit.txt` `{density_gates}` come from config (no hardcoded prompt lists), so editing `domains.json` changes what the planner LLM can pick.
 
 **Layered service code (a strong convention across all services):** Routes (HTTP) → Services (business logic) → Repositories (data). Dependencies flow downward only; services throw domain errors and never know HTTP; repositories map docs ↔ domain entities. Node uses constructor injection + a DI `Container`; Python uses FastAPI `Depends()`.
 
@@ -113,55 +113,53 @@ video-insight-engine/
 
 ## 3. The core pipeline (vie-summarizer)
 
-The pipeline is **"plan-driven"** and uses only **3–6 LLM calls**. Canonical stage order (from `docs/ARCHITECTURE.md`):
+The pipeline is **plan-driven** (`PIPELINE_VERSION` v9, pipeline-1min phases 1–3). Its LLM calls: description analysis, tier probe, plan ∥ memory, the extraction **field groups** (1–5 text + ≤ 1 visual, per chunk of a long video), synthesis, the quiz when planned, 0–5 vision batches and a sampled faithfulness judge (+ translation batches for non-English videos). Phase order lives in `routes/pipeline_orchestration.py`; the call-order walkthrough is `docs/summarizer-workflow.md`.
 
 ```
-metadata + description analysis
-   → [ transcript ‖ frames ]  (parallel, asyncio.Queue)
-   → visual context injection (2.5)
-   → classifier (fast) ‖ plan (Sonnet)   (the "Plan" stage)
-   → extraction (adaptive; chunked for long videos)
-   → extraction quality check (retry if coverage < 0.6)
-   → [ synthesis ‖ assembly ]
-   → enrichment (only for domains with enrichment:true)
-   → assembly (pure code, no LLM)
-   → [ translation ]  (non-English only)
-   → save + stream complete
+metadata (one extract_info) → t=0 group in the background: captions · description analysis · downloads
+   → ONE parallel group:
+       text branch:  transcript → tier probe → plan ∥ memory → plan-done reconcile → <video_memory>
+                     → provisional Moments tab                                        (plan-done)
+       frames:       scenes → tier (probe) → 720p refine → OCR ∥ vision
+                     → frames-done: <visual_annotations> + deferred code tabs         (frames-done)
+       field groups: text groups fire at plan-done (text1 warms the cache), the visual group at
+                     frames-done; each landed group streams non-final tab previews
+   → faithfulness judge (background)
+   → assembly (pure code) → late group: moment fill ∥ synthesis ∥ quiz
+   → final re-emit (every tab final, overview last) → complete → save → Redis / Qdrant / S3
+   → [ translation ]  (non-English only) → done
 ```
 
-> ⚠️ **Naming note:** the current canonical design replaced **Manifest + Triage** with a single **"Plan"** stage (one Sonnet call instead of two, saving ~30–50s). Treat **"Plan" as canonical**; "triage" is the legacy name and the SSE event is still `triage_complete`. `triage.py` survives only as a low-confidence fallback (when plan confidence < 0.6 → category-based mapping). The old "persona detection" system is removed.
+`EXTRACTION_PARALLEL=false` is the rollback lever: no field groups — after the whole group, frames-done, then ONE extraction call (or a long video's chapter batches, one at a time). It reverts extraction only; reconcile, `<video_memory>` and v9 stay.
+
+> ⚠️ **Naming note:** "Plan" is canonical; "triage" is the legacy name — the SSE event is still `triage_complete`, the plan phase lives in `phases/triage.py`, and `triage.py` keeps the `TriageResult` carrier. A failed plan or confidence < 0.6 → the category's default tabs (`_build_fallback_plan`). The old classifier (replaced by the tier probe) and "persona detection" are gone.
 
 ### Stage-by-stage
 
-1. **Metadata** — `yt-dlp` fetches title, channel, duration, chapters, description, thumbnails, category. A description analysis extracts links/resources/social links.
+1. **Metadata** — one `yt-dlp` `extract_info` (title, channel, duration, chapters, description, thumbnails, category, the picked caption track) + `validate_duration`. Then, in the background, the **t=0 group**: the caption fetch, the description analysis (links/resources/social links/timestamps; an LLM call) and the low-res + one ≤720p download (none on a frame-manifest cache hit).
 
-2. **Transcript** (parallel with frames) — multi-source fallback chain, first success wins:
-   `S3 cache` → `yt-dlp subtitles` → `youtube-transcript-api` (tenacity retry, 3 attempts, exp backoff 4–30s) → `OpenAI Whisper` (~$0.16/26min, ~5–15min, max 60min) → `Gemini Flash audio` (~$0.04/26min, ~30–90s) → `metadata fallback` (**music videos only**; non-music with no transcript raises `NO_TRANSCRIPT`).
+2. **Transcript** (text branch) — multi-source fallback chain, first success wins:
+   `S3 cache` → `yt-dlp subtitles` → `youtube-transcript-api` (tenacity retry, 3 attempts, exp backoff 4–30s) → `OpenAI Whisper` (~$0.16/26min, ~5–15min) → `Gemini Flash audio` (~$0.04/26min, ~30–90s) → `metadata fallback` (**music videos only**; non-music with no transcript raises `NO_TRANSCRIPT`).
    Caption track: the spoken language first (the one original ASR track's language, else yt-dlp's `language` field — the ASR overrides a wrong uploader tag unless the video is dubbed; legacy `iw` = Hebrew), then manual over auto; the spoken-language pick never takes a machine translation, the fallback still may, as its last resort; nothing in that language → the older language waterfall. An S3 blob holding another caption track than this run's pick is stale and replaced.
-   Captions the tier probe judges not a coherent transcript of speech (`transcript_usable: false` — e.g. a wrong-tag video's ASR in the wrong language) re-run the audio layers alone (Whisper → Gemini) once, then the probe again; never for music.
-   Cleaned with **spaCy** (filler removal, TF-IDF repetition collapse). Sponsor segments filtered via **SponsorBlock** API.
+   Basic cleaning (English fillers; the spaCy + TF-IDF pass only with `TRANSCRIPT_CLEANING_ENABLED`) and **SponsorBlock** filtering. Frame annotations never enter the transcript.
 
-3. **Frames** (parallel with transcript) — **two-pass with a manifest cache.** Cache check first: `videos/{id}/scenes-v3/manifest.json` (v2 — timestamps, `hiresCount`, persisted vision descriptions; `hiresCount == 0` counts as a MISS so 403-era low-res runs self-heal). On miss, pass 1: yt-dlp downloads **worst-quality** video (~15–20s; all video/audio downloads route through `YTDLP_PLAYER_CLIENTS`, default `android` — never mix in `default`) → **FFmpeg** scene detect @ threshold 0.3 (~200 candidates) → score locally with **OpenCV** on **6 signals** (color saturation HSV, face via Haar, skin fraction inverted, center-crop detail, text density via Canny, perceptual-hash uniqueness) → adaptive **visual tier** (`domains.json` `visualCriticality`: HIGH domains over-select 40 + vision-reselect to drop presenter frames; LOW skips vision; STANDARD = top-8) → select ~25 evenly across duration. Pass 2 (`SCENE_HIRES_ENABLED`): re-extract only the winners at **720p** via stream-URL seek, with a local ≤720p download fallback when the CDN 403s seeks. Then upload winners to S3 + write the manifest → **Tesseract OCR** + **fast-tier vision** in parallel (descriptions persisted into the manifest). A per-video `asyncio.Lock` prevents duplicate concurrent extraction. `FRAME_VISION_ENABLED=false` → OCR-only.
+3. **Tier probe** (`tier_probe.py`, `LLM_CLASSIFIER_MODEL`, temperature 0, 4 s, no retry) — reads metadata + three short windows of the native transcript → domain (1 of 14), format (1 of 18, incl. `unboxing`), `has_visual_demo`, `transcript_usable`. Frames read it for the visual tier; the plan for its playbook (`"<domain>:<format>"`) and a hint line. Captions it judges not a coherent transcript of speech re-run the audio layers alone (Whisper → Gemini) once, then the probe again; never for music.
 
-4. **Visual context injection (2.5)** — splice `[VISUAL at M:SS]` (from vision) and `[ON-SCREEN TEXT at M:SS]` (from OCR) annotations into the transcript at the right positions, filtering low-value talking-head frames and de-duplicating OCR against vision.
+4. **Plan ∥ memory** — both read the full `[m:ss]`-marked transcript (rendered once).
+   - **Plan** (`plan.py`, primary model, 60 s, 1 retry, 3,500 tokens, JSON mode; the static half of the prompt cached 1 h): `contentTags`, modifiers, the **tab layout** (component, dataSource, goal, brief `{what, where, expect}`), **evidence** (`has_steps`, `has_ingredients`, `has_code`, `is_learnable`, …) and ≤ 12 terms. Domain **playbooks** inject required/preferred/forbidden components; `_enforce_domain_policy()` strips forbidden ones (e.g. `quiz_arena` outside learning/language/tech/science).
+   - **Memory** (`memory.py`, `LLM_EXTRACTION_MODEL`, 25 s, one attempt): outline (4–12 sections), evidence, tldr, takeaways — the tldr + takeaways stream at once as the first `synthesis_complete` (**the hero**).
 
-5. **Classifier + Plan (the Plan stage)** —
-   - **Classifier** (`classifier.py`, **fast model**, ~$0.001, 10s timeout): assigns 1 of 14 **domains**, 1 of 18 **formats** (incl. `unboxing` — TCG box openings → gaming+unboxing, consumer products → review+unboxing), and 8 **ContentTraits** booleans. Overrides the rule-based category hint when confidence > 0.6.
-   - **Plan** (`plan.py`, **single Sonnet call**, 30s timeout, 2 retries, JSON mode + prompt caching): produces creator identity, core promise, unique angle, extraction guidance, `contentTags`, modifiers, the **tab layout** (component names + goals + item counts), and a compact ~300-char `video_context` that flows to all downstream phases. Domain **playbooks** (`domains.json`, keyed `"<domain>:<format>"`) inject required/preferred/forbidden components + guidance into the prompt, and post-validation `_enforce_domain_policy()` strips `forbidden` components (e.g. `quiz_arena` outside learning/language/tech/science) **before** extraction burns tokens.
+5. **Plan-done reconcile** (`reconcile.py`, `reconcile_pass.py`) — the memory's second opinion: an evidence key is false only when both readers said false; a tab whose required evidence is doubly false is re-pointed, kept (moment_track), demoted or dropped; code tabs wait for frames-done (code on screen decides); required components backfilled; quiz policy; dedupe; 3–6 tabs. Every decision → `pipeline.reconcile`. Then `triage_complete` + `meta`, the `<video_memory>` block (every writer's `{video_context}`) and the **provisional Moments tab** (memory outline → chapters → description timestamps).
 
-6. **Extraction** (adaptive) — injects the domain schema (`prompts/schemas/{tag}.txt`) into a cached `base_extraction.txt` template.
-   - **Short (<~15min / 900s threshold):** single call (or "overflow" single call for 5.3K+ words).
-   - **Long:** chapter-aware **chunked extraction** (see §5). Output is per-domain structured data (ingredients, steps, code snippets, locations, …).
+6. **Frames** (parallel with the text branch) — **two-pass with a manifest cache.** Cache check first: `videos/{id}/{SCENE_S3_PREFIX}/manifest.json` (default `scenes-v4`; timestamps, `hiresCount`, persisted vision descriptions; `hiresCount == 0` counts as a MISS). On miss, pass 1 reads the run's **worst-quality** download (all video/audio downloads route through `YTDLP_PLAYER_CLIENTS`, default `android` — never mix in `default`) → **FFmpeg** scene detect (~200 candidates; zero-candidate ladder 0.3 → 0.15 → uniform) → score locally with **OpenCV** on **6 signals** → select ~25 → adaptive **visual tier** from the probe (HIGH over-selects + vision-reselects to drop presenter frames; LOW skips vision; STANDARD = top-8). Pass 2 (`SCENE_HIRES_ENABLED`): the winners re-extracted at **720p** by seeking the run's one local ≤720p file (no stream-URL seeks). Then S3 upload + manifest → **Tesseract OCR** ∥ **vision** (`LLM_VISION_MODEL`, blank → primary; ≤ 8 frames per call, ≤ 5 in flight). **Frames-done**: the `<visual_annotations>` block (`[m:ss] caption | on-screen text`) + the deferred code tabs.
 
-7. **Extraction quality check** — `score = populated tabs / planned tabs`. If `< 0.6` (`RETRY_SCORE_THRESHOLD`), run a **synthesis-fed retry** (max 1): run synthesis early, build a retry prompt with evidence, re-extract, keep the better result. Costs +$0.05–0.15 for ~10–30% of videos.
+7. **Field-group extraction** (`phases/split_extraction.py`, `EXTRACTION_PARALLEL=true`) — requests only the fields the reconciled tabs read (+ siblings, side reads, scalars), cut into ≤ 5 text groups (split by `outputWeight × expect` over 1,500) + one visual group (`waitsForVisual` fields: tech code, gaming highlights). Each call = three cached-prompt blocks (1h rules + schemas + example, 5m video + transcript + memory, uncached group job). Per chunk text1 streams and its first token releases the other text groups (they read the cache); the visual group fires at frames-done. Each landed group → `extraction_progress` + **preview** `tab_ready`s (non-final); a lost answer gets one more call, then the group fails (its tabs drop/demote, the run is `degraded`). One deterministic merge → `extraction_complete`. Coverage and quality are logged metrics — no retry.
 
-8. **Synthesis** (fast model, parallel with assembly) — TLDR, key takeaways, master summary, SEO description. Hierarchical (chapter summaries) for >5 chapters.
+8. **Assembly** — **code, no LLM calls.** 29 assemblers in `ASSEMBLER_REGISTRY` transform extraction → component-addressed `TabEntry[]`. Domain forbidden/max policy, a **degrade-never-drop demote ladder** (`promotion.py`, stamped `degradedFrom`), per-tab **drop-reason accounting**, frame thumbnails (nearest-timestamp + ±15s backfill), moments beyond the duration dropped, cross-tab links from `LINK_RULES`, a minimum of 3 tabs, an always-present Moments tab when a source has entries. Synthesis runs first only when memory left the hero empty.
 
-9. **Enrichment** (fast model) — quiz / flashcards / scenarios. **Config-driven**, not hardcoded: the `domains.json` `enrichment` map assigns every domain a prompt; **podcast and gaming** route to `enrich_recall.txt` (flashcards only), and quiz/scenarios are code-stripped for any domain where `quiz_arena` is forbidden.
+9. **Late group** (parallel, heartbeats) — **moment fill** (a frame at each frameless moment's timestamp from the run's ≤720p file; the moment tabs stream framed, replacing the provisional tab), **synthesis** (fast tier: masterSummary + SEO description over `<video_memory>` + the compact extraction), the **quiz** (`enrich_quiz.txt`, fast tier; only with a quiz host in a quiz domain; on the field-group path started as soon as its groups landed). Then the **final re-emit** — every tab `final: true` at its final position, the overview last — `complete`, the save, Redis (English, awaited), Qdrant + the S3 raw transcript (background), `done`.
 
-10. **Assembly** — **code, no LLM calls** (no longer <10ms — see moment frame fill below). 29 assemblers in `ASSEMBLER_REGISTRY` transform extraction → component-addressed `TabEntry[]` with pre-resolved props. Enforces domain forbidden/max policy and a **degrade-never-drop demote ladder** (`promotion.py` — e.g. step_player → checklist → display_section, stamped `degradedFrom`); returns per-tab **drop-reason accounting**. Injects frame thumbnails (nearest-timestamp match + ±15s backfill), drops moments beyond video duration (+10s), validates props against component schemas, resolves cross-tab links from static `LINK_RULES`. Guarantees a minimum of 3 tabs via fallback candidates. **Moment frame fill:** `moment_frame_fill.py` extracts a frame AT each still-frameless moment's exact timestamp (stream-URL seek, local-download fallback; 60s + 150s budgets) — `moment_track` tabs are held back during this, stream last, and the client slots them by `tab_ready.position` while SSE heartbeats keep the stream alive.
-
-11. **Translation (non-English only)** — `translate_to_source()` collects every translatable prose string into **one flat list**, translates it on the fast model (gpt-4o-mini; `LLM_TRANSLATION_MODEL` when set) in ≤ 2,500-char batches run in parallel (`translate_flat.txt`), each with mirror-detection (an echoed batch is retried as halves, then kept English), and applies results back by path. **Promotes English to the top-level** `tabs`/`meta`, stashes the original under a nested `sourceLanguage = {code, name, isRTL, tabs, meta}` block. **Translation — not assembly — owns the Redis cache write for non-English videos** (assembly skips Redis when `ctx.language != 'en'`). It does no Qdrant work: the English text the transcript points embed comes from a background task started at assembly's save — the transcript translated as text on the fast model (`summarize:rag_translation`), Whisper translate only when the run transcribed the audio ([docs/RAG.md](./docs/RAG.md#non-english-transcripts)). Non-blocking: any failure returns input unchanged.
+10. **Translation (non-English only)** — `translate_to_source()` collects every translatable prose string into **one flat list**, translates it on `LLM_TRANSLATION_MODEL` (blank → fast tier) in ≤ 2,500-char batches run in parallel (`translate_flat.txt`), each with mirror-detection (an echoed batch is retried as halves, then kept English), and applies results back by path. Generation is English-canonical: English stays the top-level `tabs`/`meta`, the original-language artifact goes under `sourceLanguage = {code, name, isRTL, tabs, meta}`. **Translation — not assembly — owns the Redis cache write and `done` for non-English videos** (assembly skips Redis when `source_language_code` is set). It does no Qdrant work: the English text the transcript points embed comes from a background task started at the save — the transcript translated as text on the fast model (`summarize:rag_translation`), Whisper translate only when the run transcribed the audio ([docs/RAG.md](./docs/RAG.md#non-english-transcripts)). Non-blocking: any failure returns input unchanged.
 
 ---
 
@@ -170,11 +168,11 @@ metadata + description analysis
 **14 primary content tags:** `learning, tech, fitness, food, music, travel, review, project, language, science, gaming, news, podcast, sport`.
 **2 modifier tags:** `narrative, finance`. → **16 domain schemas** total (`prompts/schemas/*.txt`).
 
-**8 ContentTraits booleans** (drive component routing in Plan):
-`has_steps, has_drills, has_comparison, has_narrative, has_code, has_visual_demo, is_opinionated, is_list`.
+**Evidence keys** (answered by the plan and the memory; drive conditional domain requirements, reconcile, the quiz gate and `<video_memory>`):
+`has_steps, has_ingredients, has_materials, has_code, has_drills, has_comparison, has_ranking, has_lineup, has_claims, has_lyrics, has_itinerary, has_packing, is_learnable` (`plan.txt` `<evidence_rules>`). The tier probe adds `has_visual_demo` (visual tier) and `transcript_usable`.
 
 **Tags → example tabs:**
-- learning: key_points, concepts, takeaways, timestamps (+ quizzes, flashcards, scenarios via enrichment)
+- learning: key_points, concepts, takeaways, timestamps (+ the quiz when planned)
 - tech: overview, setup, code, patterns, cheat_sheet
 - food: overview, ingredients, steps, tips
 - fitness: overview, exercises, timer, tips
@@ -186,29 +184,30 @@ metadata + description analysis
 - science: concepts, key_facts, experiments
 - gaming: highlights, builds/loadouts, tier_list (unboxing format: pulled items ranked by rarity/value)
 - news: events, claims_tracker, key_facts
-- podcast: guests, key_quotes, moments (recall-only enrichment)
+- podcast: guests, key_quotes, moments
 - sport: match events, formation_diagram, stats
 - narrative (modifier): key_moments, quotes, takeaways
 - finance (modifier): costs[] + savingTips[] only (primary domain owns budget)
 
-**To add a new domain:** update `domains.json` + add `prompts/schemas/{tag}.txt` + (if enriched) add an enrichment prompt in `prompts/enrich/`.
+**To add a new domain:** update `domains.json` (incl. its `dataSources` entries; a quiz domain also goes in `quizEnrichment` with a flavor line) + add `prompts/schemas/{tag}.txt` (+ `prompts/examples/{tag}.txt` if it has an example). The quiz is the only enrichment (`enrich_quiz.txt`).
 
 ---
 
 ## 5. Long-video support (chunked extraction)
 
 ```
-SHORT   (<~15–30 min):  full transcript → single extraction call
-MEDIUM  (30–120 min):   chapters → 1–2 batch calls → merge
-LONG    (2 h+):         chapters → 3–5 batch calls → hierarchical synthesis → merge
+Field groups (default):
+≤ 40 min and ≤ 50k tokens:  ONE chunk → its groups (1–5 text + ≤ 1 visual)
+longer / larger:            chapters → batches (≤ MAX_TOKENS_PER_BATCH 50k, ≤ MAX_MINUTES_PER_BATCH 40)
+                            → one chunk per batch → chunks × groups in parallel → chunk-major merge
+EXTRACTION_PARALLEL=false:  > CHUNKED_EXTRACTION_THRESHOLD (900 s) with chapters → batches one at a time
 ```
 
-- **Chapter detection fallback:** YouTube creator chapters → AI-detected (fast model) → ~5-minute time splits → single chunk.
-- **Batching:** chapters grouped up to `MAX_TOKENS_PER_BATCH=50000`, `CHAPTER_BATCH_SIZE=3`, run in parallel via `asyncio.Semaphore(EXTRACTION_PARALLEL_BATCHES=2)`.
-- **Threshold:** `CHUNKED_EXTRACTION_THRESHOLD=900` (15 min) is the actual code default (prose sometimes says 30 min — trust 900s).
-- **Merge:** per-domain — dedup lists by identity, re-number ordered items, keep the richest scalar.
-- **Per-batch context:** each batch's prompt carries a `<batch_partial_context>` block telling the model it sees only a slice and to **return empty arrays for absent fields / not pad to meet density quotas**. Without it, partial batches scored 0.40 and triggered cost-doubling retries. The `{batch_context}` placeholder sits *after* the cache-split marker so per-batch text never invalidates the Anthropic prompt cache.
-- A **9-hour video** ≈ **~10 LLM calls** total, processed in ~8 minutes.
+- **Chapter chain:** YouTube creator chapters → description timestamps → (only when one batch can't cover the video) the memory outline, else AI chapter detection (`chapter_detect.txt`, fast tier) → ~5-minute time splits → single chunk. When the chain gives ≤ 1 batch the transcript is force-split by sentences.
+- **Concurrency:** every group call of every chunk shares the run's `EXTRACTION_PARALLEL_BATCHES` semaphore (6 per run); each chunk's text1 warms that chunk's cached prefix for its other groups.
+- **Merge:** chunk-major then group order; lists concatenate with later duplicates dropped, first non-empty scalar wins, ordered items renumbered (the false path keeps `extraction_merger.py`: identity dedup, richest scalar).
+- **Per-chunk context:** each chunk's prompt carries a `<batch_partial_context>` block telling the model it sees only a slice and to **return empty arrays for absent fields / not pad to meet density quotas**, plus only the visual annotations and key frames of its own time window.
+- Synthesis has no hierarchical mode any more: it reads `<video_memory>` (built from the full transcript) + the compact final extraction, whatever the length.
 
 ---
 
@@ -252,22 +251,24 @@ Node.js 20 + Fastify + TypeScript + Zod. Base URL `/api`. Patterns: DI `Containe
 - `GET /api/users/me/usage` — today's spend/headroom/next-reset.
 - Internal: `POST /internal/status` (summarizer → API → rebroadcast over WS), `POST /internal/reconcile-costs` (nightly cron), `POST /internal/run-deletions` (GDPR cron).
 
-### SSE event sequence (v2)
+### SSE event sequence (v9, `EXTRACTION_PARALLEL=true`)
 ```
-metadata → chapters → transcript_ready → sponsor_segments → description_analysis
-  → phase* (transcript sub-phases: transcript | transcript_cached | audio_transcription
-            | whisper_transcription | metadata_fallback; later: translation)
-  → triage_complete (contentTags, modifiers, primaryTag, tabs[], confidence)
-  → extraction_progress* → extraction_complete
-  → frames (selected frames — timestamps, presigned URLs, OCR)
-  → meta (VIEResponseMeta) → tab_ready × N (one component-addressed tab each,
-      with `position` = index in the persisted order; moment_track tabs are held
-      back for exact-timestamp frame fill and stream LAST — clients slot by
-      position, never append; heartbeat events keep the stream alive meanwhile)
-  → synthesis_complete → enrichment_complete
-  → complete (tabCount, processingTimeMs) → done (confetti) → [DONE]
+metadata → phase* (transcript hops: transcript_cached | transcript | audio_transcription
+                   | whisper_transcription | metadata_fallback; later: translation)
+  → transcript_ready → synthesis_complete (memory's hero: tldr + keyTakeaways)
+  → triage_complete + meta (plan-done, after reconcile) → tab_ready {provisional} (Moments)
+  → frames (any time after metadata) → [meta again when frames-done changed the tabs]
+  → per landed extraction group: extraction_progress {section: "groups"}
+      + tab_ready previews (final: false, no links / attachments)
+  → extraction_complete → description_analysis → tab_ready previews (overview, added tabs)
+  → late group: moment tabs (framed; replace the provisional) ∥ synthesis_complete
+      (superset) ∥ enrichment_complete (quiz)
+  → final re-emit: every tab tab_ready {final: true} at its final position, overview last
+  → complete (tabCount, tabIds, processingTimeMs, degraded) → done (confetti) → [DONE]
 ```
-Legacy v1 events (still emitted): `detection_result`, `chapter_ready`, `concepts_complete`.
+Clients replace tabs by id and sort by `position`; `heartbeat` events keep the stream alive.
+`chapters`, `sponsor_segments` and the v1 events (`detection_result`, `chapter_ready`,
+`concepts_complete`) are no longer emitted. Full rules: `docs/API-REFERENCE.md#tab_ready`.
 
 ### WebSocket
 `ws://localhost:3000/ws?token=<jwt>` (auth via query param; invalid → close 4001). Events: `video.status`, `expansion.status`, `chat.message`. Fed by the summarizer's `POST /internal/status` callback.
@@ -330,7 +331,7 @@ Four-layer component model: (1) shadcn/ui primitives, (2) the domain-free VIE li
 React Router 7: `/` (Landing, public), `/login`, `/register`, `/board` (folder explorer + video grid, protected), `/generate` (URL intake, protected), `/video/:id` (output, protected), `/s/:slug` (public share).
 
 ### Streaming consumption & resilience
-- SSE at `/api/videos/:id/stream`: `triage_complete` → pending-tab strip + domain accent; `tab_ready[]` → progressive render **spliced by `position`** (moment tabs stream last after their frame fill); `complete` → celebration. UI phases derive from milestone events via `SSE_PHASE_MAP` (`StreamPhase`: idle | connecting | metadata | transcript | extraction | building | translation | done | cancelled | error, plus `phaseDetail`). On load, `resolve-display-tabs` prefers a completed DB doc over a partial stream.
+- SSE at `/api/videos/:id/stream`: `triage_complete` → pending-tab strip + domain accent; `tab_ready[]` → progressive render **sorted by `position`**, replaced by id (the provisional Moments tab at plan-done, non-final previews per extraction group, moment tabs after their frame fill, then every tab once `final: true`); `complete` → celebration. UI phases derive from milestone events via `SSE_PHASE_MAP` (`StreamPhase`: idle | connecting | metadata | transcript | extraction | building | translation | done | cancelled | error, plus `phaseDetail`). On load, `resolve-display-tabs` prefers a completed DB doc over a partial stream.
 - `useProcessingManager` (init in `App.tsx`) watches the video list; for any `pending`/`processing` video it reconnects an SSE stream into a Zustand `processing-store` keyed by `videoSummaryId` → **auto-resume after refresh**, shared between sidebar spinner and detail page.
 - `use-websocket` delivers `video.status`/`video.metadata` → invalidates React Query lists, keeps sidebar titles synced.
 
@@ -383,10 +384,10 @@ The `output_chunker.py` walks assembled tabs via a **per-component handler regis
 - Default path (flag off) is a **direct HTTP `POST /summarize`** → `202 Accepted` → FastAPI BackgroundTasks.
 
 ### Observability (Langfuse) — strictly best-effort, no-ops when keys unset
-- One pipeline run = one trace `pipeline:{videoSummaryId}` (tagged `youtubeId`, `videoSummaryId`, `requestId`). Each LLM call is a child **generation** with usage + metadata (`attempt`, `useFastModel`, `modelOverride`, `latencyMs`, `finishReason`). **Assembly emits no generations** (pure code). Model mix in traces: classifier=fast, plan=sonnet, extraction=sonnet (one generation per chunk), synthesis=fast, enrichment=haiku, `translation_*`.
+- One pipeline run = one trace `pipeline:{videoSummaryId}` (tagged `youtubeId`, `videoSummaryId`, `requestId`). Each LLM call is a child **generation** with usage + metadata (`attempt`, `useFastModel`, `modelOverride`, `latencyMs`, `finishReason`). **Assembly emits no generations** (pure code). Generations: `description_analysis`, `tier_probe`, `plan`, `memory`, `frame_vision`, `extraction_text1..N` / `extraction_visual` (`_c<k>` per later chunk), `synthesis`, `enrichment` (the quiz), `faithfulness`, `translation_*`, `rag_translation`; plus one `phase:<name>` span per timed phase.
 - Assistant traces chat as `chat:{videoId}` with tool spans + `library_generation` / `library_agent` generations.
 - **Prompt registry:** local `.txt` files under `services/summarizer/src/prompts/**` are the source of truth; `vie-langfuse-init` (run-once service) syncs them to Langfuse under `label='production'`. `load_prompt_text` is registry-first with file fallback, recording the version in the trace.
-- **Faithfulness judge:** after extraction, fire-and-forget, samples `LANGFUSE_FAITHFULNESS_SAMPLE_RATE=0.2` of items (capped 6/video), asks a Haiku-tier LLM if each claim is transcript-supported, logs a `faithfulness` score (~$0.005/video). **Informational only — never blocks**; runs < 0.7 logged at warning.
+- **Faithfulness judge:** after extraction, fire-and-forget, samples `LANGFUSE_FAITHFULNESS_SAMPLE_RATE=0.2` of items (capped 6/video), asks a fast-tier LLM if each claim is transcript-supported, logs a `faithfulness` score (~$0.005/video). **Informational only — never blocks**; runs < 0.7 logged at warning.
 - **Golden dataset eval:** 20-video dataset + `run_eval.py --fail-under 0.7` for CI-gradeable scoring (must use `--api-url http://vie-api:3000` from inside the container).
 - Aggregate cost lives **locally in MongoDB** (`llm_usage` via the shared `packages/llm-common` callback), not in Langfuse.
 
@@ -398,7 +399,7 @@ Every API request gets a UUID v4 on `x-request-id` (regex-validated `^[A-Za-z0-9
 
 ### Error handling model
 Canonical `{error, message, details, statusCode}` envelope, one shared code set.
-- **Validation/edge:** `INVALID_URL`, `NO_TRANSCRIPT` (422), `VIDEO_TOO_LONG` (>180min/3h), `VIDEO_TOO_SHORT` (<60s), `VIDEO_UNAVAILABLE`, `VIDEO_RESTRICTED`, `LIVE_STREAM`.
+- **Validation/edge:** `INVALID_URL`, `NO_TRANSCRIPT` (422), `VIDEO_TOO_LONG` (> `MAX_VIDEO_DURATION_MINUTES`: config default 600, the `.env` templates set 30; checked by the summarizer's metadata phase), `VIDEO_TOO_SHORT` (<60s), `VIDEO_UNAVAILABLE`, `VIDEO_RESTRICTED`, `LIVE_STREAM`.
 - **Server:** `LLM_ERROR`, `DATABASE_ERROR`, `SUMMARIZER_ERROR`.
 - **Automatic retry:** max 3, backoff `[5,15,60]s`, retryable = `LLM_ERROR, DATABASE_ERROR, NETWORK_ERROR, RATE_LIMITED`.
 - **Manual retry** (`POST /api/videos/:id/retry`): only if `failed` + retryable + within 24h. Non-retryable: `INVALID_URL, VIDEO_TOO_LONG, VIDEO_TOO_SHORT, NO_TRANSCRIPT, VIDEO_RESTRICTED, LIVE_STREAM`.
@@ -410,23 +411,23 @@ Canonical `{error, message, details, statusCode}` envelope, one shared code set.
 
 **LiteLLM** multi-provider with automatic fallback. Per-stage routing via `LLM_<STAGE>_MODEL` overrides.
 
-| Provider | Default (quality) | Fast (classify/synth) | Context |
+| Provider | Default (quality) | Fast tier | Context |
 |----------|-------------------|------------------------|---------|
 | Anthropic | Claude Sonnet 4.6 (`anthropic/claude-sonnet-4-6`) | Claude Haiku 4.5 (`anthropic/claude-haiku-4-5-20251001`) | 200K |
 | OpenAI | GPT-4o | GPT-4o-mini | 128K |
 | Google | Gemini 2.5 Flash | Gemini 2.5 Flash Lite | 1M |
 
-**Tiering by stage:** Plan = Sonnet · Classifier = fast · Synthesis = fast · Enrichment = **Haiku 4.5** · **Frame vision = Sonnet** (must stay on primary — gpt-4o-mini was reverted; it was only ~20% cheaper and hallucinated OCR on dense frames) · Extraction first pass = primary unless `EXTRACTION_USE_FAST_FIRST`.
+**Routing by stage:** Plan = primary · Tier probe = `LLM_CLASSIFIER_MODEL` · Memory + extraction groups = `LLM_EXTRACTION_MODEL` (blank → primary) · Frame vision = `LLM_VISION_MODEL` (blank → primary; gpt-4o-mini was reverted — only ~20% cheaper and it hallucinated OCR on dense frames) · Synthesis / quiz / translation / description analysis / chapter detect = their `LLM_<STAGE>_MODEL` (blank → fast tier) · Faithfulness judge = fast tier. `LLM_FALLBACK_PROVIDER` = a cross-provider fallback for primary-model calls after one same-provider retry.
 
-**Per-stage timeouts:** Classifier 10s · Plan 30s · Extraction 240s (dynamic) · Synthesis 30s · Enrichment 90s · Assembly: no LLM calls (moment frame fill budgets 60s + 150s when it runs).
+**Per-stage timeouts:** Tier probe 4s · Plan 60s · Memory 25s · Extraction groups 120–300s (from the group's estimate; the single call 240s / dynamic overflow) · Synthesis 20s · Quiz 14s per attempt, 30s total · Assembly: no LLM calls (moment frame fill budgets 60s + 150s when it runs).
 
-**Prompt caching (Anthropic):** `cache_control: {type: ephemeral}` on the static halves of `base_extraction.txt` and `plan.txt`. Cached reads bill ~10% of input ($0.30 vs $3.00/MTok for Sonnet 4.6). ⚠️ Cache breaks (zero hits) if the static half isn't byte-identical between calls (a timestamp/user_goal slipping in invalidates it). `cost_usd` is **net of** the cache discount; list-price ≈ `cost_usd + cache_savings_usd`. Audit with `scripts/audit_cache_credits.py` (exit 2 = Anthropic calls but zero cache hits → investigate).
+**Prompt caching (Anthropic):** `cache_control` on user blocks — the plan's static half (ttl 1h); the extraction field groups' shared blocks (1h rules + schemas + example, 5m video + transcript + memory; text1 warms them, the other groups read them); the single call's `[video + transcript + memory]` block (5m). Cached reads bill ~10% of input ($0.30 vs $3.00/MTok for Sonnet 4.6). ⚠️ Cache breaks (zero hits) if the static half isn't byte-identical between calls (a timestamp/user_goal slipping in invalidates it). `cost_usd` is **net of** the cache discount; list-price ≈ `cost_usd + cache_savings_usd`. Audit with `scripts/audit_cache_credits.py` (exit 2 = Anthropic calls but zero cache hits → investigate).
 
 **Cost per video:**
 
 | Scenario | LLM calls | Cost |
 |----------|-----------|------|
-| First processing (~20 min, captions) | 7 | ~$0.29 |
+| First processing (~20 min, captions; v8 measurement) | 7 (v8) | ~$0.29 (v8) |
 | Same video, any user (cache hit) | 0 | **$0.00** |
 | Cache expired, S3 frames reused | 0 | ~$0.01 |
 
