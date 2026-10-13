@@ -1,8 +1,44 @@
-# pipeline-1min — rules for implementation subagents (phases 1–3)
+# pipeline-1min — rules for implementation subagents (phases 1–4)
 
 You are one of several Opus subagents working IN PARALLEL in the SAME git working tree
 (`/home/kfir/projects/video-insight-engine`, branch `feat/pipeline-1min`). Kfir watches the
 changes live in his IDE. Other agents are editing other files right now.
+
+## Phase 4 (Kfir 2026-10-13) — read this section first; the phase-3 and phase-2 rules below still apply
+- Spec: tasks.md Phase 4 rows (incl. the "Checked against the code 2026-10-13" facts under 4.0),
+  plan.md §Phase 4, context.md D29 and the "4.0c docs facts" block (once recorded). Your brief
+  (`brief-4.*.md`) is binding together with them.
+- Order (Kfir 2026-10-13, second message — supersedes "4.0 alone"): 4.0a (LiteLLM bump) lands
+  FIRST, alone, as its own commit. Then IN PARALLEL on disjoint files: 4.0 b–e ∥ 4.1 sweep ∥ 4.2 docs
+  ∥ 4.3 report skeleton. Measurement runs (the A/B, the full golden, the dev cold runs ×4) run ALONE
+  — no agent working, nothing else executing (the dev containers bind-mount this tree and dev reads
+  prompts from disk: an edit during a measurement run changes what is measured). ONE commit per task
+  id, prefix `p4.0a`, `p4.0b`, `p4.0d`, `p4.0e`, `p4.1`, `p4.2`, `p4.3` …
+- **File ownership in the parallel stage** (a file has ONE owner; a needed change in a file you don't
+  own goes into your report, the coordinator routes it):
+  - **4.0 b–e:** LLM plumbing (`services/summarizer/src/services/llm*.py`, `utils/llm_retry.py`,
+    `services/pipeline/pipeline_timing.py`), `src/config.py` (+ its test), model settings incl. the
+    model env lines AND every other edit in `docker-compose.yml` / `docker-compose.prod.yml`,
+    `dev/active/pipeline-1min/env-changes.md`, the replay identity test, the A/B script(s), and
+    their tests.
+  - **4.1 sweep:** the leftover code/tests in its list (pipeline modules, prompts, scripts) — never
+    the 4.0 files above (config / compose removals → report them); `.env.example`,
+    `.env.production.example`, `docs/INFRASTRUCTURE.md` (model names only after 4.0 picks them).
+  - **4.2 docs:** `docs/**` except `docs/INFRASTRUCTURE.md`, `README.md`, service READMEs; model
+    names and README numbers LAST (after the gate-4.0 numbers).
+  - **4.3 report:** `dev/active/pipeline-1min/gates/g4.md` (skeleton; the coordinator fills gate 4.0
+    and the 4.0 section).
+- Flow per task: implement + tests + targeted runs → STOP and report WITHOUT committing → the
+  coordinator runs a review → you fold the findings in (SendMessage) → full suites under the lock →
+  you commit (stage by path, `--no-verify` after the hook's commands by hand) → report the hash.
+- **Heavy lock path changed:** `flock /tmp/claude-1000/-home-kfir-projects-video-insight-engine/af60d8e4-09b5-430c-92c1-3a4b950e7ba0/scratchpad/locks/heavy.lock -c '<command>'`
+  (use this path wherever the sections below name the phase-3 one).
+- Something outside the phase-4 tasks → a QUESTION for `gates/g4.md` in your report; never code.
+- `EXTRACTION_PARALLEL=false` stays today's single call: prompt bytes byte-identical (the identity
+  test; from 4.0b on it keys on the prompt bytes — messages + `cache_control` — not the model id).
+- Prompts: DEV Langfuse only, and only when your brief says so; never prod. No env change outside
+  `env-changes.md`; the dev `.env` belongs to the coordinator. LLM spend only as your brief allows —
+  state it in your report.
 
 ## Phase 3 (Kfir 2026-10-12) — read this section first; the phase-2 rules below still apply
 - Design: `dev/active/pipeline-1min/designs/phase3-design.md` is binding together with your brief.
