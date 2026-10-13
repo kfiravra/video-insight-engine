@@ -34,6 +34,12 @@ function stepTab(stepCount = 4): TabEntry {
   };
 }
 
+/** Assembly promotes step_player to step_flow_canvas at 8+ steps, so every
+ *  real-length recipe/build ships its steps under this component. */
+function flowCanvasTab(stepCount = 9): TabEntry {
+  return { ...stepTab(stepCount), component: 'step_flow_canvas' };
+}
+
 function workoutTab(): TabEntry {
   return {
     id: 'exercises',
@@ -117,7 +123,22 @@ describe('detectFlowMode', () => {
       expect(mode?.sequenceLength).toBe(4);
     });
 
-    it('returns null for food without a step_player tab', () => {
+    it('detects cooking mode when the steps were promoted to step_flow_canvas', () => {
+      const mode = detectFlowMode([checklistTab(), flowCanvasTab()], 'food');
+      expect(mode?.id).toBe('cooking');
+    });
+
+    it('sequences the step_flow_canvas steps', () => {
+      const mode = detectFlowMode([checklistTab(), flowCanvasTab(12)], 'food');
+      expect(mode?.sequenceLength).toBe(12);
+    });
+
+    it('prefers the step_player sequence when both step tabs are present', () => {
+      const mode = detectFlowMode([checklistTab(), flowCanvasTab(12), stepTab(4)], 'food');
+      expect(mode?.sequenceLength).toBe(4);
+    });
+
+    it('returns null for food without a step tab', () => {
       const mode = detectFlowMode([checklistTab()], 'food');
       expect(mode).toBeNull();
     });
@@ -156,7 +177,17 @@ describe('detectFlowMode', () => {
       expect(mode?.id).toBe('build');
     });
 
-    it('returns null for tech without a step_player', () => {
+    it('detects build mode for tech with step_flow_canvas', () => {
+      const mode = detectFlowMode([flowCanvasTab()], 'tech');
+      expect(mode?.id).toBe('build');
+    });
+
+    it('detects build mode for project with step_flow_canvas', () => {
+      const mode = detectFlowMode([flowCanvasTab()], 'project');
+      expect(mode?.id).toBe('build');
+    });
+
+    it('returns null for tech without a step tab', () => {
       expect(detectFlowMode([checklistTab()], 'tech')).toBeNull();
     });
   });
@@ -196,6 +227,11 @@ describe('detectFlowMode', () => {
   describe('practice (language)', () => {
     it('detects practice mode when language has drill steps', () => {
       const mode = detectFlowMode([stepTab(5)], 'language');
+      expect(mode?.id).toBe('practice');
+    });
+
+    it('detects practice mode when the drills were promoted to step_flow_canvas', () => {
+      const mode = detectFlowMode([flowCanvasTab()], 'language');
       expect(mode?.id).toBe('practice');
     });
   });

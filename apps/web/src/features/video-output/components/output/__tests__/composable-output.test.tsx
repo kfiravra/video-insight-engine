@@ -311,6 +311,27 @@ describe('ComposableOutput', () => {
       expect(screen.getByRole('button', { name: /exit cooking mode/i })).toBeInTheDocument();
     });
 
+    it('shows the "Enter Cooking Mode" button when the steps tab is a step_flow_canvas', () => {
+      // Real recipes have 8+ steps, which assembly ships as step_flow_canvas —
+      // the tabs also pass through the Zod boundary here, as cached outputs do.
+      const [ingredients, steps] = foodTabs();
+      const longSteps = Array.from({ length: 9 }, (_, i) => ({
+        number: i + 1,
+        title: `Step ${i + 1}`,
+        instruction: `Do thing ${i + 1}`,
+      }));
+      render(
+        <ComposableOutput
+          response={null}
+          tabs={[ingredients, { ...steps, component: 'step_flow_canvas', props: { steps: longSteps } }]}
+          activeTab="ingredients"
+          onNavigateTab={vi.fn()}
+          primaryTag="food"
+        />,
+      );
+      expect(screen.getByRole('button', { name: /Enter Cooking Mode/i })).toBeInTheDocument();
+    });
+
     it('does NOT show an enter-mode button for a non-food domain lacking the required tabs', () => {
       render(
         <ComposableOutput
