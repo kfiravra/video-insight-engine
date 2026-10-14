@@ -27,7 +27,7 @@ from src.models.schemas import (
 )
 from src.services.llm_telemetry import stopwatch_ms_since
 from src.services.media.download_utils import download_youtube_audio
-from src.services.pipeline.pipeline_timing import record_download
+from src.services.pipeline.download_timing import record_download
 from src.services.transcription.usage import emit_transcription_usage
 from src.utils.language_utils import normalize_language_code
 

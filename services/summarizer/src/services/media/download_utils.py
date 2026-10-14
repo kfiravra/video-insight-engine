@@ -300,11 +300,11 @@ def ytdlp_client_cli_args(clients: str | None = None) -> list[str]:
 
 
 def ytdlp_hires_client_attempts() -> list[str]:
-    """Player-client lists for the hi-res 720p download, in order.
+    """Player-client lists for the run's two video downloads (pass 1 + 720p), in order.
 
-    YTDLP_HIRES_PLAYER_CLIENTS first (android alone caps at 360p); if that
-    differs from YTDLP_PLAYER_CLIENTS, the latter is the one retry — the
-    clients pass 1 just proved working for this video.
+    YTDLP_HIRES_PLAYER_CLIENTS first (android alone has no video-only
+    renditions: it caps at the muxed 360p file); if that differs from
+    YTDLP_PLAYER_CLIENTS, the latter is the one retry.
     """
     base = settings.YTDLP_PLAYER_CLIENTS.strip()
     hires = settings.YTDLP_HIRES_PLAYER_CLIENTS.strip() or base

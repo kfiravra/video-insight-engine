@@ -13,13 +13,13 @@ from litellm.types.utils import Usage
 from llm_common.context import llm_feature_var
 
 from src.services.pipeline import pipeline_timing
+from src.services.pipeline.download_timing import record_download
 from src.services.pipeline.pipeline_helpers import sse_event
 from src.services.pipeline.pipeline_timing import (
     PipelineTimingRecorder,
     current_timing,
     is_fallback_response,
     mark_step,
-    record_download,
     record_llm_call,
     record_llm_failure,
     span_output_tokens,
@@ -270,6 +270,45 @@ class TestRecordFailureAndDownload:
         )
 
         assert recorder.downloads[0]["bytes"] is None
+
+    def test_should_record_throughput_in_mb_per_second(
+        self, recorder: PipelineTimingRecorder, tmp_path: Path
+    ) -> None:
+        video = tmp_path / "v.mp4"
+        video.write_bytes(b"x" * 2_000_000)
+        recorder.started_monotonic -= 5.0  # the run began before this 2 s download
+
+        record_download(
+            kind="lowres",
+            purpose="scene_detect",
+            start_monotonic=time.monotonic() - 2.0,
+            path=video,
+            ok=True,
+        )
+
+        assert recorder.downloads[0]["mbPerSec"] == pytest.approx(1.0, rel=0.05)
+
+    def test_should_record_no_throughput_without_a_file(
+        self, recorder: PipelineTimingRecorder
+    ) -> None:
+        record_download(
+            kind="720p", purpose="prefetch", start_monotonic=time.monotonic(), path=None, ok=False
+        )
+
+        assert recorder.downloads[0]["mbPerSec"] is None
+
+    def test_should_merge_the_downloaders_detail(self, recorder: PipelineTimingRecorder) -> None:
+        record_download(
+            kind="720p",
+            purpose="prefetch",
+            start_monotonic=time.monotonic(),
+            path=None,
+            ok=False,
+            detail={"format": None, "proxyExit": "3/3", "error": "HTTP Error 403: Forbidden"},
+        )
+
+        entry = recorder.downloads[0]
+        assert (entry["proxyExit"], entry["error"]) == ("3/3", "HTTP Error 403: Forbidden")
 
 
 class TestSteps:

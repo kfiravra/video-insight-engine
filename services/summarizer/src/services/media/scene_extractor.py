@@ -1,16 +1,20 @@
 """Scene-based keyframe extraction with smart frame selection (two-pass).
 
-Pass 1 (detection): reads the run's lowest-quality download (``ctx.lowres_video``,
-started by the metadata phase) — 144p is plenty for FFmpeg scene detection
-and local scoring, and keeps the download small/fast. Selects ~25 best frames
-with even time distribution.
+Pass 1 (detection): reads the run's 360p pass-1 download (``ctx.lowres_video``,
+started by the metadata phase), or the 720p download's file when it lands
+first as the same ≤360p rendition (``first_detection_file``). Selects ~25 best frames with even time
+distribution.
 
 Pass 2 (refinement): re-extracts only the SELECTED frames at 720p by
 seeking into the run's local 720p file (hires_refiner), so the JPEGs
 uploaded to S3 and sent to the vision LLM are sharp. Falls back to the
-low-res detection frames per-frame on any failure. The 720p file belongs to
-the run (``ctx.hires_video``): extraction reads it and leaves it on disk for
-moment fill.
+low-res detection frames per-frame on any failure. Only a 720p file already
+on disk is read here: while it is still downloading, the 360p frames are
+uploaded and vision reads them, and a deferred pass upgrades the S3 objects
+once it lands (``hires_upgrade``) — frames-done never waits for the big file
+unless pass 1 failed.
+The 720p file belongs to the run (``ctx.hires_video``): extraction reads it
+and leaves it on disk for moment fill.
 
 Key principle: detect cheap, refine selectively, upload selectively.
 """
@@ -27,7 +31,12 @@ from pathlib import Path
 from typing import Awaitable, Callable
 
 from src.config import settings
-from src.services.media.hires_prefetch import LocalHiresSource, LocalLowresSource
+from src.services.media.hires_prefetch import (
+    LocalHiresSource,
+    LocalLowresSource,
+    first_detection_file,
+)
+from src.services.media.hires_upgrade import deferred_upgrade
 from src.services.media.image_dedup import compute_ahash, is_duplicate
 from src.services.media.s3_client import s3_client
 from src.services.media.scene_detect import detect_candidate_frames
@@ -165,15 +174,25 @@ async def persist_vision_descriptions(video_id: str, descriptions: list[dict]) -
     """
     if not descriptions:
         return
+    await _update_manifest(video_id, {"visionDescriptions": descriptions}, "vision descriptions")
+
+
+async def mark_manifest_hires(video_id: str, hires_count: int) -> None:
+    """Record a deferred hi-res pass's count on the frame manifest (``hires_upgrade``)."""
+    await _update_manifest(video_id, {"hiresCount": hires_count}, "the hi-res count")
+
+
+async def _update_manifest(video_id: str, fields: dict, what: str) -> None:
+    """Read-modify-write the frame manifest's ``fields``. Best-effort."""
     key = _manifest_key(video_id)
     try:
         manifest = await s3_client.get_json(key)
         if not isinstance(manifest, dict):
             return
-        manifest["visionDescriptions"] = descriptions
+        manifest.update(fields)
         await s3_client.put_json(key, manifest)
     except Exception as e:
-        logger.warning("Failed to persist vision descriptions for %s: %s", video_id, e)
+        logger.warning("Failed to persist %s for %s: %s", what, video_id, e)
 
 
 async def _write_manifest(
@@ -187,8 +206,10 @@ async def _write_manifest(
         "version": _MANIFEST_VERSION,
         "videoId": video_id,
         "generatedAt": datetime.now(timezone.utc).isoformat(),
-        # 0 = degraded run (every hi-res seek failed) — _validate_manifest
-        # treats that as a cache miss so quality self-heals on the next run.
+        # 0 = degraded run (every hi-res seek failed) or a deferred hi-res pass
+        # not done yet (hires_upgrade sets it when it lands; a cancelled pass
+        # leaves 0) — _validate_manifest treats that as a cache miss so quality
+        # self-heals on the next run.
         "hiresCount": hires_count,
         "frames": [
             {
@@ -344,7 +365,7 @@ async def extract_scene_keyframes(
 ) -> dict:
     """Extract keyframes at scene change boundaries with smart selection.
 
-    Reads the lowest-quality download, runs FFmpeg scene detection,
+    Reads the 360p pass-1 download, runs FFmpeg scene detection,
     scores all frames locally, selects ~25 best, uploads only those to S3.
 
     Args:
@@ -427,9 +448,11 @@ async def _do_extraction(
     try:
         # Step 1: the run's 720p download overlaps detection + scoring (the
         # metadata phase normally started it already; start() is idempotent).
-        if hires_video is not None and settings.SCENE_HIRES_ENABLED:
-            hires_video.start()
-        temp_video = await lowres_video.path()
+        # Detection reads whichever local file lands first.
+        hires = hires_video if hires_video is not None and settings.SCENE_HIRES_ENABLED else None
+        if hires is not None:
+            hires.start()
+        temp_video = await first_detection_file(lowres_video, hires)
         if temp_video is None:
             return empty_result
 
@@ -509,11 +532,16 @@ async def _do_extraction(
                 )
 
         # Step 7: Re-extract selected frames at 720p (in-place path swap;
-        # per-frame fallback to the low-res detection JPEG on failure)
+        # per-frame fallback to the low-res detection JPEG on failure) — only
+        # from a file already on disk: frames-done never waits for the 720p
+        # download, a running one is left to the deferred pass (hires_upgrade).
         from src.services.media.hires_refiner import refine_selected_frames
 
+        deferred = hires is not None and not hires.finished
         hires_started = time.monotonic()
-        hires_count = await refine_selected_frames(video_id, selected_frames, hires_video)
+        hires_count = (
+            0 if deferred else await refine_selected_frames(video_id, selected_frames, hires_video)
+        )
         mark_step("frames.hires", hires_started)
 
         # Step 7b: Dedup AFTER refinement — seeks by int(timestamp) can
@@ -563,11 +591,15 @@ async def _do_extraction(
             len(gallery_frames),
         )
 
-        return {
+        result: dict = {
             "all_frames": scored_frames,
             "selected_frames": uploaded,
             "gallery_frames": gallery_frames,
         }
+        if deferred:
+            logger.info("Hi-res pass deferred for %s: the 720p file is still downloading", video_id)
+            result["hires_upgrade"] = await deferred_upgrade(video_id, uploaded)
+        return result
 
     except Exception as e:
         logger.warning("Scene extraction failed for %s: %s", video_id, e)

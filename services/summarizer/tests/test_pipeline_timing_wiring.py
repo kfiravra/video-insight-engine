@@ -346,11 +346,10 @@ class TestDownloadSeam:
         assert result is not None
         local_video.cleanup_local_video(result[1])
 
-        assert recorder.downloads[0] | {"startMs": 0, "wallMs": 0} == {
+        entry = recorder.downloads[0]
+        assert {k: entry[k] for k in ("kind", "purpose", "bytes", "ok")} == {
             "kind": "720p",
             "purpose": "prefetch",
-            "startMs": 0,
-            "wallMs": 0,
             "bytes": 300,
             "ok": True,
         }

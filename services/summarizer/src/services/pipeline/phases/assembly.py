@@ -42,6 +42,7 @@ from src.services.pipeline.group_failures import group_drops
 from src.services.pipeline.phases import run_phase_enrichment, run_phase_synthesis
 from src.services.pipeline.phases.enrichment import cancel_quiz_task
 from src.services.pipeline.phases.extraction import extraction_record
+from src.services.pipeline.phases.frames import hires_upgrade_pending
 from src.services.pipeline.phases.group_emission import assembled_tab_events
 from src.services.pipeline.phases.late_quiz import carry_moment_props
 from src.services.pipeline.phases.metadata import await_description_analysis
@@ -285,9 +286,10 @@ async def run_phase_assembly(ctx: PipelineContext) -> AsyncGenerator[str, None]:
         assembled = _add_late_quiz(ctx, description, synthesis_input, synthesized_first)
     for event in ctx.tab_ledger.closing_events(ctx.assembled_tabs or []):
         yield event
-    # Moment fill was the 720p file's last reader — free the disk now.
+    # Moment fill was the 720p file's last reader — free the disk now, unless
+    # the deferred hi-res pass still reads it (the runner closes it after).
     hires_video = getattr(ctx, "hires_video", None)
-    if hires_video is not None:
+    if hires_video is not None and not hires_upgrade_pending(ctx):
         await hires_video.close()
 
     async for event in _finish(ctx, assembled):

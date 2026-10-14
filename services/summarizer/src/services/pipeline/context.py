@@ -89,6 +89,10 @@ class PipelineContext:
     # path leaks a download.
     lowres_video: LocalLowresSource | None = None
     hires_video: LocalHiresSource | None = None
+    # The deferred hi-res pass (media/hires_upgrade): it reads the 720p file, so
+    # assembly leaves the file open while it runs and the runner awaits it
+    # (bounded) before closing the file.
+    hires_upgrade: asyncio.Task[int] | None = None
     scene_frames_for_assembly: list[dict] = field(default_factory=list)
     scene_frames_all: list[dict] = field(
         default_factory=list

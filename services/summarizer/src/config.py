@@ -265,7 +265,7 @@ class Settings(BaseSettings):
     # Scene-based frame extraction (additive to timestamp extraction)
     SCENE_EXTRACTION_ENABLED: bool = True
     SCENE_THRESHOLD: float = 0.3
-    # Detection pass renders from the worst-quality download; these only shape
+    # Detection pass renders from the 360p pass-1 download; these only shape
     # the low-res JPEGs used for scoring/OCR/HIGH-tier vision (and the fallback
     # if hi-res fails). MAX width: frames narrower than this are never upscaled
     # (upscaling the ~360p file added no pixels, only vision image tokens).

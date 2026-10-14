@@ -822,12 +822,15 @@ class TestRunHiresVideo:
         ffmpeg_ok: bool = True,
         select_raises: bool = False,
         hires_enabled: bool = True,
+        hires_finished: bool = True,
     ):
         order: list[str] = []
         lowres_video = _ready_lowres(tmp_path, order)
-        hires_video = MagicMock()
+        hires_video = MagicMock(started=True, finished=hires_finished)
         hires_video.close = AsyncMock()
         hires_video.start = MagicMock(side_effect=lambda: order.append("start-720p"))
+        # Detection prefers pass 1 when both answer at once (the 720p file has none here).
+        hires_video.path = AsyncMock(return_value=None)
 
         def fake_select(frames, duration):
             order.append("select")
@@ -878,6 +881,25 @@ class TestRunHiresVideo:
         _, hires_video, refine, _, _ = await self._run(tmp_path)
 
         assert refine.await_args.args[2] is hires_video
+
+    async def test_should_defer_the_hires_pass_while_the_720p_file_downloads(self, tmp_path):
+        """frames-done never waits for the big file (g4 §8)."""
+        result, _, refine, _, _ = await self._run(tmp_path, hires_finished=False)
+
+        assert (refine.await_count, "hires_upgrade" in result) == (0, True)
+
+    async def test_should_hand_the_deferred_pass_every_uploaded_frames_s3_key(self, tmp_path):
+        result, _, _, _, _ = await self._run(tmp_path, hires_finished=False)
+
+        upgrade = result["hires_upgrade"]
+        assert [f.s3_key for f in upgrade.frames] == [
+            f["s3_key"] for f in result["selected_frames"]
+        ]
+
+    async def test_should_not_defer_when_the_720p_file_is_on_disk(self, tmp_path):
+        result, _, _, _, _ = await self._run(tmp_path)
+
+        assert "hires_upgrade" not in result
 
     async def test_should_leave_the_720p_file_open_for_moment_fill(self, tmp_path):
         _, hires_video, _, _, _ = await self._run(tmp_path)
