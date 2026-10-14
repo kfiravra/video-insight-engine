@@ -41,9 +41,9 @@ SSH = [
 JS = """const d=db.videoSummaryCache.findOne({_id:ObjectId('%s')}); const t=(d.pipeline||{}).timing||{};
 print(JSON.stringify({status:d.status, version:d.version, pv:d.pipelineVersion, degraded:d.degraded||null,
  tabs:(d.tabs||[]).map(x=>[x.id,x.component]), milestones:t.milestones, costUsd:t.costUsd, counts:t.counts, totalMs:t.totalMs,
- llmFailures:(t.llmFailures||[]).map(f=>({span:f.span,model:f.model,startMs:f.startMs,wallMs:f.wallMs,attempt:f.attempt,error:f.error,rateLimited:f.rateLimited})),
+ llmFailures:(t.llmFailures||[]).map(f=>({span:f.span,model:f.model,startMs:f.startMs,wallMs:f.wallMs,attempt:f.attempt,error:f.error,rateLimited:f.rateLimited,refusedModel:f.refusedModel,refusalCategory:f.refusalCategory,in:f.inputTokens,out:f.outputTokens,usd:f.costUsd})),
  phases:(t.phases||[]).map(p=>[p.name,p.startMs,p.wallMs]),
- llm:(t.llmCalls||[]).map(c=>({f:c.feature,span:c.span,model:c.model,rm:c.responseModel,s:c.startMs,w:c.wallMs,ttft:c.ttftMs,in:c.inputTokens,out:c.outputTokens,cr:c.cacheReadTokens,cw:c.cacheWriteTokens,cw1h:c.cacheWrite1hTokens,cw5m:c.cacheWrite5mTokens,usd:c.costUsd,att:c.attempt,fb:c.fallbackUsed,fin:c.finishReason})),
+ llm:(t.llmCalls||[]).map(c=>({f:c.feature,span:c.span,model:c.model,rm:c.responseModel,s:c.startMs,w:c.wallMs,ttft:c.ttftMs,in:c.inputTokens,out:c.outputTokens,cr:c.cacheReadTokens,cw:c.cacheWriteTokens,cw1h:c.cacheWrite1hTokens,cw5m:c.cacheWrite5mTokens,usd:c.costUsd,att:c.attempt,fb:c.fallbackUsed,fin:c.finishReason,refusedModel:c.refusedModel,refusalCategory:c.refusalCategory})),
  downloads:(t.downloads||[]).map(x=>[x.kind,x.purpose,x.wallMs,x.bytes,x.ok]),
  tm:d.transcriptMeta, src:d.sourceLanguage?d.sourceLanguage.code:null, error:d.error||d.errorCode||null}))"""  # noqa: E501
 

@@ -9,7 +9,8 @@ ROOT="$(cd "$TOOLS/../../../.." && pwd)"
 P="$TOOLS/out/prod"
 mkdir -p "$P"
 cd "$ROOT"
-set -a; eval "$(grep -E '^(PROD_ADMIN_(EMAIL|PASSWORD)|VIE_PROD_API_URL|VIE_PROD_SSH|VIE_PROD_SSH_KEY)=' .env)"; set +a
+. "$TOOLS/_env.sh"
+load_env_keys '^(PROD_ADMIN_(EMAIL|PASSWORD)|VIE_PROD_API_URL|VIE_PROD_SSH|VIE_PROD_SSH_KEY)='
 [ -n "$PROD_ADMIN_EMAIL" ] && [ -n "$PROD_ADMIN_PASSWORD" ] || { echo "PROD_ADMIN_* missing in .env"; exit 2; }
 [ -n "$VIE_PROD_API_URL" ] && [ -n "$VIE_PROD_SSH" ] && [ -n "$VIE_PROD_SSH_KEY" ] || { echo "VIE_PROD_API_URL / VIE_PROD_SSH / VIE_PROD_SSH_KEY missing in .env"; exit 2; }
 export EVAL_USER_EMAIL="$PROD_ADMIN_EMAIL" EVAL_USER_PASSWORD="$PROD_ADMIN_PASSWORD"; unset EVAL_ALLOW_REGISTER

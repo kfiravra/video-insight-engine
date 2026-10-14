@@ -14,7 +14,7 @@ mkdir -p $T/out/{runs,golden,replay,capture,prod}
 
 | Tool | What it does | Usage (repo root) | Calls | Spend | Output |
 |---|---|---|---|---|---|
-| `devrun.py` | One dev pipeline run as the eval user. Records the SSE timeline from the client side, plus `pipeline.timing` read from local Mongo. | `services/summarizer/.venv/bin/python $T/devrun.py <ytid> [--cold] [--no-bypass]`. When run on its own, first run the `.env` eval line from its docstring. | dev API (`DEVRUN_API`, default `localhost:3000`) and local Mongo (`MONGODB_URI`) | ≈ $0.15–0.22 per cold run | appends to `out/runs/devruns.jsonl`; summary on stdout |
+| `devrun.py` | One dev pipeline run as the eval user. Records the SSE timeline from the client side, plus `pipeline.timing` read from local Mongo. | `services/summarizer/.venv/bin/python $T/devrun.py <ytid> [--cold] [--no-bypass]`. When run on its own, first load its `.env` keys with the `_env.sh` line from its docstring. | dev API (`DEVRUN_API`, default `localhost:3000`) and local Mongo (`MONGODB_URI`) | ≈ $0.15–0.22 per cold run | appends to `out/runs/devruns.jsonl`; summary on stdout |
 | `devruns.sh` | Four cold dev runs, one at a time: T1dQhQAm8Tc, jMq8lEu-of0, uC45_4nnEAI, EqaMrzd9nZU. Was `devruns-p3.sh`. | `flock "$L" $T/devruns.sh <tag> > $T/out/runs/runs-<tag>.log 2>&1` | `devrun.py` ×4 (dev API). Reads `EVAL_USER_*` and `MONGODB_URI` from `.env`. | ≈ $0.63–0.70 per batch (g3) | `out/runs/<tag>-<ytid>.{json,err}` and `out/runs/devruns.jsonl` |
 | `golden-full.sh` | Full golden eval: 18 live videos, concurrency 3, bypassCache. Then runs `gate.py` against `noise.json`. Run it alone. | `flock "$L" $T/golden-full.sh > $T/out/golden/golden-full.log 2>&1` | eval (`scripts/run_eval.py` → dev API) and `scripts/gate.py`. Reads `EVAL_USER_*` and `LANGFUSE_{PUBLIC,SECRET}_KEY`/`LANGFUSE_BASE_URL` from `.env`. | ≈ $1.74 per full run (g3, plan cache warm) | report goes to `reports/eval-*.json` (run_eval's own location); gate result on stdout |
 | `replay3.sh` | Replays the 3 cassettes at `--speed 0.1` and prints the phase-timing tables. | `flock "$L" $T/replay3.sh > $T/out/replay/replay3.txt 2>&1` | replay (`scripts/replay.py`, fake LLM, no network) | $0 | stdout |
@@ -25,6 +25,7 @@ mkdir -p $T/out/{runs,golden,replay,capture,prod}
 | `rebuild-images.sh` | Rebuilds dev images one at a time, then force-recreates their containers. Added separately; see its header. | `$T/rebuild-images.sh [service ...]` (takes the heavy lock itself) | docker compose (dev) | $0 | `out/rebuild/<UTC stamp>.log` |
 
 Notes:
+- **`.env` keys.** The wrappers source `_env.sh` and call `load_env_keys '<ERE>'`, which exports only the matching keys and never runs `.env` values as shell code (a `$` or backtick in a password stays literal).
 - **Heavy lock.** Apart from `rebuild-images.sh`, these tools never lock themselves. Wrap the local heavy ones (`devruns.sh`, `golden-full.sh`, `replay3.sh`, `capture.py`) in `flock "$L"` as shown, so only one heavy job runs on the WSL box at a time.
 - **New `.env` keys for the prod tools** (no defaults):
   - `VIE_PROD_API_URL`: the prod API base URL.

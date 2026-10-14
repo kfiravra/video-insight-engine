@@ -3,7 +3,8 @@
 TOOLS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$TOOLS/../../../.." && pwd)"
 cd "$ROOT"
-set -a; eval "$(grep -E '^EVAL_USER_|^LANGFUSE_(PUBLIC|SECRET)_KEY|^LANGFUSE_BASE_URL' .env)"; set +a
+. "$TOOLS/_env.sh"
+load_env_keys '^(EVAL_USER_[A-Z_]+|LANGFUSE_(PUBLIC|SECRET)_KEY|LANGFUSE_BASE_URL)='
 services/summarizer/.venv/bin/python scripts/run_eval.py --concurrency 3
 R=$(command ls -t reports/eval-*.json | head -1)
 echo "REPORT $R"

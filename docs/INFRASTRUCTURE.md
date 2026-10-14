@@ -335,7 +335,7 @@ The per-stage defaults are the pipeline-1min 4.0d model A/B picks, rounds 1 + 2 
 
 | Var | Default | Purpose |
 |-----|---------|---------|
-| `EXTRACTION_PARALLEL` | `true` | `true`: field groups (phase 3) — text groups fire at plan-done, the visual group at frames-done, under `EXTRACTION_PARALLEL_BATCHES`; `false`: today's single extraction call after frames (chunked batches one at a time), byte-identical request for the same plan. Extraction-only: the plan-done/frames-done reconcile, the `<video_memory>` evidence ranges, the toolkit markers and `PIPELINE_VERSION` v9 stay with either value — a full rollback is a redeploy of the previous `main` |
+| `EXTRACTION_PARALLEL` | `true` | `true`: field groups (phase 3) — text groups fire at plan-done, the visual group at frames-done, under `EXTRACTION_PARALLEL_BATCHES`; `false`: today's single extraction call after frames (chunked batches one at a time), byte-identical request for the same plan. Extraction-only: the plan-done/frames-done reconcile, the `<video_memory>` evidence ranges, the toolkit markers and `PIPELINE_VERSION` stay with either value — a full rollback is a redeploy of the previous `main` |
 | `EXTRACTION_PARALLEL_BATCHES` | `6` | Max extraction LLM calls in flight per run (was 2). The semaphore is per run: a worker with `WORKER_CONCURRENCY=2` holds up to 12. `pipeline.timing` counts 429s per run (blind to a concurrent run's 429s) — drop to `4` if any appear |
 | `CHUNKED_EXTRACTION_THRESHOLD` | `900` | Videos longer than this (s) may split the transcript into chapter batches |
 | `MAX_TOKENS_PER_BATCH` / `MAX_MINUTES_PER_BATCH` | `50000` / `40` | Limits of one extraction batch: estimated transcript tokens, minutes of video |

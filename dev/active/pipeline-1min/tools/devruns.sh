@@ -4,7 +4,8 @@ TOOLS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$TOOLS/../../../.." && pwd)"
 OUT="$TOOLS/out/runs"
 cd "$ROOT"
-set -a; eval "$(grep -E '^(EVAL_USER_|MONGODB_URI)' .env)"; set +a
+. "$TOOLS/_env.sh"
+load_env_keys '^(EVAL_USER_[A-Z_]+|MONGODB_URI)='
 mkdir -p "$OUT"
 for v in T1dQhQAm8Tc jMq8lEu-of0 uC45_4nnEAI EqaMrzd9nZU; do
   echo "### $v $(date +%T)"

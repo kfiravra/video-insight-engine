@@ -1,7 +1,7 @@
 """Coordinator dev-run tool: one pipeline run as the eval user, SSE timeline + pipeline.timing.
 
 Usage (repo root):
-  set -a; eval "$(grep -E '^(EVAL_USER_|MONGODB_URI)' .env)"; set +a
+  . dev/active/pipeline-1min/tools/_env.sh; load_env_keys '^(EVAL_USER_[A-Z_]+|MONGODB_URI)='
   services/summarizer/.venv/bin/python dev/active/pipeline-1min/tools/devrun.py <ytid> \
       [--cold] [--no-bypass]
 Appends one JSON line per run to tools/out/runs/devruns.jsonl and prints a summary.

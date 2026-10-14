@@ -1873,7 +1873,7 @@ Per run (v10 pipeline; the default `EXTRACTION_PARALLEL=true`; models = the `con
 | Description analysis | gpt-6-luna (`LLM_DESCRIPTION_MODEL`) | 1 | Background from metadata-end |
 | Tier probe | Haiku 4.5 (`LLM_CLASSIFIER_MODEL`) | 1 | At transcript-ready, ∥ frames |
 | Plan | Primary (Sonnet 5.5, effort medium) | 1 | ∥ Memory |
-| Memory | Haiku 5.5 (`LLM_MEMORY_MODEL`; blank = `LLM_EXTRACTION_MODEL`) | 1 (none without timed transcript) | ∥ Plan |
+| Memory | Haiku 5.5 (`LLM_MEMORY_MODEL`; blank = `LLM_EXTRACTION_MODEL` in config.py only — under compose a blank line keeps Haiku 5.5) | 1 (none without timed transcript) | ∥ Plan |
 | Frame vision | Sonnet 5.5 (`LLM_VISION_MODEL`) | 1-5 batches (none on LOW tier / manifest hit) | ∥ text branch |
 | Chapter detect | Fast | 0-1 (videos past one extraction batch — over `MAX_MINUTES_PER_BATCH` or `MAX_TOKENS_PER_BATCH` — with no listed chapters, no description timestamps and no usable memory outline) | No — before the field groups fire |
 | Extraction field groups | Sonnet 5.5 at effort low (`LLM_EXTRACTION_MODEL`) | 1-5 text groups + 0-1 visual group, per chunk (`grouping` in domains.json: `maxTextGroups` 5, `groupOutputBudget` 1,500 tokens; a long video has one chunk per chapter batch). A lost answer gets one more call | Text groups at plan-done (text1 first, the rest on its first streamed chunk), the visual group at frames-done; ≤ `EXTRACTION_PARALLEL_BATCHES` in flight |

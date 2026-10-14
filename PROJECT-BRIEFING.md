@@ -130,7 +130,7 @@ metadata (one extract_info) → t=0 group in the background: captions · descrip
    → [ translation ]  (non-English only) → done
 ```
 
-`EXTRACTION_PARALLEL=false` is the rollback lever: no field groups — after the whole group, frames-done, then ONE extraction call (or a long video's chapter batches, one at a time). It reverts extraction only; reconcile, `<video_memory>` and v9 stay.
+`EXTRACTION_PARALLEL=false` is the rollback lever: no field groups — after the whole group, frames-done, then ONE extraction call (or a long video's chapter batches, one at a time). It reverts extraction only; reconcile, `<video_memory>` and `PIPELINE_VERSION` stay.
 
 > ⚠️ **Naming note:** "Plan" is canonical; "triage" is the legacy name — the SSE event is still `triage_complete`, the plan phase lives in `phases/triage.py`, and `triage.py` keeps the `TriageResult` carrier. A failed plan or confidence < 0.6 → the category's default tabs (`_build_fallback_plan`). The old classifier (replaced by the tier probe) and "persona detection" are gone.
 
@@ -251,7 +251,7 @@ Node.js 20 + Fastify + TypeScript + Zod. Base URL `/api`. Patterns: DI `Containe
 - `GET /api/users/me/usage` — today's spend/headroom/next-reset.
 - Internal: `POST /internal/status` (summarizer → API → rebroadcast over WS), `POST /internal/reconcile-costs` (nightly cron), `POST /internal/run-deletions` (GDPR cron).
 
-### SSE event sequence (v9, `EXTRACTION_PARALLEL=true`)
+### SSE event sequence (since v9, `EXTRACTION_PARALLEL=true`)
 ```
 metadata → phase* (transcript hops: transcript_cached | transcript | audio_transcription
                    | whisper_transcription | metadata_fallback; later: translation)
@@ -419,7 +419,7 @@ The summarizer's `MODEL_MAP` (`services/summarizer/src/config.py`) — the provi
 | OpenAI | GPT-4o | GPT-4o-mini | 128K |
 | Google | Gemini 2.5 Flash | Gemini 2.5 Flash Lite | 1M |
 
-**Routing by stage (defaults from the 4.0d model A/B rounds 1 + 2, `dev/active/pipeline-1min/gates/g4-model-ab.md` — quality within noise first, then latency, then cost):** Plan = the primary, Sonnet 5.5 at effort medium (the only stage that reads it) · Frame vision = `LLM_VISION_MODEL` = Sonnet 5.5 (Haiku 5.5 labelled cooking frames as talking heads; gpt-4o-mini was reverted in 2026-05 — it hallucinated OCR on dense frames) · Extraction groups = `LLM_EXTRACTION_MODEL` = Sonnet 5.5 at effort low, the group calls' rules ending with the completeness rule (A/B round 2: the fewest missed transcript-supported items and no invented details — Haiku 4.5 invented steps, quantities and code snippets) · Memory = `LLM_MEMORY_MODEL` = Haiku 5.5 (blank follows `LLM_EXTRACTION_MODEL`) · Tier probe = `LLM_CLASSIFIER_MODEL` = Haiku 4.5 · Description analysis + translation (output, title, RAG transcript) = `LLM_DESCRIPTION_MODEL` / `LLM_TRANSLATION_MODEL` = gpt-6-luna, reasoning off · Quiz = `LLM_ENRICHMENT_MODEL` = gpt-4o-mini · Synthesis, chapter detect, faithfulness judge = the fast tier (gpt-4o-mini with `LLM_FAST_PROVIDER=openai`, as both `.env` templates and prod set; Haiku 4.5 by default). config.py and both compose anchors carry the same literal defaults. `LLM_FALLBACK_PROVIDER` = a cross-provider fallback for primary-model calls after one same-provider retry (`openai` → gpt-4o).
+**Routing by stage (defaults from the 4.0d model A/B rounds 1 + 2, `dev/active/pipeline-1min/gates/g4-model-ab.md` — quality within noise first, then latency, then cost):** Plan = the primary, Sonnet 5.5 at effort medium (the only stage that reads it) · Frame vision = `LLM_VISION_MODEL` = Sonnet 5.5 (Haiku 5.5 labelled cooking frames as talking heads; gpt-4o-mini was reverted in 2026-05 — it hallucinated OCR on dense frames) · Extraction groups = `LLM_EXTRACTION_MODEL` = Sonnet 5.5 at effort low, the group calls' rules ending with the completeness rule (A/B round 2: the fewest missed transcript-supported items and no invented details — Haiku 4.5 invented steps, quantities and code snippets) · Memory = `LLM_MEMORY_MODEL` = Haiku 5.5 (blank follows `LLM_EXTRACTION_MODEL` in config.py only — under compose a blank line keeps Haiku 5.5) · Tier probe = `LLM_CLASSIFIER_MODEL` = Haiku 4.5 · Description analysis + translation (output, title, RAG transcript) = `LLM_DESCRIPTION_MODEL` / `LLM_TRANSLATION_MODEL` = gpt-6-luna, reasoning off · Quiz = `LLM_ENRICHMENT_MODEL` = gpt-4o-mini · Synthesis, chapter detect, faithfulness judge = the fast tier (gpt-4o-mini with `LLM_FAST_PROVIDER=openai`, as both `.env` templates and prod set; Haiku 4.5 by default). config.py and both compose anchors carry the same literal defaults. `LLM_FALLBACK_PROVIDER` = a cross-provider fallback for primary-model calls after one same-provider retry (`openai` → gpt-4o).
 
 **Per-model request rules + refusals (4.0b):** every request is shaped for the model it goes to (`llm_model_rules`: thinking off + effort for the 5.5 models, `reasoning_effort="none"` for gpt-6-luna, sampling params dropped where the model rejects them, no assistant prefill). A refused answer (HTTP 200) is asked once more, in the same call, of the model it replaced (`config.PREVIOUS_MODEL`: Sonnet 5.5 → Sonnet 4.6, Haiku 5.5 → Haiku 4.5, gpt-6-luna → gpt-4o-mini) — never again on the refused model, never retried; tagged in `pipeline.timing` (v4) and `llm_usage` (`refusal`, `fallback_from`).
 

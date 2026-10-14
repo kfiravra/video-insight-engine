@@ -59,7 +59,7 @@ services/summarizer/
     │   │   ├── tier_probe.py         # Tier probe: domain+format+has_visual_demo+transcript_usable at transcript-ready (Haiku, temp 0)
     │   │   ├── plan.py / plan_prompt.py # Plan (Sonnet 5.5, effort medium): full marked transcript → tabs + briefs,
     │   │   │                         #   evidence, terms (+ _render_playbook, _enforce_domain_policy)
-    │   │   ├── memory.py             # Memory (LLM_EXTRACTION_MODEL) ∥ plan: outline, evidence, tldr, takeaways
+    │   │   ├── memory.py             # Memory (LLM_MEMORY_MODEL) ∥ plan: outline, evidence, tldr, takeaways
     │   │   ├── plan_reconcile.py     # Plan-parse guard: unregistered path, inactive domain
     │   │   ├── reconcile.py          # Plan-done reconcile: doubly-false view, step 1, screen-code check
     │   │   ├── reconcile_pass.py     # Reconcile steps 2–5 (backfill, quiz, dedupe, 3–6) + row writer
@@ -253,7 +253,7 @@ FRAME_VISION_PARALLEL=true             # Vision in parallel batches; false = one
 LLM_VISION_MODEL=anthropic/claude-sonnet-5-5  # 4.0d pick (both composes default to it); empty outside compose = the primary model
 
 # Extraction concurrency + chunking
-EXTRACTION_PARALLEL=true               # Field groups (text at plan-done, visual at frames-done); false = today's single call / chunked batches one at a time (extraction only: reconcile, evidence ranges, toolkit markers, v9 stay)
+EXTRACTION_PARALLEL=true               # Field groups (text at plan-done, visual at frames-done); false = today's single call / chunked batches one at a time (extraction only: reconcile, evidence ranges, toolkit markers, PIPELINE_VERSION stay)
 EXTRACTION_PARALLEL_BATCHES=6          # Max extraction calls in flight per run (× WORKER_CONCURRENCY per worker); drop to 4 if pipeline.timing records 429s
 CHUNKED_EXTRACTION_THRESHOLD=900       # (EXTRACTION_PARALLEL=false only) Videos longer than this (s) may split the transcript into chapter batches
 MAX_TOKENS_PER_BATCH=50000             # One batch's estimated transcript tokens
@@ -321,7 +321,7 @@ will be retrievable.
 
 ## Processing Pipeline (Plan-Driven)
 
-A plan-first pipeline (v9): description analysis, tier probe, plan ∥ memory, the extraction field groups (1–5 text groups + at most one visual group, per chunk — a long video has several chunks), synthesis, the quiz when demanded, plus 1-5 vision batches and the sampled faithfulness judge; non-English videos add batched translation calls. With `EXTRACTION_PARALLEL=false` extraction is one call (or one per chapter batch). Phase order lives in `routes/pipeline_orchestration.py`; the call-order walkthrough with file anchors is [summarizer-workflow.md](./summarizer-workflow.md):
+A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, tier probe, plan ∥ memory, the extraction field groups (1–5 text groups + at most one visual group, per chunk — a long video has several chunks), synthesis, the quiz when demanded, plus 1-5 vision batches and the sampled faithfulness judge; non-English videos add batched translation calls. With `EXTRACTION_PARALLEL=false` extraction is one call (or one per chapter batch). Phase order lives in `routes/pipeline_orchestration.py`; the call-order walkthrough with file anchors is [summarizer-workflow.md](./summarizer-workflow.md):
 
 ```
  1. CONNECT via SSE
@@ -448,7 +448,7 @@ A plan-first pipeline (v9): description analysis, tier probe, plan ∥ memory, t
     │   │   video half is uncached. Emits contentTags, modifiers, tabs with briefs ({what,
     │   │   where, expect}), evidence (has_* booleans that gate domain requirements) and
     │   │   terms; truncation is counted (counts.truncated)
-    │   └─▶ Memory: LLM_MEMORY_MODEL (Haiku 5.5), 25 s, ONE attempt, temperature 0 → outline (4-12
+    │   └─▶ Memory: LLM_MEMORY_MODEL (Haiku 5.5), 25 s, ONE attempt, temperature 0 (dropped for Haiku 5.5) → outline (4-12
     │   │   contiguous sections; dropped when it stops short of the duration), evidence, tldr,
     │   │   takeaways. No timed transcript → no call. Its tldr + takeaways go out at once as the
     │   │   first synthesis_complete (the hero). Failure → None; every reader has a fallback
@@ -581,7 +581,7 @@ A plan-first pipeline (v9): description analysis, tier probe, plan ∥ memory, t
     └─▶ The rollback lever: after the whole phase-2 group (frames-done step first), ONE call via
     │   run_parallel_phases (heartbeats) — the same request bytes for the same plan as before the
     │   split (replay identity test). It reverts extraction only: reconcile, the `<video_memory>`
-    │   evidence ranges, the toolkit markers and v9 stay; the flag also runs a long video's chunked
+    │   evidence ranges, the toolkit markers and PIPELINE_VERSION stay; the flag also runs a long video's chunked
     │   batches one at a time. A full rollback is a redeploy of the previous main
     └─▶ Prompt (pipeline/extraction_prompt.py): system = the rules (no per-video text);
     │   user block 1 = [video + transcript + video_memory] with the one cache breakpoint;
@@ -1004,7 +1004,7 @@ read as fallbacks (Frontend Meta Resolution below). Field-level detail:
         }
     ],
     "language": "en", "isRTL": False,
-    "pipelineVersion": "v9",                # packages/shared/src/config/pipeline-version.json
+    "pipelineVersion": "v10",                # packages/shared/src/config/pipeline-version.json
     "pipeline": {                           # the summarizer's own record of the run
         "triage": {...},                    # the triage_complete payload (reconciled tabs + evidence)
         "reconcile": [...],                 # every plan-parse / plan-done / frames-done tab decision
@@ -1319,7 +1319,7 @@ A setting left out of the environment keeps the compose / `config.py` default; t
 "empty →" fallbacks below apply only to an empty value outside compose:
 - Plan: primary model = Sonnet 5.5 at effort medium (60s timeout, 1 retry, 3,500 tokens; the cross-provider fallback applies). At effort low it flipped `is_learnable` on T1dQhQAm8Tc in both A/B runs (the quiz tab dropped)
 - Tier probe (replaced the classifier): `LLM_CLASSIFIER_MODEL` = Haiku 4.5 (4s, no retry). Haiku 5.5 matched 16/18 golden visual-demo labels vs 18/18
-- Memory: `LLM_MEMORY_MODEL` = Haiku 5.5, blank = `LLM_EXTRACTION_MODEL` (25s, single attempt; a primary-model call with an override)
+- Memory: `LLM_MEMORY_MODEL` = Haiku 5.5, blank = `LLM_EXTRACTION_MODEL` in config.py only — under compose a blank line keeps Haiku 5.5 (25s, single attempt; a primary-model call with an override)
 - Synthesis: the fast tier (`LLM_SYNTHESIS_MODEL` blank; 20s, 1 retry)
 - Quiz (enrichment): `LLM_ENRICHMENT_MODEL` = gpt-4o-mini (14s per attempt, 30s total). gpt-6-luna was as usable, at twice the p50
 - Description analysis: `LLM_DESCRIPTION_MODEL` = gpt-6-luna (25s per attempt, 30s total)
@@ -1343,7 +1343,7 @@ Hard character limit per model before every LLM call (`MODEL_CHAR_LIMITS`):
 | `CHUNKED_EXTRACTION_THRESHOLD` | 900 (15 min) | Duration threshold for chunked path (`EXTRACTION_PARALLEL=false` only; the field groups chunk past `MAX_MINUTES_PER_BATCH` / `MAX_TOKENS_PER_BATCH`) |
 | `MAX_TOKENS_PER_BATCH` | 50000 | Max tokens per extraction batch |
 | `MAX_MINUTES_PER_BATCH` | 40 | Max minutes of video per extraction batch |
-| `EXTRACTION_PARALLEL` | True | True: field groups (text groups at plan-done, the visual group at frames-done); False: today's single call / chunked batches one at a time, byte-identical request for the same plan — an extraction-only lever (reconcile, `<video_memory>` evidence ranges, toolkit markers and v9 stay; full rollback = redeploy the previous main) |
+| `EXTRACTION_PARALLEL` | True | True: field groups (text groups at plan-done, the visual group at frames-done); False: today's single call / chunked batches one at a time, byte-identical request for the same plan — an extraction-only lever (reconcile, `<video_memory>` evidence ranges, toolkit markers and `PIPELINE_VERSION` stay; full rollback = redeploy the previous main) |
 | `EXTRACTION_PARALLEL_BATCHES` | 6 | Max split-extraction group calls in flight — per run, so a worker holds up to this × `WORKER_CONCURRENCY` calls (today's path runs its batches one at a time) |
 | `EXTRACTION_FORCE_SPLIT_CHUNKS` | 4 | Sub-batches when chunked input collapses to 1 batch (`EXTRACTION_PARALLEL=false` only) |
 

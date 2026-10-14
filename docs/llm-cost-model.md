@@ -213,7 +213,7 @@ Since the 4.0 picks extraction runs on Sonnet 5.5, whose minimum is 512 tokens
 (pipeline-1min context.md, "4.0c docs facts"): block 1 (≈ 5.3k tokens on the new
 tokenizer) now gets its own 1h entry, written by the first text1 of a domain set in
 the hour. Dev v10 T1dQhQAm8Tc: text1 read 5,349 (block 1) and wrote 6,713 for 5m
-(block 2); text2 read 12,062 (blocks 1 + 2).
+(block 2); text2 read 12,062 (blocks 1 + 2) (`dev/active/pipeline-1min/gates/g4.md` §3.7, L5).
 
 **Extraction, `EXTRACTION_PARALLEL=false` — 5m (1c.3).** The single call (one
 per chapter batch on a long video) the groups replaced — byte-identical to the

@@ -133,8 +133,8 @@ Rule: quality within noise or better first, then latency, then cost.
 |---|---|---|---|
 | plan | `anthropic/claude-sonnet-5-5 @ effort medium` | at low it flipped is_learnable on T1dQ in both runs (quiz tab dropped); medium keeps it — evidence 0.94 / tabs 0.82 vs A (A's own run-to-run tabs 0.6); p50 11.3 s vs 23.6 s; warm ≈ $0.032 vs $0.036 per call | quality (medium over low), then latency (vs Sonnet 4.6) |
 | vision | `anthropic/claude-sonnet-5-5` | reads all 5 uC45 cards like Sonnet 4.6; scene types 0.94 vs A (Haiku 5.5 0.77: chef-at-work frames → talking_head, dropped as filler); p50 8.6 s vs 16.8 s; −30 % cost | quality (C over B), then latency (C over A) |
-| extraction | `anthropic/claude-haiku-4-5-20251001 (unchanged)` | Haiku 5.5 kept 0.72 of A's items vs its own run-to-run 0.86 and lost real recipe steps (jMq8: preheat, 375 °F covered bake); at medium 0.87, same steps lost | quality |
-| memory | `anthropic/claude-haiku-4-5-20251001 (unchanged)` | reads LLM_EXTRACTION_MODEL (D5) — follows the extraction pick (Haiku 5.5 parsed 3/3, evidence agreement 0.82) | tied to extraction |
+| extraction | ~~`anthropic/claude-haiku-4-5-20251001 (unchanged)`~~ **superseded by D31 below** | Haiku 5.5 kept 0.72 of A's items vs its own run-to-run 0.86 and lost real recipe steps (jMq8: preheat, 375 °F covered bake); at medium 0.87, same steps lost | quality |
+| memory | ~~`anthropic/claude-haiku-4-5-20251001 (unchanged)`~~ **superseded by D31 below** | reads LLM_EXTRACTION_MODEL (D5) — follows the extraction pick (Haiku 5.5 parsed 3/3, evidence agreement 0.82) | tied to extraction |
 | tier_probe | `anthropic/claude-haiku-4-5-20251001 (unchanged)` | Haiku 5.5 matched 16/18 visual-demo labels vs 18/18, the same two misses in both passes; p50 1.14 s vs 0.91 s, 1/36 calls over the 4 s timeout | quality |
 | description | `openai/gpt-6-luna` | same URLs (differences are link/resource/social buckets); gpt-4o-mini invented a placeholder URL in 1/6 runs, luna 0/6; p50 3.4 s vs 3.2 s; −7 % cost | quality |
 | quiz | `openai/gpt-4o-mini (unchanged)` | both usable 2/2 (4 vs 5 valid questions, cap 8) — within noise; p50 5.2 s vs 10.5 s, one luna call past the 14 s attempt timeout | latency |
@@ -143,6 +143,14 @@ Rule: quality within noise or better first, then latency, then cost.
 | faithfulness | `openai/gpt-4o-mini (unchanged, fast tier)` | luna halves the grounded rate (0.44 vs 0.89; 8 of 18 claims flipped, never the reverse) and fails headings; the score is informational and the golden baseline is gpt-4o-mini | quality (comparability) |
 
 p50s in this section are round 1's nearest-rank values; true medians are in the tables (plan 24.5 vs 11.5 s, vision 22.2 vs 8.9 s).
+
+**Final picks (Kfir, D31, 2026-10-14 — after Round 2 below; commit 37dccd1, `PIPELINE_VERSION` v10).** Extraction →
+`anthropic/claude-sonnet-5-5` at effort low WITH the completeness rule, in the split path's group calls (the measured
+C+rule arm: the fewest missed transcript-supported items, no invented details; round 1's "lost real recipe steps" was
+wrong — Round 2 §1). Memory → its own setting `LLM_MEMORY_MODEL` = `anthropic/claude-haiku-5-5` (otherwise it would
+follow extraction onto Sonnet; agreement 0.82 vs Haiku 4.5's noise floor 0.923–0.974, direction unknown). Every other
+row above stands (plan at medium, vision, tier probe, description, quiz, translations, judge). Gate 4.0 on these
+models: `g4.md` §1.
 
 ## Round 2 — 2026-10-13 (UTC)
 

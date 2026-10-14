@@ -17,7 +17,7 @@
 
 Stores: MongoDB 7 (records), Redis 7 (cache + locks), Qdrant (RAG vectors), RabbitMQ (optional queue), S3 (frames/transcripts). Shared config: `packages/shared/src/config/domains.json` (one config, read by Python + TS). **API gateway lives at top-level `api/`** (not `services/api`).
 
-## The pipeline (v9; measured on prod before the 4.0 model refresh: $0.10–0.18 and 59–93 s to `complete` per video on the 3 benchmarks + the Hebrew regression video, g3 §Prod; streamed over SSE)
+## The pipeline (v10 since the 4.0 model refresh; v9 measured on prod before it: $0.10–0.18 and 59–93 s to `complete` per video on the 3 benchmarks + the Hebrew regression video, g3 §Prod; v10 on dev: $0.11–0.18 and 36–90 s, g4 §1; streamed over SSE)
 ```
 metadata (+ t=0 background: captions · description analysis · downloads)
 → ONE parallel group:
