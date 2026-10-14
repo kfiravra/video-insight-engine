@@ -62,6 +62,8 @@ TODAY_SETTINGS: dict[str, Any] = {
     "LLM_ENRICHMENT_MODEL": GPT_4O_MINI,
     "LLM_DESCRIPTION_MODEL": None,
     "LLM_TRANSLATION_MODEL": None,
+    # The judge on the fast tier (gpt-4o-mini), as round 1 captured it.
+    "LLM_JUDGE_MODEL": None,
 }
 # Params only a model's request rules add — never part of a captured request.
 _MODEL_PARAMS = frozenset({"thinking", "output_config", "reasoning_effort"})

@@ -313,8 +313,25 @@ class TestDegradedBySummaryId:
             ]
         )
         result = await _degraded_by_summary_id(db, {degraded_id, clean_id})
-        assert result[degraded_id] is True
-        assert result[clean_id] is False
+        assert result[degraded_id] == (True, None)
+        assert result[clean_id] == (False, None)
+
+    @pytest.mark.anyio
+    async def test_returns_the_reasons_with_the_flag(self) -> None:
+        from bson import ObjectId
+
+        degraded_id = "664f000000000000000000aa"
+        db = _FakeDb(
+            [
+                {
+                    "_id": ObjectId(degraded_id),
+                    "degraded": True,
+                    "degradedReasons": ["media_download_failed"],
+                }
+            ]
+        )
+        result = await _degraded_by_summary_id(db, {degraded_id})
+        assert result[degraded_id] == (True, ["media_download_failed"])
 
     @pytest.mark.anyio
     async def test_invalid_object_ids_are_skipped(self) -> None:

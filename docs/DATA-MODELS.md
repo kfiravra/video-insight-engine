@@ -242,13 +242,22 @@ One row per video **version** (`version`, `isLatest` below); the served row is s
                     refusedModel?,    // v4: any row recorded during a refused call's one re-send on the previous model (its refusal, error or timeout) — a timeout only under call_deadline (LLMService calls); a re-send cancelled by frame vision's wait_for or the description's 30 s cap is a plain TimeoutError row under the refused model, without refusedModel
                     // error "Refusal" rows only — what the declined answer was billed:
                     refusalCategory?, inputTokens?, outputTokens?, cacheReadTokens?, cacheWriteTokens?, cacheWrite5mTokens?, cacheWrite1hTokens?, costUsd? }],
-    downloads: [{ kind: "lowres" | "720p" | "audio", purpose: string, startMs, wallMs, bytes: number | null, ok: boolean }],
+    downloads: [{ kind: "lowres" | "720p" | "audio", purpose: string, startMs, wallMs, bytes: number | null,
+                  mbPerSec: number | null, ok: boolean,
+                  // yt-dlp video downloads only: the picked rendition, the clients + proxy exit that delivered it, why it failed
+                  format?: string | null, height?: number | null, clients?: string | null, proxyExit?: string | null, error?: string | null }],
+    degraded: boolean,              // a failed frame download (lowres / 720p; not a run-made cancel) or a
+    degradedReasons: string[],      //   partial extraction — the same reasons as the row's degradedReasons
     costUsd: number,                // Σ costUsd over llmCalls + llmFailures — refused calls included (v4)
     counts: { llmCalls, llmFailures, retries, rateLimited,
               fallbacks,            // answers with fallbackUsed and no refusedModel: the cross-provider fallback + provider-side model swaps
               refusals,             // v4: calls refused — "Refusal" rows without refusedModel
               refusalFallbacks,     // v4: refused calls the previous model answered — llmCalls with refusedModel
               refusalsUnanswered,   // v4: refusals − refusalFallbacks
+              cacheRewrites,        // hotfix 4.1, absent before: split-extraction writes of a prefix another call
+              cacheRewriteTokens,   //   writes — a group released before its chunk's text1 first token that wrote,
+                                    //   a later chunk's text1 writing block 1 (1h); and the tokens written
+                                    //   (pipeline/cache_rewrites.py; refusal re-sends and sole writers excluded)
               outputTokens, cacheReadTokens,  // Σ over llmCalls only (refused answers excluded)
               downloadBytes, tabsPlanned, tabsAssembled, tabsEmitted,  // tabsEmitted = distinct tab ids streamed non-provisional (a provisional tab replaced by id counts once; one withdrawn or replaced under another id never counts; an assembled tab withdrawn later still counts)
               truncated }  // answers that stopped at max_tokens (finish_reason=length); DONE log line `llm truncated=N`
@@ -445,8 +454,11 @@ One row per video **version** (`version`, `isLatest` below); the served row is s
   forceRefresh: true | absent,      // bypassCache: summarizer skips its Redis response cache; $unset on save
   coldMedia: true | absent,         // POST /videos `cold` (admin/eval only): the run also skips the
                                     // S3 transcript + scene-frame caches
-  degraded: true | absent,          // top-level mirror of meta.degraded (admin run badge): a failed
-                                    // extraction group, a dropped chunked batch, or critical coverage
+  degraded: true | absent,          // admin run badge: meta.degraded (a failed extraction group, a
+                                    // dropped chunked batch, or critical coverage), OR a failed frame
+                                    // download (set at the run's end; no user-facing banner)
+  degradedReasons: string[] | absent, // why, written at the run's end: "partial_extraction",
+                                    // "media_download_failed"; [] = clean
   pipelineVersion: string | absent, // PIPELINE_VERSION stamp of the run that saved the row; a stale
                                     // stamp re-runs on the user's next submission (and the worker
                                     // skips a queued job only when the row is completed by the

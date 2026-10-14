@@ -114,7 +114,8 @@ services/summarizer/
     │   ├── transcript/           # cleaner.py (basic cleaning incl. English fillers), render.py ([m:ss] markers)
     │   │
     │   ├── media/                # Frame extraction, vision & S3 storage
-    │   │   ├── scene_extractor.py    # Scene keyframe extraction (yt-dlp + FFmpeg) + manifest-v2 cache
+    │   │   ├── scene_extractor.py    # Scene keyframe extraction (yt-dlp + FFmpeg)
+    │   │   ├── frame_manifest.py     # Manifest-v2 frame cache (S3 sidecar: timestamps, hiresCount, vision descriptions)
     │   │   ├── frame_scorer.py       # Frame scoring (visual, face, skin, center-detail, text, uniqueness)
     │   │   ├── frame_analyzer.py     # Vision (LLM_VISION_MODEL, Sonnet 5.5) in ≤5 parallel batches of ≤8 frames (vision.txt)
     │   │   ├── visual_tier.py        # Adaptive visual tier (high/standard/low from metadata)
@@ -197,13 +198,14 @@ LLM_PROVIDER=anthropic          # anthropic, openai, or gemini
 LLM_FAST_PROVIDER=              # Optional: separate provider for the fast tier (prod + .env.example: openai → gpt-4o-mini; blank → Haiku 4.5)
 LLM_FALLBACK_PROVIDER=          # Optional: cross-provider fallback after one same-provider retry (primary-model calls; openai → gpt-4o)
 LLM_MODEL=                      # Optional: override the primary model (blank = MODEL_MAP default, anthropic/claude-sonnet-5-5 — in this service only the plan + /health read it; vie-assistant reads it too)
-LLM_FAST_MODEL=                 # Optional: override the fast-tier model (synthesis, faithfulness judge, chapter detect, blank stage settings; vie-assistant's quiz tool too)
+LLM_FAST_MODEL=                 # Optional: override the fast-tier model (synthesis, chapter detect, blank stage settings; vie-assistant's quiz tool too)
 
 # Per-stage models (pipeline-1min 4.0d A/B, gates/g4-model-ab.md). config.py and both
 # compose anchors carry the same literal default, so a blank .env line keeps it.
 LLM_CLASSIFIER_MODEL=anthropic/claude-haiku-4-5-20251001   # Tier probe (D21)
 LLM_EXTRACTION_MODEL=anthropic/claude-sonnet-5-5           # Extraction (groups + single call), effort low
 LLM_MEMORY_MODEL=anthropic/claude-haiku-5-5                # Memory; blank = LLM_EXTRACTION_MODEL (config only)
+LLM_JUDGE_MODEL=openai/gpt-6-luna                          # Faithfulness judge (reasoning off); blank = the fast tier (config only)
 LLM_DESCRIPTION_MODEL=openai/gpt-6-luna                    # Description analysis (reasoning off)
 LLM_TRANSLATION_MODEL=openai/gpt-6-luna                    # Output, title and RAG transcript translation (reasoning off)
 LLM_ENRICHMENT_MODEL=openai/gpt-4o-mini                    # The quiz
@@ -244,9 +246,9 @@ SCENE_S3_PREFIX=scenes-v4              # Versioned frame/manifest prefix — bum
 SCENE_HIRES_ENABLED=true               # Pass-2 720p refinement of the selected frames
 SCENE_HIRES_FALLBACK_TIMEOUT=180.0     # Hi-res seek budget in the run's local 720p file (media/hires_refiner.py)
 YOUTUBE_PROXY_URL=                     # One proxy for every YouTube request (metadata, captions, every download)
-YOUTUBE_PROXY_EXIT_COUNT=1             # Sticky exits (USERNAME-1…N) a 429 or bot check rotates through on every YouTube call (max 3); 1 = no rotation
-YTDLP_PLAYER_CLIENTS=android           # yt-dlp player clients for pass 1 + audio downloads; empty = yt-dlp defaults
-YTDLP_HIRES_PLAYER_CLIENTS=web_embedded,android  # 720p download only (android caps at 360p); retries with the line above
+YOUTUBE_PROXY_EXIT_COUNT=1             # Sticky exits (USERNAME-1…N) a 429 or bot check rotates through on every YouTube call (metadata + captions: every exit, no new one after 15 s; downloads: max 3); 1 = no rotation
+YTDLP_PLAYER_CLIENTS=android           # yt-dlp player clients for audio downloads + the video downloads' retry; empty = yt-dlp defaults
+YTDLP_HIRES_PLAYER_CLIENTS=web_embedded,android  # both video downloads try these first (android has no video-only renditions); retries with the line above
 FRAME_TIER_ENABLED=true                # Adaptive visual tiers (HIGH: overselect + vision reselect before hires)
 FRAME_VISION_ENABLED=true              # Frame descriptions by the vision model; false = OCR only
 FRAME_VISION_PARALLEL=true             # Vision in parallel batches; false = one call with every frame
@@ -361,12 +363,13 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     │       while frames still run
     │
     └─▶ FRAMES (smart frame selection, two-pass, non-critical)
-        └─▶ S3 cache check — MANIFEST-only: `videos/{id}/{SCENE_S3_PREFIX}/manifest.json`
+        └─▶ S3 cache check (media/frame_manifest.py) — MANIFEST-only: `videos/{id}/{SCENE_S3_PREFIX}/manifest.json`
         │   (v2) carries per-frame timestamps, galleryIndices, hiresCount and the
         │   persisted visionDescriptions. A hit skips extraction AND restores the
         │   vision descriptions (cached frames have no local file, so vision can't
-        │   re-run); `hiresCount == 0` (every hi-res seek failed) is treated as a
-        │   MISS so a 403-era low-res run self-heals on the next reprocess.
+        │   re-run); `hiresCount == 0` (every hi-res seek failed, or a deferred hi-res
+        │   pass that never landed) is treated as a MISS so a low-res run self-heals
+        │   on the next reprocess.
         │   (prefix is versioned via SCENE_S3_PREFIX, default "scenes-v4" — bump to
         │    invalidate after quality changes; "scenes" holds pre-hires low-res
         │    frames, "scenes-v2" pre-adaptive-vision frames. NOTE: scene_NNNN keys
@@ -378,13 +381,31 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
         │   HIGH over-selects FRAME_OVERSELECT_COUNT candidates and
         │   vision-describes them BEFORE hires refinement so subject-matter frames beat
         │   presenter shots (floor FRAME_RESELECT_FLOOR); LOW skips vision; STANDARD = top-8.
-        └─▶ Pass 1 — detection: reads the run's WORST-quality download (started by the
-        │   metadata phase; ~15-20s; 144p is plenty for scene detection + scoring).
-        │   All yt-dlp VIDEO/AUDIO downloads (detection, whisper audio; the 720p file uses
-        │   YTDLP_HIRES_PLAYER_CLIENTS first) route through YTDLP_PLAYER_CLIENTS (default "android" — YouTube
-        │   403s the web client's download URLs from some environments; never mix in
+        └─▶ Pass 1 — detection: reads the run's 360p download (started by the metadata
+        │   phase): the smallest ≥360p video-only rendition, H.264 first — or the 720p
+        │   download's file when it lands first as the same ≤360p rendition
+        │   (hires_prefetch.first_detection_file; pass 1 is then cancelled; a real
+        │   720p file is read only when pass 1 fails — scene scoring on it costs
+        │   several times more). Both video downloads try YTDLP_HIRES_PLAYER_CLIENTS first:
+        │   android alone serves only the muxed 360p rendition (format 18, audio
+        │   included, 2-4x the bytes, often bigger than the 720p file — g4 §8), and
+        │   YouTube's SABR experiment sometimes drops web_embedded's renditions too, so
+        │   both downloads can still be format 18. Audio downloads and the video
+        │   downloads' retry use YTDLP_PLAYER_CLIENTS (default "android" — YouTube 403s
+        │   the web client's download URLs from some environments; never mix in
         │   "default": merged format lists let bestvideo pick a 403ing web DASH format).
         │   Metadata/subtitle extraction deliberately does NOT use it (android lacks subs).
+        │   Every download's pipeline.timing entry records bytes, wallMs and mbPerSec;
+        │   the video downloads add the picked format + height, the clients, the proxy
+        │   exit (n/m) and the error. A bot check, a 429 or a 403 on the video data
+        │   moves the download to the next sticky exit (on prod 2026-10-14 exit -2 got
+        │   the 403 for every client while exit -1 downloaded). A frame download that
+        │   still fails — or a deferred hi-res pass the run gave up on — marks the run
+        │   degraded (pipeline.timing degraded + degradedReasons
+        │   "media_download_failed", and the row's degraded flag — the admin runs
+        │   badge; audio downloads don't count: a failed one fails the transcript path
+        │   itself). The run start and a Redis-served completion clear the previous
+        │   run's flags. yt-dlp is pinned to a nightly (requirements.txt).
         └─▶ FFmpeg scene detection on local file (~10-15s, 20-50x realtime; frames capped at
         │   SCENE_DETECT_SCALE_WIDTH and never upscaled; quality via SCENE_JPEG_QUALITY).
         │   Zero-candidate ladder: threshold 0.3 → 0.15 → uniform seeks, ffmpeg rc checked
@@ -403,6 +424,17 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
         │   (or when the run fails). No stream-URL seeks: client-bound googlevideo URLs
         │   403 plain ffmpeg, and proxied runs would seek from the blocked host IP.
         │   Swaps frame paths in place → S3 upload, vision, and OCR all get the best available.
+        │   Only a 720p file already on disk is read: while it still downloads, the
+        │   360p detection frames are uploaded (manifest hiresCount 0) and vision reads
+        │   them (vision + OCR at 360p is the trade-off) — frames-done never waits for
+        │   the big file unless pass 1 failed — and a deferred pass
+        │   (media/hires_upgrade.py, started after vision) seeks them in the 720p file
+        │   once it lands and overwrites the same S3 objects (a 720p duplicate, or a
+        │   seek that landed on the shot before the cut, keeps its 360p object), then
+        │   sets the manifest's hiresCount. Assembly leaves the file open while it
+        │   runs; the runner gives it ≤ 60 s after `done`, side by side with the RAG
+        │   transcript wait (a failed run cancels it), then closes the file.
+        │   pipeline.timing step frames.hires_upgrade.
         └─▶ Batch parallel S3 upload (only selected frames — not all detected) + manifest write
         └─▶ OCR + Vision LLM analysis run in parallel:
             ├─▶ OCR: Tesseract on text-heavy frames
@@ -541,7 +573,8 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     │   its estimate (Σ outputWeight × expect ÷ 60 tok/s + 30 s, 120–300 s); the group-job template
     │   is read once per run. Cache layout and hit rates: llm-cost-model.md
     └─▶ Firing (pipeline/extraction_groups.py, warm-first): per chunk, text1 is the only streamed
-    │   call; its first chunk — or GROUP_RELEASE_FALLBACK_S (1.5 s) — releases the chunk's other text
+    │   call; its first chunk — or GROUP_RELEASE_FALLBACK_S (5 s; 1.5 s before hotfix
+    │   4.1; a race counts in counts.cacheRewrites) — releases the chunk's other text
     │   groups, which then read blocks 1 + 2 instead of writing them. The visual group fires once
     │   frames-done cut it. Every call holds a slot of the run's EXTRACTION_PARALLEL_BATCHES
     │   semaphore (text1 calls first)
@@ -605,8 +638,9 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     │   timestamped field records the call counts alone (`meta.extractionCoverage` =
     │   `{batchesTotal, batchesSucceeded, batchesDropped}`, `flag_failed_groups`). The
     │   synthesis-fed retry, RETRY_SCORE_THRESHOLD and validate_extraction_counts are gone (1c.5)
-    └─▶ Faithfulness judge fires in the background once extraction has data — on the split path
-        when the whole phase-2 group is done (transcript + annotations; informational)
+    └─▶ Faithfulness judge (LLM_JUDGE_MODEL = gpt-6-luna) fires in the background once extraction
+        has data — on the split path when the whole phase-2 group is done (transcript +
+        annotations; informational)
 
  6. ASSEMBLY → LATE GROUP → SAVE (phases/assembly.py)
     └─▶ Description analysis (≤ 5 s wait; past it meta goes without it) → SSE description_analysis
@@ -883,7 +917,7 @@ PREVIOUS_MODEL = {
 
 The primary (`default`) model only reaches the plan and `/health`: every other stage
 is pinned per stage (Environment Variables above). Picks and evidence per call type:
-`dev/active/pipeline-1min/gates/g4-model-ab.md` §Picks.
+`dev/completed/pipeline-1min/gates/g4-model-ab.md` §Picks.
 
 ---
 
@@ -929,7 +963,7 @@ list against the model registry.
 | `cached` | `{videoSummaryId}` (only for cached results) |
 | `metadata` | `{title, channel, thumbnailUrl, duration}` (fields may be `null` on cached legacy docs) |
 | `transcript_ready` | `{duration}` |
-| `phase` | `{phase}` — progress marker (`transcript_cached`, `transcript`, `audio_transcription`, `whisper_transcription`, `metadata_fallback`, `translation`) |
+| `phase` | `{phase}` — progress marker (`metadata_retry`, `transcript_retry`, `transcript_cached`, `transcript`, `audio_transcription`, `whisper_transcription`, `metadata_fallback`, `translation`) |
 | `description_analysis` | `{links, resources, socialLinks}` (emitted at assembly, after a ≤ 5 s wait for the analysis) |
 | `triage_complete` | `{contentTags, modifiers, primaryTag, userGoal, tabs (with briefs), confidence, contentFormat, evidence, planEvidence, memoryEvidence, terms}` — at plan-done, after reconcile (API-REFERENCE.md#triage_complete) |
 | `extraction_progress` | `{section, percent, batch?, of?}` — the field groups (default) emit `section="groups"` with `batch`/`of` per landed group call (`of` follows the visual group's fate); with `EXTRACTION_PARALLEL=false` one call emits `section="all"`, chunked batches `section="chunked"` with `batch`/`of`, rate-limited fallback batches `section="chunked-sequential"` |
@@ -1016,6 +1050,8 @@ read as fallbacks (Frontend Meta Resolution below). Field-level detail:
         # "timing" is $set separately after the phases end (pipeline.timing)
     },
     "degraded": True,                       # only when true: a failed group / dropped batch / critical coverage
+                                            # (the run's end also sets it, with degradedReasons, when a frame
+                                            # download failed — admin badge only, no meta.degraded banner)
     "processedAt": ..., "processingTimeMs": 25432,
 }
 ```
@@ -1173,8 +1209,15 @@ proxy setup (`services/cache/caption_negative_cache.py`, Redis key
   goes straight to audio.
 - *`YOUTUBE_PROXY_EXIT_COUNT` > 1* (Webshare sticky `USERNAME-N` exits) — the
   metadata-phase timedtext fetch and the caption API both move to the next
-  exit on a 429 (`download_utils.ytdlp_proxy_exit_urls`, at most 3 exits, no
-  backoff, one shared loop `download_utils.try_proxy_exits`). Only a 429 on
+  exit on a 429 (`download_utils.ytdlp_proxy_exit_urls`, every exit since hotfix
+  4.1 — no new one after `EXIT_ROTATION_BUDGET_S` = 15 s, at least 3; the downloads
+  keep at most 3 —
+  no backoff, one shared loop `download_utils.try_proxy_exits`). Every blocked exit
+  sets the fetch's retry notice: the phase awaiting it emits one `phase`
+  `metadata_retry` / `transcript_retry` event (`pipeline/youtube_retry.py`; the
+  timedtext fetch in the caption task, the caption API in the transcript phase), the
+  web shows "YouTube is rate-limiting, retrying" until the `metadata` event /
+  `transcript_ready` or the next phase event. Only a 429 on
   every exit tried writes the marker; any other error ends the rotation
   without marking. The library's `RequestBlocked` (its 429 subclass
   `IpBlocked` plus the "not a bot" check) is recognised by type, since its
@@ -1310,7 +1353,7 @@ transcript) plus the compact final extraction (≤ 6,000 chars), whatever the le
 
 Model routing by stage (defaults from the pipeline-1min 4.0d A/B — rule: quality within
 noise first, then latency, then cost; evidence per call type in
-`dev/active/pipeline-1min/gates/g4-model-ab.md` §Picks). The tier probe, description,
+`dev/completed/pipeline-1min/gates/g4-model-ab.md` §Picks). The tier probe, description,
 quiz and translation calls pass `use_fast_model=True` + `model_override` (fast-model
 calls: no cross-provider fallback); memory and extraction pass `model_override` alone —
 primary-model calls with an override, so the cross-provider fallback applies wherever
@@ -1326,7 +1369,7 @@ A setting left out of the environment keeps the compose / `config.py` default; t
 - Translation (output, title, RAG transcript): `LLM_TRANSLATION_MODEL` = gpt-6-luna
 - Frame vision (`frame_analyzer.analyze_frames_with_vision`, ≤ 5 parallel batches; its own provider and retry): `LLM_VISION_MODEL` = Sonnet 5.5 (empty → the primary model). History: routed to fast in Phase 1B / P3, reverted 2026-05-14 after a 5-frame spot-check (`scripts/spotcheck_frame_vision.py`) found `openai/gpt-4o-mini` was only ~20% cheaper *and* hallucinated OCR on dense-text frames; in 4.0d Haiku 5.5 labelled cooking frames `talking_head` (dropped as presenter filler), Sonnet 5.5 read the card text Sonnet 4.6 reads at half the wall time
 - AI chapter detection (`transcript_chunker._detect_chapters_with_ai`): the fast tier (`LLM_CHAPTER_DETECT_MODEL` is not passed by compose), scoped under its own `llm_feature_var.set("summarize:chapter_detect")` context so cost is attributed correctly in `llm_usage` (was previously absorbed by the outer `summarize:extraction` tag)
-- Faithfulness judge: the fast tier (no stage setting)
+- Faithfulness judge: `LLM_JUDGE_MODEL` = gpt-6-luna, reasoning off (20s, 1 retry; a fast-tier call with an override — blank = the fast tier in config.py only, under compose a blank line keeps gpt-6-luna). Rollback: `openai/gpt-4o-mini`. Informational (D22); the golden baseline's faithfulness was re-scored under it (`gates/g4.md` §10)
 - Extraction runs on `LLM_EXTRACTION_MODEL` = Sonnet 5.5 at effort low (empty → primary; a primary-model call with an override, like memory: the cross-provider fallback applies, P P F). The split path's group calls end their rules with the completeness rule (`extraction_group_rules.txt`, added once per run by `extraction_group_prompt.with_group_rules`; the `EXTRACTION_PARALLEL=false` call keeps today's bytes). A/B round 2: Sonnet 5.5 missed the fewest transcript-supported items and invented no details; Haiku 4.5 (the model before) invented steps, quantities and code snippets. The fast-first path and the synthesis-fed retry were removed in pipeline-1min 1c.3/1c.5.
 
 ### Prompt Safety Net (`llm_retry.py`)

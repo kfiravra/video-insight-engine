@@ -4,11 +4,18 @@ Each job downloads two renditions at most once each, both started by the
 metadata phase as soon as the video is accepted (``validate_duration``) and
 its frames are not cached:
 
-* ``LocalLowresSource`` — the worst-quality pass-1 file scene detection
-  reads; scene extraction closes it as soon as detection is done.
+* ``LocalLowresSource`` — the 360p pass-1 file scene detection reads; scene
+  extraction closes it as soon as detection is done.
 * ``LocalHiresSource`` — the ≤720p file: scene extraction seeks the selected
-  frames in it, assembly's moment fill seeks the still-frameless moments in it
-  later, then closes it.
+  frames in it (or, when it is still downloading, a deferred hi-res pass
+  does — ``hires_upgrade``), assembly's moment fill seeks the still-frameless
+  moments in it later, then closes it.
+
+Detection reads the 720p file instead of pass 1 when it lands first as the
+same ≤360p rendition (``first_detection_file``): when YouTube serves no
+video-only rendition both downloads fetch the muxed 360p file side by side,
+and the slower copy must not hold frames-done. A real 720p file is only read
+when pass 1 fails — scene scoring on it costs several times the 360p pass.
 
 The handles live on the pipeline context (``ctx.lowres_video`` /
 ``ctx.hires_video``) because their readers sit in different phases.
@@ -35,6 +42,8 @@ from typing import Any
 from src.services.media.local_video import (
     DOWNLOAD_TIMEOUT,
     LOWRES_DOWNLOAD_TIMEOUT,
+    PASS1_HEIGHT,
+    LocalFile,
     cleanup_local_video,
     download_video_720p,
     download_video_lowres,
@@ -45,7 +54,7 @@ logger = logging.getLogger(__name__)
 # ``pipeline.timing`` label of the run's single 720p download.
 DOWNLOAD_PURPOSE = "prefetch"
 
-Download = tuple[Path, str] | None
+Download = LocalFile | None
 
 
 class LocalVideoDownload:
@@ -59,7 +68,7 @@ class LocalVideoDownload:
         self._task: asyncio.Task[Download] | None = None
         self._closed = False
 
-    def _download(self, timeout: float) -> Coroutine[Any, Any, Download]:
+    def _download(self, timeout: float, purpose: str | None) -> Coroutine[Any, Any, Download]:
         raise NotImplementedError
 
     @property
@@ -67,15 +76,31 @@ class LocalVideoDownload:
         """True once the download was started (it may still be running or have failed)."""
         return self._task is not None
 
-    def start(self, timeout: float | None = None) -> None:
+    @property
+    def finished(self) -> bool:
+        """True once the download ended — landed, failed or cancelled; False before it starts."""
+        return self._task is not None and self._task.done()
+
+    @property
+    def height(self) -> int | None:
+        """The landed file's height as yt-dlp picked it; None until it lands, or unknown."""
+        task = self._task
+        if task is None or not task.done() or task.cancelled() or task.exception() is not None:
+            return None
+        landed = task.result()
+        return landed.height if isinstance(landed, LocalFile) else None
+
+    def start(self, timeout: float | None = None, purpose: str | None = None) -> None:
         """Begin the download in the background. Idempotent; a no-op after ``close()``.
 
         ``timeout`` caps the download when this call is the one that starts it
-        (None = the downloader's own); a later call never changes a running one.
+        (None = the downloader's own), and ``purpose`` labels it in
+        ``pipeline.timing`` (None = the source's own); a later call never
+        changes a running one.
         """
         if self._task is None and not self._closed:
             budget = self._default_timeout if timeout is None else timeout
-            self._task = asyncio.create_task(self._download(budget))
+            self._task = asyncio.create_task(self._download(budget, purpose))
 
     async def path(self) -> Path | None:
         """The local file, awaiting (and if needed starting) the download; None on failure.
@@ -137,15 +162,58 @@ class LocalHiresSource(LocalVideoDownload):
 
     _label = "720p"
 
-    def _download(self, timeout: float) -> Coroutine[Any, Any, Download]:
-        return download_video_720p(self._video_id, timeout, purpose=DOWNLOAD_PURPOSE)
+    def _download(self, timeout: float, purpose: str | None) -> Coroutine[Any, Any, Download]:
+        return download_video_720p(self._video_id, timeout, purpose=purpose or DOWNLOAD_PURPOSE)
 
 
 class LocalLowresSource(LocalVideoDownload):
-    """The run's worst-quality pass-1 file — scene detection reads it."""
+    """The run's 360p pass-1 file — scene detection reads it."""
 
     _label = "Low-res"
     _default_timeout = LOWRES_DOWNLOAD_TIMEOUT
 
-    def _download(self, timeout: float) -> Coroutine[Any, Any, Download]:
+    def _download(self, timeout: float, purpose: str | None) -> Coroutine[Any, Any, Download]:
         return download_video_lowres(self._video_id, timeout)
+
+
+async def first_detection_file(
+    lowres: LocalLowresSource, hires: LocalHiresSource | None
+) -> Path | None:
+    """The file scene detection reads: pass 1, or its twin when the 720p download lands first.
+
+    A 720p download that lands first as a ≤360p rendition (the muxed file both
+    downloads get when YouTube serves no video-only one) is read instead and
+    pass 1 is closed (its download cancelled). A real 720p file waits as the
+    fallback for a pass 1 that fails. Pass 1 wins a tie; None when neither lands.
+    """
+    if hires is None or not hires.started:
+        return await lowres.path()
+    readers: dict[asyncio.Future[Path | None], LocalVideoDownload] = {
+        asyncio.ensure_future(lowres.path()): lowres,
+        asyncio.ensure_future(hires.path()): hires,
+    }
+    fallback: Path | None = None
+    try:
+        while readers:
+            done, _ = await asyncio.wait(readers, return_when=asyncio.FIRST_COMPLETED)
+            # Pass 1 first: on a tie its smaller file is the one to read.
+            for reader in sorted(done, key=lambda r: readers[r] is not lowres):
+                source = readers.pop(reader)
+                path = reader.result()
+                if path is None:
+                    continue
+                if source is lowres:
+                    return path
+                height = hires.height
+                if height is not None and height <= PASS1_HEIGHT:
+                    logger.info(
+                        "720p download landed first as %dp — scene detection reads it", height
+                    )
+                    await lowres.close()
+                    return path
+                fallback = path
+        return fallback
+    finally:
+        for reader in readers:
+            reader.cancel()
+        await asyncio.gather(*readers, return_exceptions=True)

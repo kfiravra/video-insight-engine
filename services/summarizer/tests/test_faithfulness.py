@@ -13,10 +13,14 @@ Covers:
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from litellm import ModelResponse
 
+from src.services.llm import LLMService
+from src.services.llm_provider import LLMProvider
 from src.services.observability import langfuse_client as lc
 from src.services.pipeline import faithfulness as fh
 
@@ -378,3 +382,43 @@ async def test_judge_exception_returns_none_verdict():
     )
     # Single claim, judge errored → no usable verdicts → returns None
     assert report is None
+
+
+# ─── Judge model (LLM_JUDGE_MODEL) ──────────────────────────────────────
+_LUNA = "openai/gpt-6-luna"
+_MINI = "openai/gpt-4o-mini"
+
+
+def _verdict_response() -> ModelResponse:
+    message = {"role": "assistant", "content": '{"grounded": true, "evidence": "it says so"}'}
+    return ModelResponse(choices=[{"index": 0, "finish_reason": "stop", "message": message}])
+
+
+async def _judge_request(llm_service: LLMService) -> tuple[bool | None, dict[str, Any]]:
+    """Judge one claim through the real retry wrapper + provider; return the verdict + kwargs sent."""
+    sent = AsyncMock(return_value=_verdict_response())
+    with patch("src.services.llm_provider.acompletion", sent):
+        verdict = await fh._judge_one(llm_service, "the transcript says so", "a claim to judge")
+    return verdict, sent.call_args.kwargs
+
+
+class TestJudgeModel:
+    @pytest.mark.asyncio
+    async def test_should_send_the_judge_to_llm_judge_model_with_reasoning_off_when_it_is_set(
+        self, monkeypatch
+    ):
+        monkeypatch.setattr(fh.settings, "LLM_JUDGE_MODEL", _LUNA)
+        fast_tier = LLMService(LLMProvider(model=_MINI, fast_model=_MINI))
+
+        verdict, kwargs = await _judge_request(fast_tier)
+
+        assert (verdict, kwargs["model"], kwargs.get("reasoning_effort")) == (True, _LUNA, "none")
+
+    @pytest.mark.asyncio
+    async def test_should_keep_the_judge_on_the_fast_tier_when_the_setting_is_blank(self):
+        # conftest blanks every stage setting, LLM_JUDGE_MODEL included: the rollback.
+        fast_tier = LLMService(LLMProvider(model="anthropic/claude-sonnet-5-5", fast_model=_MINI))
+
+        verdict, kwargs = await _judge_request(fast_tier)
+
+        assert (verdict, kwargs["model"], "reasoning_effort" in kwargs) == (True, _MINI, False)

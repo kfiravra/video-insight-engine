@@ -7,13 +7,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.services.media import download_utils
+from src.services.media.frame_manifest import (
+    check_existing_frames,
+    frames_cached,
+    persist_vision_descriptions,
+)
 from src.services.media.scene_extractor import (
-    _check_existing_frames,
     _dedupe_refined_frames,
     cleanup_temp_dir,
     extract_scene_keyframes,
-    frames_cached,
-    persist_vision_descriptions,
 )
 
 # Expected empty result from the 3-tier return shape
@@ -62,7 +64,7 @@ class TestExtractSceneKeyframes:
         assert result == EMPTY_RESULT
 
     @patch(
-        "src.services.media.scene_extractor._check_existing_frames",
+        "src.services.media.scene_extractor.check_existing_frames",
         new_callable=AsyncMock,
         return_value=None,
     )
@@ -84,7 +86,7 @@ class TestExtractSceneKeyframes:
         assert result == EMPTY_RESULT
 
     @patch(
-        "src.services.media.scene_extractor._check_existing_frames",
+        "src.services.media.scene_extractor.check_existing_frames",
         new_callable=AsyncMock,
         return_value=None,
     )
@@ -108,7 +110,7 @@ class TestExtractSceneKeyframes:
         assert mock_exec.call_args.kwargs["env"]["HTTPS_PROXY"] == proxy_url
 
     @patch(
-        "src.services.media.scene_extractor._check_existing_frames",
+        "src.services.media.scene_extractor.check_existing_frames",
         new_callable=AsyncMock,
         return_value=None,
     )
@@ -123,7 +125,7 @@ class TestExtractSceneKeyframes:
         assert result == EMPTY_RESULT
 
     @patch(
-        "src.services.media.scene_extractor._check_existing_frames",
+        "src.services.media.scene_extractor.check_existing_frames",
         new_callable=AsyncMock,
         return_value=None,
     )
@@ -156,7 +158,7 @@ class TestExtractSceneKeyframes:
 
         assert result == EMPTY_RESULT
 
-    @patch("src.services.media.scene_extractor._check_existing_frames", new_callable=AsyncMock)
+    @patch("src.services.media.scene_extractor.check_existing_frames", new_callable=AsyncMock)
     @patch("src.services.media.scene_extractor.settings")
     async def test_s3_cache_hit_skips_extraction(self, mock_settings, mock_check):
         """When the S3 manifest yields a cache hit, return it without FFmpeg."""
@@ -203,13 +205,13 @@ def _valid_manifest(count: int = 15, hires_count: int | None = None) -> dict:
 class TestManifestCache:
     """Frame cache reuse is manifest-only — no manifest means re-extract."""
 
-    @patch("src.services.media.scene_extractor.settings")
-    @patch("src.services.media.scene_extractor.s3_client")
+    @patch("src.services.media.frame_manifest.settings")
+    @patch("src.services.media.frame_manifest.s3_client")
     async def test_reads_manifest_at_versioned_prefix(self, mock_s3_client, mock_settings):
         mock_settings.SCENE_S3_PREFIX = "scenes-v2"
         mock_s3_client.get_json = AsyncMock(return_value=None)
 
-        result = await _check_existing_frames("dQw4w9WgXcQ")
+        result = await check_existing_frames("dQw4w9WgXcQ")
 
         assert result is None
         assert (
@@ -217,8 +219,8 @@ class TestManifestCache:
             == "videos/dQw4w9WgXcQ/scenes-v2/manifest.json"
         )
 
-    @patch("src.services.media.scene_extractor.settings")
-    @patch("src.services.media.scene_extractor.s3_client")
+    @patch("src.services.media.frame_manifest.settings")
+    @patch("src.services.media.frame_manifest.s3_client")
     async def test_valid_manifest_returns_timestamps_and_gallery(
         self, mock_s3_client, mock_settings
     ):
@@ -226,7 +228,7 @@ class TestManifestCache:
         mock_s3_client.get_json = AsyncMock(return_value=_valid_manifest(15))
         mock_s3_client.generate_presigned_url.side_effect = lambda key: f"https://s3/{key}"
 
-        result = await _check_existing_frames("dQw4w9WgXcQ")
+        result = await check_existing_frames("dQw4w9WgXcQ")
 
         assert result is not None
         assert len(result["all_frames"]) == 15
@@ -235,8 +237,8 @@ class TestManifestCache:
         # Gallery honors manifest galleryIndices (even indices)
         assert [f["index"] for f in result["gallery_frames"]] == list(range(0, 15, 2))
 
-    @patch("src.services.media.scene_extractor.settings")
-    @patch("src.services.media.scene_extractor.s3_client")
+    @patch("src.services.media.frame_manifest.settings")
+    @patch("src.services.media.frame_manifest.s3_client")
     async def test_invalid_manifests_are_cache_misses(self, mock_s3_client, mock_settings):
         mock_settings.SCENE_S3_PREFIX = "scenes-v2"
         wrong_version = {**_valid_manifest(), "version": 99}
@@ -252,10 +254,10 @@ class TestManifestCache:
 
         for bad in (wrong_version, too_few, all_zero, missing_key):
             mock_s3_client.get_json = AsyncMock(return_value=bad)
-            assert await _check_existing_frames("dQw4w9WgXcQ") is None
+            assert await check_existing_frames("dQw4w9WgXcQ") is None
 
-    @patch("src.services.media.scene_extractor.settings")
-    @patch("src.services.media.scene_extractor.s3_client")
+    @patch("src.services.media.frame_manifest.settings")
+    @patch("src.services.media.frame_manifest.s3_client")
     async def test_cache_hit_restores_persisted_vision_descriptions(
         self, mock_s3_client, mock_settings
     ):
@@ -268,13 +270,13 @@ class TestManifestCache:
         )
         mock_s3_client.generate_presigned_url.side_effect = lambda key: f"https://s3/{key}"
 
-        result = await _check_existing_frames("dQw4w9WgXcQ")
+        result = await check_existing_frames("dQw4w9WgXcQ")
 
         assert result is not None
         assert result["vision_descriptions"] == descriptions
 
-    @patch("src.services.media.scene_extractor.settings")
-    @patch("src.services.media.scene_extractor.s3_client")
+    @patch("src.services.media.frame_manifest.settings")
+    @patch("src.services.media.frame_manifest.s3_client")
     async def test_cache_hit_without_descriptions_yields_empty_list(
         self, mock_s3_client, mock_settings
     ):
@@ -282,15 +284,15 @@ class TestManifestCache:
         mock_s3_client.get_json = AsyncMock(return_value=_valid_manifest(15))
         mock_s3_client.generate_presigned_url.side_effect = lambda key: f"https://s3/{key}"
 
-        result = await _check_existing_frames("dQw4w9WgXcQ")
+        result = await check_existing_frames("dQw4w9WgXcQ")
 
         assert result is not None
         assert result["vision_descriptions"] == []
 
 
 class TestPersistVisionDescriptions:
-    @patch("src.services.media.scene_extractor.settings")
-    @patch("src.services.media.scene_extractor.s3_client")
+    @patch("src.services.media.frame_manifest.settings")
+    @patch("src.services.media.frame_manifest.s3_client")
     async def test_read_modify_writes_manifest(self, mock_s3_client, mock_settings):
         mock_settings.SCENE_S3_PREFIX = "scenes-v2"
         manifest = _valid_manifest(15)
@@ -305,8 +307,8 @@ class TestPersistVisionDescriptions:
         assert written["visionDescriptions"] == descriptions
         assert written["frames"] == manifest["frames"]  # rest of the manifest intact
 
-    @patch("src.services.media.scene_extractor.settings")
-    @patch("src.services.media.scene_extractor.s3_client")
+    @patch("src.services.media.frame_manifest.settings")
+    @patch("src.services.media.frame_manifest.s3_client")
     async def test_no_manifest_or_empty_descriptions_is_noop(self, mock_s3_client, mock_settings):
         mock_settings.SCENE_S3_PREFIX = "scenes-v2"
         mock_s3_client.get_json = AsyncMock(return_value=None)
@@ -317,8 +319,8 @@ class TestPersistVisionDescriptions:
 
         mock_s3_client.put_json.assert_not_awaited()
 
-    @patch("src.services.media.scene_extractor.settings")
-    @patch("src.services.media.scene_extractor.s3_client")
+    @patch("src.services.media.frame_manifest.settings")
+    @patch("src.services.media.frame_manifest.s3_client")
     async def test_s3_failure_is_swallowed(self, mock_s3_client, mock_settings):
         mock_settings.SCENE_S3_PREFIX = "scenes-v2"
         mock_s3_client.get_json = AsyncMock(side_effect=RuntimeError("s3 down"))
@@ -330,7 +332,7 @@ class TestTwoPassExtraction:
     """Happy path: detection settings from config, refine before upload, versioned keys."""
 
     @patch(
-        "src.services.media.scene_extractor._check_existing_frames",
+        "src.services.media.scene_extractor.check_existing_frames",
         new_callable=AsyncMock,
         return_value=None,
     )
@@ -346,7 +348,7 @@ class TestTwoPassExtraction:
     )
     @patch("src.services.media.frame_scorer.select_frames")
     @patch("src.services.media.frame_scorer.score_all_frames")
-    @patch("src.services.media.scene_extractor.s3_client")
+    @patch("src.services.media.frame_manifest.s3_client")
     @patch("src.services.media.scene_extractor.tempfile")
     @patch("src.services.media.scene_extractor.settings")
     @patch("asyncio.create_subprocess_exec")
@@ -388,9 +390,10 @@ class TestTwoPassExtraction:
         mock_select.side_effect = lambda frames, duration: (frames, frames[:1])
         mock_s3_client.put_json = AsyncMock()
 
-        result = await extract_scene_keyframes(
-            video_id, duration_seconds=120, lowres_video=_ready_lowres(tmp_path)
-        )
+        with patch("src.services.media.frame_manifest.settings", mock_settings):
+            result = await extract_scene_keyframes(
+                video_id, duration_seconds=120, lowres_video=_ready_lowres(tmp_path)
+            )
 
         # Detection ffmpeg args come from config (never-odd height via :-2)
         ffmpeg_args = next(c.args for c in mock_exec.call_args_list if c.args[0] == "ffmpeg")
@@ -540,7 +543,7 @@ class TestReselectHook:
         assert all(f["index"] % 2 == 0 for f in final)
 
     @patch(
-        "src.services.media.scene_extractor._check_existing_frames",
+        "src.services.media.scene_extractor.check_existing_frames",
         new_callable=AsyncMock,
         return_value=None,
     )
@@ -556,7 +559,7 @@ class TestReselectHook:
     )
     @patch("src.services.media.frame_scorer.select_frames")
     @patch("src.services.media.frame_scorer.score_all_frames")
-    @patch("src.services.media.scene_extractor.s3_client")
+    @patch("src.services.media.frame_manifest.s3_client")
     @patch("src.services.media.scene_extractor.tempfile")
     @patch("src.services.media.scene_extractor.settings")
     @patch("asyncio.create_subprocess_exec")
@@ -603,13 +606,14 @@ class TestReselectHook:
 
         from src.services.media.scene_extractor import extract_scene_keyframes
 
-        result = await extract_scene_keyframes(
-            video_id,
-            duration_seconds=120,
-            overselect_count=40,
-            reselect_hook=bad_hook,
-            lowres_video=_ready_lowres(tmp_path),
-        )
+        with patch("src.services.media.frame_manifest.settings", mock_settings):
+            result = await extract_scene_keyframes(
+                video_id,
+                duration_seconds=120,
+                overselect_count=40,
+                reselect_hook=bad_hook,
+                lowres_video=_ready_lowres(tmp_path),
+            )
 
         # Local selection survives the hook failure
         assert len(result["selected_frames"]) == 3
@@ -639,7 +643,7 @@ class TestLateReselectDecision:
 
         with (
             patch(
-                "src.services.media.scene_extractor._check_existing_frames",
+                "src.services.media.scene_extractor.check_existing_frames",
                 AsyncMock(return_value=None),
             ),
             patch(
@@ -649,9 +653,10 @@ class TestLateReselectDecision:
             patch("src.services.media.hires_refiner.refine_selected_frames", AsyncMock()),
             patch("src.services.media.frame_scorer.score_all_frames", side_effect=lambda f: f),
             patch("src.services.media.frame_scorer.select_frames", side_effect=fake_select),
-            patch("src.services.media.scene_extractor.s3_client") as s3,
+            patch("src.services.media.frame_manifest.s3_client") as s3,
             patch("src.services.media.scene_extractor.tempfile") as tempfile_mod,
             patch("src.services.media.scene_extractor.settings") as mock_settings,
+            patch("src.services.media.frame_manifest.settings", mock_settings),
             patch("asyncio.create_subprocess_exec", side_effect=fake_exec),
         ):
             mock_settings.SCENE_EXTRACTION_ENABLED = True
@@ -713,7 +718,7 @@ class TestZeroCandidatePath:
 
         with (
             patch(
-                "src.services.media.scene_extractor._check_existing_frames",
+                "src.services.media.scene_extractor.check_existing_frames",
                 AsyncMock(return_value=None),
             ),
             patch(
@@ -726,9 +731,10 @@ class TestZeroCandidatePath:
                 "src.services.media.frame_scorer.select_frames",
                 side_effect=lambda frames, duration: ([], []),
             ),
-            patch("src.services.media.scene_extractor.s3_client") as s3,
+            patch("src.services.media.frame_manifest.s3_client") as s3,
             patch("src.services.media.scene_extractor.tempfile") as tempfile_mod,
             patch("src.services.media.scene_extractor.settings") as mock_settings,
+            patch("src.services.media.frame_manifest.settings", mock_settings),
             patch("asyncio.create_subprocess_exec", side_effect=fake_exec),
         ):
             mock_settings.SCENE_EXTRACTION_ENABLED = True
@@ -746,40 +752,40 @@ class TestZeroCandidatePath:
 class TestManifestQualityGate:
     """v2 manifests carry hiresCount; degraded (0-upgrade) runs re-extract."""
 
-    @patch("src.services.media.scene_extractor.settings")
+    @patch("src.services.media.frame_manifest.settings")
     def test_v1_manifest_rejected(self, mock_settings):
-        from src.services.media.scene_extractor import _validate_manifest
+        from src.services.media.frame_manifest import validate_manifest
 
         mock_settings.SCENE_HIRES_ENABLED = True
         manifest = _valid_manifest(15)
         manifest["version"] = 1
         del manifest["hiresCount"]
 
-        assert _validate_manifest(manifest) is None
+        assert validate_manifest(manifest) is None
 
-    @patch("src.services.media.scene_extractor.settings")
+    @patch("src.services.media.frame_manifest.settings")
     def test_degraded_manifest_rejected_when_hires_enabled(self, mock_settings):
-        from src.services.media.scene_extractor import _validate_manifest
+        from src.services.media.frame_manifest import validate_manifest
 
         mock_settings.SCENE_HIRES_ENABLED = True
 
-        assert _validate_manifest(_valid_manifest(15, hires_count=0)) is None
+        assert validate_manifest(_valid_manifest(15, hires_count=0)) is None
 
-    @patch("src.services.media.scene_extractor.settings")
+    @patch("src.services.media.frame_manifest.settings")
     def test_degraded_manifest_accepted_when_hires_disabled(self, mock_settings):
-        from src.services.media.scene_extractor import _validate_manifest
+        from src.services.media.frame_manifest import validate_manifest
 
         mock_settings.SCENE_HIRES_ENABLED = False
 
-        assert _validate_manifest(_valid_manifest(15, hires_count=0)) is not None
+        assert validate_manifest(_valid_manifest(15, hires_count=0)) is not None
 
-    @patch("src.services.media.scene_extractor.settings")
+    @patch("src.services.media.frame_manifest.settings")
     def test_healthy_manifest_accepted(self, mock_settings):
-        from src.services.media.scene_extractor import _validate_manifest
+        from src.services.media.frame_manifest import validate_manifest
 
         mock_settings.SCENE_HIRES_ENABLED = True
 
-        entries = _validate_manifest(_valid_manifest(15, hires_count=12))
+        entries = validate_manifest(_valid_manifest(15, hires_count=12))
         assert entries is not None
         assert len(entries) == 15
 
@@ -822,12 +828,15 @@ class TestRunHiresVideo:
         ffmpeg_ok: bool = True,
         select_raises: bool = False,
         hires_enabled: bool = True,
+        hires_finished: bool = True,
     ):
         order: list[str] = []
         lowres_video = _ready_lowres(tmp_path, order)
-        hires_video = MagicMock()
+        hires_video = MagicMock(started=True, finished=hires_finished)
         hires_video.close = AsyncMock()
         hires_video.start = MagicMock(side_effect=lambda: order.append("start-720p"))
+        # Detection prefers pass 1 when both answer at once (the 720p file has none here).
+        hires_video.path = AsyncMock(return_value=None)
 
         def fake_select(frames, duration):
             order.append("select")
@@ -837,7 +846,7 @@ class TestRunHiresVideo:
 
         with (
             patch(
-                "src.services.media.scene_extractor._check_existing_frames",
+                "src.services.media.scene_extractor.check_existing_frames",
                 AsyncMock(return_value=None),
             ),
             patch(
@@ -849,9 +858,10 @@ class TestRunHiresVideo:
             ) as refine,
             patch("src.services.media.frame_scorer.select_frames", side_effect=fake_select),
             patch("src.services.media.frame_scorer.score_all_frames", side_effect=lambda f: f),
-            patch("src.services.media.scene_extractor.s3_client") as s3,
+            patch("src.services.media.frame_manifest.s3_client") as s3,
             patch("src.services.media.scene_extractor.tempfile") as tempfile_mod,
             patch("src.services.media.scene_extractor.settings") as mock_settings,
+            patch("src.services.media.frame_manifest.settings", mock_settings),
             patch(
                 "asyncio.create_subprocess_exec",
                 side_effect=self._fake_exec(tmp_path, order, ffmpeg_ok),
@@ -878,6 +888,25 @@ class TestRunHiresVideo:
         _, hires_video, refine, _, _ = await self._run(tmp_path)
 
         assert refine.await_args.args[2] is hires_video
+
+    async def test_should_defer_the_hires_pass_while_the_720p_file_downloads(self, tmp_path):
+        """frames-done never waits for the big file (g4 §8)."""
+        result, _, refine, _, _ = await self._run(tmp_path, hires_finished=False)
+
+        assert (refine.await_count, "hires_upgrade" in result) == (0, True)
+
+    async def test_should_hand_the_deferred_pass_every_uploaded_frames_s3_key(self, tmp_path):
+        result, _, _, _, _ = await self._run(tmp_path, hires_finished=False)
+
+        upgrade = result["hires_upgrade"]
+        assert [f.s3_key for f in upgrade.frames] == [
+            f["s3_key"] for f in result["selected_frames"]
+        ]
+
+    async def test_should_not_defer_when_the_720p_file_is_on_disk(self, tmp_path):
+        result, _, _, _, _ = await self._run(tmp_path)
+
+        assert "hires_upgrade" not in result
 
     async def test_should_leave_the_720p_file_open_for_moment_fill(self, tmp_path):
         _, hires_video, _, _, _ = await self._run(tmp_path)
@@ -917,7 +946,7 @@ class TestRunHiresVideo:
 class TestColdMediaRun:
     """1a.7: a cold benchmark run never reads the manifest; a normal run still does."""
 
-    @patch("src.services.media.scene_extractor.s3_client")
+    @patch("src.services.media.frame_manifest.s3_client")
     async def test_should_report_no_cached_frames_without_reading_s3_when_skip_cache_is_set(
         self, mock_s3_client
     ):
@@ -927,8 +956,8 @@ class TestColdMediaRun:
 
         assert (cached, mock_s3_client.get_json.await_count) == (False, 0)
 
-    @patch("src.services.media.scene_extractor.settings")
-    @patch("src.services.media.scene_extractor.s3_client")
+    @patch("src.services.media.frame_manifest.settings")
+    @patch("src.services.media.frame_manifest.s3_client")
     async def test_should_report_cached_frames_when_skip_cache_is_unset(
         self, mock_s3_client, mock_settings
     ):
@@ -938,7 +967,7 @@ class TestColdMediaRun:
         assert await frames_cached("dQw4w9WgXcQ") is True
 
     @patch("src.services.media.scene_extractor._do_extraction", new_callable=AsyncMock)
-    @patch("src.services.media.scene_extractor._check_existing_frames", new_callable=AsyncMock)
+    @patch("src.services.media.scene_extractor.check_existing_frames", new_callable=AsyncMock)
     @patch("src.services.media.scene_extractor.settings")
     async def test_should_extract_fresh_frames_without_a_manifest_lookup_when_skip_cache_is_set(
         self, mock_settings, mock_check, mock_extract

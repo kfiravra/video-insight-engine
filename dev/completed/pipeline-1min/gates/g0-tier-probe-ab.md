@@ -102,7 +102,7 @@ These are proposed labels, not ground truth. Reasons are in `VISUAL_DEMO_LABELS`
 ## Reproduce
 
 ```bash
-P=services/summarizer/.venv/bin/python; J=dev/active/pipeline-1min/gates/g0-tier-probe-ab.json
+P=services/summarizer/.venv/bin/python; J=dev/completed/pipeline-1min/gates/g0-tier-probe-ab.json
 $P scripts/tier_probe_ab.py --cache-dir <scratch>/probe-inputs --dry-run                # inputs only; with --out-json $J refreshes its inputs block
 $P scripts/tier_probe_ab.py --cache-dir <scratch>/probe-inputs --out-json $J            # 36 calls
 $P scripts/tier_probe_ab.py --out-json $J --rescore                                     # offline: saved answers + saved inputs, nothing external

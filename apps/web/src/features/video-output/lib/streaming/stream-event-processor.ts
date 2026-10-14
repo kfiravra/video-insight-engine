@@ -56,7 +56,9 @@ function isValidTabLabel(v: unknown): v is { id: string; label: string; emoji: s
  *  build error, never a silent UI freeze. */
 const SSE_PHASE_MAP: Record<SSEPhase, { phase: StreamPhase; detail: StreamPhaseDetail | null }> = {
   metadata: { phase: "metadata", detail: null },
+  metadata_retry: { phase: "metadata", detail: "youtube-retrying" },
   transcript: { phase: "transcript", detail: null },
+  transcript_retry: { phase: "transcript", detail: "youtube-retrying" },
   transcript_cached: { phase: "transcript", detail: "captions-cached" },
   audio_transcription: { phase: "transcript", detail: "audio-transcription" },
   whisper_transcription: { phase: "transcript", detail: "audio-transcription" },
@@ -91,8 +93,13 @@ function handleMetadataEvent(event: Record<string, unknown>, setState: SetState)
  *  be absent for some sources). Phase advancement comes from triage_complete. */
 function handleTranscriptReady(event: Record<string, unknown>, setState: SetState): void {
   const duration = typeof event.duration === "number" ? event.duration : null;
-  if (duration == null) return;
-  setState((prev) => ({ ...prev, duration }));
+  setState((prev) => ({
+    ...prev,
+    duration: duration ?? prev.duration,
+    // A caption retry that ended in captions emits no phase event of its own:
+    // the transcript landing ends "YouTube is rate-limiting, retrying".
+    phaseDetail: prev.phaseDetail === "youtube-retrying" ? null : prev.phaseDetail,
+  }));
 }
 
 function handleTriageEvent(event: Record<string, unknown>, setState: SetState): void {

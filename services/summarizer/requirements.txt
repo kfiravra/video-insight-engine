@@ -9,7 +9,10 @@ watchfiles>=0.21.0
 youtube-transcript-api>=0.6.2
 # Keep current: YouTube-side changes (SABR, PO tokens, client gating) are
 # fixed upstream release-by-release; a stale extractor silently loses formats.
-yt-dlp[default]>=2026.7.4
+# Pinned to a NIGHTLY (Kfir, hotfix 4.1, 2026-10-14): the latest stable
+# (2026.08.19) lacks the web_embedded Safari-UA fix (#17684) and the
+# tv_samsung default client; move back to a stable once one ships them.
+yt-dlp[default]==2026.10.10.233141.dev0
 
 # LLM (multi-provider via LiteLLM)
 litellm>=1.105.0

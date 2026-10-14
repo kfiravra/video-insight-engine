@@ -105,9 +105,9 @@ async def run_pipeline_phases(
     Every outgoing SSE chunk stamps the recorder's milestones (first
     ``tab_ready``, ``complete``, ``done``); the timing document is persisted
     once the phases finish or fail. A run that finished — ``done`` already
-    out — first gives a non-English RAG transcript task a bounded wait, so
-    its translation calls are in the document; a failing run never waits
-    (its error event follows this).
+    out — gives a non-English RAG transcript task and a deferred hi-res pass a
+    bounded wait (side by side), so their calls and steps are in the document;
+    a failing run never waits (its error event follows this).
     """
     timing = start_run_timing()
     finished = False
@@ -118,20 +118,38 @@ async def run_pipeline_phases(
         finished = True
     finally:
         try:
-            await _release_run_media(ctx)
-            if finished:
-                await wait_for_rag_transcript(ctx)
+            await _end_run_work(ctx, finished)
         finally:
             await persist_run_timing(ctx, repository, video_summary_id, timing)
 
 
-async def _release_run_media(ctx: PipelineContext) -> None:
+async def _end_run_work(ctx: PipelineContext, finished: bool) -> None:
+    """Release the run's media; a finished run also gives its RAG transcript task a wait.
+
+    The two bounded waits (the deferred hi-res pass, the RAG transcript) run side
+    by side so ``done`` is never followed by both back to back.
+    """
+    if not finished:
+        await _release_run_media(ctx, finished)
+        return
+    results = await asyncio.gather(
+        _release_run_media(ctx, finished), wait_for_rag_transcript(ctx), return_exceptions=True
+    )
+    for result in results:
+        if isinstance(result, BaseException):
+            raise result
+
+
+async def _release_run_media(ctx: PipelineContext, finished: bool) -> None:
     """Stop and delete whatever the t=0 group left running.
 
     Failed or cancelled runs never reach the phases that close the run's
     downloads; nothing may outlive the run (a cancelled download still lands
-    in the timing, so this runs before it is persisted).
+    in the timing, so this runs before it is persisted). A deferred hi-res
+    pass reads the 720p file: a finished run lets it end (bounded), a failed
+    one cancels it, before the file is closed.
     """
+    from src.services.pipeline.phases.frames import finish_hires_upgrade
     from src.services.pipeline.phases.metadata import release_background_work
     from src.services.pipeline.phases.probe import cancel_tier_probe
 
@@ -140,11 +158,14 @@ async def _release_run_media(ctx: PipelineContext) -> None:
     lowres_video = getattr(ctx, "lowres_video", None)
     hires_video = getattr(ctx, "hires_video", None)
     try:
-        if lowres_video is not None:
-            await lowres_video.close()
+        await finish_hires_upgrade(ctx, wait=finished)
     finally:
-        if hires_video is not None:
-            await hires_video.close()
+        try:
+            if lowres_video is not None:
+                await lowres_video.close()
+        finally:
+            if hires_video is not None:
+                await hires_video.close()
 
 
 PhaseFn = Callable[[PipelineContext], AsyncGenerator[str, None]]

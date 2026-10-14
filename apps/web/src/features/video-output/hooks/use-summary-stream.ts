@@ -45,7 +45,9 @@ export type StreamPhase =
 export type StreamPhaseDetail =
   | "captions-cached"
   | "audio-transcription"
-  | "metadata-only";
+  | "metadata-only"
+  /** A YouTube proxy exit was blocked; the summarizer is rotating exits (no new one after 15 s). */
+  | "youtube-retrying";
 
 /** User-facing labels for each streaming phase. Plain verbs, no service jargon. */
 export const STREAM_PHASE_LABELS: Record<StreamPhase, string> = {

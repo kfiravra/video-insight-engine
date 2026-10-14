@@ -69,6 +69,10 @@ class Settings(BaseSettings):
     # Sonnet's price when extraction moves (4.0d round 2). Blank follows
     # LLM_EXTRACTION_MODEL (D5's coupling, ``_STAGE_FALLBACK``).
     LLM_MEMORY_MODEL: str | None = "anthropic/claude-haiku-5-5"
+    # The faithfulness judge (stage "faithfulness"; informational, D22):
+    # gpt-6-luna, reasoning off — its own setting, so the quiz and synthesis
+    # stay on gpt-4o-mini. Blank = the fast tier (gpt-4o-mini on prod).
+    LLM_JUDGE_MODEL: str | None = "openai/gpt-6-luna"
 
     # Provider API Keys (set for providers you use)
     ANTHROPIC_API_KEY: str | None = None
@@ -265,7 +269,7 @@ class Settings(BaseSettings):
     # Scene-based frame extraction (additive to timestamp extraction)
     SCENE_EXTRACTION_ENABLED: bool = True
     SCENE_THRESHOLD: float = 0.3
-    # Detection pass renders from the worst-quality download; these only shape
+    # Detection pass renders from the 360p pass-1 download; these only shape
     # the low-res JPEGs used for scoring/OCR/HIGH-tier vision (and the fallback
     # if hi-res fails). MAX width: frames narrower than this are never upscaled
     # (upscaling the ~360p file added no pixels, only vision image tokens).
@@ -397,6 +401,7 @@ class Settings(BaseSettings):
         "enrichment": "LLM_ENRICHMENT_MODEL",
         "extraction": "LLM_EXTRACTION_MODEL",
         "memory": "LLM_MEMORY_MODEL",
+        "faithfulness": "LLM_JUDGE_MODEL",
         # The stage names the translation calls send (pipeline/translation_flat.py:
         # the output's source-language pass, and translate_text for the title).
         "translation_full": "LLM_TRANSLATION_MODEL",

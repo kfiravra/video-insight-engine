@@ -235,6 +235,8 @@ export interface RunSummary {
    * null/undefined = no doc resolvable (legacy rows).
    */
   degraded?: boolean | null;
+  /** Why: "partial_extraction" and/or "media_download_failed". Null/undefined = not recorded. */
+  degraded_reasons?: string[] | null;
   calls: RunCallSummary[];
 }
 

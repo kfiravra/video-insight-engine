@@ -299,6 +299,10 @@ export function validateErrorEvent(data: unknown): ErrorEventResult {
  */
 export const VALID_SSE_PHASES = [
   'metadata',
+  // A blocked YouTube proxy exit during the metadata / caption fetch — the
+  // summarizer rotates exits; shown as "YouTube is rate-limiting, retrying".
+  'metadata_retry',
+  'transcript_retry',
   'metadata_fallback',
   'transcript',
   'transcript_cached',

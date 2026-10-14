@@ -20,7 +20,7 @@ name: Eval
 #                        the set twice and also uploads noise.json. The
 #                        twice-a-month cron (`0 3 1,15 * *`) is re-enabled once
 #                        the secrets land — see
-#                        dev/active/pipeline-1min/env-changes.md.
+#                        dev/completed/pipeline-1min/env-changes.md.
 
 on:
   pull_request:

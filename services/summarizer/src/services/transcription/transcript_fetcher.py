@@ -29,6 +29,11 @@ from src.services.pipeline.pipeline_helpers import (
     normalized_segments_to_pipeline,
     sse_event,
 )
+from src.services.pipeline.youtube_retry import (
+    TRANSCRIPT_RETRY_PHASE,
+    relay_retry_notice,
+    retry_noticed,
+)
 from src.services.transcription.cached_transcript import read_cached_transcript
 from src.services.transcription.gemini_transcriber import transcribe_with_gemini
 from src.services.transcription.transcript import get_transcript
@@ -209,10 +214,14 @@ async def fetch_transcript(
         yield sse_event("phase", {"phase": "transcript"})
         api_label = _api_label()
         try:
-            segments, raw_text, transcript_type, api_language = await asyncio.wait_for(
+            fetch = asyncio.wait_for(
                 get_transcript(youtube_id, spoken_language=_spoken_language(video_data)),
                 timeout=settings.TRANSCRIPT_FETCH_TIMEOUT,
             )
+            async with retry_noticed(fetch) as (task, notice):
+                async for event in relay_retry_notice(task, notice, TRANSCRIPT_RETRY_PHASE):
+                    yield event
+                segments, raw_text, transcript_type, api_language = await task
             data = TranscriptData(
                 segments=segments,
                 raw_text=raw_text,

@@ -22,9 +22,11 @@ x-summarizer-env: &summarizer-env
   # Per-stage models (pipeline-1min 4.0d A/B, gates/g4-model-ab.md). Literal
   # defaults = config.py: a blank .env line keeps the default; blank = the fast
   # tier only where the default is blank (synthesis; extraction + memory never
-  # follow the primary). Memory's own model since the 4.0 picks (round 2).
+  # follow the primary). Memory's own model since the 4.0 picks (round 2); the
+  # faithfulness judge's since the close-out (rollback: openai/gpt-4o-mini).
   LLM_EXTRACTION_MODEL: ${LLM_EXTRACTION_MODEL:-anthropic/claude-sonnet-5-5}
   LLM_MEMORY_MODEL: ${LLM_MEMORY_MODEL:-anthropic/claude-haiku-5-5}
+  LLM_JUDGE_MODEL: ${LLM_JUDGE_MODEL:-openai/gpt-6-luna}
   LLM_ENRICHMENT_MODEL: ${LLM_ENRICHMENT_MODEL:-openai/gpt-4o-mini}
   LLM_VISION_MODEL: ${LLM_VISION_MODEL:-anthropic/claude-sonnet-5-5}
   LLM_DESCRIPTION_MODEL: ${LLM_DESCRIPTION_MODEL:-openai/gpt-6-luna}

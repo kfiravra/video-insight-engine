@@ -24,7 +24,7 @@ Kfir's order (verbatim):
 
 ## Ground rules
 - Cache dir (inputs, answers.jsonl, dry run, review dumps, PROGRESS.md for restarts):
-  `dev/active/pipeline-1min/tools/out/ab-r2/` — persistent, gitignored (the round-1 dir died with /tmp).
+  `dev/completed/pipeline-1min/tools/out/ab-r2/` — persistent, gitignored (the round-1 dir died with /tmp).
 - Spend: ceiling **$1.00 for round 2, cumulative** across invocations (answers.jsonl in the new dir). The tool aborts above it.
 - **No live call until the coordinator's GO.** Build + dry run → STOP → report. After GO: live run → STOP → report.
   Nothing else may run during the live run (no suites, no rebuilds).

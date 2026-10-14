@@ -81,10 +81,13 @@ class TestLabeledClaimsFixture:
 )
 class TestLiveJudgeAccuracy:
     @pytest.mark.asyncio
-    async def test_judge_accuracy_over_labeled_claims(self):
+    async def test_judge_accuracy_over_labeled_claims(self, monkeypatch):
+        from src.config import Settings
         from src.services.llm import LLMService
         from src.services.llm_provider import LLMProvider
 
+        # conftest blanks every stage model; the eval measures the judge as configured.
+        monkeypatch.setattr(fh.settings, "LLM_JUDGE_MODEL", Settings().LLM_JUDGE_MODEL)
         data = _load_fixture()
         transcript = data["transcript"]
         claims = data["claims"]

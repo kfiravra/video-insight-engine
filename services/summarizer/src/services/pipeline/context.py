@@ -25,6 +25,7 @@ if TYPE_CHECKING:
         TranscriptTrail,
     )
     from src.services.pipeline.triage import TriageResult
+    from src.services.pipeline.youtube_retry import RetryNotice
     from src.services.video.description_analyzer import DescriptionAnalysis
     from src.services.video.sponsorblock import SponsorSegment
     from src.services.video.youtube import VideoData
@@ -78,6 +79,9 @@ class PipelineContext:
     # accepted: the caption fetch (the transcript phase awaits it) and the
     # description analysis (readers await it via await_description_analysis).
     caption_task: asyncio.Task[None] | None = None
+    # Set by the caption fetch's blocked proxy exits; the transcript phase relays
+    # it as "YouTube is rate-limiting, retrying" (pipeline/youtube_retry).
+    caption_retry_notice: RetryNotice | None = None
     description_task: asyncio.Task[None] | None = None
 
     # Scene extraction
@@ -89,6 +93,13 @@ class PipelineContext:
     # path leaks a download.
     lowres_video: LocalLowresSource | None = None
     hires_video: LocalHiresSource | None = None
+    # The deferred hi-res pass (media/hires_upgrade): it reads the 720p file, so
+    # assembly leaves the file open while it runs and the runner awaits it
+    # (bounded) before closing the file.
+    hires_upgrade: asyncio.Task[int] | None = None
+    # True when the run gave up on that pass (its 720p file never landed in
+    # time): the frames stay 360p, so the run is degraded (run_timing).
+    hires_upgrade_abandoned: bool = False
     scene_frames_for_assembly: list[dict] = field(default_factory=list)
     scene_frames_all: list[dict] = field(
         default_factory=list

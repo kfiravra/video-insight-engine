@@ -31,7 +31,7 @@
   tier-probe change, or drop the rename?
 - 4.1 Q5 `tests/fixtures/llm_responses/*.json` use the v8 plan shape → refresh to v9?
 - 4.1 Q6 web `state.enrichment` (quiz) set, never read → remove?
-- 4.2 Q1 llm-cost-model + docs cite `dev/active/pipeline-1min/gates/g3.md` (moves on archive) → keep paths or inline?
+- 4.2 Q1 llm-cost-model + docs cite `dev/completed/pipeline-1min/gates/g3.md` (moves on archive) → keep paths or inline?
 - 4.2 stale claims left: ERROR-HANDLING "> 3h → VIDEO_TOO_LONG" vs `MAX_VIDEO_DURATION_MINUTES` 600 (API limit not
   checked); API-REFERENCE `metadata`/`meta` examples don't match the emitted shape; CROSS-CUTTING §VIEResponse v1/v2
   fallback order; ARCHITECTURE "29 renderers", moment-fill "60s + 150s" unchecked.
@@ -171,7 +171,7 @@
   (:191-193 + `is_fallback_response` :328) also counts provider-side model swaps — comment behind.
 - g4 question (R4.2b): `llm_usage.provider` = "unknown" (R4d-A) also blinds `scripts/audit_cache_credits.py` (exit 1 "no
   Anthropic calls") and admin `/usage/stats?provider=` (usage.py:130-131) — derive provider like `_rate_key`?
-- g4 question (R4.2b): docs cite `dev/active/pipeline-1min/gates/g4-model-ab.md` (SERVICE-SUMMARIZER ×4, OBSERVABILITY ×2,
+- g4 question (R4.2b): docs cite `dev/completed/pipeline-1min/gates/g4-model-ab.md` (SERVICE-SUMMARIZER ×4, OBSERVABILITY ×2,
   summarizer-workflow) — paths break on archive → repoint at close-out (ties to 4.2 Q1).
 - g4 question (4.2 part 2 agent): the assistant routing docs (PROJECT-BRIEFING.md:368, SERVICE-ASSISTANT.md) describe a
   `cross_reference` tool and a keyword intent router that don't exist in `services/assistant/src` (`tool_router.py` maps

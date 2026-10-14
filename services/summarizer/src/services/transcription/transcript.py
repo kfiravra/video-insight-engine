@@ -20,6 +20,7 @@ from src.models.schemas import (
     TranscriptSource,
 )
 from src.services.media.download_utils import (
+    EXIT_ROTATION_BUDGET_S,
     try_proxy_exits,
     ytdlp_proxy_exit_urls,
     ytdlp_proxy_url,
@@ -138,12 +139,14 @@ def _fetch_rotating_sync(
     video_id: str, exit_urls: list[str], spoken_language: str | None = None
 ) -> tuple[list[dict], str, str, str | None]:
     """Multi-exit fetch: a 429 is IP-scoped, so move to the next exit instead of
-    waiting on the same one. Any other error ends the attempt immediately."""
+    waiting on the same one — every exit, for up to EXIT_ROTATION_BUDGET_S. Any
+    other error ends the attempt immediately."""
     return try_proxy_exits(
         exit_urls,
         partial(_fetch_once, video_id, spoken_language=spoken_language),
         _is_rate_limited_code,
         f"Transcript fetch for {video_id}",
+        budget_s=EXIT_ROTATION_BUDGET_S,
     )
 
 
@@ -313,7 +316,7 @@ async def get_transcript(
     """
     # Keyed by the video so the caption API starts on the job's exit (1a.6
     # round-robin), the same one its yt-dlp calls use.
-    exit_urls = ytdlp_proxy_exit_urls(video_id)
+    exit_urls = ytdlp_proxy_exit_urls(video_id, limit=None)
     if len(exit_urls) > 1:
         return await asyncio.to_thread(_fetch_rotating_sync, video_id, exit_urls, spoken_language)
     return await asyncio.to_thread(_fetch_transcript_sync, video_id, spoken_language)

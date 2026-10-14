@@ -1451,7 +1451,7 @@ path: the emission sequence under [tab_ready](#tab_ready).
 ### phase
 
 ```json
-{ "event": "phase", "phase": "transcript" | "transcript_cached" | "audio_transcription" | "whisper_transcription" | "metadata_fallback" | "translation" }
+{ "event": "phase", "phase": "metadata_retry" | "transcript_retry" | "transcript" | "transcript_cached" | "audio_transcription" | "whisper_transcription" | "metadata_fallback" | "translation" }
 ```
 
 Only the transcript-source phases and `translation` are emitted as explicit
@@ -1466,6 +1466,8 @@ and `VALID_SSE_PHASES` in `sse-validators.ts`.
 
 | Phase | When |
 |-------|------|
+| `metadata_retry` | A proxy exit got YouTube's bot check / a 429 during the metadata extract; the summarizer rotates exits (no new one after 15 s, at least 3) (web: "YouTube is rate-limiting, retrying" until the `metadata` event) |
+| `transcript_retry` | The same during the caption fetch — the timedtext fetch or the caption API (web: the same line until `transcript_ready` or the next `phase` event) |
 | `transcript_cached` | Transcript found in the S3 cache (`fetch_transcript`, step 0) |
 | — | yt-dlp captions (the track picked at metadata) succeed: no `phase` event |
 | `transcript` | No yt-dlp captions: starting youtube-transcript-api (skipped while the caption-429 marker is set) |
@@ -1880,7 +1882,7 @@ Per run (v10 pipeline; the default `EXTRACTION_PARALLEL=true`; models = the `con
 | Extraction (`EXTRACTION_PARALLEL=false`) | Sonnet 5.5 at effort low (`LLM_EXTRACTION_MODEL`) | 1, or one per chapter batch | After frames-done; batches one at a time |
 | Synthesis | Fast | 1 | ∥ moment fill ∥ quiz, after the first tabs (before them when memory left the hero empty) |
 | Quiz (enrichment) | gpt-4o-mini (`LLM_ENRICHMENT_MODEL`) | 0-1 (plan with a quiz host) | ∥ moment fill ∥ synthesis; split path: started once the groups holding its domains' fields landed |
-| Faithfulness judge | Fast tier | 0-6 (`LANGFUSE_FAITHFULNESS_SAMPLE_RATE` of the extracted claims, ≤ 6) | Background, after extraction; never blocks |
+| Faithfulness judge | gpt-6-luna (`LLM_JUDGE_MODEL`; blank = the fast tier) | 0-6 (`LANGFUSE_FAITHFULNESS_SAMPLE_RATE` of the extracted claims, ≤ 6) | Background, after extraction; never blocks |
 | Translation | gpt-6-luna (`LLM_TRANSLATION_MODEL`) | Non-English only: output batches (≤ 2,500 chars, ≤ 100 strings) + the title; RAG transcript batches (`rag_translation`) | ≤ 8 output batches in flight; RAG in the background |
 | Assembly | None (code; moment frame fill does frame I/O with heartbeats) | 0 | — |
 

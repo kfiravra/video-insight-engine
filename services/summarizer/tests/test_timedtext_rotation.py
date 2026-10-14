@@ -103,9 +103,20 @@ class TestTimedtextExitRotation:
         assert error is None
         assert timedtext.tried == [_exit(5), _exit(1)]
 
-    def test_should_cap_the_exits_tried(self, exits, timedtext):
+    def test_should_try_every_exit_within_the_budget(self, exits, timedtext):
+        """Hotfix 4.1: a time budget, not 3 attempts, bounds the caption rotation."""
+        exits(primary=1, count=6)
+        timedtext.rate_limit(*range(1, 7))
+
+        _fetch_subtitles_from_url_sync(URL)
+
+        assert timedtext.tried == [_exit(n) for n in range(1, 7)]
+
+    def test_should_stop_rotating_once_the_budget_is_spent(self, exits, timedtext, monkeypatch):
+        """No new exit once the budget is spent — but never fewer than the old cap's 3."""
         exits(primary=1, count=50)
         timedtext.rate_limit(*range(1, 51))
+        monkeypatch.setattr(youtube, "EXIT_ROTATION_BUDGET_S", 0.0)
 
         _fetch_subtitles_from_url_sync(URL)
 

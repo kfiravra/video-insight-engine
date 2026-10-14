@@ -36,12 +36,13 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from typing import Any
 
 from litellm.cost_calculator import completion_cost
 from litellm.exceptions import RateLimitError
 from llm_common.context import llm_feature_var, llm_refused_model_var
+
+from src.services.pipeline.cache_rewrites import rewrite_counts
 
 logger = logging.getLogger(__name__)
 
@@ -194,6 +195,7 @@ class PipelineTimingRecorder:
             **self._refusal_counts(),
             "outputTokens": sum(c.get("outputTokens", 0) for c in self.llm_calls),
             "cacheReadTokens": sum(c.get("cacheReadTokens", 0) for c in self.llm_calls),
+            **rewrite_counts(self.llm_calls),
             "downloadBytes": sum(d.get("bytes") or 0 for d in self.downloads),
         }
 
@@ -464,35 +466,5 @@ def record_transcription_call(
             "fallbackUsed": False,
             "finishReason": None,
             "ttftMs": None,
-        }
-    )
-
-
-def record_download(
-    *,
-    kind: str,
-    purpose: str,
-    start_monotonic: float,
-    path: Path | None,
-    ok: bool,
-) -> None:
-    """Record one media download (bytes read from the finished file). Never raises."""
-    recorder = _recorder_var.get()
-    if recorder is None:
-        return
-    size: int | None = None
-    try:
-        if ok and path is not None and path.exists():
-            size = path.stat().st_size
-    except OSError as exc:
-        logger.debug("Timing download size lookup failed (%s): %s", kind, exc)
-    recorder.downloads.append(
-        {
-            "kind": kind,
-            "purpose": purpose,
-            "startMs": recorder.offset_ms(start_monotonic),
-            "wallMs": recorder.offset_ms() - recorder.offset_ms(start_monotonic),
-            "bytes": size,
-            "ok": ok,
         }
     )

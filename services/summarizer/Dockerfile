@@ -11,7 +11,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Deno is yt-dlp's default-enabled JavaScript runtime for YouTube's JS challenges
-# (yt-dlp-ejs). Requires >= 2.3.0; pinned to the version yt-dlp's pin-deno extra uses.
+# (yt-dlp-ejs). The pinned nightly's deno extra needs >= 2.6.6; pinned to the version
+# yt-dlp's pin-deno extra uses.
 COPY --from=denoland/deno:bin-2.9.5 /deno /usr/local/bin/deno
 
 # Install Python dependencies from the uv-compiled lockfile (reproducible

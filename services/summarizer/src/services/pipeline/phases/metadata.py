@@ -11,7 +11,10 @@ now runs in the background from that moment, alongside transcript and frames:
   unless the frame manifest is cached — checked during ``extract_info``.
 
 Nothing starts before ``validate_duration`` passes, so a rejected video costs
-no download bytes and no LLM call.
+no download bytes and no LLM call. A blocked proxy exit during the extract or
+the caption fetch is relayed as "YouTube is rate-limiting, retrying"
+(``pipeline/youtube_retry``: ``metadata_retry`` here, ``transcript_retry`` in
+``after_captions``).
 """
 
 from __future__ import annotations
@@ -25,8 +28,16 @@ from typing import TYPE_CHECKING, Any
 from llm_common.context import llm_feature_var
 
 from src.config import settings
-from src.services.media.scene_extractor import frames_cached
+from src.services.media.frame_manifest import frames_cached
 from src.services.pipeline.pipeline_helpers import sse_event, validate_duration
+from src.services.pipeline.youtube_retry import (
+    METADATA_RETRY_PHASE,
+    TRANSCRIPT_RETRY_PHASE,
+    RetryNotice,
+    relay_retry_notice,
+    retry_noticed,
+    with_retry_notice,
+)
 from src.services.video.description_analyzer import DescriptionAnalysis, analyze_description
 
 if TYPE_CHECKING:
@@ -57,7 +68,10 @@ async def run_phase_metadata(ctx: PipelineContext) -> AsyncGenerator[str, None]:
         else None
     )
     try:
-        ctx.video_data = await youtube.extract_video_data(ctx.youtube_id)
+        async with retry_noticed(youtube.extract_video_data(ctx.youtube_id)) as (extract, notice):
+            async for event in relay_retry_notice(extract, notice, METADATA_RETRY_PHASE):
+                yield event
+            ctx.video_data = await extract
         yield sse_event(
             "metadata",
             {
@@ -73,7 +87,10 @@ async def run_phase_metadata(ctx: PipelineContext) -> AsyncGenerator[str, None]:
             cache_check.cancel()
         raise
 
-    ctx.caption_task = asyncio.create_task(youtube.fetch_video_captions(ctx.video_data))
+    ctx.caption_retry_notice = RetryNotice()
+    ctx.caption_task = asyncio.create_task(
+        with_retry_notice(ctx.caption_retry_notice, youtube.fetch_video_captions(ctx.video_data))
+    )
     ctx.description_task = asyncio.create_task(_analyze_description(ctx))
     await _start_downloads(ctx, cache_check)
 
@@ -136,6 +153,12 @@ def after_captions(phase: PhaseFn) -> PhaseFn:
 
     @functools.wraps(phase)
     async def wrapped(ctx: PipelineContext) -> AsyncGenerator[str, None]:
+        task = getattr(ctx, "caption_task", None)
+        notice = getattr(ctx, "caption_retry_notice", None)
+        if task is not None and notice is not None:
+            # The transcript phase's own events clear the "retrying" line.
+            async for event in relay_retry_notice(task, notice, TRANSCRIPT_RETRY_PHASE):
+                yield event
         await await_captions(ctx)
         async for event in phase(ctx):
             yield event

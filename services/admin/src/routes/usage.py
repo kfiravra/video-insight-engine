@@ -104,10 +104,14 @@ class RunSummary(BaseModel):
     call_count: int
     regen_ordinal: int | None  # 1 = first run for this video, 2 = first regen, etc.
     langfuse_url: str | None = None  # Direct link to this run's Langfuse trace, if resolvable.
-    # Partial-result flag from the videoSummaryCache doc (dropped extraction
-    # batches / critical coverage). True = degraded, False = clean doc,
-    # None = no doc resolvable (legacy rows / missing video_summary_id).
+    # Degraded-run flag from the videoSummaryCache doc: a partial extraction
+    # (dropped batches / failed field group / critical coverage) or a failed
+    # frame download. True = degraded, False = clean doc, None = no doc
+    # resolvable (legacy rows / missing video_summary_id).
     degraded: bool | None = None
+    # Why ("partial_extraction", "media_download_failed"); None = not recorded
+    # (rows from before the summarizer wrote reasons, or no doc).
+    degraded_reasons: list[str] | None = None
     calls: list[RunCallSummary]
 
 
@@ -635,8 +639,10 @@ def _build_run_call(raw: dict) -> RunCallSummary:
     )
 
 
-async def _degraded_by_summary_id(db: Any, summary_ids: set[str]) -> dict[str, bool]:
-    """Map video_summary_id → degraded flag from the videoSummaryCache docs.
+async def _degraded_by_summary_id(
+    db: Any, summary_ids: set[str]
+) -> dict[str, tuple[bool, list[str] | None]]:
+    """Map video_summary_id → (degraded flag, degradedReasons) from the videoSummaryCache docs.
 
     Ids that are not valid ObjectIds (or have no doc) are simply absent from
     the returned map — the caller renders those runs with ``degraded=None``.
@@ -651,10 +657,12 @@ async def _degraded_by_summary_id(db: Any, summary_ids: set[str]) -> dict[str, b
         return {}
     cursor = db.videoSummaryCache.find(
         {"_id": {"$in": list(oids)}},
-        {"degraded": 1},
+        {"degraded": 1, "degradedReasons": 1},
     )
     docs = await cursor.to_list(len(oids))
-    return {oids[doc["_id"]]: bool(doc.get("degraded")) for doc in docs}
+    return {
+        oids[doc["_id"]]: (bool(doc.get("degraded")), doc.get("degradedReasons")) for doc in docs
+    }
 
 
 def _build_run_summary(run_group: dict, calls: list[dict], ordinal: int | None) -> RunSummary:
@@ -803,8 +811,9 @@ async def usage_by_run(
     summary_ids = {r.video_summary_id for r in results if r.video_summary_id}
     degraded_map = await _degraded_by_summary_id(db, summary_ids)
     for run in results:
-        if run.video_summary_id:
-            run.degraded = degraded_map.get(run.video_summary_id)
+        found = degraded_map.get(run.video_summary_id) if run.video_summary_id else None
+        if found is not None:
+            run.degraded, run.degraded_reasons = found
 
     _cache[cache_key] = results
     return results

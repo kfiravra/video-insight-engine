@@ -506,7 +506,7 @@ yarl==1.24.2
     #   aiormq
 youtube-transcript-api==1.2.4
     # via -r services/summarizer/requirements.txt
-yt-dlp==2026.8.19
+yt-dlp==2026.10.10.233141.dev0
     # via -r services/summarizer/requirements.txt
 yt-dlp-ejs==0.8.0
     # via yt-dlp

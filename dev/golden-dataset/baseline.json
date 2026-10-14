@@ -15,14 +15,14 @@
     "rerun": "cd services/summarizer && .venv/bin/python -m pytest -q tests/eval/test_retrieval_eval.py -s  (needs Qdrant reachable at QDRANT_HOST:QDRANT_PORT)"
   },
   "faithfulnessJudge": {
-    "measuredAt": "2026-07-12",
+    "measuredAt": "2026-10-14",
     "harness": "services/summarizer/tests/test_faithfulness_live_eval.py",
     "fixture": "services/summarizer/tests/fixtures/faithfulness_labeled_claims.json",
     "labeledClaims": 20,
     "accuracy": 1.0,
     "judgeErrors": 0,
     "floor": 0.8,
-    "notes": "Haiku fast-tier judge with claim-localized context selection. ~20 LLM calls, ~$0.02.",
+    "notes": "gpt-6-luna judge (LLM_JUDGE_MODEL, reasoning off) with claim-localized context selection. ~20 LLM calls, ~$0.003. Before: Haiku fast-tier judge, 20/20 on 2026-07-12 (~$0.02).",
     "rerun": "cd services/summarizer && LIVE_EVAL=1 .venv/bin/python -m pytest -q tests/test_faithfulness_live_eval.py -s"
   },
   "goldenEval": {

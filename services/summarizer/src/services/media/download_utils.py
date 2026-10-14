@@ -47,10 +47,12 @@ _T = TypeVar("_T")
 # set — an inherited lowercase value would otherwise beat ours.
 _PROXY_ENV_VARS = ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy")
 
-# A rotation visits at most this many exits, the job's own included — the
-# caption API layer runs under TRANSCRIPT_FETCH_TIMEOUT and every timedtext
-# attempt delays the transcript, so more attempts would only cost time.
+# A download rotation visits at most this many exits, the job's own included.
+# The metadata extract and the caption fetch instead visit every exit, for up
+# to EXIT_ROTATION_BUDGET_S (hotfix 4.1: three bot-checked exits out of prod's
+# 20 failed a submission that the next exits would have served).
 _MAX_ROTATED_EXITS = 3
+EXIT_ROTATION_BUDGET_S = 15.0
 _STICKY_SUFFIX_RE = re.compile(r"^(?P<base>.*)-(?P<n>\d+)$")
 
 # YouTube's "Sign in to confirm you’re not a bot" wall, as yt-dlp passes it
@@ -210,8 +212,11 @@ def _exit_pool(primary: str, count: int) -> list[str]:
     return urls
 
 
-def ytdlp_proxy_exit_urls(job_key: str | None = None) -> list[str]:
-    """Proxy URLs to try in order for an IP-scoped failure (bot check, 429, session block).
+def ytdlp_proxy_exit_urls(
+    job_key: str | None = None, *, limit: int | None = _MAX_ROTATED_EXITS
+) -> list[str]:
+    """Proxy URLs to try in order for an IP-scoped failure (bot check, 429, session block;
+    for the video downloads also a 403 on the video data — ``local_video``).
 
     Empty without a proxy; just YOUTUBE_PROXY_URL when YOUTUBE_PROXY_EXIT_COUNT
     is 1 or its username has no sticky ``-N`` suffix. Otherwise the pool is
@@ -220,7 +225,8 @@ def ytdlp_proxy_exit_urls(job_key: str | None = None) -> list[str]:
     exit, the next job on the one after, and so on — and every call of that
     job starts there again; no key starts on the configured exit. Exits
     blocked in the last _BLOCKED_EXIT_TTL_SECONDS move behind the others, and
-    at most _MAX_ROTATED_EXITS are returned. Never log the returned URLs —
+    at most ``limit`` are returned (None = the whole pool: the metadata and
+    caption rotations, bounded by time instead). Never log the returned URLs —
     they carry credentials.
     """
     primary = ytdlp_proxy_url()
@@ -230,7 +236,7 @@ def ytdlp_proxy_exit_urls(job_key: str | None = None) -> list[str]:
     if len(pool) == 1:
         return pool
     start = _EXIT_MEMORY.job_offset(job_key) % len(pool)
-    return _EXIT_MEMORY.order(pool[start:] + pool[:start])[:_MAX_ROTATED_EXITS]
+    return _EXIT_MEMORY.order(pool[start:] + pool[:start])[:limit]
 
 
 def try_proxy_exits(
@@ -238,17 +244,37 @@ def try_proxy_exits(
     attempt: Callable[[str], _T],
     is_blocked: Callable[[Exception], bool],
     label: str,
+    *,
+    budget_s: float | None = None,
 ) -> _T:
     """Run ``attempt`` on each exit of ytdlp_proxy_exit_urls() in turn.
 
     A 429 or a bot check is scoped to the exit IP, so a blocked attempt moves
     straight on to the next exit instead of waiting on the same one, and the
     exit stays behind the others for later rotations (record_blocked_exit).
-    Any other error ends the rotation at once; when every exit is blocked the
-    last error is re-raised. ``label`` is logged — never put a proxy URL in it.
+    Every block also sets the fetch's retry notice (the client's "YouTube is
+    rate-limiting, retrying"). Any other error ends the rotation at once; when
+    every exit is blocked — or, after the first _MAX_ROTATED_EXITS, ``budget_s``
+    has passed since the first attempt (no new exit after it; the attempt in
+    flight finishes) — the last error is re-raised. ``label`` is logged — never put a proxy URL
+    in it.
     """
+    from src.services.pipeline.youtube_retry import notify_exit_blocked
+
+    started = time.monotonic()
     last_error: Exception | None = None
     for n, proxy_url in enumerate(exit_urls, 1):
+        # At least the download cap's exits, however slow each attempt is.
+        if last_error is not None and budget_s is not None and n > _MAX_ROTATED_EXITS:
+            if time.monotonic() - started >= budget_s:
+                logger.warning(
+                    "%s: %.0f s rotation budget spent after %d/%d exits",
+                    label,
+                    budget_s,
+                    n - 1,
+                    len(exit_urls),
+                )
+                break
         try:
             result = attempt(proxy_url)
         except Exception as e:
@@ -256,6 +282,7 @@ def try_proxy_exits(
                 raise
             last_error = e
             record_blocked_exit(proxy_url)
+            notify_exit_blocked()
             logger.warning("%s blocked on proxy exit %d/%d", label, n, len(exit_urls))
             continue
         record_working_exit(proxy_url, label, n, len(exit_urls))
@@ -300,11 +327,11 @@ def ytdlp_client_cli_args(clients: str | None = None) -> list[str]:
 
 
 def ytdlp_hires_client_attempts() -> list[str]:
-    """Player-client lists for the hi-res 720p download, in order.
+    """Player-client lists for the run's two video downloads (pass 1 + 720p), in order.
 
-    YTDLP_HIRES_PLAYER_CLIENTS first (android alone caps at 360p); if that
-    differs from YTDLP_PLAYER_CLIENTS, the latter is the one retry — the
-    clients pass 1 just proved working for this video.
+    YTDLP_HIRES_PLAYER_CLIENTS first (android alone has no video-only
+    renditions: it caps at the muxed 360p file); if that differs from
+    YTDLP_PLAYER_CLIENTS, the latter is the one retry.
     """
     base = settings.YTDLP_PLAYER_CLIENTS.strip()
     hires = settings.YTDLP_HIRES_PLAYER_CLIENTS.strip() or base

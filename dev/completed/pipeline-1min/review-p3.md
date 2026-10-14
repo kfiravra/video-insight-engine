@@ -9,7 +9,7 @@ agents are using the box's memory.
 1. Read the project's review recipe `.claude/commands/review.md` fully and apply it (labels,
    severities, compliance checks; skill files: `.claude/skills/backend-python/SKILL.md` for
    services/, `backend-node` for api/, `react-vite` for apps/web/).
-2. Context: `dev/active/pipeline-1min/designs/phase3-design.md` (binding design), your task's brief
+2. Context: `dev/completed/pipeline-1min/designs/phase3-design.md` (binding design), your task's brief
    (named in your group line), `pipeline-1min-tasks.md` Phase 3 rows (incl. Kfir's sub-items),
    `pipeline-1min-plan.md` §Phase 3, `pipeline-1min-brief.md` §Phase 3 + Appendices A–C,
    `pipeline-1min-context.md` (decisions D1–D28). The brief + Kfir's sub-items are the spec.

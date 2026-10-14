@@ -15,11 +15,12 @@ from typing import TYPE_CHECKING, AsyncGenerator, Awaitable, Callable
 from llm_common.context import llm_feature_var
 
 from src.config import settings
+from src.services.media.frame_manifest import persist_vision_descriptions
+from src.services.media.hires_upgrade import HiresUpgrade, upgrade_frames
 from src.services.media.scene_extractor import (
     ReselectHook,
     cleanup_temp_dir,
     extract_scene_keyframes,
-    persist_vision_descriptions,
 )
 from src.services.media.visual_tier import VisualTier, resolve_tier, tier_settings
 from src.services.pipeline.pipeline_timing import mark_step
@@ -29,6 +30,54 @@ if TYPE_CHECKING:
     from src.services.pipeline.context import PipelineContext
 
 logger = logging.getLogger(__name__)
+
+# How long a finished run waits for its deferred hi-res pass (``done`` is out
+# already) before it cancels the pass and closes the 720p file.
+HIRES_UPGRADE_WAIT_S = 60.0
+
+
+def start_hires_upgrade(ctx: PipelineContext, upgrade: HiresUpgrade | None) -> None:
+    """Start the deferred hi-res pass (``media/hires_upgrade``) in the background."""
+    if upgrade is None or not upgrade.frames or ctx.hires_video is None:
+        return
+    ctx.hires_upgrade = asyncio.create_task(upgrade_frames(upgrade, ctx.hires_video))
+
+
+def hires_upgrade_pending(ctx: PipelineContext) -> bool:
+    """True while the deferred hi-res pass still runs (it reads the 720p file)."""
+    task = getattr(ctx, "hires_upgrade", None)
+    return task is not None and not task.done()
+
+
+async def finish_hires_upgrade(ctx: PipelineContext, *, wait: bool) -> None:
+    """End the deferred hi-res pass before the run closes the 720p file.
+
+    ``wait`` (a finished run) gives it up to ``HIRES_UPGRADE_WAIT_S``; otherwise,
+    or past that, it is cancelled and the 360p frames stand. Raises only when
+    the caller is cancelled — after cancelling the pass.
+    """
+    task = getattr(ctx, "hires_upgrade", None)
+    if task is None:
+        return
+    ctx.hires_upgrade = None
+    try:
+        if wait:
+            await asyncio.wait({task}, timeout=HIRES_UPGRADE_WAIT_S)
+    except asyncio.CancelledError:
+        # The run itself is going away (worker shutdown): the pass must not outlive it.
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        raise
+    if not task.done():
+        if wait:
+            ctx.hires_upgrade_abandoned = True
+            logger.warning(
+                "Deferred hi-res pass for %s still running after %.0fs — cancelled",
+                ctx.youtube_id,
+                HIRES_UPGRADE_WAIT_S,
+            )
+        task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
 
 
 async def _run_vision_analysis(ctx: PipelineContext, selected_frames: list[dict]) -> None:
@@ -163,10 +212,11 @@ class _TierGate:
 async def run_phase_frames(ctx: PipelineContext) -> AsyncGenerator[str, None]:
     """Extract scene keyframes, score, select, run OCR + vision, and prepare for assembly.
 
-    Reads the run's low-res file (``ctx.lowres_video``, started by the metadata
+    Reads the run's 360p file (``ctx.lowres_video``, started by the metadata
     phase), runs FFmpeg scene detection, scores frames locally, selects ~25
-    best, refines them from the run's 720p file, uploads to S3, runs OCR and
-    vision analysis in parallel, and stores enriched frames on context.
+    best, refines them from the run's 720p file when it is already on disk
+    (else starts the deferred hi-res pass after vision), uploads to S3, runs OCR
+    and vision analysis in parallel, and stores enriched frames on context.
     """
     if not settings.SCENE_EXTRACTION_ENABLED:
         return
@@ -224,6 +274,9 @@ async def run_phase_frames(ctx: PipelineContext) -> AsyncGenerator[str, None]:
         # cache hit (regen, bypassCache) keeps the same visual context.
         if ctx.frame_descriptions and not cached_descriptions:
             await persist_vision_descriptions(ctx.youtube_id, ctx.frame_descriptions)
+        # After the descriptions are on the manifest: the pass's own manifest
+        # write is a read-modify-write that must not race them.
+        start_hires_upgrade(ctx, extraction_result.get("hires_upgrade"))
 
         # Store on context for assembly
         ctx.scene_frames_for_assembly = enriched_result.get("selected_frames", [])

@@ -1,10 +1,12 @@
 """Hi-res refinement of selected scene frames.
 
 Second pass of the two-pass frame pipeline: scene detection + scoring run on
-a worst-quality download (fast), then this module re-extracts only the ~25
+the 360p pass-1 download (fast), then this module re-extracts only the ~25
 SELECTED frames at 720p. Refined bytes replace each frame's local ``path`` in
 place, so S3 upload, vision analysis, and OCR all pick up the hi-res JPEG for
-free.
+free — when scene extraction runs it, with the 720p file already on disk. The
+deferred pass (``hires_upgrade``) runs it later on its own copies and only
+overwrites the S3 objects; vision and OCR then read the 360p frames.
 
 The source is the run's one local 720p file (``hires_prefetch``), downloaded
 alongside scene detection and kept for moment fill. Failure is always

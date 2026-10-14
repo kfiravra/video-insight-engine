@@ -46,6 +46,18 @@ describe("StreamingPlaceholder", () => {
     expect(screen.getByText(/audio is being transcribed/i)).toBeInTheDocument();
   });
 
+  it("should say YouTube is rate-limiting while the metadata fetch retries", () => {
+    render(<StreamingPlaceholder streamPhase="metadata" phaseDetail="youtube-retrying" />);
+
+    expect(screen.getByText("YouTube is rate-limiting, retrying")).toBeInTheDocument();
+  });
+
+  it("should say YouTube is rate-limiting while the caption fetch retries", () => {
+    render(<StreamingPlaceholder streamPhase="transcript" phaseDetail="youtube-retrying" />);
+
+    expect(screen.getByText("YouTube is rate-limiting, retrying")).toBeInTheDocument();
+  });
+
   it("should show the detected domain and batch progress during extraction", () => {
     render(
       <StreamingPlaceholder

@@ -77,7 +77,12 @@ async def _run(ctx: SimpleNamespace, world: _World) -> list[str]:
     for p in patches:
         p.start()
     try:
-        return [chunk async for chunk in metadata.run_phase_metadata(ctx)]  # type: ignore[arg-type]
+        chunks = [chunk async for chunk in metadata.run_phase_metadata(ctx)]  # type: ignore[arg-type]
+        # The background tasks the phase started look the fakes up when they first
+        # run: let them start before the patches go.
+        for _ in range(3):
+            await asyncio.sleep(0)
+        return chunks
     finally:
         for p in patches:
             p.stop()

@@ -9,23 +9,26 @@ orphan processes and /tmp/vie-hires-* directories.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from src.services.media import local_video
+from src.services.pipeline import pipeline_timing
+from src.services.pipeline.pipeline_timing import PipelineTimingRecorder
 
 VIDEO_ID = "dQw4w9WgXcQ"
 
 
-def _fake_proc(returncode: int = 0, stderr: bytes = b"") -> MagicMock:
+def _fake_proc(returncode: int = 0, stderr: bytes = b"", stdout: bytes = b"") -> MagicMock:
     proc = MagicMock()
     proc.returncode = None
 
     async def _communicate() -> tuple[bytes, bytes]:
         proc.returncode = returncode
-        return b"", stderr
+        return stdout, stderr
 
     proc.communicate = AsyncMock(side_effect=_communicate)
     proc.kill = MagicMock()
@@ -72,7 +75,7 @@ async def test_success_returns_path_and_temp_dir(monkeypatch, tmp_path):
         result = await local_video.download_video_720p(VIDEO_ID)
 
     assert result is not None
-    video_path, temp_dir = result
+    video_path, temp_dir = result.path, result.temp_dir
     assert video_path.exists()
     assert temp_dir == created[0]
     local_video.cleanup_local_video(temp_dir)
@@ -259,9 +262,12 @@ def test_cleanup_tolerates_missing_dir(tmp_path):
 
 
 class TestDownloadVideoLowres:
-    """Pass 1 — the worst-quality file scene detection reads, one attempt."""
+    """Pass 1 — the 360p video-only file scene detection reads (g4 §8: android's
+    muxed 360p is 2-4x its bytes)."""
 
-    async def test_should_download_the_worst_rendition(self, monkeypatch, tmp_path):
+    async def test_should_download_the_smallest_360p_video_only_rendition(
+        self, monkeypatch, tmp_path
+    ):
         _capture_temp_dirs(monkeypatch, tmp_path)
         formats: list[str] = []
 
@@ -273,7 +279,71 @@ class TestDownloadVideoLowres:
         with patch.object(local_video.asyncio, "create_subprocess_exec", side_effect=_spawn):
             result = await local_video.download_video_lowres(VIDEO_ID)
 
-        assert result is not None and formats == ["worstvideo[ext=mp4]/worst[ext=mp4]/worst"]
+        assert result is not None and formats == [local_video._LOWRES_FORMAT_SPEC]
+        local_video.cleanup_local_video(result[1])
+
+    @staticmethod
+    def _pick(formats: list[dict]) -> str:
+        """The format id yt-dlp's own selector picks for the pass-1 spec (worst first)."""
+        from yt_dlp import YoutubeDL
+
+        selector = YoutubeDL({"quiet": True}).build_format_selector(local_video._LOWRES_FORMAT_SPEC)
+        picked = list(selector({"formats": formats, "incomplete_formats": False}))
+        return picked[0]["format_id"]
+
+    @staticmethod
+    def _fmt(format_id: str, height: int, protocol: str, *, video_only: bool = False) -> dict:
+        return {
+            "format_id": format_id,
+            "ext": "mp4",
+            "height": height,
+            "width": height * 16 // 9,
+            "vcodec": "avc1.4d401e",
+            "acodec": "none" if video_only else "mp4a.40.2",
+            "protocol": protocol,
+            "url": f"https://example.invalid/{format_id}",
+        }
+
+    def test_should_pick_the_360p_video_only_file_when_offered(self):
+        formats = [
+            self._fmt("160", 144, "https", video_only=True),
+            self._fmt("134", 360, "https", video_only=True),
+            self._fmt("18", 360, "https"),
+        ]
+
+        assert self._pick(formats) == "134"
+
+    def test_should_keep_360p_when_a_sabr_session_offers_only_muxed_files(self):
+        """The nightly's web_embedded offers muxed HLS 144p-720p next to android's
+        format 18: pass 1 must not drop to the 144p stream."""
+        formats = [
+            self._fmt("91-0", 144, "m3u8_native"),
+            self._fmt("93-0", 360, "m3u8_native"),
+            self._fmt("18", 360, "https"),
+            self._fmt("95-0", 720, "m3u8_native"),
+        ]
+
+        assert self._pick(formats) == "18"
+
+    async def test_should_try_the_video_clients_before_the_pass1_clients(
+        self, monkeypatch, tmp_path
+    ):
+        _capture_temp_dirs(monkeypatch, tmp_path)
+        spawn = AsyncMock(side_effect=_spawn_writing_output([1, 0]))
+        with (
+            patch("src.services.media.download_utils.settings") as settings,
+            patch.object(local_video.asyncio, "create_subprocess_exec", spawn),
+        ):
+            settings.YOUTUBE_PROXY_URL = None
+            settings.YTDLP_PLAYER_CLIENTS = "android"
+            settings.YTDLP_HIRES_PLAYER_CLIENTS = "web_embedded,android"
+            result = await local_video.download_video_lowres(VIDEO_ID)
+
+        assert result is not None
+        assert [_client_arg(c) for c in spawn.await_args_list] == [
+            "youtube:player_client=web_embedded,android",
+            "youtube:player_client=android",
+        ]
         local_video.cleanup_local_video(result[1])
 
     async def test_should_remove_its_dir_when_yt_dlp_fails(self, monkeypatch, tmp_path):
@@ -320,6 +390,7 @@ class _FakeYtdlp:
         self.stderr_by_exit: dict[str, bytes] = {}  # exit URL -> failing stderr
         self.tried: list[str] = []
         self.argvs: list[tuple[str, ...]] = []
+        self.stdout = b""  # what a successful yt-dlp prints
 
     async def spawn(self, *args: str, env: dict[str, str], **_kwargs: object) -> MagicMock:
         proxy_url = env["HTTPS_PROXY"]
@@ -328,7 +399,7 @@ class _FakeYtdlp:
         stderr = self.stderr_by_exit.get(proxy_url)
         if stderr is None:
             Path(args[args.index("-o") + 1]).write_bytes(b"mp4")
-            return _fake_proc(returncode=0)
+            return _fake_proc(returncode=0, stdout=self.stdout)
         return _fake_proc(returncode=1, stderr=stderr)
 
 
@@ -370,6 +441,17 @@ class TestProxyExitRotation:
         ytdlp.stderr_by_exit[_exit(1)] = b"ERROR: HTTP Error 429: Too Many Requests"
 
         result = await local_video.download_video_lowres(VIDEO_ID)
+
+        assert result is not None and ytdlp.tried == [_exit(1), _exit(2)]
+        local_video.cleanup_local_video(result[1])
+
+    async def test_should_rotate_on_a_403_for_the_video_data(self, ytdlp):
+        """googlevideo refusing the bytes is exit-scoped too (prod exit -2, 2026-10-14)."""
+        ytdlp.stderr_by_exit[_exit(1)] = (
+            b"ERROR: unable to download video data: HTTP Error 403: Forbidden"
+        )
+
+        result = await local_video.download_video_720p(VIDEO_ID)
 
         assert result is not None and ytdlp.tried == [_exit(1), _exit(2)]
         local_video.cleanup_local_video(result[1])
@@ -437,3 +519,103 @@ class TestProxyExitRotation:
         assert "succeeded on proxy exit 2/3 (session -2)" in caplog.text
         assert "pass@" not in caplog.text
         local_video.cleanup_local_video(result[1])
+
+
+class TestDownloadTiming:
+    """Each download's ``pipeline.timing`` entry says what yt-dlp fetched, through
+    which clients and proxy exit, and why it failed."""
+
+    @pytest.fixture
+    def recorder(self) -> Iterator[PipelineTimingRecorder]:
+        token = pipeline_timing._recorder_var.set(None)
+        try:
+            yield pipeline_timing.start_run_timing()
+        finally:
+            pipeline_timing._recorder_var.reset(token)
+
+    @pytest.fixture
+    def ytdlp(self, monkeypatch, tmp_path):
+        _capture_temp_dirs(monkeypatch, tmp_path)
+        fake = _FakeYtdlp()
+        with (
+            patch("src.services.media.download_utils.settings") as settings,
+            patch.object(local_video.asyncio, "create_subprocess_exec", side_effect=fake.spawn),
+        ):
+            settings.YOUTUBE_PROXY_URL = _exit(1)
+            settings.YOUTUBE_PROXY_EXIT_COUNT = 3
+            settings.YTDLP_PLAYER_CLIENTS = "android"
+            settings.YTDLP_HIRES_PLAYER_CLIENTS = "android"
+            yield fake
+
+    async def test_should_record_the_rendition_yt_dlp_picked(self, ytdlp, recorder):
+        ytdlp.stdout = b"vie-picked 134 360\n"
+
+        result = await local_video.download_video_lowres(VIDEO_ID)
+
+        entry = recorder.downloads[0]
+        assert result is not None
+        assert (entry["format"], entry["height"], entry["clients"]) == ("134", 360, "android")
+        local_video.cleanup_local_video(result[1])
+
+    async def test_should_record_no_height_when_yt_dlp_prints_none(self, ytdlp, recorder):
+        ytdlp.stdout = b"vie-picked 18 NA\n"
+
+        result = await local_video.download_video_lowres(VIDEO_ID)
+
+        assert result is not None and recorder.downloads[0]["height"] is None
+        local_video.cleanup_local_video(result[1])
+
+    async def test_should_return_the_picked_height_with_the_file(self, ytdlp, recorder):
+        ytdlp.stdout = b"vie-picked 18 360\n"
+
+        result = await local_video.download_video_720p(VIDEO_ID)
+
+        assert result is not None and result.height == 360
+        local_video.cleanup_local_video(result[1])
+
+    async def test_should_record_the_proxy_exit_that_delivered(self, ytdlp, recorder):
+        ytdlp.stderr_by_exit[_exit(1)] = BOT_CHECK
+
+        result = await local_video.download_video_720p(VIDEO_ID)
+
+        assert result is not None and recorder.downloads[0]["proxyExit"] == "2/3"
+        local_video.cleanup_local_video(result[1])
+
+    async def test_should_record_why_the_download_failed_without_credentials(self, ytdlp, recorder):
+        ytdlp.stderr_by_exit[_exit(1)] = (
+            b"ERROR: [youtube] dQw4w9WgXcQ: Unable to connect to proxy http://user-1:pass@p.webshare.io:80"
+        )
+
+        assert await local_video.download_video_lowres(VIDEO_ID) is None
+
+        entry = recorder.downloads[0]
+        assert (entry["ok"], entry["error"]) == (
+            False,
+            "Unable to connect to proxy http://***@p.webshare.io:80",
+        )
+
+    async def test_should_record_the_last_exits_bot_check_when_every_exit_is_blocked(
+        self, ytdlp, recorder
+    ):
+        for n in (1, 2, 3):
+            ytdlp.stderr_by_exit[_exit(n)] = BOT_CHECK
+
+        assert await local_video.download_video_lowres(VIDEO_ID) is None
+
+        assert recorder.downloads[0]["error"].startswith("Sign in to confirm you")
+
+    async def test_should_record_a_cancelled_download(self, monkeypatch, tmp_path, recorder):
+        _capture_temp_dirs(monkeypatch, tmp_path)
+        proc = _fake_proc()
+        proc.communicate = AsyncMock(side_effect=_hang)
+
+        with patch.object(
+            local_video.asyncio, "create_subprocess_exec", AsyncMock(return_value=proc)
+        ):
+            with pytest.raises(asyncio.TimeoutError):
+                await asyncio.wait_for(local_video.download_video_720p(VIDEO_ID), timeout=0.01)
+
+        assert (recorder.downloads[0]["ok"], recorder.downloads[0]["error"]) == (
+            False,
+            "CancelledError",
+        )
