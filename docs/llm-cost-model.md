@@ -209,8 +209,11 @@ block 1 measures ≈ 2.6–3.4k cl100k tokens on the benchmark domain sets (offl
 so no 1h entry is written (`cacheWrite1hTokens` 0) and the 5m entry text1 writes holds blocks 1 + 2;
 text2 / text3 / visual read it at a 100 % hit rate. The 1h marker on block 1
 stays in the request, so a prefix at or above the model's minimum caches for an hour.
-Extraction stays on Haiku 4.5 after the 4.0d picks, so this holds; Haiku 5.5's
-minimum is 512 tokens (pipeline-1min context.md, "4.0c docs facts").
+Since the 4.0 picks extraction runs on Sonnet 5.5, whose minimum is 512 tokens
+(pipeline-1min context.md, "4.0c docs facts"): block 1 (≈ 5.3k tokens on the new
+tokenizer) now gets its own 1h entry, written by the first text1 of a domain set in
+the hour. Dev v10 T1dQhQAm8Tc: text1 read 5,349 (block 1) and wrote 6,713 for 5m
+(block 2); text2 read 12,062 (blocks 1 + 2).
 
 **Extraction, `EXTRACTION_PARALLEL=false` — 5m (1c.3).** The single call (one
 per chapter batch on a long video) the groups replaced — byte-identical to the

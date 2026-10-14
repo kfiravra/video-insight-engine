@@ -33,10 +33,10 @@ Trace: pipeline:{videoSummaryId}
 ├── generation: description_analysis  model=gpt-6-luna        (LLM_DESCRIPTION_MODEL; reasoning off)
 ├── generation: tier_probe            model=haiku-4.5         (LLM_CLASSIFIER_MODEL)
 ├── generation: plan                  model=sonnet-5.5        (the primary model, effort medium) tokens  cost  latency
-├── generation: memory                model=haiku-4.5         (LLM_EXTRACTION_MODEL; ∥ plan)
+├── generation: memory                model=haiku-5.5         (LLM_MEMORY_MODEL; ∥ plan)
 ├── generation: frame_vision          model=sonnet-5.5        (LLM_VISION_MODEL; 1-5 batches; none on LOW tier / manifest hit)
 ├── generation: chapter_detect        model=fast tier         (long videos past one batch, without listed chapters, description timestamps or a usable memory outline)
-├── generation: extraction_text1      model=haiku-4.5         (LLM_EXTRACTION_MODEL) the split path's warm-up group call: streamed, `ttftMs` in pipeline.timing
+├── generation: extraction_text1      model=sonnet-5.5        (LLM_EXTRACTION_MODEL) the split path's warm-up group call: streamed, `ttftMs` in pipeline.timing
 ├── generation: extraction_text2…N    (released on text1's first chunk; ≤ 5 text groups)
 ├── generation: extraction_visual     (fired at frames-done; absent when no tab needs it)
 │   └── (long videos: the same names + `_c<k>` for chunk k ≥ 1, e.g. `extraction_text1_c1`;
@@ -98,6 +98,7 @@ Local `.txt` files in `services/summarizer/src/prompts/**` are the source of tru
 | --- | --- |
 | `prompts/base_extraction.txt` | `summarizer:base_extraction` |
 | `prompts/extraction_group_job.txt` | `summarizer:extraction_group_job` |
+| `prompts/extraction_group_rules.txt` | `summarizer:extraction_group_rules` |
 | `prompts/schemas/food.txt` | `summarizer:schema:food` |
 | `prompts/enrich_quiz.txt` | `summarizer:enrich_quiz` |
 | `prompts/vision.txt` | `summarizer:vision` |

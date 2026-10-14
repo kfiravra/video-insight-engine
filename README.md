@@ -145,9 +145,9 @@ The gateway owns auth, rate limits and idempotency. The Python services own ever
 
 ### Cost
 
-About $0.29 for a ~20-minute video with captions (measured, v8 ledger); the Whisper fallback adds roughly $0.14 when captions are unavailable.
+About $0.11–0.18 for a 17–19-minute video with captions, frame reading included ($0.107 / $0.177 / $0.148 on the three benchmark videos, measured on the v10 dev ledger at gate 4.0; v8 was about $0.29); the Whisper fallback adds roughly $0.14 when captions are unavailable (v8 measurement).
 
-Models are chosen per stage through LiteLLM (`LLM_<STAGE>_MODEL`): a stronger model plans, fast models classify, synthesize and enrich. Work that does not need a model does not get one: frame scoring is local OpenCV, assembly is pure code, and prompt caching covers the plan and extraction prompts. Every call is written to an `llm_usage` ledger with its stage, model, tokens and cost. See [docs/llm-cost-model.md](./docs/llm-cost-model.md).
+Models are chosen per stage through LiteLLM (`LLM_<STAGE>_MODEL`): a stronger model plans, reads frames and extracts; fast models probe the video, write its memory, synthesize and enrich. Work that does not need a model does not get one: frame scoring is local OpenCV, assembly is pure code, and prompt caching covers the plan and extraction prompts. Every call is written to an `llm_usage` ledger with its stage, model, tokens and cost. See [docs/llm-cost-model.md](./docs/llm-cost-model.md).
 
 ### Caching and idempotency
 

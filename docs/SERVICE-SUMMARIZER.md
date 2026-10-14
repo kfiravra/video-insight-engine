@@ -145,6 +145,7 @@ services/summarizer/
     │   ├── component_toolkit.txt # Component descriptions + datasource paths (injected into plan/triage). Density table is generated from domains.json `densityGates` via `{density_gates}` placeholder
     │   ├── base_extraction.txt   # Extraction template: <rules> / <video> (cached) / <your_job>
     │   ├── extraction_group_job.txt # Split extraction (EXTRACTION_PARALLEL): one field group's <your_job> (emit-only keys + shape, tabs it serves; visual group: annotations + key frames)
+    │   ├── extraction_group_rules.txt # Split extraction: the completeness rule, appended to <quality_rules> in block 1 (4.0 picks)
     │   ├── tier_probe.txt        # Tier-probe prompt (14 domains + 18 formats incl. unboxing, has_visual_demo, transcript_usable — domains.json is the source)
     │   ├── chapter_detect.txt    # AI chapter detection prompt (fast model)
     │   ├── quality_rules.txt     # JSON extraction quality rules
@@ -447,7 +448,7 @@ A plan-first pipeline (v9): description analysis, tier probe, plan ∥ memory, t
     │   │   video half is uncached. Emits contentTags, modifiers, tabs with briefs ({what,
     │   │   where, expect}), evidence (has_* booleans that gate domain requirements) and
     │   │   terms; truncation is counted (counts.truncated)
-    │   └─▶ Memory: LLM_EXTRACTION_MODEL (Haiku 4.5), 25 s, ONE attempt, temperature 0 → outline (4-12
+    │   └─▶ Memory: LLM_MEMORY_MODEL (Haiku 5.5), 25 s, ONE attempt, temperature 0 → outline (4-12
     │   │   contiguous sections; dropped when it stops short of the duration), evidence, tldr,
     │   │   takeaways. No timed transcript → no call. Its tldr + takeaways go out at once as the
     │   │   first synthesis_complete (the hero). Failure → None; every reader has a fallback
@@ -820,7 +821,7 @@ async def call_llm_with_retry(
 # Stage-specific configurations (per attempt; models = config.py / compose defaults):
 # Tier probe:  4s,   retries=0  (LLM_CLASSIFIER_MODEL = Haiku 4.5, temperature 0)
 # Plan:        60s,  retries=1  (primary = Sonnet 5.5, effort medium, 3,500 tokens)
-# Memory:      25s,  retries=0  (LLM_EXTRACTION_MODEL = Haiku 4.5, temperature 0)
+# Memory:      25s,  retries=0  (LLM_MEMORY_MODEL = Haiku 5.5; temperature 0 dropped for it)
 # Extraction groups: 120-300s from the group's estimate, retries=1 (+ one more call for a lost answer;
 #              Haiku 4.5; the warm-up passes propagate_refusal — a refused warm-up is not re-asked)
 # Extraction (EXTRACTION_PARALLEL=false): 240s single / dynamic overflow / 300s per batch, retries=2
@@ -1318,7 +1319,7 @@ A setting left out of the environment keeps the compose / `config.py` default; t
 "empty →" fallbacks below apply only to an empty value outside compose:
 - Plan: primary model = Sonnet 5.5 at effort medium (60s timeout, 1 retry, 3,500 tokens; the cross-provider fallback applies). At effort low it flipped `is_learnable` on T1dQhQAm8Tc in both A/B runs (the quiz tab dropped)
 - Tier probe (replaced the classifier): `LLM_CLASSIFIER_MODEL` = Haiku 4.5 (4s, no retry). Haiku 5.5 matched 16/18 golden visual-demo labels vs 18/18
-- Memory: `LLM_EXTRACTION_MODEL` = Haiku 4.5 (25s, single attempt; a primary-model call with an override)
+- Memory: `LLM_MEMORY_MODEL` = Haiku 5.5, blank = `LLM_EXTRACTION_MODEL` (25s, single attempt; a primary-model call with an override)
 - Synthesis: the fast tier (`LLM_SYNTHESIS_MODEL` blank; 20s, 1 retry)
 - Quiz (enrichment): `LLM_ENRICHMENT_MODEL` = gpt-4o-mini (14s per attempt, 30s total). gpt-6-luna was as usable, at twice the p50
 - Description analysis: `LLM_DESCRIPTION_MODEL` = gpt-6-luna (25s per attempt, 30s total)
@@ -1326,7 +1327,7 @@ A setting left out of the environment keeps the compose / `config.py` default; t
 - Frame vision (`frame_analyzer.analyze_frames_with_vision`, ≤ 5 parallel batches; its own provider and retry): `LLM_VISION_MODEL` = Sonnet 5.5 (empty → the primary model). History: routed to fast in Phase 1B / P3, reverted 2026-05-14 after a 5-frame spot-check (`scripts/spotcheck_frame_vision.py`) found `openai/gpt-4o-mini` was only ~20% cheaper *and* hallucinated OCR on dense-text frames; in 4.0d Haiku 5.5 labelled cooking frames `talking_head` (dropped as presenter filler), Sonnet 5.5 read the card text Sonnet 4.6 reads at half the wall time
 - AI chapter detection (`transcript_chunker._detect_chapters_with_ai`): the fast tier (`LLM_CHAPTER_DETECT_MODEL` is not passed by compose), scoped under its own `llm_feature_var.set("summarize:chapter_detect")` context so cost is attributed correctly in `llm_usage` (was previously absorbed by the outer `summarize:extraction` tag)
 - Faithfulness judge: the fast tier (no stage setting)
-- Extraction runs on `LLM_EXTRACTION_MODEL` = Haiku 4.5 (empty → primary; a primary-model call with an override, like memory: the cross-provider fallback applies, P P F): Haiku 5.5 kept 0.72 of Haiku 4.5's items vs its own run-to-run 0.86 and lost real recipe steps. The fast-first path and the synthesis-fed retry were removed in pipeline-1min 1c.3/1c.5.
+- Extraction runs on `LLM_EXTRACTION_MODEL` = Sonnet 5.5 at effort low (empty → primary; a primary-model call with an override, like memory: the cross-provider fallback applies, P P F). The split path's group calls end their rules with the completeness rule (`extraction_group_rules.txt`, added once per run by `extraction_group_prompt.with_group_rules`; the `EXTRACTION_PARALLEL=false` call keeps today's bytes). A/B round 2: Sonnet 5.5 missed the fewest transcript-supported items and invented no details; Haiku 4.5 (the model before) invented steps, quantities and code snippets. The fast-first path and the synthesis-fed retry were removed in pipeline-1min 1c.3/1c.5.
 
 ### Prompt Safety Net (`llm_retry.py`)
 

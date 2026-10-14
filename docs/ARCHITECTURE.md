@@ -318,17 +318,17 @@ The pipeline uses Server-Sent Events (SSE) to stream results progressively with 
 
 ### LLM Calls Summary
 
-Per run, default path (`EXTRACTION_PARALLEL=true`). The model column names the routing setting and its default (`config.py` = both compose anchors; picked by the 4.0d model A/B, `dev/active/pipeline-1min/gates/g4-model-ab.md` §Picks). Under compose a blank or missing `.env` line keeps the default (`${LLM_X:-<default>}`); to change a stage, set a model (e.g. `openai/gpt-4o-mini`). Only `LLM_SYNTHESIS_MODEL` defaults blank, which means the fast tier. The fast tier is Haiku 4.5 by default (code and compose) and gpt-4o-mini with `LLM_FAST_PROVIDER=openai`, as both `.env` templates and prod set:
+Per run, default path (`EXTRACTION_PARALLEL=true`). The model column names the routing setting and its default (`config.py` = both compose anchors; picked by the 4.0d model A/B rounds 1 + 2, `dev/active/pipeline-1min/gates/g4-model-ab.md`). Under compose a blank or missing `.env` line keeps the default (`${LLM_X:-<default>}`); to change a stage, set a model (e.g. `openai/gpt-4o-mini`). Only `LLM_SYNTHESIS_MODEL` defaults blank, which means the fast tier. The fast tier is Haiku 4.5 by default (code and compose) and gpt-4o-mini with `LLM_FAST_PROVIDER=openai`, as both `.env` templates and prod set:
 
 | Stage | Model | Calls | Timeout |
 |-------|-------|-------|---------|
 | Description analysis | `LLM_DESCRIPTION_MODEL` = gpt-6-luna | 1 | 25s per attempt, 30s total |
 | Tier probe | `LLM_CLASSIFIER_MODEL` = Haiku 4.5 | 1 (a second one after an unusable-captions audio pass) | 4s, no retry |
 | Plan | Primary model = Sonnet 5.5, effort medium | 1 | 60s, 1 retry |
-| Memory | `LLM_EXTRACTION_MODEL` = Haiku 4.5 | 0-1 (none without a timed transcript) | 25s, no retry |
+| Memory | `LLM_MEMORY_MODEL` = Haiku 5.5 (blank = `LLM_EXTRACTION_MODEL`) | 0-1 (none without a timed transcript) | 25s, no retry |
 | Frame vision | `LLM_VISION_MODEL` = Sonnet 5.5 | 0-5 batches of ≤ 8 frames (none on LOW tier / manifest hit) | 2× the expected wall, within 30s–`FRAME_VISION_TIMEOUT` |
 | Chapter detect | Fast tier (`LLM_CHAPTER_DETECT_MODEL` is not passed by compose) | 0-1 (long videos only) | 25s |
-| Extraction field groups | `LLM_EXTRACTION_MODEL` = Haiku 4.5 | 1-5 text + 0-1 visual, per chunk | 120-300s, from the group's estimated output |
+| Extraction field groups | `LLM_EXTRACTION_MODEL` = Sonnet 5.5, effort low | 1-5 text + 0-1 visual, per chunk | 120-300s, from the group's estimated output |
 | Synthesis | `LLM_SYNTHESIS_MODEL` (blank → fast tier) | 1 | 20s |
 | Quiz (enrichment) | `LLM_ENRICHMENT_MODEL` = gpt-4o-mini | 0-1 (a plan with a quiz host) | 14s per attempt, 30s total |
 | Faithfulness judge | Fast tier | 0-6 (sampled claims, background) | 20s |
