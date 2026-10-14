@@ -16,7 +16,7 @@ Outputs, per video, in ``--out``:
 
 Run with the summarizer venv (pass an ABSOLUTE ``--out``: the script chdirs into
 services/summarizer before parsing it):
-    services/summarizer/.venv/bin/python dev/active/pipeline-1min/tools/capture.py \
+    services/summarizer/.venv/bin/python dev/completed/pipeline-1min/tools/capture.py \
         --out <abs dir> [--parallel-false] [--videos <id> ...] [--speed <x>]
 """
 

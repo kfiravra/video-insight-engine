@@ -917,7 +917,7 @@ PREVIOUS_MODEL = {
 
 The primary (`default`) model only reaches the plan and `/health`: every other stage
 is pinned per stage (Environment Variables above). Picks and evidence per call type:
-`dev/active/pipeline-1min/gates/g4-model-ab.md` §Picks.
+`dev/completed/pipeline-1min/gates/g4-model-ab.md` §Picks.
 
 ---
 
@@ -1353,7 +1353,7 @@ transcript) plus the compact final extraction (≤ 6,000 chars), whatever the le
 
 Model routing by stage (defaults from the pipeline-1min 4.0d A/B — rule: quality within
 noise first, then latency, then cost; evidence per call type in
-`dev/active/pipeline-1min/gates/g4-model-ab.md` §Picks). The tier probe, description,
+`dev/completed/pipeline-1min/gates/g4-model-ab.md` §Picks). The tier probe, description,
 quiz and translation calls pass `use_fast_model=True` + `model_override` (fast-model
 calls: no cross-provider fallback); memory and extraction pass `model_override` alone —
 primary-model calls with an override, so the cross-provider fallback applies wherever

@@ -8,7 +8,7 @@ Credentials come from the repo `.env` at run time and are never written into the
 Setup, from the repo root:
 
 ```bash
-T=dev/active/pipeline-1min/tools; L="${VIE_HEAVY_LOCK:-/tmp/vie-heavy.lock}"
+T=dev/completed/pipeline-1min/tools; L="${VIE_HEAVY_LOCK:-/tmp/vie-heavy.lock}"
 mkdir -p $T/out/{runs,golden,replay,capture,prod}
 ```
 

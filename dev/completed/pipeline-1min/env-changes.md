@@ -1,5 +1,11 @@
 # pipeline-1min — Env and secrets changes (apply at the END of the task)
 
+> **APPLIED 2026-10-14 (prod `.env`).** Kfir edited the prod `.env` for the phase-4 deploy (PR #30 → 3d2647f; applied with a
+> recreate after the deploy): `LLM_EXTRACTION_MODEL`, `LLM_VISION_MODEL`, `LLM_MAX_TOKENS`, `LLM_FAST_MAX_TOKENS` removed; the running
+> summarizer + worker verified on extraction / vision Sonnet 5.5 and memory Haiku 5.5 (gates/g4.md §8). The phase-1 rows were applied
+> earlier (proxy exit count; the checks). Later settings need no `.env` line (compose defaults): `LLM_MEMORY_MODEL`, `LLM_JUDGE_MODEL`.
+> NOT applied — still open: the GitHub eval secrets + schedule and the prod eval user (sections below), the Console rate-limit check.
+
 Rule (Kfir, 2026-10-07): no prod `.env` edit until the task ends. Every merge must run on prod with the
 current `.env`, so every new or changed setting ships with a safe default in `config.py` AND a literal
 default in both compose anchors. This file lists what to change once everything has merged.

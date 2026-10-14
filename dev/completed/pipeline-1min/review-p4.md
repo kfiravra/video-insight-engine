@@ -48,7 +48,7 @@ Then optional `g4 question:` lines. End with one line:
   still on the sync boto3 client, credentials/endpoint/region config passed the same way, no session
   created per call that leaks connectors); tests still exercise the real paths (mocks target the new
   import); the scripts' swap; docs line accurate.
-- R4.3 4.3 → uncommitted: `dev/active/pipeline-1min/gates/g4.md` (new, report skeleton) → brief `brief-4.3.md`.
+- R4.3 4.3 → uncommitted: `dev/completed/pipeline-1min/gates/g4.md` (new, report skeleton) → brief `brief-4.3.md`.
   Check EVERY number against its cited source (`gates/g0-prod-baseline.md/.json`, `g1.md`, `g1-prod-benchmark.json`,
   `g2.md`, `g3.md` incl. §Prod as corrected in commit "correct gate 3 §Prod", `g3-prod-benchmark.json`,
   `evidence/A-DIGEST.md`): wrong numbers, numbers with no source, dev numbers presented as prod, medians that mix the
@@ -105,8 +105,8 @@ Then optional `g4 question:` lines. End with one line:
   `test_model_refresh_ab_cost.py`; config: `services/summarizer/src/config.py` + `tests/test_config.py`,
   `docker-compose.yml`, `docker-compose.prod.yml`, `src/utils/llm_retry.py` (MODEL_CHAR_LIMITS) + test,
   `packages/llm-common` cache rates + test, `src/services/transcription/gemini_transcriber.py` (comment) +
-  `tests/test_gemini_transcriber.py` (test removed), `dev/active/pipeline-1min/env-changes.md`; report
-  `dev/active/pipeline-1min/gates/g4-model-ab.md/.json` (198 calls, $1.084) → brief `brief-4.0d.md` + the PICKS in
+  `tests/test_gemini_transcriber.py` (test removed), `dev/completed/pipeline-1min/env-changes.md`; report
+  `dev/completed/pipeline-1min/gates/g4-model-ab.md/.json` (198 calls, $1.084) → brief `brief-4.0d.md` + the PICKS in
   `gates/g4-notes.md` (plan + vision → Sonnet 5.5 low; extraction + memory + tier probe stay Haiku 4.5;
   description / quiz / output + RAG translation → gpt-6-luna; judge / synthesis / chapter_detect unchanged; the primary
   = Sonnet 5.5 with LLM_EXTRACTION_MODEL defaulting to Haiku 4.5 so only the plan moves).

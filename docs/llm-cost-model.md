@@ -152,9 +152,9 @@ hour. In one request every 1h breakpoint must come before any 5m one.
 - **user block 1** = the English output directive + everything above
   `<video>` (rules, component toolkit, registry caps and requirements,
   examples) — rendered from config alone, so byte-identical for every video;
-  ≈ 16.3k tokens on Sonnet 4.6 (16,290 written on prod, `dev/active/pipeline-1min/gates/g3.md`
+  ≈ 16.3k tokens on Sonnet 4.6 (16,290 written on prod, `dev/completed/pipeline-1min/gates/g3.md`
   §Prod), ≈ 22.1k on Sonnet 5.5 (its tokenizer; 22,070 written in the 4.0d A/B,
-  `dev/active/pipeline-1min/gates/g4-model-ab.md`).
+  `dev/completed/pipeline-1min/gates/g4-model-ab.md`).
   `cache_control {type: ephemeral, ttl: 1h}`
   (`plan.PLAN_CACHE_TTL`, `plan.plan_user_content`);
 - **user block 2** = `<video>` (title, channel, duration, probe hint,
@@ -206,7 +206,7 @@ tokens — jMq8 r1 on prod wrote the prefix three times, +$0.065) releases them
 without that chunk; `pipeline.timing` `counts.cacheRewrites` / `cacheRewriteTokens`
 count such writes (`pipeline/cache_rewrites.py`). A
 text1 that fails before its first chunk releases them at once. Measured
-(`dev/active/pipeline-1min/gates/g3.md` §Cache hit rate, dev end runs and prod):
+(`dev/completed/pipeline-1min/gates/g3.md` §Cache hit rate, dev end runs and prod):
 block 1 measures ≈ 2.6–3.4k cl100k tokens on the benchmark domain sets (offline,
 `pipeline-1min-tasks.md` 3.4 / 4.0); g3: 1h write 0 (< Haiku 4.5's 4,096-token minimum),
 so no 1h entry is written (`cacheWrite1hTokens` 0) and the 5m entry text1 writes holds blocks 1 + 2;
@@ -216,7 +216,7 @@ Since the 4.0 picks extraction runs on Sonnet 5.5, whose minimum is 512 tokens
 (pipeline-1min context.md, "4.0c docs facts"): block 1 (≈ 5.3k tokens on the new
 tokenizer) now gets its own 1h entry, written by the first text1 of a domain set in
 the hour. Dev v10 T1dQhQAm8Tc: text1 read 5,349 (block 1) and wrote 6,713 for 5m
-(block 2); text2 read 12,062 (blocks 1 + 2) (`dev/active/pipeline-1min/gates/g4.md` §3.7, L5).
+(block 2); text2 read 12,062 (blocks 1 + 2) (`dev/completed/pipeline-1min/gates/g4.md` §3.7, L5).
 
 **Extraction, `EXTRACTION_PARALLEL=false` — 5m (1c.3).** The single call (one
 per chapter batch on a long video) the groups replaced — byte-identical to the

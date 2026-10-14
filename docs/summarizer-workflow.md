@@ -362,7 +362,7 @@ and falls back to the on-disk `.txt`, recording the prompt version on the active
 `LLM_FAST_PROVIDER=openai` (prod, `.env.example`), Haiku 4.5 without. A stage setting's
 default is in `config.py` and in both compose anchors as the same literal, so a blank
 `.env` line keeps it; an empty value outside compose falls back as shown. The defaults
-come from the 4.0d model A/B (`dev/active/pipeline-1min/gates/g4-model-ab.md` §Picks).
+come from the 4.0d model A/B (`dev/completed/pipeline-1min/gates/g4-model-ab.md` §Picks).
 
 | Prompt file | Stage | Loaded by | Model (default) |
 |-------------|-------|-----------|-------|

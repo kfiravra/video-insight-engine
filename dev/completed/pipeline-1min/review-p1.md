@@ -6,7 +6,7 @@ You review ONE group of pipeline-1min phase-1 commits in /home/kfir/projects/vid
 1. Read the project's review recipe `.claude/commands/review.md` fully and apply it (labels, severities,
    compliance checks, skill files: `.claude/skills/backend-python/SKILL.md` for services/,
    `backend-node` for api/, `react-vite` for apps/web/).
-2. Context: `dev/active/pipeline-1min/pipeline-1min-plan.md` (Phase 1 rows + conflicts C1–C21),
+2. Context: `dev/completed/pipeline-1min/pipeline-1min-plan.md` (Phase 1 rows + conflicts C1–C21),
    `pipeline-1min-context.md` (decisions D1–D25), `designs/decisions.md`. The brief is the spec.
 3. Review the combined change of your commits (`git show <sha>` each). Later phase-1 commits may have changed
    the same code — for every finding check the code AT HEAD and report only what is still present at HEAD

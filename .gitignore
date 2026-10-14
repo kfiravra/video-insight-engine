@@ -90,7 +90,7 @@ dev/diagnostics/
 demo-data/
 
 # pipeline-1min raw research answers (378 KB, session-scoped evidence; digest + code maps stay tracked)
-dev/active/pipeline-1min/evidence/ans-*.md
+dev/completed/pipeline-1min/evidence/ans-*.md
 
 # Hook-written session snapshots (.claude/hooks/auto-save-context.sh) — local state, never committed
 dev/active/.last-session-snapshot.json

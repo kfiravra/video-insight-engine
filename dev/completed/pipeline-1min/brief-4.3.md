@@ -8,7 +8,7 @@ Kfir 2026-10-13: "4.3 report skeleton with phases 0–3 filled (the 4.0 section 
 "`gates/g4.md` (gate 4.0 table; the 4.3 report: before/after per phase from the prod baseline to now,
 what each phase bought, levers not taken with projected gain)".
 
-You own `dev/active/pipeline-1min/gates/g4.md` (new). Read `agent-rules.md` (phase-4 section) and
+You own `dev/completed/pipeline-1min/gates/g4.md` (new). Read `agent-rules.md` (phase-4 section) and
 the sources: `pipeline-1min-brief.md` (targets), `gates/g0-prod-baseline.md` (+ `.json`) = the prod
 v8 baseline; `gates/g1.md` + `g1-prod-benchmark.json` (prod after phase 1); `gates/g2.md`
 §Post-deploy (prod after phase 2) + its dev rounds; `gates/g3.md` incl. §Prod + `g3-prod-benchmark.json`

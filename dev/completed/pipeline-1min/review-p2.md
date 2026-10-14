@@ -8,7 +8,7 @@ full suites, no pyright on > 10 files, no `tsc -b`) — other agents are using t
 1. Read the project's review recipe `.claude/commands/review.md` fully and apply it (labels,
    severities, compliance checks; skill files: `.claude/skills/backend-python/SKILL.md` for
    services/, `backend-node` for api/, `react-vite` for apps/web/).
-2. Context: `dev/active/pipeline-1min/pipeline-1min-tasks.md` (Phase 2 rows + the log entries for
+2. Context: `dev/completed/pipeline-1min/pipeline-1min-tasks.md` (Phase 2 rows + the log entries for
    your task id), `pipeline-1min-plan.md` §Phase 2, `pipeline-1min-brief.md` §Phase 2,
    `pipeline-1min-context.md` (decisions D1–D25). The brief is the spec.
 3. Review the change of your commit(s) (`git show <sha>`). Other phase-2 work may have changed the
