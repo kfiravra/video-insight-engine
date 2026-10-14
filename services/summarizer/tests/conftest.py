@@ -1,5 +1,7 @@
 """Pytest fixtures for summarizer tests."""
 
+import logging
+
 import pytest
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -463,3 +465,18 @@ def mock_app_dependencies(mock_mongo_client, mock_llm_provider):
     yield app
 
     app.dependency_overrides.clear()
+
+
+# Root logging as pytest set it up, before a test module imports src.main or
+# src.worker — their import runs configure_structlog (a stdout handler, root at
+# LOG_LEVEL), which would otherwise leak into every later test's caplog.
+_PYTEST_ROOT_LEVEL = logging.getLogger().level
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _pytest_root_logging():
+    root = logging.getLogger()
+    for handler in [h for h in root.handlers if getattr(h, "_vie_structlog_handler", False)]:
+        root.removeHandler(handler)
+    root.setLevel(_PYTEST_ROOT_LEVEL)
+    yield

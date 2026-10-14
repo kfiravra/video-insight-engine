@@ -265,6 +265,8 @@ JSON logs in every service carry, at minimum:
 
 The `service` field is stamped by a structlog processor (or pino `base`) so log aggregators can filter without callers having to mention it. Other fields appear only when bound on contextvars (Python) or attached to `req.log` (Node).
 
+In the summarizer and its worker the standard-library records — most modules log through `logging.getLogger(__name__)`, and so do uvicorn and the libraries — render through structlog's chain too (`structlog.stdlib.ProcessorFormatter` in `logging_config.py`; hotfix 4.1 — they used to print the bare message, with no time): `timestamp`, `level`, `service`, the bound contextvars (Python names: `event`, `request_id`, `video_summary_id`) and, on stdlib lines only, `logger` — JSON with `LOG_FORMAT=json` (UTF-8, not `\u`-escaped), a timestamped console line otherwise; console tracebacks are plain (no frame locals). Not covered: LiteLLM's own stderr handler (its WARNING+ lines also print once more, unformatted) and uvicorn's `--reload` supervisor.
+
 ### Cross-system lookup
 
 Given a `request-id`:
