@@ -114,7 +114,8 @@ services/summarizer/
     │   ├── transcript/           # cleaner.py (basic cleaning incl. English fillers), render.py ([m:ss] markers)
     │   │
     │   ├── media/                # Frame extraction, vision & S3 storage
-    │   │   ├── scene_extractor.py    # Scene keyframe extraction (yt-dlp + FFmpeg) + manifest-v2 cache
+    │   │   ├── scene_extractor.py    # Scene keyframe extraction (yt-dlp + FFmpeg)
+    │   │   ├── frame_manifest.py     # Manifest-v2 frame cache (S3 sidecar: timestamps, hiresCount, vision descriptions)
     │   │   ├── frame_scorer.py       # Frame scoring (visual, face, skin, center-detail, text, uniqueness)
     │   │   ├── frame_analyzer.py     # Vision (LLM_VISION_MODEL, Sonnet 5.5) in ≤5 parallel batches of ≤8 frames (vision.txt)
     │   │   ├── visual_tier.py        # Adaptive visual tier (high/standard/low from metadata)
@@ -361,7 +362,7 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     │       while frames still run
     │
     └─▶ FRAMES (smart frame selection, two-pass, non-critical)
-        └─▶ S3 cache check — MANIFEST-only: `videos/{id}/{SCENE_S3_PREFIX}/manifest.json`
+        └─▶ S3 cache check (media/frame_manifest.py) — MANIFEST-only: `videos/{id}/{SCENE_S3_PREFIX}/manifest.json`
         │   (v2) carries per-frame timestamps, galleryIndices, hiresCount and the
         │   persisted visionDescriptions. A hit skips extraction AND restores the
         │   vision descriptions (cached frames have no local file, so vision can't

@@ -13,6 +13,7 @@ import pytest
 
 from src.routes.pipeline_orchestration import _release_run_media
 from src.services.media import hires_upgrade
+from src.services.media.frame_manifest import mark_manifest_hires
 from src.services.media.hires_refiner import HIRES_SUFFIX
 from src.services.media.hires_upgrade import (
     HiresUpgrade,
@@ -21,7 +22,6 @@ from src.services.media.hires_upgrade import (
     upgrade_frames,
 )
 from src.services.media.image_dedup import compute_ahash
-from src.services.media.scene_extractor import mark_manifest_hires
 from src.services.pipeline.phases import frames as frames_phase
 from tests.replay.media_fakes import fake_jpeg
 
@@ -66,7 +66,7 @@ def s3():
 
 @pytest.fixture
 def mark():
-    with patch("src.services.media.scene_extractor.mark_manifest_hires", AsyncMock()) as marker:
+    with patch.object(hires_upgrade, "mark_manifest_hires", AsyncMock()) as marker:
         yield marker
 
 
@@ -154,7 +154,7 @@ class TestDeferredUpgrade:
 class TestMarkManifestHires:
     async def test_should_keep_the_vision_descriptions(self):
         manifest = {"version": 2, "hiresCount": 0, "visionDescriptions": [{"frame_index": 0}]}
-        with patch("src.services.media.scene_extractor.s3_client") as client:
+        with patch("src.services.media.frame_manifest.s3_client") as client:
             client.get_json = AsyncMock(return_value=manifest)
             client.put_json = AsyncMock()
             await mark_manifest_hires(VIDEO_ID, 9)

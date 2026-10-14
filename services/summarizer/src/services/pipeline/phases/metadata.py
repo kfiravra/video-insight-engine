@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Any
 from llm_common.context import llm_feature_var
 
 from src.config import settings
-from src.services.media.scene_extractor import frames_cached
+from src.services.media.frame_manifest import frames_cached
 from src.services.pipeline.pipeline_helpers import sse_event, validate_duration
 from src.services.pipeline.youtube_retry import (
     METADATA_RETRY_PHASE,

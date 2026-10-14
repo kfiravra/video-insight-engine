@@ -15,12 +15,12 @@ from typing import TYPE_CHECKING, AsyncGenerator, Awaitable, Callable
 from llm_common.context import llm_feature_var
 
 from src.config import settings
+from src.services.media.frame_manifest import persist_vision_descriptions
 from src.services.media.hires_upgrade import HiresUpgrade, upgrade_frames
 from src.services.media.scene_extractor import (
     ReselectHook,
     cleanup_temp_dir,
     extract_scene_keyframes,
-    persist_vision_descriptions,
 )
 from src.services.media.visual_tier import VisualTier, resolve_tier, tier_settings
 from src.services.pipeline.pipeline_timing import mark_step

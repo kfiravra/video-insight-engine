@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from src.services.media.frame_manifest import mark_manifest_hires
 from src.services.media.hires_refiner import HIRES_SUFFIX, refine_selected_frames
 from src.services.media.image_dedup import compute_ahash, is_duplicate
 from src.services.media.s3_client import s3_client
@@ -125,8 +126,6 @@ async def _overwrite(frames: list[dict]) -> int:
 
 async def upgrade_frames(upgrade: HiresUpgrade, hires_video: LocalHiresSource) -> int:
     """Refine the uploaded frames from the 720p file once it lands; the number upgraded."""
-    from src.services.media.scene_extractor import mark_manifest_hires
-
     started = time.monotonic()
     temp_dir = await asyncio.to_thread(tempfile.mkdtemp, prefix=f"vie-upgrade-{upgrade.video_id}-")
     try:
