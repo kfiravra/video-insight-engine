@@ -2,7 +2,7 @@
 // Output Types — Triage Pipeline
 // ═══════════════════════════════════════════════════
 
-import type { ContentTag, ScenarioItem, TriageResult, VIEResponseMeta, TabEntry } from './vie-response.js';
+import type { ContentTag, TriageResult, VIEResponseMeta, TabEntry } from './vie-response.js';
 import { CONTENT_TAG_VALUES } from '@vie/shared/config';
 
 // OutputType is an alias for ContentTag — kept for backward compatibility.
@@ -48,17 +48,9 @@ export function filledSynthesisFields(synthesis: Partial<SynthesisResult>): Part
 import type { QuizQuestion, Flashcard } from './vie-response.js';
 export type { QuizQuestion, Flashcard };
 
-export interface CodeCheatSheetItem {
-  title: string;
-  code: string;
-  description: string;
-}
-
+// The summarizer's enrichment_complete carries the quiz only (pipeline-1min 1d.1).
 export interface EnrichmentData {
   quiz?: QuizQuestion[];
-  flashcards?: Flashcard[];
-  cheatSheet?: CodeCheatSheetItem[];
-  scenarios?: ScenarioItem[];
 }
 
 // ─────────────────────────────────────────────────────

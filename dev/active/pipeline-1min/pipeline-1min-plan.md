@@ -24,11 +24,11 @@ cost. Four shipped phases + a sweep, each behind a gate report and a prod deploy
 | 1 orchestration + prompts | plan ∥ memory no longer wait for frames; t=0 downloads; vision batched; honest prompts | ≈ 130 s, hero ≈ 25 s |
 | 2 progressive output | per-tab `tab_ready`, provisional Moments, frontend reducer fixes | first visible tab ≤ 35 s |
 | 3 the split (v9) | field-group extraction in parallel, reconcile, per-group assembly | ≤ 65 s all tabs, hero ≤ 30 s |
-| 4 sweep + docs + report | dead code/settings gone, docs true, before/after report | — |
+| 4 model refresh + sweep + docs + report | 4.0: newer models per call type (offline A/B, gate 4.0); dead code/settings gone, docs true, before/after report on the final models | quality within noise or better, cost ≤ v9 |
 
 Principles that constrain every decision: readers get the full transcript, only writers get split;
 output contract (domain-keyed JSON, Pydantic models, `tabs`/`meta` shape) unchanged; the plan has the
-final say; nothing is invented to fill a schema; vision stays on Sonnet; reuse existing seams.
+final say; nothing is invented to fill a schema; vision stays on Sonnet (4.0 moves it to Haiku 5.5 only if the A/B shows it reads screen text as well; else Sonnet 5.5); reuse existing seams.
 
 ## Current State Analysis (verified against code, 2026-10-07)
 
@@ -202,19 +202,22 @@ Still one extraction call per batch with the planned domains' schemas, so the go
 | 3.6 | Per-group assembly + emission: a tab assembles when all its requested fields landed; `tab_ready{final:true}`; attachments at the final re-emit; overview/meta last; `resolve_cross_tab_links` at the end. Quiz after its owning group; synthesis ∥ moment fill ∥ faithfulness after the last group. | Per-group assembly test (tab waits for all fields); ordering test. | L |
 | 3.7 | Long videos: chunks from the memory outline merged to ≤ 50k tokens / 40 min; calls = chunks × groups under the semaphore; annotations sliced per chunk for the visual group; merge chunk-major then group-union; `chapter_detect` only without outline. | Chunk × group test with a synthetic 90-min cassette. | M |
 | 3.8 | Failure paths: one group fails after one retry → its tabs demote/drop, rest ship, `droppedTabs`; all fail → error as today; plan failure → fallback plan's dataSources as the requested set. | Failure-path tests. | S |
-| 3.9 | Bump `PIPELINE_VERSION` (single file `packages/shared/.../pipeline-version.json`; force-recreate summarizer/worker/api); re-register prompts; demo library re-run script (`demo-export.sh` urls + `run_pipeline(bypass_cache=True)`), runs on Kfir's go. | Script dry-runs; version visible on new docs. | S |
+| 3.9 | Bump `PIPELINE_VERSION` (single file `packages/shared/.../pipeline-version.json`; force-recreate summarizer/worker/api); re-register prompts; demo library re-run script (`demo-export.sh` urls + `run_pipeline(bypass_cache=True)`), runs on Kfir's go — the RUN moves to after phase 4 is on prod (Kfir 2026-10-13: once, on the 4.0 models). | Script dry-runs; version visible on new docs. | S |
 
 **Phase 3 verification**: replay 3 cassettes with group timings synthesized from recorded output sizes; golden full run; prod benchmark 3 × 2 + regression set; cost per video from the ledger (requests tagged by group).
 
 **Gate 3**: golden within noise on quality (faithfulness reported, informational — D22); assertions pass; duplicate items ≤ baseline; benchmark table; cost; 429 count 0. Expected: HIGH cooking ≈ 55–60 s, text-only ≤ 55 s, hero ≤ 30 s, cost below baseline.
 
-### Phase 4 — sweep, docs, report — effort M
+### Phase 4 — model refresh, sweep, docs, report — effort L
 
 | # | Task | AC |
 |---|---|---|
-| 4.1 | Sweep leftovers: `inject_visual_context`, retry paths, chapter_detect on the single path, flashcards/scenarios, fast-first, `FRAME_TIER_EARLY_CLASSIFIER`, `to_video_context_full`/`video_dna_text`, `outboundLinks`/`itemCounts` readers, plan cache_control, old enrich files, `category_confidence`; `.env.example`/`.env.production.example`; `docs/INFRASTRUCTURE.md` flags table (document what is passed through). | grep-tests for removed symbols; compose config validates. |
+| 4.0 | **Model refresh** (Kfir 2026-10-13) — after phase 3 is on prod, before 4.1. Targets per call type, picked by an offline A/B (quality within noise or better first, then latency, then cost): plan Sonnet 4.6 → `claude-sonnet-5-5`; vision Sonnet 4.6 → `claude-haiku-5-5`, A/B against `claude-sonnet-5-5` with the D3 script (selection overlap, uC45 card-text reading, latency) — Sonnet 5.5 if Haiku misreads screen text; extraction groups, memory, tier probe Haiku 4.5 → `claude-haiku-5-5`; quiz enrichment, output + RAG translation, description analysis gpt-4o-mini → `gpt-6-luna` (second provider kept); faithfulness judge stays gpt-4o-mini until the comparison is done, then `gpt-6-luna`; Haiku 4.5 + Sonnet 4.6 stay in config as fallbacks. Steps: (a) LiteLLM 1.91.0 → latest stable (≥ 1.105.0), same pin in CI and prod (both hand-edited locks: summarizer + assistant), suites + replay ×3 byte-identical first, removed helpers fixed like c8bbb1f; (b) model-keyed guards in the LLM plumbing — no temperature / top_p / top_k to a model that rejects them (LiteLLM's own predicates), thinking off + effort low on every pipeline call (plan medium only on an A/B quality loss), no assistant prefill (JSON-forcing prefill → structured outputs), stop_reason `refusal` → same-call fallback to the previous model (tagged in the ledger + `pipeline.timing`, never retried on the same model), content blocks selected by type; (c) verify in the docs first, record in context.md: Haiku 5.5 minimum cacheable length (Q3), effort/thinking API shape and structured outputs through LiteLLM; rate limits at our tier from the Console (Kfir); new tokenizer ≈ +30 % tokens → ITPM, every Haiku 5.5 call < the 100K-token tier incl. long-video chunks; (d) offline A/B on golden transcripts + cassettes (≈ $1, like 0.8) per call type → defaults in config, dev `.env`, prod values into `env-changes.md` (one prod edit at the end); (e) full golden with the chosen set vs the re-scored baseline (judge fixed), dev cold runs ×4, replay ×3; the `EXTRACTION_PARALLEL=false` identity test keys on prompt bytes, not the model id (today it hashes `model` too). Facts checked 2026-10-13 (today's models per call type from the ledger, routing, the open synthesis / chapter_detect question): tasks.md 4.0. | **Gate 4.0** (`gates/g4.md`): quality within noise or better; cost per video ≤ v9 on the 4 benchmarks; first extracted tab + total per benchmark; 0 refusals without a fallback on the golden; max prompt tokens per call type (new tokenizer); per-call-type before/after cost + latency. |
+| 4.1 | Sweep leftovers: `inject_visual_context`, retry paths, chapter_detect on the single path, flashcards/scenarios, fast-first, `FRAME_TIER_EARLY_CLASSIFIER`, `to_video_context_full`/`video_dna_text`, `outboundLinks`/`itemCounts` readers, plan cache_control, old enrich files, `category_confidence`; `.env.example`/`.env.production.example` (with 4.0's model names); `docs/INFRASTRUCTURE.md` flags table (document what is passed through). | grep-tests for removed symbols; compose config validates. |
 | 4.2 | Docs: summarizer docs' stale lines (S3/region defaults, "SHORT < 30 min" vs 900 s, "3–6 LLM calls", pass-2 stream seek, fast model on prod, vision model, chunked semantics, new phases + v9 flow in `docs/summarizer-workflow.md` and `SERVICE-SUMMARIZER.md`); README numbers that changed; eval sentence → "twice a month" after the first scheduled run. | `/update-docs` pass; no stale claim left from the list. |
-| 4.3 | Report: before/after per phase (phase walls, first tab, total, cost) for benchmark + regression sets; what each phase bought; levers not taken with projected gain (outline from plan instead of memory; slicing long videos by brief ranges; 720p vision; `WORKER_CONCURRENCY=2`; 1 h cache TTL; Haiku vision; m6i). | Report file in this folder + artifact link. |
+| 4.3 | Report (on the final 4.0 models): before/after per phase (phase walls, first tab, total, cost) for benchmark + regression sets; what each phase bought; levers not taken with projected gain (outline from plan instead of memory; slicing long videos by brief ranges; 720p vision; `WORKER_CONCURRENCY=2`; 1 h cache TTL; Haiku vision; m6i). | Report file in this folder + artifact link. |
+
+**After phase 4 is on prod**: the demo library re-run (moved from 3.9, Kfir 2026-10-13) — once, on the 4.0 models (`scripts/demo_rerun.py`: dry run → `--limit 1` → `--apply`; spend stated first; demo user's limits, g3 Q-demo).
 
 ## Risk Assessment
 
@@ -249,8 +252,8 @@ Still one extraction call per batch with the planned domains' schemas, so the go
 
 ## Required Resources and Dependencies
 
-- Kfir: approvals at each gate; `.env.production` edits (`EXTRACTION_PARALLEL_BATCHES=6`; prod `LLM_EXTRACTION_MODEL` = `anthropic/claude-haiku-4-5-20251001` (verified on the box 2026-10-07)); GitHub secrets for the eval, prod-API mode (C18): `EVAL_API_URL`, `EVAL_USER_EMAIL`, `EVAL_USER_PASSWORD`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` (+ `ANTHROPIC_API_KEY` only if the offline tier-probe A/B runs in CI) — no proxy/S3/OpenAI secrets on GitHub; eval-user `bypassCache` permission + daily quota sized for 18 × 2 runs; budget alert; tier-probe model decision after the A/B; demo library re-run go; the non-English regression video = `EqaMrzd9nZU` (picked from the dev DB 2026-10-07).
-- Spend: phase 0 baseline 6 prod runs ≈ $1.1; golden ×2 ≈ 28 runs ≈ $5; each later phase ≈ 8 prod runs + 1 golden run ≈ $4. Replay harness is free.
+- Kfir: approvals at each gate; `.env.production` edits (`EXTRACTION_PARALLEL_BATCHES=6`; prod `LLM_EXTRACTION_MODEL` = `anthropic/claude-haiku-4-5-20251001` (verified on the box 2026-10-07)); GitHub secrets for the eval, prod-API mode (C18): `EVAL_API_URL`, `EVAL_USER_EMAIL`, `EVAL_USER_PASSWORD`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` (+ `ANTHROPIC_API_KEY` only if the offline tier-probe A/B runs in CI) — no proxy/S3/OpenAI secrets on GitHub; eval-user `bypassCache` permission + daily quota sized for 18 × 2 runs; budget alert; tier-probe model decision after the A/B; 4.0: the new models' rate limits at our tier (Console) + the per-call-type picks; demo library re-run go (after phase 4 is on prod); the non-English regression video = `EqaMrzd9nZU` (picked from the dev DB 2026-10-07).
+- Spend: phase 0 baseline 6 prod runs ≈ $1.1; golden ×2 ≈ 28 runs ≈ $5; each later phase ≈ 8 prod runs + 1 golden run ≈ $4; 4.0 adds its offline A/B (≈ $1) + one full golden + dev runs ×4. Replay harness is free.
 - Prod access for the ledger/log reads: `ssh -i ~/.ssh/vie-demo-key.pem ec2-user@<vie.ad IP>`; prod code = `origin/main`.
 - Langfuse: both projects; `register_prompts.py --commit` (labels `production`, leaves orphans for deleted files → delete orphans in the UI; list at each gate).
 
@@ -262,6 +265,6 @@ Still one extraction call per batch with the planned domains' schemas, so the go
 | 1 | 6–8 | 1b + 1c are prompt-heavy; 1d.4 vision has a measurement step |
 | 2 | 2–3 | mostly frontend + SSE tests |
 | 3 | 5–6 | renderer + grouping + per-group assembly |
-| 4 | 1–2 | — |
+| 4 | 3–4 | 4.0 (LiteLLM bump, guards, A/B, golden) is the long pole |
 
 Each phase: worktree → implement → suites green → replay → golden → gate report → STOP → (Kfir: review, commit word, PR, merge → deploy) → prod benchmark → gate closes.

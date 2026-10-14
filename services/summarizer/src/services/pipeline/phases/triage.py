@@ -175,7 +175,3 @@ def frames_done_events(ctx: PipelineContext) -> list[str]:
     if _tab_heads(ctx.plan_result) == _tab_heads(plan):
         return []
     return [sse_event("meta", _meta_payload(ctx, ctx.plan_result))]
-
-
-# Backward-compat alias
-run_phase_triage = run_phase_plan

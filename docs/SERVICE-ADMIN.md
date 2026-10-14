@@ -43,7 +43,7 @@ Python package providing automatic LLM call tracking via LiteLLM callbacks.
 
 | Module | Purpose |
 |--------|---------|
-| `models.py` | `UsageRecord` Pydantic model (25 fields incl. `cache_*`, plus `unit`/`audio_seconds` for transcription) + `compute_cache_savings_usd(model, tokens)` (backed by `_CACHE_RATES_USD_PER_M`) and `compute_transcription_cost_usd(model, ...)` (backed by `_TRANSCRIPTION_RATES_USD` — Whisper $0.006/min, Gemini per-token) helpers |
+| `models.py` | `UsageRecord` Pydantic model (28 fields incl. `cache_*`, `unit`/`audio_seconds` for transcription, and `refusal` / `refusal_category` / `fallback_from` for refusals) + `compute_cache_savings_usd(model, tokens)` (backed by `_CACHE_RATES_USD_PER_M`) and `compute_transcription_cost_usd(model, ...)` (backed by `_TRANSCRIPTION_RATES_USD` — Whisper $0.006/min, Gemini per-token) helpers |
 | `context.py` | `ContextVar`s for feature, request_id, video_id, user_id, video_summary_id |
 | `buffer.py` | `SyncBuffer` (threading.Timer) + `AsyncBuffer` (asyncio). Flushes every 5 s or 50 rows. A failed flush **retains** its rows (bounded to 500, oldest shed and counted in `buffer_flush_failed`) and suppresses size-triggered flushes for one interval so a Mongo outage doesn't turn every `add()` into an inline blocking `insert_many` — the periodic flush keeps retrying |
 | `callback.py` | `MongoDBUsageCallback(CustomLogger)` with cost alerting; `register_active_buffer` + `record_manual_usage(record)` for out-of-band emits (transcription bypasses LiteLLM) |

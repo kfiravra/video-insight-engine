@@ -653,15 +653,8 @@ class TestGeminiTranscriptionMaxTokens:
     """Tests for the dedicated transcription token limit."""
 
     def test_max_tokens_is_65536(self):
-        """Test that transcription uses 65K tokens, not the summarizer's 4096."""
+        """Test that transcription uses 65K tokens, the model's max output."""
         assert GEMINI_TRANSCRIPTION_MAX_TOKENS == 65536
-
-    def test_max_tokens_differs_from_llm_setting(self):
-        """Test that transcription tokens are independent of LLM_MAX_TOKENS."""
-        from src.config import settings
-
-        assert GEMINI_TRANSCRIPTION_MAX_TOKENS != settings.LLM_MAX_TOKENS
-        assert GEMINI_TRANSCRIPTION_MAX_TOKENS > settings.LLM_MAX_TOKENS
 
     @patch("src.services.transcription.gemini_transcriber.genai.Client")
     @patch("src.services.transcription.gemini_transcriber._download_audio_raw_sync")

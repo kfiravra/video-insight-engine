@@ -38,17 +38,18 @@ x-summarizer-env: &summarizer-env
   LLM_FALLBACK_PROVIDER: ${LLM_FALLBACK_PROVIDER:-}
   LLM_MODEL: ${LLM_MODEL:-}
   LLM_FAST_MODEL: ${LLM_FAST_MODEL:-}
-  LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-4096}
-  LLM_FAST_MAX_TOKENS: ${LLM_FAST_MAX_TOKENS:-2048}
   LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-60.0}
-  LLM_EXTRACTION_MODEL: ${LLM_EXTRACTION_MODEL:-}
-  # Enrichment: blank = the fast tier of LLM_PROVIDER (config.py keeps a Haiku dev pin). Vision: blank =
-  # the primary model, Sonnet on purpose (frame descriptions drive the moment gallery; owner rejected Haiku 2026-09-16).
-  LLM_ENRICHMENT_MODEL: ${LLM_ENRICHMENT_MODEL:-}
-  LLM_VISION_MODEL: ${LLM_VISION_MODEL:-}
-  LLM_DESCRIPTION_MODEL: ${LLM_DESCRIPTION_MODEL:-}
+  # Per-stage models (pipeline-1min 4.0d A/B, gates/g4-model-ab.md). Literal
+  # defaults = config.py: a blank .env line keeps the default; blank = the fast
+  # tier only where the default is blank (synthesis; extraction + memory never
+  # follow the primary). Memory's own model since the 4.0 picks (round 2).
+  LLM_EXTRACTION_MODEL: ${LLM_EXTRACTION_MODEL:-anthropic/claude-sonnet-5-5}
+  LLM_MEMORY_MODEL: ${LLM_MEMORY_MODEL:-anthropic/claude-haiku-5-5}
+  LLM_ENRICHMENT_MODEL: ${LLM_ENRICHMENT_MODEL:-openai/gpt-4o-mini}
+  LLM_VISION_MODEL: ${LLM_VISION_MODEL:-anthropic/claude-sonnet-5-5}
+  LLM_DESCRIPTION_MODEL: ${LLM_DESCRIPTION_MODEL:-openai/gpt-6-luna}
   LLM_SYNTHESIS_MODEL: ${LLM_SYNTHESIS_MODEL:-}
-  LLM_TRANSLATION_MODEL: ${LLM_TRANSLATION_MODEL:-}
+  LLM_TRANSLATION_MODEL: ${LLM_TRANSLATION_MODEL:-openai/gpt-6-luna}
   # Tier-probe model (pipeline-1min D21). Literal default = config.py: a blank
   # passthrough would route the probe to the fast tier.
   LLM_CLASSIFIER_MODEL: ${LLM_CLASSIFIER_MODEL:-anthropic/claude-haiku-4-5-20251001}

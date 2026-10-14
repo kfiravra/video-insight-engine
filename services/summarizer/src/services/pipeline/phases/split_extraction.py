@@ -26,7 +26,11 @@ from src.services.pipeline.extraction_chunks import (
     key_frames_by_chunk,
     plan_chunks,
 )
-from src.services.pipeline.extraction_group_prompt import GroupJob, load_job_template
+from src.services.pipeline.extraction_group_prompt import (
+    GroupJob,
+    load_job_template,
+    with_group_rules,
+)
 from src.services.pipeline.extraction_groups import (
     GroupOutcome,
     SplitRun,
@@ -94,21 +98,24 @@ async def _split_run(ctx: PipelineContext) -> tuple[SplitRun, bool]:
 
     The chunks come first (a long video's chapter chain can wait on the
     description or chapter_detect), the groups from the tabs as they are then.
-    The prompt is today's, built without frame inputs: blocks 1 and 2 never
-    carry them; the visual group's job binds them at frames-done. The job
-    template is read here once for every call of the run.
+    The prompt is today's plus the group rules, built without frame inputs:
+    blocks 1 and 2 never carry them; the visual group's job binds them at
+    frames-done. The job template and the group rules are read here once for
+    every call of the run.
     """
     chunks = await plan_chunks(ctx)
     plan, triage, video = ctx.plan_result, ctx.triage, ctx.video_data
     assert plan is not None and triage is not None and video is not None
     groups = build_groups(_requested(plan), plan.tabs, grouping_config())
     text_groups = tuple(g for g in groups if not g.visual)
-    prompt = _build_prompt(
-        triage,
-        {"title": video.title, "duration": video.duration},
-        video_memory=ctx.video_memory,
-        frame_context="",
-        visual_annotations="",
+    prompt = with_group_rules(
+        _build_prompt(
+            triage,
+            {"title": video.title, "duration": video.duration},
+            video_memory=ctx.video_memory,
+            frame_context="",
+            visual_annotations="",
+        )
     )
     run = SplitRun(
         ctx.llm_service,

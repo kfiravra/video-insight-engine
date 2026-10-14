@@ -4,6 +4,13 @@ Provides unified API for calling LLMs across Anthropic, OpenAI, and Gemini
 with cost tracking. One request = one model: retries and the cross-provider
 fallback live in ``call_llm_with_retry``, never inside LiteLLM, so every
 attempt is recorded under the model that actually answered.
+
+Every request is shaped for the model it goes to (``llm_model_rules``:
+thinking off + effort, sampling params it accepts, no prefill). An answer the
+model declines (a refusal, ``llm_common.refusal``) is asked for once more in
+the same call on its previous model (``config.PREVIOUS_MODEL``) — never again
+on the model that refused; when that is not possible the call raises
+``LLMRefusalError``, which no retry re-sends.
 """
 
 import logging
@@ -19,74 +26,36 @@ from litellm.exceptions import (
     ServiceUnavailableError,
     Timeout,
 )
-from litellm.llms.openai.chat.gpt_5_transformation import OpenAIGPT5Config
+from llm_common.context import llm_refused_model_var
+from llm_common.refusal import Refusal, refusal_of
 
-from src.config import settings
+from src.config import PREVIOUS_MODEL, settings
+from src.services.llm_call import (
+    ModelAnswer,
+    ProviderCall,
+    base_request,
+    is_fallback_attempt,
+    model_parameters,
+    note_refused_resend,
+    record_refused,
+)
 from src.services.llm_messages import (
     Message,
     UserContent,
     build_prompt_messages,
-    prepare_for_model,
     to_message_dicts,
+)
+from src.services.llm_model_rules import (
+    DEFAULT_EFFORT,
+    Effort,
+    LLMRefusalError,
+    request_for_model,
 )
 from src.services.llm_streaming import stream_completion
 from src.services.llm_telemetry import record_generation, stopwatch_ms_since
 from src.services.pipeline.pipeline_timing import record_llm_call, record_llm_failure
 
 logger = logging.getLogger(__name__)
-
-# LiteLLM num_retries is disabled because retries are handled by
-# call_llm_with_retry(), which adds structured logging, per-stage timeouts,
-# retry-after-aware backoff and the cross-provider fallback.
-_LITELLM_NUM_RETRIES = 0
-
-
-def _attempt_of(span_metadata: dict[str, Any] | None) -> int:
-    """Retry attempt number stamped by ``call_llm_with_retry`` (1 when absent)."""
-    attempt = (span_metadata or {}).get("attempt", 1)
-    return attempt if isinstance(attempt, int) else 1
-
-
-def _is_fallback_attempt(span_metadata: dict[str, Any] | None) -> bool:
-    """True when ``call_llm_with_retry`` routed this attempt to the fallback model."""
-    return bool((span_metadata or {}).get("fallbackFrom"))
-
-
-def _rejects_temperature(model: str, temperature: float) -> bool:
-    """gpt-5 reasoning models accept only temperature=1; LiteLLM raises on any other value.
-
-    Models that support ``reasoning_effort="none"`` (gpt-5.1+) take any temperature while no
-    effort is sent. The check is LiteLLM's own predicate, so the guard cannot drift from the
-    rule that raises ``UnsupportedParamsError``.
-    """
-    if temperature == 1 or not OpenAIGPT5Config.is_model_gpt_5_model(model):
-        return False
-    return not OpenAIGPT5Config._supports_reasoning_effort_level(model, "none")
-
-
-def _with_sampling(kwargs: dict[str, Any], temperature: float | None) -> dict[str, Any]:
-    """Add ``temperature`` to the request only when the caller set one.
-
-    ``None`` leaves the key out so the provider default applies and the
-    request stays byte-identical to calls that never passed it. A value the
-    model rejects is dropped (with a warning) rather than failing every attempt.
-    """
-    if temperature is None:
-        return kwargs
-    if _rejects_temperature(kwargs["model"], temperature):
-        logger.warning(
-            "Dropping temperature=%s: %s accepts only temperature=1", temperature, kwargs["model"]
-        )
-        return kwargs
-    kwargs["temperature"] = temperature
-    return kwargs
-
-
-def _model_parameters(kwargs: dict[str, Any]) -> dict[str, Any] | None:
-    """Sampling parameters actually sent, for Langfuse ``modelParameters``."""
-    if "temperature" not in kwargs:
-        return None
-    return {"temperature": kwargs["temperature"]}
 
 
 class LLMProvider:
@@ -224,55 +193,129 @@ class LLMProvider:
         )
         return streamed.response, streamed.ttft_ms
 
-    async def _run_completion(
-        self,
-        kwargs: dict[str, Any],
-        *,
-        span_name: str | None,
-        span_metadata: dict[str, Any] | None,
-        context: str = "",
-        on_first_chunk: Callable[[], None] | None = None,
-    ) -> str:
-        """Send one ``acompletion`` request; record timing and the Langfuse generation."""
-        model = kwargs["model"]
-        kwargs["messages"] = prepare_for_model(kwargs["messages"], model)
-        attempt = _attempt_of(span_metadata)
+    async def _ask(self, call: ProviderCall, model: str) -> ModelAnswer:
+        """Send ``call`` to ``model``, shaped by that model's request rules."""
+        sent = request_for_model(
+            {**call.request, "model": model}, temperature=call.temperature, effort=call.effort
+        )
         start_monotonic = time.monotonic()
         response, ttft_ms = await self._send(
-            kwargs, on_first_chunk, context=context, span_name=span_name, attempt=attempt
+            sent,
+            call.on_first_chunk,
+            context=call.context,
+            span_name=call.span_name,
+            attempt=call.attempt,
         )
         latency_ms = stopwatch_ms_since(start_monotonic)
-        record_llm_call(
-            span=span_name,
-            model=model,
-            response=response,
-            start_monotonic=start_monotonic,
-            latency_ms=latency_ms,
-            attempt=attempt,
-            fallback_used=_is_fallback_attempt(span_metadata),
-            ttft_ms=ttft_ms,
+        return ModelAnswer(model, sent, response, start_monotonic, latency_ms, ttft_ms)
+
+    def _log_generation(
+        self,
+        call: ProviderCall,
+        answer: ModelAnswer,
+        content: str,
+        extra: dict[str, Any] | None = None,
+    ) -> None:
+        """The Langfuse generation of one answer (only for a named span)."""
+        if not call.span_name:
+            return
+        metadata = {**(call.span_metadata or {}), **extra} if extra else call.span_metadata
+        record_generation(
+            span_name=call.span_name,
+            model=answer.model,
+            msg_dicts=answer.sent["messages"],
+            content=content,
+            response=answer.response,
+            latency_ms=answer.latency_ms,
+            finish_reason=answer.response.choices[0].finish_reason,
+            extra_metadata=metadata,
+            model_parameters=model_parameters(answer.sent),
         )
-        choice = response.choices[0]
+
+    def _accept(
+        self,
+        call: ProviderCall,
+        answer: ModelAnswer,
+        *,
+        fallback_used: bool,
+        refused: tuple[str, Refusal] | None = None,
+    ) -> str:
+        """Record an answer (timing, Langfuse) and return its text — text blocks only."""
+        refused_model, refusal = refused if refused is not None else (None, None)
+        category = refusal.category if refusal is not None else None
+        record_llm_call(
+            span=call.span_name,
+            model=answer.model,
+            response=answer.response,
+            start_monotonic=answer.start_monotonic,
+            latency_ms=answer.latency_ms,
+            attempt=call.attempt,
+            fallback_used=fallback_used,
+            ttft_ms=answer.ttft_ms,
+            refused_model=refused_model,
+            refusal_category=category,
+        )
+        choice = answer.response.choices[0]
         if choice.finish_reason == "length":
             logger.warning(
                 "LLM response truncated (finish_reason=length), model=%s, max_tokens=%d",
-                model,
-                kwargs["max_tokens"],
+                answer.model,
+                answer.sent["max_tokens"],
             )
+        # LiteLLM joins the text blocks into ``content``; thinking blocks stay in
+        # ``reasoning_content`` / ``thinking_blocks`` and are never the answer.
         content = choice.message.content or ""
-        if span_name:
-            record_generation(
-                span_name=span_name,
-                model=model,
-                msg_dicts=kwargs["messages"],
-                content=content,
-                response=response,
-                latency_ms=latency_ms,
-                finish_reason=choice.finish_reason,
-                extra_metadata=span_metadata,
-                model_parameters=_model_parameters(kwargs),
-            )
+        extra = {"refusedModel": refused_model, "refusalCategory": category} if refused else None
+        self._log_generation(call, answer, content, extra)
         return content
+
+    def _record_refusal(
+        self,
+        call: ProviderCall,
+        answer: ModelAnswer,
+        refusal: Refusal,
+        refused_model: str | None = None,
+    ) -> None:
+        category = refusal.category
+        record_refused(call, answer, category, refused_model)
+        logger.warning("%s refused (span=%s, category=%s)", answer.model, call.span_name, category)
+        partial = answer.response.choices[0].message.content or ""
+        self._log_generation(call, answer, partial, {"refusal": True, "refusalCategory": category})
+
+    async def _answer_for_refused(
+        self, call: ProviderCall, refused_model: str, refusal: Refusal
+    ) -> str:
+        """The previous model's answer, asked for once in the same call.
+
+        No previous model, its refusal, its error or the call's deadline (``call_deadline``)
+        → ``LLMRefusalError``: the refused model is never asked again, no retry re-sends it.
+        """
+        previous = PREVIOUS_MODEL.get(refused_model)
+        if previous is None:
+            raise LLMRefusalError(refused_model, refusal.category)
+        logger.warning("Asking %s once for the answer %s refused", previous, refused_model)
+        note_refused_resend(call, refused_model, refusal.category, previous)
+        token = llm_refused_model_var.set(refused_model)
+        try:
+            answer = await self._ask(call, previous)
+        except Exception as e:
+            raise LLMRefusalError(refused_model, refusal.category) from e
+        finally:
+            llm_refused_model_var.reset(token)
+        second = refusal_of(answer.response)
+        if second is not None:
+            self._record_refusal(call, answer, second, refused_model)
+            raise LLMRefusalError(previous, second.category)
+        return self._accept(call, answer, fallback_used=True, refused=(refused_model, refusal))
+
+    async def _run_completion(self, call: ProviderCall) -> str:
+        """Send the call (and, on a refusal, its one fallback); return the answer's text."""
+        answer = await self._ask(call, call.request["model"])
+        refusal = refusal_of(answer.response)
+        if refusal is None:
+            return self._accept(call, answer, fallback_used=is_fallback_attempt(call.span_metadata))
+        self._record_refusal(call, answer, refusal)
+        return await self._answer_for_refused(call, answer.model, refusal)
 
     async def complete(
         self,
@@ -286,6 +329,7 @@ class LLMProvider:
         span_metadata: dict[str, Any] | None = None,
         temperature: float | None = None,
         on_first_chunk: Callable[[], None] | None = None,
+        effort: Effort = DEFAULT_EFFORT,
     ) -> str:
         """Generate completion from prompt.
 
@@ -301,6 +345,7 @@ class LLMProvider:
             temperature: Sampling temperature; ``None`` sends none (provider default).
             on_first_chunk: Stream the reply and call this at its first chunk
                 (``llm_streaming``); ``None`` sends the request unstreamed.
+            effort: Effort for a model that takes one (``llm_model_rules``).
 
         Returns:
             Generated text content
@@ -316,6 +361,7 @@ class LLMProvider:
             span_metadata=span_metadata,
             temperature=temperature,
             on_first_chunk=on_first_chunk,
+            effort=effort,
         )
 
     async def complete_fast(
@@ -328,6 +374,7 @@ class LLMProvider:
         span_metadata: dict[str, Any] | None = None,
         temperature: float | None = None,
         system_prompt: str | None = None,
+        effort: Effort = DEFAULT_EFFORT,
     ) -> str:
         """Generate quick completion using fast model.
 
@@ -340,6 +387,7 @@ class LLMProvider:
             timeout: Request timeout in seconds (default 5.0)
             temperature: Sampling temperature; ``None`` sends none (provider default).
             system_prompt: Optional system prompt (no cache breakpoint).
+            effort: Effort for a model that takes one (``llm_model_rules``).
 
         Returns:
             Generated text content
@@ -349,20 +397,17 @@ class LLMProvider:
             Timeout: Request timed out
             APIError: General API error
         """
-        kwargs: dict[str, Any] = {
-            "model": self._fast_model,
-            "messages": build_prompt_messages(prompt, system_prompt=system_prompt),
-            "max_tokens": max_tokens,
-            "timeout": timeout,
-            "num_retries": _LITELLM_NUM_RETRIES,
-        }
-        if json_mode:
-            kwargs["response_format"] = {"type": "json_object"}
+        messages = build_prompt_messages(prompt, system_prompt=system_prompt)
+        request = base_request(self._fast_model, messages, max_tokens, timeout, json_mode)
         return await self._run_completion(
-            _with_sampling(kwargs, temperature),
-            span_name=span_name,
-            span_metadata=span_metadata,
-            context="fast model",
+            ProviderCall(
+                request=request,
+                temperature=temperature,
+                effort=effort,
+                span_name=span_name,
+                span_metadata=span_metadata,
+                context="fast model",
+            )
         )
 
     async def complete_with_messages(
@@ -377,6 +422,7 @@ class LLMProvider:
         span_metadata: dict[str, Any] | None = None,
         temperature: float | None = None,
         on_first_chunk: Callable[[], None] | None = None,
+        effort: Effort = DEFAULT_EFFORT,
     ) -> str:
         """Generate completion from message list; returns the generated text.
 
@@ -395,24 +441,22 @@ class LLMProvider:
             span_metadata: Extra metadata merged into the generation span.
             temperature: Sampling temperature; ``None`` sends none (provider default).
             on_first_chunk: Stream the reply, calling this at its first chunk.
+            effort: Effort for a model that takes one (``llm_model_rules``).
         """
-        effective_model = self._fast_model if use_fast_model else self._model
-        kwargs: dict[str, Any] = {
-            "model": effective_model,
-            "messages": to_message_dicts(messages),
-            "max_tokens": max_tokens,
-            "timeout": timeout if timeout is not None else self._timeout,
-            "num_retries": _LITELLM_NUM_RETRIES,
-        }
-        if json_mode:
-            kwargs["response_format"] = {"type": "json_object"}
-        if metadata:
-            kwargs["metadata"] = metadata
+        model = self._fast_model if use_fast_model else self._model
+        call_timeout = timeout if timeout is not None else self._timeout
+        request = base_request(
+            model, to_message_dicts(messages), max_tokens, call_timeout, json_mode, metadata
+        )
         return await self._run_completion(
-            _with_sampling(kwargs, temperature),
-            span_name=span_name,
-            span_metadata=span_metadata,
-            on_first_chunk=on_first_chunk,
+            ProviderCall(
+                request=request,
+                temperature=temperature,
+                effort=effort,
+                span_name=span_name,
+                span_metadata=span_metadata,
+                on_first_chunk=on_first_chunk,
+            )
         )
 
 

@@ -7,32 +7,14 @@ from typing import ClassVar, Literal
 from pydantic import Field
 from pydantic_settings import BaseSettings
 
+# ``name as name`` = explicit re-export: MODEL_MAP / PREVIOUS_MODEL live in
+# ``model_map`` and are still imported from here.
+from src.model_map import MODEL_MAP as MODEL_MAP
+from src.model_map import PREVIOUS_MODEL as PREVIOUS_MODEL
+from src.model_map import get_model as get_model
 from src.shared_config.pipeline_version import get_pipeline_version
 
 _DEFAULT_INTERNAL_SECRET = "dev-internal-secret-change-me"
-
-
-# Model mapping for each provider
-MODEL_MAP = {
-    "anthropic": {
-        "default": "anthropic/claude-sonnet-4-6",
-        "fast": "anthropic/claude-haiku-4-5-20251001",
-    },
-    "openai": {
-        "default": "openai/gpt-4o",
-        "fast": "openai/gpt-4o-mini",
-    },
-    "gemini": {
-        "default": "gemini/gemini-2.5-flash",
-        "fast": "gemini/gemini-2.5-flash-lite",
-    },
-}
-
-
-def get_model(provider: str = "anthropic", tier: str = "default") -> str:
-    """Get model name for provider and tier."""
-    provider_models = MODEL_MAP.get(provider, MODEL_MAP["anthropic"])
-    return provider_models.get(tier, provider_models["default"])
 
 
 class Settings(BaseSettings):
@@ -54,33 +36,39 @@ class Settings(BaseSettings):
     LLM_MODEL: str | None = None  # Override default model (e.g., "anthropic/claude-sonnet-4-6")
     LLM_FAST_MODEL: str | None = None  # Override fast model
 
-    # Per-stage model overrides (None → fall back to LLM_FAST_MODEL).
-    # Defaults reflect the 2026-05-19 fast-tier benchmark winners
-    # (reports/fast-model-bench-20260519-074647.md). Override via env to test
-    # alternatives without rebuilding.
-    # Only enrichment (+35% quality) is pinned from that bench, plus the tier
-    # probe: the 2026-10-07 A/B (pipeline-1min gate 0, D21) picked Haiku 4.5
-    # at temperature 0.
-    # Translation stays on the default fast tier (gpt-4o-mini); the Gemini
-    # Flash-Lite savings were fractions of a cent — not worth adding a third
-    # provider dependency.
-    # The tier probe's model (stage "tier_probe"; the name predates the probe).
-    # Both composes pass it through with this same literal default, so a blank
-    # .env never routes the probe to the fast tier.
+    # Per-stage model overrides (None → the fast tier; extraction, memory and
+    # vision → the primary; memory blank → extraction first).
+    # Defaults from the pipeline-1min 4.0d model A/B (gates/g4-model-ab.md;
+    # rule: quality first, then latency, then cost). Both composes pass each
+    # pinned one through with the same literal default, so a blank .env line
+    # keeps it. Haiku 4.5 and Sonnet 4.6 stay as the refusal fallbacks
+    # (PREVIOUS_MODEL).
+    # The tier probe's model (stage "tier_probe"; the name predates the probe):
+    # Haiku 4.5 at temperature 0 (0.8's A/B, D21); Haiku 5.5 matched fewer
+    # visual-demo labels and was slower in 4.0d.
     LLM_CLASSIFIER_MODEL: str | None = "anthropic/claude-haiku-4-5-20251001"
     LLM_CHAPTER_DETECT_MODEL: str | None = None
-    LLM_DESCRIPTION_MODEL: str | None = None
+    # Description analysis and every translation (output, title, RAG text):
+    # gpt-6-luna, reasoning off (4.0b) — no invented URLs, RAG batches parse
+    # more often, cheaper. The quiz stays on gpt-4o-mini: luna's questions were
+    # as usable but its p50 doubled (5.2 → 10.5 s, one call past the 14 s attempt).
+    LLM_DESCRIPTION_MODEL: str | None = "openai/gpt-6-luna"
     LLM_SYNTHESIS_MODEL: str | None = None
-    LLM_ENRICHMENT_MODEL: str | None = "anthropic/claude-haiku-4-5-20251001"
-    LLM_TRANSLATION_MODEL: str | None = None
-    # Vision stays on the primary model (Sonnet): frame descriptions drive the
-    # moment gallery and OCR, and Haiku was rejected for them (2026-09-16).
-    # None → the caller's primary model (frame_analyzer).
-    LLM_VISION_MODEL: str | None = None
-    # Extraction model override — pins every extraction call and the memory
-    # stage (pipeline-1min D5). None → the primary model (Sonnet); prod pins
-    # "anthropic/claude-haiku-4-5-20251001" via env.
-    LLM_EXTRACTION_MODEL: str | None = None
+    LLM_ENRICHMENT_MODEL: str | None = "openai/gpt-4o-mini"
+    LLM_TRANSLATION_MODEL: str | None = "openai/gpt-6-luna"
+    # Vision: Sonnet 5.5 — reads the card text Sonnet 4.6 reads, at half the
+    # wall time; Haiku 5.5 mislabelled cooking frames as talking heads, which
+    # drops them from the selection.
+    LLM_VISION_MODEL: str | None = "anthropic/claude-sonnet-5-5"
+    # Every extraction call: Sonnet 5.5 at effort low, its group calls with the
+    # completeness rule (4.0d round 2: the fewest missed transcript-supported
+    # items and the least invented detail — Haiku 4.5 invented steps,
+    # quantities and code snippets). Pinned so it never follows the primary.
+    LLM_EXTRACTION_MODEL: str | None = "anthropic/claude-sonnet-5-5"
+    # The memory call: Haiku 5.5 — its own setting, so memory stays off
+    # Sonnet's price when extraction moves (4.0d round 2). Blank follows
+    # LLM_EXTRACTION_MODEL (D5's coupling, ``_STAGE_FALLBACK``).
+    LLM_MEMORY_MODEL: str | None = "anthropic/claude-haiku-5-5"
 
     # Provider API Keys (set for providers you use)
     ANTHROPIC_API_KEY: str | None = None
@@ -98,8 +86,6 @@ class Settings(BaseSettings):
     MAX_VIDEO_DURATION_MINUTES: int = 600
     MIN_VIDEO_DURATION_SECONDS: int = 60
     LLM_TIMEOUT_SECONDS: float = 60.0
-    LLM_MAX_TOKENS: int = 4096
-    LLM_FAST_MAX_TOKENS: int = 4096
 
     # Chapter-based chunked extraction
     # Videos longer than this run chapter detection + chunked-batch extraction
@@ -279,7 +265,6 @@ class Settings(BaseSettings):
     # Scene-based frame extraction (additive to timestamp extraction)
     SCENE_EXTRACTION_ENABLED: bool = True
     SCENE_THRESHOLD: float = 0.3
-    SCENE_MAX_FRAMES: int = 100
     # Detection pass renders from the worst-quality download; these only shape
     # the low-res JPEGs used for scoring/OCR/HIGH-tier vision (and the fallback
     # if hi-res fails). MAX width: frames narrower than this are never upscaled
@@ -411,6 +396,7 @@ class Settings(BaseSettings):
         "synthesis": "LLM_SYNTHESIS_MODEL",
         "enrichment": "LLM_ENRICHMENT_MODEL",
         "extraction": "LLM_EXTRACTION_MODEL",
+        "memory": "LLM_MEMORY_MODEL",
         # The stage names the translation calls send (pipeline/translation_flat.py:
         # the output's source-language pass, and translate_text for the title).
         "translation_full": "LLM_TRANSLATION_MODEL",
@@ -420,10 +406,17 @@ class Settings(BaseSettings):
         "vision": "LLM_VISION_MODEL",
     }
 
+    # A stage whose blank setting follows another stage's model.
+    _STAGE_FALLBACK: ClassVar[dict[str, str]] = {"memory": "extraction"}
+
     def get_stage_model(self, stage_name: str) -> str | None:
         """Return the per-stage model override or None to use fast/primary."""
         attr = self._STAGE_TO_SETTING.get(stage_name)
-        return getattr(self, attr, None) if attr else None
+        model = getattr(self, attr, None) if attr else None
+        fallback = self._STAGE_FALLBACK.get(stage_name)
+        if not model and fallback:
+            return self.get_stage_model(fallback)
+        return model
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 

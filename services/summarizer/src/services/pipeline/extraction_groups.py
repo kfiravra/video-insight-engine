@@ -40,6 +40,7 @@ from ...config import settings
 from ...models.domain_validation import ValidationReport
 from ...utils.json_parsing import parse_json_response, strip_markdown_fences
 from ...utils.llm_retry import call_llm_with_retry
+from ..llm_model_rules import LLMRefusalError
 from .extraction_chunks import ExtractionChunk
 from .extraction_group_prompt import GroupJob, build_group_messages
 from .extraction_prompt import ExtractionPrompt
@@ -57,7 +58,8 @@ logger = logging.getLogger(__name__)
 GROUP_RELEASE_FALLBACK_S = 1.5
 GROUP_MAX_TOKENS = 16384
 # A group call's time budget follows its estimated answer (Σ outputWeight ×
-# expect) at a pace below Haiku's measured 83–91 tok/s, plus the request's
+# expect) at a pace below the extraction model's measured one (Sonnet 5.5
+# ≈ 160 tok/s in the 4.0d A/B round 2, Haiku 4.5 83–91), plus the request's
 # fixed cost; the old flat 120 s stays the floor, 300 s the ceiling.
 GROUP_TIMEOUT_FLOOR_S = 120.0
 GROUP_TIMEOUT_CAP_S = 300.0
@@ -218,6 +220,8 @@ async def _ask(
         json_mode=True,
         model_override=settings.get_stage_model("extraction"),
         on_first_chunk=on_first_chunk,
+        # A refused warm-up must not pass for a broken stream (asked once more).
+        propagate_refusal=on_first_chunk is not None,
     )
 
 
@@ -225,11 +229,17 @@ async def _first_answer(
     call: GroupCall, run: SplitRun, on_first_chunk: Callable[[], None] | None
 ) -> _Answer:
     """The first call's answer. A warm-up stream that raises or brings nothing back is
-    worth one more call too ("stream"); a plain call's error goes to ``_guarded``."""
+    worth one more call too ("stream"); a plain call's error goes to ``_guarded``. A
+    refused warm-up releases the waiting groups and is no answer: asking again would
+    send it to the model that refused (4.0b)."""
     if on_first_chunk is None:
         return _read(await _ask(call, run, GROUP_MAX_RETRIES, None), call, run)
     try:
         raw = await _ask(call, run, GROUP_MAX_RETRIES, on_first_chunk)
+    except LLMRefusalError as e:
+        logger.warning("[%s] warm-up refused: %s", call.stage_name, e)
+        on_first_chunk()
+        return _NO_ANSWER
     except Exception:
         logger.exception("[%s] streamed group call failed", call.stage_name)
         return _Answer(None, None, "stream")
@@ -253,7 +263,7 @@ async def _second_answer(call: GroupCall, run: SplitRun, first: _Answer) -> _Ans
 async def run_group_call(
     call: GroupCall, run: SplitRun, *, on_first_chunk: Callable[[], None] | None = None
 ) -> GroupOutcome:
-    """One group call: its own feature + span, Haiku, JSON; streamed for a warm-up call.
+    """One group call: its own feature + span, the extraction model, JSON; a warm-up streams.
 
     The answer is validated and cut to the group's own keys before it is
     reported. A lost answer (``group_failures.answer_lost``; not a JSON object;

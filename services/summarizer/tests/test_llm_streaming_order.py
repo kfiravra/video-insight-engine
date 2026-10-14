@@ -1,11 +1,11 @@
 """Streamed answers keep their order through LiteLLM's rebuild (pipeline-1min 3.4 fix).
 
-LiteLLM 1.91 sorts a stream's chunks by a ``time.time()`` stamp before it
-rebuilds them into one response. The WSL2 dev box's wall clock steps back ~2 s
-every 30 s, and on 2026-10-13 that interleaved two stretches of long streamed
-extraction answers (``extraction_text1``) into unparseable JSON — in our
-rebuild (what Langfuse logs) and in LiteLLM's (what its success callbacks,
-the usage ledger, get).
+LiteLLM 1.91–1.105.0 (re-verified 2026-10-13) sorts a stream's chunks by a
+``time.time()`` stamp before it rebuilds them into one response. The WSL2 dev
+box's wall clock steps back ~2 s every 30 s, and on 2026-10-13 that
+interleaved two stretches of long streamed extraction answers
+(``extraction_text1``) into unparseable JSON — in our rebuild (what Langfuse
+logs) and in LiteLLM's (what its success callbacks, the usage ledger, get).
 """
 
 from __future__ import annotations

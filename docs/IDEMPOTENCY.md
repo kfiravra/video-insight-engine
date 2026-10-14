@@ -122,7 +122,7 @@ Do **NOT** bump for:
 4. Old keys remain in `idempotencyKeys` until their TTL expires; they just no longer match new submissions. Old cache rows keep serving to users who already own them until they resubmit (stamped-stale docs then regen on the same row).
 5. Re-run the demo library: `scripts/demo_rerun.py` lists the videos still on the old version and the cost (dry run); `--apply` resubmits them as the demo user, on the owner's go.
 
-**Current version: `v9`** (2026-08: v6→v7 consistency overhaul — playbooks/forbidden, adaptive vision tiers; v7→v8 moment redesign + exact-timestamp frame fill + hi-res frame pipeline; 2026-10: v8→v9 pipeline-1min — split extraction (field groups fired from plan-done and frames-done, tabs emitted per group), plan-done reconcile with code-evidence gating; the task's phases 1–2 shipped under `v8`).
+**Current version: `v10`** (2026-08: v6→v7 consistency overhaul — playbooks/forbidden, adaptive vision tiers; v7→v8 moment redesign + exact-timestamp frame fill + hi-res frame pipeline; 2026-10: v8→v9 pipeline-1min — split extraction (field groups fired from plan-done and frames-done, tabs emitted per group), plan-done reconcile with code-evidence gating; the task's phases 1–2 shipped under `v8`; v9→v10 the 4.0 model refresh — extraction on Sonnet 5.5 with the completeness rule, memory on Haiku 5.5, plan + vision on Sonnet 5.5, description + translations on gpt-6-luna).
 
 ### Unification note (2026-07-08)
 

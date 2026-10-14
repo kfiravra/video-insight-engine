@@ -507,6 +507,7 @@ The summarizer logs a warning at startup if `INTERNAL_SECRET` is using the defau
 | `JWT_SECRET`           | vie-api               | `openssl rand -base64 32` |
 | `JWT_REFRESH_SECRET`   | vie-api               | `openssl rand -base64 32` |
 | `ANTHROPIC_API_KEY`    | summarizer, assistant | Anthropic Console         |
+| `OPENAI_API_KEY`       | summarizer, assistant | OpenAI Platform           |
 | `PADDLE_WEBHOOK_SECRET`| vie-api               | Paddle Dashboard          |
 | `PADDLE_API_KEY`       | vie-api (future)      | Paddle Dashboard          |
 | `INTERNAL_SECRET`      | service-to-service    | `openssl rand -base64 32` |

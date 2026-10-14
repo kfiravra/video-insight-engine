@@ -27,7 +27,7 @@ import logging
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from ...config import settings
 from ..transcription.transcript_chunker import (
@@ -80,29 +80,12 @@ def _needs_chunks(ctx: PipelineContext) -> bool:
     )
 
 
-def _chapter_video_info(ctx: PipelineContext) -> dict[str, Any]:
-    """The video fields today's extraction phase hands the chapter chain.
-
-    Keep in sync with ``video_info`` in ``phases/extraction.py:run_phase_extraction``.
-    """
-    video = ctx.video_data
-    assert video is not None
-    return {
-        "title": video.title,
-        "channel": video.channel,
-        "duration": video.duration,
-        "chapters": getattr(video, "chapters", None),
-        # chapter_detect reads it; without the key it ran on an empty description (A9).
-        "description": video.description,
-    }
-
-
 async def _chapter_batches(ctx: PipelineContext) -> list[list[ChapterChunk]]:
     """Today's chapter chain (sets ``ctx.chapters``), merged into extraction batches."""
     # The phase sits above this module (and imports it): bound on the long-video path only.
-    from .phases.extraction import _split_chapters
+    from .phases.extraction import _split_chapters, extraction_video_info
 
-    chapters = await _split_chapters(ctx, _chapter_video_info(ctx), ctx.prompt_transcript)
+    chapters = await _split_chapters(ctx, extraction_video_info(ctx), ctx.prompt_transcript)
     return batch_chapters(chapters) if chapters else []
 
 

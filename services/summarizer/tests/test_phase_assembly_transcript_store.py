@@ -175,7 +175,7 @@ async def test_freshly_fetched_transcript_is_stored_with_its_source(
 
 @pytest.mark.asyncio
 async def test_store_skipped_when_s3_unavailable(mock_store: AsyncMock) -> None:
-    """Without aioboto3 the store is never attempted, whatever the source."""
+    """Without aiobotocore the store is never attempted, whatever the source."""
     ctx = _build_ctx(_transcript("whisper"))
 
     await _run_assembly(ctx, s3_available=False)

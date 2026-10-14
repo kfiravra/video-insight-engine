@@ -76,7 +76,7 @@ See [docs/SECURITY.md](./SECURITY.md#rate-limiting) for implementation.
 | Code                | Message                                  | When               |
 | ------------------- | ---------------------------------------- | ------------------ |
 | `NO_TRANSCRIPT`     | No transcript available for this video   | Captions disabled  |
-| `VIDEO_TOO_LONG`    | Video exceeds maximum duration (3 hours) | > 180 minutes      |
+| `VIDEO_TOO_LONG`    | Video exceeds maximum duration           | > `MAX_VIDEO_DURATION_MINUTES` (summarizer; config default 600 min, the `.env` templates set 30) |
 | `VIDEO_TOO_SHORT`   | Video too short to summarize             | < 60 seconds       |
 | `VIDEO_UNAVAILABLE` | Video is private or unavailable          | Can't access       |
 | `VIDEO_RESTRICTED`  | Age-restricted video not supported       | Requires auth      |
@@ -129,8 +129,8 @@ URL submitted
          │
          ▼
 ┌─────────────────┐
-│ Check duration  │──── > 3h ──────► VIDEO_TOO_LONG
-└────────┬────────┘     < 1m ──────► VIDEO_TOO_SHORT
+│ Check duration  │──── > MAX_VIDEO_DURATION_MINUTES ► VIDEO_TOO_LONG
+└────────┬────────┘     < MIN_VIDEO_DURATION_SECONDS ► VIDEO_TOO_SHORT
          │
          ▼
 ┌─────────────────┐
@@ -147,20 +147,21 @@ URL submitted
          │
          ▼
 ┌─────────────────┐
-│ Classifier      │──── LLM classifies domain + format
+│ Tier probe      │──── LLM guesses domain + format (+ transcript_usable)
 └────────┬────────┘
          │
          ▼
 ┌─────────────────┐
-│ Plan stage      │──── LLM designs tab layout + content tags
+│ Plan ∥ memory   │──── LLM designs tab layout + content tags; reconcile at plan-done
 └────────┬────────┘
          │
          ▼
-   Extraction → Assembly → Synthesis → Enrichment
+   Field-group extraction → Assembly (+ moment fill ∥ synthesis ∥ quiz) → Translation
 ```
 
-> **Note:** Classification happens via an LLM classifier (`classifier.py`) and plan stage (`plan.py`),
-> not the legacy "persona detection" system which has been removed.
+> **Note:** Domain and format come from the tier probe (`pipeline/tier_probe.py`) and the plan
+> (`pipeline/plan.py`); the old classifier and the legacy "persona detection" system are gone.
+> Call order: [summarizer-workflow.md](./summarizer-workflow.md).
 
 ### Implementation
 
@@ -180,10 +181,11 @@ async def validate_video(youtube_id: str) -> VideoValidation:
     if metadata.is_live:
         return ValidationError("LIVE_STREAM")
 
-    # Check duration
-    if metadata.duration > 180 * 60:  # 3 hours
+    # Check duration — the real check is pipeline_helpers.validate_duration (summarizer
+    # metadata phase; the API does not check duration): it raises a TranscriptError
+    if metadata.duration > settings.MAX_VIDEO_DURATION_MINUTES * 60:  # config default 600
         return ValidationError("VIDEO_TOO_LONG")
-    if metadata.duration < 60:  # 1 minute
+    if metadata.duration < settings.MIN_VIDEO_DURATION_SECONDS:  # 60
         return ValidationError("VIDEO_TOO_SHORT")
 
     # Check transcript
@@ -203,14 +205,21 @@ async def validate_video(youtube_id: str) -> VideoValidation:
 
 ### User-Facing Messages
 
-| Error             | User Message                                                                                 |
-| ----------------- | -------------------------------------------------------------------------------------------- |
-| NO_TRANSCRIPT     | "This video doesn't have captions. We can only summarize videos with available transcripts." |
-| VIDEO_TOO_LONG    | "This video is over 3 hours. Please try a shorter video."                                    |
-| VIDEO_TOO_SHORT   | "This video is too short to summarize meaningfully."                                         |
-| VIDEO_UNAVAILABLE | "This video is private or has been removed."                                                 |
-| VIDEO_RESTRICTED  | "Age-restricted videos aren't supported."                                                    |
-| LIVE_STREAM       | "Live streams can't be summarized. Please wait until the stream ends."                       |
+The SSE stream's messages come from `CODE_MESSAGES` in
+`apps/web/src/features/video-output/lib/streaming/stream-error-messages.ts`
+(`getUserFriendlyError(message, code)`):
+
+| Error             | User Message |
+| ----------------- | ------------ |
+| NO_TRANSCRIPT     | "This video doesn't have captions available. Videos need captions or subtitles to be summarized." |
+| VIDEO_TOO_LONG    | "This video is too long to summarize. Maximum duration is 4 hours." |
+| VIDEO_TOO_SHORT   | "This video is too short to summarize. Minimum duration is 30 seconds." |
+| VIDEO_UNAVAILABLE | "This video is unavailable. It may be private, deleted, or region-restricted." |
+| VIDEO_RESTRICTED  | "This video has restrictions that prevent it from being processed." |
+| LIVE_STREAM       | "Live streams cannot be summarized. Please wait until the stream ends." |
+
+The "4 hours" / "30 seconds" in these texts do not match the summarizer's limits
+(`MAX_VIDEO_DURATION_MINUTES`, `MIN_VIDEO_DURATION_SECONDS` = 60).
 
 ---
 
@@ -223,10 +232,14 @@ Two layers, both real code:
 - **LLM calls** — summarizer: `call_llm_with_retry` (`utils/llm_retry.py`) retries
   transient errors on the same model, then falls back to `LLM_FALLBACK_PROVIDER`
   (see [LLM Error Handling](#llm-error-handling)); LiteLLM's own retries and
-  fallbacks are off. The assistant keeps LiteLLM `num_retries` (`LLM_NUM_RETRIES`).
-  Chunked extraction runs up to `EXTRACTION_PARALLEL_BATCHES` (6) batches at once per run (× `WORKER_CONCURRENCY` per worker); a
-  batch still rate-limited after its retries re-runs in a sequential second pass
-  (2 s apart). `pipeline.timing` counts 429s per run — drop the setting to 4 if any appear.
+  fallbacks are off. A refused answer is never retried: it is asked once of the
+  previous model ([Refusals](#refusals)). The assistant keeps LiteLLM `num_retries` (`LLM_NUM_RETRIES`).
+  The extraction field groups run up to `EXTRACTION_PARALLEL_BATCHES` (6) calls at once per run (× `WORKER_CONCURRENCY` per worker);
+  a group whose answer is lost (not JSON, none of its keys, a broken warm-up stream) gets one
+  more call, then counts as failed — its tabs drop or demote and the run is `degraded`; only
+  every group failing is an `LLM_ERROR` failure. With `EXTRACTION_PARALLEL=false` chunked
+  batches run one at a time, and a batch still rate-limited after its retries re-runs in a
+  sequential second pass (2 s apart). `pipeline.timing` counts 429s per run — drop the setting to 4 if any appear.
 - **Queue jobs** — `services/summarizer/src/worker/runner.py`: a pipeline exception
   with `attempt < WORKER_MAX_RETRIES` (3) waits
   `WORKER_RETRY_BACKOFF_SECONDS × 2^(attempt-1)` (5 → 10 → 20 s, capped 120 s) and
@@ -472,9 +485,38 @@ if await get_failed_jobs_count() > 10:
 ## LLM Error Handling
 
 Every summarizer stage calls the LLM through `call_llm_with_retry`
-(`services/summarizer/src/utils/llm_retry.py`). Each attempt is one request to one
-model (LiteLLM `num_retries=0`, no LiteLLM `fallbacks`), so telemetry and the
-Langfuse generation always name the model that actually answered.
+(`services/summarizer/src/utils/llm_retry.py`); frame vision runs its own retry
+with the same error classes (`TRANSIENT_LLM_ERRORS`). Each attempt is one request
+to one model (LiteLLM `num_retries=0`, no LiteLLM `fallbacks`), so telemetry and
+the Langfuse generation always name the model that actually answered.
+
+### Request rules (per model)
+
+Every request passes `llm_model_rules.request_for_model` on its way to LiteLLM
+(`LLMProvider._ask`, the one `acompletion` seam), keyed by the model it goes to,
+never by call site:
+
+- **Thinking off + effort.** Claude Haiku 5.5 gets `thinking: {"type": "disabled"}`,
+  Claude Sonnet 5.5 `{"type": "between_tools"}` (the only off shape it accepts;
+  any other model rejects it), each with `output_config.effort` — `low` by
+  default, a caller may pass `effort` (the plan sends `medium`,
+  `plan.PLAN_EFFORT`). An OpenAI gpt-5 / gpt-6 reasoning model whose LiteLLM map
+  entry supports it (gpt-6-luna) gets `reasoning_effort="none"`. Only the answer's
+  text blocks are read (`message.content`), never thinking blocks.
+- **Sampling.** `temperature` / `top_p` / `top_k` are dropped, with a warning, for a
+  model that rejects them — by LiteLLM's own predicates on the effort the request
+  carries: an Anthropic model whose map says `supports_sampling_params: false`
+  (the 5.5 models), a gpt-5 / gpt-6 model unless its effort resolves to `none`
+  (gpt-6-luna at `none` keeps it). `temperature=1` always passes.
+- **No assistant prefill.** A request whose last message is the assistant's raises
+  `AssistantPrefillError` before LiteLLM (a programming error — the 5.x models
+  reject prefill; a reply format belongs in `response_format`). None exists today.
+
+Haiku 4.5, Sonnet 4.6, gpt-4o-mini and gpt-4o match none of these rules: their
+requests are byte-identical to the pre-4.0b ones. `llm_model_rules` also registers
+a Haiku 5.5 entry in LiteLLM's model map when the loaded map lacks one (1.105.0's
+bundled map does): LiteLLM keys the thinking / effort mapping, the sampling gate
+and `completion_cost` on it.
 
 ### Errors
 
@@ -482,8 +524,9 @@ Langfuse generation always name the model that actually answered.
 | --- | --- |
 | Timeout, 429, 5xx, connection error, empty reply | Retry (the stage's `max_retries` budget) |
 | Connection error / LiteLLM `Timeout` in under 1 s (a dropped pooled connection — the request never reached the model) | Re-sent at once, once per call, outside the retry budget |
-| 400 / 401 / 403 / 404 / 422, programming errors | Raise on first occurrence — another attempt cannot fix them |
+| 400 / 401 / 403 / 404 / 422, programming errors (`AssistantPrefillError` included) | Raise on first occurrence — another attempt cannot fix them |
 | The same, on a **fallback** attempt (e.g. the fallback provider's key is missing) | The call ends with `None` like any other failed attempt — the last resort never turns a recoverable stage failure into a crash |
+| Refusal (HTTP 200, the model declined) | Asked once of the previous model inside the same attempt; no answer → `LLMRefusalError` ends the call — no retry, no cross-provider fallback ([Refusals](#refusals)) |
 
 Order per call: attempt 1 → (same-model retries: provider `retry-after-ms` /
 `retry-after` header, capped at 20 s, else a linear backoff 1 s, 2 s, …) → the
@@ -506,12 +549,62 @@ fallback provider's default model for the remaining attempts
 (`max_retries` 1 or 2 → primary, primary, fallback; 3 → primary, primary,
 fallback, fallback; 0 → a single attempt). Fast-model calls never fall back, and
 a fallback on the primary's own provider is ignored. A fallback attempt is tagged
-`fallbackFrom` in the span metadata and counted in `pipeline.timing`.
+`fallbackFrom` in the span metadata and counted in `pipeline.timing`
+(`counts.fallbacks`).
 
 When every attempt fails the wrapper returns `None` and the stage takes its own
 fallback (fallback plan, no memory, metadata tier, …); the parallel batch
-extractor alone asks for the last rate-limit error to be re-raised so it can
-re-run that batch sequentially.
+extractor alone asks for the last rate-limit error to be re-raised
+(`propagate_rate_limit`) so it can re-run that batch sequentially — never when
+the call ended on a refusal, which would send it back to the model that refused.
+
+### Refusals
+
+A refusal is an HTTP 200 whose answer the model declined: Anthropic
+`stop_reason: "refusal"` (LiteLLM: `finish_reason="content_filter"`), OpenAI's
+non-streamed `message.refusal`, or any provider's `content_filter` finish
+(`llm_common.refusal.refusal_of`). In `LLMProvider._run_completion`:
+
+1. The declined answer is recorded (a `pipeline.timing` `llmFailures` row
+   `error: "Refusal"` with its tokens and cost, a Langfuse generation with
+   `refusal: true`, a warning log).
+2. The **same call** is asked once of the refused model's previous model
+   (`config.PREVIOUS_MODEL`: `claude-sonnet-5-5` → `claude-sonnet-4-6`,
+   `claude-haiku-5-5` → `claude-haiku-4-5-20251001`, `gpt-6-luna` →
+   `gpt-4o-mini`), shaped by that model's own request rules, within the same
+   attempt and the call's deadline (`call_deadline` — see below for the stages
+   it does not cover). Never chained, never back to the refused
+   model. Its answer is the call's answer (`fallbackUsed`, `refusedModel` in
+   `pipeline.timing`; `fallback_from` in `llm_usage`).
+3. No previous model configured (every model but those three — Haiku 4.5,
+   Sonnet 4.6, gpt-4o-mini, gpt-4o, Gemini), the previous model refuses too, its
+   request errors, or the call's deadline passes during the re-send
+   (`llm_call.call_deadline` turns that timeout into the refusal) →
+   `LLMRefusalError(model, category)`.
+
+`call_deadline` bounds only calls made through `LLMService.call_llm` /
+`call_llm_fast` (`llm.py`). A stage cap that sits outside it — frame vision's
+`asyncio.wait_for` (`frame_analyzer._send_batch`) and the description analysis'
+30 s total cap (`description_analyzer._request_analysis`) — cancels a re-send in
+flight as a plain timeout: it is recorded under the refused model, without
+`refusedModel`, and the stage treats it as its own timeout.
+
+`LLMRefusalError` is not transient: `call_llm_with_retry` ends the call there —
+no same-model retry, no cross-provider fallback — and returns `None` (the stage's
+own fallback), or raises it when the caller passes `propagate_refusal=True`. The
+split extraction's warm-up call (each chunk's text1) is the one caller that does:
+a refused warm-up releases the waiting groups and counts as failed instead of
+taking the extra call a broken stream gets. Frame vision counts the batch as
+failed (not retried).
+
+Not detectable today: an OpenAI refusal on a **streamed** call (LiteLLM 1.105.0
+drops the refusal deltas, so it reads as an empty answer and is retried on the
+same model). Under the default config no pipeline OpenAI call streams — the one
+streamed call, the split extraction's warm-up, goes to Anthropic; but
+`on_first_chunk` streams every attempt, so with `LLM_FALLBACK_PROVIDER=openai`
+the warm-up's cross-provider fallback attempt streams on `gpt-4o`. Refused attempts are billed and
+priced: they count in `pipeline.timing.costUsd` and in the per-user daily cap
+(their `llm_usage` rows are `success: true`).
 
 ---
 
@@ -576,34 +669,12 @@ class ApiClient {
 
 ### User Notifications
 
-```typescript
-// web/src/utils/errors.ts
-
-const ERROR_MESSAGES: Record<string, string> = {
-  // Video errors
-  NO_TRANSCRIPT: "This video doesn't have captions available.",
-  VIDEO_TOO_LONG: "Video is too long (max 3 hours).",
-  VIDEO_TOO_SHORT: "Video is too short to summarize.",
-  VIDEO_UNAVAILABLE: "This video is private or unavailable.",
-  VIDEO_RESTRICTED: "Age-restricted videos aren't supported.",
-  LIVE_STREAM: "Live streams can't be summarized yet.",
-
-  // Auth errors
-  UNAUTHORIZED: "Please log in to continue.",
-  TOKEN_EXPIRED: "Your session expired. Please log in again.",
-
-  // Rate limit
-  RATE_LIMITED: "Too many requests. Please wait a moment.",
-
-  // Default
-  default: "Something went wrong. Please try again.",
-};
-
-export function handleError(error: ApiError) {
-  const message = ERROR_MESSAGES[error.code] || ERROR_MESSAGES.default;
-  toast.error(message);
-}
-```
+Stream errors are mapped by `getUserFriendlyError(message, code)`
+(`apps/web/src/features/video-output/lib/streaming/stream-error-messages.ts`): the
+`ErrorCode` first (`CODE_MESSAGES`, see [User-Facing Messages](#user-facing-messages)),
+then regex `PATTERNS` over the raw message (timeout, rate limit, network, missing
+captions, unavailable video, 401, 5xx), else a default ("Something went wrong while
+processing this video. Please try again.").
 
 ---
 

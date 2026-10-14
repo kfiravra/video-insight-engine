@@ -68,6 +68,8 @@ _RUN_SETTINGS: dict[str, Any] = {
     "LLM_SYNTHESIS_MODEL": None,
     "LLM_ENRICHMENT_MODEL": _MINI,
     "LLM_EXTRACTION_MODEL": _HAIKU,
+    # Memory followed LLM_EXTRACTION_MODEL when these runs were recorded (D5).
+    "LLM_MEMORY_MODEL": None,
     "LLM_TRANSLATION_MODEL": None,
     "LLM_VISION_MODEL": _SONNET,
     "EXTRACTION_PARALLEL_BATCHES": 2,

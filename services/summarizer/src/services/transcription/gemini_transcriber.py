@@ -47,7 +47,7 @@ TEMP_DIR = Path(tempfile.gettempdir()) / "vie-gemini"
 GEMINI_TRANSCRIPTION_MODEL = "gemini-2.5-flash-lite"
 
 # Dedicated token limit for transcription output.
-# Transcription needs far more tokens than summarization (LLM_MAX_TOKENS=4096).
+# Transcription needs far more output than any summarization call (those cap at 32,768).
 # A 173-min video needs ~5,000-10,000+ tokens for its transcript JSON.
 # 65536 is the max output for gemini-2.5-flash-lite.
 GEMINI_TRANSCRIPTION_MAX_TOKENS = 65536

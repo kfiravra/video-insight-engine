@@ -10,7 +10,7 @@ import pytest
 import yaml
 from pydantic import TypeAdapter
 
-from src.config import Settings, settings
+from src.config import PREVIOUS_MODEL, Settings, settings
 
 _COMPOSE_FILES = ("docker-compose.yml", "docker-compose.prod.yml")
 # Passed through both x-summarizer-env anchors (pipeline-1min 1d.6). A setting
@@ -28,6 +28,11 @@ _PASSED_THROUGH = (
     "FRAME_TIER_ENABLED",
     "LLM_VISION_MODEL",
     "LLM_CLASSIFIER_MODEL",
+    "LLM_ENRICHMENT_MODEL",
+    "LLM_DESCRIPTION_MODEL",
+    "LLM_TRANSLATION_MODEL",
+    "LLM_EXTRACTION_MODEL",
+    "LLM_MEMORY_MODEL",
     "TRANSCRIPT_CLEANING_ENABLED",
 )
 # Deleted settings must not linger in config.py or either compose anchor.
@@ -36,6 +41,10 @@ _DELETED = (
     "CHUNKED_EXTRACTION_TIMEOUT",
     "MAX_CHAPTER_CHARS",
     "MAX_TRANSCRIPT_CHARS",
+    # No reader (pipeline-1min 4.1 sweep, removed in 4.0d).
+    "LLM_MAX_TOKENS",
+    "LLM_FAST_MAX_TOKENS",
+    "SCENE_MAX_FRAMES",
 )
 _COMPOSE_PASSTHROUGH = re.compile(r"^\$\{(?P<name>\w+):-(?P<default>.*)\}$")
 
@@ -129,11 +138,70 @@ class TestConcurrencyDefaults:
     ) -> None:
         assert Settings().get_stage_model("tier_probe") == "anthropic/claude-haiku-4-5-20251001"
 
-    def test_should_route_vision_to_the_primary_model_when_no_override_is_set(
+
+class TestStageModelDefaults:
+    """Per-call-type defaults picked by the 4.0d model A/B (gates/g4-model-ab.md)."""
+
+    @pytest.mark.parametrize(
+        ("stage", "model"),
+        [
+            ("vision", "anthropic/claude-sonnet-5-5"),
+            ("description_analysis", "openai/gpt-6-luna"),
+            ("enrichment", "openai/gpt-4o-mini"),
+            ("translation_full", "openai/gpt-6-luna"),
+            ("translation_title", "openai/gpt-6-luna"),
+            ("rag_translation", "openai/gpt-6-luna"),
+            ("tier_probe", "anthropic/claude-haiku-4-5-20251001"),
+            ("extraction", "anthropic/claude-sonnet-5-5"),
+            ("memory", "anthropic/claude-haiku-5-5"),
+        ],
+    )
+    def test_should_route_the_stage_to_its_picked_model_when_env_is_unset(
+        self, isolated_env: pytest.MonkeyPatch, stage: str, model: str
+    ) -> None:
+        assert Settings().get_stage_model(stage) == model
+
+    @pytest.mark.parametrize(
+        ("stage", "setting"),
+        [
+            ("synthesis", "LLM_SYNTHESIS_MODEL"),
+            ("chapter_detect", "LLM_CHAPTER_DETECT_MODEL"),
+        ],
+    )
+    def test_should_leave_the_stage_unpinned_when_the_ab_kept_its_model(
+        self, isolated_env: pytest.MonkeyPatch, stage: str, setting: str
+    ) -> None:
+        # None → synthesis and chapter_detect stay on the fast tier.
+        isolated_env.delenv(setting, raising=False)
+        assert Settings().get_stage_model(stage) is None
+
+    def test_should_run_memory_on_the_extraction_model_when_its_setting_is_blank(
         self, isolated_env: pytest.MonkeyPatch
     ) -> None:
-        # None → frame_analyzer keeps the caller's primary-model provider.
-        assert Settings().get_stage_model("vision") is None
+        isolated_env.setenv("LLM_MEMORY_MODEL", "")
+        isolated_env.setenv("LLM_EXTRACTION_MODEL", "anthropic/claude-haiku-4-5-20251001")
+        assert Settings().get_stage_model("memory") == "anthropic/claude-haiku-4-5-20251001"
+
+    def test_should_run_memory_on_its_own_model_when_both_are_set(
+        self, isolated_env: pytest.MonkeyPatch
+    ) -> None:
+        isolated_env.setenv("LLM_MEMORY_MODEL", "anthropic/claude-haiku-4-5-20251001")
+        assert Settings().get_stage_model("memory") == "anthropic/claude-haiku-4-5-20251001"
+
+    def test_should_keep_the_fast_tier_model_when_env_is_unset(
+        self, isolated_env: pytest.MonkeyPatch
+    ) -> None:
+        for name in ("LLM_FAST_MODEL", "LLM_FAST_PROVIDER", "LLM_PROVIDER"):
+            isolated_env.delenv(name, raising=False)
+        assert Settings().llm_fast_model == "anthropic/claude-haiku-4-5-20251001"
+
+    def test_should_run_the_primary_model_on_sonnet_5_5_when_env_is_unset(
+        self, isolated_env: pytest.MonkeyPatch
+    ) -> None:
+        # The primary serves the plan only: every other stage is pinned above.
+        for name in ("LLM_MODEL", "LLM_PROVIDER"):
+            isolated_env.delenv(name, raising=False)
+        assert Settings().llm_model == "anthropic/claude-sonnet-5-5"
 
 
 class TestComposePassthrough:
@@ -152,3 +220,32 @@ class TestComposePassthrough:
         self, compose_file: str, name: str
     ) -> None:
         assert name not in _summarizer_env(compose_file)
+
+
+class TestPreviousModel:
+    """The refusal fallback table (pipeline-1min 4.0b)."""
+
+    @pytest.mark.parametrize(
+        ("model", "previous"),
+        [
+            ("anthropic/claude-haiku-5-5", "anthropic/claude-haiku-4-5-20251001"),
+            ("anthropic/claude-sonnet-5-5", "anthropic/claude-sonnet-4-6"),
+            ("openai/gpt-6-luna", "openai/gpt-4o-mini"),
+        ],
+    )
+    def test_should_fall_back_to_the_model_it_replaced(self, model: str, previous: str) -> None:
+        assert PREVIOUS_MODEL[model] == previous
+
+    @pytest.mark.parametrize(("model", "previous"), list(PREVIOUS_MODEL.items()))
+    def test_should_stay_on_the_provider_and_never_chain(self, model: str, previous: str) -> None:
+        assert (previous.split("/")[0], previous in PREVIOUS_MODEL) == (model.split("/")[0], False)
+
+
+class TestModelMapReExport:
+    """The model tables live in ``src.model_map``; ``src.config`` re-exports them."""
+
+    @pytest.mark.parametrize("name", ["MODEL_MAP", "get_model", "PREVIOUS_MODEL"])
+    def test_should_serve_the_model_maps_objects_when_imported_from_config(self, name: str) -> None:
+        from src import config, model_map
+
+        assert getattr(config, name) is getattr(model_map, name)

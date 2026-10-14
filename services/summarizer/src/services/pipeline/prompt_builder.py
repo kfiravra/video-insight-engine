@@ -25,9 +25,7 @@ PROMPTS_DIR = Path(__file__).parent.parent.parent / "prompts"
 # so the registry name we look up matches the name the uploader registered.
 _SUBDIR_LABEL: dict[str, str] = {
     "schemas": "schema",
-    "enrich": "enrich",
     "examples": "example",
-    "detection": "detection",
 }
 
 

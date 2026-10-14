@@ -54,6 +54,12 @@ _HARNESS_SETTINGS: dict[str, Any] = {
 }
 
 
+# Settings added after the cassettes were recorded, at the value the recorded
+# runs had: memory followed LLM_EXTRACTION_MODEL then (D5). A cassette's own
+# value wins.
+_RECORDED_BEFORE: dict[str, Any] = {"LLM_MEMORY_MODEL": None}
+
+
 @dataclass(frozen=True)
 class SseRecord:
     offset_ms: int
@@ -156,7 +162,7 @@ def _capture_done_line() -> Iterator[_DoneLineHandler]:
 @contextmanager
 def replay_settings(cassette: Cassette, extra: dict[str, Any] | None = None) -> Iterator[None]:
     """Patch ``settings`` with the recorded run's knobs + harness invariants (+ ``extra``)."""
-    overrides = {**cassette.settings, **_HARNESS_SETTINGS, **(extra or {})}
+    overrides = {**_RECORDED_BEFORE, **cassette.settings, **_HARNESS_SETTINGS, **(extra or {})}
     unknown = sorted(name for name in overrides if not hasattr(settings, name))
     if unknown:
         raise ValueError(f"Cassette {cassette.video_id} sets unknown settings: {unknown}")

@@ -1348,32 +1348,27 @@ The summarization pipeline uses SSE to stream results progressively, allowing th
 
 | Event | Phase | Description |
 |-------|-------|-------------|
-| `phase` | All | Indicates which processing phase started |
+| `phase` | All | Transcript-source hops and `translation` (see [phase](#phase)) |
 | `cached` | 0 | Cache hit — a fast replay follows (`metadata`, `triage_complete`, `meta`, `tab_ready[]` — every tab once, `final: true`, `position` = its index — `synthesis_complete`, `done`) |
-| `metadata` | 1 | Video metadata (title, channel, duration, context) |
-| `chapters` | 1 | Creator chapters if available |
-| `sponsor_segments` | 1 | SponsorBlock segments |
+| `metadata` | 1 | Video metadata (title, channel, thumbnailUrl, duration) |
 | `transcript_ready` | 2 | Transcript extraction complete (authoritative `duration`) |
-| `description_analysis` | 5 | Links, resources extracted from description — emitted at assembly (assembly waits ≤ 5 s for the analysis started at metadata-end; past that, nothing) |
+| `synthesis_complete` | 2 + 3 | Up to twice: `{tldr, keyTakeaways}` at memory-done (the hero), then the four-field superset in assembly's late group — see [synthesis_complete](#synthesis_complete) |
 | `triage_complete` | 2 | Content tags, tab layout, confidence, `contentFormat`, `evidence` (the reconciled view), `planEvidence` / `memoryEvidence`, `terms` — at plan-done (plan ∥ memory both in, after reconcile) |
-| `extraction_progress` | 4 | Chunked-extraction progress for long videos |
-| `extraction_complete` | 4 | Domain extraction finished |
-| `frames` | 2 | Extracted frame set (presigned URLs), from the frames branch of phase 2 |
 | `meta` | 2 | VIEResponseMeta with videoId, contentTags, tab labels — emitted with `triage_complete`; again at frames-done when the screen-code check changed the tab list |
-| `tab_ready` | 2 + 5 | One tab, with `position` (sort key) and `final`. The provisional Moments tab (`provisional: true`) streams at plan-done; with `EXTRACTION_PARALLEL` (default) non-final previews stream as each extraction group lands, the rest from assembly; a tab id can arrive more than once and the later emission replaces the earlier by id (a tab taking the provisional's place under another id names it in `replaces`). Each tab of the final response gets a `final: true` emission before `complete` — the last final wins — see [tab_ready](#tab_ready) |
-| `enrichment_complete` | 5 | The quiz landed (only for a plan with a quiz host; runs after the first tabs) |
-| `synthesis_complete` | 2 + 5 | Up to twice: `{tldr, keyTakeaways}` at memory-done (the hero), then the four-field superset after the tabs — see [synthesis_complete](#synthesis_complete) |
+| `frames` | 2 | Extracted frame set (presigned URLs), from the frames branch of phase 2 |
+| `extraction_progress` | 2 | Per landed extraction group call (`section: "groups"`, `batch` / `of`); with `EXTRACTION_PARALLEL=false` after phase 2: per chunked batch (`"chunked"` / `"chunked-sequential"`) or `"all"` for one call |
+| `extraction_complete` | 2 | The merged extraction, once every group landed (with `EXTRACTION_PARALLEL=false`: after phase 2) |
+| `tab_ready` | 2 + 3 | One tab, with `position` (sort key) and `final`. The provisional Moments tab (`provisional: true`) streams at plan-done; with `EXTRACTION_PARALLEL` (default) non-final previews stream as each extraction group lands, the rest from assembly; a tab id can arrive more than once and the later emission replaces the earlier by id (a tab taking the provisional's place under another id names it in `replaces`). Each tab of the final response gets a `final: true` emission before `complete` — the last final wins — see [tab_ready](#tab_ready) |
+| `description_analysis` | 3 | Links, resources extracted from description — emitted at assembly (assembly waits ≤ 5 s for the analysis started at metadata-end; past that, nothing) |
+| `enrichment_complete` | 3 | The quiz landed (only for a plan with a quiz host; in assembly's late group) |
 | `heartbeat` | Any | Keep-alive during long-running steps (e.g. moment frame fill) — carries `ts`, safe to ignore |
-| `complete` | 6 | Processing complete: tab count, `tabIds` (the final tab order — a streamed tab missing here was withdrawn), timing |
-| `done` | 6 | Final event, closes stream |
+| `complete` | 4 | Processing complete: tab count, `tabIds` (the final tab order — a streamed tab missing here was withdrawn), timing |
+| `done` | 4 | Final event, closes stream (non-English videos: after the translation phase) |
+| `error` | Any | `{message, code?}` — replaces the tail on a failed run |
 
-### Legacy Events (v1 -- still emitted for backward compat)
-
-| Event | Phase | Description |
-|-------|-------|-------------|
-| `detection_result` | 1 | Legacy: Category detection result with outputType |
-| `chapter_ready` | 3 | Legacy: Individual chapter summary with content blocks |
-| `concepts_complete` | 4 | Legacy: Key concepts extracted |
+The registry of emitted events is `SSE_EVENT_MODELS` in
+`services/summarizer/src/models/sse_events.py`. `chapters`, `sponsor_segments` and the v1
+events `detection_result`, `chapter_ready`, `concepts_complete` are no longer emitted.
 
 ---
 
@@ -1384,61 +1379,70 @@ The summarization pipeline uses SSE to stream results progressively, allowing th
 │                    STREAMING PHASES (SSE Events)                            │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
-│  PHASE 1: METADATA (one yt-dlp extract_info, ~5 s)                         │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │  Output event: metadata (title, channel, thumbnail, duration)       │   │
-│  │  Then, in the background: caption fetch, description analysis,      │   │
-│  │  low-res + one ≤720p download (skipped on a frame-manifest hit)     │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
+│  PHASE 1: METADATA (one yt-dlp extract_info + validate_duration)            │
+│  ┌──────────────────────────────────────────────────────────────────────┐   │
+│  │  Output event: metadata (title, channel, thumbnail, duration)        │   │
+│  │  Then, in the background: caption fetch, description analysis,       │   │
+│  │  low-res + one ≤720p download (skipped on a frame-manifest hit)      │   │
+│  └──────────────────────────────────────────────────────────────────────┘   │
 │                                                                             │
-│  PHASE 2: TEXT BRANCH ∥ FRAMES                                             │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │  Text: transcript → tier probe (Haiku) → plan (Sonnet) ∥ memory     │   │
-│  │  Frames: scenes → tier (probe, ≤3 s wait) → hi-res → OCR ∥ vision   │   │
-│  │                                                                     │   │
-│  │  Output events: transcript_ready, synthesis_complete (memory-done:  │   │
-│  │    tldr + keyTakeaways), triage_complete + meta (plan), frames,     │   │
-│  │    tab_ready (provisional Moments tab, at plan-done)                │   │
-│  │                                                                     │   │
-│  │  Transcript source chain (first success wins):                      │   │
-│  │    1. S3 cache          → phase: transcript_cached (~instant)       │   │
-│  │    2. yt-dlp captions   → phase: transcript (~1-3s)                 │   │
-│  │    3. Gemini audio      → phase: audio_transcription (~5-15s)       │   │
-│  │    4. Whisper audio     → phase: whisper_transcription (~10-30s)    │   │
-│  │    5. Metadata fallback → phase: metadata_fallback (music only)     │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
+│  PHASE 2: TEXT BRANCH ∥ FRAMES ∥ FIELD GROUPS (one parallel group)          │
+│  ┌──────────────────────────────────────────────────────────────────────┐   │
+│  │  Text: transcript → tier probe → plan ∥ memory → reconcile           │   │
+│  │  Frames: scenes → tier (probe, ≤3 s wait) → hi-res → OCR ∥ vision    │   │
+│  │    → frames-done: <visual_annotations> + deferred code tabs          │   │
+│  │  Field groups (EXTRACTION_PARALLEL=true): text groups fire at        │   │
+│  │    plan-done, the visual group at frames-done                        │   │
+│  │                                                                      │   │
+│  │  Output events: phase (transcript source), transcript_ready,         │   │
+│  │    synthesis_complete (memory-done: tldr + keyTakeaways),            │   │
+│  │    triage_complete + meta (plan-done), tab_ready (provisional        │   │
+│  │    Moments tab), frames, meta again when frames-done changed the     │   │
+│  │    tabs; per landed group: extraction_progress {section:             │   │
+│  │    "groups"} + tab_ready previews (final: false);                    │   │
+│  │    extraction_complete (the merged groups)                           │   │
+│  │                                                                      │   │
+│  │  Transcript source chain (first success wins):                       │   │
+│  │    1. S3 cache          → phase: transcript_cached                   │   │
+│  │    2. yt-dlp captions   → (no phase event)                           │   │
+│  │    3. transcript-api    → phase: transcript                          │   │
+│  │    4. Whisper audio     → phase: audio_transcription, then           │   │
+│  │                           whisper_transcription                      │   │
+│  │    5. Gemini audio      → (after Whisper failed or is gated off)     │   │
+│  │    6. Metadata fallback → phase: metadata_fallback (music only)      │   │
+│  └──────────────────────────────────────────────────────────────────────┘   │
 │                                                                             │
-│  PHASE 3: VISUAL ANNOTATIONS (code, no events)                             │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │  Frame captions + OCR → <visual_annotations> block for extraction;  │   │
-│  │  the transcript itself stays speech-only                            │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
+│  PHASE 3: ASSEMBLY → LATE GROUP                                             │
+│  ┌──────────────────────────────────────────────────────────────────────┐   │
+│  │  Output events: description_analysis, tab_ready previews of the      │   │
+│  │    tabs the client lacks (the overview, tabs assembly added or       │   │
+│  │    the last groups changed), then moment fill ∥ synthesis ∥          │   │
+│  │    quiz: moment tabs (framed, heartbeats meanwhile),                 │   │
+│  │    synthesis_complete (superset), enrichment_complete; then the      │   │
+│  │    final re-emit: every tab not yet final, `final: true`, at its     │   │
+│  │    final position (the overview last)                                │   │
+│  └──────────────────────────────────────────────────────────────────────┘   │
 │                                                                             │
-│  PHASE 4: EXTRACTION (one call; chunked batches for long videos)           │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │  Output events: extraction_progress (chunked), extraction_complete  │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-│                                                                             │
-│  PHASE 5: ASSEMBLY → LATE GROUP                                            │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │  Output events: description_analysis, tab_ready[] (all but moment   │   │
-│  │    tabs; `final` where no late phase can change them), then moment  │   │
-│  │    fill ∥ synthesis ∥ quiz: moment tabs (framed, heartbeats         │   │
-│  │    meanwhile), synthesis_complete (superset), enrichment_complete;  │   │
-│  │    then the final re-emit: every tab not yet final, `final: true`,  │   │
-│  │    at its final position (the quiz tab last)                        │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-│                                                                             │
-│  PHASE 6: SAVE & DONE                                                      │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │  - Save complete result to MongoDB                                  │   │
-│  │  - Emit "complete" event with tabCount, tabIds, processingTimeMs    │   │
-│  │  - Emit "done" event (triggers confetti on frontend)                │   │
-│  │  - Emit "[DONE]" to close SSE stream                                │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
+│  PHASE 4: SAVE & DONE                                                       │
+│  ┌──────────────────────────────────────────────────────────────────────┐   │
+│  │  - Emit "complete" (tabCount, tabIds, processingTimeMs, degraded)    │   │
+│  │  - Save the result to MongoDB; Redis response cache (English,        │   │
+│  │    awaited, best-effort); Qdrant + S3 raw transcript in the          │   │
+│  │    background                                                        │   │
+│  │  - Emit "done" (triggers confetti on frontend) — non-English         │   │
+│  │    videos: after the translation phase (phase: translation)          │   │
+│  │  - Emit "[DONE]" to close SSE stream                                 │   │
+│  └──────────────────────────────────────────────────────────────────────┘   │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
+
+With `EXTRACTION_PARALLEL=false` there are no field groups: after the whole
+phase-2 group, frames-done runs and then ONE extraction call (or a long
+video's chapter batches, one at a time) — `extraction_progress` carries
+`section: "all"` (one call) or `"chunked"` / `"chunked-sequential"` (batches) —
+and assembly streams every tab but the moment tabs at once. Event order per
+path: the emission sequence under [tab_ready](#tab_ready).
 
 ---
 
@@ -1457,14 +1461,16 @@ Only the transcript-source phases and `translation` are emitted as explicit
 `apps/web/src/features/video-output/lib/streaming/stream-event-processor.ts`
 and `VALID_SSE_PHASES` in `sse-validators.ts`.
 
-**Transcript sub-phases** (emitted within Phase 1 based on transcript source):
+**Transcript sub-phases** (emitted by the transcript fetch chain,
+`transcription/transcript_fetcher.py`, inside Phase 2's text branch):
 
 | Phase | When |
 |-------|------|
-| `transcript` | Starting transcript extraction (always emitted first) |
-| `transcript_cached` | Transcript found in S3 cache |
-| `audio_transcription` | No captions available; starting audio transcription (Gemini) |
-| `whisper_transcription` | Gemini failed or unavailable; falling back to Whisper |
+| `transcript_cached` | Transcript found in the S3 cache (`fetch_transcript`, step 0) |
+| — | yt-dlp captions (the track picked at metadata) succeed: no `phase` event |
+| `transcript` | No yt-dlp captions: starting youtube-transcript-api (skipped while the caption-429 marker is set) |
+| `audio_transcription` | Starting the audio layers (`fetch_audio_transcript`: Whisper, then Gemini) — also for the audio pass after the tier probe judged the captions unusable |
+| `whisper_transcription` | Right after `audio_transcription`, when Whisper may run (`WHISPER_ENABLED`, under the duration cap); Gemini, tried only after Whisper failed or was gated off, emits no event of its own |
 | `metadata_fallback` | All transcript sources failed for music video; using title/description as transcript |
 
 ### metadata
@@ -1860,19 +1866,22 @@ export function useSummaryStream(videoSummaryId: string | null) {
 
 ## LLM Calls Summary
 
-For a typical video (v2 pipeline):
+Per run (v10 pipeline; the default `EXTRACTION_PARALLEL=true`; models = the `config.py` / compose defaults, 4.0 picks — under compose a blank `.env` line keeps them; "Fast" = the fast tier: Haiku 4.5 by default, gpt-4o-mini with `LLM_FAST_PROVIDER=openai` as both `.env` templates and prod set):
 
 | Stage | Model | Calls | Parallel? |
 |-------|-------|-------|-----------|
-| Description analysis | Fast | 1 | Background from metadata-end |
+| Description analysis | gpt-6-luna (`LLM_DESCRIPTION_MODEL`) | 1 | Background from metadata-end |
 | Tier probe | Haiku 4.5 (`LLM_CLASSIFIER_MODEL`) | 1 | At transcript-ready, ∥ frames |
-| Plan | Primary (Sonnet) | 1 | ∥ Memory |
-| Memory | `LLM_EXTRACTION_MODEL` (blank = primary) | 1 (none without timed transcript) | ∥ Plan |
-| Frame vision | Primary (Sonnet) | 1-5 batches (none on LOW tier / manifest hit) | ∥ text branch |
-| Chapter detect | Fast | 0-1 (long videos with no listed chapters and no memory outline) | No |
-| Extraction | `LLM_EXTRACTION_MODEL` | 1, or one per batch (chunked) | Batches in parallel |
-| Synthesis | Fast | 1 | ∥ moment fill ∥ quiz, after the first tabs |
-| Quiz (enrichment) | Fast | 0-1 (plan with a quiz host) | ∥ moment fill ∥ synthesis |
+| Plan | Primary (Sonnet 5.5, effort medium) | 1 | ∥ Memory |
+| Memory | Haiku 5.5 (`LLM_MEMORY_MODEL`; blank = `LLM_EXTRACTION_MODEL` in config.py only — under compose a blank line keeps Haiku 5.5) | 1 (none without timed transcript) | ∥ Plan |
+| Frame vision | Sonnet 5.5 (`LLM_VISION_MODEL`) | 1-5 batches (none on LOW tier / manifest hit) | ∥ text branch |
+| Chapter detect | Fast | 0-1 (videos past one extraction batch — over `MAX_MINUTES_PER_BATCH` or `MAX_TOKENS_PER_BATCH` — with no listed chapters, no description timestamps and no usable memory outline) | No — before the field groups fire |
+| Extraction field groups | Sonnet 5.5 at effort low (`LLM_EXTRACTION_MODEL`) | 1-5 text groups + 0-1 visual group, per chunk (`grouping` in domains.json: `maxTextGroups` 5, `groupOutputBudget` 1,500 tokens; a long video has one chunk per chapter batch). A lost answer gets one more call | Text groups at plan-done (text1 first, the rest on its first streamed chunk), the visual group at frames-done; ≤ `EXTRACTION_PARALLEL_BATCHES` in flight |
+| Extraction (`EXTRACTION_PARALLEL=false`) | Sonnet 5.5 at effort low (`LLM_EXTRACTION_MODEL`) | 1, or one per chapter batch | After frames-done; batches one at a time |
+| Synthesis | Fast | 1 | ∥ moment fill ∥ quiz, after the first tabs (before them when memory left the hero empty) |
+| Quiz (enrichment) | gpt-4o-mini (`LLM_ENRICHMENT_MODEL`) | 0-1 (plan with a quiz host) | ∥ moment fill ∥ synthesis; split path: started once the groups holding its domains' fields landed |
+| Faithfulness judge | Fast tier | 0-6 (`LANGFUSE_FAITHFULNESS_SAMPLE_RATE` of the extracted claims, ≤ 6) | Background, after extraction; never blocks |
+| Translation | gpt-6-luna (`LLM_TRANSLATION_MODEL`) | Non-English only: output batches (≤ 2,500 chars, ≤ 100 strings) + the title; RAG transcript batches (`rag_translation`) | ≤ 8 output batches in flight; RAG in the background |
 | Assembly | None (code; moment frame fill does frame I/O with heartbeats) | 0 | — |
 
-**Total: ~6-7 calls plus vision batches** for a short video (more when chunked; translation adds batched calls for non-English videos)
+**Total** for a video one extraction batch covers: description analysis, tier probe, plan, memory, 1-6 extraction group calls, synthesis and the quiz when planned — plus 0-5 vision batches and ≤ 6 sampled judge calls. A long video multiplies the group calls by its chunks; a non-English video adds the translation batches. A refused answer adds one call on the refused model's previous model ([ERROR-HANDLING.md](./ERROR-HANDLING.md#refusals)).

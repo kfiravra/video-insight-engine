@@ -46,10 +46,6 @@ def run_phase_text(ctx):  # type: ignore[no-untyped-def]
     return _fn(ctx)
 
 
-# Backward-compat alias
-run_phase_triage = run_phase_plan
-
-
 def run_phase_extraction(ctx):  # type: ignore[no-untyped-def]
     from src.services.pipeline.phases.extraction import run_phase_extraction as _fn
 
@@ -81,7 +77,6 @@ __all__ = [
     "run_phase_plan",
     "run_phase_memory",
     "run_phase_text",
-    "run_phase_triage",  # Backward-compat alias for run_phase_plan
     "run_phase_extraction",
     "run_phase_synthesis",
     "run_phase_enrichment",

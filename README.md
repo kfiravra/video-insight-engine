@@ -95,22 +95,23 @@ flowchart LR
   URL([YouTube URL]) --> META[Metadata]
   META --> TR["Transcript<br/>captions, audio fallback"]
   META --> FR["Frames<br/>FFmpeg scene detect → OpenCV scoring → OCR + vision"]
-  TR --> CP["Classify + plan<br/>domain, tabs, components"]
-  FR -->|timestamped visual context| CP
-  CP --> EX["Extraction<br/>chunked by chapter"]
-  EX --> SY[Synthesis]
-  EX --> AS["Assembly<br/>pure code, no LLM"]
-  SY --> EN[Enrichment]
-  AS --> EN
-  AS -. "tab_ready × N" .-> UI([SSE → React tabs])
-  EN -.-> UI
+  TR --> CP["Probe + plan ∥ memory<br/>domain, tabs, outline, evidence"]
+  CP --> TX["Extraction<br/>text field groups"]
+  FR -->|visual annotations| VX["Extraction<br/>visual field group"]
+  CP --> VX
+  TX --> AS["Assembly<br/>pure code, no LLM"]
+  VX --> AS
+  AS --> LT["Moment fill ∥ synthesis ∥ quiz"]
+  CP -. "hero + provisional Moments" .-> UI([SSE → React tabs])
+  TX -. "tab previews per group" .-> UI
+  LT -. "final tabs" .-> UI
 ```
 
-- **Classify + plan.** A fast classifier and one planning call decide the video's domain (14 domains, e.g. food, tech, travel) and design its tabs from 29 registered components. The plan determines what extraction looks for.
-- **Chunked extraction.** Long videos are split by chapter (creator chapters, then detected chapters, then time splits) and batched into calls up to the context limit, so a multi-hour video takes a handful of calls.
+- **Probe + plan.** A short tier probe guesses the domain and format; one planning call then reads the whole timestamped transcript and designs the tabs from 29 registered components across 14 domains (e.g. food, tech, travel), while a memory call reads the same transcript for an outline, evidence and the summary. Reconcile checks the plan against the memory before anything is extracted.
+- **Field-group extraction.** Extraction asks only for the fields the planned tabs read, cut into small groups that run in parallel: the text groups start as soon as the plan is done, the visual group (code, game highlights) once the frames are described. Long videos are split by chapter (creator chapters, description timestamps, the memory outline or detected chapters, then time splits), and every group runs per chunk.
 - **Assembly.** Deterministic code turns extraction output into validated component props. The frontend renders each tab with one registry lookup.
 - **Frames.** FFmpeg scene detection yields about 200 candidates. OpenCV scores them locally on six signals, and only the roughly 25 winners are re-extracted at 720p and sent to OCR and vision.
-- **Streaming.** Each assembled tab is sent as an SSE event with its position, so tabs appear in place while the rest of the pipeline runs.
+- **Streaming.** The summary arrives from the memory call and a provisional Moments tab at plan time; each tab then streams as a preview the moment its extraction group lands, and every tab is sent once more as final, with its position, before the run completes.
 
 Stage-by-stage detail: [docs/summarizer-workflow.md](./docs/summarizer-workflow.md).
 
@@ -144,9 +145,9 @@ The gateway owns auth, rate limits and idempotency. The Python services own ever
 
 ### Cost
 
-About $0.29 for a ~20-minute video with captions (measured, v8 ledger); the Whisper fallback adds roughly $0.14 when captions are unavailable.
+About $0.11–0.18 for a 17–19-minute video with captions, frame reading included ($0.107 / $0.177 / $0.148 on the three benchmark videos, measured on the v10 dev ledger at gate 4.0; v8 was about $0.29); the Whisper fallback adds roughly $0.14 when captions are unavailable (v8 measurement).
 
-Models are chosen per stage through LiteLLM (`LLM_<STAGE>_MODEL`): a stronger model plans, fast models classify, synthesize and enrich. Work that does not need a model does not get one: frame scoring is local OpenCV, assembly is pure code, and prompt caching covers the plan and extraction prompts. Every call is written to an `llm_usage` ledger with its stage, model, tokens and cost. See [docs/llm-cost-model.md](./docs/llm-cost-model.md).
+Models are chosen per stage through LiteLLM (`LLM_<STAGE>_MODEL`): a stronger model plans, reads frames and extracts; fast models probe the video, write its memory, synthesize and enrich. Work that does not need a model does not get one: frame scoring is local OpenCV, assembly is pure code, and prompt caching covers the plan and extraction prompts. Every call is written to an `llm_usage` ledger with its stage, model, tokens and cost. See [docs/llm-cost-model.md](./docs/llm-cost-model.md).
 
 ### Caching and idempotency
 
@@ -168,13 +169,13 @@ Deploy is CI-gated: after a green CI run on `main`, a workflow deploys to a sing
 
 ## Run locally
 
-Requires Docker and one LLM API key.
+Requires Docker plus an Anthropic and an OpenAI API key: the default stage models use both providers (Claude for the plan, vision and extraction; OpenAI for description analysis, translation, the quiz and — with `LLM_FAST_PROVIDER=openai`, which `.env.example` sets — the fast tier).
 
 ```bash
 git clone https://github.com/kfiravra/video-insight-engine.git
 cd video-insight-engine
 
-cp .env.example .env        # set ANTHROPIC_API_KEY (or OPENAI_API_KEY / GEMINI_API_KEY)
+cp .env.example .env        # set ANTHROPIC_API_KEY and OPENAI_API_KEY (GEMINI_API_KEY optional)
 docker compose up -d
 
 curl http://localhost:3000/health    # API gateway

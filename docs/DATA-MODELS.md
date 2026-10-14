@@ -31,28 +31,28 @@ The block-based content system was replaced by the composable output system (v2)
 
 # Content Tag System (v2)
 
-The triage pipeline determines content tags from video metadata and transcript manifest. Tags drive schema selection, tab layout, and enrichment.
+The plan determines content tags from the video metadata and the full transcript (steered by the tier probe's domain); reconcile corrects the tabs at plan-done. Tags drive schema selection, tab layout, the extraction field groups, and the quiz.
 
 ### 14 Primary Content Tags + 2 Modifiers
 
-Enrichment prompts come from the `domains.json` `enrichment` map (every domain has one; `enrich_recall.txt` domains get flashcards only — no quiz/scenarios).
+Enrichment is the quiz only (`enrich_quiz.txt`, pipeline-1min 1d.1): it runs for the `domains.json` `quizEnrichment.quizDomains` (learning, language, tech, science), and only when the plan has a quiz host (`enrichment.needs_quiz`); the domain sets the quiz's flavor line. The per-domain `enrich_*.txt` prompts, flashcards and scenarios are gone.
 
-| ContentTag | Domain Schema | Enrichment prompt |
-|------------|---------------|-------------------|
-| `learning` | `schemas/learning.txt` | `enrich_study.txt` |
-| `tech` | `schemas/tech.txt` | `enrich_tech.txt` |
-| `fitness` | `schemas/fitness.txt` | `enrich_fitness.txt` |
-| `food` | `schemas/food.txt` | `enrich_food.txt` |
-| `music` | `schemas/music.txt` | `enrich_music.txt` |
-| `travel` | `schemas/travel.txt` | `enrich_travel.txt` |
-| `review` | `schemas/review.txt` | `enrich_review.txt` |
-| `project` | `schemas/project.txt` | `enrich_project.txt` |
-| `language` | `schemas/language.txt` | `enrich_language.txt` |
-| `science` | `schemas/science.txt` | `enrich_science.txt` |
-| `gaming` | `schemas/gaming.txt` | `enrich_recall.txt` (flashcards only) |
-| `news` | `schemas/news.txt` | default (`enrich_study.txt`) |
-| `podcast` | `schemas/podcast.txt` | `enrich_recall.txt` (flashcards only) |
-| `sport` | `schemas/sport.txt` | default (`enrich_study.txt`) |
+| ContentTag | Domain Schema | Quiz |
+|------------|---------------|------|
+| `learning` | `schemas/learning.txt` | yes (when planned) |
+| `tech` | `schemas/tech.txt` | yes (when planned) |
+| `fitness` | `schemas/fitness.txt` | - |
+| `food` | `schemas/food.txt` | - |
+| `music` | `schemas/music.txt` | - |
+| `travel` | `schemas/travel.txt` | - |
+| `review` | `schemas/review.txt` | - |
+| `project` | `schemas/project.txt` | - |
+| `language` | `schemas/language.txt` | yes (when planned) |
+| `science` | `schemas/science.txt` | yes (when planned) |
+| `gaming` | `schemas/gaming.txt` | - |
+| `news` | `schemas/news.txt` | - |
+| `podcast` | `schemas/podcast.txt` | - |
+| `sport` | `schemas/sport.txt` | - |
 | `narrative` | `schemas/narrative.txt` | Modifier only |
 | `finance` | `schemas/finance.txt` | Modifier only |
 
@@ -135,11 +135,10 @@ interface VideoContext {
   youtubeCategory: string;     // Raw YouTube category
   tags: string[];              // Raw tags from YouTube
   displayTags: string[];       // Cleaned for UI display
-  categoryConfidence?: number; // Detection confidence
 }
 ```
 
-Category serves as a fallback when triage confidence < 0.6. The triage LLM now determines content tags directly from manifest + metadata.
+A failed plan or plan confidence < 0.6 → the category's default tabs (`plan._build_fallback_plan`; the category hint is a confident tier probe's domain, else this metadata category). The plan reads metadata + the `[m:ss]`-marked transcript.
 
 ---
 
@@ -220,26 +219,43 @@ One row per video **version** (`version`, `isLatest` below); the served row is s
   // Per-run timing — written by pipeline_orchestration (run_timing.persist_run_timing) when the phases finish OR
   // fail (dotted `$set` after assembly's save; absent on Redis-served rows).
   // Eval-user runs (evalRun) write it too — it is how benchmarks are read.
-  // Offsets are ms since the run started. Mirrored (minus llmCalls) onto the
-  // Langfuse trace metadata; each phase is also a Langfuse span.
+  // Offsets are ms since the run started. Mirrored (minus llmCalls / llmFailures)
+  // onto the Langfuse trace metadata; each phase is also a Langfuse span.
   "pipeline.timing": {
-    version: 3,                     // 2: the 1h/5m cache-write split on llmCalls (pipeline-1min 2.0); 3: ttftMs on llmCalls (3.4)
+    version: 4,                     // 2: the 1h/5m cache-write split on llmCalls (pipeline-1min 2.0); 3: ttftMs on llmCalls (3.4); 4: refusals (4.0b) — "Refusal" llmFailures rows, refusedModel stamps, counts.refusals / refusalFallbacks / refusalsUnanswered, fallbacks = cross-provider + model swaps only, costUsd incl. refused calls
     startedAt: Date,
     totalMs: number,
-    phases: [{ name: string, startMs: number, endMs: number, wallMs: number }],  // metadata, transcript_frames (phase 2: text, transcript, transcript_audio = the audio re-run after the tier probe judged the captions unusable (2.5; that run also has a second tier_probe llmCall), plan, memory, frames, frames.* sub-steps incl. frames.tier_wait), visual_inject (name kept: the annotations render), extraction, split_extraction (EXTRACTION_PARALLEL: the group-extraction member of phase 2, which then also spans transcript_frames; extraction = plan-done → last group), assembly (moment_fill, synthesis, enrichment = the quiz, run inside it), translation
+    phases: [{ name: string, startMs: number, endMs: number, wallMs: number }],  // metadata, transcript_frames (phase 2: text, transcript, transcript_audio = the audio re-run after the tier probe judged the captions unusable (2.5; that run also has a second tier_probe llmCall), plan, memory, frames, frames.* sub-steps incl. frames.tier_wait), visual_inject (name kept: the annotations render), extraction, split_extraction (EXTRACTION_PARALLEL: the group-extraction member of phase 2, which then also spans transcript_frames; extraction = plan-done → last group; quiz_call = the quiz call it started once the quiz's groups landed), assembly (moment_fill, synthesis, enrichment = the quiz, run inside it), translation
     milestones: { metadataMs?, synthesisCompleteMs?, firstTabReadyMs?, firstAssembledTabMs?, completeMs?, doneMs? },  // firstTabReadyMs = first tab_ready of any kind — since 2.1 the provisional Moments tab at plan-done; firstAssembledTabMs = first non-provisional tab_ready (the first tab assembly built)
     llmCalls: [{ feature, span, model, responseModel, startMs, wallMs, inputTokens, outputTokens,
                  cacheReadTokens,     // Anthropic cache_read_input_tokens, or OpenAI cached input (prompt_tokens_details.cached_tokens; 0 for OpenAI before v2)
                  cacheWriteTokens, cacheWrite5mTokens, cacheWrite1hTokens,  // the write split by cache lifetime, when the provider reports it
-                 costUsd, attempt, fallbackUsed, finishReason,
-                 ttftMs }],  // ms to the first streamed chunk — the split extraction's warm-up call (span extraction_text1); null otherwise. Incl. Whisper/Gemini transcription rows (span "transcription:openai|google")
-    llmFailures: [{ feature, span, model, startMs, wallMs, attempt, error, rateLimited }],
+                 costUsd, attempt,
+                 fallbackUsed,        // answered by a fallback: the cross-provider one (D4), the previous model after a refusal, or a provider-side model swap
+                 finishReason,
+                 ttftMs,              // ms to the first streamed chunk — the split extraction's warm-up call (span extraction_text1); null otherwise
+                 refusedModel?, refusalCategory? }],  // v4, only on the previous model's answer to a refused call: the model that refused + its stop_details category (always null on LiteLLM 1.105, which drops stop_details)
+                 // Incl. Whisper/Gemini transcription rows (span "transcription:openai|google")
+    llmFailures: [{ feature, span, model, startMs, wallMs, attempt,
+                    error,            // exception class name, or "Refusal" — a declined answer (HTTP 200; llm_common.refusal)
+                    rateLimited,
+                    refusedModel?,    // v4: any row recorded during a refused call's one re-send on the previous model (its refusal, error or timeout) — a timeout only under call_deadline (LLMService calls); a re-send cancelled by frame vision's wait_for or the description's 30 s cap is a plain TimeoutError row under the refused model, without refusedModel
+                    // error "Refusal" rows only — what the declined answer was billed:
+                    refusalCategory?, inputTokens?, outputTokens?, cacheReadTokens?, cacheWriteTokens?, cacheWrite5mTokens?, cacheWrite1hTokens?, costUsd? }],
     downloads: [{ kind: "lowres" | "720p" | "audio", purpose: string, startMs, wallMs, bytes: number | null, ok: boolean }],
-    costUsd: number,
-    counts: { llmCalls, llmFailures, retries, rateLimited, fallbacks, outputTokens, cacheReadTokens,
+    costUsd: number,                // Σ costUsd over llmCalls + llmFailures — refused calls included (v4)
+    counts: { llmCalls, llmFailures, retries, rateLimited,
+              fallbacks,            // answers with fallbackUsed and no refusedModel: the cross-provider fallback + provider-side model swaps
+              refusals,             // v4: calls refused — "Refusal" rows without refusedModel
+              refusalFallbacks,     // v4: refused calls the previous model answered — llmCalls with refusedModel
+              refusalsUnanswered,   // v4: refusals − refusalFallbacks
+              outputTokens, cacheReadTokens,  // Σ over llmCalls only (refused answers excluded)
               downloadBytes, tabsPlanned, tabsAssembled, tabsEmitted,  // tabsEmitted = distinct tab ids streamed non-provisional (a provisional tab replaced by id counts once; one withdrawn or replaced under another id never counts; an assembled tab withdrawn later still counts)
               truncated }  // answers that stopped at max_tokens (finish_reason=length); DONE log line `llm truncated=N`
   } | absent,
+  // The usage ledger (`llm_usage`, one row per LiteLLM call) tags the same events:
+  // refusal / refusal_category on a declined answer's row, fallback_from = the refused
+  // model on the previous model's row — llm-cost-model.md §Schema.
 
   // Processed summary (legacy v1 format — kept for backward compat,
   // new pipeline populates assembledMeta/assembledTabs instead)
@@ -330,7 +346,8 @@ One row per video **version** (`version`, `isLatest` below); the served row is s
   // Domain-keyed extraction data
   output: Record<string, unknown> | null,
 
-  // Enrichment (quiz, flashcards, scenarios)
+  // Enrichment — legacy top-level copy. The pipeline writes pipeline.enrichment = {quiz}
+  // (the quiz only, when the plan demanded one; flashcards/scenarios were removed in pipeline-1min 1d.1)
   enrichment: Record<string, unknown> | null,
 
   // Synthesis (TLDR, takeaways, master summary) — written by the API relay
@@ -428,6 +445,8 @@ One row per video **version** (`version`, `isLatest` below); the served row is s
   forceRefresh: true | absent,      // bypassCache: summarizer skips its Redis response cache; $unset on save
   coldMedia: true | absent,         // POST /videos `cold` (admin/eval only): the run also skips the
                                     // S3 transcript + scene-frame caches
+  degraded: true | absent,          // top-level mirror of meta.degraded (admin run badge): a failed
+                                    // extraction group, a dropped chunked batch, or critical coverage
   pipelineVersion: string | absent, // PIPELINE_VERSION stamp of the run that saved the row; a stale
                                     // stamp re-runs on the user's next submission (and the worker
                                     // skips a queued job only when the row is completed by the
@@ -449,7 +468,7 @@ One row per video **version** (`version`, `isLatest` below); the served row is s
   rawTranscriptRef: string | null,  // S3 key "videos/{youtubeId}/transcript.json". Only set by
                                     // scripts/backfill-transcripts.py / migrate-s3-keys.py: the
                                     // assembly-phase write-back is a no-op (string _id filter,
-                                    // see summarizer-workflow.md Phase 7). Prefer the deterministic key.
+                                    // see summarizer-workflow.md §Assembly). Prefer the deterministic key.
 
   // Generation metadata (for regeneration)
   generation: {

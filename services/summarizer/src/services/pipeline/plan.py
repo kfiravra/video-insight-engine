@@ -26,6 +26,7 @@ from ...shared_config.domain_config import (
 from ...utils.json_parsing import parse_json_response
 from ...utils.llm_retry import call_llm_with_retry
 from ..llm_messages import CacheTTL, UserContent, text_block
+from ..llm_model_rules import Effort
 from .assembly import infer_component
 from .plan_prompt import PROMPT_PATH, PlanPrompt, PlanVideo, render_plan_parts
 from .plan_reconcile import reconcile_plan_tabs
@@ -62,6 +63,11 @@ PLAN_CACHE_TTL: CacheTTL = "1h"
 PLAN_TIMEOUT_SECONDS = 60.0
 PLAN_MAX_RETRIES = 1
 PLAN_MAX_TOKENS = 3500
+# Effort for a model that takes one (Sonnet 5.5; today's fallbacks ignore it).
+# The 4.0d A/B: at "low" Sonnet 5.5 flipped is_learnable to False on T1dQ in
+# both runs (the quiz tab dropped); "medium" kept it, closer to Sonnet 4.6's
+# evidence (0.94 vs 0.90) and tabs (0.82 vs 0.69) for +1.8 s.
+PLAN_EFFORT: Effort = "medium"
 
 # Components whose assembler builds from synthesis/meta and ignores the tab's
 # data, so their dataSource needs no registry check (mirrors the overview half
@@ -361,6 +367,7 @@ async def run_plan(
             max_retries=PLAN_MAX_RETRIES,
             stage_name="plan",
             json_mode=True,
+            effort=PLAN_EFFORT,
         )
         if not raw:
             logger.warning("Plan LLM call failed after retries, using fallback")

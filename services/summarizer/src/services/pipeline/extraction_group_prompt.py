@@ -5,7 +5,9 @@ output, which stays unmodified:
 
 1. ``ttl="1h"``: the rules + ``<schema>`` (every requested domain's full
    schema) + ``<extraction_example>`` (the primary's) — the same bytes for every
-   group and chunk of the run;
+   group and chunk of the run. The run's rules end with the group calls'
+   own (``with_group_rules``: ``extraction_group_rules.txt``, 4.0d round 2's
+   completeness rule); the ``EXTRACTION_PARALLEL=false`` call never reads it;
 2. 5 minutes: today's head block — ``<video>`` + the chunk's transcript +
    ``<video_memory>`` — the same bytes for every group of a chunk;
 3. the group's job (``extraction_group_job.txt``, uncached): the emit-only
@@ -20,8 +22,9 @@ on-screen text (late-bound) can sit between the tags there.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from ..llm_messages import CacheTTL, TextBlock, text_block
 from .extraction_chunks import ExtractionChunk, chunk_annotations
@@ -38,12 +41,16 @@ from .pipeline_helpers import sanitize_for_prompt
 from .prompt_builder import PROMPTS_DIR, load_prompt_text
 from .schema_fields import SchemaParseError, render_emit_only, slice_skeleton
 
+logger = logging.getLogger(__name__)
+
 JOB_TEMPLATE_PATH = PROMPTS_DIR / "extraction_group_job.txt"
+GROUP_RULES_PATH = PROMPTS_DIR / "extraction_group_rules.txt"
 
 # Block 1 lives an hour: same-domain-set runs within it read the rules + schemas.
 PREFIX_TTL: CacheTTL = "1h"
 
 _SCHEMA_TAG = "schema"
+_RULES_CLOSE = "\n</quality_rules>"
 _EXAMPLE_TAG = "extraction_example"
 # A domain whose schema text does not parse gets its keys named without a shape.
 _UNSLICED_LEAD = "Emit ONLY these keys (anything else is discarded): "
@@ -78,6 +85,25 @@ def _element(text: str, tag: str) -> str:
     if start == -1 or end < start:
         return ""
     return text[start : end + len(tag) + 3]
+
+
+def with_group_rules(prompt: ExtractionPrompt) -> ExtractionPrompt:
+    """``prompt`` whose rules end with the group calls' own — read once per run.
+
+    Where 4.0d round 2 measured the completeness rule: ``<quality_rules>``'s
+    last paragraph, after a blank line. Without exactly one
+    ``</quality_rules>`` the rule has no measured place: logged, and the
+    run keeps today's rules.
+    """
+    rules = load_prompt_text(GROUP_RULES_PATH).strip()
+    if not rules:
+        return prompt
+    system = prompt.system
+    if system.count(_RULES_CLOSE) != 1:
+        logger.warning("extraction rules have no single </quality_rules>; group rules not added")
+        return prompt
+    at = system.index(_RULES_CLOSE)
+    return replace(prompt, system=f"{system[:at]}\n\n{rules}{system[at:]}")
 
 
 def prefix_block(prompt: ExtractionPrompt) -> TextBlock:

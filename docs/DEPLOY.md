@@ -155,7 +155,7 @@ done
 sed -i 's|your-domain.example|DOMAIN|g' .env
 ```
 
-Then edit `.env` and set `ANTHROPIC_API_KEY` plus any optional provider keys. Check that `S3_BUCKET` names the bucket and `AWS_REGION` is the region the check in section a printed. Leave `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` unset, because the instance role supplies credentials.
+Then edit `.env` and set both required provider keys, `ANTHROPIC_API_KEY` and `OPENAI_API_KEY`, plus any optional one (`GEMINI_API_KEY`). The OpenAI key is required since the pipeline-1min 4.0d model picks: description analysis and the output / title / RAG-text translation default to `openai/gpt-6-luna`, the quiz to `openai/gpt-4o-mini`, and the template sets `LLM_FAST_PROVIDER=openai` (synthesis, chapter detection and the faithfulness judge on gpt-4o-mini); it also enables the Whisper audio fallback. Compose passes the key through as optional, so `dc config -q` does not catch a missing one: without it those calls fail (fast-tier calls never fall back to another provider): pipeline runs lose the description analysis, the quiz, translation, synthesis's master summary, AI chapter detection and the faithfulness judge, and vie-assistant loses its chat (the template sets `LLM_CHAT_MODEL=openai/gpt-4o-mini`) and its quiz tool (the fast tier). The OpenAI project behind the key must have access to `gpt-6-luna` and `gpt-4o-mini`. Check that `S3_BUCKET` names the bucket and `AWS_REGION` is the region the check in section a printed. Leave `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` unset, because the instance role supplies credentials.
 
 Validate and start:
 

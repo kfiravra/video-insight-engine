@@ -220,6 +220,25 @@ async def _description_chapters(ctx: PipelineContext) -> list[dict] | None:
     return [{"seconds": t.seconds, "label": t.label} for t in da.timestamps]
 
 
+def extraction_video_info(ctx: PipelineContext) -> dict[str, Any]:
+    """The video fields extraction hands the chapter chain (and, on today's path, ``extract``).
+
+    One source for both paths: today's ``run_phase_extraction`` and the split
+    path's chunk planner (``extraction_chunks``), so chapter_detect sees the same
+    video either way.
+    """
+    video = ctx.video_data
+    assert video is not None
+    return {
+        "title": video.title,
+        "channel": video.channel,
+        "duration": video.duration,
+        "chapters": getattr(video, "chapters", None),
+        # chapter_detect reads it; without the key it ran on an empty description (A9).
+        "description": video.description,
+    }
+
+
 async def _split_chapters(
     ctx: PipelineContext, video_info: dict, prompt_transcript: str
 ) -> list[Any] | None:
@@ -258,14 +277,7 @@ async def run_phase_extraction(ctx: PipelineContext) -> AsyncGenerator[str, None
     assert ctx.triage is not None
     assert ctx.video_data is not None
 
-    video_info = {
-        "title": ctx.video_data.title,
-        "channel": ctx.video_data.channel,
-        "duration": ctx.video_data.duration,
-        "chapters": getattr(ctx.video_data, "chapters", None),
-        # chapter_detect reads it; without the key it ran on an empty description (A9).
-        "description": ctx.video_data.description,
-    }
+    video_info = extraction_video_info(ctx)
 
     # Rendered once by the text branch (``[m:ss]`` markers, sponsor reads cut,
     # source-language cleaning) — the string plan and memory read.

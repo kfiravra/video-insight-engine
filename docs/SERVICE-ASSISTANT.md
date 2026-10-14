@@ -319,7 +319,7 @@ deterministically (no LLM in the routing decision).
 | Tool | Model | Description |
 |------|-------|-------------|
 | `note_taker` | None (DB only) | Save notes to MongoDB |
-| `quiz_generator` | Fast (Haiku) | Generate multiple-choice questions |
+| `quiz_generator` | Fast tier (`settings.llm_fast_model`: gpt-4o-mini with `LLM_FAST_PROVIDER=openai`, as the `.env` templates and prod set; else Haiku 4.5) | Generate multiple-choice questions |
 | `concept_explain` | Default (Sonnet) | Deep concept explanations with RAG |
 | `navigator` | None (local) | Fuzzy search through video tabs |
 | `folder_organizer` | None (vie-api calls) | Folder create/rename/move/delete, move video |

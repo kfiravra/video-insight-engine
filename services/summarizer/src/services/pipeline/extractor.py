@@ -13,6 +13,7 @@ from ...config import settings
 from ...models.domain_types import validate_domain_output_with_drops
 from ...utils.json_parsing import parse_json_response, strip_markdown_fences
 from ...utils.llm_retry import call_llm_with_retry
+from ..transcript.render import MARKER_PATTERN, marker_seconds
 from .extraction_merger import merge_batch_extractions
 from .extraction_prompt import (
     ExtractionPrompt,
@@ -20,7 +21,6 @@ from .extraction_prompt import (
     build_extraction_prompt,
     slice_visual_annotations,
 )
-from ..transcript.render import MARKER_PATTERN, marker_seconds
 from .prompt_builder import load_prompt_text
 from .triage import TriageResult
 
@@ -149,11 +149,13 @@ async def extract(
 ) -> AsyncGenerator[dict, None]:
     """Adaptive extraction yielding progress events and final result.
 
-    Strategy selection:
-    - chapters provided AND duration > 30 min: chunked extraction (batched by chapters)
-    - <5.3K words (~4K tokens): single extraction call
-    - 5.3-20K words (~4-15K tokens): single call + overflow retry if validation fails
-    - 20K+ words: overflow extraction
+    Strategy selection (``_resolve_strategy``):
+    - chapters provided AND duration > CHUNKED_EXTRACTION_THRESHOLD: chunked extraction
+      batched by chapters; chapters that make one batch → a single call up to 5.3K
+      words, else force-split chunks (one overflow call when the split gives one part)
+    - otherwise <5.3K words (~7K tokens): single extraction call
+    - 5.3-20K words: one overflow call (larger output budget, dynamic timeout)
+    - 20K+ words: force-split chunks, else one overflow call
 
     ``video_context`` is the run's ``<video_memory>`` block; ``frame_context``
     the ≤ 12 key-frame lines; ``visual_annotations`` the ``<visual_annotations>``
@@ -386,7 +388,7 @@ async def _overflow_extraction(
 
 
 # ---------------------------------------------------------------------------
-# Chunked extraction (>30 min with chapters)
+# Chunked extraction (long videos: chapter batches or a force-split)
 # ---------------------------------------------------------------------------
 
 

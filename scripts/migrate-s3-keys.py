@@ -20,7 +20,6 @@ import argparse
 import asyncio
 import logging
 import os
-import sys
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -41,10 +40,12 @@ def _new_key(youtube_id: str) -> str:
 
 
 async def migrate(args: argparse.Namespace) -> None:
-    import aioboto3
+    from aiobotocore.session import get_session
     from motor.motor_asyncio import AsyncIOMotorClient
 
-    mongodb_uri = args.mongodb_uri or os.environ.get("MONGODB_URI", "mongodb://localhost:27017/video-insight-engine")
+    mongodb_uri = args.mongodb_uri or os.environ.get(
+        "MONGODB_URI", "mongodb://localhost:27017/video-insight-engine"
+    )
     bucket = args.s3_bucket or os.environ.get("S3_BUCKET", "vie-transcripts")
 
     client = AsyncIOMotorClient(mongodb_uri)
@@ -63,7 +64,7 @@ async def migrate(args: argparse.Namespace) -> None:
         s3_config["aws_access_key_id"] = aws_key
         s3_config["aws_secret_access_key"] = aws_secret
 
-    session = aioboto3.Session()
+    session = get_session()
 
     # Find documents with legacy keys
     cursor = collection.find(
@@ -83,9 +84,9 @@ async def migrate(args: argparse.Namespace) -> None:
     skipped = 0
     failed = 0
 
-    async with session.client("s3", **s3_config) as s3:
+    async with session.create_client("s3", **s3_config) as s3:
         for i in range(0, len(docs), args.batch_size):
-            batch = docs[i:i + args.batch_size]
+            batch = docs[i : i + args.batch_size]
 
             for doc in batch:
                 old_key = doc["rawTranscriptRef"]
@@ -102,7 +103,9 @@ async def migrate(args: argparse.Namespace) -> None:
                     except Exception as exc:
                         # Only proceed if key doesn't exist (NoSuchKey / 404).
                         # Re-raise unexpected errors (auth failures, throttling).
-                        error_code = getattr(getattr(exc, "response", None), "Error", {}).get("Code", "")
+                        error_code = getattr(getattr(exc, "response", None), "Error", {}).get(
+                            "Code", ""
+                        )
                         if error_code not in ("404", "NoSuchKey"):
                             raise
                         # Key doesn't exist, proceed with migration
@@ -143,7 +146,10 @@ async def migrate(args: argparse.Namespace) -> None:
     prefix = "[DRY RUN] " if args.dry_run else ""
     logger.info(
         "%sMigration complete. Migrated: %d, Skipped: %d, Failed: %d",
-        prefix, migrated, skipped, failed,
+        prefix,
+        migrated,
+        skipped,
+        failed,
     )
 
 

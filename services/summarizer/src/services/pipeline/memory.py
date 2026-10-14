@@ -9,8 +9,8 @@ plan's only, tldr/takeaways from synthesis as today. A partial answer is repaire
 field by field — an empty field in the returned ``MemoryResult`` means the same
 per-field fallback.
 
-Model: whatever ``LLM_EXTRACTION_MODEL`` resolves to (D5 — no setting of its own;
-prod pins Haiku 4.5, blank falls through to the primary model).
+Model: ``LLM_MEMORY_MODEL`` (Haiku 5.5, 4.0d round 2); blank follows
+``LLM_EXTRACTION_MODEL`` (D5), and a blank one of those the primary model.
 """
 
 from __future__ import annotations
@@ -42,7 +42,6 @@ PROMPT_PATH = Path(__file__).parent.parent.parent / "prompts" / "memory.txt"
 
 MEMORY_FEATURE = "summarize:memory"
 MEMORY_STAGE = "memory"
-MEMORY_MODEL_STAGE = "extraction"
 MEMORY_MAX_TOKENS = 1200
 MEMORY_TIMEOUT_S = 25.0
 # One attempt: memory runs alongside the plan inside the phase-2 group, and a
@@ -50,6 +49,8 @@ MEMORY_TIMEOUT_S = 25.0
 # cross-provider fallback landed. Every reader has a fallback for a missing
 # memory; a dropped connection is still resent once by call_llm_with_retry.
 MEMORY_MAX_RETRIES = 0
+# Haiku 5.5 rejects sampling params (dropped by ``llm_model_rules``): this
+# applies only on Haiku 4.5, the refusal fallback / rollback model.
 MEMORY_TEMPERATURE = 0.0
 
 MIN_SECTION_SECONDS = 60
@@ -306,7 +307,7 @@ async def _run_memory(llm_service: LLMService, request: MemoryInput) -> MemoryRe
         stage_name=MEMORY_STAGE,
         json_mode=True,
         temperature=MEMORY_TEMPERATURE,
-        model_override=settings.get_stage_model(MEMORY_MODEL_STAGE),
+        model_override=settings.get_stage_model(MEMORY_STAGE),
     )
     if not raw:
         logger.warning("Memory LLM call failed after retries; falling back")

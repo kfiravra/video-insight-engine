@@ -40,6 +40,12 @@ class UsageRecord(BaseModel):
     cache_savings_usd: float = 0.0
     litellm_version: str = ""
     error_message: str | None = None
+    # A call the model declined (HTTP 200, see ``llm_common.refusal``), and the
+    # call that answered for a refused model on its previous model (the refused
+    # model's id). Additive: rows written before them read as no refusal.
+    refusal: bool = False
+    refusal_category: str | None = None
+    fallback_from: str | None = None
 
 
 # Per-model input pricing (USD per 1M tokens) for the cache-savings estimate.
@@ -50,6 +56,11 @@ _CACHE_RATES_USD_PER_M: dict[str, dict[str, float]] = {
     "anthropic/claude-sonnet-4-5": {"input": 3.00, "cache_read": 0.30},
     "anthropic/claude-haiku-4-5-20251001": {"input": 1.00, "cache_read": 0.10},
     "anthropic/claude-haiku-4-5": {"input": 1.00, "cache_read": 0.10},
+    # The pipeline-1min 4.0 models at their docs prices (Haiku 5.5: the ≤ 100K
+    # prompt tier, where every pipeline call sits — 4.0d).
+    "anthropic/claude-sonnet-5-5": {"input": 2.00, "cache_read": 0.20},
+    "anthropic/claude-haiku-5-5": {"input": 0.10, "cache_read": 0.01},
+    "openai/gpt-6-luna": {"input": 0.10, "cache_read": 0.01},
 }
 
 

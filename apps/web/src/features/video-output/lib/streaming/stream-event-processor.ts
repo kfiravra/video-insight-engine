@@ -18,7 +18,7 @@ import { upsertStreamTab, withdrawUnlisted } from "@/features/video-output/lib/s
 import type { StreamTab } from "@/features/video-output/lib/streaming/stream-tabs";
 import { validateTabProps } from "@/features/video-output/lib/tab-prop-schemas";
 import type { StreamState, FrameInfo, StreamPhase, StreamPhaseDetail } from "@/features/video-output/hooks/use-summary-stream";
-import type { ContentTag, TabDefinition, VIEResponseMeta, EnrichmentData, QuizQuestion, Flashcard, CodeCheatSheetItem, ScenarioItem, Modifier, SynthesisResult } from "@vie/types";
+import type { ContentTag, TabDefinition, VIEResponseMeta, EnrichmentData, QuizQuestion, Modifier, SynthesisResult } from "@vie/types";
 import { filledSynthesisFields } from "@vie/types";
 
 type SetState = Dispatch<SetStateAction<StreamState>>;
@@ -148,21 +148,6 @@ function handleEnrichmentComplete(event: Record<string, unknown>, setState: SetS
   if (Array.isArray(event.quiz)) {
     enrichment.quiz = event.quiz.filter(
       (q): q is QuizQuestion => !!q && typeof q === 'object' && 'question' in q && Array.isArray((q as Record<string, unknown>).options)
-    );
-  }
-  if (Array.isArray(event.flashcards)) {
-    enrichment.flashcards = event.flashcards.filter(
-      (f): f is Flashcard => !!f && typeof f === 'object' && 'front' in f && 'back' in f
-    );
-  }
-  if (Array.isArray(event.cheatSheet)) {
-    enrichment.cheatSheet = event.cheatSheet.filter(
-      (c): c is CodeCheatSheetItem => !!c && typeof c === 'object' && 'title' in c
-    );
-  }
-  if (Array.isArray(event.scenarios)) {
-    enrichment.scenarios = event.scenarios.filter(
-      (s): s is ScenarioItem => !!s && typeof s === 'object' && 'scenario' in s
     );
   }
   setState((prev) => ({ ...prev, enrichment }));

@@ -188,6 +188,10 @@ async def _run(response: str | None) -> tuple[PlanResult, AsyncMock]:
 
 @pytest.mark.usefixtures("disk_prompts")
 class TestRunPlan:
+    async def test_should_ask_for_medium_effort_when_the_plan_is_called(self) -> None:
+        _, mock_call = await _run(None)
+        assert mock_call.await_args.kwargs["effort"] == "medium"
+
     async def test_should_return_briefs_evidence_and_terms_when_plan_is_valid(self) -> None:
         result, _ = await _run(json.dumps(_GOOD_PLAN))
 
