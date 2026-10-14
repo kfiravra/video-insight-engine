@@ -119,6 +119,25 @@ class TestCompletenessVariant:
         point = insertion_point(_static_request(rules))
         assert (point["char_offset"], point["inserted_utf8_bytes"]) == (21, 127)
 
+    def test_should_match_the_pipelines_group_rules_byte_for_byte(self) -> None:
+        """The 4.0 picks ship the measured configuration: the split path's block 1
+        (``with_group_rules``) is the variant applied to round 1's block 1."""
+        from src.services.pipeline.extraction_group_prompt import prefix_block, with_group_rules
+        from src.services.pipeline.extraction_prompt import (
+            ExtractionPromptInput,
+            build_extraction_prompt,
+        )
+
+        prompt = build_extraction_prompt(
+            ExtractionPromptInput(["food"], [], "- one\n- two", title="T", tabs=[])
+        )
+        measured = add_completeness_rule(
+            {"model": HAIKU_45, "messages": [{"role": "user", "content": [prefix_block(prompt)]}]}
+        )
+        shipped = prefix_block(with_group_rules(prompt))
+
+        assert shipped["text"] == measured["messages"][0]["content"][0]["text"]
+
     def test_should_return_the_same_request_when_the_arm_has_no_variant(self) -> None:
         request = _static_request("x")
         assert apply_variant(request, None) is request

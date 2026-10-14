@@ -90,10 +90,15 @@ class Settings(BaseSettings):
     # wall time; Haiku 5.5 mislabelled cooking frames as talking heads, which
     # drops them from the selection.
     LLM_VISION_MODEL: str | None = "anthropic/claude-sonnet-5-5"
-    # Every extraction call and the memory stage (pipeline-1min D5): Haiku 4.5
-    # — Haiku 5.5 lost real recipe steps beyond its own noise (4.0d). Pinned so
-    # neither follows the primary model (the plan's, Sonnet 5.5).
-    LLM_EXTRACTION_MODEL: str | None = "anthropic/claude-haiku-4-5-20251001"
+    # Every extraction call: Sonnet 5.5 at effort low, its group calls with the
+    # completeness rule (4.0d round 2: the fewest missed transcript-supported
+    # items and the least invented detail — Haiku 4.5 invented steps,
+    # quantities and code snippets). Pinned so it never follows the primary.
+    LLM_EXTRACTION_MODEL: str | None = "anthropic/claude-sonnet-5-5"
+    # The memory call: Haiku 5.5 — its own setting, so memory stays off
+    # Sonnet's price when extraction moves (4.0d round 2). Blank follows
+    # LLM_EXTRACTION_MODEL (D5's coupling, ``_STAGE_FALLBACK``).
+    LLM_MEMORY_MODEL: str | None = "anthropic/claude-haiku-5-5"
 
     # Provider API Keys (set for providers you use)
     ANTHROPIC_API_KEY: str | None = None
@@ -421,6 +426,7 @@ class Settings(BaseSettings):
         "synthesis": "LLM_SYNTHESIS_MODEL",
         "enrichment": "LLM_ENRICHMENT_MODEL",
         "extraction": "LLM_EXTRACTION_MODEL",
+        "memory": "LLM_MEMORY_MODEL",
         # The stage names the translation calls send (pipeline/translation_flat.py:
         # the output's source-language pass, and translate_text for the title).
         "translation_full": "LLM_TRANSLATION_MODEL",
@@ -430,10 +436,17 @@ class Settings(BaseSettings):
         "vision": "LLM_VISION_MODEL",
     }
 
+    # A stage whose blank setting follows another stage's model.
+    _STAGE_FALLBACK: ClassVar[dict[str, str]] = {"memory": "extraction"}
+
     def get_stage_model(self, stage_name: str) -> str | None:
         """Return the per-stage model override or None to use fast/primary."""
         attr = self._STAGE_TO_SETTING.get(stage_name)
-        return getattr(self, attr, None) if attr else None
+        model = getattr(self, attr, None) if attr else None
+        fallback = self._STAGE_FALLBACK.get(stage_name)
+        if not model and fallback:
+            return self.get_stage_model(fallback)
+        return model
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 

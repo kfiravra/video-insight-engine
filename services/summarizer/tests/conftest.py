@@ -18,6 +18,7 @@ _STAGE_OVERRIDE_ATTRS = (
     "LLM_SYNTHESIS_MODEL",
     "LLM_ENRICHMENT_MODEL",
     "LLM_EXTRACTION_MODEL",
+    "LLM_MEMORY_MODEL",
     "LLM_TRANSLATION_MODEL",
     "LLM_VISION_MODEL",
 )
@@ -28,7 +29,7 @@ def _disable_stage_model_overrides(monkeypatch):
     """Force every per-stage LLM override to None for the duration of the test.
 
     `src/config.py` gives every stage but synthesis and chapter_detect a model
-    by default (the 4.0d picks: Haiku 4.5, Sonnet 5.5, gpt-6-luna, gpt-4o-mini),
+    by default (the 4.0d picks: Haiku 4.5 + 5.5, Sonnet 5.5, gpt-6-luna, gpt-4o-mini),
     and the env can set those two as well. Without this fixture, any test that
     calls a stage function with a `MagicMock` for `llm_service` (or for the
     vision provider) would have it replaced by a real one pinned to that model

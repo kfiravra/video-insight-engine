@@ -201,7 +201,8 @@ LLM_FAST_MODEL=                 # Optional: override the fast-tier model (synthe
 # Per-stage models (pipeline-1min 4.0d A/B, gates/g4-model-ab.md). config.py and both
 # compose anchors carry the same literal default, so a blank .env line keeps it.
 LLM_CLASSIFIER_MODEL=anthropic/claude-haiku-4-5-20251001   # Tier probe (D21)
-LLM_EXTRACTION_MODEL=anthropic/claude-haiku-4-5-20251001   # Extraction (groups + single call) and memory (D5)
+LLM_EXTRACTION_MODEL=anthropic/claude-sonnet-5-5           # Extraction (groups + single call), effort low
+LLM_MEMORY_MODEL=anthropic/claude-haiku-5-5                # Memory; blank = LLM_EXTRACTION_MODEL (config only)
 LLM_DESCRIPTION_MODEL=openai/gpt-6-luna                    # Description analysis (reasoning off)
 LLM_TRANSLATION_MODEL=openai/gpt-6-luna                    # Output, title and RAG transcript translation (reasoning off)
 LLM_ENRICHMENT_MODEL=openai/gpt-4o-mini                    # The quiz
@@ -686,7 +687,7 @@ A plan-first pipeline (v9): description analysis, tier probe, plan ∥ memory, t
     │   save. A tab streamed earlier but missing from tabIds was withdrawn (logged)
     └─▶ Store result to MongoDB + Redis cache (if enabled). Redis response-cache keys are
     │   namespaced by PIPELINE_VERSION (packages/shared/src/config/pipeline-version.json,
-    │   currently v9 — bumped v8→v9 by the pipeline-1min split extraction).
+    │   currently v10 — bumped v9→v10 by the pipeline-1min 4.0 model refresh).
     │   bypassCache=true submissions arrive with force_refresh (worker payload) OR the
     │   `forceRefresh` flag stamped on the videoSummaryCache version row by the api —
     │   either skips the Redis response cache; the flag is $unset on completion.

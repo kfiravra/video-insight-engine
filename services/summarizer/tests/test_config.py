@@ -32,6 +32,7 @@ _PASSED_THROUGH = (
     "LLM_DESCRIPTION_MODEL",
     "LLM_TRANSLATION_MODEL",
     "LLM_EXTRACTION_MODEL",
+    "LLM_MEMORY_MODEL",
     "TRANSCRIPT_CLEANING_ENABLED",
 )
 # Deleted settings must not linger in config.py or either compose anchor.
@@ -151,7 +152,8 @@ class TestStageModelDefaults:
             ("translation_title", "openai/gpt-6-luna"),
             ("rag_translation", "openai/gpt-6-luna"),
             ("tier_probe", "anthropic/claude-haiku-4-5-20251001"),
-            ("extraction", "anthropic/claude-haiku-4-5-20251001"),
+            ("extraction", "anthropic/claude-sonnet-5-5"),
+            ("memory", "anthropic/claude-haiku-5-5"),
         ],
     )
     def test_should_route_the_stage_to_its_picked_model_when_env_is_unset(
@@ -172,6 +174,19 @@ class TestStageModelDefaults:
         # None → synthesis and chapter_detect stay on the fast tier.
         isolated_env.delenv(setting, raising=False)
         assert Settings().get_stage_model(stage) is None
+
+    def test_should_run_memory_on_the_extraction_model_when_its_setting_is_blank(
+        self, isolated_env: pytest.MonkeyPatch
+    ) -> None:
+        isolated_env.setenv("LLM_MEMORY_MODEL", "")
+        isolated_env.setenv("LLM_EXTRACTION_MODEL", "anthropic/claude-haiku-4-5-20251001")
+        assert Settings().get_stage_model("memory") == "anthropic/claude-haiku-4-5-20251001"
+
+    def test_should_run_memory_on_its_own_model_when_both_are_set(
+        self, isolated_env: pytest.MonkeyPatch
+    ) -> None:
+        isolated_env.setenv("LLM_MEMORY_MODEL", "anthropic/claude-haiku-4-5-20251001")
+        assert Settings().get_stage_model("memory") == "anthropic/claude-haiku-4-5-20251001"
 
     def test_should_keep_the_fast_tier_model_when_env_is_unset(
         self, isolated_env: pytest.MonkeyPatch

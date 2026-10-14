@@ -319,7 +319,8 @@ ADMIN_API_KEY=change-this-admin-key
 | `LLM_MODEL` | blank | Primary-model override (the plan; vie-assistant reads it too); blank = `LLM_PROVIDER`'s default model |
 | `LLM_FAST_MODEL` | blank | Fast-tier override; blank = the fast provider's fast model |
 | `LLM_TIMEOUT_SECONDS` | `60.0` | Per-call timeout for calls that set none themselves |
-| `LLM_EXTRACTION_MODEL` | `anthropic/claude-haiku-4-5-20251001` | Every extraction call (field groups, batches) and the memory call (D5) |
+| `LLM_EXTRACTION_MODEL` | `anthropic/claude-sonnet-5-5` | Every extraction call (field groups, batches), at effort low; the group calls end their rules with the completeness rule (`extraction_group_rules.txt`) |
+| `LLM_MEMORY_MODEL` | `anthropic/claude-haiku-5-5` | The memory call; blank = `LLM_EXTRACTION_MODEL` (config only — under compose a blank line keeps Haiku 5.5). Rollback: `anthropic/claude-haiku-4-5-20251001` |
 | `LLM_ENRICHMENT_MODEL` | `openai/gpt-4o-mini` | The quiz call |
 | `LLM_DESCRIPTION_MODEL` | `openai/gpt-6-luna` | Description analysis |
 | `LLM_SYNTHESIS_MODEL` | blank | Synthesis (master summary, SEO description); blank = the fast tier |

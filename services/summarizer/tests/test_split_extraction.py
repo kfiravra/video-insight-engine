@@ -243,7 +243,8 @@ class TestPlanDoneFiring:
         assert _events(events, "error")[0]["code"] == "LLM_ERROR"
 
     async def test_should_read_the_group_job_template_once_per_run(self) -> None:
-        """A registry miss must not cost every group call a fetch (R40 B1)."""
+        """A registry miss must not cost every group call a fetch (R40 B1): the job
+        template and the group rules, one read each."""
         ctx = _done(_ctx(["food"], _FOOD_TABS))
         reads = MagicMock(wraps=extraction_group_prompt.load_prompt_text)
         llm = AsyncMock(return_value="{}")
@@ -254,7 +255,17 @@ class TestPlanDoneFiring:
         ):
             _ = [event async for event in run_phase_split_extraction(ctx)]
 
-        assert (llm.await_count, reads.call_count) == (3, 1)
+        assert (llm.await_count, reads.call_count) == (3, 2)
+
+    async def test_should_send_the_completeness_rule_in_every_group_calls_rules(self) -> None:
+        ctx = _done(_ctx(["food"], _FOOD_TABS))
+        llm = AsyncMock(return_value="{}")
+
+        with patch.object(extraction_groups, "call_llm_with_retry", llm):
+            _ = [event async for event in run_phase_split_extraction(ctx)]
+
+        firsts = [call.args[1][0]["text"] for call in llm.await_args_list]
+        assert [("Completeness: emit every distinct step" in t) for t in firsts] == [True] * 3
 
     async def test_should_record_the_extraction_step_in_the_timing(
         self, recorder: PipelineTimingRecorder

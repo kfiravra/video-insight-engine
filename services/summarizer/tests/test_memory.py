@@ -419,8 +419,19 @@ class TestRunMemory:
         assert await run_memory(service, _request()) is None
         assert service.call_llm.await_count == 1
 
-    async def test_should_use_extraction_model_when_setting_pins_one(self, mock_call, monkeypatch):
+    async def test_should_use_extraction_model_when_only_it_pins_one(self, mock_call, monkeypatch):
         monkeypatch.setattr(settings, "LLM_EXTRACTION_MODEL", _HAIKU)
+        with patch.object(memory_mod, "call_llm_with_retry", mock_call):
+            await run_memory(MagicMock(), _request())
+
+        assert mock_call.await_args.kwargs["model_override"] == _HAIKU
+
+    async def test_should_use_its_own_model_when_both_settings_pin_one(
+        self, mock_call, monkeypatch
+    ):
+        """4.0d round 2: memory on Haiku 5.5 while extraction moves to Sonnet 5.5."""
+        monkeypatch.setattr(settings, "LLM_EXTRACTION_MODEL", _SONNET)
+        monkeypatch.setattr(settings, "LLM_MEMORY_MODEL", _HAIKU)
         with patch.object(memory_mod, "call_llm_with_retry", mock_call):
             await run_memory(MagicMock(), _request())
 

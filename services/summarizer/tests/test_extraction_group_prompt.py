@@ -15,6 +15,7 @@ from src.services.pipeline.extraction_group_prompt import (
     emit_only,
     prefix_block,
     tabs_to_serve,
+    with_group_rules,
 )
 from src.services.pipeline.extraction_prompt import (
     ExtractionPrompt,
@@ -95,6 +96,14 @@ def _job() -> GroupJob:
 
 def _blocks(group: ExtractionGroup, chunk: ExtractionChunk | None = None) -> list:
     return build_group_messages(_prompt(), group, chunk or ExtractionChunk(0, "[0:00] hi"), _job())
+
+
+# The rule 4.0d round 2 measured (scripts/_model_ab_variants.py) — the group
+# calls' own rules since the 4.0 picks.
+_COMPLETENESS = (
+    "Completeness: emit every distinct step, item or command the transcript supports "
+    "— never merge two into one, never skip one."
+)
 
 
 def _sha(text: str) -> str:
@@ -188,6 +197,32 @@ class TestCacheLayout:
 
         with pytest.raises(ValueError, match="<schema>"):
             prefix_block(prompt)
+
+
+class TestGroupRules:
+    def test_should_end_the_rules_with_the_completeness_rule(self) -> None:
+        system = with_group_rules(_prompt()).system
+
+        assert f"quality rules text\n\n{_COMPLETENESS}\n</quality_rules>" in system
+
+    def test_should_change_nothing_but_the_rules(self) -> None:
+        prompt = _prompt()
+        ruled = with_group_rules(prompt)
+
+        assert (ruled.head, ruled.tail) == (prompt.head, prompt.tail)
+
+    def test_should_keep_the_completeness_rule_out_of_the_single_call(self) -> None:
+        assert "Completeness:" not in _prompt().system
+
+    def test_should_keep_todays_rules_when_the_group_rules_are_empty(self) -> None:
+        prompt = _prompt()
+        with patch.object(extraction_group_prompt, "load_prompt_text", return_value="\n"):
+            assert with_group_rules(prompt) == prompt
+
+    def test_should_keep_todays_rules_without_a_single_closing_tag(self) -> None:
+        prompt = ExtractionPrompt(system="rules", head="<video>", tail="<schema>s</schema>")
+
+        assert with_group_rules(prompt) == prompt
 
 
 class TestJobBlock:

@@ -36,8 +36,10 @@ from tests.replay.driver import run_replay
 
 from llm_common.context import llm_feature_var
 from src.services.pipeline import extraction_groups, plan
+from src.services.pipeline.extraction_prompt import ExtractionPrompt
 from src.services.pipeline.field_groups import ExtractionGroup
 from src.services.pipeline.field_requests import FieldRequest
+from src.services.pipeline.phases import split_extraction
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +57,7 @@ TODAY_SETTINGS: dict[str, Any] = {
     "LLM_FAST_MODEL": GPT_4O_MINI,
     "LLM_CLASSIFIER_MODEL": HAIKU_45,
     "LLM_EXTRACTION_MODEL": HAIKU_45,
+    "LLM_MEMORY_MODEL": HAIKU_45,
     "LLM_VISION_MODEL": SONNET_46,
     "LLM_ENRICHMENT_MODEL": GPT_4O_MINI,
     "LLM_DESCRIPTION_MODEL": None,
@@ -207,11 +210,17 @@ def _to_request(recorder: _Recorder, row: dict[str, Any]) -> AbRequest | None:
     )
 
 
+def _todays_rules(prompt: ExtractionPrompt) -> ExtractionPrompt:
+    """Round 1's TODAY rules: the group rules (4.0 picks) are the completeness variant."""
+    return prompt
+
+
 async def _capture_video(video_id: str) -> list[AbRequest]:
     cassette = load_cassette(video_id)
     recorder = _Recorder(video_id, cassette.video.duration)
     with ExitStack() as stack:
         _recording_patches(recorder, stack)
+        stack.enter_context(patch.object(split_extraction, "with_group_rules", _todays_rules))
         await run_replay(cassette, speed=0.0, settings_overrides=_CAPTURE_OVERRIDES)
     requests = [_to_request(recorder, row) for row in recorder.rows]
     return [request for request in requests if request is not None]

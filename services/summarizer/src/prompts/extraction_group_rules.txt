@@ -1,0 +1,1 @@
+Completeness: emit every distinct step, item or command the transcript supports — never merge two into one, never skip one.
