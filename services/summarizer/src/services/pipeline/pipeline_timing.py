@@ -307,11 +307,6 @@ def record_llm_call(
         usage = getattr(response, "usage", None)
         choices = getattr(response, "choices", None) or [None]
         response_model = getattr(response, "model", None)
-        refusal = (
-            {_REFUSED: refused_model, "refusalCategory": refusal_category}
-            if refused_model is not None
-            else {}
-        )
         recorder.llm_calls.append(
             {
                 "feature": llm_feature_var.get(),
@@ -328,11 +323,18 @@ def record_llm_call(
                 "fallbackUsed": fallback_used or is_fallback_response(model, response_model),
                 "finishReason": getattr(choices[0], "finish_reason", None),
                 "ttftMs": ttft_ms,
-                **refusal,
+                **_refusal_fields(refused_model, refusal_category),
             }
         )
     except Exception as exc:  # noqa: BLE001 — timing must never break a call
         logger.debug("Timing LLM record skipped (span=%s): %s", span, exc)
+
+
+def _refusal_fields(refused_model: str | None, category: str | None) -> dict[str, str | None]:
+    """An answer to a refused call: the model that refused and its category."""
+    if refused_model is None:
+        return {}
+    return {_REFUSED: refused_model, "refusalCategory": category}
 
 
 def span_output_tokens(span: str) -> int:

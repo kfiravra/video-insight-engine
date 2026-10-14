@@ -7,45 +7,14 @@ from typing import ClassVar, Literal
 from pydantic import Field
 from pydantic_settings import BaseSettings
 
+# ``name as name`` = explicit re-export: MODEL_MAP / PREVIOUS_MODEL live in
+# ``model_map`` and are still imported from here.
+from src.model_map import MODEL_MAP as MODEL_MAP
+from src.model_map import PREVIOUS_MODEL as PREVIOUS_MODEL
+from src.model_map import get_model as get_model
 from src.shared_config.pipeline_version import get_pipeline_version
 
 _DEFAULT_INTERNAL_SECRET = "dev-internal-secret-change-me"
-
-
-# Model mapping for each provider
-MODEL_MAP = {
-    "anthropic": {
-        # The primary model — the plan, at effort medium (4.0d A/B: p50 11.3 vs
-        # 23.6 s, tab choice within noise); every other stage is pinned per stage.
-        "default": "anthropic/claude-sonnet-5-5",
-        "fast": "anthropic/claude-haiku-4-5-20251001",
-    },
-    "openai": {
-        "default": "openai/gpt-4o",
-        "fast": "openai/gpt-4o-mini",
-    },
-    "gemini": {
-        "default": "gemini/gemini-2.5-flash",
-        "fast": "gemini/gemini-2.5-flash-lite",
-    },
-}
-
-
-def get_model(provider: str = "anthropic", tier: str = "default") -> str:
-    """Get model name for provider and tier."""
-    provider_models = MODEL_MAP.get(provider, MODEL_MAP["anthropic"])
-    return provider_models.get(tier, provider_models["default"])
-
-
-# The model a refusal falls back to (pipeline-1min 4.0b): an answer a model
-# declines (stop_reason "refusal") is asked for once more, in the same call, on
-# the model it replaced — same provider, never chained. A model missing here
-# has no refusal fallback. Haiku 4.5 and Sonnet 4.6 stay configured for this.
-PREVIOUS_MODEL: dict[str, str] = {
-    "anthropic/claude-haiku-5-5": "anthropic/claude-haiku-4-5-20251001",
-    "anthropic/claude-sonnet-5-5": "anthropic/claude-sonnet-4-6",
-    "openai/gpt-6-luna": "openai/gpt-4o-mini",
-}
 
 
 class Settings(BaseSettings):
@@ -67,7 +36,8 @@ class Settings(BaseSettings):
     LLM_MODEL: str | None = None  # Override default model (e.g., "anthropic/claude-sonnet-4-6")
     LLM_FAST_MODEL: str | None = None  # Override fast model
 
-    # Per-stage model overrides (None → the fast tier; extraction + memory → primary).
+    # Per-stage model overrides (None → the fast tier; extraction, memory and
+    # vision → the primary; memory blank → extraction first).
     # Defaults from the pipeline-1min 4.0d model A/B (gates/g4-model-ab.md;
     # rule: quality first, then latency, then cost). Both composes pass each
     # pinned one through with the same literal default, so a blank .env line

@@ -33,6 +33,7 @@ from src.config import PREVIOUS_MODEL, settings
 from src.services.llm_call import (
     ModelAnswer,
     ProviderCall,
+    base_request,
     is_fallback_attempt,
     model_parameters,
     note_refused_resend,
@@ -55,11 +56,6 @@ from src.services.llm_telemetry import record_generation, stopwatch_ms_since
 from src.services.pipeline.pipeline_timing import record_llm_call, record_llm_failure
 
 logger = logging.getLogger(__name__)
-
-# LiteLLM num_retries is disabled because retries are handled by
-# call_llm_with_retry(), which adds structured logging, per-stage timeouts,
-# retry-after-aware backoff and the cross-provider fallback.
-_LITELLM_NUM_RETRIES = 0
 
 
 class LLMProvider:
@@ -401,18 +397,11 @@ class LLMProvider:
             Timeout: Request timed out
             APIError: General API error
         """
-        kwargs: dict[str, Any] = {
-            "model": self._fast_model,
-            "messages": build_prompt_messages(prompt, system_prompt=system_prompt),
-            "max_tokens": max_tokens,
-            "timeout": timeout,
-            "num_retries": _LITELLM_NUM_RETRIES,
-        }
-        if json_mode:
-            kwargs["response_format"] = {"type": "json_object"}
+        messages = build_prompt_messages(prompt, system_prompt=system_prompt)
+        request = base_request(self._fast_model, messages, max_tokens, timeout, json_mode)
         return await self._run_completion(
             ProviderCall(
-                request=kwargs,
+                request=request,
                 temperature=temperature,
                 effort=effort,
                 span_name=span_name,
@@ -454,21 +443,14 @@ class LLMProvider:
             on_first_chunk: Stream the reply, calling this at its first chunk.
             effort: Effort for a model that takes one (``llm_model_rules``).
         """
-        effective_model = self._fast_model if use_fast_model else self._model
-        kwargs: dict[str, Any] = {
-            "model": effective_model,
-            "messages": to_message_dicts(messages),
-            "max_tokens": max_tokens,
-            "timeout": timeout if timeout is not None else self._timeout,
-            "num_retries": _LITELLM_NUM_RETRIES,
-        }
-        if json_mode:
-            kwargs["response_format"] = {"type": "json_object"}
-        if metadata:
-            kwargs["metadata"] = metadata
+        model = self._fast_model if use_fast_model else self._model
+        call_timeout = timeout if timeout is not None else self._timeout
+        request = base_request(
+            model, to_message_dicts(messages), max_tokens, call_timeout, json_mode, metadata
+        )
         return await self._run_completion(
             ProviderCall(
-                request=kwargs,
+                request=request,
                 temperature=temperature,
                 effort=effort,
                 span_name=span_name,

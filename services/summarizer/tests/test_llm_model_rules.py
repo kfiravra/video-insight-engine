@@ -8,6 +8,7 @@ are checked in ``test_llm_wire_body.py``.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -130,6 +131,15 @@ class TestSampling:
 
     def test_should_keep_temperature_one_when_the_model_rejects_other_values(self) -> None:
         assert _added(SONNET_55, temperature=1.0)["temperature"] == 1.0
+
+    def test_should_not_warn_when_memorys_temperature_is_dropped_for_haiku_5_5(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # Memory sends temperature 0 to Haiku 5.5 on every run, by design (4.0d).
+        with caplog.at_level(logging.WARNING, logger=rules.__name__):
+            request_for_model(_request(HAIKU_55), temperature=0.0, effort="low")
+
+        assert caplog.records == []
 
 
 class TestMessages:

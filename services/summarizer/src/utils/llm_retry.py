@@ -413,37 +413,21 @@ async def call_llm_with_retry(
 ) -> str | None:
     """Call LLM with timeout, retry and cross-provider fallback. Returns raw string or None.
 
+    ``prompt``, ``max_tokens``, ``json_mode``, ``temperature``, ``system_prompt``,
+    ``on_first_chunk`` and ``effort`` are ``LLMService.call_llm``'s, sent on every attempt.
+
     Args:
         llm_service: LLMService instance with call_llm / call_llm_fast methods.
-        prompt: The prompt to send — a string, or content blocks where one
-            block ends an Anthropic cached prefix (``llm_messages.text_block``).
-        max_tokens: Maximum tokens in response.
         timeout: Per-attempt timeout in seconds.
-        max_retries: Retry budget (0 = single attempt). With a fallback the
-            schedule is P P F … — see ``_attempt_models``.
-        stage_name: Name for logging (e.g., "triage", "extraction").
+        max_retries: Retry budget (0 = one attempt); with a fallback P P F … (``_attempt_models``).
+        stage_name: Name for logging and the span (e.g., "triage", "extraction").
         use_fast_model: When True, route to the fast model (never falls back).
-        propagate_rate_limit: When True, re-raise the last
-            ``RateLimitError`` / ``ServiceUnavailableError`` once every attempt
-            failed instead of returning ``None``. Used by the parallel batch
-            extractor to route rate-limited batches into its sequential path.
-            A call that ended on a refusal never raises it (``raise_for_caller``).
-        model_override: When non-None, wrap ``llm_service`` with a one-off
-            provider pinned to this model (stages pass
-            ``settings.get_stage_model(stage_name)``).
-        temperature: Sampling temperature forwarded on every attempt (also on
-            the ``model_override`` and fallback paths); ``None`` sends none.
-        system_prompt: System text; it never carries a cache breakpoint (a
-            caller that wants one marks a user block, ``llm_messages.text_block``).
-        on_first_chunk: Stream every attempt, calling this at its first chunk.
-        effort: Effort for a model that takes one (``llm_model_rules``; default low).
+        propagate_rate_limit: Re-raise the last ``RateLimitError`` / ``ServiceUnavailableError``
+            once every attempt failed (the parallel batch extractor); never after a refusal.
+        model_override: A one-off provider pinned to this model (``settings.get_stage_model``).
         propagate_refusal: Raise the ``LLMRefusalError`` that ended the call instead of None.
-
-    Returns:
-        Raw LLM response string, or None if all attempts failed.
     """
-    if model_override:
-        llm_service = _wrap_with_override(model_override)
+    service = _wrap_with_override(model_override) if model_override else llm_service
     request = _Request(
         prompt=prompt,
         stage_name=stage_name,
@@ -457,14 +441,28 @@ async def call_llm_with_retry(
         on_first_chunk=on_first_chunk,
         effort=effort,
     )
-    attempts = _plan_attempts(llm_service, use_fast_model, max_retries)
+    attempts = _plan_attempts(service, use_fast_model, max_retries)
+    return await _answer(attempts, request, propagate_rate_limit, propagate_refusal)
+
+
+async def _answer(
+    attempts: list[_Attempt],
+    request: _Request,
+    propagate_rate_limit: bool,
+    propagate_refusal: bool,
+) -> str | None:
+    """The plan's first reply; else None, or what ended the call when its caller asked."""
     text, ended_by = await _run_attempts(attempts, request)
-    if text is None:
-        logger.error("[%s] All %d attempts failed", stage_name, len(attempts))
-        raise_for_caller(
-            ended_by, propagate_rate_limit=propagate_rate_limit, propagate_refusal=propagate_refusal
-        )
-    return text
+    if text is not None:
+        return text
+    if isinstance(ended_by, LLMRefusalError):
+        logger.warning("[%s] ended on a refusal (no retry)", request.stage_name)
+    else:
+        logger.error("[%s] All %d attempts failed", request.stage_name, len(attempts))
+    raise_for_caller(
+        ended_by, propagate_rate_limit=propagate_rate_limit, propagate_refusal=propagate_refusal
+    )
+    return None
 
 
 async def _run_attempts(

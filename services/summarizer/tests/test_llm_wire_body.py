@@ -13,6 +13,7 @@ from typing import Any
 
 import pytest
 
+from src.services.llm_model_rules import Effort
 from src.services.llm_provider import LLMProvider
 from tests.llm_wire import (
     THINKING,
@@ -35,6 +36,9 @@ SONNET_55 = "anthropic/claude-sonnet-5-5"
 LUNA = "openai/gpt-6-luna"
 
 _WIRE_KEYS = ("thinking", "output_config", "reasoning_effort", "temperature", "top_p", "top_k")
+# The pick shapes' projection: the guards' keys, the stream flag, and every key
+# a JSON reply could reach the wire as (a forced tool, a native output format).
+_PICK_KEYS = (*_WIRE_KEYS, "stream", "tools", "tool_choice", "output_format")
 # A 1x1 PNG, as frame vision sends its frames (data URLs).
 _PIXEL = (
     "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGBgAAAABQAB"
@@ -53,8 +57,14 @@ def _plain_answer(body: dict[str, Any]):
     return as_json(openai_message("ok"))
 
 
-def _wire(body: dict[str, Any]) -> dict[str, Any]:
-    return {key: body[key] for key in _WIRE_KEYS if key in body}
+def _streamed_or_plain_answer(body: dict[str, Any]):
+    if body.get("stream"):
+        return as_stream(anthropic_stream([text("{}")]))
+    return as_json(anthropic_message([text("{}")]))
+
+
+def _wire(body: dict[str, Any], keys: tuple[str, ...] = _WIRE_KEYS) -> dict[str, Any]:
+    return {key: body[key] for key in keys if key in body}
 
 
 class TestWireBodyPerModel:
@@ -86,6 +96,47 @@ class TestWireBodyPerModel:
             await LLMProvider(model=SONNET_55).complete("hi", effort="medium")
 
         assert wire.bodies[0]["output_config"] == {"effort": "medium"}
+
+
+class TestWireBodyOfThePicks:
+    """The request shapes the 4.0d picks send: plan / extraction on Sonnet 5.5 (JSON,
+    the warm-up streamed, effort low or medium), memory on Haiku 5.5 (JSON, temperature 0)."""
+
+    @pytest.mark.parametrize("effort", ["low", "medium"])
+    async def test_should_send_sonnet_5_5_thinking_off_and_the_effort_when_json_is_streamed(
+        self, effort: Effort
+    ) -> None:
+        with offline_http(_streamed_or_plain_answer) as wire:
+            await LLMProvider(model=SONNET_55).complete(
+                "hi", json_mode=True, on_first_chunk=lambda: None, effort=effort
+            )
+
+        assert _wire(wire.bodies[0], _PICK_KEYS) == {
+            "thinking": {"type": "between_tools"},
+            "output_config": {"effort": effort},
+            "stream": True,
+        }
+
+    @pytest.mark.parametrize("effort", ["low", "medium"])
+    async def test_should_send_sonnet_5_5_no_stream_flag_when_json_is_not_streamed(
+        self, effort: Effort
+    ) -> None:
+        with offline_http(_streamed_or_plain_answer) as wire:
+            await LLMProvider(model=SONNET_55).complete("hi", json_mode=True, effort=effort)
+
+        assert _wire(wire.bodies[0], _PICK_KEYS) == {
+            "thinking": {"type": "between_tools"},
+            "output_config": {"effort": effort},
+        }
+
+    async def test_should_drop_the_temperature_when_memory_sends_json_to_haiku_5_5(self) -> None:
+        with offline_http(_streamed_or_plain_answer) as wire:
+            await LLMProvider(model=HAIKU_55).complete("hi", json_mode=True, temperature=0.0)
+
+        assert _wire(wire.bodies[0], _PICK_KEYS) == {
+            "thinking": {"type": "disabled"},
+            "output_config": {"effort": "low"},
+        }
 
 
 class TestAnswerTextByBlockType:

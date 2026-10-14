@@ -74,6 +74,35 @@ class ProviderCall:
         return self.span_name or self.context or "unknown"
 
 
+# LiteLLM num_retries is disabled because retries are handled by
+# call_llm_with_retry(), which adds structured logging, per-stage timeouts,
+# retry-after-aware backoff and the cross-provider fallback.
+_LITELLM_NUM_RETRIES = 0
+
+
+def base_request(
+    model: str,
+    messages: list[dict[str, Any]],
+    max_tokens: int,
+    timeout: float,
+    json_mode: bool,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """The model-agnostic kwargs of one completion (``ProviderCall.request``)."""
+    kwargs: dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+        "max_tokens": max_tokens,
+        "timeout": timeout,
+        "num_retries": _LITELLM_NUM_RETRIES,
+    }
+    if json_mode:
+        kwargs["response_format"] = {"type": "json_object"}
+    if metadata:
+        kwargs["metadata"] = metadata
+    return kwargs
+
+
 @dataclass(frozen=True)
 class ModelAnswer:
     """One model's response to a ``ProviderCall`` and how long it took."""
@@ -117,6 +146,8 @@ class _Resend:
 
 @dataclass
 class _Deadline:
+    # The deadline this one runs inside (a stage's total cap around a retried call).
+    parent: _Deadline | None = None
     resend: _Resend | None = None
 
 
@@ -126,10 +157,12 @@ _deadline_var: ContextVar[_Deadline | None] = ContextVar("llm_call_deadline", de
 def note_refused_resend(
     call: ProviderCall, refused_model: str, category: str | None, previous_model: str
 ) -> None:
-    """Tell the call's deadline (when one bounds it) that the refusal's re-send is going out."""
+    """Tell every deadline bounding the call that the refusal's re-send is going out."""
+    resend = _Resend(call, refused_model, category, previous_model, time.monotonic())
     deadline = _deadline_var.get()
-    if deadline is not None:
-        deadline.resend = _Resend(call, refused_model, category, previous_model, time.monotonic())
+    while deadline is not None:
+        deadline.resend = resend
+        deadline = deadline.parent
 
 
 @asynccontextmanager
@@ -139,8 +172,11 @@ async def call_deadline(seconds: float) -> AsyncIterator[None]:
     The deadline also bounds a refused answer's re-send. Hitting it there ends
     the call as that refusal (``LLMRefusalError``), its timeout recorded under
     the previous model: a plain timeout would be retried on the refused model.
+    Nested deadlines (a stage cap around ``call_llm``'s own) all see the re-send;
+    the one that fires records it. One deadline bounds one call: after a re-send
+    nothing else is sent under it.
     """
-    deadline = _Deadline()
+    deadline = _Deadline(parent=_deadline_var.get())
     token = _deadline_var.set(deadline)
     try:
         async with asyncio.timeout(seconds):

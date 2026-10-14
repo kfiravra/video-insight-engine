@@ -239,3 +239,13 @@ class TestPreviousModel:
     @pytest.mark.parametrize(("model", "previous"), list(PREVIOUS_MODEL.items()))
     def test_should_stay_on_the_provider_and_never_chain(self, model: str, previous: str) -> None:
         assert (previous.split("/")[0], previous in PREVIOUS_MODEL) == (model.split("/")[0], False)
+
+
+class TestModelMapReExport:
+    """The model tables live in ``src.model_map``; ``src.config`` re-exports them."""
+
+    @pytest.mark.parametrize("name", ["MODEL_MAP", "get_model", "PREVIOUS_MODEL"])
+    def test_should_serve_the_model_maps_objects_when_imported_from_config(self, name: str) -> None:
+        from src import config, model_map
+
+        assert getattr(config, name) is getattr(model_map, name)

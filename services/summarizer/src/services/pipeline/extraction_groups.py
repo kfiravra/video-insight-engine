@@ -58,7 +58,8 @@ logger = logging.getLogger(__name__)
 GROUP_RELEASE_FALLBACK_S = 1.5
 GROUP_MAX_TOKENS = 16384
 # A group call's time budget follows its estimated answer (Σ outputWeight ×
-# expect) at a pace below Haiku's measured 83–91 tok/s, plus the request's
+# expect) at a pace below the extraction model's measured one (Sonnet 5.5
+# ≈ 160 tok/s in the 4.0d A/B round 2, Haiku 4.5 83–91), plus the request's
 # fixed cost; the old flat 120 s stays the floor, 300 s the ceiling.
 GROUP_TIMEOUT_FLOOR_S = 120.0
 GROUP_TIMEOUT_CAP_S = 300.0
@@ -262,7 +263,7 @@ async def _second_answer(call: GroupCall, run: SplitRun, first: _Answer) -> _Ans
 async def run_group_call(
     call: GroupCall, run: SplitRun, *, on_first_chunk: Callable[[], None] | None = None
 ) -> GroupOutcome:
-    """One group call: its own feature + span, Haiku, JSON; streamed for a warm-up call.
+    """One group call: its own feature + span, the extraction model, JSON; a warm-up streams.
 
     The answer is validated and cut to the group's own keys before it is
     reported. A lost answer (``group_failures.answer_lost``; not a JSON object;

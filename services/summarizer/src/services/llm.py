@@ -18,6 +18,11 @@ from src.services.llm_provider import LLMProvider
 logger = logging.getLogger(__name__)
 
 
+def _streamed(on_first_chunk: Callable[[], None] | None) -> dict[str, Any]:
+    """``on_first_chunk`` only when set, so every other call reaches the provider unchanged."""
+    return {"on_first_chunk": on_first_chunk} if on_first_chunk is not None else {}
+
+
 class LLMService:
     """Service for LLM-based video processing.
 
@@ -110,15 +115,14 @@ class LLMService:
             prompt: The prompt to send (string or content blocks, see ``LLMProvider.complete``)
             max_tokens: Maximum tokens in response
             timeout: Per-call timeout override (seconds). Falls back to LLM_TIMEOUT_SECONDS.
-                It bounds the whole call, a refused answer's one re-send included.
+                It bounds the whole call: a stream, a refused answer's one re-send.
             json_mode: When True, request JSON-only output from the model.
             span_name: When non-None, record the call as a Langfuse generation
                 span. Best-effort — observability failures are swallowed.
             span_metadata: Extra metadata merged into the generation span.
             temperature: Sampling temperature; ``None`` sends none (provider default).
             system_prompt: Optional system prompt (never carries a cache breakpoint).
-            on_first_chunk: Stream the reply, calling this at its first chunk;
-                ``timeout`` bounds the whole stream.
+            on_first_chunk: Stream the reply, calling this at its first chunk.
             effort: Effort for a model that takes one (``llm_model_rules``).
 
         Returns:
@@ -126,14 +130,9 @@ class LLMService:
 
         Raises:
             TimeoutError: If LLM call exceeds timeout
-            LLMRefusalError: The model refused and its one re-send got no answer
-                (``LLMProvider``), the deadline included (``call_deadline``).
+            LLMRefusalError: The model refused and its one re-send got no answer (or none in time).
         """
         effective_timeout = timeout if timeout is not None else settings.LLM_TIMEOUT_SECONDS
-        # Forwarded only when set, so every other call reaches the provider unchanged.
-        streamed: dict[str, Any] = (
-            {"on_first_chunk": on_first_chunk} if on_first_chunk is not None else {}
-        )
         async with call_deadline(effective_timeout):
             return await self._provider.complete(
                 prompt,
@@ -145,5 +144,5 @@ class LLMService:
                 temperature=temperature,
                 system_prompt=system_prompt,
                 effort=effort,
-                **streamed,
+                **_streamed(on_first_chunk),
             )

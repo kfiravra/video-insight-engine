@@ -49,6 +49,8 @@ MEMORY_TIMEOUT_S = 25.0
 # cross-provider fallback landed. Every reader has a fallback for a missing
 # memory; a dropped connection is still resent once by call_llm_with_retry.
 MEMORY_MAX_RETRIES = 0
+# Haiku 5.5 rejects sampling params (dropped by ``llm_model_rules``): this
+# applies only on Haiku 4.5, the refusal fallback / rollback model.
 MEMORY_TEMPERATURE = 0.0
 
 MIN_SECTION_SECONDS = 60

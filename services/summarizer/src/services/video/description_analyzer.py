@@ -8,7 +8,6 @@ This module extracts structured data from YouTube video descriptions:
 - Social links (creator's profiles)
 """
 
-import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
@@ -17,6 +16,8 @@ from typing import Any
 
 from src.config import settings
 from src.services.llm import LLMService
+from src.services.llm_call import call_deadline
+from src.services.llm_model_rules import LLMRefusalError
 from src.services.llm_provider import LLMProvider
 from src.services.pipeline.pipeline_timing import record_llm_failure
 from src.utils.data_helpers import parse_timestamp_to_seconds
@@ -173,12 +174,16 @@ def _parse_analysis(data: dict[str, Any]) -> DescriptionAnalysis:
 
 
 async def _request_analysis(description: str, model: str) -> str | None:
-    """The model's raw reply, or None when every attempt failed or the total cap hit."""
+    """The model's raw reply, or None when every attempt failed or the total cap hit.
+
+    The cap is refusal-aware (``call_deadline``): one that cuts a refused
+    answer's re-send ends as that refusal, recorded under the previous model.
+    """
     # .replace(), not .format(): the template carries literal JSON braces.
     prompt = load_prompt(_STAGE).replace("{description}", description)
     start = time.monotonic()
     try:
-        async with asyncio.timeout(DESCRIPTION_TOTAL_SECONDS):
+        async with call_deadline(DESCRIPTION_TOTAL_SECONDS):
             return await call_llm_with_retry(
                 LLMService(LLMProvider(model=model, fast_model=model)),
                 prompt,
@@ -191,6 +196,9 @@ async def _request_analysis(description: str, model: str) -> str | None:
                 # JSON mode keeps the reply an object whatever that text says.
                 json_mode=True,
             )
+    except LLMRefusalError as e:
+        logger.warning("Description analysis refused: %s", e)
+        return None
     except TimeoutError as e:
         # The cap cancelled an attempt mid-flight, so the provider never saw it
         # fail. Attempts stop at 25 s, so the cap always lands in the last one.

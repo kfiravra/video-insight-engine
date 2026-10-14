@@ -28,6 +28,8 @@ from typing import TYPE_CHECKING, Any
 from litellm.exceptions import Timeout as LitellmTimeout
 
 from src.config import settings
+from src.services.llm_call import call_deadline
+from src.services.llm_model_rules import LLMRefusalError
 from src.services.pipeline.pipeline_timing import record_llm_failure
 from src.services.pipeline.prompt_builder import load_prompt_text
 from src.utils.llm_retry import TRANSIENT_LLM_ERRORS, retry_after_seconds
@@ -69,6 +71,8 @@ _WALL_SECONDS_PER_1K_TOKENS = 16.2
 _MIN_CALL_TIMEOUT = 30.0
 # A provider timeout this close to the call's own timeout used the whole of it.
 _FULL_TIMEOUT_SHARE = 0.9
+# A call's deadline (``call_deadline``) is its timeout plus this safety net.
+_DEADLINE_MARGIN_SECONDS = 5.0
 _SPAN_NAME = "frame_vision"
 
 _MAX_FRAME_SIZE_BYTES = 10 * 1024 * 1024  # 10 MB safety cap
@@ -274,8 +278,8 @@ def _vision_provider(llm_provider: LLMProvider) -> LLMProvider:
 
 
 async def _send_batch(provider: LLMProvider, batch: _VisionBatch, attempt: _Attempt) -> str:
-    return await asyncio.wait_for(
-        provider.complete_with_messages(
+    async with call_deadline(attempt.timeout + _DEADLINE_MARGIN_SECONDS):
+        return await provider.complete_with_messages(
             [{"role": "user", "content": batch.content}],
             max_tokens=attempt.max_tokens,
             timeout=attempt.timeout,
@@ -288,9 +292,7 @@ async def _send_batch(provider: LLMProvider, batch: _VisionBatch, attempt: _Atte
                 "attempt": attempt.number,
                 "maxAttempts": _MAX_ATTEMPTS,
             },
-        ),
-        timeout=attempt.timeout + 5,  # outer safety net
-    )
+        )
 
 
 async def _attempt_batch(
@@ -299,14 +301,18 @@ async def _attempt_batch(
     """One call for one batch: its descriptions, or why there are none.
 
     A call that ran into its own timeout is not retried: it already had twice
-    its expected wall, and a second one would double the stage.
+    its expected wall, and a second one would double the stage. Nor is a
+    refusal: asking again would send it to the model that refused.
     """
     started = time.monotonic()
     where = f"batch {batch.number}/{batch.total}, attempt {attempt.number}/{_MAX_ATTEMPTS}"
     try:
         raw = await _send_batch(provider, batch, attempt)
+    except LLMRefusalError as e:
+        logger.warning("Vision %s refused: %s", where, e)
+        return _Failure(retryable=False)
     except asyncio.TimeoutError as e:
-        # The outer wait_for cancels the provider coroutine, so the provider
+        # The call's deadline cancels the provider coroutine, so the provider
         # never records this failure — record it here.
         record_llm_failure(
             span=_SPAN_NAME,

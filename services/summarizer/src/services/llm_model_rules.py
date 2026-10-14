@@ -11,9 +11,10 @@ keyed by the model it goes to, never by call site:
   drops ``disabled`` for Sonnet 5.5 (``thinking_always_on``), hence the table.
   An OpenAI reasoning model whose map entry supports it gets
   ``reasoning_effort="none"`` (thinking off; ``effort`` is Anthropic's knob).
-- **sampling.** ``temperature`` / ``top_p`` / ``top_k`` are dropped (with a
-  warning) for a model that rejects them, by LiteLLM's own predicates and on
-  the effort the request actually carries: an Anthropic model whose map says
+- **sampling.** ``temperature`` / ``top_p`` / ``top_k`` are dropped (logged at
+  DEBUG: memory sends Haiku 5.5 temperature 0 by design) for a model that
+  rejects them, by LiteLLM's own predicates and on the effort the request
+  actually carries: an Anthropic model whose map says
   ``supports_sampling_params: false``; a gpt-5/gpt-6 model unless its effort
   resolves to ``none`` (temperature=1 always passes, as in LiteLLM).
 - **no assistant prefill.** A request whose last message is the assistant's is
@@ -180,7 +181,7 @@ def _drop_rejected_sampling(kwargs: dict[str, Any]) -> None:
         if param in kwargs and _sampling_rejected(model, param, kwargs[param], effort)
     ]
     for param in rejected:
-        logger.warning("Dropping %s=%s: %s rejects it", param, kwargs[param], model)
+        logger.debug("Dropping %s=%s: %s rejects it", param, kwargs[param], model)
         del kwargs[param]
 
 

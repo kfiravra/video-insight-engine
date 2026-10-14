@@ -9,6 +9,7 @@ exactly as LiteLLM 1.105 surfaces it: Anthropic ``stop_reason: "refusal"`` →
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Iterator
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -203,6 +204,42 @@ class TestRefusalInTheRetryWrapper:
             raw = await call_llm_with_retry(service, "hi", max_retries=2, stage_name="plan")
 
         assert (raw, wire.models) == (None, ["claude-sonnet-5-5", "claude-sonnet-4-6"])
+
+    async def test_should_log_a_warning_not_an_error_when_the_call_ends_on_a_refusal(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        replies = {"claude-sonnet-5-5": _claude(text("no"), refuse=True)}
+        service = LLMService(LLMProvider(model=SONNET_55))
+
+        with caplog.at_level(logging.WARNING, logger=_RETRY_LOGGER):
+            with offline_http(_by_model(replies)):
+                await call_llm_with_retry(service, "hi", max_retries=2, stage_name="plan")
+
+        assert _call_endings(caplog) == [("WARNING", "[plan] ended on a refusal (no retry)")]
+
+    async def test_should_log_an_error_when_every_attempt_failed(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        service = LLMService(LLMProvider(model=SONNET_55))
+
+        with caplog.at_level(logging.WARNING, logger=_RETRY_LOGGER):
+            with offline_http(_by_model({})):
+                await call_llm_with_retry(service, "hi", max_retries=0, stage_name="plan")
+
+        assert _call_endings(caplog) == [("ERROR", "[plan] All 1 attempts failed")]
+
+
+_RETRY_LOGGER = "src.utils.llm_retry"
+
+
+def _call_endings(caplog: pytest.LogCaptureFixture) -> list[tuple[str, str]]:
+    """The retry wrapper's closing line for a call that got no answer."""
+    return [
+        (record.levelname, record.getMessage())
+        for record in caplog.records
+        if record.name == _RETRY_LOGGER
+        and ("ended on" in record.getMessage() or "attempts failed" in record.getMessage())
+    ]
 
 
 class TestRefusalTags:
