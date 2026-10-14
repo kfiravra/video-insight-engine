@@ -332,7 +332,7 @@ Per run, default path (`EXTRACTION_PARALLEL=true`). The model column names the r
 | Extraction field groups | `LLM_EXTRACTION_MODEL` = Sonnet 5.5, effort low | 1-5 text + 0-1 visual, per chunk | 120-300s, from the group's estimated output |
 | Synthesis | `LLM_SYNTHESIS_MODEL` (blank → fast tier) | 1 | 20s |
 | Quiz (enrichment) | `LLM_ENRICHMENT_MODEL` = gpt-4o-mini | 0-1 (a plan with a quiz host) | 14s per attempt, 30s total |
-| Faithfulness judge | Fast tier | 0-6 (sampled claims, background) | 20s |
+| Faithfulness judge | `LLM_JUDGE_MODEL` = gpt-6-luna (blank = the fast tier) | 0-6 (sampled claims, background) | 20s |
 | Translation | `LLM_TRANSLATION_MODEL` = gpt-6-luna | non-English only: output + title + RAG transcript batches | 90s per batch |
 | Assembly | None (code only) | 0 | instant, unless moment frame fill runs (60s + 150s budgets) |
 

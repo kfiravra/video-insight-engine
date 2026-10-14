@@ -378,7 +378,7 @@ come from the 4.0d model A/B (`dev/active/pipeline-1min/gates/g4-model-ab.md` §
 | `synthesis.txt` | synthesis | `pipeline/synthesis.py` | `LLM_SYNTHESIS_MODEL` (blank) → fast tier |
 | `enrich_quiz.txt` | the quiz | `pipeline/enrichment.py` | `LLM_ENRICHMENT_MODEL` = `openai/gpt-4o-mini` → fast tier |
 | `translate_flat.txt` | output translation + title + the RAG transcript's English | `pipeline/translation_flat.py` | `LLM_TRANSLATION_MODEL` = `openai/gpt-6-luna` → fast tier |
-| (inline `_JUDGE_PROMPT`) | faithfulness judge (background) | `pipeline/faithfulness.py` | fast tier |
+| (inline `_JUDGE_PROMPT`) | faithfulness judge (background) | `pipeline/faithfulness.py` | `LLM_JUDGE_MODEL` = `openai/gpt-6-luna` → fast tier |
 
 `prompts/detection/category_rules.json` is not an LLM prompt: the metadata category
 rules (`video/youtube.py`) behind the visual-tier fallback and the plan's category hint.

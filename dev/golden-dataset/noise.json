@@ -18,8 +18,8 @@
       0.9158
     ],
     "faithfulness": [
-      0.7511,
-      0.7645
+      0.5539,
+      0.4705
     ],
     "duplicateRate": [
       0.0793,
@@ -28,7 +28,7 @@
   },
   "baseline": {
     "quality": 0.9208,
-    "faithfulness": 0.7578,
+    "faithfulness": 0.5122,
     "duplicateRate": 0.066
   },
   "noise": {
@@ -40,11 +40,11 @@
       "sigmaMean": 0.011332
     },
     "faithfulness": {
-      "sd": 0.230778,
-      "df": 15,
-      "n": 15,
+      "sd": 0.335756,
+      "df": 13,
+      "n": 13,
       "passes": 2,
-      "sigmaMean": 0.059587
+      "sigmaMean": 0.093122
     },
     "duplicateRate": {
       "sd": 0.073761,
@@ -56,7 +56,7 @@
   },
   "runMeanSpread": {
     "quality": 0.0101,
-    "faithfulness": 0.0134,
+    "faithfulness": 0.0834,
     "duplicateRate": 0.0266
   },
   "layoutStability": 0.7532,
@@ -66,7 +66,9 @@
     "faithfulness": [
       "gaming-op17-set-verdict",
       "review-airpods-pro-2",
-      "science-crispr-intro"
+      "science-crispr-intro",
+      "tech-agentic-engineering",
+      "tech-docker-basics"
     ],
     "duplicateRate": []
   },
@@ -76,27 +78,27 @@
   "videos": {
     "fitness-7min-workout": {
       "quality": 0.962,
-      "faithfulness": 0.55,
+      "faithfulness": 0.325,
       "duplicateRate": 0.0563
     },
     "fitness-pushup-form": {
       "quality": 0.8,
-      "faithfulness": 0.55,
+      "faithfulness": 0.425,
       "duplicateRate": 0.0876
     },
     "food-knife-skills": {
       "quality": 0.846,
-      "faithfulness": 1.0,
+      "faithfulness": 0.2835,
       "duplicateRate": 0.1562
     },
     "food-recipe-story-intro": {
       "quality": 1.0,
-      "faithfulness": 1.0,
+      "faithfulness": 0.75,
       "duplicateRate": 0.0
     },
     "food-travel-montreal-vlog": {
       "quality": 0.9245,
-      "faithfulness": 0.2,
+      "faithfulness": 0.1,
       "duplicateRate": 0.2452
     },
     "gaming-op13-box-opening": {
@@ -111,7 +113,7 @@
     },
     "gaming-op17-static-camera": {
       "quality": 1.0,
-      "faithfulness": 1.0,
+      "faithfulness": 0.75,
       "duplicateRate": 0.0
     },
     "gaming-op17-unboxing": {
@@ -121,12 +123,12 @@
     },
     "learning-double-slit": {
       "quality": 0.812,
-      "faithfulness": 1.0,
+      "faithfulness": 0.8335,
       "duplicateRate": 0.0
     },
     "learning-photosynthesis": {
       "quality": 0.9,
-      "faithfulness": 1.0,
+      "faithfulness": 0.3335,
       "duplicateRate": 0.0
     },
     "review-airpods-pro-2": {
@@ -136,7 +138,7 @@
     },
     "science-black-holes": {
       "quality": 0.8625,
-      "faithfulness": 0.75,
+      "faithfulness": 0.625,
       "duplicateRate": 0.0
     },
     "science-crispr-intro": {
@@ -146,23 +148,52 @@
     },
     "tech-agentic-engineering": {
       "quality": 0.925,
-      "faithfulness": 0.8335,
+      "faithfulness": null,
       "duplicateRate": 0.0168
     },
     "tech-docker-basics": {
       "quality": 0.962,
-      "faithfulness": 0.9165,
+      "faithfulness": null,
       "duplicateRate": 0.0415
     },
     "tech-react-hooks": {
       "quality": 0.981,
-      "faithfulness": 0.8165,
+      "faithfulness": 0.7335,
       "duplicateRate": 0.0
     },
     "travel-vietnam-10day": {
       "quality": 0.937,
-      "faithfulness": 0.667,
+      "faithfulness": 0.4165,
       "duplicateRate": 0.0
+    }
+  },
+  "faithfulnessJudge": {
+    "model": "openai/gpt-6-luna",
+    "rescoredAt": "2026-10-14T17:19:18.542170+00:00",
+    "method": "offline re-score: each pass's recorded judge requests (dev Langfuse generations 'faithfulness' on the reports' traces) re-sent to gpt-6-luna through the model A/B runner; inputs Langfuse truncated at its 50K-char payload cap (the claim is lost) are not sendable \u2014 those videos are not scored",
+    "rescoredReports": [
+      "reports/judge-luna-20261014/eval-20261007-173833-r1.luna-judge.json",
+      "reports/judge-luna-20261014/eval-20261007-180350-r2.luna-judge.json"
+    ],
+    "previous": {
+      "model": "openai/gpt-4o-mini",
+      "runMeans": [
+        0.7511,
+        0.7645
+      ],
+      "baseline": 0.7578,
+      "noise": {
+        "sd": 0.230778,
+        "df": 15,
+        "n": 15,
+        "passes": 2,
+        "sigmaMean": 0.059587
+      },
+      "notScored": [
+        "gaming-op17-set-verdict",
+        "review-airpods-pro-2",
+        "science-crispr-intro"
+      ]
     }
   }
 }

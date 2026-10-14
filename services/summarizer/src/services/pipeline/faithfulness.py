@@ -1,8 +1,9 @@
 """LLM-as-Judge faithfulness check.
 
-Samples a deterministic subset of extracted items, asks a Haiku-tier LLM
-whether each claim is supported by the transcript, and logs an aggregate
-score onto the active Langfuse trace.
+Samples a deterministic subset of extracted items, asks the judge model
+(``LLM_JUDGE_MODEL``, gpt-6-luna; blank = the fast tier) whether each claim
+is supported by the transcript, and logs an aggregate score onto the active
+Langfuse trace.
 
 Design notes
 ------------
@@ -13,8 +14,8 @@ Design notes
   ``youtube_id`` so the same video always gets the same items checked.
   That keeps day-to-day variance attributable to model drift rather than
   random sampling noise.
-- **Cheap.** Haiku-tier judge, 20% sample, capped at 6 items per video.
-  Per-video cost ~$0.005.
+- **Cheap.** A small judge model, 20% sample, capped at 6 items per video.
+  Per-video cost ≈ $0.002–0.003 on gpt-6-luna (the golden set, 2026-10).
 - **Claim-localized context.** Transcripts longer than the judged-context
   budget are not head-sliced — each claim is judged against the transcript
   windows that share the most (IDF-weighted) vocabulary with it, packed
@@ -41,12 +42,14 @@ from src.services.observability import log_score
 logger = logging.getLogger(__name__)
 
 
+# The judge's stage: its model is LLM_JUDGE_MODEL (blank = the fast tier).
+JUDGE_STAGE = "faithfulness"
 _MAX_SAMPLES_PER_VIDEO = 6
 _JUDGE_TIMEOUT_SECONDS = 20.0
 # Judged-context budget passed to the judge LLM (call_llm_fast path).
 #
-# Sized for the default fast tier — Anthropic Haiku-4.5, 200K-token context;
-# 80K chars ≈ 20K tokens leaves ample room for the judge prompt + claim.
+# Sized for a 128K+-token judge (gpt-6-luna; gpt-4o-mini, the blank-setting
+# fast tier); 80K chars ≈ 20K tokens leaves ample room for the prompt + claim.
 # Transcripts within the budget pass through whole. Longer transcripts are
 # NOT head-sliced (a 3h+ video head-slice meant tail claims were judged
 # against text that could not contain them → false hallucination verdicts);
@@ -54,7 +57,7 @@ _JUDGE_TIMEOUT_SECONDS = 20.0
 # relevant to the claim being judged — see `_select_claim_context`.
 #
 # WARNING for operators: this constant is coupled to the judge model's
-# context window. If LLM_FAST_MODEL or a per-stage faithfulness override
+# context window. If LLM_JUDGE_MODEL (or, when it is blank, LLM_FAST_MODEL)
 # routes the judge through a smaller-context model (e.g. an 8K-context
 # legacy model), this budget will overflow the model's prompt limit and
 # every judge call will error out. The diagnostic log in
@@ -424,9 +427,10 @@ async def _judge_one(llm_service: LLMService, context: str, claim: str) -> bool 
             max_tokens=256,
             timeout=_JUDGE_TIMEOUT_SECONDS,
             max_retries=1,
-            stage_name="faithfulness",
+            stage_name=JUDGE_STAGE,
             use_fast_model=True,
             json_mode=True,
+            model_override=settings.get_stage_model(JUDGE_STAGE),
         )
     except Exception as exc:  # noqa: BLE001 — judge errors must not crash pipeline
         logger.debug("Faithfulness judge call failed: %s", exc)

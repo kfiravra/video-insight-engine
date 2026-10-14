@@ -198,13 +198,14 @@ LLM_PROVIDER=anthropic          # anthropic, openai, or gemini
 LLM_FAST_PROVIDER=              # Optional: separate provider for the fast tier (prod + .env.example: openai → gpt-4o-mini; blank → Haiku 4.5)
 LLM_FALLBACK_PROVIDER=          # Optional: cross-provider fallback after one same-provider retry (primary-model calls; openai → gpt-4o)
 LLM_MODEL=                      # Optional: override the primary model (blank = MODEL_MAP default, anthropic/claude-sonnet-5-5 — in this service only the plan + /health read it; vie-assistant reads it too)
-LLM_FAST_MODEL=                 # Optional: override the fast-tier model (synthesis, faithfulness judge, chapter detect, blank stage settings; vie-assistant's quiz tool too)
+LLM_FAST_MODEL=                 # Optional: override the fast-tier model (synthesis, chapter detect, blank stage settings; vie-assistant's quiz tool too)
 
 # Per-stage models (pipeline-1min 4.0d A/B, gates/g4-model-ab.md). config.py and both
 # compose anchors carry the same literal default, so a blank .env line keeps it.
 LLM_CLASSIFIER_MODEL=anthropic/claude-haiku-4-5-20251001   # Tier probe (D21)
 LLM_EXTRACTION_MODEL=anthropic/claude-sonnet-5-5           # Extraction (groups + single call), effort low
 LLM_MEMORY_MODEL=anthropic/claude-haiku-5-5                # Memory; blank = LLM_EXTRACTION_MODEL (config only)
+LLM_JUDGE_MODEL=openai/gpt-6-luna                          # Faithfulness judge (reasoning off); blank = the fast tier (config only)
 LLM_DESCRIPTION_MODEL=openai/gpt-6-luna                    # Description analysis (reasoning off)
 LLM_TRANSLATION_MODEL=openai/gpt-6-luna                    # Output, title and RAG transcript translation (reasoning off)
 LLM_ENRICHMENT_MODEL=openai/gpt-4o-mini                    # The quiz
@@ -637,8 +638,9 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     │   timestamped field records the call counts alone (`meta.extractionCoverage` =
     │   `{batchesTotal, batchesSucceeded, batchesDropped}`, `flag_failed_groups`). The
     │   synthesis-fed retry, RETRY_SCORE_THRESHOLD and validate_extraction_counts are gone (1c.5)
-    └─▶ Faithfulness judge fires in the background once extraction has data — on the split path
-        when the whole phase-2 group is done (transcript + annotations; informational)
+    └─▶ Faithfulness judge (LLM_JUDGE_MODEL = gpt-6-luna) fires in the background once extraction
+        has data — on the split path when the whole phase-2 group is done (transcript +
+        annotations; informational)
 
  6. ASSEMBLY → LATE GROUP → SAVE (phases/assembly.py)
     └─▶ Description analysis (≤ 5 s wait; past it meta goes without it) → SSE description_analysis
@@ -1367,7 +1369,7 @@ A setting left out of the environment keeps the compose / `config.py` default; t
 - Translation (output, title, RAG transcript): `LLM_TRANSLATION_MODEL` = gpt-6-luna
 - Frame vision (`frame_analyzer.analyze_frames_with_vision`, ≤ 5 parallel batches; its own provider and retry): `LLM_VISION_MODEL` = Sonnet 5.5 (empty → the primary model). History: routed to fast in Phase 1B / P3, reverted 2026-05-14 after a 5-frame spot-check (`scripts/spotcheck_frame_vision.py`) found `openai/gpt-4o-mini` was only ~20% cheaper *and* hallucinated OCR on dense-text frames; in 4.0d Haiku 5.5 labelled cooking frames `talking_head` (dropped as presenter filler), Sonnet 5.5 read the card text Sonnet 4.6 reads at half the wall time
 - AI chapter detection (`transcript_chunker._detect_chapters_with_ai`): the fast tier (`LLM_CHAPTER_DETECT_MODEL` is not passed by compose), scoped under its own `llm_feature_var.set("summarize:chapter_detect")` context so cost is attributed correctly in `llm_usage` (was previously absorbed by the outer `summarize:extraction` tag)
-- Faithfulness judge: the fast tier (no stage setting)
+- Faithfulness judge: `LLM_JUDGE_MODEL` = gpt-6-luna, reasoning off (20s, 1 retry; a fast-tier call with an override — blank = the fast tier in config.py only, under compose a blank line keeps gpt-6-luna). Rollback: `openai/gpt-4o-mini`. Informational (D22); the golden baseline's faithfulness was re-scored under it (`gates/g4.md` §10)
 - Extraction runs on `LLM_EXTRACTION_MODEL` = Sonnet 5.5 at effort low (empty → primary; a primary-model call with an override, like memory: the cross-provider fallback applies, P P F). The split path's group calls end their rules with the completeness rule (`extraction_group_rules.txt`, added once per run by `extraction_group_prompt.with_group_rules`; the `EXTRACTION_PARALLEL=false` call keeps today's bytes). A/B round 2: Sonnet 5.5 missed the fewest transcript-supported items and invented no details; Haiku 4.5 (the model before) invented steps, quantities and code snippets. The fast-first path and the synthesis-fed retry were removed in pipeline-1min 1c.3/1c.5.
 
 ### Prompt Safety Net (`llm_retry.py`)

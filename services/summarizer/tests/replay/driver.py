@@ -55,9 +55,9 @@ _HARNESS_SETTINGS: dict[str, Any] = {
 
 
 # Settings added after the cassettes were recorded, at the value the recorded
-# runs had: memory followed LLM_EXTRACTION_MODEL then (D5). A cassette's own
-# value wins.
-_RECORDED_BEFORE: dict[str, Any] = {"LLM_MEMORY_MODEL": None}
+# runs had: memory followed LLM_EXTRACTION_MODEL then (D5), the judge ran on
+# the fast tier. A cassette's own value wins.
+_RECORDED_BEFORE: dict[str, Any] = {"LLM_MEMORY_MODEL": None, "LLM_JUDGE_MODEL": None}
 
 
 @dataclass(frozen=True)

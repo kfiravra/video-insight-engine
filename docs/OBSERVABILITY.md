@@ -44,7 +44,7 @@ Trace: pipeline:{videoSummaryId}
 │        generation, or one `extraction_batchN` per chapter batch + `_seq` for the rate-limited second pass)
 ├── generation: synthesis             model=fast tier
 ├── generation: enrichment            model=gpt-4o-mini       (LLM_ENRICHMENT_MODEL; the quiz; only for a plan with a quiz host)
-├── generation: faithfulness          model=fast tier         (judge calls, ≤ 6 sampled claims, background)
+├── generation: faithfulness          model=gpt-6-luna        (LLM_JUDGE_MODEL; judge calls, ≤ 6 sampled claims, background)
 ├── generation: translation_full      model=gpt-6-luna        (LLM_TRANSLATION_MODEL; non-English video: the output, in batches) + translation_title
 ├── generation: rag_translation       model=gpt-6-luna        (LLM_TRANSLATION_MODEL; non-English caption / S3 / Gemini transcript → English for Qdrant)
 ├── generation: <span> (refused)      a declined answer: metadata refusal=true, refusalCategory; the previous model's
@@ -137,9 +137,9 @@ python3 scripts/register_prompts.py --commit
 
 ## Faithfulness judge
 
-After extraction completes, a fire-and-forget task samples 20% of extracted items (capped at 6 per video, deterministic by `youtubeId`) and asks the fast-tier model (gpt-4o-mini with `LLM_FAST_PROVIDER=openai`, else Haiku 4.5; the judge has no stage setting) "is this claim supported by the transcript?" — the excerpt may end with the rendered `<visual_annotations>` block, so on-screen facts count as support (frame text no longer sits in the transcript). The aggregate `grounded / total` ratio is logged as a Langfuse score named `faithfulness`.
+After extraction completes, a fire-and-forget task samples 20% of extracted items (capped at 6 per video, deterministic by `youtubeId`) and asks the judge model (`LLM_JUDGE_MODEL` = `openai/gpt-6-luna`, reasoning off; blank = the fast tier — gpt-4o-mini with `LLM_FAST_PROVIDER=openai`, else Haiku 4.5) "is this claim supported by the transcript?" — the excerpt may end with the rendered `<visual_annotations>` block, so on-screen facts count as support (frame text no longer sits in the transcript). The aggregate `grounded / total` ratio is logged as a Langfuse score named `faithfulness`.
 
-The check is **informational only** — it never blocks the pipeline or fails a video. Use the Langfuse dashboards to track drift over time. A run below 0.7 is logged at warning level but otherwise ignored. The judge model is part of the score: in the 4.0d model A/B gpt-6-luna graded 0.44 of the same 18 claims grounded vs gpt-4o-mini's 0.89 (8 flipped, never the reverse — `dev/active/pipeline-1min/gates/g4-model-ab.md`), so it stays on gpt-4o-mini and a judge change needs a re-baselined golden.
+The check is **informational only** — it never blocks the pipeline or fails a video. Use the Langfuse dashboards to track drift over time. A run below 0.7 is logged at warning level but otherwise ignored. The judge model is part of the score, and gpt-6-luna is the stricter judge: in the 4.0d model A/B it graded 0.44 of the same 18 claims grounded vs gpt-4o-mini's 0.89 (8 flipped, never the reverse — `dev/active/pipeline-1min/gates/g4-model-ab.md`); re-sent the golden baseline's recorded judge requests, it flipped 26 of 108 verdicts to ungrounded and 2 the other way (mostly claims that add unstated detail to a grounded core). So the move (pipeline-1min close-out) came with a re-baselined golden: `dev/golden-dataset/noise.json`'s faithfulness parts are the luna re-score (its `faithfulnessJudge` block; `gates/g4.md` §10). Rollback: `LLM_JUDGE_MODEL=openai/gpt-4o-mini` together with the previous `noise.json` (git history).
 
 **Claim-localized context (not a head slice).** Transcripts within the 80K-char judged-context budget pass through whole. Longer transcripts are split into ~4K-char windows; per claim, the top BM25-style (IDF-weighted lexical overlap) windows are packed into the budget in document order with gaps marked, plus immediate neighbors of scoring windows. A claim from hour 3 of a long video is therefore judged against hour-3 text — the old fixed 80K-char head slice mis-verdicted tail claims of 3h+ videos as hallucinations. Falls back to the head slice only when a claim shares zero vocabulary with the transcript. See `_select_claim_context` in `faithfulness.py`; regression tests in `tests/test_faithfulness.py` include a synthetic tail-claim case past the 80K boundary.
 
@@ -149,13 +149,13 @@ The check is **informational only** — it never blocks the pipeline or fails a 
 cd services/summarizer && LIVE_EVAL=1 .venv/bin/python -m pytest -q tests/test_faithfulness_live_eval.py -s
 ```
 
-(~20 calls on the environment's fast tier — ≈ $0.02 on Haiku 4.5 in 2026-07; the fixture's structural checks run in the normal suite for free.)
+(~20 calls on the configured judge model — ≈ $0.003 on gpt-6-luna, which scored 20/20 on 2026-10-14; ≈ $0.02 on Haiku 4.5 in 2026-07; the fixture's structural checks run in the normal suite for free.)
 
 Tuning:
 
 - `LANGFUSE_FAITHFULNESS_SAMPLE_RATE=0` disables the judge entirely.
 - `LANGFUSE_FAITHFULNESS_SAMPLE_RATE=1.0` checks every claim (capped at 6/video). Useful when debugging a quality regression.
-- Cost: ~$0.005 per video at the default rate.
+- Cost: ≈ $0.002–0.003 per video on gpt-6-luna at the default rate (golden set, 2026-10).
 - `_TRANSCRIPT_BUDGET_CHARS` (80K) is coupled to the judge model's context window — see the warning comment in `faithfulness.py` before pointing the faithfulness stage at a smaller-context model.
 
 ## Golden dataset + eval
@@ -202,7 +202,7 @@ Dry-run mode (`--dry-run`) substitutes a perfect-response stub for the live pipe
 - **PR** (paths: `src/prompts/**`, pipeline/vector code, `scripts/run_eval.py`, `dev/golden-dataset/**`): a zero-spend `--dry-run --fail-under` gate plus the retrieval recall@k/MRR floor against an ephemeral Qdrant service container (see docs/RAG.md §Retrieval eval).
 - **Weekly** (Mondays 03:00 UTC) + `workflow_dispatch`: full live golden-dataset run against a composed stack, `--fail-under` gated, `--publish-run weekly-YYYYMMDD` to Langfuse. Skips cleanly when spend secrets (`ANTHROPIC_API_KEY`, `EVAL_USER_PASSWORD`, Langfuse keys) are not configured.
 
-Committed metric baselines live in `dev/golden-dataset/baseline.json` — retrieval eval (recall@3 1.000 / MRR 0.865, 2026-07-12), faithfulness-judge accuracy (20/20, 2026-07-12), and the golden-eval average (currently `deferred-for-spend` with the exact production procedure recorded in the file; the workflow reads its `failUnder` floor either way).
+Committed metric baselines live in `dev/golden-dataset/baseline.json` — retrieval eval (recall@3 1.000 / MRR 0.865, 2026-07-12), faithfulness-judge accuracy (20/20 on gpt-6-luna, 2026-10-14), and the golden-eval average (currently `deferred-for-spend` with the exact production procedure recorded in the file; the workflow reads its `failUnder` floor either way).
 
 ## Operational watch-outs
 

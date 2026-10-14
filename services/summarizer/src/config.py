@@ -69,6 +69,10 @@ class Settings(BaseSettings):
     # Sonnet's price when extraction moves (4.0d round 2). Blank follows
     # LLM_EXTRACTION_MODEL (D5's coupling, ``_STAGE_FALLBACK``).
     LLM_MEMORY_MODEL: str | None = "anthropic/claude-haiku-5-5"
+    # The faithfulness judge (stage "faithfulness"; informational, D22):
+    # gpt-6-luna, reasoning off — its own setting, so the quiz and synthesis
+    # stay on gpt-4o-mini. Blank = the fast tier (gpt-4o-mini on prod).
+    LLM_JUDGE_MODEL: str | None = "openai/gpt-6-luna"
 
     # Provider API Keys (set for providers you use)
     ANTHROPIC_API_KEY: str | None = None
@@ -397,6 +401,7 @@ class Settings(BaseSettings):
         "enrichment": "LLM_ENRICHMENT_MODEL",
         "extraction": "LLM_EXTRACTION_MODEL",
         "memory": "LLM_MEMORY_MODEL",
+        "faithfulness": "LLM_JUDGE_MODEL",
         # The stage names the translation calls send (pipeline/translation_flat.py:
         # the output's source-language pass, and translate_text for the title).
         "translation_full": "LLM_TRANSLATION_MODEL",

@@ -33,6 +33,7 @@ _PASSED_THROUGH = (
     "LLM_TRANSLATION_MODEL",
     "LLM_EXTRACTION_MODEL",
     "LLM_MEMORY_MODEL",
+    "LLM_JUDGE_MODEL",
     "TRANSCRIPT_CLEANING_ENABLED",
 )
 # Deleted settings must not linger in config.py or either compose anchor.
@@ -154,6 +155,7 @@ class TestStageModelDefaults:
             ("tier_probe", "anthropic/claude-haiku-4-5-20251001"),
             ("extraction", "anthropic/claude-sonnet-5-5"),
             ("memory", "anthropic/claude-haiku-5-5"),
+            ("faithfulness", "openai/gpt-6-luna"),
         ],
     )
     def test_should_route_the_stage_to_its_picked_model_when_env_is_unset(
@@ -187,6 +189,23 @@ class TestStageModelDefaults:
     ) -> None:
         isolated_env.setenv("LLM_MEMORY_MODEL", "anthropic/claude-haiku-4-5-20251001")
         assert Settings().get_stage_model("memory") == "anthropic/claude-haiku-4-5-20251001"
+
+    def test_should_run_the_judge_on_the_fast_tier_when_its_setting_is_blank(
+        self, isolated_env: pytest.MonkeyPatch
+    ) -> None:
+        # No override (blank) → the judge's use_fast_model call keeps the fast tier.
+        isolated_env.setenv("LLM_JUDGE_MODEL", "")
+        assert not Settings().get_stage_model("faithfulness")
+
+    def test_should_keep_the_quiz_and_synthesis_off_the_judge_model_when_env_is_unset(
+        self, isolated_env: pytest.MonkeyPatch
+    ) -> None:
+        isolated_env.delenv("LLM_SYNTHESIS_MODEL", raising=False)
+        stages = Settings()
+        assert (stages.get_stage_model("enrichment"), stages.get_stage_model("synthesis")) == (
+            "openai/gpt-4o-mini",
+            None,
+        )
 
     def test_should_keep_the_fast_tier_model_when_env_is_unset(
         self, isolated_env: pytest.MonkeyPatch

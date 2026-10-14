@@ -70,6 +70,8 @@ _RUN_SETTINGS: dict[str, Any] = {
     "LLM_EXTRACTION_MODEL": _HAIKU,
     # Memory followed LLM_EXTRACTION_MODEL when these runs were recorded (D5).
     "LLM_MEMORY_MODEL": None,
+    # The judge ran on the fast tier (LLM_JUDGE_MODEL came at the close-out).
+    "LLM_JUDGE_MODEL": None,
     "LLM_TRANSLATION_MODEL": None,
     "LLM_VISION_MODEL": _SONNET,
     "EXTRACTION_PARALLEL_BATCHES": 2,
