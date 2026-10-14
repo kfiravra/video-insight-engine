@@ -707,6 +707,9 @@ async def test_redis_hit_clears_stale_transcript_meta_before_saving() -> None:
     assert _call_index(repository, "clear_transcript_meta") < _call_index(
         repository, "save_structured_result"
     ), "stale block must be cleared before the cached payload completes the row"
+    assert _call_index(repository, "clear_degraded") < _call_index(
+        repository, "save_structured_result"
+    ), "a previous run's degraded flags must not survive a Redis-served completion"
 
 
 @pytest.mark.asyncio
@@ -726,6 +729,19 @@ async def test_processing_transition_clears_transcript_meta() -> None:
     assert _call_index(repository, "update_status") < _call_index(
         repository, "clear_transcript_meta"
     ), "clear follows the processing transition"
+
+
+@pytest.mark.asyncio
+async def test_processing_transition_clears_the_previous_runs_degraded_flags() -> None:
+    """A clean re-run on the same _id must not keep an earlier run's degraded badge."""
+    repository = MagicMock()
+
+    async def _phases_stub(*_args: object, **_kwargs: object) -> AsyncIterator[str]:
+        yield "data: phases\n\n"
+
+    await _stream_direct(repository, _phases_stub)
+
+    repository.clear_degraded.assert_called_once_with("vsum_9")
 
 
 @pytest.mark.asyncio

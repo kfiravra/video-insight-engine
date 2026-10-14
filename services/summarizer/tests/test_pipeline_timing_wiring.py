@@ -182,7 +182,7 @@ class TestRunnerPersistence:
 
         await self._drive(self._ctx(), repository, [tab])
 
-        _vsid, doc = repository.set_pipeline_timing.call_args.args
+        _vsid, doc, _reasons = repository.set_pipeline_timing.call_args.args
         assert "firstTabReadyMs" in doc["milestones"]
 
     async def test_should_persist_tab_counts(self) -> None:
@@ -236,6 +236,73 @@ class TestRunnerPersistence:
             await self._drive(self._ctx(), MagicMock(), [tab])
 
         assert "tabs planned=3 assembled=2 emitted=1" in caplog.text
+
+
+class TestDegradedRun:
+    """A run whose frame download failed is degraded — in pipeline.timing and on the row
+    (hotfix 4.1: T1dQhQAm8Tc's 403s completed silently with no frames)."""
+
+    @staticmethod
+    def _recorder(*downloads: dict) -> PipelineTimingRecorder:
+        recorder = PipelineTimingRecorder()
+        recorder.downloads = list(downloads)
+        return recorder
+
+    @staticmethod
+    def _ctx(meta: dict | None = None) -> SimpleNamespace:
+        return SimpleNamespace(
+            row_deleted=False, triage=None, assembled_tabs=None, assembled_meta=meta
+        )
+
+    async def _persist(self, ctx: SimpleNamespace, *downloads: dict) -> MagicMock:
+        repository = MagicMock()
+        await run_timing.persist_run_timing(ctx, repository, "vsid", self._recorder(*downloads))  # type: ignore[arg-type]
+        return repository
+
+    async def test_should_mark_a_failed_frame_download(self) -> None:
+        repository = await self._persist(
+            self._ctx(), {"kind": "720p", "ok": False, "error": "HTTP Error 403: Forbidden"}
+        )
+
+        doc, reasons = repository.set_pipeline_timing.call_args.args[1:3]
+        assert (doc["degraded"], doc["degradedReasons"], reasons) == (
+            True,
+            ["media_download_failed"],
+            ["media_download_failed"],
+        )
+
+    async def test_should_not_count_a_download_the_run_cancelled(self) -> None:
+        repository = await self._persist(
+            self._ctx(), {"kind": "lowres", "ok": False, "error": "CancelledError"}
+        )
+
+        assert repository.set_pipeline_timing.call_args.args[2] == []
+
+    async def test_should_not_count_an_audio_download(self) -> None:
+        repository = await self._persist(self._ctx(), {"kind": "audio", "ok": False})
+
+        assert repository.set_pipeline_timing.call_args.args[2] == []
+
+    async def test_should_name_a_partial_extraction(self) -> None:
+        repository = await self._persist(self._ctx({"degraded": True}))
+
+        assert repository.set_pipeline_timing.call_args.args[2] == ["partial_extraction"]
+
+    async def test_should_mark_an_abandoned_deferred_hires_pass(self) -> None:
+        ctx = self._ctx()
+        ctx.hires_upgrade_abandoned = True
+
+        repository = await self._persist(
+            ctx, {"kind": "720p", "ok": False, "error": "CancelledError"}
+        )
+
+        assert repository.set_pipeline_timing.call_args.args[2] == ["media_download_failed"]
+
+    async def test_should_record_a_clean_run_as_not_degraded(self) -> None:
+        repository = await self._persist(self._ctx(), {"kind": "720p", "ok": True})
+
+        doc = repository.set_pipeline_timing.call_args.args[1]
+        assert (doc["degraded"], doc["degradedReasons"]) == (False, [])
 
 
 class TestTruncatedCalls:
@@ -317,11 +384,42 @@ class TestRepositoryWrite:
         collection = MagicMock()
         repo = MongoDBVideoRepository(MagicMock(videoSummaryCache=collection))
 
-        repo.set_pipeline_timing("0" * 24, {"totalMs": 1})
+        repo.set_pipeline_timing("0" * 24, {"totalMs": 1}, [])
 
         collection.update_one.assert_called_once_with(
-            {"_id": ObjectId("0" * 24)}, {"$set": {"pipeline.timing": {"totalMs": 1}}}
+            {"_id": ObjectId("0" * 24)},
+            {"$set": {"pipeline.timing": {"totalMs": 1}, "degradedReasons": []}},
         )
+
+    def test_should_mark_the_row_degraded_when_the_run_had_a_reason(self) -> None:
+        collection = MagicMock()
+        repo = MongoDBVideoRepository(MagicMock(videoSummaryCache=collection))
+
+        repo.set_pipeline_timing("0" * 24, {"totalMs": 1}, ["media_download_failed"])
+
+        written = collection.update_one.call_args.args[1]["$set"]
+        assert (written["degraded"], written["degradedReasons"]) == (
+            True,
+            ["media_download_failed"],
+        )
+
+    def test_should_clear_the_previous_runs_degraded_flags(self) -> None:
+        collection = MagicMock()
+        repo = MongoDBVideoRepository(MagicMock(videoSummaryCache=collection))
+
+        repo.clear_degraded("0" * 24)
+
+        collection.update_one.assert_called_once_with(
+            {"_id": ObjectId("0" * 24)}, {"$unset": {"degraded": "", "degradedReasons": ""}}
+        )
+
+    def test_should_never_clear_the_rows_degraded_flag(self) -> None:
+        collection = MagicMock()
+        repo = MongoDBVideoRepository(MagicMock(videoSummaryCache=collection))
+
+        repo.set_pipeline_timing("0" * 24, {"totalMs": 1}, [])
+
+        assert "degraded" not in collection.update_one.call_args.args[1]["$set"]
 
 
 class TestDownloadSeam:

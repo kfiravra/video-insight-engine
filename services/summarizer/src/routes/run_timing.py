@@ -17,6 +17,7 @@ from typing import Any
 from src.repositories.mongodb_repository import MongoDBVideoRepository
 from src.services.observability import log_span, update_trace_metadata
 from src.services.pipeline.context import PipelineContext
+from src.services.pipeline.download_timing import failed_video_downloads
 from src.services.pipeline.phases.enrichment import QUIZ_CALL_STEP
 from src.services.pipeline.pipeline_helpers import PipelineTimer
 from src.services.pipeline.pipeline_timing import PipelineTimingRecorder
@@ -26,6 +27,12 @@ logger = logging.getLogger(__name__)
 # An answer cut at max_tokens. The JSON repair keeps whatever parsed, so a
 # truncated plan silently loses its trailing tabs — counted per run to see it.
 _TRUNCATED_FINISH_REASON = "length"
+# Why a run is degraded (``pipeline.timing.degradedReasons`` + the row's
+# ``degradedReasons``): a partial extraction (meta.degraded — the web's retry
+# banner) or a failed video download / an abandoned deferred hi-res pass
+# (frames, hi-res frames or moment images may be missing; admin only).
+PARTIAL_EXTRACTION = "partial_extraction"
+MEDIA_DOWNLOAD_FAILED = "media_download_failed"
 
 
 def mark_phase(
@@ -128,6 +135,33 @@ def _log_phase_spans(timing: PipelineTimingRecorder) -> None:
         )
 
 
+def degraded_reasons(
+    ctx: PipelineContext, downloads: list[dict], video_summary_id: str
+) -> list[str]:
+    """Why the run's output is degraded; empty when it is not."""
+    reasons: list[str] = []
+    if (getattr(ctx, "assembled_meta", None) or {}).get("degraded"):
+        reasons.append(PARTIAL_EXTRACTION)
+    failed = failed_video_downloads(downloads)
+    abandoned = getattr(ctx, "hires_upgrade_abandoned", False)
+    if failed or abandoned:
+        reasons.append(MEDIA_DOWNLOAD_FAILED)
+    if abandoned:
+        logger.warning(
+            "[pipeline] deferred hi-res pass abandoned (720p file too slow) — run degraded "
+            "video_summary_id=%s",
+            video_summary_id,
+        )
+    if failed:
+        logger.warning(
+            "[pipeline] %d media download(s) failed (%s) — run degraded video_summary_id=%s",
+            len(failed),
+            "; ".join(f"{d.get('kind')}: {d.get('error')}" for d in failed),
+            video_summary_id,
+        )
+    return reasons
+
+
 async def persist_run_timing(
     ctx: PipelineContext,
     repository: MongoDBVideoRepository,
@@ -142,8 +176,10 @@ async def persist_run_timing(
         planned, assembled = _tab_counts(ctx)
         doc = timing.to_document(tabs_planned=planned, tabs_assembled=assembled)
         doc["counts"]["truncated"] = truncated_calls(timing)
+        reasons = degraded_reasons(ctx, doc["downloads"], video_summary_id)
+        doc["degraded"], doc["degradedReasons"] = bool(reasons), reasons
         update_trace_metadata({"timing": _trace_timing_summary(doc)})
         _log_phase_spans(timing)
-        await asyncio.to_thread(repository.set_pipeline_timing, video_summary_id, doc)
+        await asyncio.to_thread(repository.set_pipeline_timing, video_summary_id, doc, reasons)
     except Exception as exc:
         logger.warning("[pipeline] timing record failed for %s: %s", video_summary_id, exc)

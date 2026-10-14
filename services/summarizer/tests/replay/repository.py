@@ -61,5 +61,11 @@ class InMemoryRepository:
     def clear_transcript_meta(self, video_summary_id: str) -> None:
         self.transcript_meta = None
 
-    def set_pipeline_timing(self, video_summary_id: str, timing: dict[str, Any]) -> None:
+    def clear_degraded(self, video_summary_id: str) -> None:
+        self.degraded_reasons = None
+
+    def set_pipeline_timing(
+        self, video_summary_id: str, timing: dict[str, Any], degraded_reasons: list[str]
+    ) -> None:
         self.pipeline_timing = copy.deepcopy(timing)
+        self.degraded_reasons = list(degraded_reasons)

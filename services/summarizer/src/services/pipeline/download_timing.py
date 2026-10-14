@@ -12,6 +12,7 @@ credential-free ``error``.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Mapping
 from pathlib import Path
@@ -19,6 +20,13 @@ from pathlib import Path
 from src.services.pipeline.pipeline_timing import current_timing
 
 logger = logging.getLogger(__name__)
+
+# The run's frame sources. Their failure leaves the run without frames or hi-res
+# frames, so it marks the run degraded (``failed_video_downloads``).
+_VIDEO_KINDS = frozenset({"lowres", "720p"})
+# A download the run cancelled itself (pass 1 for its 720p twin, a frame
+# manifest hit, the run's end) did not fail.
+_CANCELLED = frozenset({asyncio.CancelledError.__name__})
 
 
 def _file_size(path: Path | None, kind: str) -> int | None:
@@ -57,3 +65,13 @@ def record_download(
             **(detail or {}),
         }
     )
+
+
+def failed_video_downloads(downloads: list[dict]) -> list[dict]:
+    """The run's video downloads that failed — 403, bot check, timeout, no format;
+    not the ones the run cancelled itself."""
+    return [
+        d
+        for d in downloads
+        if d.get("kind") in _VIDEO_KINDS and not d.get("ok") and d.get("error") not in _CANCELLED
+    ]

@@ -247,5 +247,5 @@ async def test_should_leave_seek_time_when_it_starts_the_download_itself(monkeyp
         await mff.fill_moment_frames([_moment_tab(items)], "yt123", source)
 
     download.assert_awaited_once_with(
-        "yt123", mff._FILL_TIMEOUT - mff._FILL_SEEK_RESERVE, purpose="prefetch"
+        "yt123", mff._FILL_TIMEOUT - mff._FILL_SEEK_RESERVE, purpose="moment_fill"
     )

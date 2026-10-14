@@ -210,6 +210,18 @@ describe('PipelineRunsPanel', () => {
     });
   });
 
+  it('should name a failed media download on the degraded badge', async () => {
+    mockByRun.mockResolvedValue([
+      { ...RUN_1, degraded: true, degraded_reasons: ['media_download_failed'] },
+    ]);
+    const { PipelineRunsPanel } = await import('./PipelineRunsPanel');
+    const wrapper = makeWrapper();
+    render(<PipelineRunsPanel days={7} />, { wrapper });
+    await waitFor(() => {
+      expect(screen.getByText(/degraded · media/i)).toBeTruthy();
+    });
+  });
+
   it('should NOT show a degraded badge for clean or unresolved runs', async () => {
     mockByRun.mockResolvedValue([{ ...RUN_1, degraded: false }, UNATTRIBUTED_RUN]);
     const { PipelineRunsPanel } = await import('./PipelineRunsPanel');

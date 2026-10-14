@@ -64,7 +64,7 @@ Registered in:
 | GET | `/usage/by-model` | Cost per model, sorted desc |
 | GET | `/usage/by-service` | Cost per service |
 | GET | `/usage/by-video` | Top videos by total cost (latest cache version only — `isLatest` lookup avoids duplicate rows from versioned/dedup'd docs) |
-| GET | `/usage/by-run` | Pipeline runs grouped by `request_id`, newest first; each run carries `regen_ordinal` (1 = first run, 2+ = regeneration), a best-effort `langfuse_url` (direct trace deep-link, null when unconfigured/unresolvable), and child calls. Paginated (`days`, `limit`, `offset`). Rows missing `request_id` → "unattributed (legacy)" bucket |
+| GET | `/usage/by-run` | Pipeline runs grouped by `request_id`, newest first; each run carries `regen_ordinal` (1 = first run, 2+ = regeneration), a best-effort `langfuse_url` (direct trace deep-link, null when unconfigured/unresolvable), `degraded` + `degraded_reasons` from the run's videoSummaryCache row (`partial_extraction`, `media_download_failed` — the runs panel badge reads `degraded · partial` / `degraded · media`), and child calls. Paginated (`days`, `limit`, `offset`). Rows missing `request_id` → "unattributed (legacy)" bucket |
 | GET | `/usage/video/{video_id}` | Per-video feature breakdown |
 | GET | `/usage/anomalies` | Expensive calls above threshold |
 | GET | `/usage/recent` | Cursor-based pagination (before_id) |

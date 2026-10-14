@@ -188,7 +188,7 @@ async def fill_moment_frames(
                 "moment_frame_fill: %d frameless moments — not worth a 720p download", len(capped)
             )
             return 0
-        hires_video.start(timeout=_FILL_TIMEOUT - _FILL_SEEK_RESERVE)
+        hires_video.start(timeout=_FILL_TIMEOUT - _FILL_SEEK_RESERVE, purpose="moment_fill")
 
     filled = await _fill_within_budget(youtube_id, capped, hires_video)
     if filled:

@@ -70,6 +70,7 @@ async def finish_hires_upgrade(ctx: PipelineContext, *, wait: bool) -> None:
         raise
     if not task.done():
         if wait:
+            ctx.hires_upgrade_abandoned = True
             logger.warning(
                 "Deferred hi-res pass for %s still running after %.0fs — cancelled",
                 ctx.youtube_id,

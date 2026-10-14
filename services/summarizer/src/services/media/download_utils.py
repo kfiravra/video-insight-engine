@@ -211,7 +211,8 @@ def _exit_pool(primary: str, count: int) -> list[str]:
 
 
 def ytdlp_proxy_exit_urls(job_key: str | None = None) -> list[str]:
-    """Proxy URLs to try in order for an IP-scoped failure (bot check, 429, session block).
+    """Proxy URLs to try in order for an IP-scoped failure (bot check, 429, session block;
+    for the video downloads also a 403 on the video data — ``local_video``).
 
     Empty without a proxy; just YOUTUBE_PROXY_URL when YOUTUBE_PROXY_EXIT_COUNT
     is 1 or its username has no sticky ``-N`` suffix. Otherwise the pool is

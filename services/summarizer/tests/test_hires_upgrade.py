@@ -240,6 +240,15 @@ class TestRunWiring:
 
         assert order == ["pass-ended", "720p-closed"]
 
+    async def test_should_record_that_the_run_gave_up_on_the_pass(self, monkeypatch):
+        monkeypatch.setattr(frames_phase, "HIRES_UPGRADE_WAIT_S", 0.01)
+        ctx = _ctx(asyncio.create_task(asyncio.sleep(60)))
+        ctx.hires_upgrade_abandoned = False
+
+        await frames_phase.finish_hires_upgrade(ctx, wait=True)
+
+        assert ctx.hires_upgrade_abandoned is True
+
     async def test_should_cancel_a_pass_that_outlives_the_wait(self, monkeypatch):
         monkeypatch.setattr(frames_phase, "HIRES_UPGRADE_WAIT_S", 0.01)
         task = asyncio.create_task(asyncio.sleep(60))

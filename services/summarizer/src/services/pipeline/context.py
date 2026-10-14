@@ -93,6 +93,9 @@ class PipelineContext:
     # assembly leaves the file open while it runs and the runner awaits it
     # (bounded) before closing the file.
     hires_upgrade: asyncio.Task[int] | None = None
+    # True when the run gave up on that pass (its 720p file never landed in
+    # time): the frames stay 360p, so the run is degraded (run_timing).
+    hires_upgrade_abandoned: bool = False
     scene_frames_for_assembly: list[dict] = field(default_factory=list)
     scene_frames_all: list[dict] = field(
         default_factory=list

@@ -246,6 +246,8 @@ One row per video **version** (`version`, `isLatest` below); the served row is s
                   mbPerSec: number | null, ok: boolean,
                   // yt-dlp video downloads only: the picked rendition, the clients + proxy exit that delivered it, why it failed
                   format?: string | null, height?: number | null, clients?: string | null, proxyExit?: string | null, error?: string | null }],
+    degraded: boolean,              // a failed frame download (lowres / 720p; not a run-made cancel) or a
+    degradedReasons: string[],      //   partial extraction — the same reasons as the row's degradedReasons
     costUsd: number,                // Σ costUsd over llmCalls + llmFailures — refused calls included (v4)
     counts: { llmCalls, llmFailures, retries, rateLimited,
               fallbacks,            // answers with fallbackUsed and no refusedModel: the cross-provider fallback + provider-side model swaps
@@ -448,8 +450,11 @@ One row per video **version** (`version`, `isLatest` below); the served row is s
   forceRefresh: true | absent,      // bypassCache: summarizer skips its Redis response cache; $unset on save
   coldMedia: true | absent,         // POST /videos `cold` (admin/eval only): the run also skips the
                                     // S3 transcript + scene-frame caches
-  degraded: true | absent,          // top-level mirror of meta.degraded (admin run badge): a failed
-                                    // extraction group, a dropped chunked batch, or critical coverage
+  degraded: true | absent,          // admin run badge: meta.degraded (a failed extraction group, a
+                                    // dropped chunked batch, or critical coverage), OR a failed frame
+                                    // download (set at the run's end; no user-facing banner)
+  degradedReasons: string[] | absent, // why, written at the run's end: "partial_extraction",
+                                    // "media_download_failed"; [] = clean
   pipelineVersion: string | absent, // PIPELINE_VERSION stamp of the run that saved the row; a stale
                                     // stamp re-runs on the user's next submission (and the worker
                                     // skips a queued job only when the row is completed by the

@@ -43,11 +43,14 @@ _FORMAT_SPEC = "bestvideo[height<=720][ext=mp4]/best[height<=720][ext=mp4]/best[
 # cheapest to decode for scene detection). Detection JPEGs stay 360p because
 # the HIGH tier's vision always reads them, and vision + OCR do when the hi-res
 # pass is deferred. A video with nothing that tall takes its best video-only
-# file, a client with no video-only rendition (android alone) the muxed worst.
+# file. With no video-only rendition at all (android alone; a SABR session,
+# where the yt-dlp nightly's web_embedded still offers muxed 144p-720p HLS) the
+# smallest muxed file of at least 360p — plain https first — never the 144p one.
 PASS1_HEIGHT = 360
 _LOWRES_FORMAT_SPEC = (
     "worstvideo[height>=360][ext=mp4][vcodec^=avc1]/worstvideo[height>=360][ext=mp4]"
-    "/bestvideo[ext=mp4]/worst[ext=mp4]/worst"
+    "/bestvideo[ext=mp4]/worst[height>=360][ext=mp4][protocol=https]"
+    "/worst[height>=360][ext=mp4]/worst[ext=mp4]/worst"
 )
 # yt-dlp prints the rendition it picked once the file is in place (one stdout line).
 _PICKED_MARK = "vie-picked"
@@ -55,6 +58,10 @@ _PRINT_PICKED = f"after_move:{_PICKED_MARK} %(format_id)s %(height)s"
 _ERROR_CHARS = 160
 _CREDENTIALS_RE = re.compile(r"(\w+://)[^\s/@]+@")
 _ERROR_PREFIX_RE = re.compile(r"^ERROR:\s*(\[\w+\]\s*[\w-]+:\s*)?")
+# googlevideo refusing the bytes is scoped to the proxy exit's IP too: on prod
+# (2026-10-14) exit -2 got it for every client and format while exit -1
+# downloaded the same file, so it moves on to the next exit like a bot check.
+_DATA_403 = "unable to download video data: HTTP Error 403"
 
 
 class LocalFile(NamedTuple):
@@ -255,10 +262,11 @@ async def _run_ytdlp(
     """One yt-dlp download with the given player clients.
 
     ``clients`` None = YTDLP_PLAYER_CLIENTS (``ytdlp_client_cli_args`` default).
-    YouTube's bot check and a 429 are scoped to the proxy exit's IP, so either
-    moves on to the next sticky exit (``ytdlp_proxy_exit_urls``: the job's
-    round-robin exit first, recently blocked exits last) within the same
-    ``timeout``; any other failure ends the download.
+    YouTube's bot check, a 429 and a 403 on the video data are scoped to the
+    proxy exit's IP, so each moves on to the next sticky exit
+    (``ytdlp_proxy_exit_urls``: the job's round-robin exit first, recently
+    blocked exits last) within the same ``timeout``; any other failure ends
+    the download.
     """
     from src.services.media.download_utils import (
         record_blocked_exit,
@@ -354,7 +362,8 @@ async def _run_ytdlp_once(
         logger.warning(
             "yt-dlp download failed for %s (rc=%s): %s", label, proc.returncode, err[:300]
         )
-        attempt = _Attempt.EXIT_BLOCKED if is_exit_blocked(err) else _Attempt.FAILED
+        blocked = is_exit_blocked(err) or _DATA_403 in err
+        attempt = _Attempt.EXIT_BLOCKED if blocked else _Attempt.FAILED
         return _Once(attempt, out, _short_error(err))
     return _Once(_Attempt.OK, out)
 

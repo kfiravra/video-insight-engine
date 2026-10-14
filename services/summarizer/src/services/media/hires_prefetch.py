@@ -68,7 +68,7 @@ class LocalVideoDownload:
         self._task: asyncio.Task[Download] | None = None
         self._closed = False
 
-    def _download(self, timeout: float) -> Coroutine[Any, Any, Download]:
+    def _download(self, timeout: float, purpose: str | None) -> Coroutine[Any, Any, Download]:
         raise NotImplementedError
 
     @property
@@ -90,15 +90,17 @@ class LocalVideoDownload:
         landed = task.result()
         return landed.height if isinstance(landed, LocalFile) else None
 
-    def start(self, timeout: float | None = None) -> None:
+    def start(self, timeout: float | None = None, purpose: str | None = None) -> None:
         """Begin the download in the background. Idempotent; a no-op after ``close()``.
 
         ``timeout`` caps the download when this call is the one that starts it
-        (None = the downloader's own); a later call never changes a running one.
+        (None = the downloader's own), and ``purpose`` labels it in
+        ``pipeline.timing`` (None = the source's own); a later call never
+        changes a running one.
         """
         if self._task is None and not self._closed:
             budget = self._default_timeout if timeout is None else timeout
-            self._task = asyncio.create_task(self._download(budget))
+            self._task = asyncio.create_task(self._download(budget, purpose))
 
     async def path(self) -> Path | None:
         """The local file, awaiting (and if needed starting) the download; None on failure.
@@ -160,8 +162,8 @@ class LocalHiresSource(LocalVideoDownload):
 
     _label = "720p"
 
-    def _download(self, timeout: float) -> Coroutine[Any, Any, Download]:
-        return download_video_720p(self._video_id, timeout, purpose=DOWNLOAD_PURPOSE)
+    def _download(self, timeout: float, purpose: str | None) -> Coroutine[Any, Any, Download]:
+        return download_video_720p(self._video_id, timeout, purpose=purpose or DOWNLOAD_PURPOSE)
 
 
 class LocalLowresSource(LocalVideoDownload):
@@ -170,7 +172,7 @@ class LocalLowresSource(LocalVideoDownload):
     _label = "Low-res"
     _default_timeout = LOWRES_DOWNLOAD_TIMEOUT
 
-    def _download(self, timeout: float) -> Coroutine[Any, Any, Download]:
+    def _download(self, timeout: float, purpose: str | None) -> Coroutine[Any, Any, Download]:
         return download_video_lowres(self._video_id, timeout)
 
 

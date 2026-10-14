@@ -471,3 +471,27 @@ class TestFinished:
 
         assert source.finished is True
         await source.close()
+
+
+class TestPurpose:
+    async def test_should_label_a_download_started_for_moment_fill(self, fake_download):
+        async def landed() -> None:
+            return None
+
+        downloads = fake_download(landed)
+        source = LocalHiresSource(VIDEO_ID)
+
+        source.start(timeout=5.0, purpose="moment_fill")
+        await source.path()
+
+        assert downloads.calls == ["moment_fill"]
+
+    async def test_should_label_the_prefetch_by_default(self, fake_download):
+        async def landed() -> None:
+            return None
+
+        downloads = fake_download(landed)
+
+        await LocalHiresSource(VIDEO_ID).path()
+
+        assert downloads.calls == [DOWNLOAD_PURPOSE]

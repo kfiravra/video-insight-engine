@@ -279,11 +279,51 @@ class TestDownloadVideoLowres:
         with patch.object(local_video.asyncio, "create_subprocess_exec", side_effect=_spawn):
             result = await local_video.download_video_lowres(VIDEO_ID)
 
-        assert result is not None and formats == [
-            "worstvideo[height>=360][ext=mp4][vcodec^=avc1]/worstvideo[height>=360][ext=mp4]"
-            "/bestvideo[ext=mp4]/worst[ext=mp4]/worst"
-        ]
+        assert result is not None and formats == [local_video._LOWRES_FORMAT_SPEC]
         local_video.cleanup_local_video(result[1])
+
+    @staticmethod
+    def _pick(formats: list[dict]) -> str:
+        """The format id yt-dlp's own selector picks for the pass-1 spec (worst first)."""
+        from yt_dlp import YoutubeDL
+
+        selector = YoutubeDL({"quiet": True}).build_format_selector(local_video._LOWRES_FORMAT_SPEC)
+        picked = list(selector({"formats": formats, "incomplete_formats": False}))
+        return picked[0]["format_id"]
+
+    @staticmethod
+    def _fmt(format_id: str, height: int, protocol: str, *, video_only: bool = False) -> dict:
+        return {
+            "format_id": format_id,
+            "ext": "mp4",
+            "height": height,
+            "width": height * 16 // 9,
+            "vcodec": "avc1.4d401e",
+            "acodec": "none" if video_only else "mp4a.40.2",
+            "protocol": protocol,
+            "url": f"https://example.invalid/{format_id}",
+        }
+
+    def test_should_pick_the_360p_video_only_file_when_offered(self):
+        formats = [
+            self._fmt("160", 144, "https", video_only=True),
+            self._fmt("134", 360, "https", video_only=True),
+            self._fmt("18", 360, "https"),
+        ]
+
+        assert self._pick(formats) == "134"
+
+    def test_should_keep_360p_when_a_sabr_session_offers_only_muxed_files(self):
+        """The nightly's web_embedded offers muxed HLS 144p-720p next to android's
+        format 18: pass 1 must not drop to the 144p stream."""
+        formats = [
+            self._fmt("91-0", 144, "m3u8_native"),
+            self._fmt("93-0", 360, "m3u8_native"),
+            self._fmt("18", 360, "https"),
+            self._fmt("95-0", 720, "m3u8_native"),
+        ]
+
+        assert self._pick(formats) == "18"
 
     async def test_should_try_the_video_clients_before_the_pass1_clients(
         self, monkeypatch, tmp_path
@@ -401,6 +441,17 @@ class TestProxyExitRotation:
         ytdlp.stderr_by_exit[_exit(1)] = b"ERROR: HTTP Error 429: Too Many Requests"
 
         result = await local_video.download_video_lowres(VIDEO_ID)
+
+        assert result is not None and ytdlp.tried == [_exit(1), _exit(2)]
+        local_video.cleanup_local_video(result[1])
+
+    async def test_should_rotate_on_a_403_for_the_video_data(self, ytdlp):
+        """googlevideo refusing the bytes is exit-scoped too (prod exit -2, 2026-10-14)."""
+        ytdlp.stderr_by_exit[_exit(1)] = (
+            b"ERROR: unable to download video data: HTTP Error 403: Forbidden"
+        )
+
+        result = await local_video.download_video_720p(VIDEO_ID)
 
         assert result is not None and ytdlp.tried == [_exit(1), _exit(2)]
         local_video.cleanup_local_video(result[1])

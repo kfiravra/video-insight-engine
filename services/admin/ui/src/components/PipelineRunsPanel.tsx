@@ -28,16 +28,37 @@ function RegenBadge({ ordinal }: RegenBadgeProps) {
   );
 }
 
-/** Partial-result marker: the run's doc is flagged degraded (a failed
- *  extraction field group, a dropped chunked batch or critical coverage —
- *  the same flag the web app's DegradedNotice shows). */
-function DegradedBadge() {
+const DEGRADED_REASON_TEXT: Record<string, { label: string; detail: string }> = {
+  partial_extraction: {
+    label: "partial",
+    detail:
+      "an extraction field group failed, a chunked batch was dropped, or coverage was critical — the stored output is a partial result",
+  },
+  media_download_failed: {
+    label: "media",
+    detail:
+      "a video download failed (403, bot check, timeout…) or the hi-res pass was abandoned — frames, hi-res frames or moment images may be missing",
+  },
+};
+
+interface DegradedBadgeProps {
+  reasons?: string[] | null;
+}
+
+/** Degraded-run marker: a partial extraction (the flag the web app's
+ *  DegradedNotice shows) and/or a failed frame download (admin only). */
+function DegradedBadge({ reasons }: DegradedBadgeProps) {
+  const known = (reasons ?? []).map((r) => DEGRADED_REASON_TEXT[r] ?? { label: r, detail: r });
+  const labels = known.map((r) => r.label).join(" · ");
+  // Rows from before the summarizer wrote reasons: partial extraction was the only cause.
+  const shown = known.length ? known : [DEGRADED_REASON_TEXT.partial_extraction];
+  const title = `Degraded run: ${shown.map((r) => r.detail).join("; ")}`;
   return (
     <span
       className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wide bg-[var(--color-danger-soft)] text-[var(--color-danger)]"
-      title="Degraded run: an extraction field group failed, a chunked batch was dropped, or coverage was critical — the stored output is a partial result"
+      title={title}
     >
-      degraded
+      {labels ? `degraded · ${labels}` : "degraded"}
     </span>
   );
 }
@@ -169,7 +190,7 @@ function RunRow({ run, isOpen, onToggle }: RunRowProps) {
           )}
           {run.degraded === true && (
             <span className="ml-2">
-              <DegradedBadge />
+              <DegradedBadge reasons={run.degraded_reasons} />
             </span>
           )}
         </td>

@@ -130,7 +130,9 @@ class MongoDBVideoRepository:
             "transcriptMeta",
             "generation",
             # Degraded-run flag (dropped extraction batches / critical coverage) —
-            # top-level mirror of meta.degraded for admin queries.
+            # top-level mirror of meta.degraded for admin queries; the run's end
+            # also sets it for a failed frame download (set_pipeline_timing,
+            # with degradedReasons).
             "degraded",
             "descriptionAnalysis",
             "channel",
@@ -182,17 +184,36 @@ class MongoDBVideoRepository:
             {"$set": {"transcriptMeta": meta, "updatedAt": _utc_now()}},
         )
 
-    def set_pipeline_timing(self, video_summary_id: str, timing: dict[str, Any]) -> None:
+    def set_pipeline_timing(
+        self, video_summary_id: str, timing: dict[str, Any], degraded_reasons: list[str]
+    ) -> None:
         """Persist the run's ``pipeline.timing`` block (phase walls, LLM calls,
-        downloads, SSE milestones).
+        downloads, SSE milestones) and its ``degradedReasons``.
 
         Written AFTER assembly's ``save_structured_result`` (which replaces the
         whole ``pipeline`` object) and for failed runs too, so it is a dotted
-        ``$set``. No ``updatedAt`` bump: that field is the stall sweeper's
-        liveness signal and this write carries no progress.
+        ``$set``. Every download has ended by now — a 720p file can still be
+        downloading at the save — so a failed one marks the row ``degraded``
+        here. This write never clears the flag: the run start and the Redis
+        fast path clear the previous run's (``clear_degraded``).
+        No ``updatedAt`` bump: that field is the stall sweeper's liveness
+        signal and this write carries no progress.
+        """
+        fields: dict[str, Any] = {"pipeline.timing": timing, "degradedReasons": degraded_reasons}
+        if degraded_reasons:
+            fields["degraded"] = True
+        self._collection.update_one({"_id": ObjectId(video_summary_id)}, {"$set": fields})
+
+    def clear_degraded(self, video_summary_id: str) -> None:
+        """Drop the previous run's ``degraded`` flag and ``degradedReasons``.
+
+        A re-run on the same ``_id`` (regen, failed retry, stall re-dispatch, a
+        Redis-served completion) sets them again only for its own reasons —
+        the save (partial extraction) and ``set_pipeline_timing`` (a failed
+        frame download). No ``updatedAt`` bump, as ``clear_transcript_meta``.
         """
         self._collection.update_one(
-            {"_id": ObjectId(video_summary_id)}, {"$set": {"pipeline.timing": timing}}
+            {"_id": ObjectId(video_summary_id)}, {"$unset": {"degraded": "", "degradedReasons": ""}}
         )
 
     def clear_transcript_meta(self, video_summary_id: str) -> None:

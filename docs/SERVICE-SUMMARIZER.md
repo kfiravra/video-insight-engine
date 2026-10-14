@@ -395,7 +395,15 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
         │   Metadata/subtitle extraction deliberately does NOT use it (android lacks subs).
         │   Every download's pipeline.timing entry records bytes, wallMs and mbPerSec;
         │   the video downloads add the picked format + height, the clients, the proxy
-        │   exit (n/m) and the error.
+        │   exit (n/m) and the error. A bot check, a 429 or a 403 on the video data
+        │   moves the download to the next sticky exit (on prod 2026-10-14 exit -2 got
+        │   the 403 for every client while exit -1 downloaded). A frame download that
+        │   still fails — or a deferred hi-res pass the run gave up on — marks the run
+        │   degraded (pipeline.timing degraded + degradedReasons
+        │   "media_download_failed", and the row's degraded flag — the admin runs
+        │   badge; audio downloads don't count: a failed one fails the transcript path
+        │   itself). The run start and a Redis-served completion clear the previous
+        │   run's flags. yt-dlp is pinned to a nightly (requirements.txt).
         └─▶ FFmpeg scene detection on local file (~10-15s, 20-50x realtime; frames capped at
         │   SCENE_DETECT_SCALE_WIDTH and never upscaled; quality via SCENE_JPEG_QUALITY).
         │   Zero-candidate ladder: threshold 0.3 → 0.15 → uniform seeks, ffmpeg rc checked
@@ -1038,6 +1046,8 @@ read as fallbacks (Frontend Meta Resolution below). Field-level detail:
         # "timing" is $set separately after the phases end (pipeline.timing)
     },
     "degraded": True,                       # only when true: a failed group / dropped batch / critical coverage
+                                            # (the run's end also sets it, with degradedReasons, when a frame
+                                            # download failed — admin badge only, no meta.degraded banner)
     "processedAt": ..., "processingTimeMs": 25432,
 }
 ```

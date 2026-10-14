@@ -57,6 +57,7 @@ def _persist_cache_hit(
     that discriminator.
     """
     repository.clear_transcript_meta(video_summary_id)
+    repository.clear_degraded(video_summary_id)
     repository.save_structured_result(video_summary_id, cached)
 
 
@@ -205,6 +206,7 @@ async def stream_summarization(
             # Best-effort: an observability-only field must never abort a run.
             try:
                 await asyncio.to_thread(repository.clear_transcript_meta, video_summary_id)
+                await asyncio.to_thread(repository.clear_degraded, video_summary_id)
             except Exception as exc:
                 logger.warning(
                     "[pipeline] transcriptMeta clear failed for %s: %s", video_summary_id, exc

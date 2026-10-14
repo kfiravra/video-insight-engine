@@ -76,8 +76,9 @@ curl -fsSLo /tmp/deno.zip https://github.com/denoland/deno/releases/download/v2.
 sudo unzip -o /tmp/deno.zip -d /usr/local/bin
 deno --version
 
-# yt-dlp standalone build, the same version as services/summarizer/requirements.lock
-sudo curl -fsSLo /usr/local/bin/yt-dlp https://github.com/yt-dlp/yt-dlp/releases/download/2026.08.19/yt-dlp_linux
+# yt-dlp standalone build, the same version as services/summarizer/requirements.lock (a nightly
+# since hotfix 4.1 — nightlies live in the yt-dlp-nightly-builds repo)
+sudo curl -fsSLo /usr/local/bin/yt-dlp https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/download/2026.10.10.233141/yt-dlp_linux
 sudo chmod +x /usr/local/bin/yt-dlp
 
 URL='https://www.youtube.com/watch?v=VIDEO_ID'   # a short public video with captions
