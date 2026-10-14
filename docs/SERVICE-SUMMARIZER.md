@@ -245,8 +245,8 @@ SCENE_HIRES_ENABLED=true               # Pass-2 720p refinement of the selected 
 SCENE_HIRES_FALLBACK_TIMEOUT=180.0     # Hi-res seek budget in the run's local 720p file (media/hires_refiner.py)
 YOUTUBE_PROXY_URL=                     # One proxy for every YouTube request (metadata, captions, every download)
 YOUTUBE_PROXY_EXIT_COUNT=1             # Sticky exits (USERNAME-1…N) a 429 or bot check rotates through on every YouTube call (max 3); 1 = no rotation
-YTDLP_PLAYER_CLIENTS=android           # yt-dlp player clients for pass 1 + audio downloads; empty = yt-dlp defaults
-YTDLP_HIRES_PLAYER_CLIENTS=web_embedded,android  # 720p download only (android caps at 360p); retries with the line above
+YTDLP_PLAYER_CLIENTS=android           # yt-dlp player clients for audio downloads + the video downloads' retry; empty = yt-dlp defaults
+YTDLP_HIRES_PLAYER_CLIENTS=web_embedded,android  # both video downloads try these first (android has no video-only renditions); retries with the line above
 FRAME_TIER_ENABLED=true                # Adaptive visual tiers (HIGH: overselect + vision reselect before hires)
 FRAME_VISION_ENABLED=true              # Frame descriptions by the vision model; false = OCR only
 FRAME_VISION_PARALLEL=true             # Vision in parallel batches; false = one call with every frame
@@ -365,8 +365,9 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
         │   (v2) carries per-frame timestamps, galleryIndices, hiresCount and the
         │   persisted visionDescriptions. A hit skips extraction AND restores the
         │   vision descriptions (cached frames have no local file, so vision can't
-        │   re-run); `hiresCount == 0` (every hi-res seek failed) is treated as a
-        │   MISS so a 403-era low-res run self-heals on the next reprocess.
+        │   re-run); `hiresCount == 0` (every hi-res seek failed, or a deferred hi-res
+        │   pass that never landed) is treated as a MISS so a low-res run self-heals
+        │   on the next reprocess.
         │   (prefix is versioned via SCENE_S3_PREFIX, default "scenes-v4" — bump to
         │    invalidate after quality changes; "scenes" holds pre-hires low-res
         │    frames, "scenes-v2" pre-adaptive-vision frames. NOTE: scene_NNNN keys
@@ -378,13 +379,23 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
         │   HIGH over-selects FRAME_OVERSELECT_COUNT candidates and
         │   vision-describes them BEFORE hires refinement so subject-matter frames beat
         │   presenter shots (floor FRAME_RESELECT_FLOOR); LOW skips vision; STANDARD = top-8.
-        └─▶ Pass 1 — detection: reads the run's WORST-quality download (started by the
-        │   metadata phase; ~15-20s; 144p is plenty for scene detection + scoring).
-        │   All yt-dlp VIDEO/AUDIO downloads (detection, whisper audio; the 720p file uses
-        │   YTDLP_HIRES_PLAYER_CLIENTS first) route through YTDLP_PLAYER_CLIENTS (default "android" — YouTube
-        │   403s the web client's download URLs from some environments; never mix in
+        └─▶ Pass 1 — detection: reads the run's 360p download (started by the metadata
+        │   phase): the smallest ≥360p video-only rendition, H.264 first — or the 720p
+        │   download's file when it lands first as the same ≤360p rendition
+        │   (hires_prefetch.first_detection_file; pass 1 is then cancelled; a real
+        │   720p file is read only when pass 1 fails — scene scoring on it costs
+        │   several times more). Both video downloads try YTDLP_HIRES_PLAYER_CLIENTS first:
+        │   android alone serves only the muxed 360p rendition (format 18, audio
+        │   included, 2-4x the bytes, often bigger than the 720p file — g4 §8), and
+        │   YouTube's SABR experiment sometimes drops web_embedded's renditions too, so
+        │   both downloads can still be format 18. Audio downloads and the video
+        │   downloads' retry use YTDLP_PLAYER_CLIENTS (default "android" — YouTube 403s
+        │   the web client's download URLs from some environments; never mix in
         │   "default": merged format lists let bestvideo pick a 403ing web DASH format).
         │   Metadata/subtitle extraction deliberately does NOT use it (android lacks subs).
+        │   Every download's pipeline.timing entry records bytes, wallMs and mbPerSec;
+        │   the video downloads add the picked format + height, the clients, the proxy
+        │   exit (n/m) and the error.
         └─▶ FFmpeg scene detection on local file (~10-15s, 20-50x realtime; frames capped at
         │   SCENE_DETECT_SCALE_WIDTH and never upscaled; quality via SCENE_JPEG_QUALITY).
         │   Zero-candidate ladder: threshold 0.3 → 0.15 → uniform seeks, ffmpeg rc checked
@@ -403,6 +414,17 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
         │   (or when the run fails). No stream-URL seeks: client-bound googlevideo URLs
         │   403 plain ffmpeg, and proxied runs would seek from the blocked host IP.
         │   Swaps frame paths in place → S3 upload, vision, and OCR all get the best available.
+        │   Only a 720p file already on disk is read: while it still downloads, the
+        │   360p detection frames are uploaded (manifest hiresCount 0) and vision reads
+        │   them (vision + OCR at 360p is the trade-off) — frames-done never waits for
+        │   the big file unless pass 1 failed — and a deferred pass
+        │   (media/hires_upgrade.py, started after vision) seeks them in the 720p file
+        │   once it lands and overwrites the same S3 objects (a 720p duplicate, or a
+        │   seek that landed on the shot before the cut, keeps its 360p object), then
+        │   sets the manifest's hiresCount. Assembly leaves the file open while it
+        │   runs; the runner gives it ≤ 60 s after `done`, side by side with the RAG
+        │   transcript wait (a failed run cancels it), then closes the file.
+        │   pipeline.timing step frames.hires_upgrade.
         └─▶ Batch parallel S3 upload (only selected frames — not all detected) + manifest write
         └─▶ OCR + Vision LLM analysis run in parallel:
             ├─▶ OCR: Tesseract on text-heavy frames

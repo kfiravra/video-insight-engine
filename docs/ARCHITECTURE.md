@@ -184,8 +184,9 @@ Content type and tab layout come from the **plan** (primary model, Sonnet 5.5), 
 │     ├── Plan-done: reconcile (memory's second opinion, required             │
 │     │   backfill, quiz policy, 3–6 tabs) → triage_complete + meta →         │
 │     │   <video_memory> → provisional Moments tab                            │
-│     ├── Frames: worst-quality detect + score → tier (waits ≤ 3 s for        │
-│     │   the probe) → select → 720p refine from the local file → S3          │
+│     ├── Frames: 360p detect (or its 360p twin if that lands first) + score  │
+│     │   → tier (waits ≤ 3 s for the probe) → select → 720p refine if the    │
+│     │   file is on disk, else a deferred pass after vision → S3             │
 │     │   (manifest cache) → OCR ∥ vision → frames-done:                      │
 │     │   <visual_annotations> + the code tabs reconcile deferred             │
 │     └── Field groups (EXTRACTION_PARALLEL=true): the tabs' fields →         │

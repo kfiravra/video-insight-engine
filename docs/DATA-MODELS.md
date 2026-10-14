@@ -242,7 +242,10 @@ One row per video **version** (`version`, `isLatest` below); the served row is s
                     refusedModel?,    // v4: any row recorded during a refused call's one re-send on the previous model (its refusal, error or timeout) — a timeout only under call_deadline (LLMService calls); a re-send cancelled by frame vision's wait_for or the description's 30 s cap is a plain TimeoutError row under the refused model, without refusedModel
                     // error "Refusal" rows only — what the declined answer was billed:
                     refusalCategory?, inputTokens?, outputTokens?, cacheReadTokens?, cacheWriteTokens?, cacheWrite5mTokens?, cacheWrite1hTokens?, costUsd? }],
-    downloads: [{ kind: "lowres" | "720p" | "audio", purpose: string, startMs, wallMs, bytes: number | null, ok: boolean }],
+    downloads: [{ kind: "lowres" | "720p" | "audio", purpose: string, startMs, wallMs, bytes: number | null,
+                  mbPerSec: number | null, ok: boolean,
+                  // yt-dlp video downloads only: the picked rendition, the clients + proxy exit that delivered it, why it failed
+                  format?: string | null, height?: number | null, clients?: string | null, proxyExit?: string | null, error?: string | null }],
     costUsd: number,                // Σ costUsd over llmCalls + llmFailures — refused calls included (v4)
     counts: { llmCalls, llmFailures, retries, rateLimited,
               fallbacks,            // answers with fallbackUsed and no refusedModel: the cross-provider fallback + provider-side model swaps
