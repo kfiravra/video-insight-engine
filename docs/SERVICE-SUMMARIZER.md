@@ -244,7 +244,7 @@ SCENE_S3_PREFIX=scenes-v4              # Versioned frame/manifest prefix — bum
 SCENE_HIRES_ENABLED=true               # Pass-2 720p refinement of the selected frames
 SCENE_HIRES_FALLBACK_TIMEOUT=180.0     # Hi-res seek budget in the run's local 720p file (media/hires_refiner.py)
 YOUTUBE_PROXY_URL=                     # One proxy for every YouTube request (metadata, captions, every download)
-YOUTUBE_PROXY_EXIT_COUNT=1             # Sticky exits (USERNAME-1…N) a 429 or bot check rotates through on every YouTube call (max 3); 1 = no rotation
+YOUTUBE_PROXY_EXIT_COUNT=1             # Sticky exits (USERNAME-1…N) a 429 or bot check rotates through on every YouTube call (metadata + captions: every exit, no new one after 15 s; downloads: max 3); 1 = no rotation
 YTDLP_PLAYER_CLIENTS=android           # yt-dlp player clients for audio downloads + the video downloads' retry; empty = yt-dlp defaults
 YTDLP_HIRES_PLAYER_CLIENTS=web_embedded,android  # both video downloads try these first (android has no video-only renditions); retries with the line above
 FRAME_TIER_ENABLED=true                # Adaptive visual tiers (HIGH: overselect + vision reselect before hires)
@@ -959,7 +959,7 @@ list against the model registry.
 | `cached` | `{videoSummaryId}` (only for cached results) |
 | `metadata` | `{title, channel, thumbnailUrl, duration}` (fields may be `null` on cached legacy docs) |
 | `transcript_ready` | `{duration}` |
-| `phase` | `{phase}` — progress marker (`transcript_cached`, `transcript`, `audio_transcription`, `whisper_transcription`, `metadata_fallback`, `translation`) |
+| `phase` | `{phase}` — progress marker (`metadata_retry`, `transcript_retry`, `transcript_cached`, `transcript`, `audio_transcription`, `whisper_transcription`, `metadata_fallback`, `translation`) |
 | `description_analysis` | `{links, resources, socialLinks}` (emitted at assembly, after a ≤ 5 s wait for the analysis) |
 | `triage_complete` | `{contentTags, modifiers, primaryTag, userGoal, tabs (with briefs), confidence, contentFormat, evidence, planEvidence, memoryEvidence, terms}` — at plan-done, after reconcile (API-REFERENCE.md#triage_complete) |
 | `extraction_progress` | `{section, percent, batch?, of?}` — the field groups (default) emit `section="groups"` with `batch`/`of` per landed group call (`of` follows the visual group's fate); with `EXTRACTION_PARALLEL=false` one call emits `section="all"`, chunked batches `section="chunked"` with `batch`/`of`, rate-limited fallback batches `section="chunked-sequential"` |
@@ -1205,8 +1205,15 @@ proxy setup (`services/cache/caption_negative_cache.py`, Redis key
   goes straight to audio.
 - *`YOUTUBE_PROXY_EXIT_COUNT` > 1* (Webshare sticky `USERNAME-N` exits) — the
   metadata-phase timedtext fetch and the caption API both move to the next
-  exit on a 429 (`download_utils.ytdlp_proxy_exit_urls`, at most 3 exits, no
-  backoff, one shared loop `download_utils.try_proxy_exits`). Only a 429 on
+  exit on a 429 (`download_utils.ytdlp_proxy_exit_urls`, every exit since hotfix
+  4.1 — no new one after `EXIT_ROTATION_BUDGET_S` = 15 s, at least 3; the downloads
+  keep at most 3 —
+  no backoff, one shared loop `download_utils.try_proxy_exits`). Every blocked exit
+  sets the fetch's retry notice: the phase awaiting it emits one `phase`
+  `metadata_retry` / `transcript_retry` event (`pipeline/youtube_retry.py`; the
+  timedtext fetch in the caption task, the caption API in the transcript phase), the
+  web shows "YouTube is rate-limiting, retrying" until the `metadata` event /
+  `transcript_ready` or the next phase event. Only a 429 on
   every exit tried writes the marker; any other error ends the rotation
   without marking. The library's `RequestBlocked` (its 429 subclass
   `IpBlocked` plus the "not a bot" check) is recognised by type, since its

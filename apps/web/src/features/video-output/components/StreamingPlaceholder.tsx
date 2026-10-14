@@ -39,10 +39,14 @@ const CANCEL_REVEAL_MS = 5000;
 /** Rotation interval for the feature spotlight. Slow enough to read twice. */
 const SPOTLIGHT_INTERVAL_MS = 6500;
 
+/** Shown on the metadata or transcript stage while the summarizer rotates proxy exits. */
+const YOUTUBE_RETRYING = 'YouTube is rate-limiting, retrying';
+
 const TRANSCRIPT_DETAIL: Record<StreamPhaseDetail, string> = {
   'captions-cached': 'Reusing a transcript we already have',
   'audio-transcription': 'No captions found, so the audio is being transcribed. This is the longest step.',
   'metadata-only': 'No captions available; working from the video details',
+  'youtube-retrying': YOUTUBE_RETRYING,
 };
 
 interface Spotlight {
@@ -285,6 +289,9 @@ interface StageDetailProps {
 }
 
 function StageDetail({ stageId, phaseDetail, extractionProgress, triage, tabCount }: StageDetailProps) {
+  if (phaseDetail === 'youtube-retrying' && stageId === 'metadata') {
+    return <p className="mt-1 text-xs text-muted-foreground">{YOUTUBE_RETRYING}</p>;
+  }
   if (stageId === 'transcript') {
     const text = phaseDetail ? TRANSCRIPT_DETAIL[phaseDetail] : 'Pulling the captions';
     return <p className="mt-1 text-xs text-muted-foreground">{text}</p>;

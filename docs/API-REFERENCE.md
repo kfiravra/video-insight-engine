@@ -1451,7 +1451,7 @@ path: the emission sequence under [tab_ready](#tab_ready).
 ### phase
 
 ```json
-{ "event": "phase", "phase": "transcript" | "transcript_cached" | "audio_transcription" | "whisper_transcription" | "metadata_fallback" | "translation" }
+{ "event": "phase", "phase": "metadata_retry" | "transcript_retry" | "transcript" | "transcript_cached" | "audio_transcription" | "whisper_transcription" | "metadata_fallback" | "translation" }
 ```
 
 Only the transcript-source phases and `translation` are emitted as explicit
@@ -1466,6 +1466,8 @@ and `VALID_SSE_PHASES` in `sse-validators.ts`.
 
 | Phase | When |
 |-------|------|
+| `metadata_retry` | A proxy exit got YouTube's bot check / a 429 during the metadata extract; the summarizer rotates exits (no new one after 15 s, at least 3) (web: "YouTube is rate-limiting, retrying" until the `metadata` event) |
+| `transcript_retry` | The same during the caption fetch — the timedtext fetch or the caption API (web: the same line until `transcript_ready` or the next `phase` event) |
 | `transcript_cached` | Transcript found in the S3 cache (`fetch_transcript`, step 0) |
 | — | yt-dlp captions (the track picked at metadata) succeed: no `phase` event |
 | `transcript` | No yt-dlp captions: starting youtube-transcript-api (skipped while the caption-429 marker is set) |

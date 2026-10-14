@@ -30,6 +30,7 @@ import yt_dlp  # type: ignore[import-untyped]
 from src.exceptions import TranscriptError
 from src.models.schemas import ErrorCode
 from src.services.media.download_utils import (
+    EXIT_ROTATION_BUDGET_S,
     is_exit_blocked,
     try_proxy_exits,
     ytdlp_proxy_exit_urls,
@@ -643,13 +644,14 @@ def _fetch_subtitle_data_sync(url: str, job_key: str | None = None) -> dict:
     (``ip=0.0.0.0``) — so a 429 reaches the caller only when every tried exit
     was blocked. Direct connections and a single exit keep the same-IP retry.
     """
-    exit_urls = ytdlp_proxy_exit_urls(job_key)
+    exit_urls = ytdlp_proxy_exit_urls(job_key, limit=None)
     if len(exit_urls) > 1:
         return try_proxy_exits(
             exit_urls,
             partial(_get_subtitle_json_sync, url),
             _is_timedtext_exit_blocked,
             "Timedtext fetch",
+            budget_s=EXIT_ROTATION_BUDGET_S,
         )
     return _fetch_subtitle_single_exit_sync(url)
 
@@ -750,12 +752,13 @@ def _extract_info_via_exits(video_id: str) -> dict[str, Any] | None:
 
     YouTube's bot check and its 429 are scoped to the exit IP, so with several
     sticky exits (YOUTUBE_PROXY_EXIT_COUNT) either moves on to the next one,
-    starting from the video's round-robin exit; private / removed / age-gated
-    videos fail on the first exit as before.
+    starting from the video's round-robin exit — every exit, for up to
+    EXIT_ROTATION_BUDGET_S; private / removed / age-gated videos fail on the
+    first exit as before.
     """
     url = f"https://www.youtube.com/watch?v={video_id}"
     opts = _build_yt_dlp_opts()
-    exit_urls = ytdlp_proxy_exit_urls(video_id)
+    exit_urls = ytdlp_proxy_exit_urls(video_id, limit=None)
     if len(exit_urls) <= 1:
         return _extract_with_retry(url, opts)
     return try_proxy_exits(
@@ -763,6 +766,7 @@ def _extract_info_via_exits(video_id: str) -> dict[str, Any] | None:
         lambda proxy_url: _extract_with_retry(url, {**opts, "proxy": proxy_url}),
         is_exit_blocked,
         f"Metadata extract for {video_id}",
+        budget_s=EXIT_ROTATION_BUDGET_S,
     )
 
 

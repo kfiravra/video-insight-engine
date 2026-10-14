@@ -25,6 +25,7 @@ if TYPE_CHECKING:
         TranscriptTrail,
     )
     from src.services.pipeline.triage import TriageResult
+    from src.services.pipeline.youtube_retry import RetryNotice
     from src.services.video.description_analyzer import DescriptionAnalysis
     from src.services.video.sponsorblock import SponsorSegment
     from src.services.video.youtube import VideoData
@@ -78,6 +79,9 @@ class PipelineContext:
     # accepted: the caption fetch (the transcript phase awaits it) and the
     # description analysis (readers await it via await_description_analysis).
     caption_task: asyncio.Task[None] | None = None
+    # Set by the caption fetch's blocked proxy exits; the transcript phase relays
+    # it as "YouTube is rate-limiting, retrying" (pipeline/youtube_retry).
+    caption_retry_notice: RetryNotice | None = None
     description_task: asyncio.Task[None] | None = None
 
     # Scene extraction

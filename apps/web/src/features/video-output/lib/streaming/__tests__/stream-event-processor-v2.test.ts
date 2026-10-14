@@ -777,7 +777,9 @@ describe('stream-event-processor — Pipeline events', () => {
   describe('phase mapping', () => {
     it.each([
       ['metadata', 'metadata', null],
+      ['metadata_retry', 'metadata', 'youtube-retrying'],
       ['transcript', 'transcript', null],
+      ['transcript_retry', 'transcript', 'youtube-retrying'],
       ['transcript_cached', 'transcript', 'captions-cached'],
       ['audio_transcription', 'transcript', 'audio-transcription'],
       ['whisper_transcription', 'transcript', 'audio-transcription'],
@@ -888,6 +890,20 @@ describe('stream-event-processor — Pipeline events', () => {
       processEvent({ event: 'transcript_ready' }, mockSetState.setState);
 
       expect(mockSetState.getState().duration).toBe(600);
+    });
+
+    it('should end "YouTube is rate-limiting, retrying" once the captions landed', () => {
+      processEvent({ event: 'phase', phase: 'transcript_retry' }, mockSetState.setState);
+      processEvent({ event: 'transcript_ready', duration: 600 }, mockSetState.setState);
+
+      expect(mockSetState.getState().phaseDetail).toBeNull();
+    });
+
+    it('should keep any other transcript detail', () => {
+      processEvent({ event: 'phase', phase: 'transcript_cached' }, mockSetState.setState);
+      processEvent({ event: 'transcript_ready', duration: 600 }, mockSetState.setState);
+
+      expect(mockSetState.getState().phaseDetail).toBe('captions-cached');
     });
   });
 });

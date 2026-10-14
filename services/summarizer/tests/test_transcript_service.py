@@ -557,4 +557,4 @@ class TestJobExit:
     ):
         await get_transcript("dQw4w9WgXcQ")
 
-        mock_exit_urls.assert_called_once_with("dQw4w9WgXcQ")
+        mock_exit_urls.assert_called_once_with("dQw4w9WgXcQ", limit=None)
