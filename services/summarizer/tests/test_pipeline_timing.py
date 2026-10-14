@@ -429,3 +429,16 @@ class TestLlmCallShape:
             1920,
             0,
         )
+
+
+class TestCacheRewrites:
+    def test_should_put_the_rewrite_counts_in_the_document(self) -> None:
+        recorder = PipelineTimingRecorder()
+        recorder.llm_calls = [
+            {"span": "extraction_text1", "startMs": 0, "ttftMs": 4000, "cacheWriteTokens": 9886},
+            {"span": "extraction_text2", "startMs": 1500, "cacheWriteTokens": 9886},
+        ]
+
+        counts = recorder.to_document(tabs_planned=0, tabs_assembled=0)["counts"]
+
+        assert (counts["cacheRewrites"], counts["cacheRewriteTokens"]) == (1, 9886)

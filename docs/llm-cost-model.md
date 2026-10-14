@@ -201,7 +201,10 @@ The 1h breakpoint precedes the 5m one: two of the four Anthropic allows.
 once the response writing it has begun, so per chunk text1 (the group holding
 the first planned tab) is the one streamed call, and its first chunk releases
 the chunk's other groups, which then read blocks 1 + 2 instead of writing them
-again. `GROUP_RELEASE_FALLBACK_S` (1.5 s) releases them without that chunk; a
+again. `GROUP_RELEASE_FALLBACK_S` (5 s; 1.5 s raced Sonnet 5.5's slower first
+tokens — jMq8 r1 on prod wrote the prefix three times, +$0.065) releases them
+without that chunk; `pipeline.timing` `counts.cacheRewrites` / `cacheRewriteTokens`
+count such writes (`pipeline/cache_rewrites.py`). A
 text1 that fails before its first chunk releases them at once. Measured
 (`dev/active/pipeline-1min/gates/g3.md` §Cache hit rate, dev end runs and prod):
 block 1 measures ≈ 2.6–3.4k cl100k tokens on the benchmark domain sets (offline,

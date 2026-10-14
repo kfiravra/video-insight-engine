@@ -54,8 +54,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Released without text1's first chunk after this long (Kfir round 3: "or 1.5 s").
-GROUP_RELEASE_FALLBACK_S = 1.5
+# Released without text1's first chunk after this long (Kfir round 3: "or 1.5 s";
+# hotfix 4.1: 5 s — on Sonnet 5.5 text1's first token took 0.67-3.96 s on prod,
+# and a group released before it rewrites the shared prefix: jMq8 r1, +$0.065;
+# pipeline.timing counts.cacheRewrites).
+GROUP_RELEASE_FALLBACK_S = 5.0
 GROUP_MAX_TOKENS = 16384
 # A group call's time budget follows its estimated answer (Σ outputWeight ×
 # expect) at a pace below the extraction model's measured one (Sonnet 5.5

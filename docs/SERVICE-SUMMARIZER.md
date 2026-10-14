@@ -571,7 +571,8 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     │   its estimate (Σ outputWeight × expect ÷ 60 tok/s + 30 s, 120–300 s); the group-job template
     │   is read once per run. Cache layout and hit rates: llm-cost-model.md
     └─▶ Firing (pipeline/extraction_groups.py, warm-first): per chunk, text1 is the only streamed
-    │   call; its first chunk — or GROUP_RELEASE_FALLBACK_S (1.5 s) — releases the chunk's other text
+    │   call; its first chunk — or GROUP_RELEASE_FALLBACK_S (5 s; 1.5 s before hotfix
+    │   4.1; a race counts in counts.cacheRewrites) — releases the chunk's other text
     │   groups, which then read blocks 1 + 2 instead of writing them. The visual group fires once
     │   frames-done cut it. Every call holds a slot of the run's EXTRACTION_PARALLEL_BATCHES
     │   semaphore (text1 calls first)

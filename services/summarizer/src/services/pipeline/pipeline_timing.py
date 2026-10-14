@@ -42,6 +42,8 @@ from litellm.cost_calculator import completion_cost
 from litellm.exceptions import RateLimitError
 from llm_common.context import llm_feature_var, llm_refused_model_var
 
+from src.services.pipeline.cache_rewrites import rewrite_counts
+
 logger = logging.getLogger(__name__)
 
 # 2: llmCalls carry the 1h/5m cache-write split, and cacheReadTokens counts
@@ -193,6 +195,7 @@ class PipelineTimingRecorder:
             **self._refusal_counts(),
             "outputTokens": sum(c.get("outputTokens", 0) for c in self.llm_calls),
             "cacheReadTokens": sum(c.get("cacheReadTokens", 0) for c in self.llm_calls),
+            **rewrite_counts(self.llm_calls),
             "downloadBytes": sum(d.get("bytes") or 0 for d in self.downloads),
         }
 

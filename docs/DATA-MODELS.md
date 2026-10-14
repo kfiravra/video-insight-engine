@@ -254,6 +254,10 @@ One row per video **version** (`version`, `isLatest` below); the served row is s
               refusals,             // v4: calls refused — "Refusal" rows without refusedModel
               refusalFallbacks,     // v4: refused calls the previous model answered — llmCalls with refusedModel
               refusalsUnanswered,   // v4: refusals − refusalFallbacks
+              cacheRewrites,        // hotfix 4.1, absent before: split-extraction writes of a prefix another call
+              cacheRewriteTokens,   //   writes — a group released before its chunk's text1 first token that wrote,
+                                    //   a later chunk's text1 writing block 1 (1h); and the tokens written
+                                    //   (pipeline/cache_rewrites.py; refusal re-sends and sole writers excluded)
               outputTokens, cacheReadTokens,  // Σ over llmCalls only (refused answers excluded)
               downloadBytes, tabsPlanned, tabsAssembled, tabsEmitted,  // tabsEmitted = distinct tab ids streamed non-provisional (a provisional tab replaced by id counts once; one withdrawn or replaced under another id never counts; an assembled tab withdrawn later still counts)
               truncated }  // answers that stopped at max_tokens (finish_reason=length); DONE log line `llm truncated=N`
