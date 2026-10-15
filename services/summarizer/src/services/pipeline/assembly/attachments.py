@@ -20,6 +20,7 @@ from typing import Any
 
 from src.shared_config.domain_config import quiz_policy
 
+from .derived_guard import anchor_seconds
 from .registry import ASSEMBLER_REGISTRY
 from .text_utils import truncate_words
 
@@ -250,13 +251,6 @@ def _stat_value(title: str) -> str | None:
     return best[2] if best else None
 
 
-def _stat_timestamp(value: Any) -> int | None:
-    """Seconds as the extraction stamps them; None for anything that cannot seek."""
-    if isinstance(value, bool) or not isinstance(value, int | float) or value < 0:
-        return None
-    return int(value)
-
-
 def _key_points(extraction: dict | None, domain: str) -> list[dict]:
     """The first ``keyPoints`` list in the extraction, primary domain first."""
     if not isinstance(extraction, dict):
@@ -282,7 +276,7 @@ def _stat_banner_attachment(extraction: dict | None, domain: str) -> dict | None
     for point in _key_points(extraction, domain):
         title = str(point.get("title") or "").strip()
         value = _stat_value(title) if title else None
-        timestamp = _stat_timestamp(point.get("timestamp"))
+        timestamp = anchor_seconds(point)
         if value is None or timestamp is None:
             continue
         stat: dict[str, Any] = {

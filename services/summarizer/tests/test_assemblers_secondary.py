@@ -132,11 +132,14 @@ class TestAssembleClaimsTracker:
 
 
 class TestAssembleTierList:
+    # Rows carry a timestamp: a tier is a stated rank only when the row is
+    # anchored in the video (0b.13, D13) — test_assembly_0b13_derived_guard.py
+    # covers the unanchored case.
     def test_normalizes_full_rankings(self):
         data = [
-            {"item": "Jett", "tier": "S", "reason": "Top duelist", "emoji": "🌪️"},
-            {"item": "Sage", "tier": "a", "reason": "Carry"},
-            {"item": "Yoru", "tier": "C"},
+            {"item": "Jett", "tier": "S", "reason": "Top duelist", "emoji": "🌪️", "timestamp": 10},
+            {"item": "Sage", "tier": "a", "reason": "Carry", "timestamp": 20},
+            {"item": "Yoru", "tier": "C", "timestamp": 30},
         ]
         result = assemble_tier_list({}, data, {}, None)
         assert result is not None
@@ -151,9 +154,9 @@ class TestAssembleTierList:
 
     def test_invalid_tier_omitted(self):
         data = [
-            {"item": "A", "tier": "Z"},
-            {"item": "B", "tier": "S"},
-            {"item": "C"},
+            {"item": "A", "tier": "Z", "timestamp": 10},
+            {"item": "B", "tier": "S", "timestamp": 20},
+            {"item": "C", "timestamp": 30},
         ]
         result = assemble_tier_list({}, data, {}, None)
         assert "tier" not in result["items"][0]
@@ -163,9 +166,9 @@ class TestAssembleTierList:
     def test_dict_wrapper_with_rankings_key(self):
         data = {
             "rankings": [
-                {"item": "A", "tier": "S"},
-                {"item": "B", "tier": "A"},
-                {"item": "C", "tier": "B"},
+                {"item": "A", "tier": "S", "timestamp": 10},
+                {"item": "B", "tier": "A", "timestamp": 20},
+                {"item": "C", "tier": "B", "timestamp": 30},
             ]
         }
         result = assemble_tier_list({}, data, {}, None)
@@ -173,11 +176,11 @@ class TestAssembleTierList:
 
     def test_drops_items_with_no_label(self):
         data = [
-            {"item": "", "tier": "S"},
-            {"tier": "A"},
-            {"item": "Real one", "tier": "B"},
-            {"item": "Real two", "tier": "C"},
-            {"item": "Real three"},
+            {"item": "", "tier": "S", "timestamp": 10},
+            {"tier": "A", "timestamp": 20},
+            {"item": "Real one", "tier": "B", "timestamp": 30},
+            {"item": "Real two", "tier": "C", "timestamp": 40},
+            {"item": "Real three", "timestamp": 50},
         ]
         result = assemble_tier_list({}, data, {}, None)
         assert len(result["items"]) == 3

@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from .derived_guard import stated_scalars
 from .text_utils import truncate_words
 
 # Category-like front values that indicate flash_deck front corruption
@@ -180,7 +181,8 @@ def _normalize_step(item: dict, index: int) -> dict:
         "number": item.get("number", index + 1),
         "instruction": instruction,
         "timestamp": item.get("timestamp") or item.get("seconds"),
-        "duration": item.get("duration"),
+        # A duration is a fact only on a step anchored in the video (D13).
+        "duration": stated_scalars(item, ("duration",)).get("duration"),
         "tips": tips,
         **({"title": title} if title else {}),
         **({"safetyNote": item["safetyNote"]} if item.get("safetyNote") else {}),
@@ -208,8 +210,9 @@ def _to_flash_card(item: dict) -> dict:
         if item.get("formCues"):
             cues = item["formCues"]
             back_parts.append(", ".join(cues) if isinstance(cues, list) else str(cues))
-        if item.get("duration"):
-            back_parts.append(str(item["duration"]))
+        duration = stated_scalars(item, ("duration",)).get("duration")
+        if duration:
+            back_parts.append(str(duration))
         if item.get("difficulty"):
             back_parts.append(str(item["difficulty"]))
         if item.get("modifications"):
@@ -440,9 +443,11 @@ def _normalize_exercise(item: Any) -> dict | None:
         "formCues": form_cues,
         "modifications": modifications,
     }
-    for key in ("sets", "reps", "duration", "rest", "difficulty", "timestamp", "description"):
+    for key in ("sets", "reps", "difficulty", "timestamp", "description"):
         if item.get(key) is not None:
             result[key] = item[key]
+    # Work and rest times are facts only on an exercise anchored in the video (D13).
+    result.update(stated_scalars(item, ("duration", "rest")))
     return result
 
 

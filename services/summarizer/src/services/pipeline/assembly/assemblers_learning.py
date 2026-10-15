@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .derived_guard import stated_number, stated_rows
 from .normalizers import (
     _CATEGORY_FRONTS,
     _DOMAIN_EMOJI,
@@ -133,14 +134,16 @@ def assemble_verdict(
         "bestFor": data.get("bestFor") or [],
         "notFor": data.get("notFor") or [],
     }
-    sub_scores = data.get("subScores")
-    if isinstance(sub_scores, list) and sub_scores:
+    # Scores are facts only when anchored in the video (D13) — same guard as
+    # the comparison assembler's review rating.
+    sub_scores = stated_rows(data.get("subScores"), "score")
+    if sub_scores:
         verdict_props["subScores"] = sub_scores
-    score = data.get("score")
-    if isinstance(score, (int, float)):
+    score = stated_number(data, "score")
+    if score is not None:
         verdict_props["score"] = score
-        max_score = data.get("maxScore")
-        if isinstance(max_score, (int, float)) and max_score > 0:
+        max_score = stated_number(data, "maxScore")
+        if max_score is not None and max_score > 0:
             verdict_props["maxScore"] = max_score
     return {
         "pros": [],

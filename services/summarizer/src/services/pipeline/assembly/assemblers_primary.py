@@ -12,6 +12,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from .derived_guard import stated_number, stated_rows
 from .normalizers import (
     _normalize_code_snippet,
     _normalize_comparison,
@@ -278,19 +279,19 @@ def assemble_comparison(
                 "bestFor": verdict.get("bestFor") or [],
                 "notFor": verdict.get("notFor") or [],
             }
-            sub_scores = verdict.get("subScores")
-            if isinstance(sub_scores, list) and sub_scores:
+            # A score or sub-score is a fact only when the extraction carries
+            # it with a timestamp (D13): S07 shipped a "9.0" and five sub-scores
+            # the reviewer never gave.
+            sub_scores = stated_rows(verdict.get("subScores"), "score")
+            if sub_scores:
                 verdict_props["subScores"] = sub_scores
-            rating = (
-                review_data.get("rating") if isinstance(review_data.get("rating"), dict) else None
-            )
-            if isinstance(rating, dict):
-                score = rating.get("score")
-                if isinstance(score, (int, float)):
-                    verdict_props["score"] = score
-                    max_score = rating.get("maxScore")
-                    if isinstance(max_score, (int, float)) and max_score > 0:
-                        verdict_props["maxScore"] = max_score
+            rating = review_data.get("rating")
+            score = stated_number(rating, "score")
+            if score is not None:
+                verdict_props["score"] = score
+                max_score = stated_number(rating, "maxScore")
+                if max_score is not None and max_score > 0:
+                    verdict_props["maxScore"] = max_score
             props["verdict"] = verdict_props
 
     return props

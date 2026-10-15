@@ -12,16 +12,17 @@ from __future__ import annotations
 
 from typing import Any
 
-from .text_utils import truncate_words
-from .normalizers import (
-    _coerce_float,
-    _coerce_int,
-)
 from .assemblers_overhaul import (
     _connection_target,
     assemble_quiz_arena,
     assemble_video_filmstrip,
 )
+from .derived_guard import anchor_seconds, stated_scalars
+from .normalizers import (
+    _coerce_float,
+    _coerce_int,
+)
+from .text_utils import truncate_words
 
 # ─────────────────────────────────────────────────────
 # Secondary-tier assemblers (interactive-overhaul-v2 P2)
@@ -237,7 +238,9 @@ def _normalize_claim(item: Any) -> dict | None:
     claim = str(item.get("claim") or item.get("text") or "").strip()
     if not claim:
         return None
-    status = str(item.get("status") or "").strip().lower()
+    # verified / disputed are assertions: they ship only when the claim is
+    # anchored in the video (D13); otherwise the non-asserting "context".
+    status = str(stated_scalars(item, ("status",)).get("status") or "").strip().lower()
     if status not in _CLAIM_STATUSES:
         status = "context"
     result: dict[str, Any] = {
@@ -285,11 +288,12 @@ _TIER_LIST_MIN = 3
 
 
 def _normalize_tier_item(item: Any) -> dict | None:
-    """Coerce a ranking row to {item, tier?, reason?, emoji?}.
+    """Coerce a ranking row to {item, tier?, reason?, emoji?, timestamp?}.
 
     Drops the row when there is no item label. `tier` is the creator's
-    SUGGESTED placement (S/A/B/C/D); it is omitted when absent or invalid so
-    the viewer places the item themselves rather than us guessing a tier.
+    STATED placement (S/A/B/C/D): it ships only when the row is anchored in
+    the video (D13) and valid, so the viewer places an unranked item
+    themselves rather than us guessing a tier.
     """
     if not isinstance(item, dict):
         return None
@@ -297,9 +301,12 @@ def _normalize_tier_item(item: Any) -> dict | None:
     if not label:
         return None
     result: dict[str, Any] = {"item": truncate_words(label, 60)}
-    tier = str(item.get("tier") or "").strip().upper()
+    tier = str(stated_scalars(item, ("tier",)).get("tier") or "").strip().upper()
     if tier in _TIER_VALUES:
         result["tier"] = tier
+    timestamp = anchor_seconds(item)
+    if timestamp is not None:
+        result["timestamp"] = timestamp
     reason = item.get("reason") or item.get("note") or item.get("description")
     if reason:
         result["reason"] = truncate_words(str(reason), 120)
@@ -316,16 +323,17 @@ def assemble_tier_list(
 ) -> dict | None:
     """Build TierList props from gaming.rankings — the gaming signature surface.
 
-    Each item carries a label, an optional suggested S/A/B/C/D tier (the answer
+    Each item carries a label, an optional stated S/A/B/C/D tier (the answer
     key the user can override), and an optional reason. Needs ≥3 real items to
-    justify the tab; otherwise it folds into info_grid / overview.
+    justify the tab, and at least one stated tier — no stated rank → a list,
+    not tiers (D13): the tab folds into info_grid / overview.
     """
     if isinstance(data, dict):
         data = data.get("rankings") or data.get("items") or []
     if not isinstance(data, list):
         return None
     items = [i for i in (_normalize_tier_item(it) for it in data) if i is not None]
-    if len(items) < _TIER_LIST_MIN:
+    if len(items) < _TIER_LIST_MIN or not any("tier" in i for i in items):
         return None
     return {"items": items}
 

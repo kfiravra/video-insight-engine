@@ -80,7 +80,14 @@ class TestAssembleVerdict:
         assert result["verdict"]["notFor"] == ["pros"]
 
     def test_includes_score_when_provided(self):
-        data = {"badge": "best_in_class", "bottomLine": "Top pick", "score": 8.5, "maxScore": 10}
+        # 0b.13: a score is a fact only when anchored in the video (timestamp).
+        data = {
+            "badge": "best_in_class",
+            "bottomLine": "Top pick",
+            "score": 8.5,
+            "maxScore": 10,
+            "timestamp": 600,
+        }
         result = assemble_verdict({}, data, {}, None)
         assert result is not None
         assert result["verdict"]["score"] == 8.5
@@ -348,6 +355,7 @@ class TestFlashCardNoEnglishPrefixes:
                 "formCues": ["Keep your hips level", "Engage your core"],
                 "duration": "30 seconds",
                 "difficulty": "intermediate",
+                "timestamp": 95,  # 0b.13: the duration ships only on an anchored item
             }
         )
         assert card["front"] == "Plank"

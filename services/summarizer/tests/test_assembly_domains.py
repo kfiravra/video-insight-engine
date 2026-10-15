@@ -215,10 +215,11 @@ class TestGamingAssembly:
                     {"item": "Light shields", "category": "economy", "note": "Eco"},
                     {"item": "0.4 sens", "category": "settings", "note": "Mouse"},
                 ],
+                # 0b.13: a tier is a stated rank only on an anchored row.
                 "rankings": [
-                    {"item": "Jett", "tier": "S", "reason": "Entry"},
-                    {"item": "Sage", "tier": "A", "reason": "Heal"},
-                    {"item": "Yoru", "tier": "C", "reason": "Niche"},
+                    {"item": "Jett", "tier": "S", "reason": "Entry", "timestamp": 30},
+                    {"item": "Sage", "tier": "A", "reason": "Heal", "timestamp": 60},
+                    {"item": "Yoru", "tier": "C", "reason": "Niche", "timestamp": 90},
                 ],
             },
         }

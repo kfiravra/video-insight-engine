@@ -15,11 +15,11 @@ re-validates the result immediately afterward.
 from __future__ import annotations
 
 import logging
-import re
 from typing import Any
 
 from .assemblers_overhaul import assemble_concept_canvas
 from .assemblers_primary import assemble_spot_explorer
+from .derived_guard import is_numeric_axis
 from .normalizers import _normalize_to_spot
 
 logger = logging.getLogger(__name__)
@@ -49,36 +49,13 @@ _CONCEPT_DOMAINS: frozenset[str] = frozenset({"learning", "science"})
 # depend on step_player): they never render as a canvas, however long (D8).
 STEP_LIST_DOMAINS: frozenset[str] = frozenset({"food", "project"})
 
-# A comparison cell that IS a number (optionally a currency/approx prefix and a
-# short unit): "4,422 mAh", "$249", "6.1 in", "48". A sentence that merely
-# contains a digit ("Sony WF-1000XM4", "AirPods Pro 2 — placed…") is not an
-# axis; scoring it invented radar shapes (0b.9, R10). Mirrors NUMERIC_CELL in
-# apps/web …/interactive/comparison/radar-scoring.ts.
-_NUMERIC_CELL = re.compile(r"^[$€£¥₪~≈<>]?\s*[-+]?\d[\d,]*(?:\.\d+)?\s*[A-Za-z%°µ/]{0,8}$")
-
-
-def _is_numeric_side(value: Any) -> bool:
-    if isinstance(value, bool):
-        return False
-    if isinstance(value, (int, float)):
-        return True
-    return isinstance(value, str) and _NUMERIC_CELL.match(value.strip()) is not None
-
-
-def is_numeric_axis(row: Any) -> bool:
-    """A comparison row scores a radar axis only when both sides are numbers."""
-    return (
-        isinstance(row, dict)
-        and _is_numeric_side(row.get("thisProduct"))
-        and _is_numeric_side(row.get("competitor"))
-    )
-
 
 def _promote_comparison(props: dict) -> dict | None:
     """comparison -> comparison_radar when enough rows are numeric axes.
 
     `comparison_radar` shares the comparison data contract, so the props are
-    forwarded unchanged; the renderer chooses the radar visualization.
+    forwarded unchanged; the renderer chooses the radar visualization. What
+    counts as an axis is `derived_guard.is_numeric_axis` (D13).
     """
     rows = props.get("comparisons")
     if not isinstance(rows, list):
