@@ -506,7 +506,8 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     │   components backfilled from its defaultTabs unless doubly false (`not_backfilled`, under
     │   the defaultTab id it would have added) — tech's has_code-gated code_playground with no
     │   tab planned for it is deferred too; (3) quiz dropped outside quizDomains or when
-    │   is_learnable is doubly false, else moved last; (4) dedupe (dataSource, component);
+    │   is_learnable is doubly false, else moved last; (4) dedupe (dataSource, component) — the
+    │   tab the primary requires (equivalents included) stays, else the first;
     │   (5) 3–6 tabs. Every decision → `pipeline.reconcile` (row shape: DATA-MODELS.md); drops →
     │   droppedTabs `reconcile_<reason>`. The plan-parse guard (plan_reconcile.py) keeps only
     │   registry validity + `inactive_domain`.
@@ -526,9 +527,9 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     │   the latter only if the analysis already landed), with the id/label/goal of the tab
     │   that replaces it: the plan's first moment_track tab, else the always-Moments tab
     │   (`key_moments`, see 6). `position` is an estimate (overview + the planned tabs before
-    │   it, quiz excluded). No source with an entry → no tab; a plan whose steps are the
-    │   timeline (step_player / step_flow_canvas / workout_room, D6, output-quality 0b)
-    │   → no tab (moment_fallback.steps_are_the_timeline)
+    │   it, quiz excluded). No source with an entry → no tab; a food / fitness / project plan
+    │   whose steps are the timeline (step_player / step_flow_canvas / workout_room, moment_track
+    │   not required; D6, output-quality 0b) → no tab (moment_fallback.steps_are_the_timeline)
 
  4b. FRAMES-DONE (both paths; code — phases/frames_done.py)
     └─▶ Frame captions + OCR → `ctx.visual_annotations` (`<visual_annotations>`, chronological
@@ -660,13 +661,15 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     │   video_filmstrip, lyrics_karaoke, frame_strip.
     └─▶ Per-tab drop accounting: assemble_response returns {"meta", "tabs", "dropped"} — drop
     │   reasons: assembler_raised, validation_empty_list, assembler_returned_none,
-    │   domain_forbidden, domain_max_cap, all_timestamps_impossible, and on the split path
+    │   domain_forbidden, domain_max_cap, all_timestamps_impossible, steps_are_the_timeline
+    │   (D6, below), duplicate_tab (the post-promotion dedupe), and on the split path
     │   extraction_group_failed (one of the first three for a tab that waited for a failed
     │   group's field — assembly's own reason kept in `detail`) (feeds tabsDropped/droppedTabs
     │   telemetry instead of the old designed−assembled subtraction); the backstop's
     │   `requirement_evidence_false` entry (a required component the evidence rules out, `id` =
-    │   the defaultTab it would have added, `""` when a live tab holds it) is listed, never
-    │   counted. The plan stage's drops are prepended (reconcile's as `reconcile_<reason>`, see
+    │   the defaultTab it would have added, `""` when a live tab holds it) and the dedupe's
+    │   `duplicate_items` entry (a twin that shed its shared items and still ships) are listed,
+    │   never counted. The plan stage's drops are prepended (reconcile's as `reconcile_<reason>`, see
     │   4): reason `invalid_datasource` = an unregistered dataSource with no same-domain
     │   registry path for the tab's component (plan.py `_validate_data_sources`); when that
     │   leaves no tab, the domain defaults stand in, `planFallback: true` is persisted and
@@ -683,10 +686,12 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     │   like any moment tab. A real tab: saved, Redis-cached, RAG-indexed, translated. No
     │   source with an entry → no tab and no drop record (never invented); never added
     │   where the domain policy forbids moment_track. Exception (D6, output-quality 0b):
-    │   when the steps are the timeline (a step player, step flow canvas or workout room
-    │   ships), every moment_track tab is dropped (reason `steps_are_the_timeline`) and
+    │   when the steps are the timeline (a food, fitness or project response whose domain
+    │   does not require moment_track ships a step player, step flow canvas or workout
+    │   room), every moment_track tab is dropped (reason `steps_are_the_timeline`) and
     │   no always-Moments tab is added — recipes, workouts and step tutorials are
-    │   navigated by their steps
+    │   navigated by their steps; any other primary (a podcast or lecture with a stray step
+    │   tab) keeps its Moments
     └─▶ Gallery tab: ~12 curated frames from gallery_frames (not all uploaded frames)
     └─▶ Cross-tab links resolved from static LINK_RULES
     └─▶ SSE: every `tab_ready` goes through the run's TabLedger (pipeline/tab_ledger.py, the
