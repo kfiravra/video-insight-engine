@@ -19,17 +19,30 @@ cut) the transcript is force-split by sentences into enough parts for both
 limits, one chunk per part — today's force-split path; one chunk only when
 that split gives fewer than two parts. At frames-done each chunk's key frames
 are formatted from the gallery frames in its window (``key_frames_by_chunk``).
+
+The window also bounds what a chunk's call may stamp (output-quality 0b.10, R10 /
+L21): ``window_stamps`` keeps an item's ``timestamp`` / ``seconds`` only inside the
+chunk's window (a marker-interval of grace at both edges). A stamp outside it is
+the model reading the chunk's ``[h:mm:ss]`` markers without the hour (S02 chunk 3
+stamped 1:13:41 as 13:41 = 821 s), so the hour is put back when that lands the
+stamp inside the window — once, deterministically; a stamp no hour fits is
+cleared (an annotated item stays) or, when the stamp is the item (``seconds``,
+``learning.timestamps``), the item is dropped. One chunk is open at both ends:
+nothing is checked and the data is returned as is (the ≤ 40-min replay stays
+byte-identical).
 """
 
 from __future__ import annotations
 
 import logging
 import math
+import re
 from collections.abc import Sequence
-from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
 
 from ...config import settings
+from ..transcript.render import format_marker
 from ..transcription.transcript_chunker import (
     _estimate_tokens,
     force_split_by_sentences,
@@ -56,7 +69,9 @@ class ExtractionChunk:
     """One transcript slice: its text, its ``<batch_partial_context>`` line, its annotation window.
 
     ``start_s`` / ``end_s`` bound the ``<visual_annotations>`` entries and the
-    key frames the chunk's visual group reads (``None`` = open at that side).
+    key frames the chunk's visual group reads (``None`` = open at that side);
+    ``video_end_s`` (the last chapter's end) caps what the open-ended last
+    chunk may stamp.
     """
 
     index: int
@@ -64,6 +79,7 @@ class ExtractionChunk:
     batch_context: str = ""
     start_s: float | None = None
     end_s: float | None = None
+    video_end_s: float | None = None
 
 
 # ─── Planning ───
@@ -111,6 +127,7 @@ def _batch_chunks(batches: list[list[ChapterChunk]]) -> list[ExtractionChunk]:
             batch_context=_build_batch_context(k, len(batches), batch, full_duration),
             start_s=opens[k] if k else None,
             end_s=opens[k + 1] if k < last else None,
+            video_end_s=full_duration,
         )
         for k, batch in enumerate(batches)
     ]
@@ -173,3 +190,158 @@ def key_frames_by_chunk(
         )
         for chunk in chunks
     }
+
+
+# ─── Per-chunk timestamp range (0b.10) ───
+
+# Keys an extracted item is stamped under. ``seconds`` is the stamp of an item that IS
+# a timestamp (``learning.timestamps``); the others annotate an item that stands alone.
+_STAMP_KEYS = ("timestamp", "endTimestamp", "seconds", "endSeconds")
+_ITEM_IS_STAMP = "seconds"
+_CLOCK_KEY = "time"
+# A window opens at its first marker (one every 20 s) and a chapter edge may sit a few
+# seconds before it: a stamp this close outside the window is at the edge, not off-clock.
+WINDOW_GRACE_S = 30.0
+_HOUR_S = 3600
+_MAX_HOURS = 24
+_CLOCK_PATTERN = re.compile(r"^\s*(?:(\d+):)?(\d{1,2}):(\d{2})\s*$")
+
+
+@dataclass
+class StampReport:
+    """What ``window_stamps`` did to one call's data."""
+
+    restamped: int = 0
+    cleared: int = 0
+    # Per field path (``learning.timestamps``): the items dropped and the list's size,
+    # the shape ``ValidationReport.dropped`` holds.
+    dropped: dict[str, dict[str, int]] = field(default_factory=dict)
+
+    def drop(self, path: str, lost: int, total: int) -> None:
+        counts = self.dropped.setdefault(path, {"dropped": 0, "total": 0})
+        counts["dropped"] += lost
+        counts["total"] += total
+
+    @property
+    def changed(self) -> bool:
+        return bool(self.restamped or self.cleared or self.dropped)
+
+
+def _window_open(chunk: ExtractionChunk) -> bool:
+    return chunk.start_s is None and chunk.end_s is None
+
+
+def _holds(seconds: int, chunk: ExtractionChunk) -> bool:
+    """Whether ``seconds`` lies in the chunk's window, a grace interval at both edges."""
+    after_start = chunk.start_s is None or seconds >= chunk.start_s - WINDOW_GRACE_S
+    end = chunk.end_s if chunk.end_s is not None else chunk.video_end_s
+    return after_start and (end is None or seconds < end + WINDOW_GRACE_S)
+
+
+def restamp(seconds: int, chunk: ExtractionChunk) -> int | None:
+    """``seconds`` inside the window; else the hour-restored clock that lands inside it;
+    else None (no marker of the chunk reads that way)."""
+    if _holds(seconds, chunk):
+        return seconds
+    for hours in range(1, _MAX_HOURS + 1):
+        candidate = seconds + hours * _HOUR_S
+        if _holds(candidate, chunk):
+            return candidate
+    return None
+
+
+def _clock_seconds(text: Any) -> int | None:
+    """The seconds a ``m:ss`` / ``h:mm:ss`` clock string reads; None for anything else."""
+    found = _CLOCK_PATTERN.match(text) if isinstance(text, str) else None
+    if found is None:
+        return None
+    hours, minutes, secs = found.groups()
+    return int(hours or 0) * _HOUR_S + int(minutes) * 60 + int(secs)
+
+
+def _is_stamp(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _restamp_item(
+    item: dict[str, Any], chunk: ExtractionChunk, report: StampReport
+) -> dict[str, Any] | None:
+    """The item with every stamp inside the window: same object when nothing moved, a copy
+    when one did, None when the item's own stamp (``seconds``) fits nowhere."""
+    fixed = item
+    for key in _STAMP_KEYS:
+        value = item.get(key)
+        if not _is_stamp(value):
+            continue
+        placed = restamp(value, chunk)
+        if placed is None and key == _ITEM_IS_STAMP:
+            placed = _clock_placed(item, chunk)
+        if placed == value:
+            continue
+        if placed is None and key == _ITEM_IS_STAMP:
+            return None
+        fixed = _with_stamp(fixed, key, placed, report)
+    return fixed
+
+
+def _clock_placed(item: dict[str, Any], chunk: ExtractionChunk) -> int | None:
+    """A ``seconds`` no hour fits may still have its ``time`` clock inside the window."""
+    clock = _clock_seconds(item.get(_CLOCK_KEY))
+    return clock if clock is not None and _holds(clock, chunk) else None
+
+
+def _with_stamp(
+    item: dict[str, Any], key: str, placed: int | None, report: StampReport
+) -> dict[str, Any]:
+    fixed = {**item, key: placed}
+    if placed is None:
+        report.cleared += 1
+        return fixed
+    report.restamped += 1
+    if key == _ITEM_IS_STAMP and isinstance(item.get(_CLOCK_KEY), str):
+        fixed[_CLOCK_KEY] = format_marker(placed)[1:-1]
+    return fixed
+
+
+def _restamp_value(value: Any, chunk: ExtractionChunk, path: str, report: StampReport) -> Any:
+    """``value`` with every stamped item below it placed; the same object when nothing moved."""
+    if isinstance(value, dict):
+        if any(key in value for key in _STAMP_KEYS):
+            return _restamp_item(value, chunk, report)
+        placed = {
+            k: _restamp_value(v, chunk, f"{path}.{k}" if path else k, report)
+            for k, v in value.items()
+        }
+        return placed if any(placed[k] is not value[k] for k in value) else value
+    if isinstance(value, list):
+        return _restamp_list(value, chunk, path, report)
+    return value
+
+
+def _restamp_list(
+    items: list[Any], chunk: ExtractionChunk, path: str, report: StampReport
+) -> list[Any]:
+    """The list's items placed; an item placing dropped is left out and counted."""
+    placed = [_restamp_value(item, chunk, path, report) for item in items]
+    kept = [new for new, old in zip(placed, items) if new is not None or old is None]
+    if len(kept) < len(items):
+        report.drop(path, len(items) - len(kept), len(items))
+    if len(kept) == len(items) and all(new is old for new, old in zip(kept, items)):
+        return items
+    return kept
+
+
+def window_stamps(
+    data: dict[str, Any], chunk: ExtractionChunk
+) -> tuple[dict[str, Any], StampReport]:
+    """One call's validated, domain-keyed data with every stamp inside the chunk's window.
+
+    Deterministic and pure: the input is never mutated, and the same object comes
+    back when nothing moved — always for the one open chunk of a video a single
+    batch covers.
+    """
+    report = StampReport()
+    if _window_open(chunk):
+        return data, report
+    placed = _restamp_value(data, chunk, "", report)
+    return placed, report

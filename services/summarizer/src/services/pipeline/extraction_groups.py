@@ -12,8 +12,11 @@ of the run's ``EXTRACTION_PARALLEL_BATCHES`` semaphore; the text1 calls are
 started first, so they take the first slots. Outcomes stream back as they land.
 
 A landed answer is validated and cut to the group's own keys
-(``group_merge.validate_group``, 3.5) before it is reported; one that says the
-group has nothing here (``{}``, its keys ``null``) lands empty. A lost answer —
+(``group_merge.validate_group``, 3.5), then every stamp it carries is held to
+the chunk's window (``extraction_chunks.window_stamps``, 0b.10: the hour put
+back or the stamp cleared; a ``learning.timestamps`` item no clock fits is
+dropped and counted in the outcome's report) before it is reported; one that
+says the group has nothing here (``{}``, its keys ``null``) lands empty. A lost answer —
 not a JSON object, no key of the group, content validation dropped, or a
 warm-up stream that raised or brought nothing — is asked for ONCE more (3.8),
 unstreamed (a broken stream can never cost a group) and with no retry budget
@@ -37,11 +40,11 @@ from typing import TYPE_CHECKING, Any, Literal
 from llm_common.context import llm_feature_var
 
 from ...config import settings
-from ...models.domain_validation import ValidationReport
+from ...models.domain_validation import ValidationReport, merge_report
 from ...utils.json_parsing import parse_json_response, strip_markdown_fences
 from ...utils.llm_retry import call_llm_with_retry
 from ..llm_model_rules import LLMRefusalError
-from .extraction_chunks import ExtractionChunk
+from .extraction_chunks import ExtractionChunk, StampReport, window_stamps
 from .extraction_group_prompt import GroupJob, build_group_messages
 from .extraction_prompt import ExtractionPrompt
 from .field_groups import ExtractionGroup
@@ -184,7 +187,7 @@ def _read(raw: str | None, call: GroupCall, run: SplitRun) -> _Answer:
         return _Answer(None, None, "parse")
     data, report = validate_group(parsed, call.group, run.content_tags, run.modifiers)
     if data:
-        return _Answer(data, report, None)
+        return _Answer(_windowed(data, report, call), report, None)
     if not answer_lost(parsed, call.group, report):
         return _Answer({}, report, None)  # e.g. a later chunk's window without the content
     logger.warning(
@@ -193,6 +196,27 @@ def _read(raw: str | None, call: GroupCall, run: SplitRun) -> _Answer:
         sorted(parsed)[:_LOGGED_KEYS],
     )
     return _Answer(None, report, "empty")
+
+
+def _windowed(data: dict[str, Any], report: ValidationReport, call: GroupCall) -> dict[str, Any]:
+    """``data`` with its stamps held to the call's chunk window; item drops join the report."""
+    placed, stamps = window_stamps(data, call.chunk)
+    if stamps.changed:
+        _log_stamps(call, stamps)
+        merge_report(report, stamps.dropped, 0)
+    return placed
+
+
+def _log_stamps(call: GroupCall, stamps: StampReport) -> None:
+    logger.warning(
+        "[%s] stamps outside the chunk window %s–%s: %d hour-restored, %d cleared, %s dropped",
+        call.stage_name,
+        call.chunk.start_s,
+        call.chunk.end_s,
+        stamps.restamped,
+        stamps.cleared,
+        {p: c["dropped"] for p, c in stamps.dropped.items()},
+    )
 
 
 def _outcome(
