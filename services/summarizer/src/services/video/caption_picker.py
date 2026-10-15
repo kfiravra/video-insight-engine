@@ -22,7 +22,11 @@ missing — never override the field; without a field, several ``-orig``
 languages are no signal at all.
 
 Only untranslated json3 formats count: a machine translation INTO the spoken
-language is not a track in that language. When the spoken language is unknown
+language is not a track in that language. When YouTube lists both ``<lang>``
+and ``<lang>-orig``, the ``-orig`` key is taken (Kfir, 2026-10-15): on an
+auto-dubbed video the plain key mixes the dub translations with one
+untranslated format, and the pick from it read like a machine translation
+(MWvH7BRgwL8). Manual tracks still win. When the spoken language is unknown
 or has no track, the older language waterfall + preference order picks, as
 before 2.4.
 """
@@ -126,14 +130,25 @@ def spoken_language(info: dict[str, Any], auto_captions: dict[str, Any]) -> str 
     return tag
 
 
+def _orig_first(captions: dict[str, Any]) -> list[tuple[str, list[dict[str, Any]]]]:
+    """The caption keys with ``<lang>-orig`` keys first, the rest in yt-dlp's order.
+
+    The original ASR track beats the plain key of the same language, which on
+    an auto-dubbed video mixes the dub translations with one untranslated
+    format (the stable sort keeps every other preference as listed).
+    """
+    return sorted(captions.items(), key=lambda item: not item[0].endswith(_ORIG_SUFFIX))
+
+
 def _untranslated_track(language: str, kind: str, captions: dict[str, Any]) -> SubtitleTrack | None:
     """First key whose aliased primary subtag is ``language`` and that has an untranslated json3.
 
     ``iw-orig`` → he, ``en-US-cvfXDfbeED0`` → en, ``pt-BR`` → pt. One key can
     list formats from several source tracks (a dubbed video's ``en`` key lists
-    the ar→en translation first), so the format is chosen, not the key.
+    the ar→en translation first), so the format is chosen, not the key — and
+    a ``<lang>-orig`` key is tried before the plain ``<lang>`` key.
     """
-    for key, fmts in captions.items():
+    for key, fmts in _orig_first(captions):
         if normalize_language_code(key) != language:
             continue
         url = json3_url(fmts, translated=False)
@@ -255,9 +270,12 @@ def _find_track(
     *,
     translated: bool,
 ) -> SubtitleTrack | None:
-    """First json3 track keyed ``lang_code``, a regional variant (``ar-SA``) or an alias."""
+    """First json3 track keyed ``lang_code``, a regional variant (``ar-SA``) or an alias.
+
+    Within a bucket a ``<lang>-orig`` key is tried before the plain key.
+    """
     for kind, captions in sources:
-        for key, fmts in captions.items():
+        for key, fmts in _orig_first(captions):
             if not _key_matches(key, lang_code):
                 continue
             url = json3_url(fmts, translated=translated)

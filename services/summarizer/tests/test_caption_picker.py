@@ -129,7 +129,8 @@ class TestSpokenLanguage:
 
 class TestChooseCaptionTrackProbeShapes:
     def test_should_pick_the_hebrew_asr_when_a_dub_lists_english_asr_first(self):
-        """EqaMrzd9nZU: Hebrew talk with an English auto-dub; today got the dub ASR."""
+        """EqaMrzd9nZU: Hebrew talk with an English auto-dub; today got the dub ASR.
+        Since 2026-10-15 the ``iw-orig`` key beats the plain ``iw`` key."""
         auto = {
             "iw": _orig("iw") + _translated("en-US", "iw"),
             "en-US-orig": _orig("en-US"),
@@ -137,7 +138,7 @@ class TestChooseCaptionTrackProbeShapes:
             "iw-orig": _orig("iw"),
         }
 
-        assert _picked(_info("iw", auto=auto)) == ("auto-generated", "iw", "he")
+        assert _picked(_info("iw", auto=auto)) == ("auto-generated", "iw-orig", "he")
 
     def test_should_pick_the_english_manual_track_over_a_dutch_one_listed_first(self):
         """vOkkWuEwUmc: manual nl, en-US, fr, … — today got Dutch."""
@@ -175,7 +176,51 @@ class TestChooseCaptionTrackProbeShapes:
         choice = choose_caption_track("vid", _info("en-US", auto=auto))
 
         assert choice.track is not None
-        assert (choice.track.lang, choice.track.url) == ("en", _orig("en")[0]["url"])
+        assert (choice.track.lang, choice.track.url) == ("en-orig", _orig("en")[0]["url"])
+
+    def test_should_pick_the_en_orig_key_over_the_plain_en_key_of_an_auto_dubbed_video(self):
+        """MWvH7BRgwL8 (2026-10-15): 14 dub audios; the ``en`` key lists 13 dub→en
+        translations around one untranslated format and the pick from it read like a
+        machine translation. Both ``en`` and ``en-orig`` listed → ``en-orig``."""
+        dubs = (
+            "ar",
+            "bn",
+            "nl-NL",
+            "de-DE",
+            "iw",
+            "hi",
+            "id",
+            "it",
+            "ja",
+            "ko",
+            "ml",
+            "pt-BR",
+            "es-US",
+        )
+        en_key = [fmt for dub in dubs[:3] for fmt in _translated(dub, "en")]
+        en_key += _orig("en") + [fmt for dub in dubs[3:] for fmt in _translated(dub, "en")]
+        auto: dict[str, Any] = {"ar-orig": _orig("ar"), "ar": _orig("ar")}
+        auto.update({"nl": _translated("ar", "nl"), "en": en_key, "vi": _translated("ar", "vi")})
+        for dub in dubs[1:]:
+            auto[f"{dub}-orig"] = _orig(dub)
+        auto["en-orig"] = _orig("en")
+        info = _info("en-US", auto=auto, audio_languages=("en-US", *dubs))
+
+        assert _picked(info) == ("auto-generated", "en-orig", "en")
+
+    def test_should_keep_a_manual_track_over_the_en_orig_key(self):
+        """The ``-orig`` preference orders auto keys only; a creator upload still wins."""
+        manual = {"en": _orig("en")}
+        auto = {"en": _translated("ar", "en") + _orig("en"), "en-orig": _orig("en")}
+
+        assert _picked(_info("en-US", manual, auto)) == ("manual", "en", "en")
+
+    def test_should_pick_the_en_orig_key_on_the_fallback_path_too(self):
+        """No language tag and several ``-orig`` languages → the waterfall picks
+        English from the auto keys; the ``-orig`` key is taken there as well."""
+        auto = {"ar-orig": _orig("ar"), "en": _orig("en"), "en-orig": _orig("en")}
+
+        assert _picked(_info(None, auto=auto)) == ("auto-generated", "en-orig", "en")
 
     def test_should_keep_the_same_manual_track_when_its_key_carries_a_track_suffix(self):
         """jMq8lEu-of0 / 2pp17E4E-O8: ``en-US-cvfXDfbeED0`` is English."""
