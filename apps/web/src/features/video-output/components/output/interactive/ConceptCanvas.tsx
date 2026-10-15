@@ -14,7 +14,7 @@ import {
 
 import { Skeleton } from '@/components/ui/skeleton';
 
-import { VieCanvas } from '@/components/vie/canvas/CanvasShell';
+import { CanvasViewToggle, VieCanvas } from '@/components/vie/canvas/CanvasShell';
 import {
   FloatingEdge,
   type EdgeVisualState,
@@ -24,10 +24,11 @@ import {
   CanvasInspector,
   type InspectorNeighbor,
 } from '@/components/vie/canvas/CanvasInspector';
-import { useGraphLayout } from '@/components/vie/canvas/useGraphLayout';
+import { NODE_WIDTH, useGraphLayout } from '@/components/vie/canvas/useGraphLayout';
 import { Network } from 'lucide-react';
 
 import { GlassCard } from '@/components/vie';
+import { ConceptCanvasList, GroupDot } from './ConceptCanvasList';
 import { EmptyTabState } from './EmptyTabState';
 import { useIsDesktop } from '@/hooks/use-media-query';
 import { cn } from '@/lib/utils';
@@ -45,17 +46,12 @@ interface ConceptCanvasProps {
 
 const DEFAULT_GROUP = 'Concepts';
 const ACCENT = 'var(--vie-accent, var(--primary))';
-const GROUP_DOT_CLASSES = [
-  'bg-foreground/30',
-  'bg-foreground/45',
-  'bg-foreground/60',
-  'bg-foreground/75',
-  'bg-foreground/90',
-];
 
-function groupDotClass(index: number): string {
-  return GROUP_DOT_CLASSES[index % GROUP_DOT_CLASSES.length];
-}
+type ConceptView = 'list' | 'map';
+const VIEW_OPTIONS = [
+  { value: 'list', label: 'List' },
+  { value: 'map', label: 'Map' },
+] as const satisfies ReadonlyArray<{ value: ConceptView; label: string }>;
 
 function conceptNodeId(index: number): string {
   return `concept-${index}`;
@@ -192,10 +188,7 @@ const ConceptNode = memo(function ConceptNode({ data }: { data: ConceptNodeData 
           <span className="flex-1 truncate text-sm font-semibold text-foreground">
             {concept.name}
           </span>
-          <span
-            className={cn('h-2.5 w-2.5 shrink-0 rounded-full', groupDotClass(groupIndex))}
-            aria-hidden="true"
-          />
+          <GroupDot index={groupIndex} />
         </button>
       </GlassCard>
     </div>
@@ -248,8 +241,8 @@ function RelationLegend() {
  *
  * Selecting a concept docks the `CanvasInspector` (rendered outside the flow
  * node tree so it is never z-trapped), brightens the selected neighbourhood and
- * dims the rest. A Map/Groups toggle swaps the graph for group list-cards;
- * mobile defaults to Groups, desktop to Map.
+ * dims the rest. Opens in the list view on every viewport — definition,
+ * example and seek chip inline per concept (R8 / D8); the map is a toggle.
  */
 export const ConceptCanvas = memo(function ConceptCanvas({
   concepts,
@@ -260,7 +253,7 @@ export const ConceptCanvas = memo(function ConceptCanvas({
   const model = useMemo(() => buildConceptGraph(concepts, groupsProp), [concepts, groupsProp]);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [view, setView] = useState<'map' | 'groups'>(() => (isDesktop ? 'map' : 'groups'));
+  const [view, setView] = useState<ConceptView>('list');
   // Flipped true by React Flow's onInit (canvas measured + first paint ready).
   // Until then a skeleton fills the canvas box to cover the blank mount window.
   const [canvasReady, setCanvasReady] = useState(false);
@@ -358,29 +351,7 @@ export const ConceptCanvas = memo(function ConceptCanvas({
         <p className="text-xs font-medium tabular-nums text-muted-foreground" data-testid="concept-canvas-counts">
           {counts}
         </p>
-        <div
-          role="tablist"
-          aria-label="Concept view"
-          className="inline-flex items-center rounded-lg border border-border bg-muted/20 p-0.5 text-xs font-semibold"
-        >
-          {(['map', 'groups'] as const).map((v) => (
-            <button
-              key={v}
-              type="button"
-              role="tab"
-              aria-selected={view === v}
-              onClick={() => setView(v)}
-              className={cn(
-                'rounded-md px-3 py-1 capitalize transition-colors',
-                view === v
-                  ? 'bg-[var(--vie-accent,var(--primary))] text-[var(--vie-accent-foreground)]'
-                  : 'text-muted-foreground hover:text-foreground',
-              )}
-            >
-              {v}
-            </button>
-          ))}
-        </div>
+        <CanvasViewToggle label="Concept view" value={view} options={VIEW_OPTIONS} onChange={setView} />
       </div>
 
       <div className="relative">
@@ -398,6 +369,7 @@ export const ConceptCanvas = memo(function ConceptCanvas({
               onInit={handleCanvasInit}
               nodesDraggable={false}
               nodesConnectable={false}
+              nodeWidth={NODE_WIDTH}
               height={canvasHeight}
             />
             {!canvasReady && (
@@ -408,10 +380,11 @@ export const ConceptCanvas = memo(function ConceptCanvas({
             )}
           </div>
         ) : (
-          <GroupsView
+          <ConceptCanvasList
             model={model}
             selectedId={selectedId}
             onSelect={handleSelect}
+            onSeek={onSeek}
           />
         )}
 
@@ -427,86 +400,20 @@ export const ConceptCanvas = memo(function ConceptCanvas({
         )}
       </div>
 
-      {/* Legends: relationship key + group key (both single-accent, no hue) */}
-      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-lg border border-border/60 bg-muted/10 px-3 py-2">
-        <RelationLegend />
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-          {model.groups.map((group, i) => (
-            <span key={group} className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground">
-              <span className={cn('h-2.5 w-2.5 rounded-full', groupDotClass(i))} aria-hidden="true" />
-              {group}
-            </span>
-          ))}
+      {/* Legends (map only): relationship key + group key (both single-accent, no hue) */}
+      {view === 'map' && (
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-lg border border-border/60 bg-muted/10 px-3 py-2">
+          <RelationLegend />
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            {model.groups.map((group, i) => (
+              <span key={group} className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                <GroupDot index={i} />
+                {group}
+              </span>
+            ))}
+          </div>
         </div>
-      </div>
-    </div>
-  );
-});
-
-// ─── Groups list view (mobile default) ───
-
-interface GroupsViewProps {
-  model: ConceptGraphModel;
-  selectedId: string | null;
-  onSelect: (id: string) => void;
-}
-
-const GroupsView = memo(function GroupsView({ model, selectedId, onSelect }: GroupsViewProps) {
-  const byGroup = useMemo(() => {
-    const map = new Map<string, ConceptGraphModel['nodes']>();
-    for (const group of model.groups) map.set(group, []);
-    for (const node of model.nodes) {
-      const list = map.get(node.group) ?? [];
-      list.push(node);
-      map.set(node.group, list);
-    }
-    return map;
-  }, [model]);
-
-  return (
-    <div className="grid gap-3 sm:grid-cols-2">
-      {model.groups.map((group, groupIndex) => {
-        const members = byGroup.get(group) ?? [];
-        if (members.length === 0) return null;
-        return (
-          <GlassCard key={group} variant="default" className="space-y-2 p-3">
-            <header className="flex items-center gap-2">
-              <span className={cn('h-2.5 w-2.5 rounded-full', groupDotClass(groupIndex))} aria-hidden="true" />
-              <h4 className="flex-1 text-sm font-semibold text-foreground">{group}</h4>
-              <span className="text-xs tabular-nums text-muted-foreground">{members.length}</span>
-            </header>
-            <ul className="space-y-1">
-              {members.map((node) => (
-                <li key={node.id}>
-                  <button
-                    type="button"
-                    onClick={() => onSelect(node.id)}
-                    aria-pressed={node.id === selectedId}
-                    className={cn(
-                      'flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-start transition-colors',
-                      node.id === selectedId
-                        ? 'bg-[color:var(--vie-accent,var(--primary))]/10'
-                        : 'hover:bg-muted/40',
-                    )}
-                  >
-                    <span className="text-base leading-none" aria-hidden="true">
-                      {node.concept.emoji || '💡'}
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm font-medium text-foreground">
-                        {node.concept.name}
-                      </span>
-                      <span className="line-clamp-1 text-xs text-muted-foreground">
-                        {node.concept.definition}
-                      </span>
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </GlassCard>
-        );
-      })}
+      )}
     </div>
   );
 });

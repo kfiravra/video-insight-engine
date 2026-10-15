@@ -9,10 +9,10 @@ import {
   type NodeTypes,
 } from '@xyflow/react';
 
-import { Clock, Workflow } from 'lucide-react';
+import { AlertTriangle, Clock, Lightbulb, Workflow } from 'lucide-react';
 
-import { VieCanvas } from '@/components/vie/canvas/CanvasShell';
-import { GlassCard, VisualEvidence } from '@/components/vie';
+import { CanvasViewToggle, VieCanvas } from '@/components/vie/canvas/CanvasShell';
+import { GlassCard, TextBlock, Timestamp, VisualEvidence } from '@/components/vie';
 import { EmptyTabState } from './EmptyTabState';
 import { zigzagLayout } from './step-flow-layout';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -30,6 +30,15 @@ interface StepFlowCanvasProps {
   tabId?: string;
 }
 
+type StepView = 'list' | 'flow';
+const VIEW_OPTIONS = [
+  { value: 'list', label: 'List' },
+  { value: 'flow', label: 'Flow' },
+] as const satisfies ReadonlyArray<{ value: StepView; label: string }>;
+
+/** Design width of a step node card; the canvas zoom floor keeps it legible. */
+const STEP_NODE_WIDTH = 260;
+
 // ─── Helpers ───
 
 function stepNodeId(index: number): string {
@@ -46,9 +55,13 @@ function formatDurationLabel(seconds: number): string {
   return rem === 0 ? `${hrs}h` : `${hrs}h ${rem}m`;
 }
 
-// ─── Node ───
+function hasFrame(step: StepItem): boolean {
+  return Boolean(step.thumbnailUrl || step.frameCaption || step.frameOcr);
+}
 
-interface StepNodeData extends Record<string, unknown> {
+// ─── Shared step chrome (node card + list row) ───
+
+interface StepData {
   step: StepItem;
   index: number;
   completed: boolean;
@@ -57,11 +70,54 @@ interface StepNodeData extends Record<string, unknown> {
   onSeek?: (seconds: number) => void;
 }
 
-const StepNode = memo(function StepNode({ data }: { data: StepNodeData }) {
-  const { step, index, completed, durationSeconds, onToggle, onSeek } = data;
+function StepNumber({ number, completed }: { number: number; completed: boolean }) {
+  return (
+    <span
+      className={cn(
+        'inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-xs font-bold tabular-nums',
+        completed
+          ? 'border-success bg-success text-success-foreground'
+          : 'border-[color:var(--vie-accent,var(--primary))]/50 text-[color:var(--vie-accent,var(--primary))]',
+      )}
+      aria-hidden="true"
+    >
+      {number}
+    </span>
+  );
+}
+
+function DurationChip({ seconds }: { seconds: number }) {
+  if (seconds <= 0) return null;
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-muted/40 px-2 py-0.5 text-[11px] font-medium tabular-nums text-muted-foreground">
+      <Clock className="h-3 w-3 shrink-0" aria-hidden="true" />
+      {formatDurationLabel(seconds)}
+    </span>
+  );
+}
+
+function CompleteToggle({ step, index, completed, onToggle }: StepData) {
   const stepNumber = step.number ?? index + 1;
   return (
-    <div data-slot="vie-step-node" className="relative">
+    <label className="flex items-center gap-2 pt-1 text-xs font-medium text-foreground/80">
+      <Checkbox
+        checked={completed}
+        onCheckedChange={() => onToggle(index, completed)}
+        aria-label={completed ? `Mark step ${stepNumber} incomplete` : `Mark step ${stepNumber} complete`}
+      />
+      <span>{completed ? 'Done' : 'Mark complete'}</span>
+    </label>
+  );
+}
+
+// ─── Node ───
+
+interface StepNodeData extends Record<string, unknown>, StepData {}
+
+const StepNode = memo(function StepNode({ data }: { data: StepNodeData }) {
+  const { step, index, completed, durationSeconds, onSeek } = data;
+  return (
+    <div data-slot="vie-step-node" data-view="flow" className="relative">
       <Handle
         type="target"
         position={Position.Top}
@@ -69,30 +125,17 @@ const StepNode = memo(function StepNode({ data }: { data: StepNodeData }) {
       />
       <GlassCard
         variant={completed ? 'subtle' : 'default'}
-        className={cn(
-          'w-[260px] p-3 transition-colors',
-          completed && 'opacity-80',
-        )}
+        className={cn('w-[260px] p-3 transition-colors', completed && 'opacity-80')}
       >
         <div className="flex items-start gap-3">
-          <span
-            className={cn(
-              'inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-xs font-bold tabular-nums',
-              completed
-                ? 'border-success bg-success text-success-foreground'
-                : 'border-[color:var(--vie-accent,var(--primary))]/50 text-[color:var(--vie-accent,var(--primary))]',
-            )}
-            aria-hidden="true"
-          >
-            {stepNumber}
-          </span>
+          <StepNumber number={step.number ?? index + 1} completed={completed} />
           <div className="flex-1 min-w-0 space-y-2">
             {step.title && (
               <h4 className={cn('text-sm font-semibold leading-snug', completed && 'line-through')}>
                 {step.title}
               </h4>
             )}
-            {(step.thumbnailUrl || step.frameCaption || step.frameOcr) && (
+            {hasFrame(step) && (
               <VisualEvidence
                 variant="figure"
                 thumbnailUrl={step.thumbnailUrl}
@@ -111,24 +154,8 @@ const StepNode = memo(function StepNode({ data }: { data: StepNodeData }) {
             >
               {step.instruction}
             </p>
-            {durationSeconds > 0 && (
-              <span className="inline-flex items-center gap-1 rounded-full bg-muted/40 px-2 py-0.5 text-[11px] font-medium tabular-nums text-muted-foreground">
-                <Clock className="h-3 w-3 shrink-0" aria-hidden="true" />
-                {formatDurationLabel(durationSeconds)}
-              </span>
-            )}
-            <label className="flex items-center gap-2 pt-1 text-xs font-medium text-foreground/80">
-              <Checkbox
-                checked={completed}
-                onCheckedChange={() => onToggle(index, completed)}
-                aria-label={
-                  completed
-                    ? `Mark step ${stepNumber} incomplete`
-                    : `Mark step ${stepNumber} complete`
-                }
-              />
-              <span>{completed ? 'Done' : 'Mark complete'}</span>
-            </label>
+            <DurationChip seconds={durationSeconds} />
+            <CompleteToggle {...data} />
           </div>
         </div>
       </GlassCard>
@@ -143,16 +170,76 @@ const StepNode = memo(function StepNode({ data }: { data: StepNodeData }) {
 
 const NODE_TYPES: NodeTypes = { step: StepNode };
 
+// ─── List row ───
+
+/**
+ * One step with its whole instruction, tips and safety note inline, plus the
+ * duration and seek chips — the first screen reads without a click (R8).
+ * Carries the same `data-slot` as the flow node: it is the step node, listed.
+ */
+const StepRow = memo(function StepRow(data: StepData) {
+  const { step, index, completed, durationSeconds, onSeek } = data;
+  const { timestamp } = step;
+  const framed = hasFrame(step);
+  return (
+    <li data-slot="vie-step-node" data-view="list">
+      <GlassCard variant={completed ? 'subtle' : 'default'} className={cn('p-3', completed && 'opacity-80')}>
+        <div className="flex items-start gap-3">
+          <StepNumber number={step.number ?? index + 1} completed={completed} />
+          <div className="flex-1 min-w-0 space-y-2">
+            {step.title && (
+              <h4 className={cn('text-sm font-semibold leading-snug', completed && 'line-through')}>
+                {step.title}
+              </h4>
+            )}
+            <p className={cn('text-sm leading-snug text-foreground/90', completed && 'line-through')}>
+              {step.instruction}
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <DurationChip seconds={durationSeconds} />
+              {!framed && timestamp != null && (
+                <Timestamp seconds={timestamp} onClick={onSeek ? () => onSeek(timestamp) : undefined} />
+              )}
+            </div>
+            {framed && (
+              <VisualEvidence
+                variant="compact"
+                thumbnailUrl={step.thumbnailUrl}
+                caption={step.frameCaption}
+                ocr={step.frameOcr}
+                sceneType={step.frameSceneType}
+                timestamp={timestamp}
+                onSeek={onSeek}
+              />
+            )}
+            {step.tips && (
+              <TextBlock intent="tip" icon={<Lightbulb />}>
+                {step.tips}
+              </TextBlock>
+            )}
+            {step.safetyNote && (
+              <TextBlock intent="warning" icon={<AlertTriangle />}>
+                {step.safetyNote}
+              </TextBlock>
+            )}
+            <CompleteToggle {...data} />
+          </div>
+        </div>
+      </GlassCard>
+    </li>
+  );
+});
+
 // ─── Canvas ───
 
 /**
- * Step-by-step recipe / tutorial flow rendered on an xyflow canvas in a
- * vertical zigzag. Each step renders as a draggable card with thumbnail,
- * instruction body, optional inline `Timer`, and an inline checkbox that
- * syncs completion state with `useTabState` so other tabs stay in sync with
- * StepByStepInteractive.
+ * Step-by-step recipe / tutorial flow. Opens as a list on every viewport —
+ * full instruction, tips, safety note and seek chip per step (R8 / D8); the
+ * xyflow zigzag is a toggle. Both views share one completion state through
+ * `useTabState`, so this tab and StepByStepInteractive stay in sync.
  *
- * Edges between consecutive steps animate when both endpoints are complete.
+ * In the flow view, edges between consecutive steps animate when both
+ * endpoints are complete.
  */
 export const StepFlowCanvas = memo(function StepFlowCanvas({
   steps,
@@ -165,6 +252,7 @@ export const StepFlowCanvas = memo(function StepFlowCanvas({
   // completions are reflected the moment the canvas mounts. `completedSteps`
   // gets a fresh identity on every change, which drives the sync effect below.
   const completedSteps = tabState.completedSteps;
+  const [view, setView] = useState<StepView>('list');
 
   const toggleComplete = useCallback(
     (index: number, isCompleted: boolean) => {
@@ -265,27 +353,42 @@ export const StepFlowCanvas = memo(function StepFlowCanvas({
   }
 
   const canvasHeight = Math.min(720, 280 + steps.length * 160);
+  const progress = `${completedSteps.size}/${steps.length} done`;
 
   return (
     <div className="space-y-3" data-tab-id={tabId}>
-      <div className="relative" style={{ height: canvasHeight }}>
-        <VieCanvas
-          nodes={nodes}
-          edges={edges}
-          nodeTypes={NODE_TYPES}
-          onNodesChange={onNodesChange}
-          onEdgesChange={onEdgesChange}
-          onInit={handleCanvasInit}
-          nodesDraggable={false}
-          height={canvasHeight}
-        />
-        {!canvasReady && (
-          <Skeleton
-            aria-hidden="true"
-            className="absolute inset-0 rounded-2xl bg-muted/40 motion-reduce:animate-none"
-          />
-        )}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs font-medium tabular-nums text-muted-foreground">{progress}</p>
+        <CanvasViewToggle label="Steps view" value={view} options={VIEW_OPTIONS} onChange={setView} />
       </div>
+
+      {view === 'flow' ? (
+        <div className="relative" style={{ height: canvasHeight }}>
+          <VieCanvas
+            nodes={nodes}
+            edges={edges}
+            nodeTypes={NODE_TYPES}
+            onNodesChange={onNodesChange}
+            onEdgesChange={onEdgesChange}
+            onInit={handleCanvasInit}
+            nodesDraggable={false}
+            nodeWidth={STEP_NODE_WIDTH}
+            height={canvasHeight}
+          />
+          {!canvasReady && (
+            <Skeleton
+              aria-hidden="true"
+              className="absolute inset-0 rounded-2xl bg-muted/40 motion-reduce:animate-none"
+            />
+          )}
+        </div>
+      ) : (
+        <ol className="space-y-2" aria-label="Steps">
+          {nodes.map((node) => (
+            <StepRow key={node.id} {...node.data} />
+          ))}
+        </ol>
+      )}
     </div>
   );
 });

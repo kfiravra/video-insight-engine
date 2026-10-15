@@ -1,8 +1,20 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { render, screen, renderHook, act } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { useStore } from '@xyflow/react';
 
-import { VieCanvas } from '../CanvasShell';
+import { CanvasViewToggle, VieCanvas } from '../CanvasShell';
 import { useVieFlowTheme } from '../useVieFlowTheme';
+
+/** Reads the zoom floor React Flow actually holds, from inside the provider. */
+function MinZoomProbe() {
+  const minZoom = useStore((state) => state.minZoom);
+  return <span data-testid="min-zoom">{minZoom}</span>;
+}
+
+function probedMinZoom(): number {
+  return Number(screen.getByTestId('min-zoom').textContent);
+}
 
 describe('useVieFlowTheme', () => {
   afterEach(() => {
@@ -84,11 +96,64 @@ describe('VieCanvas', () => {
     expect(container.querySelector('[data-slot="vie-canvas"]')).not.toBeNull();
   });
 
+  it('should raise the zoom floor so the default 184 px node never renders under 120 px (R8)', () => {
+    render(
+      <VieCanvas nodes={[]} edges={[]}>
+        <MinZoomProbe />
+      </VieCanvas>,
+    );
+    expect(probedMinZoom()).toBeCloseTo(120 / 184, 3);
+  });
+
+  it('should scale the zoom floor to the consumer node width', () => {
+    render(
+      <VieCanvas nodes={[]} edges={[]} nodeWidth={260}>
+        <MinZoomProbe />
+      </VieCanvas>,
+    );
+    expect(probedMinZoom()).toBeCloseTo(120 / 260, 3);
+  });
+
+  it('should keep a requested minZoom that is already above the floor', () => {
+    render(
+      <VieCanvas nodes={[]} edges={[]} minZoom={0.9}>
+        <MinZoomProbe />
+      </VieCanvas>,
+    );
+    expect(probedMinZoom()).toBe(0.9);
+  });
+
   it('should accept a custom edgeTypes registration (e.g. FloatingEdge)', () => {
     const FakeEdge = () => null;
     const { container } = render(
       <VieCanvas nodes={[]} edges={[]} edgeTypes={{ floating: FakeEdge }} />,
     );
     expect(container.querySelector('[data-slot="vie-canvas"]')).not.toBeNull();
+  });
+});
+
+describe('CanvasViewToggle', () => {
+  const options = [
+    { value: 'list', label: 'List' },
+    { value: 'map', label: 'Map' },
+  ] as const;
+
+  it('should mark the current view as the selected tab', () => {
+    render(<CanvasViewToggle label="Concept view" value="list" options={options} onChange={() => {}} />);
+    expect(screen.getByRole('tab', { name: 'List' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: 'Map' })).toHaveAttribute('aria-selected', 'false');
+  });
+
+  it('should report the chosen view when another tab is clicked', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<CanvasViewToggle label="Concept view" value="list" options={options} onChange={onChange} />);
+    await user.click(screen.getByRole('tab', { name: 'Map' }));
+    expect(onChange).toHaveBeenCalledWith('map');
+  });
+
+  it('should name its tablist so it stays distinct from the hero strip', () => {
+    render(<CanvasViewToggle label="Steps view" value="list" options={options} onChange={() => {}} />);
+    expect(screen.getByRole('tablist', { name: 'Steps view' })).toBeInTheDocument();
   });
 });

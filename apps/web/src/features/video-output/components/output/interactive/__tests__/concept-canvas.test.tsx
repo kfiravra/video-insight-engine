@@ -11,6 +11,7 @@ const concepts: ConceptItem[] = [
     emoji: '🌍',
     definition: 'Force that attracts objects with mass toward each other.',
     example: 'An apple falling from a tree.',
+    timestamp: 90,
     group: 'Foundations',
     connections: [{ to: 'Acceleration', type: 'causes' }],
   },
@@ -93,11 +94,60 @@ describe('ConceptCanvas', () => {
     );
   });
 
-  it('defaults to the Groups list view on mobile (matchMedia → not desktop)', () => {
+  it('opens in the list view by default (matchMedia → not desktop)', () => {
     render(<ConceptCanvas concepts={concepts} groups={['Foundations', 'Mechanics']} />);
     // Group headings are present; the canvas node layer is not.
     expect(screen.getByRole('heading', { name: 'Foundations' })).toBeInTheDocument();
     expect(document.querySelector('[data-slot="vie-concept-node"]')).toBeNull();
+  });
+
+  it('opens in the list view on desktop too — the map is a toggle (D8 / R8)', () => {
+    const original = window.matchMedia;
+    window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+      ...original(query),
+      matches: /min-width: 1024px/.test(query),
+    }));
+    try {
+      render(<ConceptCanvas concepts={concepts} groups={['Foundations', 'Mechanics']} />);
+      expect(screen.getByRole('tab', { name: /list/i })).toHaveAttribute('aria-selected', 'true');
+      expect(document.querySelector('.react-flow')).toBeNull();
+    } finally {
+      window.matchMedia = original;
+    }
+  });
+
+  it('shows definition, example and timestamp inline per concept without a click (R8)', () => {
+    render(<ConceptCanvas concepts={concepts} groups={['Foundations', 'Mechanics']} />);
+    expect(
+      screen.getByText('Force that attracts objects with mass toward each other.'),
+    ).toBeInTheDocument();
+    expect(screen.getByText('An apple falling from a tree.')).toBeInTheDocument();
+    expect(screen.getByText('1:30')).toBeInTheDocument();
+  });
+
+  it('seeks the video from the inline timestamp chip', async () => {
+    const user = userEvent.setup();
+    const onSeek = vi.fn();
+    render(<ConceptCanvas concepts={concepts} groups={['Foundations', 'Mechanics']} onSeek={onSeek} />);
+    await user.click(screen.getByRole('button', { name: /jump to 1:30/i }));
+    expect(onSeek).toHaveBeenCalledWith(90);
+  });
+
+  it('keeps the relation legend to the map view', async () => {
+    const user = userEvent.setup();
+    render(<ConceptCanvas concepts={concepts} groups={['Foundations', 'Mechanics']} />);
+    expect(screen.queryByText('contrasts')).toBeNull();
+    await user.click(screen.getByRole('tab', { name: /map/i }));
+    expect(screen.getByText('contrasts')).toBeInTheDocument();
+  });
+
+  it('returns from the map to the list view', async () => {
+    const user = userEvent.setup();
+    render(<ConceptCanvas concepts={concepts} groups={['Foundations', 'Mechanics']} />);
+    await user.click(screen.getByRole('tab', { name: /map/i }));
+    await user.click(screen.getByRole('tab', { name: /list/i }));
+    expect(document.querySelector('.react-flow')).toBeNull();
+    expect(screen.getByRole('heading', { name: 'Mechanics' })).toBeInTheDocument();
   });
 
   it('switches to the Map view and renders one node per concept', async () => {
@@ -128,7 +178,7 @@ describe('ConceptCanvas', () => {
     render(<ConceptCanvas concepts={concepts} groups={['Foundations', 'Mechanics']} />);
     // No inspector before selection.
     expect(document.querySelector('[data-slot="canvas-inspector"]')).toBeNull();
-    // Select Gravity from the (default) Groups list.
+    // Select Gravity from the (default) list view.
     await user.click(screen.getByRole('button', { name: /Gravity/ }));
     const inspector = document.querySelector('[data-slot="canvas-inspector"]');
     expect(inspector).not.toBeNull();

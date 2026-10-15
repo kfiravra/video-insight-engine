@@ -15,7 +15,25 @@ import '@xyflow/react/dist/style.css';
 
 import { cn } from '@/lib/utils';
 
+import { NODE_WIDTH } from './useGraphLayout';
 import { useVieFlowTheme } from './useVieFlowTheme';
+
+// ─── Zoom floor ───
+
+/** Narrowest a node card may render on screen, in px (R8: nodes stay legible). */
+const MIN_NODE_PX = 120;
+const DEFAULT_MIN_ZOOM = 0.2;
+
+/**
+ * Zoom floor for a canvas whose narrowest node card is `nodeWidth` px wide:
+ * the requested floor, raised wherever it would let that card shrink under
+ * `MIN_NODE_PX`. `fitView` honours the floor, so a wide layout overflows the
+ * viewport (pannable) instead of collapsing into a band of specks.
+ */
+function clampMinZoom(nodeWidth: number, requested: number = DEFAULT_MIN_ZOOM): number {
+  if (!(nodeWidth > 0)) return requested;
+  return Math.max(requested, MIN_NODE_PX / nodeWidth);
+}
 
 // ─── Canvas ───
 
@@ -30,6 +48,8 @@ export interface VieCanvasProps<
   className?: string;
   /** Container height — defaults to 480 px. Pass `'100%'` for layout-driven sizing. */
   height?: number | string;
+  /** Design width of the consumer's narrowest node card, in px — drives the zoom floor. */
+  nodeWidth?: number;
 }
 
 const tokenStyle = {
@@ -54,9 +74,9 @@ const tokenStyle = {
  *
  * Bounded pan (`translateExtent` / `nodeExtent`), static nodes
  * (`nodesDraggable={false}`), and custom `edgeTypes` (e.g. the concept canvas
- * `FloatingEdge`) all pass straight through via `...rest`. `minZoom` defaults
- * lower than ReactFlow's 0.5 so wide grouped-lane layouts can `fitView` without
- * clamping; override per-consumer when needed.
+ * `FloatingEdge`) all pass straight through via `...rest`. `minZoom` is a
+ * requested floor; the effective floor is `clampMinZoom(nodeWidth, minZoom)`
+ * so no node card ever renders narrower than `MIN_NODE_PX`.
  */
 function VieCanvasInner<
   NodeType extends Node = Node,
@@ -66,11 +86,12 @@ function VieCanvasInner<
   showMinimap = false,
   className,
   height = 480,
+  nodeWidth = NODE_WIDTH,
   defaultEdgeOptions,
   panOnDrag = true,
   zoomOnScroll = false,
   fitView = true,
-  minZoom = 0.2,
+  minZoom = DEFAULT_MIN_ZOOM,
   ...rest
 }: VieCanvasProps<NodeType, EdgeType>) {
   const { isDark } = useVieFlowTheme();
@@ -93,7 +114,7 @@ function VieCanvasInner<
           fitView={fitView}
           panOnDrag={panOnDrag}
           zoomOnScroll={zoomOnScroll}
-          minZoom={minZoom}
+          minZoom={clampMinZoom(nodeWidth, minZoom)}
           {...rest}
         >
           <Background gap={16} size={1} color="var(--border)" />
@@ -120,3 +141,55 @@ function VieCanvasInner<
  * can pass a strongly-typed `onNodesChange` without an `as never` escape hatch.
  */
 export const VieCanvas = memo(VieCanvasInner) as typeof VieCanvasInner;
+
+// ─── View toggle ───
+
+export interface CanvasViewOption<V extends string> {
+  value: V;
+  label: string;
+}
+
+export interface CanvasViewToggleProps<V extends string> {
+  /** Accessible tablist name — keep it distinct from the page's hero tablist. */
+  label: string;
+  value: V;
+  options: ReadonlyArray<CanvasViewOption<V>>;
+  onChange: (value: V) => void;
+}
+
+/**
+ * List ⇄ graph switch shared by the canvases. Canvases open in list mode on
+ * every viewport (D8); the graph is the opt-in view behind this toggle.
+ */
+export function CanvasViewToggle<V extends string>({
+  label,
+  value,
+  options,
+  onChange,
+}: CanvasViewToggleProps<V>) {
+  return (
+    <div
+      role="tablist"
+      aria-label={label}
+      className="inline-flex items-center rounded-lg border border-border bg-muted/20 p-0.5 text-xs font-semibold"
+    >
+      {options.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          role="tab"
+          aria-selected={value === option.value}
+          onClick={() => onChange(option.value)}
+          className={cn(
+            'rounded-md px-3 py-1 transition-colors',
+            value === option.value
+              ? 'bg-[var(--vie-accent,var(--primary))] text-[var(--vie-accent-foreground)]'
+              : 'text-muted-foreground hover:text-foreground',
+          )}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
+}

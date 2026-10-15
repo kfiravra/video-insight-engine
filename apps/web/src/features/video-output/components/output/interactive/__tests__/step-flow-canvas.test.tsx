@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest';
-import { render, fireEvent } from '@testing-library/react';
+import { describe, it, expect, vi } from 'vitest';
+import { render, screen, fireEvent } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import type { ReactElement } from 'react';
 import type { StepItem } from '@vie/types';
 
@@ -8,8 +9,8 @@ import { zigzagLayout } from '../step-flow-layout';
 import { TabStateProvider } from '@/features/video-output/contexts/TabStateContext';
 
 const steps: StepItem[] = [
-  { number: 1, title: 'Knead', instruction: 'Knead the dough for 10 minutes.', duration: '10 min' },
-  { number: 2, title: 'Rest', instruction: 'Let the dough rest covered.' },
+  { number: 1, title: 'Knead', instruction: 'Knead the dough for 10 minutes.', duration: '10 min', timestamp: 75 },
+  { number: 2, title: 'Rest', instruction: 'Let the dough rest covered.', tips: 'A warm spot speeds the rise.' },
   { number: 3, title: 'Shape', instruction: 'Shape into rounds.', duration: '5 min' },
 ];
 
@@ -26,14 +27,43 @@ describe('StepFlowCanvas', () => {
     expect(nodes).toHaveLength(steps.length);
   });
 
-  it('should lock node dragging (nodesDraggable=false — no infinite drag)', () => {
+  it('should lock node dragging (nodesDraggable=false — no infinite drag)', async () => {
+    const user = userEvent.setup();
     renderInProvider(<StepFlowCanvas steps={steps} />);
+    await user.click(screen.getByRole('tab', { name: /flow/i }));
+    expect(document.querySelectorAll('.react-flow__node')).toHaveLength(steps.length);
     // ReactFlow tags draggable nodes with a `draggable` class; locked nodes have none.
     expect(document.querySelectorAll('.react-flow__node.draggable')).toHaveLength(0);
   });
 
-  it('should render edges between consecutive steps', () => {
+  it('should open in the list view with the whole instruction inline and no canvas (R8 / D8)', () => {
     renderInProvider(<StepFlowCanvas steps={steps} />);
+    expect(screen.getByRole('tab', { name: /list/i })).toHaveAttribute('aria-selected', 'true');
+    expect(document.querySelector('.react-flow')).toBeNull();
+    expect(screen.getByText('Knead the dough for 10 minutes.')).toBeInTheDocument();
+    expect(screen.getByText('A warm spot speeds the rise.')).toBeInTheDocument();
+  });
+
+  it('should seek the video from the inline timestamp chip', async () => {
+    const user = userEvent.setup();
+    const onSeek = vi.fn();
+    renderInProvider(<StepFlowCanvas steps={steps} onSeek={onSeek} />);
+    await user.click(screen.getByRole('button', { name: /jump to 1:15/i }));
+    expect(onSeek).toHaveBeenCalledWith(75);
+  });
+
+  it('should mount the xyflow canvas when the Flow view is chosen', async () => {
+    const user = userEvent.setup();
+    renderInProvider(<StepFlowCanvas steps={steps} />);
+    await user.click(screen.getByRole('tab', { name: /flow/i }));
+    expect(document.querySelector('.react-flow')).not.toBeNull();
+    expect(document.querySelectorAll('[data-slot="vie-step-node"]')).toHaveLength(steps.length);
+  });
+
+  it('should render edges between consecutive steps in the Flow view', async () => {
+    const user = userEvent.setup();
+    renderInProvider(<StepFlowCanvas steps={steps} />);
+    await user.click(screen.getByRole('tab', { name: /flow/i }));
     // xyflow edges require a real viewport to render the path; we assert the
     // edges container mounted so the layer is wired up.
     expect(document.querySelector('.react-flow__edges')).not.toBeNull();
@@ -86,8 +116,10 @@ describe('StepFlowCanvas', () => {
     expect(secondCanvasComplete).not.toBeNull();
   });
 
-  it('should show a compact duration chip for timed steps, not a per-node Timer (regression: step title must stay primary)', () => {
+  it('should show a compact duration chip for timed steps, not a per-node Timer (regression: step title must stay primary)', async () => {
+    const user = userEvent.setup();
     renderInProvider(<StepFlowCanvas steps={steps} />);
+    await user.click(screen.getByRole('tab', { name: /flow/i }));
     // Duration is a quiet chip now — a full countdown Timer (Start/Reset, big
     // ring) in every node out-shouted the step title. Query raw DOM because
     // xyflow keeps viewport children hidden until measured (no jsdom layout).
