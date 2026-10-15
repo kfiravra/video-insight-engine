@@ -17,6 +17,10 @@ export const DOMAIN_META: Record<string, { emoji: string; label: string }> = {
   language: { emoji: '🗣️', label: 'Language' },
   science: { emoji: '🔬', label: 'Science' },
   narrative: { emoji: '📖', label: 'Narrative' },
+  podcast: { emoji: '🎙️', label: 'Podcast' },
+  news: { emoji: '📰', label: 'News' },
+  gaming: { emoji: '🎮', label: 'Gaming' },
+  sport: { emoji: '⚽', label: 'Sport' },
 };
 
 /** A planner label's leading number ("9 Core Arguments", "6-Step Factory"). */

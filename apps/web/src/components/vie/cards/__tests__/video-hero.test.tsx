@@ -271,11 +271,68 @@ describe('VideoHero', () => {
       expect(screen.getByText('Takeaway three')).toBeInTheDocument();
     });
 
-    it('should cap takeaways at six visible items', () => {
+    it('should show six takeaways on desktop with a "+N" more control for the rest', () => {
       const tooMany = Array.from({ length: 9 }, (_, i) => `Takeaway ${i + 1}`);
       renderWithPlayer(<VideoHero {...DEFAULT_PROPS} keyTakeaways={tooMany} />);
       expect(screen.getByText('Takeaway 6')).toBeInTheDocument();
       expect(screen.queryByText('Takeaway 7')).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^\+3 · More takeaways$/ })).toBeInTheDocument();
+    });
+
+    it('should reveal all takeaways when "+N" is clicked', async () => {
+      const user = userEvent.setup();
+      const tooMany = Array.from({ length: 9 }, (_, i) => `Takeaway ${i + 1}`);
+      renderWithPlayer(<VideoHero {...DEFAULT_PROPS} keyTakeaways={tooMany} />);
+      await user.click(screen.getByRole('button', { name: /^\+3 · More takeaways$/ }));
+      expect(screen.getByText('Takeaway 9')).toBeInTheDocument();
+    });
+
+    it('should collapse the takeaways by default on phones', () => {
+      mockPhoneViewport();
+      renderWithPlayer(<VideoHero {...DEFAULT_PROPS} />);
+      expect(screen.getByRole('button', { name: /key takeaways/i })).toHaveAttribute('aria-expanded', 'false');
+    });
+
+    it('should show three takeaways on phones with a "+N" more control', () => {
+      mockPhoneViewport();
+      const five = Array.from({ length: 5 }, (_, i) => `Takeaway ${i + 1}`);
+      renderWithPlayer(<VideoHero {...DEFAULT_PROPS} keyTakeaways={five} />);
+      expect(screen.getByText('Takeaway 3')).toBeInTheDocument();
+      expect(screen.queryByText('Takeaway 4')).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^\+2 · More takeaways$/ })).toBeInTheDocument();
+    });
+
+    it('should not show a more control when every takeaway fits', () => {
+      renderWithPlayer(<VideoHero {...DEFAULT_PROPS} />);
+      expect(screen.queryByRole('button', { name: /More takeaways/ })).not.toBeInTheDocument();
+    });
+
+    it('should clamp a long brief until "Show all" is clicked', async () => {
+      const user = userEvent.setup();
+      const long = Array.from({ length: 8 }, (_, i) => `Sentence number ${i + 1} of a long brief that runs well past five lines.`).join(' ');
+      renderWithPlayer(<VideoHero {...DEFAULT_PROPS} masterSummary={long} />);
+      const showAll = screen.getByRole('button', { name: /^show all$/i });
+      expect(showAll).toBeInTheDocument();
+      await user.click(showAll);
+      expect(screen.getByRole('button', { name: /^hide$/i })).toBeInTheDocument();
+    });
+
+    it('should render a domain chip for podcast, news, gaming and sport', () => {
+      renderWithPlayer(<VideoHero {...DEFAULT_PROPS} primaryTag="podcast" />);
+      expect(screen.getByText('Podcast')).toBeInTheDocument();
+    });
+
+    it('should show a "+N" overflow pill when tabs sit past the strip edge', () => {
+      const rightEdges: Record<string, number> = { 'tab-overview': 120, 'tab-key_points': 240, 'tab-quizzes': 360 };
+      const spy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+        const right = this.getAttribute('role') === 'tablist' ? 250 : (rightEdges[this.id] ?? 0);
+        return { left: 0, top: 0, right, bottom: 0, width: right, height: 0, x: 0, y: 0, toJSON: () => ({}) } as DOMRect;
+      });
+      renderWithPlayer(
+        <VideoHero {...DEFAULT_PROPS} tabs={SAMPLE_TABS} activeTabId="overview" onTabSelect={() => {}} />,
+      );
+      expect(screen.getByRole('button', { name: /^\+1 /i })).toHaveTextContent('+1');
+      spy.mockRestore();
     });
 
     it('should not render the Key takeaways block when none are present and not streaming', () => {

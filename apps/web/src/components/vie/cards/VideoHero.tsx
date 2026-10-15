@@ -1,4 +1,4 @@
-import { memo, useCallback, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState, type RefObject } from 'react';
 import { motion } from 'motion/react';
 import { Check } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -8,6 +8,7 @@ import { useLabels } from '@/lib/i18n';
 import { useMediaQuery } from '@/hooks/use-media-query';
 import { useVideoPlayer } from '@/features/video-output/contexts/VideoPlayerContext';
 import { YouTubePlayer } from '@/components/videos/YouTubePlayer';
+import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { FadeIn } from '@/components/vie';
 import { CollapsibleSection } from './CollapsibleSection';
@@ -79,6 +80,40 @@ function briefParagraphs(text: string): string[] {
 }
 
 const PHONE_QUERY = '(max-width: 767px)';
+// Mobile rule (audit §2 #15): the hero must leave the first viewport to the
+// tab panel — three takeaways on phones, six on desktop, the rest behind
+// "+N"; the brief shows five lines until expanded.
+const TAKEAWAY_CAP_DESKTOP = 6;
+const TAKEAWAY_CAP_PHONE = 3;
+// ≈ five lines at the brief's 68ch measure; shorter briefs never clamp.
+const BRIEF_CLAMP_CHARS = 360;
+
+/** Tabs scrolled past the strip's visible end — the "+N" overflow count,
+ *  re-measured on scroll and resize. */
+function useStripOverflow(stripRef: RefObject<HTMLDivElement | null>, tabCount: number): number {
+  const [overflow, setOverflow] = useState(0);
+  useEffect(() => {
+    const strip = stripRef.current;
+    if (!strip) return;
+    const measure = (): void => {
+      const edge = strip.getBoundingClientRect().right;
+      let hidden = 0;
+      for (const tab of strip.querySelectorAll<HTMLElement>('[role="tab"]')) {
+        if (tab.getBoundingClientRect().right > edge + 1) hidden += 1;
+      }
+      setOverflow(hidden);
+    };
+    measure();
+    strip.addEventListener('scroll', measure, { passive: true });
+    const observer = new ResizeObserver(measure);
+    observer.observe(strip);
+    return () => {
+      strip.removeEventListener('scroll', measure);
+      observer.disconnect();
+    };
+  }, [stripRef, tabCount]);
+  return overflow;
+}
 
 export const VideoHero = memo(function VideoHero({
   title,
@@ -129,7 +164,10 @@ export const VideoHero = memo(function VideoHero({
   if (!autoCollapsed && userOpen === null && hasEngaged && !isStreaming) {
     setAutoCollapsed(true);
   }
-  const takeawaysOpen = userOpen ?? !autoCollapsed;
+  // Phones start collapsed too (mobile rule, audit §2 #15): with the list
+  // open the hero filled the first viewport; the "Key takeaways · N" row is
+  // the reopen affordance.
+  const takeawaysOpen = userOpen ?? (!autoCollapsed && !isPhone);
 
   const toggleTakeaways = useCallback(() => {
     setUserOpen(!takeawaysOpen);
@@ -144,6 +182,21 @@ export const VideoHero = memo(function VideoHero({
     setBriefUserOpen(!briefOpen);
   }, [briefOpen]);
   const brief = masterSummary?.trim() ? briefParagraphs(masterSummary) : [];
+  // Open ≠ unrolled: the brief shows five lines until the reader asks for all.
+  const [briefExpanded, setBriefExpanded] = useState(false);
+  const briefClamps = brief.join(' ').length > BRIEF_CLAMP_CHARS;
+
+  const takeawayCap = isPhone ? TAKEAWAY_CAP_PHONE : TAKEAWAY_CAP_DESKTOP;
+  const [showAllTakeaways, setShowAllTakeaways] = useState(false);
+  const allTakeaways = keyTakeaways ?? [];
+  const visibleTakeaways = showAllTakeaways ? allTakeaways : allTakeaways.slice(0, takeawayCap);
+  const hiddenTakeaways = allTakeaways.length - visibleTakeaways.length;
+
+  const stripRef = useRef<HTMLDivElement>(null);
+  const stripOverflow = useStripOverflow(stripRef, safeTabs.length);
+  const scrollStripOn = useCallback(() => {
+    stripRef.current?.scrollBy({ left: stripRef.current.clientWidth * 0.8, behavior: 'smooth' });
+  }, []);
 
   // Identity strip pieces — laid out as a single row, separated by dots so the
   // metadata reads as one cohesive line instead of a stack of chips.
@@ -163,8 +216,7 @@ export const VideoHero = memo(function VideoHero({
   if (durationStr) identityChips.push({ key: 'duration', node: <span className="tabular-nums">{durationStr}</span> });
   if (creator) identityChips.push({ key: 'creator', node: <span className="truncate max-w-[24ch]">{creator}</span> });
 
-  const visibleTakeaways = keyTakeaways?.slice(0, 6);
-  const showTakeaways = (visibleTakeaways && visibleTakeaways.length > 0) || isStreaming;
+  const showTakeaways = visibleTakeaways.length > 0 || isStreaming;
   // When nothing renders below the header (no takeaways, no tab strip, player
   // closed), the header must carry its own bottom padding so the card doesn't
   // look clipped. Every other block supplies its own trailing space.
@@ -254,9 +306,21 @@ export const VideoHero = memo(function VideoHero({
                 {keyQuestion && (
                   <p className="font-medium text-foreground/90">{keyQuestion}</p>
                 )}
-                {brief.map((paragraph, i) => (
-                  <p key={i}>{paragraph}</p>
-                ))}
+                {briefClamps && !briefExpanded ? (
+                  <p className="line-clamp-5">{brief.join(' ')}</p>
+                ) : (
+                  brief.map((paragraph, i) => <p key={i}>{paragraph}</p>)
+                )}
+                {briefClamps && (
+                  <Button
+                    variant="ghost"
+                    size="bare"
+                    onClick={() => setBriefExpanded(!briefExpanded)}
+                    className="text-xs font-medium text-[var(--vie-accent)] hover:underline"
+                  >
+                    {briefExpanded ? t.hide : t.showAll}
+                  </Button>
+                )}
               </div>
             </CollapsibleSection>
           </div>
@@ -292,7 +356,7 @@ export const VideoHero = memo(function VideoHero({
           skeleton grid instead of a toggle. */}
       {showTakeaways ? (
         <div className="px-6 pb-5 md:px-7 md:pb-6 pt-4">
-          {!visibleTakeaways || visibleTakeaways.length === 0 ? (
+          {visibleTakeaways.length === 0 ? (
             <div className="space-y-3" aria-hidden="true">
               <div className="flex items-center gap-2.5">
                 <span className="h-px w-5 bg-border" />
@@ -315,7 +379,7 @@ export const VideoHero = memo(function VideoHero({
             <FadeIn>
               <CollapsibleSection
                 baseId="vie-hero-takeaways"
-                label={`${t.keyTakeaways} · ${visibleTakeaways!.length}`}
+                label={`${t.keyTakeaways} · ${allTakeaways.length}`}
                 open={takeawaysOpen}
                 onToggle={toggleTakeaways}
               >
@@ -323,7 +387,7 @@ export const VideoHero = memo(function VideoHero({
                     columns left-aligned and reads as a crisp, ordered list.
                     Tight 13px type sits clearly below the brief in hierarchy. */}
                 <ul className="grid grid-cols-1 gap-x-7 gap-y-2 sm:grid-cols-2">
-                  {visibleTakeaways!.map((takeaway, i) => (
+                  {visibleTakeaways.map((takeaway, i) => (
                     <FadeIn key={i} index={i}>
                       <li className="flex items-start gap-2.5 text-[0.8125rem] leading-snug text-foreground/75">
                         <span
@@ -335,6 +399,16 @@ export const VideoHero = memo(function VideoHero({
                     </FadeIn>
                   ))}
                 </ul>
+                {(hiddenTakeaways > 0 || showAllTakeaways) && (
+                  <Button
+                    variant="ghost"
+                    size="bare"
+                    onClick={() => setShowAllTakeaways(!showAllTakeaways)}
+                    className="mt-2.5 text-xs font-medium text-[var(--vie-accent)] hover:underline"
+                  >
+                    {showAllTakeaways ? t.hide : `+${hiddenTakeaways} · ${t.moreTakeaways}`}
+                  </Button>
+                )}
               </CollapsibleSection>
             </FadeIn>
           )}
@@ -371,12 +445,16 @@ export const VideoHero = memo(function VideoHero({
 
       {hasTabs && (
         <TooltipProvider delayDuration={300}>
+          {/* The sticky shell holds the scrolling strip and, when tabs sit past
+              its end, a "+N" pill that scrolls them in — the fade alone hid
+              them on phones. */}
+          <div className="sticky top-0 z-20 rounded-b-2xl border-t border-border/60 bg-card/85 backdrop-blur-md">
           <div
+            ref={stripRef}
             role="tablist"
             aria-label="Video insight sections"
             className={cn(
-              'sticky top-0 z-20 flex items-center gap-1.5 overflow-x-auto scroll-smooth',
-              'border-t border-border/60 bg-card/85 backdrop-blur-md',
+              'flex items-center gap-1.5 overflow-x-auto scroll-smooth snap-x snap-proximity',
               'rounded-b-2xl px-3 py-2.5 md:px-4',
               '[mask-image:linear-gradient(to_right,transparent,black_16px,black_calc(100%-16px),transparent)]',
               '[&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]',
@@ -396,7 +474,7 @@ export const VideoHero = memo(function VideoHero({
                   aria-controls={`panel-${tab.id}`}
                   onClick={() => onTabSelect?.(tab.id)}
                   className={cn(
-                    'group relative inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap',
+                    'group relative inline-flex shrink-0 snap-start items-center gap-1.5 whitespace-nowrap',
                     'rounded-xl px-3.5 py-2 text-sm transition-all duration-200',
                     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                     isActive
@@ -442,6 +520,20 @@ export const VideoHero = memo(function VideoHero({
             {trailingPending.map((tab, i) => (
               <PendingTabPill key={tab.id} label={tab.label} emoji={tab.emoji} index={i} upcoming />
             ))}
+          </div>
+          {stripOverflow > 0 && (
+            <div className="pointer-events-none absolute inset-y-0 end-0 flex items-center rounded-be-2xl bg-gradient-to-l from-card from-55% to-transparent ps-10 pe-2">
+              <Button
+                variant="ghost"
+                size="bare"
+                onClick={scrollStripOn}
+                aria-label={`+${stripOverflow} ${t.showAll}`}
+                className="pointer-events-auto rounded-full border border-border/60 bg-card px-2 py-0.5 text-xs font-medium tabular-nums text-foreground/80 shadow-sm hover:bg-muted/60"
+              >
+                +{stripOverflow}
+              </Button>
+            </div>
+          )}
           </div>
         </TooltipProvider>
       )}
