@@ -27,7 +27,7 @@ from src.models.domain_types import (
 
 class TestTravelSpotRoundTrip:
     """TS SpotItem: cost, currency, duration, mapQuery, bookingSearch, tips,
-    specs, rating, thumbnailUrl must all survive travel validation."""
+    specs, rating, thumbnailUrl, timestamp, quote must all survive travel validation."""
 
     _SPOT = {
         "name": "Senso-ji Temple",
@@ -42,6 +42,8 @@ class TestTravelSpotRoundTrip:
         "specs": "Open 6:00-17:00",
         "rating": 4.7,
         "thumbnailUrl": "https://cdn.example.com/sensoji.jpg",
+        "timestamp": 754,
+        "quote": "This is the oldest temple in the city.",
     }
 
     def _dump_spot(self) -> dict:

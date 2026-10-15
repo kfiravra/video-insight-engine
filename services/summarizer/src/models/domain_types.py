@@ -43,8 +43,24 @@ class TravelSpot(BaseModel):
     pronunciation: str | None = None
     rating: float | None = None
     thumbnail_url: str | None = Field(None, alias="thumbnailUrl")
+    # Where the spot is discussed (seconds) — the seek chip (output-quality R2).
+    timestamp: int | None = None
+    # The speaker's verbatim line about the spot (output-quality R10).
+    quote: str | None = None
 
     model_config = {"populate_by_name": True}
+
+    @field_validator("timestamp", mode="before")
+    @classmethod
+    def coerce_timestamp(cls, v: Any) -> int | None:
+        """Seconds into the video: a non-negative integer, else None."""
+        if v is None or v == "" or isinstance(v, bool):
+            return None
+        try:
+            seconds = int(v)
+        except (ValueError, TypeError):
+            return None
+        return seconds if seconds >= 0 else None
 
     @field_validator("rating", mode="before")
     @classmethod
