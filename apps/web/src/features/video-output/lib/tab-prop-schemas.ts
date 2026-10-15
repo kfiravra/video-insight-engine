@@ -34,9 +34,16 @@ function addBoundsIssue(ctx: z.RefinementCtx, path: (string | number)[], message
 
 // ─── Primary components ───
 
+// `timestamp` (seconds) drives the seek chip; a non-numeric value would render
+// as a garbage chip, so it is bounded here. `quote` is the speaker's verbatim
+// line (output-quality R2/R10).
+const spotItemSchema = z
+  .object({ name: z.string(), timestamp: optionalNumber, quote: optionalString })
+  .passthrough();
+
 const spotExplorerSchema = z
   .object({
-    spots: z.array(z.object({ name: z.string() }).passthrough()),
+    spots: z.array(spotItemSchema),
     sections: z
       .array(z.object({ label: z.string(), spotIndices: z.array(nonNegativeInt) }).passthrough())
       .nullish(),

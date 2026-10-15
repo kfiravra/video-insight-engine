@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 
 
 import { SpotExplorer } from '../SpotExplorer';
@@ -95,5 +96,53 @@ describe('SpotExplorer', () => {
     render(<SpotExplorer spots={[{ name: 'Spot', emoji: '📍', description: longDesc }]} />);
     // One full copy at rest — no clamped duplicate, no expanded twin.
     expect(screen.getAllByText(longDesc)).toHaveLength(1);
+  });
+
+  describe('timestamp and quote (output-quality 0a.4)', () => {
+    const keyIdea = {
+      name: 'Half as much code in 20 months',
+      emoji: '💻',
+      description: 'Lines of code are a fuzzy measure, but the drop is undeniable.',
+      timestamp: 373,
+      quote: 'One line of Ruby is worth far more than a line of Rust.',
+    };
+
+    it('should render a seek chip that seeks the player when a timestamp is present', async () => {
+      const user = userEvent.setup();
+      const onSeek = vi.fn();
+      render(<SpotExplorer spots={[keyIdea]} onSeek={onSeek} />);
+      await user.click(screen.getByRole('button', { name: 'Jump to 6:13' }));
+      expect(onSeek).toHaveBeenCalledWith(373);
+    });
+
+    it('should render the timestamp as a static chip when no seek handler is given', () => {
+      render(<SpotExplorer spots={[keyIdea]} />);
+      expect(screen.getByText('6:13')).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /jump to/i })).not.toBeInTheDocument();
+    });
+
+    it('should render the quote in italics when present', () => {
+      render(<SpotExplorer spots={[keyIdea]} onSeek={vi.fn()} />);
+      const quote = screen.getByText(keyIdea.quote);
+      expect(quote.tagName).toBe('BLOCKQUOTE');
+      expect(quote).toHaveClass('italic');
+    });
+
+    it('should render hour-long timestamps as h:mm:ss', () => {
+      render(<SpotExplorer spots={[{ ...keyIdea, timestamp: 3725 }]} onSeek={vi.fn()} />);
+      expect(screen.getByRole('button', { name: 'Jump to 1:02:05' })).toBeInTheDocument();
+    });
+
+    it('should render no chip and no quote when the fields are absent', () => {
+      render(<SpotExplorer spots={spots} onSeek={vi.fn()} />);
+      expect(screen.queryByRole('button', { name: /jump to/i })).not.toBeInTheDocument();
+      expect(document.querySelector('blockquote')).toBeNull();
+    });
+
+    it('should ignore null timestamp and blank quote from the assembler', () => {
+      render(<SpotExplorer spots={[{ ...keyIdea, timestamp: null, quote: '   ' }]} onSeek={vi.fn()} />);
+      expect(screen.queryByRole('button', { name: /jump to/i })).not.toBeInTheDocument();
+      expect(document.querySelector('blockquote')).toBeNull();
+    });
   });
 });

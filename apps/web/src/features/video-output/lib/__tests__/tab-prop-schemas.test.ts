@@ -365,6 +365,25 @@ describe('tab-prop-schemas', () => {
       ).toBe(false);
     });
 
+    it('should accept spot timestamp (seconds) and quote, including null from Python None', () => {
+      expect(
+        parses('spot_explorer', {
+          spots: [
+            { name: 'A', description: 'x', timestamp: 373, quote: 'Said verbatim.' },
+            { name: 'B', description: 'y', timestamp: null, quote: null },
+          ],
+        }),
+      ).toBe(true);
+    });
+
+    it('should reject a spot timestamp that is not a number', () => {
+      expect(
+        parses('spot_explorer', {
+          spots: [{ name: 'A', description: 'x', timestamp: '6:13' }],
+        }),
+      ).toBe(false);
+    });
+
     it('should reject spot sections whose indices exceed the spot list', () => {
       expect(
         parses('spot_explorer', {
