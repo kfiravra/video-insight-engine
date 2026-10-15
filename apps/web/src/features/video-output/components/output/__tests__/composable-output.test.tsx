@@ -268,6 +268,77 @@ describe('ComposableOutput', () => {
     });
   });
 
+  describe('cross-tab links (audit §2 #8)', () => {
+    function linkedTabs(): TabEntry[] {
+      return [
+        {
+          id: 'arguments',
+          label: '9 Core Arguments',
+          emoji: '🧠',
+          component: 'spot_explorer',
+          goal: 'Explore how the arguments connect',
+          props: { spots: Array.from({ length: 24 }, (_, i) => ({ name: `Argument ${i + 1}` })) },
+        },
+        {
+          id: 'numbers',
+          label: 'Numbers That Matter',
+          emoji: '📊',
+          component: 'spot_explorer',
+          goal: 'Check the numbers behind each argument',
+          props: { spots: [{ name: '150,000 lines' }] },
+        },
+        {
+          id: 'quiz',
+          label: 'Test Yourself',
+          emoji: '✅',
+          component: 'info_grid',
+          goal: 'See what stuck',
+          props: { items: [{ key: 'Q1', value: 'A' }] },
+        },
+      ];
+    }
+
+    it('should link a tab without explicit links to the next tab, labelled with the target goal', () => {
+      render(
+        <ComposableOutput response={null} tabs={linkedTabs()} activeTab="arguments" onNavigateTab={vi.fn()} />,
+      );
+      const link = screen.getByRole('button', { name: /Check the numbers behind each argument/ });
+      expect(link).toHaveTextContent('Next: Numbers That Matter');
+    });
+
+    it('should print the true count in the link label', () => {
+      render(
+        <ComposableOutput response={null} tabs={linkedTabs()} activeTab="quiz" onNavigateTab={vi.fn()} />,
+      );
+      // The last tab has no next tab, so nothing is derived for it — but an
+      // explicit assembler link still renders with the true count.
+      expect(screen.queryByRole('button', { name: /Next:/ })).not.toBeInTheDocument();
+      const tabs = linkedTabs();
+      tabs[2].crossTabLinks = [{ targetTab: 'arguments', label: '9 Core Arguments' }];
+      render(<ComposableOutput response={null} tabs={tabs} activeTab="quiz" onNavigateTab={vi.fn()} />);
+      expect(screen.getByRole('button', { name: /Explore how the arguments connect/ })).toHaveTextContent(
+        'Next: 24 Core Arguments',
+      );
+    });
+
+    it('should render one link per target when an explicit link and the next tab coincide', () => {
+      const tabs = linkedTabs();
+      tabs[0].crossTabLinks = [{ targetTab: 'numbers', label: 'Numbers That Matter' }, { targetTab: 'overview', label: 'Overview' }];
+      render(<ComposableOutput response={null} tabs={tabs} activeTab="arguments" onNavigateTab={vi.fn()} />);
+      expect(screen.getAllByRole('button', { name: /Next:/ })).toHaveLength(1);
+    });
+
+    it('should navigate to the target when a link is clicked', async () => {
+      const user = userEvent.setup();
+      const onNavigateTab = vi.fn();
+      render(
+        <ComposableOutput response={null} tabs={linkedTabs()} activeTab="numbers" onNavigateTab={onNavigateTab} />,
+      );
+      await user.click(screen.getByRole('button', { name: /See what stuck/ }));
+      expect(onNavigateTab).toHaveBeenCalledWith('quiz');
+    });
+  });
+
   describe('enter mode / FlowPlayer (interactive-overhaul-v2 P4)', () => {
     function foodTabs(): TabEntry[] {
       return [

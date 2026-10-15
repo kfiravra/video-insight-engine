@@ -10,7 +10,7 @@ import { useVideoPlayer } from '@/features/video-output/contexts/VideoPlayerCont
 import { FlowPlayer } from './FlowPlayer';
 import { detectFlowMode } from './flow-modes';
 import { ErrorBoundary } from '@/components/ui/error-boundary';
-import { EmojiMarker } from '@/components/vie';
+import { CrossTabButton, EmojiMarker } from '@/components/vie';
 import { inferItemCount, trueCountLabel } from '@/components/vie/cards/domain-meta';
 import { stripLeadingEmoji } from '@/lib/string-utils';
 import { validateTabEntries } from '@/features/video-output/lib/tab-prop-schemas';
@@ -42,6 +42,43 @@ interface ComposableOutputProps {
  *  the shipped count (R3). */
 function displayLabel(tab: TabEntry): string {
   return trueCountLabel(stripLeadingEmoji(tab.label), inferItemCount(tab));
+}
+
+interface ResolvedCrossLink {
+  targetTab: string;
+  label: string;
+  /** The target's goal — the reason to go there. */
+  reason?: string;
+}
+
+/** The onward links of every tab (audit §2 #8). The assembler lets one tab
+ *  claim each target and the hidden overview claims first, so content tabs
+ *  ship almost none: each tab gets its explicit links (overview dropped) plus
+ *  the next tab in strip order, deduped by target, labelled with the target's
+ *  true-count label and its goal as the reason. The last tab links onward
+ *  only when the assembler said so. */
+function resolveCrossLinks(tabs: TabEntry[]): Map<string, ResolvedCrossLink[]> {
+  const map = new Map<string, ResolvedCrossLink[]>();
+  tabs.forEach((tab, i) => {
+    const candidates = [...(tab.crossTabLinks ?? [])];
+    const next = tabs[i + 1];
+    if (next) candidates.push({ targetTab: next.id, label: next.label });
+    const seen = new Set<string>([tab.id, 'overview']);
+    const links: ResolvedCrossLink[] = [];
+    for (const candidate of candidates) {
+      if (seen.has(candidate.targetTab)) continue;
+      seen.add(candidate.targetTab);
+      const target = tabs.find((t) => t.id === candidate.targetTab);
+      if (target?.component === 'overview') continue;
+      links.push({
+        targetTab: candidate.targetTab,
+        label: target ? displayLabel(target) : candidate.label,
+        reason: target?.goal,
+      });
+    }
+    map.set(tab.id, links);
+  });
+  return map;
 }
 
 /** Build the cross-tab nav grid shown inside the Overview tab. Sources sibling
@@ -126,18 +163,14 @@ export const ComposableOutput = memo(function ComposableOutput({
     [tabs],
   );
 
-  // Memoize derived structures on `validatedTabs` so per-tab filtering and the
-  // Overview cross-tab nav don't allocate fresh arrays on every `currentTime`
-  // tick. This is what makes `memo()` on individual tab renderers actually hold.
-  const filteredCrossLinks = useMemo(() => {
-    const map = new Map<string, NonNullable<TabEntry['crossTabLinks']>>();
-    if (validatedTabs) {
-      for (const t of validatedTabs) {
-        map.set(t.id, (t.crossTabLinks ?? []).filter((l) => l.targetTab !== 'overview'));
-      }
-    }
-    return map;
-  }, [validatedTabs]);
+  // Memoize derived structures on `validatedTabs` so per-tab link resolution
+  // and the Overview cross-tab nav don't allocate fresh arrays on every
+  // `currentTime` tick. This is what makes `memo()` on individual tab
+  // renderers actually hold.
+  const resolvedCrossLinks = useMemo(
+    () => (validatedTabs ? resolveCrossLinks(validatedTabs) : new Map<string, ResolvedCrossLink[]>()),
+    [validatedTabs],
+  );
 
   const derivedOverviewLinks = useMemo(
     () => buildOverviewCrossTabLinks(validatedTabs ?? undefined, activeTab),
@@ -160,10 +193,7 @@ export const ComposableOutput = memo(function ComposableOutput({
     if (!tab) return null;
 
     const renderer = resolveRenderer(tab.component);
-    // Pull pre-filtered crossLinks from the memoized map. The Overview tab is
-    // filtered from the strip at the OutputRouter layer; legacy backend rules
-    // can still target "overview" and the parent-level filter drops those.
-    const crossLinks = filteredCrossLinks.get(tab.id) ?? [];
+    const crossLinks = resolvedCrossLinks.get(tab.id) ?? [];
     // One goal line per tab (R4): the assembler's summary_header still carries
     // the goal as its text, so the intro would print it twice. The header wins
     // until 0b.6 gives it content of its own.
@@ -221,18 +251,14 @@ export const ComposableOutput = memo(function ComposableOutput({
 
             {crossLinks.length > 0 && (
               <div className="flex flex-col gap-2 mt-2">
-                {crossLinks.map((link) => {
-                  const targetTabDef = validatedTabs.find((t: TabEntry) => t.id === link.targetTab);
-                  return (
-                    <CrossTabLink
-                      key={link.targetTab}
-                      tabId={link.targetTab}
-                      label={targetTabDef ? displayLabel(targetTabDef) : link.label}
-                      description={targetTabDef?.goal}
-                      onNavigate={onNavigateTab}
-                    />
-                  );
-                })}
+                {crossLinks.map((link) => (
+                  <CrossTabButton
+                    key={link.targetTab}
+                    label={link.label}
+                    reason={link.reason}
+                    onClick={() => onNavigateTab(link.targetTab)}
+                  />
+                ))}
               </div>
             )}
           </>
