@@ -185,12 +185,9 @@ export const MomentTimelineRow = memo(function MomentTimelineRow({
                   onto its own line BELOW the text, so the row top stays put. */}
               <div className="flex flex-wrap items-start gap-3">
                 <div className="flex-1 basis-56 min-w-0 space-y-1.5">
-                  <p
-                    className="text-sm font-semibold leading-snug line-clamp-2"
-                    title={label}
-                  >
-                    {label}
-                  </p>
+                  {/* No clamp: in this view the label IS the substance for
+                      most videos (R7), so it always renders in full. */}
+                  <p className="text-sm font-semibold leading-snug">{label}</p>
                   {item.description && item.description !== label && (
                     <p className="text-xs leading-relaxed text-muted-foreground">
                       {item.description}

@@ -136,7 +136,8 @@ describe('MomentTrack', () => {
     it('share button copies the link without triggering a seek', async () => {
       const onSeek = vi.fn();
       const writeText = vi.spyOn(navigator.clipboard, 'writeText');
-      render(<MomentTrack items={[mixedItems[1]]} onSeek={onSeek} />);
+      // Undescribed so the grid stays the default view (see 0a.6 block below).
+      render(<MomentTrack items={[{ ...mixedItems[1], description: undefined }]} onSeek={onSeek} />);
       fireEvent.click(screen.getByTestId('gallery-share-0'));
       expect(writeText).toHaveBeenCalled();
       expect((writeText.mock.calls[0][0] as string)).toMatch(/#t=120,187$/);
@@ -176,6 +177,73 @@ describe('MomentTrack', () => {
       expect(buttons).toHaveLength(2);
       expect(buttons[0]).toHaveAttribute('aria-pressed');
       expect(buttons[1]).toHaveAttribute('aria-pressed');
+    });
+  });
+
+  describe('default view by description share (0a.6 / R7)', () => {
+    const described = (n: number, label: string): MomentItem => ({
+      time: `${n}:00`,
+      seconds: n * 60,
+      label,
+      description: `What was established at minute ${n}`,
+    });
+    const bare = (n: number, label: string): MomentItem => ({ time: `${n}:00`, seconds: n * 60, label });
+
+    it('should open in the timeline view when at least half the items carry a description', () => {
+      render(<MomentTrack items={[described(1, 'A'), described(2, 'B'), described(3, 'C'), bare(4, 'D')]} />);
+      expect(screen.getByRole('list', { name: 'Moment track' })).toBeInTheDocument();
+      expect(screen.getByTestId('view-timeline')).toHaveAttribute('aria-pressed', 'true');
+    });
+
+    it('should treat exactly half as enough for the timeline default', () => {
+      render(<MomentTrack items={[described(1, 'A'), described(2, 'B'), bare(3, 'C'), bare(4, 'D')]} />);
+      expect(screen.getByRole('list', { name: 'Moment track' })).toBeInTheDocument();
+    });
+
+    it('should keep the grid when fewer than half the items carry a description', () => {
+      render(<MomentTrack items={[described(1, 'A'), bare(2, 'B'), bare(3, 'C'), bare(4, 'D')]} />);
+      expect(screen.getByTestId('moment-grid')).toBeInTheDocument();
+      expect(screen.getByTestId('view-grid')).toHaveAttribute('aria-pressed', 'true');
+    });
+
+    it('should not count blank descriptions', () => {
+      const blank: MomentItem[] = [
+        { time: '1:00', seconds: 60, label: 'A', description: '   ' },
+        { time: '2:00', seconds: 120, label: 'B', description: '' },
+      ];
+      render(<MomentTrack items={blank} />);
+      expect(screen.getByTestId('moment-grid')).toBeInTheDocument();
+    });
+
+    it('should let an explicit stored grid preference override the timeline default', () => {
+      window.localStorage.setItem('vie-moment-view', 'grid');
+      render(<MomentTrack items={[described(1, 'A'), described(2, 'B')]} />);
+      expect(screen.getByTestId('moment-grid')).toBeInTheDocument();
+    });
+
+    it('should re-derive the default when the items change and no choice was stored', () => {
+      const { rerender } = render(<MomentTrack items={[bare(1, 'Outline A'), bare(2, 'Outline B')]} />);
+      expect(screen.getByTestId('moment-grid')).toBeInTheDocument();
+      rerender(<MomentTrack items={[described(1, 'A'), described(2, 'B')]} />);
+      expect(screen.getByRole('list', { name: 'Moment track' })).toBeInTheDocument();
+    });
+
+    it('should keep the view the user toggled to even after the items change', () => {
+      const { rerender } = render(<MomentTrack items={[described(1, 'A'), described(2, 'B')]} />);
+      fireEvent.click(screen.getByTestId('view-grid'));
+      rerender(<MomentTrack items={[described(1, 'A'), described(2, 'B'), described(3, 'C')]} />);
+      expect(screen.getByTestId('moment-grid')).toBeInTheDocument();
+    });
+
+    it('should render the full label in the timeline view with no line clamp', () => {
+      const longLabel =
+        'Opening scenario: a quiet 40-year-old suddenly punches a coworker, has an affair, and starts gambling — the neurologist finds a tumour pressing on the frontal lobe';
+      render(<MomentTrack items={[{ ...described(1, longLabel), label: longLabel }, described(2, 'B')]} />);
+      const label = screen.getByText(longLabel);
+      // The clamp is a style, but it is exactly what the acceptance forbids —
+      // jsdom has no layout, so the class is the only observable regression guard.
+      expect(label.className).not.toMatch(/line-clamp/);
+      expect(label).not.toHaveAttribute('title');
     });
   });
 

@@ -18,6 +18,10 @@ type TypeFilter = 'all' | 'clips' | 'moments';
 type MomentView = 'grid' | 'timeline';
 
 const VIEW_STORAGE_KEY = 'vie-moment-view';
+/** Share of items that must carry a description for the timeline view to open
+ *  by default — the grid card clamps descriptions to one line, the timeline
+ *  row shows them in full (R7: moments carry substance). */
+const TIMELINE_DEFAULT_DESCRIPTION_SHARE = 0.5;
 
 // Re-exported for existing consumers (tests, interactive/index.ts); the
 // canonical home is the leaf module so the row/card children never import
@@ -34,13 +38,26 @@ interface MomentTrackProps {
   onNavigateTab?: (id: string) => void;
 }
 
-function readStoredView(): MomentView {
+/** The viewer's explicit toggle choice, or null when they never chose. */
+function readStoredView(): MomentView | null {
   try {
-    return window.localStorage.getItem(VIEW_STORAGE_KEY) === 'timeline' ? 'timeline' : 'grid';
+    const stored = window.localStorage.getItem(VIEW_STORAGE_KEY);
+    return stored === 'timeline' || stored === 'grid' ? stored : null;
   } catch {
     // Storage unavailable (private mode / blocked) — fall back to the default.
-    return 'grid';
+    return null;
   }
+}
+
+function hasDescription(item: MomentItem): boolean {
+  return Boolean(item.description?.trim());
+}
+
+/** Content-driven default: timeline when the items have descriptions to show. */
+function defaultViewFor(items: MomentItem[]): MomentView {
+  if (items.length === 0) return 'grid';
+  const described = items.filter(hasDescription).length;
+  return described / items.length >= TIMELINE_DEFAULT_DESCRIPTION_SHARE ? 'timeline' : 'grid';
 }
 
 export const MomentTrack = memo(function MomentTrack({
@@ -51,7 +68,12 @@ export const MomentTrack = memo(function MomentTrack({
   nextTab: _nextTab,
   onNavigateTab: _onNavigateTab,
 }: MomentTrackProps) {
-  const [view, setView] = useState<MomentView>(readStoredView);
+  // An explicit toggle choice wins; otherwise the view is derived from the
+  // items on every render, so a tab whose items land later (provisional
+  // outline → final moments) still opens in the right view.
+  const [chosenView, setChosenView] = useState<MomentView | null>(readStoredView);
+  const defaultView = useMemo(() => defaultViewFor(items), [items]);
+  const view: MomentView = chosenView ?? defaultView;
   const [moodFilter, setMoodFilter] = useState<string | null>(null);
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
   const [pulseKey, setPulseKey] = useState<number>(-1);
@@ -140,7 +162,7 @@ export const MomentTrack = memo(function MomentTrack({
   const { setRef } = useFocusBand({ enabled: focusBandEnabled, count: filtered.length });
 
   const handleViewChange = (next: MomentView): void => {
-    setView(next);
+    setChosenView(next);
     try {
       window.localStorage.setItem(VIEW_STORAGE_KEY, next);
     } catch {
