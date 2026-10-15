@@ -42,7 +42,9 @@ from .sampling import (
     MomentAnchors,
     collect_moment_anchors,
     evenly_sample,
+    item_richness,
     moment_cap_for_duration,
+    rank_sample,
     sample_moments,
 )
 
@@ -944,14 +946,17 @@ def _cap_tab_items(
             )
             _cap_spots_with_sections(props, items, cap)
             return
+        # Rank-sample, never head-slice (R9): the richest items are kept in
+        # their original order, equals even-sampled, so the tail of a long
+        # video survives the cap (S02's arguments after 58 min).
         logger.info(
-            "Assembly: capping %s.%s from %d → %d",
+            "Assembly: capping %s.%s from %d → %d (rank-sampled by richness)",
             component,
             list_key,
             len(items),
             cap,
         )
-        props[list_key] = items[:cap]
+        props[list_key] = rank_sample(items, cap, item_richness)
 
 
 def _cap_spots_with_sections(props: dict, spots: list, cap: int) -> None:

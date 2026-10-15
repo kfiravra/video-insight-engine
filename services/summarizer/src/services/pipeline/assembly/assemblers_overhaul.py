@@ -26,6 +26,7 @@ from .normalizers import (
     _normalize_quiz_question,
     _normalize_scenario_item,
 )
+from .sampling import concept_richness, rank_sample
 
 logger = logging.getLogger(__name__)
 
@@ -169,8 +170,10 @@ def assemble_concept_canvas(
         return None
 
     if len(concepts) > _CONCEPT_CANVAS_MAX:
+        # Rank-sampled by richness in the original order (R9): the closing
+        # concepts of a long video survive, not just the first 30.
         logger.info("concept_canvas: capping %d concepts to %d", len(concepts), _CONCEPT_CANVAS_MAX)
-        concepts = concepts[:_CONCEPT_CANVAS_MAX]
+        concepts = rank_sample(concepts, _CONCEPT_CANVAS_MAX, concept_richness)
 
     # Validate connections against the surviving concept names (case-insensitive),
     # canonicalize the `to` casing, and drop hallucinated / self references.
