@@ -13,13 +13,16 @@ import { FadeIn } from '@/components/vie';
 import { CollapsibleSection } from './CollapsibleSection';
 import { PendingTabPill } from './PendingTabPill';
 import { PlayCloseGlyph } from './PlayCloseGlyph';
-import { DOMAIN_META } from './domain-meta';
+import { DOMAIN_META, trueCountLabel } from './domain-meta';
 import type { TabDefinition, ContentTag } from '@vie/types';
 
 interface VideoHeroTab extends TabDefinition {
   preview?: string;
   /** An early placeholder the stream will replace — marked in the strip. */
   provisional?: boolean;
+  /** The number of items the tab really ships (inferItemCount); replaces the
+   *  planner's guessed count in the label. */
+  itemCount?: number;
 }
 
 interface VideoHeroProps {
@@ -382,7 +385,7 @@ export const VideoHero = memo(function VideoHero({
             {safeTabs.map((tab) => {
               const isActive = tab.id === activeTabId;
               const isCompleted = completedTabs?.has(tab.id) ?? false;
-              const label = stripLeadingEmoji(tab.label);
+              const label = trueCountLabel(stripLeadingEmoji(tab.label), tab.itemCount);
               const button = (
                 <button
                   key={tab.id}

@@ -13,6 +13,9 @@ import { useTabCoordination } from './TabCoordinationContext';
 export interface ShellTabDef extends TabDefinition {
   preview?: string;
   provisional?: boolean;
+  /** Items the tab ships (`inferItemCount`) — the hero strip prints it in
+   *  place of the planner's guessed count (R3). */
+  itemCount?: number;
 }
 
 export interface PendingTabLabel {

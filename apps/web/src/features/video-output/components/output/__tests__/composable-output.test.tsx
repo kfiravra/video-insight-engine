@@ -216,6 +216,29 @@ describe('ComposableOutput', () => {
       ).toBeInTheDocument();
     });
 
+    it('should print the shipped count in place of the planner count in nav-grid labels (R3)', () => {
+      // "9 Core Arguments" over 24 spots — the planner guessed, the props are the truth.
+      const tabs = buildAssembledTabs();
+      tabs.push({
+        id: 'arguments',
+        label: '9 Core Arguments',
+        emoji: '🧠',
+        component: 'spot_explorer',
+        props: { spots: Array.from({ length: 24 }, (_, i) => ({ name: `Argument ${i + 1}` })) },
+      });
+      render(
+        <ComposableOutput
+          response={null}
+          tabs={tabs}
+          activeTab="overview"
+          onNavigateTab={vi.fn()}
+          videoSummaryId="vsum-1"
+        />,
+      );
+      expect(screen.getByRole('button', { name: 'Open 24 Core Arguments' })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Open 9 Core Arguments' })).not.toBeInTheDocument();
+    });
+
     it('should NOT render a duplicate hero card with title/subtitle/masterSummary or top takeaways', () => {
       const tabs = buildAssembledTabs();
       tabs[0].props = {

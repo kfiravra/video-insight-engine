@@ -121,6 +121,30 @@ describe('VideoHero', () => {
     expect(onTabSelect).toHaveBeenCalledWith('quizzes');
   });
 
+  it('should print the shipped item count in place of the planner count in a tab label', () => {
+    renderWithPlayer(
+      <VideoHero
+        {...DEFAULT_PROPS}
+        tabs={[{ id: 'args', label: '9 Core Arguments', emoji: '🧠', dataSource: '', itemCount: 24 }]}
+        activeTabId="args"
+        onTabSelect={() => {}}
+      />,
+    );
+    expect(screen.getByRole('tab', { name: '24 Core Arguments' })).toBeInTheDocument();
+  });
+
+  it('should drop the planner count from a tab label when the shipped count is unknown', () => {
+    renderWithPlayer(
+      <VideoHero
+        {...DEFAULT_PROPS}
+        tabs={[{ id: 'args', label: '9 Core Arguments', emoji: '🧠', dataSource: '' }]}
+        activeTabId="args"
+        onTabSelect={() => {}}
+      />,
+    );
+    expect(screen.getByRole('tab', { name: 'Core Arguments' })).toBeInTheDocument();
+  });
+
   it('should not render a tab bar when no tabs are provided', () => {
     renderWithPlayer(<VideoHero {...DEFAULT_PROPS} />);
 

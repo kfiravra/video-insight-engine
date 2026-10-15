@@ -11,6 +11,7 @@ import { FlowPlayer } from './FlowPlayer';
 import { detectFlowMode } from './flow-modes';
 import { ErrorBoundary } from '@/components/ui/error-boundary';
 import { EmojiMarker } from '@/components/vie';
+import { inferItemCount, trueCountLabel } from '@/components/vie/cards/domain-meta';
 import { stripLeadingEmoji } from '@/lib/string-utils';
 import { validateTabEntries } from '@/features/video-output/lib/tab-prop-schemas';
 import {
@@ -37,60 +38,10 @@ interface ComposableOutputProps {
   videoSummaryId?: string;
 }
 
-/** Component name → the props key holding its primary item list. Used by the
- *  Overview nav grid to surface "how many things are inside this tab". Kept as
- *  a single source of truth next to the renderers so new components only need
- *  to register their count-prop here. */
-const COUNT_PROP_BY_COMPONENT: Record<string, string> = {
-  // Current (post video-to-action overhaul) component set. Retired keys
-  // (quiz, timeline, clip_player, code_explorer, exercise_tracker, scenario,
-  // gallery, lyrics_player) were dropped in interactive-overhaul-v2 1D.
-  flash_deck: 'cards',
-  step_player: 'steps',
-  step_flow_canvas: 'steps',
-  checklist: 'items',
-  info_grid: 'items',
-  spot_explorer: 'spots',
-  moment_track: 'items',
-  budget: 'breakdown',
-  // Overhaul components
-  code_playground: 'snippets',
-  quiz_arena: 'questions',
-  packing_mission: 'items',
-  workout_room: 'exercises',
-  video_filmstrip: 'frames',
-  concept_canvas: 'concepts',
-  connect_canvas: 'pairs',
-  comparison_radar: 'comparisons',
-  lyrics_karaoke: 'sections',
-  claims_tracker: 'claims',
-  tier_list: 'items',
-  formation_diagram: 'positions',
-};
-
-/** Pull the most-meaningful item count out of an assembled tab's props.
- *  Returns undefined when the count is ambiguous — the nav card still renders
- *  without a number rather than guessing. */
-function inferItemCount(tab: TabEntry): number | undefined {
-  const props = tab.props ?? {};
-  // Comparison has no single "items" list — it's pros + cons + rows together.
-  if (tab.component === 'comparison') {
-    const pros = Array.isArray(props.pros) ? props.pros.length : 0;
-    const cons = Array.isArray(props.cons) ? props.cons.length : 0;
-    const rows = Array.isArray(props.comparisons) ? props.comparisons.length : 0;
-    const total = rows + pros + cons;
-    return total > 0 ? total : undefined;
-  }
-  const key = COUNT_PROP_BY_COMPONENT[tab.component];
-  if (!key) return undefined;
-  const value = props[key];
-  // moment_track historically also used `entries` — fall through when `items`
-  // is missing so assembler outputs that used the older shape still show a count.
-  if (!Array.isArray(value) && tab.component === 'moment_track') {
-    const entries = props.entries;
-    return Array.isArray(entries) ? entries.length : undefined;
-  }
-  return Array.isArray(value) ? value.length : undefined;
+/** The label a tab is shown under: emoji stripped, planner count replaced by
+ *  the shipped count (R3). */
+function displayLabel(tab: TabEntry): string {
+  return trueCountLabel(stripLeadingEmoji(tab.label), inferItemCount(tab));
 }
 
 /** Build the cross-tab nav grid shown inside the Overview tab. Sources sibling
@@ -104,7 +55,7 @@ function buildOverviewCrossTabLinks(
   const siblings = allTabs.filter((t) => t.id !== activeTabId && t.component !== 'overview');
   return siblings.map((t) => ({
     targetTab: t.id,
-    label: stripLeadingEmoji(t.label),
+    label: displayLabel(t),
     emoji: t.emoji || undefined,
     count: inferItemCount(t),
   }));
@@ -219,7 +170,7 @@ export const ComposableOutput = memo(function ComposableOutput({
       onNavigateTab,
       onSeek: seekTo,
       tabId: tab.id,
-      tabLabel: tab.label,
+      tabLabel: displayLabel(tab),
       currentTime: playbackTime,
       allTabs: validatedTabs,
       videoId: videoSummaryId,
@@ -272,7 +223,7 @@ export const ComposableOutput = memo(function ComposableOutput({
                     <CrossTabLink
                       key={link.targetTab}
                       tabId={link.targetTab}
-                      label={link.label}
+                      label={targetTabDef ? displayLabel(targetTabDef) : link.label}
                       description={targetTabDef?.goal}
                       onNavigate={onNavigateTab}
                     />
