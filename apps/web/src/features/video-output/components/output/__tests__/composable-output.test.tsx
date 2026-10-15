@@ -480,6 +480,35 @@ describe('ComposableOutput', () => {
       expect(screen.getByText('8')).toBeInTheDocument();
     });
 
+    it('should print the goal once when a summary_header attachment is present (R4)', () => {
+      const [tab] = tabWithAttachments();
+      const goal = 'A quick spec overview';
+      // Stored v10 docs: the summary_header text IS the goal.
+      render(
+        <ComposableOutput
+          response={null}
+          tabs={[{ ...tab, goal }]}
+          activeTab="specs"
+          onNavigateTab={vi.fn()}
+        />,
+      );
+      expect(screen.getAllByText(goal)).toHaveLength(1);
+      expect(screen.getByRole('note')).toHaveTextContent(goal);
+    });
+
+    it('should keep the intro goal line on a tab without a summary_header', () => {
+      const goal = 'Spec the machine at a glance';
+      render(
+        <ComposableOutput
+          response={null}
+          tabs={[{ id: 'specs', label: 'Specs', emoji: '📊', component: 'info_grid', goal, props: { items: [{ key: 'CPU', value: 'M2' }] } }]}
+          activeTab="specs"
+          onNavigateTab={vi.fn()}
+        />,
+      );
+      expect(screen.getByText(goal)).toBeInTheDocument();
+    });
+
     it('renders flat tabs (no attachments) exactly as before', () => {
       const tabs: TabEntry[] = [
         {

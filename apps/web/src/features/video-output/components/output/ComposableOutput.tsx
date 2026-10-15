@@ -164,6 +164,10 @@ export const ComposableOutput = memo(function ComposableOutput({
     // filtered from the strip at the OutputRouter layer; legacy backend rules
     // can still target "overview" and the parent-level filter drops those.
     const crossLinks = filteredCrossLinks.get(tab.id) ?? [];
+    // One goal line per tab (R4): the assembler's summary_header still carries
+    // the goal as its text, so the intro would print it twice. The header wins
+    // until 0b.6 gives it content of its own.
+    const hasSummaryHeader = (tab.attachments ?? []).some((a) => a.component === 'summary_header');
     // Don't pass nextTab — ComposableOutput renders CrossTabLink after each tab.
     // Passing nextTab causes duplicate "Next" buttons inside Celebration components.
     const nav: NavProps = {
@@ -206,7 +210,7 @@ export const ComposableOutput = memo(function ComposableOutput({
           />
         ) : (
           <>
-            {tab.goal && <TabIntro goal={tab.goal} />}
+            {tab.goal && !hasSummaryHeader && <TabIntro goal={tab.goal} />}
             <TabAttachments attachments={tab.attachments} slot="top" nav={nav} />
             <ErrorBoundary fallback={<div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">Failed to render this tab. Try refreshing the page.</div>}>
               {renderer
