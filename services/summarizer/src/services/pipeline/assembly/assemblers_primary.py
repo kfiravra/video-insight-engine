@@ -16,9 +16,9 @@ from .normalizers import (
     _first_competitor_name,
     _normalize_code_snippet,
     _normalize_comparison,
-    _normalize_moment_item,
     _normalize_step,
     _normalize_to_spot,
+    normalize_moment_items,
 )
 
 # ─────────────────────────────────────────────────────
@@ -105,13 +105,12 @@ def assemble_moment_track(
 
     Replaces legacy assemble_timeline (points) and assemble_clip_player (spans).
     Items keep endSeconds only when the LLM marked the moment as a replayable
-    highlight worth re-watching.
+    highlight worth re-watching. Textless items and a second item at the same
+    second are refused by `normalize_moment_items` (0b.1).
     """
     if not isinstance(data, list) or len(data) < 1:
         return None
-    items = [
-        m for m in (_normalize_moment_item(item, i) for i, item in enumerate(data)) if m is not None
-    ]
+    items = normalize_moment_items(data)
     return {"items": items} if items else None
 
 
@@ -284,7 +283,6 @@ _INFO_KEY_FIELDS: tuple[str, ...] = (
     "phrase",
     "aspect",
     "role",
-    "type",
     "fact",
     "concept",
     "topic",
@@ -313,6 +311,11 @@ _INFO_VALUE_FIELDS: tuple[str, ...] = (
     "tip",
     "instruction",
 )
+# `type` is a category token (`chef_tip`, `safety`, `form`), never the key —
+# mapped into the key it named every promoted spot "chef_tip" (0b.8, R5). It
+# ships as `category`, a badge the renderer may show next to the key.
+_CATEGORY_TOKEN_MAX_CHARS = 32
+_CATEGORY_TOKEN_MAX_WORDS = 3
 _INFO_EVIDENCE_FIELDS: tuple[str, ...] = (
     "example",
     "source",
@@ -365,16 +368,41 @@ def _split_string_info_item(text: str) -> dict | None:
     return {"key": text, "value": ""}
 
 
-def _normalize_info_grid_item(item: Any) -> dict | None:
-    """Coerce diverse LLM-emit shapes into {key, value, evidence?, emoji?}.
+def _category_badge(raw: Any) -> str | None:
+    """A short `type` token ("chef_tip") as badge text ("Chef tip"); None otherwise."""
+    if not isinstance(raw, str):
+        return None
+    text = raw.replace("_", " ").replace("-", " ").strip()
+    if not text or len(text) > _CATEGORY_TOKEN_MAX_CHARS:
+        return None
+    if len(text.split()) > _CATEGORY_TOKEN_MAX_WORDS or any(c in text for c in ".!?:"):
+        return None
+    return text[0].upper() + text[1:]
 
-    Returns None when the item lacks either key OR value — those would render
-    as empty cards and are the root cause of the wall-of-empty-grid bug.
+
+def _with_category(result: dict | None, item: dict) -> dict | None:
+    """Attach the item's `type` as a `category` badge to a normalized row."""
+    category = _category_badge(item.get("type")) if result is not None else None
+    if category:
+        result["category"] = category
+    return result
+
+
+def _normalize_info_grid_item(item: Any) -> dict | None:
+    """Coerce diverse LLM-emit shapes into {key, value, evidence?, emoji?, category?}.
+
+    Returns None when the item lacks a key — those would render as empty cards
+    and were the root cause of the wall-of-empty-grid bug.
     """
     if isinstance(item, str):
         return _split_string_info_item(item)
     if not isinstance(item, dict):
         return None
+    return _with_category(_normalize_info_grid_dict(item), item)
+
+
+def _normalize_info_grid_dict(item: dict) -> dict | None:
+    """The dict half of `_normalize_info_grid_item` (category attached by the caller)."""
 
     # Credits-style: {role, name} — role labels the position (key), name
     # identifies who fills it (value). Handle explicitly because both fields
@@ -411,7 +439,7 @@ def _normalize_info_grid_item(item: Any) -> dict | None:
             key_raw = candidate.strip()
             break
     if not key_raw:
-        return None
+        return _text_only_info_item(item)
 
     value_raw = ""
     for field in _INFO_VALUE_FIELDS:
@@ -433,6 +461,22 @@ def _normalize_info_grid_item(item: Any) -> dict | None:
     if item.get("timestamp") is not None:
         result["timestamp"] = item["timestamp"]
 
+    return result
+
+
+def _text_only_info_item(item: dict) -> dict | None:
+    """A keyless `{type, text}` tip: the `text` is the whole card.
+
+    It splits into key/value exactly like a bare string (delimiter, then
+    sentence boundary), so the key is the tip's own headline and never its
+    category token. Other keyless fragments (a lone `definition`) still drop.
+    """
+    text = item.get("text")
+    if not isinstance(text, str) or not text.strip():
+        return None
+    result = _split_string_info_item(text)
+    if result is not None and item.get("emoji"):
+        result["emoji"] = item["emoji"]
     return result
 
 

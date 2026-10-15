@@ -70,6 +70,7 @@ from .normalizers import (
     _normalize_moment_item,
     _normalize_quiz_question,
     _normalize_scenario_item,
+    normalize_moment_items,
 )
 from .promotion import (
     CONCEPT_CONNECTION_MIN,
@@ -112,6 +113,7 @@ __all__ = [
     "_normalize_exercise",
     "_normalize_quiz_question",
     "_normalize_scenario_item",
+    "normalize_moment_items",
     "_chapters_to_moments",
     # Individual assemblers (used by tests)
     "assemble_display_section",

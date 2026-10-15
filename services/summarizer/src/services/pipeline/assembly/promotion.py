@@ -131,9 +131,10 @@ def _promote_info_grid(
     A grid of short reference pairs stays a grid; a grid whose values are long
     descriptions is really a set of browsable cards, so we re-shape it through
     the spot_explorer assembler. Each spot keeps its row's `timestamp` and
-    carries the row's `evidence` as the card's `quote` line (R2, R10). A row
-    the spot normalizer would refuse (a headline chip with no body) keeps the
-    whole tab a grid, where every row still renders — degrade, never drop.
+    carries the row's `evidence` as the card's `quote` line and its `category`
+    badge (R2, R5, R10). A row the spot normalizer would refuse (a headline
+    chip with no body) keeps the whole tab a grid, where every row still
+    renders — degrade, never drop.
     """
     items = props.get("items")
     if not isinstance(items, list):
@@ -151,6 +152,8 @@ def _promote_info_grid(
     for spot, row in zip(spot_props["spots"], rows, strict=True):
         if row.get("evidence"):
             spot["quote"] = row["evidence"]
+        if row.get("category"):
+            spot["category"] = row["category"]
     return spot_props
 
 
