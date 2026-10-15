@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
 import { ObjectId } from 'mongodb';
 import type { FastifyBaseLogger } from 'fastify';
 import { getTestDb, mockLogger } from '../../test/setup.js';
@@ -15,6 +15,14 @@ vi.mock('../../config.js', () => ({
 
 describe('CostMonitorService', () => {
   let costMonitorService: CostMonitorService;
+
+  // Mirror the prod index (plugins/mongodb.ts). Without it, concurrent upserts
+  // on the same (userId, date) race into two documents and findOne sees one.
+  beforeAll(async () => {
+    await getTestDb()
+      .collection('userCosts')
+      .createIndex({ userId: 1, date: 1 }, { unique: true });
+  });
 
   beforeEach(() => {
     vi.clearAllMocks();

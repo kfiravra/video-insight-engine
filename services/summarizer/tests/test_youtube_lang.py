@@ -220,7 +220,8 @@ class TestPickOriginalOverTranslation:
 
     def test_should_pick_the_original_when_a_translation_is_listed_first(self):
         """Auto-dubbed video shape (prod T1dQhQAm8Tc): one ASR track per dub, so
-        yt-dlp's ``en`` key lists the ar→en translation before the English ASR."""
+        yt-dlp's ``en`` key lists the ar→en translation before the English ASR.
+        Since 2026-10-15 the ``en-orig`` key wins outright (same URL)."""
         auto = {
             "ar-orig": self._json3("ar-orig"),
             "ar": self._json3("ar-asr"),
@@ -231,7 +232,11 @@ class TestPickOriginalOverTranslation:
         track = _pick_subtitle_url("en", {}, auto)
 
         assert track is not None
-        assert (track.url, track.kind, track.lang) == (self.ORIGINAL_EN, "auto-generated", "en")
+        assert (track.url, track.kind, track.lang) == (
+            self.ORIGINAL_EN,
+            "auto-generated",
+            "en-orig",
+        )
 
     def test_should_not_let_a_translated_regional_key_beat_the_original(self):
         """A prefix-matched translation key (``en-ar``: English from Arabic
