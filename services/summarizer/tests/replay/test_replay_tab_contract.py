@@ -41,8 +41,7 @@ from tests.replay.driver import ReplayResult, run_replay
 _VIDEOS = available_cassettes()
 _REFERENCE_VIDEO = "T1dQhQAm8Tc"
 # Plans whose steps are the timeline (D6, output-quality 0b.2): assembly ships no
-# Moments tab, so the plan-done provisional tab is withdrawn at ``complete``
-# instead of replaced.
+# Moments tab, and plan-done streams no provisional one (0b follow-ups).
 _STEPS_ARE_THE_TIMELINE = frozenset({"jMq8lEu-of0"})
 _PLAN_SPAN = "plan"
 _MEMORY_SPAN = "memory"
@@ -72,7 +71,12 @@ def _ends_of_plan_done_window(result: ReplayResult) -> tuple[int, int]:
 @pytest.mark.parametrize("video_id", _VIDEOS)
 class TestTabEmissionContract:
     def test_should_open_with_the_provisional_moments_tab(self, replays: dict, video_id: str):
-        assert replays[video_id].tab_events()[0].get("provisional") is True
+        tabs = replays[video_id].tab_events()
+
+        if video_id in _STEPS_ARE_THE_TIMELINE:
+            assert [t["id"] for t in tabs if t.get("provisional")] == []
+            return
+        assert tabs[0].get("provisional") is True
 
     def test_should_stream_it_at_plan_done_before_extraction(self, replays: dict, video_id: str):
         meta_at, extraction_at = _ends_of_plan_done_window(replays[video_id])
@@ -84,12 +88,10 @@ class TestTabEmissionContract:
     ) -> None:
         tabs = replays[video_id].tab_events()
 
-        provisional_id = tabs[0]["id"]
-
         if video_id in _STEPS_ARE_THE_TIMELINE:
-            assert [t["final"] for t in tabs if t["id"] == provisional_id] == [False]
-            assert provisional_id not in _saved_ids(replays[video_id])
+            assert not any(t.get("provisional") for t in tabs)
             return
+        provisional_id = tabs[0]["id"]
         assert [t["final"] for t in tabs if t["id"] == provisional_id][-1] is True
 
     def test_should_send_every_saved_tab_final_exactly_once(self, replays: dict, video_id: str):
@@ -381,7 +383,8 @@ class TestSplitPathEmission:
 
 # ─── EXTRACTION_PARALLEL=false: today's tab_ready sequence ───
 
-# (id, position, final, provisional, replaces) per tab_ready, captured on b7a2077.
+# (id, position, final, provisional, replaces) per tab_ready, captured on b7a2077;
+# jMq8lEu-of0 lost its provisional key_moments preview to D6 (output-quality 0b).
 _TODAYS_SEQUENCE: dict[str, list[tuple[str, int, bool, bool, str | None]]] = {
     "T1dQhQAm8Tc": [
         ("key_moments", 3, False, True, None),
@@ -398,7 +401,6 @@ _TODAYS_SEQUENCE: dict[str, list[tuple[str, int, bool, bool, str | None]]] = {
         ("quiz", 5, True, False, None),
     ],
     "jMq8lEu-of0": [
-        ("key_moments", 4, False, True, None),
         ("overview", 0, False, False, None),
         ("ingredients", 1, True, False, None),
         ("cook_steps", 2, True, False, None),

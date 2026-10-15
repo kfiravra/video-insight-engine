@@ -15,7 +15,9 @@ A Moments tab always exists (Kfir 2026-10-12, pipeline-1min 2.1): a response
 whose plan designed none gets the always-Moments tab from the same chain
 (``always_moments_tab``), and the plan-done provisional copy
 (``provisional_moments_tab``) carries the id of whichever tab will replace it.
-No source with an entry → no Moments tab: one is never invented.
+No source with an entry → no Moments tab: one is never invented. When the
+steps are the timeline (D6: a step player, flow canvas or workout room),
+assembly ships no Moments tab, so none is previewed either.
 """
 
 from __future__ import annotations
@@ -121,6 +123,20 @@ def tab_component(tab: Mapping[str, Any]) -> str:
     return str(tab.get("component") or infer_component(str(tab.get("id", ""))))
 
 
+# D6 (output-quality 0b.2): a response navigated by a step player, a step flow
+# canvas or a workout room gets no Moments tab — recipes, workouts and step
+# tutorials are navigated by their steps, and the overview is the hero.
+_TIMELINE_STEP_COMPONENTS = frozenset({"step_player", "step_flow_canvas", "workout_room"})
+
+
+def steps_are_the_timeline(tabs: Iterable[Mapping[str, Any]]) -> bool:
+    """D6: the response navigates by its steps (a step player / flow canvas / workout room).
+
+    Plan tabs and assembled tabs alike: an unnamed plan tab counts by its id.
+    """
+    return any(tab_component(t) in _TIMELINE_STEP_COMPONENTS for t in tabs)
+
+
 def _always_moments_id(taken: Iterable[str]) -> str:
     """``key_moments`` unless a tab holds it; plan-done and assembly reach the same id."""
     used = set(taken)
@@ -180,19 +196,23 @@ def provisional_moments_tab(
     description_analysis: Mapping[str, Any] | None,
     forbidden: Collection[str],
 ) -> tuple[dict, int] | None:
-    """The plan-done Moments tab and its estimated position, or None (no source).
+    """The plan-done Moments tab and its estimated position, or None.
+
+    None when the domain forbids moment_track, when the steps are the timeline
+    (D6 — assembly would only withdraw the preview at ``complete``) or when no
+    fallback source has an entry.
 
     Its id, label, emoji and goal are those of the tab that will replace it:
     the plan's first moment_track tab, else the always-Moments tab, which
     assembly adds after the planned tabs. The estimate counts the overview
     assembly puts first and the planned tabs before it, quiz excluded.
     """
-    if _MOMENT_COMPONENT in forbidden:
+    tabs = [t for t in plan_tabs if isinstance(t, dict)]
+    if _MOMENT_COMPONENT in forbidden or steps_are_the_timeline(tabs):
         return None
     props = fallback_moment_props(video_meta, description_analysis)
     if props is None:
         return None
-    tabs = [t for t in plan_tabs if isinstance(t, dict)]
     index = next((i for i, t in enumerate(tabs) if tab_component(t) == _MOMENT_COMPONENT), None)
     if index is None:
         index, stub = len(tabs), _always_moments_stub(_tab_ids(tabs))

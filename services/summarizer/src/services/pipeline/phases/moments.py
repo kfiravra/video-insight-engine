@@ -6,8 +6,9 @@ when it designed one, else the tab assembly adds from the fallback chain
 → YouTube chapters → description timestamps — needs no extraction, so a
 provisional copy streams as soon as the plan and memory are done: the id,
 label and position estimate of the tab that replaces it by id later. No
-source with an entry → no tab. The copy is a best-effort preview: a failure to
-build it logs a warning and streams nothing, never failing the run.
+source with an entry → no tab; a plan whose steps are the timeline (D6) →
+no tab. The copy is a best-effort preview: a failure to build it logs a
+warning and streams nothing, never failing the run.
 """
 
 from __future__ import annotations

@@ -34,6 +34,7 @@ from .moment_fallback import (
     cannot_feed_moments,
     fallback_moment_props,
     fallback_moments,
+    steps_are_the_timeline,
 )
 from .promotion import demote_component, promote_component
 from .registry import ASSEMBLER_REGISTRY, infer_component
@@ -410,11 +411,6 @@ def _drop_emptied_moment_tabs(
                 "reason": "all_timestamps_impossible",
             }
         )
-
-
-def steps_are_the_timeline(tabs: Iterable[Mapping[str, Any]]) -> bool:
-    """D6: the response navigates by its steps (a step player / flow canvas / workout room)."""
-    return any(t.get("component") in _TIMELINE_STEP_COMPONENTS for t in tabs)
 
 
 def _drop_moments_when_steps_are_the_timeline(tabs: list[dict], dropped_sink: list[dict]) -> bool:
@@ -946,10 +942,6 @@ _TAB_ITEM_CAPS: dict[str, int] = assembler_item_caps()
 # within a tier, so the headline beats and the tail both survive (R9).
 _MOMENT_CAP_MAX = MOMENT_CAP_MAX
 
-# Steps are the timeline (D6): a response that ships its steps as a player, a
-# flow canvas or a workout room gets no Moments tab — recipes, workouts and
-# step tutorials are navigated by their steps, and the overview is the hero.
-_TIMELINE_STEP_COMPONENTS = frozenset({"step_player", "step_flow_canvas", "workout_room"})
 STEPS_ARE_THE_TIMELINE = "steps_are_the_timeline"
 
 
