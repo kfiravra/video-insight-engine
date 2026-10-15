@@ -20,6 +20,7 @@ from typing import Any
 from src.shared_config.domain_config import quiz_policy
 
 from .registry import ASSEMBLER_REGISTRY
+from .text_utils import truncate_words
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,25 @@ SPARSE_THRESHOLD = 4
 # Tabs whose primary list is at or above this length are "dense" — a top
 # summary header gives the reader an anchor before the long scroll.
 _DENSE_THRESHOLD = 10
+# A summary_header is one orientation line, never a paragraph.
+_HEADER_MAX_CHARS = 220
+# An item's headline / body fields, in priority order (mirrors the FE's
+# text-key probe so "the first item" reads the same server- and client-side).
+_ITEM_HEADLINE_KEYS = (
+    "label",
+    "title",
+    "name",
+    "term",
+    "question",
+    "claim",
+    "text",
+    "front",
+    "instruction",
+)
+_ITEM_BODY_KEYS = ("description", "detail", "definition", "summary", "explanation", "back")
+# Attachments built from response-global data: ONE of each per response, or
+# every tab repeats the identical payload.
+ONCE_PER_RESPONSE = frozenset({"frame_strip", "quick_quiz", "tip_callout"})
 
 # Component → the props key holding its primary item list. Mirrors the frontend
 # COUNT_PROP_BY_COMPONENT so "how many items does this tab show" is consistent.
@@ -145,15 +165,73 @@ def _tip_callout_attachment(extraction: dict | None, domain: str) -> dict | None
     return None
 
 
-def _summary_header_attachment(tab: dict) -> dict | None:
-    """Build a top summary_header from the tab's goal (one-line orientation)."""
-    goal = tab.get("goal")
-    if not isinstance(goal, str) or not goal.strip():
+def _first_text(item: dict, keys: tuple[str, ...]) -> str | None:
+    """The first non-blank string under ``keys``, stripped."""
+    for key in keys:
+        value = item.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _first_item_line(component: str, props: dict) -> str | None:
+    """One line for the tab's first primary item: ``headline — body`` when the
+    item carries both, else whichever it has. None for a textless item."""
+    key = _PRIMARY_LIST_KEY.get(component)
+    items = props.get(key) if key else None
+    if not isinstance(items, list) or not items:
+        return None
+    first = items[0]
+    if isinstance(first, str):
+        return first.strip() or None
+    if not isinstance(first, dict):
+        return None
+    headline = _first_text(first, _ITEM_HEADLINE_KEYS)
+    body = _first_text(first, _ITEM_BODY_KEYS)
+    if headline and body:
+        return f"{headline} — {body}"
+    return headline or body
+
+
+def _extraction_summary(extraction: dict | None, domain: str) -> str | None:
+    """The extraction's ``summary`` scalar: the primary domain's first, else the
+    first other domain that wrote one (a tech video summarised under learning)."""
+    if not isinstance(extraction, dict):
+        return None
+    ordered = [extraction.get(domain), *(v for k, v in extraction.items() if k != domain)]
+    for domain_data in ordered:
+        if not isinstance(domain_data, dict):
+            continue
+        summary = domain_data.get("summary")
+        if isinstance(summary, str) and summary.strip():
+            return summary.strip()
+    return None
+
+
+def _same_line(a: str | None, b: str | None) -> bool:
+    """Case/punctuation-insensitive equality for the "never the goal" guard."""
+    if not isinstance(a, str) or not isinstance(b, str):
+        return False
+    return a.strip().rstrip(".!").casefold() == b.strip().rstrip(".!").casefold()
+
+
+def _summary_header_attachment(
+    tab: dict, extraction: dict | None, domain: str, is_answer_tab: bool
+) -> dict | None:
+    """Build a top summary_header with content (R4, 0b.6): the extraction's
+    ``summary`` on the answer tab, otherwise the tab's first item — never the
+    goal, which the FE already prints as the tab's intro line."""
+    summary = _extraction_summary(extraction, domain) if is_answer_tab else None
+    title = "In short"
+    if summary is None:
+        summary = _first_item_line(tab.get("component", ""), tab.get("props") or {})
+        title = "First up"
+    if summary is None or _same_line(summary, tab.get("goal")):
         return None
     return _build_attachment(
         "summary_header",
         "top",
-        {"summary": goal.strip(), "title": "In short", "emoji": "🧭"},
+        {"summary": truncate_words(summary, _HEADER_MAX_CHARS), "title": title, "emoji": "🧭"},
         size="banner",
     )
 
@@ -165,18 +243,22 @@ def attach_secondaries(
     frames: list[dict] | None,
     domain: str,
     excluded_kinds: set[str] | frozenset[str] = frozenset(),
+    is_answer_tab: bool = False,
 ) -> list[dict]:
     """Decide and build secondary attachments for a single assembled tab.
 
     Sparse tab (≤ SPARSE_THRESHOLD items): add ONE enriching bottom attachment,
     trying frame_strip → quick_quiz → tip_callout in priority order. Dense tab
-    (≥ _DENSE_THRESHOLD items): add a top summary_header. Tabs in between get
-    nothing. Returns a (possibly empty) list of attachment dicts.
+    (≥ _DENSE_THRESHOLD items): add a top summary_header carrying content (the
+    extraction summary on the answer tab, else the first item). Tabs in
+    between get nothing. Returns a (possibly empty) list of attachment dicts.
 
     frame_strip/quick_quiz/tip_callout are built from response-global data, so
     repeating one across tabs shows the identical payload N times — the caller
     passes already-used kinds via `excluded_kinds` and each is skipped in favor
-    of the next in the chain.
+    of the next in the chain. ``is_answer_tab`` marks the first content tab
+    (the one that answers the video's question — proposal §2); the caller knows
+    the strip order, this function does not.
     """
     component = tab.get("component", "")
     props = tab.get("props")
@@ -209,8 +291,46 @@ def attach_secondaries(
             attachments.append(attachment)
 
     elif count >= _DENSE_THRESHOLD:
-        header = _summary_header_attachment(tab)
+        header = _summary_header_attachment(tab, extraction, domain, is_answer_tab)
         if header is not None:
             attachments.append(header)
 
     return attachments
+
+
+def attach_response_secondaries(
+    tabs: list[dict],
+    extraction: dict | None,
+    enrichment: dict | None,
+    frames: list[dict] | None,
+    domain: str,
+) -> None:
+    """Decorate every content tab of a response in place.
+
+    The overview is its own hero and is never decorated; the first content tab
+    after it is the answer tab. ONCE_PER_RESPONSE kinds are budgeted to one
+    appearance, and a filmstrip tab (planned or auto-appended) pre-consumes the
+    frame_strip budget because it already shows the gallery.
+    """
+    used_kinds: set[str] = (
+        {"frame_strip"} if any(t.get("component") == "video_filmstrip" for t in tabs) else set()
+    )
+    answer_pending = True
+    for tab in tabs:
+        if tab.get("component") == "overview":
+            continue
+        secondaries = attach_secondaries(
+            tab,
+            extraction,
+            enrichment,
+            frames,
+            domain,
+            excluded_kinds=used_kinds,
+            is_answer_tab=answer_pending,
+        )
+        answer_pending = False
+        if secondaries:
+            tab["attachments"] = secondaries
+            used_kinds |= {
+                a["component"] for a in secondaries if a["component"] in ONCE_PER_RESPONSE
+            }

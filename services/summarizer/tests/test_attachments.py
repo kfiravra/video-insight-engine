@@ -75,14 +75,16 @@ class TestSparseEnrichment:
 class TestDenseSummary:
     def test_dense_tab_gets_a_top_summary_header(self):
         tab = _tab("info_grid", "items", _DENSE_THRESHOLD, goal="Searchable spec table.")
+        tab["props"]["items"][0] = {"label": "Battery", "value": "6 h"}
         out = attach_secondaries(tab, {}, None, None, "review")
         assert len(out) == 1
         assert out[0]["component"] == "summary_header"
         assert out[0]["slot"] == "top"
-        assert out[0]["props"]["summary"] == "Searchable spec table."
+        # 0b.6: the header carries content (the first item), never the goal.
+        assert out[0]["props"]["summary"] == "Battery"
 
-    def test_dense_tab_with_no_goal_gets_nothing(self):
-        tab = _tab("info_grid", "items", _DENSE_THRESHOLD, goal="")
+    def test_dense_tab_with_textless_items_gets_nothing(self):
+        tab = _tab("info_grid", "items", _DENSE_THRESHOLD, goal="Searchable spec table.")
         out = attach_secondaries(tab, {}, None, None, "review")
         assert out == []
 
@@ -176,6 +178,7 @@ class TestOncePerResponseBudget:
 
     def test_summary_header_is_not_budgeted(self):
         tab = _tab("info_grid", "items", _DENSE_THRESHOLD)
+        tab["props"]["items"][0] = {"label": "Battery"}
         out = attach_secondaries(
             tab,
             {},
