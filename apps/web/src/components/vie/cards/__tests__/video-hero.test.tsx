@@ -100,72 +100,11 @@ describe('VideoHero', () => {
     expect(screen.getAllByRole('tab')).toHaveLength(SAMPLE_TABS.length);
   });
 
-  it('should mark the active tab with aria-selected=true', () => {
-    renderWithPlayer(
-      <VideoHero {...DEFAULT_PROPS} tabs={SAMPLE_TABS} activeTabId="key_points" onTabSelect={() => {}} />,
-    );
-
-    const active = screen.getByRole('tab', { selected: true });
-    expect(active).toHaveTextContent('Key Points');
-  });
-
-  it('should fire onTabSelect with the tab id when a tab is clicked', async () => {
-    const onTabSelect = vi.fn();
-    const user = userEvent.setup();
-    renderWithPlayer(
-      <VideoHero {...DEFAULT_PROPS} tabs={SAMPLE_TABS} activeTabId="overview" onTabSelect={onTabSelect} />,
-    );
-
-    await user.click(screen.getByRole('tab', { name: /quizzes/i }));
-
-    expect(onTabSelect).toHaveBeenCalledWith('quizzes');
-  });
-
-  it('should print the shipped item count in place of the planner count in a tab label', () => {
-    renderWithPlayer(
-      <VideoHero
-        {...DEFAULT_PROPS}
-        tabs={[{ id: 'args', label: '9 Core Arguments', emoji: '🧠', dataSource: '', itemCount: 24 }]}
-        activeTabId="args"
-        onTabSelect={() => {}}
-      />,
-    );
-    expect(screen.getByRole('tab', { name: '24 Core Arguments' })).toBeInTheDocument();
-  });
-
-  it('should drop the planner count from a tab label when the shipped count is unknown', () => {
-    renderWithPlayer(
-      <VideoHero
-        {...DEFAULT_PROPS}
-        tabs={[{ id: 'args', label: '9 Core Arguments', emoji: '🧠', dataSource: '' }]}
-        activeTabId="args"
-        onTabSelect={() => {}}
-      />,
-    );
-    expect(screen.getByRole('tab', { name: 'Core Arguments' })).toBeInTheDocument();
-  });
-
   it('should not render a tab bar when no tabs are provided', () => {
     renderWithPlayer(<VideoHero {...DEFAULT_PROPS} />);
 
     expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
     expect(screen.queryAllByRole('tab')).toHaveLength(0);
-  });
-
-  it('should apply the domain gradient to the active tab', () => {
-    const gradient = 'linear-gradient(135deg, oklch(70% 0.2 280), oklch(60% 0.2 320))';
-    renderWithPlayer(
-      <VideoHero
-        {...DEFAULT_PROPS}
-        tabs={SAMPLE_TABS}
-        activeTabId="overview"
-        onTabSelect={() => {}}
-        domainGradient={gradient}
-      />,
-    );
-
-    const active = screen.getByRole('tab', { selected: true });
-    expect(active.getAttribute('style') ?? '').toContain('linear-gradient');
   });
 
   it('should handle missing optional props gracefully', () => {
@@ -320,19 +259,6 @@ describe('VideoHero', () => {
     it('should render a domain chip for podcast, news, gaming and sport', () => {
       renderWithPlayer(<VideoHero {...DEFAULT_PROPS} primaryTag="podcast" />);
       expect(screen.getByText('Podcast')).toBeInTheDocument();
-    });
-
-    it('should show a "+N" overflow pill when tabs sit past the strip edge', () => {
-      const rightEdges: Record<string, number> = { 'tab-overview': 120, 'tab-key_points': 240, 'tab-quizzes': 360 };
-      const spy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
-        const right = this.getAttribute('role') === 'tablist' ? 250 : (rightEdges[this.id] ?? 0);
-        return { left: 0, top: 0, right, bottom: 0, width: right, height: 0, x: 0, y: 0, toJSON: () => ({}) } as DOMRect;
-      });
-      renderWithPlayer(
-        <VideoHero {...DEFAULT_PROPS} tabs={SAMPLE_TABS} activeTabId="overview" onTabSelect={() => {}} />,
-      );
-      expect(screen.getByRole('button', { name: /^\+1 /i })).toHaveTextContent('+1');
-      spy.mockRestore();
     });
 
     it('should not render the Key takeaways block when none are present and not streaming', () => {

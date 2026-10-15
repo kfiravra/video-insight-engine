@@ -77,6 +77,57 @@ describe('OutputRouter tab filtering', () => {
   });
 });
 
+describe('OutputRouter hero plumbing', () => {
+  const synthesis = {
+    tldr: 'One line.',
+    keyTakeaways: ['A takeaway'],
+    masterSummary: 'The brief body.',
+    seoDescription: '',
+  };
+
+  it("should lead the hero brief with the overview tab's keyQuestion", () => {
+    const overviewWithQuestion: TabEntry = {
+      ...overviewTab,
+      props: { data: { keyQuestion: 'What does agent-written code mean for programmers?' } },
+    };
+    render(
+      <OutputRouter
+        title="Test video"
+        videoSummaryId="vid-1"
+        tabs={[overviewWithQuestion, momentTab(makeMomentItems(4, 0))]}
+        meta={null}
+        synthesis={synthesis}
+      />,
+    );
+
+    const question = screen.getByText('What does agent-written code mean for programmers?');
+    const body = screen.getByText('The brief body.');
+    expect(question.compareDocumentPosition(body) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('should not render a key question when the overview tab carries none', () => {
+    render(
+      <OutputRouter
+        title="Test video"
+        videoSummaryId="vid-1"
+        tabs={[overviewTab, momentTab(makeMomentItems(4, 0))]}
+        meta={null}
+        synthesis={synthesis}
+      />,
+    );
+
+    expect(screen.getByText('The brief body.')).toBeInTheDocument();
+    expect(screen.queryByText(/\?$/)).toBeNull();
+  });
+
+  it('should print the shipped item count in the strip label in place of the planner count', () => {
+    const argued: TabEntry = { ...momentTab(makeMomentItems(24, 0)), id: 'args', label: '9 Core Arguments' };
+    renderRouter([overviewTab, argued]);
+
+    expect(screen.getByRole('tab', { name: '24 Core Arguments' })).toBeInTheDocument();
+  });
+});
+
 describe('OutputRouter while tabs stream in', () => {
   const provisionalMoments: StreamTab = {
     ...momentTab(makeMomentItems(4, 0)),

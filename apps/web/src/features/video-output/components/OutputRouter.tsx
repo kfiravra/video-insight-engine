@@ -1,7 +1,8 @@
 import { useMemo } from 'react';
 import { isContentTag } from '@vie/types';
-import type { SynthesisResult, ContentTag, VIEResponseMeta, TriageResult } from '@vie/types';
+import type { SynthesisResult, ContentTag, VIEResponseMeta, TriageResult, TabEntry } from '@vie/types';
 import { getDomainGradient } from '@vie/shared/config';
+import { inferItemCount } from '@/components/vie/cards/domain-meta';
 import { TabCoordinationProvider } from './output/TabCoordinationContext';
 import { CommandDeck, TabPanel, type PendingTabLabel, type ShellTabDef } from './output/OutputTabShell';
 import { TabStateProvider } from '@/features/video-output/contexts/TabStateContext';
@@ -84,6 +85,17 @@ function countFrameBackedItems(props: Record<string, unknown> | undefined): numb
   return count;
 }
 
+/** The question the video answers — the assembler stores it on the overview
+ *  tab (`props.data.keyQuestion`), which the strip filters out, so the router
+ *  lifts it into the hero brief itself. Empty or non-string → nothing. */
+function overviewKeyQuestion(tabs: TabEntry[] | null): string | undefined {
+  const overview = tabs?.find((t) => t.id === 'overview' || t.component === 'overview');
+  const data = overview?.props.data;
+  if (data == null || typeof data !== 'object') return undefined;
+  const { keyQuestion } = data as { keyQuestion?: unknown };
+  return typeof keyQuestion === 'string' && keyQuestion.trim().length > 0 ? keyQuestion : undefined;
+}
+
 export function OutputRouter({
   title,
   videoSummaryId,
@@ -160,8 +172,12 @@ export function OutputRouter({
       dataSource: '',
       preview: tabPreviews[t.id],
       provisional: t.provisional === true,
+      itemCount: inferItemCount(t),
     }));
   }, [orderedTabs, tabPreviews]);
+
+  // Read from the UNFILTERED tabs: the overview tab never reaches the strip.
+  const keyQuestion = overviewKeyQuestion(tabs);
 
   // Planned tabs (meta.tabLabels) that haven't streamed yet: inert pills in
   // the strip and the provisional notice's count. Nothing is pending once the
@@ -212,6 +228,7 @@ export function OutputRouter({
               creator={creator}
               duration={duration}
               synthesis={synthesis}
+              keyQuestion={keyQuestion}
               youtubeId={youtubeId}
               tabDefs={tabDefs}
               pendingTabs={hasData ? pendingTabs : tabLabels}
