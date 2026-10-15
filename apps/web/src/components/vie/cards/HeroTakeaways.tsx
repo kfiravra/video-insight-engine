@@ -80,12 +80,16 @@ export const HeroTakeaways = memo(function HeroTakeaways({ takeaways, isStreamin
             sits clearly below the brief in hierarchy. */}
         <ul className="grid grid-cols-1 gap-x-7 gap-y-2 sm:grid-cols-2">
           {visible.map((takeaway, i) => (
-            <FadeIn key={i} index={i}>
-              <li className="flex items-start gap-2.5 text-[0.8125rem] leading-snug text-foreground/75">
-                <span aria-hidden="true" className="mt-[0.4rem] h-1 w-1 rounded-full bg-foreground/30 shrink-0" />
-                <span>{takeaway}</span>
-              </li>
-            </FadeIn>
+            // The <li> is the animated element itself: a FadeIn <div> between <ul> and <li>
+            // breaks the list semantics (axe `list` / `listitem`).
+            <li
+              key={i}
+              className="animate-fade-up flex items-start gap-2.5 text-[0.8125rem] leading-snug text-foreground/75"
+              style={{ animationDelay: `${i * 60}ms` }}
+            >
+              <span aria-hidden="true" className="mt-[0.4rem] h-1 w-1 rounded-full bg-foreground/30 shrink-0" />
+              <span>{takeaway}</span>
+            </li>
           ))}
         </ul>
         {(hidden > 0 || showAll) && (
