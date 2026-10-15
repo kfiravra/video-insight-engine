@@ -14,7 +14,7 @@ that shape the tab list once the evidence is settled:
    false; otherwise moved last;
 4. dedupe — one tab per ``(dataSource, component)``, a component and what
    assembly promotes it to counting as one (flash_deck → concept_canvas), the
-   first wins; assembly dedupes again on the assembled items (``_dedupe_tabs``);
+   first wins; assembly dedupes again on the assembled items (``assembly/dedupe.py``);
 5. size — 3–6 tabs: beyond 6 the last other planned tab is trimmed (never a
    required tab, a moment_track or the quiz), a short plan is filled from the
    primary's defaultTabs.

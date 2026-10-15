@@ -251,9 +251,10 @@ def _normalize_claim(item: Any) -> dict | None:
     citation = item.get("sourceCitation") or item.get("citation")
     if citation:
         result["sourceCitation"] = str(citation).strip()
-    ts = _coerce_int(item.get("timestamp"))
-    if ts is not None:
-        result["timestamp"] = ts
+    # The anchor that let a status through is the seek point the reader checks it at.
+    timestamp = anchor_seconds(item)
+    if timestamp is not None:
+        result["timestamp"] = timestamp
     return result
 
 

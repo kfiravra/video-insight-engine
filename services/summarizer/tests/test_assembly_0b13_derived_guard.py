@@ -1,15 +1,16 @@
 """output-quality 0b.13 — nothing derived from nothing (D13, R10): scores, tiers,
 statuses, rest times, dates and durations ship only when the extraction carries
 them on an item anchored in the video (a timestamp); no numeric axis → no radar;
-no stated rank → a list, not tiers. One guard (`assembly/derived_guard.py`)."""
+no stated rank → a list, not tiers. One guard (`assembly/derived_guard.py`),
+also on the overview's spread of the primary block and on spot facts."""
 
 from src.services.pipeline.assembly import (
     _normalize_exercise,
     assemble_claims_tracker,
     assemble_comparison,
+    assemble_overview,
     assemble_step_player,
     assemble_tier_list,
-    normalize_moment_items,
     promote_component,
 )
 from src.services.pipeline.assembly.attachments import attach_secondaries
@@ -17,11 +18,16 @@ from src.services.pipeline.assembly.derived_guard import (
     anchor_seconds,
     is_anchored,
     is_numeric_axis,
+    stated_block_scalars,
     stated_number,
     stated_rows,
     stated_scalars,
 )
-from src.services.pipeline.assembly.normalizers import _to_flash_card
+from src.services.pipeline.assembly.normalizers import (
+    _normalize_step,
+    _normalize_to_spot,
+    _to_flash_card,
+)
 
 ROWS = [
     {"feature": "Battery", "thisProduct": "6 h", "competitor": "8 h"},
@@ -29,11 +35,34 @@ ROWS = [
 ]
 
 
+# S07 (AirPods Pro 2) as stored: a rating and sub-scores the reviewer never gave.
+_S07_REVIEW = {
+    "product": "Apple AirPods Pro 2",
+    "rating": {"score": 9, "maxScore": 10, "label": "Great"},
+    "pros": ["Entirely new driver and amplifier"],
+    "cons": ["Still no lossless audio"],
+    "verdict": {
+        "badge": "recommended",
+        "bestFor": ["'AirPods people' who wear them everywhere"],
+        "notFor": ["Buyers who need lossless audio"],
+        "bottomLine": "AirPods Pro 2 are 'really, really good'.",
+        "subScores": [{"category": "Sound Quality", "score": 9}],
+    },
+}
+_SPOT = {"name": "Ichiran", "description": "Solo ramen booths", "cost": "¥980", "rating": 4.5}
+
+
 def _review(rating: dict, sub_scores: list[dict] | None = None) -> dict:
     verdict: dict = {"badge": "recommended", "bottomLine": "Really, really good."}
     if sub_scores is not None:
         verdict["subScores"] = sub_scores
     return {"review": {"product": "AirPods Pro 2", "rating": rating, "verdict": verdict}}
+
+
+def _overview_data(primary_tag: str, block: dict, video_meta: dict | None = None) -> dict:
+    meta = video_meta or {"title": "T", "duration": 677}
+    tab = {"_primary_tag": primary_tag, "_video_meta": meta}
+    return assemble_overview(tab, None, {primary_tag: block}, None)["data"]
 
 
 # ─── the guard itself ───
@@ -73,6 +102,69 @@ class TestAnchor:
     def test_should_tell_an_anchored_item(self):
         assert is_anchored({"timestamp": 0}) is True
         assert is_anchored({"label": "x"}) is False
+
+    def test_should_not_read_a_string_timestamp_as_an_anchor(self):
+        assert anchor_seconds({"timestamp": "915"}) is None
+
+    def test_should_fall_through_a_clock_string_to_the_numeric_seconds(self):
+        assert anchor_seconds({"timestamp": "8:30", "seconds": 510}) == 510
+
+
+class TestBlockScalars:
+    def test_should_hold_back_every_scalar_of_an_unanchored_rating_block(self):
+        assert stated_block_scalars({"score": 9, "label": "Great"}, "rating") == {}
+
+    def test_should_pass_prose_and_counts_but_hold_back_unanchored_facts(self):
+        block = {"product": "AirPods", "status": "verified", "estimatedTime": "2 h", "servings": 4}
+
+        assert stated_block_scalars(block) == {"product": "AirPods", "servings": 4}
+
+    def test_should_pass_the_facts_of_an_anchored_block(self):
+        block = {"tier": "S", "timestamp": 12}
+
+        assert stated_block_scalars(block) == block
+
+    def test_should_skip_blank_and_non_scalar_values(self):
+        block = {"summary": "  ", "takeaways": ["a"], "meta": {"x": 1}, "keyQuestion": None}
+
+        assert stated_block_scalars(block) == {}
+
+
+# ─── the overview spread (S07: no 9 / 10 / "Great" beside the hero) ───
+
+
+class TestOverviewScalars:
+    def test_should_not_spread_an_unanchored_review_rating(self):
+        data = _overview_data("review", _S07_REVIEW)
+
+        assert {"score", "maxScore", "label"} & data.keys() == set()
+
+    def test_should_keep_the_review_prose(self):
+        data = _overview_data("review", _S07_REVIEW)
+
+        assert (data["product"], data["bottomLine"]) == (
+            "Apple AirPods Pro 2",
+            "AirPods Pro 2 are 'really, really good'.",
+        )
+
+    def test_should_spread_a_rating_stated_with_a_timestamp(self):
+        rating = {"score": 9, "maxScore": 10, "label": "Great", "timestamp": 600}
+
+        data = _overview_data("review", {**_S07_REVIEW, "rating": rating})
+
+        assert (data["score"], data["maxScore"], data["label"]) == (9, 10, "Great")
+
+    def test_should_drop_an_unanchored_duration_from_the_domain_meta(self):
+        fitness = {"meta": {"type": "HIIT", "difficulty": "beginner", "duration": 7}}
+
+        data = _overview_data("fitness", fitness, video_meta={"title": "T"})
+
+        assert "duration" not in data
+
+    def test_should_keep_the_video_duration_over_the_domain_one(self):
+        fitness = {"meta": {"type": "HIIT", "duration": 7}}
+
+        assert _overview_data("fitness", fitness)["duration"] == 677
 
 
 # ─── score / maxScore / subScores (S07: no 9.0, no sub-scores) ───
@@ -158,6 +250,17 @@ class TestClaimStatus:
 
         assert [c["status"] for c in out["claims"]] == ["context", "disputed"]
 
+    def test_should_ship_the_anchor_that_let_a_status_through(self):
+        # Any anchor key lets a status through; that second is the reader's seek point.
+        data = [
+            {"claim": "4 failing states", "status": "verified", "seconds": 42},
+            {"claim": "3 wars", "status": "disputed", "timestamp": 2},
+        ]
+
+        out = assemble_claims_tracker({}, data, {}, None)
+
+        assert out["claims"][0]["timestamp"] == 42
+
 
 # ─── rest times and durations ───
 
@@ -196,19 +299,50 @@ class TestRestAndDuration:
 
         assert card["back"] == "hips level"
 
+    def test_should_put_the_duration_on_an_anchored_exercise_card(self):
+        item = {"name": "Plank", "formCues": ["hips level"], "duration": "60 s", "timestamp": 95}
 
-# ─── dates ───
+        assert _to_flash_card(item)["back"] == "hips level · 60 s"
+
+    def test_should_keep_the_seek_point_and_duration_of_a_step_at_0_00(self):
+        item = {"instruction": "Preheat the oven", "duration": 5, "timestamp": 0}
+
+        step = _normalize_step(item, 0)
+
+        assert (step["timestamp"], step["duration"]) == (0, 5)
+
+
+# ─── spot facts (the demote rung of a refused tier list / comparison / claims) ───
+
+
+class TestSpotFacts:
+    def test_should_strip_cost_and_rating_from_an_unanchored_spot(self):
+        spot = _normalize_to_spot({**_SPOT, "duration": "1 h"})
+
+        assert {"cost", "duration", "rating"} & spot.keys() == set()
+
+    def test_should_keep_the_facts_of_an_anchored_spot(self):
+        spot = _normalize_to_spot({**_SPOT, "duration": "1 h", "timestamp": 312})
+
+        assert (spot["cost"], spot["duration"], spot["rating"]) == ("¥980", "1 h", 4.5)
+
+    def test_should_refuse_a_spot_whose_only_content_is_an_unanchored_fact(self):
+        assert _normalize_to_spot({"name": "Ichiran", "rating": 4.5}) is None
+
+
+# ─── dates (no schema field is a date today; the overview copies any scalar) ───
 
 
 class TestDates:
-    def test_should_not_ship_a_date_on_a_moment(self):
-        # No model carries a date; the moment contract passes none through,
-        # so a date can never appear without the extraction stating it.
-        moment = {"label": "Ottoman collapse", "description": "tribes fight", "seconds": 100}
+    def test_should_not_spread_an_unanchored_date_on_the_overview(self):
+        data = _overview_data("news", {"headline": "Armistice", "date": "1918-11-11"})
 
-        items = normalize_moment_items([{**moment, "date": "1918"}])
+        assert "date" not in data
 
-        assert "date" not in items[0]
+    def test_should_spread_a_date_its_block_anchors(self):
+        block = {"headline": "Armistice", "event": {"date": "1918-11-11", "timestamp": 40}}
+
+        assert _overview_data("news", block)["date"] == "1918-11-11"
 
 
 # ─── radar: no numeric axis → no radar ───

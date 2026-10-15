@@ -2,9 +2,9 @@
 
 `component_toolkit.txt` asks the model to keep cells short, but that guidance is
 advisory only: the audited `info_grid` bug shipped 150–190-char paragraphs in a
-single cell. This module enforces the caps in code so a tab never renders
-paragraph-length cells, and folds a tab whose list shrinks below the minimum.
-Runs in ``assemble_response`` after promotion and before validation.
+single cell. This module caps cells in code for the compact layouts that cannot
+show a paragraph (see `_CAPPED_MODES`), and folds a tab whose list shrinks below
+the minimum. Runs in ``assemble_response`` after promotion and before validation.
 """
 
 from __future__ import annotations
@@ -16,14 +16,18 @@ from .text_utils import truncate_words
 logger = logging.getLogger(__name__)
 
 # component -> (list_key, text_fields_to_cap, char_cap, min_items)
-# char_cap is the hard per-cell ceiling; min_items folds the tab to None when
-# too few rows survive normalization.
+# char_cap is the per-cell ceiling in a capped layout (`_CAPPED_MODES`);
+# min_items folds the tab to None when too few rows survive normalization.
 _DENSITY_RULES: dict[str, tuple[str, tuple[str, ...], int, int]] = {
     "info_grid": ("items", ("key", "value", "evidence"), 120, 1),
 }
 # Cells are capped only in the layouts that cannot show a paragraph (a table
 # row, a tag chip). The default `key_value` cards render every value in full —
 # cutting them at 120 chars destroyed the content they summarised (0b.4, L23).
+# FE-mode forward-compat: nothing in the summarizer writes `props.mode` today
+# (the planner emits no layout mode — plan.py keeps id/label/emoji/dataSource/
+# component/goal/brief per tab), so every info_grid ships uncapped as
+# `key_value`. The cap waits for a producer of InfoGridInteractive's `mode`.
 _CAPPED_MODES: dict[str, frozenset[str]] = {
     "info_grid": frozenset({"table", "tag_cloud"}),
 }

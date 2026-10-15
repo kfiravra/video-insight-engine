@@ -35,7 +35,8 @@ _DENSE_THRESHOLD = 10
 # A summary_header is one orientation line, never a paragraph.
 _HEADER_MAX_CHARS = 220
 # An item's headline / body fields, in priority order (mirrors the FE's
-# text-key probe so "the first item" reads the same server- and client-side).
+# text-key probe — minus a flash card's front/back, see below — so "the first
+# item" reads the same server- and client-side).
 _ITEM_HEADLINE_KEYS = (
     "label",
     "title",
@@ -44,10 +45,12 @@ _ITEM_HEADLINE_KEYS = (
     "question",
     "claim",
     "text",
-    "front",
     "instruction",
+    "key",
 )
-_ITEM_BODY_KEYS = ("description", "detail", "definition", "summary", "explanation", "back")
+_ITEM_BODY_KEYS = ("description", "detail", "definition", "summary", "explanation", "value")
+# A flash deck is a self-test: a header printing card 1 gives its answer away.
+_NO_SUMMARY_HEADER_COMPONENTS = frozenset({"flash_deck"})
 # Attachments built from response-global data: ONE of each per response, or
 # every tab repeats the identical payload.
 ONCE_PER_RESPONSE = frozenset({"frame_strip", "quick_quiz", "tip_callout"})
@@ -57,20 +60,35 @@ ONCE_PER_RESPONSE = frozenset({"frame_strip", "quick_quiz", "tip_callout"})
 # tiles so it stays a strip, not a wall.
 _STAT_BANNER_MIN = 5
 _STAT_BANNER_MAX = 8
-# The tile label is the FE's small-caps line above the value; the full meaning
-# travels alongside it in ``meaning``.
+# The tile label is the FE's small-caps line above the value: a short phrase
+# from the title — the clause the figure closes ("Rust backend: 99%"), else the
+# one it opens ("2 trillion photos a year, …") — at most this many words, minus
+# the hedges and connectives a cut leaves dangling. The full title travels in
+# ``meaning``.
 _STAT_LABEL_MAX_CHARS = 56
+_STAT_LABEL_MAX_WORDS = 4
+_LABEL_DANGLING = frozenset(
+    "a an the of to in on at for from by with vs vs. and or but so then now as about over "
+    "under nearly around roughly almost just only up than is are was were within".split()
+)
+_CLAUSE_BREAK = re.compile(r"[,:;()—–]|\s-\s")
+_CLAUSE_EDGE = " ,:;()—–-"
 # A figure as a speaker says one: "150,000", "$20 million", "99%", "1,000x",
-# "0.5 MB", "3:33", "20 months". A letter or digit glued to the end ("1950s",
-# "v2.5", "x86") is not a figure.
+# "0.5 MB" / "0.5MB", "3:33", "20 months". Thousands separators group exactly
+# three digits, so a trailing comma ("2023,") is never part of the figure. A
+# letter, digit, point or comma glued to either end ("1950s", "v2.5", "x86",
+# the "5" of "1,5") is not a figure.
 _NUMBER_RE = re.compile(
-    r"(?<![\w.])"
-    r"(?P<figure>[$€£]?\d[\d,]*(?:\.\d+)?(?::\d{2})?"
-    r"(?:\s?(?:%|x|×|percent|thousand|million|billion|trillion)"
-    r"|\s(?:MB|GB|KB|TB|ms|seconds?|minutes?|hours?|days?|weeks?|months?|years?|lines?|apps?))?)"
+    r"(?<![\w.,])"
+    r"(?P<figure>[$€£]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?::\d{2})?"
+    r"(?:\s?(?:%|x|×|percent|thousand|million|billion|trillion"
+    r"|MB|GB|KB|TB|ms|seconds?|minutes?|hours?|days?|weeks?|months?|years?|lines?|apps?))?)"
     r"(?![\w])",
     re.IGNORECASE,
 )
+# A bare year or a bare single digit names something ("in 2023", "Rails 8",
+# "Python 3") rather than measuring it: never a stat.
+_YEAR = re.compile(r"(?:19|20)\d{2}")
 
 # Component → the props key holding its primary item list. Mirrors the frontend
 # COUNT_PROP_BY_COMPONENT so "how many items does this tab show" is consistent.
@@ -230,25 +248,66 @@ def _extraction_summary(extraction: dict | None, domain: str) -> str | None:
     return None
 
 
+def _line_key(text: str) -> str:
+    """A line as the "never the goal" guard compares it — inner whitespace
+    collapsed, trailing ``.!?`` dropped, case folded (the FE's ComposableOutput
+    hides a stored header equal to the goal by the same rule)."""
+    return " ".join(text.split()).rstrip(".!?").rstrip().casefold()
+
+
 def _same_line(a: str | None, b: str | None) -> bool:
-    """Case/punctuation-insensitive equality for the "never the goal" guard."""
+    """Equality under ``_line_key`` for the "never the goal" guard."""
     if not isinstance(a, str) or not isinstance(b, str):
         return False
-    return a.strip().rstrip(".!").casefold() == b.strip().rstrip(".!").casefold()
+    return _line_key(a) == _line_key(b)
+
+
+def _is_figure(figure: str) -> bool:
+    """False for a bare year or a bare single digit (a name, not a stat)."""
+    if not figure.isdigit():
+        return True
+    return len(figure) > 1 and _YEAR.fullmatch(figure) is None
+
+
+def _stat_figure(title: str) -> re.Match[str] | None:
+    """The headline figure in a key-point title: a figure with a unit, suffix,
+    currency or separator beats a bare number, a multi-digit number beats a
+    single digit, and the earliest wins a tie. None when the title holds no
+    figure."""
+    best: tuple[int, re.Match[str]] | None = None
+    for match in _NUMBER_RE.finditer(title):
+        figure = match.group("figure")
+        if not _is_figure(figure):
+            continue
+        digits = sum(ch.isdigit() for ch in figure)
+        score = (2 if not figure.isdigit() else 0) + (1 if digits >= 2 else 0)
+        if best is None or score > best[0]:
+            best = (score, match)
+    return best[1] if best else None
 
 
 def _stat_value(title: str) -> str | None:
-    """The headline figure in a key-point title: a figure with a unit, suffix
-    or currency beats a bare number, a multi-digit number beats a single digit,
-    and the earliest wins a tie. None when the title holds no figure."""
-    best: tuple[int, int, str] | None = None
-    for index, match in enumerate(_NUMBER_RE.finditer(title)):
-        figure = match.group("figure")
-        digits = sum(ch.isdigit() for ch in figure)
-        score = (2 if not figure.rstrip().isdigit() else 0) + (1 if digits >= 2 else 0)
-        if best is None or score > best[0]:
-            best = (score, index, figure)
-    return best[2] if best else None
+    """The headline figure's text (``_stat_figure``); None without one."""
+    match = _stat_figure(title)
+    return match.group("figure") if match else None
+
+
+def _phrase(text: str) -> str:
+    """At most _STAT_LABEL_MAX_WORDS words of ``text``, dangling connectives trimmed."""
+    words = text.split()[:_STAT_LABEL_MAX_WORDS]
+    while words and words[-1].casefold() in _LABEL_DANGLING:
+        words.pop()
+    return " ".join(words)
+
+
+def _stat_label(title: str, figure: re.Match[str]) -> str:
+    """The tile's caption: the clause before the figure, else the clause after
+    it; the capped title when neither leaves a word."""
+    before = _CLAUSE_BREAK.split(title[: figure.start()].rstrip(_CLAUSE_EDGE))[-1]
+    label = _phrase(before)
+    if not label:
+        label = _phrase(_CLAUSE_BREAK.split(title[figure.end() :].lstrip(_CLAUSE_EDGE))[0])
+    return truncate_words(label or title, _STAT_LABEL_MAX_CHARS)
 
 
 def _key_points(extraction: dict | None, domain: str) -> list[dict]:
@@ -263,6 +322,24 @@ def _key_points(extraction: dict | None, domain: str) -> list[dict]:
     return []
 
 
+def _stat_tile(point: dict) -> dict[str, Any] | None:
+    """One key point as a tile; None without a figure or a timestamp."""
+    title = str(point.get("title") or "").strip()
+    figure = _stat_figure(title) if title else None
+    timestamp = anchor_seconds(point)
+    if figure is None or timestamp is None:
+        return None
+    tile: dict[str, Any] = {
+        "label": _stat_label(title, figure),
+        "value": figure.group("figure"),
+        "meaning": title,
+        "timestamp": timestamp,
+    }
+    if isinstance(point.get("emoji"), str) and point["emoji"].strip():
+        tile["emoji"] = point["emoji"].strip()
+    return tile
+
+
 def _stat_banner_attachment(extraction: dict | None, domain: str) -> dict | None:
     """Build the answer tab's numbers strip (C8) from the numeric key points:
     ``{label, value, emoji?, meaning, timestamp}`` per tile, where ``label`` +
@@ -272,22 +349,8 @@ def _stat_banner_attachment(extraction: dict | None, domain: str) -> dict | None
     the timestamp is the point (R2). None below _STAT_BANNER_MIN figures."""
     from .core import _validate_assembled_props  # local import avoids cycle
 
-    stats: list[dict[str, Any]] = []
-    for point in _key_points(extraction, domain):
-        title = str(point.get("title") or "").strip()
-        value = _stat_value(title) if title else None
-        timestamp = anchor_seconds(point)
-        if value is None or timestamp is None:
-            continue
-        stat: dict[str, Any] = {
-            "label": truncate_words(title, _STAT_LABEL_MAX_CHARS),
-            "value": value,
-            "meaning": title,
-            "timestamp": timestamp,
-        }
-        if isinstance(point.get("emoji"), str) and point["emoji"].strip():
-            stat["emoji"] = point["emoji"].strip()
-        stats.append(stat)
+    tiles = (_stat_tile(point) for point in _key_points(extraction, domain))
+    stats = [tile for tile in tiles if tile is not None]
     if len(stats) < _STAT_BANNER_MIN:
         return None
     props = {"stats": stats[:_STAT_BANNER_MAX]}
@@ -301,7 +364,10 @@ def _summary_header_attachment(
 ) -> dict | None:
     """Build a top summary_header with content (R4, 0b.6): the extraction's
     ``summary`` on the answer tab, otherwise the tab's first item — never the
-    goal, which the FE already prints as the tab's intro line."""
+    goal, which the FE already prints as the tab's intro line. None for a
+    flash deck (``_NO_SUMMARY_HEADER_COMPONENTS``)."""
+    if tab.get("component") in _NO_SUMMARY_HEADER_COMPONENTS:
+        return None
     summary = _extraction_summary(extraction, domain) if is_answer_tab else None
     title = "In short"
     if summary is None:
@@ -332,9 +398,10 @@ def attach_secondaries(
     trying frame_strip → quick_quiz → tip_callout in priority order. Dense tab
     (≥ _DENSE_THRESHOLD items): add a top summary_header carrying content (the
     extraction summary on the answer tab, else the first item). Tabs in
-    between get nothing. The answer tab additionally carries a bottom
-    stat_banner when the key points hold enough figures (C8), whatever its
-    size. Returns a (possibly empty) list of attachment dicts.
+    between, and tabs without a primary list, get neither. The answer tab
+    additionally carries a bottom stat_banner when the key points hold enough
+    figures (C8), whatever its size or shape (a filmstrip or diagram answer tab
+    included). Returns a (possibly empty) list of attachment dicts.
 
     frame_strip/quick_quiz/tip_callout are built from response-global data, so
     repeating one across tabs shows the identical payload N times — the caller
@@ -349,19 +416,16 @@ def attach_secondaries(
         return []
 
     count = _primary_item_count(component, props)
-    if count is None:
-        return []
-
     attachments: list[dict] = []
 
-    if count <= SPARSE_THRESHOLD:
+    if count is not None and count <= SPARSE_THRESHOLD:
         attachment = _sparse_enrichment(
             component, extraction, enrichment, frames, domain, excluded_kinds
         )
         if attachment is not None:
             attachments.append(attachment)
 
-    elif count >= _DENSE_THRESHOLD:
+    elif count is not None and count >= _DENSE_THRESHOLD:
         header = _summary_header_attachment(tab, extraction, domain, is_answer_tab)
         if header is not None:
             attachments.append(header)
@@ -408,7 +472,10 @@ def attach_response_secondaries(
     """Decorate every content tab of a response in place.
 
     The overview is its own hero and is never decorated; the first content tab
-    after it is the answer tab. ONCE_PER_RESPONSE kinds are budgeted to one
+    after it is the answer tab — unless it takes no attachment at all (a
+    filmstrip, a diagram or a mid-size tab, with too few figures for a numbers
+    strip): then the answer, and its "In short" header and numbers strip, moves
+    on to the next content tab. ONCE_PER_RESPONSE kinds are budgeted to one
     appearance, and a filmstrip tab (planned or auto-appended) pre-consumes the
     frame_strip budget because it already shows the gallery.
     """
@@ -428,9 +495,8 @@ def attach_response_secondaries(
             excluded_kinds=used_kinds,
             is_answer_tab=answer_pending,
         )
+        if not secondaries:
+            continue
         answer_pending = False
-        if secondaries:
-            tab["attachments"] = secondaries
-            used_kinds |= {
-                a["component"] for a in secondaries if a["component"] in ONCE_PER_RESPONSE
-            }
+        tab["attachments"] = secondaries
+        used_kinds |= {a["component"] for a in secondaries if a["component"] in ONCE_PER_RESPONSE}

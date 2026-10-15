@@ -5,7 +5,8 @@ normalizer refuses an item that has neither label nor description instead of
 naming it by position (S06 shipped "Moment 1…16" from food.steps whose only
 prose is `instruction`; S11 shipped ten itinerary days at 0:00), carries the
 prose any source holds under its own name (PodcastSegment.summary,
-FoodStep.instruction, a chapter digest), and keeps one item per second.
+FoodStep.instruction, a chapter summary), and keeps one timed item per second:
+an item that states no time cannot be seeked, so it is refused.
 """
 
 from __future__ import annotations
@@ -127,7 +128,7 @@ class TestCarryDescription:
         assert result is not None
         assert result["label"] == "Season the beef and pork liberally with salt and combine…"
 
-    def test_should_carry_a_chapter_digest_as_description(self) -> None:
+    def test_should_carry_a_chapter_summary_as_description(self) -> None:
         chapters = [{"start_time": 0, "title": "Intro", "summary": "The route in one minute."}]
 
         assert _chapters_to_moments(chapters, 400)[0]["description"] == "The route in one minute."
@@ -164,13 +165,6 @@ class TestRefuseDuplicateSeconds:
 
         assert _labels(items) == ["First", "Third"]
 
-    def test_should_treat_missing_times_as_one_second_zero(self) -> None:
-        items = normalize_moment_items(
-            [{"label": "A"}, {"label": "B"}, {"label": "C", "seconds": 9}]
-        )
-
-        assert _labels(items) == ["A", "C"]
-
     def test_should_return_an_empty_list_for_a_non_list(self) -> None:
         assert normalize_moment_items({"label": "A"}) == []
 
@@ -193,8 +187,52 @@ class TestRefuseDuplicateSeconds:
         assert _chapters_to_moments(chapters, 400)[0]["endSeconds"] == 199
 
 
+class TestRefuseTimeless:
+    """A moment is a seek point: an item that states no time is refused, never parked at 0:00."""
+
+    def test_should_refuse_an_item_that_states_no_time(self) -> None:
+        items = normalize_moment_items([{"label": "A"}, {"label": "C", "seconds": 9}])
+
+        assert _labels(items) == ["C"]
+
+    def test_should_keep_the_real_opening_after_a_timeless_item(self) -> None:
+        items = normalize_moment_items([{"label": "Timeless"}, {"label": "Opening", "seconds": 0}])
+
+        assert _labels(items) == ["Opening"]
+
+    def test_should_refuse_a_bare_string_from_the_track(self) -> None:
+        assert normalize_moment_items(["Introduction"]) == []
+
+    def test_should_refuse_an_unparseable_time(self) -> None:
+        assert normalize_moment_items([{"label": "X", "seconds": "abc"}]) == []
+
+    def test_should_ship_no_track_from_an_all_timeless_list(self) -> None:
+        assert assemble_moment_track({}, [{"label": "A"}, {"label": "B"}], {}, None) is None
+
+
+class TestChapterOrder:
+    def test_should_read_unsorted_chapters_in_time_order(self) -> None:
+        chapters = [{"start_time": 200, "title": "B"}, {"start_time": 0, "title": "A"}]
+
+        assert _labels(_chapters_to_moments(chapters, 400)) == ["A", "B"]
+
+    def test_should_end_an_unsorted_chapter_at_the_next_later_start(self) -> None:
+        chapters = [{"start_time": 200, "title": "B"}, {"start_time": 0, "title": "A"}]
+
+        assert _chapters_to_moments(chapters, 400)[0]["endSeconds"] == 199
+
+    def test_should_skip_a_chapter_without_a_start(self) -> None:
+        chapters = [
+            {"title": "No start"},
+            {"start_time": 0, "title": "Opening"},
+            {"start_time": 200, "title": "B"},
+        ]
+
+        assert _labels(_chapters_to_moments(chapters, 400)) == ["Opening", "B"]
+
+
 class TestAssembledResponse:
-    """The planned source has no prose → the tab is fed by the fallback chain, never padded."""
+    """The planned source lacks prose or times → the fallback chain feeds the tab, never padded."""
 
     def test_should_fall_back_to_the_outline_for_an_itinerary_fed_moment_tab(self) -> None:
         triage = {
@@ -214,6 +252,31 @@ class TestAssembledResponse:
 
         result = assemble_response(
             triage, {"travel": {"itinerary": _ITINERARY}}, None, None, video_meta=meta
+        )
+
+        moments = next(t for t in result["tabs"] if t["component"] == "moment_track")
+        assert _labels(moments["props"]["items"]) == ["Arrival in Hanoi", "Ha Long Bay cruise"]
+
+    def test_should_fall_back_to_the_outline_for_timeless_key_moments(self) -> None:
+        triage = {
+            "contentTags": ["learning"],
+            "modifiers": ["narrative"],
+            "primaryTag": "learning",
+            "tabs": [
+                {
+                    "id": "moments",
+                    "label": "Key Moments",
+                    "emoji": "🎬",
+                    "component": "moment_track",
+                    "dataSource": "narrative.keyMoments",
+                }
+            ],
+        }
+        timeless = [{"description": "The reveal"}, {"description": "The twist"}]
+        meta = {"duration": 900, "outline": _OUTLINE, "chapters": []}
+
+        result = assemble_response(
+            triage, {"narrative": {"keyMoments": timeless}}, None, None, video_meta=meta
         )
 
         moments = next(t for t in result["tabs"] if t["component"] == "moment_track")

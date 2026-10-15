@@ -3,14 +3,17 @@
 Split out of assemblers_primary.py (output-quality 0b follow-ups): bare
 strings split into key/value pairs (0b.4), ``{type, text}`` tips headlined by
 their text with ``type`` as a category badge (0b.8), and the key / value /
-evidence field priorities. Every name here stays importable from
-``assemblers_primary`` through its explicit re-exports.
+evidence field priorities. Whatever its shape, a row carries its item's emoji,
+evidence line and seek timestamp (0b review). Every name here stays importable
+from ``assemblers_primary`` through its explicit re-exports.
 """
 
 from __future__ import annotations
 
 import re
 from typing import Any
+
+from .derived_guard import anchor_seconds
 
 _INFO_KEY_FIELDS: tuple[str, ...] = (
     "key",
@@ -64,6 +67,10 @@ _INFO_EVIDENCE_FIELDS: tuple[str, ...] = (
     "analogy",
     "quote",
 )
+# A keyless tip's card text: the schema's `text`, then `tip` (the usual drift),
+# then any value field — a `{type, tip|description|definition|detail}` item
+# degrades to a card headlined by its own prose instead of dropping (0b review).
+_TIP_TEXT_FIELDS: tuple[str, ...] = tuple(dict.fromkeys(("text", "tip", *_INFO_VALUE_FIELDS)))
 
 # A bare string longer than this with no key/value delimiter is a paragraph,
 # not a reference pair. Dropping it lost content (S12 shipped 3 of 7 takeaways),
@@ -72,17 +79,29 @@ _INFO_EVIDENCE_FIELDS: tuple[str, ...] = (
 # long sentence stays a headline chip (output-quality 0b.4, R5/R10).
 _INFO_STRING_MAX = 120
 _SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?])\s+(?=\S)")
-# The headline must be at least this long — guards against "No. 1 …" / "e.g. …"
-# being read as a sentence end.
+# The headline is at least this long, so an abbreviation near the start
+# ("No. 1 rule …", "Dr. Smith …") is not read as a sentence end. One past it
+# ("…, e.g. LangGraph") still splits the text there.
 _SENTENCE_LEAD_MIN = 20
 
 
+def _drop_closing_period(headline: str) -> str:
+    """One closing period goes; an ellipsis ("Wait for it...") stays whole."""
+    if headline.endswith(".") and not headline.endswith(".."):
+        return headline[:-1]
+    return headline
+
+
 def _split_long_sentence(text: str) -> dict:
-    """Paragraph-length bare string: first sentence -> key, the rest -> value."""
+    """Paragraph-length bare string: first sentence -> key, the rest -> value.
+
+    Text with no `.`/`!`/`?` + whitespace boundary — unpunctuated, or CJK
+    whose "。" has no space after it — stays one headline chip, uncut.
+    """
     match = _SENTENCE_BOUNDARY.search(text, _SENTENCE_LEAD_MIN)
     if match is None:
         return {"key": text, "value": ""}
-    return {"key": text[: match.start()].rstrip("."), "value": text[match.end() :]}
+    return {"key": _drop_closing_period(text[: match.start()]), "value": text[match.end() :]}
 
 
 def _split_string_info_item(text: str) -> dict | None:
@@ -127,93 +146,114 @@ def _with_category(result: dict | None, item: dict) -> dict | None:
     return result
 
 
-def _normalize_info_grid_item(item: Any) -> dict | None:
-    """Coerce diverse LLM-emit shapes into {key, value, evidence?, emoji?, category?}.
+def _first_text(item: dict, fields: tuple[str, ...], skip: str = "") -> tuple[str, str]:
+    """The first of `fields` holding non-empty text other than `skip` -> (field, text)."""
+    for field in fields:
+        candidate = item.get(field)
+        if isinstance(candidate, str) and candidate.strip() and candidate.strip() != skip:
+            return field, candidate.strip()
+    return "", ""
 
-    Returns None when the item lacks a key — those would render as empty cards
-    and were the root cause of the wall-of-empty-grid bug.
+
+def _attach_extras(result: dict, item: dict, text_field: str = "") -> dict:
+    """Carry the item's emoji, first evidence line and seek timestamp onto its row.
+
+    Evidence never repeats the row's value nor the field the row was cut from
+    (`text_field`). The timestamp is the item's anchor as `derived_guard`
+    reads it: whole seconds, 0 included; a non-numeric stamp cannot seek.
+    """
+    if item.get("emoji"):
+        result["emoji"] = item["emoji"]
+    evidence_fields = tuple(f for f in _INFO_EVIDENCE_FIELDS if f != text_field)
+    _, evidence = _first_text(item, evidence_fields, skip=result["value"])
+    if evidence:
+        result["evidence"] = evidence
+    seconds = anchor_seconds(item)
+    if seconds is not None:
+        result["timestamp"] = seconds
+    return result
+
+
+def _credit_pair(item: dict) -> dict | None:
+    """Credits-style `{role, name}`: the role labels the position (key), the name fills it.
+
+    Both are key fields and would otherwise collide, so this shape is checked
+    first — and only when the item carries no value field.
+    """
+    role = str(item.get("role") or "").strip()
+    name = str(item.get("name") or "").strip()
+    if role and name and not any(item.get(f) for f in _INFO_VALUE_FIELDS):
+        return {"key": role, "value": name}
+    return None
+
+
+def _explicit_pair(item: dict) -> dict | None:
+    """An explicit `{key, value}` row; with an empty value it is a headline chip.
+
+    The frontend renders any key length in full, so no key-only row is dropped.
+    """
+    if "key" not in item or "value" not in item:
+        return None
+    key = str(item["key"]).strip()
+    if not key:
+        return None
+    return {"key": key, "value": str(item.get("value") or "").strip()}
+
+
+def _keyed_pair(item: dict) -> dict | None:
+    """First key field -> key; first value field that is not the key -> value.
+
+    No value field -> a key-only headline chip (frontend renders these in full).
+    """
+    _, key = _first_text(item, _INFO_KEY_FIELDS)
+    if not key:
+        return None
+    _, value = _first_text(item, _INFO_VALUE_FIELDS, skip=key)
+    return {"key": key, "value": value}
+
+
+def _is_typed(item: dict) -> bool:
+    category = item.get("type")
+    return isinstance(category, str) and bool(category.strip())
+
+
+def _text_only_info_item(item: dict) -> dict | None:
+    """A keyless tip: its prose is the whole card.
+
+    The card text is `text` — or, on a typed item, its first prose field
+    (`_TIP_TEXT_FIELDS`). It splits like a bare string (delimiter, then
+    sentence boundary), so the key is the tip's own headline and never its
+    category token. A keyless fragment with neither `text` nor `type` (a
+    lone `definition`) still drops: there is no tip to headline.
+    """
+    field, text = _first_text(item, _TIP_TEXT_FIELDS if _is_typed(item) else ("text",))
+    result = _split_string_info_item(text) if text else None
+    if result is None:
+        return None
+    return _attach_extras(result, item, text_field=field)
+
+
+def _normalize_info_grid_dict(item: dict) -> dict | None:
+    """The dict half of `_normalize_info_grid_item` (category attached by the caller).
+
+    First shape that fits wins: credits `{role, name}`, an explicit
+    `{key, value}` row, any key field with its value field, then a keyless tip.
+    """
+    pair = _credit_pair(item) or _explicit_pair(item) or _keyed_pair(item)
+    if pair is None:
+        return _text_only_info_item(item)
+    return _attach_extras(pair, item)
+
+
+def _normalize_info_grid_item(item: Any) -> dict | None:
+    """Coerce diverse LLM-emit shapes into {key, value, evidence?, emoji?, timestamp?, category?}.
+
+    Returns None when nothing can headline the card (no key field, no tip
+    text) — such rows would render as empty cards, the root cause of the
+    wall-of-empty-grid bug.
     """
     if isinstance(item, str):
         return _split_string_info_item(item)
     if not isinstance(item, dict):
         return None
     return _with_category(_normalize_info_grid_dict(item), item)
-
-
-def _normalize_info_grid_dict(item: dict) -> dict | None:
-    """The dict half of `_normalize_info_grid_item` (category attached by the caller)."""
-
-    # Credits-style: {role, name} — role labels the position (key), name
-    # identifies who fills it (value). Handle explicitly because both fields
-    # fall in the priority key-field list and would otherwise collide.
-    role = str(item.get("role") or "").strip()
-    name = str(item.get("name") or "").strip()
-    if role and name and not any(item.get(f) for f in _INFO_VALUE_FIELDS):
-        result: dict[str, Any] = {"key": role, "value": name}
-        if item.get("emoji"):
-            result["emoji"] = item["emoji"]
-        return result
-
-    if "key" in item and "value" in item:
-        key_clean = str(item["key"]).strip()
-        value_clean = str(item.get("value") or "").strip()
-        if not key_clean:
-            return None
-        # Key-only items survive as headline chips (terms-only glossaries) —
-        # the frontend renders any key length in full, so none is dropped.
-        result: dict[str, Any] = {"key": key_clean, "value": value_clean}
-        if item.get("emoji"):
-            result["emoji"] = item["emoji"]
-        for ev_field in _INFO_EVIDENCE_FIELDS:
-            ev = item.get(ev_field)
-            if isinstance(ev, str) and ev.strip():
-                result["evidence"] = ev.strip()
-                break
-        return result
-
-    key_raw = ""
-    for field in _INFO_KEY_FIELDS:
-        candidate = item.get(field)
-        if isinstance(candidate, str) and candidate.strip():
-            key_raw = candidate.strip()
-            break
-    if not key_raw:
-        return _text_only_info_item(item)
-
-    value_raw = ""
-    for field in _INFO_VALUE_FIELDS:
-        candidate = item.get(field)
-        if isinstance(candidate, str) and candidate.strip() and candidate.strip() != key_raw:
-            value_raw = candidate.strip()
-            break
-    # No value field → key-only headline chip (frontend renders these in full).
-    result = {"key": key_raw, "value": value_raw}
-    if item.get("emoji"):
-        result["emoji"] = item["emoji"]
-
-    for ev_field in _INFO_EVIDENCE_FIELDS:
-        ev = item.get(ev_field)
-        if isinstance(ev, str) and ev.strip() and ev.strip() != value_raw:
-            result["evidence"] = ev.strip()
-            break
-
-    if item.get("timestamp") is not None:
-        result["timestamp"] = item["timestamp"]
-
-    return result
-
-
-def _text_only_info_item(item: dict) -> dict | None:
-    """A keyless `{type, text}` tip: the `text` is the whole card.
-
-    It splits into key/value exactly like a bare string (delimiter, then
-    sentence boundary), so the key is the tip's own headline and never its
-    category token. Other keyless fragments (a lone `definition`) still drop.
-    """
-    text = item.get("text")
-    if not isinstance(text, str) or not text.strip():
-        return None
-    result = _split_string_info_item(text)
-    if result is not None and item.get("emoji"):
-        result["emoji"] = item["emoji"]
-    return result

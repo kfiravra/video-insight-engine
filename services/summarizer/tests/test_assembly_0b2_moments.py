@@ -37,8 +37,18 @@ def _moment(seconds: int, label: str, **extra: object) -> dict:
     }
 
 
+def _word(index: int) -> str:
+    """A unique, digit-free word per index (A … Z, BA, BB …): a digit would score."""
+    word = ""
+    while True:
+        index, letter = divmod(index, 26)
+        word = chr(65 + letter) + word
+        if index == 0:
+            return word
+
+
 def _plain_moments(count: int, spacing: int = 60) -> list[dict]:
-    return [_moment(i * spacing, f"Beat {chr(65 + i % 26)}{i}") for i in range(count)]
+    return [_moment(i * spacing, f"Beat {_word(i)}") for i in range(count)]
 
 
 def _moment_tab(items: list[dict]) -> dict:
@@ -106,6 +116,14 @@ class TestMomentSalience:
 
         assert moment_salience(_moment(100, "Crowded"), anchors) == 3
 
+    def test_should_never_read_a_bool_as_seconds(self) -> None:
+        anchors = MomentAnchors(times=[(0.0, None)], texts=[])
+
+        assert moment_salience({"label": "A plain beat", "seconds": True}, anchors) == 0
+
+    def test_should_score_a_plain_fixture_label_zero(self) -> None:
+        assert [moment_salience(m) for m in _plain_moments(30)] == [0] * 30
+
 
 class TestCollectMomentAnchors:
     def test_should_take_timestamps_and_titles_from_every_other_list(self) -> None:
@@ -115,15 +133,49 @@ class TestCollectMomentAnchors:
                 "keyPoints": [{"title": "The Rails moment", "timestamp": 1093}],
                 "takeaways": ["Go pencils down"],
             },
-            "narrative": {
-                "keyMoments": [{"description": "x", "timestamp": 2361, "endTimestamp": 2569}]
+            "news": {
+                "claims": [{"claim": "Prices doubled", "timestamp": 2361, "endTimestamp": 2569}]
             },
         }
 
         anchors = collect_moment_anchors(extraction, {"keyTakeaways": ["Total optimism"]})
 
         assert anchors.times == ((1093.0, None), (2361.0, 2569.0))
-        assert len(anchors.texts) == 3
+        assert len(anchors.texts) == 4
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "learning.timestamps",
+            "narrative.keyMoments",
+            "podcast.segments",
+            "gaming.highlights",
+            "sport.matchEvents",
+            "news.storyTimeline",
+            "music.structure",
+        ],
+    )
+    def test_should_never_anchor_a_moment_list_on_itself(self, path: str) -> None:
+        domain, field = path.split(".")
+        moments = [{"title": "Kickoff", "timestamp": 30, "endTimestamp": 90}]
+
+        anchors = collect_moment_anchors({domain: {field: moments}}, None)
+
+        assert (anchors.times, anchors.texts) == ((), ())
+
+    def test_should_keep_a_list_another_component_renders_first_as_an_anchor(self) -> None:
+        steps = [{"instruction": "Brown the beef", "timestamp": 120}]
+
+        anchors = collect_moment_anchors({"food": {"steps": steps}}, None)
+
+        assert anchors.times == ((120.0, None),)
+
+    def test_should_never_read_a_bool_as_a_timestamp(self) -> None:
+        points = [{"title": "Flagged", "timestamp": True, "endTimestamp": False}]
+
+        anchors = collect_moment_anchors({"learning": {"keyPoints": points}}, None)
+
+        assert anchors.times == ()
 
     def test_should_return_empty_anchors_without_an_extraction(self) -> None:
         anchors = collect_moment_anchors(None, None)
@@ -180,6 +232,15 @@ class TestSampleMoments:
 
         assert len(kept) == 4
         assert kept[-1]["seconds"] >= items[15]["seconds"]
+
+    def test_should_stride_by_index_when_a_moment_has_no_seconds(self) -> None:
+        items = _plain_moments(40, spacing=60)
+        del items[35]["seconds"]  # its index (35) must never be read as 0:35
+        items[35]["description"] = "late and salient"
+
+        kept = sample_moments(items, 4, 2400)
+
+        assert [items.index(m) // 10 for m in kept] == [0, 1, 2, 3]
 
 
 class TestRankSample:
@@ -284,6 +345,15 @@ class TestStepsAreTheTimeline:
         assert {(d["id"], d["reason"]) for d in result["dropped"]} >= {
             ("moments", STEPS_ARE_THE_TIMELINE)
         }
+
+    def test_should_record_the_dropped_tabs_planned_data_source(self) -> None:
+        result = assemble_response(
+            _food_triage(_PLANNED_MOMENTS), _FOOD_EXTRACTION, None, None, _META
+        )
+
+        assert [d["dataSource"] for d in result["dropped"] if d["id"] == "moments"] == [
+            "food.steps"
+        ]
 
     def test_should_not_add_the_always_moments_tab_either(self) -> None:
         result = assemble_response(_food_triage(), _FOOD_EXTRACTION, None, None, _META)

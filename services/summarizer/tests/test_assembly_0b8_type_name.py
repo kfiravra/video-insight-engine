@@ -2,6 +2,8 @@
 tip is headlined by its own text, and the promoted spot keeps the badge (R5;
 component-audit §2 #10: S06/S10 spots named "chef_tip" / "safety")."""
 
+import pytest
+
 from src.services.pipeline.assembly import (
     assemble_info_grid,
     assemble_moment_track,
@@ -111,7 +113,44 @@ class TestPromotedSpotsKeepTheBadge:
         ]
         assert [s["category"] for s in out["spots"]] == ["Chef tip", "Chef tip"]
 
+
+class TestKeylessTipsDegradeNeverDrop:
+    """A `{type, tip|description|definition|detail}` tip is a card, not a drop."""
+
+    @pytest.mark.parametrize("field", ["tip", "description", "definition", "detail"])
+    def test_should_headline_a_typed_tip_by_its_prose_field(self, field):
+        item = {"type": "chef_tip", field: "Salt the pasta water generously"}
+
+        out = assemble_info_grid({}, [item], {}, None)
+
+        assert out["items"][0]["key"] == "Salt the pasta water generously"
+
+    def test_should_badge_a_typed_prose_tip(self):
+        out = assemble_info_grid({}, [{"type": "safety", "tip": "Brace your core"}], {}, None)
+
+        assert out["items"][0]["category"] == "Safety"
+
+    def test_should_split_a_long_typed_description_at_its_first_sentence(self):
+        item = {"type": "chef_tip", "description": S06_TIPS[1]["text"]}
+
+        out = assemble_info_grid({}, [item], {}, None)
+
+        assert out["items"][0]["key"] == "🔥 Don't force the browning along"
+
+    def test_should_not_repeat_the_tip_text_as_its_evidence(self):
+        out = assemble_info_grid({}, [{"type": "chef_tip", "note": "Let it rest."}], {}, None)
+
+        assert "evidence" not in out["items"][0]
+
+    def test_should_carry_a_tip_example_as_evidence(self):
+        item = {"type": "chef_tip", "text": "Rest the sauce", "example": "overnight in the fridge"}
+
+        out = assemble_info_grid({}, [item], {}, None)
+
+        assert out["items"][0]["evidence"] == "overnight in the fridge"
+
     def test_should_drop_a_keyless_fragment_that_is_not_a_tip(self):
+        # No `text`, no `type`: a concept that lost its name has nothing to headline.
         assert assemble_info_grid({}, [{"name": "", "definition": "no key"}], {}, None) is None
 
 

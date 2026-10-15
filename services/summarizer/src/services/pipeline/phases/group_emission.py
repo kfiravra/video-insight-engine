@@ -72,6 +72,7 @@ _ASSEMBLY_LOGGER_PREFIX = "src.services.pipeline.assembly."
 # The modules whose loggers assemble_response and its passes write to.
 _ASSEMBLY_MODULES = (
     "core",
+    "dedupe",
     "promotion",
     "density",
     "attachments",

@@ -14,8 +14,9 @@ from .text_utils import truncate_words
 
 _MOMENT_LABEL_KEYS = ("label", "title", "name")
 # Prose a moment source may carry under another name: PodcastSegment.summary,
-# FoodStep.instruction, a chapter / outline digest.
-_MOMENT_DESCRIPTION_KEYS = ("description", "summary", "instruction", "digest")
+# FoodStep.instruction. (A chapter, outline section or description timestamp
+# carries a title only.)
+_MOMENT_DESCRIPTION_KEYS = ("description", "summary", "instruction")
 _MOMENT_START_KEYS = ("seconds", "startSeconds", "timestamp", "start_time", "startTime")
 _MOMENT_END_KEYS = ("endSeconds", "end_seconds", "endTimestamp", "end_time", "endTime")
 _MOMENT_PASSTHROUGH_KEYS = ("mood", "emoji", "speaker", "thumbnailUrl", "s3Key")
@@ -81,7 +82,9 @@ def _normalize_moment_item(item: Any, index: int) -> dict | None:
     Unified shape for MomentTrack: points (no endSeconds) and spans (with endSeconds).
     Accepts the legacy field names from TimelineExplorer.entries and ClipPlayerInteractive.clips.
     An item without prose is refused (None) — a moment is never invented from
-    its position; ``index`` stays for the call contract and names nothing.
+    its position; ``index`` stays for the call contract and names nothing. A
+    timeless item is shaped at 0:00 here; the track (``normalize_moment_items``)
+    refuses it.
     """
     if isinstance(item, str):
         stripped = item.strip()
@@ -113,17 +116,28 @@ def _normalize_moment_item(item: Any, index: int) -> dict | None:
     return normalized
 
 
-def normalize_moment_items(data: Any) -> list[dict]:
-    """Moment items a track can ship: prose-bearing, one per ``seconds`` (first wins).
+def _stated_start(raw: Any) -> int | None:
+    """The second a source item says it starts at; None for a string or a timeless item."""
+    return _first_int(raw, _MOMENT_START_KEYS) if isinstance(raw, dict) else None
 
-    A second item at the same second cannot be seeked apart from the first and
-    reads as padding (S11 shipped nine itinerary days at 0:00), so it is refused.
+
+def normalize_moment_items(data: Any) -> list[dict]:
+    """Moment items a track can ship: prose-bearing, timed, one per ``seconds`` (first wins).
+
+    A moment is a seek point. An item that states no time is refused, not
+    parked at 0:00, where it took the real opening's slot and turned an
+    all-timeless list into one item at a made-up 0:00; with nothing left the
+    track falls back to the outline's real sections. A second item at the same
+    second cannot be seeked apart from the first and reads as padding (S11
+    shipped nine itinerary days at 0:00), so it is refused too.
     """
     if not isinstance(data, list):
         return []
     items: list[dict] = []
     seen: set[int] = set()
     for index, raw in enumerate(data):
+        if _stated_start(raw) is None:
+            continue
         item = _normalize_moment_item(raw, index)
         if item is None or item["seconds"] in seen:
             continue
@@ -132,18 +146,32 @@ def normalize_moment_items(data: Any) -> list[dict]:
     return items
 
 
-def _chapter_end(
-    chapters: list[dict], index: int, start: int, video_duration: int | None
-) -> int | None:
-    """The span end: the next later chapter's start minus 1; the video end for the last one."""
-    next_start = next(
-        (
-            later
-            for ch in chapters[index + 1 :]
-            if (later := _coerce_int(ch.get("start_time"))) is not None and later > start
-        ),
-        int(video_duration) if video_duration is not None else None,
-    )
+def _timed_chapters(chapters: list[dict]) -> list[tuple[int, dict]]:
+    """``(start, chapter)`` for every chapter that states a start, in time order.
+
+    A start-less chapter is skipped like an untitled one: parked at 0 it took
+    the opening slot from the real 0:00 chapter. The sort is stable, so of two
+    chapters at one start the earlier in the source stays first.
+    """
+    timed: list[tuple[int, dict]] = []
+    for chapter in chapters:
+        start = _coerce_int(chapter.get("start_time"))
+        if start is not None:
+            timed.append((start, chapter))
+    return sorted(timed, key=lambda pair: pair[0])
+
+
+def _chapter_end(starts: list[int], index: int, video_duration: int | None) -> int | None:
+    """The span end: the next later start minus 1; the video end for the last one.
+
+    ``starts`` is in time order (``_timed_chapters``).
+    """
+    start = starts[index]
+    next_start = int(video_duration) if video_duration is not None else None
+    for later in starts[index + 1 :]:
+        if later > start:
+            next_start = later
+            break
     return next_start - 1 if next_start is not None and next_start > start + 1 else None
 
 
@@ -169,18 +197,20 @@ def _chapter_moment(chapter: dict, start: int, end_seconds: int | None) -> dict 
 def _chapters_to_moments(chapters: list[dict], video_duration: int | None = None) -> list[dict]:
     """Convert yt-dlp chapters (or outline / description entries in that shape) to spans.
 
-    Each chapter ends where the next later chapter starts; the final one at
-    video_duration - 1 when known. A chapter without a title, or at a start an
-    earlier chapter already holds, is skipped; a ``summary`` / ``description``
-    digest rides along as the moment's description.
+    Chapters are read in time order. Each ends where the next later chapter
+    starts; the final one at video_duration - 1 when known. A chapter without a
+    title or a start, or at a start an earlier chapter already holds, is
+    skipped; a ``summary`` / ``description`` rides along as the moment's
+    description.
     """
+    timed = _timed_chapters(chapters)
+    starts = [start for start, _ in timed]
     items: list[dict] = []
     seen: set[int] = set()
-    for i, ch in enumerate(chapters):
-        start = _coerce_int(ch.get("start_time")) or 0
+    for i, (start, ch) in enumerate(timed):
         if start in seen:
             continue
-        entry = _chapter_moment(ch, start, _chapter_end(chapters, i, start, video_duration))
+        entry = _chapter_moment(ch, start, _chapter_end(starts, i, video_duration))
         if entry is None:
             continue
         seen.add(start)

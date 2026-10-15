@@ -26,6 +26,8 @@ class TestSpotPassthrough:
                 "bookingSearch": "Senso-ji guided tour",
                 "specs": "Open 6:00-17:00",
                 "rating": 4.7,
+                # cost/duration/rating ship only when anchored (0b.13 derived_guard).
+                "timestamp": 95,
             }
         )
         assert spot is not None

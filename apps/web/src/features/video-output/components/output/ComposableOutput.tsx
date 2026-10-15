@@ -53,15 +53,28 @@ const CrossTabLinkRow = memo(function CrossTabLinkRow({ link, onNavigateTab }: C
   return <CrossTabButton label={link.label} reason={link.reason} onClick={handleClick} />;
 });
 
-/** A top summary_header that will actually print: a non-blank summary in the
- *  top slot. SummaryHeader renders nothing for a blank summary, and a bottom
- *  header leaves the top of the tab without its goal line. */
-function hasTopSummaryHeader(attachments: TabAttachment[] | undefined): boolean {
-  return (attachments ?? []).some((a) => {
-    if (a.component !== 'summary_header' || a.slot !== 'top') return false;
+/** A line as the summarizer's "never the goal" guard compares it (python
+ *  `_same_line`): inner whitespace collapsed, trailing `.!?` dropped, case-folded. */
+function lineKey(text: string): string {
+  return text.trim().replace(/\s+/g, ' ').replace(/[.!?]+$/, '').trimEnd().toLowerCase();
+}
+
+/** The tab's attachments without a summary_header that only repeats the goal.
+ *  Stored rows assembled before 0b.6 carry the goal as the header text; TabIntro
+ *  already prints it, so the goal shows once (R4). A header with content of its
+ *  own stays. */
+function withoutGoalEcho(
+  attachments: TabAttachment[] | undefined,
+  goal: string | undefined,
+): TabAttachment[] | undefined {
+  if (!attachments || !goal?.trim()) return attachments;
+  const goalKey = lineKey(goal);
+  const kept = attachments.filter((a) => {
     const summary = a.props?.summary;
-    return typeof summary === 'string' && summary.trim().length > 0;
+    const echoesGoal = typeof summary === 'string' && lineKey(summary) === goalKey;
+    return !(a.component === 'summary_header' && echoesGoal);
   });
+  return kept.length === attachments.length ? attachments : kept;
 }
 
 interface TabAttachmentsProps {
@@ -160,10 +173,9 @@ export const ComposableOutput = memo(function ComposableOutput({
 
     const renderer = resolveRenderer(tab.component);
     const crossLinks = resolvedCrossLinks.get(tab.id) ?? [];
-    // One goal line per tab (R4): the assembler's summary_header still carries
-    // the goal as its text, so the intro would print it twice. The header wins
-    // until 0b.6 gives it content of its own.
-    const hasSummaryHeader = hasTopSummaryHeader(tab.attachments);
+    // One goal line per tab (R4): TabIntro prints it; a stored header that only
+    // repeats it is dropped.
+    const attachments = withoutGoalEcho(tab.attachments, tab.goal);
     // Don't pass nextTab — ComposableOutput renders the onward links (the
     // CrossTabLinkRow list) after each tab. Passing nextTab would duplicate
     // the "Next" buttons inside Celebration components.
@@ -207,14 +219,14 @@ export const ComposableOutput = memo(function ComposableOutput({
           />
         ) : (
           <>
-            {tab.goal && !hasSummaryHeader && <TabIntro goal={tab.goal} />}
-            <TabAttachments attachments={tab.attachments} slot="top" nav={nav} />
+            {tab.goal && <TabIntro goal={tab.goal} />}
+            <TabAttachments attachments={attachments} slot="top" nav={nav} />
             <ErrorBoundary fallback={<div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">Failed to render this tab. Try refreshing the page.</div>}>
               {renderer
                 ? renderer(tab.props, nav)
                 : <DisplaySection data={tab.props} />}
             </ErrorBoundary>
-            <TabAttachments attachments={tab.attachments} slot="bottom" nav={nav} />
+            <TabAttachments attachments={attachments} slot="bottom" nav={nav} />
 
             {crossLinks.length > 0 && (
               <div className="flex flex-col gap-2 mt-2">

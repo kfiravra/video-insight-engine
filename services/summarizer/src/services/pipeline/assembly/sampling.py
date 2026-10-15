@@ -5,7 +5,14 @@ evenly sampled by index (a timeline's headline beats fell between the
 strides). Every cap now keeps the items by *score* — salience for moments,
 richness for reference lists — and only falls back to even spacing inside one
 score tier, so the kept items still span the whole video. The original
-(chronological) order is always preserved.
+(chronological) order is always preserved; a tier list keeps its best stated
+tiers instead (``tier_head``).
+
+Moments are sized by content-model §9 (``_MOMENT_BANDS``): one per 3 / 4 / 5 / 6
+minutes in the ≤ 15 / 15–45 / 45–90 / > 90-minute bands, clamped to each band's
+range. §9 gives the > 90-minute band no range; its floor of 18 (the 45–90 band's
+ceiling, so a longer video never gets fewer moments) and its ceiling of 60 (a
+six-hour video) are this module's choice.
 """
 
 from __future__ import annotations
@@ -13,6 +20,8 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, TypeVar
+
+from src.shared_config.domain_config import data_sources
 
 T = TypeVar("T")
 
@@ -117,6 +126,18 @@ def _text(item: Any, key: str) -> str:
     return value if isinstance(value, str) else ""
 
 
+def _number(value: Any) -> float | None:
+    """``value`` as a float when it is a real number — a bool is never seconds."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
+def _seconds(item: Any) -> float | None:
+    """A moment's numeric ``seconds``, else None."""
+    return _number(item.get("seconds")) if isinstance(item, dict) else None
+
+
 # ─── Moment anchors: what the rest of the extraction points at ───
 
 # A moment another surface also names (a key point stamped there, a takeaway
@@ -125,8 +146,25 @@ def _text(item: Any, key: str) -> str:
 # items; text anchors: their title-level fields and the hero takeaways.
 _ANCHOR_TITLE_FIELDS: tuple[str, ...] = ("title", "name", "claim", "text")
 _ANCHOR_WINDOW_SECONDS = 45.0
-# The moment list itself (``learning.timestamps``) never anchors its own items.
-_MOMENT_LIST_FIELDS = frozenset({"timestamps"})
+
+
+def _moment_list_fields() -> frozenset[str]:
+    """Field names of every list the registry renders first as a timeline
+    (``learning.timestamps``, ``narrative.keyMoments``, ``podcast.segments``,
+    ``gaming.highlights``, ``sport.matchEvents`` …)."""
+    return frozenset(
+        path.rsplit(".", 1)[-1]
+        for path, spec in data_sources().items()
+        if spec["components"][:1] == ["moment_track"]
+    )
+
+
+# A Moments tab's own list never anchors its items — every moment would point at
+# itself and a cluster of moments at each other. Excluded by field name in every
+# domain, so a cross-domain fallback onto the same field is left out too. A list
+# another component renders first (steps, an itinerary) still anchors: a Moments
+# tab built from one ships rarely (D6, the dedupe against its required twin).
+_MOMENT_LIST_FIELDS = _moment_list_fields()
 _TOKEN = re.compile(r"[a-z0-9][a-z0-9'’\-]+")
 _STOPWORDS = frozenset(
     "the a an and of to in on for with by at from as is are was were be it its this that "
@@ -166,15 +204,16 @@ def _anchor_item(
     title = " ".join(_text(item, key) for key in _ANCHOR_TITLE_FIELDS).strip()
     if title:
         texts.append(_tokens(title))
-    start, end = item.get("timestamp"), item.get("endTimestamp")
-    if isinstance(start, (int, float)) and not isinstance(start, bool):
-        times.append((float(start), float(end) if isinstance(end, (int, float)) else None))
+    start = _number(item.get("timestamp"))
+    if start is not None:
+        times.append((start, _number(item.get("endTimestamp"))))
 
 
 def collect_moment_anchors(
     extraction: Mapping[str, Any] | None, synthesis: Mapping[str, Any] | None
 ) -> MomentAnchors:
-    """Every list item of every domain (the moment lists excluded) plus the hero takeaways."""
+    """Every list item of every domain plus the hero takeaways — the Moments tabs' own
+    lists (``_MOMENT_LIST_FIELDS``) excluded."""
     times: list[tuple[float, float | None]] = []
     texts: list[frozenset[str]] = []
     for domain_data in (extraction or {}).values():
@@ -192,9 +231,9 @@ def collect_moment_anchors(
 
 
 def _anchor_points(item: dict, anchors: MomentAnchors) -> int:
-    seconds = item.get("seconds")
+    seconds = _seconds(item)
     hits = 0
-    if isinstance(seconds, (int, float)):
+    if seconds is not None:
         hits += sum(
             1
             for start, end in anchors.times
@@ -226,24 +265,25 @@ def moment_salience(item: Any, anchors: MomentAnchors | None = None) -> int:
     return score
 
 
-def _position(item: Any, index: int, duration: float | None) -> float:
-    """Where a moment sits: its seconds when the duration is known, else its index."""
-    seconds = item.get("seconds") if isinstance(item, dict) else None
-    if duration and isinstance(seconds, (int, float)):
-        return float(seconds)
-    return float(index)
+def _positions(items: Sequence[Any], duration: float | None) -> tuple[list[float], float]:
+    """Where each moment sits and the span the strides cut: seconds over the duration
+    when it is known and every moment has them, else indices over the list — one
+    unit for the whole list, never an index inside a seconds stride."""
+    seconds = [_seconds(item) for item in items]
+    timed = [s for s in seconds if s is not None]
+    if duration and duration > 0 and len(timed) == len(items):
+        return timed, float(duration)
+    return [float(i) for i in range(len(items))], float(len(items))
 
 
 def _pick_per_window(
-    items: Sequence[Any], scores: Sequence[int], cap: int, duration: float | None
+    scores: Sequence[int], cap: int, positions: Sequence[float], span: float
 ) -> set[int]:
-    """The most salient moment of each of ``cap`` equal strides (ties → nearest the
-    stride's centre); strides by time when the duration is known, else by index."""
-    span = float(duration) if duration and duration > 0 else float(len(items))
+    """The most salient moment of each of ``cap`` equal strides of ``span`` (ties →
+    nearest the stride's centre)."""
     stride = span / cap
     best: dict[int, tuple[tuple[int, float], int]] = {}
-    for index, item in enumerate(items):
-        position = _position(item, index, duration)
+    for index, position in enumerate(positions):
         window = min(cap - 1, max(0, int(position // stride)))
         key = (scores[index], -abs(position - (window + 0.5) * stride))
         if window not in best or key > best[window][0]:
@@ -266,7 +306,7 @@ def sample_moments(
     if len(items) <= cap:
         return list(items)
     scores = [moment_salience(item, anchors) for item in items]
-    chosen = _pick_per_window(items, scores, cap, duration)
+    chosen = _pick_per_window(scores, cap, *_positions(items, duration))
     room = cap - len(chosen)
     if room > 0:
         rest = [i for i in range(len(items)) if i not in chosen]
@@ -284,7 +324,7 @@ def item_richness(item: Any) -> int:
     if not isinstance(item, dict):
         return 0
     score = sum(1 for key in _RICH_FIELDS if _populated(item.get(key)))
-    if any(isinstance(item.get(key), (int, float)) for key in _TIMESTAMP_FIELDS):
+    if any(_number(item.get(key)) is not None for key in _TIMESTAMP_FIELDS):
         score += 1
     longest = max((len(v) for v in item.values() if isinstance(v, str)), default=0)
     if longest >= _LONG_TEXT:
@@ -302,3 +342,25 @@ def concept_richness(concept: Any) -> int:
     if isinstance(connections, list):
         score += min(len(connections), 3)
     return score
+
+
+# ─── Tier lists: the best stated tiers ───
+
+# S is the top tier (the creator's stated placement, ``assemble_tier_list``).
+_TIER_RANK: dict[str, int] = {tier: 5 - i for i, tier in enumerate("SABCD")}
+
+
+def tier_rank(item: Any) -> int:
+    """5 for an S-tier item down to 1 for D; 0 for an item without a stated tier."""
+    tier = item.get("tier") if isinstance(item, dict) else None
+    return _TIER_RANK.get(tier, 0) if isinstance(tier, str) else 0
+
+
+def tier_head(items: Sequence[T], cap: int) -> list[T]:
+    """``cap`` items by stated tier — S first, the head of a tier (source order) when
+    it does not fit — in their original order. A stated tier outranks any amount of
+    prose: ``item_richness`` would trade an S row for a verbose D one."""
+    if cap <= 0:
+        return []
+    by_tier = sorted(range(len(items)), key=lambda i: -tier_rank(items[i]))
+    return [items[i] for i in sorted(by_tier[:cap])]

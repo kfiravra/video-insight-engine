@@ -310,12 +310,14 @@ def validate_block_items(
 def merge_report(
     into: ValidationReport, dropped: Mapping[str, Mapping[str, int]], defaulted: int
 ) -> None:
-    """Add one block's drops and defaulted count to the extraction's report."""
+    """Add one block's counts (drops, re-stamps, clears) and defaulted count to the report."""
     totals = into.setdefault("dropped", {})
     for label, counts in dropped.items():
         current = totals.setdefault(label, {"dropped": 0, "total": 0})
-        current["dropped"] += counts["dropped"]
-        current["total"] += counts["total"]
+        # Every count key adds up — the 0b.10 window check's restamped/cleared
+        # counts reach the stored report beside dropped/total (D17 drift read).
+        for key, count in counts.items():
+            current[key] = current.get(key, 0) + count
     into["defaulted"] = into.get("defaulted", 0) + defaulted
 
 

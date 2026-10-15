@@ -1,12 +1,14 @@
-"""Assembler unit tests — secondary-tier + signature components (diagram_card, claims_tracker, tier_list, formation_diagram)."""
+"""Assembler unit tests — secondary-tier + signature components.
+
+diagram_card, claims_tracker, tier_list, formation_diagram.
+"""
 
 from src.services.pipeline.assembly import (
-    assemble_diagram_card,
     assemble_claims_tracker,
-    assemble_tier_list,
+    assemble_diagram_card,
     assemble_formation_diagram,
+    assemble_tier_list,
 )
-
 
 # ─── resolve_data_source ───
 

@@ -11,6 +11,8 @@ through ``attach_response_secondaries`` (answer tab = first content tab).
 
 from __future__ import annotations
 
+import pytest
+
 from src.services.pipeline.assembly import assemble_response
 from src.services.pipeline.assembly.core import (
     DUPLICATE_TAB,
@@ -49,14 +51,55 @@ def _assembled(tab_id: str, component: str, items: list, key: str = "items") -> 
     return {"id": tab_id, "label": tab_id, "component": component, "props": {key: items}}
 
 
+def _keys(*names: str) -> list[dict]:
+    return [{"label": name} for name in names]
+
+
+def _canvas(tab_id: str, groups: list[str]) -> dict:
+    concepts = [{"name": f"Concept {c}", "definition": "d"} for c in "ABCD"]
+    props = {"concepts": concepts, "groups": groups}
+    return {"id": tab_id, "label": tab_id, "component": "concept_canvas", "props": props}
+
+
 # ─── Fingerprints and the overlap rule ───
 
 
 class TestTabFingerprints:
-    def test_should_take_every_list_items_first_text_field(self) -> None:
+    def test_should_take_each_items_first_text_field(self) -> None:
         tab = _assembled("t", "spot_explorer", [{"name": "A", "description": "x"}, "B"], "spots")
 
         assert tab_fingerprints(tab) == frozenset({"a", "b"})
+
+    def test_should_read_only_the_components_own_list(self) -> None:
+        tab = _canvas("t", ["Group 1", "Group 2"])
+
+        assert tab_fingerprints(tab) == frozenset(f"concept {c}" for c in "abcd")
+
+    def test_should_read_every_list_of_an_unregistered_component(self) -> None:
+        tab = {"component": "display_section", "props": {"a": ["x"], "b": [{"title": "y"}]}}
+
+        assert tab_fingerprints(tab) == frozenset({"x", "y"})
+
+    def test_should_read_a_comparisons_rows_pros_and_cons(self) -> None:
+        props = {"comparisons": [{"feature": "Battery"}], "pros": ["Light"], "cons": ["Pricey"]}
+
+        fingerprints = tab_fingerprints({"component": "comparison", "props": props})
+
+        assert fingerprints == frozenset({"battery", "light", "pricey"})
+
+    def test_should_identify_a_code_snippet_by_its_code(self) -> None:
+        snippets = [
+            {"filename": "app.py", "code": "x = 1"},
+            {"filename": "app.py", "code": "x = 2"},
+        ]
+        tab = _assembled("t", "code_playground", snippets, "snippets")
+
+        assert tab_fingerprints(tab) == frozenset({"x = 1", "x = 2"})
+
+    def test_should_identify_a_budget_row_by_its_category(self) -> None:
+        tab = _assembled("t", "budget", [{"category": "Food", "amount": 20}], "breakdown")
+
+        assert tab_fingerprints(tab) == frozenset({"food"})
 
     def test_should_fold_case_and_whitespace(self) -> None:
         tab = _assembled("t", "info_grid", [{"key": "  Great   Filter "}])
@@ -126,23 +169,153 @@ class TestDedupeTabs:
 
         assert [t["id"] for t in tabs] == ["overview", "a"]
 
+    @pytest.mark.parametrize("later", ["plain", "grouped"])
+    def test_should_dedupe_twin_canvases_whatever_their_group_labels(self, later: str) -> None:
+        plain, grouped = _canvas("plain", []), _canvas("grouped", [f"G{i}" for i in range(5)])
+        tabs = [grouped, plain] if later == "plain" else [plain, grouped]
+        dropped: list[dict] = []
+
+        _dedupe_tabs(tabs, dropped)
+
+        assert [d["id"] for d in dropped] == [later]
+
+    def test_should_drop_a_one_item_tab_whose_item_ships_elsewhere(self) -> None:
+        tabs = [
+            _assembled("a", "info_grid", _keys("x", "y", "z")),
+            _assembled("b", "info_grid", _keys("y")),
+        ]
+        dropped: list[dict] = []
+
+        _dedupe_tabs(tabs, dropped)
+
+        assert [t["id"] for t in tabs] == ["a"]
+
+    def test_should_keep_a_bigger_later_tab_holding_a_small_tabs_items(self) -> None:
+        tabs = [
+            _assembled("small", "info_grid", _keys("x", "y")),
+            _assembled("big", "checklist", _keys(*"xyabcdefgh")),
+        ]
+        dropped: list[dict] = []
+
+        _dedupe_tabs(tabs, dropped)
+
+        assert [t["id"] for t in tabs] == ["small", "big"]
+
+    def test_should_carry_the_planned_data_source_in_the_drop_record(self) -> None:
+        tabs = [
+            _assembled("a", "info_grid", _keys("x", "y")),
+            _assembled("b", "checklist", _keys("x", "y")),
+        ]
+        dropped: list[dict] = []
+
+        _dedupe_tabs(tabs, dropped, sources={"a": "food.tips", "b": "food.equipment"})
+
+        assert dropped[0]["dataSource"] == "food.equipment"
+
+
+class TestRequiredTwin:
+    """A twin the domain requires outlives one it does not (the backfill's tab)."""
+
+    def test_should_keep_the_later_twin_when_only_it_is_required(self) -> None:
+        tabs = [
+            _assembled("stops", "checklist", _keys("x", "y", "z")),
+            _assembled("itinerary", "spot_explorer", [{"name": n} for n in "xyz"], "spots"),
+        ]
+        dropped: list[dict] = []
+
+        _dedupe_tabs(tabs, dropped, required={"spot_explorer"})
+
+        assert [t["id"] for t in tabs] == ["itinerary"]
+
+    def test_should_name_the_required_survivor_in_the_drop_record(self) -> None:
+        tabs = [
+            _assembled("stops", "checklist", _keys("x", "y")),
+            _assembled("itinerary", "spot_explorer", [{"name": n} for n in "xy"], "spots"),
+        ]
+        dropped: list[dict] = []
+
+        _dedupe_tabs(tabs, dropped, required={"spot_explorer"})
+
+        assert (dropped[0]["id"], dropped[0]["detail"]) == (
+            "stops",
+            "100% of its items ship on itinerary",
+        )
+
+    def test_should_keep_an_earlier_tab_whose_own_items_mostly_ship_nowhere_else(self) -> None:
+        tabs = [
+            _assembled("stops", "checklist", _keys(*"xyabcdefgh")),
+            _assembled("itinerary", "spot_explorer", [{"name": n} for n in "xy"], "spots"),
+        ]
+        dropped: list[dict] = []
+
+        _dedupe_tabs(tabs, dropped, required={"spot_explorer"})
+
+        assert [t["id"] for t in tabs] == ["stops", "itinerary"]
+
+    def test_should_drop_the_later_twin_when_both_are_required(self) -> None:
+        tabs = [
+            _assembled("steps", "step_player", _keys("x", "y"), "steps"),
+            _assembled("flow", "step_flow_canvas", _keys("x", "y"), "steps"),
+        ]
+        dropped: list[dict] = []
+
+        _dedupe_tabs(tabs, dropped, required={"step_player", "step_flow_canvas"})
+
+        assert [t["id"] for t in tabs] == ["steps"]
+
 
 # ─── Through the assembler ───
 
 
+def _twin_canvases(*, deck_first: bool = False) -> dict:
+    tabs = [
+        _tab("core_ideas", "concept_canvas", "learning.concepts"),
+        _tab("thinkers", "flash_deck", "learning.concepts"),
+    ]
+    triage = _learning_triage(*(reversed(tabs) if deck_first else tabs))
+    return assemble_response(triage, {"learning": {"concepts": _CONCEPTS}}, None, None)
+
+
 class TestAssembledDedupe:
-    def test_should_ship_one_concept_canvas_when_a_flash_deck_promotes_onto_it(self) -> None:
-        triage = _learning_triage(
-            _tab("core_ideas", "concept_canvas", "learning.concepts"),
-            _tab("thinkers", "flash_deck", "learning.concepts"),
-        )
+    @pytest.mark.parametrize("deck_first", [False, True])
+    def test_should_ship_one_concept_canvas_when_a_flash_deck_promotes_onto_it(
+        self, deck_first: bool
+    ) -> None:
+        result = _twin_canvases(deck_first=deck_first)
 
-        result = assemble_response(triage, {"learning": {"concepts": _CONCEPTS}}, None, None)
+        assert [t["component"] for t in result["tabs"]].count("concept_canvas") == 1
 
-        assert [t["component"] for t in result["tabs"] if t["component"] == "concept_canvas"] == [
-            "concept_canvas"
-        ]
+    def test_should_drop_the_later_twin(self) -> None:
+        result = _twin_canvases()
+
         assert {d["id"] for d in result["dropped"] if d["reason"] == DUPLICATE_TAB} == {"thinkers"}
+
+    def test_should_record_the_dropped_twins_planned_data_source(self) -> None:
+        result = _twin_canvases()
+
+        assert [d["dataSource"] for d in result["dropped"] if d["id"] == "thinkers"] == [
+            "learning.concepts"
+        ]
+
+    def test_should_never_link_a_surviving_tab_to_a_dropped_twin(self) -> None:
+        result = _twin_canvases()
+
+        targets = {link["targetTab"] for t in result["tabs"] for link in t["crossTabLinks"]}
+        assert "thinkers" not in targets
+
+    def test_should_keep_the_backfilled_required_tab_over_its_planned_twin(self) -> None:
+        spots = [
+            {"name": n, "description": f"About {n}"} for n in ("Old Quarter", "Halong", "Sapa")
+        ]
+        triage = {
+            "contentTags": ["travel"],
+            "primaryTag": "travel",
+            "tabs": [_tab("stops", "checklist", "travel.itinerary")],
+        }
+
+        result = assemble_response(triage, {"travel": {"itinerary": spots}}, None, None)
+
+        assert "spot_explorer" in [t["component"] for t in result["tabs"]]
 
     def test_should_refuse_a_sibling_fallback_another_tab_already_shows(self) -> None:
         snippets = [
@@ -163,6 +336,28 @@ class TestAssembledDedupe:
         )
 
         assert [t["id"] for t in result["tabs"] if t["component"] == "code_playground"] == ["code"]
+
+    def test_should_recover_a_sibling_whose_claiming_tab_dropped(self) -> None:
+        snippets = [
+            {"filename": f"{i}.py", "language": "python", "code": f"x = {i}", "explanation": "e"}
+            for i in range(2)
+        ]
+        triage = {
+            "contentTags": ["tech"],
+            "primaryTag": "tech",
+            "tabs": [
+                _tab("drill", "quiz_arena", "tech.snippets"),
+                _tab("patterns", "code_playground", "tech.patterns"),
+            ],
+        }
+
+        result = assemble_response(
+            triage, {"tech": {"snippets": snippets, "patterns": []}}, None, None
+        )
+
+        assert [t["id"] for t in result["tabs"] if t["component"] == "code_playground"] == [
+            "patterns"
+        ]
 
     def test_should_still_recover_a_sibling_no_other_tab_reads(self) -> None:
         snippets = [

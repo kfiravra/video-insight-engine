@@ -22,14 +22,17 @@ are formatted from the gallery frames in its window (``key_frames_by_chunk``).
 
 The window also bounds what a chunk's call may stamp (output-quality 0b.10, R10 /
 L21): ``window_stamps`` keeps an item's ``timestamp`` / ``seconds`` only inside the
-chunk's window (a marker-interval of grace at both edges). A stamp outside it is
-the model reading the chunk's ``[h:mm:ss]`` markers without the hour (S02 chunk 3
-stamped 1:13:41 as 13:41 = 821 s), so the hour is put back when that lands the
-stamp inside the window — once, deterministically; a stamp no hour fits is
-cleared (an annotated item stays) or, when the stamp is the item (``seconds``,
-``learning.timestamps``), the item is dropped. One chunk is open at both ends:
-nothing is checked and the data is returned as is (the ≤ 40-min replay stays
-byte-identical).
+chunk's window (a marker-interval of grace at an inner edge, none past the video's
+end). A stamp outside it is the model reading the chunk's ``[h:mm:ss]`` markers
+without the hour (S02 chunk 3 stamped 1:13:41 as 13:41 = 821 s), so the hour is put
+back when that lands the stamp inside the window — once, deterministically; a 0 (the
+"no stamp" a model writes) is never hour-restored. A stamp nothing fits is cleared
+(an annotated item stays, and so does a stamped dict reached as a value) or, when the
+stamp is a list item (``seconds``, ``learning.timestamps``), the item is dropped; a
+range end left before its start, or without it, is cleared too. Every move is
+counted per field path (``StampReport``) for the validation report — gate 1's
+timestamp-drift reading (D17). One chunk is open at both ends: nothing is checked
+and the data is returned as is (the ≤ 40-min replay stays byte-identical).
 """
 
 from __future__ import annotations
@@ -42,7 +45,6 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from ...config import settings
-from ..transcript.render import format_marker
 from ..transcription.transcript_chunker import (
     _estimate_tokens,
     force_split_by_sentences,
@@ -53,6 +55,7 @@ from .extractor import (
     _batch_start_seconds,
     _build_batch_context,
     _build_batch_transcript,
+    _format_time,
     batch_chapters,
 )
 from .prompt_builder import format_gallery_frames_for_extraction
@@ -195,47 +198,82 @@ def key_frames_by_chunk(
 # ─── Per-chunk timestamp range (0b.10) ───
 
 # Keys an extracted item is stamped under. ``seconds`` is the stamp of an item that IS
-# a timestamp (``learning.timestamps``); the others annotate an item that stands alone.
-_STAMP_KEYS = ("timestamp", "endTimestamp", "seconds", "endSeconds")
+# a timestamp (``learning.timestamps``) — first, so a dropped item counts no other move;
+# the others annotate an item that stands alone.
+_STAMP_KEYS = ("seconds", "timestamp", "endSeconds", "endTimestamp")
 _ITEM_IS_STAMP = "seconds"
+# (start, end) of a range: a PodcastSegment ends its ``timestamp`` with ``endSeconds``.
+_RANGE_KEYS = (
+    ("timestamp", "endTimestamp"),
+    ("timestamp", "endSeconds"),
+    ("seconds", "endSeconds"),
+)
 _CLOCK_KEY = "time"
 # A window opens at its first marker (one every 20 s) and a chapter edge may sit a few
 # seconds before it: a stamp this close outside the window is at the edge, not off-clock.
+# There is no grace past the video's end — no marker reads later than that.
 WINDOW_GRACE_S = 30.0
 _HOUR_S = 3600
 _MAX_HOURS = 24
 _CLOCK_PATTERN = re.compile(r"^\s*(?:(\d+):)?(\d{1,2}):(\d{2})\s*$")
+_MOVES = ("dropped", "restamped", "cleared")
 
 
 @dataclass
 class StampReport:
-    """What ``window_stamps`` did to one call's data."""
+    """What ``window_stamps`` did to one call's data, per field path (``learning.keyPoints``,
+    the label ``ValidationReport.dropped`` uses): the items dropped, the stamps restamped
+    (the hour put back, or a ``seconds`` read from its clock) and cleared, out of the
+    ``total`` items at that path."""
 
-    restamped: int = 0
-    cleared: int = 0
-    # Per field path (``learning.timestamps``): the items dropped and the list's size,
-    # the shape ``ValidationReport.dropped`` holds.
-    dropped: dict[str, dict[str, int]] = field(default_factory=dict)
+    counts: dict[str, dict[str, int]] = field(default_factory=dict)
 
-    def drop(self, path: str, lost: int, total: int) -> None:
-        counts = self.dropped.setdefault(path, {"dropped": 0, "total": 0})
-        counts["dropped"] += lost
-        counts["total"] += total
+    def tally(self, path: str, kind: str, n: int = 1) -> None:
+        entry = self.counts.setdefault(path, {**dict.fromkeys(_MOVES, 0), "total": 0})
+        entry[kind] += n
+
+    @property
+    def paths(self) -> dict[str, dict[str, int]]:
+        """``{path: {dropped, restamped, cleared, total}}`` for every path a stamp moved on."""
+        return {p: dict(c) for p, c in self.counts.items() if any(c[k] for k in _MOVES)}
+
+    def _sum(self, kind: str) -> int:
+        return sum(c[kind] for c in self.counts.values())
+
+    @property
+    def dropped(self) -> int:
+        return self._sum("dropped")
+
+    @property
+    def restamped(self) -> int:
+        return self._sum("restamped")
+
+    @property
+    def cleared(self) -> int:
+        return self._sum("cleared")
 
     @property
     def changed(self) -> bool:
-        return bool(self.restamped or self.cleared or self.dropped)
+        return bool(self.paths)
 
 
 def _window_open(chunk: ExtractionChunk) -> bool:
     return chunk.start_s is None and chunk.end_s is None
 
 
-def _holds(seconds: int, chunk: ExtractionChunk) -> bool:
-    """Whether ``seconds`` lies in the chunk's window, a grace interval at both edges."""
-    after_start = chunk.start_s is None or seconds >= chunk.start_s - WINDOW_GRACE_S
+def window_label(chunk: ExtractionChunk) -> str:
+    """The chunk's window on the transcript's clock (``1:11:11–1:22:58``), for logs."""
     end = chunk.end_s if chunk.end_s is not None else chunk.video_end_s
-    return after_start and (end is None or seconds < end + WINDOW_GRACE_S)
+    return f"{_format_time(chunk.start_s or 0)}–{_format_time(end) if end is not None else 'end'}"
+
+
+def _holds(seconds: int, chunk: ExtractionChunk) -> bool:
+    """Whether ``seconds`` lies in the chunk's window: a grace interval at an inner edge,
+    none past the video's end."""
+    after_start = chunk.start_s is None or seconds >= chunk.start_s - WINDOW_GRACE_S
+    before_end = chunk.end_s is None or seconds < chunk.end_s + WINDOW_GRACE_S
+    in_video = chunk.video_end_s is None or seconds <= chunk.video_end_s
+    return after_start and before_end and in_video
 
 
 def restamp(seconds: int, chunk: ExtractionChunk) -> int | None:
@@ -263,51 +301,87 @@ def _is_stamp(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
+def _stamped(value: dict[str, Any]) -> bool:
+    return any(key in value for key in _STAMP_KEYS)
+
+
+def _clock_placed(item: dict[str, Any], chunk: ExtractionChunk) -> int | None:
+    """The item's ``time`` clock (the video clock of a ``seconds`` item) when it lies inside
+    the window."""
+    clock = _clock_seconds(item.get(_CLOCK_KEY))
+    return clock if clock is not None and _holds(clock, chunk) else None
+
+
+def _place(item: dict[str, Any], key: str, value: int, chunk: ExtractionChunk) -> int | None:
+    """Where the stamp under ``key`` lands: itself inside the window, else the hour put
+    back, else (``seconds``) the item's own clock; None when nothing fits. A 0 is the
+    model's "no stamp" (``LearningTimestamp.seconds`` defaults to it): it gives way to a
+    fitting clock and is never hour-restored — 0 + 1 h would be a fabricated stamp."""
+    clock = _clock_placed(item, chunk) if key == _ITEM_IS_STAMP else None
+    if value == 0:
+        return clock if clock is not None else (0 if _holds(0, chunk) else None)
+    placed = restamp(value, chunk)
+    return placed if placed is not None else clock
+
+
+def _with_stamp(
+    item: dict[str, Any], key: str, placed: int | None, path: str, report: StampReport
+) -> dict[str, Any]:
+    fixed = {**item, key: placed}
+    if placed is None:
+        report.tally(path, "cleared")
+        return fixed
+    report.tally(path, "restamped")
+    if key == _ITEM_IS_STAMP and isinstance(item.get(_CLOCK_KEY), str):
+        fixed[_CLOCK_KEY] = _format_time(placed)
+    return fixed
+
+
+def _ordered_range(
+    fixed: dict[str, Any], item: dict[str, Any], path: str, report: StampReport
+) -> dict[str, Any]:
+    """``fixed`` without a range end before its start or without its start — what placing
+    one side of a range and not the other leaves."""
+    for start_key, end_key in _RANGE_KEYS:
+        start, end = fixed.get(start_key), fixed.get(end_key)
+        if start_key not in fixed or not _is_stamp(end):
+            continue
+        start_cleared = start is None and _is_stamp(item.get(start_key))
+        if start_cleared or (_is_stamp(start) and end < start):
+            fixed = _with_stamp(fixed, end_key, None, path, report)
+    return fixed
+
+
 def _restamp_item(
-    item: dict[str, Any], chunk: ExtractionChunk, report: StampReport
+    item: dict[str, Any],
+    chunk: ExtractionChunk,
+    path: str,
+    report: StampReport,
+    droppable: bool,
 ) -> dict[str, Any] | None:
     """The item with every stamp inside the window: same object when nothing moved, a copy
-    when one did, None when the item's own stamp (``seconds``) fits nowhere."""
+    when one did. A ``seconds`` nothing places drops a list item (None) and is cleared on
+    a dict reached as a value — a value is never replaced by None."""
     fixed = item
     for key in _STAMP_KEYS:
         value = item.get(key)
         if not _is_stamp(value):
             continue
-        placed = restamp(value, chunk)
-        if placed is None and key == _ITEM_IS_STAMP:
-            placed = _clock_placed(item, chunk)
+        placed = _place(item, key, value, chunk)
         if placed == value:
             continue
-        if placed is None and key == _ITEM_IS_STAMP:
+        if placed is None and key == _ITEM_IS_STAMP and droppable:
             return None
-        fixed = _with_stamp(fixed, key, placed, report)
-    return fixed
-
-
-def _clock_placed(item: dict[str, Any], chunk: ExtractionChunk) -> int | None:
-    """A ``seconds`` no hour fits may still have its ``time`` clock inside the window."""
-    clock = _clock_seconds(item.get(_CLOCK_KEY))
-    return clock if clock is not None and _holds(clock, chunk) else None
-
-
-def _with_stamp(
-    item: dict[str, Any], key: str, placed: int | None, report: StampReport
-) -> dict[str, Any]:
-    fixed = {**item, key: placed}
-    if placed is None:
-        report.cleared += 1
-        return fixed
-    report.restamped += 1
-    if key == _ITEM_IS_STAMP and isinstance(item.get(_CLOCK_KEY), str):
-        fixed[_CLOCK_KEY] = format_marker(placed)[1:-1]
-    return fixed
+        fixed = _with_stamp(fixed, key, placed, path, report)
+    return fixed if fixed is item else _ordered_range(fixed, item, path, report)
 
 
 def _restamp_value(value: Any, chunk: ExtractionChunk, path: str, report: StampReport) -> Any:
     """``value`` with every stamped item below it placed; the same object when nothing moved."""
     if isinstance(value, dict):
-        if any(key in value for key in _STAMP_KEYS):
-            return _restamp_item(value, chunk, report)
+        if _stamped(value):
+            report.tally(path, "total")
+            return _restamp_item(value, chunk, path, report, droppable=False)
         placed = {
             k: _restamp_value(v, chunk, f"{path}.{k}" if path else k, report)
             for k, v in value.items()
@@ -318,14 +392,22 @@ def _restamp_value(value: Any, chunk: ExtractionChunk, path: str, report: StampR
     return value
 
 
+def _restamp_entry(item: Any, chunk: ExtractionChunk, path: str, report: StampReport) -> Any:
+    """One list item placed — a stamped item whose own stamp fits nowhere is None (dropped)."""
+    if isinstance(item, dict) and _stamped(item):
+        return _restamp_item(item, chunk, path, report, droppable=True)
+    return _restamp_value(item, chunk, path, report)
+
+
 def _restamp_list(
     items: list[Any], chunk: ExtractionChunk, path: str, report: StampReport
 ) -> list[Any]:
     """The list's items placed; an item placing dropped is left out and counted."""
-    placed = [_restamp_value(item, chunk, path, report) for item in items]
+    report.tally(path, "total", len(items))
+    placed = [_restamp_entry(item, chunk, path, report) for item in items]
     kept = [new for new, old in zip(placed, items) if new is not None or old is None]
     if len(kept) < len(items):
-        report.drop(path, len(items) - len(kept), len(items))
+        report.tally(path, "dropped", len(items) - len(kept))
     if len(kept) == len(items) and all(new is old for new, old in zip(kept, items)):
         return items
     return kept

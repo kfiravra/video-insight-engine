@@ -16,15 +16,21 @@ export interface AxisScore {
  * A cell that IS a number — an optional currency/approx prefix, the number,
  * an optional short unit: "4,422 mAh", "$249", "6.1 in", "48". A sentence that
  * merely contains a digit ("Sony WF-1000XM4", "AirPods Pro 2 — placed…") is
- * not an axis. Mirrors `_NUMERIC_CELL` in the summarizer's assembly/promotion.py.
+ * not an axis. Mirrors `_NUMERIC_CELL` in the summarizer's assembly/derived_guard.py.
  */
 const NUMERIC_CELL = /^[$€£¥₪~≈<>]?\s*[-+]?\d[\d,]*(?:\.\d+)?\s*[A-Za-z%°µ/]{0,8}$/;
+/**
+ * A rank ("1st", "22nd", "3RD") fits NUMERIC_CELL but is no measurement —
+ * scaled as one, the worse rank would win its spoke. Twin of `_ORDINAL_CELL`
+ * in the summarizer's assembly/promotion.py.
+ */
+const ORDINAL_CELL = /^\d[\d,]*(?:st|nd|rd|th)$/i;
 const NUMBER_TOKEN = /[-+]?\d[\d,]*(?:\.\d+)?/;
 
 function parseNumeric(value: string | number | undefined): number | null {
   if (typeof value === 'number') return Number.isFinite(value) ? value : null;
   const text = value?.trim();
-  if (!text || !NUMERIC_CELL.test(text)) return null;
+  if (!text || !NUMERIC_CELL.test(text) || ORDINAL_CELL.test(text)) return null;
   const match = text.match(NUMBER_TOKEN);
   if (!match) return null;
   const n = Number(match[0].replace(/,/g, ''));

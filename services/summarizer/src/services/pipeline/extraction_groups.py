@@ -15,8 +15,9 @@ A landed answer is validated and cut to the group's own keys
 (``group_merge.validate_group``, 3.5), then every stamp it carries is held to
 the chunk's window (``extraction_chunks.window_stamps``, 0b.10: the hour put
 back or the stamp cleared; a ``learning.timestamps`` item no clock fits is
-dropped and counted in the outcome's report) before it is reported; one that
-says the group has nothing here (``{}``, its keys ``null``) lands empty. A lost answer —
+dropped) before it is reported, each move counted per field path in the
+outcome's report; one that says the group has nothing here (``{}``, its keys
+``null``) lands empty. A lost answer —
 not a JSON object, no key of the group, content validation dropped, or a
 warm-up stream that raised or brought nothing — is asked for ONCE more (3.8),
 unstreamed (a broken stream can never cost a group) and with no retry budget
@@ -40,11 +41,11 @@ from typing import TYPE_CHECKING, Any, Literal
 from llm_common.context import llm_feature_var
 
 from ...config import settings
-from ...models.domain_validation import ValidationReport, merge_report
+from ...models.domain_validation import ValidationReport
 from ...utils.json_parsing import parse_json_response, strip_markdown_fences
 from ...utils.llm_retry import call_llm_with_retry
 from ..llm_model_rules import LLMRefusalError
-from .extraction_chunks import ExtractionChunk, StampReport, window_stamps
+from .extraction_chunks import ExtractionChunk, StampReport, window_label, window_stamps
 from .extraction_group_prompt import GroupJob, build_group_messages
 from .extraction_prompt import ExtractionPrompt
 from .field_groups import ExtractionGroup
@@ -199,23 +200,36 @@ def _read(raw: str | None, call: GroupCall, run: SplitRun) -> _Answer:
 
 
 def _windowed(data: dict[str, Any], report: ValidationReport, call: GroupCall) -> dict[str, Any]:
-    """``data`` with its stamps held to the call's chunk window; item drops join the report."""
+    """``data`` with its stamps held to the call's chunk window; what moved joins the report."""
     placed, stamps = window_stamps(data, call.chunk)
     if stamps.changed:
         _log_stamps(call, stamps)
-        merge_report(report, stamps.dropped, 0)
+        _merge_stamps(report, stamps)
     return placed
+
+
+def _merge_stamps(report: ValidationReport, stamps: StampReport) -> None:
+    """The window's moves join the validation report under their field path as
+    ``{dropped, restamped, cleared, total}`` — gate 1 reads the timestamp drift there
+    (D17). A path validation already dropped items from keeps validation's ``total``
+    (the list as the model wrote it), so the window's count of the same list is not
+    added twice."""
+    dropped = report.setdefault("dropped", {})
+    for path, counts in stamps.paths.items():
+        entry = dropped.setdefault(path, {"dropped": 0, "total": counts["total"]})
+        for kind in ("dropped", "restamped", "cleared"):
+            entry[kind] = entry.get(kind, 0) + counts[kind]
 
 
 def _log_stamps(call: GroupCall, stamps: StampReport) -> None:
     logger.warning(
-        "[%s] stamps outside the chunk window %s–%s: %d hour-restored, %d cleared, %s dropped",
+        "[%s] stamps outside the chunk window %s: %d restamped, %d cleared, %d dropped %s",
         call.stage_name,
-        call.chunk.start_s,
-        call.chunk.end_s,
+        window_label(call.chunk),
         stamps.restamped,
         stamps.cleared,
-        {p: c["dropped"] for p, c in stamps.dropped.items()},
+        stamps.dropped,
+        sorted(stamps.paths),
     )
 
 

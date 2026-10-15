@@ -3,7 +3,10 @@
 The FE prints ``tab.goal`` as the tab's intro line; the header on top of a
 dense tab used to repeat it ("IN SHORT" = the goal, 30 of 45 tabs). Now the
 header is the extraction ``summary`` on the answer tab, else the tab's first
-item — and it is dropped rather than shipped when that text equals the goal.
+item — and it is dropped rather than shipped when that text equals the goal
+(case, inner whitespace and a trailing ``.!?`` aside — the FE hides a stored
+header equal to the goal by the same rule). A flash deck never gets one: its
+first card's text would give the answer away.
 """
 
 from __future__ import annotations
@@ -121,6 +124,23 @@ class TestNeverTheGoal:
 
         assert _header(out) is None
 
+    def test_goal_comparison_ignores_a_trailing_question_mark(self):
+        goal = "What does DHH mean by pencils down?"
+        first = {"name": "what does DHH mean by pencils down"}
+        tab = _dense_tab(goal=goal, props={"spots": _spots(_DENSE_THRESHOLD, first)})
+
+        out = attach_secondaries(tab, {}, None, None, "learning")
+
+        assert _header(out) is None
+
+    def test_goal_comparison_collapses_inner_whitespace(self):
+        first = {"name": GOAL.replace(" ", "  \n ")}
+        tab = _dense_tab(props={"spots": _spots(_DENSE_THRESHOLD, first)})
+
+        out = attach_secondaries(tab, {}, None, None, "learning")
+
+        assert _header(out) is None
+
     def test_textless_first_item_yields_no_header(self):
         tab = _dense_tab(props={"spots": [{"x": i} for i in range(_DENSE_THRESHOLD)]})
 
@@ -135,6 +155,25 @@ class TestNeverTheGoal:
 
         assert header is not None
         assert header["props"]["summary"] == "Spot 0 — detail 0"
+
+
+class TestFlashDeck:
+    def test_flash_deck_never_gets_a_header(self):
+        cards = [{"front": f"Q{i}?", "back": f"A{i}."} for i in range(_DENSE_THRESHOLD)]
+        tab = {"id": "cards", "component": "flash_deck", "goal": GOAL, "props": {"cards": cards}}
+
+        out = attach_secondaries(tab, {}, None, None, "learning")
+
+        assert _header(out) is None
+
+    def test_flash_deck_answer_tab_skips_the_in_short_header_too(self):
+        cards = [{"front": f"Q{i}?", "back": f"A{i}."} for i in range(_DENSE_THRESHOLD)]
+        tab = {"id": "cards", "component": "flash_deck", "goal": GOAL, "props": {"cards": cards}}
+        extraction = {"learning": {"summary": "The thesis."}}
+
+        out = attach_secondaries(tab, extraction, None, None, "learning", is_answer_tab=True)
+
+        assert _header(out) is None
 
 
 class TestAnswerTab:
@@ -216,6 +255,38 @@ class TestResponseLoop:
     def test_later_tabs_get_their_first_item(self):
         tabs = self._tabs()
         extraction = {"learning": {"summary": "The thesis."}}
+
+        attach_response_secondaries(tabs, extraction, None, None, "learning")
+
+        assert _header(tabs[2]["attachments"])["props"]["summary"] == "Spot 0 — detail 0"
+
+    def test_answer_moves_past_a_content_tab_that_took_nothing(self):
+        overview, first, second = self._tabs()
+        filmstrip = {"id": "frames", "component": "video_filmstrip", "goal": "g", "props": {}}
+        tabs = [overview, filmstrip, first, second]
+
+        attach_response_secondaries(
+            tabs, {"learning": {"summary": "The thesis."}}, None, None, "learning"
+        )
+
+        assert _header(tabs[2]["attachments"])["props"]["summary"] == "The thesis."
+
+    def test_the_tab_that_takes_the_answer_keeps_it(self):
+        overview, first, second = self._tabs()
+        filmstrip = {"id": "frames", "component": "video_filmstrip", "goal": "g", "props": {}}
+        tabs = [overview, filmstrip, first, second]
+
+        attach_response_secondaries(
+            tabs, {"learning": {"summary": "The thesis."}}, None, None, "learning"
+        )
+
+        assert _header(tabs[3]["attachments"])["props"]["summary"] == "Spot 0 — detail 0"
+
+    def test_a_tab_that_took_an_attachment_holds_the_answer(self):
+        overview, _, dense = self._tabs()
+        sparse = {"id": "s", "component": "info_grid", "goal": "g", "props": {"items": [{"x": 1}]}}
+        tabs = [overview, sparse, dense]
+        extraction = {"learning": {"summary": "The thesis.", "tips": ["Rest the dough."]}}
 
         attach_response_secondaries(tabs, extraction, None, None, "learning")
 

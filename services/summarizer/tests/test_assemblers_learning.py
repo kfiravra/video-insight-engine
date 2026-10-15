@@ -1,4 +1,7 @@
-"""Assembler unit tests — learning/media family (exercise, quiz, flash_deck, scenario, verdict, overview, gallery, lyrics)."""
+"""Assembler unit tests — learning/media family.
+
+exercise, quiz, flash_deck, scenario, verdict, overview, gallery, lyrics.
+"""
 
 from src.services.pipeline.assembly import (
     _normalize_exercise,
@@ -114,6 +117,11 @@ class TestAssembleOverview:
 
     def test_no_domain_data(self):
         assert assemble_overview({"_primary_tag": "travel"}, None, {}, None) is None
+
+    def test_should_not_spread_a_blank_domain_string(self):
+        extraction = {"learning": {"summary": "  ", "keyQuestion": "What is ML?"}}
+        result = assemble_overview({"_primary_tag": "learning"}, None, extraction, None)
+        assert "summary" not in result["data"]
 
 
 # ─── Registry Coverage ───

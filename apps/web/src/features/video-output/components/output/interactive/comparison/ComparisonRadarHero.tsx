@@ -31,10 +31,11 @@ interface ComparisonRadarHeroProps {
 }
 
 /**
- * Radar hero — one axis per comparison row, two series, per-axis weight
- * sliders to re-balance the weighted winner. Rendered above the table when a
- * comparison has ≥3 scoreable axes. Merged in from the retired standalone
- * ComparisonRadar; the unified component now chooses radar-vs-table by data.
+ * Radar hero — one axis per numeric comparison row (`scoreComparisonAxes`),
+ * two series, per-axis weight sliders to re-balance the weighted winner.
+ * Rendered above the table when a comparison has ≥3 scoreable axes. Merged in
+ * from the retired standalone ComparisonRadar; the unified component now
+ * chooses radar-vs-table by data.
  */
 export const ComparisonRadarHero = memo(function ComparisonRadarHero({
   comparisons,
@@ -42,7 +43,13 @@ export const ComparisonRadarHero = memo(function ComparisonRadarHero({
   colRight,
 }: ComparisonRadarHeroProps) {
   const scored = useMemo(() => scoreComparisonAxes(comparisons), [comparisons]);
-  const [weights, setWeights] = useState<number[]>(() => comparisons.map(() => DEFAULT_WEIGHT));
+  const [weights, setWeights] = useState<number[]>(() => scored.map(() => DEFAULT_WEIGHT));
+  // One weight per scored axis, not per row: a prose row has no spoke, so it
+  // never resets the tuning, while a new axis count starts it fresh. Adjusted
+  // while rendering (React's pattern for state that follows a prop), no effect.
+  if (weights.length !== scored.length) {
+    setWeights(scored.map(() => DEFAULT_WEIGHT));
+  }
   const [tunerOpen, setTunerOpen] = useState(false);
 
   // Self-measure the chart box rather than leaning on Recharts'
@@ -85,14 +92,6 @@ export const ComparisonRadarHero = memo(function ComparisonRadarHero({
       observer.disconnect();
     };
   }, []);
-
-  // Re-sync weight array length whenever the comparison count changes.
-  useMemo(() => {
-    if (weights.length !== comparisons.length) {
-      setWeights(comparisons.map(() => DEFAULT_WEIGHT));
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [comparisons.length]);
 
   const leftPercent = useMemo(() => computeLeftPercent(scored, weights), [scored, weights]);
   const rightPercent = 100 - leftPercent;

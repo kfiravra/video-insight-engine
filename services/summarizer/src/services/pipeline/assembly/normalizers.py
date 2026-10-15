@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .derived_guard import stated_scalars
+from .derived_guard import anchor_seconds, stated_scalars
 from .moment_normalizers import _chapter_end as _chapter_end
 from .moment_normalizers import _chapters_to_moments as _chapters_to_moments
 from .moment_normalizers import _coerce_int as _coerce_int
@@ -78,19 +78,20 @@ _TIP_FIELDS: tuple[str, ...] = (
 
 _SPOT_PASSTHROUGH_FIELDS: tuple[str, ...] = (
     "emoji",
-    "cost",
     "currency",
-    "duration",
     "mapQuery",
     "bookingSearch",
     "tips",
     "specs",
-    "rating",
     "thumbnailUrl",
     "s3Key",
     "pronunciation",
     "timestamp",
 )
+# Facts a spot states only when it is anchored in the video (D13). spot_explorer
+# and info_grid are the demote rung of a refused tier list, comparison or claims
+# tracker, so an unanchored cost, duration or rating would re-enter there.
+_SPOT_STATED_FIELDS: tuple[str, ...] = ("cost", "duration", "rating")
 
 
 def _normalize_to_spot(item: dict) -> dict | None:
@@ -126,29 +127,15 @@ def _normalize_to_spot(item: dict) -> dict | None:
     )
     description = str(desc_raw).strip()
 
-    result: dict = {"name": name, "description": description}
-    has_passthrough = False
-    for field in _SPOT_PASSTHROUGH_FIELDS:
-        if field not in item:
-            continue
-        value = item[field]
-        if value is None or value == "":
-            continue
-        result[field] = value
-        has_passthrough = True
-
-    if not description and not has_passthrough:
+    extras: dict = {
+        field: item[field]
+        for field in _SPOT_PASSTHROUGH_FIELDS
+        if item.get(field) not in (None, "")
+    }
+    extras.update(stated_scalars(item, _SPOT_STATED_FIELDS))
+    if not description and not extras:
         return None
-    return result
-
-
-def _first_competitor_name(comparisons: list[dict]) -> str:
-    """Extract the first non-empty competitorName from comparison rows."""
-    for c in comparisons:
-        name = c.get("competitorName", "")
-        if name:
-            return str(name)
-    return ""
+    return {"name": name, "description": description, **extras}
 
 
 def _normalize_comparison(item: dict) -> dict:
@@ -186,8 +173,9 @@ def _normalize_step(item: dict, index: int) -> dict:
     return {
         "number": item.get("number", index + 1),
         "instruction": instruction,
-        "timestamp": item.get("timestamp") or item.get("seconds"),
-        # A duration is a fact only on a step anchored in the video (D13).
+        # One anchor for the seek point and the duration guard (D13): a step
+        # at 0:00 keeps both.
+        "timestamp": anchor_seconds(item),
         "duration": stated_scalars(item, ("duration",)).get("duration"),
         "tips": tips,
         **({"title": title} if title else {}),

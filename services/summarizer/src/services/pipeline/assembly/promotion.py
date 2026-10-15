@@ -15,12 +15,12 @@ re-validates the result immediately afterward.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from .assemblers_overhaul import assemble_concept_canvas
 from .assemblers_primary import assemble_spot_explorer
 from .derived_guard import is_numeric_axis
-from .normalizers import _normalize_to_spot
 
 logger = logging.getLogger(__name__)
 
@@ -49,18 +49,34 @@ _CONCEPT_DOMAINS: frozenset[str] = frozenset({"learning", "science"})
 # depend on step_player): they never render as a canvas, however long (D8).
 STEP_LIST_DOMAINS: frozenset[str] = frozenset({"food", "project"})
 
+# A rank ("1st", "22nd", "3RD") has the guard's number shape but is no
+# measurement: scaled as one, the worse rank would win its spoke. Twin of
+# ORDINAL_CELL in apps/web …/interactive/comparison/radar-scoring.ts.
+_ORDINAL_CELL = re.compile(r"^\d[\d,]*(?:st|nd|rd|th)$", re.IGNORECASE)
+
+
+def _is_ordinal(value: Any) -> bool:
+    return isinstance(value, str) and _ORDINAL_CELL.match(value.strip()) is not None
+
+
+def _is_radar_axis(row: Any) -> bool:
+    """A numeric axis (`derived_guard.is_numeric_axis`, D13) with no ranked side."""
+    return is_numeric_axis(row) and not (
+        _is_ordinal(row.get("thisProduct")) or _is_ordinal(row.get("competitor"))
+    )
+
 
 def _promote_comparison(props: dict) -> dict | None:
     """comparison -> comparison_radar when enough rows are numeric axes.
 
     `comparison_radar` shares the comparison data contract, so the props are
-    forwarded unchanged; the renderer chooses the radar visualization. What
-    counts as an axis is `derived_guard.is_numeric_axis` (D13).
+    forwarded unchanged; the renderer chooses the radar visualization. An
+    axis is a row whose both sides are measurements (`_is_radar_axis`).
     """
     rows = props.get("comparisons")
     if not isinstance(rows, list):
         return None
-    if sum(1 for row in rows if is_numeric_axis(row)) >= RADAR_AXIS_THRESHOLD:
+    if sum(1 for row in rows if _is_radar_axis(row)) >= RADAR_AXIS_THRESHOLD:
         return props
     return None
 
@@ -155,10 +171,10 @@ def _promote_info_grid(
     if len(long_rows) < INFO_GRID_LONG_MIN:
         return None
     spot_input = [_info_row_to_spot(r) for r in rows]
-    if any(_normalize_to_spot(spot) is None for spot in spot_input):
-        return None
     spot_props = assemble_spot_explorer({}, spot_input, extraction or {}, None)
-    if spot_props is None:
+    # The assembler drops each row its normalizer refuses — one row short
+    # means a refused row, which keeps the whole tab a grid.
+    if spot_props is None or len(spot_props["spots"]) != len(rows):
         return None
     for spot, row in zip(spot_props["spots"], rows, strict=True):
         if row.get("evidence"):

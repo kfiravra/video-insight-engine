@@ -9,12 +9,27 @@ prefixes the count that ships, mirroring the FE rule in ``domain-meta.ts``
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
 import pytest
 
 from src.services.pipeline.assembly.core import (
     _post_process_tabs,
     shipped_count,
     true_count_label,
+)
+from src.services.pipeline.assembly.labels import _LABEL_COUNT_KEYS
+
+_DOMAIN_META = (
+    Path(__file__).resolve().parent.parent.parent.parent
+    / "apps"
+    / "web"
+    / "src"
+    / "components"
+    / "vie"
+    / "cards"
+    / "domain-meta.ts"
 )
 
 
@@ -45,6 +60,21 @@ class TestTrueCountLabel:
     def test_should_count_a_label_in_another_script(self) -> None:
         assert true_count_label("5 נקודות", 7) == "7 נקודות"
 
+    @pytest.mark.parametrize(
+        "label",
+        [
+            "١٢ خطوات",  # Arabic-Indic digits: JS ``\d`` is ASCII-only
+            "3 ½ Cups",  # a number sign (No) is not a letter
+            "12 Ⅻ Rules",  # a letter number (Nl) is not a letter either
+            "12 ",
+        ],
+    )
+    def test_should_mirror_the_fe_rule_exactly(self, label: str) -> None:
+        assert true_count_label(label, 4) == label
+
+    def test_should_take_any_run_of_whitespace_before_the_letter(self) -> None:
+        assert true_count_label("12 \u00a0Steps", 4) == "4 Steps"
+
 
 class TestShippedCount:
     def test_should_count_the_components_list(self) -> None:
@@ -60,6 +90,29 @@ class TestShippedCount:
 
     def test_should_fall_back_to_the_older_moment_track_shape(self) -> None:
         assert shipped_count("moment_track", {"entries": [{}, {}]}) == 2
+
+    def test_should_be_unknown_for_a_comparison_with_no_rows_pros_or_cons(self) -> None:
+        assert shipped_count("comparison", {"comparisons": [], "pros": [], "cons": []}) is None
+
+    def test_should_count_an_empty_list_as_zero(self) -> None:
+        """Pinned as intended: ``inferItemCount`` returns 0 for an empty list."""
+        assert shipped_count("spot_explorer", {"spots": []}) == 0
+
+    def test_should_never_count_an_attachment_only_component(self) -> None:
+        assert shipped_count("stat_banner", {"stats": [{}, {}]}) is None
+
+
+class TestFrontendParity:
+    """The count rule and the counted lists are the FE's (``domain-meta.ts``)."""
+
+    def test_should_count_the_lists_the_hero_strip_counts(self) -> None:
+        source = _DOMAIN_META.read_text()
+        table = source.split("const COUNT_PROP_BY_COMPONENT", 1)[1].split("};", 1)[0]
+
+        assert dict(re.findall(r"(\w+): '(\w+)'", table)) == _LABEL_COUNT_KEYS
+
+    def test_should_mirror_the_fe_leading_count_rule(self) -> None:
+        assert "LEADING_COUNT = /^\\d{1,3}\\s+(?=\\p{L})/u;" in _DOMAIN_META.read_text()
 
 
 class TestPostProcessedLabels:
@@ -78,6 +131,21 @@ class TestPostProcessedLabels:
         _post_process_tabs([tab])
 
         assert tab["label"] == "2 Core Arguments"
+
+    def test_should_drop_the_count_of_a_comparison_that_ships_nothing_countable(self) -> None:
+        props = {"comparisons": [], "pros": [], "cons": [], "verdict": {"summary": "Buy"}}
+        tab = _tab("6 Pros & Cons", "comparison", props)
+
+        _post_process_tabs([tab])
+
+        assert tab["label"] == "Pros & Cons"
+
+    def test_should_write_zero_for_an_empty_counted_list(self) -> None:
+        tab = _tab("5 Spots", "spot_explorer", {"spots": []})
+
+        _post_process_tabs([tab])
+
+        assert tab["label"] == "0 Spots"
 
     def test_should_never_add_a_count_to_a_label_without_one(self) -> None:
         tab = _tab("Key Moments", "moment_track", {"items": [{"label": "a", "seconds": 1}]})

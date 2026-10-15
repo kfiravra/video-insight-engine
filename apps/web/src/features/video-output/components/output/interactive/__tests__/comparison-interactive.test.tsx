@@ -5,6 +5,7 @@ import userEvent from '@testing-library/user-event';
 
 
 import { ComparisonInteractive } from '../ComparisonInteractive';
+import { ComparisonRadarHero } from '../comparison/ComparisonRadarHero';
 import { hasRadarAxes, scoreComparisonAxes } from '../comparison/radar-scoring';
 
 const comparisons = [
@@ -19,6 +20,15 @@ const radarRows = [
   { feature: 'Display', thisProduct: '120', competitor: '120', competitorName: 'Galaxy S24', winner: 'tie' as const },
   { feature: 'Weight', thisProduct: '187', competitor: '227', competitorName: 'Galaxy S24', winner: 'left' as const },
 ];
+
+// A row with no number on either side — no radar spoke.
+const proseRow = { feature: 'Finish', thisProduct: 'Titanium', competitor: 'Aluminium', competitorName: 'Galaxy S24' };
+
+async function tuneFirstAxisUp(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole('button', { name: /tune what matters/i }));
+  screen.getAllByRole('slider')[0].focus();
+  await user.keyboard('{ArrowRight}');
+}
 
 describe('ComparisonInteractive', () => {
   it('should render table comparison', () => {
@@ -134,6 +144,14 @@ describe('ComparisonInteractive', () => {
       expect(scored).toEqual([]);
     });
 
+    it('should not score a row with an ordinal rank on either side', () => {
+      const scored = scoreComparisonAxes([
+        { feature: 'Ranking', thisProduct: '1st', competitor: '3RD', competitorName: 'X' },
+        { feature: 'Chart position', thisProduct: '22nd', competitor: '48', competitorName: 'X' },
+      ]);
+      expect(scored).toEqual([]);
+    });
+
     it('should not read a sentence that merely contains a digit as an axis', () => {
       const scored = scoreComparisonAxes([
         {
@@ -171,6 +189,29 @@ describe('ComparisonInteractive', () => {
     ];
     render(<ComparisonInteractive comparisons={proseRows} view="radar" />);
     expect(screen.queryByTestId('comparison-radar-winner-badge')).not.toBeInTheDocument();
+  });
+
+  describe('ComparisonRadarHero weights', () => {
+    it('should keep a tuned weight when a prose row joins and the axes stay the same', async () => {
+      const user = userEvent.setup();
+      const { rerender } = render(<ComparisonRadarHero comparisons={radarRows} colLeft="A" colRight="B" />);
+      await tuneFirstAxisUp(user);
+
+      rerender(<ComparisonRadarHero comparisons={[...radarRows, proseRow]} colLeft="A" colRight="B" />);
+
+      expect(screen.getAllByRole('slider')[0]).toHaveAttribute('aria-valuenow', '6');
+    });
+
+    it('should start the tuning fresh when the number of axes changes', async () => {
+      const user = userEvent.setup();
+      const priceRow = { feature: 'Price', thisProduct: '$799', competitor: '$899', competitorName: 'Galaxy S24' };
+      const { rerender } = render(<ComparisonRadarHero comparisons={radarRows} colLeft="A" colRight="B" />);
+      await tuneFirstAxisUp(user);
+
+      rerender(<ComparisonRadarHero comparisons={[...radarRows, priceRow]} colLeft="A" colRight="B" />);
+
+      expect(screen.getAllByRole('slider')[0]).toHaveAttribute('aria-valuenow', '5');
+    });
   });
 
   it('should NOT render ReviewSummary when verdict.bottomLine is empty/undefined', () => {

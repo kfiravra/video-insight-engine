@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections import Counter
 from collections.abc import Callable, Collection, Iterable, Mapping
 from typing import Any
 
@@ -26,17 +27,16 @@ from src.utils.data_helpers import is_empty_data
 from .assemblers_learning import assemble_display_section
 from .assemblers_overhaul import _normalize_filmstrip_frame
 from .attachments import attach_response_secondaries
+from .component_lists import COMPONENT_LIST_KEYS
 from .cross_tab import resolve_cross_tab_links
 from .dedupe import _ITEM_TEXT_KEYS as _ITEM_TEXT_KEYS
 from .dedupe import DUPLICATE_OVERLAP as DUPLICATE_OVERLAP
 from .dedupe import DUPLICATE_TAB as DUPLICATE_TAB
 from .dedupe import _dedupe_tabs as _dedupe_tabs
-from .dedupe import _duplicate_of as _duplicate_of
 from .dedupe import _item_fingerprint as _item_fingerprint
 from .dedupe import tab_fingerprints as tab_fingerprints
 from .density import enforce_density
 from .item_timestamps import clear_impossible_item_timestamps
-from .labels import _COMPARISON_COMPONENTS as _COMPARISON_COMPONENTS
 from .labels import _LABEL_COUNT_KEYS as _LABEL_COUNT_KEYS
 from .labels import _LEADING_COUNT as _LEADING_COUNT
 from .labels import _list_len as _list_len
@@ -52,14 +52,13 @@ from .moment_fallback import (
 from .promotion import demote_component, promote_component
 from .registry import ASSEMBLER_REGISTRY, infer_component
 from .sampling import (
-    MOMENT_CAP_MAX,
     MomentAnchors,
     collect_moment_anchors,
-    evenly_sample,
     item_richness,
     moment_cap_for_duration,
     rank_sample,
     sample_moments,
+    tier_head,
 )
 
 logger = logging.getLogger(__name__)
@@ -426,8 +425,13 @@ def _drop_emptied_moment_tabs(
         )
 
 
-def _drop_moments_when_steps_are_the_timeline(tabs: list[dict], dropped_sink: list[dict]) -> bool:
-    """Remove every moment_track tab when the steps are the timeline (D6); True when so."""
+def _drop_moments_when_steps_are_the_timeline(
+    tabs: list[dict], dropped_sink: list[dict], sources: Mapping[str, str] | None = None
+) -> bool:
+    """Remove every moment_track tab when the steps are the timeline (D6); True when so.
+
+    ``sources`` (tab id → planned dataSource) labels each drop record.
+    """
     if not steps_are_the_timeline(tabs):
         return False
     for idx in reversed(range(len(tabs))):
@@ -442,7 +446,7 @@ def _drop_moments_when_steps_are_the_timeline(tabs: list[dict], dropped_sink: li
             {
                 "id": popped.get("id", ""),
                 "component": "moment_track",
-                "dataSource": "",
+                "dataSource": (sources or {}).get(str(popped.get("id", "")), ""),
                 "reason": STEPS_ARE_THE_TIMELINE,
             }
         )
@@ -653,6 +657,12 @@ def demotion_blocked(
     return frozenset().union(*(_REQUIREMENT_EQUIVALENTS.get(c, frozenset({c})) for c in ruled_out))
 
 
+def required_components(primary_tag: str, content_format: str | None) -> frozenset[str]:
+    """Every component that meets one of the domain's requirements (equivalents included)."""
+    required = effective_requirements(primary_tag, content_format).get("required", [])
+    return frozenset().union(*(_REQUIREMENT_EQUIVALENTS.get(c, frozenset({c})) for c in required))
+
+
 def count_dropped_tabs(dropped: list[dict]) -> int:
     """Planned tabs that died. An evidence-skipped requirement is recorded in
     ``droppedTabs`` for the audit trail but was never a tab, so it is not counted."""
@@ -802,43 +812,9 @@ def _check_tab_labels(tabs: list[dict]) -> None:
 
 _UNTITLED_RE = re.compile(r"<?\s*Untitled\s+Chapter\s+(\d+)\s*>?", re.IGNORECASE)
 
-# Maps component → required list key. If the list is empty after assembly, drop the tab.
-# Live (v2 registry) components only — legacy v1 names were dropped alongside
-# their ASSEMBLER_REGISTRY entries (cached rows fall through to display_section).
-_COMPONENT_REQUIRED_LISTS: dict[str, str] = {
-    # Kept across the overhaul
-    "moment_track": "items",
-    "spot_explorer": "spots",
-    "info_grid": "items",
-    "checklist": "items",
-    "step_player": "steps",
-    "flash_deck": "cards",
-    "budget": "breakdown",
-    "comparison": "comparisons",
-    # Video-to-action overhaul: new components
-    "code_playground": "snippets",
-    "workout_room": "exercises",
-    "quiz_arena": "questions",
-    "lyrics_karaoke": "sections",
-    "video_filmstrip": "frames",
-    "concept_canvas": "concepts",
-    "connect_canvas": "pairs",
-    "step_flow_canvas": "steps",
-    "comparison_radar": "comparisons",
-    "packing_mission": "items",
-    # interactive-overhaul-v2 P5b — news signature component
-    "claims_tracker": "claims",
-    # interactive-overhaul-v2 P5c/d — gaming + sport signature components
-    "tier_list": "items",
-    "formation_diagram": "positions",
-    # Secondary-tier (attachment-only) — interactive-overhaul-v2 P2.
-    # tip_callout/summary_header carry scalar text (no list), so they are not
-    # listed here; they're validated by their assemblers returning None on empty.
-    "stat_banner": "stats",
-    "diagram_card": "nodes",
-    "frame_strip": "frames",
-    "quick_quiz": "questions",
-}
+# Maps component → required list key (``component_lists``, the one table). If
+# the list is empty after assembly, drop the tab.
+_COMPONENT_REQUIRED_LISTS: dict[str, str] = COMPONENT_LIST_KEYS
 
 
 def _validate_assembled_props(component: str, props: dict) -> bool:
@@ -863,25 +839,6 @@ def _validate_assembled_props(component: str, props: dict) -> bool:
     return True
 
 
-# Component → name of its user-facing list prop. Stays code-side (it names
-# assembler prop keys, not tunables); every component in domains.json
-# `assemblerItemCaps` MUST appear here or its cap silently never enforces
-# (pinned by tests/test_assembly_caps_config.py). v1-legacy names (quiz,
-# scenario, exercise_tracker, code_explorer, gallery, lyrics_player) removed
-# 2026-07-12 — they are no longer registry components.
-_COUNT_KEYS: dict[str, str] = {
-    "spot_explorer": "spots",
-    "checklist": "items",
-    "step_player": "steps",
-    "flash_deck": "cards",
-    "info_grid": "items",
-    "moment_track": "items",
-    "comparison": "comparisons",
-    "claims_tracker": "claims",
-    "tier_list": "items",
-    "formation_diagram": "positions",
-}
-
 # Per-component user-facing item caps. Long videos otherwise produce
 # unscannable lists (29-row "comparisons", 55-item timelines). Single-sourced
 # from domains.json `assemblerItemCaps` (project-score-9 4.5d) — deliberately
@@ -889,19 +846,42 @@ _COUNT_KEYS: dict[str, str] = {
 # code backstop that holds regardless of prompt drift.
 _TAB_ITEM_CAPS: dict[str, int] = assembler_item_caps()
 
-
-# moment_track is a timeline: its cap scales with duration (content-model §9
-# bands, ``sampling.moment_cap_for_duration``) and the kept moments are the
-# salient ones first (description / quote / number — R7), then even spacing
-# within a tier, so the headline beats and the tail both survive (R9).
-_MOMENT_CAP_MAX = MOMENT_CAP_MAX
+# Capped component → the list its cap trims (``component_lists``). A capped
+# component missing from that table would silently never enforce its cap
+# (pinned by tests/test_assembly_caps_config.py).
+_COUNT_KEYS: dict[str, str] = {
+    component: COMPONENT_LIST_KEYS[component]
+    for component in _TAB_ITEM_CAPS
+    if component in COMPONENT_LIST_KEYS
+}
 
 STEPS_ARE_THE_TIMELINE = "steps_are_the_timeline"
 
 
-def _evenly_sample(items: list, cap: int) -> list:
-    """``cap`` items at evenly spaced indices, keeping first and last (spot sections)."""
-    return items if len(items) <= cap else evenly_sample(items, cap)
+def _log_cap(component: str, list_key: str, size: int, cap: int, how: str) -> None:
+    logger.info("Assembly: capping %s.%s from %d → %d (%s)", component, list_key, size, cap, how)
+
+
+def _sample_capped(
+    component: str,
+    items: list,
+    cap: int,
+    video_duration: float | None,
+    anchors: MomentAnchors | None,
+) -> tuple[list, str]:
+    """The ``cap`` items a capped list keeps, in their original order, and how (R9)."""
+    if component == "moment_track":
+        # A timeline: each stride of the video keeps its most salient moment
+        # (description / quote / number — R7), so the headline beats and the tail
+        # both survive.
+        return sample_moments(items, cap, video_duration, anchors), "rank-sampled by salience"
+    if component == "tier_list":
+        # A stated tier outranks any amount of prose: richness would trade an S row
+        # for a verbose D one.
+        return tier_head(items, cap), "best stated tiers kept"
+    # Rank-sample, never head-slice: the richest items survive, equals even-sampled,
+    # so the tail of a long video survives the cap (S02's arguments after 58 min).
+    return rank_sample(items, cap, item_richness), "rank-sampled by richness"
 
 
 def _cap_tab_items(
@@ -910,69 +890,44 @@ def _cap_tab_items(
     video_duration: float | None = None,
     anchors: MomentAnchors | None = None,
 ) -> None:
-    """Truncate the user-facing list on a tab if it exceeds the cap."""
-    cap = _TAB_ITEM_CAPS.get(component)
-    if cap is None:
-        return
-    list_key = _COUNT_KEYS.get(component)
-    if not list_key:
-        return
-    items = props.get(list_key)
-    if not isinstance(items, list):
-        return
+    """Cap the user-facing list of a tab, keeping the items that matter (R9).
 
-    # Timeline: the cap follows the duration; salience first, then even spacing.
+    A timeline's cap follows the video's length (content-model §9). Spots grouped
+    by day (``sections[].spotIndices``) are capped per section with the indices
+    remapped, so no day vanishes and no index dangles.
+    """
+    cap = _TAB_ITEM_CAPS.get(component)
+    list_key = _COUNT_KEYS.get(component)
+    items = props.get(list_key) if list_key else None
+    if cap is None or not isinstance(items, list):
+        return
     if component == "moment_track":
         cap = moment_cap_for_duration(video_duration, cap)
-        if len(items) > cap:
-            logger.info(
-                "Assembly: capping %s.%s from %d → %d (rank-sampled by salience)",
-                component,
-                list_key,
-                len(items),
-                cap,
-            )
-            props[list_key] = sample_moments(items, cap, video_duration, anchors)
+    if len(items) <= cap:
         return
+    if list_key == "spots" and isinstance(props.get("sections"), list):
+        _log_cap(component, list_key, len(items), cap, "rank-sampled per section, remapped")
+        _cap_spots_with_sections(props, items, cap)
+        return
+    kept, how = _sample_capped(component, items, cap, video_duration, anchors)
+    _log_cap(component, list_key, len(items), cap, how)
+    props[list_key] = kept
 
-    if len(items) > cap:
-        # spot_explorer groups spots by day via sections[].spotIndices. A plain
-        # head-truncation would silently amputate the later days (a 10-day
-        # itinerary rendering only days 1-4) AND leave sections pointing at
-        # indices past the cap (empty days in the UI). Even-sample across the
-        # whole list and remap the section indices instead.
-        if list_key == "spots" and isinstance(props.get("sections"), list):
-            logger.info(
-                "Assembly: capping %s.%s from %d → %d (even-sampled, sections remapped)",
-                component,
-                list_key,
-                len(items),
-                cap,
-            )
-            _cap_spots_with_sections(props, items, cap)
-            return
-        # Rank-sample, never head-slice (R9): the richest items are kept in
-        # their original order, equals even-sampled, so the tail of a long
-        # video survives the cap (S02's arguments after 58 min).
-        logger.info(
-            "Assembly: capping %s.%s from %d → %d (rank-sampled by richness)",
-            component,
-            list_key,
-            len(items),
-            cap,
-        )
-        props[list_key] = rank_sample(items, cap, item_richness)
+
+def _richest(indices: list[int], quota: int, spots: list) -> list[int]:
+    """``quota`` of these spot indices, the richest first, equals even-sampled (R9)."""
+    return rank_sample(indices, quota, lambda i: item_richness(spots[i]))
 
 
 def _cap_spots_with_sections(props: dict, spots: list, cap: int) -> None:
     """Cap spots while guaranteeing every day/section keeps at least one spot.
 
-    Global even-sampling can empty a small section entirely (a "Day 4"
-    sub-tab silently vanishing from an itinerary), so quotas are allocated
-    per section — largest remainder with a floor of 1 — and sampled evenly
-    WITHIN each section. Sections' spotIndices are remapped to the rebuilt
-    spots list; only when the section count itself exceeds the cap are
-    trailing sections dropped.
+    Global sampling can empty a small section entirely (a "Day 4" sub-tab
+    silently vanishing from an itinerary), so quotas are allocated per
+    section — largest remainder with a floor of 1 — and rank-sampled by
+    richness WITHIN each section (equals even-sampled, R9). Sections'
+    spotIndices are remapped to the rebuilt spots list; only when the section
+    count itself exceeds the cap are trailing sections dropped.
     """
     valid: list[dict] = []
     for section in props["sections"]:
@@ -985,7 +940,7 @@ def _cap_spots_with_sections(props: dict, spots: list, cap: int) -> None:
             valid.append({**section, "spotIndices": indices})
 
     if not valid:
-        props["spots"] = _evenly_sample(spots, cap)
+        props["spots"] = rank_sample(spots, cap, item_richness)
         props["sections"] = []
         return
 
@@ -1018,13 +973,13 @@ def _cap_spots_with_sections(props: dict, spots: list, cap: int) -> None:
 
     kept_old: set[int] = set()
     for section, quota in zip(valid, quotas):
-        kept_old.update(_evenly_sample(section["spotIndices"], quota))
+        kept_old.update(_richest(section["spotIndices"], quota, spots))
 
     # Spots not referenced by any section fill whatever room remains.
     if len(kept_old) < cap:
         referenced = {i for s in valid for i in s["spotIndices"]}
         unreferenced = [i for i in range(len(spots)) if i not in referenced]
-        kept_old.update(_evenly_sample(unreferenced, cap - len(kept_old)))
+        kept_old.update(_richest(unreferenced, cap - len(kept_old), spots))
 
     kept_sorted = sorted(kept_old)[:cap]
     old_to_new = {old: new for new, old in enumerate(kept_sorted)}
@@ -1209,9 +1164,9 @@ def _in_domain_sibling_fallback(
 ) -> Any:
     """Recover an empty planned field from a populated SIBLING field in the SAME domain.
 
-    ``claimed`` names the dataSources other planned tabs read: a sibling another
-    tab already shows is refused (R5) — the fallback would only reproduce that
-    tab, and the tab on the empty field drops instead.
+    ``claimed`` names the dataSources other tabs ship from (``_planned_claims``):
+    a sibling another tab already shows is refused (R5) — the fallback would only
+    reproduce that tab, and the tab on the empty field drops instead.
 
     The planner picks a tab's dataSource before extraction runs, so it may bet on a
     schema field this video left empty (e.g. ``tech.patterns`` when only
@@ -1293,6 +1248,32 @@ def _in_domain_sibling_fallback(
             return best_value
 
     return None
+
+
+def _planned_claims(
+    raw_tabs: list, extraction: dict | None, enrichment: dict | None
+) -> Counter[str]:
+    """dataSource → how many planned tabs read it with data of their own.
+
+    Computed once, before the tabs assemble; the sibling fallback refuses a
+    claimed source (R5). A tab on an empty field claims nothing, and a tab that
+    drops releases its claim (``_release_claim``), so a later tab may still
+    recover that sibling.
+    """
+    claims: Counter[str] = Counter()
+    for tab in raw_tabs:
+        source = tab.get("dataSource") if isinstance(tab, dict) else None
+        if source and not is_empty_data(resolve_data_source(source, extraction, enrichment)):
+            claims[source] += 1
+    return claims
+
+
+def _release_claim(claims: Counter[str], source: str) -> None:
+    """A dropped tab ships nothing: one claim fewer on its source."""
+    if claims[source] > 1:
+        claims[source] -= 1
+    else:
+        claims.pop(source, None)
 
 
 # ─────────────────────────────────────────────────────
@@ -1545,6 +1526,10 @@ def assemble_response(
     frame_used: dict[str, float] = {}
     # Honest drop accounting: every planned tab that dies records why.
     dropped_tabs: list[dict] = []
+    # Planned sources read with data of their own — the sibling fallback refuses them.
+    claims = _planned_claims(raw_tabs, extraction, enrichment)
+    # Tab id → planned dataSource of every planned tab that ships (drop records).
+    sources: dict[str, str] = {}
 
     for raw_tab in raw_tabs:
         if not isinstance(raw_tab, dict):
@@ -1577,13 +1562,8 @@ def assemble_response(
         # In-domain sibling fallback: when the planner bet on a field this video left
         # empty, swap in a populated sibling backing the same component (registry-driven).
         if data is None and "." in data_source:
-            claimed = {
-                t.get("dataSource")
-                for t in raw_tabs
-                if isinstance(t, dict) and t is not raw_tab and t.get("dataSource")
-            }
             data = _in_domain_sibling_fallback(
-                data_source, component, extraction, enrichment, claimed
+                data_source, component, extraction, enrichment, claims
             )
             if data is not None:
                 data_resolved = True
@@ -1747,6 +1727,7 @@ def assemble_response(
                     **({"detail": drop_detail} if drop_detail else {}),
                 }
             )
+            _release_claim(claims, data_source)
             continue
 
         assembled_tabs.append(
@@ -1761,6 +1742,7 @@ def assemble_response(
                 **({"degradedFrom": degraded_from} if degraded_from else {}),
             }
         )
+        sources[tab_id] = data_source
 
     # Hallucinated timestamps (beyond the video's end) can never seek or
     # match a frame — drop them before the backfill and post-assembly
@@ -1808,9 +1790,13 @@ def assemble_response(
     # No Moments tab when the steps are the timeline (D6) — before the dedupe,
     # so a moment tab built from the steps is recorded under the rule, not as
     # a duplicate. Then the post-promotion dedupe (R5): the assembled items
-    # decide, not the plan's (dataSource, component) pairs — ``_dedupe_tabs``.
-    steps_timeline = _drop_moments_when_steps_are_the_timeline(assembled_tabs, dropped_tabs)
-    _dedupe_tabs(assembled_tabs, dropped_tabs)
+    # decide, not the plan's (dataSource, component) pairs, and a twin the
+    # domain requires outlives one it does not — ``dedupe._dedupe_tabs``.
+    steps_timeline = _drop_moments_when_steps_are_the_timeline(
+        assembled_tabs, dropped_tabs, sources
+    )
+    required = required_components(primary_tag, triage.get("contentFormat"))
+    _dedupe_tabs(assembled_tabs, dropped_tabs, required, sources)
 
     # A Moments tab always exists (Kfir 2026-10-12): with no moment_track tab
     # left, the fallback chain's tab joins after the planned and required ones —

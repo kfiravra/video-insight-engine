@@ -31,6 +31,13 @@ class TestEnforceDensity:
         out = enforce_density("info_grid", props)
         assert len(out["items"][0]["evidence"]) == 120
 
+    def test_should_not_cap_an_assembled_grid_because_no_producer_sets_a_mode(self):
+        # FE-mode forward-compat: the summarizer never writes `mode`, so an
+        # assembled grid renders as uncapped `key_value` cards.
+        props = assemble_info_grid({}, [{"key": "useState", "value": "v" * 300}], {}, None)
+        out = enforce_density("info_grid", props)
+        assert out["items"][0]["value"] == "v" * 300
+
 
 class TestInfoGridStringNormalization:
     def test_em_dash_string_splits_into_pair(self):

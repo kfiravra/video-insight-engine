@@ -12,49 +12,110 @@ from src.services.pipeline.assembly.promotion import INFO_GRID_LONG_VALUE
 LONG = "x" * (INFO_GRID_LONG_VALUE + 30)
 
 
-def _key_point_rows(n: int) -> list[dict]:
-    """S01 "Numbers" shape: learning.keyPoints normalized by assemble_info_grid."""
+def _key_points(n: int) -> list[dict]:
+    """S01 "Numbers" shape: raw learning.keyPoints as the extraction emits them."""
     return [
-        {"key": f"Number {i}", "value": LONG, "emoji": "📈", "timestamp": 60 * (i + 1)}
+        {"title": f"Number {i}", "detail": LONG, "emoji": "📈", "timestamp": 60 * (i + 1)}
         for i in range(n)
     ]
+
+
+def _explicit_rows(n: int) -> list[dict]:
+    """review.specs-style explicit `{key, value, timestamp}` rows."""
+    return [{"key": f"Spec {i}", "value": LONG, "timestamp": 45 * (i + 1)} for i in range(n)]
+
+
+def _tips(n: int) -> list[dict]:
+    """Keyless `{type, text, timestamp}` tips long enough to split into a card."""
+    return [
+        {"type": "chef_tip", "text": f"Tip number {i} is the headline. {LONG}", "timestamp": 30 * i}
+        for i in range(1, n + 1)
+    ]
+
+
+def _grid_then_promote(data: list) -> tuple[str, dict]:
+    """The live order: assemble_info_grid normalizes, then promotion re-shapes."""
+    grid = assemble_info_grid({}, data, {}, None)
+    return promote_component("info_grid", grid, data, {}, "learning")
 
 
 # ─── info_grid -> spot_explorer keeps timestamp and evidence (L24) ───
 
 
-class TestPromotionKeepsTimestampAndEvidence:
+class TestPromotionKeepsTimestamps:
     def test_should_keep_every_timestamp_when_promoting_to_spots(self):
-        props = {"items": _key_point_rows(24)}
-
-        component, out = promote_component("info_grid", props, None, {}, "learning")
+        component, out = _grid_then_promote(_key_points(24))
 
         assert component == "spot_explorer"
         assert [s["timestamp"] for s in out["spots"]] == [60 * (i + 1) for i in range(24)]
 
-    def test_should_carry_evidence_as_the_spot_quote(self):
-        rows = _key_point_rows(2)
-        rows[0]["evidence"] = "the speaker's own words"
+    def test_should_keep_the_timestamp_of_an_explicit_key_value_row(self):
+        _, out = _grid_then_promote(_explicit_rows(2))
 
-        _, out = promote_component("info_grid", {"items": rows}, None, {}, "learning")
+        assert [s["timestamp"] for s in out["spots"]] == [45, 90]
 
-        assert out["spots"][0]["quote"] == "the speaker's own words"
-        assert "quote" not in out["spots"][1]
+    def test_should_keep_the_timestamp_of_a_keyless_tip(self):
+        _, out = _grid_then_promote(_tips(2))
+
+        assert [s["timestamp"] for s in out["spots"]] == [30, 60]
+
+    def test_should_keep_a_timestamp_at_the_first_second(self):
+        rows = _explicit_rows(2)
+        rows[0]["timestamp"] = 0
+
+        _, out = _grid_then_promote(rows)
+
+        assert out["spots"][0]["timestamp"] == 0
+
+    def test_should_read_a_seconds_anchor_as_the_timestamp(self):
+        item = {"label": "Hook", "description": "d", "seconds": 42}
+
+        out = assemble_info_grid({}, [item], {}, None)
+
+        assert out["items"][0]["timestamp"] == 42
+
+    def test_should_not_carry_a_timestamp_that_cannot_seek(self):
+        out = assemble_info_grid({}, [{"key": "K", "value": "V", "timestamp": "1:23"}], {}, None)
+
+        assert "timestamp" not in out["items"][0]
+
+
+class TestPromotionKeepsEvidence:
+    def test_should_carry_a_keyed_item_quote_as_the_spot_quote(self):
+        data = _key_points(2)
+        data[0]["quote"] = "the speaker's own words"
+
+        _, out = _grid_then_promote(data)
+
+        assert [s.get("quote") for s in out["spots"]] == ["the speaker's own words", None]
+
+    def test_should_carry_an_explicit_row_source_as_the_spot_quote(self):
+        data = _explicit_rows(2)
+        data[1]["source"] = "Apple keynote"
+
+        _, out = _grid_then_promote(data)
+
+        assert out["spots"][1]["quote"] == "Apple keynote"
+
+    def test_should_carry_a_tip_example_as_the_spot_quote(self):
+        data = _tips(2)
+        data[0]["example"] = "a 9x13 pan holds four layers"
+
+        _, out = _grid_then_promote(data)
+
+        assert out["spots"][0]["quote"] == "a 9x13 pan holds four layers"
 
     def test_should_keep_emoji_on_promoted_spots(self):
-        _, out = promote_component("info_grid", {"items": _key_point_rows(2)}, None, {}, "learning")
+        _, out = _grid_then_promote(_key_points(2))
 
         assert out["spots"][0]["emoji"] == "📈"
 
     def test_should_stay_a_grid_when_a_headline_chip_would_be_dropped(self):
         # Degrade, never drop: a key-only chip has no spot shape, so the whole
         # tab stays an info_grid where every row renders.
-        rows = _key_point_rows(2) + [{"key": "Headline only", "value": ""}]
+        component, out = _grid_then_promote(_key_points(2) + [{"name": "Headline only"}])
 
-        component, out = promote_component("info_grid", {"items": rows}, None, {}, "learning")
-
-        assert component == "info_grid"
-        assert len(out["items"]) == 3
+        assert (component, len(out["items"])) == ("info_grid", 3)
 
 
 # ─── density never cuts what the FE can show (L23) ───
@@ -147,6 +208,24 @@ class TestLongBareStringsAreKept:
         out = assemble_info_grid({}, [S12_TAKEAWAYS[6]], {}, None)
 
         assert out["items"][0]["key"] == "Before picking any framework, ask"
+
+    def test_should_keep_an_ellipsis_that_closes_the_headline(self):
+        text = (
+            "Wait for the dough to rest the full hour... Then roll it as thin as you can "
+            "without tearing, and keep the rest covered so it never dries out on the board."
+        )
+
+        out = assemble_info_grid({}, [text], {}, None)
+
+        assert out["items"][0]["key"] == "Wait for the dough to rest the full hour..."
+
+    def test_should_keep_a_long_cjk_paragraph_whole(self):
+        # "。" carries no following space, so there is no boundary to split at.
+        text = "在选择框架之前先问自己是否真的需要它。有时最聪明的答案是没有框架的简短代码。" * 4
+
+        out = assemble_info_grid({}, [text], {}, None)
+
+        assert out["items"][0] == {"key": text, "value": ""}
 
     def test_should_keep_a_paragraph_length_key_only_dict(self):
         out = assemble_info_grid({}, [{"key": "k" * 150, "value": ""}], {}, None)

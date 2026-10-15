@@ -21,7 +21,7 @@ from pydantic import BaseModel
 
 from src.models.domain_types import DOMAIN_MODELS, MODIFIER_MODELS
 from src.models.pipeline_types import EnrichmentData
-from src.services.pipeline.assembly.core import _MOMENT_CAP_MAX
+from src.services.pipeline.assembly.sampling import MOMENT_CAP_MAX
 from src.services.pipeline.schema_fields import load_domain_schema
 from src.shared_config.domain_config import (
     EVIDENCE_KEYS,
@@ -157,8 +157,8 @@ class TestDataSourceEntries:
     @pytest.mark.parametrize("path", _ALL_PATHS)
     def test_should_not_ask_for_more_items_than_the_primary_renderer_keeps(self, path):
         spec = data_sources()[path]
-        # moment_track's hard cap scales with duration up to _MOMENT_CAP_MAX.
-        limits = {**assembler_item_caps(), "moment_track": _MOMENT_CAP_MAX}
+        # moment_track's hard cap scales with duration up to MOMENT_CAP_MAX.
+        limits = {**assembler_item_caps(), "moment_track": MOMENT_CAP_MAX}
         limit = limits.get(spec["components"][0])
 
         assert limit is None or spec["cap"] <= limit

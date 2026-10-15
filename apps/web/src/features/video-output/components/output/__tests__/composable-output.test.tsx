@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import type { VIEResponse, TabEntry } from '@vie/types';
+import type { VIEResponse, TabEntry, TabAttachment } from '@vie/types';
 
 // Mock cross-tab link dependencies
 vi.mock('../CrossTabLink', () => ({
@@ -554,54 +554,65 @@ describe('ComposableOutput', () => {
       expect(screen.getByText('8')).toBeInTheDocument();
     });
 
-    it('should print the goal once when a summary_header attachment is present (R4)', () => {
+    function renderSpecs(goal: string, attachments: TabAttachment[]) {
       const [tab] = tabWithAttachments();
-      const goal = 'A quick spec overview';
-      // Stored v10 docs: the summary_header text IS the goal.
       render(
         <ComposableOutput
           response={null}
-          tabs={[{ ...tab, goal }]}
+          tabs={[{ ...tab, goal, attachments }]}
           activeTab="specs"
           onNavigateTab={vi.fn()}
         />,
       );
+    }
+
+    function header(summary: string, slot: 'top' | 'bottom' = 'top'): TabAttachment {
+      return { slot, component: 'summary_header', props: { summary, title: 'In short' } };
+    }
+
+    // Stored rows assembled before 0b.6: the summary_header text IS the goal.
+    it('should print the goal once when a stored summary_header repeats it (R4)', () => {
+      const goal = 'A quick spec overview';
+      renderSpecs(goal, [header(goal)]);
       expect(screen.getAllByText(goal)).toHaveLength(1);
-      expect(screen.getByRole('note')).toHaveTextContent(goal);
+    });
+
+    it('should keep the goal in the intro and drop a stored summary_header that repeats it', () => {
+      const goal = 'A quick spec overview';
+      renderSpecs(goal, [header(goal)]);
+      expect(screen.queryByRole('note')).not.toBeInTheDocument();
+    });
+
+    it('should drop a repeating header that differs only in case, spacing and trailing punctuation', () => {
+      renderSpecs('What does the machine cost?', [header('what does the  machine cost')]);
+      expect(screen.queryByRole('note')).not.toBeInTheDocument();
+    });
+
+    // Rows assembled from 0b.6 on: the header carries content of its own.
+    it('should print the goal once beside a summary_header with content of its own', () => {
+      const goal = 'Spec the machine at a glance';
+      renderSpecs(goal, [header('Battery — 6 h of mixed use')]);
+      expect(screen.getAllByText(goal)).toHaveLength(1);
+    });
+
+    it('should render a summary_header whose content differs from the goal', () => {
+      renderSpecs('Spec the machine at a glance', [header('Battery — 6 h of mixed use')]);
+      expect(screen.getByRole('note')).toHaveTextContent('Battery — 6 h of mixed use');
     });
 
     it('should keep the intro goal line when the summary_header carries a blank summary', () => {
-      const [tab] = tabWithAttachments();
       const goal = 'Spec the machine at a glance';
-      const blankHeader = { slot: 'top' as const, component: 'summary_header', props: { summary: '   ' } };
-      render(
-        <ComposableOutput
-          response={null}
-          tabs={[{ ...tab, goal, attachments: [blankHeader] }]}
-          activeTab="specs"
-          onNavigateTab={vi.fn()}
-        />,
-      );
-      // The header prints nothing for a blank summary, so the intro carries the goal.
+      renderSpecs(goal, [header('   ')]);
+      // The header prints nothing for a blank summary; the intro carries the goal.
       expect(screen.getAllByText(goal)).toHaveLength(1);
       expect(screen.queryByRole('note')).not.toBeInTheDocument();
     });
 
-    it('should keep the intro goal line when the summary_header sits in the bottom slot', () => {
-      const [tab] = tabWithAttachments();
+    it('should print the goal once when a bottom summary_header repeats it', () => {
       const goal = 'Spec the machine at a glance';
-      const bottomHeader = { slot: 'bottom' as const, component: 'summary_header', props: { summary: goal } };
-      render(
-        <ComposableOutput
-          response={null}
-          tabs={[{ ...tab, goal, attachments: [bottomHeader] }]}
-          activeTab="specs"
-          onNavigateTab={vi.fn()}
-        />,
-      );
-      // Intro at the top AND the bottom header: the goal opens the tab either way.
+      renderSpecs(goal, [header(goal, 'bottom')]);
       const goalNodes = screen.getAllByText(goal);
-      expect(goalNodes).toHaveLength(2);
+      expect(goalNodes).toHaveLength(1);
       expect(goalNodes[0].closest('[role="note"]')).toBeNull();
     });
 

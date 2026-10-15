@@ -9,7 +9,8 @@ from src.services.pipeline.assembly import (
     assemble_comparison,
     promote_component,
 )
-from src.services.pipeline.assembly.promotion import STEP_LIST_DOMAINS, is_numeric_axis
+from src.services.pipeline.assembly.derived_guard import is_numeric_axis
+from src.services.pipeline.assembly.promotion import STEP_LIST_DOMAINS
 
 
 def _steps(n: int) -> list[dict]:
@@ -20,6 +21,19 @@ def _numeric_rows(n: int) -> list[dict]:
     return [
         {"feature": f"Spec {i}", "thisProduct": f"{10 + i} mAh", "competitor": f"{20 + i} mAh"}
         for i in range(n)
+    ]
+
+
+def _two_competitors(cell: str, name: str) -> list[dict]:
+    """A row for `name` whose competitor cell is `cell`, beside a Sony row."""
+    return [
+        {"feature": "ANC", "thisProduct": "best", "competitor": cell, "competitorName": name},
+        {
+            "feature": "Fit",
+            "thisProduct": "snug",
+            "competitor": "Sony is looser",
+            "competitorName": "Sony WF",
+        },
     ]
 
 
@@ -142,6 +156,33 @@ class TestComparisonKeepsEveryCompetitor:
         assert out["rightLabel"] == "X1"
         assert out["comparisons"][0]["competitor"] == "8 h"
 
+    def test_should_name_the_competitor_when_its_word_is_only_inside_another(self):
+        out = assemble_comparison({}, _two_competitors("Boses are louder", "Bose QC"), {}, None)
+
+        assert out["comparisons"][0]["competitor"] == "Bose QC — Boses are louder"
+
+    def test_should_name_a_short_word_competitor_its_cell_does_not_mention(self):
+        out = assemble_comparison({}, _two_competitors("worse contrast", "LG"), {}, None)
+
+        assert out["comparisons"][0]["competitor"] == "LG — worse contrast"
+
+    def test_should_leave_a_cell_that_names_a_short_word_competitor(self):
+        out = assemble_comparison({}, _two_competitors("LG has worse contrast", "LG"), {}, None)
+
+        assert out["comparisons"][0]["competitor"] == "LG has worse contrast"
+
+    def test_should_match_the_competitor_in_any_case(self):
+        out = assemble_comparison({}, _two_competitors("bose wins on ANC", "Bose QC"), {}, None)
+
+        assert out["comparisons"][0]["competitor"] == "bose wins on ANC"
+
+    def test_should_count_names_differing_only_in_case_as_one_competitor(self):
+        rows = _two_competitors("quieter", "sony wf")
+
+        out = assemble_comparison({}, rows, {}, None)
+
+        assert (out["rightLabel"], out["comparisons"][0]["competitor"]) == ("sony wf", "quieter")
+
 
 class TestProsConsNeverDerivedFromWinner:
     def test_should_ship_empty_pros_cons_for_a_winner_tagged_row_list(self):
@@ -192,6 +233,26 @@ class TestRadarOnlyWithNumericAxes:
 
     def test_should_count_only_the_numeric_rows_toward_the_threshold(self):
         rows = _numeric_rows(RADAR_AXIS_THRESHOLD - 1) + S07_ROWS
+        props = {"comparisons": rows, "pros": [], "cons": []}
+
+        component, _ = promote_component("comparison", props, None, {}, "review")
+
+        assert component == "comparison"
+
+    def test_should_not_promote_ranked_rows_however_many(self):
+        rows = [
+            {"feature": f"Ranking {i}", "thisProduct": "1st", "competitor": "3RD"}
+            for i in range(RADAR_AXIS_THRESHOLD * 2)
+        ]
+        props = {"comparisons": rows, "pros": [], "cons": []}
+
+        component, _ = promote_component("comparison", props, None, {}, "review")
+
+        assert component == "comparison"
+
+    def test_should_not_count_a_row_with_one_ranked_side(self):
+        rows = _numeric_rows(RADAR_AXIS_THRESHOLD - 1)
+        rows.append({"feature": "Chart position", "thisProduct": "22nd", "competitor": "48"})
         props = {"comparisons": rows, "pros": [], "cons": []}
 
         component, _ = promote_component("comparison", props, None, {}, "review")

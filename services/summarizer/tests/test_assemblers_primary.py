@@ -1,4 +1,9 @@
-"""Assembler unit tests — primary family (spots, moments, comparison, info_grid, checklist, steps, code)."""
+"""Assembler unit tests — primary family.
+
+Spots, moments, comparison, info_grid, checklist, steps, code.
+"""
+
+import pytest
 
 from src.services.pipeline.assembly import (
     _normalize_code_snippet,
@@ -121,6 +126,18 @@ class TestAssembleChecklist:
 
     def test_empty(self):
         assert assemble_checklist({}, [], {}, None) is None
+
+    @pytest.mark.parametrize(
+        "placeholder", ["amount not stated", "Not specified", "unknown", "N/A", "not given."]
+    )
+    def test_should_ship_the_name_alone_when_the_amount_is_not_stated(
+        self, placeholder: str
+    ) -> None:
+        data = [{"name": "beef", "amount": 0, "displayAmount": placeholder, "unit": ""}]
+
+        result = assemble_checklist({"id": "ingredients"}, data, {}, None)
+
+        assert result is not None and result["items"][0]["label"] == "beef"
 
 
 class TestAssembleComparison:
@@ -321,9 +338,16 @@ class TestFlexSpotExplorer:
         assert assemble_spot_explorer({}, [], {}, None) is None
 
     def test_passthrough_fields(self):
+        # `cost` is a stated fact (D13): it rides along on an anchored spot.
         data = [
-            {"name": "Place", "description": "Nice", "cost": "$50", "mapQuery": "place+near+me"},
-            {"name": "Spot B", "description": "Also nice", "cost": "$30"},
+            {
+                "name": "Place",
+                "description": "Nice",
+                "cost": "$50",
+                "mapQuery": "place+near+me",
+                "timestamp": 120,
+            },
+            {"name": "Spot B", "description": "Also nice", "cost": "$30", "timestamp": 300},
         ]
         result = assemble_spot_explorer({}, data, {}, None)
         assert result is not None
@@ -492,7 +516,7 @@ class TestFlexInfoGrid:
         assert result["items"][0]["value"] == "6.7-inch AMOLED"
 
     def test_title_code_description_shape(self):
-        """Items with {title, code, description} should normalize to {key=title, value=description}."""
+        """{title, code, description} items normalize to {key=title, value=description}."""
         data = [
             {
                 "title": "Enable extra usage",
@@ -647,6 +671,17 @@ class TestFlexInfoGrid:
         assert [i["value"] for i in result["items"]] == ["Has body", "", ""]
         assert result["items"][0]["key"] == "Real"
 
+    def test_falls_back_to_another_key_field_when_the_explicit_key_is_empty(self):
+        # Degrade, never drop: an empty `key` is not the only headline candidate.
+        data = [{"key": "", "value": "Two batches", "title": "Brown the meat"}]
+        result = assemble_info_grid({}, data, {}, None)
+        assert result["items"][0] == {"key": "Brown the meat", "value": "Two batches"}
+
+    def test_credits_row_keeps_its_timestamp(self):
+        data = [{"role": "Director", "name": "Christopher Nolan", "timestamp": 75}]
+        result = assemble_info_grid({}, data, {}, None)
+        assert result["items"][0]["timestamp"] == 75
+
     def test_drops_comparison_single_sided_rows_per_row(self):
         # Regression: previously a comparison with any one real-pair row kept
         # ALL rows including single-sided ones, which rendered as half-empty
@@ -695,7 +730,7 @@ class TestSpotExplorerEmptyFiltering:
         assert result is None
 
     def test_spot_with_only_name_is_dropped(self):
-        """A spot with just a name (no description or passthrough) renders as an empty card — drop it."""
+        """A name-only spot (no description or passthrough) renders as an empty card — drop it."""
         data = [
             {"name": "Has name only", "description": ""},
             {"name": "Also name only", "description": ""},
@@ -764,7 +799,7 @@ class TestSpotExplorerEmptyFiltering:
         assert result is None
 
     def test_travel_day_section_indices_stay_aligned_after_filter(self):
-        """When some day-spots are filtered, sections' spotIndices must re-align to the kept list."""
+        """When day-spots are filtered, sections' spotIndices must re-align to the kept list."""
         data = [
             {
                 "day": 1,
@@ -1086,7 +1121,7 @@ class TestMomentTrackClipDefaults:
         assert assemble_moment_track({}, [{"timestamp": 10}], {}, None) is None
 
     def test_label_from_title(self):
-        result = assemble_moment_track({}, [{"title": "Great moment"}], {}, None)
+        result = assemble_moment_track({}, [{"title": "Great moment", "seconds": 30}], {}, None)
         assert result["items"][0]["label"] == "Great moment"
 
     def test_seconds_from_timestamp(self):
@@ -1098,7 +1133,7 @@ class TestMomentTrackClipDefaults:
 
     def test_optional_fields_omitted_when_absent(self):
         """Optional fields (description, mood, ...) are dropped — not defaulted."""
-        result = assemble_moment_track({}, [{"label": "X"}], {}, None)
+        result = assemble_moment_track({}, [{"label": "X", "seconds": 30}], {}, None)
         item = result["items"][0]
         assert "description" not in item
         assert "mood" not in item

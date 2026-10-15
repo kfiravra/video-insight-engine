@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .derived_guard import stated_number, stated_rows
+from .derived_guard import stated_block_scalars, stated_number, stated_rows
 from .normalizers import (
     _CATEGORY_FRONTS,
     _DOMAIN_EMOJI,
@@ -213,6 +213,25 @@ def _collect_tips(extraction: dict | None, primary_tag: str, cap: int = 5) -> li
     return out
 
 
+def _domain_scalars(domain_data: dict) -> dict[str, Any]:
+    """The primary block's scalars and its dict children's, the first key winning.
+
+    Only what a reader may take as a fact (D13): a score, rating, tier, status,
+    duration or date passes only when its block is anchored, and a ``rating``
+    block passes nothing unanchored. S07's overview shipped the review's
+    unanchored score 9 / maxScore 10 / "Great" through this spread.
+    """
+    top_level = stated_block_scalars(domain_data)
+    scalars: dict[str, Any] = {}
+    for key, value in domain_data.items():
+        if key in top_level:
+            scalars.setdefault(key, top_level[key])
+        elif isinstance(value, dict):
+            for child_key, child_value in stated_block_scalars(value, key).items():
+                scalars.setdefault(child_key, child_value)
+    return scalars
+
+
 def assemble_overview(
     tab: dict,
     data: Any,
@@ -270,15 +289,8 @@ def assemble_overview(
 
     domain_data = extraction.get(primary_tag) if extraction else None
     if isinstance(domain_data, dict):
-        for key, value in domain_data.items():
-            if value is None or key in result:
-                continue
-            if isinstance(value, (str, int, float, bool)):
-                result[key] = value
-            elif isinstance(value, dict):
-                for k, v in value.items():
-                    if isinstance(v, (str, int, float, bool)) and v is not None and k not in result:
-                        result[k] = v
+        for key, value in _domain_scalars(domain_data).items():
+            result.setdefault(key, value)
 
     # Only the domain emoji was set — no real content to show.
     if set(result.keys()) <= {"emoji"}:
@@ -340,10 +352,10 @@ def assemble_lyrics_player(
                 else 999999
             )
             seg_lines = [
-                l
-                for l in lyric_lines
-                if l.get("timestamp") is not None
-                and seg_start <= int(l.get("timestamp") or 0) < next_start
+                line
+                for line in lyric_lines
+                if line.get("timestamp") is not None
+                and seg_start <= int(line.get("timestamp") or 0) < next_start
             ]
             sections.append(
                 {

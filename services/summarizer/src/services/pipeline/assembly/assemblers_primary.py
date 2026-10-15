@@ -180,23 +180,42 @@ def _is_real_comparison_pair(row: dict) -> bool:
 # the caller can route the data into info_grid / flash_deck instead.
 _MIN_COMPARISON_ROWS = 2
 # A competitor is "named" in its cell when one of its words (≥ this long —
-# skips "the", "vs", "II") appears there; otherwise the cell is prefixed.
+# skips "the", "vs", "II") appears there as a whole word, any case; a name with
+# no such word ("LG", "Mi 11") must appear whole. Otherwise the cell is prefixed.
 _COMPETITOR_WORD_MIN = 3
 
 
 def _competitor_names(rows: list[dict]) -> list[str]:
-    """Distinct non-empty `competitorName`s in row order."""
+    """Distinct non-empty `competitorName`s in row order; "Sony" and "sony" are one."""
     names: list[str] = []
+    seen: set[str] = set()
     for row in rows:
         name = str(row.get("competitorName") or "").strip()
-        if name and name not in names:
+        if name and name.casefold() not in seen:
+            seen.add(name.casefold())
             names.append(name)
     return names
 
 
+def _competitor_patterns(name: str) -> list[str]:
+    """What identifies the competitor in a cell: its long words, else its whole name."""
+    words = re.findall(r"\w+", name)
+    long_words = [re.escape(w) for w in words if len(w) >= _COMPETITOR_WORD_MIN]
+    if long_words or not words:
+        return long_words
+    return [r"\W+".join(re.escape(w) for w in words)]
+
+
 def _cell_names_competitor(cell: str, name: str) -> bool:
-    words = [w for w in re.findall(r"\w+", name) if len(w) >= _COMPETITOR_WORD_MIN]
-    return not words or any(w.lower() in cell.lower() for w in words)
+    """Whether the cell already says whose it is (whole words, any case).
+
+    A name with no word characters has nothing to look for, so it never
+    prefixes a cell.
+    """
+    patterns = _competitor_patterns(name)
+    if not patterns:
+        return True
+    return any(re.search(rf"\b{p}\b", cell, re.IGNORECASE) for p in patterns)
 
 
 def _name_competitor_cells(rows: list[dict], names: list[str]) -> list[dict]:
@@ -315,12 +334,15 @@ def assemble_info_grid(
     extraction: dict,
     enrichment: dict | None,
 ) -> dict | None:
-    """Normalize diverse list/dict shapes into InfoGridItem[].
+    """Normalize diverse list/dict shapes into InfoGridItem[] (`info_grid_items`).
 
-    Drops items that can't produce both a key and a value — they'd render as
-    empty cards. If every item is dropped, returns None so the orchestrator
-    can route the data through a fallback layer instead of shipping an empty
-    grid (the audited "8 empty cards" failure mode).
+    Every row needs a key — the card's headline. A key-only row ships as a
+    headline chip, a long bare string splits at its first sentence, and a
+    keyless tip is headlined by its own text with its `type` as a category
+    badge; each row keeps its emoji, evidence and timestamp. Only a row with
+    nothing to headline drops; when every row does, returns None so the
+    orchestrator can route the data through a fallback layer instead of
+    shipping an empty grid (the audited "8 empty cards" failure mode).
     """
     if isinstance(data, list) and len(data) >= 1:
         pairs = [p for p in (_normalize_info_grid_item(item) for item in data) if p is not None]
@@ -333,6 +355,21 @@ def assemble_info_grid(
         ]
         return {"items": pairs} if pairs else None
     return None
+
+
+# A display amount that only says the amount is unknown ("amount not stated")
+# is not an amount: the ingredient ships by its name alone (R10).
+_UNSTATED_AMOUNT = re.compile(
+    r"^(?:amount\s+)?(?:not\s+(?:stated|given|specified|mentioned|shown)"
+    r"|unspecified|unknown|n/?a)\.?$",
+    re.IGNORECASE,
+)
+
+
+def _display_amount(item: dict) -> str:
+    """The item's displayAmount, or '' when it only says the amount is unknown."""
+    shown = str(item.get("displayAmount", "")).strip()
+    return "" if _UNSTATED_AMOUNT.match(shown) else shown
 
 
 def assemble_checklist(
@@ -350,7 +387,7 @@ def assemble_checklist(
             items.append({"label": item})
         elif isinstance(item, dict):
             if "name" in item and ("amount" in item or "unit" in item or "displayAmount" in item):
-                da = str(item.get("displayAmount", "")).strip()
+                da = _display_amount(item)
                 if da:
                     items.append({"label": f"{da} {item['name']}", "note": item.get("notes")})
                 else:
