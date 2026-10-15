@@ -15,6 +15,7 @@ re-validates the result immediately afterward.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from .assemblers_overhaul import assemble_concept_canvas
@@ -44,25 +45,58 @@ COMPONENT_PROMOTIONS: dict[str, str] = {
 # as a canvas rather than a flat flashcard deck.
 _CONCEPT_DOMAINS: frozenset[str] = frozenset({"learning", "science"})
 
+# Domains whose steps are a procedure to follow along (Cooking / Build mode
+# depend on step_player): they never render as a canvas, however long (D8).
+STEP_LIST_DOMAINS: frozenset[str] = frozenset({"food", "project"})
+
+# A comparison cell that IS a number (optionally a currency/approx prefix and a
+# short unit): "4,422 mAh", "$249", "6.1 in", "48". A sentence that merely
+# contains a digit ("Sony WF-1000XM4", "AirPods Pro 2 — placed…") is not an
+# axis; scoring it invented radar shapes (0b.9, R10). Mirrors NUMERIC_CELL in
+# apps/web …/interactive/comparison/radar-scoring.ts.
+_NUMERIC_CELL = re.compile(r"^[$€£¥₪~≈<>]?\s*[-+]?\d[\d,]*(?:\.\d+)?\s*[A-Za-z%°µ/]{0,8}$")
+
+
+def _is_numeric_side(value: Any) -> bool:
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, (int, float)):
+        return True
+    return isinstance(value, str) and _NUMERIC_CELL.match(value.strip()) is not None
+
+
+def is_numeric_axis(row: Any) -> bool:
+    """A comparison row scores a radar axis only when both sides are numbers."""
+    return (
+        isinstance(row, dict)
+        and _is_numeric_side(row.get("thisProduct"))
+        and _is_numeric_side(row.get("competitor"))
+    )
+
 
 def _promote_comparison(props: dict) -> dict | None:
-    """comparison -> comparison_radar when there are enough scoreable axes.
+    """comparison -> comparison_radar when enough rows are numeric axes.
 
     `comparison_radar` shares the comparison data contract, so the props are
     forwarded unchanged; the renderer chooses the radar visualization.
     """
     rows = props.get("comparisons")
-    if isinstance(rows, list) and len(rows) >= RADAR_AXIS_THRESHOLD:
+    if not isinstance(rows, list):
+        return None
+    if sum(1 for row in rows if is_numeric_axis(row)) >= RADAR_AXIS_THRESHOLD:
         return props
     return None
 
 
-def _promote_step_player(props: dict) -> dict | None:
+def _promote_step_player(props: dict, domain: str) -> dict | None:
     """step_player -> step_flow_canvas for long procedures.
 
     Same data contract as step_player; the canvas renderer lays the steps out
     as a connected flow once the list is long enough to benefit from it.
+    Never for `STEP_LIST_DOMAINS`, whose steps are followed, not browsed.
     """
+    if domain in STEP_LIST_DOMAINS:
+        return None
     steps = props.get("steps")
     if isinstance(steps, list) and len(steps) >= STEP_FLOW_THRESHOLD:
         return props
@@ -170,11 +204,17 @@ def promote_component(
     always returns re-shaped, render-valid props for the new component, which
     is ``COMPONENT_PROMOTIONS[component]``.
     """
+    if component == "step_flow_canvas" and domain in STEP_LIST_DOMAINS:
+        # The planner may pick the canvas outright; the step list is the same
+        # contract, so the tab ships as step_player (Cooking / Build mode).
+        logger.info("[assembly] step_flow_canvas -> step_player: %s steps are followed", domain)
+        return "step_player", props
+
     new_props: dict | None = None
     if component == "comparison":
         new_props = _promote_comparison(props)
     elif component == "step_player":
-        new_props = _promote_step_player(props)
+        new_props = _promote_step_player(props, domain)
     elif component == "flash_deck":
         new_props = _promote_flash_deck(data, extraction, domain)
     elif component == "info_grid":

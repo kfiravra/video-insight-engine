@@ -5,7 +5,7 @@ import userEvent from '@testing-library/user-event';
 
 
 import { ComparisonInteractive } from '../ComparisonInteractive';
-import { scoreComparisonAxes } from '../comparison/radar-scoring';
+import { hasRadarAxes, scoreComparisonAxes } from '../comparison/radar-scoring';
 
 const comparisons = [
   { feature: 'Battery', thisProduct: '4000mAh', competitor: '3500mAh', competitorName: 'Brand X' },
@@ -115,19 +115,62 @@ describe('ComparisonInteractive', () => {
       const scored = scoreComparisonAxes([
         { feature: 'Battery', thisProduct: '4000', competitor: '2000', competitorName: 'X' },
       ]);
-      expect(scored[0].isNumeric).toBe(true);
       expect(scored[0].left).toBe(10);
       expect(scored[0].right).toBe(5);
     });
 
-    it('falls back to winner-based scoring for non-numeric sides', () => {
+    it('reads a unit-suffixed or currency-prefixed cell as a number', () => {
+      const scored = scoreComparisonAxes([
+        { feature: 'Battery', thisProduct: '4,422 mAh', competitor: '$2,211', competitorName: 'X' },
+      ]);
+      expect(scored[0].left).toBe(10);
+      expect(scored[0].right).toBe(5);
+    });
+
+    it('should not score a non-numeric row — no winner-based axis (R10)', () => {
       const scored = scoreComparisonAxes([
         { feature: 'Display', thisProduct: 'OLED', competitor: 'LCD', competitorName: 'X', winner: 'left' },
       ]);
-      expect(scored[0].isNumeric).toBe(false);
-      expect(scored[0].left).toBe(8);
-      expect(scored[0].right).toBe(5);
+      expect(scored).toEqual([]);
     });
+
+    it('should not read a sentence that merely contains a digit as an axis', () => {
+      const scored = scoreComparisonAxes([
+        {
+          feature: 'Noise cancellation (ranking)',
+          thisProduct: 'AirPods Pro 2 — placed on the same level',
+          competitor: "Sony WF-1000XM4 (said as 'Sony Mark 4')",
+          competitorName: 'Sony WF-1000XM4',
+          winner: 'tie',
+        },
+      ]);
+      expect(scored).toEqual([]);
+    });
+  });
+
+  describe('hasRadarAxes', () => {
+    it('should hide the radar when fewer than 3 rows are numeric on both sides', () => {
+      const rows = [
+        ...comparisons,
+        { feature: 'Weight', thisProduct: '187 g', competitor: '227 g', competitorName: 'Brand X' },
+        { feature: 'Price', thisProduct: '$249', competitor: 'about the same', competitorName: 'Brand X' },
+      ];
+      expect(hasRadarAxes(rows)).toBe(false);
+    });
+
+    it('should show the radar with 3 numeric axes among prose rows', () => {
+      expect(hasRadarAxes([...radarRows, ...comparisons])).toBe(true);
+    });
+  });
+
+  it('should NOT show the radar hero for prose rows even with >=3 of them', () => {
+    const proseRows = [
+      { feature: 'ANC', thisProduct: 'AirPods Pro 2 — placed right below', competitor: 'Bose QC II — ranked just above', competitorName: 'Bose', winner: 'right' as const },
+      { feature: 'Transparency', thisProduct: 'on a level by itself', competitor: 'Boses, Samsungs and Pixel Buds', competitorName: 'Bose', winner: 'left' as const },
+      { feature: 'Overall', thisProduct: 'significant upgrade', competitor: "Samsung's buds are really good", competitorName: 'Samsung', winner: 'tie' as const },
+    ];
+    render(<ComparisonInteractive comparisons={proseRows} view="radar" />);
+    expect(screen.queryByTestId('comparison-radar-winner-badge')).not.toBeInTheDocument();
   });
 
   it('should NOT render ReviewSummary when verdict.bottomLine is empty/undefined', () => {

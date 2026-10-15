@@ -9,8 +9,10 @@ from src.services.pipeline.assembly import (
 
 
 def _comparison_rows(n: int) -> list[dict]:
+    # Numeric on both sides — the radar scores only numeric axes (0b.9).
     return [
-        {"feature": f"Spec {i}", "thisProduct": f"A{i}", "competitor": f"B{i}"} for i in range(n)
+        {"feature": f"Spec {i}", "thisProduct": f"{i + 1} GB", "competitor": f"{i + 2} GB"}
+        for i in range(n)
     ]
 
 
@@ -52,14 +54,15 @@ class TestPromoteComparison:
 
 
 class TestPromoteStepPlayer:
+    # Domain is "tech": food/project steps never become a canvas (0b.9, D8).
     def test_promotes_at_threshold(self):
         props = {"steps": _steps(STEP_FLOW_THRESHOLD)}
-        component, _ = promote_component("step_player", props, None, {}, "food")
+        component, _ = promote_component("step_player", props, None, {}, "tech")
         assert component == "step_flow_canvas"
 
     def test_no_promotion_for_short_procedure(self):
         props = {"steps": _steps(STEP_FLOW_THRESHOLD - 1)}
-        component, _ = promote_component("step_player", props, None, {}, "food")
+        component, _ = promote_component("step_player", props, None, {}, "tech")
         assert component == "step_player"
 
 

@@ -10,15 +10,24 @@ export interface AxisScore {
   feature: string;
   left: number;
   right: number;
-  /** Whether scores came from numeric extraction (vs winner-based fallback). */
-  isNumeric: boolean;
 }
 
-function parseNumeric(value: string | undefined): number | null {
-  if (!value) return null;
-  const match = value.match(/-?\d+(?:\.\d+)?/);
+/**
+ * A cell that IS a number — an optional currency/approx prefix, the number,
+ * an optional short unit: "4,422 mAh", "$249", "6.1 in", "48". A sentence that
+ * merely contains a digit ("Sony WF-1000XM4", "AirPods Pro 2 — placed…") is
+ * not an axis. Mirrors `_NUMERIC_CELL` in the summarizer's assembly/promotion.py.
+ */
+const NUMERIC_CELL = /^[$€£¥₪~≈<>]?\s*[-+]?\d[\d,]*(?:\.\d+)?\s*[A-Za-z%°µ/]{0,8}$/;
+const NUMBER_TOKEN = /[-+]?\d[\d,]*(?:\.\d+)?/;
+
+function parseNumeric(value: string | number | undefined): number | null {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  const text = value?.trim();
+  if (!text || !NUMERIC_CELL.test(text)) return null;
+  const match = text.match(NUMBER_TOKEN);
   if (!match) return null;
-  const n = Number(match[0]);
+  const n = Number(match[0].replace(/,/g, ''));
   return Number.isFinite(n) ? n : null;
 }
 
@@ -30,30 +39,28 @@ function clamp01(n: number): number {
 }
 
 /**
- * Normalises a comparison row to a pair of 0–10 scores per side. Numeric
- * sides scale so the larger is 10; otherwise winner-based fallback
- * (left=8/right=5 or flipped, tie=6/6). Exported for unit testing.
+ * The numeric axes of a comparison: rows whose BOTH sides are numbers, scaled
+ * so the larger side is 10. Rows without numbers on both sides are not axes —
+ * a radar spoke was never invented from `winner` (output-quality R10).
+ * Exported for unit testing.
  */
 export function scoreComparisonAxes(comparisons: ReviewComparison[]): AxisScore[] {
-  return comparisons.map((row) => {
+  const axes: AxisScore[] = [];
+  for (const row of comparisons) {
     const left = parseNumeric(row.thisProduct);
     const right = parseNumeric(row.competitor);
-    if (left != null && right != null) {
-      const max = Math.max(Math.abs(left), Math.abs(right), 1);
-      return {
-        feature: row.feature,
-        left: clamp01(left / max) * MAX_SCORE,
-        right: clamp01(right / max) * MAX_SCORE,
-        isNumeric: true,
-      };
-    }
-    if (row.winner === 'left') return { feature: row.feature, left: 8, right: 5, isNumeric: false };
-    if (row.winner === 'right') return { feature: row.feature, left: 5, right: 8, isNumeric: false };
-    return { feature: row.feature, left: 6, right: 6, isNumeric: false };
-  });
+    if (left == null || right == null) continue;
+    const max = Math.max(Math.abs(left), Math.abs(right), 1);
+    axes.push({
+      feature: row.feature,
+      left: clamp01(left / max) * MAX_SCORE,
+      right: clamp01(right / max) * MAX_SCORE,
+    });
+  }
+  return axes;
 }
 
-/** Scoreable axes = comparison rows; radar degenerates below 3 spokes. */
+/** The radar needs ≥3 numeric axes; it degenerates below 3 spokes and lies without numbers. */
 export function hasRadarAxes(comparisons: ReviewComparison[]): boolean {
-  return comparisons.length >= RADAR_MIN_AXES;
+  return scoreComparisonAxes(comparisons).length >= RADAR_MIN_AXES;
 }

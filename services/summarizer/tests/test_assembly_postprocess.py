@@ -32,8 +32,8 @@ class TestPostProcessing:
         )
         assert result["cards"][1]["front"] == "Real Concept"
 
-    def test_comparison_synthesizes_pros_cons(self):
-        """Sprint 0.6: empty pros/cons get synthesized from winner fields."""
+    def test_comparison_never_synthesizes_pros_cons(self):
+        """0b.9 (R10): empty pros/cons stay empty — never derived from winner fields."""
         data = {
             "pros": [],
             "cons": [],
@@ -54,10 +54,8 @@ class TestPostProcessing:
         }
         result = assemble_comparison({}, data, {}, None)
         assert result is not None
-        assert len(result["pros"]) >= 1
-        assert "Camera" in result["pros"]
-        assert len(result["cons"]) >= 1
-        assert "Price" in result["cons"]
+        assert result["pros"] == []
+        assert result["cons"] == []
 
     def test_flash_deck_max_one_guardrail(self):
         """Sprint 0: assembly keeps only the first flash_deck tab."""

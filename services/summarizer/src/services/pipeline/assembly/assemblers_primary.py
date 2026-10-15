@@ -13,7 +13,6 @@ import re
 from typing import Any
 
 from .normalizers import (
-    _first_competitor_name,
     _normalize_code_snippet,
     _normalize_comparison,
     _normalize_step,
@@ -167,6 +166,43 @@ def _is_real_comparison_pair(row: dict) -> bool:
 # audited "comparison with one row" failure mode — fall through to None so
 # the caller can route the data into info_grid / flash_deck instead.
 _MIN_COMPARISON_ROWS = 2
+# A competitor is "named" in its cell when one of its words (≥ this long —
+# skips "the", "vs", "II") appears there; otherwise the cell is prefixed.
+_COMPETITOR_WORD_MIN = 3
+
+
+def _competitor_names(rows: list[dict]) -> list[str]:
+    """Distinct non-empty `competitorName`s in row order."""
+    names: list[str] = []
+    for row in rows:
+        name = str(row.get("competitorName") or "").strip()
+        if name and name not in names:
+            names.append(name)
+    return names
+
+
+def _cell_names_competitor(cell: str, name: str) -> bool:
+    words = [w for w in re.findall(r"\w+", name) if len(w) >= _COMPETITOR_WORD_MIN]
+    return not words or any(w.lower() in cell.lower() for w in words)
+
+
+def _name_competitor_cells(rows: list[dict], names: list[str]) -> list[dict]:
+    """With several competitors, each competitor cell says whose it is.
+
+    The two-column renderer heads the right column with every competitor, so
+    a cell that does not mention its own competitor is prefixed with the
+    extraction's `competitorName` (never a label the assembler made up).
+    """
+    if len(names) < 2:
+        return rows
+    named: list[dict] = []
+    for row in rows:
+        name = str(row.get("competitorName") or "").strip()
+        cell = row.get("competitor")
+        if name and isinstance(cell, str) and not _cell_names_competitor(cell, name):
+            row = {**row, "competitor": f"{name} — {cell}"}
+        named.append(row)
+    return named
 
 
 def assemble_comparison(
@@ -184,7 +220,9 @@ def assemble_comparison(
     info_grid or flash_deck via the fallback layer instead.
 
     The leftLabel/rightLabel are only set when the data is actually a product
-    review with an explicit competitor — never from the video title.
+    review with an explicit competitor — never from the video title. The right
+    column keeps one name per competitor, and pros/cons come only from the
+    review's own `pros`/`cons` — never derived from `winner` (0b.9, R10).
     """
     review_data = extraction.get("review") if isinstance(extraction, dict) else None
     product_name: str | None = None
@@ -211,35 +249,20 @@ def assemble_comparison(
 
     rows = [r for r in rows if str(r.get("feature") or "").strip() and _is_real_comparison_pair(r)]
 
-    # When the LLM tagged winners on real-pair rows but didn't emit pros/cons
-    # explicitly, derive them from the winner field. Keeps the "Go for it /
-    # Skip it" recommendation section populated on review tabs that focus on
-    # the table rather than separately listing pros and cons.
-    if rows and not pros and not cons:
-        for row in rows:
-            feature = str(row.get("feature") or "").strip()
-            if not feature:
-                continue
-            winner = str(row.get("winner") or "").strip().lower()
-            if winner == "left":
-                pros.append(feature)
-            elif winner == "right":
-                cons.append(feature)
-
     # Enforce the documented contract: a comparison tab needs either ≥2 real
     # pairs OR a populated pros/cons set. A lone row with no pros/cons is the
     # "info_grid in disguise" failure mode the refactor was supposed to close.
     if len(rows) < _MIN_COMPARISON_ROWS and not pros and not cons:
         return None
 
-    competitor_name = _first_competitor_name(rows) if rows else ""
+    names = _competitor_names(rows)
 
     props: dict[str, Any] = {
         "pros": pros,
         "cons": cons,
-        "comparisons": rows,
+        "comparisons": _name_competitor_cells(rows, names),
         "leftLabel": product_name or "",
-        "rightLabel": competitor_name,
+        "rightLabel": " · ".join(names),
     }
 
     # Verdict header data is folded into ComparisonInteractive — when the

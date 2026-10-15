@@ -1114,14 +1114,15 @@ class TestComparisonNullHandling:
             "cons": None,
             "comparisons": [
                 {"feature": "Speed", "thisProduct": "Fast", "competitor": "Slow", "winner": "left"},
+                {"feature": "Price", "thisProduct": "$9", "competitor": "$12", "winner": "left"},
             ],
         }
         result = assemble_comparison({}, data, {}, None)
         assert result is not None
         assert isinstance(result["pros"], list)
         assert isinstance(result["cons"], list)
-        # Winner synthesis still works
-        assert "Speed" in result["pros"]
+        # 0b.9: pros/cons are never derived from `winner`.
+        assert result["pros"] == []
 
     def test_null_comparisons_handled(self):
         data = {"pros": ["Good"], "cons": ["Bad"], "comparisons": None}
