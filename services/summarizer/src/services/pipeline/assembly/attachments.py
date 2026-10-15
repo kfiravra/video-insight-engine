@@ -15,6 +15,7 @@ attachment is dropped rather than shipped empty.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from src.shared_config.domain_config import quiz_policy
@@ -49,6 +50,26 @@ _ITEM_BODY_KEYS = ("description", "detail", "definition", "summary", "explanatio
 # Attachments built from response-global data: ONE of each per response, or
 # every tab repeats the identical payload.
 ONCE_PER_RESPONSE = frozenset({"frame_strip", "quick_quiz", "tip_callout"})
+
+# stat_banner (C8): the answer tab carries a numbers strip when the key points
+# hold at least this many figures with a timestamp; at most _STAT_BANNER_MAX
+# tiles so it stays a strip, not a wall.
+_STAT_BANNER_MIN = 5
+_STAT_BANNER_MAX = 8
+# The tile label is the FE's small-caps line above the value; the full meaning
+# travels alongside it in ``meaning``.
+_STAT_LABEL_MAX_CHARS = 56
+# A figure as a speaker says one: "150,000", "$20 million", "99%", "1,000x",
+# "0.5 MB", "3:33", "20 months". A letter or digit glued to the end ("1950s",
+# "v2.5", "x86") is not a figure.
+_NUMBER_RE = re.compile(
+    r"(?<![\w.])"
+    r"(?P<figure>[$€£]?\d[\d,]*(?:\.\d+)?(?::\d{2})?"
+    r"(?:\s?(?:%|x|×|percent|thousand|million|billion|trillion)"
+    r"|\s(?:MB|GB|KB|TB|ms|seconds?|minutes?|hours?|days?|weeks?|months?|years?|lines?|apps?))?)"
+    r"(?![\w])",
+    re.IGNORECASE,
+)
 
 # Component → the props key holding its primary item list. Mirrors the frontend
 # COUNT_PROP_BY_COMPONENT so "how many items does this tab show" is consistent.
@@ -215,6 +236,72 @@ def _same_line(a: str | None, b: str | None) -> bool:
     return a.strip().rstrip(".!").casefold() == b.strip().rstrip(".!").casefold()
 
 
+def _stat_value(title: str) -> str | None:
+    """The headline figure in a key-point title: a figure with a unit, suffix
+    or currency beats a bare number, a multi-digit number beats a single digit,
+    and the earliest wins a tie. None when the title holds no figure."""
+    best: tuple[int, int, str] | None = None
+    for index, match in enumerate(_NUMBER_RE.finditer(title)):
+        figure = match.group("figure")
+        digits = sum(ch.isdigit() for ch in figure)
+        score = (2 if not figure.rstrip().isdigit() else 0) + (1 if digits >= 2 else 0)
+        if best is None or score > best[0]:
+            best = (score, index, figure)
+    return best[2] if best else None
+
+
+def _stat_timestamp(value: Any) -> int | None:
+    """Seconds as the extraction stamps them; None for anything that cannot seek."""
+    if isinstance(value, bool) or not isinstance(value, int | float) or value < 0:
+        return None
+    return int(value)
+
+
+def _key_points(extraction: dict | None, domain: str) -> list[dict]:
+    """The first ``keyPoints`` list in the extraction, primary domain first."""
+    if not isinstance(extraction, dict):
+        return []
+    ordered = [extraction.get(domain), *(v for k, v in extraction.items() if k != domain)]
+    for domain_data in ordered:
+        points = domain_data.get("keyPoints") if isinstance(domain_data, dict) else None
+        if isinstance(points, list) and points:
+            return [kp for kp in points if isinstance(kp, dict)]
+    return []
+
+
+def _stat_banner_attachment(extraction: dict | None, domain: str) -> dict | None:
+    """Build the answer tab's numbers strip (C8) from the numeric key points:
+    ``{label, value, emoji?, meaning, timestamp}`` per tile, where ``label`` +
+    ``value`` are what StatBanner renders and ``meaning`` + ``timestamp`` ride
+    along (the FE schema passes extra keys through). Built here, not via the
+    registered assembler, because that one keeps only label/value/emoji and
+    the timestamp is the point (R2). None below _STAT_BANNER_MIN figures."""
+    from .core import _validate_assembled_props  # local import avoids cycle
+
+    stats: list[dict[str, Any]] = []
+    for point in _key_points(extraction, domain):
+        title = str(point.get("title") or "").strip()
+        value = _stat_value(title) if title else None
+        timestamp = _stat_timestamp(point.get("timestamp"))
+        if value is None or timestamp is None:
+            continue
+        stat: dict[str, Any] = {
+            "label": truncate_words(title, _STAT_LABEL_MAX_CHARS),
+            "value": value,
+            "meaning": title,
+            "timestamp": timestamp,
+        }
+        if isinstance(point.get("emoji"), str) and point["emoji"].strip():
+            stat["emoji"] = point["emoji"].strip()
+        stats.append(stat)
+    if len(stats) < _STAT_BANNER_MIN:
+        return None
+    props = {"stats": stats[:_STAT_BANNER_MAX]}
+    if not _validate_assembled_props("stat_banner", props):
+        return None
+    return {"slot": "bottom", "component": "stat_banner", "props": props, "size": "strip"}
+
+
 def _summary_header_attachment(
     tab: dict, extraction: dict | None, domain: str, is_answer_tab: bool
 ) -> dict | None:
@@ -251,7 +338,9 @@ def attach_secondaries(
     trying frame_strip → quick_quiz → tip_callout in priority order. Dense tab
     (≥ _DENSE_THRESHOLD items): add a top summary_header carrying content (the
     extraction summary on the answer tab, else the first item). Tabs in
-    between get nothing. Returns a (possibly empty) list of attachment dicts.
+    between get nothing. The answer tab additionally carries a bottom
+    stat_banner when the key points hold enough figures (C8), whatever its
+    size. Returns a (possibly empty) list of attachment dicts.
 
     frame_strip/quick_quiz/tip_callout are built from response-global data, so
     repeating one across tabs shows the identical payload N times — the caller
@@ -272,21 +361,9 @@ def attach_secondaries(
     attachments: list[dict] = []
 
     if count <= SPARSE_THRESHOLD:
-        attachment = None
-        if (
-            "frame_strip" not in excluded_kinds
-            and component not in _NO_FRAME_STRIP_COMPONENTS
-            and domain not in _NO_FRAME_STRIP_DOMAINS
-        ):
-            attachment = _frame_strip_attachment(frames)
-        if (
-            attachment is None
-            and "quick_quiz" not in excluded_kinds
-            and can_host_quick_quiz(component)
-        ):
-            attachment = _quick_quiz_attachment(enrichment)
-        if attachment is None and "tip_callout" not in excluded_kinds:
-            attachment = _tip_callout_attachment(extraction, domain)
+        attachment = _sparse_enrichment(
+            component, extraction, enrichment, frames, domain, excluded_kinds
+        )
         if attachment is not None:
             attachments.append(attachment)
 
@@ -295,7 +372,36 @@ def attach_secondaries(
         if header is not None:
             attachments.append(header)
 
+    if is_answer_tab:
+        banner = _stat_banner_attachment(extraction, domain)
+        if banner is not None:
+            attachments.append(banner)
+
     return attachments
+
+
+def _sparse_enrichment(
+    component: str,
+    extraction: dict | None,
+    enrichment: dict | None,
+    frames: list[dict] | None,
+    domain: str,
+    excluded_kinds: set[str] | frozenset[str],
+) -> dict | None:
+    """ONE enriching bottom attachment for a sparse tab: frame_strip →
+    quick_quiz → tip_callout, skipping kinds the response already used."""
+    attachment = None
+    if (
+        "frame_strip" not in excluded_kinds
+        and component not in _NO_FRAME_STRIP_COMPONENTS
+        and domain not in _NO_FRAME_STRIP_DOMAINS
+    ):
+        attachment = _frame_strip_attachment(frames)
+    if attachment is None and "quick_quiz" not in excluded_kinds and can_host_quick_quiz(component):
+        attachment = _quick_quiz_attachment(enrichment)
+    if attachment is None and "tip_callout" not in excluded_kinds:
+        attachment = _tip_callout_attachment(extraction, domain)
+    return attachment
 
 
 def attach_response_secondaries(
