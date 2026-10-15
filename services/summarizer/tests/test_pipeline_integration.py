@@ -405,7 +405,7 @@ class TestPipelineEdgeCases:
         complete = next(e for e in events if e["event"] == "extraction_complete")
         fitness_data = complete["data"]["fitness"]
         assert fitness_data["meta"]["type"] == "general"
-        assert fitness_data["meta"]["difficulty"] == "intermediate"
+        assert fitness_data["meta"]["difficulty"] is None
 
     async def test_extraction_with_null_fields_in_review(self, mock_llm):
         """Test extraction handles LLM returning null for review rating fields."""
@@ -427,7 +427,7 @@ class TestPipelineEdgeCases:
         review_data = complete["data"]["review"]
         assert review_data["rating"]["score"] == 0.0
         assert review_data["rating"]["maxScore"] == 10.0
-        assert review_data["verdict"]["badge"] == "recommended"
+        assert review_data["verdict"]["badge"] is None
 
     async def test_synthesis_handles_truncated_extraction(self, mock_llm):
         """Test synthesis works with very large extraction data."""

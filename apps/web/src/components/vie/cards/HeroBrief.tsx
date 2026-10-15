@@ -1,4 +1,4 @@
-import { memo, useCallback, useState } from 'react';
+import { memo, useCallback, useId, useState } from 'react';
 import { useLabels } from '@/lib/i18n';
 import { Button } from '@/components/ui/button';
 import { CollapsibleSection } from './CollapsibleSection';
@@ -36,6 +36,7 @@ export const HeroBrief = memo(function HeroBrief({ masterSummary, keyQuestion, i
   }, [isPhone]);
   // Open ≠ unrolled: the brief shows five lines until the reader asks for all.
   const [expanded, setExpanded] = useState(false);
+  const textId = useId();
 
   const paragraphs = briefParagraphs(masterSummary);
   if (paragraphs.length === 0) return null;
@@ -48,16 +49,20 @@ export const HeroBrief = memo(function HeroBrief({ masterSummary, keyQuestion, i
       <CollapsibleSection baseId="vie-hero-brief" label={t.brief} open={open} onToggle={toggle}>
         <div className="max-w-[68ch] space-y-2.5 text-sm leading-relaxed text-foreground/80 text-pretty">
           {keyQuestion && <p className="font-medium text-foreground/90">{keyQuestion}</p>}
-          {clamps && !expanded ? (
-            <p className="line-clamp-5">{joined}</p>
-          ) : (
-            paragraphs.map((paragraph, i) => <p key={i}>{paragraph}</p>)
-          )}
+          <div id={textId} className="space-y-2.5">
+            {clamps && !expanded ? (
+              <p className="line-clamp-5">{joined}</p>
+            ) : (
+              paragraphs.map((paragraph, i) => <p key={i}>{paragraph}</p>)
+            )}
+          </div>
           {clamps && (
             <Button
               variant="ghost"
               size="bare"
               onClick={() => setExpanded(!expanded)}
+              aria-expanded={expanded}
+              aria-controls={textId}
               aria-label={expanded ? t.hideBrief : undefined}
               className="text-xs font-medium text-[var(--vie-accent)] hover:underline"
             >

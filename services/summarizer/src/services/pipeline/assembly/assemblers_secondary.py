@@ -232,6 +232,9 @@ def _normalize_claim(item: Any) -> dict | None:
     Drops the row when there is no claim text. status defaults to "context"
     (the safe, non-asserting default) when the LLM omits or supplies an
     unknown value — we never silently upgrade an unverified claim to verified.
+    ``source`` is who the video says made the claim; unattributed, it is ""
+    (ClaimsTracker then prints no "Claimed by" line), never an invented
+    "Reporter". The key stays because the FE schema requires a string.
     """
     if not isinstance(item, dict):
         return None
@@ -245,7 +248,7 @@ def _normalize_claim(item: Any) -> dict | None:
         status = "context"
     result: dict[str, Any] = {
         "claim": claim,
-        "source": str(item.get("source") or item.get("speaker") or "Reporter").strip(),
+        "source": str(item.get("source") or item.get("speaker") or "").strip(),
         "status": status,
     }
     citation = item.get("sourceCitation") or item.get("citation")

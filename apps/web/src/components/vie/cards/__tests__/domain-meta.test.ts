@@ -40,6 +40,22 @@ describe('trueCountLabel', () => {
   it('should replace the count in a Hebrew label', () => {
     expect(trueCountLabel('12 רגעים מרכזיים', 7)).toBe('7 רגעים מרכזיים');
   });
+
+  it('should leave a measure verbatim when a unit follows the number', () => {
+    expect(trueCountLabel('7 Days in Tokyo', 21)).toBe('7 Days in Tokyo');
+  });
+
+  it('should leave a measure verbatim when the shipped count is unknown', () => {
+    expect(trueCountLabel('10 Minute Abs', undefined)).toBe('10 Minute Abs');
+  });
+
+  it('should recognise a unit whatever its case', () => {
+    expect(trueCountLabel('3 COURSE Meal', 5)).toBe('3 COURSE Meal');
+  });
+
+  it('should still rewrite a count whose word only starts like a unit', () => {
+    expect(trueCountLabel('8 Secrets of Sleep', 5)).toBe('5 Secrets of Sleep');
+  });
 });
 
 describe('hasLeadingCount / stripCountPrefix', () => {
@@ -49,6 +65,11 @@ describe('hasLeadingCount / stripCountPrefix', () => {
     expect(hasLeadingCount('5-Star Recipe')).toBe(false);
     expect(stripCountPrefix('5-Star Recipe')).toBe('5-Star Recipe');
     expect(stripCountPrefix('1.5 cups')).toBe('1.5 cups');
+  });
+
+  it('should agree that a measure is not a count claim', () => {
+    expect(hasLeadingCount('10 Minute Abs')).toBe(false);
+    expect(stripCountPrefix('10 Minute Abs')).toBe('10 Minute Abs');
   });
 });
 

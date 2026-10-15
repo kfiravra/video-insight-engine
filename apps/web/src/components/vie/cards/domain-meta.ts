@@ -23,34 +23,51 @@ export const DOMAIN_META: Record<string, { emoji: string; label: string }> = {
   sport: { emoji: '⚽', label: 'Sport' },
 };
 
-/** A planner label's leading count: one to three digits followed by
+/** A planner label's leading number: one to three digits followed by
  *  whitespace and a letter in any script ("9 Core Arguments", "12 רגעים").
- *  Hyphenated forms ("7-Minute Workout", "6-Step Factory") are names or
- *  durations and four-digit numbers ("2024 Review") are years — neither is a
- *  count, so neither matches. Shared with `stripCountPrefix` (the enter-mode
- *  context labels) so the app has exactly one notion of a count claim. */
-export const LEADING_COUNT = /^\d{1,3}\s+(?=\p{L})/u;
+ *  The match is the number and its whitespace; the word after it is captured
+ *  (inside the lookahead) for the measure check. Hyphenated forms
+ *  ("7-Minute Workout", "6-Step Factory") are names or durations and
+ *  four-digit numbers ("2024 Review") are years — neither matches. */
+const LEADING_COUNT = /^\d{1,3}\s+(?=(\p{L}+))/u;
 
-/** Whether a label opens with a count claim (`LEADING_COUNT`). */
+/** Units that make a leading number a measure, not a count: "7 Days in
+ *  Tokyo", "10 Minute Abs" and "3 Course Meal" say how long or how much, not
+ *  how many items the tab ships, so they are never rewritten. Compared with
+ *  the whole next word, case-insensitively. One list with the summarizer
+ *  (assembly/labels.py `_MEASURE_UNITS`) and the output-quality tools —
+ *  change them together. */
+const MEASURE_UNITS: ReadonlySet<string> = new Set([
+  'second', 'seconds', 'sec', 'secs', 'minute', 'minutes', 'min', 'mins',
+  'hour', 'hours', 'hr', 'hrs', 'day', 'days', 'night', 'nights',
+  'week', 'weeks', 'month', 'months', 'year', 'years', 'course', 'courses',
+  'km', 'mile', 'miles', 'kg', 'lb', 'lbs', 'pound', 'pounds', 'percent',
+]);
+
+/** Whether a label opens with a count claim: a leading number
+ *  (`LEADING_COUNT`) whose next word is not a unit (`MEASURE_UNITS`). The
+ *  app's one notion of a count claim — `stripCountPrefix` (the enter-mode
+ *  context labels) and `trueCountLabel` follow it. */
 export function hasLeadingCount(label: string): boolean {
-  return LEADING_COUNT.test(label);
+  const word = LEADING_COUNT.exec(label)?.[1];
+  return word !== undefined && !MEASURE_UNITS.has(word.toLowerCase());
 }
 
 /** Strip an assembler-produced count prefix ("8 Steps" → "Steps"). Returns
- *  the label unchanged when it carries no count, so callers can fall back to
- *  a default. */
+ *  the label unchanged when it carries no count claim (a measure such as
+ *  "10 Minute Abs" included), so callers can fall back to a default. */
 export function stripCountPrefix(label: string): string {
-  return label.replace(LEADING_COUNT, '');
+  return hasLeadingCount(label) ? label.replace(LEADING_COUNT, '') : label;
 }
 
 /** Counts are true (R3, D7): the planner writes labels like "9 Core Arguments"
  *  before extraction, so the number is a guess. Replace it with the count the
  *  tab actually ships; when the count is unknown, drop the number rather than
- *  keep a lie. Labels without a leading count (including hyphenated names
- *  and years) are returned verbatim. */
+ *  keep a lie. Labels without a count claim (hyphenated names, years and
+ *  measures) are returned verbatim. */
 export function trueCountLabel(label: string, count: number | undefined): string {
   if (!hasLeadingCount(label)) return label;
-  const rest = stripCountPrefix(label);
+  const rest = label.replace(LEADING_COUNT, '');
   return count !== undefined ? `${count} ${rest}` : rest;
 }
 

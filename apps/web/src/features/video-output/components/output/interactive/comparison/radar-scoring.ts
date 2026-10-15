@@ -10,6 +10,8 @@ export interface AxisScore {
   feature: string;
   left: number;
   right: number;
+  /** Scored inverted: the smaller value is the better one (price, weight). */
+  lowerIsBetter: boolean;
 }
 
 /**
@@ -45,10 +47,24 @@ function clamp01(n: number): number {
 }
 
 /**
+ * A row where less is better (price, weight, latency) — read from the stated
+ * `winner`, never guessed from the feature name: the winner holds the smaller
+ * value. A tie, an unstated winner or a winner holding the larger value keeps
+ * the bigger-is-better reading.
+ */
+function isLowerBetter(row: ReviewComparison, left: number, right: number): boolean {
+  if (row.winner === 'left') return left < right;
+  if (row.winner === 'right') return right < left;
+  return false;
+}
+
+/**
  * The numeric axes of a comparison: rows whose BOTH sides are numbers, scaled
- * so the larger side is 10. Rows without numbers on both sides are not axes —
- * a radar spoke was never invented from `winner` (output-quality R10).
- * Exported for unit testing.
+ * so the better side is 10 — the larger side, or the smaller one on a
+ * lower-is-better row, where the two scores swap so the radar and its
+ * weighted verdict crown the stated winner (the cheaper or lighter product).
+ * Rows without numbers on both sides are not axes — a radar spoke was never
+ * invented from `winner` (output-quality R10). Exported for unit testing.
  */
 export function scoreComparisonAxes(comparisons: ReviewComparison[]): AxisScore[] {
   const axes: AxisScore[] = [];
@@ -57,10 +73,14 @@ export function scoreComparisonAxes(comparisons: ReviewComparison[]): AxisScore[
     const right = parseNumeric(row.competitor);
     if (left == null || right == null) continue;
     const max = Math.max(Math.abs(left), Math.abs(right), 1);
+    const leftScore = clamp01(left / max) * MAX_SCORE;
+    const rightScore = clamp01(right / max) * MAX_SCORE;
+    const lowerIsBetter = isLowerBetter(row, left, right);
     axes.push({
       feature: row.feature,
-      left: clamp01(left / max) * MAX_SCORE,
-      right: clamp01(right / max) * MAX_SCORE,
+      left: lowerIsBetter ? rightScore : leftScore,
+      right: lowerIsBetter ? leftScore : rightScore,
+      lowerIsBetter,
     });
   }
   return axes;

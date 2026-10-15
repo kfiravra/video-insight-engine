@@ -1,4 +1,4 @@
-import { memo, type ReactNode } from 'react';
+import { memo, useMemo, type ReactNode } from 'react';
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -7,6 +7,7 @@ import {
   MiniMap,
   type ColorMode,
   type Edge,
+  type FitViewOptions,
   type Node,
   type ReactFlowProps,
 } from '@xyflow/react';
@@ -36,6 +37,26 @@ function clampMinZoom(nodeWidth: number | undefined, requested: number): number 
   return Math.max(requested, MIN_NODE_PX / nodeWidth);
 }
 
+// ─── Opening view ───
+
+/** Closest an opening view zooms in: start nodes show at their design size, never blown up. */
+const START_MAX_ZOOM = 1;
+
+/**
+ * `fitView` options that open the canvas on its start nodes instead of the
+ * whole graph: fitting everything centres a long graph at the zoom floor, so
+ * the view opened mid-procedure. Only `maxZoom` is set — the floor stays
+ * `clampMinZoom`'s, so start nodes keep the ≥ `MIN_NODE_PX` legibility.
+ * Consumer options win key by key; without start nodes they pass through.
+ */
+function startFitViewOptions<NodeType extends Node>(
+  startNodeIds: readonly string[] | undefined,
+  fitViewOptions: FitViewOptions<NodeType> | undefined,
+): FitViewOptions<NodeType> | undefined {
+  if (!startNodeIds?.length) return fitViewOptions;
+  return { nodes: startNodeIds.map((id) => ({ id })), maxZoom: START_MAX_ZOOM, ...fitViewOptions };
+}
+
 // ─── Canvas ───
 
 export interface VieCanvasProps<
@@ -52,6 +73,10 @@ export interface VieCanvasProps<
   /** Design width of the consumer's narrowest node card, in px — opts in to
    *  the zoom floor that keeps it legible. Omit it and `minZoom` is used as is. */
   nodeWidth?: number;
+  /** Ids of the nodes the view opens on — the start of the graph (first
+   *  steps, first lane), framed at ≤ 100 % zoom. Omit to fit the whole graph.
+   *  Pass a stable (memoised) array: React Flow re-reads changed options. */
+  startNodeIds?: readonly string[];
 }
 
 const tokenStyle = {
@@ -79,7 +104,8 @@ const tokenStyle = {
  * `FloatingEdge`) all pass straight through via `...rest`. `minZoom` is a
  * requested floor; a consumer that passes `nodeWidth` gets it raised to
  * `clampMinZoom(nodeWidth, minZoom)` so its node cards never render narrower
- * than `MIN_NODE_PX`.
+ * than `MIN_NODE_PX`. A consumer that passes `startNodeIds` opens on those
+ * nodes (`startFitViewOptions`); the controls' fit button still shows all.
  */
 function VieCanvasInner<
   NodeType extends Node = Node,
@@ -90,15 +116,22 @@ function VieCanvasInner<
   className,
   height = 480,
   nodeWidth,
+  startNodeIds,
   defaultEdgeOptions,
   panOnDrag = true,
   zoomOnScroll = false,
   fitView = true,
+  fitViewOptions,
   minZoom = DEFAULT_MIN_ZOOM,
   ...rest
 }: VieCanvasProps<NodeType, EdgeType>) {
   const { isDark } = useVieFlowTheme();
   const colorMode: ColorMode = isDark ? 'dark' : 'light';
+  // Memoised: React Flow's store re-applies `fitViewOptions` whenever its identity changes.
+  const openingFit = useMemo(
+    () => startFitViewOptions(startNodeIds, fitViewOptions),
+    [startNodeIds, fitViewOptions],
+  );
 
   return (
     <ReactFlowProvider>
@@ -115,6 +148,7 @@ function VieCanvasInner<
           proOptions={{ hideAttribution: true }}
           defaultEdgeOptions={{ type: 'smoothstep', ...defaultEdgeOptions }}
           fitView={fitView}
+          fitViewOptions={openingFit}
           panOnDrag={panOnDrag}
           zoomOnScroll={zoomOnScroll}
           minZoom={clampMinZoom(nodeWidth, minZoom)}

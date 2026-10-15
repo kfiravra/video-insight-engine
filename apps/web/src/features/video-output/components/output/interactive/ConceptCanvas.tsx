@@ -46,6 +46,11 @@ export const ConceptCanvas = memo(function ConceptCanvas({
   const [view, setView] = useState<ConceptView>('list');
 
   const handleSelect = useCallback((id: string) => setSelectedId(id), []);
+  // The list's concept names are disclosures: the open one closes again.
+  const handleToggle = useCallback(
+    (id: string) => setSelectedId((current) => (current === id ? null : id)),
+    [],
+  );
   const handleClose = useCallback(() => setSelectedId(null), []);
 
   const selectedConcept = model.nodes.find((n) => n.id === selectedId)?.concept ?? null;
@@ -80,7 +85,7 @@ export const ConceptCanvas = memo(function ConceptCanvas({
         <ConceptCanvasList
           model={model}
           selectedId={selectedId}
-          onSelect={handleSelect}
+          onToggle={handleToggle}
           onSeek={onSeek}
           inspector={
             selectedConcept && (

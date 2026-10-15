@@ -1,10 +1,12 @@
 """Labels carry the shipped count (output-quality 0b.7 — R3, D7).
 
 The planner writes "9 Core Arguments" before extraction, so its number is a
-guess; post-processing replaces it with the count the tab ships. Both halves
-mirror the FE (apps/web/src/components/vie/cards/domain-meta.ts): what counts as
-a count claim (``LEADING_COUNT``) and what the strip counts (``inferItemCount``
-over ``COUNT_PROP_BY_COMPONENT``). ``core`` re-exports the public names.
+guess; post-processing replaces it with the count the tab ships. A number
+followed by a unit is a measure, never a count ("7 Days in Tokyo", "10 Minute
+Abs"). Both halves mirror the FE (apps/web/src/components/vie/cards/domain-meta.ts):
+what counts as a count claim (``LEADING_COUNT`` + the measure units) and what the
+strip counts (``inferItemCount`` over ``COUNT_PROP_BY_COMPONENT``). ``core``
+re-exports the public names.
 """
 
 from __future__ import annotations
@@ -23,6 +25,17 @@ from .component_lists import COMPARISON_COMPONENTS, COMPARISON_LIST_KEYS, COMPON
 # Python's ``\d`` / ``[^\W\d_]`` would also take Arabic-Indic digits, "½" or "Ⅻ".
 # "7-Minute Workout" and "2024 Review" are names and never rewritten.
 _LEADING_COUNT = re.compile(r"^[0-9]{1,3}\s+")
+# The number measures the word after it (case-insensitive) — "7 Days in Tokyo",
+# "10 Minute Abs", "3 Course Meal" — so the label is left verbatim. One list with
+# the FE and the output-quality tools (phase-0 review W-A1); change all three.
+_MEASURE_UNITS = frozenset(
+    {
+        "second", "seconds", "sec", "secs", "minute", "minutes", "min", "mins",
+        "hour", "hours", "hr", "hrs", "day", "days", "night", "nights",
+        "week", "weeks", "month", "months", "year", "years", "course", "courses",
+        "km", "mile", "miles", "kg", "lb", "lbs", "pound", "pounds", "percent",
+    }
+)  # fmt: skip
 # The list the hero strip counts per component (``COUNT_PROP_BY_COMPONENT``):
 # every tab-tier component's own list. Attachment-only components never head a
 # tab, and a comparison counts its rows, pros and cons together.
@@ -51,11 +64,20 @@ def shipped_count(component: str, props: Mapping[str, Any]) -> int | None:
     return _list_len(props, key) if isinstance(props.get(key), list) else None
 
 
+def _first_word(text: str) -> str:
+    """The leading run of letters of ``text`` (``str.isalpha`` — the FE's ``\\p{L}``)."""
+    end = next((i for i, char in enumerate(text) if not char.isalpha()), len(text))
+    return text[:end]
+
+
 def _after_count_claim(label: str) -> str | None:
-    """The label after its leading count claim; None when it makes no count claim."""
+    """The label after its leading count claim; None when it makes no count claim —
+    a measure ("7 Days in Tokyo") makes none."""
     match = _LEADING_COUNT.match(label)
     rest = label[match.end() :] if match else ""
-    return rest if rest[:1].isalpha() else None
+    if not rest[:1].isalpha() or _first_word(rest).lower() in _MEASURE_UNITS:
+        return None
+    return rest
 
 
 def true_count_label(label: str, count: int | None) -> str:

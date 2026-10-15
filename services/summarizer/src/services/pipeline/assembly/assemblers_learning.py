@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .derived_guard import stated_block_scalars, stated_number, stated_rows
+from .derived_guard import stated_block_scalars
 from .normalizers import (
     _CATEGORY_FRONTS,
     _DOMAIN_EMOJI,
@@ -19,6 +19,7 @@ from .normalizers import (
     _normalize_exercise,
     _normalize_quiz_question,
     _normalize_scenario_item,
+    _normalize_verdict,
     _to_flash_card,
 )
 
@@ -128,30 +129,15 @@ def assemble_verdict(
     """
     if not isinstance(data, dict):
         return None
-    verdict_props: dict[str, Any] = {
-        "badge": data.get("badge", "neutral"),
-        "bottomLine": data.get("bottomLine", ""),
-        "bestFor": data.get("bestFor") or [],
-        "notFor": data.get("notFor") or [],
-    }
-    # Scores are facts only when anchored in the video (D13) — same guard as
-    # the comparison assembler's review rating.
-    sub_scores = stated_rows(data.get("subScores"), "score")
-    if sub_scores:
-        verdict_props["subScores"] = sub_scores
-    score = stated_number(data, "score")
-    if score is not None:
-        verdict_props["score"] = score
-        max_score = stated_number(data, "maxScore")
-        if max_score is not None and max_score > 0:
-            verdict_props["maxScore"] = max_score
+    # A legacy verdict block carries its own score / maxScore — the same D13
+    # guard as the comparison assembler's review rating.
     return {
         "pros": [],
         "cons": [],
         "comparisons": [],
         "leftLabel": "",
         "rightLabel": "",
-        "verdict": verdict_props,
+        "verdict": _normalize_verdict(data, data),
     }
 
 

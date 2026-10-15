@@ -1,26 +1,34 @@
-"""Post-promotion dedupe (output-quality 0b.5 — R5, L26).
+"""Post-promotion dedupe (output-quality 0b.5 — R5, L26; phase-0 review W-A2).
 
 Reconcile dedupes planned tabs by (dataSource, component) before extraction;
 promotion (flash_deck → concept_canvas) and the sibling fallback can still make
-two tabs ship the same items. The assembled props decide: a tab goes when at
-least ``DUPLICATE_OVERLAP`` of its items ship on a tab that stays. A tab's
-items are its component's own list (``component_lists.item_list_keys`` — a
-canvas's group labels never dilute the overlap); every list prop only for a
-component the table does not know. ``core`` re-exports the public names.
+two tabs ship the same items. The assembled props decide: a tab whose items
+ship at least ``DUPLICATE_OVERLAP`` on a tab that stays is its twin. An item
+one tab ships is never lost: a twin goes only when every item it ships also
+ships elsewhere; a twin with items of its own sheds the shared ones and stays
+(``duplicate_items``) — a procedure (``SEQUENTIAL_COMPONENTS``) ships whole
+instead. A tab's items are its component's own list
+(``component_lists.item_list_keys`` — a canvas's group labels never dilute the
+overlap); every list prop only for a component the table does not know.
+``core`` re-exports the public names.
 """
 
 from __future__ import annotations
 
 import logging
 from collections.abc import Collection, Mapping
+from dataclasses import dataclass, field
 from typing import Any
 
-from .component_lists import item_list_keys
+from .component_lists import COMPONENT_LIST_KEYS, SEQUENTIAL_COMPONENTS, item_list_keys
 
 logger = logging.getLogger(__name__)
 
 DUPLICATE_OVERLAP = 0.5
 DUPLICATE_TAB = "duplicate_tab"
+# A twin that sheds its shared items: listed in ``droppedTabs`` for the audit
+# trail, but the tab ships — no drop (``core.count_dropped_tabs``).
+DUPLICATE_ITEMS = "duplicate_items"
 # An item's identity is its first text field in this order. A code snippet is its
 # code (one file evolving through a tutorial keeps its filename) and a budget row
 # its category — both last, so no other item changes identity.
@@ -105,10 +113,123 @@ def _meets_requirement_alone(
     )
 
 
-def _record_duplicate(
-    loser: _Kept, survivor: _Kept, dropped_sink: list[dict], sources: Mapping[str, str]
-) -> None:
-    """Log the drop and list it in ``droppedTabs`` with its planned dataSource."""
+# ─── Trimming a twin down to its own items ───
+
+
+def _list_keys(component: str, props: Mapping[str, Any]) -> list[str]:
+    """The props keys of the lists ``_item_lists`` reads."""
+    keys = item_list_keys(component) or tuple(props)
+    return [key for key in keys if isinstance(props.get(key), list)]
+
+
+def _item_count(tab: Mapping[str, Any]) -> int:
+    props = tab.get("props")
+    if not isinstance(props, dict):
+        return 0
+    return sum(len(items) for items in _item_lists(str(tab.get("component", "")), props))
+
+
+def _remap_sections(props: dict, kept: list[int]) -> None:
+    """Point ``sections[].spotIndices`` at the trimmed spots; a section left empty goes."""
+    sections = props.get("sections")
+    if not isinstance(sections, list):
+        return
+    new_index = {old: new for new, old in enumerate(kept)}
+    remapped: list[dict] = []
+    for section in sections:
+        if not isinstance(section, dict):
+            continue
+        indices = section.get("spotIndices") or []
+        mapped = [new_index[i] for i in indices if isinstance(i, int) and i in new_index]
+        if mapped:
+            remapped.append({**section, "spotIndices": mapped})
+    props["sections"] = remapped
+
+
+def _linked_to(concept: dict, names: set[str]) -> dict:
+    """The concept without its connections to a concept no longer on the canvas."""
+    links = concept.get("connections")
+    if not isinstance(links, list):
+        return concept
+    kept = [
+        link
+        for link in links
+        if isinstance(link, dict) and str(link.get("to", "")).strip().lower() in names
+    ]
+    return {**concept, "connections": kept}
+
+
+def _prune_concept_graph(props: dict) -> None:
+    """A trimmed canvas keeps no edge to a trimmed concept and no empty group."""
+    concepts = [c for c in props.get("concepts") or [] if isinstance(c, dict)]
+    names = {str(c.get("name", "")).strip().lower() for c in concepts}
+    props["concepts"] = [_linked_to(c, names) for c in concepts]
+    if isinstance(props.get("groups"), list):
+        props["groups"] = list(dict.fromkeys(c["group"] for c in concepts if c.get("group")))
+
+
+def _empties_its_list(tab: Mapping[str, Any], elsewhere: frozenset[str]) -> bool:
+    """Every item of the list the tab was validated on (``COMPONENT_LIST_KEYS``) ships
+    elsewhere — a comparison whose own items are pros, not rows."""
+    key = COMPONENT_LIST_KEYS.get(str(tab.get("component", "")))
+    items = tab["props"].get(key) if key else None
+    return isinstance(items, list) and all(_item_fingerprint(item) in elsewhere for item in items)
+
+
+def _trim(tab: dict, elsewhere: frozenset[str]) -> int:
+    """Remove from the tab's own lists every item ``elsewhere`` ships; the count removed."""
+    props = tab["props"]
+    component = str(tab.get("component", ""))
+    removed = 0
+    for key in _list_keys(component, props):
+        items = props[key]
+        kept = [i for i, item in enumerate(items) if _item_fingerprint(item) not in elsewhere]
+        removed += len(items) - len(kept)
+        if key == "spots":
+            _remap_sections(props, kept)
+        props[key] = [items[i] for i in kept]
+    if component == "concept_canvas":
+        _prune_concept_graph(props)
+    return removed
+
+
+# ─── One pass ───
+
+
+@dataclass
+class _Pass:
+    """One dedupe pass: the tab list it edits, its records and the tabs that stay."""
+
+    tabs: list[dict]
+    dropped_sink: list[dict]
+    sources: Mapping[str, str]
+    kept: list[_Kept] = field(default_factory=list)
+
+    def shipped_besides(self, tab: Mapping[str, Any]) -> frozenset[str]:
+        """Every item a staying tab other than ``tab`` ships."""
+        return frozenset().union(*(own for other, own in self.kept if other is not tab))
+
+    def remove(self, tab: Mapping[str, Any]) -> None:
+        """Remove ``tab`` itself — by identity, never an equal tab before it."""
+        index = next((i for i, other in enumerate(self.tabs) if other is tab), None)
+        if index is not None:
+            del self.tabs[index]
+
+    def record(self, tab: Mapping[str, Any], reason: str, detail: str) -> None:
+        """List the decision in ``droppedTabs`` with the tab's planned dataSource."""
+        self.dropped_sink.append(
+            {
+                "id": tab.get("id", ""),
+                "component": tab.get("component", ""),
+                "dataSource": self.sources.get(str(tab.get("id", "")), ""),
+                "reason": reason,
+                "detail": detail,
+            }
+        )
+
+
+def _record_duplicate(run: _Pass, loser: _Kept, survivor: _Kept) -> None:
+    """Log the drop and list it in ``droppedTabs``."""
     tab, of_id = loser[0], str(survivor[0].get("id", ""))
     share = _overlap(loser[1], survivor[1])
     logger.warning(
@@ -118,15 +239,59 @@ def _record_duplicate(
         share * 100,
         of_id,
     )
-    dropped_sink.append(
-        {
-            "id": tab.get("id", ""),
-            "component": tab.get("component", ""),
-            "dataSource": sources.get(str(tab.get("id", "")), ""),
-            "reason": DUPLICATE_TAB,
-            "detail": f"{share:.0%} of its items ship on {of_id}",
-        }
+    run.record(tab, DUPLICATE_TAB, f"{share:.0%} of its items ship on {of_id}")
+
+
+def _record_trim(
+    run: _Pass, tab: Mapping[str, Any], survivor: _Kept, removed: int, total: int
+) -> None:
+    """Log the trim and list it in ``droppedTabs`` (``DUPLICATE_ITEMS`` — the tab ships)."""
+    of_id = str(survivor[0].get("id", ""))
+    logger.info(
+        "TAB TRIMMED: id=%r, component=%r — %d of its %d items ship elsewhere (twin of %r)",
+        tab.get("id"),
+        tab.get("component"),
+        removed,
+        total,
+        of_id,
     )
+    run.record(tab, DUPLICATE_ITEMS, f"{removed} of its {total} items ship elsewhere ({of_id})")
+
+
+def _settle(run: _Pass, twin: _Kept, survivor: _Kept, elsewhere: frozenset[str]) -> _Kept | None:
+    """``twin`` against what ``elsewhere`` ships: dropped (None) when it has no item of its
+    own; else trimmed to its own items. The entry that stays.
+
+    A procedure ships whole, and so does a twin a trim would leave without the list
+    it was validated on — its own items would not ship.
+    """
+    tab, own = twin
+    unique = own - elsewhere
+    if not unique:
+        run.remove(tab)
+        _record_duplicate(run, twin, survivor)
+        return None
+    if tab.get("component") in SEQUENTIAL_COMPONENTS or _empties_its_list(tab, elsewhere):
+        return twin
+    total = _item_count(tab)
+    _record_trim(run, tab, survivor, _trim(tab, elsewhere), total)
+    return tab, unique
+
+
+def _settle_earlier_twins(run: _Pass, entry: _Kept, twins: list[int]) -> None:
+    """Each earlier twin whose own items ship ≥ ``DUPLICATE_OVERLAP`` on ``entry`` (the
+    required tab that stays) keeps only what ships nowhere else."""
+    losers = [
+        run.kept[i][0] for i in twins if _overlap(run.kept[i][1], entry[1]) >= DUPLICATE_OVERLAP
+    ]
+    for loser in losers:
+        index = next(i for i, (tab, _) in enumerate(run.kept) if tab is loser)
+        elsewhere = run.shipped_besides(loser) | entry[1]
+        settled = _settle(run, run.kept[index], entry, elsewhere)
+        if settled is None:
+            del run.kept[index]
+        else:
+            run.kept[index] = settled
 
 
 def _dedupe_tabs(
@@ -135,27 +300,24 @@ def _dedupe_tabs(
     required: Collection[str] = (),
     sources: Mapping[str, str] | None = None,
 ) -> None:
-    """Drop every tab whose items ship ≥ ``DUPLICATE_OVERLAP`` on a tab that stays.
+    """Settle every tab whose items ship ≥ ``DUPLICATE_OVERLAP`` on a tab that stays.
 
     Runs after promotion and the requirement backfill, on the assembled props.
-    Of two twins the earlier stays — unless only the later renders a ``required``
-    component (the domain's, equivalents included): then the later stays and each
-    earlier twin whose own items ship on it at that share goes, so the dedupe
-    never undoes the requirement the backfill just met. The overview is its own
-    hero and never takes part. ``sources`` (tab id → planned dataSource) labels
-    each drop record.
+    Of two twins the earlier stays whole and the later sheds what ships elsewhere
+    (``_settle``: dropped when nothing of its own is left) — unless only the later
+    renders a ``required`` component (the domain's, equivalents included): then
+    the later stays whole and each earlier twin whose own items ship on it at that
+    share is settled instead, so the dedupe never undoes the requirement the
+    backfill just met. The overview is its own hero and never takes part.
+    ``sources`` (tab id → planned dataSource) labels each record.
     """
-    sources = sources or {}
-    kept: list[_Kept] = []
+    run = _Pass(tabs, dropped_sink, sources or {})
     for tab in [t for t in tabs if t.get("component") != "overview"]:
         entry = (tab, tab_fingerprints(tab))
-        twins = _twins(entry[1], kept)
-        if twins and not _meets_requirement_alone(tab, [kept[i] for i in twins], required):
-            tabs.remove(tab)
-            _record_duplicate(entry, kept[twins[0]], dropped_sink, sources)
+        twins = _twins(entry[1], run.kept)
+        if twins and not _meets_requirement_alone(tab, [run.kept[i] for i in twins], required):
+            settled = _settle(run, entry, run.kept[twins[0]], run.shipped_besides(tab))
+            run.kept.extend([settled] if settled is not None else [])
             continue
-        losers = [i for i in twins if _overlap(kept[i][1], entry[1]) >= DUPLICATE_OVERLAP]
-        for index in losers:
-            tabs.remove(kept[index][0])
-            _record_duplicate(kept[index], entry, dropped_sink, sources)
-        kept = [k for i, k in enumerate(kept) if i not in losers] + [entry]
+        _settle_earlier_twins(run, entry, twins)
+        run.kept.append(entry)

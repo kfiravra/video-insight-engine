@@ -4,6 +4,8 @@ them on an item anchored in the video (a timestamp); no numeric axis → no rada
 no stated rank → a list, not tiers. One guard (`assembly/derived_guard.py`),
 also on the overview's spread of the primary block and on spot facts."""
 
+import pytest
+
 from src.services.pipeline.assembly import (
     _normalize_exercise,
     assemble_claims_tracker,
@@ -95,9 +97,26 @@ class TestAnchor:
         assert stated_number({"score": 9}, "score") is None
 
     def test_should_keep_only_anchored_rows_that_carry_the_field(self):
-        rows = [{"tier": "S", "timestamp": 1}, {"tier": "A"}, {"timestamp": 2}]
+        rows = [{"score": 9, "timestamp": 1}, {"score": 8}, {"timestamp": 2}]
 
-        assert stated_rows(rows, "tier") == [{"tier": "S", "timestamp": 1}]
+        assert stated_rows(rows, "score") == [{"score": 9, "timestamp": 1}]
+
+    @pytest.mark.parametrize("score", ["9/10", "9", float("nan"), float("inf"), True])
+    def test_should_drop_a_row_whose_field_is_not_a_finite_number(self, score: object):
+        rows = [{"category": "Sound", "score": score, "timestamp": 1}]
+
+        assert stated_rows(rows, "score") == []
+
+    @pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+    def test_should_not_state_a_non_finite_number(self, value: float):
+        assert stated_number({"score": value, "timestamp": 5}, "score") is None
+
+    @pytest.mark.parametrize("stamp", [float("nan"), float("inf"), float("-inf")])
+    def test_should_skip_a_non_finite_anchor_without_raising(self, stamp: float):
+        assert anchor_seconds({"timestamp": stamp}) is None
+
+    def test_should_fall_through_a_non_finite_stamp_to_the_next_anchor(self):
+        assert anchor_seconds({"timestamp": float("inf"), "seconds": 42}) == 42
 
     def test_should_tell_an_anchored_item(self):
         assert is_anchored({"timestamp": 0}) is True
@@ -200,6 +219,21 @@ class TestReviewScore:
         out = assemble_comparison({}, ROWS, _review({"score": 9}, subs), None)
 
         assert out["verdict"]["subScores"] == [{"category": "Sound", "score": 9, "timestamp": 120}]
+
+    def test_should_not_ship_a_sub_score_that_is_not_a_number(self):
+        subs = [{"category": "Sound", "score": "9/10", "timestamp": 120}]
+
+        out = assemble_comparison({}, ROWS, _review({"score": 9}, subs), None)
+
+        assert "subScores" not in out["verdict"]
+
+    def test_should_omit_a_badge_the_reviewer_did_not_state(self):
+        review = _review({"score": 9})
+        review["review"]["verdict"]["badge"] = None
+
+        out = assemble_comparison({}, ROWS, review, None)
+
+        assert "badge" not in out["verdict"]
 
     def test_should_keep_the_verdict_prose_without_a_score(self):
         out = assemble_comparison({}, ROWS, _review({"score": 9}), None)
@@ -328,6 +362,29 @@ class TestSpotFacts:
 
     def test_should_refuse_a_spot_whose_only_content_is_an_unanchored_fact(self):
         assert _normalize_to_spot({"name": "Ichiran", "rating": 4.5}) is None
+
+
+class TestSpotSeekPointAndQuote:
+    def test_should_stamp_the_spot_in_whole_seconds(self):
+        assert _normalize_to_spot({**_SPOT, "timestamp": 754.9})["timestamp"] == 754
+
+    @pytest.mark.parametrize("stamp", [-5, "12:34", float("nan"), True])
+    def test_should_omit_a_stamp_the_spot_cannot_seek_to(self, stamp: object):
+        assert "timestamp" not in _normalize_to_spot({**_SPOT, "timestamp": stamp})
+
+    def test_should_seek_to_the_next_anchor_when_the_timestamp_is_unusable(self):
+        spot = _normalize_to_spot({**_SPOT, "timestamp": -1, "seconds": 312})
+
+        assert spot["timestamp"] == 312
+
+    def test_should_pass_the_speakers_quote_through_trimmed(self):
+        spot = _normalize_to_spot({**_SPOT, "quote": "  Best ramen in the city.  "})
+
+        assert spot["quote"] == "Best ramen in the city."
+
+    @pytest.mark.parametrize("quote", ["   ", None, 42])
+    def test_should_omit_a_blank_or_non_text_quote(self, quote: object):
+        assert "quote" not in _normalize_to_spot({**_SPOT, "quote": quote})
 
 
 # ─── dates (no schema field is a date today; the overview copies any scalar) ───

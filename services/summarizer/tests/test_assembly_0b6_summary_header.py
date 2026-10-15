@@ -1,19 +1,23 @@
-"""0b.6 — a dense tab's summary_header carries content, never the goal (R4).
+"""0b.6 — a summary_header carries content, never the goal (R4).
 
 The FE prints ``tab.goal`` as the tab's intro line; the header on top of a
 dense tab used to repeat it ("IN SHORT" = the goal, 30 of 45 tabs). Now the
-header is the extraction ``summary`` on the answer tab, else the tab's first
-item — and it is dropped rather than shipped when that text equals the goal
-(case, inner whitespace and a trailing ``.!?`` aside — the FE hides a stored
-header equal to the goal by the same rule). A flash deck never gets one: its
-first card's text would give the answer away.
+answer tab's header is the extraction ``summary`` ("In short") whatever the
+tab's size, and another dense tab's is its first item ("First up") — dropped
+rather than shipped when that text equals the goal (case, inner whitespace and
+a trailing ``.!?`` aside — the FE hides a stored header equal to the goal by
+the same rule). A flash deck never gets one: its first card's text would give
+the answer away.
 """
 
 from __future__ import annotations
 
+import pytest
+
 from src.services.pipeline.assembly.attachments import (
     _DENSE_THRESHOLD,
     _HEADER_MAX_CHARS,
+    SPARSE_THRESHOLD,
     attach_response_secondaries,
     attach_secondaries,
 )
@@ -228,6 +232,49 @@ class TestAnswerTab:
         assert header is not None
         assert header["props"]["summary"] == "Spot 0 — detail 0"
 
+    @pytest.mark.parametrize("size", [1, SPARSE_THRESHOLD, SPARSE_THRESHOLD + 1, 9])
+    def test_answer_tab_gets_the_in_short_header_whatever_its_size(self, size: int):
+        tab = _dense_tab(props={"spots": _spots(size)})
+
+        header = _header(
+            attach_secondaries(tab, self._EXTRACTION, None, None, "learning", is_answer_tab=True)
+        )
+
+        assert header["props"]["summary"] == "DHH argues hand-written code is over."
+
+    def test_answer_tab_without_a_primary_list_gets_the_in_short_header(self):
+        filmstrip = {"id": "frames", "component": "video_filmstrip", "goal": GOAL, "props": {}}
+
+        header = _header(
+            attach_secondaries(
+                filmstrip, self._EXTRACTION, None, None, "learning", is_answer_tab=True
+            )
+        )
+
+        assert header["props"]["title"] == "In short"
+
+    def test_sparse_answer_tab_keeps_its_enrichment_beside_the_header(self):
+        tab = _dense_tab(props={"spots": _spots(2)})
+        extraction = {"learning": {**self._EXTRACTION["learning"], "tips": ["Ship it."]}}
+
+        out = attach_secondaries(tab, extraction, None, None, "learning", is_answer_tab=True)
+
+        assert [a["component"] for a in out] == ["summary_header", "tip_callout"]
+
+    def test_mid_size_answer_tab_without_a_summary_gets_no_first_up(self):
+        tab = _dense_tab(props={"spots": _spots(_DENSE_THRESHOLD - 1)})
+
+        out = attach_secondaries(tab, {"food": {}}, None, None, "food", is_answer_tab=True)
+
+        assert _header(out) is None
+
+    def test_mid_size_non_answer_tab_gets_no_header(self):
+        tab = _dense_tab(props={"spots": _spots(_DENSE_THRESHOLD - 1)})
+
+        out = attach_secondaries(tab, self._EXTRACTION, None, None, "learning")
+
+        assert _header(out) is None
+
     def test_answer_tab_summary_equal_to_goal_is_dropped(self):
         tab = _dense_tab()
         extraction = {"learning": {"summary": GOAL}}
@@ -260,10 +307,13 @@ class TestResponseLoop:
 
         assert _header(tabs[2]["attachments"])["props"]["summary"] == "Spot 0 — detail 0"
 
+    def _deck(self) -> dict:
+        cards = [{"front": f"Q{i}?", "back": f"A{i}."} for i in range(_DENSE_THRESHOLD)]
+        return {"id": "cards", "component": "flash_deck", "goal": "g", "props": {"cards": cards}}
+
     def test_answer_moves_past_a_content_tab_that_took_nothing(self):
         overview, first, second = self._tabs()
-        filmstrip = {"id": "frames", "component": "video_filmstrip", "goal": "g", "props": {}}
-        tabs = [overview, filmstrip, first, second]
+        tabs = [overview, self._deck(), first, second]
 
         attach_response_secondaries(
             tabs, {"learning": {"summary": "The thesis."}}, None, None, "learning"
@@ -273,14 +323,24 @@ class TestResponseLoop:
 
     def test_the_tab_that_takes_the_answer_keeps_it(self):
         overview, first, second = self._tabs()
-        filmstrip = {"id": "frames", "component": "video_filmstrip", "goal": "g", "props": {}}
-        tabs = [overview, filmstrip, first, second]
+        tabs = [overview, self._deck(), first, second]
 
         attach_response_secondaries(
             tabs, {"learning": {"summary": "The thesis."}}, None, None, "learning"
         )
 
         assert _header(tabs[3]["attachments"])["props"]["summary"] == "Spot 0 — detail 0"
+
+    def test_a_filmstrip_answer_tab_holds_the_in_short_header(self):
+        overview, first, _ = self._tabs()
+        filmstrip = {"id": "frames", "component": "video_filmstrip", "goal": "g", "props": {}}
+        tabs = [overview, filmstrip, first]
+
+        attach_response_secondaries(
+            tabs, {"learning": {"summary": "The thesis."}}, None, None, "learning"
+        )
+
+        assert _header(tabs[1]["attachments"])["props"]["summary"] == "The thesis."
 
     def test_a_tab_that_took_an_attachment_holds_the_answer(self):
         overview, _, dense = self._tabs()

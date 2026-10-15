@@ -429,7 +429,9 @@ class ReviewComparison(BaseModel):
 class ReviewVerdict(BaseModel):
     model_config = {"populate_by_name": True}
 
-    badge: str = "recommended"
+    # None when the reviewer states no verdict (D13): a defaulted "recommended"
+    # shipped as the reviewer's call.
+    badge: str | None = None
     best_for: list[str] = Field([], alias="bestFor")
     not_for: list[str] = Field([], alias="notFor")
     bottom_line: str = Field("", alias="bottomLine")
@@ -437,9 +439,9 @@ class ReviewVerdict(BaseModel):
 
     @field_validator("badge", mode="before")
     @classmethod
-    def coerce_badge(cls, v: Any) -> str:
+    def coerce_badge(cls, v: Any) -> str | None:
         valid = ("recommended", "not_recommended", "conditional", "best_in_class")
-        return v if v in valid else "recommended"
+        return v if v in valid else None
 
 
 class ReviewData(BaseModel):
@@ -608,7 +610,8 @@ class FitnessMeta(BaseModel):
     model_config = {"populate_by_name": True}
 
     type: str = "general"
-    difficulty: str = "intermediate"
+    # None when the video states no level (D13): a default read as the video's.
+    difficulty: str | None = None
     duration: int = 0
     muscle_groups: list[str] = Field([], alias="muscleGroups")
     equipment: list[str] = []
@@ -621,9 +624,9 @@ class FitnessMeta(BaseModel):
 
     @field_validator("difficulty", mode="before")
     @classmethod
-    def coerce_difficulty(cls, v: Any) -> str:
+    def coerce_difficulty(cls, v: Any) -> str | None:
         valid = ("beginner", "intermediate", "advanced")
-        return v if v in valid else "intermediate"
+        return v if v in valid else None
 
     @field_validator("duration", mode="before")
     @classmethod
@@ -743,8 +746,9 @@ class ProjectStep(BaseModel):
 class ProjectData(BaseModel):
     model_config = {"populate_by_name": True}
 
-    project_name: str = Field("Untitled Project", alias="projectName")
-    difficulty: str = "intermediate"
+    # None when unstated (D13): "Untitled Project" / "intermediate" read as facts.
+    project_name: str | None = Field(None, alias="projectName")
+    difficulty: str | None = None
     estimated_time: str = Field("unknown", alias="estimatedTime")
     estimated_cost: str | None = Field(None, alias="estimatedCost")
     materials: list[ProjectMaterial] = []
@@ -754,14 +758,14 @@ class ProjectData(BaseModel):
 
     @field_validator("project_name", mode="before")
     @classmethod
-    def coerce_name(cls, v: Any) -> str:
-        return v if v else "Untitled Project"
+    def coerce_name(cls, v: Any) -> str | None:
+        return v if v else None
 
     @field_validator("difficulty", mode="before")
     @classmethod
-    def coerce_difficulty(cls, v: Any) -> str:
+    def coerce_difficulty(cls, v: Any) -> str | None:
         valid = ("beginner", "intermediate", "advanced")
-        return v if v in valid else "intermediate"
+        return v if v in valid else None
 
     @field_validator("estimated_time", mode="before")
     @classmethod
@@ -874,7 +878,8 @@ class LanguageData(BaseModel):
 
     target_language: str = Field("", alias="targetLanguage")
     native_language: str | None = Field(None, alias="nativeLanguage")
-    level: str = "beginner"
+    # None when the video states no level (D13): a default read as the video's.
+    level: str | None = None
     phrases: list[LanguagePhrase] = []
     rules: list[LanguageRule] = []
     drills: list[LanguageDrill] = []
@@ -882,9 +887,9 @@ class LanguageData(BaseModel):
 
     @field_validator("level", mode="before")
     @classmethod
-    def coerce_level(cls, v: Any) -> str:
+    def coerce_level(cls, v: Any) -> str | None:
         valid = ("beginner", "intermediate", "advanced")
-        return v if v in valid else "beginner"
+        return v if v in valid else None
 
 
 # ─────────────────────────────────────────────────────
@@ -935,16 +940,17 @@ class ScienceData(BaseModel):
     model_config = {"populate_by_name": True}
 
     field: str = ""
-    level: str = "intermediate"
+    # None when the video states no level (D13): a default read as the video's.
+    level: str | None = None
     concepts: list[ScienceConcept] = []
     key_facts: list[ScienceKeyFact] = Field([], alias="keyFacts")
     experiments: list[ScienceExperiment] = []
 
     @field_validator("level", mode="before")
     @classmethod
-    def coerce_level(cls, v: Any) -> str:
+    def coerce_level(cls, v: Any) -> str | None:
         valid = ("beginner", "intermediate", "advanced")
-        return v if v in valid else "intermediate"
+        return v if v in valid else None
 
 
 # ─────────────────────────────────────────────────────
@@ -962,6 +968,18 @@ class PodcastSegment(BaseModel):
     timestamp: int | None = None
     end_seconds: int | None = Field(None, alias="endSeconds")
     speaker: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def prefer_filled_prose(cls, data: Any) -> Any:
+        """``AliasChoices`` takes the first key present, so an empty or null
+        ``summary`` would hide a filled ``description``: the prose wins."""
+        if not isinstance(data, dict) or str(data.get("summary") or "").strip():
+            return data
+        description = data.get("description")
+        if isinstance(description, str) and description.strip():
+            return {**data, "summary": description}
+        return data
 
 
 class PodcastGuest(BaseModel):
@@ -1013,7 +1031,8 @@ class NewsClaim(BaseModel):
     model_config = {"populate_by_name": True}
 
     claim: str
-    source: str = "Reporter"
+    # None when the video attributes the claim to no one — never an invented "Reporter".
+    source: str | None = None
     status: str = "context"
     source_citation: str | None = Field(None, alias="sourceCitation")
     timestamp: int | None = None
@@ -1254,8 +1273,8 @@ def _carries_own_fields(model_cls: type[BaseModel], data: dict) -> bool:
     """True when ``data`` holds at least one non-empty field of ``model_cls``.
 
     Checked on the RAW data: the validated dump always looks populated for
-    models with truthy defaults (``project_name="Untitled Project"``,
-    ``badge="recommended"``), which used to smuggle default-only domains in.
+    models with truthy defaults (``estimated_time="unknown"``,
+    ``FitnessMeta.type="general"``), which used to smuggle default-only domains in.
     """
     return any(not _is_empty(data.get(key)) for key in _model_keys(model_cls))
 

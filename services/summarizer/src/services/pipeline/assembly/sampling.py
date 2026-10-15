@@ -8,11 +8,12 @@ score tier, so the kept items still span the whole video. The original
 (chronological) order is always preserved; a tier list keeps its best stated
 tiers instead (``tier_head``).
 
-Moments are sized by content-model §9 (``_MOMENT_BANDS``): one per 3 / 4 / 5 / 6
-minutes in the ≤ 15 / 15–45 / 45–90 / > 90-minute bands, clamped to each band's
-range. §9 gives the > 90-minute band no range; its floor of 18 (the 45–90 band's
-ceiling, so a longer video never gets fewer moments) and its ceiling of 60 (a
-six-hour video) are this module's choice.
+Label-only moments are sized by content-model §9 (``_MOMENT_BANDS``): one per
+3 / 4 / 5 / 6 minutes in the ≤ 15 / 15–45 / 45–90 / > 90-minute bands, clamped to
+each band's range. §9 gives the > 90-minute band no range; its floor of 18 (the
+45–90 band's ceiling, so a longer video never gets fewer moments) and its ceiling
+of 60 (a six-hour video) are this module's choice. A described track — what each
+moment established — keeps the component's configured cap (``moment_track_cap``).
 """
 
 from __future__ import annotations
@@ -124,6 +125,35 @@ def moment_cap_for_duration(duration_seconds: float | None, default: int) -> int
 def _text(item: Any, key: str) -> str:
     value = item.get(key) if isinstance(item, dict) else None
     return value if isinstance(value, str) else ""
+
+
+# The share of described moments that makes a track a timeline — the UI's
+# ``TIMELINE_DEFAULT_DESCRIPTION_SHARE`` (MomentTrack.tsx), whose rows show them.
+DESCRIBED_TRACK_SHARE = 0.5
+
+
+def _shows_description(item: Any) -> bool:
+    """A description the timeline row shows: non-blank and not its label repeated
+    (the UI's ``hasDescription``)."""
+    description = _text(item, "description").strip()
+    return bool(description) and description != _text(item, "label").strip()
+
+
+def is_described_track(items: Sequence[Any]) -> bool:
+    """At least ``DESCRIBED_TRACK_SHARE`` of the moments carry a description the row shows."""
+    if not items:
+        return False
+    described = sum(1 for item in items if _shows_description(item))
+    return described / len(items) >= DESCRIBED_TRACK_SHARE
+
+
+def moment_track_cap(items: Sequence[Any], duration_seconds: float | None, configured: int) -> int:
+    """The cap of a Moments track: §9's count for a label-only one; for a described one
+    the ``configured`` item cap — §9 sizes a list of chapter titles, and S08's 14
+    described events in 10 minutes are its content — or §9's count where a long video
+    gives more (a longer video never gets fewer moments)."""
+    by_duration = moment_cap_for_duration(duration_seconds, configured)
+    return max(configured, by_duration) if is_described_track(items) else by_duration
 
 
 def _number(value: Any) -> float | None:

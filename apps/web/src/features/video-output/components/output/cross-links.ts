@@ -24,38 +24,42 @@ function isContentTab(tab: TabEntry): boolean {
   return tab.component !== 'overview' && tab.id !== 'overview';
 }
 
+/** The candidate targets a link can reach: content tabs that exist, other
+ *  than `self`, each once, in candidate order. The overview and ids no tab
+ *  carries (a link from a stored row to a tab since dropped) go nowhere. */
+function reachableTargets(tabs: TabEntry[], self: TabEntry, candidateIds: string[]): TabEntry[] {
+  const seen = new Set<string>([self.id]);
+  const targets: TabEntry[] = [];
+  for (const id of candidateIds) {
+    const target = tabs.find((t) => t.id === id);
+    if (!target || seen.has(id) || !isContentTab(target)) continue;
+    seen.add(id);
+    targets.push(target);
+  }
+  return targets;
+}
+
+function toCrossLink(target: TabEntry): ResolvedCrossLink {
+  return { targetTab: target.id, label: displayLabel(target), reason: target.goal };
+}
+
 /** The onward links of every tab. The assembler lets one tab claim each
  *  target and the hidden overview claims first, so content tabs ship almost
- *  none: each tab gets its explicit links (overview dropped) plus the next tab
- *  in strip order, deduped by target, labelled with the target's true-count
- *  label and its goal as the reason. A content tab with no explicit link and
- *  no next tab wraps to the first content tab, so every content tab has at
- *  least one way onward. */
+ *  none: each tab gets its explicit links plus the next tab in strip order,
+ *  filtered to reachable content tabs (`reachableTargets`), labelled with the
+ *  target's true-count label and its goal as the reason. A tab left with no
+ *  link — e.g. a stored row whose only explicit link is the overview — wraps
+ *  to the first content tab, so every content tab has a way onward. */
 export function resolveCrossLinks(tabs: TabEntry[]): Map<string, ResolvedCrossLink[]> {
   const map = new Map<string, ResolvedCrossLink[]>();
   const firstContent = tabs.find(isContentTab);
   tabs.forEach((tab, i) => {
-    const explicit = tab.crossTabLinks ?? [];
-    const candidates = [...explicit];
+    const candidateIds = (tab.crossTabLinks ?? []).map((link) => link.targetTab);
     const next = tabs[i + 1];
-    if (next) candidates.push({ targetTab: next.id, label: next.label });
-    else if (explicit.length === 0 && firstContent && firstContent.id !== tab.id) {
-      candidates.push({ targetTab: firstContent.id, label: firstContent.label });
-    }
-    const seen = new Set<string>([tab.id, 'overview']);
-    const links: ResolvedCrossLink[] = [];
-    for (const candidate of candidates) {
-      if (seen.has(candidate.targetTab)) continue;
-      seen.add(candidate.targetTab);
-      const target = tabs.find((t) => t.id === candidate.targetTab);
-      if (target?.component === 'overview') continue;
-      links.push({
-        targetTab: candidate.targetTab,
-        label: target ? displayLabel(target) : candidate.label,
-        reason: target?.goal,
-      });
-    }
-    map.set(tab.id, links);
+    if (next) candidateIds.push(next.id);
+    const targets = reachableTargets(tabs, tab, candidateIds);
+    if (targets.length === 0 && firstContent && firstContent.id !== tab.id) targets.push(firstContent);
+    map.set(tab.id, targets.map(toCrossLink));
   });
   return map;
 }

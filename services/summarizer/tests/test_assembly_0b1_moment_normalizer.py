@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.models.domain_types import PodcastSegment
+from src.models.domain_types import LearningTimestamp, PodcastSegment
 from src.services.pipeline.assembly import assemble_moment_track, assemble_response
 from src.services.pipeline.assembly.normalizers import (
     _chapters_to_moments,
@@ -208,6 +208,62 @@ class TestRefuseTimeless:
 
     def test_should_ship_no_track_from_an_all_timeless_list(self) -> None:
         assert assemble_moment_track({}, [{"label": "A"}, {"label": "B"}], {}, None) is None
+
+
+class TestClockBeatsADefaultedZero:
+    """Phase-0 review W-B1: ``LearningTimestamp`` turns a missing ``seconds`` into 0, so
+    the ``time`` clock decides — on validated data, as the extraction hands it over."""
+
+    @staticmethod
+    def _validated(*raw: dict) -> list[dict]:
+        return [LearningTimestamp.model_validate(item).model_dump() for item in raw]
+
+    def test_should_ship_the_clocked_item_and_the_real_opening(self) -> None:
+        data = self._validated(
+            {"time": "2:10", "seconds": None, "label": "Setup"},
+            {"time": "0:00", "seconds": 0, "label": "Intro"},
+        )
+
+        items = normalize_moment_items(data)
+
+        assert [(i["label"], i["seconds"]) for i in items] == [("Setup", 130), ("Intro", 0)]
+
+    def test_should_seek_where_the_chip_says(self) -> None:
+        data = self._validated({"time": "2:10", "seconds": None, "label": "Setup"})
+
+        item = normalize_moment_items(data)[0]
+
+        assert (item["seconds"], item["time"]) == (130, "2:10")
+
+    def test_should_derive_the_chip_from_stated_seconds_over_a_disagreeing_clock(self) -> None:
+        item = _normalize_moment_item({"time": "5:00", "seconds": 130, "label": "Setup"}, 0)
+
+        assert item is not None and (item["seconds"], item["time"]) == (130, "2:10")
+
+    def test_should_refuse_a_negative_seconds_without_a_clock(self) -> None:
+        data = self._validated({"time": "", "seconds": -5, "label": "Sentinel"})
+
+        assert normalize_moment_items(data) == []
+
+    def test_should_place_a_negative_seconds_by_its_clock(self) -> None:
+        data = self._validated({"time": "3:00", "seconds": -1, "label": "Late"})
+
+        assert normalize_moment_items(data)[0]["seconds"] == 180
+
+    def test_should_keep_a_zero_without_a_clock_as_the_opening(self) -> None:
+        data = self._validated({"seconds": 0, "label": "Opening"})
+
+        assert normalize_moment_items(data)[0]["seconds"] == 0
+
+    def test_should_ship_both_through_the_moment_track_assembler(self) -> None:
+        data = self._validated(
+            {"time": "2:10", "seconds": None, "label": "Setup"},
+            {"time": "0:00", "seconds": 0, "label": "Intro"},
+        )
+
+        result = assemble_moment_track({}, data, {}, None)
+
+        assert result is not None and _labels(result["items"]) == ["Setup", "Intro"]
 
 
 class TestChapterOrder:

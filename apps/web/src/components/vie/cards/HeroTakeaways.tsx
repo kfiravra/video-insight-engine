@@ -1,4 +1,4 @@
-import { memo, useCallback, useState } from 'react';
+import { memo, useCallback, useId, useState } from 'react';
 import { useLabels } from '@/lib/i18n';
 import { useVideoPlayer } from '@/features/video-output/contexts/VideoPlayerContext';
 import { Button } from '@/components/ui/button';
@@ -61,6 +61,7 @@ export const HeroTakeaways = memo(function HeroTakeaways({ takeaways, isStreamin
   }, [open]);
 
   const [showAll, setShowAll] = useState(false);
+  const listId = useId();
   const cap = isPhone ? TAKEAWAY_CAP_PHONE : TAKEAWAY_CAP_DESKTOP;
   const visible = showAll ? takeaways : takeaways.slice(0, cap);
   const hidden = takeaways.length - visible.length;
@@ -78,7 +79,7 @@ export const HeroTakeaways = memo(function HeroTakeaways({ takeaways, isStreamin
         {/* Uniform fine dot marker (not per-item emoji) keeps both columns
             left-aligned and reads as a crisp, ordered list. Tight 13px type
             sits clearly below the brief in hierarchy. */}
-        <ul className="grid grid-cols-1 gap-x-7 gap-y-2 sm:grid-cols-2">
+        <ul id={listId} className="grid grid-cols-1 gap-x-7 gap-y-2 sm:grid-cols-2">
           {visible.map((takeaway, i) => (
             // The <li> is the animated element itself: a FadeIn <div> between <ul> and <li>
             // breaks the list semantics (axe `list` / `listitem`).
@@ -97,6 +98,8 @@ export const HeroTakeaways = memo(function HeroTakeaways({ takeaways, isStreamin
             variant="ghost"
             size="bare"
             onClick={() => setShowAll(!showAll)}
+            aria-expanded={showAll}
+            aria-controls={listId}
             aria-label={showAll ? t.hideTakeaways : undefined}
             className="mt-2.5 text-xs font-medium text-[var(--vie-accent)] hover:underline"
           >

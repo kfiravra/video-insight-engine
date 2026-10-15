@@ -21,8 +21,10 @@ from src.services.pipeline.assembly.core import (
 from src.services.pipeline.assembly.sampling import (
     MomentAnchors,
     collect_moment_anchors,
+    is_described_track,
     moment_cap_for_duration,
     moment_salience,
+    moment_track_cap,
     rank_sample,
     sample_moments,
 )
@@ -275,6 +277,60 @@ class TestMomentTabPostProcessing:
         assert len(tab["props"]["items"]) == 20
 
 
+# ─── §9 sizes label-only tracks; a described track keeps the item cap (g0b open item 1) ───
+
+
+def _described_moments(count: int, spacing: int = 40) -> list[dict]:
+    return [
+        _moment(i * spacing, f"Event {_word(i)}", description=f"What event {_word(i)} settled.")
+        for i in range(count)
+    ]
+
+
+class TestDescribedTrackCap:
+    def test_should_ship_every_event_of_a_described_ten_minute_track(self) -> None:
+        """S08: 14 described events in a 10-minute explainer — §9 alone kept 4."""
+        tab = _moment_tab(_described_moments(14))
+
+        _post_process_tabs([tab], 600)
+
+        assert len(tab["props"]["items"]) == 14
+
+    def test_should_size_a_label_only_track_by_duration(self) -> None:
+        tab = _moment_tab(_plain_moments(14, spacing=40))
+
+        _post_process_tabs([tab], 600)
+
+        assert len(tab["props"]["items"]) == moment_cap_for_duration(600, 20)
+
+    def test_should_rank_sample_a_described_track_over_the_item_cap(self) -> None:
+        tab = _moment_tab(_described_moments(30, spacing=20))
+
+        _post_process_tabs([tab], 600)
+
+        assert len(tab["props"]["items"]) == 20
+
+    def test_should_never_give_a_long_described_video_fewer_moments_than_by_duration(
+        self,
+    ) -> None:
+        assert moment_track_cap(_described_moments(80), 280 * 60, 20) == 46
+
+    def test_should_count_a_track_half_described_as_described(self) -> None:
+        items = _described_moments(2) + _plain_moments(2)
+
+        assert is_described_track(items) is True
+
+    def test_should_not_count_a_description_that_repeats_the_label(self) -> None:
+        items = [
+            _moment(i * 60, f"Beat {_word(i)}", description=f" Beat {_word(i)} ") for i in range(4)
+        ]
+
+        assert is_described_track(items) is False
+
+    def test_should_treat_an_empty_track_as_label_only(self) -> None:
+        assert is_described_track([]) is False
+
+
 # ─── No Moments tab when the steps are the timeline (D6) ───
 
 _STEPS = [
@@ -325,10 +381,14 @@ _PLANNED_MOMENTS = {"id": "moments", "label": "Key Moments", "component": "momen
 
 
 class TestStepsAreTheTimeline:
-    def test_should_detect_a_step_player_flow_canvas_or_workout_room(self) -> None:
-        assert steps_are_the_timeline([{"component": "workout_room"}])
-        assert steps_are_the_timeline([{"component": "step_flow_canvas"}])
-        assert not steps_are_the_timeline([{"component": "spot_explorer"}])
+    @pytest.mark.parametrize(
+        ("component", "expected"),
+        [("workout_room", True), ("step_flow_canvas", True), ("spot_explorer", False)],
+    )
+    def test_should_detect_a_step_player_flow_canvas_or_workout_room(
+        self, component: str, expected: bool
+    ) -> None:
+        assert steps_are_the_timeline([{"component": component}], "fitness", []) is expected
 
     def test_should_drop_the_planned_moments_tab_of_a_recipe(self) -> None:
         result = assemble_response(

@@ -35,6 +35,7 @@ _QUIZ_TAB = {"id": "quiz", "label": "Quiz", "component": "quiz_arena",
              "dataSource": "enrichment.quiz", "goal": "Check it"}  # fmt: skip
 _MOMENTS_TAB = {"id": "moments", "label": "🎬 Demos", "emoji": "🎬", "component": "moment_track",
                 "dataSource": "learning.timestamps", "goal": "Jump to a demo"}  # fmt: skip
+_TECH = effective_requirements("tech")
 
 
 def _snippet(code: str) -> dict:
@@ -61,6 +62,12 @@ def _ids(result: dict) -> list[str]:
 
 def _moment_tabs(result: dict) -> list[dict]:
     return [t for t in result["tabs"] if t["component"] == "moment_track"]
+
+
+def _provisional(
+    plan: list[dict], meta: dict = _META, rules: dict = _TECH
+) -> tuple[dict, int] | None:
+    return provisional_moments_tab(plan, meta, None, "tech", rules)
 
 
 class TestAlwaysMomentsInAssembly:
@@ -184,40 +191,40 @@ class TestAlwaysMomentsTab:
 
 class TestProvisionalMomentsTab:
     def test_should_take_the_planned_moment_tabs_id_label_and_goal(self) -> None:
-        built = provisional_moments_tab([_CODE_TAB, _MOMENTS_TAB], _META, None, frozenset())
+        built = _provisional([_CODE_TAB, _MOMENTS_TAB])
 
         tab, _position = built or ({}, 0)
         assert (tab["id"], tab["label"], tab["goal"]) == ("moments", "🎬 Demos", "Jump to a demo")
 
     def test_should_estimate_the_position_after_the_overview_and_earlier_tabs(self) -> None:
-        built = provisional_moments_tab([_CODE_TAB, _MOMENTS_TAB], _META, None, frozenset())
+        built = _provisional([_CODE_TAB, _MOMENTS_TAB])
 
         assert (built or ({}, -1))[1] == 2
 
     def test_should_leave_the_quiz_out_of_the_position_estimate(self) -> None:
         plan = [_QUIZ_TAB, _CODE_TAB, _MOMENTS_TAB]
 
-        assert (provisional_moments_tab(plan, _META, None, frozenset()) or ({}, -1))[1] == 2
+        assert (_provisional(plan) or ({}, -1))[1] == 2
 
     def test_should_be_the_always_moments_tab_when_the_plan_designed_none(self) -> None:
-        built = provisional_moments_tab([_CODE_TAB, _QUIZ_TAB], _META, None, frozenset())
+        built = _provisional([_CODE_TAB, _QUIZ_TAB])
 
         tab, position = built or ({}, -1)
         assert (tab["id"], tab["component"], position) == ("key_moments", "moment_track", 2)
 
     def test_should_be_outline_based(self) -> None:
-        built = provisional_moments_tab([_CODE_TAB, _MOMENTS_TAB], _META, None, frozenset())
+        built = _provisional([_CODE_TAB, _MOMENTS_TAB])
 
         items = (built or ({"props": {"items": []}}, 0))[0]["props"]["items"]
         assert [m["label"] for m in items] == ["The stack", "Agent workflow"]
 
     def test_should_return_none_without_any_source(self) -> None:
-        assert provisional_moments_tab([_CODE_TAB], _NO_SOURCE_META, None, frozenset()) is None
+        assert _provisional([_CODE_TAB], _NO_SOURCE_META) is None
 
     def test_should_return_none_when_the_domain_forbids_moment_track(self) -> None:
-        forbidden = frozenset({"moment_track"})
+        forbidding = {**_TECH, "forbidden": frozenset({"moment_track"})}
 
-        assert provisional_moments_tab([_MOMENTS_TAB], _META, None, forbidden) is None
+        assert _provisional([_MOMENTS_TAB], rules=forbidding) is None
 
 
 class TestPlanDoneAndAssemblyAgree:
@@ -226,7 +233,7 @@ class TestPlanDoneAndAssemblyAgree:
     def test_should_name_the_provisional_after_the_tab_assembly_adds(self) -> None:
         triage = _triage(_CODE_TAB, _QUIZ_TAB)
 
-        built = provisional_moments_tab(triage["tabs"], _META, None, frozenset())
+        built = _provisional(triage["tabs"])
 
         assert (built or ({"id": None}, 0))[0]["id"] in _ids(_assemble(triage, _META))
 
@@ -235,6 +242,6 @@ class TestPlanDoneAndAssemblyAgree:
                  "dataSource": "tech.snippets"}  # fmt: skip
         triage = _triage(taken, _QUIZ_TAB)
 
-        built = provisional_moments_tab(triage["tabs"], _META, None, frozenset())
+        built = _provisional(triage["tabs"])
 
         assert (built or ({"id": None}, 0))[0]["id"] in _ids(_assemble(triage, _META))

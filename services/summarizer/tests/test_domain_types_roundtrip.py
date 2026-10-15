@@ -16,10 +16,19 @@ path (``validate_domain_output``) and asserts the fields survive.
 
 from __future__ import annotations
 
+import pytest
+from pydantic import BaseModel
+
 from src.models.domain_types import (
+    FitnessMeta,
     FoodData,
+    LanguageData,
     NarrativeData,
+    NewsClaim,
+    PodcastSegment,
     ProjectData,
+    ReviewVerdict,
+    ScienceData,
     TravelData,
     validate_domain_output,
 )
@@ -115,6 +124,50 @@ class TestStepItemRoundTrip:
         step = dumped["steps"][0]
         assert step["safetyNote"] == "Wear eye protection"
         assert step["thumbnailUrl"] == "https://cdn.example.com/cut.jpg"
+
+
+class TestUnstatedValuesStayAbsent:
+    """A level, verdict badge, project name or claim source the video does not
+    state validates to None — never a default the reader takes as the video's
+    (output-quality D13; phase-0 review W-B2)."""
+
+    @pytest.mark.parametrize(
+        ("model", "data", "field"),
+        [
+            (FitnessMeta, {}, "difficulty"),
+            (FitnessMeta, {"difficulty": "expert"}, "difficulty"),
+            (ProjectData, {}, "project_name"),
+            (ProjectData, {"projectName": ""}, "project_name"),
+            (ProjectData, {}, "difficulty"),
+            (LanguageData, {}, "level"),
+            (ScienceData, {"level": "phd"}, "level"),
+            (ReviewVerdict, {}, "badge"),
+            (NewsClaim, {"claim": "Fares rise 15%"}, "source"),
+        ],
+    )
+    def test_should_validate_an_unstated_value_to_none(
+        self, model: type[BaseModel], data: dict, field: str
+    ):
+        assert getattr(model.model_validate(data), field) is None
+
+    def test_should_keep_a_stated_value(self):
+        assert ScienceData.model_validate({"level": "advanced"}).level == "advanced"
+
+
+class TestPodcastSegmentProse:
+    """The prompt asks for `summary`; a model writing `description` beside an
+    empty one must not lose the segment's only prose."""
+
+    @pytest.mark.parametrize("summary", ["", "   ", None])
+    def test_should_take_a_filled_description_over_a_blank_summary(self, summary: str | None):
+        data = {"title": "Intro", "summary": summary, "description": "Guest welcome."}
+
+        assert PodcastSegment.model_validate(data).summary == "Guest welcome."
+
+    def test_should_keep_a_filled_summary_over_the_description(self):
+        data = {"title": "Intro", "summary": "Host intro.", "description": "Guest welcome."}
+
+        assert PodcastSegment.model_validate(data).summary == "Host intro."
 
 
 class TestFoodMetaRoundTrip:

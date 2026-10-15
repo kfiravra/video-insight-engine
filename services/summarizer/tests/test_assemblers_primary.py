@@ -621,6 +621,29 @@ class TestFlexInfoGrid:
         assert result["items"][0]["value"] == "What a shame"
         assert result["items"][0]["evidence"].startswith("Said when")
 
+    def test_food_substitution_shape(self):
+        # food.substitutions shape — original→key, substitute→value, notes→evidence.
+        data = [
+            {
+                "original": "Buttermilk",
+                "substitute": "Milk + 1 tbsp lemon juice",
+                "notes": "Let it rest 5 minutes",
+            }
+        ]
+        result = assemble_info_grid({}, data, {}, None)
+        assert result["items"] == [
+            {
+                "key": "Buttermilk",
+                "value": "Milk + 1 tbsp lemon juice",
+                "evidence": "Let it rest 5 minutes",
+            }
+        ]
+
+    def test_food_substitution_without_notes_keeps_the_pair(self):
+        data = [{"original": "Butter", "substitute": "Coconut oil", "notes": None}]
+        result = assemble_info_grid({}, data, {}, None)
+        assert result["items"] == [{"key": "Butter", "value": "Coconut oil"}]
+
     def test_term_definition_shape(self):
         data = [{"term": "ReLU", "definition": "Rectified Linear Unit — max(0, x)"}]
         result = assemble_info_grid({}, data, {}, None)

@@ -287,7 +287,7 @@ class TestReviewData:
 
     def test_verdict_badge_coercion(self):
         verdict = ReviewVerdict(badge="unknown_badge", bottomLine="Test")
-        assert verdict.badge == "recommended"
+        assert verdict.badge is None
 
     def test_comparison_alias(self):
         comp = ReviewComparison.model_validate(
@@ -386,7 +386,7 @@ class TestFitnessData:
     def test_meta_coercion(self):
         meta = FitnessMeta(type=None, difficulty="expert", duration=None)
         assert meta.type == "general"
-        assert meta.difficulty == "intermediate"
+        assert meta.difficulty is None
         assert meta.duration == 0
 
     def test_exercise_difficulty_coercion(self):
@@ -464,8 +464,8 @@ class TestProjectData:
                 "estimatedTime": None,
             }
         )
-        assert data.project_name == "Untitled Project"
-        assert data.difficulty == "intermediate"
+        assert data.project_name is None
+        assert data.difficulty is None
         assert data.estimated_time == "unknown"
 
 

@@ -13,7 +13,8 @@ that shape the tab list once the evidence is settled:
 3. quiz — dropped outside ``quizDomains`` or when ``is_learnable`` is doubly
    false; otherwise moved last;
 4. dedupe — one tab per ``(dataSource, component)``, a component and what
-   assembly promotes it to counting as one (flash_deck → concept_canvas), the
+   assembly promotes it to counting as one (flash_deck → concept_canvas): a tab
+   the primary requires (or its equivalent) wins over one it does not, else the
    first wins; assembly dedupes again on the assembled items (``assembly/dedupe.py``);
 5. size — 3–6 tabs: beyond 6 the last other planned tab is trimmed (never a
    required tab, a moment_track or the quiz), a short plan is filled from the
@@ -285,19 +286,45 @@ def quiz_step(run: ReconcilePass) -> None:
 # ─── Steps 4–5: dedupe, size ───
 
 
+def _required_family(run: ReconcilePass) -> frozenset[str]:
+    """The primary's required components and what assembly promotes each to."""
+    required = effective_requirements(run.primary, run.content_format)["required"]
+    return frozenset().union(*(_equivalents(component) for component in required))
+
+
+def _dedupe_pair(tab: Mapping[str, Any]) -> tuple[str, str]:
+    """``(dataSource, component)`` with the component read as what assembly promotes it to."""
+    component: str = tab["component"]
+    return tab.get("dataSource") or "", COMPONENT_PROMOTIONS.get(component, component)
+
+
+def _dedupe_winners(run: ReconcilePass) -> dict[tuple[str, str], dict]:
+    """The tab that stays for each ``(dataSource, component)``: the first one the primary
+    requires (equivalents included), else the first."""
+    protected = _required_family(run)
+    winners: dict[tuple[str, str], dict] = {}
+    for tab in run.tabs:
+        pair = _dedupe_pair(tab)
+        held = winners.get(pair)
+        if held is None or (tab["component"] in protected and held["component"] not in protected):
+            winners[pair] = tab
+    return winners
+
+
 def dedupe_step(run: ReconcilePass) -> None:
-    """One tab per ``(dataSource, component)`` — the first wins. A component and
-    its promotion target are the same component here: a flash_deck and a
-    concept_canvas on one ``concepts`` list ship the same items (S03, L26)."""
-    seen: set[tuple[str, str]] = set()
+    """One tab per ``(dataSource, component)``. A component and its promotion target
+    are the same component here: a flash_deck and a concept_canvas on one
+    ``concepts`` list ship the same items (S03, L26). A tab the primary requires
+    outlives an earlier twin it does not (phase-0 review W-A6: travel's planned
+    spot_explorer is never lost to an info_grid that merely could promote); else
+    the first wins."""
+    winners = _dedupe_winners(run)
     kept: list[dict] = []
     for tab in run.tabs:
-        component = tab["component"]
-        pair = (tab.get("dataSource") or "", COMPONENT_PROMOTIONS.get(component, component))
-        if pair[0] and pair in seen:
+        pair = _dedupe_pair(tab)
+        if pair[0] and winners[pair] is not tab:
             drop(run, tab, "duplicate")
             continue
-        seen.add(pair)
         kept.append(tab)
     run.tabs = kept
 
@@ -305,8 +332,7 @@ def dedupe_step(run: ReconcilePass) -> None:
 def _trimmable(run: ReconcilePass) -> list[int]:
     """Indices of the tabs a trim may remove: not required, not a moment_track,
     not the quiz (it sits last by policy, not because it matters least)."""
-    required = effective_requirements(run.primary, run.content_format)["required"]
-    protected = NEVER_DROPPED.union(*(_equivalents(component) for component in required))
+    protected = NEVER_DROPPED | _required_family(run)
     return [
         i
         for i, tab in enumerate(run.tabs)

@@ -27,9 +27,10 @@ from src.utils.data_helpers import is_empty_data
 from .assemblers_learning import assemble_display_section
 from .assemblers_overhaul import _normalize_filmstrip_frame
 from .attachments import attach_response_secondaries
-from .component_lists import COMPONENT_LIST_KEYS
+from .component_lists import COMPONENT_LIST_KEYS, SEQUENTIAL_COMPONENTS
 from .cross_tab import resolve_cross_tab_links
 from .dedupe import _ITEM_TEXT_KEYS as _ITEM_TEXT_KEYS
+from .dedupe import DUPLICATE_ITEMS as DUPLICATE_ITEMS
 from .dedupe import DUPLICATE_OVERLAP as DUPLICATE_OVERLAP
 from .dedupe import DUPLICATE_TAB as DUPLICATE_TAB
 from .dedupe import _dedupe_tabs as _dedupe_tabs
@@ -55,7 +56,7 @@ from .sampling import (
     MomentAnchors,
     collect_moment_anchors,
     item_richness,
-    moment_cap_for_duration,
+    moment_track_cap,
     rank_sample,
     sample_moments,
     tier_head,
@@ -426,13 +427,19 @@ def _drop_emptied_moment_tabs(
 
 
 def _drop_moments_when_steps_are_the_timeline(
-    tabs: list[dict], dropped_sink: list[dict], sources: Mapping[str, str] | None = None
+    tabs: list[dict],
+    dropped_sink: list[dict],
+    primary_tag: str,
+    required: Collection[str],
+    sources: Mapping[str, str] | None = None,
 ) -> bool:
     """Remove every moment_track tab when the steps are the timeline (D6); True when so.
 
-    ``sources`` (tab id → planned dataSource) labels each drop record.
+    ``primary_tag`` and its ``required`` components decide (``steps_are_the_timeline``:
+    a moment_track the domain requires is never dropped). ``sources`` (tab id →
+    planned dataSource) labels each drop record.
     """
-    if not steps_are_the_timeline(tabs):
+    if not steps_are_the_timeline(tabs, primary_tag, required):
         return False
     for idx in reversed(range(len(tabs))):
         if tabs[idx].get("component") != "moment_track":
@@ -663,10 +670,15 @@ def required_components(primary_tag: str, content_format: str | None) -> frozens
     return frozenset().union(*(_REQUIREMENT_EQUIVALENTS.get(c, frozenset({c})) for c in required))
 
 
+# droppedTabs records of tabs that never died: an evidence-skipped requirement was
+# never a tab, and a twin that shed its shared items (``dedupe``) still ships.
+_NOT_A_DROP = frozenset({REQUIREMENT_EVIDENCE_FALSE, DUPLICATE_ITEMS})
+
+
 def count_dropped_tabs(dropped: list[dict]) -> int:
-    """Planned tabs that died. An evidence-skipped requirement is recorded in
-    ``droppedTabs`` for the audit trail but was never a tab, so it is not counted."""
-    return sum(1 for entry in dropped if entry.get("reason") != REQUIREMENT_EVIDENCE_FALSE)
+    """Planned tabs that died. ``droppedTabs`` also lists, for the audit trail, an
+    evidence-skipped requirement and a trimmed twin (``_NOT_A_DROP``) — not counted."""
+    return sum(1 for entry in dropped if entry.get("reason") not in _NOT_A_DROP)
 
 
 def _record_evidence_skip(
@@ -892,17 +904,21 @@ def _cap_tab_items(
 ) -> None:
     """Cap the user-facing list of a tab, keeping the items that matter (R9).
 
-    A timeline's cap follows the video's length (content-model §9). Spots grouped
-    by day (``sections[].spotIndices``) are capped per section with the indices
-    remapped, so no day vanishes and no index dangles.
+    A procedure (``SEQUENTIAL_COMPONENTS``) ships whole: a sampled step player
+    skips steps mid-procedure (phase-0 review W-A4). A label-only timeline's cap
+    follows the video's length (content-model §9; ``moment_track_cap``). Spots
+    grouped by day (``sections[].spotIndices``) are capped per section with the
+    indices remapped, so no day vanishes and no index dangles.
     """
     cap = _TAB_ITEM_CAPS.get(component)
     list_key = _COUNT_KEYS.get(component)
-    items = props.get(list_key) if list_key else None
-    if cap is None or not isinstance(items, list):
+    if cap is None or list_key is None or component in SEQUENTIAL_COMPONENTS:
+        return
+    items = props.get(list_key)
+    if not isinstance(items, list):
         return
     if component == "moment_track":
-        cap = moment_cap_for_duration(video_duration, cap)
+        cap = moment_track_cap(items, video_duration, cap)
     if len(items) <= cap:
         return
     if list_key == "spots" and isinstance(props.get("sections"), list):
@@ -1095,58 +1111,57 @@ _FIELD_EQUIVALENTS: dict[str, list[str]] = {
 }
 
 
+def _cross_domain_candidates(extraction: dict, primary_domain: str, field: str) -> list[str]:
+    """The paths the cross-domain fallback tries, in order: ``field`` in every other
+    domain, then its equivalents (``_FIELD_EQUIVALENTS``) domain by domain."""
+    others = [
+        domain
+        for domain, data in extraction.items()
+        if domain != primary_domain and isinstance(data, dict)
+    ]
+    equivalents = _FIELD_EQUIVALENTS.get(field, [])
+    return [f"{domain}.{field}" for domain in others] + [
+        f"{domain}.{equivalent}" for domain in others for equivalent in equivalents
+    ]
+
+
 def _cross_domain_fallback(
     data_source: str,
     extraction: dict | None,
     enrichment: dict | None = None,
+    claimed: Collection[str] = (),
 ) -> Any:
     """Try other extraction domains when primary domain field is empty.
 
     Given "learning.concepts" with empty data, scans narrative, tech, etc.
-    for the same field name or equivalent fields.
+    for the same field name or equivalent fields. A field another tab ships
+    from (``claimed``, ``_planned_claims``) is refused (R5): borrowed, it would
+    ship under this tab's label and the dedupe would drop its owner.
     """
     if not extraction:
         return None
     parts = data_source.split(".")
     if len(parts) != 2:
         return None
-
-    primary_domain, field = parts
-
-    # Try exact field name in other domains first
-    for domain, domain_data in extraction.items():
-        if domain == primary_domain or not isinstance(domain_data, dict):
+    for path in _cross_domain_candidates(extraction, *parts):
+        domain, field = path.split(".", 1)
+        candidate = extraction[domain].get(field)
+        if is_empty_data(candidate):
             continue
-        candidate = domain_data.get(field)
-        if not is_empty_data(candidate):
+        if path in claimed:
             logger.info(
-                "Cross-domain fallback: %s.%s (empty) → %s.%s (%d items)",
-                primary_domain,
-                field,
-                domain,
-                field,
-                len(candidate) if isinstance(candidate, (list, dict)) else 1,
+                "Cross-domain fallback: %s (empty) → %s refused, another tab reads it",
+                data_source,
+                path,
             )
-            return candidate
-
-    # Try equivalent field names in other domains
-    equivalents = _FIELD_EQUIVALENTS.get(field, [])
-    for domain, domain_data in extraction.items():
-        if domain == primary_domain or not isinstance(domain_data, dict):
             continue
-        for equiv_field in equivalents:
-            candidate = domain_data.get(equiv_field)
-            if not is_empty_data(candidate):
-                logger.info(
-                    "Cross-domain fallback: %s.%s (empty) → %s.%s (%d items)",
-                    primary_domain,
-                    field,
-                    domain,
-                    equiv_field,
-                    len(candidate) if isinstance(candidate, (list, dict)) else 1,
-                )
-                return candidate
-
+        logger.info(
+            "Cross-domain fallback: %s (empty) → %s (%d items)",
+            data_source,
+            path,
+            len(candidate) if isinstance(candidate, (list, dict)) else 1,
+        )
+        return candidate
     return None
 
 
@@ -1165,8 +1180,9 @@ def _in_domain_sibling_fallback(
     """Recover an empty planned field from a populated SIBLING field in the SAME domain.
 
     ``claimed`` names the dataSources other tabs ship from (``_planned_claims``):
-    a sibling another tab already shows is refused (R5) — the fallback would only
-    reproduce that tab, and the tab on the empty field drops instead.
+    a sibling — or, in the generic last resort, any list — another tab already
+    shows is refused (R5): the fallback would only reproduce that tab, and the
+    tab on the empty field drops instead.
 
     The planner picks a tab's dataSource before extraction runs, so it may bet on a
     schema field this video left empty (e.g. ``tech.patterns`` when only
@@ -1222,32 +1238,44 @@ def _in_domain_sibling_fallback(
     # the planned domain. Positional components (spot_explorer etc.) are
     # deliberately excluded — a random list would corrupt their semantics.
     if component in _GENERIC_LIST_FALLBACK_COMPONENTS and isinstance(domain_data, dict):
-        best_field: str | None = None
-        best_value: list | None = None
-        for field_name, value in domain_data.items():
-            if not isinstance(value, list) or is_empty_data(value):
-                continue
-            if not all(isinstance(v, (dict, str)) for v in value):
-                continue
-            # Timeline-shaped lists (highlights, moments, chapters — items that
-            # carry a timestamp) are a jump index, not reference facts; keyed
-            # off "step"/"claim"/"topic" they would masquerade as a grid.
-            if any(isinstance(v, dict) and _item_timestamp(v) is not None for v in value):
-                continue
-            if best_value is None or len(value) > len(best_value):
-                best_field = field_name
-                best_value = value
-        if best_value is not None:
-            logger.info(
-                "Generic in-domain fallback: %s (empty) → %s.%s (%d items)",
-                data_source,
-                domain,
-                best_field,
-                len(best_value),
-            )
-            return best_value
-
+        return _longest_list_fallback(data_source, domain, domain_data, claimed)
     return None
+
+
+def _generic_list(value: Any) -> bool:
+    """A populated list of dicts / strings that is no timeline.
+
+    Timeline-shaped lists (highlights, moments, chapters — items that carry a
+    timestamp) are a jump index, not reference facts; keyed off
+    "step"/"claim"/"topic" they would masquerade as a grid.
+    """
+    if not isinstance(value, list) or is_empty_data(value):
+        return False
+    if not all(isinstance(v, (dict, str)) for v in value):
+        return False
+    return not any(isinstance(v, dict) and _item_timestamp(v) is not None for v in value)
+
+
+def _longest_list_fallback(
+    data_source: str, domain: str, domain_data: dict, claimed: Collection[str]
+) -> list | None:
+    """The longest generic list of ``domain`` no other tab ships from (``claimed``, R5)."""
+    best_field: str | None = None
+    best_value: list | None = None
+    for field_name, value in domain_data.items():
+        if not _generic_list(value) or f"{domain}.{field_name}" in claimed:
+            continue
+        if best_value is None or len(value) > len(best_value):
+            best_field, best_value = field_name, value
+    if best_value is not None:
+        logger.info(
+            "Generic in-domain fallback: %s (empty) → %s.%s (%d items)",
+            data_source,
+            domain,
+            best_field,
+            len(best_value),
+        )
+    return best_value
 
 
 def _planned_claims(
@@ -1555,7 +1583,7 @@ def assemble_response(
 
         # Cross-domain fallback: when primary domain field is empty, try other domains
         if data is None and "." in data_source:
-            data = _cross_domain_fallback(data_source, extraction, enrichment)
+            data = _cross_domain_fallback(data_source, extraction, enrichment, claims)
             if data is not None:
                 data_resolved = True
 
@@ -1792,10 +1820,10 @@ def assemble_response(
     # a duplicate. Then the post-promotion dedupe (R5): the assembled items
     # decide, not the plan's (dataSource, component) pairs, and a twin the
     # domain requires outlives one it does not — ``dedupe._dedupe_tabs``.
-    steps_timeline = _drop_moments_when_steps_are_the_timeline(
-        assembled_tabs, dropped_tabs, sources
-    )
     required = required_components(primary_tag, triage.get("contentFormat"))
+    steps_timeline = _drop_moments_when_steps_are_the_timeline(
+        assembled_tabs, dropped_tabs, primary_tag, required, sources
+    )
     _dedupe_tabs(assembled_tabs, dropped_tabs, required, sources)
 
     # A Moments tab always exists (Kfir 2026-10-12): with no moment_track tab

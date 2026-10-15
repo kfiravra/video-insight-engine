@@ -361,6 +361,10 @@ export interface StatBannerStat {
   label: string;
   value: string;
   emoji?: string;
+  /** The key point the figure comes from — what the number means. */
+  meaning?: string;
+  /** Where the video states the figure, in seconds. */
+  timestamp?: number;
 }
 
 export interface StatBannerProps {
@@ -633,7 +637,8 @@ export interface FitnessTimer {
 export interface FitnessData {
   meta: {
     type: string;
-    difficulty: 'beginner' | 'intermediate' | 'advanced';
+    /** Absent when the video states no level. */
+    difficulty?: 'beginner' | 'intermediate' | 'advanced';
     duration: number;
     muscleGroups: string[];
     equipment: string[];
@@ -709,7 +714,8 @@ export interface ReviewComparison {
 }
 
 export interface ReviewVerdict {
-  badge: 'recommended' | 'not_recommended' | 'conditional' | 'best_in_class';
+  /** Absent when the video gives no verdict. */
+  badge?: 'recommended' | 'not_recommended' | 'conditional' | 'best_in_class';
   bestFor: string[];
   notFor: string[];
   bottomLine: string;
@@ -743,8 +749,10 @@ export interface ProjectTool {
 }
 
 export interface ProjectData {
-  projectName: string;
-  difficulty: 'beginner' | 'intermediate' | 'advanced';
+  /** Absent when the video names no project. */
+  projectName?: string;
+  /** Absent when the video states no level. */
+  difficulty?: 'beginner' | 'intermediate' | 'advanced';
   estimatedTime: string;
   estimatedCost?: string;
   materials: ProjectMaterial[];

@@ -11,9 +11,10 @@ so the rule lives in one place.
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Iterable
-from typing import Any
+from typing import Any, TypeGuard
 
 # Where an item says when it is said, in the order the normalizers read them.
 ANCHOR_KEYS: tuple[str, ...] = ("timestamp", "seconds", "startSeconds")
@@ -38,17 +39,26 @@ DERIVED_FIELDS: frozenset[str] = frozenset((*_SCORES, *_TIERS, *_STATUSES, *_DUR
 DERIVED_BLOCKS: frozenset[str] = frozenset({"rating"})
 
 
+def _is_finite_number(value: Any) -> TypeGuard[int | float]:
+    """A number a reader can take as one: not a bool, NaN or ±Infinity (JSON from
+    the model may carry NaN / Infinity, which ``json.loads`` accepts)."""
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return False
+    return not isinstance(value, float) or math.isfinite(value)
+
+
 def anchor_seconds(item: Any) -> int | None:
     """The item's seek point as the extraction stamps it; None when it cannot seek.
 
     The schema stamps whole seconds as numbers. A string — a clock or a quoted
-    number — is not a stamp; the next anchor key is read instead.
+    number — is not a stamp, nor is a negative or non-finite number; the next
+    anchor key is read instead.
     """
     if not isinstance(item, dict):
         return None
     for key in ANCHOR_KEYS:
         value = item.get(key)
-        if isinstance(value, bool) or not isinstance(value, int | float) or value < 0:
+        if not _is_finite_number(value) or value < 0:
             continue
         return int(value)
     return None
@@ -67,18 +77,20 @@ def stated_scalars(item: Any, fields: Iterable[str]) -> dict[str, Any]:
 
 
 def stated_number(item: Any, field: str) -> int | float | None:
-    """A numeric scalar (a score, a maxScore) of an anchored item; None otherwise."""
+    """A finite numeric scalar (a score, a maxScore) of an anchored item; None otherwise."""
     value = stated_scalars(item, (field,)).get(field)
-    if isinstance(value, bool) or not isinstance(value, int | float):
-        return None
-    return value
+    return value if _is_finite_number(value) else None
 
 
 def stated_rows(rows: Any, field: str) -> list[dict]:
-    """The rows that are anchored and carry ``field`` (sub-scores, ranked items)."""
+    """The anchored rows whose ``field`` is a stated number (a sub-score's score).
+
+    A "9/10" or a NaN fails the FE's number contract, which would remap the
+    whole tab to the display_section fallback.
+    """
     if not isinstance(rows, list):
         return []
-    return [row for row in rows if field in stated_scalars(row, (field,))]
+    return [row for row in rows if stated_number(row, field) is not None]
 
 
 def _is_scalar(value: Any) -> bool:

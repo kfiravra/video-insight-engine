@@ -16,6 +16,18 @@ function probedMinZoom(): number {
   return Number(screen.getByTestId('min-zoom').textContent);
 }
 
+/** Reads the options of the opening fit React Flow holds until its nodes are measured. */
+function FitViewProbe() {
+  const options = useStore((state) => state.fitViewOptions);
+  return <span data-testid="fit-view">{JSON.stringify(options ?? null)}</span>;
+}
+
+function probedFitView(): unknown {
+  return JSON.parse(screen.getByTestId('fit-view').textContent ?? 'null');
+}
+
+const START_IDS = ['step-0', 'step-1'];
+
 describe('useVieFlowTheme', () => {
   afterEach(() => {
     delete document.documentElement.dataset.theme;
@@ -130,6 +142,42 @@ describe('VieCanvas', () => {
       </VieCanvas>,
     );
     expect(probedMinZoom()).toBe(0.9);
+  });
+
+  it('should open on the start nodes at no more than 100 % zoom', () => {
+    render(
+      <VieCanvas nodes={[]} edges={[]} nodeWidth={260} startNodeIds={START_IDS}>
+        <FitViewProbe />
+      </VieCanvas>,
+    );
+    expect(probedFitView()).toEqual({ nodes: [{ id: 'step-0' }, { id: 'step-1' }], maxZoom: 1 });
+  });
+
+  it('should keep the legibility floor when opening on the start nodes', () => {
+    render(
+      <VieCanvas nodes={[]} edges={[]} nodeWidth={260} startNodeIds={START_IDS}>
+        <MinZoomProbe />
+      </VieCanvas>,
+    );
+    expect(probedMinZoom()).toBeCloseTo(120 / 260, 3);
+  });
+
+  it('should fit the whole graph when no start nodes are given', () => {
+    render(
+      <VieCanvas nodes={[]} edges={[]}>
+        <FitViewProbe />
+      </VieCanvas>,
+    );
+    expect(probedFitView()).toBeNull();
+  });
+
+  it('should let consumer fitViewOptions override the opening defaults', () => {
+    render(
+      <VieCanvas nodes={[]} edges={[]} startNodeIds={START_IDS} fitViewOptions={{ maxZoom: 0.8 }}>
+        <FitViewProbe />
+      </VieCanvas>,
+    );
+    expect(probedFitView()).toMatchObject({ maxZoom: 0.8 });
   });
 
   it('should accept a custom edgeTypes registration (e.g. FloatingEdge)', () => {

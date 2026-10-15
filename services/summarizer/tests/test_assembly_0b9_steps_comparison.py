@@ -3,6 +3,8 @@ ships step_player, Cooking mode); a comparison keeps one name per competitor,
 derives no pros/cons from `winner`, and becomes a radar only on numeric axes
 (R10, R12; component-audit §2 #3, #11)."""
 
+import pytest
+
 from src.services.pipeline.assembly import (
     RADAR_AXIS_THRESHOLD,
     STEP_FLOW_THRESHOLD,
@@ -170,6 +172,34 @@ class TestComparisonKeepsEveryCompetitor:
         out = assemble_comparison({}, _two_competitors("LG has worse contrast", "LG"), {}, None)
 
         assert out["comparisons"][0]["competitor"] == "LG has worse contrast"
+
+    @pytest.mark.parametrize(
+        ("name", "cell"),
+        [
+            ("The Galaxy S24", "The best screen of the lot"),
+            ("iPhone 15 Pro", "Pro-grade video, but heavier"),
+        ],
+    )
+    def test_should_name_the_competitor_when_only_a_filler_word_matches(self, name: str, cell: str):
+        out = assemble_comparison({}, _two_competitors(cell, name), {}, None)
+
+        assert out["comparisons"][0]["competitor"] == f"{name} — {cell}"
+
+    @pytest.mark.parametrize(
+        ("name", "cell"),
+        [("The Galaxy S24", "Galaxy S24 lasts longer"), ("iPhone 15 Pro", "the iPhone is lighter")],
+    )
+    def test_should_leave_a_cell_that_names_the_competitor_past_its_fillers(
+        self, name: str, cell: str
+    ):
+        out = assemble_comparison({}, _two_competitors(cell, name), {}, None)
+
+        assert out["comparisons"][0]["competitor"] == cell
+
+    def test_should_match_an_all_filler_name_whole(self):
+        out = assemble_comparison({}, _two_competitors("Mini Pro is louder", "Mini Pro"), {}, None)
+
+        assert out["comparisons"][0]["competitor"] == "Mini Pro is louder"
 
     def test_should_match_the_competitor_in_any_case(self):
         out = assemble_comparison({}, _two_competitors("bose wins on ANC", "Bose QC"), {}, None)

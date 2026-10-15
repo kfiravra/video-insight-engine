@@ -65,6 +65,8 @@ export interface Labels {
   hideTakeaways: string;
   /** Strip overflow pill; {count} is interpolated. */
   showMoreSections: string;
+  /** Strip overflow pill when exactly one tab is hidden. */
+  showOneMoreSection: string;
   tips: string;
   // Verdict
   price: string;
@@ -142,6 +144,7 @@ const EN: Labels = {
   hideBrief: 'Hide brief',
   hideTakeaways: 'Hide takeaways',
   showMoreSections: 'Show {count} more sections',
+  showOneMoreSection: 'Show 1 more section',
   tips: 'Tips',
   price: 'Price',
   score: 'Score',
@@ -253,6 +256,7 @@ const TRANSLATIONS: Record<string, Labels> = {
     hideBrief: 'הסתר תקציר',
     hideTakeaways: 'הסתר תובנות מפתח',
     showMoreSections: 'הצג עוד {count} מקטעים',
+    showOneMoreSection: 'הצג עוד מקטע אחד',
     tips: 'טיפים',
     price: 'מחיר',
     score: 'ציון',
@@ -361,6 +365,7 @@ const TRANSLATIONS: Record<string, Labels> = {
     hideBrief: 'إخفاء الموجز',
     hideTakeaways: 'إخفاء النقاط الرئيسية',
     showMoreSections: 'عرض {count} أقسام إضافية',
+    showOneMoreSection: 'عرض قسم إضافي واحد',
     tips: 'نصائح',
     price: 'السعر',
     score: 'النتيجة',

@@ -99,6 +99,9 @@ export const ComparisonRadarHero = memo(function ComparisonRadarHero({
   const winnerMargin = Math.abs(leftPercent - rightPercent);
 
   const chartData = scored.map((s) => ({ feature: s.feature, [colLeft]: s.left, [colRight]: s.right }));
+  // A lower-is-better spoke is scored inverted (the cheaper side reaches the
+  // rim) — say so, or "Price" at the rim reads as "pricier".
+  const lowerIsBetter = scored.filter((s) => s.lowerIsBetter).map((s) => s.feature);
 
   return (
     <div className="space-y-3">
@@ -150,6 +153,11 @@ export const ComparisonRadarHero = memo(function ComparisonRadarHero({
             </RadarChart>
           )}
         </div>
+        {lowerIsBetter.length > 0 && (
+          <p className="mt-2 text-xs text-muted-foreground">
+            Further out is better — lower wins on {lowerIsBetter.join(', ')}.
+          </p>
+        )}
       </GlassCard>
 
       {/* Weight sliders collapse by default — the winner split stays visible so

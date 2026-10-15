@@ -10,6 +10,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from src.utils.data_helpers import parse_timestamp_to_seconds
+
 from .text_utils import truncate_words
 
 _MOMENT_LABEL_KEYS = ("label", "title", "name")
@@ -18,6 +20,8 @@ _MOMENT_LABEL_KEYS = ("label", "title", "name")
 # carries a title only.)
 _MOMENT_DESCRIPTION_KEYS = ("description", "summary", "instruction")
 _MOMENT_START_KEYS = ("seconds", "startSeconds", "timestamp", "start_time", "startTime")
+# The clock a ``learning.timestamps`` item writes beside its ``seconds`` ("2:10").
+_MOMENT_CLOCK_KEY = "time"
 _MOMENT_END_KEYS = ("endSeconds", "end_seconds", "endTimestamp", "end_time", "endTime")
 _MOMENT_PASSTHROUGH_KEYS = ("mood", "emoji", "speaker", "thumbnailUrl", "s3Key")
 _MOMENT_LABEL_CAP = 60
@@ -59,6 +63,30 @@ def _seconds_to_time_str(seconds: int) -> str:
     return f"{hours}:{mins:02d}:{secs:02d}" if hours else f"{mins}:{secs:02d}"
 
 
+def _clock_start(item: dict) -> int | None:
+    """The second the item's ``time`` clock reads ("2:10" → 130); None without one."""
+    clock = item.get(_MOMENT_CLOCK_KEY)
+    return parse_timestamp_to_seconds(clock) if isinstance(clock, str) else None
+
+
+def _moment_start(item: dict) -> int | None:
+    """The second a source item starts at; None when it states none.
+
+    A ``seconds`` of 0, or none, is no stamp when the item carries a ``time``
+    clock: ``LearningTimestamp`` defaults a missing ``seconds`` to 0, so a chip
+    reading 2:10 seeked to 0:00 and the real opening was deduped away (phase-0
+    review W-B1) — the clock decides. A negative is a sentinel, never a second:
+    the clock decides, else None. A 0 without a clock is the opening.
+    """
+    stated = _first_int(item, _MOMENT_START_KEYS)
+    if stated is not None and stated > 0:
+        return stated
+    clock = _clock_start(item)
+    if clock is not None:
+        return clock
+    return 0 if stated == 0 else None
+
+
 def _moment_text(item: dict) -> tuple[str, str | None] | None:
     """(label, description) from whichever fields carry prose; None when none does.
 
@@ -84,7 +112,7 @@ def _normalize_moment_item(item: Any, index: int) -> dict | None:
     An item without prose is refused (None) — a moment is never invented from
     its position; ``index`` stays for the call contract and names nothing. A
     timeless item is shaped at 0:00 here; the track (``normalize_moment_items``)
-    refuses it.
+    refuses it. The ``time`` chip is always the clock of the ``seconds`` shipped.
     """
     if isinstance(item, str):
         stripped = item.strip()
@@ -95,11 +123,12 @@ def _normalize_moment_item(item: Any, index: int) -> dict | None:
     if text is None:
         return None
     label, description = text
-    seconds = _first_int(item, _MOMENT_START_KEYS) or 0
+    start = _moment_start(item)
+    seconds = start if start is not None else 0
     end_seconds = _first_int(item, _MOMENT_END_KEYS)
     normalized: dict[str, Any] = {
         "label": label,
-        "time": item.get("time") or _seconds_to_time_str(seconds),
+        "time": _seconds_to_time_str(seconds),
         "seconds": seconds,
     }
     if end_seconds is not None and end_seconds > seconds + 1:
@@ -118,7 +147,7 @@ def _normalize_moment_item(item: Any, index: int) -> dict | None:
 
 def _stated_start(raw: Any) -> int | None:
     """The second a source item says it starts at; None for a string or a timeless item."""
-    return _first_int(raw, _MOMENT_START_KEYS) if isinstance(raw, dict) else None
+    return _moment_start(raw) if isinstance(raw, dict) else None
 
 
 def normalize_moment_items(data: Any) -> list[dict]:

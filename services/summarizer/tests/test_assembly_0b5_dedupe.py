@@ -3,10 +3,12 @@ several tabs, response-level attachments (output-quality 0b.5 — R5, L26, audit
 
 Reconcile dedupes planned tabs by (dataSource, component) before extraction; promotion
 (flash_deck → concept_canvas) and the sibling fallback still made two tabs ship the
-same items (S03's two canvases). Assembly now hashes every tab's items and drops a tab
-whose items overlap an earlier tab's by ≥ 50 %, refuses a sibling another tab reads,
-lets several tabs link one target (never the overview), and decorates the response
-through ``attach_response_secondaries`` (answer tab = first content tab).
+same items (S03's two canvases). Assembly now hashes every tab's items: a tab whose
+items overlap an earlier tab's by ≥ 50 % sheds the shared ones, and goes only when none
+of its own is left (phase-0 review W-A2: an item one tab ships is never lost). It also
+refuses a sibling another tab reads, lets several tabs link one target (never the
+overview), and decorates the response through ``attach_response_secondaries`` (answer
+tab = first content tab).
 """
 
 from __future__ import annotations
@@ -15,6 +17,7 @@ import pytest
 
 from src.services.pipeline.assembly import assemble_response
 from src.services.pipeline.assembly.core import (
+    DUPLICATE_ITEMS,
     DUPLICATE_TAB,
     _dedupe_tabs,
     _link_tabs,
@@ -136,16 +139,39 @@ class TestDedupeTabs:
         assert (dropped[0]["id"], dropped[0]["reason"]) == ("b", DUPLICATE_TAB)
         assert "a" in dropped[0]["detail"]
 
-    def test_should_drop_at_half_overlap(self) -> None:
+    def test_should_trim_a_half_overlapping_twin_to_its_own_items(self) -> None:
         tabs = [
-            _assembled("a", "info_grid", [{"key": "x"}, {"key": "y"}, {"key": "z"}, {"key": "w"}]),
-            _assembled("b", "info_grid", [{"key": "x"}, {"key": "y"}, {"key": "p"}, {"key": "q"}]),
+            _assembled("a", "info_grid", _keys(*"xyzw")),
+            _assembled("b", "info_grid", _keys(*"xypq")),
+        ]
+
+        _dedupe_tabs(tabs, [])
+
+        assert [(t["id"], t["props"]["items"]) for t in tabs] == [
+            ("a", _keys(*"xyzw")),
+            ("b", _keys("p", "q")),
+        ]
+
+    def test_should_record_the_trim_as_duplicate_items_not_a_drop(self) -> None:
+        tabs = [
+            _assembled("a", "info_grid", _keys(*"xyzw")),
+            _assembled("b", "info_grid", _keys(*"xypq")),
         ]
         dropped: list[dict] = []
 
         _dedupe_tabs(tabs, dropped)
 
-        assert [t["id"] for t in tabs] == ["a"]
+        assert [(d["id"], d["reason"], d["detail"]) for d in dropped] == [
+            ("b", DUPLICATE_ITEMS, "2 of its 4 items ship elsewhere (a)")
+        ]
+
+    def test_should_remove_the_dropped_twin_itself_never_an_equal_earlier_tab(self) -> None:
+        first = _assembled("a", "info_grid", _keys("x", "y"))
+        tabs = [first, dict(first)]
+
+        _dedupe_tabs(tabs, [])
+
+        assert tabs[0] is first and len(tabs) == 1
 
     def test_should_keep_a_tab_below_half_overlap(self) -> None:
         tabs = [
@@ -302,6 +328,10 @@ class TestAssembledDedupe:
 
         targets = {link["targetTab"] for t in result["tabs"] for link in t["crossTabLinks"]}
         assert "thinkers" not in targets
+
+    def test_should_still_drop_a_twin_with_no_item_of_its_own(self) -> None:
+        """S03: a flash_deck promoted onto the planned canvas repeats every concept."""
+        assert [d["reason"] for d in _twin_canvases()["dropped"]] == [DUPLICATE_TAB]
 
     def test_should_keep_the_backfilled_required_tab_over_its_planned_twin(self) -> None:
         spots = [

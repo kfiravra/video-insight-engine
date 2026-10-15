@@ -3,6 +3,9 @@
 exercise, quiz, flash_deck, scenario, verdict, overview, gallery, lyrics.
 """
 
+import pytest
+
+from src.models.domain_types import validate_domain_output
 from src.services.pipeline.assembly import (
     _normalize_exercise,
     _normalize_quiz_question,
@@ -96,6 +99,10 @@ class TestAssembleVerdict:
         assert result["verdict"]["score"] == 8.5
         assert result["verdict"]["maxScore"] == 10
 
+    def test_should_omit_a_badge_the_reviewer_did_not_state(self):
+        result = assemble_verdict({}, {"badge": None, "bottomLine": "Great product"}, {}, None)
+        assert "badge" not in result["verdict"]
+
     def test_empty(self):
         assert assemble_verdict({}, None, {}, None) is None
         assert assemble_verdict({}, [], {}, None) is None
@@ -114,6 +121,30 @@ class TestAssembleOverview:
         assert result is not None
         assert result["data"]["difficulty"] == "easy"
         assert result["data"]["servings"] == 4
+
+    @pytest.mark.parametrize(
+        ("tag", "data"),
+        [
+            ("fitness", {"exercises": [{"name": "Squat"}]}),
+            ("project", {"steps": [{"number": 1, "instruction": "Cut"}]}),
+            ("language", {"targetLanguage": "French"}),
+            ("science", {"field": "Physics"}),
+        ],
+    )
+    def test_should_show_no_level_name_or_difficulty_the_video_does_not_state(
+        self, tag: str, data: dict
+    ):
+        extraction = validate_domain_output([tag], [], data)
+        tab = {"_primary_tag": tag, "_video_meta": {"title": "T"}}
+
+        result = assemble_overview(tab, None, extraction, None)
+
+        assert {"level", "difficulty", "projectName"} & result["data"].keys() == set()
+
+    def test_should_show_the_level_the_video_states(self):
+        extraction = validate_domain_output(["fitness"], [], {"meta": {"difficulty": "beginner"}})
+        result = assemble_overview({"_primary_tag": "fitness"}, None, extraction, None)
+        assert result["data"]["level"] == "Beginner"
 
     def test_no_domain_data(self):
         assert assemble_overview({"_primary_tag": "travel"}, None, {}, None) is None

@@ -243,17 +243,18 @@ def _same_line(a: str | None, b: str | None) -> bool:
 
 
 def _summary_header_attachment(
-    tab: dict, extraction: dict | None, domain: str, is_answer_tab: bool
+    tab: dict, extraction: dict | None, domain: str, is_answer_tab: bool, dense: bool
 ) -> dict | None:
     """Build a top summary_header with content (R4, 0b.6): the extraction's
-    ``summary`` on the answer tab, otherwise the tab's first item — never the
-    goal, which the FE already prints as the tab's intro line. None for a
-    flash deck (``_NO_SUMMARY_HEADER_COMPONENTS``)."""
+    ``summary`` ("In short") on the answer tab whatever its size, else — on a
+    dense tab only — the tab's first item ("First up"); never the goal, which
+    the FE already prints as the tab's intro line. None for a flash deck
+    (``_NO_SUMMARY_HEADER_COMPONENTS``)."""
     if tab.get("component") in _NO_SUMMARY_HEADER_COMPONENTS:
         return None
     summary = _extraction_summary(extraction, domain) if is_answer_tab else None
     title = "In short"
-    if summary is None:
+    if summary is None and dense:
         summary = _first_item_line(tab.get("component", ""), tab.get("props") or {})
         title = "First up"
     if summary is None or _same_line(summary, tab.get("goal")):
@@ -277,21 +278,16 @@ def attach_secondaries(
 ) -> list[dict]:
     """Decide and build secondary attachments for a single assembled tab.
 
-    Sparse tab (≤ SPARSE_THRESHOLD items): add ONE enriching bottom attachment,
-    trying frame_strip → quick_quiz → tip_callout in priority order. Dense tab
-    (≥ _DENSE_THRESHOLD items): add a top summary_header carrying content (the
-    extraction summary on the answer tab, else the first item). Tabs in
-    between, and tabs without a primary list, get neither. The answer tab
-    additionally carries a bottom stat_banner when the key points hold enough
-    figures (C8), whatever its size or shape (a filmstrip or diagram answer tab
-    included). Returns a (possibly empty) list of attachment dicts.
+    The answer tab carries a top "In short" summary_header (the extraction
+    summary) and, with enough figures in its key points, a bottom stat_banner
+    (C8) — both whatever its size or shape. Another dense tab (≥
+    _DENSE_THRESHOLD items), or a dense answer tab with no summary, gets a
+    "First up" header (its first item). A sparse tab (≤ SPARSE_THRESHOLD items)
+    gets ONE enriching bottom attachment: frame_strip → quick_quiz → tip_callout.
 
-    frame_strip/quick_quiz/tip_callout are built from response-global data, so
-    repeating one across tabs shows the identical payload N times — the caller
-    passes already-used kinds via `excluded_kinds` and each is skipped in favor
-    of the next in the chain. ``is_answer_tab`` marks the first content tab
-    (the one that answers the video's question — proposal §2); the caller knows
-    the strip order, this function does not.
+    Those three repeat a response-global payload, so the caller passes the kinds
+    already used (`excluded_kinds`), each skipped for the next. ``is_answer_tab``
+    marks the first content tab (proposal §2); the caller knows the strip order.
     """
     component = tab.get("component", "")
     props = tab.get("props")
@@ -299,7 +295,13 @@ def attach_secondaries(
         return []
 
     count = _primary_item_count(component, props)
+    dense = count is not None and count >= _DENSE_THRESHOLD
     attachments: list[dict] = []
+
+    if is_answer_tab or dense:
+        header = _summary_header_attachment(tab, extraction, domain, is_answer_tab, dense)
+        if header is not None:
+            attachments.append(header)
 
     if count is not None and count <= SPARSE_THRESHOLD:
         attachment = _sparse_enrichment(
@@ -307,11 +309,6 @@ def attach_secondaries(
         )
         if attachment is not None:
             attachments.append(attachment)
-
-    elif count is not None and count >= _DENSE_THRESHOLD:
-        header = _summary_header_attachment(tab, extraction, domain, is_answer_tab)
-        if header is not None:
-            attachments.append(header)
 
     if is_answer_tab:
         banner = _stat_banner_attachment(extraction, domain)
@@ -355,10 +352,10 @@ def attach_response_secondaries(
     """Decorate every content tab of a response in place.
 
     The overview is its own hero and is never decorated; the first content tab
-    after it is the answer tab — unless it takes no attachment at all (a
-    filmstrip, a diagram or a mid-size tab, with too few figures for a numbers
-    strip): then the answer, and its "In short" header and numbers strip, moves
-    on to the next content tab. ONCE_PER_RESPONSE kinds are budgeted to one
+    after it is the answer tab — unless it takes no attachment at all (a flash
+    deck, or any tab when the extraction has no summary and too few figures for
+    a numbers strip): then the answer, its "In short" header and numbers strip,
+    moves on to the next content tab. ONCE_PER_RESPONSE kinds are budgeted to one
     appearance, and a filmstrip tab (planned or auto-appended) pre-consumes the
     frame_strip budget because it already shows the gallery.
     """

@@ -25,11 +25,12 @@ L21): ``window_stamps`` keeps an item's ``timestamp`` / ``seconds`` only inside 
 chunk's window (a marker-interval of grace at an inner edge, none past the video's
 end). A stamp outside it is the model reading the chunk's ``[h:mm:ss]`` markers
 without the hour (S02 chunk 3 stamped 1:13:41 as 13:41 = 821 s), so the hour is put
-back when that lands the stamp inside the window — once, deterministically; a 0 (the
-"no stamp" a model writes) is never hour-restored. A stamp nothing fits is cleared
-(an annotated item stays, and so does a stamped dict reached as a value) or, when the
-stamp is a list item (``seconds``, ``learning.timestamps``), the item is dropped; a
-range end left before its start, or without it, is cleared too. Every move is
+back when that lands the stamp inside the window — once, deterministically; a stamp
+≤ 0 (a 0 is the "no stamp" a model writes, a negative a sentinel) is never
+hour-restored. A stamp nothing fits is cleared (an annotated item stays, and so does
+a stamped dict reached as a value) or, when the stamp is a list item (``seconds``,
+``learning.timestamps``), the item is dropped; a range end left before its start, or
+without it, is cleared too. Every move is
 counted per field path (``StampReport``) for the validation report — gate 1's
 timestamp-drift reading (D17). One chunk is open at both ends: nothing is checked
 and the data is returned as is (the ≤ 40-min replay stays byte-identical).
@@ -42,7 +43,7 @@ import math
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeGuard
 
 from ...config import settings
 from ..transcription.transcript_chunker import (
@@ -278,9 +279,14 @@ def _holds(seconds: int, chunk: ExtractionChunk) -> bool:
 
 def restamp(seconds: int, chunk: ExtractionChunk) -> int | None:
     """``seconds`` inside the window; else the hour-restored clock that lands inside it;
-    else None (no marker of the chunk reads that way)."""
+    else None (no marker of the chunk reads that way). A negative is no second of the
+    video, and neither it nor a 0 is ever hour-restored: + 1 h would fabricate a stamp."""
+    if seconds < 0:
+        return None
     if _holds(seconds, chunk):
         return seconds
+    if seconds == 0:
+        return None
     for hours in range(1, _MAX_HOURS + 1):
         candidate = seconds + hours * _HOUR_S
         if _holds(candidate, chunk):
@@ -297,7 +303,7 @@ def _clock_seconds(text: Any) -> int | None:
     return int(hours or 0) * _HOUR_S + int(minutes) * 60 + int(secs)
 
 
-def _is_stamp(value: Any) -> bool:
+def _is_stamp(value: Any) -> TypeGuard[int]:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
@@ -315,11 +321,12 @@ def _clock_placed(item: dict[str, Any], chunk: ExtractionChunk) -> int | None:
 def _place(item: dict[str, Any], key: str, value: int, chunk: ExtractionChunk) -> int | None:
     """Where the stamp under ``key`` lands: itself inside the window, else the hour put
     back, else (``seconds``) the item's own clock; None when nothing fits. A 0 is the
-    model's "no stamp" (``LearningTimestamp.seconds`` defaults to it): it gives way to a
-    fitting clock and is never hour-restored — 0 + 1 h would be a fabricated stamp."""
+    model's "no stamp" (``LearningTimestamp.seconds`` defaults to it) and a negative a
+    sentinel: both give way to a fitting clock and are never hour-restored
+    (``restamp``) — a 0 stays only inside the window, a negative never."""
     clock = _clock_placed(item, chunk) if key == _ITEM_IS_STAMP else None
-    if value == 0:
-        return clock if clock is not None else (0 if _holds(0, chunk) else None)
+    if value <= 0 and clock is not None:
+        return clock
     placed = restamp(value, chunk)
     return placed if placed is not None else clock
 

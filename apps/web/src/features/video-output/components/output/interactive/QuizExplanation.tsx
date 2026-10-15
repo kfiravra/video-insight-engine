@@ -1,15 +1,18 @@
 import { SeekChip } from '@/components/vie';
+import { cn } from '@/lib/utils';
 import { splitTimeRefs } from '@/features/video-output/lib/quiz-time-refs';
 
 interface QuizExplanationProps {
   text: string;
   onSeek?: (seconds: number) => void;
+  /** Paragraph classes on top of the muted default (Study mode's info tint). */
+  className?: string;
 }
 
 /** Explanation paragraph with every `(m:ss)` reference rendered as a seek chip. */
-export function QuizExplanation({ text, onSeek }: QuizExplanationProps) {
+export function QuizExplanation({ text, onSeek, className }: QuizExplanationProps) {
   return (
-    <p className="text-sm leading-relaxed text-muted-foreground">
+    <p className={cn('text-sm leading-relaxed text-muted-foreground', className)}>
       {splitTimeRefs(text).map((segment, i) =>
         segment.kind === 'text' ? (
           <span key={i}>{segment.text}</span>

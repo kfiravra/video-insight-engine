@@ -3,13 +3,21 @@ import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { VideoHeroStrip } from '../VideoHeroStrip';
 
+// jsdom has no Element#scrollBy: the pill test stubs one, and every test
+// ends with the prototype as it was.
+const originalScrollBy = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollBy');
+
 afterEach(() => {
   vi.restoreAllMocks();
+  if (originalScrollBy) Object.defineProperty(HTMLElement.prototype, 'scrollBy', originalScrollBy);
+  else Reflect.deleteProperty(HTMLElement.prototype, 'scrollBy');
 });
 
-/** Lay the tabs out past a 250 px strip: the third tab's end sits beyond it. */
-function mockOverflowingLayout(): void {
-  const rightEdges: Record<string, number> = { 'tab-overview': 120, 'tab-key_points': 240, 'tab-quizzes': 360 };
+/** Lay the tabs out past a 250 px strip — by default only the third tab's
+ *  end sits beyond it. */
+function mockOverflowingLayout(
+  rightEdges: Record<string, number> = { 'tab-overview': 120, 'tab-key_points': 240, 'tab-quizzes': 360 },
+): void {
   vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
     const right = this.getAttribute('role') === 'tablist' ? 250 : (rightEdges[this.id] ?? 0);
     return { left: 0, top: 0, right, bottom: 0, width: right, height: 0, x: 0, y: 0, toJSON: () => ({}) } as DOMRect;
@@ -70,6 +78,29 @@ describe('VideoHeroStrip', () => {
     expect(screen.getByRole('tab', { name: 'Core Arguments' })).toBeInTheDocument();
   });
 
+  it('should keep a measure in a tab label verbatim', () => {
+    render(
+      <VideoHeroStrip
+        tabs={[{ id: 'days', label: '7 Days in Tokyo', emoji: '🗼', dataSource: '', itemCount: 21 }]}
+        activeTabId="days"
+        trailingPending={[]}
+      />,
+    );
+
+    expect(screen.getByRole('tab', { name: '7 Days in Tokyo' })).toBeInTheDocument();
+  });
+
+  it('should keep a tab with a preview tooltip selectable', async () => {
+    const onTabSelect = vi.fn();
+    const user = userEvent.setup();
+    const withPreview = [{ ...SAMPLE_TABS[0], preview: 'What the video is about' }, ...SAMPLE_TABS.slice(1)];
+    render(<VideoHeroStrip tabs={withPreview} activeTabId="key_points" onTabSelect={onTabSelect} trailingPending={[]} />);
+
+    await user.click(screen.getByRole('tab', { name: 'Overview' }));
+
+    expect(onTabSelect).toHaveBeenCalledWith('overview');
+  });
+
   it('should apply the domain gradient to the active tab', () => {
     const gradient = 'linear-gradient(135deg, oklch(70% 0.2 280), oklch(60% 0.2 320))';
     render(<VideoHeroStrip tabs={SAMPLE_TABS} activeTabId="overview" domainGradient={gradient} trailingPending={[]} />);
@@ -107,7 +138,14 @@ describe('VideoHeroStrip', () => {
     mockOverflowingLayout();
     render(<VideoHeroStrip tabs={SAMPLE_TABS} activeTabId="overview" trailingPending={[]} />);
 
-    expect(screen.getByRole('button', { name: 'Show 1 more sections' })).toHaveTextContent('+1');
+    expect(screen.getByRole('button', { name: 'Show 1 more section' })).toHaveTextContent('+1');
+  });
+
+  it('should name the pill in the plural when more than one tab is hidden', () => {
+    mockOverflowingLayout({ 'tab-overview': 120, 'tab-key_points': 260, 'tab-quizzes': 360 });
+    render(<VideoHeroStrip tabs={SAMPLE_TABS} activeTabId="overview" trailingPending={[]} />);
+
+    expect(screen.getByRole('button', { name: 'Show 2 more sections' })).toHaveTextContent('+2');
   });
 
   it('should scroll the strip towards its end when the pill is clicked', async () => {
@@ -117,7 +155,7 @@ describe('VideoHeroStrip', () => {
     const user = userEvent.setup();
     render(<VideoHeroStrip tabs={SAMPLE_TABS} activeTabId="overview" trailingPending={[]} />);
 
-    await user.click(screen.getByRole('button', { name: 'Show 1 more sections' }));
+    await user.click(screen.getByRole('button', { name: 'Show 1 more section' }));
 
     expect(scrollBy).toHaveBeenCalledWith(expect.objectContaining({ left: expect.any(Number), behavior: 'smooth' }));
   });
@@ -138,7 +176,7 @@ describe('VideoHeroStrip', () => {
     });
     render(<VideoHeroStrip tabs={SAMPLE_TABS} activeTabId="overview" trailingPending={[]} />);
 
-    expect(screen.getByRole('button', { name: 'Show 1 more sections' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Show 1 more section' })).toBeInTheDocument();
   });
 
   it('should not show an overflow pill when every tab fits', () => {

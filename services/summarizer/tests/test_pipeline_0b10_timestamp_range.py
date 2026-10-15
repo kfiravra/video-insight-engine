@@ -291,6 +291,36 @@ class TestWindowStampsZero:
         assert placed is data
 
 
+class TestWindowStampsAtOrBelowZero:
+    """Phase-0 review W-A5: no stamp ≤ 0 is hour-restored (-1 + 1 h read 59:59);
+    a negative is a sentinel — its fitting clock places it, else it goes."""
+
+    @pytest.mark.parametrize("stamp", [-1, 0])
+    def test_should_never_hour_restore_a_stamp_at_or_below_zero(self, stamp: int) -> None:
+        assert restamp(stamp, _MIDDLE) is None
+
+    def test_should_clear_a_negative_timestamp_even_inside_the_first_chunk(self) -> None:
+        data = {"learning": {"keyPoints": [{"title": "t", "timestamp": -1}]}}
+
+        placed, _ = window_stamps(data, _FIRST)
+
+        assert placed["learning"]["keyPoints"][0]["timestamp"] is None
+
+    def test_should_drop_a_timestamps_item_whose_seconds_is_negative(self) -> None:
+        data = {"learning": {"timestamps": [{"time": "", "seconds": -1, "label": "x"}]}}
+
+        placed, report = window_stamps(data, _MIDDLE)
+
+        assert (placed["learning"]["timestamps"], report.restamped) == ([], 0)
+
+    def test_should_place_a_negative_seconds_by_its_fitting_clock(self) -> None:
+        data = {"learning": {"timestamps": [{"time": "5:00", "seconds": -1, "label": "x"}]}}
+
+        placed, _ = window_stamps(data, _FIRST)
+
+        assert placed["learning"]["timestamps"][0]["seconds"] == 300
+
+
 class TestWindowStampsDictValues:
     def test_should_clear_the_seconds_of_a_dict_value_not_drop_the_value(self) -> None:
         data = {"learning": {"highlight": {"seconds": 71, "label": "x"}}}

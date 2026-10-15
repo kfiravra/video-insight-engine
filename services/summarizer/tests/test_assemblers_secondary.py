@@ -3,6 +3,7 @@
 diagram_card, claims_tracker, tier_list, formation_diagram.
 """
 
+from src.models.domain_types import validate_domain_output
 from src.services.pipeline.assembly import (
     assemble_claims_tracker,
     assemble_diagram_card,
@@ -92,13 +93,21 @@ class TestAssembleClaimsTracker:
         assert result["claims"][0]["status"] == "context"
         assert result["claims"][1]["status"] == "context"
 
-    def test_missing_source_defaults_to_reporter(self):
+    def test_should_leave_an_unattributed_claim_blank_never_reporter(self):
         data = [
             {"claim": "Claim one", "status": "context"},
             {"claim": "Claim two", "status": "verified"},
         ]
         result = assemble_claims_tracker({}, data, {}, None)
-        assert result["claims"][0]["source"] == "Reporter"
+        assert result["claims"][0]["source"] == ""
+
+    def test_should_leave_a_validated_unattributed_claim_blank(self):
+        claims = [{"claim": "Claim one"}, {"claim": "Claim two", "source": "Mayor"}]
+        news = validate_domain_output(["news"], [], {"claims": claims})["news"]
+
+        result = assemble_claims_tracker({}, news["claims"], {}, None)
+
+        assert [c["source"] for c in result["claims"]] == ["", "Mayor"]
 
     def test_dict_wrapper_with_claims_key(self):
         data = {

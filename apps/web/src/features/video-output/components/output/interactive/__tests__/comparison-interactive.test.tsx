@@ -24,6 +24,13 @@ const radarRows = [
 // A row with no number on either side — no radar spoke.
 const proseRow = { feature: 'Finish', thisProduct: 'Titanium', competitor: 'Aluminium', competitorName: 'Galaxy S24' };
 
+// Price and weight are won by the SMALLER number (lower is better); battery by the larger.
+const lowerIsBetterRows = [
+  { feature: 'Price', thisProduct: '$799', competitor: '$899', competitorName: 'Galaxy S24', winner: 'left' as const },
+  { feature: 'Weight', thisProduct: '187 g', competitor: '227 g', competitorName: 'Galaxy S24', winner: 'left' as const },
+  { feature: 'Battery', thisProduct: '4,422 mAh', competitor: '4,000 mAh', competitorName: 'Galaxy S24', winner: 'left' as const },
+];
+
 async function tuneFirstAxisUp(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole('button', { name: /tune what matters/i }));
   screen.getAllByRole('slider')[0].focus();
@@ -152,6 +159,28 @@ describe('ComparisonInteractive', () => {
       expect(scored).toEqual([]);
     });
 
+    it('should score the smaller side 10 when the stated winner holds the smaller value (price)', () => {
+      const [price] = scoreComparisonAxes(lowerIsBetterRows);
+      expect(price.left).toBe(10);
+    });
+
+    it('should score the larger side of a lower-is-better row as smaller/larger (weight)', () => {
+      const [, weight] = scoreComparisonAxes(lowerIsBetterRows);
+      expect(weight.right).toBeCloseTo((187 / 227) * 10, 5);
+    });
+
+    it('should keep larger-is-better scoring when the stated winner holds the larger value (battery)', () => {
+      const [, , battery] = scoreComparisonAxes(lowerIsBetterRows);
+      expect(battery).toMatchObject({ left: 10, lowerIsBetter: false });
+    });
+
+    it.each([['tie' as const], [undefined]])('should keep larger-is-better scoring when the winner is %s', (winner) => {
+      const [price] = scoreComparisonAxes([
+        { feature: 'Price', thisProduct: '$799', competitor: '$899', competitorName: 'X', winner },
+      ]);
+      expect(price.right).toBe(10);
+    });
+
     it('should not read a sentence that merely contains a digit as an axis', () => {
       const scored = scoreComparisonAxes([
         {
@@ -189,6 +218,23 @@ describe('ComparisonInteractive', () => {
     ];
     render(<ComparisonInteractive comparisons={proseRows} view="radar" />);
     expect(screen.queryByTestId('comparison-radar-winner-badge')).not.toBeInTheDocument();
+  });
+
+  describe('ComparisonRadarHero verdict', () => {
+    it('should crown the stated winner of lower-is-better rows (cheaper and lighter)', () => {
+      render(<ComparisonRadarHero comparisons={lowerIsBetterRows} colLeft="A" colRight="B" />);
+      expect(screen.getByTestId('comparison-radar-winner-badge')).toHaveTextContent(/^A wins by/);
+    });
+
+    it('should name the spokes where the lower value wins', () => {
+      render(<ComparisonRadarHero comparisons={lowerIsBetterRows} colLeft="A" colRight="B" />);
+      expect(screen.getByText(/lower wins on Price, Weight\./)).toBeInTheDocument();
+    });
+
+    it('should not show the lower-wins note when every spoke is larger-is-better', () => {
+      render(<ComparisonRadarHero comparisons={radarRows.slice(0, 3)} colLeft="A" colRight="B" />);
+      expect(screen.queryByText(/lower wins on/)).not.toBeInTheDocument();
+    });
   });
 
   describe('ComparisonRadarHero weights', () => {

@@ -130,6 +130,33 @@ class TestQuizDedupeSize:
 
         assert _action(outcome, "thinkers") == "dropped"
 
+    def test_should_keep_the_required_tab_over_an_earlier_twin_that_could_promote(self):
+        """Phase-0 review W-A6: an info_grid promotes to spot_explorer, so it shares the
+        pair of travel's required spot_explorer — the required tab stays."""
+        tabs = [
+            _tab("tips", "info_grid", "travel.itinerary"),
+            _tab("spots", "spot_explorer", "travel.itinerary"),
+            _tab("budget", "budget", "travel.budget"),
+        ]
+
+        outcome = reconcile_at_plan_done(_plan("travel", tabs), MemoryResult(), None)
+
+        assert ("spots" in _ids(outcome.tabs), [d["id"] for d in outcome.dropped]) == (
+            True,
+            ["tips"],
+        )
+
+    def test_should_keep_the_first_twin_when_neither_is_required(self):
+        tabs = [
+            _tab("deck", "flash_deck", "learning.concepts"),
+            _tab("canvas", "concept_canvas", "learning.concepts"),
+            _tab("takeaways", "checklist", "learning.takeaways"),
+        ]
+
+        outcome = reconcile_at_plan_done(_plan("learning", tabs), MemoryResult(), None)
+
+        assert [d["id"] for d in outcome.dropped] == ["canvas"]
+
     def test_should_keep_two_views_of_one_source(self):
         outcome = reconcile_at_plan_done(
             _plan("food", _food_tabs_without_checklist()), MemoryResult(), None

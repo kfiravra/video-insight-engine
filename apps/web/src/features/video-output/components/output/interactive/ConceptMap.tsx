@@ -157,6 +157,13 @@ export interface ConceptMapProps {
   isDesktop: boolean;
 }
 
+/** The map opens on its first lane — the first group that has concepts
+ *  (`useGraphLayout` lays the lanes out left to right in group order). */
+function firstLaneNodeIds(model: ConceptGraphModel): string[] {
+  const firstGroup = model.groups.find((group) => model.nodes.some((n) => n.group === group));
+  return model.nodes.filter((n) => n.group === firstGroup).map((n) => n.id);
+}
+
 /** React Flow node set with the selection decoration derived during render
  *  (single source of truth) — pushing it in via effects let edge state desync
  *  from the model when `concepts` changed mid-selection. */
@@ -220,8 +227,10 @@ function useDecoratedGraph(
  * top→bottom by connection rank, clustered into per-group lanes —
  * `useGraphLayout`) on @xyflow/react, locked nodes, relationship type encoded
  * on the edges by line-style + arrowhead (`FloatingEdge`), the inspector
- * docked over the canvas. Mounted only while the map is the chosen view, so
- * the layout and React Flow state never run for the list.
+ * docked over the canvas. Opens on the first lane rather than centring every
+ * lane at the zoom floor (which cut the first lane on phones). Mounted only
+ * while the map is the chosen view, so the layout and React Flow state never
+ * run for the list.
  */
 export const ConceptMap = memo(function ConceptMap({
   model,
@@ -237,6 +246,7 @@ export const ConceptMap = memo(function ConceptMap({
     model.groups,
   );
   const { nodes: baseNodes, edges: baseEdges } = useDecoratedGraph(model, layout.positions, selectedId, onSelect);
+  const startNodeIds = useMemo(() => firstLaneNodeIds(model), [model]);
   const [nodes, setNodes, onNodesChange] = useNodesState<Node<ConceptNodeData>>(baseNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(baseEdges);
   // Keep React Flow's controlled state in sync as the model or selection
@@ -271,6 +281,7 @@ export const ConceptMap = memo(function ConceptMap({
           nodesDraggable={false}
           nodesConnectable={false}
           nodeWidth={NODE_WIDTH}
+          startNodeIds={startNodeIds}
           height={canvasHeight}
         />
         {!canvasReady && (

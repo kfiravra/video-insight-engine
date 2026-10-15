@@ -139,6 +139,30 @@ class TestStatValue:
     def test_no_figure_yields_none(self, title: str):
         assert _stat_value(title) is None
 
+    @pytest.mark.parametrize(
+        ("title", "expected"),
+        [
+            ("$1.2B", "$1.2B"),
+            ("$20.5M", "$20.5M"),
+            ("45.5k", "45.5k"),
+            ("$3.4bn", "$3.4bn"),
+            ("1,000,000s", "1,000,000s"),
+        ],
+    )
+    def test_should_never_cut_a_figure_before_its_decimal_group_or_magnitude(
+        self, title: str, expected: str
+    ):
+        assert _stat_value(title) == expected
+
+    def test_should_read_a_glued_magnitude_inside_a_title(self):
+        assert _stat_value("Valued at $1.2B after the round") == "$1.2B"
+
+    def test_should_not_read_a_spaced_letter_as_a_magnitude(self):
+        assert _stat_value("Top 10 K-pop hits") == "10"
+
+    def test_should_keep_every_field_of_a_clock(self):
+        assert _stat_value("Kipchoge ran the marathon in 2:01:09") == "2:01:09"
+
 
 def _label(title: str) -> str:
     figure = _stat_figure(title)

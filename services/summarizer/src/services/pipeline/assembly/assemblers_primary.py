@@ -13,7 +13,6 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from .derived_guard import stated_number, stated_rows
 from .info_grid_items import _INFO_EVIDENCE_FIELDS as _INFO_EVIDENCE_FIELDS
 from .info_grid_items import _INFO_KEY_FIELDS as _INFO_KEY_FIELDS
 from .info_grid_items import _INFO_STRING_MAX as _INFO_STRING_MAX
@@ -30,6 +29,7 @@ from .normalizers import (
     _normalize_comparison,
     _normalize_step,
     _normalize_to_spot,
+    _normalize_verdict,
     normalize_moment_items,
 )
 
@@ -179,10 +179,14 @@ def _is_real_comparison_pair(row: dict) -> bool:
 # audited "comparison with one row" failure mode — fall through to None so
 # the caller can route the data into info_grid / flash_deck instead.
 _MIN_COMPARISON_ROWS = 2
-# A competitor is "named" in its cell when one of its words (≥ this long —
-# skips "the", "vs", "II") appears there as a whole word, any case; a name with
-# no such word ("LG", "Mi 11") must appear whole. Otherwise the cell is prefixed.
+# A competitor is "named" in its cell when one of its identifying words (≥ this
+# long — skips "vs", "II" — and not a filler word) appears there as a whole
+# word, any case; a name with no such word ("LG", "Mi 11", "Mini Pro") must
+# appear whole. Otherwise the cell is prefixed.
 _COMPETITOR_WORD_MIN = 3
+# Words that ride along in product names without saying whose a cell is: "the"
+# of "The Galaxy S24" and "Pro" of "iPhone 15 Pro" match cells about any product.
+_COMPETITOR_FILLER = frozenset({"the", "and", "pro", "max", "plus", "mini", "ultra", "lite", "new"})
 
 
 def _competitor_names(rows: list[dict]) -> list[str]:
@@ -198,11 +202,16 @@ def _competitor_names(rows: list[dict]) -> list[str]:
 
 
 def _competitor_patterns(name: str) -> list[str]:
-    """What identifies the competitor in a cell: its long words, else its whole name."""
+    """What identifies the competitor in a cell: its long non-filler words, else
+    its whole name."""
     words = re.findall(r"\w+", name)
-    long_words = [re.escape(w) for w in words if len(w) >= _COMPETITOR_WORD_MIN]
-    if long_words or not words:
-        return long_words
+    identifying = [
+        re.escape(w)
+        for w in words
+        if len(w) >= _COMPETITOR_WORD_MIN and w.casefold() not in _COMPETITOR_FILLER
+    ]
+    if identifying or not words:
+        return identifying
     return [r"\W+".join(re.escape(w) for w in words)]
 
 
@@ -304,26 +313,7 @@ def assemble_comparison(
     if isinstance(review_data, dict):
         verdict = review_data.get("verdict")
         if isinstance(verdict, dict) and verdict.get("bottomLine"):
-            verdict_props: dict[str, Any] = {
-                "badge": verdict.get("badge", "neutral"),
-                "bottomLine": verdict.get("bottomLine", ""),
-                "bestFor": verdict.get("bestFor") or [],
-                "notFor": verdict.get("notFor") or [],
-            }
-            # A score or sub-score is a fact only when the extraction carries
-            # it with a timestamp (D13): S07 shipped a "9.0" and five sub-scores
-            # the reviewer never gave.
-            sub_scores = stated_rows(verdict.get("subScores"), "score")
-            if sub_scores:
-                verdict_props["subScores"] = sub_scores
-            rating = review_data.get("rating")
-            score = stated_number(rating, "score")
-            if score is not None:
-                verdict_props["score"] = score
-                max_score = stated_number(rating, "maxScore")
-                if max_score is not None and max_score > 0:
-                    verdict_props["maxScore"] = max_score
-            props["verdict"] = verdict_props
+            props["verdict"] = _normalize_verdict(verdict, review_data.get("rating"))
 
     return props
 

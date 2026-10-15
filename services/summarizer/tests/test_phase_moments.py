@@ -92,6 +92,28 @@ class TestProvisionalMomentsEvent:
         assert moments.provisional_moments_event(ctx) is None  # type: ignore[arg-type]
 
 
+_WORKOUT = {"id": "routine", "label": "Routine", "component": "workout_room"}
+_STEPS = {"id": "steps", "label": "Steps", "component": "step_player"}
+
+
+def _plan_of(primary: str, *tabs: dict) -> SimpleNamespace:
+    return _ctx(list(tabs), triage=SimpleNamespace(primary_tag=primary, tabs=list(tabs)))
+
+
+class TestProvisionalFollowsThePrimaryDomain:
+    """D6 by the primary domain (phase-0 review C-A1), as assembly decides it."""
+
+    def test_should_preview_a_podcasts_moments_beside_one_workout_room(self) -> None:
+        ctx = _plan_of("podcast", _PLANNED, _WORKOUT)
+
+        assert _payload(moments.provisional_moments_event(ctx))["id"] == "moments"  # type: ignore[arg-type]
+
+    def test_should_preview_nothing_for_a_recipe_navigated_by_its_steps(self) -> None:
+        ctx = _plan_of("food", _STEPS, _PLANNED)
+
+        assert moments.provisional_moments_event(ctx) is None  # type: ignore[arg-type]
+
+
 async def _text_branch(ctx: Any) -> AsyncGenerator[str, None]:
     yield sse_event("phase", {"phase": "transcript"})
 

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .derived_guard import anchor_seconds, stated_scalars
+from .derived_guard import anchor_seconds, stated_number, stated_rows, stated_scalars
 from .moment_normalizers import _chapter_end as _chapter_end
 from .moment_normalizers import _chapters_to_moments as _chapters_to_moments
 from .moment_normalizers import _coerce_int as _coerce_int
@@ -86,12 +86,34 @@ _SPOT_PASSTHROUGH_FIELDS: tuple[str, ...] = (
     "thumbnailUrl",
     "s3Key",
     "pronunciation",
-    "timestamp",
 )
 # Facts a spot states only when it is anchored in the video (D13). spot_explorer
 # and info_grid are the demote rung of a refused tier list, comparison or claims
 # tracker, so an unanchored cost, duration or rating would re-enter there.
 _SPOT_STATED_FIELDS: tuple[str, ...] = ("cost", "duration", "rating")
+
+
+def _spot_extras(item: dict) -> dict:
+    """A spot's optional fields: the passthroughs, its seek point, the speaker's
+    verbatim ``quote`` and the facts its anchor states.
+
+    The seek point is the item's anchor as ``derived_guard`` reads it — whole
+    seconds ≥ 0, else none: the FE schema refuses the whole tab over a negative
+    or non-numeric stamp.
+    """
+    extras: dict = {
+        field: item[field]
+        for field in _SPOT_PASSTHROUGH_FIELDS
+        if item.get(field) not in (None, "")
+    }
+    timestamp = anchor_seconds(item)
+    if timestamp is not None:
+        extras["timestamp"] = timestamp
+    quote = item.get("quote")
+    if isinstance(quote, str) and quote.strip():
+        extras["quote"] = quote.strip()
+    extras.update(stated_scalars(item, _SPOT_STATED_FIELDS))
+    return extras
 
 
 def _normalize_to_spot(item: dict) -> dict | None:
@@ -127,12 +149,7 @@ def _normalize_to_spot(item: dict) -> dict | None:
     )
     description = str(desc_raw).strip()
 
-    extras: dict = {
-        field: item[field]
-        for field in _SPOT_PASSTHROUGH_FIELDS
-        if item.get(field) not in (None, "")
-    }
-    extras.update(stated_scalars(item, _SPOT_STATED_FIELDS))
+    extras = _spot_extras(item)
     if not description and not extras:
         return None
     return {"name": name, "description": description, **extras}
@@ -148,6 +165,35 @@ def _normalize_comparison(item: dict) -> dict:
         "competitor": item.get("right", ""),
         "competitorName": item.get("competitorName", ""),
     }
+
+
+def _normalize_verdict(verdict: dict, rating: Any) -> dict[str, Any]:
+    """A review verdict as ReviewSummary renders it.
+
+    The badge ships only as the reviewer stated it (absent, never a default);
+    the sub-scores and the score / maxScore only as the extraction anchors them
+    (D13 — S07 shipped a "9.0" and five sub-scores the reviewer never gave).
+    ``rating`` holds the score: the review's rating block, or the verdict
+    itself for a legacy verdict tab.
+    """
+    props: dict[str, Any] = {
+        "bottomLine": verdict.get("bottomLine", ""),
+        "bestFor": verdict.get("bestFor") or [],
+        "notFor": verdict.get("notFor") or [],
+    }
+    badge = verdict.get("badge")
+    if isinstance(badge, str) and badge.strip():
+        props["badge"] = badge.strip()
+    sub_scores = stated_rows(verdict.get("subScores"), "score")
+    if sub_scores:
+        props["subScores"] = sub_scores
+    score = stated_number(rating, "score")
+    if score is not None:
+        props["score"] = score
+        max_score = stated_number(rating, "maxScore")
+        if max_score is not None and max_score > 0:
+            props["maxScore"] = max_score
+    return props
 
 
 def _normalize_step(item: dict, index: int) -> dict:

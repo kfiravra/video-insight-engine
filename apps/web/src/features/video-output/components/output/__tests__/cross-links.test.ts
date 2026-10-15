@@ -56,11 +56,25 @@ describe('resolveCrossLinks', () => {
     expect(links.map((l) => l.targetTab)).toEqual(['numbers']);
   });
 
-  it('should fall back to the assembler label for an unknown target', () => {
+  it('should drop a link to a tab that does not exist', () => {
     const all = tabs();
     all[1].crossTabLinks = [{ targetTab: 'ghost', label: 'Ghost Tab' }];
     const links = resolveCrossLinks(all).get('arguments') ?? [];
-    expect(links[0]).toEqual({ targetTab: 'ghost', label: 'Ghost Tab', reason: undefined });
+    expect(links.map((l) => l.targetTab)).toEqual(['numbers']);
+  });
+
+  it('should wrap the last tab when its only explicit link is the overview (stored rows)', () => {
+    const all = tabs();
+    all[3].crossTabLinks = [{ targetTab: 'overview', label: 'Overview' }];
+    const links = resolveCrossLinks(all).get('quiz') ?? [];
+    expect(links.map((l) => l.targetTab)).toEqual(['arguments']);
+  });
+
+  it('should wrap the last tab when its only explicit link targets an unknown tab', () => {
+    const all = tabs();
+    all[3].crossTabLinks = [{ targetTab: 'ghost', label: 'Ghost Tab' }];
+    const links = resolveCrossLinks(all).get('quiz') ?? [];
+    expect(links.map((l) => l.targetTab)).toEqual(['arguments']);
   });
 
   it('should leave a lone content tab without a link rather than linking it to itself', () => {

@@ -34,16 +34,21 @@ _LABEL_DANGLING = frozenset(
 _CLAUSE_BREAK = re.compile(r"[,:;()—–]|\s-\s")
 _CLAUSE_EDGE = " ,:;()—–-"
 # A figure as a speaker says one: "150,000", "$20 million", "99%", "1,000x",
-# "0.5 MB" / "0.5MB", "3:33", "20 months". Thousands separators group exactly
-# three digits, so a trailing comma ("2023,") is never part of the figure. A
-# letter, digit, point or comma glued to either end ("1950s", "v2.5", "x86",
-# the "5" of "1,5") is not a figure.
+# "0.5 MB" / "0.5MB", "3:33", "20 months", a magnitude letter glued to its
+# number ("$1.2B", "45.5k", "$3.4bn"; spaced, "Top 10 K-pop" is no magnitude) and
+# a grouped count read as a plural ("1,000,000s"). Thousands separators group
+# exactly three digits, so a trailing comma ("2023,") is never part of the
+# figure, and the match never stops before a glued decimal, group or clock
+# field: "$1.2B" is never "$1", "1,000,000s" never "1,000", "2:01:09" never
+# "2:01". A letter, digit, point or comma glued to either end ("1950s", "v2.5",
+# "x86", the "5" of "1,5") is not a figure.
 _NUMBER_RE = re.compile(
     r"(?<![\w.,])"
-    r"(?P<figure>[$€£]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?::\d{2})?"
+    r"(?P<figure>[$€£]?(?:\d{1,3}(?:,\d{3})+s?|\d+)(?:\.\d+)?(?::\d{2}){0,2}"
     r"(?:\s?(?:%|x|×|percent|thousand|million|billion|trillion"
-    r"|MB|GB|KB|TB|ms|seconds?|minutes?|hours?|days?|weeks?|months?|years?|lines?|apps?))?)"
-    r"(?![\w])",
+    r"|MB|GB|KB|TB|ms|seconds?|minutes?|hours?|days?|weeks?|months?|years?|lines?|apps?)"
+    r"|bn|[kmb])?)"
+    r"(?!\w|[.,:]\d)",
     re.IGNORECASE,
 )
 # A bare year or a bare single digit names something ("in 2023", "Rails 8",

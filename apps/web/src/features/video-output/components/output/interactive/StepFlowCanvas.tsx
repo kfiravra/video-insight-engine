@@ -2,7 +2,7 @@ import { memo, useCallback, useState } from 'react';
 import { AlertTriangle, Lightbulb, Workflow } from 'lucide-react';
 
 import { CanvasViewToggle } from '@/components/vie/canvas/CanvasShell';
-import { GlassCard, TextBlock, Timestamp, VisualEvidence } from '@/components/vie';
+import { GlassCard, SeekChip, TextBlock, VisualEvidence } from '@/components/vie';
 import { cn } from '@/lib/utils';
 import { useTabState } from '@/features/video-output/contexts/TabStateContext';
 import { parseStepDurationSeconds } from '@/features/video-output/lib/step-duration';
@@ -52,9 +52,7 @@ const StepRow = memo(function StepRow({ step, index, completed, durationSeconds,
             </p>
             <div className="flex flex-wrap items-center gap-2">
               <DurationChip seconds={durationSeconds} />
-              {!framed && timestamp != null && (
-                <Timestamp seconds={timestamp} onClick={onSeek ? () => onSeek(timestamp) : undefined} />
-              )}
+              {!framed && timestamp != null && <SeekChip seconds={timestamp} onSeek={onSeek} />}
             </div>
             {framed && (
               <VisualEvidence
@@ -87,6 +85,14 @@ const StepRow = memo(function StepRow({ step, index, completed, durationSeconds,
 
 // ─── Canvas ───
 
+/** Completed steps of THIS list: the shared set is keyed by index across the
+ *  video's step tabs, so a longer tab's completions must not count here. */
+function countCompletedSteps(completedSteps: ReadonlySet<number>, stepCount: number): number {
+  let done = 0;
+  for (const index of completedSteps) if (index >= 0 && index < stepCount) done += 1;
+  return done;
+}
+
 /**
  * Step-by-step recipe / tutorial flow. Opens as a list on every viewport —
  * full instruction, tips, safety note and seek chip per step (R8 / D8); the
@@ -99,29 +105,31 @@ export const StepFlowCanvas = memo(function StepFlowCanvas({
   onSeek,
   tabId = 'steps',
 }: StepFlowCanvasProps) {
-  const tabState = useTabState();
   // Completion lives in the shared TabStateContext (single source of truth) so
   // this canvas and StepByStepInteractive stay in sync, and pre-existing
   // completions are reflected the moment the canvas mounts.
-  const completedSteps = tabState.completedSteps;
+  const { completedSteps, completeStep, uncompleteStep } = useTabState();
   const [view, setView] = useState<StepView>('list');
 
+  // Depends on the provider's stable actions only, never the whole tab state:
+  // a new toggle per completion would rebuild every flow node (and drop
+  // React Flow's measurements — the nodes blink).
   const toggleComplete = useCallback(
     (index: number, isCompleted: boolean) => {
       if (isCompleted) {
-        tabState.uncompleteStep(index);
+        uncompleteStep(index);
       } else {
-        tabState.completeStep(index);
+        completeStep(index);
       }
     },
-    [tabState],
+    [completeStep, uncompleteStep],
   );
 
   if (!steps?.length) {
     return <EmptyTabState message="No steps were extracted for this video." icon={Workflow} />;
   }
 
-  const progress = `${completedSteps.size}/${steps.length} done`;
+  const progress = `${countCompletedSteps(completedSteps, steps.length)}/${steps.length} done`;
 
   return (
     <div className="space-y-3" data-tab-id={tabId}>

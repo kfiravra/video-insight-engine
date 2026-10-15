@@ -65,15 +65,17 @@ def provisional_moments_event(ctx: PipelineContext) -> str | None:
     """The provisional Moments ``tab_ready``, or None when no fallback source has an entry."""
     assert ctx.triage is not None
     assert ctx.video_data is not None
-    forbidden = effective_requirements(ctx.triage.primary_tag, ctx.content_format)["forbidden"]
+    primary = ctx.triage.primary_tag
+    requirements = effective_requirements(primary, ctx.content_format)
     built = provisional_moments_tab(
-        ctx.triage.tabs, video_meta(ctx), _landed_description(ctx), forbidden
+        ctx.triage.tabs, video_meta(ctx), _landed_description(ctx), primary, requirements
     )
     if built is None:
         return None
     tab, position = built
-    # The label and the item cap the real tab gets in assembly, so the
-    # replacement changes the moments, not the tab's name.
+    # Assembly's post-processing (emoji strip, item cap, label count) on the
+    # fallback moments: a label that states a count states the preview's, so the
+    # replacement may restate it with the count the real tab ships (D7).
     post_process_tabs([tab], ctx.video_data.duration)
     logger.info(
         "pipeline.moments_provisional",

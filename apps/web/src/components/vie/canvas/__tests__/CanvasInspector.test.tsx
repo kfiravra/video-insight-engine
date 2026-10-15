@@ -63,6 +63,12 @@ describe('CanvasInspector', () => {
     expect(screen.getByRole('img')).toBeInTheDocument();
   });
 
+  it('should carry the full concept name as the heading title when it is clamped to two lines', () => {
+    const name = 'Reinforcement learning from human feedback with a learned reward model';
+    renderInspector({ concept: { ...concept, name } });
+    expect(screen.getByRole('heading', { name })).toHaveAttribute('title', name);
+  });
+
   it('omits frame evidence gracefully when none is present', () => {
     renderInspector();
     expect(screen.queryByRole('img')).toBeNull();

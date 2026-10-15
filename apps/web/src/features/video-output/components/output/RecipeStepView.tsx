@@ -17,6 +17,8 @@ import { buildStepIngredientMap } from '@/features/video-output/components/outpu
 import { parseStepDurationSeconds } from '@/features/video-output/lib/step-duration';
 import type { StepItem, QuizArenaQuestion } from '@vie/types';
 
+import { QuizExplanation } from './interactive/QuizExplanation';
+
 // ─── Shared chrome ───
 
 interface FlowStepFrameProps {
@@ -364,7 +366,12 @@ function StudyQuestion({ question, forceRevealed, onSeek }: StudyQuestionProps) 
               {question.explanation && (
                 <div className="flex items-start gap-2 text-sm text-info bg-info/5 rounded-lg px-3 py-2">
                   <Lightbulb className="h-4 w-4 shrink-0 mt-0.5" aria-hidden="true" />
-                  <span>{question.explanation}</span>
+                  {/* Same seek chips as the quiz tab: each "(m:ss)" in the explanation jumps the video. */}
+                  <QuizExplanation
+                    text={question.explanation}
+                    onSeek={onSeek}
+                    className="min-w-0 leading-5 text-info"
+                  />
                 </div>
               )}
               {canSeek && question.timestamp != null && onSeek && (

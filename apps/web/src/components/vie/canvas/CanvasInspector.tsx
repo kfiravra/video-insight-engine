@@ -87,7 +87,10 @@ export const CanvasInspector = memo(function CanvasInspector({
             {concept.emoji || '💡'}
           </span>
           <div className="min-w-0 flex-1">
-            <h3 className="truncate text-base font-semibold text-foreground">{concept.name}</h3>
+            {/* Two lines before clamping — one line cut most long names short; the title keeps all of it. */}
+            <h3 className="line-clamp-2 break-words text-base font-semibold text-foreground" title={concept.name}>
+              {concept.name}
+            </h3>
             {concept.group && (
               <Badge variant="muted" className="mt-1 text-[10px] font-medium">
                 {concept.group}

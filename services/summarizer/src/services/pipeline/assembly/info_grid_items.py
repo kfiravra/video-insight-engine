@@ -35,6 +35,9 @@ _INFO_KEY_FIELDS: tuple[str, ...] = (
     "claim",
     "step",
     "question",
+    # food.substitutions {original, substitute, notes}: the swapped-out
+    # ingredient heads the row, its replacement is the value (W-B3).
+    "original",
 )
 _INFO_VALUE_FIELDS: tuple[str, ...] = (
     "value",
@@ -52,6 +55,7 @@ _INFO_VALUE_FIELDS: tuple[str, ...] = (
     "note",
     "tip",
     "instruction",
+    "substitute",
 )
 # `type` is a category token (`chef_tip`, `safety`, `form`), never the key —
 # mapped into the key it named every promoted spot "chef_tip" (0b.8, R5). It
@@ -64,6 +68,7 @@ _INFO_EVIDENCE_FIELDS: tuple[str, ...] = (
     "context",
     "pronunciation",
     "note",
+    "notes",
     "analogy",
     "quote",
 )
@@ -140,7 +145,9 @@ def _category_badge(raw: Any) -> str | None:
 
 def _with_category(result: dict | None, item: dict) -> dict | None:
     """Attach the item's `type` as a `category` badge to a normalized row."""
-    category = _category_badge(item.get("type")) if result is not None else None
+    if result is None:
+        return None
+    category = _category_badge(item.get("type"))
     if category:
         result["category"] = category
     return result

@@ -1,10 +1,24 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ConceptItem } from '@vie/types';
+import type { VieCanvasProps } from '@/components/vie/canvas/CanvasShell';
 
 import { ConceptCanvas } from '../ConceptCanvas';
 import { buildConceptGraph } from '../concept-graph';
+
+// Every render of the Map view's canvas, recorded — the real canvas still renders.
+const canvasRenders = vi.hoisted(() => [] as VieCanvasProps[]);
+vi.mock('@/components/vie/canvas/CanvasShell', async () => {
+  const actual = await vi.importActual<typeof import('@/components/vie/canvas/CanvasShell')>(
+    '@/components/vie/canvas/CanvasShell',
+  );
+  function RecordingCanvas(props: VieCanvasProps) {
+    canvasRenders.push(props);
+    return <actual.VieCanvas {...props} />;
+  }
+  return { ...actual, VieCanvas: RecordingCanvas };
+});
 
 const concepts: ConceptItem[] = [
   {
@@ -70,6 +84,10 @@ describe('buildConceptGraph', () => {
 });
 
 describe('ConceptCanvas', () => {
+  beforeEach(() => {
+    canvasRenders.length = 0;
+  });
+
   it('renders the empty fallback when there are no concepts', () => {
     render(<ConceptCanvas concepts={[]} />);
     expect(screen.getByText(/No concepts were extracted/i)).toBeInTheDocument();
@@ -213,12 +231,93 @@ describe('ConceptCanvas', () => {
     expect(inspector.className).toMatch(/absolute/);
   });
 
+  it('should open the Map on its first lane, not the middle of every lane', async () => {
+    const user = userEvent.setup();
+    render(<ConceptCanvas concepts={concepts} groups={['Foundations', 'Mechanics']} />);
+    await user.click(screen.getByRole('button', { name: /^map$/i }));
+    // Foundations is the first lane: Gravity (concept-0) and Mass (concept-2).
+    expect(canvasRenders.at(-1)?.startNodeIds).toEqual(['concept-0', 'concept-2']);
+  });
+
   it('locks node dragging in the Map view (no infinite drag)', async () => {
     const user = userEvent.setup();
     render(<ConceptCanvas concepts={concepts} groups={['Foundations', 'Mechanics']} />);
     await user.click(screen.getByRole('button', { name: /^map$/i }));
     // ReactFlow tags draggable nodes with a `draggable` class; locked nodes have none.
     expect(document.querySelectorAll('.react-flow__node.draggable')).toHaveLength(0);
+  });
+
+  it('should label a concept past the first hour with an hour-aware seek chip', async () => {
+    const user = userEvent.setup();
+    const onSeek = vi.fn();
+    render(<ConceptCanvas concepts={[{ ...concepts[2], timestamp: 5000 }]} onSeek={onSeek} />);
+    await user.click(screen.getByRole('button', { name: 'Jump to 1:23:20' }));
+    expect(onSeek).toHaveBeenCalledWith(5000);
+  });
+
+  describe('inline details (list view)', () => {
+    function renderList() {
+      render(<ConceptCanvas concepts={concepts} groups={['Foundations', 'Mechanics']} />);
+    }
+
+    it('should mark a concept name collapsed before its details open', () => {
+      renderList();
+      expect(screen.getByRole('button', { name: 'Gravity' })).toHaveAttribute('aria-expanded', 'false');
+    });
+
+    it('should mark a concept name expanded while its details are open', async () => {
+      const user = userEvent.setup();
+      renderList();
+      await user.click(screen.getByRole('button', { name: 'Gravity' }));
+      expect(screen.getByRole('button', { name: 'Gravity' })).toHaveAttribute('aria-expanded', 'true');
+    });
+
+    it('should close the details when the open concept name is activated again', async () => {
+      const user = userEvent.setup();
+      renderList();
+      await user.click(screen.getByRole('button', { name: 'Gravity' }));
+      await user.click(screen.getByRole('button', { name: 'Gravity' }));
+      expect(document.querySelector('[data-slot="canvas-inspector"]')).toBeNull();
+    });
+
+    it('should move focus to the concept chosen from the connected list', async () => {
+      const user = userEvent.setup();
+      renderList();
+      await user.click(screen.getByRole('button', { name: 'Gravity' }));
+      const inspector = document.querySelector('[data-slot="canvas-inspector"]') as HTMLElement;
+      await user.click(within(inspector).getByRole('button', { name: /Acceleration/ }));
+      expect(screen.getByRole('button', { name: 'Acceleration' })).toHaveFocus();
+    });
+
+    it('should scroll the concept chosen from the connected list into view', async () => {
+      const user = userEvent.setup();
+      renderList();
+      const row = screen.getByRole('button', { name: 'Acceleration' }).closest('li') as HTMLElement;
+      const scrollSpy = vi.spyOn(row, 'scrollIntoView');
+      await user.click(screen.getByRole('button', { name: 'Gravity' }));
+      const inspector = document.querySelector('[data-slot="canvas-inspector"]') as HTMLElement;
+      await user.click(within(inspector).getByRole('button', { name: /Acceleration/ }));
+      expect(scrollSpy).toHaveBeenCalled();
+      scrollSpy.mockRestore();
+    });
+
+    it('should return focus to the concept name when its details close', async () => {
+      const user = userEvent.setup();
+      renderList();
+      await user.click(screen.getByRole('button', { name: 'Gravity' }));
+      await user.click(screen.getByRole('button', { name: /close details/i }));
+      expect(screen.getByRole('button', { name: 'Gravity' })).toHaveFocus();
+    });
+
+    it('should leave focus where it is when Escape closes the details from elsewhere', async () => {
+      const user = userEvent.setup();
+      renderList();
+      await user.click(screen.getByRole('button', { name: 'Gravity' }));
+      const listToggle = screen.getByRole('button', { name: /^list$/i });
+      listToggle.focus();
+      await user.keyboard('{Escape}');
+      expect(listToggle).toHaveFocus();
+    });
   });
 
   it('does not persist any layout to localStorage (feature dropped)', () => {

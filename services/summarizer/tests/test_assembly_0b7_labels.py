@@ -4,7 +4,8 @@ The planner writes "9 Core Arguments" before extraction, so the number was a gue
 (13 of 16 stored labels lied). Post-processing now strips the planner's digits and
 prefixes the count that ships, mirroring the FE rule in ``domain-meta.ts``
 (``LEADING_COUNT``: 1–3 leading digits + whitespace + a letter; hyphenated and
-4-digit leaders are names). Labels without a count claim are left verbatim.
+4-digit leaders are names; a unit after the number makes it a measure — phase-0
+review W-A1). Labels without a count claim are left verbatim.
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ from src.services.pipeline.assembly.core import (
     shipped_count,
     true_count_label,
 )
-from src.services.pipeline.assembly.labels import _LABEL_COUNT_KEYS
+from src.services.pipeline.assembly.labels import _LABEL_COUNT_KEYS, _MEASURE_UNITS
 
 _DOMAIN_META = (
     Path(__file__).resolve().parent.parent.parent.parent
@@ -76,6 +77,40 @@ class TestTrueCountLabel:
         assert true_count_label("12 \u00a0Steps", 4) == "4 Steps"
 
 
+class TestMeasuresAreNoCounts:
+    @pytest.mark.parametrize(
+        "label",
+        [
+            "7 Days in Tokyo",
+            "10 Minute Abs",
+            "3 Course Meal",
+            "30 SECONDS to Plank",
+            "5 km Run",
+            "100 Percent Juice",
+            "2 Nights, 3 Cities",
+        ],
+    )
+    def test_should_leave_a_measure_verbatim(self, label: str) -> None:
+        assert true_count_label(label, 21) == label
+
+    def test_should_read_the_whole_next_word_not_its_prefix(self) -> None:
+        assert true_count_label("5 Daily Habits", 7) == "7 Daily Habits"
+
+    def test_should_still_rewrite_a_count_over_the_shipped_items(self) -> None:
+        tab = _tab("9 Core Arguments", "concept_canvas", {"concepts": [{}] * 24})
+
+        _post_process_tabs([tab])
+
+        assert tab["label"] == "24 Core Arguments"
+
+    def test_should_keep_an_itinerarys_day_count_after_the_cap(self) -> None:
+        tab = _tab("7 Days in Tokyo", "spot_explorer", {"spots": [{"name": "s"}] * 21})
+
+        _post_process_tabs([tab])
+
+        assert tab["label"] == "7 Days in Tokyo"
+
+
 class TestShippedCount:
     def test_should_count_the_components_list(self) -> None:
         assert shipped_count("spot_explorer", {"spots": [{}, {}, {}]}) == 3
@@ -112,7 +147,13 @@ class TestFrontendParity:
         assert dict(re.findall(r"(\w+): '(\w+)'", table)) == _LABEL_COUNT_KEYS
 
     def test_should_mirror_the_fe_leading_count_rule(self) -> None:
-        assert "LEADING_COUNT = /^\\d{1,3}\\s+(?=\\p{L})/u;" in _DOMAIN_META.read_text()
+        assert "LEADING_COUNT = /^\\d{1,3}\\s+(?=(\\p{L}+))/u;" in _DOMAIN_META.read_text()
+
+    def test_should_mirror_the_fe_measure_units(self) -> None:
+        source = _DOMAIN_META.read_text()
+        table = source.split("const MEASURE_UNITS", 1)[1].split("]);", 1)[0]
+
+        assert set(re.findall(r"'(\w+)'", table)) == _MEASURE_UNITS
 
 
 class TestPostProcessedLabels:

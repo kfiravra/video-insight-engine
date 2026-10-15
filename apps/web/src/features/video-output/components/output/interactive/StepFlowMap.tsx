@@ -13,6 +13,8 @@ import { zigzagLayout } from './step-flow-layout';
 
 /** Design width of a step node card; the canvas zoom floor keeps it legible. */
 const STEP_NODE_WIDTH = 260;
+/** The flow opens on its first steps — the start of the procedure. */
+const OPENING_STEPS = 2;
 
 function stepNodeId(index: number): string {
   return `step-${index}`;
@@ -131,18 +133,21 @@ function useStepFlowGraph({ steps, completedSteps, onToggle, onSeek }: StepFlowM
   // Sync per-node `completed` flag + animate edges where both endpoints are
   // complete. Re-runs when completion changes OR when the nodes/edges are
   // rebuilt (steps changed), so a fresh node set picks up existing completion.
+  // Only the nodes and edges whose state flips are replaced: the rest keep
+  // their identity, and every node keeps the measurements React Flow stored.
   useEffect(() => {
     setNodes((prev) =>
-      prev.map((node) => ({
-        ...node,
-        data: { ...node.data, completed: completedSteps.has(node.data.index) },
-      })),
+      prev.map((node) => {
+        const completed = completedSteps.has(node.data.index);
+        return completed === node.data.completed ? node : { ...node, data: { ...node.data, completed } };
+      }),
     );
     setEdges((prev) =>
       prev.map((edge) => {
         const sourceIndex = Number(edge.source.replace('step-', ''));
         const targetIndex = Number(edge.target.replace('step-', ''));
         const animated = completedSteps.has(sourceIndex) && completedSteps.has(targetIndex);
+        if (animated === edge.animated) return edge;
         return {
           ...edge,
           animated,
@@ -160,11 +165,16 @@ function useStepFlowGraph({ steps, completedSteps, onToggle, onSeek }: StepFlowM
 /**
  * The flow view of the step canvas: the xyflow zigzag, one node per step,
  * edges between consecutive steps that animate when both endpoints are
- * complete. Mounted only while the flow is the chosen view, so React Flow
- * state never runs for the list.
+ * complete. Opens on the first steps, not the middle of a long procedure.
+ * Mounted only while the flow is the chosen view, so React Flow state never
+ * runs for the list.
  */
 export const StepFlowMap = memo(function StepFlowMap(props: StepFlowMapProps) {
   const { nodes, edges, onNodesChange, onEdgesChange } = useStepFlowGraph(props);
+  const startNodeIds = useMemo(
+    () => props.steps.slice(0, OPENING_STEPS).map((_, index) => stepNodeId(index)),
+    [props.steps],
+  );
   // Skeleton covers the blank mount window until React Flow reports it has
   // initialised + measured the viewport (onInit).
   const [canvasReady, setCanvasReady] = useState(false);
@@ -182,6 +192,7 @@ export const StepFlowMap = memo(function StepFlowMap(props: StepFlowMapProps) {
         onInit={handleCanvasInit}
         nodesDraggable={false}
         nodeWidth={STEP_NODE_WIDTH}
+        startNodeIds={startNodeIds}
         height={canvasHeight}
       />
       {!canvasReady && (

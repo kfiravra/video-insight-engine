@@ -1,12 +1,39 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactElement } from 'react';
 import type { StepItem } from '@vie/types';
+import type { VieCanvasProps } from '@/components/vie/canvas/CanvasShell';
+import { Button } from '@/components/ui/button';
 
 import { StepFlowCanvas } from '../StepFlowCanvas';
 import { zigzagLayout } from '../step-flow-layout';
-import { TabStateProvider } from '@/features/video-output/contexts/TabStateContext';
+import { TabStateProvider, useTabState } from '@/features/video-output/contexts/TabStateContext';
+
+// Every render of the Flow view's canvas, recorded — the real canvas still renders.
+const canvasRenders = vi.hoisted(() => [] as VieCanvasProps[]);
+vi.mock('@/components/vie/canvas/CanvasShell', async () => {
+  const actual = await vi.importActual<typeof import('@/components/vie/canvas/CanvasShell')>(
+    '@/components/vie/canvas/CanvasShell',
+  );
+  function RecordingCanvas(props: VieCanvasProps) {
+    canvasRenders.push(props);
+    return <actual.VieCanvas {...props} />;
+  }
+  return { ...actual, VieCanvas: RecordingCanvas };
+});
+
+function lastCanvasProps(): VieCanvasProps {
+  const props = canvasRenders.at(-1);
+  if (!props) throw new Error('the Flow view canvas never rendered');
+  return props;
+}
+
+/** Completes a step outside this canvas — in a longer step tab of the same video. */
+function CompleteElsewhere({ index }: { index: number }) {
+  const { completeStep } = useTabState();
+  return <Button onClick={() => completeStep(index)}>Complete step {index + 1} of another tab</Button>;
+}
 
 const steps: StepItem[] = [
   { number: 1, title: 'Knead', instruction: 'Knead the dough for 10 minutes.', duration: '10 min', timestamp: 75 },
@@ -21,6 +48,10 @@ function renderInProvider(ui: ReactElement, videoId = 'video-1') {
 }
 
 describe('StepFlowCanvas', () => {
+  beforeEach(() => {
+    canvasRenders.length = 0;
+  });
+
   it('should render one node per step', () => {
     renderInProvider(<StepFlowCanvas steps={steps} />);
     const nodes = document.querySelectorAll('[data-slot="vie-step-node"]');
@@ -114,6 +145,50 @@ describe('StepFlowCanvas', () => {
       .querySelector('[data-testid="b"]')!
       .querySelector('button[aria-label="Mark step 1 incomplete"]');
     expect(secondCanvasComplete).not.toBeNull();
+  });
+
+  it('should open the Flow view on the first two steps, not the middle of the procedure', async () => {
+    const user = userEvent.setup();
+    const long = Array.from({ length: 12 }, (_, i) => ({ number: i + 1, instruction: `Step ${i + 1}.` }));
+    renderInProvider(<StepFlowCanvas steps={long} />);
+    await user.click(screen.getByRole('button', { name: /^flow$/i }));
+    expect(lastCanvasProps().startNodeIds).toEqual(['step-0', 'step-1']);
+  });
+
+  it('should keep the other flow nodes untouched when a step is marked complete (no rebuild, no re-measure)', async () => {
+    const user = userEvent.setup();
+    renderInProvider(<StepFlowCanvas steps={steps} />);
+    await user.click(screen.getByRole('button', { name: /^flow$/i }));
+    const before = lastCanvasProps().nodes ?? [];
+    fireEvent.click(document.querySelector('button[aria-label="Mark step 1 complete"]') as HTMLElement);
+    expect(lastCanvasProps().nodes?.[1]).toBe(before[1]);
+  });
+
+  it('should count only this list\'s steps in the done counter', async () => {
+    const user = userEvent.setup();
+    renderInProvider(
+      <>
+        <CompleteElsewhere index={10} />
+        <StepFlowCanvas steps={steps} />
+      </>,
+    );
+    await user.click(screen.getByRole('button', { name: 'Complete step 11 of another tab' }));
+    expect(screen.getByText('0/3 done')).toBeInTheDocument();
+  });
+
+  it('should count a completed step of this list in the done counter', async () => {
+    const user = userEvent.setup();
+    renderInProvider(<StepFlowCanvas steps={steps} />);
+    await user.click(screen.getByRole('checkbox', { name: 'Mark step 2 complete' }));
+    expect(screen.getByText('1/3 done')).toBeInTheDocument();
+  });
+
+  it('should label a step past the first hour with an hour-aware seek chip', async () => {
+    const user = userEvent.setup();
+    const onSeek = vi.fn();
+    renderInProvider(<StepFlowCanvas steps={[{ number: 1, instruction: 'Late step.', timestamp: 5000 }]} onSeek={onSeek} />);
+    await user.click(screen.getByRole('button', { name: 'Jump to 1:23:20' }));
+    expect(onSeek).toHaveBeenCalledWith(5000);
   });
 
   it('should show a compact duration chip for timed steps, not a per-node Timer (regression: step title must stay primary)', async () => {

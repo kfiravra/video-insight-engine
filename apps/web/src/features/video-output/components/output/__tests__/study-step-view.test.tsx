@@ -86,6 +86,15 @@ describe('StudyStepView', () => {
     expect(onSeek).toHaveBeenCalledWith(680);
   });
 
+  it('should turn an (m:ss) reference in the explanation into a seek chip', async () => {
+    const user = userEvent.setup();
+    const onSeek = vi.fn();
+    render(<StudyHarness onSeek={onSeek} questions={[{ ...QUESTIONS[0], explanation: 'Covered at (2:05).' }]} />);
+    await user.click(screen.getByRole('button', { name: /Reveal answer/ }));
+    await user.click(screen.getByRole('button', { name: 'Jump to 2:05' }));
+    expect(onSeek).toHaveBeenCalledWith(125);
+  });
+
   it('should show the answer of a question marked Done without a Reveal click', async () => {
     const user = userEvent.setup();
     render(<StudyHarness />);

@@ -51,6 +51,11 @@ COMPONENT_LIST_KEYS: dict[str, str] = {
 COMPARISON_COMPONENTS: frozenset[str] = frozenset({"comparison", "comparison_radar"})
 COMPARISON_LIST_KEYS: tuple[str, ...] = ("comparisons", "pros", "cons")
 
+# A procedure ships whole and in order — Cooking / Build mode walks every step
+# (phase-0 review W-A4): no item cap samples its steps and the dedupe never
+# trims one out of it.
+SEQUENTIAL_COMPONENTS: frozenset[str] = frozenset({"step_player", "step_flow_canvas"})
+
 
 def item_list_keys(component: str) -> tuple[str, ...]:
     """The props keys holding the items a ``component`` tab ships; () when unregistered."""
