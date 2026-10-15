@@ -695,6 +695,8 @@ Layer 4: Shell        (features/video-output/components/output/) — State coord
 | `TabLayout` | Tab shell with navigation, progress, celebrations |
 | `TabCoordinationContext` | Cross-tab state (activeTab, completedTabs) |
 | `CrossTabLink` | Navigates between related tabs |
+| `TabIntro` | The tab's goal line, printed on every tab that has a `goal` (outside an active flow mode). `ComposableOutput` first drops a `summary_header` attachment whose text only repeats the goal (`withoutGoalEcho`; `lineKey` = the summarizer's `_same_line`: whitespace collapsed, trailing `.!?` dropped, case-folded) — rows assembled before output-quality 0b.6 carry one — so the goal prints once |
+| `SeekChip` (`components/vie/data/`) | The shared accent timestamp chip (spot cards, quiz explanations): hour-aware via `formatDuration`; a button calling `onSeek` when one is passed, else a static marker |
 | `VideoHero` (+ `VideoPlayerContext`) | Hosts the **inline** YouTube player (the old `CollapsibleVideoPlayer` was deleted). Context exposes `seekTo`, `registerPlayerAnchor` (scroll-into-view on seek), a `hasEngaged` latch, and Escape-to-close (capture-aware, skips typing targets). |
 | `StreamingPlaceholder` / `StreamErrorCard` | Pre-tab streaming states and stream-failure card with retry (replaced `OutputSkeleton`) |
 | `TabProgressStrip` / `ProvisionalTabNotice` | In-tab streaming chrome: progress, stage row and Cancel above the panel; the "Early preview" header of a provisional tab |
@@ -713,22 +715,22 @@ Each tab's `component` field maps to a renderer in `output/component-registry.ts
 | `checklist` | ChecklistInteractive | Checkbox items, serving scaler, grouped items |
 | `step_player` | StepByStepInteractive | Progress tracking, timers, video sync |
 | `comparison` | ComparisonInteractive | Per-row winner highlighting, verdict ScoreRing, pros/cons (with counts) |
-| `comparison_radar` | ComparisonInteractive (`view="radar"`) | Same renderer with the radar hero forced on |
+| `comparison_radar` | ComparisonInteractive (`view="radar"`) | Same renderer with the radar hero forced on — still only with ≥ 3 numeric axes (both cells numbers, ordinals excluded: `radar-scoring.ts`, twin of the summarizer's `derived_guard.is_numeric_axis`) |
 | `flash_deck` | FlashDeckInteractive | Keyboard + touch swipe, shuffleable |
-| `spot_explorer` | SpotExplorer | Location spots with sections, "All" pill, grid mode (>8 spots with frames), pronunciation |
+| `spot_explorer` | SpotExplorer | Location spots with sections, "All" pill, grid mode (>8 spots with frames), pronunciation; a spot's `timestamp` renders a `SeekChip`, its `quote` an italic line |
 | `budget` | BudgetInteractive | Editable amounts, SVG donut chart, savings calculator |
-| `moment_track` | MomentTrack | **Value gallery** (not a nav strip): grid/timeline view toggle persisted at `localStorage['vie-moment-view']` (default grid). Clicking a card opens the `Lightbox` (never seeks); the explicit **Jump** pill seeks. Timeline mode uses the `use-focus-band` scroll focus band. Split into `MomentGalleryCard` / `MomentTimelineRow` / `moment-utils`. |
+| `moment_track` | MomentTrack | **Value gallery** (not a nav strip): grid/timeline view toggle; the default follows the items (timeline when ≥ 50 % carry a description the row shows, else grid) and a toggle choice holds for the tab, never persisted. Clicking a card opens the `Lightbox` (never seeks); the explicit **Jump** pill seeks. Timeline mode uses the `use-focus-band` scroll focus band and shows descriptions unclamped. Split into `MomentGalleryCard` / `MomentTimelineRow` / `moment-utils`. |
 | `video_filmstrip` | VideoFilmstrip (`mode="tab"`) | Enriched scrubber: wide cells, visible captions, whole-cell seek. The filmstrip tab is **suppressed by OutputRouter** when a `moment_track` tab has ≥8 frame-backed items. |
 | `code_playground` | CodePlayground | Tech snippets with run/navigate modes |
-| `quiz_arena` | QuizArena | Quiz flow (educational domains only — see `domains.json` `forbidden`) |
+| `quiz_arena` | QuizArena | Quiz flow (educational domains only — see `domains.json` `forbidden`); untimed unless `withTimer` (default false); each `(m:ss)` in an explanation renders as a `SeekChip` (`QuizExplanation`) |
 | `packing_mission` | PackingMission | Gamified packing checklist |
 | `workout_room` | WorkoutRoom | Exercises + warmup/cooldown with seek |
 | `lyrics_karaoke` | LyricsKaraoke | Per-line synced karaoke view |
 | `claims_tracker` | ClaimsTracker | News claims with evidence citations |
 | `tier_list` | TierList | Ranked tiers (single-hue ramp) |
 | `formation_diagram` | FormationDiagram | Read-only React Flow pitch (lazy-loaded) |
-| `concept_canvas` | ConceptCanvas | Dagre-laid grouped lanes + docked inspector; typed edge relations (lazy-loaded) |
-| `step_flow_canvas` | StepFlowCanvas | Step graph laid out via the shared canvas layout (lazy-loaded) |
+| `concept_canvas` | ConceptCanvas | Opens as a list on every viewport (`ConceptCanvasList`: definition, example, seek chip inline); the Dagre-laid grouped map behind `CanvasViewToggle`; docked inspector; typed edge relations (lazy-loaded) |
+| `step_flow_canvas` | StepFlowCanvas | Opens as a step list on every viewport (instruction, tips, safety note, seek chip); the step graph behind `CanvasViewToggle`, sharing `step_player`'s completion state (lazy-loaded) |
 | `connect_canvas` | ConnectCanvas | Graded match-the-pairs canvas (lazy-loaded) |
 | `display_section` | DisplaySection | Generic data-driven fallback renderer |
 
@@ -738,7 +740,7 @@ Each tab's `component` field maps to a renderer in `output/component-registry.ts
 |---------------|----------|-------------|
 | `stat_banner` | StatBanner | Stat pill row |
 | `tip_callout` | TipCallout | Tip/warning/note callout |
-| `summary_header` | SummaryHeader | Section summary header |
+| `summary_header` | SummaryHeader | One content line on a dense tab (the extraction summary or the first item, never the goal); hidden when it repeats the goal (see `TabIntro`) |
 | `diagram_card` | DiagramCard | Small node/edge diagram (lazy-loaded) |
 | `frame_strip` | VideoFilmstrip (`mode="overlay"`) | Thin frame strip overlay |
 | `quick_quiz` | QuizArena (single question) | One-question quiz attachment |
@@ -754,12 +756,13 @@ renderers. Dependency: `@dagrejs/dagre` (^3.0.0).
 
 | File | Role |
 |------|------|
-| `CanvasShell.tsx` | React Flow wrapper — bounded pan, locked (non-draggable) nodes, registered `edgeTypes`, sensible `minZoom`. **Nodes must keep hidden handles** even with floating edges, or RF errors and renders zero edges. |
+| `CanvasShell.tsx` | React Flow wrapper — bounded pan, locked (non-draggable) nodes, registered `edgeTypes`, a `minZoom` floor raised by `nodeWidth` (`clampMinZoom`) so a node card never renders under 120 px; also exports `CanvasViewToggle`, the list ↔ graph switch. **Nodes must keep hidden handles** even with floating edges, or RF errors and renders zero edges. |
 | `FloatingEdge.tsx` | Handle-less edge renderer; line style encodes the relation, never color (`causes`/`requires` → solid + arrow, `contrasts` → dashed, `partOf`/`relatesTo` → dotted). |
 | `useGraphLayout.ts` | Deterministic Dagre layout — tiers concepts within a group, lays groups out as horizontal lanes; pure + SSR-safe. |
 | `CanvasInspector.tsx` | Right-dock (desktop) / bottom-sheet (mobile) detail panel — concept definition, neighbors, frame evidence. Rendered as a docked sibling **outside** React Flow so it is never z-trapped behind nodes. |
 
-`ConceptCanvas` consumes these to render a static (non-drag) grouped graph from
+`ConceptCanvas` and `StepFlowCanvas` open as lists on every viewport and consume these in
+their graph views — `ConceptCanvas`'s map is a static (non-drag) grouped graph from
 `ConceptCanvasProps` (`concepts`, optional `groups` for lane order). See
 [DATA-MODELS.md](./DATA-MODELS.md#interactive-component-types) for the prop types.
 
