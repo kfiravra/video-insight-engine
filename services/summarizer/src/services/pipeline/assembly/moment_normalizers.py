@@ -1,0 +1,188 @@
+"""Moment item normalizers (the MomentTrack item contract).
+
+Split out of normalizers.py (output-quality 0b follow-ups): the moment block
+— prose-bearing items, one per second, chapters as spans. Every name here
+stays importable from ``normalizers`` through its explicit re-exports.
+"""
+
+from __future__ import annotations
+
+import re
+from typing import Any
+
+from .text_utils import truncate_words
+
+_MOMENT_LABEL_KEYS = ("label", "title", "name")
+# Prose a moment source may carry under another name: PodcastSegment.summary,
+# FoodStep.instruction, a chapter / outline digest.
+_MOMENT_DESCRIPTION_KEYS = ("description", "summary", "instruction", "digest")
+_MOMENT_START_KEYS = ("seconds", "startSeconds", "timestamp", "start_time", "startTime")
+_MOMENT_END_KEYS = ("endSeconds", "end_seconds", "endTimestamp", "end_time", "endTime")
+_MOMENT_PASSTHROUGH_KEYS = ("mood", "emoji", "speaker", "thumbnailUrl", "s3Key")
+_MOMENT_LABEL_CAP = 60
+# A placeholder label is no text: the track never ships "Moment 3" (R5). Exact form only —
+# a lowercase "moment 3" is a source's own words, not the old positional default.
+_MOMENT_PLACEHOLDER = re.compile(r"^Moment \d+$")
+
+
+def _prose(value: Any) -> str | None:
+    """A stripped non-empty string, else None."""
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
+def _first_prose(item: dict, keys: tuple[str, ...]) -> str | None:
+    return next((text for key in keys if (text := _prose(item.get(key))) is not None), None)
+
+
+def _coerce_int(value: Any) -> int | None:
+    """Parse int or return None on failure."""
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return None
+
+
+def _first_int(item: dict, keys: tuple[str, ...]) -> int | None:
+    return next((value for key in keys if (value := _coerce_int(item.get(key))) is not None), None)
+
+
+def _seconds_to_time_str(seconds: int) -> str:
+    """Convert seconds to M:SS or H:MM:SS time string."""
+    mins, secs = divmod(seconds, 60)
+    hours, mins = divmod(mins, 60)
+    return f"{hours}:{mins:02d}:{secs:02d}" if hours else f"{mins}:{secs:02d}"
+
+
+def _moment_text(item: dict) -> tuple[str, str | None] | None:
+    """(label, description) from whichever fields carry prose; None when none does.
+
+    The label comes from label/title/name, else from the head of the
+    description; the description is dropped when it only repeats the label.
+    """
+    label = _first_prose(item, _MOMENT_LABEL_KEYS)
+    if label is not None and _MOMENT_PLACEHOLDER.match(label):
+        label = None
+    description = _first_prose(item, _MOMENT_DESCRIPTION_KEYS)
+    if label is None and description is not None:
+        label = truncate_words(description, _MOMENT_LABEL_CAP)
+    if label is None:
+        return None
+    return label, (None if description == label else description)
+
+
+def _normalize_moment_item(item: Any, index: int) -> dict | None:
+    """Normalize a moment/clip item to {label, time, seconds, endSeconds?, description?, ...}.
+
+    Unified shape for MomentTrack: points (no endSeconds) and spans (with endSeconds).
+    Accepts the legacy field names from TimelineExplorer.entries and ClipPlayerInteractive.clips.
+    An item without prose is refused (None) — a moment is never invented from
+    its position; ``index`` stays for the call contract and names nothing.
+    """
+    if isinstance(item, str):
+        stripped = item.strip()
+        return {"label": stripped, "time": "0:00", "seconds": 0} if stripped else None
+    if not isinstance(item, dict):
+        return None
+    text = _moment_text(item)
+    if text is None:
+        return None
+    label, description = text
+    seconds = _first_int(item, _MOMENT_START_KEYS) or 0
+    end_seconds = _first_int(item, _MOMENT_END_KEYS)
+    normalized: dict[str, Any] = {
+        "label": label,
+        "time": item.get("time") or _seconds_to_time_str(seconds),
+        "seconds": seconds,
+    }
+    if end_seconds is not None and end_seconds > seconds + 1:
+        normalized["endSeconds"] = end_seconds
+    if description is not None:
+        normalized["description"] = description
+    for key in _MOMENT_PASSTHROUGH_KEYS:
+        value = item.get(key)
+        if value is not None and value != "":
+            normalized[key] = value
+    tags = item.get("tags")
+    if isinstance(tags, list) and tags:
+        normalized["tags"] = [str(t) for t in tags if t is not None]
+    return normalized
+
+
+def normalize_moment_items(data: Any) -> list[dict]:
+    """Moment items a track can ship: prose-bearing, one per ``seconds`` (first wins).
+
+    A second item at the same second cannot be seeked apart from the first and
+    reads as padding (S11 shipped nine itinerary days at 0:00), so it is refused.
+    """
+    if not isinstance(data, list):
+        return []
+    items: list[dict] = []
+    seen: set[int] = set()
+    for index, raw in enumerate(data):
+        item = _normalize_moment_item(raw, index)
+        if item is None or item["seconds"] in seen:
+            continue
+        seen.add(item["seconds"])
+        items.append(item)
+    return items
+
+
+def _chapter_end(
+    chapters: list[dict], index: int, start: int, video_duration: int | None
+) -> int | None:
+    """The span end: the next later chapter's start minus 1; the video end for the last one."""
+    next_start = next(
+        (
+            later
+            for ch in chapters[index + 1 :]
+            if (later := _coerce_int(ch.get("start_time"))) is not None and later > start
+        ),
+        int(video_duration) if video_duration is not None else None,
+    )
+    return next_start - 1 if next_start is not None and next_start > start + 1 else None
+
+
+def _chapter_moment(chapter: dict, start: int, end_seconds: int | None) -> dict | None:
+    """A chapter span in MomentTrack item shape; None for a chapter without a title."""
+    text = _moment_text(chapter)
+    if text is None:
+        return None
+    label, description = text
+    entry: dict[str, Any] = {
+        "time": _seconds_to_time_str(start),
+        "seconds": start,
+        "label": label,
+        "mood": "chapter",
+    }
+    if end_seconds is not None:
+        entry["endSeconds"] = end_seconds
+    if description is not None:
+        entry["description"] = description
+    return entry
+
+
+def _chapters_to_moments(chapters: list[dict], video_duration: int | None = None) -> list[dict]:
+    """Convert yt-dlp chapters (or outline / description entries in that shape) to spans.
+
+    Each chapter ends where the next later chapter starts; the final one at
+    video_duration - 1 when known. A chapter without a title, or at a start an
+    earlier chapter already holds, is skipped; a ``summary`` / ``description``
+    digest rides along as the moment's description.
+    """
+    items: list[dict] = []
+    seen: set[int] = set()
+    for i, ch in enumerate(chapters):
+        start = _coerce_int(ch.get("start_time")) or 0
+        if start in seen:
+            continue
+        entry = _chapter_moment(ch, start, _chapter_end(chapters, i, start, video_duration))
+        if entry is None:
+            continue
+        seen.add(start)
+        items.append(entry)
+    return items
