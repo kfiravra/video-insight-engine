@@ -37,6 +37,14 @@ from .moment_fallback import (
 )
 from .promotion import demote_component, promote_component
 from .registry import ASSEMBLER_REGISTRY, infer_component
+from .sampling import (
+    MOMENT_CAP_MAX,
+    MomentAnchors,
+    collect_moment_anchors,
+    evenly_sample,
+    moment_cap_for_duration,
+    sample_moments,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -382,7 +390,7 @@ def _drop_emptied_moment_tabs(
         refilled = refill() if refill else None
         if refilled is not None:
             logger.warning(
-                "Moment tab %r: every moment was beyond duration — refilled from the fallback chain",
+                "Moment tab %r: every moment was beyond duration — refilled from the fallback",
                 tab.get("id"),
             )
             tab["props"] = refilled
@@ -400,6 +408,34 @@ def _drop_emptied_moment_tabs(
                 "reason": "all_timestamps_impossible",
             }
         )
+
+
+def steps_are_the_timeline(tabs: Iterable[Mapping[str, Any]]) -> bool:
+    """D6: the response navigates by its steps (a step player / flow canvas / workout room)."""
+    return any(t.get("component") in _TIMELINE_STEP_COMPONENTS for t in tabs)
+
+
+def _drop_moments_when_steps_are_the_timeline(tabs: list[dict], dropped_sink: list[dict]) -> bool:
+    """Remove every moment_track tab when the steps are the timeline (D6); True when so."""
+    if not steps_are_the_timeline(tabs):
+        return False
+    for idx in reversed(range(len(tabs))):
+        if tabs[idx].get("component") != "moment_track":
+            continue
+        popped = tabs.pop(idx)
+        logger.info(
+            "TAB DROPPED: id=%r, component='moment_track' — the steps are the timeline (D6)",
+            popped.get("id"),
+        )
+        dropped_sink.append(
+            {
+                "id": popped.get("id", ""),
+                "component": "moment_track",
+                "dataSource": "",
+                "reason": STEPS_ARE_THE_TIMELINE,
+            }
+        )
+    return True
 
 
 def _backfill_moment_thumbnails(
@@ -843,33 +879,30 @@ _COUNT_KEYS: dict[str, str] = {
 _TAB_ITEM_CAPS: dict[str, int] = assembler_item_caps()
 
 
-# moment_track is a timeline: its cap scales with duration and the kept items
-# are sampled evenly across the video, not head-sliced (which truncated long
-# videos to their first ~40 min). ~1 moment per 7 min, clamped to [20, 60].
-_MOMENT_CAP_MIN = 20
-_MOMENT_CAP_MAX = 60
-_MOMENT_MINUTES_PER_ITEM = 7
+# moment_track is a timeline: its cap scales with duration (content-model §9
+# bands, ``sampling.moment_cap_for_duration``) and the kept moments are the
+# salient ones first (description / quote / number — R7), then even spacing
+# within a tier, so the headline beats and the tail both survive (R9).
+_MOMENT_CAP_MAX = MOMENT_CAP_MAX
+
+# Steps are the timeline (D6): a response that ships its steps as a player, a
+# flow canvas or a workout room gets no Moments tab — recipes, workouts and
+# step tutorials are navigated by their steps, and the overview is the hero.
+_TIMELINE_STEP_COMPONENTS = frozenset({"step_player", "step_flow_canvas", "workout_room"})
+STEPS_ARE_THE_TIMELINE = "steps_are_the_timeline"
 
 
 def _evenly_sample(items: list, cap: int) -> list:
-    """Return ``cap`` items at evenly spaced indices, keeping first and last.
-
-    Used for timelines so a capped list still spans the whole video instead of
-    only its head. Rounding collisions may yield slightly fewer than ``cap``.
-    """
-    n = len(items)
-    if cap <= 0:
-        return []
-    if n <= cap:
-        return items
-    if cap == 1:
-        return [items[0]]
-    step = (n - 1) / (cap - 1)
-    indices = sorted({round(i * step) for i in range(cap)})
-    return [items[i] for i in indices]
+    """``cap`` items at evenly spaced indices, keeping first and last (spot sections)."""
+    return items if len(items) <= cap else evenly_sample(items, cap)
 
 
-def _cap_tab_items(component: str, props: dict, video_duration: float | None = None) -> None:
+def _cap_tab_items(
+    component: str,
+    props: dict,
+    video_duration: float | None = None,
+    anchors: MomentAnchors | None = None,
+) -> None:
     """Truncate the user-facing list on a tab if it exceeds the cap."""
     cap = _TAB_ITEM_CAPS.get(component)
     if cap is None:
@@ -881,25 +914,18 @@ def _cap_tab_items(component: str, props: dict, video_duration: float | None = N
     if not isinstance(items, list):
         return
 
-    # Timeline: scale the cap with duration and sample evenly (span the video).
+    # Timeline: the cap follows the duration; salience first, then even spacing.
     if component == "moment_track":
-        if video_duration and video_duration > 0:
-            cap = min(
-                _MOMENT_CAP_MAX,
-                max(
-                    _MOMENT_CAP_MIN,
-                    round((video_duration / 60) / _MOMENT_MINUTES_PER_ITEM),
-                ),
-            )
+        cap = moment_cap_for_duration(video_duration, cap)
         if len(items) > cap:
             logger.info(
-                "Assembly: capping %s.%s from %d → %d (even-sampled)",
+                "Assembly: capping %s.%s from %d → %d (rank-sampled by salience)",
                 component,
                 list_key,
                 len(items),
                 cap,
             )
-            props[list_key] = _evenly_sample(items, cap)
+            props[list_key] = sample_moments(items, cap, video_duration, anchors)
         return
 
     if len(items) > cap:
@@ -1005,7 +1031,11 @@ def _cap_spots_with_sections(props: dict, spots: list, cap: int) -> None:
     props["sections"] = rebuilt
 
 
-def _post_process_tabs(tabs: list[dict], video_duration: float | None = None) -> None:
+def _post_process_tabs(
+    tabs: list[dict],
+    video_duration: float | None = None,
+    anchors: MomentAnchors | None = None,
+) -> None:
     """Apply post-processing rules to assembled tabs in-place."""
     for i, tab in enumerate(tabs):
         label = tab.get("label", "")
@@ -1014,7 +1044,7 @@ def _post_process_tabs(tabs: list[dict], video_duration: float | None = None) ->
 
         component = tab.get("component", "")
         if isinstance(props, dict) and component:
-            _cap_tab_items(component, props, video_duration)
+            _cap_tab_items(component, props, video_duration, anchors)
 
         if emoji and label.startswith(emoji):
             label = label[len(emoji) :].lstrip()
@@ -1742,14 +1772,17 @@ def assemble_response(
 
     # A Moments tab always exists (Kfir 2026-10-12): with no moment_track tab
     # left, the fallback chain's tab joins after the planned and required ones —
-    # after the requirements, so a backfill from extraction data wins.
-    moments = always_moments_tab(
-        assembled_tabs,
-        raw_tabs,
-        video_meta,
-        description_analysis,
-        effective_requirements(primary_tag, triage.get("contentFormat"))["forbidden"],
-    )
+    # after the requirements, so a backfill from extraction data wins. Unless
+    # the steps are the timeline (D6): then no Moments tab, planned or not.
+    moments = None
+    if not _drop_moments_when_steps_are_the_timeline(assembled_tabs, dropped_tabs):
+        moments = always_moments_tab(
+            assembled_tabs,
+            raw_tabs,
+            video_meta,
+            description_analysis,
+            effective_requirements(primary_tag, triage.get("contentFormat"))["forbidden"],
+        )
     if moments is not None:
         _frame_moment_tab(moments, frames, all_frames, frame_descriptions, frame_used)
         assembled_tabs.append(moments)
@@ -1843,7 +1876,11 @@ def assemble_response(
                 }
             )
 
-    _post_process_tabs(assembled_tabs, (video_meta or {}).get("duration"))
+    _post_process_tabs(
+        assembled_tabs,
+        (video_meta or {}).get("duration"),
+        collect_moment_anchors(extraction, synthesis),
+    )
     # After post-processing: a link's text is its target's FINAL label (emoji
     # prefix stripped, "Untitled Chapter N" renamed), never the raw plan label.
     _link_tabs(assembled_tabs, primary_tag)

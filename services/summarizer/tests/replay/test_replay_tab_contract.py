@@ -40,6 +40,10 @@ from tests.replay.driver import ReplayResult, run_replay
 
 _VIDEOS = available_cassettes()
 _REFERENCE_VIDEO = "T1dQhQAm8Tc"
+# Plans whose steps are the timeline (D6, output-quality 0b.2): assembly ships no
+# Moments tab, so the plan-done provisional tab is withdrawn at ``complete``
+# instead of replaced.
+_STEPS_ARE_THE_TIMELINE = frozenset({"jMq8lEu-of0"})
 _PLAN_SPAN = "plan"
 _MEMORY_SPAN = "memory"
 _FENCE = "```"
@@ -82,6 +86,10 @@ class TestTabEmissionContract:
 
         provisional_id = tabs[0]["id"]
 
+        if video_id in _STEPS_ARE_THE_TIMELINE:
+            assert [t["final"] for t in tabs if t["id"] == provisional_id] == [False]
+            assert provisional_id not in _saved_ids(replays[video_id])
+            return
         assert [t["final"] for t in tabs if t["id"] == provisional_id][-1] is True
 
     def test_should_send_every_saved_tab_final_exactly_once(self, replays: dict, video_id: str):
@@ -352,6 +360,9 @@ class TestSplitPathEmission:
         result = split_runs[video_id].result
         last_group = result.event_names().index("extraction_complete")
 
+        if video_id in _STEPS_ARE_THE_TIMELINE:
+            assert _tab_event_indexes(result, "moment_track") == []
+            return
         assert min(_tab_event_indexes(result, "moment_track")) > last_group
 
     def test_should_synthesize_after_the_last_group(self, split_runs: dict, video_id: str):
@@ -392,7 +403,7 @@ _TODAYS_SEQUENCE: dict[str, list[tuple[str, int, bool, bool, str | None]]] = {
         ("ingredients", 1, True, False, None),
         ("cook_steps", 2, True, False, None),
         ("chef_tips", 3, True, False, None),
-        ("key_moments", 4, True, False, None),
+        ("frames-gallery", 4, True, False, None),
         ("overview", 0, True, False, None),
     ],
     "uC45_4nnEAI": [

@@ -211,12 +211,13 @@ class TestPostProcessing:
                 "props": {"items": list(items)},
             }
         ]
-        _post_process_tabs(tabs, video_duration=16789)  # ~280 min → cap ~40
+        _post_process_tabs(tabs, video_duration=16789)  # ~280 min → 1 / 6 min = 46
         kept = tabs[0]["props"]["items"]
-        assert 35 <= len(kept) <= 45
-        # First and last moments are preserved → timeline spans the whole video.
-        assert kept[0]["seconds"] == items[0]["seconds"]
-        assert kept[-1]["seconds"] == items[-1]["seconds"]
+        assert len(kept) == 46
+        # One moment per stride → the timeline spans the whole video.
+        stride = 16789 / 46
+        assert kept[0]["seconds"] < stride
+        assert kept[-1]["seconds"] >= 16789 - stride
 
     def test_evenly_sample_preserves_first_and_last(self):
         from src.services.pipeline.assembly.core import _evenly_sample

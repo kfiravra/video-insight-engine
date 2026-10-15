@@ -242,13 +242,15 @@ class TestKeptMomentTabOnAnInactiveDomain:
 
         assert (complete["degraded"], bool(kept_moments.saved.get("degraded"))) == (False, False)
 
-    async def test_should_ship_the_tab_from_the_moment_fallback_when_the_video_has_chapters(
+    async def test_should_drop_the_tab_even_with_chapters_when_the_steps_are_the_timeline(
         self, kept_moments_with_chapters: SimpleNamespace
     ) -> None:
+        """D6 (output-quality 0b.2): a recipe navigates by its steps, so no Moments tab —
+        the chapter fallback never ships one either."""
         run = kept_moments_with_chapters
         dropped_ids = [tab_id for tab_id, _ in _dropped(run)]
 
-        assert ("moments" in _saved_ids(run), "moments" in dropped_ids) == (True, False)
+        assert ("moments" in _saved_ids(run), "moments" in dropped_ids) == (False, True)
 
 
 # ─── Every group fails ───

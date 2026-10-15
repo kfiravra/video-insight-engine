@@ -55,12 +55,12 @@ _TABS_ADDED_SINCE_RECORDING: dict[str, list[str]] = {
     "T1dQhQAm8Tc": ["quiz"],
 }
 
-# Tabs the code under test no longer assembles: jMq8lEu-of0's recorded plan put
-# key_moments on learning.timestamps although the plan is food-only; the hotfix
-# 2.1 reconcile guard re-points it to food.steps, whose moments carry step
-# thumbnails, so assembly skips the duplicate "Visual Moments" filmstrip.
+# Tabs the code under test no longer assembles: jMq8lEu-of0 is a recipe whose
+# steps are the timeline, so output-quality 0b.2 (D6) ships no Moments tab for
+# it; with no moment gallery showing the frames, the recorded "Visual Moments"
+# filmstrip is back.
 _TABS_REMOVED_SINCE_RECORDING: dict[str, list[str]] = {
-    "jMq8lEu-of0": ["frames-gallery"],
+    "jMq8lEu-of0": ["key_moments"],
 }
 
 
