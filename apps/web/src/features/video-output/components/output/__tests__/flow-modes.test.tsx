@@ -1,6 +1,9 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+import { render, screen } from '@testing-library/react';
+import { TabStateProvider } from '@/features/video-output/contexts/TabStateContext';
 import type { TabEntry } from '@vie/types';
 import { detectFlowMode } from '../flow-modes';
+import type { FlowStepRenderArgs } from '../FlowPlayer';
 
 // ── Tab fixtures (minimal assembled-tab shapes per domain) ──
 
@@ -99,6 +102,33 @@ function spotTab(): TabEntry {
       ],
     },
   };
+}
+
+function momentTab(withDescription = true): TabEntry {
+  return {
+    id: 'conversation_map',
+    label: 'Conversation Timeline',
+    emoji: '🎬',
+    component: 'moment_track',
+    props: {
+      items: [
+        { time: '2:28', seconds: 148, label: 'Intelligent life', description: withDescription ? 'Guess: no.' : undefined },
+        { time: '5:44', seconds: 344, label: 'Great Filter' },
+      ],
+    },
+  };
+}
+
+function renderStep(mode: ReturnType<typeof detectFlowMode>, onSeek = vi.fn()) {
+  const args: FlowStepRenderArgs = {
+    currentStep: 0,
+    onStepChange: vi.fn(),
+    onComplete: vi.fn(),
+    isStepCompleted: () => false,
+  };
+  return render(
+    <TabStateProvider videoId="flow-modes-test">{mode!.renderStep(args, onSeek)}</TabStateProvider>,
+  );
 }
 
 describe('detectFlowMode', () => {
@@ -209,6 +239,39 @@ describe('detectFlowMode', () => {
 
     it('returns null for learning without concepts/flashcards', () => {
       expect(detectFlowMode([quizTab()], 'learning')).toBeNull();
+    });
+
+    it('renders the question with the answer hidden behind Reveal', () => {
+      renderStep(detectFlowMode([conceptTab(), quizTab()], 'learning'));
+      expect(screen.getByRole('button', { name: /Reveal answer/ })).toBeInTheDocument();
+      expect(screen.queryByText(/^Answer:/)).not.toBeInTheDocument();
+    });
+  });
+
+  describe('listen (podcast)', () => {
+    it('detects listen mode when podcast has a moment_track', () => {
+      const mode = detectFlowMode([momentTab()], 'podcast');
+      expect(mode?.id).toBe('listen');
+    });
+
+    it('sequences the segments', () => {
+      const mode = detectFlowMode([momentTab()], 'podcast');
+      expect(mode?.sequenceLength).toBe(2);
+    });
+
+    it('renders the segment description and play range instead of recipe copy', () => {
+      renderStep(detectFlowMode([momentTab()], 'podcast'));
+      expect(screen.getByText('Guess: no.')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Play 2:28 – 5:44' })).toBeInTheDocument();
+    });
+
+    it('renders only the label and range when the segment has no description', () => {
+      renderStep(detectFlowMode([momentTab(false)], 'podcast'));
+      expect(screen.getAllByText('Intelligent life')).toHaveLength(1);
+    });
+
+    it('returns null for podcast without a moment_track', () => {
+      expect(detectFlowMode([conceptTab()], 'podcast')).toBeNull();
     });
   });
 

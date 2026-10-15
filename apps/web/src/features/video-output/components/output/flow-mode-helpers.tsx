@@ -10,9 +10,9 @@
  */
 
 import type { ReactNode } from 'react';
-import { RecipeStepView } from './RecipeStepView';
+import { RecipeStepView, StudyStepView, ListenStepView, type ListenSegment } from './RecipeStepView';
 import type { FlowStepRenderArgs } from './FlowPlayer';
-import type { TabEntry, StepItem, FitnessExercise, SpotItem, QuizArenaQuestion } from '@vie/types';
+import type { TabEntry, StepItem, FitnessExercise, SpotItem, QuizArenaQuestion, MomentItem } from '@vie/types';
 
 /** A context-panel entry — a checkable orientation item (ingredient, material,
  *  vocabulary word, packing item, …). Mirrors the cooking ingredient shape so
@@ -88,18 +88,47 @@ export function exercisesToSteps(exercises: FitnessExercise[]): StepItem[] {
   });
 }
 
-/** Normalize quiz questions into a study run sequence (reveal-the-answer). */
-export function questionsToSteps(questions: QuizArenaQuestion[]): StepItem[] {
-  return questions.map((q, i) => {
-    const answer = q.options?.[q.correctIndex];
+/** Build the Study run pane: one quiz question at a time, answer hidden until
+ *  "Reveal" (the old questionsToSteps printed "Answer: …" as the instruction). */
+export function makeStudyStepRenderer(questions: QuizArenaQuestion[]): FlowStepRenderer {
+  return (args, onSeek) => (
+    <StudyStepView
+      questions={questions}
+      currentStep={args.currentStep}
+      onStepChange={args.onStepChange}
+      onComplete={args.onComplete}
+      onSeek={onSeek}
+    />
+  );
+}
+
+/** Normalize moment_track items into listen segments. A segment without an
+ *  explicit end plays until the next segment starts; the last one is open-ended. */
+export function momentsToListenSegments(items: MomentItem[]): ListenSegment[] {
+  return items.map((item, i) => {
+    const next = items[i + 1]?.seconds;
+    const endSeconds = item.endSeconds ?? (next != null && next > item.seconds ? next : undefined);
     return {
-      number: i + 1,
-      title: q.question,
-      instruction: answer ? `Answer: ${answer}` : 'Recall the answer, then mark done.',
-      tips: q.explanation || undefined,
-      timestamp: q.timestamp,
+      label: item.label || `Segment ${i + 1}`,
+      description: item.description || undefined,
+      speaker: item.speaker || undefined,
+      seconds: item.seconds,
+      endSeconds,
     };
   });
+}
+
+/** Build the Listen run pane: segment description + play range per segment. */
+export function makeListenStepRenderer(segments: ListenSegment[]): FlowStepRenderer {
+  return (args, onSeek) => (
+    <ListenStepView
+      segments={segments}
+      currentStep={args.currentStep}
+      onStepChange={args.onStepChange}
+      onComplete={args.onComplete}
+      onSeek={onSeek}
+    />
+  );
 }
 
 /** Normalize travel spots into a day-by-day explore sequence. */
