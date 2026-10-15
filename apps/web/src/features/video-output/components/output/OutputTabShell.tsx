@@ -26,6 +26,10 @@ interface CommandDeckProps {
   creator?: string;
   duration?: number | null;
   synthesis: SynthesisResult | null;
+  /** The question the video answers — lives on the overview tab's props
+   *  (`data.keyQuestion`), which the router filters from the strip, so the
+   *  router hands it over separately. */
+  keyQuestion?: string;
   youtubeId?: string;
   tabDefs: ShellTabDef[];
   pendingTabs: PendingTabLabel[];
@@ -43,6 +47,7 @@ export function CommandDeck({
   creator,
   duration,
   synthesis,
+  keyQuestion,
   youtubeId,
   tabDefs,
   pendingTabs,
@@ -66,6 +71,7 @@ export function CommandDeck({
       tldr={synthesis?.tldr}
       keyTakeaways={synthesis?.keyTakeaways}
       masterSummary={synthesis?.masterSummary}
+      keyQuestion={keyQuestion}
       youtubeId={youtubeId}
       tabs={tabDefs}
       activeTabId={activeTabId}

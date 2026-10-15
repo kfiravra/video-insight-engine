@@ -5,6 +5,7 @@ import { cn } from '@/lib/utils';
 import { springs } from '@/lib/motion';
 import { stripLeadingEmoji } from '@/lib/string-utils';
 import { useLabels } from '@/lib/i18n';
+import { useMediaQuery } from '@/hooks/use-media-query';
 import { useVideoPlayer } from '@/features/video-output/contexts/VideoPlayerContext';
 import { YouTubePlayer } from '@/components/videos/YouTubePlayer';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
@@ -27,7 +28,12 @@ interface VideoHeroProps {
   duration?: number | null;
   tldr?: string;
   keyTakeaways?: string[];
+  /** The long-form brief (synthesis.masterSummary). Rendered as a collapsible
+   *  "Brief" under the tldr — open on desktop, collapsed on phones (R11). */
   masterSummary?: string;
+  /** The question the video answers (extraction keyQuestion). First line of
+   *  the brief when present. */
+  keyQuestion?: string;
   youtubeId?: string;
   tabs?: VideoHeroTab[];
   activeTabId?: string;
@@ -61,12 +67,24 @@ function formatDuration(seconds: number | null | undefined): string {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
+/** Paragraphs of the brief — the synthesis writes it with blank-line breaks. */
+function briefParagraphs(text: string): string[] {
+  return text
+    .split(/\n+/)
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0);
+}
+
+const PHONE_QUERY = '(max-width: 767px)';
+
 export const VideoHero = memo(function VideoHero({
   title,
   creator,
   duration,
   tldr,
   keyTakeaways,
+  masterSummary,
+  keyQuestion,
   youtubeId,
   tabs,
   activeTabId,
@@ -80,6 +98,7 @@ export const VideoHero = memo(function VideoHero({
   className,
 }: VideoHeroProps) {
   const t = useLabels();
+  const isPhone = useMediaQuery(PHONE_QUERY);
   const { togglePlayer, isPlayerOpen, playerRef, hasEngaged, registerPlayerAnchor } = useVideoPlayer();
   const durationStr = formatDuration(duration);
   const safeTabs: VideoHeroTab[] = tabs ?? [];
@@ -112,6 +131,16 @@ export const VideoHero = memo(function VideoHero({
   const toggleTakeaways = useCallback(() => {
     setUserOpen(!takeawaysOpen);
   }, [takeawaysOpen]);
+
+  // The brief opens on desktop (reading surface) and starts collapsed on
+  // phones, where it would push the tab strip below the first viewport.
+  // A manual toggle owns the state from then on.
+  const [briefUserOpen, setBriefUserOpen] = useState<boolean | null>(null);
+  const briefOpen = briefUserOpen ?? !isPhone;
+  const toggleBrief = useCallback(() => {
+    setBriefUserOpen(!briefOpen);
+  }, [briefOpen]);
+  const brief = masterSummary?.trim() ? briefParagraphs(masterSummary) : [];
 
   // Identity strip pieces — laid out as a single row, separated by dots so the
   // metadata reads as one cohesive line instead of a stack of chips.
@@ -207,6 +236,28 @@ export const VideoHero = memo(function VideoHero({
             {tldr}
           </p>
         ) : null}
+
+        {/* The brief — the written overview every video has, under the tldr.
+            The key question leads it when the extraction found one. */}
+        {brief.length > 0 && (
+          <div className="mt-4">
+            <CollapsibleSection
+              baseId="vie-hero-brief"
+              label={t.brief}
+              open={briefOpen}
+              onToggle={toggleBrief}
+            >
+              <div className="max-w-[68ch] space-y-2.5 text-sm leading-relaxed text-foreground/80 text-pretty">
+                {keyQuestion && (
+                  <p className="font-medium text-foreground/90">{keyQuestion}</p>
+                )}
+                {brief.map((paragraph, i) => (
+                  <p key={i}>{paragraph}</p>
+                ))}
+              </div>
+            </CollapsibleSection>
+          </div>
+        )}
       </div>
 
       {youtubeId && (

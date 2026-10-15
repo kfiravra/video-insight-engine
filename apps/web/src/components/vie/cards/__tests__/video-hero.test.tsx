@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import type { ReactNode } from 'react';
 import { VideoHero } from '../VideoHero';
 import { VideoPlayerProvider, useVideoPlayer } from '@/features/video-output/contexts/VideoPlayerContext';
@@ -24,6 +24,27 @@ const SAMPLE_TABS = [
 function renderWithPlayer(ui: ReactNode): ReturnType<typeof render> {
   return render(<VideoPlayerProvider>{ui}</VideoPlayerProvider>);
 }
+
+const originalMatchMedia = window.matchMedia;
+
+/** Make the phone media query match for one test (the setup mock answers
+ *  false to everything except prefers-reduced-motion). */
+function mockPhoneViewport(): void {
+  window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+    matches: /max-width: 767px/.test(query) || /prefers-reduced-motion/.test(query),
+    media: query,
+    onchange: null,
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  }));
+}
+
+afterEach(() => {
+  window.matchMedia = originalMatchMedia;
+});
 
 /** Test-only sibling that exposes seekTo so tests can simulate a timestamp
  *  click from elsewhere in the output (MomentTrack, VisualEvidence, …). */
@@ -170,11 +191,49 @@ describe('VideoHero', () => {
       expect(screen.getByText('Advanced')).toBeInTheDocument();
     });
 
-    it('should render the brief inline with no Brief collapse toggle', () => {
+    it('should render the tldr inline above the brief', () => {
       renderWithPlayer(<VideoHero {...DEFAULT_PROPS} />);
-      // The brief now rides beside the action cluster as plain prose — there is
-      // no longer a "Brief" disclosure button.
       expect(screen.getByText(DEFAULT_PROPS.tldr)).toBeInTheDocument();
+    });
+
+    it('should render masterSummary as a Brief section open on desktop', () => {
+      renderWithPlayer(<VideoHero {...DEFAULT_PROPS} />);
+      expect(screen.getByRole('button', { name: /^brief$/i })).toHaveAttribute('aria-expanded', 'true');
+      expect(screen.getByText(DEFAULT_PROPS.masterSummary)).toBeInTheDocument();
+    });
+
+    it('should collapse the Brief by default on phones', () => {
+      mockPhoneViewport();
+      renderWithPlayer(<VideoHero {...DEFAULT_PROPS} />);
+      expect(screen.getByRole('button', { name: /^brief$/i })).toHaveAttribute('aria-expanded', 'false');
+    });
+
+    it('should toggle the Brief when its disclosure is clicked', async () => {
+      const user = userEvent.setup();
+      renderWithPlayer(<VideoHero {...DEFAULT_PROPS} />);
+      const briefBtn = screen.getByRole('button', { name: /^brief$/i });
+      await user.click(briefBtn);
+      expect(briefBtn).toHaveAttribute('aria-expanded', 'false');
+      await user.click(briefBtn);
+      expect(briefBtn).toHaveAttribute('aria-expanded', 'true');
+    });
+
+    it('should render the key question as the first line of the brief when present', () => {
+      renderWithPlayer(
+        <VideoHero
+          {...DEFAULT_PROPS}
+          keyQuestion="What does agent-written code mean for programmers?"
+          masterSummary={'First paragraph.\n\nSecond paragraph.'}
+        />,
+      );
+      const question = screen.getByText('What does agent-written code mean for programmers?');
+      const firstParagraph = screen.getByText('First paragraph.');
+      expect(question.compareDocumentPosition(firstParagraph) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(screen.getByText('Second paragraph.')).toBeInTheDocument();
+    });
+
+    it('should not render a Brief section when masterSummary is absent', () => {
+      renderWithPlayer(<VideoHero {...DEFAULT_PROPS} masterSummary={undefined} />);
       expect(screen.queryByRole('button', { name: /^brief$/i })).not.toBeInTheDocument();
     });
 
