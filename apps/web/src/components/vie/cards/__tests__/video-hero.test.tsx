@@ -156,7 +156,9 @@ describe('VideoHero', () => {
 
     it('should render the tldr inline above the brief', () => {
       renderWithPlayer(<VideoHero {...DEFAULT_PROPS} />);
-      expect(screen.getByText(DEFAULT_PROPS.tldr)).toBeInTheDocument();
+      const tldr = screen.getByText(DEFAULT_PROPS.tldr);
+      const brief = screen.getByText(DEFAULT_PROPS.masterSummary);
+      expect(tldr.compareDocumentPosition(brief) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     });
 
     it('should render masterSummary as a Brief section open on desktop', () => {
@@ -200,6 +202,20 @@ describe('VideoHero', () => {
       expect(screen.queryByRole('button', { name: /^brief$/i })).not.toBeInTheDocument();
     });
 
+    it('should not render the key question on its own when masterSummary is absent (it lives in the brief)', () => {
+      renderWithPlayer(<VideoHero {...DEFAULT_PROPS} masterSummary={undefined} keyQuestion="Why does it matter?" />);
+      expect(screen.queryByText('Why does it matter?')).not.toBeInTheDocument();
+    });
+
+    it('should hide collapsed section content from the focus order and the accessibility tree', () => {
+      mockPhoneViewport();
+      renderWithPlayer(<VideoHero {...DEFAULT_PROPS} />);
+      // Collapsed on phones: the takeaways are mounted but inert.
+      const content = document.getElementById('vie-hero-takeaways-content') as HTMLElement;
+      expect(content).toHaveAttribute('aria-hidden', 'true');
+      expect(content).toHaveAttribute('inert');
+    });
+
     it('should render Key takeaways disclosure with a count when takeaways are present', () => {
       renderWithPlayer(<VideoHero {...DEFAULT_PROPS} />);
       // Label carries the count: "Key takeaways · 3".
@@ -232,13 +248,24 @@ describe('VideoHero', () => {
       expect(screen.getByRole('button', { name: /key takeaways/i })).toHaveAttribute('aria-expanded', 'false');
     });
 
-    it('should show three takeaways on phones with a "+N" more control', () => {
+    it('should show three takeaways on phones with a "+N" more control', async () => {
       mockPhoneViewport();
+      const user = userEvent.setup();
       const five = Array.from({ length: 5 }, (_, i) => `Takeaway ${i + 1}`);
       renderWithPlayer(<VideoHero {...DEFAULT_PROPS} keyTakeaways={five} />);
+      // Phones start collapsed (the content is inert) — open the section first.
+      await user.click(screen.getByRole('button', { name: /key takeaways/i }));
       expect(screen.getByText('Takeaway 3')).toBeInTheDocument();
       expect(screen.queryByText('Takeaway 4')).not.toBeInTheDocument();
       expect(screen.getByRole('button', { name: /^\+2 · More takeaways$/ })).toBeInTheDocument();
+    });
+
+    it('should name the takeaways collapse control distinctly from the player and brief controls', async () => {
+      const user = userEvent.setup();
+      const tooMany = Array.from({ length: 9 }, (_, i) => `Takeaway ${i + 1}`);
+      renderWithPlayer(<VideoHero {...DEFAULT_PROPS} keyTakeaways={tooMany} />);
+      await user.click(screen.getByRole('button', { name: /^\+3 · More takeaways$/ }));
+      expect(screen.getByRole('button', { name: 'Hide takeaways' })).toBeInTheDocument();
     });
 
     it('should not show a more control when every takeaway fits', () => {
@@ -253,7 +280,14 @@ describe('VideoHero', () => {
       const showAll = screen.getByRole('button', { name: /^show all$/i });
       expect(showAll).toBeInTheDocument();
       await user.click(showAll);
-      expect(screen.getByRole('button', { name: /^hide$/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Hide brief' })).toBeInTheDocument();
+    });
+
+    it('should count the key question against the five-line clamp budget', () => {
+      const question = 'Q'.repeat(200);
+      const body = 'B'.repeat(200);
+      renderWithPlayer(<VideoHero {...DEFAULT_PROPS} keyQuestion={question} masterSummary={body} />);
+      expect(screen.getByRole('button', { name: /^show all$/i })).toBeInTheDocument();
     });
 
     it('should render a domain chip for podcast, news, gaming and sport', () => {

@@ -117,7 +117,7 @@ describe('OutputRouter hero plumbing', () => {
     );
 
     expect(screen.getByText('The brief body.')).toBeInTheDocument();
-    expect(screen.queryByText(/\?$/)).toBeNull();
+    expect(screen.queryByText('What does agent-written code mean for programmers?')).toBeNull();
   });
 
   it('should print the shipped item count in the strip label in place of the planner count', () => {

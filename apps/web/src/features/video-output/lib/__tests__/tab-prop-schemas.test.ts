@@ -411,6 +411,14 @@ describe('tab-prop-schemas', () => {
       ).toBe(false);
     });
 
+    it('should reject a negative spot timestamp', () => {
+      expect(
+        parses('spot_explorer', {
+          spots: [{ name: 'A', description: 'x', timestamp: -5 }],
+        }),
+      ).toBe(false);
+    });
+
     it('should reject spot sections whose indices exceed the spot list', () => {
       expect(
         parses('spot_explorer', {

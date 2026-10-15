@@ -59,6 +59,12 @@ export interface Labels {
   continueExploring: string;
   highlights: string;
   moreTakeaways: string;
+  /** Accessible names for the hero's collapse controls — three buttons would
+   *  otherwise all be called "Hide". */
+  hideBrief: string;
+  hideTakeaways: string;
+  /** Strip overflow pill; {count} is interpolated. */
+  showMoreSections: string;
   tips: string;
   // Verdict
   price: string;
@@ -133,6 +139,9 @@ const EN: Labels = {
   continueExploring: 'Continue exploring',
   highlights: 'Highlights',
   moreTakeaways: 'More takeaways',
+  hideBrief: 'Hide brief',
+  hideTakeaways: 'Hide takeaways',
+  showMoreSections: 'Show {count} more sections',
   tips: 'Tips',
   price: 'Price',
   score: 'Score',
@@ -241,6 +250,9 @@ const TRANSLATIONS: Record<string, Labels> = {
     continueExploring: 'המשיכו לחקור',
     highlights: 'נקודות בולטות',
     moreTakeaways: 'תובנות נוספות',
+    hideBrief: 'הסתר תקציר',
+    hideTakeaways: 'הסתר תובנות מפתח',
+    showMoreSections: 'הצג עוד {count} מקטעים',
     tips: 'טיפים',
     price: 'מחיר',
     score: 'ציון',
@@ -346,6 +358,9 @@ const TRANSLATIONS: Record<string, Labels> = {
     continueExploring: 'تابع الاستكشاف',
     highlights: 'أبرز النقاط',
     moreTakeaways: 'نقاط إضافية',
+    hideBrief: 'إخفاء الموجز',
+    hideTakeaways: 'إخفاء النقاط الرئيسية',
+    showMoreSections: 'عرض {count} أقسام إضافية',
     tips: 'نصائح',
     price: 'السعر',
     score: 'النتيجة',

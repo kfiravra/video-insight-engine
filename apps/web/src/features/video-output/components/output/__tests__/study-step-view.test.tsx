@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { TabStateProvider } from '@/features/video-output/contexts/TabStateContext';
+import { TabStateProvider, useTabState } from '@/features/video-output/contexts/TabStateContext';
 import { StudyStepView } from '../RecipeStepView';
 import type { QuizArenaQuestion } from '@vie/types';
 
@@ -17,17 +17,30 @@ const QUESTIONS: QuizArenaQuestion[] = [
   { question: 'Capital of France?', options: ['Berlin', 'Paris'], correctIndex: 1 },
 ];
 
-function StudyHarness({ onSeek }: { onSeek?: (s: number) => void }) {
+interface HarnessProps {
+  onSeek?: (s: number) => void;
+  questions?: QuizArenaQuestion[];
+}
+
+/** Inside the provider: "Done" marks the question complete in shared tab state. */
+function StudyHarnessInner({ onSeek, questions = QUESTIONS }: HarnessProps) {
   const [currentStep, setCurrentStep] = useState(0);
+  const tabState = useTabState();
+  return (
+    <StudyStepView
+      questions={questions}
+      currentStep={currentStep}
+      onStepChange={setCurrentStep}
+      onComplete={(i) => tabState.completeStep(i)}
+      onSeek={onSeek}
+    />
+  );
+}
+
+function StudyHarness(props: HarnessProps) {
   return (
     <TabStateProvider videoId="study-step-test">
-      <StudyStepView
-        questions={QUESTIONS}
-        currentStep={currentStep}
-        onStepChange={setCurrentStep}
-        onComplete={vi.fn()}
-        onSeek={onSeek}
-      />
+      <StudyHarnessInner {...props} />
     </TabStateProvider>
   );
 }
@@ -71,6 +84,26 @@ describe('StudyStepView', () => {
     await user.click(screen.getByRole('button', { name: /Reveal answer/ }));
     await user.click(screen.getByRole('button', { name: /Watch this part/ }));
     expect(onSeek).toHaveBeenCalledWith(680);
+  });
+
+  it('should show the answer of a question marked Done without a Reveal click', async () => {
+    const user = userEvent.setup();
+    render(<StudyHarness />);
+    await user.click(screen.getByRole('button', { name: /^Done$/ }));
+    expect(screen.getByText('Answer:')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Reveal answer/ })).not.toBeInTheDocument();
+  });
+
+  it('should announce the revealed answer through a polite live region', async () => {
+    const user = userEvent.setup();
+    render(<StudyHarness />);
+    await user.click(screen.getByRole('button', { name: /Reveal answer/ }));
+    expect(screen.getByText('Answer:').closest('[aria-live="polite"]')).not.toBeNull();
+  });
+
+  it('should not offer a Reveal button when there is nothing to reveal', () => {
+    render(<StudyHarness questions={[{ question: 'Open question?', options: [], correctIndex: 0 }]} />);
+    expect(screen.queryByRole('button', { name: /Reveal answer/ })).not.toBeInTheDocument();
   });
 
   it('should hide the next question answer again after moving on from a revealed one', async () => {

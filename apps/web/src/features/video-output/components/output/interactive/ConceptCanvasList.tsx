@@ -1,10 +1,10 @@
-import { memo, useMemo } from 'react';
+import { memo, useMemo, type ReactNode } from 'react';
 
 import { GlassCard, Timestamp } from '@/components/vie';
 import { cn } from '@/lib/utils';
 import type { ConceptItem } from '@vie/types';
 
-import type { ConceptGraphModel } from './ConceptCanvas';
+import type { ConceptGraphModel } from './concept-graph';
 
 // ─── Group key ───
 
@@ -34,6 +34,8 @@ interface ConceptRowProps {
   selected: boolean;
   onSelect: (id: string) => void;
   onSeek?: (seconds: number) => void;
+  /** The inspector, rendered under the row while it is the selected one. */
+  inspector?: ReactNode;
 }
 
 function LabelledLine({ label, text }: { label: string; text: string }) {
@@ -50,10 +52,10 @@ function LabelledLine({ label, text }: { label: string; text: string }) {
 /**
  * One concept with its substance inline — definition, example, analogy and
  * the seek chip — so the first screen reads without a click (R8). The name
- * is the only control: it selects the concept and docks the inspector
- * (frame evidence + connected concepts).
+ * is the only control: it selects the concept and opens the inspector
+ * (frame evidence + connected concepts) right under it.
  */
-const ConceptRow = memo(function ConceptRow({ id, concept, selected, onSelect, onSeek }: ConceptRowProps) {
+const ConceptRow = memo(function ConceptRow({ id, concept, selected, onSelect, onSeek, inspector }: ConceptRowProps) {
   const { timestamp } = concept;
   return (
     <li
@@ -89,6 +91,7 @@ const ConceptRow = memo(function ConceptRow({ id, concept, selected, onSelect, o
           {concept.analogy && <LabelledLine label="Analogy" text={concept.analogy} />}
         </div>
       </div>
+      {selected && inspector}
     </li>
   );
 });
@@ -100,6 +103,8 @@ export interface ConceptCanvasListProps {
   selectedId: string | null;
   onSelect: (id: string) => void;
   onSeek?: (seconds: number) => void;
+  /** The inspector for the selected concept — placed inline under its row. */
+  inspector?: ReactNode;
 }
 
 /** Group-sectioned concept list — the default view of the concept canvas on every viewport (D8). */
@@ -108,6 +113,7 @@ export const ConceptCanvasList = memo(function ConceptCanvasList({
   selectedId,
   onSelect,
   onSeek,
+  inspector,
 }: ConceptCanvasListProps) {
   const byGroup = useMemo(() => {
     const map = new Map<string, ConceptGraphModel['nodes']>();
@@ -141,6 +147,7 @@ export const ConceptCanvasList = memo(function ConceptCanvasList({
                   selected={node.id === selectedId}
                   onSelect={onSelect}
                   onSeek={onSeek}
+                  inspector={inspector}
                 />
               ))}
             </ul>

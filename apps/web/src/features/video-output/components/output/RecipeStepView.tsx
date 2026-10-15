@@ -23,6 +23,9 @@ interface FlowStepFrameProps {
   /** Word for one sequence entry in the header counter ("Step", "Question", "Segment"). */
   noun: string;
   currentStep: number;
+  /** The number printed in the header — the step's own number when the
+   *  source carries one, else the position (index + 1). */
+  ordinal?: number;
   total: number;
   isDone: boolean;
   /** Extra header content on the trailing side (the cooking readiness pill). */
@@ -32,9 +35,58 @@ interface FlowStepFrameProps {
   children: ReactNode;
 }
 
+interface FlowStepNavProps {
+  currentStep: number;
+  total: number;
+  isDone: boolean;
+  onStepChange: (index: number) => void;
+  onComplete: (index: number) => void;
+}
+
+/** Prev / Done / Next footer of a step pane. */
+function FlowStepNav({ currentStep, total, isDone, onStepChange, onComplete }: FlowStepNavProps) {
+  const t = useLabels();
+  return (
+    <div className="flex items-center justify-between px-4 py-3 border-t border-border/30">
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={() => onStepChange(currentStep - 1)}
+        disabled={currentStep === 0}
+        className="gap-1.5"
+      >
+        <ChevronLeft className="h-4 w-4 rtl:rotate-180" aria-hidden="true" />
+        Prev
+      </Button>
+
+      <Button
+        variant={isDone ? 'outline' : 'default'}
+        size="sm"
+        onClick={() => onComplete(currentStep)}
+        className="gap-1.5 min-h-[44px]"
+      >
+        <Check className="h-4 w-4" aria-hidden="true" />
+        {isDone ? t.undo : t.done}
+      </Button>
+
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={() => onStepChange(currentStep + 1)}
+        disabled={currentStep === total - 1}
+        className="gap-1.5"
+      >
+        Next
+        <ChevronRight className="h-4 w-4 rtl:rotate-180" aria-hidden="true" />
+      </Button>
+    </div>
+  );
+}
+
 export function FlowStepFrame({
   noun,
   currentStep,
+  ordinal,
   total,
   isDone,
   headerExtra,
@@ -42,13 +94,12 @@ export function FlowStepFrame({
   onComplete,
   children,
 }: FlowStepFrameProps) {
-  const t = useLabels();
   return (
     <div className="flex flex-col h-full">
       <div className="flex items-center justify-between px-4 py-3 border-b border-border/30">
         <div className="flex items-center gap-2">
           <span className="text-xs text-muted-foreground">
-            {noun} {currentStep + 1} of {total}
+            {noun} {ordinal ?? currentStep + 1} of {total}
           </span>
           {isDone && (
             <Badge variant="success" className="text-xs">Done</Badge>
@@ -59,39 +110,13 @@ export function FlowStepFrame({
 
       <div className="flex-1 overflow-y-auto p-4 space-y-4">{children}</div>
 
-      <div className="flex items-center justify-between px-4 py-3 border-t border-border/30">
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => onStepChange(currentStep - 1)}
-          disabled={currentStep === 0}
-          className="gap-1.5"
-        >
-          <ChevronLeft className="h-4 w-4 rtl:rotate-180" aria-hidden="true" />
-          Prev
-        </Button>
-
-        <Button
-          variant={isDone ? 'outline' : 'default'}
-          size="sm"
-          onClick={() => onComplete(currentStep)}
-          className="gap-1.5 min-h-[44px]"
-        >
-          <Check className="h-4 w-4" aria-hidden="true" />
-          {isDone ? t.undo : t.done}
-        </Button>
-
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => onStepChange(currentStep + 1)}
-          disabled={currentStep === total - 1}
-          className="gap-1.5"
-        >
-          Next
-          <ChevronRight className="h-4 w-4 rtl:rotate-180" aria-hidden="true" />
-        </Button>
-      </div>
+      <FlowStepNav
+        currentStep={currentStep}
+        total={total}
+        isDone={isDone}
+        onStepChange={onStepChange}
+        onComplete={onComplete}
+      />
     </div>
   );
 }
@@ -167,6 +192,7 @@ export const RecipeStepView = memo(function RecipeStepView({
     <FlowStepFrame
       noun="Step"
       currentStep={currentStep}
+      ordinal={step.number}
       total={steps.length}
       isDone={isDone}
       headerExtra={readinessPill}
@@ -207,24 +233,30 @@ export const RecipeStepView = memo(function RecipeStepView({
         />
       )}
 
-      {/* Tips */}
-      {step.tips && (
-        <div className="flex items-start gap-2 text-sm text-info bg-info/5 rounded-lg px-3 py-2">
-          <Lightbulb className="h-4 w-4 shrink-0 mt-0.5" aria-hidden="true" />
-          <span>{step.tips}</span>
-        </div>
-      )}
-
-      {/* Safety */}
-      {step.safetyNote && (
-        <div className="flex items-start gap-2 text-sm text-warning bg-warning-soft rounded-lg px-3 py-2">
-          <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" aria-hidden="true" />
-          <span>{step.safetyNote}</span>
-        </div>
-      )}
+      <StepNotes tips={step.tips} safetyNote={step.safetyNote} />
     </FlowStepFrame>
   );
 });
+
+/** The tip and safety callouts under a step. */
+function StepNotes({ tips, safetyNote }: { tips?: string; safetyNote?: string }) {
+  return (
+    <>
+      {tips && (
+        <div className="flex items-start gap-2 text-sm text-info bg-info/5 rounded-lg px-3 py-2">
+          <Lightbulb className="h-4 w-4 shrink-0 mt-0.5" aria-hidden="true" />
+          <span>{tips}</span>
+        </div>
+      )}
+      {safetyNote && (
+        <div className="flex items-start gap-2 text-sm text-warning bg-warning-soft rounded-lg px-3 py-2">
+          <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" aria-hidden="true" />
+          <span>{safetyNote}</span>
+        </div>
+      )}
+    </>
+  );
+}
 
 // ─── Study questions ───
 
@@ -272,58 +304,73 @@ interface StudyQuestionProps {
   onSeek?: (seconds: number) => void;
 }
 
+/** The lettered options; the correct one is marked once the answer is shown. */
+function StudyOptionList({ question, shown }: { question: QuizArenaQuestion; shown: boolean }) {
+  if (question.options.length === 0) return null;
+  return (
+    <ol className="space-y-1.5">
+      {question.options.map((option, i) => {
+        const isAnswer = shown && i === question.correctIndex;
+        return (
+          <li
+            key={i}
+            className={cn(
+              'flex items-start gap-2 rounded-lg border border-border/30 px-3 py-2 text-sm',
+              isAnswer && 'border-success/40 bg-success/10 font-medium text-success',
+            )}
+          >
+            <span className="w-5 shrink-0 text-xs text-muted-foreground tabular-nums">
+              {String.fromCharCode(65 + i)}.
+            </span>
+            <span>{option}</span>
+            {isAnswer && <Check className="ms-auto h-4 w-4 shrink-0" aria-hidden="true" />}
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
 function StudyQuestion({ question, forceRevealed, onSeek }: StudyQuestionProps) {
   const [revealed, setRevealed] = useState(false);
   const shown = revealed || forceRevealed;
   const answer = question.options[question.correctIndex];
+  const canSeek = question.timestamp != null && onSeek != null;
+  // Nothing behind the button → no button.
+  const hasReveal = Boolean(answer || question.explanation || canSeek);
 
   return (
     <>
       <h3 className="text-lg font-semibold">{question.question}</h3>
 
-      {question.options.length > 0 && (
-        <ol className="space-y-1.5">
-          {question.options.map((option, i) => {
-            const isAnswer = shown && i === question.correctIndex;
-            return (
-              <li
-                key={i}
-                className={cn(
-                  'flex items-start gap-2 rounded-lg border border-border/30 px-3 py-2 text-sm',
-                  isAnswer && 'border-success/40 bg-success/10 font-medium text-success',
-                )}
-              >
-                <span className="w-5 shrink-0 text-xs text-muted-foreground tabular-nums">
-                  {String.fromCharCode(65 + i)}.
-                </span>
-                <span>{option}</span>
-                {isAnswer && <Check className="ms-auto h-4 w-4 shrink-0" aria-hidden="true" />}
-              </li>
-            );
-          })}
-        </ol>
-      )}
+      <StudyOptionList question={question} shown={shown} />
 
-      {!shown ? (
-        <Button variant="outline" size="sm" onClick={() => setRevealed(true)} className="gap-1.5">
-          <Eye className="h-3.5 w-3.5" aria-hidden="true" />
-          Reveal answer
-        </Button>
-      ) : (
-        <div className="space-y-3">
-          {answer && (
-            <p className="text-sm">
-              <span className="font-semibold">Answer:</span> {answer}
-            </p>
-          )}
-          {question.explanation && (
-            <div className="flex items-start gap-2 text-sm text-info bg-info/5 rounded-lg px-3 py-2">
-              <Lightbulb className="h-4 w-4 shrink-0 mt-0.5" aria-hidden="true" />
-              <span>{question.explanation}</span>
-            </div>
-          )}
-          {question.timestamp != null && onSeek && (
-            <SeekButton seconds={question.timestamp} label="Watch this part" onSeek={onSeek} />
+      {/* Live region: the reveal swaps the button for the answer, so the
+          swap is announced instead of silently moving focus to the body. */}
+      {hasReveal && (
+        <div aria-live="polite" className="space-y-3">
+          {!shown ? (
+            <Button variant="outline" size="sm" onClick={() => setRevealed(true)} className="gap-1.5">
+              <Eye className="h-3.5 w-3.5" aria-hidden="true" />
+              Reveal answer
+            </Button>
+          ) : (
+            <>
+              {answer && (
+                <p className="text-sm">
+                  <span className="font-semibold">Answer:</span> {answer}
+                </p>
+              )}
+              {question.explanation && (
+                <div className="flex items-start gap-2 text-sm text-info bg-info/5 rounded-lg px-3 py-2">
+                  <Lightbulb className="h-4 w-4 shrink-0 mt-0.5" aria-hidden="true" />
+                  <span>{question.explanation}</span>
+                </div>
+              )}
+              {canSeek && question.timestamp != null && onSeek && (
+                <SeekButton seconds={question.timestamp} label="Watch this part" onSeek={onSeek} />
+              )}
+            </>
           )}
         </div>
       )}
@@ -351,6 +398,33 @@ function formatPlayRange(segment: ListenSegment): string | null {
   return `Play ${start} – ${formatDuration(segment.endSeconds)}`;
 }
 
+/** The play-range control plus the segment length chip. */
+function PlayRangeRow({ segment, onSeek }: { segment: ListenSegment; onSeek?: (seconds: number) => void }) {
+  const range = formatPlayRange(segment);
+  const length =
+    segment.seconds != null && segment.endSeconds != null && segment.endSeconds > segment.seconds
+      ? formatDurationHuman(segment.endSeconds - segment.seconds)
+      : null;
+  return (
+    <div className="flex items-center gap-3 flex-wrap">
+      {range && segment.seconds != null && onSeek ? (
+        <SeekButton seconds={segment.seconds} label={range} onSeek={onSeek} />
+      ) : range ? (
+        <span dir="ltr" className="inline-flex items-center gap-1 text-sm text-muted-foreground bg-muted/50 px-3 py-1 rounded-lg">
+          <Play className="h-4 w-4" aria-hidden="true" />
+          {range}
+        </span>
+      ) : null}
+      {length && (
+        <span className="inline-flex items-center gap-1 text-sm text-muted-foreground bg-muted/50 px-3 py-1 rounded-lg">
+          <Clock className="h-4 w-4" aria-hidden="true" />
+          {length}
+        </span>
+      )}
+    </div>
+  );
+}
+
 interface ListenStepViewProps {
   segments: ListenSegment[];
   currentStep: number;
@@ -373,11 +447,6 @@ export const ListenStepView = memo(function ListenStepView({
   if (!segment) return null;
 
   const isDone = tabState.isStepCompleted(currentStep);
-  const range = formatPlayRange(segment);
-  const length =
-    segment.seconds != null && segment.endSeconds != null && segment.endSeconds > segment.seconds
-      ? formatDurationHuman(segment.endSeconds - segment.seconds)
-      : null;
 
   return (
     <FlowStepFrame
@@ -402,22 +471,7 @@ export const ListenStepView = memo(function ListenStepView({
         </p>
       )}
 
-      <div className="flex items-center gap-3 flex-wrap">
-        {range && segment.seconds != null && onSeek ? (
-          <SeekButton seconds={segment.seconds} label={range} onSeek={onSeek} />
-        ) : range ? (
-          <span dir="ltr" className="inline-flex items-center gap-1 text-sm text-muted-foreground bg-muted/50 px-3 py-1 rounded-lg">
-            <Play className="h-4 w-4" aria-hidden="true" />
-            {range}
-          </span>
-        ) : null}
-        {length && (
-          <span className="inline-flex items-center gap-1 text-sm text-muted-foreground bg-muted/50 px-3 py-1 rounded-lg">
-            <Clock className="h-4 w-4" aria-hidden="true" />
-            {length}
-          </span>
-        )}
-      </div>
+      <PlayRangeRow segment={segment} onSeek={onSeek} />
     </FlowStepFrame>
   );
 });

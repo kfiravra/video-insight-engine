@@ -1,10 +1,9 @@
 import { memo, useState } from 'react';
-import { Star, Clock, MapPin, Play } from 'lucide-react';
+import { Star, Clock, MapPin } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useLabels } from '@/lib/i18n';
-import { formatDuration } from '@/lib/string-utils';
 import type { SpotItem } from '@vie/types';
-import { GlassCard, FadeIn, SectionNav, Badge, MapLink, VisualEvidence } from '@/components/vie';
+import { GlassCard, FadeIn, SectionNav, Badge, MapLink, SeekChip, VisualEvidence } from '@/components/vie';
 import { EmptyTabState } from './EmptyTabState';
 
 
@@ -13,15 +12,8 @@ interface SpotSection {
   spotIndices: number[];
 }
 
-/** Spot card item — `timestamp` (seconds) and `quote` arrive from the
- *  assembler ahead of the shared type (output-quality R2/R10, C4). */
-interface SpotCardItem extends SpotItem {
-  timestamp?: number | null;
-  quote?: string | null;
-}
-
 interface SpotExplorerProps {
-  spots: SpotCardItem[];
+  spots: SpotItem[];
   sections?: SpotSection[];
   nextTab?: string;
   onNavigateTab?: (id: string) => void;
@@ -29,48 +21,18 @@ interface SpotExplorerProps {
 }
 
 /** Normalize spot data — backend may send `title`/`detail` (KeyPoint shape) instead of `name`/`description`. */
-function normalizeSpot(raw: SpotCardItem): SpotCardItem {
-  const r = raw as SpotCardItem & { title?: string; detail?: string };
+function normalizeSpot(raw: SpotItem): SpotItem {
+  const r = raw as SpotItem & { title?: string; detail?: string };
   if (!r.name && r.title) {
     return { ...r, name: r.title, description: r.description || r.detail || '' };
   }
   return r;
 }
 
-function hasSeekTimestamp(spot: SpotCardItem): spot is SpotCardItem & { timestamp: number } {
-  return typeof spot.timestamp === 'number' && Number.isFinite(spot.timestamp);
-}
-
-interface SpotSeekChipProps {
-  seconds: number;
-  onSeek?: (seconds: number) => void;
-}
-
-/** Timestamp chip — same accent chip as the moment timeline; a button only
- *  when a seek handler exists, otherwise a static marker. */
-function SpotSeekChip({ seconds, onSeek }: SpotSeekChipProps) {
-  const time = formatDuration(seconds);
-  const chipClass =
-    'ms-auto inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-bold tabular-nums shrink-0 text-[var(--vie-accent)] bg-[var(--vie-accent)]/10';
-  if (!onSeek) {
-    return (
-      <span dir="ltr" className={chipClass}>
-        {time}
-      </span>
-    );
-  }
-  return (
-    <button
-      type="button"
-      onClick={() => onSeek(seconds)}
-      dir="ltr"
-      aria-label={`Jump to ${time}`}
-      className={cn(chipClass, 'cursor-pointer transition-colors hover:bg-[var(--vie-accent)]/20')}
-    >
-      <Play className="h-3 w-3 fill-current" aria-hidden="true" />
-      {time}
-    </button>
-  );
+/** A seekable timestamp: a finite, non-negative number of seconds. The schema
+ *  bounds it too; this guards the direct (unvalidated) render path. */
+function hasSeekTimestamp(spot: SpotItem): spot is SpotItem & { timestamp: number } {
+  return typeof spot.timestamp === 'number' && Number.isFinite(spot.timestamp) && spot.timestamp >= 0;
 }
 
 /** SectionNav id for the synthetic "All" pill — no section label can collide. */
@@ -109,6 +71,7 @@ export const SpotExplorer = memo(function SpotExplorer({
 
     const hasFrame = Boolean(spot.thumbnailUrl || spot.frameCaption || spot.frameOcr);
     const hasActions = Boolean(spot.mapQuery || spot.bookingSearch);
+    const quote = spot.quote?.trim();
 
     return (
       <FadeIn key={spotIndex} index={fadeIdx}>
@@ -138,7 +101,9 @@ export const SpotExplorer = memo(function SpotExplorer({
                     {spot.pronunciation}
                   </span>
                 )}
-                {hasSeekTimestamp(spot) && <SpotSeekChip seconds={spot.timestamp} onSeek={onSeek} />}
+                {hasSeekTimestamp(spot) && (
+                  <SeekChip seconds={spot.timestamp} onSeek={onSeek} className="ms-auto shrink-0" />
+                )}
               </span>
               {spot.description && (
                 <p className="text-sm leading-relaxed text-muted-foreground">
@@ -146,9 +111,9 @@ export const SpotExplorer = memo(function SpotExplorer({
                 </p>
               )}
               {/* Verbatim beats paraphrase (R10): the speaker's own line, set apart. */}
-              {spot.quote?.trim() && (
+              {quote && (
                 <blockquote className="border-s-2 border-[var(--vie-accent)]/40 ps-2.5 text-sm italic leading-relaxed text-foreground/85">
-                  {spot.quote.trim()}
+                  {quote}
                 </blockquote>
               )}
               {spot.specs && (

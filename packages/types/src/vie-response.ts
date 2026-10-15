@@ -125,6 +125,10 @@ export interface SpotItem extends FrameEvidence {
   pronunciation?: string;
   rating?: number;
   thumbnailUrl?: string;
+  /** Where the spot is discussed (seconds) — the seek chip (output-quality R2). */
+  timestamp?: number | null;
+  /** The speaker's verbatim line about the spot (output-quality R10). */
+  quote?: string | null;
 }
 
 export interface TipItem {

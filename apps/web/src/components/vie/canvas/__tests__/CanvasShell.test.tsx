@@ -96,9 +96,18 @@ describe('VieCanvas', () => {
     expect(container.querySelector('[data-slot="vie-canvas"]')).not.toBeNull();
   });
 
-  it('should raise the zoom floor so the default 184 px node never renders under 120 px (R8)', () => {
+  it('should keep the requested zoom floor when no nodeWidth is given (clamp is opt-in)', () => {
     render(
       <VieCanvas nodes={[]} edges={[]}>
+        <MinZoomProbe />
+      </VieCanvas>,
+    );
+    expect(probedMinZoom()).toBe(0.2);
+  });
+
+  it('should raise the zoom floor so a 184 px node never renders under 120 px (R8)', () => {
+    render(
+      <VieCanvas nodes={[]} edges={[]} nodeWidth={184}>
         <MinZoomProbe />
       </VieCanvas>,
     );
@@ -138,22 +147,23 @@ describe('CanvasViewToggle', () => {
     { value: 'map', label: 'Map' },
   ] as const;
 
-  it('should mark the current view as the selected tab', () => {
+  it('should mark the current view as the pressed button', () => {
     render(<CanvasViewToggle label="Concept view" value="list" options={options} onChange={() => {}} />);
-    expect(screen.getByRole('tab', { name: 'List' })).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getByRole('tab', { name: 'Map' })).toHaveAttribute('aria-selected', 'false');
+    expect(screen.getByRole('button', { name: 'List' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: 'Map' })).toHaveAttribute('aria-pressed', 'false');
   });
 
-  it('should report the chosen view when another tab is clicked', async () => {
+  it('should report the chosen view when another button is clicked', async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
     render(<CanvasViewToggle label="Concept view" value="list" options={options} onChange={onChange} />);
-    await user.click(screen.getByRole('tab', { name: 'Map' }));
+    await user.click(screen.getByRole('button', { name: 'Map' }));
     expect(onChange).toHaveBeenCalledWith('map');
   });
 
-  it('should name its tablist so it stays distinct from the hero strip', () => {
+  it('should expose a named group, never a tablist that could collide with the hero strip', () => {
     render(<CanvasViewToggle label="Steps view" value="list" options={options} onChange={() => {}} />);
-    expect(screen.getByRole('tablist', { name: 'Steps view' })).toBeInTheDocument();
+    expect(screen.getByRole('group', { name: 'Steps view' })).toBeInTheDocument();
+    expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
   });
 });

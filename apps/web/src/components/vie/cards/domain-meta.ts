@@ -23,21 +23,35 @@ export const DOMAIN_META: Record<string, { emoji: string; label: string }> = {
   sport: { emoji: '⚽', label: 'Sport' },
 };
 
-/** A planner label's leading number ("9 Core Arguments", "6-Step Factory"). */
-const LEADING_COUNT = /^\d+([\s\-–—]+)/u;
+/** A planner label's leading count: one to three digits followed by
+ *  whitespace and a letter in any script ("9 Core Arguments", "12 רגעים").
+ *  Hyphenated forms ("7-Minute Workout", "6-Step Factory") are names or
+ *  durations and four-digit numbers ("2024 Review") are years — neither is a
+ *  count, so neither matches. Shared with `stripCountPrefix` (the enter-mode
+ *  context labels) so the app has exactly one notion of a count claim. */
+export const LEADING_COUNT = /^\d{1,3}\s+(?=\p{L})/u;
+
+/** Whether a label opens with a count claim (`LEADING_COUNT`). */
+export function hasLeadingCount(label: string): boolean {
+  return LEADING_COUNT.test(label);
+}
+
+/** Strip an assembler-produced count prefix ("8 Steps" → "Steps"). Returns
+ *  the label unchanged when it carries no count, so callers can fall back to
+ *  a default. */
+export function stripCountPrefix(label: string): string {
+  return label.replace(LEADING_COUNT, '');
+}
 
 /** Counts are true (R3, D7): the planner writes labels like "9 Core Arguments"
  *  before extraction, so the number is a guess. Replace it with the count the
- *  tab actually ships; when the count is unknown, drop a space-separated
- *  number rather than keep a lie (a hyphenated one — "7-Minute Workout" — may
- *  be a name, so it stays). Labels without a leading number are untouched. */
+ *  tab actually ships; when the count is unknown, drop the number rather than
+ *  keep a lie. Labels without a leading count (including hyphenated names
+ *  and years) are returned verbatim. */
 export function trueCountLabel(label: string, count: number | undefined): string {
-  const match = LEADING_COUNT.exec(label);
-  if (!match) return label;
-  const separator = match[1];
-  const rest = label.slice(match[0].length);
-  if (count !== undefined) return `${count}${separator}${rest}`;
-  return separator.trim() === '' ? rest : label;
+  if (!hasLeadingCount(label)) return label;
+  const rest = stripCountPrefix(label);
+  return count !== undefined ? `${count} ${rest}` : rest;
 }
 
 /** Component name → the props key holding its primary item list. The single
@@ -63,7 +77,6 @@ const COUNT_PROP_BY_COMPONENT: Record<string, string> = {
   video_filmstrip: 'frames',
   concept_canvas: 'concepts',
   connect_canvas: 'pairs',
-  comparison_radar: 'comparisons',
   lyrics_karaoke: 'sections',
   claims_tracker: 'claims',
   tier_list: 'items',
@@ -77,8 +90,9 @@ const COUNT_PROP_BY_COMPONENT: Record<string, string> = {
  *  defs (`ShellTabDef.itemCount`). */
 export function inferItemCount(tab: TabEntry): number | undefined {
   const props = tab.props ?? {};
-  // Comparison has no single "items" list — it's pros + cons + rows together.
-  if (tab.component === 'comparison') {
+  // Comparison (and its radar twin) has no single "items" list — it's pros +
+  // cons + rows together.
+  if (tab.component === 'comparison' || tab.component === 'comparison_radar') {
     const pros = Array.isArray(props.pros) ? props.pros.length : 0;
     const cons = Array.isArray(props.cons) ? props.cons.length : 0;
     const rows = Array.isArray(props.comparisons) ? props.comparisons.length : 0;

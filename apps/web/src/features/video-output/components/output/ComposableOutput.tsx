@@ -1,4 +1,4 @@
-import { memo, useState, useMemo } from 'react';
+import { memo, useCallback, useState, useMemo } from 'react';
 import type { VIEResponse, TabEntry, TabAttachment } from '@vie/types';
 import { DisplaySection } from './DisplaySection';
 import { CrossTabLink } from './CrossTabLink';
@@ -11,15 +11,18 @@ import { FlowPlayer } from './FlowPlayer';
 import { detectFlowMode } from './flow-modes';
 import { ErrorBoundary } from '@/components/ui/error-boundary';
 import { CrossTabButton, EmojiMarker } from '@/components/vie';
-import { inferItemCount, trueCountLabel } from '@/components/vie/cards/domain-meta';
-import { stripLeadingEmoji } from '@/lib/string-utils';
 import { validateTabEntries } from '@/features/video-output/lib/tab-prop-schemas';
 import {
   COMPONENT_REGISTRY,
   resolveRenderer,
   type NavProps,
 } from './component-registry';
-import type { OverviewCrossTabLink } from './interactive/OverviewInteractive';
+import {
+  buildOverviewCrossTabLinks,
+  displayLabel,
+  resolveCrossLinks,
+  type ResolvedCrossLink,
+} from './cross-links';
 
 // Re-exported so the contract-parity test (and any external consumer) keeps
 // its import path after the registry moved to component-registry.tsx (6.2).
@@ -38,64 +41,27 @@ interface ComposableOutputProps {
   videoSummaryId?: string;
 }
 
-/** The label a tab is shown under: emoji stripped, planner count replaced by
- *  the shipped count (R3). */
-function displayLabel(tab: TabEntry): string {
-  return trueCountLabel(stripLeadingEmoji(tab.label), inferItemCount(tab));
+interface CrossTabLinkRowProps {
+  link: ResolvedCrossLink;
+  onNavigateTab: (tabId: string) => void;
 }
 
-interface ResolvedCrossLink {
-  targetTab: string;
-  label: string;
-  /** The target's goal — the reason to go there. */
-  reason?: string;
-}
+/** One onward link with a stable click handler, so the memo()'d button
+ *  survives the 1 Hz `currentTime` re-renders of the output. */
+const CrossTabLinkRow = memo(function CrossTabLinkRow({ link, onNavigateTab }: CrossTabLinkRowProps) {
+  const handleClick = useCallback(() => onNavigateTab(link.targetTab), [onNavigateTab, link.targetTab]);
+  return <CrossTabButton label={link.label} reason={link.reason} onClick={handleClick} />;
+});
 
-/** The onward links of every tab (audit §2 #8). The assembler lets one tab
- *  claim each target and the hidden overview claims first, so content tabs
- *  ship almost none: each tab gets its explicit links (overview dropped) plus
- *  the next tab in strip order, deduped by target, labelled with the target's
- *  true-count label and its goal as the reason. The last tab links onward
- *  only when the assembler said so. */
-function resolveCrossLinks(tabs: TabEntry[]): Map<string, ResolvedCrossLink[]> {
-  const map = new Map<string, ResolvedCrossLink[]>();
-  tabs.forEach((tab, i) => {
-    const candidates = [...(tab.crossTabLinks ?? [])];
-    const next = tabs[i + 1];
-    if (next) candidates.push({ targetTab: next.id, label: next.label });
-    const seen = new Set<string>([tab.id, 'overview']);
-    const links: ResolvedCrossLink[] = [];
-    for (const candidate of candidates) {
-      if (seen.has(candidate.targetTab)) continue;
-      seen.add(candidate.targetTab);
-      const target = tabs.find((t) => t.id === candidate.targetTab);
-      if (target?.component === 'overview') continue;
-      links.push({
-        targetTab: candidate.targetTab,
-        label: target ? displayLabel(target) : candidate.label,
-        reason: target?.goal,
-      });
-    }
-    map.set(tab.id, links);
+/** A top summary_header that will actually print: a non-blank summary in the
+ *  top slot. SummaryHeader renders nothing for a blank summary, and a bottom
+ *  header leaves the top of the tab without its goal line. */
+function hasTopSummaryHeader(attachments: TabAttachment[] | undefined): boolean {
+  return (attachments ?? []).some((a) => {
+    if (a.component !== 'summary_header' || a.slot !== 'top') return false;
+    const summary = a.props?.summary;
+    return typeof summary === 'string' && summary.trim().length > 0;
   });
-  return map;
-}
-
-/** Build the cross-tab nav grid shown inside the Overview tab. Sources sibling
- *  tabs from the assembled response, drops the overview itself, and annotates
- *  each entry with an emoji + best-effort item count. */
-function buildOverviewCrossTabLinks(
-  allTabs: TabEntry[] | undefined,
-  activeTabId: string,
-): OverviewCrossTabLink[] {
-  if (!allTabs || allTabs.length === 0) return [];
-  const siblings = allTabs.filter((t) => t.id !== activeTabId && t.component !== 'overview');
-  return siblings.map((t) => ({
-    targetTab: t.id,
-    label: displayLabel(t),
-    emoji: t.emoji || undefined,
-    count: inferItemCount(t),
-  }));
 }
 
 interface TabAttachmentsProps {
@@ -197,9 +163,10 @@ export const ComposableOutput = memo(function ComposableOutput({
     // One goal line per tab (R4): the assembler's summary_header still carries
     // the goal as its text, so the intro would print it twice. The header wins
     // until 0b.6 gives it content of its own.
-    const hasSummaryHeader = (tab.attachments ?? []).some((a) => a.component === 'summary_header');
-    // Don't pass nextTab — ComposableOutput renders CrossTabLink after each tab.
-    // Passing nextTab causes duplicate "Next" buttons inside Celebration components.
+    const hasSummaryHeader = hasTopSummaryHeader(tab.attachments);
+    // Don't pass nextTab — ComposableOutput renders the onward links (the
+    // CrossTabLinkRow list) after each tab. Passing nextTab would duplicate
+    // the "Next" buttons inside Celebration components.
     const nav: NavProps = {
       onNavigateTab,
       onSeek: seekTo,
@@ -252,12 +219,7 @@ export const ComposableOutput = memo(function ComposableOutput({
             {crossLinks.length > 0 && (
               <div className="flex flex-col gap-2 mt-2">
                 {crossLinks.map((link) => (
-                  <CrossTabButton
-                    key={link.targetTab}
-                    label={link.label}
-                    reason={link.reason}
-                    onClick={() => onNavigateTab(link.targetTab)}
-                  />
+                  <CrossTabLinkRow key={link.targetTab} link={link} onNavigateTab={onNavigateTab} />
                 ))}
               </div>
             )}

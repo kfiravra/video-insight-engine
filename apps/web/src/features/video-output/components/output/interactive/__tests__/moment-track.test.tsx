@@ -22,7 +22,8 @@ const onlyClips: MomentItem[] = [
   { time: '4:00', seconds: 240, endSeconds: 330, label: 'Clip B', mood: 'demo' },
 ];
 
-/** Render + switch to the timeline view (grid is the default). */
+/** Render + switch to the timeline view (these fixtures are mostly
+ *  undescribed, so the grid is their content-driven default). */
 function renderTimeline(ui: React.ReactElement): RenderResult {
   const result = render(ui);
   fireEvent.click(screen.getByTestId('view-timeline'));
@@ -153,21 +154,25 @@ describe('MomentTrack', () => {
     });
   });
 
-  describe('view toggle and persistence', () => {
-    it('switches to the timeline view and persists the choice', () => {
+  describe('view toggle (session-only, never persisted)', () => {
+    it('switches to the timeline view', () => {
       render(<MomentTrack items={mixedItems} />);
       fireEvent.click(screen.getByTestId('view-timeline'));
       expect(screen.getByRole('list', { name: 'Moment track' })).toBeInTheDocument();
       expect(screen.queryByTestId('moment-grid')).toBeNull();
       expect(screen.getByTestId('view-timeline')).toHaveAttribute('aria-pressed', 'true');
-      expect(window.localStorage.setItem).toHaveBeenCalledWith('vie-moment-view', 'timeline');
     });
 
-    it('initializes from a persisted timeline preference', () => {
+    it('does not write the choice to localStorage — the next video gets its own default', () => {
+      render(<MomentTrack items={mixedItems} />);
+      fireEvent.click(screen.getByTestId('view-timeline'));
+      expect(window.localStorage.setItem).not.toHaveBeenCalledWith('vie-moment-view', expect.anything());
+    });
+
+    it('ignores a stale stored preference from an older build', () => {
       window.localStorage.setItem('vie-moment-view', 'timeline');
       render(<MomentTrack items={mixedItems} />);
-      expect(screen.getByRole('list', { name: 'Moment track' })).toBeInTheDocument();
-      expect(screen.queryByTestId('moment-grid')).toBeNull();
+      expect(screen.getByTestId('moment-grid')).toBeInTheDocument();
     });
 
     it('exposes the toggle as a two-button group', () => {
@@ -215,10 +220,30 @@ describe('MomentTrack', () => {
       expect(screen.getByTestId('moment-grid')).toBeInTheDocument();
     });
 
-    it('should let an explicit stored grid preference override the timeline default', () => {
-      window.localStorage.setItem('vie-moment-view', 'grid');
-      render(<MomentTrack items={[described(1, 'A'), described(2, 'B')]} />);
+    it('should not count a description that merely repeats the label (the row hides it)', () => {
+      const echo = (n: number): MomentItem => ({ time: `${n}:00`, seconds: n * 60, label: `Label ${n}`, description: `Label ${n}` });
+      render(<MomentTrack items={[echo(1), echo(2), echo(3)]} />);
       expect(screen.getByTestId('moment-grid')).toBeInTheDocument();
+    });
+
+    it('should open an S08-like track (every moment described) in the timeline', () => {
+      const s08 = Array.from({ length: 12 }, (_, i) => described(i + 1, `Beat ${i + 1}`));
+      render(<MomentTrack items={s08} />);
+      expect(screen.getByRole('list', { name: 'Moment track' })).toBeInTheDocument();
+    });
+
+    it('should open an S01-like track (no descriptions at all) in the grid', () => {
+      const s01 = Array.from({ length: 12 }, (_, i) => bare(i + 1, `Scene ${i + 1}`));
+      render(<MomentTrack items={s01} />);
+      expect(screen.getByTestId('moment-grid')).toBeInTheDocument();
+    });
+
+    it('should open a fresh mount in the content-driven default even after a toggle elsewhere', () => {
+      const first = render(<MomentTrack items={[bare(1, 'A'), bare(2, 'B')]} />);
+      fireEvent.click(screen.getByTestId('view-timeline'));
+      first.unmount();
+      render(<MomentTrack items={[described(1, 'A'), described(2, 'B')]} />);
+      expect(screen.getByRole('list', { name: 'Moment track' })).toBeInTheDocument();
     });
 
     it('should re-derive the default when the items change and no choice was stored', () => {

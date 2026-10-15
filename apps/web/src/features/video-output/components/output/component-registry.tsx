@@ -17,6 +17,7 @@
 import { lazy, Suspense, type ReactNode } from 'react';
 import type { SpotItem, FlashcardItem, TabEntry, TechSnippet, StepItem, FitnessExercise, ReviewComparison, FilmstripFrame, PackingMissionItem, QuizArenaQuestion, ConceptItem, LyricsKaraokeSection, StatBannerStat, DiagramCardItem, ConnectPair, ClaimItem, TierListItem, FormationPosition } from '@vie/types';
 import { incrementTelemetryCounter } from '@/features/video-output/lib/telemetry';
+import { stripCountPrefix } from '@/components/vie/cards/domain-meta';
 import { DisplaySection } from './DisplaySection';
 import {
   ChecklistInteractive,
@@ -77,15 +78,6 @@ function CanvasFallback() {
       <span className="animate-pulse">Loading canvas…</span>
     </div>
   );
-}
-
-// Strip an assembler-produced count prefix ("10 Ingredients" → "Ingredients").
-// The lookahead `(?=\p{L})` keeps numeric content like "1.5 cups" or
-// "5-Star Recipe" intact — we only drop the leading digits when the next
-// non-whitespace char is a letter in any script. Returns the original label
-// unchanged when no prefix is found, so callers can fall back to a default.
-function stripCountPrefix(label: string): string {
-  return label.replace(/^\d+\s+(?=\p{L})/u, '');
 }
 
 export interface NavProps {
@@ -410,6 +402,7 @@ export const COMPONENT_REGISTRY: Record<string, (props: Record<string, unknown>,
       tabId={nav.tabId}
       videoId={nav.videoId}
       onNavigateTab={nav.onNavigateTab}
+      onSeek={nav.onSeek}
     />
   ),
 

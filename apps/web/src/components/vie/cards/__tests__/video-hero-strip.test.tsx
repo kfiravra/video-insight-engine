@@ -1,7 +1,20 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { VideoHeroStrip } from '../VideoHeroStrip';
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+/** Lay the tabs out past a 250 px strip: the third tab's end sits beyond it. */
+function mockOverflowingLayout(): void {
+  const rightEdges: Record<string, number> = { 'tab-overview': 120, 'tab-key_points': 240, 'tab-quizzes': 360 };
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+    const right = this.getAttribute('role') === 'tablist' ? 250 : (rightEdges[this.id] ?? 0);
+    return { left: 0, top: 0, right, bottom: 0, width: right, height: 0, x: 0, y: 0, toJSON: () => ({}) } as DOMRect;
+  });
+}
 
 const SAMPLE_TABS = [
   { id: 'overview', label: 'Overview', emoji: '📚', dataSource: '' },
@@ -91,15 +104,41 @@ describe('VideoHeroStrip', () => {
   });
 
   it('should show a "+N" overflow pill when tabs sit past the strip edge', () => {
-    const rightEdges: Record<string, number> = { 'tab-overview': 120, 'tab-key_points': 240, 'tab-quizzes': 360 };
-    const spy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
-      const right = this.getAttribute('role') === 'tablist' ? 250 : (rightEdges[this.id] ?? 0);
-      return { left: 0, top: 0, right, bottom: 0, width: right, height: 0, x: 0, y: 0, toJSON: () => ({}) } as DOMRect;
+    mockOverflowingLayout();
+    render(<VideoHeroStrip tabs={SAMPLE_TABS} activeTabId="overview" trailingPending={[]} />);
+
+    expect(screen.getByRole('button', { name: 'Show 1 more sections' })).toHaveTextContent('+1');
+  });
+
+  it('should scroll the strip towards its end when the pill is clicked', async () => {
+    mockOverflowingLayout();
+    const scrollBy = vi.fn();
+    HTMLElement.prototype.scrollBy = scrollBy;
+    const user = userEvent.setup();
+    render(<VideoHeroStrip tabs={SAMPLE_TABS} activeTabId="overview" trailingPending={[]} />);
+
+    await user.click(screen.getByRole('button', { name: 'Show 1 more sections' }));
+
+    expect(scrollBy).toHaveBeenCalledWith(expect.objectContaining({ left: expect.any(Number), behavior: 'smooth' }));
+  });
+
+  it('should count tabs past the start edge in a right-to-left strip', () => {
+    // Mirror of the LTR layout: the strip spans 0–250 from the right, so the
+    // third tab (its left edge at -110) hangs past the start edge.
+    const leftEdges: Record<string, number> = { 'tab-overview': 130, 'tab-key_points': 10, 'tab-quizzes': -110 };
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      const left = this.getAttribute('role') === 'tablist' ? 0 : (leftEdges[this.id] ?? 0);
+      return { left, top: 0, right: 250, bottom: 0, width: 250 - left, height: 0, x: left, y: 0, toJSON: () => ({}) } as DOMRect;
+    });
+    const realGetComputedStyle = window.getComputedStyle.bind(window);
+    vi.spyOn(window, 'getComputedStyle').mockImplementation((element: Element) => {
+      const declaration = realGetComputedStyle(element);
+      Object.defineProperty(declaration, 'direction', { value: 'rtl' });
+      return declaration;
     });
     render(<VideoHeroStrip tabs={SAMPLE_TABS} activeTabId="overview" trailingPending={[]} />);
 
-    expect(screen.getByRole('button', { name: /^\+1 /i })).toHaveTextContent('+1');
-    spy.mockRestore();
+    expect(screen.getByRole('button', { name: 'Show 1 more sections' })).toBeInTheDocument();
   });
 
   it('should not show an overflow pill when every tab fits', () => {

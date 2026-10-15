@@ -3,7 +3,8 @@ import { render, screen, fireEvent, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ConceptItem } from '@vie/types';
 
-import { ConceptCanvas, buildConceptGraph } from '../ConceptCanvas';
+import { ConceptCanvas } from '../ConceptCanvas';
+import { buildConceptGraph } from '../concept-graph';
 
 const concepts: ConceptItem[] = [
   {
@@ -94,7 +95,7 @@ describe('ConceptCanvas', () => {
     );
   });
 
-  it('opens in the list view by default (matchMedia → not desktop)', () => {
+  it('opens in the list view by default', () => {
     render(<ConceptCanvas concepts={concepts} groups={['Foundations', 'Mechanics']} />);
     // Group headings are present; the canvas node layer is not.
     expect(screen.getByRole('heading', { name: 'Foundations' })).toBeInTheDocument();
@@ -109,7 +110,7 @@ describe('ConceptCanvas', () => {
     }));
     try {
       render(<ConceptCanvas concepts={concepts} groups={['Foundations', 'Mechanics']} />);
-      expect(screen.getByRole('tab', { name: /list/i })).toHaveAttribute('aria-selected', 'true');
+      expect(screen.getByRole('button', { name: /^list$/i })).toHaveAttribute('aria-pressed', 'true');
       expect(document.querySelector('.react-flow')).toBeNull();
     } finally {
       window.matchMedia = original;
@@ -137,15 +138,15 @@ describe('ConceptCanvas', () => {
     const user = userEvent.setup();
     render(<ConceptCanvas concepts={concepts} groups={['Foundations', 'Mechanics']} />);
     expect(screen.queryByText('contrasts')).toBeNull();
-    await user.click(screen.getByRole('tab', { name: /map/i }));
+    await user.click(screen.getByRole('button', { name: /^map$/i }));
     expect(screen.getByText('contrasts')).toBeInTheDocument();
   });
 
   it('returns from the map to the list view', async () => {
     const user = userEvent.setup();
     render(<ConceptCanvas concepts={concepts} groups={['Foundations', 'Mechanics']} />);
-    await user.click(screen.getByRole('tab', { name: /map/i }));
-    await user.click(screen.getByRole('tab', { name: /list/i }));
+    await user.click(screen.getByRole('button', { name: /^map$/i }));
+    await user.click(screen.getByRole('button', { name: /^list$/i }));
     expect(document.querySelector('.react-flow')).toBeNull();
     expect(screen.getByRole('heading', { name: 'Mechanics' })).toBeInTheDocument();
   });
@@ -153,7 +154,7 @@ describe('ConceptCanvas', () => {
   it('switches to the Map view and renders one node per concept', async () => {
     const user = userEvent.setup();
     render(<ConceptCanvas concepts={concepts} groups={['Foundations', 'Mechanics']} />);
-    await user.click(screen.getByRole('tab', { name: /map/i }));
+    await user.click(screen.getByRole('button', { name: /^map$/i }));
     expect(document.querySelectorAll('[data-slot="vie-concept-node"]')).toHaveLength(concepts.length);
   });
 
@@ -165,7 +166,7 @@ describe('ConceptCanvas', () => {
     // (jsdom can't render RF's measured edge layer, so we assert the anchors.)
     const user = userEvent.setup();
     render(<ConceptCanvas concepts={concepts} groups={['Foundations', 'Mechanics']} />);
-    await user.click(screen.getByRole('tab', { name: /map/i }));
+    await user.click(screen.getByRole('button', { name: /^map$/i }));
     const nodes = document.querySelectorAll('[data-slot="vie-concept-node"]');
     nodes.forEach((node) => {
       expect(node.querySelectorAll('.react-flow__handle.source').length).toBe(1);
@@ -189,10 +190,33 @@ describe('ConceptCanvas', () => {
     ).toBeInTheDocument();
   });
 
+  it('renders the inspector inline under the selected concept in the list view', async () => {
+    const user = userEvent.setup();
+    render(<ConceptCanvas concepts={concepts} groups={['Foundations', 'Mechanics']} />);
+    const nameButton = screen.getByRole('button', { name: /Gravity/ });
+    await user.click(nameButton);
+    const inspector = document.querySelector('[data-slot="canvas-inspector"]') as HTMLElement;
+    expect(inspector.getAttribute('data-placement')).toBe('inline');
+    expect(inspector.className).not.toMatch(/absolute/);
+    // Same list item as the concept it describes.
+    expect(nameButton.closest('li')).toBe(inspector.closest('li'));
+  });
+
+  it('floats the inspector over the canvas in the Map view', async () => {
+    const user = userEvent.setup();
+    render(<ConceptCanvas concepts={concepts} groups={['Foundations', 'Mechanics']} />);
+    await user.click(screen.getByRole('button', { name: /^map$/i }));
+    // xyflow keeps nodes hidden until measured (no jsdom layout) — click the raw node button.
+    fireEvent.click(document.querySelector('[data-slot="vie-concept-node"] button') as HTMLElement);
+    const inspector = document.querySelector('[data-slot="canvas-inspector"]') as HTMLElement;
+    expect(inspector.getAttribute('data-placement')).toBe('overlay');
+    expect(inspector.className).toMatch(/absolute/);
+  });
+
   it('locks node dragging in the Map view (no infinite drag)', async () => {
     const user = userEvent.setup();
     render(<ConceptCanvas concepts={concepts} groups={['Foundations', 'Mechanics']} />);
-    await user.click(screen.getByRole('tab', { name: /map/i }));
+    await user.click(screen.getByRole('button', { name: /^map$/i }));
     // ReactFlow tags draggable nodes with a `draggable` class; locked nodes have none.
     expect(document.querySelectorAll('.react-flow__node.draggable')).toHaveLength(0);
   });

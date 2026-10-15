@@ -90,7 +90,7 @@ function countFrameBackedItems(props: Record<string, unknown> | undefined): numb
  *  lifts it into the hero brief itself. Empty or non-string → nothing. */
 function overviewKeyQuestion(tabs: TabEntry[] | null): string | undefined {
   const overview = tabs?.find((t) => t.id === 'overview' || t.component === 'overview');
-  const data = overview?.props.data;
+  const data = overview?.props?.data;
   if (data == null || typeof data !== 'object') return undefined;
   const { keyQuestion } = data as { keyQuestion?: unknown };
   return typeof keyQuestion === 'string' && keyQuestion.trim().length > 0 ? keyQuestion : undefined;

@@ -26,4 +26,15 @@ describe('splitTimeRefs', () => {
   it('should handle several references in one explanation', () => {
     expect(splitTimeRefs('(0:05) then (2:40)').filter((s) => s.kind === 'seek')).toHaveLength(2);
   });
+
+  it('should reject seconds or minutes of 60 and above', () => {
+    expect(splitTimeRefs('(12:60) and (99:99:99)')).toEqual([{ kind: 'text', text: '(12:60) and (99:99:99)' }]);
+  });
+
+  it('should split adjacent references into two seeks with no empty text between them', () => {
+    expect(splitTimeRefs('(1:00)(2:00)')).toEqual([
+      { kind: 'seek', seconds: 60 },
+      { kind: 'seek', seconds: 120 },
+    ]);
+  });
 });

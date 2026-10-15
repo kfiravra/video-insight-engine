@@ -39,8 +39,12 @@ export function CollapsibleSection({ baseId, label, open, onToggle, children }: 
           )}
         />
       </button>
+      {/* Collapsed content is still mounted (the grid-rows morph animates it
+          back in) but must leave the focus order and the accessibility tree. */}
       <div
         id={contentId}
+        inert={!open}
+        aria-hidden={!open}
         className={cn(
           'grid transition-[grid-template-rows,opacity] duration-300 ease-[var(--ease-out-expo)]',
           open ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0',

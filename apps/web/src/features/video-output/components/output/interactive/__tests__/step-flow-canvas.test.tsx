@@ -30,7 +30,7 @@ describe('StepFlowCanvas', () => {
   it('should lock node dragging (nodesDraggable=false — no infinite drag)', async () => {
     const user = userEvent.setup();
     renderInProvider(<StepFlowCanvas steps={steps} />);
-    await user.click(screen.getByRole('tab', { name: /flow/i }));
+    await user.click(screen.getByRole('button', { name: /^flow$/i }));
     expect(document.querySelectorAll('.react-flow__node')).toHaveLength(steps.length);
     // ReactFlow tags draggable nodes with a `draggable` class; locked nodes have none.
     expect(document.querySelectorAll('.react-flow__node.draggable')).toHaveLength(0);
@@ -38,7 +38,7 @@ describe('StepFlowCanvas', () => {
 
   it('should open in the list view with the whole instruction inline and no canvas (R8 / D8)', () => {
     renderInProvider(<StepFlowCanvas steps={steps} />);
-    expect(screen.getByRole('tab', { name: /list/i })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('button', { name: /^list$/i })).toHaveAttribute('aria-pressed', 'true');
     expect(document.querySelector('.react-flow')).toBeNull();
     expect(screen.getByText('Knead the dough for 10 minutes.')).toBeInTheDocument();
     expect(screen.getByText('A warm spot speeds the rise.')).toBeInTheDocument();
@@ -55,7 +55,7 @@ describe('StepFlowCanvas', () => {
   it('should mount the xyflow canvas when the Flow view is chosen', async () => {
     const user = userEvent.setup();
     renderInProvider(<StepFlowCanvas steps={steps} />);
-    await user.click(screen.getByRole('tab', { name: /flow/i }));
+    await user.click(screen.getByRole('button', { name: /^flow$/i }));
     expect(document.querySelector('.react-flow')).not.toBeNull();
     expect(document.querySelectorAll('[data-slot="vie-step-node"]')).toHaveLength(steps.length);
   });
@@ -63,7 +63,7 @@ describe('StepFlowCanvas', () => {
   it('should render edges between consecutive steps in the Flow view', async () => {
     const user = userEvent.setup();
     renderInProvider(<StepFlowCanvas steps={steps} />);
-    await user.click(screen.getByRole('tab', { name: /flow/i }));
+    await user.click(screen.getByRole('button', { name: /^flow$/i }));
     // xyflow edges require a real viewport to render the path; we assert the
     // edges container mounted so the layer is wired up.
     expect(document.querySelector('.react-flow__edges')).not.toBeNull();
@@ -119,7 +119,7 @@ describe('StepFlowCanvas', () => {
   it('should show a compact duration chip for timed steps, not a per-node Timer (regression: step title must stay primary)', async () => {
     const user = userEvent.setup();
     renderInProvider(<StepFlowCanvas steps={steps} />);
-    await user.click(screen.getByRole('tab', { name: /flow/i }));
+    await user.click(screen.getByRole('button', { name: /^flow$/i }));
     // Duration is a quiet chip now — a full countdown Timer (Start/Reset, big
     // ring) in every node out-shouted the step title. Query raw DOM because
     // xyflow keeps viewport children hidden until measured (no jsdom layout).

@@ -47,11 +47,9 @@ export function findStepTab(tabs: TabEntry[]): TabEntry | undefined {
   return findComponent(tabs, 'step_player') ?? findComponent(tabs, 'step_flow_canvas');
 }
 
-/** Strip an assembler-produced count prefix ("8 Steps" → "Steps"). Mirrors the
- *  helper in component-registry so context labels read cleanly. */
-export function stripCountPrefix(label: string): string {
-  return label.replace(/^\d+\s+(?=\p{L})/u, '');
-}
+// One count-claim rule for the whole app (domain-meta's LEADING_COUNT) — the
+// enter-mode context labels and the registry's tab labels strip it alike.
+export { stripCountPrefix } from '@/components/vie/cards/domain-meta';
 
 /** Build a RecipeStepView-backed step renderer from a StepItem list. Every
  *  step-based mode (cooking, build, workout, practice, explore) shares this so
@@ -89,7 +87,7 @@ export function exercisesToSteps(exercises: FitnessExercise[]): StepItem[] {
 }
 
 /** Build the Study run pane: one quiz question at a time, answer hidden until
- *  "Reveal" (the old questionsToSteps printed "Answer: …" as the instruction). */
+ *  "Reveal" (or until the question is marked done). */
 export function makeStudyStepRenderer(questions: QuizArenaQuestion[]): FlowStepRenderer {
   return (args, onSeek) => (
     <StudyStepView
@@ -103,11 +101,13 @@ export function makeStudyStepRenderer(questions: QuizArenaQuestion[]): FlowStepR
 }
 
 /** Normalize moment_track items into listen segments. A segment without an
- *  explicit end plays until the next segment starts; the last one is open-ended. */
+ *  explicit end (or with one that doesn't come after its start) plays until
+ *  the next segment starts; the last one is open-ended. */
 export function momentsToListenSegments(items: MomentItem[]): ListenSegment[] {
   return items.map((item, i) => {
     const next = items[i + 1]?.seconds;
-    const endSeconds = item.endSeconds ?? (next != null && next > item.seconds ? next : undefined);
+    const explicitEnd = item.endSeconds != null && item.endSeconds > item.seconds ? item.endSeconds : undefined;
+    const endSeconds = explicitEnd ?? (next != null && next > item.seconds ? next : undefined);
     return {
       label: item.label || `Segment ${i + 1}`,
       description: item.description || undefined,

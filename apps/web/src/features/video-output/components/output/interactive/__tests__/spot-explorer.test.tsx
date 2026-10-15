@@ -139,6 +139,16 @@ describe('SpotExplorer', () => {
       expect(document.querySelector('blockquote')).toBeNull();
     });
 
+    it('should render no chip for a negative or NaN timestamp', () => {
+      render(
+        <SpotExplorer
+          spots={[{ ...keyIdea, timestamp: -3 }, { ...keyIdea, name: 'NaN idea', timestamp: Number.NaN }]}
+          onSeek={vi.fn()}
+        />,
+      );
+      expect(screen.queryByRole('button', { name: /jump to/i })).not.toBeInTheDocument();
+    });
+
     it('should ignore null timestamp and blank quote from the assembler', () => {
       render(<SpotExplorer spots={[{ ...keyIdea, timestamp: null, quote: '   ' }]} onSeek={vi.fn()} />);
       expect(screen.queryByRole('button', { name: /jump to/i })).not.toBeInTheDocument();

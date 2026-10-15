@@ -58,6 +58,8 @@ export const CrossTabButton = memo(function CrossTabButton({
           {reason ? (
             <>
               <span className="font-semibold tracking-tight text-pretty">{reason}</span>
+              {/* The accessible name joins the two lines — keep them apart. */}
+              <span className="sr-only">. </span>
               <span className="text-xs font-normal leading-relaxed text-muted-foreground">Next: {label}</span>
             </>
           ) : (

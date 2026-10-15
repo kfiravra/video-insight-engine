@@ -27,6 +27,7 @@ export { KeyValue } from './data/KeyValue';
 export { CostDisplay } from './data/CostDisplay';
 export { Timer } from './data/Timer';
 export { Timestamp } from './data/Timestamp';
+export { SeekChip } from './data/SeekChip';
 export { VisualEvidence, EvidenceImage, type VisualEvidenceProps } from './data/VisualEvidence';
 
 // Feedback & Animation

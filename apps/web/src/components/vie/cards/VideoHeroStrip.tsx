@@ -29,17 +29,23 @@ interface VideoHeroStripProps {
 }
 
 /** Tabs scrolled past the strip's visible end — the "+N" overflow count,
- *  re-measured on scroll and resize. */
-function useStripOverflow(stripRef: RefObject<HTMLDivElement | null>, tabCount: number): number {
+ *  re-measured on scroll, on resize of the strip or any tab, and whenever the
+ *  tab labels change. Direction-aware: the "end" edge is the right edge in
+ *  LTR and the left edge in RTL. */
+function useStripOverflow(stripRef: RefObject<HTMLDivElement | null>, labelSignature: string): number {
   const [overflow, setOverflow] = useState(0);
   useEffect(() => {
     const strip = stripRef.current;
     if (!strip) return;
+    const tabs = Array.from(strip.querySelectorAll<HTMLElement>('[role="tab"]'));
     const measure = (): void => {
-      const edge = strip.getBoundingClientRect().right;
+      const rtl = getComputedStyle(strip).direction === 'rtl';
+      const stripBox = strip.getBoundingClientRect();
       let hidden = 0;
-      for (const tab of strip.querySelectorAll<HTMLElement>('[role="tab"]')) {
-        if (tab.getBoundingClientRect().right > edge + 1) hidden += 1;
+      for (const tab of tabs) {
+        const box = tab.getBoundingClientRect();
+        const past = rtl ? box.left < stripBox.left - 1 : box.right > stripBox.right + 1;
+        if (past) hidden += 1;
       }
       setOverflow(hidden);
     };
@@ -47,12 +53,20 @@ function useStripOverflow(stripRef: RefObject<HTMLDivElement | null>, tabCount: 
     strip.addEventListener('scroll', measure, { passive: true });
     const observer = new ResizeObserver(measure);
     observer.observe(strip);
+    for (const tab of tabs) observer.observe(tab);
     return () => {
       strip.removeEventListener('scroll', measure);
       observer.disconnect();
     };
-  }, [stripRef, tabCount]);
+  }, [stripRef, labelSignature]);
   return overflow;
+}
+
+/** Scroll the strip one viewport towards its end — leftwards in RTL. */
+function scrollTowardsEnd(strip: HTMLDivElement): void {
+  const rtl = getComputedStyle(strip).direction === 'rtl';
+  const distance = strip.clientWidth * 0.8;
+  strip.scrollBy({ left: rtl ? -distance : distance, behavior: 'smooth' });
 }
 
 /** The hero's tab strip: the sticky, horizontally scrolling tablist ("Video
@@ -69,9 +83,11 @@ export const VideoHeroStrip = memo(function VideoHeroStrip({
 }: VideoHeroStripProps) {
   const t = useLabels();
   const stripRef = useRef<HTMLDivElement>(null);
-  const stripOverflow = useStripOverflow(stripRef, tabs.length);
+  // Labels change width (planner count → shipped count), so they re-measure too.
+  const labelSignature = tabs.map((tab) => `${tab.id}:${tab.label}:${tab.itemCount ?? ''}`).join('|');
+  const stripOverflow = useStripOverflow(stripRef, labelSignature);
   const scrollStripOn = useCallback(() => {
-    stripRef.current?.scrollBy({ left: stripRef.current.clientWidth * 0.8, behavior: 'smooth' });
+    if (stripRef.current) scrollTowardsEnd(stripRef.current);
   }, []);
 
   return (
@@ -153,12 +169,12 @@ export const VideoHeroStrip = memo(function VideoHeroStrip({
         ))}
       </div>
       {stripOverflow > 0 && (
-        <div className="pointer-events-none absolute inset-y-0 end-0 flex items-center rounded-be-2xl bg-gradient-to-l from-card from-55% to-transparent ps-10 pe-2">
+        <div className="pointer-events-none absolute inset-y-0 end-0 flex items-center rounded-ee-2xl bg-gradient-to-l from-card from-55% to-transparent ps-10 pe-2">
           <Button
             variant="ghost"
             size="bare"
             onClick={scrollStripOn}
-            aria-label={`+${stripOverflow} ${t.showAll}`}
+            aria-label={t.showMoreSections.replace('{count}', String(stripOverflow))}
             className="pointer-events-auto rounded-full border border-border/60 bg-card px-2 py-0.5 text-xs font-medium tabular-nums text-foreground/80 shadow-sm hover:bg-muted/60"
           >
             +{stripOverflow}

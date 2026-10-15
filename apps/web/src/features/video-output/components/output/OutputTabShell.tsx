@@ -1,7 +1,8 @@
 import { useRef } from 'react';
-import type { ContentTag, SynthesisResult, TabDefinition, TabEntry } from '@vie/types';
+import type { ContentTag, SynthesisResult, TabEntry } from '@vie/types';
 import { ErrorBoundary } from '@/components/ui/error-boundary';
 import { VideoHero } from '@/components/vie';
+import type { VideoHeroTab } from '@/components/vie/cards/VideoHeroStrip';
 import type { StreamPhase } from '@/features/video-output/hooks/use-summary-stream';
 import { ComposableOutput } from './ComposableOutput';
 import { GlassCard } from './GlassCard';
@@ -9,14 +10,9 @@ import { ProvisionalTabNotice } from './ProvisionalTabNotice';
 import { TabLayout, type TabLayoutHandle } from './TabLayout';
 import { useTabCoordination } from './TabCoordinationContext';
 
-/** A tab-strip entry as the shell renders it. */
-export interface ShellTabDef extends TabDefinition {
-  preview?: string;
-  provisional?: boolean;
-  /** Items the tab ships (`inferItemCount`) — the hero strip prints it in
-   *  place of the planner's guessed count (R3). */
-  itemCount?: number;
-}
+/** A tab-strip entry as the shell renders it — the hero strip's own tab shape
+ *  (preview, provisional flag, shipped `itemCount`). */
+export type ShellTabDef = VideoHeroTab;
 
 export interface PendingTabLabel {
   id: string;

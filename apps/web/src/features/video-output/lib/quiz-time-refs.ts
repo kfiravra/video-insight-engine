@@ -3,7 +3,9 @@
  * explanation text — "…the Kodak Brownie (11:20)". QuizExplanation renders
  * each one as a seek chip (output-quality R12, 0a.7).
  */
-const TIME_REF = /\((\d{1,3}):(\d{2})(?::(\d{2}))?\)/g;
+// Minutes and seconds past the leading group are clock digits (00–59): a
+// "(12:60)" is a ratio or a typo, never a seek target.
+const TIME_REF = /\((\d{1,3}):([0-5]\d)(?::([0-5]\d))?\)/g;
 
 export type ExplanationSegment = { kind: 'text'; text: string } | { kind: 'seek'; seconds: number };
 

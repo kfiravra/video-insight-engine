@@ -306,16 +306,19 @@ describe('ComposableOutput', () => {
       expect(link).toHaveTextContent('Next: Numbers That Matter');
     });
 
-    it('should print the true count in the link label', () => {
+    it('should wrap the last tab to the first content tab so every tab has a way onward', () => {
       render(
         <ComposableOutput response={null} tabs={linkedTabs()} activeTab="quiz" onNavigateTab={vi.fn()} />,
       );
-      // The last tab has no next tab, so nothing is derived for it — but an
-      // explicit assembler link still renders with the true count.
-      expect(screen.queryByRole('button', { name: /Next:/ })).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Explore how the arguments connect/ })).toHaveTextContent(
+        'Next: 24 Core Arguments',
+      );
+    });
+
+    it('should print the true count in an explicit assembler link label', () => {
       const tabs = linkedTabs();
-      tabs[2].crossTabLinks = [{ targetTab: 'arguments', label: '9 Core Arguments' }];
-      render(<ComposableOutput response={null} tabs={tabs} activeTab="quiz" onNavigateTab={vi.fn()} />);
+      tabs[1].crossTabLinks = [{ targetTab: 'arguments', label: '9 Core Arguments' }];
+      render(<ComposableOutput response={null} tabs={tabs} activeTab="numbers" onNavigateTab={vi.fn()} />);
       expect(screen.getByRole('button', { name: /Explore how the arguments connect/ })).toHaveTextContent(
         'Next: 24 Core Arguments',
       );
@@ -565,6 +568,41 @@ describe('ComposableOutput', () => {
       );
       expect(screen.getAllByText(goal)).toHaveLength(1);
       expect(screen.getByRole('note')).toHaveTextContent(goal);
+    });
+
+    it('should keep the intro goal line when the summary_header carries a blank summary', () => {
+      const [tab] = tabWithAttachments();
+      const goal = 'Spec the machine at a glance';
+      const blankHeader = { slot: 'top' as const, component: 'summary_header', props: { summary: '   ' } };
+      render(
+        <ComposableOutput
+          response={null}
+          tabs={[{ ...tab, goal, attachments: [blankHeader] }]}
+          activeTab="specs"
+          onNavigateTab={vi.fn()}
+        />,
+      );
+      // The header prints nothing for a blank summary, so the intro carries the goal.
+      expect(screen.getAllByText(goal)).toHaveLength(1);
+      expect(screen.queryByRole('note')).not.toBeInTheDocument();
+    });
+
+    it('should keep the intro goal line when the summary_header sits in the bottom slot', () => {
+      const [tab] = tabWithAttachments();
+      const goal = 'Spec the machine at a glance';
+      const bottomHeader = { slot: 'bottom' as const, component: 'summary_header', props: { summary: goal } };
+      render(
+        <ComposableOutput
+          response={null}
+          tabs={[{ ...tab, goal, attachments: [bottomHeader] }]}
+          activeTab="specs"
+          onNavigateTab={vi.fn()}
+        />,
+      );
+      // Intro at the top AND the bottom header: the goal opens the tab either way.
+      const goalNodes = screen.getAllByText(goal);
+      expect(goalNodes).toHaveLength(2);
+      expect(goalNodes[0].closest('[role="note"]')).toBeNull();
     });
 
     it('should keep the intro goal line on a tab without a summary_header', () => {

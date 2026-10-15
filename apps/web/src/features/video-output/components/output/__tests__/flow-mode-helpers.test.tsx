@@ -26,6 +26,11 @@ describe('momentsToListenSegments', () => {
     expect([first.description, second.speaker]).toEqual(['Guess: no.', 'Tegmark']);
   });
 
+  it('should ignore an explicit endSeconds that does not come after the start', () => {
+    const out = momentsToListenSegments([{ ...ITEMS[0], endSeconds: 100 }, ITEMS[1]]);
+    expect(out[0].endSeconds).toBe(344);
+  });
+
   it('should not produce a negative range when items are out of order', () => {
     const out = momentsToListenSegments([ITEMS[1], ITEMS[0]]);
     expect(out[0].endSeconds).toBeUndefined();
