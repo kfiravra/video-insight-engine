@@ -26,6 +26,7 @@ import { HelpCircle } from 'lucide-react';
 
 import { Celebration } from '../Celebration';
 import { EmptyTabState } from './EmptyTabState';
+import { QuizExplanation } from './QuizExplanation';
 import { useLabels } from '@/lib/i18n';
 import { usePrefersReducedMotion } from '@/hooks/use-prefers-reduced-motion';
 
@@ -47,11 +48,13 @@ interface QuizArenaProps {
   nextTab?: string;
   onNavigateTab?: (id: string) => void;
   videoId?: string;
-  /** Per-question timer. Defaults to true. Disable for untimed practice. */
+  /** Per-question countdown. Off by default — a recall quiz is untimed
+   *  (output-quality R12/D9); opt in for drills. */
   withTimer?: boolean;
   /** Seconds allotted per question when timer is on. */
   timerSeconds?: number;
-  /** Seek callback for evidence-frame jump-to-moment. */
+  /** Seek callback for evidence-frame jump-to-moment and the explanation's
+   *  `(m:ss)` chips. */
   onSeek?: (seconds: number) => void;
 }
 
@@ -120,8 +123,8 @@ const CountdownRing = memo(function CountdownRing({
 });
 
 /**
- * Unified quiz + scenario component. Single question per screen with optional
- * 10s timer ring, streak counter, frame-evidence slot, and localStorage best
+ * Unified quiz + scenario component. Single question per screen with opt-in
+ * timer ring, streak counter, frame-evidence slot, and localStorage best
  * score persistence (only when `videoId` is provided).
  */
 export const QuizArena = memo(function QuizArena({
@@ -129,7 +132,7 @@ export const QuizArena = memo(function QuizArena({
   nextTab,
   onNavigateTab,
   videoId,
-  withTimer = true,
+  withTimer = false,
   timerSeconds = DEFAULT_TIMER_SECONDS,
   onSeek,
 }: QuizArenaProps) {
@@ -379,9 +382,7 @@ export const QuizArena = memo(function QuizArena({
             <span className="font-semibold text-xs uppercase tracking-wider text-muted-foreground block mb-1">
               Explanation
             </span>
-            <p className="text-sm leading-relaxed text-muted-foreground">
-              {question.explanation}
-            </p>
+            <QuizExplanation text={question.explanation} onSeek={onSeek} />
           </div>
         </FadeIn>
       )}

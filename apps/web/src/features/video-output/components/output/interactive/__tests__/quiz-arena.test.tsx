@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 
 vi.mock('../../Celebration', () => ({
   Celebration: ({ title }: { title: string }) => <div data-testid="celebration">{title}</div>,
@@ -111,14 +112,53 @@ describe('QuizArena', () => {
     ).toBeInTheDocument();
   });
 
-  it('should render the timer ring by default', () => {
-    const { container } = render(<QuizArena questions={questions} />);
-    expect(container.querySelector('[data-slot="countdown-ring"]')).not.toBeNull();
+  it('should be untimed by default (output-quality R12/D9)', () => {
+    render(<QuizArena questions={questions} />);
+    expect(screen.queryByRole('timer')).not.toBeInTheDocument();
   });
 
-  it('should not render the timer ring when withTimer=false', () => {
-    const { container } = render(<QuizArena questions={questions} withTimer={false} />);
-    expect(container.querySelector('[data-slot="countdown-ring"]')).toBeNull();
+  it('should render the timer ring only when withTimer is opted in', () => {
+    render(<QuizArena questions={questions} withTimer timerSeconds={10} />);
+    expect(screen.getByRole('timer', { name: '10 seconds remaining' })).toBeInTheDocument();
+  });
+
+  describe('explanation seek chips (output-quality 0a.7)', () => {
+    const timedQuestion: QuizArenaQuestion = {
+      question: 'What does DHH compare Opus 4.5 to?',
+      options: ['A typewriter', 'The Kodak Brownie', 'A calculator'],
+      correctIndex: 1,
+      explanation: 'DHH compares Opus 4.5 to the Kodak Brownie (11:20) as an inflection point.',
+    };
+
+    it('should render "(11:20)" as a chip that seeks the player', async () => {
+      const user = userEvent.setup();
+      const onSeek = vi.fn();
+      render(<QuizArena questions={[timedQuestion]} onSeek={onSeek} />);
+      await user.click(screen.getByText('The Kodak Brownie'));
+      await user.click(screen.getByRole('button', { name: 'Jump to 11:20' }));
+      expect(onSeek).toHaveBeenCalledWith(680);
+    });
+
+    it('should keep the surrounding explanation text around the chip', () => {
+      render(<QuizArena questions={[timedQuestion]} onSeek={vi.fn()} />);
+      fireEvent.click(screen.getByText('The Kodak Brownie'));
+      expect(screen.getByText(/compares Opus 4\.5 to the Kodak Brownie/)).toBeInTheDocument();
+      expect(screen.getByText(/as an inflection point\./)).toBeInTheDocument();
+      expect(screen.queryByText(/\(11:20\)/)).not.toBeInTheDocument();
+    });
+
+    it('should render a static chip when no seek handler is given', () => {
+      render(<QuizArena questions={[timedQuestion]} />);
+      fireEvent.click(screen.getByText('The Kodak Brownie'));
+      expect(screen.getByText('11:20')).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /jump to/i })).not.toBeInTheDocument();
+    });
+
+    it('should render no chip when the explanation has no time reference', () => {
+      render(<QuizArena questions={questions.slice(0, 1)} onSeek={vi.fn()} />);
+      fireEvent.click(screen.getByText('4'));
+      expect(screen.queryByRole('button', { name: /jump to/i })).not.toBeInTheDocument();
+    });
   });
 
   describe('aria-live answer feedback', () => {

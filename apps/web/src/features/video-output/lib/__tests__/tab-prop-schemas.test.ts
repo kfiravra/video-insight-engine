@@ -350,6 +350,33 @@ describe('tab-prop-schemas', () => {
       ).toBe(false);
     });
 
+    it('should accept quiz explanation and timestamp, including null from Python None', () => {
+      expect(
+        parses('quiz_arena', {
+          questions: [
+            { question: 'Q?', options: ['A', 'B'], correctIndex: 0, explanation: 'See (11:20).', timestamp: 680 },
+            { question: 'R?', options: ['A', 'B'], correctIndex: 1, explanation: null, timestamp: null },
+          ],
+        }),
+      ).toBe(true);
+    });
+
+    it('should reject a quiz explanation that is not a string', () => {
+      expect(
+        parses('quiz_arena', {
+          questions: [{ question: 'Q?', options: ['A', 'B'], correctIndex: 0, explanation: ['not', 'text'] }],
+        }),
+      ).toBe(false);
+    });
+
+    it('should reject a quiz timestamp that is not a number', () => {
+      expect(
+        parses('quiz_arena', {
+          questions: [{ question: 'Q?', options: ['A', 'B'], correctIndex: 0, timestamp: '11:20' }],
+        }),
+      ).toBe(false);
+    });
+
     it('should reject quiz options with fewer than 2 entries', () => {
       expect(
         parses('quiz_arena', { questions: [{ question: 'Q?', options: ['A'], correctIndex: 0 }] }),

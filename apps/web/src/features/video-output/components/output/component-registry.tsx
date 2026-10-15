@@ -251,6 +251,7 @@ export const COMPONENT_REGISTRY: Record<string, (props: Record<string, unknown>,
       videoId={nav.videoId}
       nextTab={nav.nextTab}
       onNavigateTab={nav.onNavigateTab}
+      onSeek={nav.onSeek}
     />
   ),
 

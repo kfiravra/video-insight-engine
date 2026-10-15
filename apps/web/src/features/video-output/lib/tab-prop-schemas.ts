@@ -157,11 +157,15 @@ const codePlaygroundSchema = z
   .object({ snippets: z.array(z.object({ code: z.string() }).passthrough()) })
   .passthrough();
 
+// `explanation` is parsed for `(m:ss)` seek chips and `timestamp` (seconds)
+// feeds the evidence slot, so both are bounded (output-quality R12).
 const quizQuestionSchema = z
   .object({
     question: z.string(),
     options: z.array(z.string()).min(2),
     correctIndex: nonNegativeInt,
+    explanation: optionalString,
+    timestamp: optionalNumber,
   })
   .passthrough()
   .superRefine((q, ctx) => {
