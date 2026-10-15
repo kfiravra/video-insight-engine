@@ -947,9 +947,9 @@ class TestMomentItemNormalization:
     def test_non_dict_non_str_returns_none(self):
         assert _normalize_moment_item(42, 0) is None
 
-    def test_missing_label_gets_default(self):
-        result = _normalize_moment_item({"seconds": 60}, 2)
-        assert result["label"] == "Moment 3"
+    def test_missing_label_is_refused(self):
+        """0b.1: a moment is never named by its position ("Moment 3")."""
+        assert _normalize_moment_item({"seconds": 60}, 2) is None
 
     def test_label_from_description_when_no_title(self):
         """When label/title/name are absent, derive from description prefix."""
@@ -1082,10 +1082,8 @@ class TestMomentTrackClipDefaults:
     """assemble_moment_track with clip-style input — default value behavior."""
 
     def test_label_fallback_chain(self):
-        result = assemble_moment_track({}, [{"timestamp": 10}], {}, None)
-        assert result is not None
-        # No label/title/description ⇒ default "Moment 1"
-        assert result["items"][0]["label"] == "Moment 1"
+        # No label/title/description ⇒ the item is refused (0b.1), never "Moment 1"
+        assert assemble_moment_track({}, [{"timestamp": 10}], {}, None) is None
 
     def test_label_from_title(self):
         result = assemble_moment_track({}, [{"title": "Great moment"}], {}, None)

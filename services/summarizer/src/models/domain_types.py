@@ -940,7 +940,9 @@ class PodcastSegment(BaseModel):
     model_config = {"populate_by_name": True}
 
     title: str = ""
-    summary: str = ""
+    # The prompt asks for `summary`; a model that writes `description` instead must not
+    # lose the segment's only prose (the moment normalizer carries it as `description`).
+    summary: str = Field(default="", validation_alias=AliasChoices("summary", "description"))
     timestamp: int | None = None
     end_seconds: int | None = Field(None, alias="endSeconds")
     speaker: str | None = None
