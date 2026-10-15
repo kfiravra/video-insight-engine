@@ -119,7 +119,8 @@ class TestResolveCrossTabLinks:
 
 
 class TestAssembledLinkLabels:
-    """Links are resolved after post-processing, so they read the tab's final label."""
+    """Links are resolved after post-processing, so they read the tab's final label.
+    The overview claims no links (0b.5), so the steps tab's link is read."""
 
     @staticmethod
     def _assembled_tabs(checklist_label: str) -> list[dict]:
@@ -129,18 +130,21 @@ class TestAssembledLinkLabels:
             "tabs": [
                 {"id": "ingredients", "label": checklist_label, "emoji": "🛒",
                  "component": "checklist", "dataSource": "food.ingredients", "goal": "Shop"},
+                {"id": "steps", "label": "Steps", "emoji": "👨‍🍳",
+                 "component": "step_player", "dataSource": "food.steps", "goal": "Cook"},
             ],
         }  # fmt: skip
-        extraction = {"food": {"ingredients": [{"name": f"item {i}"} for i in range(14)]}}
+        steps = [{"number": i, "instruction": f"Do step {i} carefully."} for i in (1, 2)]
+        extraction = {
+            "food": {"ingredients": [{"name": f"item {i}"} for i in range(14)], "steps": steps}
+        }
         synthesis = {"tldr": "A lasagna.", "keyTakeaways": ["a", "b", "c"]}
         return assemble_response(triage, extraction, None, synthesis)["tabs"]
 
     def _link_label(self, checklist_label: str) -> str:
-        overview = self._assembled_tabs(checklist_label)[0]
+        steps = next(t for t in self._assembled_tabs(checklist_label) if t["id"] == "steps")
         return next(
-            link["label"]
-            for link in overview["crossTabLinks"]
-            if link["targetTab"] == "ingredients"
+            link["label"] for link in steps["crossTabLinks"] if link["targetTab"] == "ingredients"
         )
 
     def test_should_drop_the_emoji_prefix_from_a_link_label(self) -> None:

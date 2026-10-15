@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Collection, Iterable, Mapping
 from typing import Any
 
 from src.shared_config.domain_config import (
@@ -25,7 +25,7 @@ from src.utils.data_helpers import is_empty_data
 
 from .assemblers_learning import assemble_display_section
 from .assemblers_overhaul import _normalize_filmstrip_frame
-from .attachments import attach_secondaries
+from .attachments import attach_response_secondaries
 from .cross_tab import resolve_cross_tab_links
 from .density import enforce_density
 from .item_timestamps import clear_impossible_item_timestamps
@@ -1146,23 +1146,129 @@ post_process_tabs = _post_process_tabs
 
 
 def _link_tabs(tabs: list[dict], primary_tag: str) -> None:
-    """Set every tab's ``crossTabLinks``; each target is linked from one tab only."""
+    """Set every tab's ``crossTabLinks``.
+
+    A target may be linked from several tabs (0a.9: the FE dedupes per source
+    tab and labels the link with the target's goal), and the overview — the
+    hero, which the FE never renders links on — claims none, so a content tab
+    is never robbed of its onward link by the overview claiming first.
+    """
     all_tab_ids = {t["id"] for t in tabs}
-    globally_linked: set[str] = set()
     for tab in tabs:
-        links = resolve_cross_tab_links(
+        if tab.get("component") == "overview":
+            tab["crossTabLinks"] = []
+            continue
+        tab["crossTabLinks"] = resolve_cross_tab_links(
             tab_id=tab["id"],
             all_tab_ids=all_tab_ids,
             component=tab.get("component"),
             all_tabs=tabs,
             primary_tag=primary_tag,
         )
-        deduped = []
-        for link in links:
-            if link["targetTab"] not in globally_linked:
-                deduped.append(link)
-                globally_linked.add(link["targetTab"])
-        tab["crossTabLinks"] = deduped
+
+
+# ─────────────────────────────────────────────────────
+# Post-promotion dedupe (R5, L26)
+# ─────────────────────────────────────────────────────
+
+# Reconcile dedupes planned tabs by (dataSource, component) before extraction;
+# promotion (flash_deck → concept_canvas) and the sibling fallback can still
+# make two tabs ship the same items. The assembled props decide: a tab whose
+# items overlap an earlier tab's by at least this share is a duplicate.
+DUPLICATE_OVERLAP = 0.5
+DUPLICATE_TAB = "duplicate_tab"
+_ITEM_TEXT_KEYS: tuple[str, ...] = (
+    "label",
+    "title",
+    "name",
+    "term",
+    "question",
+    "claim",
+    "text",
+    "front",
+    "step",
+    "instruction",
+    "key",
+    "feature",
+    "item",
+)
+
+
+def _item_fingerprint(item: Any) -> str | None:
+    """A list item's identity: its first text field, case/space-folded."""
+    if isinstance(item, str):
+        text = item
+    elif isinstance(item, dict):
+        text = next(
+            (v for k in _ITEM_TEXT_KEYS if isinstance((v := item.get(k)), str) and v.strip()), ""
+        )
+    else:
+        return None
+    folded = " ".join(text.split()).casefold()
+    return folded or None
+
+
+def tab_fingerprints(tab: Mapping[str, Any]) -> frozenset[str]:
+    """The identities of every item in every list prop of a tab."""
+    props = tab.get("props")
+    if not isinstance(props, dict):
+        return frozenset()
+    found: set[str] = set()
+    for value in props.values():
+        if not isinstance(value, list):
+            continue
+        found.update(f for f in map(_item_fingerprint, value) if f is not None)
+    return frozenset(found)
+
+
+def _duplicate_of(
+    tab: Mapping[str, Any], earlier: list[tuple[str, frozenset[str]]]
+) -> tuple[str, float] | None:
+    """``(earlier tab id, overlap share)`` when ``tab`` repeats an earlier tab's items."""
+    own = tab_fingerprints(tab)
+    if not own:
+        return None
+    for tab_id, theirs in earlier:
+        share = len(own & theirs) / len(own)
+        if share >= DUPLICATE_OVERLAP:
+            return tab_id, share
+    return None
+
+
+def _dedupe_tabs(tabs: list[dict], dropped_sink: list[dict]) -> None:
+    """Drop every tab whose items overlap an earlier tab's by ≥ ``DUPLICATE_OVERLAP``.
+
+    Runs after promotion and the requirement backfill, on the assembled props
+    (so the S03 flash_deck promoted onto the same concepts as the canvas, or a
+    moment tab built from the exercises the workout room shows, go). The
+    overview is its own hero and never takes part.
+    """
+    earlier: list[tuple[str, frozenset[str]]] = []
+    for tab in list(tabs):
+        if tab.get("component") == "overview":
+            continue
+        duplicate = _duplicate_of(tab, earlier)
+        if duplicate is None:
+            earlier.append((str(tab.get("id", "")), tab_fingerprints(tab)))
+            continue
+        of_id, share = duplicate
+        tabs.remove(tab)
+        logger.warning(
+            "TAB DROPPED: id=%r, component=%r — %.0f%% of its items ship on tab %r",
+            tab.get("id"),
+            tab.get("component"),
+            share * 100,
+            of_id,
+        )
+        dropped_sink.append(
+            {
+                "id": tab.get("id", ""),
+                "component": tab.get("component", ""),
+                "dataSource": "",
+                "reason": DUPLICATE_TAB,
+                "detail": f"{share:.0%} of its items ship on {of_id}",
+            }
+        )
 
 
 # ─────────────────────────────────────────────────────
@@ -1257,8 +1363,13 @@ def _in_domain_sibling_fallback(
     component: str,
     extraction: dict | None,
     enrichment: dict | None = None,
+    claimed: Collection[str] = (),
 ) -> Any:
     """Recover an empty planned field from a populated SIBLING field in the SAME domain.
+
+    ``claimed`` names the dataSources other planned tabs read: a sibling another
+    tab already shows is refused (R5) — the fallback would only reproduce that
+    tab, and the tab on the empty field drops instead.
 
     The planner picks a tab's dataSource before extraction runs, so it may bet on a
     schema field this video left empty (e.g. ``tech.patterns`` when only
@@ -1274,6 +1385,13 @@ def _in_domain_sibling_fallback(
 
     # Registry-driven: siblings backing the same component, in priority order.
     for candidate in sibling_datasources(domain, data_source):
+        if candidate in claimed:
+            logger.info(
+                "In-domain sibling fallback: %s (empty) → %s refused, another tab reads it",
+                data_source,
+                candidate,
+            )
+            continue
         value = resolve_data_source(candidate, extraction, enrichment)
         if not is_empty_data(value):
             logger.info(
@@ -1289,7 +1407,7 @@ def _in_domain_sibling_fallback(
     # populated list fields in the same domain.
     required_key = _COMPONENT_REQUIRED_LISTS.get(component)
     domain_data = extraction.get(domain)
-    if required_key and isinstance(domain_data, dict):
+    if required_key and isinstance(domain_data, dict) and f"{domain}.{required_key}" not in claimed:
         candidate = domain_data.get(required_key)
         if not is_empty_data(candidate):
             logger.info(
@@ -1617,7 +1735,14 @@ def assemble_response(
         # In-domain sibling fallback: when the planner bet on a field this video left
         # empty, swap in a populated sibling backing the same component (registry-driven).
         if data is None and "." in data_source:
-            data = _in_domain_sibling_fallback(data_source, component, extraction, enrichment)
+            claimed = {
+                t.get("dataSource")
+                for t in raw_tabs
+                if isinstance(t, dict) and t is not raw_tab and t.get("dataSource")
+            }
+            data = _in_domain_sibling_fallback(
+                data_source, component, extraction, enrichment, claimed
+            )
             if data is not None:
                 data_resolved = True
 
@@ -1838,12 +1963,19 @@ def assemble_response(
         evidence=evidence,
     )
 
+    # No Moments tab when the steps are the timeline (D6) — before the dedupe,
+    # so a moment tab built from the steps is recorded under the rule, not as
+    # a duplicate. Then the post-promotion dedupe (R5): the assembled items
+    # decide, not the plan's (dataSource, component) pairs — ``_dedupe_tabs``.
+    steps_timeline = _drop_moments_when_steps_are_the_timeline(assembled_tabs, dropped_tabs)
+    _dedupe_tabs(assembled_tabs, dropped_tabs)
+
     # A Moments tab always exists (Kfir 2026-10-12): with no moment_track tab
     # left, the fallback chain's tab joins after the planned and required ones —
     # after the requirements, so a backfill from extraction data wins. Unless
     # the steps are the timeline (D6): then no Moments tab, planned or not.
     moments = None
-    if not _drop_moments_when_steps_are_the_timeline(assembled_tabs, dropped_tabs):
+    if not steps_timeline:
         moments = always_moments_tab(
             assembled_tabs,
             raw_tabs,
@@ -1957,33 +2089,11 @@ def assemble_response(
     # tabs / break up dense ones. Authoritative + data-driven; runs after tabs
     # are finalized so item counts reflect the user-visible list. The overview
     # tab is its own hero — never decorate it.
+    # The first content tab is the answer tab (summary header from the
+    # extraction summary, stat_banner); once-per-response kinds are budgeted
+    # there, the filmstrip pre-consuming the frame_strip.
     attach_frames = extraction.get("frames") if isinstance(extraction, dict) else None
-    # frame_strip/quick_quiz/tip_callout are built from response-global data —
-    # budget ONE of each per response so tabs don't repeat identical payloads.
-    # A filmstrip tab (planned or auto-appended) already shows the gallery, so
-    # it pre-consumes the frame_strip budget.
-    _once_per_response = frozenset({"frame_strip", "quick_quiz", "tip_callout"})
-    used_kinds: set[str] = (
-        {"frame_strip"}
-        if any(t.get("component") == "video_filmstrip" for t in assembled_tabs)
-        else set()
-    )
-    for tab in assembled_tabs:
-        if tab.get("component") == "overview":
-            continue
-        secondaries = attach_secondaries(
-            tab,
-            extraction,
-            enrichment,
-            attach_frames,
-            primary_tag,
-            excluded_kinds=used_kinds,
-        )
-        if secondaries:
-            tab["attachments"] = secondaries
-            used_kinds |= {
-                a["component"] for a in secondaries if a.get("component") in _once_per_response
-            }
+    attach_response_secondaries(assembled_tabs, extraction, enrichment, attach_frames, primary_tag)
 
     # Minimum 3-tab guarantee: add fallback tabs if needed. The always-Moments
     # tab does not count — the response gets the fallbacks it got before it.

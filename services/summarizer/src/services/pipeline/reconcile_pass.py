@@ -12,7 +12,9 @@ that shape the tab list once the evidence is settled:
    (``deferred_to_frames``) instead;
 3. quiz — dropped outside ``quizDomains`` or when ``is_learnable`` is doubly
    false; otherwise moved last;
-4. dedupe — one tab per ``(dataSource, component)``, the first wins;
+4. dedupe — one tab per ``(dataSource, component)``, a component and what
+   assembly promotes it to counting as one (flash_deck → concept_canvas), the
+   first wins; assembly dedupes again on the assembled items (``_dedupe_tabs``);
 5. size — 3–6 tabs: beyond 6 the last other planned tab is trimmed (never a
    required tab, a moment_track or the quiz), a short plan is filled from the
    primary's defaultTabs.
@@ -284,11 +286,14 @@ def quiz_step(run: ReconcilePass) -> None:
 
 
 def dedupe_step(run: ReconcilePass) -> None:
-    """One tab per ``(dataSource, component)`` — the first wins."""
+    """One tab per ``(dataSource, component)`` — the first wins. A component and
+    its promotion target are the same component here: a flash_deck and a
+    concept_canvas on one ``concepts`` list ship the same items (S03, L26)."""
     seen: set[tuple[str, str]] = set()
     kept: list[dict] = []
     for tab in run.tabs:
-        pair = (tab.get("dataSource") or "", tab["component"])
+        component = tab["component"]
+        pair = (tab.get("dataSource") or "", COMPONENT_PROMOTIONS.get(component, component))
         if pair[0] and pair in seen:
             drop(run, tab, "duplicate")
             continue
