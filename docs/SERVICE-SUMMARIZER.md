@@ -526,7 +526,9 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     │   the latter only if the analysis already landed), with the id/label/goal of the tab
     │   that replaces it: the plan's first moment_track tab, else the always-Moments tab
     │   (`key_moments`, see 6). `position` is an estimate (overview + the planned tabs before
-    │   it, quiz excluded). No source with an entry → no tab
+    │   it, quiz excluded). No source with an entry → no tab; a plan whose steps are the
+    │   timeline (step_player / step_flow_canvas / workout_room, D6, output-quality 0b)
+    │   → no tab (moment_fallback.steps_are_the_timeline)
 
  4b. FRAMES-DONE (both paths; code — phases/frames_done.py)
     └─▶ Frame captions + OCR → `ctx.visual_annotations` (`<visual_annotations>`, chronological
@@ -680,7 +682,11 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     │   YouTube chapters → description timestamps; assembly/moment_fallback.py) and framed
     │   like any moment tab. A real tab: saved, Redis-cached, RAG-indexed, translated. No
     │   source with an entry → no tab and no drop record (never invented); never added
-    │   where the domain policy forbids moment_track
+    │   where the domain policy forbids moment_track. Exception (D6, output-quality 0b):
+    │   when the steps are the timeline (a step player, step flow canvas or workout room
+    │   ships), every moment_track tab is dropped (reason `steps_are_the_timeline`) and
+    │   no always-Moments tab is added — recipes, workouts and step tutorials are
+    │   navigated by their steps
     └─▶ Gallery tab: ~12 curated frames from gallery_frames (not all uploaded frames)
     └─▶ Cross-tab links resolved from static LINK_RULES
     └─▶ SSE: every `tab_ready` goes through the run's TabLedger (pipeline/tab_ledger.py, the
