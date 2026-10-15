@@ -19,6 +19,7 @@ from typing import Any
 
 from .assemblers_overhaul import assemble_concept_canvas
 from .assemblers_primary import assemble_spot_explorer
+from .normalizers import _normalize_to_spot
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +109,19 @@ def _promote_flash_deck(
     return None
 
 
+def _info_row_to_spot(row: dict) -> dict:
+    """info_grid row -> spot input: key -> name, value -> description.
+
+    `emoji` and `timestamp` ride along — the spot normalizer passes them
+    through, and the timestamp is the card's seek chip (R2).
+    """
+    spot = {"name": row.get("key", ""), "description": row.get("value", "")}
+    for field in ("emoji", "timestamp"):
+        if row.get(field) is not None and row.get(field) != "":
+            spot[field] = row[field]
+    return spot
+
+
 def _promote_info_grid(
     props: dict,
     extraction: dict | None,
@@ -116,28 +130,28 @@ def _promote_info_grid(
 
     A grid of short reference pairs stays a grid; a grid whose values are long
     descriptions is really a set of browsable cards, so we re-shape it through
-    the spot_explorer assembler (key -> name, value -> description).
+    the spot_explorer assembler. Each spot keeps its row's `timestamp` and
+    carries the row's `evidence` as the card's `quote` line (R2, R10). A row
+    the spot normalizer would refuse (a headline chip with no body) keeps the
+    whole tab a grid, where every row still renders — degrade, never drop.
     """
     items = props.get("items")
     if not isinstance(items, list):
         return None
-    long_items = [
-        it
-        for it in items
-        if isinstance(it, dict) and len(str(it.get("value") or "")) > INFO_GRID_LONG_VALUE
-    ]
-    if len(long_items) < INFO_GRID_LONG_MIN:
+    rows = [it for it in items if isinstance(it, dict)]
+    long_rows = [r for r in rows if len(str(r.get("value") or "")) > INFO_GRID_LONG_VALUE]
+    if len(long_rows) < INFO_GRID_LONG_MIN:
         return None
-    spot_input = [
-        {
-            "name": it.get("key", ""),
-            "description": it.get("value", ""),
-            **({"emoji": it["emoji"]} if it.get("emoji") else {}),
-        }
-        for it in items
-        if isinstance(it, dict)
-    ]
-    return assemble_spot_explorer({}, spot_input, extraction or {}, None)
+    spot_input = [_info_row_to_spot(r) for r in rows]
+    if any(_normalize_to_spot(spot) is None for spot in spot_input):
+        return None
+    spot_props = assemble_spot_explorer({}, spot_input, extraction or {}, None)
+    if spot_props is None:
+        return None
+    for spot, row in zip(spot_props["spots"], rows, strict=True):
+        if row.get("evidence"):
+            spot["quote"] = row["evidence"]
+    return spot_props
 
 
 def promote_component(

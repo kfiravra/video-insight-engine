@@ -9,6 +9,7 @@ Returning None means the tab should be dropped (no data).
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from .normalizers import (
@@ -323,18 +324,31 @@ _INFO_EVIDENCE_FIELDS: tuple[str, ...] = (
 )
 
 # A bare string longer than this with no key/value delimiter is a paragraph,
-# not a reference pair — it was the wall-of-empty-grid bug (a 150-char sentence
-# dumped into `key` with an empty `value`). Drop it so the orchestrator routes
-# the data elsewhere (spot_explorer via promotion, or the fallback layer).
+# not a reference pair. Dropping it lost content (S12 shipped 3 of 7 takeaways),
+# so it now splits at its first sentence boundary into a headline + body card
+# that the grid renders in full and the promotion can turn into a spot; a single
+# long sentence stays a headline chip (output-quality 0b.4, R5/R10).
 _INFO_STRING_MAX = 120
+_SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?])\s+(?=\S)")
+# The headline must be at least this long — guards against "No. 1 …" / "e.g. …"
+# being read as a sentence end.
+_SENTENCE_LEAD_MIN = 20
+
+
+def _split_long_sentence(text: str) -> dict:
+    """Paragraph-length bare string: first sentence -> key, the rest -> value."""
+    match = _SENTENCE_BOUNDARY.search(text, _SENTENCE_LEAD_MIN)
+    if match is None:
+        return {"key": text, "value": ""}
+    return {"key": text[: match.start()].rstrip("."), "value": text[match.end() :]}
 
 
 def _split_string_info_item(text: str) -> dict | None:
-    """Turn a bare string into an info_grid pair, or drop it.
+    """Turn a bare string into an info_grid pair.
 
     A natural ` — ` / ` – ` / `: ` delimiter splits cleanly into key/value.
     A short standalone label survives as a key-only chip; a long delimiterless
-    paragraph is not a reference pair and is dropped.
+    paragraph splits at its first sentence boundary instead of being dropped.
     """
     text = text.strip()
     if not text:
@@ -347,7 +361,7 @@ def _split_string_info_item(text: str) -> dict | None:
                 return {"key": key, "value": value}
             break
     if len(text) > _INFO_STRING_MAX:
-        return None
+        return _split_long_sentence(text)
     return {"key": text, "value": ""}
 
 
@@ -379,9 +393,7 @@ def _normalize_info_grid_item(item: Any) -> dict | None:
         if not key_clean:
             return None
         # Key-only items survive as headline chips (terms-only glossaries) —
-        # the frontend renders them; only a paragraph-length key is dropped.
-        if not value_clean and len(key_clean) > _INFO_STRING_MAX:
-            return None
+        # the frontend renders any key length in full, so none is dropped.
         result: dict[str, Any] = {"key": key_clean, "value": value_clean}
         if item.get("emoji"):
             result["emoji"] = item["emoji"]
@@ -407,11 +419,7 @@ def _normalize_info_grid_item(item: Any) -> dict | None:
         if isinstance(candidate, str) and candidate.strip() and candidate.strip() != key_raw:
             value_raw = candidate.strip()
             break
-    # No value field → key-only headline chip (frontend renders these);
-    # paragraph-length keys are still dropped as not-a-reference-pair.
-    if not value_raw and len(key_raw) > _INFO_STRING_MAX:
-        return None
-
+    # No value field → key-only headline chip (frontend renders these in full).
     result = {"key": key_raw, "value": value_raw}
     if item.get("emoji"):
         result["emoji"] = item["emoji"]

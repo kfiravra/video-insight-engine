@@ -21,11 +21,23 @@ logger = logging.getLogger(__name__)
 _DENSITY_RULES: dict[str, tuple[str, tuple[str, ...], int, int]] = {
     "info_grid": ("items", ("key", "value", "evidence"), 120, 1),
 }
+# Cells are capped only in the layouts that cannot show a paragraph (a table
+# row, a tag chip). The default `key_value` cards render every value in full —
+# cutting them at 120 chars destroyed the content they summarised (0b.4, L23).
+_CAPPED_MODES: dict[str, frozenset[str]] = {
+    "info_grid": frozenset({"table", "tag_cloud"}),
+}
 
 
 def _truncate(text: str, cap: int) -> str:
     """Trim text to `cap` chars on a word boundary (shared helper)."""
     return truncate_words(text.strip(), cap)
+
+
+def _caps_cells(component: str, props: dict) -> bool:
+    """Whether this tab's layout needs its cells capped (see `_CAPPED_MODES`)."""
+    modes = _CAPPED_MODES.get(component)
+    return modes is None or props.get("mode") in modes
 
 
 def enforce_density(component: str, props: dict) -> dict | None:
@@ -38,11 +50,12 @@ def enforce_density(component: str, props: dict) -> dict | None:
     if not isinstance(items, list):
         return props
 
+    caps_cells = _caps_cells(component, props)
     kept: list = []
     for item in items:
         if not isinstance(item, dict):
             continue
-        for field in fields:
+        for field in fields if caps_cells else ():
             value = item.get(field)
             if isinstance(value, str) and value:
                 item[field] = _truncate(value, cap)
