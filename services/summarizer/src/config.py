@@ -124,6 +124,15 @@ class Settings(BaseSettings):
     # Sub-batches when a long video's chunked input collapses to one batch;
     # they run in one round while EXTRACTION_PARALLEL_BATCHES >= this.
     EXTRACTION_FORCE_SPLIT_CHUNKS: int = 4
+    # Rollback levers for the output-quality phase-2 calls (both default on).
+    # true: one ``hero_rewrite`` call on LLM_EXTRACTION_MODEL (it reads the
+    # extraction's prompt cache, which is per model) writes the hero and
+    # replaces the synthesis call. false: memory hero + synthesis, as before.
+    HERO_REWRITE_ENABLED: bool = True
+    # true: quiz v2 on LLM_MEMORY_MODEL — every question carries its answer's
+    # timestamp and a verified evidence quote. false: the enrich_quiz call on
+    # LLM_ENRICHMENT_MODEL, as before.
+    QUIZ_V2_ENABLED: bool = True
 
     # Timeout constants for pipeline stages
     TRANSCRIPT_FETCH_TIMEOUT: float = 30.0

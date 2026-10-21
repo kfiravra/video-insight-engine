@@ -62,6 +62,9 @@ x-summarizer-env: &summarizer-env
   MAX_TOKENS_PER_BATCH: ${MAX_TOKENS_PER_BATCH:-50000}
   MAX_MINUTES_PER_BATCH: ${MAX_MINUTES_PER_BATCH:-40}
   EXTRACTION_FORCE_SPLIT_CHUNKS: ${EXTRACTION_FORCE_SPLIT_CHUNKS:-4}
+  # Output-quality phase-2 rollback levers (literal defaults = config.py; a blank bool crash-loops)
+  HERO_REWRITE_ENABLED: ${HERO_REWRITE_ENABLED:-true}
+  QUIZ_V2_ENABLED: ${QUIZ_V2_ENABLED:-true}
   ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
   OPENAI_API_KEY: ${OPENAI_API_KEY:-}
   GEMINI_API_KEY: ${GEMINI_API_KEY:-}
