@@ -137,6 +137,17 @@ class TestMemoryPromptAsksForTheThesis:
 # ─── Parsing the establishes line ───
 
 
+class TestMemoryPromptForbidsInventedNumbers:
+    # S06 iteration (2026-10-21): the memory hero said "rest 10 minutes" for "give it a sec".
+    def test_should_forbid_a_duration_the_speaker_did_not_say(self) -> None:
+        assert "Never state a duration, quantity or number the speaker did not say" in (
+            PROMPT_FILE.read_text()
+        )
+
+    def test_should_forbid_moving_a_time_from_one_step_to_another(self) -> None:
+        assert "never moves to another" in PROMPT_FILE.read_text()
+
+
 class TestEstablishesParsing:
     def test_should_keep_each_sections_establishes_line(self) -> None:
         outline = repair_outline(_outline(), DURATION)

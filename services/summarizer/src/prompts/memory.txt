@@ -44,6 +44,7 @@ Answer EVERY key below. true only when the transcript itself contains that conte
 <summary_rules>
 - "tldr": one sentence of at most 150 characters stating what the video claims — its thesis, a position a reader could disagree with — not its topic, not what it covers, not a list of its numbers. A recipe or a tutorial claims what its method gets you that the usual way does not.
 - "takeaways": 3–5 claims the video makes, in its own terms, each ending with the [m:ss] marker of the transcript line where it is said. A number belongs in a takeaway only when the number IS the claim. No generic advice, no topic labels.
+- Never state a duration, quantity or number the speaker did not say: "give it a sec" stays "give it a sec", and a time said for one step (a bake) never moves to another (a rest).
 </summary_rules>
 
 <output_language>
