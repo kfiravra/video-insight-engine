@@ -235,7 +235,8 @@ class TestArgumentExamples:
 class TestExampleShape:
     @pytest.mark.parametrize("primary", ["learning", "podcast"])
     def test_should_shape_the_example_as_a_key_ideas_item(self, primary: str) -> None:
-        assert set(_example_item(primary)) == _KEY_IDEA_KEYS
+        # `speaker` is the item's optional field (who holds a podcast position).
+        assert _KEY_IDEA_KEYS <= set(_example_item(primary)) <= _KEY_IDEA_KEYS | {"speaker"}
 
     @pytest.mark.parametrize("primary", ["learning", "podcast"])
     def test_should_quote_at_most_25_words(self, primary: str) -> None:
@@ -249,8 +250,14 @@ class TestExampleShape:
     def test_should_use_a_registered_kind(self, primary: str) -> None:
         assert _example_item(primary)["kind"] in _KINDS
 
-    def test_should_name_who_holds_the_position_first_in_the_podcast_claim(self) -> None:
-        assert str(_example_item("podcast")["claim"]).startswith("Tegmark:")
+    def test_should_name_who_holds_the_position_in_speaker_when_the_example_is_a_podcast(
+        self,
+    ) -> None:
+        assert _example_item("podcast")["speaker"] == "Max Tegmark"
+
+    def test_should_keep_the_name_out_of_the_claim_when_the_example_is_a_podcast(self) -> None:
+        # S13 iteration (2026-10-21): a name-first claim put "DHH:" on all 23 Positions cards.
+        assert not str(_example_item("podcast")["claim"]).startswith("Tegmark")
 
 
 class TestSingleCallRules:
