@@ -15,6 +15,7 @@
  * ComposableOutputV1.tsx). */
 
 import { lazy, Suspense, type ReactNode } from 'react';
+import { QUIZ_TIMER } from '@vie/shared/config';
 import type { SpotItem, FlashcardItem, TabEntry, TechSnippet, StepItem, FitnessExercise, ReviewComparison, FilmstripFrame, PackingMissionItem, QuizArenaQuestion, ConceptItem, LyricsKaraokeSection, StatBannerStat, DiagramCardItem, ConnectPair, ClaimItem, TierListItem, FormationPosition } from '@vie/types';
 import { incrementTelemetryCounter } from '@/features/video-output/lib/telemetry';
 import { stripCountPrefix } from '@/components/vie/cards/domain-meta';
@@ -244,6 +245,7 @@ export const COMPONENT_REGISTRY: Record<string, (props: Record<string, unknown>,
       nextTab={nav.nextTab}
       onNavigateTab={nav.onNavigateTab}
       onSeek={nav.onSeek}
+      withTimer={QUIZ_TIMER}
     />
   ),
 
@@ -403,6 +405,7 @@ export const COMPONENT_REGISTRY: Record<string, (props: Record<string, unknown>,
       videoId={nav.videoId}
       onNavigateTab={nav.onNavigateTab}
       onSeek={nav.onSeek}
+      withTimer={QUIZ_TIMER}
     />
   ),
 

@@ -381,7 +381,11 @@ def _normalize_exercise(item: Any) -> dict | None:
 
 
 def _normalize_quiz_question(item: Any) -> dict | None:
-    """Normalize quiz question to {question, options[], correctIndex, explanation}."""
+    """Normalize quiz question to {question, options[], correctIndex, explanation, timestamp?}.
+
+    ``timestamp`` is the second the transcript answers the question (output-quality
+    1.13 / 1.5): the arena's seek chip, shipped whenever the item states one.
+    """
     if not isinstance(item, dict):
         return None
     question = item.get("question") or item.get("text") or ""
@@ -405,12 +409,16 @@ def _normalize_quiz_question(item: Any) -> dict | None:
     except (ValueError, TypeError):
         correct_index = 0
     correct_index = max(0, min(correct_index, len(options) - 1))
-    return {
+    normalized: dict[str, Any] = {
         "question": str(question),
         "options": options,
         "correctIndex": correct_index,
         "explanation": str(item.get("explanation") or ""),
     }
+    timestamp = anchor_seconds(item)
+    if timestamp is not None:
+        normalized["timestamp"] = timestamp
+    return normalized
 
 
 def _normalize_scenario_option(opt: Any) -> dict | None:

@@ -123,8 +123,14 @@ class TestFixturePayloadsStayValid:
 
     @pytest.mark.parametrize(
         "domain",
-        # Only quiz domains get a quiz call (1d.1); the others carry null.
-        [d for d in DOMAINS if d in quiz_enrichment()["quizDomains"]],
+        # Only quiz domains get a quiz call (1d.1), and only when the plan uses one
+        # (news joined the quiz domains in output-quality 1.5; its fixture run
+        # planned no quiz, so it carries null like the others).
+        [
+            d
+            for d in DOMAINS
+            if d in quiz_enrichment()["quizDomains"] and _load(d)["enrichment_response"]
+        ],
     )
     def test_enrichment_response_validates(self, domain):
         fixture = _load(domain)

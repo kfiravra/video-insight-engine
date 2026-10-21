@@ -251,7 +251,8 @@ class TestEffectiveRequirements:
     def test_educational_domains_allow_quiz(self):
         from src.shared_config.domain_config import effective_requirements
 
-        for domain in ("learning", "language", "tech", "science"):
+        # A podcast or news explainer is learnable too (output-quality D9).
+        for domain in ("learning", "language", "tech", "science", "podcast", "news"):
             merged = effective_requirements(domain, None)
             assert "quiz_arena" not in merged["forbidden"], domain
             assert merged["max"].get("quiz_arena") == 1, domain
@@ -259,7 +260,7 @@ class TestEffectiveRequirements:
     def test_non_educational_domains_forbid_quiz(self, config):
         from src.shared_config.domain_config import effective_requirements
 
-        educational = {"learning", "language", "tech", "science"}
+        educational = {"learning", "language", "tech", "science", "podcast", "news"}
         for domain in config["domainRequirements"]:
             if domain in educational:
                 continue

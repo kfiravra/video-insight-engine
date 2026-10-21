@@ -478,8 +478,8 @@ Route on YOUR evidence — decide it first, then pick components from it:
   has_lyrics=true → lyrics_karaoke.
 - has_itinerary=true → spot_explorer on travel.itinerary. has_packing=true → packing_mission.
 - is_learnable=false → no quiz_arena (opinions and entertainment aren't testable).
-  is_learnable=true → quiz_arena is allowed in learning, language, tech and science — as the
-  last tab.
+  is_learnable=true → quiz_arena is allowed in learning, language, tech and science, and in a
+  learnable podcast or news explainer — as the last tab.
 Content shape the evidence keys don't cover:
 - Concepts the video connects to each other → concept_canvas as a later tab, never the first
   (replaces flash_deck for relational learning). For a learning/science PRACTICE or REVIEW tab where the viewer should

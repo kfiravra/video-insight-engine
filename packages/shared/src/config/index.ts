@@ -80,9 +80,19 @@ interface DataSourceEntry {
   outputWeight: number;
 }
 
+/** One quiz size band: up to `maxMinutes` of video (null = no bound). */
+interface QuizBand {
+  maxMinutes: number | null;
+  questions: number;
+}
+
+/** Quiz placement, gating and size — see `quizPolicyNote` in the JSON. */
 interface QuizPolicy {
   position: 'last';
   requiresEvidence: string;
+  /** A recall quiz is untimed (output-quality D9); the web registry passes it on. */
+  timer: boolean;
+  questionsByDuration: QuizBand[];
   attachmentHostsExclude: string[];
 }
 
@@ -231,6 +241,9 @@ export function getDomainGradient(tag: ContentTag): string {
   return config.domains[tag]?.gradient ?? config.domains.learning.gradient;
 }
 
+/** Whether QuizArena runs its per-question countdown (`quizPolicy.timer`; off when absent). */
+export const QUIZ_TIMER: boolean = config.quizPolicy?.timer ?? false;
+
 /** Full raw config (escape hatch). */
 export { config as rawConfig };
 export type {
@@ -240,6 +253,7 @@ export type {
   ModifierEntry,
   DomainsConfig,
   DataSourceEntry,
+  QuizBand,
   QuizPolicy,
   QuizEnrichment,
   GroupingConfig,

@@ -330,9 +330,20 @@ class DataSourceSpec(TypedDict):
     outputWeight: int
 
 
+class QuizBand(TypedDict):
+    """One ``questionsByDuration`` band: up to ``maxMinutes`` (None = no bound)."""
+
+    maxMinutes: float | None
+    questions: int
+
+
 class QuizPolicy(TypedDict):
+    """``quizPolicy`` — see ``quizPolicyNote`` in domains.json."""
+
     position: Literal["last"]
     requiresEvidence: str
+    timer: bool
+    questionsByDuration: list[QuizBand]
     attachmentHostsExclude: list[str]
 
 
@@ -418,7 +429,7 @@ def render_extraction_caps() -> str:
 
 
 def quiz_policy() -> QuizPolicy:
-    """Quiz placement/attachment policy (position, evidence, excluded hosts)."""
+    """Quiz placement/attachment policy (position, evidence, timer, count bands, excluded hosts)."""
     return copy.deepcopy(get_config()["quizPolicy"])
 
 

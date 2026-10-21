@@ -8,7 +8,7 @@ never raises: ``None`` means no quiz — a quiz tab is then dropped at assembly
 and a sparse tab falls back to its tip strip, as before.
 
 output-quality 1.13 (R12 / D9): the question count follows the video's length
-(:data:`QUIZ_COUNT_BY_DURATION`), every question carries the ``timestamp`` of
+(:func:`quiz_count_bands`, domains.json ``quizPolicy``), every question carries the ``timestamp`` of
 the sentence that answers it (a stamp past the video's end drops the question),
 and a question the hero alone answers is trivia the prompt forbids.
 """
@@ -55,14 +55,6 @@ QUIZ_COMPONENT = "quiz_arena"
 QUIZ_DATA_SOURCE = "enrichment.quiz"
 QUIZ_STAGE = "enrichment"
 QUIZ_MAX_TOKENS = 2048
-# Questions per video length (content-model §9, D9): up to 15 min → 3, up to
-# 45 min → 5, longer → 8; the registry cap stays the ceiling. Task 1.5 moves
-# these bands into domains.json ``quizPolicy``; until then they live here.
-QUIZ_COUNT_BY_DURATION: tuple[tuple[float, int], ...] = (
-    (15 * 60, 3),
-    (45 * 60, 5),
-    (math.inf, 8),
-)
 # A stamp this far past the end is drift, not an invention — the same slack
 # assembly gives a moment before dropping it.
 QUIZ_TIMESTAMP_TOLERANCE_S = 10.0
@@ -189,16 +181,27 @@ def render_hero(title: str, memory: MemoryResult | None) -> str:
     return "\n".join(lines)
 
 
+def quiz_count_bands() -> tuple[tuple[float, int], ...]:
+    """``(upper bound in seconds, questions)`` per band, shortest first — domains.json
+    ``quizPolicy.questionsByDuration`` (content-model §9, D9: ≤ 15 min → 3, ≤ 45 → 5,
+    longer → 8); an unbounded band's limit is infinity."""
+    return tuple(
+        (math.inf if band["maxMinutes"] is None else band["maxMinutes"] * 60, band["questions"])
+        for band in quiz_policy()["questionsByDuration"]
+    )
+
+
 def quiz_question_count(duration_s: float | None, cap: int) -> int:
     """How many questions a video of ``duration_s`` seconds gets, at most ``cap``.
 
     An unknown length (None, 0, NaN) is the shortest band.
     """
+    bands = quiz_count_bands()
     seconds = float(duration_s or 0)
-    for limit, count in QUIZ_COUNT_BY_DURATION:
+    for limit, count in bands:
         if seconds <= limit:
             return min(count, cap)
-    return min(QUIZ_COUNT_BY_DURATION[0][1], cap)
+    return min(bands[0][1], cap)
 
 
 def _video_length(duration_s: float | None) -> str:

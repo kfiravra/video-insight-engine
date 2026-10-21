@@ -89,7 +89,7 @@
     "tier_list": 30,
     "formation_diagram": 23
   },
-  "domainRequirementsNote": "Per-domain assembled-output validation (_validate_domain_requirements in assembly/core.py): `required` components are backfilled from defaultTabs when the planner drops them (promotion equivalents count, e.g. comparison_radar satisfies comparison); `max` caps per-component tab counts; `forbidden` components are stripped at plan post-validation (before extraction burns tokens) AND again at assembly as a backstop — a forbidden component is never rendered for that domain regardless of what the planner emits. quiz_arena is educational-only (learning/language/tech/science). Every domain must have an entry — an empty `required` is a deliberate decision (music: lyrics_karaoke optional so videos without per-line timing don't fail; podcast: moment_track segments are the spine; news: claims_tracker is the signature accountability surface; gaming: tier_list; sport: formation_diagram).",
+  "domainRequirementsNote": "Per-domain assembled-output validation (_validate_domain_requirements in assembly/core.py): `required` components are backfilled from defaultTabs when the planner drops them (promotion equivalents count, e.g. comparison_radar satisfies comparison); `max` caps per-component tab counts; `forbidden` components are stripped at plan post-validation (before extraction burns tokens) AND again at assembly as a backstop — a forbidden component is never rendered for that domain regardless of what the planner emits. quiz_arena is allowed where the content is learnable (learning/language/tech/science, and a podcast or news explainer — output-quality D9; the quiz itself still needs is_learnable). Every domain must have an entry — an empty `required` is a deliberate decision (music: lyrics_karaoke optional so videos without per-line timing don't fail; podcast: moment_track segments are the spine; news: claims_tracker is the signature accountability surface; gaming: tier_list; sport: formation_diagram).",
   "domainRequirements": {
     "food": { "required": ["step_player", "checklist"], "max": { "flash_deck": 1 }, "forbidden": ["quiz_arena"] },
     "project": { "required": ["step_player", "checklist"], "max": { "flash_deck": 1 }, "forbidden": ["quiz_arena"] },
@@ -101,8 +101,8 @@
     "learning": { "required": [], "max": { "flash_deck": 1, "quiz_arena": 1 } },
     "language": { "required": ["spot_explorer"], "max": { "flash_deck": 1, "quiz_arena": 1 } },
     "science": { "required": ["spot_explorer"], "max": { "flash_deck": 1, "quiz_arena": 1 } },
-    "podcast": { "required": ["moment_track"], "max": { "flash_deck": 1 }, "forbidden": ["quiz_arena"] },
-    "news": { "required": ["claims_tracker"], "max": { "flash_deck": 1 }, "forbidden": ["quiz_arena"] },
+    "podcast": { "required": ["moment_track"], "max": { "flash_deck": 1, "quiz_arena": 1 } },
+    "news": { "required": ["claims_tracker"], "max": { "flash_deck": 1, "quiz_arena": 1 } },
     "gaming": { "required": ["tier_list"], "max": { "flash_deck": 1 }, "forbidden": ["quiz_arena"] },
     "sport": { "required": ["formation_diagram"], "max": { "flash_deck": 1 }, "forbidden": ["quiz_arena"] }
   },
@@ -447,19 +447,28 @@
     "sport": { "formation_diagram": "has_lineup" },
     "news": { "claims_tracker": "has_claims" }
   },
+  "quizPolicyNote": "Quiz placement, gating and size (output-quality D9, R12): the quiz is the LAST tab (reconcile at plan-done and the assembly backstop move it there), needs is_learnable not doubly false, is untimed (`timer` — the web registry passes it to QuizArena's withTimer) and gets `questionsByDuration`: the first band whose `maxMinutes` the video's length does not exceed (null = no upper bound) sets the count the quiz prompt asks for (enrichment.quiz_question_count; an unknown length is the first band), never above enrichment.quiz's registry cap. Bands = content-model §9: ≤ 15 min → 3, ≤ 45 min → 5, longer → 8. attachmentHostsExclude: components that never host the quick_quiz strip.",
   "quizPolicy": {
     "position": "last",
     "requiresEvidence": "is_learnable",
+    "timer": false,
+    "questionsByDuration": [
+      { "maxMinutes": 15, "questions": 3 },
+      { "maxMinutes": 45, "questions": 5 },
+      { "maxMinutes": null, "questions": 8 }
+    ],
     "attachmentHostsExclude": ["step_player", "step_flow_canvas", "checklist", "workout_room", "packing_mission"]
   },
   "quizEnrichmentNote": "Quiz-only enrichment (pipeline-1min phase 1d): the quiz call runs only for these domains (the ones whose domainRequirements do not forbid quiz_arena); `flavor` is the per-domain role line of enrich_quiz.txt, carried over from the per-domain enrich prompts it replaced in phase 1d. The call is demand-driven: it runs only when the plan has a quiz_arena tab or a tab that can host a quick_quiz (needs_quiz() in the summarizer's services/pipeline/enrichment.py).",
   "quizEnrichment": {
-    "quizDomains": ["learning", "language", "tech", "science"],
+    "quizDomains": ["learning", "language", "tech", "science", "podcast", "news"],
     "flavor": {
       "learning": "Test understanding with specific details from the content (not trivia) — actionable knowledge the viewer can apply immediately.",
       "language": "Test comprehension of vocabulary, grammar rules, and usage — practical language skills the viewer can use immediately.",
       "tech": "Think like a senior developer onboarding a teammate — test understanding of technical decisions, code patterns, and commands from the video.",
-      "science": "Test understanding of scientific concepts, facts, and relationships — and their real-world applications."
+      "science": "Test understanding of scientific concepts, facts, and relationships — and their real-world applications.",
+      "podcast": "Test understanding of the positions argued in the conversation — who claims what and why — never trivia about the hosts or the show.",
+      "news": "Test understanding of what happened, who is involved and what the evidence says — never a date or a name asked for its own sake."
     }
   },
   "groupingNote": "Phase-3 extraction grouping: at most maxTextGroups text groups (+ 1 visual group for waitsForVisual paths); a domain splits by field when Σ outputWeight × expected items exceeds groupOutputBudget output tokens.",

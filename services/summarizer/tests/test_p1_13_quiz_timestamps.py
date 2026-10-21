@@ -23,11 +23,11 @@ from src.services.pipeline import enrichment as enrichment_mod
 from src.services.pipeline.enrichment import (
     EMPTY_HERO,
     HERO_TAKEAWAYS_MAX,
-    QUIZ_COUNT_BY_DURATION,
     QUIZ_TIMESTAMP_TOLERANCE_S,
     build_quiz_prompt,
     enrich_quiz,
     parse_quiz,
+    quiz_count_bands,
     quiz_question_count,
     render_hero,
 )
@@ -116,7 +116,7 @@ class TestQuizQuestionCount:
         assert quiz_question_count(_HOUR_PLUS, cap=5) == 5
 
     def test_should_keep_the_three_bands_of_d9(self) -> None:
-        assert [count for _, count in QUIZ_COUNT_BY_DURATION] == [3, 5, 8]
+        assert [count for _, count in quiz_count_bands()] == [3, 5, 8]
 
 
 # ─── The rendered prompt ───
