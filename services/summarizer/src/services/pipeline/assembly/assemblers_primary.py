@@ -13,6 +13,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from src.services.pipeline.quote_verify import mark_translated_quote
+
 from .assemblers_learning import is_key_idea_list, key_idea_props
 from .info_grid_items import _INFO_EVIDENCE_FIELDS as _INFO_EVIDENCE_FIELDS
 from .info_grid_items import _INFO_KEY_FIELDS as _INFO_KEY_FIELDS
@@ -47,6 +49,12 @@ from .quote_spots import is_quote_list, quote_spots
 # core.py surface the content via overview/info_grid instead, which is the
 # better UX for sparse inputs.
 _MIN_SPOTS = 2
+
+
+def _spot_card(item: dict) -> dict | None:
+    """One item as a spot card, its translated-quote flag carried (2.0 d, D12)."""
+    spot = _normalize_to_spot(item)
+    return mark_translated_quote(spot, item) if spot is not None else None
 
 
 def assemble_spot_explorer(
@@ -92,7 +100,7 @@ def assemble_spot_explorer(
                 continue
             day_spots_clean = [
                 spot
-                for spot in (_normalize_to_spot(s) for s in day_spots_raw if isinstance(s, dict))
+                for spot in (_spot_card(s) for s in day_spots_raw if isinstance(s, dict))
                 if spot is not None
             ]
             if not day_spots_clean:
@@ -111,7 +119,7 @@ def assemble_spot_explorer(
 
     normalized = [
         spot
-        for spot in (_normalize_to_spot(item) for item in data if isinstance(item, dict))
+        for spot in (_spot_card(item) for item in data if isinstance(item, dict))
         if spot is not None
     ]
     if len(normalized) < _MIN_SPOTS:

@@ -424,13 +424,20 @@ class ReviewRating(BaseModel):
     score: float = 0.0
     max_score: float = Field(10.0, alias="maxScore")
     label: str = ""
-    # Where the reviewer gives the score — without it the score never renders (D13).
+    # Where the reviewer gives the score and the words that give it — without both
+    # the score never renders (D13, output-quality 2.0 c).
     timestamp: int | None = None
+    quote: str | None = None
 
     @field_validator("timestamp", mode="before")
     @classmethod
     def coerce_timestamp(cls, v: Any) -> int | None:
         return seconds_or_none(v)
+
+    @field_validator("quote", mode="before")
+    @classmethod
+    def coerce_quote(cls, v: Any) -> str | None:
+        return text_or_none(v)
 
     @field_validator("score", mode="before")
     @classmethod
@@ -484,8 +491,10 @@ class ReviewVerdict(BaseModel):
     not_for: list[str] = Field([], alias="notFor")
     bottom_line: str = Field("", alias="bottomLine")
     sub_scores: list[dict] | None = Field(None, alias="subScores")
-    # Where the reviewer states the verdict — the badge renders only with it (R2).
+    # Where the reviewer states the verdict and the words that state it — the badge
+    # renders only with both (R2, D13, output-quality 2.0 c).
     timestamp: int | None = None
+    quote: str | None = None
 
     @field_validator("badge", mode="before")
     @classmethod
@@ -496,6 +505,11 @@ class ReviewVerdict(BaseModel):
     @classmethod
     def coerce_timestamp(cls, v: Any) -> int | None:
         return seconds_or_none(v)
+
+    @field_validator("quote", mode="before")
+    @classmethod
+    def coerce_quote(cls, v: Any) -> str | None:
+        return text_or_none(v)
 
 
 class ReviewData(BaseModel):
@@ -1150,13 +1164,20 @@ class GamingRanking(BaseModel):
     tier: str | None = None
     reason: str = ""
     emoji: str = ""
-    # Where the creator places it — a tier renders only with it (D13).
+    # Where the creator places it and the words that place it — a tier renders
+    # only with both (D13, output-quality 2.0 c).
     timestamp: int | None = None
+    quote: str | None = None
 
     @field_validator("timestamp", mode="before")
     @classmethod
     def coerce_timestamp(cls, v: Any) -> int | None:
         return seconds_or_none(v)
+
+    @field_validator("quote", mode="before")
+    @classmethod
+    def coerce_quote(cls, v: Any) -> str | None:
+        return text_or_none(v)
 
     @field_validator("tier", mode="before")
     @classmethod

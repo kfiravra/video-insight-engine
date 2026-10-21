@@ -197,11 +197,15 @@ export const MomentTimelineRow = memo(function MomentTimelineRow({
                     </p>
                   )}
                   {/* Verbatim beats paraphrase (R10): the speaker's own line, one quiet
-                      line in the same quote style as the spot cards. */}
-                  {quote && (
+                      line in the same quote style as the spot cards. A translated quote
+                      is not the speaker's words (2.0 d, D12): plain prose. */}
+                  {quote && !item.quoteTranslated && (
                     <blockquote className="border-s-2 border-[var(--vie-accent)]/40 ps-2.5 text-xs italic leading-relaxed text-foreground/85">
                       {quote}
                     </blockquote>
+                  )}
+                  {quote && item.quoteTranslated && (
+                    <p className="text-xs leading-relaxed text-muted-foreground">{quote}</p>
                   )}
                   {item.tags && item.tags.length > 0 && (
                     <div className="flex flex-wrap gap-1">

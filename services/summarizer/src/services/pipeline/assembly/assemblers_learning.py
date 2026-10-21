@@ -13,6 +13,11 @@ from __future__ import annotations
 from typing import Any
 
 from src.models.idea_types import KEY_IDEA_KINDS
+from src.services.pipeline.quote_verify import (
+    QUOTE_STATUS_KEY,
+    QUOTE_TRANSLATED_KEY,
+    mark_translated_quote,
+)
 
 from .derived_guard import stated_block_scalars
 from .normalizers import (
@@ -111,7 +116,7 @@ def _key_idea_spot(item: dict) -> dict | None:
     speaker = item.get("speaker")
     if isinstance(speaker, str) and speaker.strip():
         spot["speaker"] = speaker.strip()
-    return spot
+    return mark_translated_quote(spot, item)
 
 
 # Where the ideas that name no section go once the others are sectioned.
@@ -289,21 +294,32 @@ def _collect_tips(extraction: dict | None, primary_tag: str, cap: int = 5) -> li
     return out
 
 
+def _quote_scalars(block: dict, key: str) -> dict[str, Any]:
+    """``stated_block_scalars`` minus the quote check's bookkeeping, and minus a
+    translated quote: the overview renders its ``quote`` as a quote (2.0 d, D12)."""
+    stated = stated_block_scalars(block, key)
+    if stated.pop(QUOTE_TRANSLATED_KEY, None) is True:
+        stated.pop("quote", None)
+    stated.pop(QUOTE_STATUS_KEY, None)
+    return stated
+
+
 def _domain_scalars(domain_data: dict) -> dict[str, Any]:
     """The primary block's scalars and its dict children's, the first key winning.
 
     Only what a reader may take as a fact (D13): a score, rating, tier, status,
-    duration or date passes only when its block is anchored, and a ``rating``
-    block passes nothing unanchored. S07's overview shipped the review's
-    unanchored score 9 / maxScore 10 / "Great" through this spread.
+    duration or date passes only when its block is anchored (a score, tier or
+    status only when it is also quoted), and a ``rating`` block passes nothing
+    unstated. S07's overview shipped the review's unanchored score 9 / maxScore
+    10 / "Great" through this spread.
     """
-    top_level = stated_block_scalars(domain_data)
+    top_level = _quote_scalars(domain_data, "")
     scalars: dict[str, Any] = {}
     for key, value in domain_data.items():
         if key in top_level:
             scalars.setdefault(key, top_level[key])
         elif isinstance(value, dict):
-            for child_key, child_value in stated_block_scalars(value, key).items():
+            for child_key, child_value in _quote_scalars(value, key).items():
                 scalars.setdefault(child_key, child_value)
     return scalars
 

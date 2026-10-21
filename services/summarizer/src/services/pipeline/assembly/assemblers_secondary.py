@@ -19,7 +19,7 @@ from .assemblers_overhaul import (
     assemble_quiz_arena,
     assemble_video_filmstrip,
 )
-from .derived_guard import anchor_seconds, stated_scalars
+from .derived_guard import anchor_seconds, has_quote, stated_scalars
 from .normalizers import (
     _coerce_float,
     _coerce_int,
@@ -232,15 +232,16 @@ _LEGACY_CLAIM_STATUSES: dict[str, str] = {
     "disputed": "contested",
     "context": "stated",
 }
-# What the video does with an anchored claim it gives no status for: it states it
-# (the non-asserting word, D11 / D13). An unanchored claim shows no status at all.
+# What the video does with an anchored, quoted claim it gives no status for: it
+# states it (the non-asserting word, D11 / D13). A claim without its timestamp and
+# its words shows no status at all.
 _STATED = "stated"
 _CLAIMS_MIN = 2
 
 
 def _claim_status(item: dict) -> str:
-    """The claim's status in D11's three words — only as the anchored item states
-    it (D13), the legacy words read as theirs, anything else ``stated``."""
+    """The claim's status in D11's three words — only as the anchored, quoted item
+    states it (D13), the legacy words read as theirs, anything else ``stated``."""
     raw = str(stated_scalars(item, ("status",)).get("status") or "").strip().lower()
     status = _LEGACY_CLAIM_STATUSES.get(raw, raw)
     return status if status in CLAIM_STATUSES else _STATED
@@ -251,11 +252,13 @@ def _normalize_claim(item: Any) -> dict | None:
 
     Drops the row when there is no claim text. ``source`` is who the video says
     made the claim, absent when it attributes it to no one (never an invented
-    "Reporter"). Only a claim anchored at a timestamp the reader can check carries
-    a ``status`` — stated / supported / contested only (D11), never "verified"; an
-    unknown or missing one is ``stated`` — and its ``sourceCitation`` (the
-    counter-evidence of a "contested"). An unanchored claim ships as the claim and
-    its source alone: no status shown, no citation under a status it lost (D13).
+    "Reporter"). An anchored claim ships its seek point (R2). Only a claim anchored
+    at a timestamp the reader can check AND carrying the words that make it
+    (``quote``, verified by 2.0 d) carries a ``status`` — stated / supported /
+    contested only (D11), never "verified"; an unknown or missing one is ``stated``
+    — and its ``sourceCitation`` (the counter-evidence of a "contested"). Any other
+    claim ships as the claim, its source and its stamp: no status shown, no
+    citation under a status it lost (D13).
     """
     if not isinstance(item, dict):
         return None
@@ -269,11 +272,11 @@ def _normalize_claim(item: Any) -> dict | None:
     timestamp = anchor_seconds(item)
     if timestamp is None:
         return result
-    result["status"] = _claim_status(item)
-    citation = item.get("sourceCitation") or item.get("citation")
-    if citation:
-        result["sourceCitation"] = str(citation).strip()
-    # The anchor that let the status through is the seek point the reader checks it at.
+    if has_quote(item):
+        result["status"] = _claim_status(item)
+        citation = item.get("sourceCitation") or item.get("citation")
+        if citation:
+            result["sourceCitation"] = str(citation).strip()
     result["timestamp"] = timestamp
     return result
 
@@ -315,8 +318,9 @@ def _normalize_tier_item(item: Any) -> dict | None:
 
     Drops the row when there is no item label. `tier` is the creator's
     STATED placement (S/A/B/C/D): it ships only when the row is anchored in
-    the video (D13) and valid, so the viewer places an unranked item
-    themselves rather than us guessing a tier.
+    the video and carries the creator's words that state it (``quote``, D13 /
+    2.0 c) and is valid, so the viewer places an unranked item themselves
+    rather than us guessing a tier.
     """
     if not isinstance(item, dict):
         return None
@@ -349,7 +353,8 @@ def assemble_tier_list(
     Each item carries a label, an optional stated S/A/B/C/D tier (the answer
     key the user can override), and an optional reason. Needs ≥3 real items to
     justify the tab, and at least one stated tier — no stated rank → a list,
-    not tiers (D13): the tab folds into info_grid / overview.
+    not tiers (D13): the tab walks the demote ladder to an info_grid of the
+    same items (name, reason, seek point), so it never vanishes.
     """
     if isinstance(data, dict):
         data = data.get("rankings") or data.get("items") or []

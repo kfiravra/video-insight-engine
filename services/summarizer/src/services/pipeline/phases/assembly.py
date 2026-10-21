@@ -52,6 +52,7 @@ from src.services.pipeline.phases.synthesis import (
     apply_synthesis_to_assembled,
     needs_hero_fallback,
     seed_synthesis_dict,
+    settle_tab_references,
 )
 from src.services.pipeline.pipeline_helpers import (
     normalize_segments,
@@ -61,6 +62,7 @@ from src.services.pipeline.pipeline_helpers import (
 )
 from src.services.pipeline.plan_reconcile import PLAN_PARSE
 from src.services.pipeline.post_processor import coverage_is_degraded
+from src.services.pipeline.quote_verify import run_quote_index
 from src.services.pipeline.reconcile_pass import ADDED_ACTIONS
 from src.services.pipeline.tab_ledger import tab_id
 from src.services.status_callback import send_video_status_background
@@ -113,6 +115,7 @@ def _assemble(
         gallery_frames=ctx.scene_frames_gallery,
         all_frames=ctx.scene_frames_all,
         frame_descriptions=ctx.frame_descriptions or None,
+        quote_index=run_quote_index(ctx),
     )
     ctx.assembled_tabs = assembled.get("tabs", [])
     ctx.assembled_meta = assembled.get("meta", {})
@@ -284,6 +287,9 @@ async def run_phase_assembly(ctx: PipelineContext) -> AsyncGenerator[str, None]:
         yield event
     if ctx.enrichment_data:
         assembled = _add_late_quiz(ctx, description, synthesis_input, synthesized_first)
+    # The Moments are framed and the hero written: nothing names a tab that does not ship.
+    if (corrected_hero := settle_tab_references(ctx, assembled)) is not None:
+        yield corrected_hero
     for event in ctx.tab_ledger.closing_events(ctx.assembled_tabs or []):
         yield event
     # Moment fill was the 720p file's last reader — free the disk now, unless

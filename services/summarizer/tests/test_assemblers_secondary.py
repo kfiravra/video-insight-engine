@@ -71,6 +71,7 @@ class TestAssembleClaimsTracker:
                 "source": "Mayor",
                 "status": "disputed",
                 "sourceCitation": "Analysts say 700",
+                "quote": "This plan creates twelve hundred jobs.",
                 "timestamp": 210,
             },
             {"claim": "Fares rise 15%", "source": "Authority", "status": "verified"},
@@ -85,10 +86,11 @@ class TestAssembleClaimsTracker:
         assert claims[0]["timestamp"] == 210
 
     def test_unknown_status_defaults_to_stated(self):
-        # An anchored claim; an unanchored one shows no status (phase-1 review R9).
+        # An anchored, quoted claim; one without its stamp or its words shows no
+        # status (phase-1 review R9, 2.0 c).
         data = [
-            {"claim": "A bold assertion", "source": "Pundit", "status": "true", "timestamp": 10},
-            {"claim": "Another assertion", "source": "Pundit", "timestamp": 20},
+            {"claim": "A bold assertion", "status": "true", "quote": "q1", "timestamp": 10},
+            {"claim": "Another assertion", "source": "Pundit", "quote": "q2", "timestamp": 20},
         ]
         result = assemble_claims_tracker({}, data, {}, None)
         assert result["claims"][0]["status"] == "stated"
@@ -143,15 +145,21 @@ class TestAssembleClaimsTracker:
 # ─── Phase 5c: tier_list (gaming signature component) ───
 
 
+def _placed(seconds: int) -> dict:
+    """Where the creator places the item and the words that place it."""
+    return {"timestamp": seconds, "quote": f"I put this one here at {seconds}."}
+
+
 class TestAssembleTierList:
-    # Rows carry a timestamp: a tier is a stated rank only when the row is
-    # anchored in the video (0b.13, D13) — test_assembly_0b13_derived_guard.py
-    # covers the unanchored case.
+    # Rows carry a timestamp and the creator's words: a tier is a stated rank only
+    # when the row is anchored in the video and quoted (0b.13, 2.0 c, D13) —
+    # test_assembly_0b13_derived_guard.py covers the unanchored case,
+    # test_p2_0_quotes.py the unquoted one.
     def test_normalizes_full_rankings(self):
         data = [
-            {"item": "Jett", "tier": "S", "reason": "Top duelist", "emoji": "🌪️", "timestamp": 10},
-            {"item": "Sage", "tier": "a", "reason": "Carry", "timestamp": 20},
-            {"item": "Yoru", "tier": "C", "timestamp": 30},
+            {"item": "Jett", "tier": "S", "reason": "Top duelist", "emoji": "🌪️", **_placed(10)},
+            {"item": "Sage", "tier": "a", "reason": "Carry", **_placed(20)},
+            {"item": "Yoru", "tier": "C", **_placed(30)},
         ]
         result = assemble_tier_list({}, data, {}, None)
         assert result is not None
@@ -166,9 +174,9 @@ class TestAssembleTierList:
 
     def test_invalid_tier_omitted(self):
         data = [
-            {"item": "A", "tier": "Z", "timestamp": 10},
-            {"item": "B", "tier": "S", "timestamp": 20},
-            {"item": "C", "timestamp": 30},
+            {"item": "A", "tier": "Z", **_placed(10)},
+            {"item": "B", "tier": "S", **_placed(20)},
+            {"item": "C", **_placed(30)},
         ]
         result = assemble_tier_list({}, data, {}, None)
         assert "tier" not in result["items"][0]
@@ -178,9 +186,9 @@ class TestAssembleTierList:
     def test_dict_wrapper_with_rankings_key(self):
         data = {
             "rankings": [
-                {"item": "A", "tier": "S", "timestamp": 10},
-                {"item": "B", "tier": "A", "timestamp": 20},
-                {"item": "C", "tier": "B", "timestamp": 30},
+                {"item": "A", "tier": "S", **_placed(10)},
+                {"item": "B", "tier": "A", **_placed(20)},
+                {"item": "C", "tier": "B", **_placed(30)},
             ]
         }
         result = assemble_tier_list({}, data, {}, None)
@@ -188,11 +196,11 @@ class TestAssembleTierList:
 
     def test_drops_items_with_no_label(self):
         data = [
-            {"item": "", "tier": "S", "timestamp": 10},
-            {"tier": "A", "timestamp": 20},
-            {"item": "Real one", "tier": "B", "timestamp": 30},
-            {"item": "Real two", "tier": "C", "timestamp": 40},
-            {"item": "Real three", "timestamp": 50},
+            {"item": "", "tier": "S", **_placed(10)},
+            {"tier": "A", **_placed(20)},
+            {"item": "Real one", "tier": "B", **_placed(30)},
+            {"item": "Real two", "tier": "C", **_placed(40)},
+            {"item": "Real three", **_placed(50)},
         ]
         result = assemble_tier_list({}, data, {}, None)
         assert len(result["items"]) == 3

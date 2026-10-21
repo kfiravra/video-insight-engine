@@ -39,10 +39,11 @@ THINKING GUIDE:
       "source": "Who made the claim (speaker, official, outlet) — or null when the report names no one",
       "status": "stated | supported | contested",
       "sourceCitation": "The evidence the report gives for or against it (study, record, outlet), or null",
+      "quote": "The words that make the claim, verbatim, at most 25 words — no words, status null",
       "timestamp": null
     }
   ],
-> UI: claims → ClaimsTracker. status drives a colored badge: stated (asserted, no evidence given), supported (the report gives evidence — name it in sourceCitation), contested (someone in the report disputes it, or counter-evidence is given). source = who said it; sourceCitation = the evidence. timestamp = the second the claim is made — a status without one is not shown.
+> UI: claims → ClaimsTracker. status drives a colored badge: stated (asserted, no evidence given), supported (the report gives evidence — name it in sourceCitation), contested (someone in the report disputes it, or counter-evidence is given). source = who said it; sourceCitation = the evidence. timestamp = the second the claim is made, quote = the words that make it — a status without both is not shown.
   "context": [
     {
       "key": "Background fact label",
@@ -65,9 +66,9 @@ THINKING GUIDE:
     {"name": "Transit Authority", "role": "Implementing body", "description": "Runs the city bus and rail network", "emoji": "🚇"}
   ],
   "claims": [
-    {"claim": "The plan creates 1,200 jobs", "source": "Mayor Diaz", "status": "contested", "sourceCitation": "Independent analysts put the figure near 700", "timestamp": 210},
-    {"claim": "Fares will rise 15% in 2026", "source": "Transit Authority", "status": "supported", "sourceCitation": "Approved fare schedule, council record", "timestamp": 540},
-    {"claim": "The city faces a structural deficit", "source": null, "status": "stated", "sourceCitation": null, "timestamp": 60}
+    {"claim": "The plan creates 1,200 jobs", "source": "Mayor Diaz", "status": "contested", "sourceCitation": "Independent analysts put the figure near 700", "quote": "This plan puts twelve hundred people to work.", "timestamp": 210},
+    {"claim": "Fares will rise 15% in 2026", "source": "Transit Authority", "status": "supported", "sourceCitation": "Approved fare schedule, council record", "quote": "Fares go up fifteen percent next year.", "timestamp": 540},
+    {"claim": "The city faces a structural deficit", "source": null, "status": "stated", "sourceCitation": null, "quote": "The city is spending more than it takes in, every year.", "timestamp": 60}
   ],
   "context": [
     {"key": "Current annual budget", "value": "$3.4B"},

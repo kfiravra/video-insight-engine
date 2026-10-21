@@ -24,6 +24,7 @@ if TYPE_CHECKING:
         TranscriptData,
         TranscriptTrail,
     )
+    from src.services.pipeline.quote_verify import QuoteIndex
     from src.services.pipeline.triage import TriageResult
     from src.services.pipeline.youtube_retry import RetryNotice
     from src.services.video.description_analyzer import DescriptionAnalysis
@@ -195,6 +196,10 @@ class PipelineContext:
     # Shape: {"code", "name", "isRTL", "tabs", "meta", "synthesis"}.
     # None for English-source videos and for sound-only music-override videos.
     source_language: dict[str, Any] | None = None
+
+    # The transcript's quote index (output-quality 2.0 d), built once at the first
+    # assembly by ``quote_verify.run_quote_index``; every re-assembly reads it.
+    quote_index: QuoteIndex | None = None
 
     # Per-phase timing (phase_name → seconds)
     phase_times: dict[str, float] = field(default_factory=dict)

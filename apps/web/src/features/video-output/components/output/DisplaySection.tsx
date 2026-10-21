@@ -238,7 +238,15 @@ function QuotesDisplay({ data }: { data: NarrativeQuote[] }) {
     <div className="flex flex-col gap-3">
       {data.map((quote, i) => (
         <GlassCard key={i}>
-          <QuoteBlock text={quote.text} attribution={quote.speaker} variant="speaker" />
+          {/* A translated line is not the speaker's words (2.0 d, D12): plain prose. */}
+          {quote.quoteTranslated ? (
+            <p className="text-sm leading-relaxed text-muted-foreground">
+              {quote.text}
+              {quote.speaker && <span className="ms-1 text-xs font-medium">— {quote.speaker}</span>}
+            </p>
+          ) : (
+            <QuoteBlock text={quote.text} attribution={quote.speaker} variant="speaker" />
+          )}
         </GlassCard>
       ))}
     </div>

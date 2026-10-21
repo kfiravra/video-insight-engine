@@ -5,6 +5,10 @@ advisory only: the audited `info_grid` bug shipped 150–190-char paragraphs in 
 single cell. This module caps cells in code for the compact layouts that cannot
 show a paragraph (see `_CAPPED_MODES`), and folds a tab whose list shrinks below
 the minimum. Runs in ``assemble_response`` after promotion and before validation.
+
+output-quality 2.0 b (G1-2): no tab ships with empty props — every value None,
+"", [] or {} — whatever its component: ``enforce_density`` folds one an assembler
+built, ``drop_empty_tabs`` removes one assembly added on its own.
 """
 
 from __future__ import annotations
@@ -54,8 +58,39 @@ def moment_gate_passes(props: dict) -> bool:
     return isinstance(items, list) and is_described_track(items)
 
 
+def has_content(value: object) -> bool:
+    """False for None, a blank string, [] and {} — and a list or dict holding only those."""
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, dict):
+        return any(has_content(member) for member in value.values())
+    if isinstance(value, list | tuple):
+        return any(has_content(member) for member in value)
+    return True
+
+
+def drop_empty_tabs(tabs: list[dict]) -> list[dict]:
+    """Remove every tab whose props carry no content (output-quality 2.0 b, G1-2): an
+    empty tab is a broken promise in the strip. Mutates ``tabs``; returns the removed."""
+    removed = [tab for tab in tabs if not has_content(tab.get("props"))]
+    if removed:
+        tabs[:] = [tab for tab in tabs if has_content(tab.get("props"))]
+        logger.warning(
+            "[assembly] dropped %d tab(s) with empty props: %s",
+            len(removed),
+            [tab.get("id") for tab in removed],
+        )
+    return removed
+
+
 def enforce_density(component: str, props: dict) -> dict | None:
-    """Cap cell lengths in-place; return None to fold a too-sparse tab."""
+    """Cap cell lengths in-place; return None to fold a too-sparse tab — and a tab
+    whose props carry no content at all (``has_content``), whatever its component."""
+    if not has_content(props):
+        logger.info("[assembly] density folded %s (empty props)", component)
+        return None
     rule = _DENSITY_RULES.get(component)
     if rule is None:
         return props

@@ -207,6 +207,9 @@ class Mapping:
 
 
 _ASSEMBLER_INJECTED = "attached by the assembler AFTER Pydantic validation"
+# output-quality 2.0 d: the quote check (pipeline/quote_verify) flags a translated
+# quote on the copy assembly reads, after validation.
+_QUOTE_CHECK_INJECTED = "set by the quote check AFTER Pydantic validation"
 
 ITEM_MAPPINGS = [
     Mapping("TabEntry", v2.TabEntry),
@@ -221,6 +224,7 @@ ITEM_MAPPINGS = [
             # holder's name (1.3).
             "category": _ASSEMBLER_INJECTED,
             "speaker": _ASSEMBLER_INJECTED,
+            "quoteTranslated": _QUOTE_CHECK_INJECTED,
         },
     ),
     Mapping(
@@ -285,7 +289,11 @@ ITEM_MAPPINGS = [
     Mapping("SportStatRow", dt.SportStatRow),
     Mapping("SportStatComparison", dt.SportStatComparison),
     Mapping("NarrativeKeyMoment", dt.NarrativeKeyMoment),
-    Mapping("NarrativeQuote", dt.NarrativeQuote),
+    Mapping(
+        "NarrativeQuote",
+        dt.NarrativeQuote,
+        exceptions={"quoteTranslated": _QUOTE_CHECK_INJECTED},
+    ),
     # The quiz enrichment's item — its answer timestamp (output-quality 1.13).
     Mapping("QuizQuestion", pt.QuizQuestion),
 ]

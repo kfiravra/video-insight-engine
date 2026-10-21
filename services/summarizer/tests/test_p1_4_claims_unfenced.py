@@ -41,17 +41,20 @@ _CLAIMS = [
         "claim": "Agents wrote 150,000 lines in August",
         "status": "supported",
         "sourceCitation": "His commit log on screen",
+        "quote": "The agents wrote a hundred and fifty thousand lines in August.",
         "timestamp": 660,
     },
     {
         "claim": "Hand-written code is no longer economically productive",
         "status": "stated",
+        "quote": "Writing code by hand just isn't productive anymore.",
         "timestamp": 1262,
     },
     {
         "claim": "AI will end programming jobs",
         "status": "contested",
         "source": "Critics",
+        "quote": "People keep telling me AI ends programming jobs.",
         "timestamp": 3382,
     },
 ]
@@ -106,7 +109,8 @@ class TestClaimsRegistry:
     def test_should_ask_every_domain_for_the_one_claim_shape(self, domain: str) -> None:
         item = slice_skeleton(domain, ["claims"])["claims"][0]
 
-        assert set(item) == {"claim", "source", "status", "sourceCitation", "timestamp"}
+        # The words that make the claim gate its status (2.0 c).
+        assert set(item) == {"claim", "source", "status", "sourceCitation", "quote", "timestamp"}
 
     @pytest.mark.parametrize("domain", ["learning", "podcast", "tech", "news"])
     def test_should_offer_only_the_three_words_in_every_schema(self, domain: str) -> None:
@@ -180,9 +184,9 @@ class TestClaimsAssembly:
 
     def test_should_read_the_stored_words_in_the_new_vocabulary(self) -> None:
         stored = [
-            {"claim": "a", "status": "verified", "timestamp": 1},
-            {"claim": "b", "status": "disputed", "timestamp": 2},
-            {"claim": "c", "status": "context", "timestamp": 3},
+            {"claim": "a", "status": "verified", "quote": "a", "timestamp": 1},
+            {"claim": "b", "status": "disputed", "quote": "b", "timestamp": 2},
+            {"claim": "c", "status": "context", "quote": "c", "timestamp": 3},
         ]
 
         props = assemble_claims_tracker({}, stored, {}, None)
@@ -214,7 +218,8 @@ class TestAnchoredReviewAndRanks:
         assert "badge" not in _normalize_verdict(self._VERDICT, {})
 
     def test_should_ship_the_badge_and_its_seek_point_when_the_verdict_is_stamped(self) -> None:
-        props = _normalize_verdict({**self._VERDICT, "timestamp": 598}, {})
+        # Since output-quality 2.0 c the badge also needs the sentence that states it.
+        props = _normalize_verdict({**self._VERDICT, "timestamp": 598, "quote": "Buy it."}, {})
 
         assert (props["badge"], props["timestamp"]) == ("recommended", 598)
 
@@ -229,13 +234,16 @@ class TestAnchoredReviewAndRanks:
         assert (review["rating"]["timestamp"], review["verdict"]["timestamp"]) == (612, 598)
 
     def test_should_render_a_stated_score_when_the_rating_is_stamped(self) -> None:
-        props = _normalize_verdict(self._VERDICT, {"score": 8.5, "maxScore": 10, "timestamp": 612})
+        rating = {"score": 8.5, "maxScore": 10, "timestamp": 612, "quote": "An eight and a half."}
+        props = _normalize_verdict(self._VERDICT, rating)
 
         assert (props["score"], props["maxScore"]) == (8.5, 10)
 
     def test_should_render_tiers_when_validated_rankings_carry_their_stamps(self) -> None:
         rows = [
-            GamingRanking.model_validate({"item": n, "tier": t, "timestamp": s}).model_dump()
+            GamingRanking.model_validate(
+                {"item": n, "tier": t, "timestamp": s, "quote": f"{n} goes in {t}."}
+            ).model_dump()
             for n, t, s in (("Jett", "S", 130), ("Sage", "A", 205), ("Yoru", "C", 340))
         ]
 

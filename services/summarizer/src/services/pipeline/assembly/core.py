@@ -12,6 +12,7 @@ from collections import Counter
 from collections.abc import Callable, Collection, Iterable, Mapping
 from typing import Any
 
+from src.services.pipeline.quote_verify import QuoteIndex, verify_extraction_quotes
 from src.shared_config.assembly_policy import assembly_policy, injected_tab
 from src.shared_config.domain_config import (
     assembler_item_caps,
@@ -37,7 +38,7 @@ from .dedupe import DUPLICATE_TAB as DUPLICATE_TAB
 from .dedupe import _dedupe_tabs as _dedupe_tabs
 from .dedupe import _item_fingerprint as _item_fingerprint
 from .dedupe import tab_fingerprints as tab_fingerprints
-from .density import enforce_density
+from .density import drop_empty_tabs, enforce_density
 from .info_grid_fold import FOLDS_KEY, apply_folds, unfolded_tabs
 from .info_grid_items import require_grid_values
 from .item_timestamps import clear_impossible_item_timestamps
@@ -55,6 +56,7 @@ from .moment_fallback import (
 from .moment_fallback import steps_are_the_timeline as steps_are_the_timeline
 from .moment_sources import described_moment_source, described_or_fallback
 from .promotion import demote_component, promote_component
+from .quiz_stamps import with_reconciled_quiz
 from .registry import ASSEMBLER_REGISTRY, infer_component
 from .sampling import (
     MomentAnchors,
@@ -68,6 +70,17 @@ from .sampling import (
 )
 from .steps_timeline import STEPS_ARE_THE_TIMELINE as STEPS_ARE_THE_TIMELINE
 from .steps_timeline import dedupe_under_steps_timeline
+from .tab_references import (
+    EMPTY_PROPS,
+    FILMSTRIP_SHADOWED,
+    auto_tab_candidates,
+    drop_records,
+    drop_shadowed_filmstrips,
+    goal_without_lost_structure,
+    planned_tab_sources,
+    recount_overview,
+    scrub_tab_references,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1415,34 +1428,6 @@ def _move_quiz_tabs_last(tabs: list[dict]) -> None:
         tabs[:] = [t for t in tabs if t.get("component") != _QUIZ_COMPONENT] + quiz_tabs
 
 
-def _annotate_overview_item_count(tabs: list[dict]) -> None:
-    """Inject the content-tab count into the overview's data + stats pills.
-
-    Must run AFTER all tab additions (cross-tab link resolution, gallery
-    auto-append, fallback candidates) so `len(tabs) - 1` reflects what the
-    user will actually see. Surfaces as both `data.itemCount` and an "Items"
-    stat chip on the hero.
-    """
-    if not tabs or tabs[0].get("component") != "overview":
-        return
-    item_count = max(0, len(tabs) - 1)
-    if item_count == 0:
-        return
-    props = tabs[0].get("props")
-    if not isinstance(props, dict):
-        return
-    data = props.setdefault("data", {})
-    if not isinstance(data, dict):
-        return
-    data["itemCount"] = item_count
-
-    existing_stats = data.get("stats")
-    stats: list[Any] = existing_stats if isinstance(existing_stats, list) else []
-    if not any(isinstance(s, dict) and s.get("label") == "Items" for s in stats):
-        stats.append({"label": "Items", "value": str(item_count), "emoji": "📚"})
-        data["stats"] = stats
-
-
 # ─────────────────────────────────────────────────────
 # Fallback Tab Candidates
 # ─────────────────────────────────────────────────────
@@ -1527,12 +1512,20 @@ def assemble_response(
     gallery_frames: list[dict] | None = None,
     all_frames: list[dict] | None = None,
     frame_descriptions: list[dict] | None = None,
+    quote_index: QuoteIndex | None = None,
 ) -> dict:
     """Assemble the final VIEResponse v2 from pipeline outputs.
+
+    ``quote_index``: the run's transcript (and source language) as
+    ``quote_verify`` indexes it — every quote is checked against it first, on a
+    copy (2.0 d); None checks nothing.
 
     Returns:
         dict: { meta, tabs: TabEntry[] }.
     """
+    if quote_index is not None:
+        checked = verify_extraction_quotes(extraction, enrichment, quote_index)
+        extraction, enrichment = checked.extraction, checked.enrichment
     video_meta = video_meta or {}
 
     # Inject normalized filmstrip frames into extraction so a tab planned as
@@ -1587,6 +1580,9 @@ def assemble_response(
     # is neither backfilled nor reached by demotion.
     evidence = triage.get("evidence") if isinstance(triage.get("evidence"), dict) else None
     blocked_rungs = demotion_blocked({primary_tag, *meta["contentTags"]}, evidence)
+    # Quiz stamps in seconds, checked against the explanation's clock, and no bare
+    # second count in the prose (2.0 a) — on a copy, before any tab reads the quiz.
+    enrichment = with_reconciled_quiz(enrichment, video_meta.get("duration"))
 
     assembled_tabs: list[dict] = []
     # Response-wide reuse ledger: s3 key -> timestamp of first attachment.
@@ -1824,7 +1820,7 @@ def assemble_response(
                 "emoji": raw_tab.get("emoji", ""),
                 "component": component,
                 "props": props,
-                "goal": raw_tab.get("goal", ""),
+                "goal": goal_without_lost_structure(raw_tab.get("goal", ""), degraded_from),
                 "crossTabLinks": [],
                 **({"degradedFrom": degraded_from} if degraded_from else {}),
             }
@@ -2007,6 +2003,14 @@ def assemble_response(
         collect_moment_anchors(extraction, synthesis),
         {**key_idea_caps(sources, (video_meta or {}).get("duration")), **fold_caps},
     )
+    # The web's rule, server-side (2.0 b): a Moments track framed as it ships (after
+    # the caps) shadows every filmstrip; no tab ships with empty props. Before links,
+    # attachments and the minimum-3 fallbacks.
+    planned = planned_tab_sources(raw_tabs)
+    dropped_tabs += drop_records(
+        drop_shadowed_filmstrips(assembled_tabs), FILMSTRIP_SHADOWED, planned
+    )
+    dropped_tabs += drop_records(drop_empty_tabs(assembled_tabs), EMPTY_PROPS, planned)
     # After post-processing: a link's text is its target's FINAL label (emoji
     # prefix stripped, "Untitled Chapter N" renamed), never the raw plan label.
     _link_tabs(assembled_tabs, primary_tag)
@@ -2052,7 +2056,9 @@ def assemble_response(
     # Annotate the overview with the final tab count — must run after all
     # additions (cross-tab links, gallery auto-append, fallback candidates)
     # so the "Items" stat reflects what the user actually sees.
-    _annotate_overview_item_count(assembled_tabs)
+    recount_overview(assembled_tabs)
+    # No hero line or goal names a planned or auto-added tab that does not ship (2.0 b).
+    scrub_tab_references(meta, assembled_tabs, [*raw_tabs, *auto_tab_candidates()])
 
     # Assembly summary
     planned_ids = [t.get("id", "?") for t in raw_tabs if isinstance(t, dict)]

@@ -44,6 +44,7 @@ from src.services.pipeline.enrichment import QUIZ_COMPONENT, QUIZ_DATA_SOURCE
 from src.services.pipeline.group_merge import merge_groups
 from src.services.pipeline.phases.enrichment import start_quiz_task
 from src.services.pipeline.phases.moments import video_meta
+from src.services.pipeline.quote_verify import run_quote_index
 from src.services.pipeline.reconcile_pass import MAX_TABS
 from src.services.pipeline.synthesis import build_synthesis_dict
 from src.services.pipeline.tab_ledger import tab_id
@@ -153,6 +154,7 @@ def _partial_tabs(ctx: PipelineContext, merged: Mapping[str, Any]) -> list[dict]
             gallery_frames=ctx.scene_frames_gallery,
             all_frames=ctx.scene_frames_all,
             frame_descriptions=ctx.frame_descriptions or None,
+            quote_index=run_quote_index(ctx),
         )
     finally:
         _PARTIAL_ASSEMBLY.reset(token)

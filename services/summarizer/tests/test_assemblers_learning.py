@@ -69,13 +69,15 @@ class TestAssembleVerdict:
     folded under `verdict`. ReviewSummary in ComparisonInteractive renders it."""
 
     def test_valid_verdict_returns_comparison_shape(self):
-        # The badge renders only with the second the verdict is said (R2, p1.4).
+        # The badge renders only with the second the verdict is said and its words
+        # (R2, p1.4; D13 extended, output-quality 2.0 c).
         data = {
             "badge": "recommended",
             "bottomLine": "Great product",
             "bestFor": ["students"],
             "notFor": ["pros"],
             "timestamp": 598,
+            "quote": "I recommend it to students.",
         }
         result = assemble_verdict({}, data, {}, None)
         assert result is not None
@@ -88,13 +90,15 @@ class TestAssembleVerdict:
         assert result["verdict"]["notFor"] == ["pros"]
 
     def test_includes_score_when_provided(self):
-        # 0b.13: a score is a fact only when anchored in the video (timestamp).
+        # 0b.13 / 2.0 c: a score is a fact only when anchored in the video (timestamp)
+        # and given in the reviewer's words (quote).
         data = {
             "badge": "best_in_class",
             "bottomLine": "Top pick",
             "score": 8.5,
             "maxScore": 10,
             "timestamp": 600,
+            "quote": "Eight and a half out of ten.",
         }
         result = assemble_verdict({}, data, {}, None)
         assert result is not None

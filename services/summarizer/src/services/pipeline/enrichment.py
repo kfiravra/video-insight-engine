@@ -11,6 +11,11 @@ output-quality 1.13 (R12 / D9): the question count follows the video's length
 (:func:`quiz_count_bands`, domains.json ``quizPolicy``), every question carries the ``timestamp`` of
 the sentence that answers it (a stamp past the video's end drops the question),
 and a question the hero alone answers is trivia the prompt forbids.
+
+output-quality 2.0 (G1-1): the stamp is in seconds — one that reads as the
+minutes of its explanation's (m:ss) takes that clock, the explanation cites the
+stamp's clock, and a bare second count in it renders as (m:ss)
+(``assembly.quiz_stamps``).
 """
 
 from __future__ import annotations
@@ -39,6 +44,7 @@ from ...utils.json_parsing import parse_json_response
 from ...utils.language_utils import ENGLISH_OUTPUT_DIRECTIVE
 from ...utils.llm_retry import call_llm_with_retry
 from .assembly.attachments import SPARSE_THRESHOLD, can_host_quick_quiz
+from .assembly.quiz_stamps import END_SLACK_S, reconcile_quiz_time
 from .memory import UNKNOWN_LENGTH_SECONDS, format_clock
 from .pipeline_helpers import sanitize_for_prompt
 from .pipeline_timing import record_llm_failure
@@ -57,8 +63,8 @@ QUIZ_DATA_SOURCE = "enrichment.quiz"
 QUIZ_STAGE = "enrichment"
 QUIZ_MAX_TOKENS = 2048
 # A stamp this far past the end is drift, not an invention — the same slack
-# assembly gives a moment before dropping it.
-QUIZ_TIMESTAMP_TOLERANCE_S = 10.0
+# assembly gives a moment before dropping it (and the quiz clock check, quiz_stamps).
+QUIZ_TIMESTAMP_TOLERANCE_S = END_SLACK_S
 HERO_TAKEAWAYS_MAX = 7
 EMPTY_HERO = "Not available"
 # Where every question's timestamp must lie: "{timestamp_range}" renders this,
@@ -284,18 +290,28 @@ def _past_the_end(question: QuizQuestion, duration_s: float | None) -> bool:
     return question.timestamp > duration_s + QUIZ_TIMESTAMP_TOLERANCE_S
 
 
+def _in_seconds(question: QuizQuestion, duration_s: float | None) -> QuizQuestion:
+    """The question with its stamp checked against its explanation's clock (a stamp that
+    reads as minutes takes the clock) and no bare second count in the explanation (2.0 a)."""
+    stamp, explanation = reconcile_quiz_time(question.timestamp, question.explanation, duration_s)
+    if stamp == question.timestamp and explanation == question.explanation:
+        return question
+    return question.model_copy(update={"timestamp": stamp, "explanation": explanation})
+
+
 def parse_quiz(data: object, cap: int, duration_s: float | None = None) -> list[QuizQuestion]:
     """Every valid question survives; a broken, repeated or past-the-end one is dropped alone.
 
     ``cap`` is the count the video gets (:func:`quiz_question_count`, at most
-    the registry cap); ``duration_s`` bounds every timestamp.
+    the registry cap); ``duration_s`` bounds every timestamp. A stamp is read in
+    seconds against the explanation's clock before the past-the-end check.
     """
     questions: list[QuizQuestion] = []
     seen: set[str] = set()
     dropped = 0
     for raw in _quiz_items(data):
         try:
-            question = QuizQuestion.model_validate(raw)
+            question = _in_seconds(QuizQuestion.model_validate(raw), duration_s)
         except ValidationError:
             dropped += 1
             continue

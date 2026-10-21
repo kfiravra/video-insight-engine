@@ -160,3 +160,22 @@ def resolve_cross_tab_links(
             seen_targets.add(target)
 
     return links
+
+
+def prune_links(tabs: list[dict]) -> int:
+    """Drop every cross-tab link whose target is not one of ``tabs`` (output-quality 2.0 b):
+    a tab removed after the links were resolved — a filmstrip the framed Moments shadow
+    — is never offered as a destination. Returns the number of links removed."""
+    shipped = {tab.get("id") for tab in tabs}
+    removed = 0
+    for tab in tabs:
+        links = tab.get("crossTabLinks")
+        if not isinstance(links, list):
+            continue
+        kept = [
+            link for link in links if isinstance(link, dict) and link.get("targetTab") in shipped
+        ]
+        if len(kept) != len(links):
+            removed += len(links) - len(kept)
+            tab["crossTabLinks"] = kept
+    return removed

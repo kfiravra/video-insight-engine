@@ -126,11 +126,15 @@ export const SpotExplorer = memo(function SpotExplorer({
                   {spot.description}
                 </p>
               )}
-              {/* Verbatim beats paraphrase (R10): the speaker's own line, set apart. */}
-              {quote && (
+              {/* Verbatim beats paraphrase (R10): the speaker's own line, set apart. A
+                  translated quote is not the speaker's words (2.0 d, D12): plain prose. */}
+              {quote && !spot.quoteTranslated && (
                 <blockquote className="border-s-2 border-[var(--vie-accent)]/40 ps-2.5 text-sm italic leading-relaxed text-foreground/85">
                   {quote}
                 </blockquote>
+              )}
+              {quote && spot.quoteTranslated && (
+                <p className="text-sm leading-relaxed text-muted-foreground">{quote}</p>
               )}
               {speaker && <p className="text-xs font-medium text-muted-foreground">— {speaker}</p>}
               {spot.specs && (

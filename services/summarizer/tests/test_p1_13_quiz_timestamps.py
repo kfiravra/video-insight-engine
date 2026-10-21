@@ -52,7 +52,9 @@ def _question(n: int = 0, **overrides: Any) -> dict[str, Any]:
             "The card issuer matches payments",
         ],
         "correctIndex": 0,
-        "explanation": "At (5:12) the speaker says every dollar on the card loses 24 cents a year.",
+        # No clock: a cited clock is the evidence a stamp is checked against (2.0 a),
+        # and these fixtures vary the stamp alone.
+        "explanation": "The speaker says every dollar on the card loses 24 cents a year.",
     }
     item.update(overrides)
     return item

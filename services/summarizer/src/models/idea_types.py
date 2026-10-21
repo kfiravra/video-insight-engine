@@ -170,7 +170,8 @@ class Claim(BaseModel):
     "disputed", the schema's own "stated | supported | contested") is refused —
     the status goes, never the claim (the lenient enum rule of the other domain
     models: a verdict badge, a tier). A status is read only beside the
-    ``timestamp`` it can be checked at (D13).
+    ``timestamp`` it can be checked at and the ``quote`` that makes the claim
+    (D13, output-quality 2.0 c).
     """
 
     model_config = {"populate_by_name": True}
@@ -180,6 +181,7 @@ class Claim(BaseModel):
     source: str | None = None
     status: str | None = None
     source_citation: str | None = Field(None, alias="sourceCitation")
+    quote: str | None = None
     timestamp: int | None = None
 
     @field_validator("status", mode="before")
@@ -197,7 +199,7 @@ class Claim(BaseModel):
     def coerce_timestamp(cls, v: Any) -> int | None:
         return seconds_or_none(v)
 
-    @field_validator("source", "source_citation", mode="before")
+    @field_validator("source", "source_citation", "quote", mode="before")
     @classmethod
     def coerce_optional_text(cls, v: Any) -> str | None:
         return text_or_none(v)

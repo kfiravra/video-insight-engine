@@ -129,6 +129,9 @@ export interface SpotItem extends FrameEvidence {
   timestamp?: number | null;
   /** The speaker's verbatim line about the spot (output-quality R10). */
   quote?: string | null;
+  /** The quote is the English rendering of non-English speech (output-quality 2.0 d,
+   *  D12): shown as prose, never in quote styling. Set by the quote check. */
+  quoteTranslated?: boolean;
   /** Category badge text — a key idea's kind ("Thesis", "Ask"), set by the assembler. */
   category?: string;
   /** Who holds a key idea when more than one person speaks — set by the assembler. */
@@ -231,6 +234,8 @@ export interface MomentItem extends FrameEvidence {
   description?: string;
   /** The speaker's line that carries the moment, verbatim (output-quality R7/R10). */
   quote?: string;
+  /** The quote is the English rendering of non-English speech (2.0 d, D12): prose. */
+  quoteTranslated?: boolean;
   /** An interview exchange's whole question (`podcast.qa`) — present only when it
    *  differs from the label (a long question's label is its first sentence); the
    *  timeline row then heads with it. */
@@ -470,6 +475,8 @@ export interface ClaimItem extends FrameEvidence {
   /** Where the claim's verification comes from (study, outlet, official record);
    *  absent with the status. */
   sourceCitation?: string;
+  /** The words that make the claim, verbatim — the status needs them (D13, 2.0 c). */
+  quote?: string | null;
   timestamp?: number;
 }
 
@@ -491,8 +498,10 @@ export interface TierListItem {
   tier?: TierRank;
   reason?: string;
   emoji?: string;
-  /** Where the creator places the item (seconds); a tier ships only with it (D13). */
+  /** Where the creator places the item (seconds); a tier ships only with it and the
+   *  creator's words that state it (`quote`, D13, 2.0 c). */
   timestamp?: number;
+  quote?: string | null;
 }
 
 export interface TierListProps {
@@ -769,8 +778,10 @@ export interface ReviewRating {
   score: number;
   maxScore: number;
   label: string;
-  /** Where the reviewer gives the score (seconds); the score renders only with it. */
+  /** Where the reviewer gives the score (seconds); the score renders only with it and
+   *  the words that give it (`quote`, 2.0 c). */
   timestamp?: number | null;
+  quote?: string | null;
 }
 
 export interface ReviewSpec {
@@ -792,9 +803,11 @@ export interface ReviewVerdict {
   bestFor: string[];
   notFor: string[];
   bottomLine: string;
-  subScores?: Array<{ category: string; score: number }>;
-  /** Where the reviewer states the verdict (seconds); the badge renders only with it. */
+  subScores?: Array<{ category: string; score: number; timestamp?: number | null; quote?: string | null }>;
+  /** Where the reviewer states the verdict (seconds); the badge renders only with it and
+   *  the words that state it (`quote`, 2.0 c). */
   timestamp?: number | null;
+  quote?: string | null;
 }
 
 export interface ReviewData {
@@ -997,6 +1010,8 @@ export interface NarrativeQuote {
   speaker: string;
   timestamp?: number;
   context?: string;
+  /** The line is the English rendering of non-English speech (2.0 d, D12): prose. */
+  quoteTranslated?: boolean;
 }
 
 export interface NarrativeData {

@@ -3,10 +3,15 @@
 A scalar the reader takes as a fact — a score, a tier, a claim status, a rest
 time, a duration, a date — ships only when the extraction carries it on an item
 that is anchored in the video: a timestamp the reader can seek to and check.
-An unanchored scalar is dropped, never defaulted; the item keeps its prose and
-the number, rank or status goes. A comparison row is a radar axis only when
-both sides are numbers. Every assembler passes its scalars through this module,
-so the rule lives in one place.
+A verdict — a score, a tier or a status, every scalar of a ``rating`` block —
+also needs the creator's words that state it (2.0 c, G1-4: S09's S–D tiers were
+a rarity bracket the creator never gave): a non-empty ``quote`` on the item,
+which by then has survived quote verification (``pipeline/quote_verify`` clears
+an unverified one before assembly reads the extraction). An unanchored or
+unquoted scalar is dropped, never defaulted; the item keeps its prose and the
+number, rank or status goes. A comparison row is a radar axis only when both
+sides are numbers. Every assembler passes its scalars through this module, so
+the rule lives in one place.
 """
 
 from __future__ import annotations
@@ -31,12 +36,15 @@ _NUMERIC_CELL = re.compile(r"^[$€£¥₪~≈<>]?\s*[-+]?\d[\d,]*(?:\.\d+)?\s*[
 # overview copies a block's scalars without knowing its schema, so it asks by name.
 _SCORES = ("score", "maxScore", "rating")
 _TIERS = ("tier", "rank")
-_STATUSES = ("status",)
+# A review verdict's badge ("recommended") is the reviewer's status call (2.0 c).
+_STATUSES = ("status", "badge")
 _DURATIONS = ("duration", "rest", "prepTime", "cookTime", "totalTime", "estimatedTime")
 _DATES = ("date", "releaseDate")
 DERIVED_FIELDS: frozenset[str] = frozenset((*_SCORES, *_TIERS, *_STATUSES, *_DURATIONS, *_DATES))
 # A block whose every scalar is a verdict: a review rating's score, max and label.
 DERIVED_BLOCKS: frozenset[str] = frozenset({"rating"})
+# The verdicts among them: the creator's call ships only beside the words that make it.
+QUOTED_FIELDS: frozenset[str] = frozenset((*_SCORES, *_TIERS, *_STATUSES))
 
 
 def _is_finite_number(value: Any) -> TypeGuard[int | float]:
@@ -68,22 +76,35 @@ def is_anchored(item: Any) -> bool:
     return anchor_seconds(item) is not None
 
 
+def has_quote(item: Any) -> bool:
+    """The item carries the words that state its verdict: a non-empty ``quote``."""
+    quote = item.get("quote") if isinstance(item, dict) else None
+    return isinstance(quote, str) and bool(quote.strip())
+
+
 def stated_scalars(item: Any, fields: Iterable[str]) -> dict[str, Any]:
     """The named scalars of an anchored item — ``{field: value}`` for the fields
-    it carries (not None, not empty); ``{}`` for an unanchored item."""
+    it carries (not None, not empty); ``{}`` for an unanchored item. A verdict
+    field (``QUOTED_FIELDS``) also needs the item's ``quote``."""
     if not is_anchored(item):
         return {}
-    return {field: item[field] for field in fields if item.get(field) not in (None, "")}
+    quoted = has_quote(item)
+    return {
+        field: item[field]
+        for field in fields
+        if item.get(field) not in (None, "") and (quoted or field not in QUOTED_FIELDS)
+    }
 
 
 def stated_number(item: Any, field: str) -> int | float | None:
-    """A finite numeric scalar (a score, a maxScore) of an anchored item; None otherwise."""
+    """A finite numeric scalar (a score, a maxScore) as ``stated_scalars`` lets it
+    through — anchored, and quoted for a verdict; None otherwise."""
     value = stated_scalars(item, (field,)).get(field)
     return value if _is_finite_number(value) else None
 
 
 def stated_rows(rows: Any, field: str) -> list[dict]:
-    """The anchored rows whose ``field`` is a stated number (a sub-score's score).
+    """The anchored, quoted rows whose ``field`` is a stated number (a sub-score's score).
 
     A "9/10" or a NaN fails the FE's number contract, which would remap the
     whole tab to the display_section fallback.
@@ -103,20 +124,29 @@ def _is_derived(key: str, block_key: str) -> bool:
     return block_key in DERIVED_BLOCKS or key in DERIVED_FIELDS
 
 
+def _is_verdict(key: str, block_key: str) -> bool:
+    return block_key in DERIVED_BLOCKS or key in QUOTED_FIELDS
+
+
 def stated_block_scalars(block: Any, block_key: str = "") -> dict[str, Any]:
-    """A block's non-empty scalars, minus the derived facts it does not anchor.
+    """A block's non-empty scalars, minus the derived facts it does not state.
 
     Prose, names and counts always pass; a score, rating, tier, status,
     duration or date (and every scalar of a ``rating`` block) passes only when
-    the block itself carries a timestamp. ``block_key`` is the key the block
-    sits under in its parent; ``""`` for a domain's top level.
+    the block itself carries a timestamp, and a verdict — a score, tier or
+    status, any scalar of a ``rating`` block — only when it also carries its
+    ``quote``. ``block_key`` is the key the block sits under in its parent;
+    ``""`` for a domain's top level.
     """
     if not isinstance(block, dict):
         return {}
     anchored = is_anchored(block)
+    quoted = anchored and has_quote(block)
     stated: dict[str, Any] = {}
     for key, value in block.items():
         if not _is_scalar(value):
+            continue
+        if _is_verdict(key, block_key) and not quoted:
             continue
         if anchored or not _is_derived(key, block_key):
             stated[key] = value

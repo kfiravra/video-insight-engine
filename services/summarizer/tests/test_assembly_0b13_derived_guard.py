@@ -92,14 +92,15 @@ class TestAnchor:
         assert stated_scalars({"rest": "10 s"}, ("rest",)) == {}
 
     def test_should_return_a_number_only_when_numeric_and_anchored(self):
-        assert stated_number({"score": 9, "timestamp": 5}, "score") == 9
-        assert stated_number({"score": "9", "timestamp": 5}, "score") is None
+        # A score is a verdict: anchored AND quoted (2.0 c, test_p2_0_quotes.py).
+        assert stated_number({"score": 9, "timestamp": 5, "quote": "a nine"}, "score") == 9
+        assert stated_number({"score": "9", "timestamp": 5, "quote": "a nine"}, "score") is None
         assert stated_number({"score": 9}, "score") is None
 
     def test_should_keep_only_anchored_rows_that_carry_the_field(self):
-        rows = [{"score": 9, "timestamp": 1}, {"score": 8}, {"timestamp": 2}]
+        rows = [{"score": 9, "timestamp": 1, "quote": "a nine"}, {"score": 8}, {"timestamp": 2}]
 
-        assert stated_rows(rows, "score") == [{"score": 9, "timestamp": 1}]
+        assert stated_rows(rows, "score") == [rows[0]]
 
     @pytest.mark.parametrize("score", ["9/10", "9", float("nan"), float("inf"), True])
     def test_should_drop_a_row_whose_field_is_not_a_finite_number(self, score: object):
@@ -139,7 +140,7 @@ class TestBlockScalars:
         assert stated_block_scalars(block) == {"product": "AirPods", "servings": 4}
 
     def test_should_pass_the_facts_of_an_anchored_block(self):
-        block = {"tier": "S", "timestamp": 12}
+        block = {"tier": "S", "timestamp": 12, "quote": "S tier, easily."}
 
         assert stated_block_scalars(block) == block
 
@@ -167,7 +168,7 @@ class TestOverviewScalars:
         )
 
     def test_should_spread_a_rating_stated_with_a_timestamp(self):
-        rating = {"score": 9, "maxScore": 10, "label": "Great", "timestamp": 600}
+        rating = {"score": 9, "maxScore": 10, "label": "Great", "timestamp": 600, "quote": "A 9."}
 
         data = _overview_data("review", {**_S07_REVIEW, "rating": rating})
 
@@ -197,7 +198,7 @@ class TestReviewScore:
         assert "maxScore" not in out["verdict"]
 
     def test_should_ship_a_score_stated_with_a_timestamp(self):
-        rating = {"score": 9, "maxScore": 10, "timestamp": 600}
+        rating = {"score": 9, "maxScore": 10, "timestamp": 600, "quote": "Nine out of ten."}
 
         out = assemble_comparison({}, ROWS, _review(rating), None)
 
@@ -212,13 +213,13 @@ class TestReviewScore:
 
     def test_should_keep_only_the_anchored_sub_scores(self):
         subs = [
-            {"category": "Sound", "score": 9, "timestamp": 120},
+            {"category": "Sound", "score": 9, "timestamp": 120, "quote": "Sound is a nine."},
             {"category": "ANC", "score": 8.5},
         ]
 
         out = assemble_comparison({}, ROWS, _review({"score": 9}, subs), None)
 
-        assert out["verdict"]["subScores"] == [{"category": "Sound", "score": 9, "timestamp": 120}]
+        assert out["verdict"]["subScores"] == [subs[0]]
 
     def test_should_not_ship_a_sub_score_that_is_not_a_number(self):
         subs = [{"category": "Sound", "score": "9/10", "timestamp": 120}]
@@ -257,7 +258,7 @@ class TestReviewScore:
 class TestTiers:
     def test_should_strip_a_tier_the_extraction_did_not_anchor(self):
         data = [
-            {"item": "Loki", "tier": "S", "reason": "needs four", "timestamp": 30},
+            {"item": "Loki", "tier": "S", "reason": "needs four", "timestamp": 30, "quote": "S."},
             {"item": "Nami", "tier": "A", "reason": "alt art"},
             {"item": "Zoro", "tier": "B", "reason": "filler"},
         ]
@@ -267,7 +268,9 @@ class TestTiers:
         assert [i.get("tier") for i in out["items"]] == ["S", None, None]
 
     def test_should_carry_the_anchor_on_a_ranked_item(self):
-        data = [{"item": f"Card {i}", "tier": "S", "timestamp": 10 * i} for i in range(3)]
+        data = [
+            {"item": f"Card {i}", "tier": "S", "timestamp": 10 * i, "quote": "S"} for i in range(3)
+        ]
 
         out = assemble_tier_list({}, data, {}, None)
 
@@ -287,7 +290,7 @@ class TestClaimStatus:
     def test_should_show_no_status_on_an_unanchored_claim(self):
         data = [
             {"claim": "4 failing states", "status": "verified"},
-            {"claim": "3 wars", "status": "disputed", "timestamp": 2},
+            {"claim": "3 wars", "status": "disputed", "timestamp": 2, "quote": "three wars"},
         ]
 
         out = assemble_claims_tracker({}, data, {}, None)
@@ -368,7 +371,7 @@ class TestSpotFacts:
         assert {"cost", "duration", "rating"} & spot.keys() == set()
 
     def test_should_keep_the_facts_of_an_anchored_spot(self):
-        spot = _normalize_to_spot({**_SPOT, "duration": "1 h", "timestamp": 312})
+        spot = _normalize_to_spot({**_SPOT, "duration": "1 h", "timestamp": 312, "quote": "A 4.5."})
 
         assert (spot["cost"], spot["duration"], spot["rating"]) == ("¥980", "1 h", 4.5)
 

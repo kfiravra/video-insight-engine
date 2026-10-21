@@ -184,8 +184,12 @@ class TestSiblingLanded:
     ) -> None:
         assert "steps" in _saved_ids(sibling_landed)
 
-    async def test_should_drop_no_tab(self, sibling_landed: SimpleNamespace) -> None:
-        assert _dropped(sibling_landed) == []
+    async def test_should_drop_only_the_contentless_tab(
+        self, sibling_landed: SimpleNamespace
+    ) -> None:
+        # The fake answers project.tools with label-less items: since output-quality
+        # 2.0 b a tab without content never ships (it shipped two blank rows before).
+        assert [tab_id for tab_id, _ in _dropped(sibling_landed)] == ["tools"]
 
     async def test_should_still_mark_the_run_degraded(
         self, sibling_landed: SimpleNamespace

@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from src.services.pipeline.quote_verify import mark_translated_quote
+
 from .normalizers import _normalize_to_spot
 from .text_utils import truncate_words
 
@@ -47,7 +49,7 @@ def _quote_spot(item: dict) -> dict | None:
     speaker = item.get("speaker")
     name = speaker.strip() if isinstance(speaker, str) and speaker.strip() else ""
     name = name or truncate_words(line, _QUOTE_NAME_MAX_CHARS)
-    return _normalize_to_spot(
+    spot = _normalize_to_spot(
         {
             "name": name,
             "description": item.get("context") or "",
@@ -55,6 +57,7 @@ def _quote_spot(item: dict) -> dict | None:
             "timestamp": item.get("timestamp"),
         }
     )
+    return mark_translated_quote(spot, item) if spot is not None else None
 
 
 def quote_spots(data: list) -> list[dict]:

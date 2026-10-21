@@ -141,12 +141,14 @@ class TestNewsAssembly:
                         "source": "Mayor",
                         "status": "disputed",
                         "sourceCitation": "Analysts say 700",
+                        "quote": "This creates twelve hundred jobs.",
                         "timestamp": 210,
                     },
                     {
                         "claim": "Fares rise 15%",
                         "source": "Authority",
                         "status": "verified",
+                        "quote": "Fares will go up fifteen percent.",
                         "timestamp": 540,
                     },
                     {"claim": "Structural deficit", "source": "Reporter", "status": "context"},
@@ -216,11 +218,23 @@ class TestGamingAssembly:
                     {"item": "Light shields", "category": "economy", "note": "Eco"},
                     {"item": "0.4 sens", "category": "settings", "note": "Mouse"},
                 ],
-                # 0b.13: a tier is a stated rank only on an anchored row.
+                # 0b.13 / 2.0 c: a tier is a stated rank only on an anchored, quoted row.
                 "rankings": [
-                    {"item": "Jett", "tier": "S", "reason": "Entry", "timestamp": 30},
-                    {"item": "Sage", "tier": "A", "reason": "Heal", "timestamp": 60},
-                    {"item": "Yoru", "tier": "C", "reason": "Niche", "timestamp": 90},
+                    {
+                        "item": "Jett",
+                        "tier": "S",
+                        "reason": "Entry",
+                        "quote": "S.",
+                        "timestamp": 30,
+                    },
+                    {"item": "Sage", "tier": "A", "reason": "Heal", "quote": "A.", "timestamp": 60},
+                    {
+                        "item": "Yoru",
+                        "tier": "C",
+                        "reason": "Niche",
+                        "quote": "C.",
+                        "timestamp": 90,
+                    },
                 ],
             },
         }

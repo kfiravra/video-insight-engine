@@ -64,10 +64,11 @@ Extract structured educational content.
       "source": "Who makes it, as the video attributes it — or null",
       "status": "stated | supported | contested",
       "sourceCitation": "The evidence the video gives for or against it (a study, a figure, a demo), or null",
+      "quote": "The words that make the claim, verbatim, at most 25 words — no words, status null",
       "timestamp": null
     }
   ],
-> CLAIMS: status says what the VIDEO does with the claim — stated (asserted, no evidence given), supported (the video gives evidence: name it in sourceCitation), contested (someone in the video disputes it or counter-evidence is given). Never judge truth yourself; never "verified" or "disputed". timestamp = the second the claim is made — a status without one is not shown. source = null when the video names no one.
+> CLAIMS: status says what the VIDEO does with the claim — stated (asserted, no evidence given), supported (the video gives evidence: name it in sourceCitation), contested (someone in the video disputes it or counter-evidence is given). Never judge truth yourself; never "verified" or "disputed". timestamp = the second the claim is made, quote = the words that make it — a status without both is not shown. source = null when the video names no one.
   "keyQuestion": "Central question this video answers",
   "summary": "2-3 sentence summary of the core teaching"
 }

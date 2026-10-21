@@ -38,11 +38,14 @@ function addBoundsIssue(ctx: z.RefinementCtx, path: (string | number)[], message
 // would render as a garbage chip (or seek before 0), so it is bounded here.
 // `quote` is the speaker's verbatim line (output-quality R2/R10); `speaker` the
 // holder of a podcast position and `category` a key idea's kind badge (1.1 / 1.3).
+// `quoteTranslated` marks a quote that is the English rendering of non-English
+// speech (2.0 d, D12): the card shows it as prose.
 const spotItemSchema = z
   .object({
     name: z.string(),
     timestamp: z.number().min(0).nullish(),
     quote: optionalString,
+    quoteTranslated: z.boolean().nullish(),
     speaker: optionalString,
     category: optionalString,
   })
@@ -67,11 +70,18 @@ const spotExplorerSchema = z
 const momentTrackSchema = z
   .object({
     // `seconds` drives seeking — an item without it can't render as a moment. The
-    // row renders `quote` (the speaker's line) and `question` (an interview's whole
-    // question) as text, so a non-string there would render garbage.
+    // row renders `quote` (the speaker's line; prose when `quoteTranslated`, 2.0 d)
+    // and `question` (an interview's whole question) as text, so a non-string there
+    // would render garbage.
     items: z.array(
       z
-        .object({ label: z.string(), seconds: z.number(), quote: optionalString, question: optionalString })
+        .object({
+          label: z.string(),
+          seconds: z.number(),
+          quote: optionalString,
+          quoteTranslated: z.boolean().nullish(),
+          question: optionalString,
+        })
         .passthrough(),
     ),
   })

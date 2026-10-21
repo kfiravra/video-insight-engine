@@ -23,6 +23,10 @@ from typing import TYPE_CHECKING, Any, AsyncGenerator
 
 from llm_common.context import llm_feature_var
 
+from src.services.pipeline.assembly.tab_references import (
+    planned_tab_sources,
+    settle_shipped_tabs,
+)
 from src.services.pipeline.pipeline_helpers import sse_event
 from src.services.pipeline.synthesis import (
     SYNTHESIS_KEYS,
@@ -141,6 +145,32 @@ def apply_synthesis_to_assembled(ctx: PipelineContext) -> None:
         if tab.get("component") == _OVERVIEW and isinstance(data, dict):
             _patch_overview(data, ctx.synthesis_dict)
             return
+
+
+# ─── The hero names only tabs that ship (output-quality 2.0 b) ───
+
+
+def settle_tab_references(ctx: PipelineContext, assembled: dict[str, Any]) -> str | None:
+    """After the late group: the final tab list and the hero agree.
+
+    The moment fill framed the Moments and synthesis wrote the hero after
+    assembly, so the filmstrip the framed Moments shadow drops here and every
+    hero / goal sentence naming a tab that does not ship goes
+    (``assembly.tab_references``); a planned tab dropped here joins
+    ``assembled["dropped"]``. Returns a corrected ``synthesis_complete`` (the
+    superset, which replaces the client's and the relay's copy) when the hero
+    no longer reads as the last one sent.
+    """
+    meta, tabs = ctx.assembled_meta, ctx.assembled_tabs
+    if meta is None or tabs is None:
+        return None
+    plan = [tab for tab in ctx.triage_dict.get("tabs") or [] if isinstance(tab, dict)]
+    drops = settle_shipped_tabs(meta, tabs, [*plan, *tabs], planned_tab_sources(plan))
+    assembled.setdefault("dropped", []).extend(drops)
+    hero = synthesis_event(meta)
+    if not ctx.synthesis_dict or hero == synthesis_event(ctx.synthesis_dict):
+        return None
+    return sse_event("synthesis_complete", hero)
 
 
 # ─── Phase ───

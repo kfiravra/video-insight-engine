@@ -10,6 +10,8 @@ export interface MomentItem {
   description?: string;
   /** The speaker's line that carries the moment, verbatim (output-quality R7/R10). */
   quote?: string;
+  /** The quote is the English rendering of non-English speech (2.0 d, D12): prose. */
+  quoteTranslated?: boolean;
   /** An interview exchange's whole question — sent only when it differs from the
    *  label (the label is then its first sentence). */
   question?: string;

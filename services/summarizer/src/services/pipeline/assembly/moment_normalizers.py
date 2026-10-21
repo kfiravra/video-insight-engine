@@ -11,6 +11,7 @@ import math
 import re
 from typing import Any
 
+from src.services.pipeline.quote_verify import QUOTE_TRANSLATED_KEY
 from src.utils.data_helpers import parse_timestamp_to_seconds
 
 from .text_utils import truncate_words
@@ -35,6 +36,8 @@ _MOMENT_CLOCK_KEY = "time"
 _MOMENT_END_KEYS = ("endSeconds", "end_seconds", "endTimestamp", "end_time", "endTime")
 _MOMENT_PASSTHROUGH_KEYS = (
     "quote",
+    # A translated quote (2.0 d, D12) renders as prose: its flag rides with it.
+    QUOTE_TRANSLATED_KEY,
     "question",
     "mood",
     "emoji",

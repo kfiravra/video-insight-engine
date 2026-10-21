@@ -20,6 +20,7 @@ from .moment_normalizers import _moment_text as _moment_text
 from .moment_normalizers import _normalize_moment_item as _normalize_moment_item
 from .moment_normalizers import _seconds_to_time_str as _seconds_to_time_str
 from .moment_normalizers import normalize_moment_items as normalize_moment_items
+from .quiz_stamps import reconcile_quiz_time
 
 # Category-like front values that indicate flash_deck front corruption
 _CATEGORY_FRONTS = frozenset(
@@ -191,8 +192,11 @@ def _normalize_verdict(verdict: dict, rating: Any) -> dict[str, Any]:
     anchor = anchor_seconds(verdict)
     if anchor is not None:
         props["timestamp"] = anchor
-        if verdict.get("badge") in VERDICT_BADGES:
-            props["badge"] = verdict["badge"]
+        # A verdict is a quoted field (D13, output-quality 2.0 c): the badge also
+        # needs the sentence that states it.
+        badge = stated_scalars(verdict, ("badge",)).get("badge")
+        if badge in VERDICT_BADGES:
+            props["badge"] = badge
     sub_scores = stated_rows(verdict.get("subScores"), "score")
     if sub_scores:
         props["subScores"] = sub_scores
@@ -380,11 +384,14 @@ def _normalize_exercise(item: Any) -> dict | None:
     return result
 
 
-def _normalize_quiz_question(item: Any) -> dict | None:
+def _normalize_quiz_question(item: Any, duration_s: float | None = None) -> dict | None:
     """Normalize quiz question to {question, options[], correctIndex, explanation, timestamp?}.
 
     ``timestamp`` is the second the transcript answers the question (output-quality
-    1.13 / 1.5): the arena's seek chip, shipped whenever the item states one.
+    1.13 / 1.5): the arena's seek chip, shipped whenever the item states one — in
+    seconds, checked against the explanation's own clock, and no bare second count
+    left in the explanation (2.0 a, ``quiz_stamps``; ``duration_s`` bounds both when
+    known — assembly reconciles enrichment.quiz with it before the tabs are built).
     """
     if not isinstance(item, dict):
         return None
@@ -409,13 +416,15 @@ def _normalize_quiz_question(item: Any) -> dict | None:
     except (ValueError, TypeError):
         correct_index = 0
     correct_index = max(0, min(correct_index, len(options) - 1))
+    timestamp, explanation = reconcile_quiz_time(
+        anchor_seconds(item), str(item.get("explanation") or ""), duration_s
+    )
     normalized: dict[str, Any] = {
         "question": str(question),
         "options": options,
         "correctIndex": correct_index,
-        "explanation": str(item.get("explanation") or ""),
+        "explanation": explanation,
     }
-    timestamp = anchor_seconds(item)
     if timestamp is not None:
         normalized["timestamp"] = timestamp
     return normalized

@@ -45,12 +45,13 @@ THINKING GUIDE:
       "item": "Thing being ranked (character, weapon, map)",
       "tier": "S | A | B | C | D",
       "reason": "Why it sits in that tier, short",
+      "quote": "The creator's words that state the rank, verbatim, at most 25 words — no words, tier null",
       "emoji": "relevant emoji",
       "timestamp": null
     }
   ]
-> UI: rankings → TierList. tier is the creator's SUGGESTED placement (the viewer can override + reorder). Use only S/A/B/C/D. When the creator gives no tier, omit it — the viewer places it. timestamp = the second the creator places the item; a tier without one is not shown.
-> UNBOXING / box-break videos: rankings = the PULLED items — card/product name as item, rarity or market-value bracket as tier (chase/alt-art = S, SR/strong = A, playable = B, filler = C/D), and WHY it matters (rarity, price, playability, the creator's reaction) as reason. highlights = the pull MOMENTS with timestamps so viewers can jump to each reveal.
+> UI: rankings → TierList. tier is the creator's SUGGESTED placement (the viewer can override + reorder). Use only S/A/B/C/D. When the creator gives no tier, omit it — the viewer places it. timestamp = the second the creator places the item, quote = the words that place it — a tier without both is not shown.
+> UNBOXING / box-break videos: rankings = the PULLED items — card/product name as item, and WHY it matters (rarity, price, playability, the creator's reaction) as reason; a tier only where the creator ranks the pull in words (quote them) — a rarity or price bracket is a reason, never a tier. highlights = the pull MOMENTS with timestamps so viewers can jump to each reveal.
 }
 
 // Example for a shooter loadout / tier video:
@@ -73,15 +74,15 @@ THINKING GUIDE:
     {"instruction": "Hold post-plant crossfire", "timestamp": 280}
   ],
   "rankings": [
-    {"item": "Jett", "tier": "S", "reason": "Top entry duelist, high skill ceiling", "emoji": "🌪️", "timestamp": 130},
-    {"item": "Sage", "tier": "A", "reason": "Wall + heal carry low ranks", "emoji": "🧊", "timestamp": 205},
-    {"item": "Yoru", "tier": "C", "reason": "Hard to use, niche value", "emoji": "👤", "timestamp": 340}
+    {"item": "Jett", "tier": "S", "reason": "Top entry duelist, high skill ceiling", "quote": "Jett is S tier, no question — the best entry duelist in the game.", "emoji": "🌪️", "timestamp": 130},
+    {"item": "Sage", "tier": "A", "reason": "Wall + heal carry low ranks", "quote": "Sage goes in A — her wall and heal still carry low ranks.", "emoji": "🧊", "timestamp": 205},
+    {"item": "Yoru", "tier": "C", "reason": "Hard to use, niche value", "quote": "Yoru I'm putting in C, he's just too hard to use.", "emoji": "👤", "timestamp": 340}
   ]
 }
 
 RULES:
 - A ranking's tier MUST be one of: S, A, B, C, D (uppercase). Omit when the
-  creator does not state one — never invent a tier.
+  creator does not state one — never invent a tier; quote the words that state it.
 - Preserve exact stats, sensitivities, and version numbers; do not round.
 - highlights timestamps must be ascending, in seconds.
 - One item per ranking row — do not collapse two characters into one row.
