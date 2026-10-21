@@ -29,7 +29,7 @@ from ..llm_messages import CacheTTL, UserContent, text_block
 from ..llm_model_rules import Effort
 from .assembly import infer_component
 from .plan_prompt import PROMPT_PATH, PlanPrompt, PlanVideo, goal_rule_violation, render_plan_parts
-from .plan_reconcile import reconcile_plan_tabs
+from .plan_reconcile import activate_argument_domains, reconcile_plan_tabs
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
@@ -270,6 +270,7 @@ def _normalize_plan_data(data: dict, content_format: str | None) -> None:
         content_tags = [content_tags]
     if not content_tags:
         content_tags = ["learning"]
+    content_tags = activate_argument_domains(validated_tabs, content_tags)
     data["contentTags"] = content_tags
 
     primary_tag = data.get("primaryTag", content_tags[0])

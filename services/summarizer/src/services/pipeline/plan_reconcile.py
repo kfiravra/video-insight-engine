@@ -39,6 +39,38 @@ INACTIVE_DOMAIN = "inactive_domain"
 # fallback chain (memory outline → YouTube chapters → description timestamps).
 NEVER_DROPPED = frozenset({"moment_track"})
 
+# D10: learning.keyIdeas is the argument tab of a talk, a lecture, a podcast or an
+# interview, whatever the primary domain. A plan that names it has asked for that
+# extraction, so its domain is switched on rather than the tab re-pointed (S13,
+# 2026-10-21: tagged podcast + tech, its Positions tab became the guest list).
+ARGUMENT_PATHS = frozenset({"learning.keyIdeas"})
+MAX_CONTENT_TAGS = 3
+
+
+def activate_argument_domains(tabs: Sequence[Mapping], content_tags: Sequence[str]) -> list[str]:
+    """``content_tags`` plus the domain of every argument path a tab reads.
+
+    When that pushes the list past :data:`MAX_CONTENT_TAGS`, tags no tab reads
+    (never the primary, the first) give way from the end.
+    """
+    tags = list(content_tags)
+    for tab in tabs:
+        spec = data_source(str(tab.get("dataSource") or ""))
+        if spec is not None and tab.get("dataSource") in ARGUMENT_PATHS:
+            if spec["domain"] not in tags:
+                tags.append(spec["domain"])
+    return _trim_unused_tags(tags, tabs)
+
+
+def _trim_unused_tags(tags: list[str], tabs: Sequence[Mapping]) -> list[str]:
+    read = {str(t.get("dataSource") or "").split(".", 1)[0] for t in tabs}
+    for tag in reversed(tags[1:]):
+        if len(tags) <= MAX_CONTENT_TAGS:
+            break
+        if tag not in read:
+            tags.remove(tag)
+    return tags
+
 
 def _inactive(spec: DataSourceSpec | None, active: set[str]) -> bool:
     """True for a content/modifier path whose domain the plan did not tag.
