@@ -181,7 +181,9 @@ const codePlaygroundSchema = z
   .passthrough();
 
 // `explanation` is parsed for `(m:ss)` seek chips and `timestamp` (seconds)
-// feeds the evidence slot, so both are bounded (output-quality R12).
+// feeds the evidence slot, so both are bounded (output-quality R12). `quote` is the
+// evidence line rendered under the explanation (quiz v2, 2.1b; prose when
+// `quoteTranslated`, 2.0 d), so a non-string there would render garbage.
 const quizQuestionSchema = z
   .object({
     question: z.string(),
@@ -189,6 +191,8 @@ const quizQuestionSchema = z
     correctIndex: nonNegativeInt,
     explanation: optionalString,
     timestamp: optionalNumber,
+    quote: optionalString,
+    quoteTranslated: z.boolean().nullish(),
   })
   .passthrough()
   .superRefine((q, ctx) => {

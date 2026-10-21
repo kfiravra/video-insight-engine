@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.config import settings
 from src.models.pipeline_types import EnrichmentData, PlanResult, QuizQuestion
 from src.services.pipeline import pipeline_timing
 from src.services.pipeline.phases import enrichment as enrichment_phase
@@ -34,6 +35,13 @@ _QUESTION = QuizQuestion.model_validate(
         "explanation": "Because b.",
     }
 )
+
+
+@pytest.fixture(autouse=True)
+def _flag_off_quiz(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests pin the flag-off quiz call (``enrich_quiz``); quiz v2 rides the same
+    phase and is covered by ``test_p2_1b_quiz_v2`` (output-quality 2.1b)."""
+    monkeypatch.setattr(settings, "QUIZ_V2_ENABLED", False)
 
 
 def _ctx(primary: str = "tech", extraction: dict | None = None) -> SimpleNamespace:

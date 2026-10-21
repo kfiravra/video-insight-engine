@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 from src.models.domain_types import VERDICT_BADGES
+from src.services.pipeline.quote_verify import mark_translated_quote
 
 from .derived_guard import anchor_seconds, stated_number, stated_rows, stated_scalars
 from .moment_normalizers import _chapter_end as _chapter_end
@@ -385,13 +386,16 @@ def _normalize_exercise(item: Any) -> dict | None:
 
 
 def _normalize_quiz_question(item: Any, duration_s: float | None = None) -> dict | None:
-    """Normalize quiz question to {question, options[], correctIndex, explanation, timestamp?}.
+    """Normalize quiz question to {question, options[], correctIndex, explanation, timestamp?,
+    quote?, quoteTranslated?}.
 
     ``timestamp`` is the second the transcript answers the question (output-quality
     1.13 / 1.5): the arena's seek chip, shipped whenever the item states one — in
     seconds, checked against the explanation's own clock, and no bare second count
     left in the explanation (2.0 a, ``quiz_stamps``; ``duration_s`` bounds both when
     known — assembly reconciles enrichment.quiz with it before the tabs are built).
+    ``quote`` is quiz v2's evidence line (2.1b), shipped when the quote check left it;
+    ``quoteTranslated`` marks an English rendering of non-English speech (prose, D12).
     """
     if not isinstance(item, dict):
         return None
@@ -427,6 +431,10 @@ def _normalize_quiz_question(item: Any, duration_s: float | None = None) -> dict
     }
     if timestamp is not None:
         normalized["timestamp"] = timestamp
+    quote = item.get("quote")
+    if isinstance(quote, str) and quote.strip():
+        normalized["quote"] = quote.strip()
+        mark_translated_quote(normalized, item)
     return normalized
 
 

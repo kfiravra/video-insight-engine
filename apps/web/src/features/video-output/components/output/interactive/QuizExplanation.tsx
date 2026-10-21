@@ -12,9 +12,23 @@ interface QuizExplanationProps {
   /** Append `timestamp` as a trailing chip when the text cites no time (default).
    *  Off where the caller offers its own control for it (Study's "Watch this part"). */
   stampChip?: boolean;
+  /** The speaker's words that settle the answer (quiz v2, output-quality 2.1b): one
+   *  quiet line under the explanation, carrying the timestamp's chip. */
+  quote?: string | null;
+  /** The quote is the English rendering of non-English speech (2.0 d, D12): prose,
+   *  never quote styling. */
+  quoteTranslated?: boolean;
   onSeek?: (seconds: number) => void;
   /** Paragraph classes on top of the muted default (Study mode's info tint). */
   className?: string;
+}
+
+interface QuizEvidenceProps {
+  quote: string;
+  translated?: boolean;
+  /** The chip's time; none when the explanation already cites one. */
+  seconds: number | null;
+  onSeek?: (seconds: number) => void;
 }
 
 const CHIP_CLASS = 'ms-1 px-1.5 align-baseline';
@@ -31,11 +45,45 @@ function seekTarget(cited: number, checked: number | null | undefined): number {
   return checked;
 }
 
-/** Explanation paragraph with every `(m:ss)` reference rendered as a seek chip. */
-export function QuizExplanation({ text, timestamp, stampChip = true, onSeek, className }: QuizExplanationProps) {
+/** The answer's evidence: the speaker's line in the quote style the spot cards and the
+ *  moments use; a translated line reads as prose (2.0 d, D12). */
+function QuizEvidence({ quote, translated, seconds, onSeek }: QuizEvidenceProps) {
+  const chip = seconds != null && (
+    <SeekChip seconds={seconds} onSeek={onSeek} className={cn(CHIP_CLASS, 'not-italic')} />
+  );
+  if (translated) {
+    return (
+      <p className="text-xs leading-relaxed text-muted-foreground">
+        {quote}
+        {chip}
+      </p>
+    );
+  }
+  return (
+    <blockquote className="border-s-2 border-[var(--vie-accent)]/40 ps-2.5 text-xs italic leading-relaxed text-foreground/85">
+      {quote}
+      {chip}
+    </blockquote>
+  );
+}
+
+/** Explanation paragraph with every `(m:ss)` reference rendered as a seek chip, and the
+ *  evidence quote under it when the question carries one. */
+export function QuizExplanation({
+  text,
+  timestamp,
+  stampChip = true,
+  quote,
+  quoteTranslated,
+  onSeek,
+  className,
+}: QuizExplanationProps) {
   const segments = splitTimeRefs(text);
   const citesTime = segments.some((segment) => segment.kind === 'seek');
-  return (
+  const evidence = quote?.trim();
+  // The timestamp's chip shows once: on the evidence line when there is one.
+  const stamp = stampChip && timestamp != null && !citesTime ? timestamp : null;
+  const paragraph = (
     <p className={cn('text-sm leading-relaxed text-muted-foreground', className)}>
       {segments.map((segment, i) =>
         segment.kind === 'text' ? (
@@ -50,9 +98,14 @@ export function QuizExplanation({ text, timestamp, stampChip = true, onSeek, cla
           />
         ),
       )}
-      {stampChip && timestamp != null && !citesTime && (
-        <SeekChip seconds={timestamp} onSeek={onSeek} className={CHIP_CLASS} />
-      )}
+      {stamp != null && !evidence && <SeekChip seconds={stamp} onSeek={onSeek} className={CHIP_CLASS} />}
     </p>
+  );
+  if (!evidence) return paragraph;
+  return (
+    <div className="space-y-1.5">
+      {paragraph}
+      <QuizEvidence quote={evidence} translated={quoteTranslated} seconds={stamp} onSeek={onSeek} />
+    </div>
   );
 }

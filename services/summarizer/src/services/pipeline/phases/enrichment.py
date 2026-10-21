@@ -5,6 +5,11 @@ extraction. The split path (3.6) starts it earlier as ``ctx.quiz_task``, over
 the extraction merged once the groups holding its domains' fields landed
 (``start_quiz_task``, B.6); the late group then awaits that task instead.
 The started call is timed as ``quiz_call`` (``enrichment`` is then the wait).
+
+Which call (output-quality 2.1b): ``QUIZ_V2_ENABLED`` (default) writes quiz v2 on
+Haiku 5.5 from the transcript + the key ideas, every question's evidence quote
+checked against the transcript (``pipeline/quiz_v2``); false keeps ``enrich_quiz``.
+Both bill the ``summarize:enrichment`` ledger feature; the span tells them apart.
 """
 
 from __future__ import annotations
@@ -16,6 +21,7 @@ from typing import TYPE_CHECKING, Any, AsyncGenerator
 
 from llm_common.context import llm_feature_var
 
+from src.config import settings
 from src.services.pipeline.enrichment import (
     _has_meaningful_data,
     enrich_quiz,
@@ -24,9 +30,11 @@ from src.services.pipeline.enrichment import (
 )
 from src.services.pipeline.pipeline_helpers import sse_event
 from src.services.pipeline.pipeline_timing import timed_step
+from src.services.pipeline.quiz_v2 import QuizV2Request, enrich_quiz_v2
+from src.services.pipeline.quote_verify import run_quote_index
 
 if TYPE_CHECKING:
-    from src.models.pipeline_types import EnrichmentData
+    from src.models.pipeline_types import EnrichmentData, PlanResult
     from src.services.pipeline.context import PipelineContext
 
 logger = logging.getLogger(__name__)
@@ -44,6 +52,46 @@ def _skip_reason(ctx: PipelineContext, extraction: Mapping[str, Any]) -> str | N
     return None
 
 
+def _duration_s(ctx: PipelineContext) -> float | None:
+    return ctx.video_data.duration if ctx.video_data else None
+
+
+def _hero(ctx: PipelineContext) -> str:
+    # The memory hero is what the page shows, so no question may be answerable from it.
+    return render_hero(ctx.video_data.title if ctx.video_data else "", ctx.memory)
+
+
+async def _quiz_v1(
+    ctx: PipelineContext, plan: PlanResult, extraction: Mapping[str, Any]
+) -> EnrichmentData | None:
+    """The flag-off quiz: ``enrich_quiz`` over the extraction, the memory and the tabs."""
+    return await enrich_quiz(
+        ctx.llm_service,
+        primary_tag=plan.primary_tag,
+        extraction_data=extraction,
+        video_memory=ctx.video_memory,
+        tabs=plan.tabs,
+        # Task 1.13: the length sizes the quiz (3 / 5 / 8) and bounds its stamps.
+        duration_s=_duration_s(ctx),
+        hero=_hero(ctx),
+    )
+
+
+async def _quiz_v2(
+    ctx: PipelineContext, plan: PlanResult, extraction: Mapping[str, Any]
+) -> EnrichmentData | None:
+    """Quiz v2: the marked transcript + the key ideas in, every quote checked on the run's index."""
+    request = QuizV2Request(
+        primary_tag=plan.primary_tag,
+        title=ctx.video_data.title if ctx.video_data else "",
+        duration_s=_duration_s(ctx),
+        transcript=ctx.prompt_transcript,
+        extraction=extraction,
+        hero=_hero(ctx),
+    )
+    return await enrich_quiz_v2(ctx.llm_service, request, run_quote_index(ctx))
+
+
 async def _quiz(ctx: PipelineContext, extraction: Mapping[str, Any]) -> EnrichmentData | None:
     """The quiz over ``extraction`` (None = skipped / failed), logged as ``pipeline.enrichment``."""
     llm_feature_var.set("summarize:enrichment")
@@ -56,17 +104,10 @@ async def _quiz(ctx: PipelineContext, extraction: Mapping[str, Any]) -> Enrichme
         )
         return None
 
-    result = await enrich_quiz(
-        ctx.llm_service,
-        primary_tag=plan.primary_tag,
-        extraction_data=extraction,
-        video_memory=ctx.video_memory,
-        tabs=plan.tabs,
-        # Task 1.13: the length sizes the quiz (3 / 5 / 8) and bounds its stamps; the
-        # memory hero is what the page shows, so no question may be answerable from it.
-        duration_s=ctx.video_data.duration if ctx.video_data else None,
-        hero=render_hero(ctx.video_data.title if ctx.video_data else "", ctx.memory),
-    )
+    if settings.QUIZ_V2_ENABLED:
+        result = await _quiz_v2(ctx, plan, extraction)
+    else:
+        result = await _quiz_v1(ctx, plan, extraction)
     logger.info(
         "pipeline.enrichment",
         extra={

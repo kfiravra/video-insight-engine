@@ -42,6 +42,11 @@ export interface QuizArenaQuestion {
   /** Where the transcript gives the answer, in seconds (output-quality 1.13):
    *  the frame evidence's seek and, once answered, the explanation's chip. */
   timestamp?: number;
+  /** The speaker's words that settle the answer (quiz v2, output-quality 2.1b):
+   *  shown under the explanation once answered. */
+  quote?: string | null;
+  /** The quote is the English rendering of non-English speech (2.0 d, D12): prose. */
+  quoteTranslated?: boolean;
 }
 
 interface QuizArenaProps {
@@ -387,6 +392,8 @@ export const QuizArena = memo(function QuizArena({
             <QuizExplanation
               text={question.explanation}
               timestamp={question.timestamp}
+              quote={question.quote}
+              quoteTranslated={question.quoteTranslated}
               onSeek={onSeek}
             />
           </div>

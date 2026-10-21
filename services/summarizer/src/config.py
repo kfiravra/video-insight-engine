@@ -410,6 +410,8 @@ class Settings(BaseSettings):
         "enrichment": "LLM_ENRICHMENT_MODEL",
         "extraction": "LLM_EXTRACTION_MODEL",
         "memory": "LLM_MEMORY_MODEL",
+        # Quiz v2 (output-quality 2.1b): Haiku 5.5, no model key of its own.
+        "quiz_v2": "LLM_MEMORY_MODEL",
         "faithfulness": "LLM_JUDGE_MODEL",
         # The stage names the translation calls send (pipeline/translation_flat.py:
         # the output's source-language pass, and translate_text for the title).
@@ -421,7 +423,7 @@ class Settings(BaseSettings):
     }
 
     # A stage whose blank setting follows another stage's model.
-    _STAGE_FALLBACK: ClassVar[dict[str, str]] = {"memory": "extraction"}
+    _STAGE_FALLBACK: ClassVar[dict[str, str]] = {"memory": "extraction", "quiz_v2": "memory"}
 
     def get_stage_model(self, stage_name: str) -> str | None:
         """Return the per-stage model override or None to use fast/primary."""

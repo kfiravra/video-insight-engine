@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from src.config import settings
 from src.services.pipeline.context import PipelineContext
 from src.services.pipeline.phases import enrichment as enrichment_phase
 from src.services.pipeline.phases import split_extraction
@@ -45,6 +46,13 @@ _STRIP_ONLY_TABS = [
      "dataSource": "learning.concepts", "brief": {"expect": 3}},
     {"id": "code", "label": "Code", "component": "code_playground", "dataSource": "tech.snippets"},
 ]  # fmt: skip
+
+
+@pytest.fixture(autouse=True)
+def _flag_off_quiz(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests time the flag-off quiz call (``enrich_quiz``); quiz v2 rides the same
+    start and cancel and is covered by ``test_p2_1b_quiz_v2`` (output-quality 2.1b)."""
+    monkeypatch.setattr(settings, "QUIZ_V2_ENABLED", False)
 
 
 @pytest.fixture

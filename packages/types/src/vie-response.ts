@@ -329,6 +329,11 @@ export interface QuizArenaQuestion extends FrameEvidence {
   kind?: 'standard' | 'scenario';
   thumbnailUrl?: string;
   timestamp?: number;
+  /** The speaker's words that settle the answer, verbatim from the transcript (quiz v2,
+   *  output-quality 2.1b) — shown under the explanation once the question is answered. */
+  quote?: string | null;
+  /** The quote is the English rendering of non-English speech (2.0 d, D12): prose. */
+  quoteTranslated?: boolean;
 }
 
 export interface QuizArenaProps {
@@ -538,6 +543,9 @@ export interface QuizQuestion {
   /** Where the transcript gives the answer, in seconds (output-quality 1.13);
    *  range-checked by the enrichment — absent on older rows. */
   timestamp?: number | null;
+  /** Quiz v2's evidence (output-quality 2.1b): ≤ 25 words the speaker says, found in
+   *  the transcript (the stamp is set from where) — absent on older rows. */
+  quote?: string | null;
 }
 
 /** Alias for QuizQuestion for domain usage. */

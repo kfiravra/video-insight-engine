@@ -88,6 +88,10 @@ class QuizQuestion(BaseModel):
     # (output-quality R12 / 1.13). Optional: stored rows predate it and a
     # model may omit it; the enrichment drops a stamp past the video's end.
     timestamp: int | None = None
+    # The speaker's words that settle the answer, ≤ 25 words from the transcript —
+    # quiz v2's evidence, checked by the quote check, which also sets the stamp
+    # (output-quality 2.1b). Optional: stored rows and the flag-off quiz carry none.
+    quote: str | None = None
 
     model_config = {"populate_by_name": True}
 
@@ -95,6 +99,12 @@ class QuizQuestion(BaseModel):
     @classmethod
     def coerce_timestamp(cls, v: object) -> int | None:
         return quiz_timestamp_seconds(v)
+
+    @field_validator("quote", mode="before")
+    @classmethod
+    def blank_quote_is_none(cls, v: object) -> object:
+        # A blank quote is no evidence: None, so the check drops the question alone.
+        return (v.strip() or None) if isinstance(v, str) else v
 
     @model_validator(mode="after")
     def _answer_is_one_distinct_option(self) -> QuizQuestion:
