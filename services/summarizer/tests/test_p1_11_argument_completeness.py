@@ -49,6 +49,11 @@ _ARGUMENT_RULE = (
     "carries it — never merge two claims into one, never skip the last 10 minutes (the close "
     "is where a talk lands its ask and a conversation its verdict)."
 )
+_NUMBERS_RULE = (
+    "Never invent a number: a duration, rest time, quantity, count or score the speaker does "
+    "not state stays null — complete means every item the transcript supports, never a figure "
+    "it does not."
+)
 _TALK_OPEN = '<argument_example field="learning.keyIdeas" primary="learning">'
 _PODCAST_OPEN = '<argument_example field="learning.keyIdeas" primary="podcast">'
 _S01_QUOTE = (
@@ -164,7 +169,13 @@ class TestBlockOneRule:
     def test_should_end_the_rules_with_the_argument_rule_when_the_run_is_split(self) -> None:
         system = with_group_rules(_prompt()).system
 
-        assert f"\n\n{_MEASURED_RULE}\n{_ARGUMENT_RULE}\n</quality_rules>" in system
+        assert (
+            f"\n\n{_MEASURED_RULE}\n{_ARGUMENT_RULE}\n{_NUMBERS_RULE}\n</quality_rules>" in system
+        )
+
+    def test_should_repeat_never_invent_numbers_in_the_completeness_rule(self) -> None:
+        # Kfir 2026-10-21 (D13): S06's extraction wrote "rest 10 minutes" for "give it a sec".
+        assert _NUMBERS_RULE in completeness_rule(_rules())
 
     def test_should_keep_the_argument_examples_out_of_block_1(self) -> None:
         assert "<argument_example" not in with_group_rules(_prompt()).system

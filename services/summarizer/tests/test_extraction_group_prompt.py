@@ -109,6 +109,12 @@ _ARGUMENTS = (
     "carries it — never merge two claims into one, never skip the last 10 minutes (the close "
     "is where a talk lands its ask and a conversation its verdict)."
 )
+# Kfir 2026-10-21 (D13, S06 iteration): the completeness rule repeats "never invent numbers".
+_NUMBERS = (
+    "Never invent a number: a duration, rest time, quantity, count or score the speaker does "
+    "not state stays null — complete means every item the transcript supports, never a figure "
+    "it does not."
+)
 
 
 def _sha(text: str) -> str:
@@ -208,7 +214,10 @@ class TestGroupRules:
     def test_should_end_the_rules_with_the_completeness_rule(self) -> None:
         system = with_group_rules(_prompt()).system
 
-        assert f"quality rules text\n\n{_COMPLETENESS}\n{_ARGUMENTS}\n</quality_rules>" in system
+        assert (
+            f"quality rules text\n\n{_COMPLETENESS}\n{_ARGUMENTS}\n{_NUMBERS}\n</quality_rules>"
+            in system
+        )
 
     def test_should_change_nothing_but_the_rules_and_the_tails_examples(self) -> None:
         prompt = _prompt()
