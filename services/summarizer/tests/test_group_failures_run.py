@@ -160,10 +160,22 @@ class TestOneGroupFailsTwice:
 # ─── Fallbacks and side reads ───
 
 
+# A tab plans on project, so project.steps is requested as food.steps' stand-in —
+# since output-quality 1.7 a sibling is asked for only inside a planned domain.
+_FOOD_AND_PROJECT_TABS = [
+    *_FOOD_TABS,
+    {"id": "tools", "label": "Tools", "component": "checklist", "dataSource": "project.tools"},
+]
+
+
 @pytest.fixture
 async def sibling_landed() -> SimpleNamespace:
     """food.steps fails; its registry sibling project.steps lands in the project group."""
-    return await _food_run(Model(garbled=frozenset({"food.steps"})), tags=("food", "project"))
+    return await _food_run(
+        Model(garbled=frozenset({"food.steps"})),
+        tags=("food", "project"),
+        tabs=_FOOD_AND_PROJECT_TABS,
+    )
 
 
 class TestSiblingLanded:
@@ -348,4 +360,7 @@ class TestPlanFailure:
     async def test_should_take_no_reconcile_action_on_the_fallback_plan(self, tag: str) -> None:
         ctx, _ = await _after_failed_plan(tag)
 
-        assert ctx.plan_result is not None and ctx.plan_result.reconcile == []
+        # Only the R6 fold (output-quality 1.6) may touch it: a default info_grid joins
+        # the default tab whose question it answers.
+        assert ctx.plan_result is not None
+        assert [r for r in ctx.plan_result.reconcile if r["action"] != "folded"] == []

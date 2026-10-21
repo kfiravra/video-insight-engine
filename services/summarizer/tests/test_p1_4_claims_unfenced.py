@@ -13,7 +13,6 @@ backfill never borrows a source another tab ships (R5).
 from __future__ import annotations
 
 import pytest
-from pydantic import ValidationError
 
 from src.models.domain_types import (
     GamingRanking,
@@ -69,12 +68,11 @@ class TestClaimStatusVocabulary:
     def test_should_name_exactly_three_statuses(self) -> None:
         assert CLAIM_STATUSES == ("stated", "supported", "contested")
 
-    @pytest.mark.parametrize("status", ["verified", "disputed", "context", "true"])
-    def test_should_fail_validation_when_the_status_is_outside_the_three_words(
-        self, status: str
-    ) -> None:
-        with pytest.raises(ValidationError):
-            Claim.model_validate({"claim": "c", "status": status})
+    @pytest.mark.parametrize(
+        "status", ["verified", "disputed", "context", "true", "stated | supported | contested"]
+    )
+    def test_should_refuse_a_status_outside_the_three_words(self, status: str) -> None:
+        assert Claim.model_validate({"claim": "c", "status": status}).status is None
 
     def test_should_accept_a_status_in_any_case(self) -> None:
         assert Claim.model_validate({"claim": "c", "status": " Supported "}).status == "supported"
@@ -82,10 +80,15 @@ class TestClaimStatusVocabulary:
     def test_should_keep_the_claim_and_drop_the_status_when_an_item_is_validated(self) -> None:
         raw = {"learning": {"claims": [{"claim": "c", "status": "verified", "timestamp": 5}]}}
 
-        data, report = validate_domain_output_with_drops(["learning"], [], raw)
+        data, _ = validate_domain_output_with_drops(["learning"], [], raw)
 
-        assert data["learning"]["claims"][0]["status"] is None
-        assert report.get("defaulted") == 1
+        assert (
+            data["learning"]["claims"][0]["claim"],
+            data["learning"]["claims"][0]["status"],
+        ) == (
+            "c",
+            None,
+        )
 
 
 # ─── Registry + schemas ───

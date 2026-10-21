@@ -1,11 +1,12 @@
 """The answer tab's numbers strip — stat_banner (C8, output-quality 0b.11).
 
-A key point (or, on a talk, a key idea — its claim read as the title) whose
-title holds a figure and whose item carries a timestamp becomes a tile:
-``{label, value, emoji?, meaning, timestamp}``. ``value`` is the figure exactly
-as the title states it, ``label`` a short phrase from the title
-around it, ``meaning`` the whole title. ``attachments`` decides which tab
-carries the strip and re-exports these names.
+A key point whose title holds a figure and whose item carries a timestamp
+becomes a tile: ``{label, value, emoji?, meaning, timestamp}``. ``value`` is the
+figure exactly as the title states it, ``label`` a short phrase from the title
+around it, ``meaning`` the whole title. A talk's key ideas are never mined (Kfir
+2026-10-21): only an idea the model labelled ``kind: number`` with the
+``figure`` ``{value, label}`` it gave becomes a tile, its claim the meaning.
+``attachments`` decides which tab carries the strip and re-exports these names.
 """
 
 from __future__ import annotations
@@ -106,30 +107,29 @@ def _stat_label(title: str, figure: re.Match[str]) -> str:
     return truncate_words(label or title, _STAT_LABEL_MAX_CHARS)
 
 
-def _key_idea_points(ideas: list) -> list[dict]:
-    """Key ideas (D10) in the key-point shape a tile reads: the claim is the title."""
-    return [
-        {"title": idea.get("claim"), "timestamp": idea.get("timestamp"), "emoji": idea.get("emoji")}
-        for idea in ideas
-        if isinstance(idea, dict)
-    ]
-
-
-def _key_points(extraction: dict | None, domain: str) -> list[dict]:
-    """The first ``keyPoints`` list in the extraction, primary domain first — else the
-    first ``keyIdeas`` list (a talk ships key ideas, not key points), as key points."""
+def _domain_blocks(extraction: dict | None, domain: str) -> list[dict]:
+    """The extraction's domain blocks, primary first."""
     if not isinstance(extraction, dict):
         return []
     ordered = [extraction.get(domain), *(v for k, v in extraction.items() if k != domain)]
-    blocks = [d for d in ordered if isinstance(d, dict)]
-    for domain_data in blocks:
+    return [d for d in ordered if isinstance(d, dict)]
+
+
+def _key_points(extraction: dict | None, domain: str) -> list[dict]:
+    """The first ``keyPoints`` list in the extraction, primary domain first."""
+    for domain_data in _domain_blocks(extraction, domain):
         points = domain_data.get("keyPoints")
         if isinstance(points, list) and points:
             return [kp for kp in points if isinstance(kp, dict)]
-    for domain_data in blocks:
+    return []
+
+
+def _key_ideas(extraction: dict | None, domain: str) -> list[dict]:
+    """The first ``keyIdeas`` list in the extraction, primary domain first."""
+    for domain_data in _domain_blocks(extraction, domain):
         ideas = domain_data.get("keyIdeas")
         if isinstance(ideas, list) and ideas:
-            return _key_idea_points(ideas)
+            return [idea for idea in ideas if isinstance(idea, dict)]
     return []
 
 
@@ -151,6 +151,40 @@ def _stat_tile(point: dict) -> dict[str, Any] | None:
     return tile
 
 
+def _text(value: Any) -> str:
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _key_idea_tile(idea: dict) -> dict[str, Any] | None:
+    """One key idea as a tile — only as the model stated it (Kfir 2026-10-21): a
+    ``kind: number`` idea with its ``figure`` ``{value, label}`` and a timestamp;
+    nothing is mined from the claim's text. ``meaning`` is the claim."""
+    raw = idea.get("figure")
+    figure: dict = raw if isinstance(raw, dict) else {}
+    value, label = _text(figure.get("value")), _text(figure.get("label"))
+    timestamp = anchor_seconds(idea)
+    if idea.get("kind") != "number" or not value or not label or timestamp is None:
+        return None
+    tile: dict[str, Any] = {
+        "label": label,
+        "value": value,
+        "meaning": _text(idea.get("claim")),
+        "timestamp": timestamp,
+    }
+    if _text(idea.get("emoji")):
+        tile["emoji"] = _text(idea.get("emoji"))
+    return tile
+
+
+def _stat_tiles(extraction: dict | None, domain: str) -> list[dict[str, Any]]:
+    """The key points' figures (read off their titles), else — a talk ships key ideas,
+    not key points — the figures the model gave its number key ideas."""
+    stats = [t for t in map(_stat_tile, _key_points(extraction, domain)) if t is not None]
+    if len(stats) >= _STAT_BANNER_MIN:
+        return stats
+    return [t for t in map(_key_idea_tile, _key_ideas(extraction, domain)) if t is not None]
+
+
 def _stat_banner_attachment(extraction: dict | None, domain: str) -> dict | None:
     """Build the answer tab's numbers strip (C8) from the numeric key points:
     ``{label, value, emoji?, meaning, timestamp}`` per tile, where ``label`` +
@@ -160,8 +194,7 @@ def _stat_banner_attachment(extraction: dict | None, domain: str) -> dict | None
     the timestamp is the point (R2). None below _STAT_BANNER_MIN figures."""
     from .core import _validate_assembled_props  # local import avoids cycle
 
-    tiles = (_stat_tile(point) for point in _key_points(extraction, domain))
-    stats = [tile for tile in tiles if tile is not None]
+    stats = _stat_tiles(extraction, domain)
     if len(stats) < _STAT_BANNER_MIN:
         return None
     props = {"stats": stats[:_STAT_BANNER_MAX]}

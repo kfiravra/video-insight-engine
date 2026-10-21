@@ -5,17 +5,20 @@ phase 1: S01 shipped 46 chapter-like labels) ships its registry sibling instead
 when the same run extracted that sibling with what each beat established
 (S01's ``narrative.keyMoments``: 20 of 20 described, planned nowhere). A sibling
 another planned tab ships from is never borrowed (R5). Read before the moment
-fallback chain, which only fills a track that has nothing at all.
+fallback chain, which only fills a track that has nothing at all. And past the
+assembler, a track that fails the moment gate yields to a described fallback
+(``described_or_fallback``).
 """
 
 from __future__ import annotations
 
 import logging
-from collections.abc import Collection
+from collections.abc import Callable, Collection
 from typing import Any
 
 from src.shared_config.domain_config import data_source
 
+from .density import moment_gate_passes
 from .moment_normalizers import normalize_moment_items
 from .sampling import is_described_track
 
@@ -57,3 +60,17 @@ def described_moment_source(
             )
             return value
     return data
+
+
+def described_or_fallback(props: dict, fallback: Callable[[], dict | None]) -> dict:
+    """R7: a track that fails the moment gate (``density.moment_gate_passes``) yields
+    to the fallback chain's track when that one is described — the memory outline
+    with what each section establishes (1.9); with none it ships as it is (a
+    Moments tab is never dropped for lack of a better source)."""
+    if moment_gate_passes(props):
+        return props
+    alternative = fallback()
+    if alternative is not None and moment_gate_passes(alternative):
+        logger.info("Moments: label-only track → the described fallback (R7)")
+        return alternative
+    return props

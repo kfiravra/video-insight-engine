@@ -42,6 +42,25 @@ def text_or_none(value: Any) -> str | None:
     return value.strip() or None
 
 
+class KeyIdeaFigure(BaseModel):
+    """The figure a number key idea states, as the speaker says it (Kfir 2026-10-21):
+    the numbers strip shows it as given — nothing is mined from the claim's text."""
+
+    value: str
+    label: str
+
+
+def _figure_or_none(value: Any) -> dict | None:
+    """``{value, label}`` with both filled (a number value becomes its text); None
+    otherwise, so a half-given figure never costs the idea it belongs to."""
+    if not isinstance(value, dict):
+        return None
+    raw = value.get("value")
+    shown = str(raw).strip() if isinstance(raw, int | float) and not isinstance(raw, bool) else raw
+    figure, label = text_or_none(shown), text_or_none(value.get("label"))
+    return {"value": figure, "label": label} if figure and label else None
+
+
 class LearningKeyIdea(BaseModel):
     """One argued idea (D10): ``claim`` → the card's name, ``why`` → its description."""
 
@@ -56,6 +75,13 @@ class LearningKeyIdea(BaseModel):
     kind: str | None = None
     # Who holds the idea when more than one person speaks (a podcast's positions).
     speaker: str | None = None
+    # A number idea's figure as the speaker says it — the numbers strip's tile.
+    figure: KeyIdeaFigure | None = None
+
+    @field_validator("figure", mode="before")
+    @classmethod
+    def coerce_figure(cls, v: Any) -> dict | None:
+        return _figure_or_none(v)
 
     @field_validator("timestamp", mode="before")
     @classmethod
@@ -118,9 +144,11 @@ class TechTopic(BaseModel):
 class Claim(BaseModel):
     """A checkable claim (D11; ``news.claims`` generalised to learning, podcast, tech).
 
-    ``status`` is one of ``CLAIM_STATUSES`` or nothing: any other word fails
-    validation, and the item validator then drops the status, never the claim.
-    A status is read only beside the ``timestamp`` it can be checked at (D13).
+    ``status`` is one of ``CLAIM_STATUSES`` or nothing: any other word ("verified",
+    "disputed", the schema's own "stated | supported | contested") is refused —
+    the status goes, never the claim (the lenient enum rule of the other domain
+    models: a verdict badge, a tier). A status is read only beside the
+    ``timestamp`` it can be checked at (D13).
     """
 
     model_config = {"populate_by_name": True}
@@ -135,12 +163,8 @@ class Claim(BaseModel):
     @field_validator("status", mode="before")
     @classmethod
     def check_status(cls, v: Any) -> str | None:
-        status = text_or_none(v)
-        if status is None:
-            return None
-        if status.lower() not in CLAIM_STATUSES:
-            raise ValueError(f"a claim's status is one of {', '.join(CLAIM_STATUSES)}")
-        return status.lower()
+        status = (text_or_none(v) or "").lower()
+        return status if status in CLAIM_STATUSES else None
 
     @field_validator("timestamp", mode="before")
     @classmethod

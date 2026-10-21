@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from src.shared_config.assembly_policy import assembly_policy
 from src.shared_config.domain_config import quiz_policy
 
 from .registry import ASSEMBLER_REGISTRY
@@ -42,11 +43,10 @@ from .text_utils import truncate_words
 logger = logging.getLogger(__name__)
 
 # Tabs whose primary list is at or below this length are "sparse" — they have
-# room for an enriching attachment without crowding.
-SPARSE_THRESHOLD = 4
-# Tabs whose primary list is at or above this length are "dense" — a top
-# summary header gives the reader an anchor before the long scroll.
-_DENSE_THRESHOLD = 10
+# room for an enriching attachment without crowding; at or above the dense one a
+# top "First up" header anchors the long scroll (domains.json ``assemblyPolicy``).
+SPARSE_THRESHOLD = assembly_policy()["sparseItemsMax"]
+_DENSE_THRESHOLD = assembly_policy()["denseItemsMin"]
 # A summary_header is one orientation line, never a paragraph.
 _HEADER_MAX_CHARS = 220
 # An item's headline / body fields, in priority order (mirrors the FE's
@@ -93,7 +93,7 @@ _PRIMARY_LIST_KEY: dict[str, str] = {
 _NO_FRAME_STRIP_COMPONENTS = frozenset({"video_filmstrip", "frame_strip"})
 _NO_QUICK_QUIZ_COMPONENTS = frozenset({"quiz_arena", "quick_quiz"})
 # Domains where the filmstrip never adds value (talking-head footage).
-_NO_FRAME_STRIP_DOMAINS = frozenset({"narrative", "music"})
+_NO_FRAME_STRIP_DOMAINS = frozenset(assembly_policy()["noFilmstripDomains"])
 
 
 def can_host_quick_quiz(component: str) -> bool:
@@ -254,6 +254,9 @@ def _summary_header_attachment(
         return None
     summary = _extraction_summary(extraction, domain) if is_answer_tab else None
     title = "In short"
+    # A summary that only repeats the goal is none: a dense tab still gets its first item.
+    if summary is not None and _same_line(summary, tab.get("goal")):
+        summary = None
     if summary is None and dense:
         summary = _first_item_line(tab.get("component", ""), tab.get("props") or {})
         title = "First up"

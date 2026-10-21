@@ -21,6 +21,7 @@ from src.services.pipeline.assembly.core import (
     true_count_label,
 )
 from src.services.pipeline.assembly.labels import _LABEL_COUNT_KEYS, _MEASURE_UNITS
+from src.shared_config.assembly_policy import measure_units
 
 _DOMAIN_META = (
     Path(__file__).resolve().parent.parent.parent.parent
@@ -149,11 +150,15 @@ class TestFrontendParity:
     def test_should_mirror_the_fe_leading_count_rule(self) -> None:
         assert "LEADING_COUNT = /^\\d{1,3}\\s+(?=(\\p{L}+))/u;" in _DOMAIN_META.read_text()
 
-    def test_should_mirror_the_fe_measure_units(self) -> None:
-        source = _DOMAIN_META.read_text()
-        table = source.split("const MEASURE_UNITS", 1)[1].split("]);", 1)[0]
+    # output-quality 1.8: one list in domains.json, read by the server and the web.
+    def test_should_read_the_one_measure_unit_list_of_the_registry(self) -> None:
+        assert _MEASURE_UNITS == measure_units() and "days" in _MEASURE_UNITS
 
-        assert set(re.findall(r"'(\w+)'", table)) == _MEASURE_UNITS
+    def test_should_have_the_fe_read_the_registry_list_too(self) -> None:
+        source = _DOMAIN_META.read_text()
+
+        assert "import { MEASURE_UNITS } from '@vie/shared/config';" in source
+        assert "const MEASURE_UNITS" not in source
 
 
 class TestPostProcessedLabels:

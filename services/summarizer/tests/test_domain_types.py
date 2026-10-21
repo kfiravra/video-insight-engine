@@ -389,7 +389,8 @@ class TestFitnessData:
         meta = FitnessMeta(type=None, difficulty="expert", duration=None)
         assert meta.type == "general"
         assert meta.difficulty is None
-        assert meta.duration == 0
+        # No stated length is no length (D13, output-quality 1.8) — never a default 0.
+        assert meta.duration is None
 
     def test_exercise_difficulty_coercion(self):
         exercise = FitnessExercise(name="Push-ups", difficulty="extreme")

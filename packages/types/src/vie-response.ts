@@ -212,6 +212,14 @@ export interface KeyIdeaItem {
   kind?: KeyIdeaKind | null;
   /** Who holds the idea when more than one person speaks (a podcast's positions). */
   speaker?: string | null;
+  /** A number idea's figure as the speaker says it — a numbers-strip tile. */
+  figure?: KeyIdeaFigure | null;
+}
+
+/** The figure a `kind: number` key idea states, as said ("99 %", "less backend CPU"). */
+export interface KeyIdeaFigure {
+  value: string;
+  label: string;
 }
 
 export interface MomentItem extends FrameEvidence {

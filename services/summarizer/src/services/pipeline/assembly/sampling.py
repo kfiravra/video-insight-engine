@@ -8,12 +8,15 @@ score tier, so the kept items still span the whole video. The original
 (chronological) order is always preserved; a tier list keeps its best stated
 tiers instead (``tier_head``).
 
-Label-only moments are sized by content-model §9 (``_MOMENT_BANDS``): one per
+Label-only moments are sized by content-model §9 (``_MOMENT_BANDS``, read from
+domains.json ``momentCapsByDuration``): one per
 3 / 4 / 5 / 6 minutes in the ≤ 15 / 15–45 / 45–90 / > 90-minute bands, clamped to
 each band's range. §9 gives the > 90-minute band no range; its floor of 18 (the
 45–90 band's ceiling, so a longer video never gets fewer moments) and its ceiling
 of 60 (a six-hour video) are this module's choice. A described track — what each
-moment established — keeps the component's configured cap (``moment_track_cap``).
+moment established — keeps its band's maximum (``moment_track_cap``; strictly the
+table, Kfir 2026-10-21). Key ideas are capped at twice §9's key-ideas count
+(``key_idea_cap``).
 """
 
 from __future__ import annotations
@@ -22,17 +25,22 @@ import re
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, TypeVar
 
+from src.shared_config.assembly_policy import assembly_policy, moment_caps_by_duration
 from src.shared_config.domain_config import data_sources
 
 T = TypeVar("T")
 
 # content-model.md §9 — Moments sized to the video: (upper minute bound, minutes
-# per moment, band minimum, band maximum). The last band has no upper bound.
-_MOMENT_BANDS: tuple[tuple[float, int, int, int], ...] = (
-    (15, 3, 4, 6),
-    (45, 4, 8, 12),
-    (90, 5, 12, 18),
-    (float("inf"), 6, 18, 60),
+# per moment, band minimum, band maximum), domains.json ``momentCapsByDuration``.
+# The last band has no upper bound.
+_MOMENT_BANDS: tuple[tuple[float, int, int, int], ...] = tuple(
+    (
+        float("inf") if band["maxMinutes"] is None else float(band["maxMinutes"]),
+        band["minutesPerMoment"],
+        band["min"],
+        band["max"],
+    )
+    for band in moment_caps_by_duration()
 )
 MOMENT_CAP_MAX = _MOMENT_BANDS[-1][3]
 
@@ -147,13 +155,42 @@ def is_described_track(items: Sequence[Any]) -> bool:
     return described / len(items) >= DESCRIBED_TRACK_SHARE
 
 
+def _moment_band_max(duration_seconds: float | None, default: int) -> int:
+    """The top of the §9 band the video's length falls in — for the open-ended last
+    band, whose row states only a rate (1 per 6 min), that rate's count; ``default``
+    for an unknown length."""
+    if not duration_seconds or duration_seconds <= 0:
+        return default
+    minutes = duration_seconds / 60
+    for upper, per_moment, low, high in _MOMENT_BANDS:
+        if minutes <= upper:
+            open_ended = upper == float("inf")
+            return max(low, min(high, int(minutes // per_moment))) if open_ended else high
+    return default
+
+
 def moment_track_cap(items: Sequence[Any], duration_seconds: float | None, configured: int) -> int:
-    """The cap of a Moments track: §9's count for a label-only one; for a described one
-    the ``configured`` item cap — §9 sizes a list of chapter titles, and S08's 14
-    described events in 10 minutes are its content — or §9's count where a long video
-    gives more (a longer video never gets fewer moments)."""
-    by_duration = moment_cap_for_duration(duration_seconds, configured)
-    return max(configured, by_duration) if is_described_track(items) else by_duration
+    """The cap of a Moments track — strictly content-model §9 (Kfir 2026-10-21, no
+    slack): one moment per band step for a label-only track, the band's maximum for a
+    described one (what each moment established earns the band's room; S08's ten
+    minutes keep 6 of their 14 described events). ``configured`` stands in only for
+    an unknown length."""
+    if is_described_track(items):
+        return _moment_band_max(duration_seconds, configured)
+    return moment_cap_for_duration(duration_seconds, configured)
+
+
+def key_idea_cap(duration_seconds: float | None, default: int) -> int:
+    """The key-ideas cap: ``keyIdeasCapFactor`` × §9's count for the video's length
+    (Kfir 2026-10-21: S01 63 min → 24); ``default`` for an unknown length."""
+    if not duration_seconds or duration_seconds <= 0:
+        return default
+    policy = assembly_policy()
+    minutes = duration_seconds / 60
+    for band in policy["keyIdeasByDuration"]:
+        if band["maxMinutes"] is None or minutes <= band["maxMinutes"]:
+            return band["count"] * policy["keyIdeasCapFactor"]
+    return default
 
 
 def _number(value: Any) -> float | None:

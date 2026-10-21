@@ -11,6 +11,7 @@ Extract a complete, followable recipe.
     "difficulty": "easy | medium | hard",
     "cuisine": "Type of cuisine or null"
   },
+> META: prepTime, cookTime and servings only as the chef states them, else null — never estimated from the steps.
   "ingredients": [
     {
       "name": "Ingredient name as the chef says it",

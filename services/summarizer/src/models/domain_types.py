@@ -678,7 +678,8 @@ class FitnessMeta(BaseModel):
     type: str = "general"
     # None when the video states no level (D13): a default read as the video's.
     difficulty: str | None = None
-    duration: int = 0
+    # None when the instructor states no length (D13): a default 0 read as one.
+    duration: int | None = None
     muscle_groups: list[str] = Field([], alias="muscleGroups")
     equipment: list[str] = []
     calories_burned: int | None = Field(None, alias="caloriesBurned")
@@ -696,8 +697,8 @@ class FitnessMeta(BaseModel):
 
     @field_validator("duration", mode="before")
     @classmethod
-    def coerce_duration(cls, v: Any) -> int:
-        return v if v is not None else 0
+    def coerce_duration(cls, v: Any) -> int | None:
+        return seconds_or_none(v)
 
 
 class FitnessData(BaseModel):

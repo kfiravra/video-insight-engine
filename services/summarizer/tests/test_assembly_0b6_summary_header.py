@@ -275,13 +275,16 @@ class TestAnswerTab:
 
         assert _header(out) is None
 
-    def test_answer_tab_summary_equal_to_goal_is_dropped(self):
+    def test_answer_tab_summary_equal_to_goal_falls_back_to_the_first_item(self):
+        # output-quality 1.8: a dense answer tab whose summary only repeats the goal
+        # gets the "First up" header any dense tab gets — never the goal, never nothing.
         tab = _dense_tab()
         extraction = {"learning": {"summary": GOAL}}
 
         out = attach_secondaries(tab, extraction, None, None, "learning", is_answer_tab=True)
 
-        assert _header(out) is None
+        header = _header(out)
+        assert header is not None and header["props"]["title"] == "First up"
 
 
 class TestResponseLoop:

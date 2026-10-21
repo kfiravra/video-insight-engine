@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 
+from .sampling import is_described_track
 from .text_utils import truncate_words
 
 logger = logging.getLogger(__name__)
@@ -42,6 +43,15 @@ def _caps_cells(component: str, props: dict) -> bool:
     """Whether this tab's layout needs its cells capped (see `_CAPPED_MODES`)."""
     modes = _CAPPED_MODES.get(component)
     return modes is None or props.get("mode") in modes
+
+
+def moment_gate_passes(props: dict) -> bool:
+    """R7, the moment_track density gate: most moments say what they established
+    (``is_described_track``). A label-only track — chapter jumps — fails it, and
+    yields to a described fallback where the run has one
+    (``moment_sources.described_or_fallback``)."""
+    items = props.get("items")
+    return isinstance(items, list) and is_described_track(items)
 
 
 def enforce_density(component: str, props: dict) -> dict | None:

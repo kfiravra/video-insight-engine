@@ -20,11 +20,12 @@ Extract structured educational content.
       "timestamp": null,
       "section": "Short name of the part of the video the idea belongs to",
       "kind": "thesis | argument | announcement | number | story | ask",
-      "speaker": "Who holds the idea — only when more than one person speaks (a podcast, a panel), else null"
+      "speaker": "Who holds the idea — only when more than one person speaks (a podcast, a panel), else null",
+      "figure": {"value": "The figure as the speaker says it (\"99 %\", \"150,000 lines\")", "label": "What it measures, 2-5 words (\"less backend CPU\")"}
     }
   ],
 > UI: Key ideas → spot cards (claim, why, quote, seek chip) grouped by section; the kind is the card's badge, and stamped figures also feed the answer tab's numbers strip.
-> KEY IDEAS: for a talk, lecture or podcast — what the speaker wants you to believe or do. One distinct claim per item, never two merged; `timestamp` = the second the claim is said; `quote` = the exact words, never a paraphrase; `kind`: thesis (the video's central claim), argument, announcement, number (a figure used as evidence), story (an anecdote that carries a point), ask (what the speaker asks the audience to do). keyPoints stays for an explainer that teaches facts.
+> KEY IDEAS: for a talk, lecture or podcast — what the speaker wants you to believe or do. One distinct claim per item, never two merged; `timestamp` = the second the claim is said; `quote` = the exact words, never a paraphrase; `kind`: thesis (the video's central claim), argument, announcement, number (a figure used as evidence), story (an anecdote that carries a point), ask (what the speaker asks the audience to do). `figure` only for kind number — the one figure the claim turns on, as said — else null; it becomes a tile of the numbers strip. keyPoints stays for an explainer that teaches facts.
   "concepts": [
     {
       "name": "Term as the speaker uses it",

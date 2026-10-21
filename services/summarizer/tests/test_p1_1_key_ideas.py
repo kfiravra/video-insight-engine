@@ -21,17 +21,31 @@ from src.services.pipeline.schema_fields import load_domain_schema, slice_skelet
 from src.shared_config.domain_config import data_source, render_extraction_caps
 
 _IDEAS = [
-    {"claim": "Hand-written code stops being economically productive this year",
-     "why": "Agents now write 150,000 lines in a month where a team wrote 30,000 a year.",
-     "quote": "Pencils down.", "timestamp": 1245, "section": "The inflection", "kind": "thesis"},
-    {"claim": "English is a better programming language than Ruby",
-     "why": "It is more expressive and vaguer, and that vagueness is a joy.",
-     "quote": "It's called English.", "timestamp": 2295, "section": "Languages",
-     "kind": "argument"},
-    {"claim": "Every app needs a CLI by next Friday",
-     "why": "Agents drive tools through the command line, not the GUI.",
-     "quote": None, "timestamp": 2715, "section": "The inflection", "kind": "ask"},
-]  # fmt: skip
+    {
+        "claim": "Hand-written code stops being economically productive this year",
+        "why": "Agents now write 150,000 lines in a month where a team wrote 30,000 a year.",
+        "quote": "Pencils down.",
+        "timestamp": 1245,
+        "section": "The inflection",
+        "kind": "thesis",
+    },
+    {
+        "claim": "English is a better programming language than Ruby",
+        "why": "It is more expressive and vaguer, and that vagueness is a joy.",
+        "quote": "It's called English.",
+        "timestamp": 2295,
+        "section": "Languages",
+        "kind": "argument",
+    },
+    {
+        "claim": "Every app needs a CLI by next Friday",
+        "why": "Agents drive tools through the command line, not the GUI.",
+        "quote": None,
+        "timestamp": 2715,
+        "section": "The inflection",
+        "kind": "ask",
+    },
+]
 
 
 def _validated(ideas: list[dict]) -> list[dict]:
@@ -40,9 +54,14 @@ def _validated(ideas: list[dict]) -> list[dict]:
 
 
 def _key_ideas_tab() -> dict:
-    return {"id": "key_ideas", "label": "12 Key Ideas", "emoji": "💡",
-            "component": "spot_explorer", "dataSource": "learning.keyIdeas",
-            "goal": "After this you know what he argues."}  # fmt: skip
+    return {
+        "id": "key_ideas",
+        "label": "12 Key Ideas",
+        "emoji": "💡",
+        "component": "spot_explorer",
+        "dataSource": "learning.keyIdeas",
+        "goal": "After this you know what he argues.",
+    }
 
 
 def _assemble(ideas: list[dict]) -> dict:
@@ -62,7 +81,7 @@ class TestKeyIdeaModel:
     def test_should_keep_every_field_when_the_idea_is_complete(self) -> None:
         idea = LearningKeyIdea.model_validate(_IDEAS[0]).model_dump()
 
-        assert idea == {**_IDEAS[0], "speaker": None}
+        assert idea == {**_IDEAS[0], "speaker": None, "figure": None}
 
     @pytest.mark.parametrize("kind", ["Thesis", " ASK ", "number"])
     def test_should_lower_case_the_kind_when_it_is_in_the_vocabulary(self, kind: str) -> None:
@@ -193,8 +212,10 @@ class TestKeyIdeaSpots:
         assert assemble_spot_explorer({}, _validated(_IDEAS[:1]), {}, None) is None
 
     def test_should_not_read_news_claims_as_key_ideas_when_they_reach_spot_explorer(self) -> None:
-        claims = [{"claim": "c1", "source": "s", "status": "context"},
-                  {"claim": "c2", "source": "s", "status": "context"}]  # fmt: skip
+        claims = [
+            {"claim": "c1", "source": "s", "status": "context"},
+            {"claim": "c2", "source": "s", "status": "context"},
+        ]
 
         assert assemble_spot_explorer({}, claims, {}, None) is None
 
@@ -212,9 +233,25 @@ class TestKeyIdeasInTheResponse:
     def test_should_attach_the_numbers_strip_when_key_ideas_state_five_stamped_figures(
         self,
     ) -> None:
-        figures = ["150,000 lines", "99% less CPU", "9 seconds", "$20 million", "40,000 tellers"]
-        ideas = [{"claim": f"It took {f}", "why": "w", "timestamp": 60 * (i + 1), "kind": "number"}
-                 for i, f in enumerate(figures)]  # fmt: skip
+        # The figure is the model's own {value, label} on a kind-number idea (Kfir
+        # 2026-10-21): nothing is mined from the claim's text.
+        figures = [
+            ("150,000 lines", "in one month"),
+            ("99%", "less backend CPU"),
+            ("9 seconds", "Omarchy install"),
+            ("$20 million", "raised"),
+            ("40,000", "bank tellers after the ATM"),
+        ]
+        ideas = [
+            {
+                "claim": f"Claim {i}",
+                "why": "w",
+                "timestamp": 60 * (i + 1),
+                "kind": "number",
+                "figure": {"value": v, "label": label},
+            }
+            for i, (v, label) in enumerate(figures)
+        ]
 
         tab = _tab(_assemble(ideas), "key_ideas")
         banner = next(a for a in tab.get("attachments", []) if a["component"] == "stat_banner")

@@ -9,6 +9,8 @@ table used to live in ``core`` (output-quality 0b review); the others derive.
 
 from __future__ import annotations
 
+from src.shared_config.assembly_policy import assembly_policy
+
 # Live (v2 registry) components only — legacy v1 names were dropped alongside
 # their ASSEMBLER_REGISTRY entries (cached rows fall through to display_section).
 COMPONENT_LIST_KEYS: dict[str, str] = {
@@ -51,10 +53,10 @@ COMPONENT_LIST_KEYS: dict[str, str] = {
 COMPARISON_COMPONENTS: frozenset[str] = frozenset({"comparison", "comparison_radar"})
 COMPARISON_LIST_KEYS: tuple[str, ...] = ("comparisons", "pros", "cons")
 
-# A procedure ships whole and in order — Cooking / Build mode walks every step
-# (phase-0 review W-A4): no item cap samples its steps and the dedupe never
-# trims one out of it.
-SEQUENTIAL_COMPONENTS: frozenset[str] = frozenset({"step_player", "step_flow_canvas"})
+# A procedure ships whole and in order — Cooking / Build mode walks every step,
+# a workout every exercise (phase-0 review W-A4): no item cap samples it and the
+# dedupe never trims one out of it. domains.json ``assemblyPolicy``.
+SEQUENTIAL_COMPONENTS: frozenset[str] = frozenset(assembly_policy()["sequentialComponents"])
 
 
 def item_list_keys(component: str) -> tuple[str, ...]:

@@ -3,6 +3,7 @@
  *  helper the hero strip and the output share. Kept outside the component
  *  files so fast refresh keeps working (component files must only export
  *  components). */
+import { MEASURE_UNITS } from '@vie/shared/config';
 import type { TabEntry } from '@vie/types';
 
 export const DOMAIN_META: Record<string, { emoji: string; label: string }> = {
@@ -31,18 +32,11 @@ export const DOMAIN_META: Record<string, { emoji: string; label: string }> = {
  *  four-digit numbers ("2024 Review") are years — neither matches. */
 const LEADING_COUNT = /^\d{1,3}\s+(?=(\p{L}+))/u;
 
-/** Units that make a leading number a measure, not a count: "7 Days in
- *  Tokyo", "10 Minute Abs" and "3 Course Meal" say how long or how much, not
- *  how many items the tab ships, so they are never rewritten. Compared with
- *  the whole next word, case-insensitively. One list with the summarizer
- *  (assembly/labels.py `_MEASURE_UNITS`) and the output-quality tools —
- *  change them together. */
-const MEASURE_UNITS: ReadonlySet<string> = new Set([
-  'second', 'seconds', 'sec', 'secs', 'minute', 'minutes', 'min', 'mins',
-  'hour', 'hours', 'hr', 'hrs', 'day', 'days', 'night', 'nights',
-  'week', 'weeks', 'month', 'months', 'year', 'years', 'course', 'courses',
-  'km', 'mile', 'miles', 'kg', 'lb', 'lbs', 'pound', 'pounds', 'percent',
-]);
+// Units that make a leading number a measure, not a count ("7 Days in Tokyo",
+// "10 Minute Abs", "3 Course Meal" say how long or how much, not how many items
+// the tab ships), so they are never rewritten: `MEASURE_UNITS` from
+// @vie/shared/config — domains.json `measureUnits`, the one list the summarizer
+// (assembly/labels.py) and the output-quality tools read too.
 
 /** Whether a label opens with a count claim: a leading number
  *  (`LEADING_COUNT`) whose next word is not a unit (`MEASURE_UNITS`). The

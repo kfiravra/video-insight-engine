@@ -32,6 +32,7 @@ from pydantic import BaseModel
 
 from src.models import domain_types as dt
 from src.models import vie_response_v2 as v2
+from src.models.idea_types import KeyIdeaFigure
 
 # ─────────────────────────────────────────────────────
 # TS interface parsing
@@ -231,6 +232,7 @@ ITEM_MAPPINGS = [
     ),
     Mapping("KeyPointItem", dt.LearningKeyPoint),
     Mapping("KeyIdeaItem", dt.LearningKeyIdea),
+    Mapping("KeyIdeaFigure", KeyIdeaFigure),
     Mapping(
         "ClaimItem",
         dt.NewsClaim,

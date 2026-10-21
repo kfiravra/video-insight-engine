@@ -62,7 +62,7 @@
     "spot_explorer": { "min": "2", "max": "25", "chars": "description ≤ 200" },
     "step_player": { "min": "3", "max": "10", "chars": "instruction ≤ 200" },
     "step_flow_canvas": { "min": "6", "max": "25", "chars": "drives the canvas graph layout" },
-    "moment_track": { "min": "3", "max": "20", "chars": "label ≤ 60" },
+    "moment_track": { "min": "3", "max": "by length: 4–6 up to 15 min, 8–12 up to 45, 12–18 up to 90, 1 per 6 min beyond", "chars": "label ≤ 60; every moment says what it established" },
     "quiz_arena": { "min": "2", "max": "8", "chars": "question ≤ 140, context ≤ 180" },
     "workout_room": { "min": "2", "max": "25", "chars": "name ≤ 40" },
     "checklist": { "min": "3", "max": "30", "chars": "label ≤ 80" },
@@ -76,7 +76,7 @@
     "formation_diagram": { "min": "3 players", "max": "23", "chars": "player ≤ 40; x/y are 0-100" },
     "lyrics_karaoke": { "min": "—", "max": "—", "chars": "per-line ≤ 120 chars" }
   },
-  "assemblerItemCapsNote": "HARD per-component item caps enforced by the assembler (_cap_tab_items in assembly/core.py). Deliberately INDEPENDENT of densityGates above: densityGates is advisory steering text shown to the planner LLM (what to aim for), these caps are the code backstop (what ships regardless of prompt drift) — e.g. step_player is steered to 10 but capped at 25. moment_track's cap additionally scales with video duration in code (evenly sampled, clamped 20-60).",
+  "assemblerItemCapsNote": "HARD per-component item caps enforced by the assembler (_cap_tab_items in assembly/core.py). Deliberately INDEPENDENT of densityGates above: densityGates is advisory steering text shown to the planner LLM (what to aim for), these caps are the code backstop (what ships regardless of prompt drift) — e.g. step_player is steered to 10 but capped at 25. moment_track's cap follows the video's length strictly (momentCapsByDuration, content-model §9 — Kfir 2026-10-21, no slack): one moment per band step for a label-only track, the band's maximum for a described one, rank-sampled by salience; its density gate (assembly/density.py) refuses a track where most moments say nothing of what they established — the moment fallback chain fills it instead (R7). A key-ideas tab (learning.keyIdeas) is capped instead at keyIdeasCapFactor × keyIdeasByDuration's count for the video's length (Kfir 2026-10-21: extraction stays complete, key ideas are the argument and are never sampled down to a screen — S01 63 min → 24), rank-sampled by richness in source order, above this cap where the video is long.",
   "assemblerItemCaps": {
     "comparison": 10,
     "moment_track": 20,
@@ -89,6 +89,44 @@
     "tier_list": 30,
     "formation_diagram": 23
   },
+  "injectedTabsNote": "The tabs assembly adds on its own — the overview hero, the minimum-tab takeaways fallback, the auto-appended frames gallery and the always-present Moments tab (also streamed at plan-done) — with their label, emoji and goal. A goal names what the viewer gets (task 1.10's rule, plan_prompt.goal_rule_violation), never an assembly template; every defaultTab goal (backfills, fillers, the fallback plan) follows the same rule.",
+  "injectedTabs": {
+    "overview": { "label": "Overview", "emoji": "📋", "goal": "After this you know what the video says and whether to watch it." },
+    "keyInfo": { "label": "Key Info", "emoji": "📊", "goal": "After this you know the video's main takeaways at a glance." },
+    "framesGallery": { "label": "Visual Moments", "emoji": "🖼️", "goal": "After this you can see each stage as it looks on screen." },
+    "moments": { "label": "Key Moments", "emoji": "🎬", "goal": "After this you know what each part of the video established." }
+  },
+  "momentCapsNote": "Moments sized to the video (content-model §9, R9): the first band whose maxMinutes the video's length does not exceed (null = no upper bound) gives one moment per minutesPerMoment, clamped to [min, max]. The last band's floor 18 (the 45–90 band's ceiling, so a longer video never gets fewer moments) and ceiling 60 (a six-hour video) are assembly's choice; learning.timestamps' cap is that 60. A described track (most moments say what they established) ships up to its band's max — for the open-ended last band, whose row states only a rate, one per minutesPerMoment within [min, max] — strictly the table, no slack (Kfir 2026-10-21). Read by assembly/sampling.py.",
+  "momentCapsByDuration": [
+    { "maxMinutes": 15, "minutesPerMoment": 3, "min": 4, "max": 6 },
+    { "maxMinutes": 45, "minutesPerMoment": 4, "min": 8, "max": 12 },
+    { "maxMinutes": 90, "minutesPerMoment": 5, "min": 12, "max": 18 },
+    { "maxMinutes": null, "minutesPerMoment": 6, "min": 18, "max": 60 }
+  ],
+  "assemblyPolicyNote": "Component and domain sets assembly used to hard-code (output-quality D8 single-sourcing, task 1.8). sequentialComponents: a procedure ships whole and in order — no item cap samples it, the dedupe never trims it, and it is what makes the steps the timeline (D6). stepListDomains: whose steps are followed, not browsed — never promoted to a step canvas (D8). stepTimelinePrimaries: the primaries D6 applies to (no Moments tab when the steps are the timeline). conceptPromotionDomains: whose flash cards may promote to a concept canvas. noFilmstripDomains: talking-head domains that get neither the auto-appended filmstrip nor a frame_strip attachment. sparseItemsMax / denseItemsMin: a tab at or below sparseItemsMax items takes one enriching attachment, one at or above denseItemsMin a \"First up\" header; the answer tab's \"In short\" header comes at any size. keyIdeasByDuration / keyIdeasCapFactor: content-model §9's key-ideas count by length (the band's low end: 5 / 8 / 12 / 16) and the factor the key-ideas cap takes over it (assemblerItemCapsNote).",
+  "assemblyPolicy": {
+    "sequentialComponents": ["step_player", "step_flow_canvas", "workout_room"],
+    "stepListDomains": ["food", "project"],
+    "stepTimelinePrimaries": ["food", "fitness", "project"],
+    "conceptPromotionDomains": ["learning", "science"],
+    "noFilmstripDomains": ["narrative", "music"],
+    "sparseItemsMax": 4,
+    "denseItemsMin": 10,
+    "keyIdeasByDuration": [
+      { "maxMinutes": 15, "count": 5 },
+      { "maxMinutes": 45, "count": 8 },
+      { "maxMinutes": 90, "count": 12 },
+      { "maxMinutes": null, "count": 16 }
+    ],
+    "keyIdeasCapFactor": 2
+  },
+  "measureUnitsNote": "Words that make a label's leading number a measure, not a count (\"7 Days in Tokyo\", \"10 Minute Abs\", \"3 Course Meal\" — never rewritten to the shipped count, R3). One list for the summarizer (assembly/labels.py), the web (domain-meta.ts through @vie/shared/config) and the output-quality tools.",
+  "measureUnits": [
+    "second", "seconds", "sec", "secs", "minute", "minutes", "min", "mins",
+    "hour", "hours", "hr", "hrs", "day", "days", "night", "nights",
+    "week", "weeks", "month", "months", "year", "years", "course", "courses",
+    "km", "mile", "miles", "kg", "lb", "lbs", "pound", "pounds", "percent"
+  ],
   "domainRequirementsNote": "Per-domain assembled-output validation (_validate_domain_requirements in assembly/core.py): `required` components are backfilled from defaultTabs when the planner drops them (promotion equivalents count, e.g. comparison_radar satisfies comparison); `max` caps per-component tab counts; `forbidden` components are stripped at plan post-validation (before extraction burns tokens) AND again at assembly as a backstop — a forbidden component is never rendered for that domain regardless of what the planner emits. quiz_arena is allowed where the content is learnable (learning/language/tech/science, and a podcast or news explainer — output-quality D9; the quiz itself still needs is_learnable). Every domain must have an entry — an empty `required` is a deliberate decision (music: lyrics_karaoke optional so videos without per-line timing don't fail; podcast: moment_track segments are the spine; news: claims_tracker is the signature accountability surface; gaming: tier_list; sport: formation_diagram).",
   "domainRequirements": {
     "food": { "required": ["step_player", "checklist"], "max": { "flash_deck": 1 }, "forbidden": ["quiz_arena"] },
@@ -179,10 +217,10 @@
       "label": "Learning",
       "gradient": "linear-gradient(135deg, var(--vie-plum), var(--vie-sky))",
       "defaultTabs": [
-        { "id": "key_points", "component": "overview", "dataSource": "learning.keyPoints", "label": "Key Points", "emoji": "💡", "goal": "The core ideas the video teaches — read these first." },
-        { "id": "concepts", "component": "concept_canvas", "dataSource": "learning.concepts", "label": "Concepts", "emoji": "📚", "goal": "Drag concepts to see how they connect. Tap any node for definition + example." },
-        { "id": "takeaways", "component": "checklist", "dataSource": "learning.takeaways", "label": "Takeaways", "emoji": "🎯", "goal": "Tick off each takeaway as you internalize it." },
-        { "id": "timestamps", "component": "moment_track", "dataSource": "learning.timestamps", "label": "Timestamps", "emoji": "🕐", "goal": "Jump to any moment in the source video." }
+        { "id": "key_points", "component": "overview", "dataSource": "learning.keyPoints", "label": "Key Points", "emoji": "💡", "goal": "After this you know the core ideas the video teaches." },
+        { "id": "concepts", "component": "concept_canvas", "dataSource": "learning.concepts", "label": "Concepts", "emoji": "📚", "goal": "After this you can explain each concept and how they connect." },
+        { "id": "takeaways", "component": "checklist", "dataSource": "learning.takeaways", "label": "Takeaways", "emoji": "🎯", "goal": "After this you know what to do with what the video taught." },
+        { "id": "timestamps", "component": "moment_track", "dataSource": "learning.timestamps", "label": "Timestamps", "emoji": "🕐", "goal": "After this you know what each part of the video established." }
       ]
     },
     "tech": {
@@ -190,9 +228,9 @@
       "label": "Tech",
       "gradient": "linear-gradient(135deg, var(--vie-sky), var(--vie-mint))",
       "defaultTabs": [
-        { "id": "code", "component": "code_playground", "dataSource": "tech.snippets", "label": "Code", "emoji": "💻", "goal": "Every code snippet from the video — copy, run, and adapt." },
-        { "id": "setup", "component": "step_player", "dataSource": "tech.setup.commands", "label": "Setup", "emoji": "⚙️", "goal": "Follow the setup steps in order — get the dev environment ready." },
-        { "id": "patterns", "component": "code_playground", "dataSource": "tech.patterns", "label": "Patterns", "emoji": "🧩", "goal": "The patterns and do/don'ts demonstrated in the video." }
+        { "id": "code", "component": "code_playground", "dataSource": "tech.snippets", "label": "Code", "emoji": "💻", "goal": "After this you can copy, run and adapt every snippet the video shows." },
+        { "id": "setup", "component": "step_player", "dataSource": "tech.setup.commands", "label": "Setup", "emoji": "⚙️", "goal": "After this you have the dev environment set up, step by step." },
+        { "id": "patterns", "component": "code_playground", "dataSource": "tech.patterns", "label": "Patterns", "emoji": "🧩", "goal": "After this you know the patterns the video recommends and the ones it warns against." }
       ]
     },
     "fitness": {
@@ -200,9 +238,9 @@
       "label": "Fitness",
       "gradient": "linear-gradient(135deg, var(--vie-rose), var(--vie-coral))",
       "defaultTabs": [
-        { "id": "exercises", "component": "workout_room", "dataSource": "fitness.exercises", "label": "Exercises", "emoji": "🏋️", "goal": "Full-bleed exercise card — sets, reps, rest, audio cue." },
-        { "id": "timer", "component": "workout_room", "dataSource": "fitness.timer", "label": "Timer", "emoji": "⏱️", "goal": "Round-by-round timer that drives the workout pace." },
-        { "id": "tips", "component": "overview", "dataSource": "fitness.tips", "label": "Tips", "emoji": "💡", "goal": "Form tips and scaling cues the coach calls out." }
+        { "id": "exercises", "component": "workout_room", "dataSource": "fitness.exercises", "label": "Exercises", "emoji": "🏋️", "goal": "After this you can do every exercise with its sets, reps and form cues." },
+        { "id": "timer", "component": "workout_room", "dataSource": "fitness.timer", "label": "Timer", "emoji": "⏱️", "goal": "After this you can keep the workout's pace, round by round." },
+        { "id": "tips", "component": "overview", "dataSource": "fitness.tips", "label": "Tips", "emoji": "💡", "goal": "After this you know the form tips and scaling cues the coach gives." }
       ]
     },
     "food": {
@@ -210,9 +248,9 @@
       "label": "Food",
       "gradient": "linear-gradient(135deg, var(--vie-coral), var(--vie-peach))",
       "defaultTabs": [
-        { "id": "ingredients", "component": "checklist", "dataSource": "food.ingredients", "label": "Ingredients", "emoji": "🛒", "goal": "Check items off as you shop or set up your mise en place." },
-        { "id": "steps", "component": "step_player", "dataSource": "food.steps", "label": "Steps", "emoji": "👨‍🍳", "goal": "Follow each step with timers. Optional cooking mode pairs steps with ingredients." },
-        { "id": "tips", "component": "overview", "dataSource": "food.tips", "label": "Tips", "emoji": "💡", "goal": "Chef tips and substitutions called out in the video." }
+        { "id": "ingredients", "component": "checklist", "dataSource": "food.ingredients", "label": "Ingredients", "emoji": "🛒", "goal": "After this you have everything the dish needs, measured and ready." },
+        { "id": "steps", "component": "step_player", "dataSource": "food.steps", "label": "Steps", "emoji": "👨‍🍳", "goal": "After this you can cook the dish step by step." },
+        { "id": "tips", "component": "overview", "dataSource": "food.tips", "label": "Tips", "emoji": "💡", "goal": "After this you know the chef's tips and substitutions." }
       ]
     },
     "music": {
@@ -220,10 +258,10 @@
       "label": "Music",
       "gradient": "linear-gradient(135deg, var(--vie-rose), var(--vie-plum))",
       "defaultTabs": [
-        { "id": "analysis", "component": "overview", "dataSource": "music.analysis", "label": "Analysis", "emoji": "🎼", "goal": "What makes this song work — production, arrangement, and lyrical intent." },
-        { "id": "structure", "component": "moment_track", "dataSource": "music.structure", "label": "Structure", "emoji": "🎵", "goal": "Jump to any section — intro, verses, chorus, bridge, outro." },
-        { "id": "lyrics", "component": "lyrics_karaoke", "dataSource": "music.lyrics", "label": "Lyrics", "emoji": "🎤", "goal": "Lyrics sync with playback — active line scales, trailing lines fade." },
-        { "id": "credits", "component": "info_grid", "dataSource": "music.credits", "label": "Credits", "emoji": "🎤", "goal": "Writers, producers, and featured artists." }
+        { "id": "analysis", "component": "overview", "dataSource": "music.analysis", "label": "Analysis", "emoji": "🎼", "goal": "After this you know what makes the song work." },
+        { "id": "structure", "component": "moment_track", "dataSource": "music.structure", "label": "Structure", "emoji": "🎵", "goal": "After this you can jump to each section of the song." },
+        { "id": "lyrics", "component": "lyrics_karaoke", "dataSource": "music.lyrics", "label": "Lyrics", "emoji": "🎤", "goal": "After this you can sing along, line by line." },
+        { "id": "credits", "component": "info_grid", "dataSource": "music.credits", "label": "Credits", "emoji": "🎤", "goal": "After this you know who wrote, produced and featured on the song." }
       ]
     },
     "travel": {
@@ -231,10 +269,10 @@
       "label": "Travel",
       "gradient": "linear-gradient(135deg, var(--vie-forest), var(--vie-mint))",
       "defaultTabs": [
-        { "id": "itinerary", "component": "spot_explorer", "dataSource": "travel.itinerary", "label": "Itinerary", "emoji": "📅", "goal": "Day-by-day plan with spots, costs, and map links." },
-        { "id": "budget", "component": "budget", "dataSource": "travel.budget", "label": "Budget", "emoji": "💰", "goal": "Adjust the category bars to match your trip style." },
-        { "id": "packing", "component": "packing_mission", "dataSource": "travel.packingList", "label": "Pack List", "emoji": "🎒", "goal": "Drag items into the suitcase — weight tally + essential warnings." },
-        { "id": "filmstrip", "component": "video_filmstrip", "dataSource": "frames", "label": "Scenes", "emoji": "🎞️", "goal": "Scrub through the trip — hover a frame for the caption, click to seek." }
+        { "id": "itinerary", "component": "spot_explorer", "dataSource": "travel.itinerary", "label": "Itinerary", "emoji": "📅", "goal": "After this you know where to go each day, what it costs and how to get there." },
+        { "id": "budget", "component": "budget", "dataSource": "travel.budget", "label": "Budget", "emoji": "💰", "goal": "After this you know what the trip costs, category by category." },
+        { "id": "packing", "component": "packing_mission", "dataSource": "travel.packingList", "label": "Pack List", "emoji": "🎒", "goal": "After this you know what to pack and what you cannot leave without." },
+        { "id": "filmstrip", "component": "video_filmstrip", "dataSource": "frames", "label": "Scenes", "emoji": "🎞️", "goal": "After this you can see each stop as it looks on screen." }
       ]
     },
     "review": {
@@ -242,9 +280,9 @@
       "label": "Review",
       "gradient": "linear-gradient(135deg, var(--vie-honey), var(--vie-peach))",
       "defaultTabs": [
-        { "id": "pros_cons", "component": "comparison", "dataSource": "review.pros", "label": "Pros & Cons", "emoji": "⚖️", "goal": "The reviewer's verdict — best-for, not-for, score." },
-        { "id": "comparison", "component": "comparison_radar", "dataSource": "review.comparisons", "label": "Comparison", "emoji": "📊", "goal": "Weight each axis to find your personal winner." },
-        { "id": "specs", "component": "info_grid", "dataSource": "review.specs", "label": "Specs", "emoji": "📊", "goal": "Searchable spec table — every number from the review." }
+        { "id": "pros_cons", "component": "comparison", "dataSource": "review.pros", "label": "Pros & Cons", "emoji": "⚖️", "goal": "After this you know the reviewer's verdict: who it suits and who should skip it." },
+        { "id": "comparison", "component": "comparison_radar", "dataSource": "review.comparisons", "label": "Comparison", "emoji": "📊", "goal": "After this you know how it stacks up against its rivals, feature by feature." },
+        { "id": "specs", "component": "info_grid", "dataSource": "review.specs", "label": "Specs", "emoji": "📊", "goal": "After this you know every spec and number the review gives." }
       ]
     },
     "project": {
@@ -252,9 +290,9 @@
       "label": "Project",
       "gradient": "linear-gradient(135deg, var(--vie-honey), var(--vie-forest))",
       "defaultTabs": [
-        { "id": "steps", "component": "step_player", "dataSource": "project.steps", "label": "Steps", "emoji": "📝", "goal": "Build it step by step — frame thumbnails per step." },
-        { "id": "materials", "component": "checklist", "dataSource": "project.materials", "label": "Materials", "emoji": "🛒", "goal": "Check items off as you gather them." },
-        { "id": "safety", "component": "overview", "dataSource": "project.safetyWarnings", "label": "Safety", "emoji": "⚠️", "goal": "Safety warnings called out by the maker." }
+        { "id": "steps", "component": "step_player", "dataSource": "project.steps", "label": "Steps", "emoji": "📝", "goal": "After this you can build it step by step." },
+        { "id": "materials", "component": "checklist", "dataSource": "project.materials", "label": "Materials", "emoji": "🛒", "goal": "After this you have every material you need gathered." },
+        { "id": "safety", "component": "overview", "dataSource": "project.safetyWarnings", "label": "Safety", "emoji": "⚠️", "goal": "After this you know the safety warnings the maker gives." }
       ]
     },
     "language": {
@@ -262,10 +300,10 @@
       "label": "Language",
       "gradient": "linear-gradient(135deg, var(--vie-plum), var(--vie-coral))",
       "defaultTabs": [
-        { "id": "phrases", "component": "spot_explorer", "dataSource": "language.phrases", "label": "Phrases", "emoji": "💬", "goal": "Useful phrases with pronunciation and context." },
-        { "id": "rules", "component": "info_grid", "dataSource": "language.rules", "label": "Grammar Rules", "emoji": "📝", "goal": "Grammar rules the lesson covers — searchable, with examples." },
-        { "id": "drills", "component": "step_player", "dataSource": "language.drills", "label": "Practice Drills", "emoji": "🎯", "goal": "Drill through the practice exercises the teacher walks." },
-        { "id": "vocabulary", "component": "flash_deck", "dataSource": "language.vocabulary", "label": "Vocabulary", "emoji": "📖", "goal": "Flip through the vocabulary — each card pairs a word with its meaning, pronunciation, and an example." }
+        { "id": "phrases", "component": "spot_explorer", "dataSource": "language.phrases", "label": "Phrases", "emoji": "💬", "goal": "After this you can say each phrase with its pronunciation and context." },
+        { "id": "rules", "component": "info_grid", "dataSource": "language.rules", "label": "Grammar Rules", "emoji": "📝", "goal": "After this you know the grammar rules the lesson covers, with examples." },
+        { "id": "drills", "component": "step_player", "dataSource": "language.drills", "label": "Practice Drills", "emoji": "🎯", "goal": "After this you have practised every drill the teacher walks through." },
+        { "id": "vocabulary", "component": "flash_deck", "dataSource": "language.vocabulary", "label": "Vocabulary", "emoji": "📖", "goal": "After this you know each word's meaning, pronunciation and an example." }
       ]
     },
     "science": {
@@ -273,9 +311,9 @@
       "label": "Science",
       "gradient": "linear-gradient(135deg, var(--vie-sky), var(--vie-forest))",
       "defaultTabs": [
-        { "id": "concepts", "component": "concept_canvas", "dataSource": "science.concepts", "label": "Concepts", "emoji": "🧪", "goal": "Concepts wired into a graph — drag to explore the relationships." },
-        { "id": "key_facts", "component": "info_grid", "dataSource": "science.keyFacts", "label": "Key Facts", "emoji": "📊", "goal": "Numbers, units, and facts you'll cite — searchable." },
-        { "id": "experiments", "component": "step_player", "dataSource": "science.experiments", "label": "Experiments", "emoji": "⚗️", "goal": "Reproduce the experiment step by step." }
+        { "id": "concepts", "component": "concept_canvas", "dataSource": "science.concepts", "label": "Concepts", "emoji": "🧪", "goal": "After this you can explain each concept and how they relate." },
+        { "id": "key_facts", "component": "info_grid", "dataSource": "science.keyFacts", "label": "Key Facts", "emoji": "📊", "goal": "After this you know the numbers, units and facts you'll cite." },
+        { "id": "experiments", "component": "step_player", "dataSource": "science.experiments", "label": "Experiments", "emoji": "⚗️", "goal": "After this you can reproduce the experiment step by step." }
       ]
     },
     "podcast": {
@@ -283,10 +321,10 @@
       "label": "Podcast",
       "gradient": "linear-gradient(135deg, var(--vie-plum), var(--vie-rose))",
       "defaultTabs": [
-        { "id": "segments", "component": "moment_track", "dataSource": "podcast.segments", "label": "Segments", "emoji": "🎙️", "goal": "Jump to any segment of the conversation — topics, tangents, and big moments." },
-        { "id": "guests", "component": "spot_explorer", "dataSource": "podcast.guests", "label": "Guests", "emoji": "🧑‍🤝‍🧑", "goal": "Who's on the mic — bios, roles, and what they came to talk about." },
-        { "id": "quotes", "component": "flash_deck", "dataSource": "podcast.quotes", "label": "Key Quotes", "emoji": "💬", "goal": "The lines worth remembering — flip through the standout quotes." },
-        { "id": "topics", "component": "info_grid", "dataSource": "podcast.topics", "label": "Topics", "emoji": "🗂️", "goal": "Every topic covered — searchable, with the gist of each." }
+        { "id": "segments", "component": "moment_track", "dataSource": "podcast.segments", "label": "Segments", "emoji": "🎙️", "goal": "After this you know what each part of the conversation concluded." },
+        { "id": "guests", "component": "spot_explorer", "dataSource": "podcast.guests", "label": "Guests", "emoji": "🧑‍🤝‍🧑", "goal": "After this you know who is speaking and why they are on the show." },
+        { "id": "quotes", "component": "flash_deck", "dataSource": "podcast.quotes", "label": "Key Quotes", "emoji": "💬", "goal": "After this you know the lines worth remembering, and who said them." },
+        { "id": "topics", "component": "info_grid", "dataSource": "podcast.topics", "label": "Topics", "emoji": "🗂️", "goal": "After this you know every topic covered and its gist." }
       ]
     },
     "news": {
@@ -294,10 +332,10 @@
       "label": "News",
       "gradient": "linear-gradient(135deg, var(--vie-sky), var(--vie-honey))",
       "defaultTabs": [
-        { "id": "timeline", "component": "moment_track", "dataSource": "news.storyTimeline", "label": "Story Timeline", "emoji": "🕐", "goal": "How the story unfolded — jump to each development in order." },
-        { "id": "entities", "component": "spot_explorer", "dataSource": "news.entities", "label": "People & Orgs", "emoji": "👤", "goal": "The people, organizations, and places at the center of the story." },
-        { "id": "claims", "component": "claims_tracker", "dataSource": "news.claims", "label": "Claims", "emoji": "🔎", "goal": "Each claim, who said it, and whether it's verified, disputed, or context." },
-        { "id": "context", "component": "info_grid", "dataSource": "news.context", "label": "Context", "emoji": "🗂️", "goal": "Background facts and figures to understand the story — searchable." }
+        { "id": "timeline", "component": "moment_track", "dataSource": "news.storyTimeline", "label": "Story Timeline", "emoji": "🕐", "goal": "After this you know how the story unfolded, step by step." },
+        { "id": "entities", "component": "spot_explorer", "dataSource": "news.entities", "label": "People & Orgs", "emoji": "👤", "goal": "After this you know who and what is at the center of the story." },
+        { "id": "claims", "component": "claims_tracker", "dataSource": "news.claims", "label": "Claims", "emoji": "🔎", "goal": "After this you know each claim, who made it and what the evidence says." },
+        { "id": "context", "component": "info_grid", "dataSource": "news.context", "label": "Context", "emoji": "🗂️", "goal": "After this you know the background you need to follow the story." }
       ]
     },
     "gaming": {
@@ -305,10 +343,10 @@
       "label": "Gaming",
       "gradient": "linear-gradient(135deg, var(--vie-plum), var(--vie-mint))",
       "defaultTabs": [
-        { "id": "highlights", "component": "moment_track", "dataSource": "gaming.highlights", "label": "Highlights", "emoji": "🎬", "goal": "Jump to the big plays — clutch moments, fails, and turning points." },
-        { "id": "loadout", "component": "checklist", "dataSource": "gaming.loadout", "label": "Build / Loadout", "emoji": "🎒", "goal": "The gear, perks, and setup the video runs — tick off what you've copied." },
-        { "id": "walkthrough", "component": "step_flow_canvas", "dataSource": "gaming.walkthrough", "label": "Walkthrough", "emoji": "🗺️", "goal": "Follow the route stage by stage — a visual map of the playthrough." },
-        { "id": "tier_list", "component": "tier_list", "dataSource": "gaming.rankings", "label": "Tier List", "emoji": "🏆", "goal": "Drag items into S/A/B/C/D tiers — your ranking saves automatically." }
+        { "id": "highlights", "component": "moment_track", "dataSource": "gaming.highlights", "label": "Highlights", "emoji": "🎬", "goal": "After this you can jump to the big plays and turning points." },
+        { "id": "loadout", "component": "checklist", "dataSource": "gaming.loadout", "label": "Build / Loadout", "emoji": "🎒", "goal": "After this you can copy the gear, perks and setup the video runs." },
+        { "id": "walkthrough", "component": "step_flow_canvas", "dataSource": "gaming.walkthrough", "label": "Walkthrough", "emoji": "🗺️", "goal": "After this you can follow the route stage by stage." },
+        { "id": "tier_list", "component": "tier_list", "dataSource": "gaming.rankings", "label": "Tier List", "emoji": "🏆", "goal": "After this you know how the creator ranks each pick, and you can rank your own." }
       ]
     },
     "sport": {
@@ -316,9 +354,9 @@
       "label": "Sport",
       "gradient": "linear-gradient(135deg, var(--vie-forest), var(--vie-honey))",
       "defaultTabs": [
-        { "id": "match_events", "component": "moment_track", "dataSource": "sport.matchEvents", "label": "Match Events", "emoji": "⏱️", "goal": "Jump to every goal, card, and turning point in order." },
-        { "id": "formation", "component": "formation_diagram", "dataSource": "sport.formation", "label": "Formation", "emoji": "📋", "goal": "See the lineup laid out on the pitch — players positioned by role." },
-        { "id": "stats", "component": "comparison", "dataSource": "sport.statComparison", "label": "Stat Comparison", "emoji": "📊", "goal": "Side-by-side team or player stats — weigh the numbers that matter." }
+        { "id": "match_events", "component": "moment_track", "dataSource": "sport.matchEvents", "label": "Match Events", "emoji": "⏱️", "goal": "After this you know every goal, card and turning point, in order." },
+        { "id": "formation", "component": "formation_diagram", "dataSource": "sport.formation", "label": "Formation", "emoji": "📋", "goal": "After this you know how each side lined up, player by player." },
+        { "id": "stats", "component": "comparison", "dataSource": "sport.statComparison", "label": "Stat Comparison", "emoji": "📊", "goal": "After this you know how the teams or players compare on the numbers." }
       ]
     }
   },

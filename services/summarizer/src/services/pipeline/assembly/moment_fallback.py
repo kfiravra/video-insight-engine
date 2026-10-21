@@ -28,6 +28,8 @@ import logging
 from collections.abc import Callable, Collection, Iterable, Mapping
 from typing import Any
 
+from src.shared_config.assembly_policy import assembly_policy, injected_tab
+
 from .assemblers_primary import assemble_moment_track
 from .normalizers import _chapters_to_moments, _coerce_int
 from .registry import infer_component
@@ -40,9 +42,11 @@ _OVERVIEW = "overview"
 
 # The Moments tab of a response whose plan designed none.
 _ALWAYS_MOMENTS_ID = "key_moments"
-_ALWAYS_MOMENTS_LABEL = "Key Moments"
-_ALWAYS_MOMENTS_EMOJI = "🎬"
-_ALWAYS_MOMENTS_GOAL = "Jump to any part of the video."
+# Label, emoji and goal from the registry (``injectedTabs.moments``): the goal names
+# what the viewer gets, never an assembly template (task 1.10's rule).
+_ALWAYS_MOMENTS_LABEL = injected_tab("moments")["label"]
+_ALWAYS_MOMENTS_EMOJI = injected_tab("moments")["emoji"]
+_ALWAYS_MOMENTS_GOAL = injected_tab("moments")["goal"]
 
 
 def _outline_entries(video_meta: Mapping[str, Any]) -> list[dict]:
@@ -137,8 +141,9 @@ def tab_component(tab: Mapping[str, Any]) -> str:
 # Moments tab — the overview is the hero. The response's PRIMARY domain decides:
 # one step tab under a podcast or a lecture leaves the domain's timeline alone,
 # and a domain that requires moment_track always keeps it (phase-0 review C-A1).
-_TIMELINE_STEP_COMPONENTS = frozenset({"step_player", "step_flow_canvas", "workout_room"})
-_STEP_TIMELINE_PRIMARIES = frozenset({"food", "fitness", "project"})
+# domains.json ``assemblyPolicy``: the procedures and the primaries they navigate.
+_TIMELINE_STEP_COMPONENTS = frozenset(assembly_policy()["sequentialComponents"])
+_STEP_TIMELINE_PRIMARIES = frozenset(assembly_policy()["stepTimelinePrimaries"])
 
 
 def steps_are_the_timeline(

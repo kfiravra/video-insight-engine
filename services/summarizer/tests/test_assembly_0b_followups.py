@@ -280,8 +280,9 @@ class TestTwinsKeepTheirOwnItems:
 
         assert [len(next(iter(t["props"].values()))) for t in tabs] == [1, 3]
 
-    def test_should_keep_the_cool_downs_own_exercise(self) -> None:
-        """W-A2: the cool-down repeats two warm-up moves; Child's pose ships nowhere else."""
+    def test_should_keep_the_cool_down_whole(self) -> None:
+        """W-A2 / output-quality 1.8: the cool-down repeats two warm-up moves, but a
+        workout is a procedure (``SEQUENTIAL_COMPONENTS``) and ships whole, in order."""
 
         def moves(*names: str) -> list[dict]:
             return [{"name": n, "formCues": ["slow and controlled"], "reps": 8} for n in names]
@@ -296,7 +297,11 @@ class TestTwinsKeepTheirOwnItems:
         result = assemble_response(triage, {"fitness": fitness}, None, None)
 
         cooldown = next(t for t in result["tabs"] if t["id"] == "cooldown")
-        assert [e["name"] for e in cooldown["props"]["exercises"]] == ["Child's pose"]
+        assert [e["name"] for e in cooldown["props"]["exercises"]] == [
+            "Cat-cow",
+            "Hip openers",
+            "Child's pose",
+        ]
 
 
 # ─── W-A3: a fallback never borrows a list another tab ships ───

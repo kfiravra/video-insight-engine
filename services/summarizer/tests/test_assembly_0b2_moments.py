@@ -288,13 +288,14 @@ def _described_moments(count: int, spacing: int = 40) -> list[dict]:
 
 
 class TestDescribedTrackCap:
-    def test_should_ship_every_event_of_a_described_ten_minute_track(self) -> None:
-        """S08: 14 described events in a 10-minute explainer — §9 alone kept 4."""
+    def test_should_give_a_described_ten_minute_track_its_bands_max(self) -> None:
+        """S08: 14 described events in a 10-minute explainer — strictly §9 (Kfir
+        2026-10-21): the ≤ 15-minute band's top, 6; a label-only track keeps 4."""
         tab = _moment_tab(_described_moments(14))
 
         _post_process_tabs([tab], 600)
 
-        assert len(tab["props"]["items"]) == 14
+        assert len(tab["props"]["items"]) == 6
 
     def test_should_size_a_label_only_track_by_duration(self) -> None:
         tab = _moment_tab(_plain_moments(14, spacing=40))
@@ -303,12 +304,12 @@ class TestDescribedTrackCap:
 
         assert len(tab["props"]["items"]) == moment_cap_for_duration(600, 20)
 
-    def test_should_rank_sample_a_described_track_over_the_item_cap(self) -> None:
+    def test_should_rank_sample_a_described_track_down_to_its_band(self) -> None:
         tab = _moment_tab(_described_moments(30, spacing=20))
 
         _post_process_tabs([tab], 600)
 
-        assert len(tab["props"]["items"]) == 20
+        assert len(tab["props"]["items"]) == 6
 
     def test_should_never_give_a_long_described_video_fewer_moments_than_by_duration(
         self,

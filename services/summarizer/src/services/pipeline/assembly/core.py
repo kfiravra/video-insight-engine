@@ -12,6 +12,7 @@ from collections import Counter
 from collections.abc import Callable, Collection, Iterable, Mapping
 from typing import Any
 
+from src.shared_config.assembly_policy import assembly_policy, injected_tab
 from src.shared_config.domain_config import (
     assembler_item_caps,
     build_fallback_tabs,
@@ -50,28 +51,31 @@ from .moment_fallback import (
     cannot_feed_moments,
     fallback_moment_props,
     fallback_moments,
-    steps_are_the_timeline,
 )
-from .moment_sources import described_moment_source
+from .moment_fallback import steps_are_the_timeline as steps_are_the_timeline
+from .moment_sources import described_moment_source, described_or_fallback
 from .promotion import demote_component, promote_component
 from .registry import ASSEMBLER_REGISTRY, infer_component
 from .sampling import (
     MomentAnchors,
     collect_moment_anchors,
     item_richness,
+    key_idea_cap,
     moment_track_cap,
     rank_sample,
     sample_moments,
     tier_head,
 )
+from .steps_timeline import STEPS_ARE_THE_TIMELINE as STEPS_ARE_THE_TIMELINE
+from .steps_timeline import dedupe_under_steps_timeline
 
 logger = logging.getLogger(__name__)
 
-# Goals of the tabs assembly adds itself — the viewer-outcome rule (task 1.10) holds
-# for them too (``plan_prompt.goal_rule_violation``).
-_OVERVIEW_GOAL = "After this you know what the video says and whether to watch it."
-_TAKEAWAYS_GOAL = "After this you know the video's main takeaways at a glance."
-_FILMSTRIP_GOAL = "After this you can see each stage as it looks on screen."
+# Goals of the tabs assembly adds itself come from the registry (``injectedTabs``):
+# the viewer-outcome rule (task 1.10) holds for them too.
+_OVERVIEW_TAB = injected_tab("overview")
+_KEY_INFO_TAB = injected_tab("keyInfo")
+_FRAMES_TAB = injected_tab("framesGallery")
 
 
 # ─────────────────────────────────────────────────────
@@ -433,40 +437,6 @@ def _drop_emptied_moment_tabs(
                 "reason": "all_timestamps_impossible",
             }
         )
-
-
-def _drop_moments_when_steps_are_the_timeline(
-    tabs: list[dict],
-    dropped_sink: list[dict],
-    primary_tag: str,
-    required: Collection[str],
-    sources: Mapping[str, str] | None = None,
-) -> bool:
-    """Remove every moment_track tab when the steps are the timeline (D6); True when so.
-
-    ``primary_tag`` and its ``required`` components decide (``steps_are_the_timeline``:
-    a moment_track the domain requires is never dropped). ``sources`` (tab id →
-    planned dataSource) labels each drop record.
-    """
-    if not steps_are_the_timeline(tabs, primary_tag, required):
-        return False
-    for idx in reversed(range(len(tabs))):
-        if tabs[idx].get("component") != "moment_track":
-            continue
-        popped = tabs.pop(idx)
-        logger.info(
-            "TAB DROPPED: id=%r, component='moment_track' — the steps are the timeline (D6)",
-            popped.get("id"),
-        )
-        dropped_sink.append(
-            {
-                "id": popped.get("id", ""),
-                "component": "moment_track",
-                "dataSource": (sources or {}).get(str(popped.get("id", "")), ""),
-                "reason": STEPS_ARE_THE_TIMELINE,
-            }
-        )
-    return True
 
 
 def _backfill_moment_thumbnails(
@@ -889,8 +859,6 @@ _COUNT_KEYS: dict[str, str] = {
     if component in COMPONENT_LIST_KEYS
 }
 
-STEPS_ARE_THE_TIMELINE = "steps_are_the_timeline"
-
 
 def _log_cap(component: str, list_key: str, size: int, cap: int, how: str) -> None:
     logger.info("Assembly: capping %s.%s from %d → %d (%s)", component, list_key, size, cap, how)
@@ -923,12 +891,14 @@ def _cap_tab_items(
     props: dict,
     video_duration: float | None = None,
     anchors: MomentAnchors | None = None,
+    cap_override: int | None = None,
 ) -> None:
     """Cap the user-facing list of a tab, keeping the items that matter (R9).
 
     A procedure (``SEQUENTIAL_COMPONENTS``) ships whole: a sampled step player
-    skips steps mid-procedure (phase-0 review W-A4). A label-only timeline's cap
-    follows the video's length (content-model §9; ``moment_track_cap``). Spots
+    skips steps mid-procedure (phase-0 review W-A4). A timeline's cap follows the
+    video's length (content-model §9; ``moment_track_cap``); ``cap_override``
+    replaces the component cap (a key-ideas tab's ``key_idea_cap``). Spots
     grouped by day (``sections[].spotIndices``) are capped per section with the
     indices remapped, so no day vanishes and no index dangles.
     """
@@ -941,6 +911,8 @@ def _cap_tab_items(
         return
     if component == "moment_track":
         cap = moment_track_cap(items, video_duration, cap)
+    if cap_override is not None:
+        cap = cap_override
     if len(items) <= cap:
         return
     if list_key == "spots" and isinstance(props.get("sections"), list):
@@ -1034,12 +1006,24 @@ def _cap_spots_with_sections(props: dict, spots: list, cap: int) -> None:
     props["sections"] = rebuilt
 
 
+_KEY_IDEAS_SOURCE = "learning.keyIdeas"
+
+
+def key_idea_caps(sources: Mapping[str, str], duration: float | None) -> dict[str, int]:
+    """Tab id → the key-ideas cap for every tab planned on ``learning.keyIdeas``: the
+    argument is never sampled down to a screen (Kfir 2026-10-21, ``key_idea_cap``)."""
+    cap = key_idea_cap(duration, _TAB_ITEM_CAPS.get("spot_explorer", 25))
+    return {tab_id: cap for tab_id, source in sources.items() if source == _KEY_IDEAS_SOURCE}
+
+
 def _post_process_tabs(
     tabs: list[dict],
     video_duration: float | None = None,
     anchors: MomentAnchors | None = None,
+    cap_overrides: Mapping[str, int] | None = None,
 ) -> None:
-    """Apply post-processing rules to assembled tabs in-place."""
+    """Apply post-processing rules to assembled tabs in-place (``cap_overrides``: tab
+    id → the item cap that replaces its component's, ``key_idea_caps``)."""
     for i, tab in enumerate(tabs):
         label = tab.get("label", "")
         props = tab.get("props", {})
@@ -1047,7 +1031,8 @@ def _post_process_tabs(
 
         component = tab.get("component", "")
         if isinstance(props, dict) and component:
-            _cap_tab_items(component, props, video_duration, anchors)
+            override = (cap_overrides or {}).get(str(tab.get("id", "")))
+            _cap_tab_items(component, props, video_duration, anchors, override)
 
         if emoji and label.startswith(emoji):
             label = label[len(emoji) :].lstrip()
@@ -1365,8 +1350,8 @@ def _ensure_overview_first(
 
     tab_stub = {
         "id": "overview",
-        "label": "Overview",
-        "emoji": "📋",
+        "label": _OVERVIEW_TAB["label"],
+        "emoji": _OVERVIEW_TAB["emoji"],
         "_primary_tag": primary_tag,
         "_synthesis": synthesis,
         "_video_meta": video_meta,
@@ -1378,11 +1363,11 @@ def _ensure_overview_first(
         0,
         {
             "id": "overview",
-            "label": "Overview",
-            "emoji": "📋",
+            "label": _OVERVIEW_TAB["label"],
+            "emoji": _OVERVIEW_TAB["emoji"],
             "component": "overview",
             "props": props,
-            "goal": _OVERVIEW_GOAL,
+            "goal": _OVERVIEW_TAB["goal"],
             "crossTabLinks": [],
         },
     )
@@ -1461,15 +1446,15 @@ def build_fallback_candidates(
             candidates.append(
                 {
                     "id": "overview",
-                    "label": "Overview",
-                    "emoji": "📋",
+                    "label": _OVERVIEW_TAB["label"],
+                    "emoji": _OVERVIEW_TAB["emoji"],
                     "component": "overview",
                     "props": {
                         "summary": master_summary,
                         "keyTakeaways": key_takeaways,
                         "tldr": synthesis.get("tldr", ""),
                     },
-                    "goal": _OVERVIEW_GOAL,
+                    "goal": _OVERVIEW_TAB["goal"],
                     "crossTabLinks": [],
                 }
             )
@@ -1482,11 +1467,11 @@ def build_fallback_candidates(
             candidates.append(
                 {
                     "id": "key_info",
-                    "label": "Key Info",
-                    "emoji": "📊",
+                    "label": _KEY_INFO_TAB["label"],
+                    "emoji": _KEY_INFO_TAB["emoji"],
                     "component": "info_grid",
                     "props": {"items": items},
-                    "goal": _TAKEAWAYS_GOAL,
+                    "goal": _KEY_INFO_TAB["goal"],
                     "crossTabLinks": [],
                 }
             )
@@ -1687,14 +1672,13 @@ def assemble_response(
         # connection graph that gate the richer components) then density caps.
         # Both run before validation so a promoted/trimmed tab is re-checked.
         if props is not None:
-            component, props = promote_component(
-                component,
-                props,
-                data,
-                extraction,
-                primary_tag,
-            )
+            component, props = promote_component(component, props, data, extraction, primary_tag)
             props = enforce_density(component, props)
+        # A Moments track that fails the gate yields to a described fallback (R7).
+        if props is not None and component == "moment_track":
+            props = described_or_fallback(
+                props, lambda: fallback_moment_props(video_meta, description_analysis)
+            )
 
         if props is not None and not _validate_assembled_props(component, props):
             logger.warning(
@@ -1860,10 +1844,10 @@ def assemble_response(
     # decide, not the plan's (dataSource, component) pairs, and a twin the
     # domain requires outlives one it does not — ``dedupe._dedupe_tabs``.
     required = required_components(primary_tag, triage.get("contentFormat"))
-    steps_timeline = _drop_moments_when_steps_are_the_timeline(
-        assembled_tabs, dropped_tabs, primary_tag, required, sources
+    # D6 decides on the steps before the dedupe; with no step tab left, the Moments come back.
+    steps_timeline = dedupe_under_steps_timeline(
+        assembled_tabs, dropped_tabs, primary_tag, required, sources, _dedupe_tabs
     )
-    _dedupe_tabs(assembled_tabs, dropped_tabs, required, sources)
     # R5: no info_grid row ships a key without a value.
     require_grid_values(assembled_tabs, dropped_tabs)
 
@@ -1927,8 +1911,7 @@ def assemble_response(
         # mostly talking-head footage; lectures with one slide drown in noise.
         has_enough_frames = len(filmstrip_frames) >= 10
         has_good_captions = non_generic_count >= len(filmstrip_frames) * 0.7
-        _NO_GALLERY_DOMAINS = {"narrative", "music"}
-        _domain_blocked = primary_tag in _NO_GALLERY_DOMAINS
+        _domain_blocked = primary_tag in assembly_policy()["noFilmstripDomains"]
         # A planner-designed filmstrip tab already shows these frames — a
         # second auto-appended gallery is pure duplication.
         _has_filmstrip_tab = any(t.get("component") == "video_filmstrip" for t in assembled_tabs)
@@ -1964,11 +1947,11 @@ def assemble_response(
             assembled_tabs.append(
                 {
                     "id": "frames-gallery",
-                    "label": "Visual Moments",
-                    "emoji": "\U0001f5bc\ufe0f",
+                    "label": _FRAMES_TAB["label"],
+                    "emoji": _FRAMES_TAB["emoji"],
                     "component": "video_filmstrip",
                     "props": {"frames": filmstrip_frames},
-                    "goal": _FILMSTRIP_GOAL,
+                    "goal": _FRAMES_TAB["goal"],
                     "crossTabLinks": [],
                 }
             )
@@ -1977,6 +1960,7 @@ def assemble_response(
         assembled_tabs,
         (video_meta or {}).get("duration"),
         collect_moment_anchors(extraction, synthesis),
+        key_idea_caps(sources, (video_meta or {}).get("duration")),
     )
     # After post-processing: a link's text is its target's FINAL label (emoji
     # prefix stripped, "Untitled Chapter N" renamed), never the raw plan label.

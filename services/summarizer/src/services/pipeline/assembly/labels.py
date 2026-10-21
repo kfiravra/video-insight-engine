@@ -15,6 +15,7 @@ import re
 from collections.abc import Mapping
 from typing import Any
 
+from src.shared_config.assembly_policy import measure_units
 from src.shared_config.domain_config import component_tier
 
 from .component_lists import COMPARISON_COMPONENTS, COMPARISON_LIST_KEYS, COMPONENT_LIST_KEYS
@@ -27,15 +28,8 @@ from .component_lists import COMPARISON_COMPONENTS, COMPARISON_LIST_KEYS, COMPON
 _LEADING_COUNT = re.compile(r"^[0-9]{1,3}\s+")
 # The number measures the word after it (case-insensitive) — "7 Days in Tokyo",
 # "10 Minute Abs", "3 Course Meal" — so the label is left verbatim. One list with
-# the FE and the output-quality tools (phase-0 review W-A1); change all three.
-_MEASURE_UNITS = frozenset(
-    {
-        "second", "seconds", "sec", "secs", "minute", "minutes", "min", "mins",
-        "hour", "hours", "hr", "hrs", "day", "days", "night", "nights",
-        "week", "weeks", "month", "months", "year", "years", "course", "courses",
-        "km", "mile", "miles", "kg", "lb", "lbs", "pound", "pounds", "percent",
-    }
-)  # fmt: skip
+# the FE and the output-quality tools: domains.json ``measureUnits``.
+_MEASURE_UNITS = measure_units()
 # The list the hero strip counts per component (``COUNT_PROP_BY_COMPONENT``):
 # every tab-tier component's own list. Attachment-only components never head a
 # tab, and a comparison counts its rows, pros and cons together.

@@ -18,6 +18,8 @@ import logging
 import re
 from typing import Any
 
+from src.shared_config.assembly_policy import assembly_policy
+
 from .assemblers_overhaul import assemble_concept_canvas
 from .assemblers_primary import assemble_spot_explorer
 from .derived_guard import is_numeric_axis
@@ -43,11 +45,12 @@ COMPONENT_PROMOTIONS: dict[str, str] = {
 
 # Domains whose `concepts` extraction carries a connection graph worth rendering
 # as a canvas rather than a flat flashcard deck.
-_CONCEPT_DOMAINS: frozenset[str] = frozenset({"learning", "science"})
+_CONCEPT_DOMAINS: frozenset[str] = frozenset(assembly_policy()["conceptPromotionDomains"])
 
 # Domains whose steps are a procedure to follow along (Cooking / Build mode
 # depend on step_player): they never render as a canvas, however long (D8).
-STEP_LIST_DOMAINS: frozenset[str] = frozenset({"food", "project"})
+# domains.json ``assemblyPolicy``.
+STEP_LIST_DOMAINS: frozenset[str] = frozenset(assembly_policy()["stepListDomains"])
 
 # A rank ("1st", "22nd", "3RD") has the guard's number shape but is no
 # measurement: scaled as one, the worse rank would win its spoke. Twin of
