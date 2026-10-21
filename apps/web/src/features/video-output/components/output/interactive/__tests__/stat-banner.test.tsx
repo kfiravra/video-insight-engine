@@ -30,6 +30,12 @@ describe('StatBanner', () => {
     expect(container.innerHTML).toBe('');
   });
 
+  it('should accept the assembler tile fields meaning and timestamp', () => {
+    const tiles = [{ label: 'Deaths', value: '1 million', meaning: 'Iran-Iraq war toll', timestamp: 242 }];
+    render(<StatBanner stats={tiles} />);
+    expect(screen.getByText('1 million')).toBeInTheDocument();
+  });
+
   it('renders nothing for an empty stats array', () => {
     const { container } = render(<StatBanner stats={[]} />);
     expect(container.innerHTML).toBe('');

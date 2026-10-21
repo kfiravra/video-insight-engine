@@ -1,10 +1,15 @@
 import { memo } from 'react';
 import { cn } from '@/lib/utils';
 
+/** Mirrors `StatBannerStat` in @vie/types: the assembler's 0b.11 tiles carry
+ *  `meaning` (the key point behind the figure) and `timestamp` (seconds). The
+ *  banner does not render them yet (phase 4: SeekChip on the timestamp). */
 export interface StatBannerStat {
   label: string;
   value: string;
   emoji?: string;
+  meaning?: string;
+  timestamp?: number;
 }
 
 interface StatBannerProps {
