@@ -2,7 +2,7 @@ import { memo } from 'react';
 import { motion } from 'motion/react';
 import { cn } from '@/lib/utils';
 import { springs } from '@/lib/motion';
-import { useLabels } from '@/lib/i18n';
+import { useLabels, type Labels } from '@/lib/i18n';
 import { useMediaQuery } from '@/hooks/use-media-query';
 import { useVideoPlayer } from '@/features/video-output/contexts/VideoPlayerContext';
 import { YouTubePlayer } from '@/components/videos/YouTubePlayer';
@@ -11,6 +11,7 @@ import { PlayCloseGlyph } from './PlayCloseGlyph';
 import { DOMAIN_META } from './domain-meta';
 import { HeroBrief } from './HeroBrief';
 import { HeroTakeaways } from './HeroTakeaways';
+import { HeroWorthIt } from './HeroWorthIt';
 import { VideoHeroStrip, type VideoHeroTab } from './VideoHeroStrip';
 import type { ContentTag } from '@vie/types';
 
@@ -25,10 +26,21 @@ interface VideoHeroProps {
   creator?: string;
   duration?: number | null;
   tldr?: string;
+  /** Each a claim closing with the `[m:ss]` (`[h:mm:ss]`) where it is said —
+   *  the marker renders as a ▶ seek chip, never as text. */
   keyTakeaways?: string[];
+  /** The hero rewrite's 3–5 sentence brief (output-quality 2.2). Wins over
+   *  `masterSummary`, which older rows carry instead. */
+  brief?: string;
   /** The long-form brief (synthesis.masterSummary). Rendered as a collapsible
    *  "Brief" under the tldr — open on desktop, collapsed on phones (R11). */
   masterSummary?: string;
+  /** "Worth it for / Skip if" — two short lines under the takeaways (C2). */
+  worthItFor?: string;
+  skipIf?: string;
+  /** Minutes to read the page: the identity strip then shows
+   *  "Read: N min · Watch: M min" in place of the bare duration. */
+  readingMinutes?: number;
   /** The question the video answers (extraction keyQuestion). First line of
    *  the brief when present. */
   keyQuestion?: string;
@@ -71,16 +83,32 @@ const NO_PENDING: PendingTab[] = [];
 const NO_TABS: VideoHeroTab[] = [];
 const NO_TAKEAWAYS: string[] = [];
 
+interface ReadWatch {
+  read: string;
+  watch?: string;
+}
+
+/** "Read: 5 min" + "Watch: 63 min" — the page's compression promise. Null
+ *  when the page carries no reading time (older rows keep the bare duration). */
+function readWatchLabels(t: Labels, readingMinutes?: number, duration?: number | null): ReadWatch | null {
+  if (readingMinutes == null || !Number.isFinite(readingMinutes) || readingMinutes <= 0) return null;
+  const read = t.readMinutes.replace('{minutes}', String(Math.max(1, Math.round(readingMinutes))));
+  if (!duration || duration <= 0) return { read };
+  return { read, watch: t.watchMinutes.replace('{minutes}', String(Math.max(1, Math.round(duration / 60)))) };
+}
+
 interface IdentityStripProps {
   primaryTag?: ContentTag;
   level?: string;
   durationStr: string;
+  readWatch: ReadWatch | null;
   creator?: string;
 }
 
-/** Identity strip — domain, level, duration and creator as a single row,
- *  separated by dots so the metadata reads as one cohesive line. */
-function IdentityStrip({ primaryTag, level, durationStr, creator }: IdentityStripProps) {
+/** Identity strip — domain, level, duration (or read / watch time) and
+ *  creator as a single row, separated by dots so the metadata reads as one
+ *  cohesive line. */
+function IdentityStrip({ primaryTag, level, durationStr, readWatch, creator }: IdentityStripProps) {
   const domainMeta = primaryTag ? DOMAIN_META[primaryTag] : undefined;
   const chips: Array<{ key: string; node: React.ReactNode }> = [];
   if (domainMeta) {
@@ -95,7 +123,12 @@ function IdentityStrip({ primaryTag, level, durationStr, creator }: IdentityStri
     });
   }
   if (level) chips.push({ key: 'level', node: <span>{level}</span> });
-  if (durationStr) chips.push({ key: 'duration', node: <span className="tabular-nums">{durationStr}</span> });
+  if (readWatch) {
+    chips.push({ key: 'read', node: <span className="font-medium text-foreground/85 tabular-nums">{readWatch.read}</span> });
+    if (readWatch.watch) chips.push({ key: 'watch', node: <span className="tabular-nums">{readWatch.watch}</span> });
+  } else if (durationStr) {
+    chips.push({ key: 'duration', node: <span className="tabular-nums">{durationStr}</span> });
+  }
   if (creator) chips.push({ key: 'creator', node: <span className="truncate max-w-[24ch]">{creator}</span> });
   if (chips.length === 0) return null;
   return (
@@ -219,7 +252,11 @@ export const VideoHero = memo(function VideoHero({
   duration,
   tldr,
   keyTakeaways = NO_TAKEAWAYS,
+  brief,
   masterSummary,
+  worthItFor,
+  skipIf,
+  readingMinutes,
   keyQuestion,
   youtubeId,
   tabs = NO_TABS,
@@ -233,9 +270,13 @@ export const VideoHero = memo(function VideoHero({
   pendingTabs = NO_PENDING,
   className,
 }: VideoHeroProps) {
+  const t = useLabels();
   const isPhone = useMediaQuery(PHONE_QUERY);
   const { isPlayerOpen } = useVideoPlayer();
   const durationStr = formatDuration(duration);
+  const readWatch = readWatchLabels(t, readingMinutes, duration);
+  // Older rows carry only `masterSummary`; the hero rewrite's brief wins.
+  const briefText = brief?.trim() ? brief : masterSummary;
   const hasTabs = tabs.length > 0;
   const isStreaming = isStreamingProp ?? !tldr;
   // Pending strip renders only while streaming and before real tabs exist —
@@ -246,12 +287,15 @@ export const VideoHero = memo(function VideoHero({
   // Once tabs exist, the planned ones still to come trail the live strip.
   const trailingPending = hasTabs && isStreaming && isStreamingProp !== undefined ? pendingTabs : NO_PENDING;
   const showTakeaways = keyTakeaways.length > 0 || isStreaming;
-  // When nothing renders below the header (no takeaways, no tab strip, player
-  // closed), the header must carry its own bottom padding so the card doesn't
-  // look clipped. Every other block supplies its own trailing space.
-  const headerNeedsBottomPad = !showTakeaways && !hasTabs && !showPendingStrip && !isPlayerOpen;
-  const identity = <IdentityStrip primaryTag={primaryTag} level={level} durationStr={durationStr} creator={creator} />;
-  const hasIdentity = Boolean(primaryTag || level || durationStr || creator);
+  const showWorth = Boolean(worthItFor?.trim() || skipIf?.trim());
+  // When nothing renders below the header (no takeaways, no worth-it lines, no
+  // tab strip, player closed), the header must carry its own bottom padding so
+  // the card doesn't look clipped. Every other block supplies its own trailing space.
+  const headerNeedsBottomPad = !showTakeaways && !showWorth && !hasTabs && !showPendingStrip && !isPlayerOpen;
+  const identity = (
+    <IdentityStrip primaryTag={primaryTag} level={level} durationStr={durationStr} readWatch={readWatch} creator={creator} />
+  );
+  const hasIdentity = Boolean(primaryTag || level || durationStr || readWatch || creator);
 
   return (
     <motion.section
@@ -269,14 +313,17 @@ export const VideoHero = memo(function VideoHero({
       <div className={cn('px-6 pt-5 md:px-7 md:pt-6', headerNeedsBottomPad && 'pb-5 md:pb-6')}>
         <HeroHeader title={title} identity={identity} hasIdentity={hasIdentity} youtubeId={youtubeId} />
         <Tldr tldr={tldr} isStreaming={isStreaming} />
-        {masterSummary?.trim() && <HeroBrief masterSummary={masterSummary} keyQuestion={keyQuestion} isPhone={isPhone} />}
+        {briefText?.trim() && <HeroBrief masterSummary={briefText} keyQuestion={keyQuestion} isPhone={isPhone} />}
       </div>
 
       {youtubeId && <HeroPlayer youtubeId={youtubeId} />}
 
-      {showTakeaways && (
-        <div className="px-6 pb-5 md:px-7 md:pb-6 pt-4">
-          <HeroTakeaways takeaways={keyTakeaways} isStreaming={isStreaming} isPhone={isPhone} />
+      {(showTakeaways || showWorth) && (
+        // Phones keep the worth-it lines below the (collapsed) takeaways: two
+        // short lines still leave the tab strip on the first screen.
+        <div className="space-y-5 px-6 pb-5 md:px-7 md:pb-6 pt-4">
+          {showTakeaways && <HeroTakeaways takeaways={keyTakeaways} isStreaming={isStreaming} isPhone={isPhone} />}
+          {showWorth && <HeroWorthIt worthItFor={worthItFor} skipIf={skipIf} />}
         </div>
       )}
 

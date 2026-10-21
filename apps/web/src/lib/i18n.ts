@@ -63,6 +63,13 @@ export interface Labels {
    *  otherwise all be called "Hide". */
   hideBrief: string;
   hideTakeaways: string;
+  /** The hero's "should I watch?" lines (output-quality 2.3). */
+  worthItFor: string;
+  skipIf: string;
+  /** The hero's reading-time promise and the video's length beside it;
+   *  {minutes} is interpolated. */
+  readMinutes: string;
+  watchMinutes: string;
   /** Strip overflow pill; {count} is interpolated. */
   showMoreSections: string;
   /** Strip overflow pill when exactly one tab is hidden. */
@@ -143,6 +150,10 @@ const EN: Labels = {
   moreTakeaways: 'More takeaways',
   hideBrief: 'Hide brief',
   hideTakeaways: 'Hide takeaways',
+  worthItFor: 'Worth it for',
+  skipIf: 'Skip if',
+  readMinutes: 'Read: {minutes} min',
+  watchMinutes: 'Watch: {minutes} min',
   showMoreSections: 'Show {count} more sections',
   showOneMoreSection: 'Show 1 more section',
   tips: 'Tips',
@@ -255,6 +266,10 @@ const TRANSLATIONS: Record<string, Labels> = {
     moreTakeaways: 'תובנות נוספות',
     hideBrief: 'הסתר תקציר',
     hideTakeaways: 'הסתר תובנות מפתח',
+    worthItFor: 'שווה צפייה עבור',
+    skipIf: 'דלגו אם',
+    readMinutes: 'קריאה: {minutes} דק׳',
+    watchMinutes: 'צפייה: {minutes} דק׳',
     showMoreSections: 'הצג עוד {count} מקטעים',
     showOneMoreSection: 'הצג עוד מקטע אחד',
     tips: 'טיפים',
@@ -364,6 +379,10 @@ const TRANSLATIONS: Record<string, Labels> = {
     moreTakeaways: 'نقاط إضافية',
     hideBrief: 'إخفاء الموجز',
     hideTakeaways: 'إخفاء النقاط الرئيسية',
+    worthItFor: 'يستحق المشاهدة لـ',
+    skipIf: 'تخطَّه إذا',
+    readMinutes: 'قراءة: {minutes} دقيقة',
+    watchMinutes: 'مشاهدة: {minutes} دقيقة',
     showMoreSections: 'عرض {count} أقسام إضافية',
     showOneMoreSection: 'عرض قسم إضافي واحد',
     tips: 'نصائح',

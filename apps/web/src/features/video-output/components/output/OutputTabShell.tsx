@@ -69,7 +69,11 @@ export function CommandDeck({
       duration={duration}
       tldr={synthesis?.tldr}
       keyTakeaways={synthesis?.keyTakeaways}
+      brief={synthesis?.brief}
       masterSummary={synthesis?.masterSummary}
+      worthItFor={synthesis?.worthItFor}
+      skipIf={synthesis?.skipIf}
+      readingMinutes={synthesis?.readingMinutes}
       keyQuestion={keyQuestion}
       youtubeId={youtubeId}
       tabs={tabDefs}
