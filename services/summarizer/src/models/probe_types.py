@@ -18,6 +18,9 @@ from ..shared_config.domain_config import valid_content_tags
 
 DEFAULT_FORMAT = "commentary"
 
+# Mirrors the <formats> block of prompts/tier_probe.txt (tests/test_p1_14_probe_formats.py
+# proves the two agree). ``talk`` (keynote / conference talk) and ``interview``
+# (a host questioning a guest) are the labels the spoken-word playbooks route on.
 VALID_FORMATS: frozenset[str] = frozenset(
     {
         "tutorial",
@@ -27,6 +30,7 @@ VALID_FORMATS: frozenset[str] = frozenset(
         "motivational",
         "interview",
         "lecture",
+        "talk",
         "vlog",
         "documentary",
         "walkthrough",
