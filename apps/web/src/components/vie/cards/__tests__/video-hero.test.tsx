@@ -226,19 +226,19 @@ describe('VideoHero', () => {
       expect(screen.getByText('Takeaway three')).toBeInTheDocument();
     });
 
-    it('should show six takeaways on desktop with a "+N" more control for the rest', () => {
+    it('should show seven takeaways on desktop with a "+N" more control for the rest', () => {
       const tooMany = Array.from({ length: 9 }, (_, i) => `Takeaway ${i + 1}`);
       renderWithPlayer(<VideoHero {...DEFAULT_PROPS} keyTakeaways={tooMany} />);
-      expect(screen.getByText('Takeaway 6')).toBeInTheDocument();
-      expect(screen.queryByText('Takeaway 7')).not.toBeInTheDocument();
-      expect(screen.getByRole('button', { name: /^\+3 · More takeaways$/ })).toBeInTheDocument();
+      expect(screen.getByText('Takeaway 7')).toBeInTheDocument();
+      expect(screen.queryByText('Takeaway 8')).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^\+2 · More takeaways$/ })).toBeInTheDocument();
     });
 
     it('should reveal all takeaways when "+N" is clicked', async () => {
       const user = userEvent.setup();
       const tooMany = Array.from({ length: 9 }, (_, i) => `Takeaway ${i + 1}`);
       renderWithPlayer(<VideoHero {...DEFAULT_PROPS} keyTakeaways={tooMany} />);
-      await user.click(screen.getByRole('button', { name: /^\+3 · More takeaways$/ }));
+      await user.click(screen.getByRole('button', { name: /^\+2 · More takeaways$/ }));
       expect(screen.getByText('Takeaway 9')).toBeInTheDocument();
     });
 
@@ -264,7 +264,7 @@ describe('VideoHero', () => {
       const user = userEvent.setup();
       const tooMany = Array.from({ length: 9 }, (_, i) => `Takeaway ${i + 1}`);
       renderWithPlayer(<VideoHero {...DEFAULT_PROPS} keyTakeaways={tooMany} />);
-      await user.click(screen.getByRole('button', { name: /^\+3 · More takeaways$/ }));
+      await user.click(screen.getByRole('button', { name: /^\+2 · More takeaways$/ }));
       expect(screen.getByRole('button', { name: 'Hide takeaways' })).toBeInTheDocument();
     });
 

@@ -72,7 +72,10 @@ OUTLINE_TITLE_MAX_CHARS = 60
 ESTABLISHES_MAX_CHARS = 120
 TLDR_MAX_CHARS = 150
 MIN_TAKEAWAYS = 3
-MAX_TAKEAWAYS = 5
+# The hero carries the top 3 / 5 / 7 claims by length (content-model §9 sizing table,
+# Kfir 2026-10-21): up to 15 min → 3, up to 45 min → 5, longer → 7.
+TAKEAWAYS_BY_DURATION: tuple[tuple[int, int], ...] = ((900, 3), (2700, 5))
+MAX_TAKEAWAYS = 7
 
 _WHITESPACE_RE = re.compile(r"\s+")
 _BOOL_STRINGS: dict[str, bool] = {"true": True, "false": False}
@@ -106,6 +109,7 @@ def build_memory_prompt(request: MemoryInput) -> str:
         template.replace("{title}", sanitize_for_prompt(request.title, max_len=200))
         .replace("{channel}", sanitize_for_prompt(request.channel or "Unknown", max_len=100))
         .replace("{duration}", format_clock(request.duration))
+        .replace("{takeaway_count}", str(takeaway_count(request.duration)))
         .replace(
             "{description}",
             sanitize_for_prompt(request.description or "N/A", max_len=1000),
@@ -279,8 +283,19 @@ def _drop_stamp_past_the_end(text: str, duration: int | None) -> str:
     return text[: match.start()].rstrip()
 
 
+def takeaway_count(duration: int | None) -> int:
+    """How many takeaways the hero carries for a video of ``duration`` seconds (3 / 5 / 7)."""
+    if duration is None:
+        return TAKEAWAYS_BY_DURATION[-1][1]
+    for limit, count in TAKEAWAYS_BY_DURATION:
+        if duration <= limit:
+            return count
+    return MAX_TAKEAWAYS
+
+
 def repair_takeaways(raw: object, duration: int | None = None) -> list[str]:
-    """3–5 distinct non-empty takeaways, else ``[]`` (synthesis's takeaways are used).
+    """3 to :func:`takeaway_count` distinct non-empty takeaways, else ``[]``
+    (synthesis's takeaways are used).
 
     With ``duration``, a takeaway's closing ``[m:ss]`` past the end is cut.
     """
@@ -293,7 +308,7 @@ def repair_takeaways(raw: object, duration: int | None = None) -> list[str]:
         if text and text.casefold() not in seen:
             seen.add(text.casefold())
             takeaways.append(text)
-    takeaways = takeaways[:MAX_TAKEAWAYS]
+    takeaways = takeaways[: takeaway_count(duration)]
     return takeaways if len(takeaways) >= MIN_TAKEAWAYS else []
 
 

@@ -6,8 +6,9 @@ import { FadeIn } from '@/components/vie/feedback/FadeIn';
 import { CollapsibleSection } from './CollapsibleSection';
 
 // Mobile rule (audit §2 #15): the hero must leave the first viewport to the
-// tab panel — three takeaways on phones, six on desktop, the rest behind "+N".
-const TAKEAWAY_CAP_DESKTOP = 6;
+// tab panel — three takeaways on phones, all seven the sizing table allows on
+// desktop (an hour-long video carries 7, Kfir 2026-10-21), the rest behind "+N".
+const TAKEAWAY_CAP_DESKTOP = 7;
 const TAKEAWAY_CAP_PHONE = 3;
 
 interface HeroTakeawaysProps {
