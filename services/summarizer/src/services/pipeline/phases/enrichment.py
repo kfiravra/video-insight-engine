@@ -16,7 +16,12 @@ from typing import TYPE_CHECKING, Any, AsyncGenerator
 
 from llm_common.context import llm_feature_var
 
-from src.services.pipeline.enrichment import _has_meaningful_data, enrich_quiz, needs_quiz
+from src.services.pipeline.enrichment import (
+    _has_meaningful_data,
+    enrich_quiz,
+    needs_quiz,
+    render_hero,
+)
 from src.services.pipeline.pipeline_helpers import sse_event
 from src.services.pipeline.pipeline_timing import timed_step
 
@@ -40,7 +45,7 @@ def _skip_reason(ctx: PipelineContext, extraction: Mapping[str, Any]) -> str | N
 
 
 async def _quiz(ctx: PipelineContext, extraction: Mapping[str, Any]) -> EnrichmentData | None:
-    """The quiz over ``extraction`` (None = skipped or failed), logged as ``pipeline.enrichment``."""
+    """The quiz over ``extraction`` (None = skipped / failed), logged as ``pipeline.enrichment``."""
     llm_feature_var.set("summarize:enrichment")
     plan = ctx.plan_result
     skip_reason = _skip_reason(ctx, extraction)  # never None without a plan (no plan → no demand)
@@ -57,6 +62,10 @@ async def _quiz(ctx: PipelineContext, extraction: Mapping[str, Any]) -> Enrichme
         extraction_data=extraction,
         video_memory=ctx.video_memory,
         tabs=plan.tabs,
+        # Task 1.13: the length sizes the quiz (3 / 5 / 8) and bounds its stamps; the
+        # memory hero is what the page shows, so no question may be answerable from it.
+        duration_s=ctx.video_data.duration if ctx.video_data else None,
+        hero=render_hero(ctx.video_data.title if ctx.video_data else "", ctx.memory),
     )
     logger.info(
         "pipeline.enrichment",

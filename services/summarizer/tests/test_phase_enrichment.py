@@ -51,6 +51,8 @@ def _ctx(primary: str = "tech", extraction: dict | None = None) -> SimpleNamespa
         enrichment_data=None,
         llm_service=MagicMock(),
         quiz_task=None,
+        video_data=SimpleNamespace(duration=600, title="t"),
+        memory=None,
     )
 
 
@@ -184,3 +186,19 @@ async def test_should_time_the_started_call_as_quiz_call(
     await _started(_ctx(), None)
 
     assert [phase["name"] for phase in recorder.phases] == [enrichment_phase.QUIZ_CALL_STEP]
+
+
+async def test_should_size_the_quiz_by_the_video_length_when_the_video_is_known() -> None:
+    ctx = _ctx()
+
+    _, enrich_quiz = await _run(ctx, None)
+
+    assert enrich_quiz.await_args.kwargs["duration_s"] == 600
+
+
+async def test_should_hand_the_hero_text_to_the_quiz_call_when_the_title_is_known() -> None:
+    ctx = _ctx()
+
+    _, enrich_quiz = await _run(ctx, None)
+
+    assert "t" in enrich_quiz.await_args.kwargs["hero"]
