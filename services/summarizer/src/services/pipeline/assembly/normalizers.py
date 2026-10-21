@@ -135,6 +135,7 @@ def _normalize_to_spot(item: dict) -> dict | None:
         or item.get("aspect")
         or item.get("label")
         or item.get("key")  # ReviewSpec {key, value} — mirror promotion.py
+        or item.get("item")  # a tier-list row {item, reason} on its spot rung
         or ""
     )
     name = str(name_raw).strip()
@@ -149,6 +150,7 @@ def _normalize_to_spot(item: dict) -> dict | None:
         or item.get("translation")
         or item.get("context")
         or item.get("value")  # ReviewSpec {key, value}
+        or item.get("reason")  # a tier-list row's why
         or ""
     )
     description = str(desc_raw).strip()
@@ -385,9 +387,8 @@ def _normalize_exercise(item: Any) -> dict | None:
     return result
 
 
-def _normalize_quiz_question(item: Any, duration_s: float | None = None) -> dict | None:
-    """Normalize quiz question to {question, options[], correctIndex, explanation, timestamp?,
-    quote?, quoteTranslated?}.
+def _quiz_extras(item: dict, duration_s: float | None) -> dict[str, Any]:
+    """A question's explanation, its seek point and its evidence line.
 
     ``timestamp`` is the second the transcript answers the question (output-quality
     1.13 / 1.5): the arena's seek chip, shipped whenever the item states one — in
@@ -397,6 +398,22 @@ def _normalize_quiz_question(item: Any, duration_s: float | None = None) -> dict
     ``quote`` is quiz v2's evidence line (2.1b), shipped when the quote check left it;
     ``quoteTranslated`` marks an English rendering of non-English speech (prose, D12).
     """
+    timestamp, explanation = reconcile_quiz_time(
+        anchor_seconds(item), str(item.get("explanation") or ""), duration_s
+    )
+    extras: dict[str, Any] = {"explanation": explanation}
+    if timestamp is not None:
+        extras["timestamp"] = timestamp
+    quote = item.get("quote")
+    if isinstance(quote, str) and quote.strip():
+        extras["quote"] = quote.strip()
+        mark_translated_quote(extras, item)
+    return extras
+
+
+def _normalize_quiz_question(item: Any, duration_s: float | None = None) -> dict | None:
+    """Normalize quiz question to {question, options[], correctIndex, explanation, timestamp?,
+    quote?, quoteTranslated?} — the last four as ``_quiz_extras`` reads them."""
     if not isinstance(item, dict):
         return None
     question = item.get("question") or item.get("text") or ""
@@ -420,22 +437,12 @@ def _normalize_quiz_question(item: Any, duration_s: float | None = None) -> dict
     except (ValueError, TypeError):
         correct_index = 0
     correct_index = max(0, min(correct_index, len(options) - 1))
-    timestamp, explanation = reconcile_quiz_time(
-        anchor_seconds(item), str(item.get("explanation") or ""), duration_s
-    )
-    normalized: dict[str, Any] = {
+    return {
         "question": str(question),
         "options": options,
         "correctIndex": correct_index,
-        "explanation": explanation,
+        **_quiz_extras(item, duration_s),
     }
-    if timestamp is not None:
-        normalized["timestamp"] = timestamp
-    quote = item.get("quote")
-    if isinstance(quote, str) and quote.strip():
-        normalized["quote"] = quote.strip()
-        mark_translated_quote(normalized, item)
-    return normalized
 
 
 def _normalize_scenario_option(opt: Any) -> dict | None:

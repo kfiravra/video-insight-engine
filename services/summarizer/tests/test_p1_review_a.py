@@ -254,7 +254,8 @@ class TestGroupRules:
 
 class TestQuizTimestampSource:
     def test_should_copy_a_stamp_only_from_a_sentence_level_item(self) -> None:
-        assert "Copy a key idea's, claim's or quote's own \"timestamp\"" in _QUIZ
+        # Copied as written, never converted (p2 review D8).
+        assert "a key idea's, claim's or quote's own \"timestamp\" as it stands" in _QUIZ
         assert "Copy the extracted item's own" not in _QUIZ
 
     def test_should_pick_the_sentence_inside_a_moment_spot_or_step(self) -> None:

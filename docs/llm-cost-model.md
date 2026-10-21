@@ -243,7 +243,7 @@ is gone. The plan reads the **full** `[m:ss]`-marked transcript (1b.2), so its
 uncached block — and cost — grows with the video; memory reads the same string.
 
 **Hero rewrite — reads the field groups' blocks (output-quality 2.1,
-`HERO_REWRITE_ENABLED`).** `hero_rewrite.cached_blocks` sends the call as
+`HERO_REWRITE_ENABLED`).** `hero_job.cached_blocks` sends the call as
 `[block 1, block 2?, block 3]` on `LLM_EXTRACTION_MODEL` (caches are per model, so
 it runs on the groups' model, with their JSON mode and effort and no system prompt):
 
@@ -255,8 +255,8 @@ it runs on the groups' model, with their JSON mode and effort and no system prom
   alone and block 3 carries `<video>` + `<video_memory>`;
 - **block 3** = the hero job (`prompts/hero_rewrite.txt` + the compacted merged
   extraction, at most `HERO_EXTRACTION_MAX_TOKENS` = 5 000 tokens, + the tab labels),
-  uncached. A retry (one, with the failed checks appended) changes block 3 only, so it
-  reads the cache too.
+  uncached. A retry (one, with the failed checks appended; made only when the hero would
+  be None or a D18 line would drop) changes block 3 only, so it reads the cache too.
 
 Without group blocks (`EXTRACTION_PARALLEL=false`) the request is block 3 alone: no
 group call wrote blocks 1 / 2, so sending them would write them (block 1 at 2x for an
@@ -292,7 +292,7 @@ restores the previous call. The `feature` column is `llm_usage.feature`
 | Synthesis | `synthesis` | the fast tier | `summarize:synthesis` | the flag off, or the hero call gave no hero (`phases/synthesis._synthesis_dict`) — then exactly as before |
 | Quiz v2 | `quiz_v2` | `LLM_MEMORY_MODEL` (Haiku 5.5; no model key of its own) | `summarize:enrichment` | `QUIZ_V2_ENABLED`, a plan with a quiz host: one call, 18 s per attempt, 1 retry, 37 s stage cap. **Replaces** `enrich_quiz` |
 | Quiz v1 | `enrichment` | `LLM_ENRICHMENT_MODEL` (gpt-4o-mini) | `summarize:enrichment` | `QUIZ_V2_ENABLED=false` |
-| Judge: hero + quiz | `faithfulness` (two calls) | `LLM_JUDGE_MODEL` (gpt-6-luna) | `summarize:faithfulness` | after assembly, when the doc has a stamped takeaway / quiz question and the sample rate is above 0 |
+| Judge: hero + quiz | `faithfulness` (up to two calls) | `LLM_JUDGE_MODEL` (gpt-6-luna) | `summarize:faithfulness` | after assembly, when the doc has a stamped takeaway / quiz question, the sample rate is above 0, and — per call — the hero rewrite wrote the hero / `QUIZ_V2_ENABLED` is on (flag-off runs make no extra judge call) |
 
 - **Quiz v2 reads no cache.** Memory sends its transcript without a breakpoint, so there
   is no shared prefix to read, and a breakpoint on this request alone would pay its 1.25x

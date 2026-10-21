@@ -54,6 +54,36 @@ export function filledSynthesisFields(synthesis: Partial<SynthesisResult>): Part
   return filled;
 }
 
+/** The hero rewrite's own synthesis fields — a final emission without one clears it. */
+export const SYNTHESIS_HERO_KEYS = ['brief', 'worthItFor', 'skipIf', 'readingMinutes'] as const;
+
+const SYNTHESIS_FIELD_KEYS = [
+  'tldr',
+  'keyTakeaways',
+  'masterSummary',
+  'seoDescription',
+  ...SYNTHESIS_HERO_KEYS,
+] as const satisfies readonly (keyof SynthesisResult)[];
+
+function copyCarried<K extends keyof SynthesisResult>(
+  from: Partial<SynthesisResult>,
+  to: Partial<SynthesisResult>,
+  key: K,
+): void {
+  if (from[key] !== undefined) to[key] = from[key];
+}
+
+/**
+ * Every synthesis field an emission carries, empties included — what the
+ * `final` (corrected) superset replaces the consumer's copy with, so a field
+ * the late-group scrub emptied clears instead of keeping the earlier text.
+ */
+export function carriedSynthesisFields(synthesis: Partial<SynthesisResult>): Partial<SynthesisResult> {
+  const carried: Partial<SynthesisResult> = {};
+  for (const key of SYNTHESIS_FIELD_KEYS) copyCarried(synthesis, carried, key);
+  return carried;
+}
+
 // ─────────────────────────────────────────────────────
 // Enrichment Data
 // ─────────────────────────────────────────────────────

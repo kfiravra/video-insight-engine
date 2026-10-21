@@ -307,5 +307,30 @@ describe('VideoRepository', () => {
 
       expect(await storedSynthesis(id)).toEqual(early);
     });
+
+    describe('the final (corrected) superset after the late group', () => {
+      const hero = { ...late, brief: late.masterSummary, worthItFor: 'Leads.', skipIf: 'You want code.' };
+
+      it('should store the empties when the scrub emptied fields of the final superset', async () => {
+        const id = await seedRow('synth-final-scrubbed');
+        await repo.mergeSynthesis(id, early);
+        await repo.mergeSynthesis(id, hero);
+
+        const scrubbed = { ...hero, tldr: '', worthItFor: '', masterSummary: '', brief: '', readingMinutes: 4 };
+        await repo.mergeSynthesis(id, { ...scrubbed, final: true });
+
+        expect(await storedSynthesis(id)).toEqual(scrubbed);
+      });
+
+      it('should unset a hero field when the final superset no longer carries it', async () => {
+        const id = await seedRow('synth-final-absent');
+        await repo.mergeSynthesis(id, hero);
+
+        const { skipIf: _gone, ...settled } = hero;
+        await repo.mergeSynthesis(id, { ...settled, final: true });
+
+        expect(await storedSynthesis(id)).toEqual(settled);
+      });
+    });
   });
 });

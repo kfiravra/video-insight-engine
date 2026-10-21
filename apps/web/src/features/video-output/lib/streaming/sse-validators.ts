@@ -10,6 +10,7 @@ import { sseLogger } from './sse-logger';
 import { incrementTelemetryCounter } from '@/features/video-output/lib/telemetry';
 import {
   VIDEO_CATEGORY_VALUES,
+  carriedSynthesisFields,
   filledSynthesisFields,
   type SSESynthesisCompleteEvent,
   type SynthesisResult,
@@ -137,7 +138,9 @@ export function validateMetadataEvent(data: unknown): VideoMetadata {
 // Every content field is optional: the memory-done partial carries only
 // tldr + keyTakeaways, a failure path can carry nothing, and only the hero
 // rewrite's supersets carry brief / worthItFor / skipIf (readingMinutes on the
-// corrected one after the late group). `satisfies` ties the schema to the
+// corrected one after the late group, marked `final`). An out-of-contract hero
+// field (or `final`) is dropped, never the emission — the summarizer only logs
+// contract drift in production. `satisfies` ties the schema's output to the
 // shared event type so the two can't drift apart.
 const synthesisCompleteEventSchema = z.object({
   event: z.literal('synthesis_complete'),
@@ -145,24 +148,37 @@ const synthesisCompleteEventSchema = z.object({
   keyTakeaways: z.array(z.string()).optional(),
   masterSummary: z.string().optional(),
   seoDescription: z.string().optional(),
-  brief: z.string().optional(),
-  worthItFor: z.string().optional(),
-  skipIf: z.string().optional(),
-  readingMinutes: z.number().int().positive().optional(),
-}) satisfies z.ZodType<SSESynthesisCompleteEvent>;
+  brief: z.string().optional().catch(undefined),
+  worthItFor: z.string().optional().catch(undefined),
+  skipIf: z.string().optional().catch(undefined),
+  readingMinutes: z.number().int().positive().optional().catch(undefined),
+  final: z.boolean().optional().catch(undefined),
+}) satisfies z.ZodType<SSESynthesisCompleteEvent, z.ZodTypeDef, unknown>;
+
+/** One validated `synthesis_complete` emission. */
+export interface SynthesisEmission {
+  /** Merged emissions: only the fields that carry content. The final one:
+   *  every field it carries, empties included. */
+  fields: Partial<SynthesisResult>;
+  /** The corrected superset after the late group — it replaces the client's
+   *  copy instead of merging into it. */
+  final: boolean;
+}
 
 /**
  * Validate synthesis_complete event from SSE.
- * Returns only the fields that carry content ({} if validation fails), ready
- * to merge over what earlier emissions filled.
+ * Returns the fields to apply ({} if validation fails): those that carry
+ * content, ready to merge over what earlier emissions filled — or, on the
+ * final emission, the whole superset it carries, ready to replace.
  */
-export function validateSynthesisComplete(data: unknown): Partial<SynthesisResult> {
+export function validateSynthesisComplete(data: unknown): SynthesisEmission {
   const result = synthesisCompleteEventSchema.safeParse(data);
   if (!result.success) {
     reportInvalidEvent('Invalid synthesis_complete event:', result.error.message);
-    return {};
+    return { fields: {}, final: false };
   }
-  return filledSynthesisFields(result.data);
+  if (result.data.final) return { fields: carriedSynthesisFields(result.data), final: true };
+  return { fields: filledSynthesisFields(result.data), final: false };
 }
 
 // ─────────────────────────────────────────────────────

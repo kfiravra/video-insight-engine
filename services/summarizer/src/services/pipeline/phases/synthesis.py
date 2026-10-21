@@ -242,8 +242,9 @@ def settle_tab_references(ctx: PipelineContext, assembled: dict[str, Any]) -> st
     (``assembly.tab_references``); a planned tab dropped here joins
     ``assembled["dropped"]``. The tabs are final now, so a hero page gets its
     ``readingMinutes`` (code-counted, ``hero_rewrite.reading_minutes``). Returns a
-    corrected ``synthesis_complete`` (the superset, which replaces the client's and
-    the relay's copy) when the hero no longer reads as the last one sent.
+    corrected ``synthesis_complete`` when the hero no longer reads as the last one
+    sent: the superset marked ``final``, which replaces the client's and the relay's
+    copy — empties and absent hero keys included.
     """
     meta, tabs = ctx.assembled_meta, ctx.assembled_tabs
     if meta is None or tabs is None:
@@ -256,7 +257,7 @@ def settle_tab_references(ctx: PipelineContext, assembled: dict[str, Any]) -> st
     hero = synthesis_event(meta)
     if not ctx.synthesis_dict or hero == synthesis_event(ctx.synthesis_dict):
         return None
-    return sse_event("synthesis_complete", hero)
+    return sse_event("synthesis_complete", {**hero, "final": True})
 
 
 # ─── Phase ───

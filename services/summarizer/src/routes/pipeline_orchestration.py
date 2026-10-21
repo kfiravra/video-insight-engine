@@ -14,6 +14,7 @@ import asyncio
 import logging
 import time
 from collections.abc import AsyncGenerator, Callable
+from typing import Literal
 
 from src.config import settings
 from src.repositories.mongodb_repository import MongoDBVideoRepository
@@ -250,6 +251,97 @@ async def _frames_done_then_extraction(
         yield event
 
 
+JudgeStage = Literal["extraction", "assembly"]
+
+
+def _launch_judges(
+    ctx: PipelineContext, spawned: list[asyncio.Task[None]], stage: JudgeStage
+) -> None:
+    """Start the fire-and-forget faithfulness judge due at ``stage``; track it in ``spawned``.
+
+    ``extraction``: once extraction has data, the extraction sample. ``assembly``: the
+    judge's hero + quiz sample (output-quality 2.4), which needs the late group's hero
+    and quiz and judges each only if its call wrote it. The task copies the current
+    ContextVar state so the Langfuse trace is still attached; the run drains the tasks
+    before exiting the trace.
+    """
+    if stage == "extraction":
+        task = _launch_faithfulness_check(ctx) if ctx.extraction_data else None
+    else:
+        task = _launch_hero_quiz_check(ctx)
+    if task is not None:
+        spawned.append(task)
+
+
+async def _run_translation_step(
+    ctx: PipelineContext,
+    repository: MongoDBVideoRepository,
+    video_summary_id: str,
+    timer: PipelineTimer,
+    timing: PipelineTimingRecorder,
+) -> AsyncGenerator[str, None]:
+    """Translate the English output into the source language and attach it as
+    ``sourceLanguage`` for the FE toggle (no-op for English).
+
+    A row purged mid-run gets no translation (paid LLM calls) and no `done`.
+    """
+    if not ctx.source_language_code or ctx.row_deleted:
+        return
+    phase_start = time.monotonic()
+    try:
+        from src.services.pipeline.phases.translation import run_phase_translation
+
+        async for event in run_phase_translation(ctx, repository, video_summary_id):
+            yield event
+        # Assembly deferred the terminal event for non-English videos so
+        # `done` fires only after the source-language surface is final.
+        # Reaching here means translation ran to completion (success or a
+        # deliberate English-only no-op) and the doc is now "completed".
+        yield sse_event(
+            "done",
+            {
+                "videoSummaryId": video_summary_id,
+                "processingTimeMs": int(timer.elapsed() * 1000),
+                # Mirrors the assembly-phase terminal event for the
+                # non-English path — same partial-result signal.
+                "degraded": coverage_is_degraded(getattr(ctx, "extraction_coverage", None)),
+            },
+        )
+        yield "data: [DONE]\n\n"
+    except Exception as e:
+        # Translation raised — leave the doc "processing" (retriable) and
+        # emit no terminal event; the FE handles the stream close.
+        logger.warning("[pipeline] Translation failed (non-critical): %s", e)
+    mark_phase(ctx, timing, "translation", phase_start)
+
+
+async def _run_early_phases(
+    ctx: PipelineContext,
+    repository: MongoDBVideoRepository,
+    video_summary_id: str,
+    timing: PipelineTimingRecorder,
+) -> AsyncGenerator[str, None]:
+    """Phase 1 (metadata) and phase 2 (text ∥ frames, then extraction on the unsplit path)."""
+    # Phase 1: Metadata — one extract_info + validate_duration; it then
+    # starts the t=0 group in the background (captions, description
+    # analysis, low-res + 720p downloads) and returns.
+    phase_start = time.monotonic()
+    async for event in run_phase_metadata(ctx):
+        yield event
+    mark_phase(ctx, timing, "metadata", phase_start)
+
+    # Phase 2: text branch (transcript → tier probe → plan ∥ memory) ∥
+    # frames. EXTRACTION_PARALLEL (3.4): the field groups run inside the
+    # group (text at plan-done, visual at frames-done); false: today's
+    # frames-done step, then ONE extraction after the whole group.
+    split = settings.EXTRACTION_PARALLEL
+    async for event in _run_phase_two(ctx, repository, video_summary_id, timing, split):
+        yield event
+    if not split:
+        async for event in _frames_done_then_extraction(ctx, timing):
+            yield event
+
+
 async def _run_phases_in_order(
     ctx: PipelineContext,
     repository: MongoDBVideoRepository,
@@ -268,32 +360,9 @@ async def _run_phases_in_order(
     spawned_faithfulness: list[asyncio.Task[None]] = []
 
     try:
-        # Phase 1: Metadata — one extract_info + validate_duration; it then
-        # starts the t=0 group in the background (captions, description
-        # analysis, low-res + 720p downloads) and returns.
-        phase_start = time.monotonic()
-        async for event in run_phase_metadata(ctx):
+        async for event in _run_early_phases(ctx, repository, video_summary_id, timing):
             yield event
-        mark_phase(ctx, timing, "metadata", phase_start)
-
-        # Phase 2: text branch (transcript → tier probe → plan ∥ memory) ∥
-        # frames. EXTRACTION_PARALLEL (3.4): the field groups run inside the
-        # group (text at plan-done, visual at frames-done); false: today's
-        # frames-done step, then ONE extraction after the whole group.
-        split = settings.EXTRACTION_PARALLEL
-        async for event in _run_phase_two(ctx, repository, video_summary_id, timing, split):
-            yield event
-        if not split:
-            async for event in _frames_done_then_extraction(ctx, timing):
-                yield event
-        # Fire-and-forget faithfulness judge once extraction has data. The
-        # task copies the current ContextVar state so the Langfuse trace is
-        # still attached. We track the task so we can drain it before
-        # exiting the trace.
-        if ctx.extraction_data:
-            spawned = _launch_faithfulness_check(ctx)
-            if spawned is not None:
-                spawned_faithfulness.append(spawned)
+        _launch_judges(ctx, spawned_faithfulness, "extraction")
 
         # Phase 6: Assembly — tabs first, then synthesis ∥ moment fill ∥ the
         # quiz (1d.1/1d.3: the quiz never blocks tabs; its tab joins last),
@@ -302,44 +371,10 @@ async def _run_phases_in_order(
         async for event in run_phase_assembly(ctx):
             yield event
         mark_phase(ctx, timing, "assembly", phase_start)
-        # The judge's hero + quiz sample (output-quality 2.4): the late group
-        # wrote both, so it starts here and drains with the extraction sample.
-        hero_quiz = _launch_hero_quiz_check(ctx)
-        if hero_quiz is not None:
-            spawned_faithfulness.append(hero_quiz)
+        _launch_judges(ctx, spawned_faithfulness, "assembly")
 
-        # Translation step — translate the English output into the source
-        # language and attach it as ``sourceLanguage`` for the FE toggle.
-        # A row purged mid-run gets no translation (paid LLM calls) and no `done`.
-        if ctx.source_language_code and not ctx.row_deleted:
-            phase_start = time.monotonic()
-            try:
-                from src.services.pipeline.phases.translation import run_phase_translation
-
-                async for event in run_phase_translation(ctx, repository, video_summary_id):
-                    yield event
-                # Assembly deferred the terminal event for non-English videos so
-                # `done` fires only after the source-language surface is final.
-                # Reaching here means translation ran to completion (success or a
-                # deliberate English-only no-op) and the doc is now "completed".
-                yield sse_event(
-                    "done",
-                    {
-                        "videoSummaryId": video_summary_id,
-                        "processingTimeMs": int(timer.elapsed() * 1000),
-                        # Mirrors the assembly-phase terminal event for the
-                        # non-English path — same partial-result signal.
-                        "degraded": coverage_is_degraded(
-                            getattr(ctx, "extraction_coverage", None),
-                        ),
-                    },
-                )
-                yield "data: [DONE]\n\n"
-            except Exception as e:
-                # Translation raised — leave the doc "processing" (retriable) and
-                # emit no terminal event; the FE handles the stream close.
-                logger.warning("[pipeline] Translation failed (non-critical): %s", e)
-            mark_phase(ctx, timing, "translation", phase_start)
+        async for event in _run_translation_step(ctx, repository, video_summary_id, timer, timing):
+            yield event
 
         # The orchestrator's logger: the replay driver + log searches key on it.
         log_run_summary(ctx, timer, timing, logger)

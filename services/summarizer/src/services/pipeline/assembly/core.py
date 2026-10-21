@@ -1820,7 +1820,9 @@ def assemble_response(
                 "emoji": raw_tab.get("emoji", ""),
                 "component": component,
                 "props": props,
-                "goal": goal_without_lost_structure(raw_tab.get("goal", ""), degraded_from),
+                "goal": goal_without_lost_structure(
+                    raw_tab.get("goal", ""), degraded_from, component, primary_tag
+                ),
                 "crossTabLinks": [],
                 **({"degradedFrom": degraded_from} if degraded_from else {}),
             }

@@ -831,7 +831,7 @@ class TestDegradeNeverDrop:
                 },
             ],
         }
-        # Only 2 items — below tier_list min 3 → demote to info_grid.
+        # Only 2 items — below tier_list min 3 → demote to a spot list (p2 review A3).
         extraction = {
             "gaming": {
                 "rankings": [
@@ -845,7 +845,7 @@ class TestDegradeNeverDrop:
         tab = next((t for t in result["tabs"] if t["id"] == "rankings"), None)
         assert tab is not None
         assert tab["degradedFrom"] == "tier_list"
-        assert tab["component"] == "info_grid"
+        assert tab["component"] == "spot_explorer"
 
     def test_truly_empty_data_still_drops(self):
         triage = {

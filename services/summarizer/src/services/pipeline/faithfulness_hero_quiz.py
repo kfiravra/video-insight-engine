@@ -20,9 +20,12 @@ page: the hero's key takeaways and the quiz. Two calls on the judge's model
 Each call logs its own Langfuse score, ``faithfulness_hero`` / ``faithfulness_quiz``
 (grounded ÷ judged, comment "N/M … grounded"), so the extraction sample's
 ``faithfulness`` score keeps its meaning on the dashboards. A doc without a stamped
-takeaway (or quiz question) skips that call; ``LANGFUSE_FAITHFULNESS_SAMPLE_RATE=0``
-skips both, like the extraction sample. One attempt per call: the score is
-informational, and the cost bound below holds per run.
+takeaway (or quiz question) skips that call; so does a run where the hero rewrite
+did not write the hero (``HERO_REWRITE_ENABLED`` off, or the rewrite failed — the page
+then shows memory's takeaways) or where quiz v2 did not write the quiz
+(``QUIZ_V2_ENABLED`` off): the flags stay rollback levers that remove their calls.
+``LANGFUSE_FAITHFULNESS_SAMPLE_RATE=0`` skips both, like the extraction sample. One
+attempt per call: the score is informational, and the cost bound below holds per run.
 
 **Cost, bounded by construction** (gpt-6-luna $0.10 in / $0.50 out per MTok): every
 piece of a prompt is capped (claim, question, option, speech window, screen lines,
@@ -295,14 +298,24 @@ def hero_quiz_samples(
     tabs: Sequence[Any],
     evidence: EvidenceSource,
     sample_rate: float | None = None,
+    judge_hero: bool = True,
+    judge_quiz: bool = True,
 ) -> HeroQuizSamples | None:
     """Both samples of an assembled doc; None when the judge is off
     (``LANGFUSE_FAITHFULNESS_SAMPLE_RATE`` ≤ 0), the run has no timed transcript,
-    or neither sample has an item."""
+    or neither sample has an item.
+
+    ``judge_hero`` / ``judge_quiz`` are False when the hero rewrite / quiz v2 did
+    not write that part of the page (their flags are off, or the call failed): the
+    page then shows memory's takeaways / no quiz, and judging them would add calls
+    the rollback flags are meant to remove. That sample is empty."""
     rate = sample_rate if sample_rate is not None else settings.LANGFUSE_FAITHFULNESS_SAMPLE_RATE
     if rate <= 0 or not evidence.segments:
         return None
-    samples = HeroQuizSamples(hero_sample(meta, evidence), quiz_sample(tabs, evidence, youtube_id))
+    samples = HeroQuizSamples(
+        hero_sample(meta, evidence) if judge_hero else Sample(SCORE_HERO, ()),
+        quiz_sample(tabs, evidence, youtube_id) if judge_quiz else Sample(SCORE_QUIZ, ()),
+    )
     return samples if samples.calls() else None
 
 

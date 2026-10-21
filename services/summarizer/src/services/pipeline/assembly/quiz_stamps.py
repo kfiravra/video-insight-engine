@@ -9,6 +9,10 @@ and printed one time as a bare "(1322)" (G1-1). The rules:
   lies inside the video is rendered as ``(m:ss)``; one past the end (when the
   length is known) is removed with its "at" and comma, so a bare second count
   never reaches the prose;
+- a bare ``(N)`` is a second count only when it agrees with the stamp (within
+  ``CLOCK_AGREEMENT_S``) or follows "at" / "around" / "from" — and never when it has 1–2
+  digits (a list number) or, off the stamp, reads as a year (1000–2099): "a study
+  (2008)" and "(1) stress and (2) sleep" stay as written (p2 review A5);
 - a stamp that reads as a cited clock's minutes (``stamp == clock // 60``) is a unit
   error and takes that clock; a stamp past the video's end takes the first cited
   clock;
@@ -48,7 +52,8 @@ END_SLACK_S = 10.0
 
 # "(3:22)", "[1:02:05]" or a bare "(1322)" — the prompt's "(m:ss)" slot — with the
 # "at" / "around" leading into it and the comma after it, which go when it goes. A
-# bare number counts only in parentheses ("[3]" is a citation, not a time).
+# bare number counts only in parentheses ("[3]" is a citation, not a time), and only
+# when :func:`_bare_count_is_time` says so.
 _CLOCK = r"\d{1,3}(?::[0-5]\d){1,2}"
 _TIME_CUE_RE = re.compile(
     r"(?P<lead>\b(?:at|around|near|from|by)\s+)?"
@@ -56,6 +61,12 @@ _TIME_CUE_RE = re.compile(
     r"(?P<comma>\s*,)?",
     re.IGNORECASE,
 )
+# A bare number with fewer digits is a list number ("(1) stress"), never a time.
+_BARE_MIN_DIGITS = 3
+# Off the stamp, a bare number in this range is a year ("a study (2008)").
+_YEARS = range(1000, 2100)
+# The words that make a bare number read as a time without the stamp's agreement.
+_BARE_LEADS = frozenset({"at", "around", "from"})
 _SPACE_RUN_RE = re.compile(r"[ \t]{2,}")
 _SPACE_BEFORE_PUNCT_RE = re.compile(r"[ \t]+(?=[,.;:!?])")
 
@@ -68,27 +79,42 @@ def _inside(seconds: int, duration_s: float | None) -> bool:
     return not duration_s or duration_s <= 0 or seconds <= duration_s + END_SLACK_S
 
 
+def _bare_count_is_time(number: str, lead: str, stamp: int | None) -> bool:
+    """A bare ``(N)`` is a second count only when it agrees with the stamp, or follows a
+    lead-in word and cannot be a list number or a year (module docstring)."""
+    if len(number) < _BARE_MIN_DIGITS:
+        return False
+    seconds = int(number)
+    if stamp is not None and abs(seconds - stamp) <= CLOCK_AGREEMENT_S:
+        return True
+    return lead.strip().casefold() in _BARE_LEADS and seconds not in _YEARS
+
+
 def _tidy(text: str, removed_at_start: bool) -> str:
     """Whitespace and punctuation left by a removed cue; a capital where it opened the text."""
     text = _SPACE_BEFORE_PUNCT_RE.sub("", _SPACE_RUN_RE.sub(" ", text)).strip()
     return text[:1].upper() + text[1:] if removed_at_start else text
 
 
-def render_time_cues(explanation: str, duration_s: float | None) -> tuple[str, list[int]]:
+def render_time_cues(
+    explanation: str, duration_s: float | None, stamp: int | None = None
+) -> tuple[str, list[int]]:
     """``explanation`` with every time cue as ``(m:ss)`` or removed, and the seconds it
-    still cites."""
+    still cites; ``stamp`` is the question's own (a bare number agreeing with it is a time)."""
     clocks: list[int] = []
     removed_at_start = False
 
     def _render(match: re.Match[str]) -> str:
         nonlocal removed_at_start
-        seconds = _cue_seconds(match.group("paren") or match.group("bracket"))
+        paren, lead = match.group("paren"), match.group("lead") or ""
+        if paren and paren.isdigit() and not _bare_count_is_time(paren, lead, stamp):
+            return match.group(0)
+        seconds = _cue_seconds(paren or match.group("bracket"))
         if seconds is None or not _inside(seconds, duration_s):
             removed_at_start = removed_at_start or not explanation[: match.start()].strip()
             return " "
         clocks.append(seconds)
-        lead, comma = match.group("lead") or "", match.group("comma") or ""
-        return f"{lead}({_seconds_to_time_str(seconds)}){comma}"
+        return f"{lead}({_seconds_to_time_str(seconds)}){match.group('comma') or ''}"
 
     rendered = _TIME_CUE_RE.sub(_render, explanation)
     if rendered == explanation:
@@ -125,7 +151,7 @@ def reconcile_quiz_time(
 ) -> tuple[int | None, str]:
     """The question's stamp checked against its explanation's clocks, and the explanation
     with every time cue rendered and citing the stamp — the module docstring's rules."""
-    text, clocks = render_time_cues(explanation, duration_s)
+    text, clocks = render_time_cues(explanation, duration_s, stamp)
     reconciled = _stamp_for(stamp, clocks, duration_s)
     return reconciled, _cite_stamp(text, clocks, reconciled, duration_s)
 

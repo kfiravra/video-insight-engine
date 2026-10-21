@@ -11,7 +11,8 @@ Order (pipeline-1min 1d.1/1d.3; every ``tab_ready`` through the run's
    final where no late phase can change it;
 4. the late group — the moment fill (streams the moment tabs, framed),
    synthesis unless step 2 ran it (patches meta + the overview in place), the
-   quiz (the response is assembled again with it, ``late_quiz``);
+   quiz (the response is assembled again with it, ``late_quiz``, once quiz v2 lost
+   any question restating a shipped takeaway — ``settle_late_quiz``);
 5. the final re-emit: every tab not yet sent final, at its final position;
 6. ``complete`` (with the final tab order), the save, the shared artifacts
    (Redis, Qdrant), ``done``.
@@ -41,7 +42,7 @@ from src.services.pipeline.assembly.moment_frame_fill import fill_moment_frames
 from src.services.pipeline.enrichment import needs_quiz
 from src.services.pipeline.group_failures import group_drops
 from src.services.pipeline.phases import run_phase_enrichment, run_phase_synthesis
-from src.services.pipeline.phases.enrichment import cancel_quiz_task
+from src.services.pipeline.phases.enrichment import cancel_quiz_task, settle_late_quiz
 from src.services.pipeline.phases.extraction import extraction_record
 from src.services.pipeline.phases.frames import hires_upgrade_pending
 from src.services.pipeline.phases.group_emission import assembled_tab_events
@@ -288,6 +289,7 @@ async def run_phase_assembly(ctx: PipelineContext) -> AsyncGenerator[str, None]:
 
     async for event in run_parallel_phases(late, ctx):
         yield event
+    settle_late_quiz(ctx)  # both late calls landed: the shipped hero is known
     if ctx.enrichment_data:
         assembled = _add_late_quiz(ctx, description, synthesis_input, synthesized_first)
     # The Moments are framed and the hero written: nothing names a tab that does not ship.

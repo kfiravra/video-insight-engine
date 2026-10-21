@@ -353,8 +353,9 @@ def assemble_tier_list(
     Each item carries a label, an optional stated S/A/B/C/D tier (the answer
     key the user can override), and an optional reason. Needs ≥3 real items to
     justify the tab, and at least one stated tier — no stated rank → a list,
-    not tiers (D13): the tab walks the demote ladder to an info_grid of the
-    same items (name, reason, seek point), so it never vanishes.
+    not tiers (D13): the tab walks the demote ladder to a spot list of the same
+    items (name, reason, seek point; info_grid only as the last resort, R6), so
+    it never vanishes.
     """
     if isinstance(data, dict):
         data = data.get("rankings") or data.get("items") or []

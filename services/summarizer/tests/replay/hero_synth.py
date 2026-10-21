@@ -30,8 +30,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from src.services.pipeline.assembly.tab_references import TabNames
-from src.services.pipeline.hero_validate import sentences_of, tab_names
+from src.services.pipeline.hero_text import HeroTabNames, sentences_of, tab_names
 from src.services.pipeline.memory import format_clock
 from src.utils.data_helpers import parse_timestamp_to_seconds
 from tests.replay.cassette import LLMEntry, LLMKey
@@ -79,7 +78,7 @@ class HeroJob:
     duration: int | None
     ids: tuple[str, ...]
     lines: tuple[str, ...]
-    tabs: TabNames
+    tabs: HeroTabNames
 
 
 def is_hero_call(key: LLMKey) -> bool:

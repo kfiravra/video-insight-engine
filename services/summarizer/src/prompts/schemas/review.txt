@@ -42,8 +42,8 @@ Extract a structured product review or comparison.
     "notFor": ["Specific use cases to avoid this product"],
     "bottomLine": "One-sentence verdict",
     "subScores": [
-      {"category": "Camera", "score": 9.0, "quote": null, "timestamp": null},
-      {"category": "Battery", "score": 7.5, "quote": null, "timestamp": null}
+      {"category": "Camera", "score": null, "quote": null, "timestamp": null},
+      {"category": "Battery", "score": null, "quote": null, "timestamp": null}
     ],
     "quote": "The reviewer's words that state the verdict, verbatim, at most 25 words — or null",
     "timestamp": null

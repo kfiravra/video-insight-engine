@@ -161,7 +161,7 @@ export interface SSECompleteEvent {
  *  late group (the hero rewrite's carries `readingMinutes`). Any can be
  *  missing on a failure path and a reconnect can replay them in any order, so
  *  every content field is optional and consumers merge emissions — a partial
- *  never overwrites the superset. */
+ *  never overwrites the superset — except the `final` one, which replaces. */
 export interface SSESynthesisCompleteEvent {
   event: 'synthesis_complete';
   tldr?: string;
@@ -172,6 +172,10 @@ export interface SSESynthesisCompleteEvent {
   worthItFor?: string;
   skipIf?: string;
   readingMinutes?: number;
+  /** The corrected superset after the late group: it REPLACES the consumer's
+   *  copy — a field its scrub emptied arrives empty and clears, an absent hero
+   *  field goes. Absent = merge (an empty never blanks a filled field). */
+  final?: boolean;
 }
 
 export interface SSEFramesEvent {

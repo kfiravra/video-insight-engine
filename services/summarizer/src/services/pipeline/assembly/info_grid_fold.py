@@ -14,9 +14,11 @@ every reader sees one tab list (the per-group previews included):
   behalf, so the host waits for it;
 - assembly (:func:`apply_folds`): when the host ships, each fold's data is
   assembled as an info_grid and joins it — a spot_explorer host takes the rows
-  as cards (key → name, value → description, the row's timestamp, evidence →
-  quote, category badge) in a section named after the fold's label, a row with
-  no value dropped (R5); any other host takes the grid as a bottom attachment.
+  as cards (key → name, value → description, the row's timestamp, its evidence —
+  the card's quote only when it is the item's checked quote, else prose after the
+  description (R10) — and category badge) in a section named after the fold's
+  label, a row with no value dropped (R5); any other host takes the grid as a
+  bottom attachment.
   Each side is capped as it would ship alone first (``cap_rows`` for the grid,
   the caller for the host), so folded rows never cut the host's own items.
 
@@ -35,7 +37,7 @@ from src.shared_config.domain_config import info_grid_hosts
 
 from .assemblers_primary import assemble_info_grid
 from .normalizers import _normalize_to_spot
-from .promotion import _info_row_to_spot
+from .promotion import _info_row_to_spot, checked_quotes, spot_evidence
 
 logger = logging.getLogger(__name__)
 
@@ -84,25 +86,26 @@ def fold_entry(grid: Mapping[str, Any]) -> dict:
 # ─── Assembly: the folded cells join the host ───
 
 
-def _row_spot(row: Any) -> dict | None:
-    """One grid row as a spot card; None without a value (R5)."""
+def _row_spot(row: Any, quotes: dict[str, dict]) -> dict | None:
+    """One grid row as a spot card; None without a value (R5). Its evidence is the
+    card's quote only when it is the item's checked quote (``spot_evidence``, R10)."""
     if not isinstance(row, dict) or not str(row.get("value") or "").strip():
         return None
     spot = _normalize_to_spot(_info_row_to_spot(row))
     if spot is None:
         return None
-    if row.get("evidence"):
-        spot["quote"] = row["evidence"]
+    spot_evidence(spot, row, quotes)
     if row.get("category"):
         spot["category"] = row["category"]
     return spot
 
 
-def _into_spots(host: dict, grid_props: dict, label: str) -> None:
+def _into_spots(host: dict, grid_props: dict, label: str, quotes: dict[str, dict]) -> None:
     """The grid's rows join the host's spots as a section named ``label``."""
     props = host["props"]
     spots = props.get("spots") if isinstance(props.get("spots"), list) else []
-    added = [spot for spot in map(_row_spot, grid_props.get("items") or []) if spot is not None]
+    rows = grid_props.get("items") or []
+    added = [spot for spot in (_row_spot(row, quotes) for row in rows) if spot is not None]
     if not added:
         return
     sections = list(props.get("sections") or [])
@@ -121,11 +124,14 @@ def _as_attachment(host: dict, grid_props: dict) -> None:
     host["attachments"] = [*(host.get("attachments") or []), attachment]
 
 
-def _fold_props(
+def _fold_data(
     fold: Mapping[str, Any], extraction: dict | None, enrichment: dict | None, resolve: Resolve
-) -> dict | None:
-    source = str(fold.get("dataSource") or "")
-    props = assemble_info_grid(dict(fold), resolve(source, extraction, enrichment), {}, None)
+) -> Any:
+    return resolve(str(fold.get("dataSource") or ""), extraction, enrichment)
+
+
+def _fold_props(fold: Mapping[str, Any], data: Any) -> dict | None:
+    props = assemble_info_grid(dict(fold), data, {}, None)
     return props if props and props.get("items") else None
 
 
@@ -140,14 +146,15 @@ def apply_folds(
     """Assemble each folded grid over its own field — capped in place by ``cap_rows``
     as a grid tab would be — and join it to the shipped host."""
     for fold in folds:
-        props = _fold_props(fold, extraction, enrichment, resolve)
+        data = _fold_data(fold, extraction, enrichment, resolve)
+        props = _fold_props(fold, data)
         if props is None:
             continue
         if cap_rows is not None:
             cap_rows(props)
         label = str(fold.get("label") or fold.get("id") or "")
         if host.get("component") == _SPOTS:
-            _into_spots(host, props, label)
+            _into_spots(host, props, label, checked_quotes(data))
         else:
             _as_attachment(host, props)
         logger.info("Assembly: folded grid %r joins %r (R6)", fold.get("id"), host.get("id"))
@@ -163,7 +170,7 @@ def unfolded_tabs(
     as a tab of its own — degrade, never drop: a lost host keeps no cells hostage."""
     tabs: list[tuple[str, dict]] = []
     for fold in folds:
-        props = _fold_props(fold, extraction, enrichment, resolve)
+        props = _fold_props(fold, _fold_data(fold, extraction, enrichment, resolve))
         if props is None:
             continue
         tab_id = str(fold.get("id") or "")

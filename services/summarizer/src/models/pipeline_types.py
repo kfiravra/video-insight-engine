@@ -90,8 +90,10 @@ class QuizQuestion(BaseModel):
     timestamp: int | None = None
     # The speaker's words that settle the answer, ≤ 25 words from the transcript —
     # quiz v2's evidence, checked by the quote check, which also sets the stamp
-    # (output-quality 2.1b). Optional: stored rows and the flag-off quiz carry none.
-    quote: str | None = None
+    # (output-quality 2.1b). Optional: stored rows and the flag-off quiz carry none,
+    # and an unset quote is left out of every dump, so the flag-off wire and stored
+    # shapes stay what they were (p2 review B7).
+    quote: str | None = Field(None, exclude_if=lambda value: value is None)
 
     model_config = {"populate_by_name": True}
 
@@ -125,6 +127,10 @@ class EnrichmentData(BaseModel):
     """Quiz-only enrichment (pipeline-1min 1d.1): read by quiz_arena tabs and quick_quiz."""
 
     quiz: list[QuizQuestion] = Field(default_factory=list)
+    # Quiz v2's checked questions past the video's count, in order: the late group
+    # refills from them when it drops a question that restates a shipped hero
+    # takeaway (p2 review D7, ``phases.enrichment.settle_late_quiz``). Never dumped.
+    spares: list[QuizQuestion] = Field(default_factory=list, exclude=True)
 
     model_config = {"populate_by_name": True}
 

@@ -67,7 +67,7 @@ THINKING GUIDE:
   ],
   "claims": [
     {"claim": "The plan creates 1,200 jobs", "source": "Mayor Diaz", "status": "contested", "sourceCitation": "Independent analysts put the figure near 700", "quote": "This plan puts twelve hundred people to work.", "timestamp": 210},
-    {"claim": "Fares will rise 15% in 2026", "source": "Transit Authority", "status": "supported", "sourceCitation": "Approved fare schedule, council record", "quote": "Fares go up fifteen percent next year.", "timestamp": 540},
+    {"claim": "Fares will rise 15% next year", "source": "Transit Authority", "status": "supported", "sourceCitation": "Approved fare schedule, council record", "quote": "Fares go up fifteen percent next year.", "timestamp": 540},
     {"claim": "The city faces a structural deficit", "source": null, "status": "stated", "sourceCitation": null, "quote": "The city is spending more than it takes in, every year.", "timestamp": 60}
   ],
   "context": [

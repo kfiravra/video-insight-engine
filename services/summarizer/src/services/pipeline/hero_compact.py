@@ -16,6 +16,12 @@ then quotes), and only then do long lists keep an even spread of their items —
 the tail of the video stays in (S01's brief lost the second half once).
 Deterministic: the same extraction always gives the same bytes.
 
+With the run's quote index the extraction is read as 2.0's pre-pass leaves it
+(``verify_extraction_quotes``): a quote the transcript never says is out of the item's
+line, the evidence and ``quotes`` (a quote list loses the item) — a number or name
+only an invented quote holds can carry no takeaway (G1-6, D13); a translated quote
+(a non-English source) stays.
+
 An item's stamp is where the extraction put the item, not always where its words
 are said (S01: K's 680 s, its quote said at 723 s). Each id's quote is kept beside
 its stamp, and ``stamps_at_quotes`` moves the stamp to where the run's transcript
@@ -32,7 +38,14 @@ from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 
 from .memory import format_clock
-from .quote_verify import VERIFIED, QuoteIndex, verify_quote
+from .quote_verify import (
+    QUOTE_STATUS_KEY,
+    QUOTE_TRANSLATED_KEY,
+    VERIFIED,
+    QuoteIndex,
+    verify_extraction_quotes,
+    verify_quote,
+)
 
 HERO_EXTRACTION_MAX_TOKENS = 5000
 # A quote found farther than this from its item's stamp is the line said again
@@ -97,6 +110,8 @@ _SKIP_KEYS = frozenset(
         "number",
         "section",
         "group",
+        QUOTE_STATUS_KEY,
+        QUOTE_TRANSLATED_KEY,
     }
 )
 # A string this short is a tag (kind=thesis, speaker=DHH, tier=S), not a body.
@@ -317,17 +332,30 @@ def _cut_to(text: str, max_chars: int) -> str:
     return cut.rsplit("\n", 1)[0] if "\n" in cut else cut
 
 
+def _said_quotes_only(
+    extraction: Mapping[str, object], quote_index: QuoteIndex | None
+) -> Mapping[str, object]:
+    """The extraction without the quotes the transcript never says (module docstring)."""
+    if quote_index is None:
+        return extraction
+    checked = verify_extraction_quotes(dict(extraction), None, quote_index).extraction
+    return extraction if checked is None else checked
+
+
 def compact_for_hero(
     extraction: Mapping[str, object] | None,
     duration: int | None = None,
     max_tokens: int = HERO_EXTRACTION_MAX_TOKENS,
+    quote_index: QuoteIndex | None = None,
 ) -> CompactExtraction:
     """The extraction as id'd lines within ``max_tokens`` (empty for no extraction).
 
-    ``duration`` (seconds) leaves a stamp past the video's end without an id.
+    ``duration`` (seconds) leaves a stamp past the video's end without an id;
+    ``quote_index`` (the run's) leaves out every quote it reads as never said.
     """
     if not extraction:
         return CompactExtraction("")
+    extraction = _said_quotes_only(extraction, quote_index)
     for level in _LEVELS:
         render = _render(extraction, level, duration)
         text = "\n".join(render.lines)

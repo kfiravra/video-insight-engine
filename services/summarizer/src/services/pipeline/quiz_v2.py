@@ -16,7 +16,11 @@ quote check (``quote_verify``) or is dropped:
   ``quoteTranslated`` and the page shows it as prose;
 - no quote — dropped.
 
-Fewer than :data:`MIN_QUIZ_V2_QUESTIONS` survivors → no quiz (no quiz tab).
+Fewer than :data:`MIN_QUIZ_V2_QUESTIONS` survivors → no quiz (no quiz tab). The
+checked questions past the count travel on as ``EnrichmentData.spares``: once the
+hero rewrite (written in parallel) lands, a question whose keyed option restates a
+shipped takeaway goes and a spare takes its place (:func:`restates_takeaway`,
+``phases.enrichment.settle_late_quiz`` — p2 review D7).
 
 No prompt cache: memory sends its transcript without a breakpoint, so there is no
 shared prefix to read, and a breakpoint on this request alone pays its 1.25x write
@@ -32,6 +36,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from collections import Counter
 from collections.abc import Mapping, Sequence
@@ -100,6 +105,23 @@ _DEFAULT_SOURCES = ("learning.keyIdeas",)
 _MAIN_KEYS = ("claim", "title", "name", "label", "phrase", "question", "text", "statement")
 _DETAIL_KEYS = ("why", "detail", "description", "definition", "explanation", "answer")
 _STAMP_KEYS = ("timestamp", "seconds", "startSeconds")
+
+# A keyed option restates a takeaway when this share of its content words is in it —
+# the moment-anchor rule's share (``assembly.sampling``) — and at least this many of
+# them (all of a shorter option's: "About 1,000x").
+RESTATES_SHARE = 0.6
+RESTATES_MIN_WORDS = 3
+# A word with its "1,000x" / "don't" joins; the takeaway's closing [m:ss] is no word.
+_WORD_RE = re.compile(r"[^\W_]+(?:[.,'’][^\W_]+)*")
+_MARKER_RE = re.compile(r"\[\d{1,2}(?::\d{2}){1,2}\]")
+_SUFFIXES = ("ing", "ed", "s")
+_STOPWORDS = frozenset(
+    "the a an and of to in on for with by at from as is are was were be been it its this that "
+    "these those his her their our your you we they he she him them not no or but so if than "
+    "into over about after before more most very just can will would should could do does did "
+    "have has had how what why when where which who while also all any some such only own same "
+    "other new now out up down off".split()
+)
 
 
 @dataclass(frozen=True)
@@ -299,6 +321,56 @@ def keep_checked(
     return kept
 
 
+# ─── The shipped hero (p2 review D7) ───
+
+
+def _stem(word: str) -> str:
+    """A light stem, the same on both sides: "agents" / "agent", "shipping" / "ship"."""
+    for suffix in _SUFFIXES:
+        if word.endswith(suffix) and len(word) - len(suffix) >= 3:
+            word = word[: -len(suffix)]
+            break
+    if len(word) > 3 and word[-1] == word[-2] and word[-1] not in "aeiou":
+        return word[:-1]
+    return word
+
+
+def content_words(text: str) -> frozenset[str]:
+    """The stemmed content words of ``text``: no stopword, no closing ``[m:ss]``; a word
+    holding a digit counts at any length ("8", "1,000x")."""
+    words = _WORD_RE.findall(_MARKER_RE.sub(" ", text.casefold().replace("’", "'")))
+    return frozenset(
+        _stem(word.removesuffix("'s"))
+        for word in words
+        if word not in _STOPWORDS and (len(word) >= 3 or any(c.isdigit() for c in word))
+    )
+
+
+def restates_takeaway(option: str, takeaway: str) -> bool:
+    """True when the keyed ``option`` says what ``takeaway`` already says — the hero alone
+    answers the question (:data:`RESTATES_SHARE` of its content words, at least
+    :data:`RESTATES_MIN_WORDS` or all of a shorter option's)."""
+    words = content_words(option)
+    if not words:
+        return False
+    shared = len(words & content_words(takeaway))
+    return shared >= min(RESTATES_MIN_WORDS, len(words)) and shared / len(words) >= RESTATES_SHARE
+
+
+def keyed_option(question: Mapping[str, Any]) -> str:
+    """The text of a stored question's correct option; ``""`` when it has none."""
+    options, index = question.get("options"), question.get("correctIndex")
+    if not isinstance(options, list) or not isinstance(index, int) or isinstance(index, bool):
+        return ""
+    return str(options[index]) if 0 <= index < len(options) else ""
+
+
+def restates_the_hero(question: Mapping[str, Any], takeaways: Sequence[str]) -> bool:
+    """True when the question's keyed option restates any of the shipped ``takeaways``."""
+    option = keyed_option(question)
+    return bool(option) and any(restates_takeaway(option, text) for text in takeaways)
+
+
 # ─── Stage ───
 
 
@@ -342,13 +414,13 @@ async def _run(
         parse_json_response(raw), asked_count(request.duration_s), request.duration_s
     )
     count = quiz_question_count(request.duration_s, _quiz_cap())
-    kept = keep_checked(candidates, index, request.duration_s)[:count]
-    if len(kept) < MIN_QUIZ_V2_QUESTIONS:
+    checked = keep_checked(candidates, index, request.duration_s)
+    if len(checked[:count]) < MIN_QUIZ_V2_QUESTIONS:
         logger.warning(
-            "Quiz v2 for %s kept %d checked question(s); no quiz", request.primary_tag, len(kept)
+            "Quiz v2 for %s kept %d checked question(s); no quiz", request.primary_tag, len(checked)
         )
         return None
-    return EnrichmentData(quiz=kept)
+    return EnrichmentData(quiz=checked[:count], spares=checked[count:])
 
 
 async def enrich_quiz_v2(

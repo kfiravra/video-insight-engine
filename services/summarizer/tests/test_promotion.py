@@ -161,10 +161,11 @@ class TestDemoteLadder:
         assert component == "display_section"
         assert props is not None
 
-    def test_tier_list_demotes_to_info_grid(self):
+    def test_tier_list_demotes_to_spot_explorer(self):
         from src.services.pipeline.assembly.promotion import demote_component
 
-        # Two items — below tier_list's min of 3, but info_grid renders pairs.
+        # Two items — below tier_list's min of 3; the picks ship as cards (info_grid
+        # never stands alone, p2 review A3).
         data = [
             {"item": "Card A", "reason": "chase pull"},
             {"item": "Card B", "reason": "playable"},
@@ -173,8 +174,8 @@ class TestDemoteLadder:
 
         assert result is not None
         component, props = result
-        assert component == "info_grid"
-        assert len(props["items"]) == 2
+        assert component == "spot_explorer"
+        assert len(props["spots"]) == 2
 
     def test_quiz_arena_never_demotes(self):
         from src.services.pipeline.assembly.promotion import demote_component

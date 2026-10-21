@@ -87,6 +87,10 @@ class SynthesisCompleteEvent(_SSEEvent):
     worth_it_for: str | None = Field(None, alias="worthItFor")
     skip_if: str | None = Field(None, alias="skipIf")
     reading_minutes: int | None = Field(None, alias="readingMinutes", ge=1)
+    # The corrected superset after the late group: consumers REPLACE their copy
+    # with it — a field its scrub emptied arrives empty, an absent hero key goes —
+    # where every earlier emission merges (an empty never blanks a filled field).
+    final: bool = False
 
 
 class FramesEvent(_SSEEvent):

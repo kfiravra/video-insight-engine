@@ -322,15 +322,16 @@ class TestTiers:
         assert [i["tier"] for i in tab["props"]["items"]] == ["S", "S", "S"]
 
     def test_should_ship_an_untiered_list_when_no_rank_is_quoted(self) -> None:
-        # S09 "The Pulls": a rarity bracket is no rank — the items stay, the tiers go.
+        # S09 "The Pulls": a rarity bracket is no rank — the items stay, the tiers go,
+        # as cards (p2 review A3: info_grid never stands alone).
         tab = self._pulls(None, _index())
 
-        assert (tab["component"], tab.get("degradedFrom")) == ("info_grid", "tier_list")
+        assert (tab["component"], tab.get("degradedFrom")) == ("spot_explorer", "tier_list")
 
     def test_should_keep_each_pulls_reason_and_stamp_when_the_tiers_go(self) -> None:
-        items = self._pulls(None, _index())["props"]["items"]
+        spots = self._pulls(None, _index())["props"]["spots"]
 
-        assert [(i["key"], i["value"], i["timestamp"]) for i in items][0] == (
+        assert [(s["name"], s["description"], s["timestamp"]) for s in spots][0] == (
             "Loki",
             "Loki matters",
             400,
@@ -339,7 +340,7 @@ class TestTiers:
     def test_should_drop_the_tiers_when_their_quote_is_not_in_the_transcript(self) -> None:
         tab = self._pulls("Loki is the best card ever printed, a total S", _index())
 
-        assert tab["component"] == "info_grid"
+        assert tab["component"] == "spot_explorer"
 
     def test_should_ship_a_tier_whose_quote_is_a_translation(self) -> None:
         tab = self._pulls(_PARAPHRASE, _index("he"))

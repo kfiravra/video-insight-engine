@@ -93,7 +93,8 @@ class TestReconcileQuizTime:
         assert text == "At (22:02), the link is reciprocal."
 
     def test_should_strip_a_bare_number_past_the_end_with_its_lead_in(self) -> None:
-        assert reconcile_quiz_time(100, "At (2019), the study shows it.", 1500) == (
+        # Not a year: a bare 1000–2099 off the stamp stays as written (p2 review A5).
+        assert reconcile_quiz_time(100, "At (2500), the study shows it.", 1500) == (
             100,
             "The study shows it.",
         )

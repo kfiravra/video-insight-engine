@@ -245,7 +245,13 @@ describe('VideoHero — rewritten hero', () => {
     it('should keep the seek chip left-to-right inside a right-to-left hero', () => {
       renderHero({}, hebrew);
 
-      expect(screen.getByRole('button', { name: 'Jump to 20:45' })).toHaveAttribute('dir', 'ltr');
+      expect(screen.getByRole('button', { name: 'מעבר אל 20:45' })).toHaveAttribute('dir', 'ltr');
+    });
+
+    it('should name every takeaway chip in Hebrew when the output is Hebrew', () => {
+      renderHero({}, hebrew);
+
+      expect(screen.queryByRole('button', { name: /^Jump to/ })).not.toBeInTheDocument();
     });
   });
 });

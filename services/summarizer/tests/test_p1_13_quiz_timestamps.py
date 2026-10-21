@@ -187,7 +187,8 @@ class TestPromptByDuration:
 
         question = json.loads(example)["quiz"][0]
 
-        assert question["timestamp"] == 272 and "(4:32)" in question["explanation"]
+        # The marker as written; the code converts (p2 review D8).
+        assert question["timestamp"] == "4:32" and "(4:32)" in question["explanation"]
 
 
 class TestRenderHero:

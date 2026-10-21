@@ -165,14 +165,17 @@ const EMPTY_SYNTHESIS: SynthesisResult = { tldr: "", keyTakeaways: [], masterSum
 // synthesis_complete arrives up to three times per run: early {tldr,
 // keyTakeaways} at memory-done (drives the hero), then the full superset at
 // synthesis-done — the hero rewrite's adds brief / worthItFor / skipIf — then
-// a corrected superset after the late group (the hero rewrite's carries
-// readingMinutes). Any can be missing on a failure path, and a reconnect can
-// replay them in any order — so emissions merge instead of replacing, and a
-// superset wins: a partial (no masterSummary) arriving after a full one is a
-// replay and is ignored. Same rule as the API relay's persistence (mergeSynthesis).
+// a corrected superset after the late group, marked `final` (the hero
+// rewrite's carries readingMinutes). Any can be missing on a failure path, and
+// a reconnect can replay them in any order — so emissions merge instead of
+// replacing, and a superset wins: a partial (no masterSummary) arriving after
+// a full one is a replay and is ignored. The final one replaces: a field its
+// scrub emptied clears, a hero field it lacks goes. Same rule as the API
+// relay's persistence (mergeSynthesis).
 function handleSynthesisComplete(event: Record<string, unknown>, setState: SetState): void {
-  const incoming = validateSynthesisComplete(event);
+  const { fields: incoming, final } = validateSynthesisComplete(event);
   setState((prev) => {
+    if (final) return { ...prev, synthesis: { ...EMPTY_SYNTHESIS, ...incoming } };
     if (prev.synthesis?.masterSummary && !incoming.masterSummary) return prev;
     const kept = prev.synthesis ? filledSynthesisFields(prev.synthesis) : {};
     return { ...prev, synthesis: { ...EMPTY_SYNTHESIS, ...kept, ...incoming } };

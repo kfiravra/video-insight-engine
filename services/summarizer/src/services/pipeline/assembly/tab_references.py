@@ -13,12 +13,16 @@ shows:
 - **no hero line, goal or link names a tab that does not ship** — a tab the plan
   named or assembly may add, missing from the final list: every sentence of the hero
   (meta ``tldr`` / ``masterSummary`` / ``keyTakeaways`` / ``seoDescription`` and the
-  overview's copy) and of each tab's goal that names its label — emoji out,
-  case-insensitive, whole words, not inside a shipped tab's longer label — is
-  removed whole. A one-word label ("Moments", "Tips") names the tab only in a
-  sentence that reads as a tab reference: it says "tab(s)" / "section(s)", or
-  carries the label in its exact case as a capitalized word past the sentence's
-  first word ("the key moments come late" stays). Other sentences are never
+  overview's copy) and of each tab's goal that names its label — emoji out, whole
+  words, not inside a shipped tab's longer label — is removed whole. A label names
+  the tab only in a sentence that reads as a tab reference: it says "tab(s)" /
+  "section(s)" (then in any case), or carries the label in its own case — past the
+  sentence's first word, unless a later word of the label is capitalized too, which
+  sentence case never writes ("the key moments come late" and "the vlog strings
+  together visual moments" stay; "Visual Moments shows every stage" goes). A field is
+  never emptied: when every sentence of it names one, only the naming clauses go, and
+  a sentence with no clean cut stays. A takeaway's closing ``[m:ss]`` is no takeaway
+  on its own: the takeaway goes when its claim does. Other sentences are never
   rewritten; links to it are pruned.
 
 ``assemble_response`` drops the shadowed filmstrip before links and attachments and
@@ -37,6 +41,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from src.shared_config.assembly_policy import injected_tab
+from src.shared_config.domain_config import build_fallback_tabs
 
 from .cross_tab import prune_links
 
@@ -59,6 +64,11 @@ _OVERVIEW_TEXT_KEYS = ("subtitle", "tldr", "masterSummary")
 _TAKEAWAYS_KEY = "keyTakeaways"
 _SENTENCE_BREAK = re.compile(r"(?<=[.!?…])\s+")
 _BLANK_LINES = re.compile(r"\n{3,}")
+# A takeaway's closing "[m:ss]" (memory's and the hero rewrite's): the claim's seek point.
+_CLOSING_MARKER = re.compile(r"\s*\[(?:\d{1,2}:)?\d{1,3}:\d{2}\]\s*$")
+# Where a sentence's clauses meet — the cuts that drop one clause and keep the rest.
+_CLAUSE_BREAK = re.compile(r",\s+|;\s+|\s+[—–]\s+|:\s+")
+_SENTENCE_END = re.compile(r"[.!?…]+$")
 # A sentence that speaks of tabs: a one-word label in it is a tab's name.
 _TAB_WORD = re.compile(r"\b(?:tabs?|sections?)\b", re.IGNORECASE)
 # Emoji and their glue: symbols, modifiers, joiners / marks, enclosing keycaps.
@@ -158,28 +168,54 @@ def recount_overview(tabs: list[dict]) -> None:
 # The plan writes a tab's goal before extraction; when assembly degrades the tab
 # (2.0 c: a tier list whose tiers no one stated ships as a plain list), a goal
 # clause naming the lost structure is a broken promise — S09's untiered "The
-# Pulls" still said "…and why each sits in its tier".
+# Pulls" still said "…and why each sits in its tier", the registry's own default
+# "…how the creator ranks each pick…", another plan "…which pulls he rates highest".
 _LOST_STRUCTURE_WORDS: dict[str, tuple[str, ...]] = {
-    "tier_list": ("tier", "tiers", "tiered", "rank", "ranks", "ranked", "ranking", "rankings"),
-}
+    "tier_list": (
+        "tier", "tiers", "tiered", "rank", "ranks", "ranked", "ranking", "rankings",
+        "rate", "rates", "rated", "rating", "ratings",
+        "best", "worst", "highest", "lowest",
+    ),
+}  # fmt: skip
 _GOAL_CLAUSE_SPLIT = re.compile(r",\s+|\s+and\s+")
 
 
-def goal_without_lost_structure(goal: str, degraded_from: str | None) -> str:
-    """``goal`` minus each clause that names the structure a degraded tab lost.
+def registry_goal(domain: str | None, component: str | None) -> str:
+    """The registry's goal for a ``component`` tab of ``domain`` — its first defaultTab
+    rendering it — else the goal of the list assembly falls back to on its own
+    (``injectedTabs.keyInfo``): the viewer-outcome form either way, never an assembly
+    template (Kfir 2026-10-21, decision 4)."""
+    tabs = build_fallback_tabs(domain) if domain else []
+    goal = next((t.get("goal") for t in tabs if t.get("component") == component), None)
+    return goal if isinstance(goal, str) and goal else injected_tab("keyInfo")["goal"]
 
-    Unchanged when no clause names it, or when the opening clause does (dropping
-    it would leave no goal to read).
+
+def _clean_cut(goal: str, names: re.Pattern[str]) -> str | None:
+    """The goal's own words up to its first clause naming the lost structure — never
+    clauses re-joined; None when the opening clause names it (nothing clean is left)."""
+    body = goal.strip().rstrip(".")
+    starts = [0, *(match.start() for match in _GOAL_CLAUSE_SPLIT.finditer(body))]
+    clauses = zip(starts, [*starts[1:], len(body)], strict=True)
+    first = next((low for low, high in clauses if names.search(body[low:high])), None)
+    return f"{body[:first]}." if first else None
+
+
+def goal_without_lost_structure(
+    goal: str, degraded_from: str | None, shipped: str | None = None, domain: str | None = None
+) -> str:
+    """A degraded tab's goal without a promise of the structure it lost.
+
+    Unchanged when nothing in it names that structure; cut before the first clause
+    that does; and when the opening clause does, the goal the registry gives the
+    shipped rung (``registry_goal``: ``shipped`` component, ``domain``).
     """
     words = _LOST_STRUCTURE_WORDS.get(degraded_from or "")
     if not words or not goal:
         return goal
     names = re.compile(rf"\b(?:{'|'.join(words)})\b", re.IGNORECASE)
-    clauses = _GOAL_CLAUSE_SPLIT.split(goal.strip().rstrip("."))
-    kept = [clause for clause in clauses if not names.search(clause)]
-    if len(kept) == len(clauses) or names.search(clauses[0]):
+    if not names.search(goal):
         return goal
-    return f"{' and '.join(kept)}."
+    return _clean_cut(goal, names) or registry_goal(domain, shipped)
 
 
 # ─── References to tabs that do not ship ───
@@ -205,27 +241,34 @@ def _label_pattern(label: str, *, exact_case: bool = False) -> re.Pattern[str]:
 
 @dataclass(frozen=True)
 class _DroppedName:
-    """A dropped tab's label as a sentence may name it; ``exact`` only for a one-word
-    label that starts with a capital (its proper-noun spelling)."""
+    """A dropped tab's label as a sentence may name it. ``exact``: the label in its own
+    case, for a label that starts with a capital (its proper-noun spelling);
+    ``inner_capital``: a later word of the label is capitalized too, so even a
+    sentence's opening words cannot spell it by sentence case."""
 
     pattern: re.Pattern[str]
-    single_word: bool
     exact: re.Pattern[str] | None
+    inner_capital: bool
 
     @classmethod
     def of(cls, label: str) -> _DroppedName:
-        single = len(label.split()) == 1
-        exact = _label_pattern(label, exact_case=True) if single and label[:1].isupper() else None
-        return cls(_label_pattern(label), single, exact)
+        exact = _label_pattern(label, exact_case=True) if label[:1].isupper() else None
+        inner = any(word[:1].isupper() for word in label.split()[1:])
+        return cls(_label_pattern(label), exact, inner)
 
-    def reads_as_tab(self, sentence: str, hits: list[tuple[int, int]]) -> bool:
-        """A multi-word label always; a one-word one only in a sentence about tabs, or
-        capitalized as the label is, past the sentence's first word."""
-        if not self.single_word or _TAB_WORD.search(sentence):
-            return True
+    def tab_hits(self, sentence: str, hits: list[tuple[int, int]]) -> list[tuple[int, int]]:
+        """The ``hits`` that name the tab: every one in a sentence about tabs; else only
+        the label in its own case, past the sentence's first word unless its inner
+        capital sets it apart from prose there."""
+        if _TAB_WORD.search(sentence):
+            return hits
+        if self.exact is None:
+            return []
         opening = len(sentence) - len(sentence.lstrip())
-        exact = {m.span() for m in self.exact.finditer(sentence)} if self.exact else set()
-        return any(span in exact and span[0] > opening for span in hits)
+        exact = {m.span() for m in self.exact.finditer(sentence)}
+        return [
+            span for span in hits if span in exact and (span[0] > opening or self.inner_capital)
+        ]
 
 
 def auto_tab_candidates() -> list[dict[str, str]]:
@@ -263,17 +306,21 @@ class TabNames:
             tuple(_label_pattern(name) for name in shipped if name),
         )
 
-    def named_in(self, sentence: str) -> bool:
-        """Whether ``sentence`` names a dropped tab outside every shipped tab's longer label."""
+    def named_spans(self, sentence: str) -> list[tuple[int, int]]:
+        """Where ``sentence`` names a dropped tab outside every shipped tab's longer label."""
+        spans: list[tuple[int, int]] = []
         for name in self.dropped:
             hits = [match.span() for match in name.pattern.finditer(sentence)]
             if not hits:
                 continue
             covers = [m.span() for shipped in self.shipped for m in shipped.finditer(sentence)]
             free = [hit for hit in hits if not _inside_longer(hit, covers)]
-            if free and name.reads_as_tab(sentence, free):
-                return True
-        return False
+            spans.extend(name.tab_hits(sentence, free))
+        return sorted(spans)
+
+    def named_in(self, sentence: str) -> bool:
+        """Whether ``sentence`` names a dropped tab outside every shipped tab's longer label."""
+        return bool(self.named_spans(sentence))
 
 
 def _inside_longer(span: tuple[int, int], covers: list[tuple[int, int]]) -> bool:
@@ -298,16 +345,54 @@ def scrub_sentences(text: str, names: TabNames) -> str:
     return _BLANK_LINES.sub("\n\n", "\n".join(scrubbed)).strip()
 
 
+def _clause_cut(sentence: str, names: TabNames) -> str:
+    """``sentence`` without each clause past its first that names a dropped tab; the
+    sentence unchanged when its first clause does (no clean cut)."""
+    stripped = sentence.strip()
+    end = _SENTENCE_END.search(stripped)
+    body, close = (stripped[: end.start()], end.group()) if end else (stripped, "")
+    # Each clause with the break before it, so dropping one takes its comma along.
+    starts = [0, *(match.start() for match in _CLAUSE_BREAK.finditer(body))]
+    pieces = list(zip(starts, [*starts[1:], len(body)], strict=True))
+    spans = names.named_spans(body)
+    named = [any(low <= hit < high for hit, _ in spans) for low, high in pieces]
+    if named[0] or not any(named):
+        return sentence
+    kept = (body[low:high] for (low, high), gone in zip(pieces, named, strict=True) if not gone)
+    return "".join(kept) + close
+
+
+def _scrub_text(text: str, names: TabNames) -> str:
+    """``scrub_sentences``, never emptying a field: when every sentence names a dropped
+    tab, each loses only its naming clauses, and one with no clean cut stays."""
+    scrubbed = scrub_sentences(text, names)
+    if scrubbed.strip() or not text.strip():
+        return scrubbed
+    lines = [_SENTENCE_BREAK.split(line) for line in text.split("\n")]
+    return "\n".join(" ".join(_clause_cut(s, names) for s in line) for line in lines).strip()
+
+
+def _scrub_takeaway(takeaway: str, names: TabNames) -> str:
+    """The takeaway without its sentences naming a dropped tab — "" when its whole claim
+    goes: the closing ``[m:ss]`` is stripped first and never ships alone."""
+    marker = _CLOSING_MARKER.search(takeaway)
+    claim = takeaway[: marker.start()] if marker else takeaway
+    scrubbed = scrub_sentences(claim, names)
+    if scrubbed == claim:
+        return takeaway
+    return f"{scrubbed}{marker.group()}" if scrubbed and marker else scrubbed
+
+
 def _scrub_fields(record: dict, text_keys: Sequence[str], names: TabNames) -> int:
     """Scrub ``record``'s hero text fields and its takeaways in place; the fields changed."""
     changed = 0
     for key in text_keys:
         value = record.get(key)
-        if isinstance(value, str) and (scrubbed := scrub_sentences(value, names)) != value:
+        if isinstance(value, str) and (scrubbed := _scrub_text(value, names)) != value:
             record[key], changed = scrubbed, changed + 1
     takeaways = record.get(_TAKEAWAYS_KEY)
     if isinstance(takeaways, list):
-        kept = [scrub_sentences(t, names) if isinstance(t, str) else t for t in takeaways]
+        kept = [_scrub_takeaway(t, names) if isinstance(t, str) else t for t in takeaways]
         kept = [t for t in kept if t != ""]
         if kept != takeaways:
             record[_TAKEAWAYS_KEY], changed = kept, changed + 1
@@ -328,7 +413,7 @@ def scrub_tab_references(meta: dict, tabs: list[dict], candidates: Iterable[Any]
         if tab.get("component") == OVERVIEW_COMPONENT and isinstance(data, dict):
             changed += _scrub_fields(data, _OVERVIEW_TEXT_KEYS, names)
         goal = tab.get("goal")
-        if isinstance(goal, str) and (scrubbed := scrub_sentences(goal, names)) != goal:
+        if isinstance(goal, str) and (scrubbed := _scrub_text(goal, names)) != goal:
             tab["goal"], changed = scrubbed, changed + 1
     if changed:
         logger.info(

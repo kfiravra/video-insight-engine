@@ -39,14 +39,10 @@ from src.models.idea_types import KeyIdeaFigure
 # TS interface parsing
 # ─────────────────────────────────────────────────────
 
-_TS_CANDIDATES = (
-    # Local dev / CI checkout: repo root relative to this test file.
-    Path(__file__).resolve().parent.parent.parent.parent
-    / "packages"
-    / "types"
-    / "src"
-    / "vie-response.ts",
-)
+# Local dev / CI checkout: repo root relative to this test file.
+_TS_DIR = Path(__file__).resolve().parent.parent.parent.parent / "packages" / "types" / "src"
+# vie-response.ts re-exports its item and domain types from two modules (p2 review C7).
+_TS_FILES = ("vie-response.ts", "vie-response-items.ts", "vie-response-domains.ts")
 
 # Frame-evidence fields are attached by `inject_frame_thumbnails` /
 # `_attach_frame_metadata` AFTER domain validation (assembly/core.py), so they
@@ -72,10 +68,11 @@ _FIELD_RE = re.compile(r"^\s*(?:readonly\s+)?([A-Za-z_]\w*)\??\s*:", re.MULTILIN
 
 
 def _ts_source() -> str:
-    for path in _TS_CANDIDATES:
-        if path.exists():
-            return path.read_text(encoding="utf-8")
-    pytest.fail(f"vie-response.ts not found at {_TS_CANDIDATES}")
+    paths = [_TS_DIR / name for name in _TS_FILES]
+    missing = [str(path) for path in paths if not path.exists()]
+    if missing:
+        pytest.fail(f"TS contract files not found: {missing}")
+    return "\n".join(path.read_text(encoding="utf-8") for path in paths)
 
 
 def _strip_comments(block: str) -> str:

@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
+import { DirectionProvider } from '@/contexts/DirectionContext';
 import { ClaimsTracker } from '../ClaimsTracker';
 import type { ClaimItem } from '@vie/types';
 
@@ -75,6 +76,15 @@ describe('ClaimsTracker', () => {
     render(<ClaimsTracker claims={claims} onSeek={onSeek} />);
     await user.click(screen.getByRole('button', { name: /jump to 3:30/i }));
     expect(onSeek).toHaveBeenCalledWith(210);
+  });
+
+  it('should name the seek chip in the page language when the output is Hebrew', () => {
+    render(
+      <DirectionProvider language="he" isRTL>
+        <ClaimsTracker claims={claims} onSeek={vi.fn()} />
+      </DirectionProvider>,
+    );
+    expect(screen.getByRole('button', { name: 'מעבר אל 3:30' })).toBeInTheDocument();
   });
 
   it('renders an empty-state message when there are no claims', () => {

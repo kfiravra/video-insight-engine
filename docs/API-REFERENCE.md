@@ -1352,7 +1352,7 @@ The summarization pipeline uses SSE to stream results progressively, allowing th
 | `cached` | 0 | Cache hit — a fast replay follows (`metadata`, `triage_complete`, `meta`, `tab_ready[]` — every tab once, `final: true`, `position` = its index — `synthesis_complete`, `done`) |
 | `metadata` | 1 | Video metadata (title, channel, thumbnailUrl, duration) |
 | `transcript_ready` | 2 | Transcript extraction complete (authoritative `duration`) |
-| `synthesis_complete` | 2 + 3 | Up to three times: `{tldr, keyTakeaways}` at memory-done (the hero), then the superset in assembly's late group (the four synthesis fields; the hero rewrite adds `brief`, `worthItFor`, `skipIf`), then a corrected superset after it when the hero changed (the hero rewrite's adds `readingMinutes`) — see [synthesis_complete](#synthesis_complete) |
+| `synthesis_complete` | 2 + 3 | Up to three times: `{tldr, keyTakeaways}` at memory-done (the hero), then the superset in assembly's late group (the four synthesis fields; the hero rewrite adds `brief`, `worthItFor`, `skipIf`), then a corrected superset after it when the hero changed (the hero rewrite's adds `readingMinutes`; marked `final: true`, so consumers replace instead of merge) — see [synthesis_complete](#synthesis_complete) |
 | `triage_complete` | 2 | Content tags, tab layout, confidence, `contentFormat`, `evidence` (the reconciled view), `planEvidence` / `memoryEvidence`, `terms` — at plan-done (plan ∥ memory both in, after reconcile) |
 | `meta` | 2 | VIEResponseMeta with videoId, contentTags, tab labels — emitted with `triage_complete`; again at frames-done when the screen-code check changed the tab list |
 | `frames` | 2 | Extracted frame set (presigned URLs), from the frames branch of phase 2 |
@@ -1654,7 +1654,7 @@ arrive without a label there — `complete.tabIds` is authoritative.
    5½. Settle, after the late group: a corrected `synthesis_complete` when the
    hero no longer reads as the last one sent — always on a hero-rewrite page
    (it adds `readingMinutes`), otherwise only when the dropped-tab scrub changed
-   the hero.
+   the hero; it carries `final: true`.
 6. The **final re-emit**: every tab not yet received final, `final: true` at
    its final position, links and attachments included — the overview last.
 7. `complete {tabCount, tabIds}`, then `done` (non-English: after translation).
@@ -1787,8 +1787,11 @@ Emitted **up to three times per run**, every field optional:
    the same superset again, sent only when the hero no longer reads as the last
    one sent: the dropped-tab scrub removed a sentence naming a tab that does not
    ship, or — on every hero-rewrite page — `readingMinutes` joined (a whole number
-   ≥ 1, counted by code over the final hero + tabs). It replaces the client's and
-   the relay's copy.
+   ≥ 1, counted by code over the final hero + tabs). It is marked **`final: true`**
+   (`phases/synthesis.settle_tab_references`) and replaces the client's and the
+   relay's copy: a field its scrub emptied arrives as `""` / `[]` and clears, and a
+   hero key it does not carry (`brief`, `worthItFor`, `skipIf`, `readingMinutes`) is
+   removed. `final` is on this emission only.
 
 A cached replay sends one superset event: the stored `meta`'s four synthesis
 fields plus the hero keys the row carries (`cached_response.resolve_synthesis`;
@@ -1798,13 +1801,22 @@ older rows send the four fields only).
 
 - An empty string or array never counts as set, so a later emission never blanks a
   field an earlier one filled; filled fields merge field by field — `brief`,
-  `worthItFor`, `skipIf` and `readingMinutes` included.
+  `worthItFor`, `skipIf` and `readingMinutes` included. The one exception is the
+  `final` emission (`carriedSynthesisFields` in `@vie/types`): it replaces — every
+  field it carries is applied, empties included, and each hero key it lacks is
+  dropped.
 - The superset wins: once a `masterSummary` is held, an emission without one (a
   reconnect replaying the partial) is ignored.
 - Web: `handleSynthesisComplete` in `stream-event-processor.ts`; the hero (`VideoHero`) renders `brief` (else `masterSummary`), `worthItFor` / `skipIf`, the takeaways' `[m:ss]` markers as ▶ seek chips and `readingMinutes` as "Read: N min · Watch: M min" ([FRONTEND.md](./FRONTEND.md)). API relay
   (`stream.routes.ts` → `VideoRepository.mergeSynthesis` → `buildSynthesisMerge`):
   dotted `$set` of the filled `synthesis.*` fields; a partial is guarded by
-  `synthesis.masterSummary ∈ {null, ""}`. Re-applying any emission is idempotent.
+  `synthesis.masterSummary ∈ {null, ""}`. A `final` emission is unguarded: it `$set`s
+  every field it carries, empties included (even a `masterSummary` scrubbed to
+  `""`), and `$unset`s each hero key it lacks (`buildFinalMerge`, `SYNTHESIS_HERO_KEYS`).
+  Re-applying any emission is idempotent.
+- Validation (web `validateSynthesisComplete`, API `synthesisCompleteEventSchema`): the
+  four optional hero fields and `final` are dropped individually when invalid
+  (`.catch(undefined)`) — the event and the tldr / takeaways beside them are kept.
 - Every (re-)dispatch of a row (new version, retry, stale-version regen, stall)
   first `$unset`s its `synthesis`, so a previous run's `masterSummary` can't block
   this run's partial.

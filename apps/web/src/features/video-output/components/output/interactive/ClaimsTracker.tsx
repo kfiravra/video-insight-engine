@@ -1,6 +1,7 @@
 import { memo, useMemo, useState } from 'react';
 import { CheckCircle2, AlertTriangle, Info, Clock, BadgeCheck, BookOpen } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useLabels } from '@/lib/i18n';
 import type { ClaimItem, ClaimStatus } from '@vie/types';
 import { GlassCard, FadeIn, Badge } from '@/components/vie';
 import { EmptyTabState } from './EmptyTabState';
@@ -29,6 +30,28 @@ function formatTimestamp(seconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = Math.floor(seconds % 60);
   return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+interface ClaimSeekButtonProps {
+  seconds: number;
+  onSeek: (seconds: number) => void;
+}
+
+/** The claim's seek chip — its accessible name in the page's language (`jumpTo`). */
+function ClaimSeekButton({ seconds, onSeek }: ClaimSeekButtonProps) {
+  const t = useLabels();
+  const time = formatTimestamp(seconds);
+  return (
+    <button
+      type="button"
+      onClick={() => onSeek(seconds)}
+      className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 font-medium text-[var(--vie-accent)] hover:bg-[var(--vie-accent)]/10"
+      aria-label={t.jumpTo.replace('{time}', time)}
+    >
+      <Clock className="size-3 shrink-0" aria-hidden="true" />
+      <span dir="ltr">{time}</span>
+    </button>
+  );
 }
 
 /**
@@ -127,15 +150,7 @@ export const ClaimsTracker = memo(function ClaimsTracker({ claims, onSeek }: Cla
                       </span>
                     ) : null}
                     {claim.timestamp != null && onSeek ? (
-                      <button
-                        type="button"
-                        onClick={() => onSeek(claim.timestamp as number)}
-                        className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 font-medium text-[var(--vie-accent)] hover:bg-[var(--vie-accent)]/10"
-                        aria-label={`Jump to ${formatTimestamp(claim.timestamp)}`}
-                      >
-                        <Clock className="size-3 shrink-0" aria-hidden="true" />
-                        <span dir="ltr">{formatTimestamp(claim.timestamp)}</span>
-                      </button>
+                      <ClaimSeekButton seconds={claim.timestamp} onSeek={onSeek} />
                     ) : null}
                   </div>
                 </GlassCard>

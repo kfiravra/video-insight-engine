@@ -158,7 +158,7 @@ describe('sse-validators', () => {
 
       const result = validateSynthesisComplete(data);
 
-      expect(result).toEqual({
+      expect(result.fields).toEqual({
         tldr: 'This is the summary',
         keyTakeaways: ['Point 1', 'Point 2', 'Point 3'],
       });
@@ -175,7 +175,7 @@ describe('sse-validators', () => {
 
       const result = validateSynthesisComplete(data);
 
-      expect(result).toEqual({
+      expect(result.fields).toEqual({
         tldr: 'Final tldr',
         masterSummary: 'The full master summary.',
         seoDescription: 'SEO description.',
@@ -185,13 +185,31 @@ describe('sse-validators', () => {
     it('should return no fields when the event carries no content', () => {
       const result = validateSynthesisComplete({ event: 'synthesis_complete', tldr: '' });
 
-      expect(result).toEqual({});
+      expect(result.fields).toEqual({});
     });
 
     it('should return no fields for an invalid event', () => {
       const result = validateSynthesisComplete({ event: 'wrong' });
 
-      expect(result).toEqual({});
+      expect(result).toEqual({ fields: {}, final: false });
+    });
+
+    it('should keep the empty fields when the final superset carries them', () => {
+      const data = {
+        event: 'synthesis_complete',
+        tldr: '',
+        keyTakeaways: [],
+        masterSummary: 'The full master summary.',
+        seoDescription: '',
+        final: true,
+      };
+
+      const result = validateSynthesisComplete(data);
+
+      expect(result).toEqual({
+        fields: { tldr: '', keyTakeaways: [], masterSummary: 'The full master summary.', seoDescription: '' },
+        final: true,
+      });
     });
   });
 

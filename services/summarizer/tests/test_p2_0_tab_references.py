@@ -25,6 +25,7 @@ from src.services.pipeline.assembly.tab_references import (
     settle_shipped_tabs,
 )
 from src.services.pipeline.phases.synthesis import settle_tab_references
+from src.shared_config.assembly_policy import injected_tab
 
 
 def _keyed(video: str, table: str) -> list[tuple[int, str]]:
@@ -260,9 +261,11 @@ class TestScrubSentences:
 
         assert scrub_sentences(text, _names(["Visual Moments"], [])) == text
 
-    def test_should_match_without_case(self) -> None:
+    def test_should_match_without_case_in_a_sentence_about_tabs(self) -> None:
+        # p2 review A1: outside a tab / section sentence only the label's own case names it.
         assert (
-            scrub_sentences("Keep. See visual moments.", _names(["Visual Moments"], [])) == "Keep."
+            scrub_sentences("Keep. See the visual moments tab.", _names(["Visual Moments"], []))
+            == "Keep."
         )
 
 
@@ -290,10 +293,11 @@ class TestOneWordLabels:
     def test_should_remove_a_sentence_that_reads_as_a_tab_reference(self, sentence: str) -> None:
         assert scrub_sentences(f"Keep. {sentence}", _names(["Moments"], [])) == "Keep."
 
-    def test_should_keep_the_phrase_rule_for_a_multi_word_label(self) -> None:
+    def test_should_keep_a_multi_word_label_written_as_prose(self) -> None:
+        # p2 review A1: a multi-word label takes the one-word rule's exact case too.
         text = "Keep. The visual moments are lovely."
 
-        assert scrub_sentences(text, _names(["Visual Moments"], [])) == "Keep."
+        assert scrub_sentences(text, _names(["Visual Moments"], [])) == text
 
 
 class TestScrubTabReferences:
@@ -416,7 +420,11 @@ class TestDegradedGoal:
 
         assert goal_without_lost_structure(goal, None) == goal
 
-    def test_should_keep_the_goal_when_its_opening_clause_names_the_tiers(self) -> None:
+    def test_should_take_the_registry_goal_when_its_opening_clause_names_the_tiers(
+        self,
+    ) -> None:
+        # p2 review A4: no clean cut → the registry's goal for the shipped list (gaming
+        # has no spot_explorer default tab, so the list goal injectedTabs.keyInfo).
         goal = "After this you know each card's tier and why."
 
-        assert goal_without_lost_structure(goal, "tier_list") == goal
+        assert goal_without_lost_structure(goal, "tier_list") == injected_tab("keyInfo")["goal"]

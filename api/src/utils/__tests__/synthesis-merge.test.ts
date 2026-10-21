@@ -42,4 +42,36 @@ describe('buildSynthesisMerge', () => {
   it('should keep guarding the memory-done partial when it arrives', () => {
     expect(buildSynthesisMerge(memoryPartial)?.guard).toEqual({ 'synthesis.masterSummary': { $in: [null, ''] } });
   });
+
+  it('should unset nothing when an emission is not final', () => {
+    expect(buildSynthesisMerge({ ...heroSuperset, skipIf: undefined })?.unset).toEqual({});
+  });
+
+  describe('the final (corrected) superset', () => {
+    const scrubbed = { ...heroSuperset, tldr: '', keyTakeaways: [], worthItFor: '', final: true };
+
+    it('should set the fields the scrub emptied when the final superset carries them empty', () => {
+      const set = buildSynthesisMerge(scrubbed)?.set;
+
+      expect([set?.['synthesis.tldr'], set?.['synthesis.keyTakeaways'], set?.['synthesis.worthItFor']]).toEqual([
+        '',
+        [],
+        '',
+      ]);
+    });
+
+    it('should unset every hero field the final superset no longer carries', () => {
+      const { brief: _b, readingMinutes: _r, ...settled } = scrubbed;
+
+      expect(buildSynthesisMerge(settled)?.unset).toEqual({ 'synthesis.brief': '', 'synthesis.readingMinutes': '' });
+    });
+
+    it('should land unguarded when its masterSummary scrubbed to empty', () => {
+      expect(buildSynthesisMerge({ ...scrubbed, masterSummary: '' })?.guard).toEqual({});
+    });
+
+    it('should never persist the final flag itself', () => {
+      expect(buildSynthesisMerge(scrubbed)?.set).not.toHaveProperty('synthesis.final');
+    });
+  });
 });

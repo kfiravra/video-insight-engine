@@ -10,6 +10,9 @@ export interface Labels {
   processing: string;
   hide: string;
   watch: string;
+  /** Accessible name of a seek chip (▶ m:ss) — {time} is interpolated, so
+   *  screen readers hear the page's language around the timestamp. */
+  jumpTo: string;
   // Language toggle (announced to screen readers; the visible pill labels
   // are the language names themselves and stay in their native script).
   contentLanguage: string;
@@ -109,6 +112,7 @@ const EN: Labels = {
   processing: 'Processing…',
   hide: 'Hide',
   watch: 'Watch',
+  jumpTo: 'Jump to {time}',
   contentLanguage: 'Content language',
   done: 'Done',
   undo: 'Undo',
@@ -225,6 +229,7 @@ const TRANSLATIONS: Record<string, Labels> = {
     processing: 'מעבד…',
     hide: 'הסתר',
     watch: 'צפה',
+    jumpTo: 'מעבר אל {time}',
     contentLanguage: 'שפת התוכן',
     done: 'בוצע',
     undo: 'ביטול',
@@ -338,6 +343,7 @@ const TRANSLATIONS: Record<string, Labels> = {
     processing: 'جاري المعالجة…',
     hide: 'إخفاء',
     watch: 'شاهد',
+    jumpTo: 'الانتقال إلى {time}',
     contentLanguage: 'لغة المحتوى',
     done: 'تم',
     undo: 'تراجع',

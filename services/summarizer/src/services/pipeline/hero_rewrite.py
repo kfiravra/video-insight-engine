@@ -4,33 +4,18 @@ Fired at text-groups-done on ``LLM_EXTRACTION_MODEL`` (stage ``hero_rewrite``,
 ledger feature ``summarize:hero_rewrite``), it replaces the gpt-4o-mini synthesis:
 memory's hero stays the ≤ 16 s preview and this one replaces it at ``complete``.
 
-The request reads the split extraction's cache — caches are per model, so the
-call runs on the groups' model, with their JSON mode, effort and no system prompt:
+The request — the split extraction's cached blocks 1 (+ 2) and the hero job in
+block 3, on the groups' model — is built in ``hero_job``; this module makes the
+call, checks the answer (``hero_validate``) and persists it.
 
-1. block 1 (1 h) = ``extraction_group_prompt.prefix_block`` of the run's ruled
-   prompt — the rules + schemas every group call sent, read at 0.1×;
-2. block 2 (5 min) = ``head_block`` — ``<video>`` + the transcript +
-   ``<video_memory>`` — only when the run is ONE chunk: a chunked (long) run has a
-   head per chunk and one request can read one prefix; reading the first chunk's
-   would show the model the first half verbatim and the second half only as
-   extraction (S01's brief lost the second half once) for +$0.002, so a chunked
-   run reads block 1 alone and block 3 carries ``<video>`` + ``<video_memory>``;
-3. the hero job (uncached): ``prompts/hero_rewrite.txt`` + the compacted merged
-   extraction (``hero_compact``, ≤ 5 K tokens, stamped items under ids) + the
-   tab labels.
-
-A takeaway takes the stamp of the id it cites; with the run's quote index (2.0) a
-quoted item's stamp is first moved to where its quote is said (``stamps_at_quotes``).
-
-Without group blocks (``EXTRACTION_PARALLEL=false``) the request is block 3
-alone: no group call wrote blocks 1 / 2, so sending them would WRITE them (block
-1 at 2× for an hour it never serves) for rules the hero does not need.
-
-One retry: a timeout, an answer that is not JSON or one that fails validation
-(``hero_validate``) is asked once more, the problems appended to block 3 (blocks 1 /
-2 stay byte-identical, so the retry reads the cache too). After it, ``finalize``
-drops a failing optional line; a failing tldr / brief / takeaway set gives None —
-the caller keeps memory's hero and today's synthesis. Never raises.
+One retry, only where a second answer can change the page: a timeout, an answer
+that is not JSON, one ``finalize`` cannot turn into a hero (a failing tldr / brief /
+takeaway set) or one that would ship a D18 line empty is asked once more, the
+problems appended to block 3 (blocks 1 / 2 stay byte-identical, so the retry reads
+the cache too). What ``finalize`` repairs on its own — a set over the band, a brief
+over 5 sentences, a failing brief sentence while 3 remain, a failing SEO line —
+costs no second call. After the retry a failing optional line is dropped; no hero
+gives None — the caller keeps memory's hero and today's synthesis. Never raises.
 
 The page's reading time is a property of the shipped page, so code counts it
 over the final hero + tabs (``reading_minutes``) once assembly is done.
@@ -50,30 +35,30 @@ from llm_common.context import llm_feature_var
 from ...config import settings
 from ...models.hero_types import HeroRewriteResult, HeroTakeaway
 from ...utils.json_parsing import parse_json_response, strip_markdown_fences
-from ...utils.language_utils import ENGLISH_OUTPUT_DIRECTIVE
 from ...utils.llm_retry import call_llm_with_retry
 from ..llm_messages import TextBlock, text_block
 from ..llm_model_rules import LLMRefusalError
-from .assembly.tab_references import bare_label
-from .extraction_group_prompt import head_block, prefix_block
-from .hero_compact import CompactExtraction, compact_for_hero, estimate_tokens, stamps_at_quotes
-from .hero_validate import HeroDraft, HeroEvidence, Problem, check_hero, finalize, parse_draft
-from .memory import format_clock, takeaway_count
-from .pipeline_helpers import sanitize_for_prompt
-from .prompt_builder import PROMPTS_DIR, load_prompt_text
+from .hero_compact import CompactExtraction, compact_for_hero, estimate_tokens
+from .hero_job import GroupBlocks, HeroRequest, cached_blocks, hero_evidence, job_text
+from .hero_validate import (
+    HeroDraft,
+    HeroEvidence,
+    Problem,
+    check_hero,
+    drops_a_line,
+    finalize,
+    parse_draft,
+)
+from .memory import format_clock
 from .quote_verify import QuoteIndex, run_quote_index
-from .synthesis import format_tab_labels
 
 if TYPE_CHECKING:
     from ..llm import LLMService
     from .context import PipelineContext
-    from .extraction_chunks import ExtractionChunk
     from .extraction_groups import SplitRun
-    from .extraction_prompt import ExtractionPrompt
 
 logger = logging.getLogger(__name__)
 
-PROMPT_PATH = PROMPTS_DIR / "hero_rewrite.txt"
 HERO_FEATURE = "summarize:hero_rewrite"
 HERO_STAGE = "hero_rewrite"
 # The answer is ≈ 0.8–1.2 K tokens (thinking off: the groups' effort, ``between_tools``).
@@ -83,107 +68,8 @@ HERO_TIMEOUT_S = 25.0
 # Silent reading of English non-fiction by adults (Brysbaert 2019, 238 words a minute).
 READING_WPM = 238
 
-_NO_VIDEO_MEMORY = "<video_memory>\nNot available\n</video_memory>"
-_NOTHING_EXTRACTED = "(nothing was extracted)"
 _NOT_JSON = "the previous answer was not a JSON object"
 _OVERVIEW = "overview"
-
-
-@dataclass(frozen=True)
-class GroupBlocks:
-    """The split run's cached prefix: its ruled prompt (``with_group_rules``) and chunks."""
-
-    prompt: ExtractionPrompt
-    chunks: Sequence[ExtractionChunk]
-
-
-@dataclass(frozen=True)
-class HeroRequest:
-    """Everything one hero call is built from; ``blocks`` None = no group blocks to read;
-    ``quote_index`` None = the takeaways keep the items' own stamps."""
-
-    title: str
-    duration: int | None
-    extraction: Mapping[str, Any]
-    tab_labels: Sequence[str] = ()
-    video_memory: str = ""
-    blocks: GroupBlocks | None = None
-    quote_index: QuoteIndex | None = None
-
-    @property
-    def reads_transcript(self) -> bool:
-        """Block 2 is read: the split run is one chunk, so its head is the whole video."""
-        return self.blocks is not None and len(self.blocks.chunks) == 1
-
-
-# ─── Request ───
-
-
-def cached_blocks(request: HeroRequest) -> list[TextBlock]:
-    """Blocks 1 (+ 2), byte-identical to the group calls'; ``[]`` without group blocks."""
-    if request.blocks is None:
-        return []
-    prompt, chunks = request.blocks.prompt, request.blocks.chunks
-    try:
-        blocks = [prefix_block(prompt)]
-        if request.reads_transcript:
-            blocks.append(head_block(prompt, chunks[0]))
-    except ValueError:
-        logger.warning("Hero rewrite: the extraction template lost its sections — job only")
-        return []
-    return blocks
-
-
-def _length(duration: int | None) -> str:
-    return format_clock(duration) if duration else "unknown-length"
-
-
-def _video_section(request: HeroRequest) -> str:
-    """``<video>`` + ``<video_memory>`` for block 3 — "" when block 2 carries them."""
-    if request.reads_transcript:
-        return ""
-    title = sanitize_for_prompt(request.title, max_len=200)
-    video = f"<video>\nTitle: {title}\nLength: {_length(request.duration)}\n</video>"
-    return f"{video}\n\n{request.video_memory or _NO_VIDEO_MEMORY}\n\n"
-
-
-def _problems_section(problems: Sequence[str]) -> str:
-    lines = "\n".join(f"- {problem}" for problem in problems)
-    return (
-        "\n<previous_answer_problems>\n"
-        "Your previous answer failed these checks. Answer again in full, fixing each one:\n"
-        f"{lines}\n</previous_answer_problems>\n"
-    )
-
-
-def job_text(request: HeroRequest, compact: CompactExtraction, problems: Sequence[str] = ()) -> str:
-    """Block 3: the hero job over this video (English output line first, as every writer)."""
-    labels = [bare_label(label) for label in request.tab_labels]
-    body = (
-        load_prompt_text(PROMPT_PATH)
-        .replace("{takeaway_count}", str(takeaway_count(request.duration)))
-        .replace("{duration}", _length(request.duration))
-        .replace("{tab_labels}", format_tab_labels([label for label in labels if label]))
-        .replace("{video}", _video_section(request))
-        # Last, so text inside the extraction is never mistaken for a placeholder.
-        .replace("{extracted}", compact.text or _NOTHING_EXTRACTED)
-    )
-    text = f"{ENGLISH_OUTPUT_DIRECTIVE}\n\n{body.rstrip()}\n"
-    return f"{text}{_problems_section(problems)}" if problems else text
-
-
-def hero_evidence(request: HeroRequest, compact: CompactExtraction) -> HeroEvidence:
-    """What the call reads about the video — the reference every fact check uses."""
-    parts = [request.title, request.video_memory, compact.evidence]
-    if request.reads_transcript and request.blocks is not None:
-        parts.append(request.blocks.chunks[0].transcript)
-    return HeroEvidence(
-        text="\n".join(parts),
-        stamps=stamps_at_quotes(compact, request.quote_index),
-        duration=request.duration,
-        tab_labels=tuple(request.tab_labels),
-        takeaway_count=takeaway_count(request.duration),
-    )
 
 
 # ─── Call ───
@@ -197,10 +83,6 @@ class _Attempt:
     problems: tuple[Problem, ...] = ()
     refused: bool = False
     not_json: bool = False
-
-    @property
-    def passed(self) -> bool:
-        return self.draft is not None and not self.problems
 
     def retry_notes(self) -> list[str]:
         """What the retry tells the model (a timeout repeats the request as it was)."""
@@ -252,9 +134,17 @@ def _final(attempt: _Attempt, evidence: HeroEvidence) -> HeroRewriteResult | Non
     return finalize(attempt.draft, attempt.problems, evidence.takeaway_count)
 
 
+def _settled(attempt: _Attempt, result: HeroRewriteResult | None) -> bool:
+    """No retry can improve the answer: refused, or a hero that keeps both D18 lines."""
+    return attempt.refused or (result is not None and not drops_a_line(attempt.problems))
+
+
 async def rewrite_hero(llm_service: LLMService, request: HeroRequest) -> HeroRewriteResult | None:
-    """The hero from one call and at most one retry; None when no valid hero came back."""
-    compact = compact_for_hero(request.extraction, request.duration)
+    """The hero from one call and at most one retry (module docstring); None when no
+    valid hero came back."""
+    compact = compact_for_hero(
+        request.extraction, request.duration, quote_index=request.quote_index
+    )
     if not compact.text:
         logger.info("Hero rewrite skipped: nothing was extracted")
         return None
@@ -262,14 +152,14 @@ async def rewrite_hero(llm_service: LLMService, request: HeroRequest) -> HeroRew
     cached = cached_blocks(request)
     _log_request(cached, compact, evidence)
     first = await _attempt(llm_service, [*cached, text_block(job_text(request, compact))], evidence)
-    if first.passed or first.refused:
-        return _final(first, evidence)
     _log_problems(first)
+    result = _final(first, evidence)
+    if _settled(first, result):
+        return result
     retry = text_block(job_text(request, compact, first.retry_notes()))
     second = await _attempt(llm_service, [*cached, retry], evidence)
-    if not second.passed:
-        _log_problems(second)
-    return _final(second, evidence) or _final(first, evidence)
+    _log_problems(second)
+    return _final(second, evidence) or result
 
 
 def _log_request(

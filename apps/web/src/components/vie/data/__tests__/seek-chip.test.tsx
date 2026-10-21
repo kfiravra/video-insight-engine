@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
+import { DirectionProvider } from '@/contexts/DirectionContext';
 import { SeekChip } from '../SeekChip';
 
 describe('SeekChip', () => {
@@ -27,5 +28,17 @@ describe('SeekChip', () => {
   it('should merge a caller className onto the chip', () => {
     render(<SeekChip seconds={5} className="ms-auto" />);
     expect(screen.getByText('0:05')).toHaveClass('ms-auto');
+  });
+
+  it.each([
+    ['he', 'מעבר אל 6:13'],
+    ['ar', 'الانتقال إلى 6:13'],
+  ])('should name the chip in the page language when the output is %s', (language, name) => {
+    render(
+      <DirectionProvider language={language} isRTL>
+        <SeekChip seconds={373} onSeek={vi.fn()} />
+      </DirectionProvider>,
+    );
+    expect(screen.getByRole('button', { name })).toBeInTheDocument();
   });
 });

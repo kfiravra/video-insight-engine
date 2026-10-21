@@ -19,9 +19,8 @@ from src.services.pipeline import hero_rewrite
 from src.services.pipeline.extraction_chunks import ExtractionChunk
 from src.services.pipeline.extraction_group_prompt import head_block, prefix_block, with_group_rules
 from src.services.pipeline.extraction_prompt import ExtractionPromptInput, build_extraction_prompt
+from src.services.pipeline.hero_job import GroupBlocks, HeroRequest
 from src.services.pipeline.hero_rewrite import (
-    GroupBlocks,
-    HeroRequest,
     hero_meta,
     hero_request,
     reading_minutes,
@@ -373,12 +372,14 @@ class TestFallback:
     async def test_should_keep_the_first_answer_when_the_retry_brings_nothing(
         self, llm: AsyncMock
     ) -> None:
-        seo_with_number = "Alice in 1999 on why hand-written code stopped paying."
-        llm.replies.extend([_answer(seoDescription=seo_with_number), None])  # type: ignore[attr-defined]
+        # A D18 line finalize would ship empty is worth the retry (review p2 B4).
+        skip_with_number = "You want the 3 hour cut."
+        llm.replies.extend([_answer(skipIf=skip_with_number), None])  # type: ignore[attr-defined]
 
         result = await run_hero_rewrite(object(), _request())  # type: ignore[arg-type]
 
-        assert result is not None and result.seo_description == ""
+        assert (llm.await_count, result is not None) == (2, True)
+        assert result is not None and result.skip_if == ""
 
     async def test_should_return_none_instead_of_raising_when_the_call_errors(
         self, llm: AsyncMock

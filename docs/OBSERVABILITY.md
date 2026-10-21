@@ -42,11 +42,11 @@ Trace: pipeline:{videoSummaryId}
 │   └── (long videos: the same names + `_c<k>` for chunk k ≥ 1, e.g. `extraction_text1_c1`;
 │        ledger feature `summarize:extraction:<group>`. EXTRACTION_PARALLEL=false: one `extraction`
 │        generation, or one `extraction_batchN` per chapter batch + `_seq` for the rate-limited second pass)
-├── generation: hero_rewrite          model=sonnet-5.5       (LLM_EXTRACTION_MODEL; HERO_REWRITE_ENABLED; one call fired at text-groups-done that reads the field groups' cached blocks, ledger feature `summarize:hero_rewrite`; a retry is a second generation under the same name)
+├── generation: hero_rewrite          model=sonnet-5.5       (LLM_EXTRACTION_MODEL; HERO_REWRITE_ENABLED; one call fired at text-groups-done that reads the field groups' cached blocks, ledger feature `summarize:hero_rewrite`; a retry — only when the hero would be None or a D18 line would drop — is a second generation under the same name)
 ├── generation: synthesis             model=fast tier         (only when the hero call is off or gave no hero — HERO_REWRITE_ENABLED=false, or `None` back; ledger feature `summarize:synthesis`)
 ├── generation: quiz_v2               model=haiku-5.5         (LLM_MEMORY_MODEL; QUIZ_V2_ENABLED; only for a plan with a quiz host; ledger feature `summarize:enrichment`)
 ├── generation: enrichment            model=gpt-4o-mini       (LLM_ENRICHMENT_MODEL; the quiz with QUIZ_V2_ENABLED=false; only for a plan with a quiz host)
-├── generation: faithfulness          model=gpt-6-luna        (LLM_JUDGE_MODEL; judge calls, background: the extraction sample's ≤ 6 claims, plus after assembly one hero call and one quiz call under the same name — told apart by their scores)
+├── generation: faithfulness          model=gpt-6-luna        (LLM_JUDGE_MODEL; judge calls, background: the extraction sample's ≤ 6 claims, plus after assembly one hero call (only when the hero rewrite wrote the hero) and one quiz call (only with `QUIZ_V2_ENABLED`) under the same name — told apart by their scores)
 ├── generation: translation_full      model=gpt-6-luna        (LLM_TRANSLATION_MODEL; non-English video: the output, in batches) + translation_title
 ├── generation: rag_translation       model=gpt-6-luna        (LLM_TRANSLATION_MODEL; non-English caption / S3 / Gemini transcript → English for Qdrant)
 ├── generation: <span> (refused)      a declined answer: metadata refusal=true, refusalCategory; the previous model's
@@ -159,7 +159,7 @@ cd services/summarizer && LIVE_EVAL=1 .venv/bin/python -m pytest -q tests/test_f
 
 ### Hero and quiz sample (output-quality 2.4)
 
-`faithfulness` scores only the extraction sample above. From phase 2 the judge also reads what a viewer meets first on the page, in **two more background calls** on the same judge model (`LLM_JUDGE_MODEL`, stage `faithfulness`, ledger feature `summarize:faithfulness`; `pipeline/faithfulness_hero_quiz.py`). `pipeline_orchestration` launches them once `run_phase_assembly` returns — the late group has written the hero and the quiz — through `routes/pipeline_faithfulness._launch_hero_quiz_check`, and drains them with the extraction sample (≤ 25 s before the trace flushes):
+`faithfulness` scores only the extraction sample above. From phase 2 the judge also reads what a viewer meets first on the page, in **up to two more background calls** on the same judge model (`LLM_JUDGE_MODEL`, stage `faithfulness`, ledger feature `summarize:faithfulness`; `pipeline/faithfulness_hero_quiz.py`). `pipeline_orchestration` launches them once `run_phase_assembly` returns — the late group has written the hero and the quiz — through `routes/pipeline_faithfulness._launch_hero_quiz_check` (`pipeline_orchestration._launch_judges`, stage `assembly`), and drains them with the extraction sample (≤ 25 s before the trace flushes). Each half is judged only when its late call wrote it: the hero sample only when the hero rewrite wrote the hero (`wrote_hero(ctx.synthesis_dict)`; else the page shows memory's takeaways), the quiz sample only when `QUIZ_V2_ENABLED` (`judge_hero` / `judge_quiz` of `hero_quiz_samples`), so a run with both flags off makes no extra judge call:
 
 | Score | What is judged | Window |
 |-------|----------------|--------|
@@ -167,7 +167,7 @@ cd services/summarizer && LIVE_EVAL=1 .venv/bin/python -m pytest -q tests/test_f
 | `faithfulness_quiz` | `QUIZ_SAMPLE` = 2 stamped questions of the shipped `quiz_arena` tab, drawn by `youtube_id` and kept in page order (`quiz_sample`): does the evidence at the question's `timestamp` give the keyed option as the answer? | the same window around the question's `timestamp` |
 
 - Each call logs `grounded ÷ judged` with a comment ("N/M … grounded", the judge errors and the entries that could not be judged — a takeaway without a marker, a question without a stamp or a valid key). A sample with no usable verdict logs no score. Below 0.7 logs a warning, like the extraction sample.
-- One attempt per call (`max_retries=0`, 20 s); the score is informational and never blocks the run. A doc without a stamped takeaway or a stamped question skips that call; `LANGFUSE_FAITHFULNESS_SAMPLE_RATE=0` skips both, any other rate leaves the two samples as they are (the rate scales only the extraction sample). A run with no timed transcript skips both.
+- One attempt per call (`max_retries=0`, 20 s); the score is informational and never blocks the run. A doc without a stamped takeaway or a stamped question skips that call, and so does a half whose flag is off (above); `LANGFUSE_FAITHFULNESS_SAMPLE_RATE=0` skips both, any other rate leaves the two samples as they are (the rate scales only the extraction sample). A run with no timed transcript skips both.
 - **Cost, bounded by construction:** every prompt piece is capped (`HERO_PROMPT_MAX_CHARS` = 22 000, `QUIZ_PROMPT_MAX_CHARS` = 10 000; output `HERO_MAX_TOKENS` 700, `QUIZ_MAX_TOKENS` 300), so the two calls cost at most ≈ $0.0021 at 2 characters a token (≈ $0.0013 at English's ~4); the module estimates ≈ $0.0006 for a 5-takeaway video, and the 2.4 lane measured ≈ $0.0004 per video over the 13 gate-1 docs (`dev/active/output-quality/output-quality-tasks.md` 2.4).
 - The two generations are named `faithfulness` like the extraction sample's; read the score name, not the generation, to tell the samples apart.
 

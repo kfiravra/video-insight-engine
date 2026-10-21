@@ -67,7 +67,7 @@ const heroSuperset = {
 };
 
 /** after the late group: the corrected superset with the page's reading time. */
-const settledSuperset = { ...heroSuperset, readingMinutes: 5 };
+const settledSuperset = { ...heroSuperset, readingMinutes: 5, final: true };
 
 // ─────────────────────────────────────────────────────
 // synthesis_complete with the hero rewrite
@@ -145,16 +145,76 @@ describe('stream-event-processor — the hero rewrite on synthesis_complete', ()
   });
 });
 
-describe('validateSynthesisComplete — hero fields', () => {
-  it('should drop an emission whose readingMinutes is not a whole positive number', () => {
-    expect(validateSynthesisComplete({ ...settledSuperset, readingMinutes: 0 })).toEqual({});
+// ─────────────────────────────────────────────────────
+// The final (corrected) superset replaces — the late-group scrub
+// ─────────────────────────────────────────────────────
+
+describe('stream-event-processor — the final superset after the late group', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
   });
 
-  it('should drop an emission whose readingMinutes is null', () => {
-    expect(validateSynthesisComplete({ ...settledSuperset, readingMinutes: null })).toEqual({});
+  it('should clear the fields the scrub emptied when the final superset carries them empty', () => {
+    const scrubbed = { ...settledSuperset, tldr: '', worthItFor: '', seoDescription: '' };
+
+    const state = runEvents([memoryPartial, heroSuperset, scrubbed]);
+
+    expect([state.synthesis?.tldr, state.synthesis?.worthItFor, state.synthesis?.seoDescription]).toEqual(['', '', '']);
+  });
+
+  it('should keep the rest of the final superset when its masterSummary scrubbed to empty', () => {
+    const scrubbed = { ...settledSuperset, masterSummary: '', brief: '' };
+
+    const state = runEvents([memoryPartial, heroSuperset, scrubbed]);
+
+    expect([state.synthesis?.masterSummary, state.synthesis?.readingMinutes]).toEqual(['', 5]);
+  });
+
+  it('should drop a hero line the final superset no longer carries', () => {
+    const settled = Object.fromEntries(Object.entries(settledSuperset).filter(([key]) => key !== 'skipIf'));
+
+    const state = runEvents([memoryPartial, heroSuperset, settled]);
+
+    expect(state.synthesis).not.toHaveProperty('skipIf');
+  });
+
+  it('should clear the preview takeaways when the final superset carries none', () => {
+    const state = runEvents([memoryPartial, heroSuperset, { ...settledSuperset, keyTakeaways: [] }]);
+
+    expect(state.synthesis?.keyTakeaways).toEqual([]);
+  });
+
+  it('should keep the earlier text when a non-final superset leaves a field empty', () => {
+    const state = runEvents([memoryPartial, heroSuperset, { ...heroSuperset, worthItFor: '' }]);
+
+    expect(state.synthesis?.worthItFor).toBe(heroSuperset.worthItFor);
+  });
+});
+
+describe('validateSynthesisComplete — hero fields', () => {
+  it('should drop a readingMinutes that is not a whole positive number and keep the emission', () => {
+    const { fields } = validateSynthesisComplete({ ...settledSuperset, readingMinutes: 0 });
+
+    expect([fields.readingMinutes, fields.tldr]).toEqual([undefined, settledSuperset.tldr]);
+  });
+
+  it('should drop a null readingMinutes and keep the emission', () => {
+    const { fields } = validateSynthesisComplete({ ...settledSuperset, readingMinutes: null });
+
+    expect([fields.readingMinutes, fields.brief]).toEqual([undefined, settledSuperset.brief]);
+  });
+
+  it.each(['brief', 'worthItFor', 'skipIf'] as const)('should drop a %s that is not a string and keep the emission', (key) => {
+    const { fields } = validateSynthesisComplete({ ...heroSuperset, [key]: 42 });
+
+    expect([fields[key], fields.tldr]).toEqual([undefined, heroSuperset.tldr]);
+  });
+
+  it('should treat an emission whose final flag is not a boolean as one to merge', () => {
+    expect(validateSynthesisComplete({ ...settledSuperset, final: 'yes' }).final).toBe(false);
   });
 
   it('should leave out an empty hero line so it never blanks an earlier one', () => {
-    expect(validateSynthesisComplete({ ...heroSuperset, worthItFor: '' })).not.toHaveProperty('worthItFor');
+    expect(validateSynthesisComplete({ ...heroSuperset, worthItFor: '' }).fields).not.toHaveProperty('worthItFor');
   });
 });

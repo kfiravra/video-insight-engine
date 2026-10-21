@@ -2,25 +2,9 @@
 
 A ``quote`` field promises the speaker's own words. ``verify_quote`` looks a quote up
 in a ``QuoteIndex`` built once per transcript (``run_quote_index`` caches it on the
-pipeline context):
-
-- **Normalized** on both sides: NFKC, casefolded, apostrophes dropped ("don't" =
-  "dont" = "don’t"), every other non-word character — punctuation, curly or straight
-  quote marks, dashes — read as a space, thousands separators joined ("8,000" =
-  "8000"), whitespace collapsed. The hesitation words in ``FILLERS`` are dropped on
-  both sides, after the prompt render's own filler pass (``remove_fillers``: "um",
-  "uh", "basically", "so yeah" …): an English prompt transcript is rendered without
-  them, so a quote copied from it lacks what the raw captions keep ("Paper basically
-  takes me" was quoted "Paper takes me"), and a hesitation is never what a quote is
-  for. Dropping words on both sides only brings two texts closer, so a Portuguese
-  "um" ("one") costs nothing.
-- **Exact first**: the normalized quote as a whole-word run of the normalized
-  transcript — the occurrence nearest ``near_seconds`` when the line recurs.
-- **Else fuzzy**: candidate windows anchored by the quote's word trigrams (each hit
-  votes for the window it implies; the most-voted windows are scored, ties nearest
-  ``near_seconds``); a window's score is the difflib ratio between the quote and the
-  transcript words it aligns to; ``FUZZY_THRESHOLD`` (0.9) passes.
-- A quote cut with "…" / "..." is fragments: every fragment must pass.
+pipeline context); how it matches — normalized, exact first, else fuzzy, a "…"-cut
+quote fragment by fragment in order and close together — is ``quote_index``'s
+docstring.
 
 Status: ``verified`` (found) · ``unverified`` (an English source, not found: the
 quote is cleared) · ``translated`` (any other source, not found: the extraction runs
@@ -37,26 +21,24 @@ from __future__ import annotations
 
 import logging
 import math
-import re
-import unicodedata
-from bisect import bisect_left
-from collections import Counter
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from difflib import SequenceMatcher
-from typing import TYPE_CHECKING, Any, Literal, TypeGuard
+from typing import TYPE_CHECKING, Any
 
-from src.services.transcript.cleaner import remove_fillers
+# The matcher's names stay importable from here (split out, output-quality p2 review).
+from .quote_index import TRANSLATED as TRANSLATED
+from .quote_index import UNVERIFIED as UNVERIFIED
+from .quote_index import VERIFIED as VERIFIED
+from .quote_index import QuoteIndex as QuoteIndex
+from .quote_index import QuoteStatus as QuoteStatus
+from .quote_index import QuoteVerdict as QuoteVerdict
+from .quote_index import _is_number
+from .quote_index import normalize_words as normalize_words
 
 if TYPE_CHECKING:
     from src.services.pipeline.context import PipelineContext
 
 logger = logging.getLogger(__name__)
-
-QuoteStatus = Literal["verified", "unverified", "translated"]
-VERIFIED: QuoteStatus = "verified"
-UNVERIFIED: QuoteStatus = "unverified"
-TRANSLATED: QuoteStatus = "translated"
 
 # Written on every checked item of the copy assembly reads.
 QUOTE_STATUS_KEY = "quoteStatus"
@@ -65,204 +47,9 @@ QUOTE_STATUS_KEY = "quoteStatus"
 # "translated" status string would arrive in the source-language tabs translated too.
 QUOTE_TRANSLATED_KEY = "quoteTranslated"
 
-FUZZY_THRESHOLD = 0.9
-FILLERS: frozenset[str] = frozenset({"um", "umm", "uh", "uhh", "uhm", "erm", "hmm", "mm"})
-
-# Words per anchor; a quote shorter than this passes only as an exact match.
-_NGRAM = 3
-# An anchor heard more often than this ("you know what") votes for no window.
-_COMMON_NGRAM = 50
-# Windows scored per fragment.
-_CANDIDATES = 4
-# Votes for starts this close are one window: a dropped or added word shifts the start.
-_JITTER = 3
-# Occurrences of an exact match weighed against ``near_seconds``.
-_EXACT_SCAN = 64
 _ANCHOR_KEYS = ("timestamp", "seconds", "startSeconds")
 # A quote list's item IS its quote: an unverified one leaves the list.
 _QUOTE_LIST_KEY = "quotes"
-
-_ELLIPSIS = re.compile(r"…|\.{3,}")
-_APOSTROPHES = re.compile(r"['`´‘’ʼ]")
-_THOUSANDS = re.compile(r"(?<=\d),(?=\d{3}(?!\d))")
-_WORD = re.compile(r"\w+")
-
-
-def normalize_words(text: str) -> list[str]:
-    """The words a quote or transcript line is compared by (module docstring)."""
-    folded = unicodedata.normalize("NFKC", remove_fillers(text)).casefold()
-    folded = _THOUSANDS.sub("", _APOSTROPHES.sub("", folded))
-    return [word for word in _WORD.findall(folded) if word not in FILLERS]
-
-
-def _is_number(value: Any) -> TypeGuard[int | float]:
-    return isinstance(value, int | float) and not isinstance(value, bool) and value >= 0
-
-
-def _segment_start(segment: Mapping[str, Any], previous: int) -> int:
-    """A segment's start in whole seconds (``start`` / ``seconds``, or ``startMs``);
-    the previous segment's when it states none."""
-    if _is_number(segment.get("startMs")):
-        return int(segment["startMs"] / 1000)
-    for key in ("start", "seconds"):
-        if _is_number(segment.get(key)):
-            return int(segment[key])
-    return previous
-
-
-@dataclass(frozen=True)
-class QuoteVerdict:
-    """``seconds``: where the quote was found — for a failed quote, where its closest
-    window sits (None when no anchor hit); ``score``: 1.0 exact, else the best ratio."""
-
-    status: QuoteStatus
-    seconds: int | None
-    score: float
-
-
-@dataclass(frozen=True)
-class _Match:
-    score: float
-    position: int | None
-
-
-@dataclass
-class QuoteIndex:
-    """One transcript's words with the second each is spoken at, its anchors and memo."""
-
-    words: list[str]
-    seconds: list[int]
-    source_language: str | None = None
-    _text: str = ""
-    _offsets: list[int] = field(default_factory=list)
-    _anchors: dict[tuple[str, ...], list[int]] = field(default_factory=dict)
-    _memo: dict[tuple[str, int | None], QuoteVerdict] = field(default_factory=dict)
-
-    @classmethod
-    def build(
-        cls, segments: Sequence[Mapping[str, Any]], source_language: str | None = None
-    ) -> QuoteIndex:
-        """``segments``: ``{text, start|seconds|startMs}`` dicts in time order;
-        ``source_language``: ``ctx.source_language_code`` (None = English)."""
-        words: list[str] = []
-        seconds: list[int] = []
-        start = 0
-        for segment in segments:
-            if not isinstance(segment, Mapping):
-                continue
-            start = _segment_start(segment, start)
-            spoken = normalize_words(str(segment.get("text") or ""))
-            words.extend(spoken)
-            seconds.extend([start] * len(spoken))
-        index = cls(words, seconds, source_language)
-        index._prepare()
-        return index
-
-    def _prepare(self) -> None:
-        offset = 1
-        for word in self.words:
-            self._offsets.append(offset)
-            offset += len(word) + 1
-        self._text = f" {' '.join(self.words)} "
-        for i in range(len(self.words) - _NGRAM + 1):
-            self._anchors.setdefault(tuple(self.words[i : i + _NGRAM]), []).append(i)
-
-    @property
-    def english_source(self) -> bool:
-        code = (self.source_language or "en").strip().lower()
-        return code == "en" or code.startswith("en-")
-
-    def verify(self, quote: str, near_seconds: int | None = None) -> QuoteVerdict:
-        """The memoized verdict on ``quote`` (see ``verify_quote``)."""
-        key = (quote.strip(), near_seconds)
-        verdict = self._memo.get(key)
-        if verdict is None:
-            verdict = self._verdict(key[0], near_seconds)
-            self._memo[key] = verdict
-        return verdict
-
-    def _verdict(self, quote: str, near: int | None) -> QuoteVerdict:
-        fragments = [words for part in _ELLIPSIS.split(quote) if (words := normalize_words(part))]
-        score = 1.0 if fragments else 0.0
-        found: int | None = None
-        for words in fragments:
-            match = self._match(words, near if found is None else found)
-            score = min(score, match.score)
-            if found is None and match.position is not None:
-                found = self.seconds[match.position]
-        if score >= FUZZY_THRESHOLD:
-            return QuoteVerdict(VERIFIED, found, round(score, 3))
-        status = UNVERIFIED if self.english_source else TRANSLATED
-        return QuoteVerdict(status, found, round(score, 3))
-
-    def _match(self, words: list[str], near: int | None) -> _Match:
-        exact = self._exact_positions(words)
-        if exact:
-            return _Match(1.0, self._nearest(exact, near))
-        if len(words) < _NGRAM:
-            return _Match(0.0, None)
-        scored = [self._window_score(words, start) for start in self._candidates(words, near)]
-        passing = [m.position for m in scored if m.score >= FUZZY_THRESHOLD]
-        if passing:
-            return _Match(max(m.score for m in scored), self._nearest(passing, near))
-        return max(scored, key=lambda m: m.score, default=_Match(0.0, None))
-
-    def _exact_positions(self, words: list[str]) -> list[int]:
-        needle = f" {' '.join(words)} "
-        positions: list[int] = []
-        at = self._text.find(needle)
-        while at != -1 and len(positions) < _EXACT_SCAN:
-            positions.append(bisect_left(self._offsets, at + 1))
-            at = self._text.find(needle, at + 1)
-        return positions
-
-    def _nearest(self, positions: Sequence[int | None], near: int | None) -> int | None:
-        known = [p for p in positions if p is not None]
-        if near is None or not known:
-            return known[0] if known else None
-        return min(known, key=lambda p: abs(self.seconds[p] - near))
-
-    def _candidates(self, words: list[str], near: int | None) -> list[int]:
-        """Window starts the quote's anchors vote for, most votes first, ties nearest."""
-        votes: Counter[int] = Counter()
-        for i in range(len(words) - _NGRAM + 1):
-            hits = self._anchors.get(tuple(words[i : i + _NGRAM]), [])
-            if len(hits) <= _COMMON_NGRAM:
-                votes.update(max(0, hit - i) for hit in hits)
-        windows = _merge_votes(votes)
-        last = len(self.seconds) - 1
-
-        def rank(window: tuple[int, int]) -> tuple[int, int]:
-            distance = 0 if near is None else abs(self.seconds[min(window[1], last)] - near)
-            return -window[0], distance
-
-        return [start for _, start in sorted(windows, key=rank)[:_CANDIDATES]]
-
-    def _window_score(self, words: list[str], start: int) -> _Match:
-        """The ratio between the quote and the transcript words it aligns to near ``start``."""
-        slack = max(2, len(words) // 5)
-        low = max(0, start - slack)
-        window = self.words[low : start + len(words) + slack]
-        matcher = SequenceMatcher(None, words, window, autojunk=False)
-        blocks = [block for block in matcher.get_matching_blocks() if block.size]
-        if not blocks:
-            return _Match(0.0, None)
-        first, end = blocks[0].b, blocks[-1].b + blocks[-1].size
-        span = " ".join(window[first:end])
-        ratio = SequenceMatcher(None, " ".join(words), span, autojunk=False).ratio()
-        return _Match(ratio, low + first)
-
-
-def _merge_votes(votes: Counter[int]) -> list[tuple[int, int]]:
-    """``(votes, start)`` per window: starts within ``_JITTER`` of each other are one,
-    led by its most-voted start."""
-    groups: list[list[int]] = []
-    for start in sorted(votes):
-        if groups and start - groups[-1][-1] <= _JITTER:
-            groups[-1].append(start)
-        else:
-            groups.append([start])
-    return [(sum(votes[s] for s in group), max(group, key=votes.__getitem__)) for group in groups]
 
 
 def verify_quote(quote: str, index: QuoteIndex, near_seconds: int | None = None) -> QuoteVerdict:

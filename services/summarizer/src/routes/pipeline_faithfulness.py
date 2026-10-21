@@ -4,7 +4,8 @@ Extracted from ``pipeline_runner.py`` — owns the module-level task registry
 (strong refs so the GC can't cancel a judge mid-call) and the bounded drain
 that runs before the Langfuse trace flushes. Two launches per run: the
 extraction sample once extraction has data, and the hero + quiz sample
-(output-quality 2.4) once the doc is assembled.
+(output-quality 2.4) once the doc is assembled — each half only when the hero
+rewrite / quiz v2 wrote it.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 from llm_common.context import llm_feature_var
 
+from src.config import settings
 from src.services.pipeline import faithfulness
 from src.services.pipeline.faithfulness_hero_quiz import (
     EvidenceSource,
@@ -23,6 +25,7 @@ from src.services.pipeline.faithfulness_hero_quiz import (
     hero_quiz_samples,
     run_hero_quiz_check,
 )
+from src.services.pipeline.phases.synthesis import wrote_hero
 
 if TYPE_CHECKING:
     from src.services.pipeline.context import PipelineContext
@@ -108,7 +111,12 @@ def _timed_segments(ctx: PipelineContext) -> list[Any]:
 
 
 def _hero_quiz_samples(ctx: PipelineContext) -> HeroQuizSamples | None:
-    """The assembled doc's hero + quiz samples, windowed on the run's transcript."""
+    """The assembled doc's hero + quiz samples, windowed on the run's transcript.
+
+    Each half is judged only when its late call wrote it: the hero rewrite wrote the
+    hero (``wrote_hero``; else the page shows memory's takeaways) and quiz v2 made the
+    quiz (``QUIZ_V2_ENABLED``). A run with both flags off makes no extra judge call.
+    """
     evidence = EvidenceSource.build(
         _timed_segments(ctx), ctx.visual_annotations, ctx.source_language_code
     )
@@ -117,6 +125,8 @@ def _hero_quiz_samples(ctx: PipelineContext) -> HeroQuizSamples | None:
         meta=ctx.assembled_meta or {},
         tabs=ctx.assembled_tabs or [],
         evidence=evidence,
+        judge_hero=wrote_hero(ctx.synthesis_dict),
+        judge_quiz=settings.QUIZ_V2_ENABLED,
     )
 
 
@@ -125,7 +135,8 @@ def _launch_hero_quiz_check(ctx: PipelineContext) -> asyncio.Task[None] | None:
 
     Called once the doc is assembled (the late group wrote the hero and the
     quiz); the caller drains the task with the others. None when a purge
-    deleted the row mid-run, the judge is off, or the doc has neither a stamped
+    deleted the row mid-run, the judge is off, the hero rewrite and quiz v2 both
+    left their part of the page unwritten, or the doc has neither a stamped
     takeaway nor a stamped quiz question.
     """
     if ctx.row_deleted:

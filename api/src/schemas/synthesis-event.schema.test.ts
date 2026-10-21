@@ -28,12 +28,34 @@ describe('synthesisCompleteEventSchema', () => {
       expect(synthesisCompleteEventSchema.safeParse(early).success).toBe(true);
     });
 
-    it('should reject a readingMinutes that is not a whole positive number', () => {
-      expect(synthesisCompleteEventSchema.safeParse({ ...heroSuperset, readingMinutes: 0 }).success).toBe(false);
+    it('should drop a readingMinutes that is not a whole positive number and keep the event', () => {
+      const result = synthesisCompleteEventSchema.safeParse({ ...heroSuperset, readingMinutes: 0 });
+
+      expect(result.success && result.data.readingMinutes).toBeUndefined();
     });
 
-    it('should reject a null readingMinutes', () => {
-      expect(synthesisCompleteEventSchema.safeParse({ ...heroSuperset, readingMinutes: null }).success).toBe(false);
+    it('should keep the rest of the superset when readingMinutes is null', () => {
+      const result = synthesisCompleteEventSchema.safeParse({ ...heroSuperset, readingMinutes: null });
+
+      expect(result.success && result.data.tldr).toBe(heroSuperset.tldr);
+    });
+
+    it.each(['brief', 'worthItFor', 'skipIf'] as const)('should drop a %s that is not a string and keep the event', (key) => {
+      const result = synthesisCompleteEventSchema.safeParse({ ...heroSuperset, [key]: null });
+
+      expect(result.success && [result.data[key], result.data.tldr]).toEqual([undefined, heroSuperset.tldr]);
+    });
+
+    it('should keep the final flag when the corrected superset carries it', () => {
+      const result = synthesisCompleteEventSchema.safeParse({ ...heroSuperset, final: true });
+
+      expect(result.success && result.data.final).toBe(true);
+    });
+
+    it('should drop a final flag that is not a boolean and keep the event', () => {
+      const result = synthesisCompleteEventSchema.safeParse({ ...heroSuperset, final: 'yes' });
+
+      expect(result.success && result.data.final).toBeUndefined();
     });
   });
 

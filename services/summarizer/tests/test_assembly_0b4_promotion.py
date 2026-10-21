@@ -89,21 +89,30 @@ class TestPromotionKeepsEvidence:
 
         assert [s.get("quote") for s in out["spots"]] == ["the speaker's own words", None]
 
-    def test_should_carry_an_explicit_row_source_as_the_spot_quote(self):
+    def test_should_carry_an_explicit_row_source_as_prose_after_the_description(self):
+        # p2 review C2: only the item's checked quote is the speaker's words.
         data = _explicit_rows(2)
         data[1]["source"] = "Apple keynote"
 
         _, out = _grid_then_promote(data)
 
-        assert out["spots"][1]["quote"] == "Apple keynote"
+        spot = out["spots"][1]
+        assert ("quote" in spot, spot["description"]) == (False, f"{LONG} — Apple keynote")
 
-    def test_should_carry_a_tip_example_as_the_spot_quote(self):
+    def test_should_carry_a_tip_example_as_prose_after_the_description(self):
         data = _tips(2)
         data[0]["example"] = "a 9x13 pan holds four layers"
 
         _, out = _grid_then_promote(data)
 
-        assert out["spots"][0]["quote"] == "a 9x13 pan holds four layers"
+        spot = out["spots"][0]
+        assert (
+            "quote" in spot,
+            spot["description"].endswith("— a 9x13 pan holds four layers"),
+        ) == (
+            False,
+            True,
+        )
 
     def test_should_keep_emoji_on_promoted_spots(self):
         _, out = _grid_then_promote(_key_points(2))

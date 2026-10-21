@@ -10,6 +10,12 @@ Which call (output-quality 2.1b): ``QUIZ_V2_ENABLED`` (default) writes quiz v2 o
 Haiku 5.5 from the transcript + the key ideas, every question's evidence quote
 checked against the transcript (``pipeline/quiz_v2``); false keeps ``enrich_quiz``.
 Both bill the ``summarize:enrichment`` ledger feature; the span tells them apart.
+
+The shipped hero (p2 review D7): quiz v2 reads memory's hero, the page's preview —
+the hero rewrite writes the shipped one in parallel. Once both late calls landed,
+assembly calls :func:`settle_late_quiz`: a question whose keyed option restates a
+shipped takeaway goes and quiz v2's spares refill (with the rewrite off, the shipped
+takeaways are memory's). The flag-off quiz stays as written.
 """
 
 from __future__ import annotations
@@ -30,7 +36,12 @@ from src.services.pipeline.enrichment import (
 )
 from src.services.pipeline.pipeline_helpers import sse_event
 from src.services.pipeline.pipeline_timing import timed_step
-from src.services.pipeline.quiz_v2 import QuizV2Request, enrich_quiz_v2
+from src.services.pipeline.quiz_v2 import (
+    MIN_QUIZ_V2_QUESTIONS,
+    QuizV2Request,
+    enrich_quiz_v2,
+    restates_the_hero,
+)
 from src.services.pipeline.quote_verify import run_quote_index
 
 if TYPE_CHECKING:
@@ -41,6 +52,9 @@ logger = logging.getLogger(__name__)
 
 # pipeline.timing step of a quiz call the split extraction started.
 QUIZ_CALL_STEP = "quiz_call"
+# Quiz v2's spares in the run's enrichment record until settle_late_quiz takes them
+# out — never emitted, never stored.
+QUIZ_SPARES_KEY = "spares"
 
 
 def _skip_reason(ctx: PipelineContext, extraction: Mapping[str, Any]) -> str | None:
@@ -57,7 +71,8 @@ def _duration_s(ctx: PipelineContext) -> float | None:
 
 
 def _hero(ctx: PipelineContext) -> str:
-    # The memory hero is what the page shows, so no question may be answerable from it.
+    # Memory's hero is the page's preview, so no question may be answerable from it; the
+    # hero the rewrite ships lands in parallel and is checked after (settle_late_quiz).
     return render_hero(ctx.video_data.title if ctx.video_data else "", ctx.memory)
 
 
@@ -158,4 +173,53 @@ async def run_phase_enrichment(ctx: PipelineContext) -> AsyncGenerator[str, None
     result = await task if task is not None else await _quiz(ctx, ctx.extraction_data or {})
     if result is not None:
         ctx.enrichment_data = result.model_dump(by_alias=True)
-        yield sse_event("enrichment_complete", ctx.enrichment_data)
+        event = sse_event("enrichment_complete", ctx.enrichment_data)
+        if result.spares:
+            spares = [question.model_dump(by_alias=True) for question in result.spares]
+            ctx.enrichment_data[QUIZ_SPARES_KEY] = spares
+        yield event
+
+
+# ─── The shipped hero (p2 review D7) ───
+
+
+def _shipped_takeaways(ctx: PipelineContext) -> list[str]:
+    """The takeaways the page ships: the hero rewrite's, else memory's (or synthesis's)."""
+    return [str(text) for text in (ctx.synthesis_dict or {}).get("keyTakeaways") or []]
+
+
+def _refilled(
+    quiz: list[dict[str, Any]], spares: list[dict[str, Any]], takeaways: list[str]
+) -> list[dict[str, Any]]:
+    """The quiz without the questions restating a takeaway, refilled from the spares in
+    order, at most its own length."""
+    pool = [question for question in [*quiz, *spares] if not restates_the_hero(question, takeaways)]
+    return pool[: len(quiz)]
+
+
+def settle_late_quiz(ctx: PipelineContext) -> None:
+    """Once the hero and the quiz both landed, no shipped quiz v2 question restates a
+    shipped takeaway (module docstring); the spares leave the record either way.
+
+    Fewer than ``MIN_QUIZ_V2_QUESTIONS`` left after a drop → no quiz (no quiz tab).
+    """
+    record = ctx.enrichment_data
+    if not record:
+        return
+    spares = record.pop(QUIZ_SPARES_KEY, None) or []
+    if not settings.QUIZ_V2_ENABLED:
+        return
+    takeaways = _shipped_takeaways(ctx)
+    quiz = list(record.get("quiz") or [])
+    restating = sum(1 for question in quiz if restates_the_hero(question, takeaways))
+    if not restating:
+        return
+    kept = _refilled(quiz, spares, takeaways)
+    logger.info(
+        "Quiz v2: %d of %d question(s) restate a shipped takeaway; %d ship",
+        restating, len(quiz), len(kept),
+    )  # fmt: skip
+    if len(kept) < MIN_QUIZ_V2_QUESTIONS:
+        ctx.enrichment_data = None
+        return
+    record["quiz"] = kept

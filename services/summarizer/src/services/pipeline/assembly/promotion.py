@@ -18,11 +18,12 @@ import logging
 import re
 from typing import Any
 
+from src.services.pipeline.quote_verify import mark_translated_quote
 from src.shared_config.assembly_policy import assembly_policy
 
 from .assemblers_overhaul import assemble_concept_canvas
 from .assemblers_primary import assemble_spot_explorer
-from .derived_guard import is_numeric_axis
+from .derived_guard import has_quote, is_numeric_axis
 
 logger = logging.getLogger(__name__)
 
@@ -152,19 +153,45 @@ def _info_row_to_spot(row: dict) -> dict:
     return spot
 
 
+def checked_quotes(data: Any) -> dict[str, dict]:
+    """Each source item's ``quote`` (stripped) → the item. Assembly reads the checked
+    extraction (2.0 d): an unverified quote is already cleared, a translated one flagged."""
+    if not isinstance(data, list):
+        return {}
+    return {item["quote"].strip(): item for item in data if has_quote(item)}
+
+
+def spot_evidence(spot: dict, row: dict, quotes: dict[str, dict]) -> dict:
+    """A grid row's evidence on its spot card (R10, 2.0 d): the card's ``quote`` only
+    when it IS its item's checked quote, with the item's translated flag; any other
+    evidence — an example, a source, a note, an analogy — is prose after the
+    description, never the speaker's words."""
+    evidence = str(row.get("evidence") or "").strip()
+    if not evidence:
+        return spot
+    item = quotes.get(evidence)
+    if item is not None:
+        spot["quote"] = evidence
+        return mark_translated_quote(spot, item)
+    description = str(spot.get("description") or "").strip()
+    spot["description"] = f"{description} — {evidence}" if description else evidence
+    return spot
+
+
 def _promote_info_grid(
     props: dict,
+    data: Any,
     extraction: dict | None,
 ) -> dict | None:
     """info_grid -> spot_explorer when rows are description-heavy cards.
 
     A grid of short reference pairs stays a grid; a grid whose values are long
     descriptions is really a set of browsable cards, so we re-shape it through
-    the spot_explorer assembler. Each spot keeps its row's `timestamp` and
-    carries the row's `evidence` as the card's `quote` line and its `category`
-    badge (R2, R5, R10). A row the spot normalizer would refuse (a headline
-    chip with no body) keeps the whole tab a grid, where every row still
-    renders — degrade, never drop.
+    the spot_explorer assembler. Each spot keeps its row's `timestamp`, its
+    `category` badge and its `evidence` — as the card's `quote` line only when
+    it is the item's checked quote (``spot_evidence``; R2, R5, R10). A row the
+    spot normalizer would refuse (a headline chip with no body) keeps the whole
+    tab a grid, where every row still renders — degrade, never drop.
     """
     items = props.get("items")
     if not isinstance(items, list):
@@ -179,9 +206,9 @@ def _promote_info_grid(
     # means a refused row, which keeps the whole tab a grid.
     if spot_props is None or len(spot_props["spots"]) != len(rows):
         return None
+    quotes = checked_quotes(data)
     for spot, row in zip(spot_props["spots"], rows, strict=True):
-        if row.get("evidence"):
-            spot["quote"] = row["evidence"]
+        spot_evidence(spot, row, quotes)
         if row.get("category"):
             spot["category"] = row["category"]
     return spot_props
@@ -214,7 +241,7 @@ def promote_component(
     elif component == "flash_deck":
         new_props = _promote_flash_deck(data, extraction, domain)
     elif component == "info_grid":
-        new_props = _promote_info_grid(props, extraction)
+        new_props = _promote_info_grid(props, data, extraction)
 
     if new_props is None:
         return component, props
@@ -237,7 +264,9 @@ _DEMOTE_LADDER: dict[str, tuple[str, ...]] = {
     "step_flow_canvas": ("checklist", "display_section"),
     "spot_explorer": ("info_grid", "checklist", "display_section"),
     "info_grid": ("checklist", "display_section"),
-    "tier_list": ("info_grid", "display_section"),
+    # A tier list nobody ranked (2.0 c, D13) is a list of picks with their reasons:
+    # cards first — info_grid never stands alone (R6), so it is the last resort.
+    "tier_list": ("spot_explorer", "info_grid", "display_section"),
     "comparison": ("info_grid", "display_section"),
     "comparison_radar": ("info_grid", "display_section"),
     "concept_canvas": ("flash_deck", "info_grid", "display_section"),
