@@ -23,13 +23,13 @@ Video: "How Memory Actually Works — The Science of Forgetting" (22 minutes)
     "Link new concepts to existing knowledge with elaborative encoding"
   ],
   "timestamps": [
-    {"time": "0:00", "seconds": 0, "label": "Introduction — why we forget"},
-    {"time": "1:25", "seconds": 85, "label": "The forgetting curve explained"},
-    {"time": "5:40", "seconds": 340, "label": "Spaced repetition technique"},
-    {"time": "9:40", "seconds": 580, "label": "Sleep and memory consolidation"},
-    {"time": "13:10", "seconds": 790, "label": "Retrieval practice vs re-reading"},
-    {"time": "17:00", "seconds": 1020, "label": "Elaborative encoding strategies"},
-    {"time": "20:30", "seconds": 1230, "label": "Summary and practical system"}
+    {"time": "0:00", "seconds": 0, "label": "Introduction — why we forget", "description": "Most of what we learn is gone within a month unless we act on it."},
+    {"time": "1:25", "seconds": 85, "label": "The forgetting curve explained", "description": "Retention falls fastest in the first day: 40% lost in 20 minutes, 70% in 24 hours."},
+    {"time": "5:40", "seconds": 340, "label": "Spaced repetition technique", "description": "Reviews at 1, 3, 7 and 21 days catch each memory just before it fades."},
+    {"time": "9:40", "seconds": 580, "label": "Sleep and memory consolidation", "description": "Sleep after a session is when the day's learning is stored for good."},
+    {"time": "13:10", "seconds": 790, "label": "Retrieval practice vs re-reading", "description": "Testing yourself beats re-reading because the effort of recall builds the memory."},
+    {"time": "17:00", "seconds": 1020, "label": "Elaborative encoding strategies", "description": "Linking a new fact to what you already know gives it more ways back."},
+    {"time": "20:30", "seconds": 1230, "label": "Summary and practical system", "description": "The three techniques combine into one weekly routine."}
   ],
   "keyQuestion": "Why do we forget most of what we learn, and what proven techniques prevent it?",
   "summary": "Memory decays exponentially without reinforcement (Ebbinghaus forgetting curve), but three evidence-based techniques dramatically improve retention: spaced repetition at increasing intervals, retrieval practice instead of re-reading, and sleeping well after learning sessions."
