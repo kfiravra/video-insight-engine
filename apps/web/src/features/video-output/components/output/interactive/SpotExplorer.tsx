@@ -35,6 +35,13 @@ function hasSeekTimestamp(spot: SpotItem): spot is SpotItem & { timestamp: numbe
   return typeof spot.timestamp === 'number' && Number.isFinite(spot.timestamp) && spot.timestamp >= 0;
 }
 
+/** Who holds each position, shown only when the tab mixes speakers (a host and a
+ *  guest): on a one-guest show the same name on every card is noise. */
+function attributesSpeakers(spots: SpotItem[]): boolean {
+  const speakers = new Set(spots.map((s) => s.speaker?.trim()).filter(Boolean));
+  return speakers.size >= 2;
+}
+
 /** SectionNav id for the synthetic "All" pill — no section label can collide. */
 const ALL_SECTION = '__all__';
 
@@ -63,6 +70,7 @@ export const SpotExplorer = memo(function SpotExplorer({
   // Dense frame-led collections read better as a gallery grid than a single
   // tall column — only when there are enough spots AND frames to justify it.
   const hasFrames = spots.some((s) => Boolean(s.thumbnailUrl || s.frameCaption || s.frameOcr));
+  const showSpeaker = attributesSpeakers(spots);
   const useGrid = spots.length > 8 && hasFrames;
 
   const renderSpotCard = (spotIndex: number, fadeIdx: number) => {
@@ -72,6 +80,7 @@ export const SpotExplorer = memo(function SpotExplorer({
     const hasFrame = Boolean(spot.thumbnailUrl || spot.frameCaption || spot.frameOcr);
     const hasActions = Boolean(spot.mapQuery || spot.bookingSearch);
     const quote = spot.quote?.trim();
+    const speaker = showSpeaker ? spot.speaker?.trim() : undefined;
 
     return (
       <FadeIn key={spotIndex} index={fadeIdx}>
@@ -116,6 +125,7 @@ export const SpotExplorer = memo(function SpotExplorer({
                   {quote}
                 </blockquote>
               )}
+              {speaker && <p className="text-xs font-medium text-muted-foreground">— {speaker}</p>}
               {spot.specs && (
                 <p className="text-xs italic text-muted-foreground">
                   {spot.specs}
