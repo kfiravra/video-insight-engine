@@ -17,7 +17,11 @@ from collections.abc import AsyncGenerator, Callable
 
 from src.config import settings
 from src.repositories.mongodb_repository import MongoDBVideoRepository
-from src.routes.pipeline_faithfulness import _drain_faithfulness, _launch_faithfulness_check
+from src.routes.pipeline_faithfulness import (
+    _drain_faithfulness,
+    _launch_faithfulness_check,
+    _launch_hero_quiz_check,
+)
 from src.routes.run_timing import log_run_summary, mark_phase, persist_run_timing
 from src.services.observability import update_trace_metadata
 from src.services.pipeline.context import PipelineContext
@@ -298,6 +302,11 @@ async def _run_phases_in_order(
         async for event in run_phase_assembly(ctx):
             yield event
         mark_phase(ctx, timing, "assembly", phase_start)
+        # The judge's hero + quiz sample (output-quality 2.4): the late group
+        # wrote both, so it starts here and drains with the extraction sample.
+        hero_quiz = _launch_hero_quiz_check(ctx)
+        if hero_quiz is not None:
+            spawned_faithfulness.append(hero_quiz)
 
         # Translation step — translate the English output into the source
         # language and attach it as ``sourceLanguage`` for the FE toggle.
