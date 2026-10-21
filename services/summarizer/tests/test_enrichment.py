@@ -79,13 +79,16 @@ def _llm_reply(*questions: dict[str, Any], **extra: Any) -> str:
     return json.dumps({"quiz": list(questions), **extra})
 
 
-async def _enrich(primary: str = "tech", tabs: list[dict] | None = None) -> EnrichmentData | None:
+async def _enrich(
+    primary: str = "tech", tabs: list[dict] | None = None, duration_s: float | None = None
+) -> EnrichmentData | None:
     return await enrich_quiz(
         MagicMock(),
         primary_tag=primary,
         extraction_data=_EXTRACTION,
         video_memory=_VIDEO_MEMORY,
         tabs=tabs or [_tab("quiz_arena", "enrichment.quiz")],
+        duration_s=duration_s,
     )
 
 
@@ -265,9 +268,10 @@ class TestEnrichQuiz:
         assert kwargs["json_mode"] is True
 
     async def test_should_keep_at_most_the_registry_cap(self) -> None:
+        # An hour-long video asks for the longest band (8): the cap is the ceiling.
         reply = _llm_reply(*(_question(i) for i in range(_QUIZ_CAP + 3)))
         with patch(_PATCH_LLM, new=AsyncMock(return_value=reply)):
-            result = await _enrich()
+            result = await _enrich(duration_s=3780)
 
         assert result is not None and len(result.quiz) == _QUIZ_CAP
 

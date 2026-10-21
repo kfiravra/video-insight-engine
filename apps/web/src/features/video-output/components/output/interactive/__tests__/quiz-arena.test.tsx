@@ -161,6 +161,30 @@ describe('QuizArena', () => {
     });
   });
 
+  describe('question timestamp chip (output-quality 1.13)', () => {
+    const stampedQuestion: QuizArenaQuestion = {
+      question: 'Why does paying the card beat investing the same dollar?',
+      options: ['A 24% APR costs more than a 7% fund returns', 'Card debt is forgiven', 'Funds never return 7%'],
+      correctIndex: 0,
+      explanation: 'Every dollar on the card loses 24 cents a year.',
+      timestamp: 312,
+    };
+
+    it('should seek to the answer timestamp once the question is answered', async () => {
+      const user = userEvent.setup();
+      const onSeek = vi.fn();
+      render(<QuizArena questions={[stampedQuestion]} onSeek={onSeek} />);
+      await user.click(screen.getByText('Card debt is forgiven'));
+      await user.click(screen.getByRole('button', { name: 'Jump to 5:12' }));
+      expect(onSeek).toHaveBeenCalledWith(312);
+    });
+
+    it('should not reveal the answer timestamp before the question is answered', () => {
+      render(<QuizArena questions={[stampedQuestion]} onSeek={vi.fn()} />);
+      expect(screen.queryByRole('button', { name: 'Jump to 5:12' })).not.toBeInTheDocument();
+    });
+  });
+
   describe('aria-live answer feedback', () => {
     it('should expose an initially empty polite live region', () => {
       render(<QuizArena questions={questions} withTimer={false} />);

@@ -39,6 +39,8 @@ export interface QuizArenaQuestion {
   kind?: 'standard' | 'scenario';
   thumbnailUrl?: string;
   frameCaption?: string;
+  /** Where the transcript gives the answer, in seconds (output-quality 1.13):
+   *  the frame evidence's seek and, once answered, the explanation's chip. */
   timestamp?: number;
 }
 
@@ -53,8 +55,8 @@ interface QuizArenaProps {
   withTimer?: boolean;
   /** Seconds allotted per question when timer is on. */
   timerSeconds?: number;
-  /** Seek callback for evidence-frame jump-to-moment and the explanation's
-   *  `(m:ss)` chips. */
+  /** Seek callback for evidence-frame jump-to-moment, the explanation's
+   *  `(m:ss)` chips and the question's answer timestamp. */
   onSeek?: (seconds: number) => void;
 }
 
@@ -382,7 +384,11 @@ export const QuizArena = memo(function QuizArena({
             <span className="font-semibold text-xs uppercase tracking-wider text-muted-foreground block mb-1">
               Explanation
             </span>
-            <QuizExplanation text={question.explanation} onSeek={onSeek} />
+            <QuizExplanation
+              text={question.explanation}
+              timestamp={question.timestamp}
+              onSeek={onSeek}
+            />
           </div>
         </FadeIn>
       )}

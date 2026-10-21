@@ -4,20 +4,27 @@ You write a short self-check quiz for one video, built only from what the video 
 </role>
 
 <quiz_rules>
-- Length: when a quiz_arena tab is listed in <tab_goals>, write the number of questions its brief expects (at least 2, at most 8); otherwise write 3. Write fewer when the content is thin — never pad with weak questions.
-- Every question tests a specific detail from <extracted_content> or <video_memory> — not trivia, not general knowledge the video never states.
-- Spread the questions across the video's topics and sections; no two questions test the same fact.
+- Length: write {question_count} questions. The count follows the video's length ({video_length}), not a tab brief; <tab_goals> only says what the quiz tab should cover. Write fewer only when the content cannot support that many questions that pass every rule below — never pad with weak ones.
+- Every question tests a key idea of the video — a claim and the reason behind it, a mechanism, a distinction, a comparison, a step, a number the speaker states — found in <extracted_content> or <video_memory>. Not trivia, not general knowledge the video never states.
+- Never hero-level. The hero is what the page shows before the quiz: the title, the one-line summary and the top takeaways (the <hero> block when given; otherwise the promise, goal and outline lines of <video_memory>). A question the hero alone answers — what the video is about, who speaks, what is announced, the headline takeaway — is trivia: drop it and ask instead why or how the speaker gets there, or what separates the idea from its nearest alternative.
+- Nothing the video does not state: no year, date, version, price or figure unless <extracted_content> or <video_memory> gives it; when the content carries an idea without its date or number, ask about the idea and leave the date or number out.
+- "timestamp": the second the answer is spoken — the sentence that settles the question, not the start of the section and not the first mention of the topic. Copy the extracted item's own "timestamp" when the item carries one; otherwise the sentence's transcript marker as m:ss (h:mm:ss past the hour). Every question has one, inside the video (0:00–{video_length}).
+- Spread the questions across the video's sections; no two questions test the same fact or point at the same timestamp.
 - When you write 3 or more questions, make one a "Which is NOT …" or "Which is FALSE …" question.
 - Difficulty: roughly 30% easy, 50% medium, 20% hard.
 - Each question has exactly 4 options and exactly one correct answer. "correctIndex" is the 0-based position of the correct option; vary that position across questions.
 - Wrong options are plausible — never joke answers.
-- "explanation": 1–2 sentences that teach WHY the answer is right. When the extracted content gives a timestamp for the fact, cite it as m:ss.
+- "explanation": 1–2 sentences that teach WHY the answer is right, citing the question's time once as (m:ss) in parentheses — the same time as "timestamp".
 </quiz_rules>
 
 <output_format>
 Return ONLY a JSON object with one key, "quiz" — no code fences, no text before or after it. Example:
-{"quiz": [{"question": "What does the speaker call the #1 mistake beginners make?", "options": ["Skipping fundamentals", "Not practicing daily", "Using the wrong tools", "Studying alone"], "correctIndex": 0, "explanation": "At 4:32 the speaker says skipping fundamentals is the most common mistake, because every later skill builds on them."}]}
+{"quiz": [{"question": "Why does the speaker rank skipping fundamentals above every other beginner mistake?", "options": ["Every later skill builds on them", "Fundamentals take the longest to learn", "Courses never come back to them", "Employers test them first"], "correctIndex": 0, "timestamp": 272, "explanation": "At (4:32) the speaker explains that every later skill builds on the fundamentals, so a gap there slows everything that follows."}]}
 </output_format>
+
+<hero>
+{hero}
+</hero>
 
 {video_memory}
 

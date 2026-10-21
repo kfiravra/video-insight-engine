@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 from typing import Annotated
@@ -9,6 +10,7 @@ from typing import Annotated
 from pydantic import BaseModel, Field, StringConstraints, field_validator, model_validator
 
 from ..shared_config.domain_config import EVIDENCE_KEYS
+from ..utils.data_helpers import parse_timestamp_to_seconds
 
 
 @dataclass
@@ -46,6 +48,30 @@ _QuizText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1
 MIN_QUIZ_OPTIONS = 2
 MAX_QUIZ_OPTIONS = 6
 
+# A transcript clock inside free text: "4:32", "[1:02:05]", "at 12:08" (seconds
+# and minutes past the first group are clock digits, so "12:60" is not one).
+_CLOCK_IN_TEXT_RE = re.compile(r"\d{1,3}(?::[0-5]\d){1,2}")
+
+
+def quiz_timestamp_seconds(value: object) -> int | None:
+    """A question's answer time in seconds, or None when the value is not one.
+
+    Takes the extracted item's seconds (``272``, ``"272"``) or the transcript's
+    clock (``"4:32"``, ``"[1:02:05]"``). Negative, non-finite, boolean and
+    unreadable values are None — a missing chip, never a dropped question.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, int | float):
+        return int(value) if math.isfinite(value) and value >= 0 else None
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if text.isdigit():
+        return int(text)
+    match = _CLOCK_IN_TEXT_RE.search(text)
+    return parse_timestamp_to_seconds(match.group()) if match else None
+
 
 class QuizQuestion(BaseModel):
     """One multiple-choice question.
@@ -58,8 +84,17 @@ class QuizQuestion(BaseModel):
     options: list[_QuizText] = Field(min_length=MIN_QUIZ_OPTIONS, max_length=MAX_QUIZ_OPTIONS)
     correct_index: int = Field(alias="correctIndex", ge=0)
     explanation: _QuizText
+    # Where the transcript gives the answer, in seconds — the seek chip
+    # (output-quality R12 / 1.13). Optional: stored rows predate it and a
+    # model may omit it; the enrichment drops a stamp past the video's end.
+    timestamp: int | None = None
 
     model_config = {"populate_by_name": True}
+
+    @field_validator("timestamp", mode="before")
+    @classmethod
+    def coerce_timestamp(cls, v: object) -> int | None:
+        return quiz_timestamp_seconds(v)
 
     @model_validator(mode="after")
     def _answer_is_one_distinct_option(self) -> QuizQuestion:

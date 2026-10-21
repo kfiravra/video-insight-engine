@@ -3,9 +3,14 @@
 pipeline-1min 1d.1 (brief Appendix B.6): ``quiz`` is the only enrichment left; a
 planned ``quiz_arena`` tab and the ``quick_quiz`` attachment read it. The call
 runs only when the plan can use it (:func:`needs_quiz`), reads the full
-extraction, the run's ``<video_memory>`` block and the tab goals, and never
-raises: ``None`` means no quiz — a quiz tab is then dropped at assembly and a
-sparse tab falls back to its tip strip, as before.
+extraction, the run's ``<video_memory>`` block, the hero and the tab goals, and
+never raises: ``None`` means no quiz — a quiz tab is then dropped at assembly
+and a sparse tab falls back to its tip strip, as before.
+
+output-quality 1.13 (R12 / D9): the question count follows the video's length
+(:data:`QUIZ_COUNT_BY_DURATION`), every question carries the ``timestamp`` of
+the sentence that answers it (a stamp past the video's end drops the question),
+and a question the hero alone answers is trivia the prompt forbids.
 """
 
 from __future__ import annotations
@@ -13,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import time
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -32,11 +38,13 @@ from ...utils.json_parsing import parse_json_response
 from ...utils.language_utils import ENGLISH_OUTPUT_DIRECTIVE
 from ...utils.llm_retry import call_llm_with_retry
 from .assembly.attachments import SPARSE_THRESHOLD, can_host_quick_quiz
+from .memory import format_clock
 from .pipeline_helpers import sanitize_for_prompt
 from .pipeline_timing import record_llm_failure
 from .prompt_builder import load_prompt_text
 
 if TYPE_CHECKING:
+    from ...models.memory_types import MemoryResult
     from ...services.llm import LLMService
 
 logger = logging.getLogger(__name__)
@@ -47,6 +55,20 @@ QUIZ_COMPONENT = "quiz_arena"
 QUIZ_DATA_SOURCE = "enrichment.quiz"
 QUIZ_STAGE = "enrichment"
 QUIZ_MAX_TOKENS = 2048
+# Questions per video length (content-model §9, D9): up to 15 min → 3, up to
+# 45 min → 5, longer → 8; the registry cap stays the ceiling. Task 1.5 moves
+# these bands into domains.json ``quizPolicy``; until then they live here.
+QUIZ_COUNT_BY_DURATION: tuple[tuple[float, int], ...] = (
+    (15 * 60, 3),
+    (45 * 60, 5),
+    (math.inf, 8),
+)
+# A stamp this far past the end is drift, not an invention — the same slack
+# assembly gives a moment before dropping it.
+QUIZ_TIMESTAMP_TOLERANCE_S = 10.0
+HERO_TAKEAWAYS_MAX = 7
+EMPTY_HERO = "Not available"
+UNKNOWN_VIDEO_LENGTH = "unknown"
 # The whole stage, retry included, ends within the brief's 30 s. The quiz runs
 # on the fast model (no cross-provider fallback), so it is two attempts: 14 s
 # each plus the 1 s backoff fit inside the cap, and a slow first answer still
@@ -145,9 +167,46 @@ def _tab_line(tab: Mapping[str, Any]) -> str:
 
 
 def render_tab_goals(tabs: Sequence[Mapping[str, Any]]) -> str:
-    """The plan's tabs as the quiz writer reads them (the quiz tab's brief sets the count)."""
+    """The plan's tabs as the quiz writer reads them (the quiz tab's brief says what to cover)."""
     lines = [_tab_line(tab) for tab in tabs if isinstance(tab, Mapping)]
     return "\n".join(lines) or "Not specified"
+
+
+def render_hero(title: str, memory: MemoryResult | None) -> str:
+    """The page's hero as the quiz writer reads it: title, tldr, takeaways.
+
+    The memory stage's hero is the preview the page shows until ``complete``
+    (the synthesis / rewrite hero lands in the same late group as the quiz, so
+    it is not available here). ``""`` when there is nothing to show.
+    """
+    heading = _clip(title)
+    tldr = _clip(memory.tldr) if memory is not None else ""
+    takeaways = [_clip(item) for item in memory.takeaways[:HERO_TAKEAWAYS_MAX]] if memory else []
+    lines = [f"title: {heading}"] if heading else []
+    if tldr:
+        lines.append(f"tldr: {tldr}")
+    lines.extend(f"- {item}" for item in takeaways if item)
+    return "\n".join(lines)
+
+
+def quiz_question_count(duration_s: float | None, cap: int) -> int:
+    """How many questions a video of ``duration_s`` seconds gets, at most ``cap``.
+
+    An unknown length (None, 0, NaN) is the shortest band.
+    """
+    seconds = float(duration_s or 0)
+    for limit, count in QUIZ_COUNT_BY_DURATION:
+        if seconds <= limit:
+            return min(count, cap)
+    return min(QUIZ_COUNT_BY_DURATION[0][1], cap)
+
+
+def _video_length(duration_s: float | None) -> str:
+    """``m:ss`` / ``h:mm:ss`` of the video, or "unknown" without a usable length."""
+    seconds = float(duration_s or 0)
+    if not math.isfinite(seconds) or seconds <= 0:
+        return UNKNOWN_VIDEO_LENGTH
+    return format_clock(int(seconds))
 
 
 def _compact_json(data: Mapping[str, Any]) -> str:
@@ -161,14 +220,25 @@ def build_quiz_prompt(
     extraction_data: Mapping[str, Any],
     video_memory: str,
     tabs: Sequence[Mapping[str, Any]],
+    *,
+    duration_s: float | None = None,
+    hero: str = "",
 ) -> str | None:
-    """Render ``enrich_quiz.txt``; ``None`` when ``primary_tag`` has no flavor line."""
+    """Render ``enrich_quiz.txt``; ``None`` when ``primary_tag`` has no flavor line.
+
+    ``duration_s`` sets the question count and the range every timestamp must
+    lie in; ``hero`` (:func:`render_hero`) is the text no question may be
+    answerable from.
+    """
     flavor = quiz_enrichment()["flavor"].get(primary_tag)
     if not flavor:
         return None
     body = (
         load_prompt_text(PROMPT_PATH)
         .replace("{flavor}", flavor)
+        .replace("{question_count}", str(quiz_question_count(duration_s, _quiz_cap())))
+        .replace("{video_length}", _video_length(duration_s))
+        .replace("{hero}", hero or EMPTY_HERO)
         .replace("{tab_goals}", render_tab_goals(tabs))
         .replace("{video_memory}", video_memory or EMPTY_VIDEO_MEMORY)
         # Last, so text inside the extraction is never mistaken for a placeholder.
@@ -185,8 +255,19 @@ def _quiz_items(data: object) -> list[object]:
     return items if isinstance(items, list) else []
 
 
-def parse_quiz(data: object, cap: int) -> list[QuizQuestion]:
-    """Every valid question survives; each broken or repeated one is dropped alone."""
+def _past_the_end(question: QuizQuestion, duration_s: float | None) -> bool:
+    """True when the question's stamp lies beyond the video (plus the drift slack)."""
+    if question.timestamp is None or not duration_s or duration_s <= 0:
+        return False
+    return question.timestamp > duration_s + QUIZ_TIMESTAMP_TOLERANCE_S
+
+
+def parse_quiz(data: object, cap: int, duration_s: float | None = None) -> list[QuizQuestion]:
+    """Every valid question survives; a broken, repeated or past-the-end one is dropped alone.
+
+    ``cap`` is the count the video gets (:func:`quiz_question_count`, at most
+    the registry cap); ``duration_s`` bounds every timestamp.
+    """
     questions: list[QuizQuestion] = []
     seen: set[str] = set()
     dropped = 0
@@ -197,14 +278,16 @@ def parse_quiz(data: object, cap: int) -> list[QuizQuestion]:
             dropped += 1
             continue
         key = question.question.casefold()
-        if key in seen:
+        if key in seen or _past_the_end(question, duration_s):
             dropped += 1
             continue
         seen.add(key)
         questions.append(question)
     if dropped:
         logger.info(
-            "Quiz: dropped %d invalid or repeated question(s), kept %d", dropped, len(questions)
+            "Quiz: dropped %d invalid, repeated or past-the-end question(s), kept %d",
+            dropped,
+            len(questions),
         )
     return questions[:cap]
 
@@ -253,13 +336,14 @@ async def _call_quiz_llm(llm_service: LLMService, prompt: str) -> str | None:
 
 
 async def _run_quiz(
-    llm_service: LLMService, primary_tag: str, prompt: str
+    llm_service: LLMService, primary_tag: str, prompt: str, duration_s: float | None
 ) -> EnrichmentData | None:
     raw = await _call_quiz_llm(llm_service, prompt)
     if not raw:
         logger.warning("Quiz LLM call failed after retries for %s", primary_tag)
         return None
-    questions = parse_quiz(parse_json_response(raw), _quiz_cap())
+    count = quiz_question_count(duration_s, _quiz_cap())
+    questions = parse_quiz(parse_json_response(raw), count, duration_s)
     if len(questions) < MIN_QUIZ_QUESTIONS:
         logger.warning(
             "Quiz for %s kept %d valid question(s); skipping", primary_tag, len(questions)
@@ -275,18 +359,24 @@ async def enrich_quiz(
     extraction_data: Mapping[str, Any],
     video_memory: str,
     tabs: Sequence[Mapping[str, Any]],
+    duration_s: float | None = None,
+    hero: str = "",
 ) -> EnrichmentData | None:
-    """Write the quiz (2 to the registry cap of questions); ``None`` on any failure.
+    """Write the quiz (2 to the video's count of questions); ``None`` on any failure.
 
+    ``duration_s`` sizes the quiz and bounds its timestamps; ``hero`` is the
+    page's hero text (:func:`render_hero`) no question may be answerable from.
     Bounded by ``QUIZ_TOTAL_TIMEOUT_S`` end to end and never raises — the quiz
     is optional and must not fail or stall the run.
     """
     try:
-        prompt = build_quiz_prompt(primary_tag, extraction_data, video_memory, tabs)
+        prompt = build_quiz_prompt(
+            primary_tag, extraction_data, video_memory, tabs, duration_s=duration_s, hero=hero
+        )
         if prompt is None:
             logger.info("Quiz: no flavor line for domain %r; skipping", primary_tag)
             return None
-        return await _run_quiz(llm_service, primary_tag, prompt)
+        return await _run_quiz(llm_service, primary_tag, prompt, duration_s)
     except TimeoutError:
         logger.warning(
             "Quiz: no answer within %.0f s; continuing without a quiz", QUIZ_TOTAL_TIMEOUT_S
