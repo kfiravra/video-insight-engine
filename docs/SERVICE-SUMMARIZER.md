@@ -59,10 +59,10 @@ services/summarizer/
     │   │   ├── tier_probe.py         # Tier probe: domain+format+has_visual_demo+transcript_usable at transcript-ready (Haiku, temp 0)
     │   │   ├── plan.py / plan_prompt.py # Plan (Sonnet 5.5, effort medium): full marked transcript → tabs + briefs,
     │   │   │                         #   evidence, terms (+ _render_playbook, _enforce_domain_policy)
-    │   │   ├── memory.py             # Memory (LLM_MEMORY_MODEL) ∥ plan: outline, evidence, tldr, takeaways
-    │   │   ├── plan_reconcile.py     # Plan-parse guard: unregistered path, inactive domain
+    │   │   ├── memory.py             # Memory (LLM_MEMORY_MODEL) ∥ plan: outline + establishes lines, evidence, tldr (the thesis), 3/5/7 stamped takeaways
+    │   │   ├── plan_reconcile.py     # Plan-parse guard: unregistered path, inactive domain; a learning.keyIdeas tab switches learning on
     │   │   ├── reconcile.py          # Plan-done reconcile: doubly-false view, step 1, screen-code check
-    │   │   ├── reconcile_pass.py     # Reconcile steps 2–5 (backfill, quiz, dedupe, 3–6) + row writer
+    │   │   ├── reconcile_pass.py     # Reconcile steps 1b–5 (primary moment source, backfill, quiz, dedupe, info_grid fold, 3–6) + row writer
     │   │   ├── video_memory.py       # <video_memory> block (plan + memory) for every {video_context} slot
     │   │   ├── visual_annotations.py # Frame captions + OCR → <visual_annotations> block (never clean_text)
     │   │   ├── triage.py             # Triage validation/fallback (TriageResult model + tab validation)
@@ -81,7 +81,7 @@ services/summarizer/
     │   │   ├── extractor.py          # Today's single call (EXTRACTION_PARALLEL=false): single/overflow/chunked
     │   │   ├── extraction_quality.py # Populated-dataSource score — a logged metric, no retry
     │   │   ├── extraction_merger.py  # Per-domain merge + dedup for chunked extraction (EXTRACTION_PARALLEL=false)
-    │   │   ├── enrichment.py         # The quiz only (quizEnrichment domains, demand-gated by the plan)
+    │   │   ├── enrichment.py         # The quiz only (quizEnrichment domains, demand-gated by the plan; 3/5/8 questions by length, each stamped)
     │   │   ├── synthesis.py          # masterSummary + seoDescription (hero from memory; fast tier)
     │   │   ├── pipeline_timing.py    # pipeline.timing recorder v4 (phases, LLM calls, failures incl. refusals, downloads, counts)
     │   │   ├── translation.py        # Source-language translation (flat-list batched)
@@ -95,6 +95,7 @@ services/summarizer/
     │   │   │   ├── moment_frame_fill.py  # Exact-timestamp frame fill for frameless moments
     │   │   │   ├── attachments.py        # Secondary attachments (excluded_kinds dedup)
     │   │   │   ├── normalizers.py, density.py, cross_tab.py, text_utils.py
+    │   │   │   ├── moment_sources.py, steps_timeline.py, info_grid_fold.py, quote_spots.py, ingredients.py # R7 / D6 / R6 / quote cards / ingredient rows (summarizer-workflow.md §Assembly notes)
     │   │   ├── phases/               # Phase runners (metadata, text, transcript, transcript_fallback,
     │   │   │                         #   probe, triage=plan, memory, moments, frames, frames_done,
     │   │   │                         #   split_extraction, group_emission, extraction, enrichment,
@@ -142,15 +143,15 @@ services/summarizer/
     │
     ├── prompts/
     │   ├── plan.txt              # Plan prompt (tabs + briefs, evidence, terms, playbook, probe hint)
-    │   ├── memory.txt            # Memory prompt (outline, evidence, tldr, takeaways)
+    │   ├── memory.txt            # Memory prompt (outline + establishes, evidence, thesis tldr, {takeaway_count} stamped takeaways)
     │   ├── component_toolkit.txt # Component descriptions + datasource paths (injected into plan/triage). Density table is generated from domains.json `densityGates` via `{density_gates}` placeholder
     │   ├── base_extraction.txt   # Extraction template: <rules> / <video> (cached) / <your_job>
     │   ├── extraction_group_job.txt # Split extraction (EXTRACTION_PARALLEL): one field group's <your_job> (emit-only keys + shape, tabs it serves; visual group: annotations + key frames)
-    │   ├── extraction_group_rules.txt # Split extraction: the completeness rule, appended to <quality_rules> in block 1 (4.0 picks)
-    │   ├── tier_probe.txt        # Tier-probe prompt (14 domains + 18 formats incl. unboxing, has_visual_demo, transcript_usable — domains.json is the source)
+    │   ├── extraction_group_rules.txt # Split extraction: completeness / argument / no-invented-number rules, appended to <quality_rules> in block 1; <argument_example>s for the key-ideas group's block 3
+    │   ├── tier_probe.txt        # Tier-probe prompt (14 domains + 19 formats incl. unboxing and talk, has_visual_demo, transcript_usable — domains.json is the source)
     │   ├── chapter_detect.txt    # AI chapter detection prompt (fast model)
     │   ├── quality_rules.txt     # JSON extraction quality rules
-    │   ├── enrich_quiz.txt       # The quiz prompt (flavor per quizEnrichment domain)
+    │   ├── enrich_quiz.txt       # The quiz prompt (flavor per quizEnrichment domain; {question_count}, {video_length}, <hero>)
     │   ├── vision.txt            # Frame-vision prompt (registry summarizer:vision)
     │   ├── description_analysis.txt, translate_flat.txt
     │   ├── synthesis.txt         # Synthesis prompt (masterSummary + seo; hero fields only as fallback)
@@ -173,13 +174,15 @@ services/summarizer/
     │
     ├── shared_config/
     │   ├── __init__.py
-    │   └── domain_config.py      # Reads domains.json (Docker mount or local fallback). Also renders the planner's `{valid_components}` list + `{density_gates}` table from config
+    │   ├── domain_config.py      # Reads domains.json (Docker mount or local fallback; cached per process). Also renders the planner's `{valid_components}` list + `{density_gates}` table from config
+    │   └── assembly_policy.py    # Assembly's registry policy: momentCapsByDuration, assemblyPolicy, measureUnits, injectedTabs
     │
     └── models/
         ├── schemas.py            # Pydantic models
         ├── domain_types.py       # Domain data models (Food, Travel, Music, etc.)
         ├── pipeline_types.py     # Pipeline models (PlanResult, TabBrief, SynthesisResult, EnrichmentData, etc.)
         ├── probe_types.py, memory_types.py # Tier-probe answer; memory input/result (outline, evidence, hero)
+        ├── idea_types.py         # Argued items: LearningKeyIdea, PodcastQA, TechTopic, the shared Claim
         ├── domain_validation.py  # Validation report (_dropped/_defaulted/_misTargeted) helpers
         ├── sse_events.py         # Pydantic contract for every SSE event (validated on emission)
         └── vie_response_v2.py    # VIEResponse v2 models (TabEntry, CrossTabLink, etc.)
@@ -323,7 +326,7 @@ will be retrievable.
 
 ## Processing Pipeline (Plan-Driven)
 
-A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, tier probe, plan ∥ memory, the extraction field groups (1–5 text groups + at most one visual group, per chunk — a long video has several chunks), synthesis, the quiz when demanded, plus 1-5 vision batches and the sampled faithfulness judge; non-English videos add batched translation calls. With `EXTRACTION_PARALLEL=false` extraction is one call (or one per chapter batch). Phase order lives in `routes/pipeline_orchestration.py`; the call-order walkthrough with file anchors is [summarizer-workflow.md](./summarizer-workflow.md):
+A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, tier probe, plan ∥ memory, the extraction field groups (1–5 text groups + at most one visual group, per chunk — a long video has several chunks), synthesis, the quiz when demanded, plus 1-5 vision batches and the sampled faithfulness judge; non-English videos add batched translation calls. With `EXTRACTION_PARALLEL=false` extraction is one call (or one per chapter batch). Output-quality phase 1 (registry, prompts, extraction schemas, assembly) adds no call and no setting and ships under v10 — the task's one bump, v10 → v11, comes at its close-out ([IDEMPOTENCY.md](./IDEMPOTENCY.md#when-to-bump-pipeline_version)); what each prompt asks for: [summarizer-workflow.md §6](./summarizer-workflow.md#what-each-prompt-asks-for-output-quality). Phase order lives in `routes/pipeline_orchestration.py`; the call-order walkthrough with file anchors is [summarizer-workflow.md](./summarizer-workflow.md):
 
 ```
  1. CONNECT via SSE
@@ -455,8 +458,10 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     └─▶ Tier probe (pipeline/tier_probe.py, prompt tier_probe.txt; replaces the classifier):
     │   LLM_CLASSIFIER_MODEL (Haiku 4.5, D21), temperature 0, 80 tokens, 4 s, no retry;
     │   reads metadata + three short NATIVE transcript windows (nothing translates before the
-    │   plan) → domain, format (18 incl. unboxing), has_visual_demo, transcript_usable (missing
-    │   key = true). Started at transcript-ready; frames read it at Step 6b (tier), the
+    │   plan) → domain, format (19 incl. unboxing; talk / lecture / interview / podcast told apart
+    │   by what the speaker does — makes a case, teaches, a host questions a guest, the regular
+    │   hosts among themselves), has_visual_demo, transcript_usable (missing key = true).
+    │   Started at transcript-ready; frames read it at Step 6b (tier), the
     │   plan for its playbook ("<domain>:<format>") and a hint line. Failure → None: metadata
     │   tier, no hint. Skipped when an admin override is active.
     └─▶ Garbage captions → audio (phases/transcript_fallback.py, 2.5): transcript_usable false
@@ -479,17 +484,28 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     │   │   with cache_control `{type: ephemeral, ttl: 1h}` (`PLAN_CACHE_TTL` in plan.py); the
     │   │   video half is uncached. Emits contentTags, modifiers, tabs with briefs ({what,
     │   │   where, expect}), evidence (has_* booleans that gate domain requirements) and
-    │   │   terms; truncation is counted (counts.truncated)
-    │   └─▶ Memory: LLM_MEMORY_MODEL (Haiku 5.5), 25 s, ONE attempt, temperature 0 (dropped for Haiku 5.5) → outline (4-12
-    │   │   contiguous sections; dropped when it stops short of the duration), evidence, tldr,
-    │   │   takeaways. No timed transcript → no call. Its tldr + takeaways go out at once as the
+    │   │   terms; truncation is counted (counts.truncated). A talk, lecture, podcast or
+    │   │   interview opens on spot_explorer over learning.keyIdeas (`<spoken_word>`, four
+    │   │   spoken-word examples); `expect` is sized to the video's length (`<sizing>`,
+    │   │   content-model §9); a tab goal names the viewer's outcome (`<goal_rule>`) — one
+    │   │   that does not is logged at validation (`plan_prompt.goal_rule_violation`), the tab
+    │   │   ships. A tab on learning.keyIdeas switches the learning domain on
+    │   │   (`plan_reconcile.activate_argument_domains`, ≤ 3 content tags)
+    │   └─▶ Memory: LLM_MEMORY_MODEL (Haiku 5.5), 25 s, ONE attempt, temperature 0 (dropped for Haiku 5.5),
+    │   │   1,600 max tokens → outline (4-12 contiguous sections, each with an `establishes`
+    │   │   line; dropped when it stops short of the duration), evidence, tldr (the thesis),
+    │   │   takeaways (3 / 5 / 7 for ≤ 15 / ≤ 45 / longer minutes, each closing with its [m:ss]).
+    │   │   No timed transcript → no call. Its tldr + takeaways go out at once as the
     │   │   first synthesis_complete (the hero). Failure → None; every reader has a fallback
     │   └─▶ Selectable component list + density guidance are config-generated from domains.json
     │   │   (`{valid_components}` via `render_valid_component_names`, `{density_gates}` via
     │   │   `render_density_gate_table` in `shared_config/domain_config.py`) — edit `components`
     │   │   in domains.json to change what the planner can pick. `densityGates` is **advisory**.
-    │   └─▶ Domain playbooks (domains.json `playbooks`, keyed "<domain>:<format>"):
-    │   │   `_render_playbook()` injects required/preferred/forbidden components + planGuidance;
+    │   └─▶ Domain playbooks (domains.json `playbooks`, keyed "<domain>:<format>": gaming:unboxing,
+    │   │   review:unboxing, learning:talk, learning:lecture, podcast:podcast, podcast:interview,
+    │   │   review:review, news:explainer; `playbookAliases` route other probe formats to one, e.g.
+    │   │   review:commentary → review:review): `_render_playbook()` injects
+    │   │   required/preferred/forbidden components + planGuidance;
     │   │   effective_requirements(): forbidden = UNION, required = playbook overrides domain
     │   │   (conditional on the plan's own evidence), max always from domain
     │   └─▶ Post-validation `_enforce_domain_policy()` strips forbidden components before
@@ -502,12 +518,16 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     │   pipeline.triage; each reader's own answers as `planEvidence` / `memoryEvidence`).
     │   Steps: (1) a tab whose dataSource `requiresEvidence` is doubly false → re-pointed, kept
     │   (moment_track), demoted onto a free eligible source, else dropped — a `has_code` tab is
-    │   deferred to frames-done instead (`deferred_to_frames`); (2) the primary's required
+    │   deferred to frames-done instead (`deferred_to_frames`); (1b) a Moments tab on
+    │   learning.timestamps reads the primary's own moment source (podcast.segments, …;
+    │   `repointed` / `primary_moment_source`); (2) the primary's required
     │   components backfilled from its defaultTabs unless doubly false (`not_backfilled`, under
     │   the defaultTab id it would have added) — tech's has_code-gated code_playground with no
     │   tab planned for it is deferred too; (3) quiz dropped outside quizDomains or when
     │   is_learnable is doubly false, else moved last; (4) dedupe (dataSource, component) — the
-    │   tab the primary requires (equivalents included) stays, else the first;
+    │   tab the primary requires (equivalents included) stays, else the first; (4b) a planned
+    │   info_grid joins the planned tab that answers its question as one of its `folds`
+    │   (R6, `folded` / `info_grid_alone`; host by `infoGridHosts`; never below 3 tabs);
     │   (5) 3–6 tabs. Every decision → `pipeline.reconcile` (row shape: DATA-MODELS.md); drops →
     │   droppedTabs `reconcile_<reason>`. The plan-parse guard (plan_reconcile.py) keeps only
     │   registry validity + `inactive_domain`.
@@ -524,9 +544,10 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     └─▶ Plan-done (plan and memory both in): the provisional Moments tab (phases/moments.py,
     │   pipeline-1min 2.1) — tab_ready `provisional: true, final: false` built from the
     │   moment fallback chain (memory outline → YouTube chapters → description timestamps,
-    │   the latter only if the analysis already landed), with the id/label/goal of the tab
+    │   the latter only if the analysis already landed; an outline moment's description is its
+    │   section's `establishes` line), with the id/label/goal of the tab
     │   that replaces it: the plan's first moment_track tab, else the always-Moments tab
-    │   (`key_moments`, see 6). `position` is an estimate (overview + the planned tabs before
+    │   (`key_moments`, see 6); the web strip labels it "Preview" until then. `position` is an estimate (overview + the planned tabs before
     │   it, quiz excluded). No source with an entry → no tab; a food / fitness / project plan
     │   whose steps are the timeline (step_player / step_flow_canvas / workout_room, moment_track
     │   not required; D6, output-quality 0b) → no tab (moment_fallback.steps_are_the_timeline)
@@ -557,11 +578,14 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     │   key-frame window; a sentence force-split when the chain gives ≤ 1 batch.
     │   CHUNKED_EXTRACTION_THRESHOLD is not read on this path
     └─▶ Requested fields (pipeline/field_requests.py): the union over the reconciled tabs of the
-    │   planned dataSource, its registry siblings (active domains only), the rendering component's
-    │   side reads, the overview's tip/level reads, and every requested domain's scalars — never an
-    │   inactive domain's fields, no unplanned modifier output
+    │   planned dataSource (+ the fields of the info_grids folded into it), its registry siblings
+    │   (only inside a domain some tab plans on), the rendering component's side reads (no
+    │   learning.timestamps stand-in for a Moments tab with a field of its own), the overview's
+    │   tip/level reads, and every requested domain's scalars — never an inactive domain's fields,
+    │   no unplanned modifier output
     └─▶ Groups (pipeline/field_groups.py, domains.json `grouping`): text fields bucketed by domain,
-    │   split by field when Σ outputWeight × expect exceeds `groupOutputBudget` (1,500), at most
+    │   split by field when Σ outputWeight × expect exceeds `groupOutputBudget` (1,500), a slice
+    │   estimated under `minGroupOutput` (400) riding with the domain's previous one, at most
     │   `maxTextGroups` (5) text groups, ordered by the first tab they serve — text1 holds the first
     │   planned tab. Every `waitsForVisual` field (tech.snippets / patterns / cheatSheet /
     │   setup.commands, gaming.highlights) forms ONE visual group, re-cut at frames-done from what no
@@ -571,7 +595,9 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     │   requested domain's full schema + the primary's example; block 2 (5 min) = `<video>` + the
     │   chunk's transcript + `<video_memory>`; block 3 (uncached) = the group's job
     │   (`extraction_group_job.txt`: "emit ONLY these keys" + their shape, the tabs it serves; the
-    │   visual group adds the annotation guide, the chunk's annotations and key frames).
+    │   visual group adds the annotation guide, the chunk's annotations and key frames; the group
+    │   requesting learning.keyIdeas, in a learning- or podcast-primary run, ends with that
+    │   primary's worked example from `extraction_group_rules.txt`).
     │   LLM_EXTRACTION_MODEL, json_mode, 16,384 max tokens, 1 retry; each call's timeout follows
     │   its estimate (Σ outputWeight × expect ÷ 60 tok/s + 30 s, 120–300 s); the group-job template
     │   is read once per run. Cache layout and hit rates: llm-cost-model.md
@@ -652,6 +678,16 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     └─▶ Assembly: code, 0 LLM calls — transforms extraction → component-addressed TabEntry[]
     └─▶ 29 assemblers in ASSEMBLER_REGISTRY (assembly/registry.py — spot_explorer, moment_track,
     │   code_playground, quiz_arena, tier_list, claims_tracker, … + secondary/attachment assemblers)
+    └─▶ Output-quality shapes and caps (module map: summarizer-workflow.md §Assembly notes; sets and
+    │   bands from domains.json `assemblyPolicy` / `momentCapsByDuration` / `injectedTabs`):
+    │   learning.keyIdeas → spot cards (claim, why, quote, timestamp, kind badge, speaker, sections),
+    │   capped at keyIdeasCapFactor × the §9 count (10 / 16 / 24 / 32 by length); a Moments track
+    │   capped strictly by the §9 bands, and a label-only one yields to a described sibling or the
+    │   described fallback chain (R7); the answer tab's stat_banner from stamped key-point figures,
+    │   else from `kind: number` key ideas with their stated `figure` (≥ 5 tiles or none, ≤ 8);
+    │   folded info_grids join their host (R6) and every info_grid row ships with a value (R5);
+    │   quiz questions carry their timestamp; the tabs assembly adds take their goals from
+    │   `injectedTabs`
     └─▶ Domain policy: components in effective_requirements(domain, format).forbidden are dropped
     │   (reason `domain_forbidden`); per-domain max caps enforced (reason `domain_max_cap`)
     └─▶ Degrade-never-drop ladder (assembly/promotion.py): a tab failing its primary component's
@@ -664,7 +700,8 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     │   domain_forbidden, domain_max_cap, all_timestamps_impossible, steps_are_the_timeline
     │   (D6, below), duplicate_tab (the post-promotion dedupe), and on the split path
     │   extraction_group_failed (one of the first three for a tab that waited for a failed
-    │   group's field — assembly's own reason kept in `detail`) (feeds tabsDropped/droppedTabs
+    │   group's field — assembly's own reason kept in `detail`); an info_grid tab R5 leaves
+    │   without a valued row is `validation_empty_list` too (feeds tabsDropped/droppedTabs
     │   telemetry instead of the old designed−assembled subtraction); the backstop's
     │   `requirement_evidence_false` entry (a required component the evidence rules out, `id` =
     │   the defaultTab it would have added, `""` when a live tab holds it) and the dedupe's
@@ -690,7 +727,8 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     │   does not require moment_track ships a step player, step flow canvas or workout
     │   room), every moment_track tab is dropped (reason `steps_are_the_timeline`) and
     │   no always-Moments tab is added — recipes, workouts and step tutorials are
-    │   navigated by their steps; any other primary (a podcast or lecture with a stray step
+    │   navigated by their steps (undone when the dedupe then drops the step tab: the
+    │   Moments come back); any other primary (a podcast or lecture with a stray step
     │   tab) keeps its Moments
     └─▶ Gallery tab: ~12 curated frames from gallery_frames (not all uploaded frames)
     └─▶ Cross-tab links resolved from static LINK_RULES
@@ -720,7 +758,10 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     │   └─▶ The quiz (phases/enrichment.py, only when needs_quiz: a planned quiz tab, or a
     │       sparse quick_quiz host with evidence that doesn't rule learning out, in a
     │       quizEnrichment domain): one enrich_quiz call on LLM_ENRICHMENT_MODEL (gpt-4o-mini),
-    │       30 s total (14 s per attempt, 1 retry), ≥ 2 valid questions — on the field-group path the call already
+    │       30 s total (14 s per attempt, 1 retry), ≥ 2 valid questions; it asks for 3 / 5 / 8 by
+    │       length (`quizPolicy.questionsByDuration`), reads the video length and the memory hero
+    │       (no question the hero alone answers), and every question carries the timestamp of
+    │       its answer (one past the end + 10 s is dropped) — on the field-group path the call already
     │       started when its groups landed (5) and this step awaits it (cancelled when the plan
     │       no longer uses a quiz). When it lands the response is assembled
     │       again (phases/late_quiz.py): enrichment_complete, the quiz tab last; the quick_quiz
@@ -953,8 +994,8 @@ Category fallback = the metadata categories `domains.json` `categoryMap` maps to
 | project | diy, craft | `schemas/project.txt` | - |
 | language | languages, pronunciation, grammar, vocabulary | `schemas/language.txt` | quiz (when the plan demands one) |
 | science | physics, chemistry, biology, math | `schemas/science.txt` | quiz (when the plan demands one) |
-| podcast | podcast, interview, talk_show | `schemas/podcast.txt` | - |
-| news | news, journalism, current_events, politics | `schemas/news.txt` | - |
+| podcast | podcast, interview, talk_show | `schemas/podcast.txt` | quiz (when the plan demands one) |
+| news | news, journalism, current_events, politics | `schemas/news.txt` | quiz (when the plan demands one) |
 | gaming | gaming, gameplay, esports, lets_play, speedrun | `schemas/gaming.txt` | - |
 | sport | sport(s), match_analysis, highlights | `schemas/sport.txt` | - |
 | narrative | — | `schemas/narrative.txt` | Modifier only |
@@ -1020,7 +1061,7 @@ no lock) are swept by `scripts/expire_leaked_pipeline_streams.py` (dry run by de
 | Finance modifier costs-only | `costs[]` + `savingTips[]`, no budget | Primary domain owns budget structure |
 | Field-group extraction (v9) | The fields the reconciled tabs read, cut into ≤ 5 text groups + 1 visual group per chunk; text groups fire at plan-done, the visual group at frames-done; tabs stream per group | Extraction no longer waits for frames, the first tabs arrive per group, and no output tokens go to fields no tab reads. `EXTRACTION_PARALLEL=false` keeps the single call (by word count: single / overflow / chunked) as the rollback lever |
 | Category fallback | Map video category to content tag | Safety net when triage confidence < 0.6 |
-| Shared domain config | `@vie/shared` `domains.json` via Docker mount | Single source of truth for domains, tabs, gradients, categories, **planner-selectable `components`**, and the **`densityGates`** table across TS + Python. `plan.txt` `{valid_components}` + `component_toolkit.txt` `{density_gates}` are generated from it (no hardcoded prompt lists); `test_contract_parity.py` asserts the generated prompt matches config. NOTE: `densityGates` is advisory LLM-steering text — assembler enforcement (`_TAB_ITEM_CAPS`, per-assembler min/max, `density.py`) is independent. |
+| Shared domain config | `@vie/shared` `domains.json` via Docker mount | Single source of truth for domains, tabs, gradients, categories, **planner-selectable `components`**, and the **`densityGates`** table across TS + Python. `plan.txt` `{valid_components}` + `component_toolkit.txt` `{density_gates}` are generated from it (no hardcoded prompt lists); `test_contract_parity.py` asserts the generated prompt matches config. NOTE: `densityGates` is advisory LLM-steering text — assembler enforcement (`_TAB_ITEM_CAPS`, per-assembler min/max, `density.py`) is independent. The enforced blocks — `domainRequirements`, `playbooks` + `playbookAliases`, `quizPolicy`, `momentCapsByDuration`, `assemblyPolicy`, `measureUnits`, `injectedTabs`, `infoGridHosts`, `grouping` — are listed in DATA-MODELS.md. The summarizer and the worker read the file once per process (`domain_config._load_config` is cached; several modules bind its sets at import), so restart both after editing it — `PROMPT_SOURCE=disk` re-reads prompts, never the registry. |
 
 ---
 
