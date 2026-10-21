@@ -29,7 +29,7 @@ def seconds_or_none(value: Any) -> int | None:
     return seconds if seconds >= 0 else None
 
 
-def _text_or_none(value: Any) -> str | None:
+def text_or_none(value: Any) -> str | None:
     """Stripped text, None when blank or not text."""
     if not isinstance(value, str):
         return None
@@ -57,11 +57,11 @@ class LearningKeyIdea(BaseModel):
     @field_validator("quote", "section", mode="before")
     @classmethod
     def coerce_optional_text(cls, v: Any) -> str | None:
-        return _text_or_none(v)
+        return text_or_none(v)
 
     @field_validator("kind", mode="before")
     @classmethod
     def coerce_kind(cls, v: Any) -> str | None:
         """One of ``KEY_IDEA_KINDS`` (any case), else None — never a guessed kind."""
-        kind = _text_or_none(v)
+        kind = text_or_none(v)
         return kind.lower() if kind and kind.lower() in KEY_IDEA_KINDS else None

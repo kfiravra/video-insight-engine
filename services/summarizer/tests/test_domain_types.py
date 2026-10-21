@@ -174,7 +174,9 @@ class TestLearningData:
                 "keyPoints": [{"emoji": "💡", "title": "Point 1", "detail": "Detail"}],
                 "concepts": [{"name": "Concept 1", "emoji": "📚", "definition": "A concept"}],
                 "takeaways": ["Do this"],
-                "timestamps": [{"time": "0:00", "seconds": 0, "label": "Start"}],
+                "timestamps": [
+                    {"time": "0:00", "seconds": 0, "label": "Start", "description": "Opens."}
+                ],
                 "keyQuestion": "What is this about?",
                 "summary": "A summary",
             }
@@ -188,7 +190,7 @@ class TestLearningData:
         assert data.key_question == ""
 
     def test_timestamp_seconds_coercion(self):
-        ts = LearningTimestamp(time="0:00", seconds=None, label="Start")
+        ts = LearningTimestamp(time="0:00", seconds=None, label="Start", description="Opens.")
         assert ts.seconds == 0
 
     def test_concept_with_connections(self):

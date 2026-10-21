@@ -280,13 +280,14 @@ def _anchor_points(item: dict, anchors: MomentAnchors) -> int:
 
 def moment_salience(item: Any, anchors: MomentAnchors | None = None) -> int:
     """R7: a moment with substance ranks first — what was established (description),
-    then a verbatim quote, then a number — plus the beats the rest of the extraction
-    points at (``anchors``); even spacing decides among equals."""
+    then a verbatim quote (its ``quote`` field or quote marks in its text), then a
+    number — plus the beats the rest of the extraction points at (``anchors``); even
+    spacing decides among equals."""
     if not isinstance(item, dict):
         return 0
     label, description = _text(item, "label"), _text(item, "description")
     score = 2 if description.strip() else 0
-    if _QUOTE.search(label) or _QUOTE.search(description):
+    if _text(item, "quote").strip() or _QUOTE.search(label) or _QUOTE.search(description):
         score += 1
     if _DIGIT.search(label) or _DIGIT.search(description):
         score += 1

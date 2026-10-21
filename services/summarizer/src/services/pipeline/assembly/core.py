@@ -50,6 +50,7 @@ from .moment_fallback import (
     fallback_moments,
     steps_are_the_timeline,
 )
+from .moment_sources import described_moment_source
 from .promotion import demote_component, promote_component
 from .registry import ASSEMBLER_REGISTRY, infer_component
 from .sampling import (
@@ -1609,6 +1610,10 @@ def assemble_response(
                     }
             elif component == "moment_track":
                 data = (extraction.get("learning") or {}).get("timestamps")
+
+        # A label-only Moments list yields to a described registry sibling (R7, 1.2).
+        if component == "moment_track":
+            data = described_moment_source(data_source, data, extraction, claims)
 
         # moment_track is never dropped for lack of data (Kfir, phase-1 close):
         # when the planned source yields nothing, the moments come from the

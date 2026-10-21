@@ -16,7 +16,7 @@ from pydantic import (
 
 from ..shared_config.domain_config import valid_content_tags, valid_modifiers
 from .domain_validation import ValidationReport, merge_report, validate_block_items
-from .idea_types import LearningKeyIdea, seconds_or_none
+from .idea_types import LearningKeyIdea, seconds_or_none, text_or_none
 
 logger = logging.getLogger(__name__)
 
@@ -345,14 +345,32 @@ class LearningConcept(BaseModel):
     # Thematic cluster label the planner asks the LLM to assign; powers the
     # ConceptCanvas Groups view. Dropped silently if not declared here.
     group: str | None = None
+    # Where the speaker explains it (seconds) — the seek chip and the frame (L13).
     timestamp: int | None = None
     connections: list[str | ConceptConnection] = []
 
+    @field_validator("timestamp", mode="before")
+    @classmethod
+    def coerce_timestamp(cls, v: Any) -> int | None:
+        return seconds_or_none(v)
+
 
 class LearningTimestamp(BaseModel):
+    """One moment of a learning video (R7): what was established at this beat.
+
+    ``description`` is required — a moment without one is a chapter jump, and
+    validation drops it (counted in ``_dropped``); a model writing ``summary``
+    or ``detail`` instead keeps it. ``quote`` is the speaker's line where the
+    moment is a claim.
+    """
+
+    model_config = {"populate_by_name": True}
+
     time: str = ""
     seconds: int = 0
     label: str = ""
+    description: str = Field(validation_alias=AliasChoices("description", "summary", "detail"))
+    quote: str | None = None
 
     @field_validator("seconds", mode="before")
     @classmethod
@@ -360,6 +378,18 @@ class LearningTimestamp(BaseModel):
         if v is None:
             return 0
         return int(v)
+
+    @field_validator("description")
+    @classmethod
+    def require_description(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("a moment states what was established")
+        return v.strip()
+
+    @field_validator("quote", mode="before")
+    @classmethod
+    def coerce_quote(cls, v: Any) -> str | None:
+        return text_or_none(v)
 
 
 class LearningData(BaseModel):

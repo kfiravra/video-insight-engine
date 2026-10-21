@@ -216,7 +216,10 @@ class TestClockBeatsADefaultedZero:
 
     @staticmethod
     def _validated(*raw: dict) -> list[dict]:
-        return [LearningTimestamp.model_validate(item).model_dump() for item in raw]
+        # A learning moment states what was established (p1.2): the clock rules are
+        # about its start, so each fixture carries one.
+        described = ({"description": "What it established.", **item} for item in raw)
+        return [LearningTimestamp.model_validate(item).model_dump() for item in described]
 
     def test_should_ship_the_clocked_item_and_the_real_opening(self) -> None:
         data = self._validated(

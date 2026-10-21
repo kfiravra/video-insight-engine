@@ -32,6 +32,7 @@ Extract structured educational content.
       "example": "Example from the video or null",
       "analogy": "Analogy from the video or null",
       "group": "Short thematic group this concept belongs to (e.g. Foundations / Mechanics / Applications)",
+      "timestamp": null,
       "connections": [
         {"to": "EXACT name of another concept", "type": "causes | requires | contrasts | partOf | relatesTo"}
       ]
@@ -40,6 +41,7 @@ Extract structured educational content.
 > UI: Concepts → ConceptCanvas tiered graph explorer (grouped lanes + typed edges) when connections are populated; otherwise falls back to FlashDeck flip cards.
 > CONNECTIONS: list the 0-3 `connections` the speaker draws from each concept to other concepts in this same `concepts` array. Each connection is an object: `to` is the EXACT NAME of the other concept, `type` is the relationship the speaker draws — `causes`/`requires` (X drives or depends on Y), `contrasts` (X is opposed to / a trade-off against Y), `partOf` (X is a component of Y), or `relatesTo` (loose association). Never invent a link to fill the canvas: when the speaker draws none for a concept, leave its array empty.
 > GROUPING: assign every concept a short `group` label — aim for 2-5 thematic groups across the whole list (e.g. Foundations / Mechanics / Applications). When the video is richer, group tightly rather than listing more disconnected terms.
+> TIMESTAMP: every concept carries `timestamp` = the second the speaker first explains it (an integer), so the reader can jump to the explanation.
   "takeaways": [
     "Actionable conclusion starting with a verb: Use..., Implement..., Avoid..."
   ],
@@ -47,10 +49,13 @@ Extract structured educational content.
     {
       "time": "M:SS or H:MM:SS",
       "seconds": 0,
-      "label": "Descriptive label for this moment"
+      "label": "Short title of the moment — what happens, never the chapter name",
+      "description": "What was established here, 1-2 sentences: the claim, decision or result, with its names and numbers",
+      "quote": "The speaker's own line that carries it, verbatim, at most 25 words — or null"
     }
   ],
-> UI: Timestamps → MomentTrack items (navigation points — no endSeconds). Fill seconds for playback jump links.
+> UI: Timestamps → MomentTrack items (no endSeconds): each row shows the label, what was established and the quote; seconds drives the jump link.
+> MOMENTS: what was established at each beat of the video, never a list of chapter jumps. `description` is required — a moment you cannot describe is not a moment; `quote` only where the moment is a claim in the speaker's words.
   "keyQuestion": "Central question this video answers",
   "summary": "2-3 sentence summary of the core teaching"
 }
@@ -64,7 +69,10 @@ Extract structured educational content.
     {"claim": "Paying off high-interest debt beats investing the same dollar", "why": "A 24% APR balance costs more each year than the 7% a typical index fund returns, so the payoff is a guaranteed 24% return.", "quote": "Every dollar on that card is losing you twenty-four cents a year.", "timestamp": 312, "section": "Debt first", "kind": "argument"}
   ],
   "concepts": [
-    {"name": "Time value of money", "emoji": "💵", "definition": "A dollar today is worth more than a dollar tomorrow because you can invest it. The speaker uses the example: '$100 invested at 7% doubles in ~10 years.'", "example": "$100 invested at 7% doubles in ~10 years", "analogy": null, "group": "Foundations", "connections": [{"to": "Compound interest", "type": "causes"}]}
+    {"name": "Time value of money", "emoji": "💵", "definition": "A dollar today is worth more than a dollar tomorrow because you can invest it. The speaker uses the example: '$100 invested at 7% doubles in ~10 years.'", "example": "$100 invested at 7% doubles in ~10 years", "analogy": null, "group": "Foundations", "timestamp": 95, "connections": [{"to": "Compound interest", "type": "causes"}]}
+  ],
+  "timestamps": [
+    {"time": "5:12", "seconds": 312, "label": "Debt before investing", "description": "Paying off a 24% card beats a 7% index fund: the payoff is a guaranteed 24% return.", "quote": "Every dollar on that card is losing you twenty-four cents a year."}
   ]
 }
 
@@ -76,6 +84,6 @@ RULES:
 - keyIdeas carry the speaker's argument: claim + why + quote + timestamp on every item; cover the whole video, the last minutes included
 - Concepts: only include what's actually explained in the video
 - Takeaways: be specific ("Use Redis for session storage to handle 10x more concurrent users")
-- Timestamps: cover introduction, topic changes, demos, conclusions
+- Timestamps: the beats that carry the video — the thesis, each turn of the argument, demos, the conclusion — each with what it established
 - Preserve speaker's terminology and examples exactly
 </domain_schema>

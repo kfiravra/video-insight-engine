@@ -217,6 +217,8 @@ export interface MomentItem extends FrameEvidence {
   endSeconds?: number;
   label: string;
   description?: string;
+  /** The speaker's line that carries the moment, verbatim (output-quality R7/R10). */
+  quote?: string;
   mood?: string;
   emoji?: string;
   speaker?: string;

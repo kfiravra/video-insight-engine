@@ -24,7 +24,7 @@ _MOMENT_START_KEYS = ("seconds", "startSeconds", "timestamp", "start_time", "sta
 # The clock a ``learning.timestamps`` item writes beside its ``seconds`` ("2:10").
 _MOMENT_CLOCK_KEY = "time"
 _MOMENT_END_KEYS = ("endSeconds", "end_seconds", "endTimestamp", "end_time", "endTime")
-_MOMENT_PASSTHROUGH_KEYS = ("mood", "emoji", "speaker", "thumbnailUrl", "s3Key")
+_MOMENT_PASSTHROUGH_KEYS = ("quote", "mood", "emoji", "speaker", "thumbnailUrl", "s3Key")
 _MOMENT_LABEL_CAP = 60
 # A placeholder label is no text: the track never ships "Moment 3" (R5). Exact form only —
 # a lowercase "moment 3" is a source's own words, not the old positional default.

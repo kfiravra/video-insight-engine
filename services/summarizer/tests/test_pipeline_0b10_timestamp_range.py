@@ -510,7 +510,10 @@ class TestRunGroupCallWindow:
     async def test_should_report_a_dropped_timestamps_item_in_the_outcome(
         self, llm: AsyncMock
     ) -> None:
-        items = [{"time": "1:11", "seconds": 71, "label": "x"}, {"seconds": 4421, "label": "y"}]
+        items = [
+            {"time": "1:11", "seconds": 71, "label": "x", "description": "x set"},
+            {"seconds": 4421, "label": "y", "description": "y set"},
+        ]
         llm.answer.reply = json.dumps({"learning": {"timestamps": items}})
 
         outcome = await asyncio.create_task(
