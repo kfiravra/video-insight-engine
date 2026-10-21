@@ -139,8 +139,9 @@ incl. the above-100K tier; the assistant process does not register it).
 
 ## Where cache_control is set
 
-Three call types carry breakpoints — the plan, the extraction field groups and
-the `EXTRACTION_PARALLEL=false` single extraction call — always on user content
+Four call types carry breakpoints — the plan, the extraction field groups, the
+`EXTRACTION_PARALLEL=false` single extraction call and (output-quality 2.1) the hero
+rewrite, which re-sends the field groups' blocks to read them — always on user content
 blocks (Anthropic models only; `services/summarizer/src/services/llm_messages.py`
 strips every marker for other providers). `text_block(text, cache=True)` is the 5-minute default (no
 `ttl` key on the wire); `text_block(text, cache=True, ttl="1h")` asks for one
@@ -241,17 +242,76 @@ The old `cache_static` path (static template half as a cached system message)
 is gone. The plan reads the **full** `[m:ss]`-marked transcript (1b.2), so its
 uncached block — and cost — grows with the video; memory reads the same string.
 
+**Hero rewrite — reads the field groups' blocks (output-quality 2.1,
+`HERO_REWRITE_ENABLED`).** `hero_rewrite.cached_blocks` sends the call as
+`[block 1, block 2?, block 3]` on `LLM_EXTRACTION_MODEL` (caches are per model, so
+it runs on the groups' model, with their JSON mode and effort and no system prompt):
+
+- **block 1** = `extraction_group_prompt.prefix_block` of the run's ruled prompt —
+  the same bytes the group calls sent (1h entry), read at 0.1x;
+- **block 2** = `head_block` (`<video>` + the transcript + `<video_memory>`, the 5m
+  entry) — only when the run is ONE chunk (`HeroRequest.reads_transcript`). A chunked
+  run has one head per chunk and a request can read one prefix, so it reads block 1
+  alone and block 3 carries `<video>` + `<video_memory>`;
+- **block 3** = the hero job (`prompts/hero_rewrite.txt` + the compacted merged
+  extraction, at most `HERO_EXTRACTION_MAX_TOKENS` = 5 000 tokens, + the tab labels),
+  uncached. A retry (one, with the failed checks appended) changes block 3 only, so it
+  reads the cache too.
+
+Without group blocks (`EXTRACTION_PARALLEL=false`) the request is block 3 alone: no
+group call wrote blocks 1 / 2, so sending them would write them (block 1 at 2x for an
+hour it never serves). Output cap `HERO_MAX_TOKENS` = 2 000, timeout `HERO_TIMEOUT_S`
+= 25 s. Started at text-groups-done, after the groups' own writes, so the entries are
+already readable.
+
 **OpenAI calls (automatic caching).** OpenAI caches a prompt prefix by itself
 once it is identical to an earlier request's and at least 1,024 tokens long; it
 reports reads (`prompt_tokens_details.cached_tokens`) but no writes, and there
 is nothing to mark. Synthesis (the fast tier — `openai/gpt-4o-mini` with
-`LLM_FAST_PROVIDER=openai`, as both templates and prod set), the quiz
-(`enrich_quiz.txt`, `openai/gpt-4o-mini`) and `description_analysis.txt`
+`LLM_FAST_PROVIDER=openai`, as both templates and prod set; with
+`HERO_REWRITE_ENABLED` it runs only when the hero call gives no hero), the
+`enrich_quiz.txt` quiz (`openai/gpt-4o-mini`; with `QUIZ_V2_ENABLED` it does not run)
+and `description_analysis.txt`
 (`openai/gpt-6-luna` since 4.0d) are laid out static-first — instructions, schema, example, then the per-video content —
 so two videos share their prefix up to the first per-video byte. Today those
 static prefixes are 355 / 471 / 311 tokens, below the 1,024 minimum, so they do
 not cache across videos yet (a quiz prefix is per quiz domain: its flavor line
 sits in `<role>`).
+
+## Output-quality phase 2: the calls that changed
+
+Three ledger-visible changes since `PIPELINE_VERSION` v10 shipped; each has a flag
+(`HERO_REWRITE_ENABLED`, `QUIZ_V2_ENABLED`, both default `true`; [INFRASTRUCTURE.md](./INFRASTRUCTURE.md)) that
+restores the previous call. The `feature` column is `llm_usage.feature`
+(`llm_feature_var`); the span is the Langfuse generation and `pipeline.timing`
+`llmCalls[].span` name ([OBSERVABILITY.md](./OBSERVABILITY.md#trace-structure)).
+
+| Call | Span / stage | Model | `feature` | When it bills |
+|------|--------------|-------|-----------|---------------|
+| Hero rewrite | `hero_rewrite` | `LLM_EXTRACTION_MODEL` (Sonnet 5.5) | `summarize:hero_rewrite` | `HERO_REWRITE_ENABLED`: once per run (a retry is a second row), fired at text-groups-done; reads the groups' cached blocks (above). **Replaces** the synthesis call |
+| Synthesis | `synthesis` | the fast tier | `summarize:synthesis` | the flag off, or the hero call gave no hero (`phases/synthesis._synthesis_dict`) — then exactly as before |
+| Quiz v2 | `quiz_v2` | `LLM_MEMORY_MODEL` (Haiku 5.5; no model key of its own) | `summarize:enrichment` | `QUIZ_V2_ENABLED`, a plan with a quiz host: one call, 18 s per attempt, 1 retry, 37 s stage cap. **Replaces** `enrich_quiz` |
+| Quiz v1 | `enrichment` | `LLM_ENRICHMENT_MODEL` (gpt-4o-mini) | `summarize:enrichment` | `QUIZ_V2_ENABLED=false` |
+| Judge: hero + quiz | `faithfulness` (two calls) | `LLM_JUDGE_MODEL` (gpt-6-luna) | `summarize:faithfulness` | after assembly, when the doc has a stamped takeaway / quiz question and the sample rate is above 0 |
+
+- **Quiz v2 reads no cache.** Memory sends its transcript without a breakpoint, so there
+  is no shared prefix to read, and a breakpoint on this request alone would pay its 1.25x
+  write on every run to save only on a rare retry (`quiz_v2` docstring). On the 63-minute
+  S01 the request is ≈ 21 K tokens in and ≈ 2 K out ≈ $0.003 on Haiku 5.5 ($0.10 / $0.50
+  per MTok); past `TRANSCRIPT_MAX_CHARS` (240 000) only the lines within
+  `KEY_IDEA_WINDOW_S` of a key idea go, which keeps the prompt in the ≤ 100 K-token price
+  tier ([above](#cache-savings-calculation)).
+- **The hero's bill is the job block plus the extraction's reads.** Blocks 1 (+ 2) are
+  priced as cache reads when the group calls wrote them (the rates in the table
+  above), block 3 is plain input, the answer is capped at 2 000 tokens. The synthesis
+  call it replaces (≤ 1 200 tokens out, fast tier) is no longer made on a run that gets a hero.
+- **The judge's two extra calls** are bounded by prompt caps: at most ≈ $0.0021 per run
+  (≈ $0.0013 at English's ~4 characters a token — `faithfulness_hero_quiz` docstring);
+  ≈ $0.0004 per video was measured over the 13 gate-1 docs
+  (`dev/active/output-quality/output-quality-tasks.md` 2.4). The extraction sample's
+  ≈ $0.002–0.003 per video is unchanged.
+- No `PIPELINE_VERSION` bump: the stored shapes the new calls write are additive
+  ([DATA-MODELS.md](./DATA-MODELS.md#output-quality-hero-and-quiz-2026-10)).
 
 ## How 1h writes are priced
 

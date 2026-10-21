@@ -42,16 +42,20 @@ Trace: pipeline:{videoSummaryId}
 │   └── (long videos: the same names + `_c<k>` for chunk k ≥ 1, e.g. `extraction_text1_c1`;
 │        ledger feature `summarize:extraction:<group>`. EXTRACTION_PARALLEL=false: one `extraction`
 │        generation, or one `extraction_batchN` per chapter batch + `_seq` for the rate-limited second pass)
-├── generation: synthesis             model=fast tier
-├── generation: enrichment            model=gpt-4o-mini       (LLM_ENRICHMENT_MODEL; the quiz; only for a plan with a quiz host)
-├── generation: faithfulness          model=gpt-6-luna        (LLM_JUDGE_MODEL; judge calls, ≤ 6 sampled claims, background)
+├── generation: hero_rewrite          model=sonnet-5.5       (LLM_EXTRACTION_MODEL; HERO_REWRITE_ENABLED; one call fired at text-groups-done that reads the field groups' cached blocks, ledger feature `summarize:hero_rewrite`; a retry is a second generation under the same name)
+├── generation: synthesis             model=fast tier         (only when the hero call is off or gave no hero — HERO_REWRITE_ENABLED=false, or `None` back; ledger feature `summarize:synthesis`)
+├── generation: quiz_v2               model=haiku-5.5         (LLM_MEMORY_MODEL; QUIZ_V2_ENABLED; only for a plan with a quiz host; ledger feature `summarize:enrichment`)
+├── generation: enrichment            model=gpt-4o-mini       (LLM_ENRICHMENT_MODEL; the quiz with QUIZ_V2_ENABLED=false; only for a plan with a quiz host)
+├── generation: faithfulness          model=gpt-6-luna        (LLM_JUDGE_MODEL; judge calls, background: the extraction sample's ≤ 6 claims, plus after assembly one hero call and one quiz call under the same name — told apart by their scores)
 ├── generation: translation_full      model=gpt-6-luna        (LLM_TRANSLATION_MODEL; non-English video: the output, in batches) + translation_title
 ├── generation: rag_translation       model=gpt-6-luna        (LLM_TRANSLATION_MODEL; non-English caption / S3 / Gemini transcript → English for Qdrant)
 ├── generation: <span> (refused)      a declined answer: metadata refusal=true, refusalCategory; the previous model's
 │                                     answer follows under the same span with refusedModel + refusalCategory
 ├── span: phase:<name>                one per `pipeline.timing.phases` entry, real start/end (run_timing._log_phase_spans)
 ├── score: faithfulness               0.0–1.0  (sampled, see below)
-└── (assembly itself makes no LLM call — pure code; synthesis, the quiz and moment fill run inside its `phase:assembly` wall)
+├── score: faithfulness_hero          0.0–1.0  (the hero's takeaways against their [m:ss] stamps, see below)
+├── score: faithfulness_quiz          0.0–1.0  (2 sampled quiz questions against their answer stamps, see below)
+└── (assembly itself makes no LLM call — pure code; the hero rewrite's wait (`phase:synthesis`), the quiz and moment fill run inside its `phase:assembly` wall)
 ```
 
 For the assistant, one chat session = one trace named `chat:{videoId}` keyed by `userId`/`sessionId`. Tool runs attach as named spans (`tool:concept_explain`, `tool:quiz_generator`, …); the agentic loop's LLM calls are `library_generation` (answer) and `library_agent` (tool-selection) spans/generations — the same names for single-video RAG chat and library chat, since both run `run_agentic_loop`. Query translation logs as `query_translate`. `/action` dispatch opens its own session trace with an `action:{action}` span. The tool router owns the per-tool `llm_feature_var` (`assistant:tool:<name>`, set/reset around dispatch so siblings aren't mislabelled); endpoints set `assistant:rag_chat` / `assistant:library_chat` / `assistant:action:<action>` plus `user_id` / `video_id` / `request_id` so assistant `llm_usage` rows are attributable.
@@ -70,7 +74,7 @@ In the Langfuse UI:
 - **Generations panel**: the per-stage breakdown. Sort by latency or cost to find the bottleneck.
 - **Input / Output panels** of a generation: the actual prompt and response, after redaction (emails, phone-shaped runs, plus a short allowlist of token formats — see below) and truncation (50KB cap with `[TRUNCATED]` marker; original length is not encoded, on purpose).
 - **Metadata**: `attempt`, `useFastModel`, `modelOverride`, `finishReason`, `latencyMs`. `attempt>1` means a retry fired; `fallbackFrom` marks the cross-provider fallback; `refusal: true` marks a declined answer and `refusedModel` the previous model's answer for it (below). `promptVersions` maps prompt name → registry version for every prompt that was loaded inside the trace.
-- **Scores**: faithfulness score plus comment "N/M grounded". Below 0.7 = quality regression suspect.
+- **Scores**: faithfulness score plus comment "N/M grounded". Below 0.7 = quality regression suspect. From output-quality phase 2 the page's hero and quiz carry their own scores, `faithfulness_hero` and `faithfulness_quiz` ([below](#hero-and-quiz-sample-output-quality-24)).
 
 ### Prompt cache
 
@@ -101,6 +105,8 @@ Local `.txt` files in `services/summarizer/src/prompts/**` are the source of tru
 | `prompts/extraction_group_rules.txt` | `summarizer:extraction_group_rules` |
 | `prompts/schemas/food.txt` | `summarizer:schema:food` |
 | `prompts/enrich_quiz.txt` | `summarizer:enrich_quiz` |
+| `prompts/quiz_v2.txt` | `summarizer:quiz_v2` |
+| `prompts/hero_rewrite.txt` | `summarizer:hero_rewrite` |
 | `prompts/vision.txt` | `summarizer:vision` |
 | `prompts/examples/learning.txt` | `summarizer:example:learning` |
 | `services/assistant/src/utils/prompt_templates.py::RAG_HEADER` | `assistant:rag_header` |
@@ -141,9 +147,9 @@ After extraction completes, a fire-and-forget task samples 20% of extracted item
 
 The check is **informational only** — it never blocks the pipeline or fails a video. Use the Langfuse dashboards to track drift over time. A run below 0.7 is logged at warning level but otherwise ignored. The judge model is part of the score, and gpt-6-luna is the stricter judge: in the 4.0d model A/B it graded 0.44 of the same 18 claims grounded vs gpt-4o-mini's 0.89 (8 flipped, never the reverse — `dev/completed/pipeline-1min/gates/g4-model-ab.md`); re-sent the golden baseline's recorded judge requests, it flipped 26 of 108 verdicts to ungrounded and 2 the other way (mostly claims that add unstated detail to a grounded core). So the move (pipeline-1min close-out) came with a re-baselined golden: `dev/golden-dataset/noise.json`'s faithfulness parts are the luna re-score (its `faithfulnessJudge` block; `gates/g4.md` §10). Rollback: `LLM_JUDGE_MODEL=openai/gpt-4o-mini` together with the previous `noise.json` (git history).
 
-**Claim-localized context (not a head slice).** Transcripts within the 80K-char judged-context budget pass through whole. Longer transcripts are split into ~4K-char windows; per claim, the top BM25-style (IDF-weighted lexical overlap) windows are packed into the budget in document order with gaps marked, plus immediate neighbors of scoring windows. A claim from hour 3 of a long video is therefore judged against hour-3 text — the old fixed 80K-char head slice mis-verdicted tail claims of 3h+ videos as hallucinations. Falls back to the head slice only when a claim shares zero vocabulary with the transcript. See `_select_claim_context` in `faithfulness.py`; regression tests in `tests/test_faithfulness.py` include a synthetic tail-claim case past the 80K boundary.
+**Claim-localized context (not a head slice).** Transcripts within the 80K-char judged-context budget pass through whole. Longer transcripts are split into ~4K-char windows; per claim, the top BM25-style (IDF-weighted lexical overlap) windows are packed into the budget in document order with gaps marked, plus immediate neighbors of scoring windows. A claim from hour 3 of a long video is therefore judged against hour-3 text — the old fixed 80K-char head slice mis-verdicted tail claims of 3h+ videos as hallucinations. Falls back to the head slice only when a claim shares zero vocabulary with the transcript. See `_select_claim_context` in `faithfulness_context.py` (split out of `faithfulness.py` by output-quality 2.4); regression tests in `tests/test_faithfulness.py` include a synthetic tail-claim case past the 80K boundary.
 
-**Judge accuracy (validated 2026-07-12).** The judge (`_judge_one` + `_select_claim_context`, Haiku fast tier) was run live over the 20-claim labeled fixture `services/summarizer/tests/fixtures/faithfulness_labeled_claims.json` (12 supported / 8 hallucinated, synthetic transcript): **20/20 = 100% accuracy, 0 judge errors**. The dataset is deliberately easy (explicit statements vs. flat contradictions/absences); the regression floor asserted by the eval is 80%. Re-run any time with:
+**Judge accuracy (validated 2026-07-12).** The judge (`_judge_one` in `faithfulness.py` + `_select_claim_context`, Haiku fast tier) was run live over the 20-claim labeled fixture `services/summarizer/tests/fixtures/faithfulness_labeled_claims.json` (12 supported / 8 hallucinated, synthetic transcript): **20/20 = 100% accuracy, 0 judge errors**. The dataset is deliberately easy (explicit statements vs. flat contradictions/absences); the regression floor asserted by the eval is 80%. Re-run any time with:
 
 ```bash
 cd services/summarizer && LIVE_EVAL=1 .venv/bin/python -m pytest -q tests/test_faithfulness_live_eval.py -s
@@ -151,12 +157,26 @@ cd services/summarizer && LIVE_EVAL=1 .venv/bin/python -m pytest -q tests/test_f
 
 (~20 calls on the configured judge model — ≈ $0.003 on gpt-6-luna, which scored 20/20 on 2026-10-14; ≈ $0.02 on Haiku 4.5 in 2026-07; the fixture's structural checks run in the normal suite for free.)
 
+### Hero and quiz sample (output-quality 2.4)
+
+`faithfulness` scores only the extraction sample above. From phase 2 the judge also reads what a viewer meets first on the page, in **two more background calls** on the same judge model (`LLM_JUDGE_MODEL`, stage `faithfulness`, ledger feature `summarize:faithfulness`; `pipeline/faithfulness_hero_quiz.py`). `pipeline_orchestration` launches them once `run_phase_assembly` returns — the late group has written the hero and the quiz — through `routes/pipeline_faithfulness._launch_hero_quiz_check`, and drains them with the extraction sample (≤ 25 s before the trace flushes):
+
+| Score | What is judged | Window |
+|-------|----------------|--------|
+| `faithfulness_hero` | every takeaway of `meta.keyTakeaways` that closes with a `[m:ss]` marker (at most 7; `hero_sample`) against the transcript around that marker and what the screen shows there. The stamp is part of the claim: a point the video states only elsewhere reads as ungrounded | 30 s before to 90 s after the marker (`WINDOW_BEFORE_S`, `WINDOW_AFTER_S`) |
+| `faithfulness_quiz` | `QUIZ_SAMPLE` = 2 stamped questions of the shipped `quiz_arena` tab, drawn by `youtube_id` and kept in page order (`quiz_sample`): does the evidence at the question's `timestamp` give the keyed option as the answer? | the same window around the question's `timestamp` |
+
+- Each call logs `grounded ÷ judged` with a comment ("N/M … grounded", the judge errors and the entries that could not be judged — a takeaway without a marker, a question without a stamp or a valid key). A sample with no usable verdict logs no score. Below 0.7 logs a warning, like the extraction sample.
+- One attempt per call (`max_retries=0`, 20 s); the score is informational and never blocks the run. A doc without a stamped takeaway or a stamped question skips that call; `LANGFUSE_FAITHFULNESS_SAMPLE_RATE=0` skips both, any other rate leaves the two samples as they are (the rate scales only the extraction sample). A run with no timed transcript skips both.
+- **Cost, bounded by construction:** every prompt piece is capped (`HERO_PROMPT_MAX_CHARS` = 22 000, `QUIZ_PROMPT_MAX_CHARS` = 10 000; output `HERO_MAX_TOKENS` 700, `QUIZ_MAX_TOKENS` 300), so the two calls cost at most ≈ $0.0021 at 2 characters a token (≈ $0.0013 at English's ~4); the module estimates ≈ $0.0006 for a 5-takeaway video, and the 2.4 lane measured ≈ $0.0004 per video over the 13 gate-1 docs (`dev/active/output-quality/output-quality-tasks.md` 2.4).
+- The two generations are named `faithfulness` like the extraction sample's; read the score name, not the generation, to tell the samples apart.
+
 Tuning:
 
-- `LANGFUSE_FAITHFULNESS_SAMPLE_RATE=0` disables the judge entirely.
+- `LANGFUSE_FAITHFULNESS_SAMPLE_RATE=0` disables the judge entirely (the hero and quiz calls included).
 - `LANGFUSE_FAITHFULNESS_SAMPLE_RATE=1.0` checks every claim (capped at 6/video). Useful when debugging a quality regression.
 - Cost: ≈ $0.002–0.003 per video on gpt-6-luna at the default rate (golden set, 2026-10).
-- `_TRANSCRIPT_BUDGET_CHARS` (80K) is coupled to the judge model's context window — see the warning comment in `faithfulness.py` before pointing the faithfulness stage at a smaller-context model.
+- `_TRANSCRIPT_BUDGET_CHARS` (80K) is coupled to the judge model's context window — see the warning comment in `faithfulness_context.py` before pointing the faithfulness stage at a smaller-context model.
 
 ## Golden dataset + eval
 
@@ -227,7 +247,10 @@ services/assistant/src/services/observability/
 ├── __init__.py              # public API (adds session_trace, span)
 └── langfuse_client.py       # mirror of summarizer's client + assistant-specific helpers
 
-services/summarizer/src/services/pipeline/faithfulness.py   # LLM-as-Judge
+services/summarizer/src/services/pipeline/faithfulness.py   # LLM-as-Judge (the extraction sample)
+services/summarizer/src/services/pipeline/faithfulness_context.py      # claim-localized transcript windows
+services/summarizer/src/services/pipeline/faithfulness_hero_quiz.py    # the hero + quiz sample (2.4)
+services/summarizer/src/routes/pipeline_faithfulness.py                # background spawn + drain of both
 scripts/register_prompts.py        # sync .txt → Langfuse
 scripts/cache_hit_rate.py          # prompt-cache hit rate per call type (pipeline.timing)
 scripts/build_golden_dataset.py    # upload videos.yaml → Langfuse dataset

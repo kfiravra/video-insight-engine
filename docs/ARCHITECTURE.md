@@ -201,8 +201,9 @@ Content type and tab layout come from the **plan** (primary model, Sonnet 5.5), 
 │     ├── Domain forbidden/max policy + degrade-never-drop demote ladder      │
 │     ├── Frame thumbnail injection (+ ±15s backfill)                         │
 │     ├── Late group, parallel: moment fill (exact-timestamp frames) ∥        │
-│     │   synthesis (masterSummary + SEO, fast tier) ∥ the quiz (gpt-4o-mini; │
-│     │   only for a plan with a quiz host)                                   │
+│     │   hero rewrite (Sonnet 5.5, reads the extraction's cache) ∥ the       │
+│     │   quiz (Haiku 5.5, every quote checked); the synthesis call only      │
+│     │   when the hero gives none; the quiz only for a plan with a host      │
 │     └── Cross-tab links; final re-emit: every tab final once, the           │
 │         overview last                                                       │
 │                                                                             │
@@ -285,9 +286,9 @@ The pipeline uses Server-Sent Events (SSE) to stream results progressively with 
 │    Events: description_analysis, tab_ready previews of what the client      │
 │      lacks (the overview, tabs assembly added or the last groups            │
 │      changed), the moment tabs once framed, synthesis_complete              │
-│      (superset), enrichment_complete (the quiz), then the final             │
-│      re-emit: tab_ready {final: true} for every tab not yet final,          │
-│      the overview last                                                      │
+│      (superset; a corrected one after the late group), enrichment_complete  │
+│      (the quiz), then the final re-emit: tab_ready {final: true} for        │
+│      every tab not yet final, the overview last                             │
 │                                                                             │
 │  PHASE 4: SAVE + DONE                                                       │
 │    Events: complete (tabCount, tabIds, processingTimeMs, degraded),         │
@@ -370,7 +371,7 @@ Every pipeline run is wrapped in a [Langfuse](https://langfuse.com) trace named 
 - **Trace boundary**: opened in `routes/pipeline_runner.py::stream_summarization` via `pipeline_trace(...)` before the Redis cache lookup (cache hits are traced too), closed automatically on exit. The trace handle lives in an asyncio `ContextVar` so concurrent runs don't collide.
 - **Generation spans**: emitted by `LLMProvider.complete_with_messages` and `complete_fast` whenever a caller passes `span_name`. `call_llm_with_retry` threads its `stage_name` through automatically, so every stage gets per-attempt visibility for free.
 - **Prompts**: synced via `scripts/register_prompts.py`. Call sites can opt into registry-first loading with `load_prompt_with_fallback`.
-- **Faithfulness judge**: `services/pipeline/faithfulness.py` runs as a fire-and-forget task after extraction. Sampling rate is `LANGFUSE_FAITHFULNESS_SAMPLE_RATE` (default 0.2).
+- **Faithfulness judge**: `services/pipeline/faithfulness.py` runs as a fire-and-forget task after extraction. Sampling rate is `LANGFUSE_FAITHFULNESS_SAMPLE_RATE` (default 0.2). After assembly two more background calls score the hero's takeaways and the quiz (`faithfulness_hero`, `faithfulness_quiz`; `faithfulness_hero_quiz.py`).
 - **Assistant**: separate trace per chat session (`chat:{videoId}`); tool calls attach as named spans.
 
 See [OBSERVABILITY.md](./OBSERVABILITY.md) for the full guide.

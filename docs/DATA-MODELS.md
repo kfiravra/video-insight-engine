@@ -124,7 +124,7 @@ Phase 0a is frontend-only; phase 0b is assembly code (`services/summarizer/src/s
 - No Moments tab when the steps are the timeline (D6): a food, fitness or project response (the primary domain) whose requirements leave out `moment_track` (`effective_requirements`) and that ships a `step_player`, `step_flow_canvas` or `workout_room` tab ships no `moment_track` tab — a planned one is dropped (`droppedTabs` reason `steps_are_the_timeline`), the always-Moments tab is not added, and such a plan gets no provisional Moments tab at plan-done (`moment_fallback.steps_are_the_timeline`; the primaries and step components are `domains.json` `assemblyPolicy.stepTimelinePrimaries` / `sequentialComponents`). When the dedupe then drops the step tab as a twin, the Moments tabs come back and their drop rows go (`steps_timeline.restore_moments_without_steps`). Any other primary keeps its Moments — a podcast or lecture with a stray step tab included.
 - `MomentItem`: an item that states no time is refused (never parked at 0:00), one item per `seconds` (the first wins), and a "Moment N" label is no text. Its start is a stated start > 0, else its `time` clock (`parse_timestamp_to_seconds` — a `learning.timestamps` item whose `seconds` is 0 or missing beside "2:10" seeks 2:10), else a stated 0 (the opening); a negative with no clock states no time (`moment_normalizers._moment_start`), and `time` ships as the clock of the `seconds` that ships. The label is `label` / `title` / `name`, else an interview `question` (whole up to 140 chars, else its first sentence when that fits, else a word cut), else the head of the description (≤ 60 chars); `description` is carried from `description` | `summary` | `instruction` | `answer` (`moment_normalizers.normalize_moment_items`, `_moment_text`); `quote?: string` (the line that carries the moment, verbatim) and `question?: string` (a `podcast.qa` item's whole question) pass through. Chapter-shaped sources (chapters, the outline, description timestamps) are read in time order, an entry without a start or a title, or at a start already taken, skipped (`_chapters_to_moments`).
 - `PodcastSegment.summary` also accepts `description` (`AliasChoices`; stored as `summary`; an empty or null `summary` never hides a filled `description` — `prefer_filled_prose`), so a segment's only prose survives validation and becomes its moment's `description`.
-- Derived scalars (D13): a score, tier, claim status, rest time, duration or date ships only on an item anchored by `timestamp` / `seconds` / `startSeconds` (`assembly/derived_guard.py`); unanchored it is dropped (an unanchored claim ships with no `status` and no `sourceCitation`; `ClaimItem.status` is optional and the tracker shows no badge for it) and the item keeps its prose — the review verdict's `badge` (the verdict ships its `timestamp` and, only with it, the badge), `score` / `maxScore` / `subScores` (`normalizers._normalize_verdict`; a sub-score row ships only with a numeric `score`), tier-list tiers (none stated → no tier list: the tab demotes), step durations, exercise durations and rests, spot `cost` / `duration` / `rating`, the overview's scalars. A NaN or ±Infinity is never a number or an anchor (`stated_number`, `anchor_seconds`). A comparison's `rightLabel` joins every distinct `competitorName` (" · "), and its `pros` / `cons` come only from the review's own lists (`assemblers_primary.assemble_comparison`).
+- Derived scalars (D13): a score, tier, claim status, rest time, duration or date ships only on an item anchored by `timestamp` / `seconds` / `startSeconds` (`assembly/derived_guard.py`) — and a *verdict* (score, tier, status, badge) also only beside a verified `quote` since 2.0 c ([below](#output-quality-hero-and-quiz-2026-10)); unanchored it is dropped (an unanchored claim ships with no `status` and no `sourceCitation`; `ClaimItem.status` is optional and the tracker shows no badge for it) and the item keeps its prose — the review verdict's `badge` (the verdict ships its `timestamp` and, only with it, the badge), `score` / `maxScore` / `subScores` (`normalizers._normalize_verdict`; a sub-score row ships only with a numeric `score`), tier-list tiers (none stated → no tier list: the tab demotes), step durations, exercise durations and rests, spot `cost` / `duration` / `rating`, the overview's scalars. A NaN or ±Infinity is never a number or an anchor (`stated_number`, `anchor_seconds`). A comparison's `rightLabel` joins every distinct `competitorName` (" · "), and its `pros` / `cons` come only from the review's own lists (`assemblers_primary.assemble_comparison`).
 - Unstated is absent, never a default (D13): the Pydantic `ReviewVerdict.badge`, `FitnessMeta.difficulty` / `duration`, `ProjectData.projectName` / `difficulty`, `LanguageData.level` and `ScienceData.level` are None when the video states none (an unknown value too); the assembled verdict carries `badge` only as stated (`normalizers._normalize_verdict`); an unattributed claim ships no `source` (`assemblers_secondary._normalize_claim`; `Claim.source` None) — never an invented "Reporter". In `vie-response.ts`, `ReviewVerdict.badge`, `ProjectData.projectName` / `difficulty` and `FitnessData.meta.difficulty` are optional.
 
 #### Output-quality extraction fields (2026-10)
@@ -140,8 +140,20 @@ Pydantic in `services/summarizer/src/models/` (`idea_types.py`, `domain_types.py
 - `learning.claims`, `podcast.claims`, `tech.claims`, `news.claims` — one shape, `Claim` (`NewsClaim` is an alias) / `ClaimItem`: `{claim, source?, status?, sourceCitation?, timestamp?}`, `status` ∈ stated | supported | contested (`CLAIM_STATUSES`; any other word → None, the claim stays). Registry: claims_tracker, `requiresEvidence: has_claims`, cap 20. Assembled `status` is one of the three — the pre-1.4 words read as `verified` → supported, `disputed` → contested, `context` → stated, and a missing, unknown or unanchored status is stated; TS `ClaimStatus | LegacyClaimStatus`, the tracker maps the legacy words.
 - `review.rating.timestamp` (`ReviewRating`) and `review.verdict.timestamp` (`ReviewVerdict`) — the second the score / the verdict is given; `gaming.rankings[].timestamp` (`GamingRanking`, TS `TierListItem.timestamp`) — the second the creator places the item. Each is the anchor the derived-scalar rule above reads.
 - `fitness.meta.duration` — None when the instructor states no length (`FitnessMeta`).
-- `OutlineSection.establishes: str` (memory, ≤ 120 chars, `""` when absent) — what the section establishes; the provisional Moments tab's descriptions. The memory hero's `keyTakeaways` are 3 / 5 / 7 by length, each closing with its `[m:ss]` (stored as written in `synthesis.keyTakeaways` / `meta.keyTakeaways`).
-- `QuizQuestion.timestamp: int | None` — the second the answer is spoken (`pipeline.enrichment.quiz[]`; read from seconds or a clock in the text, "4:32", "[1:02:05]"; negative or non-finite → None; past the video's end + 10 s → the question is dropped).
+- `OutlineSection.establishes: str` (memory, ≤ 120 chars, `""` when absent) — what the section establishes; the provisional Moments tab's descriptions. The memory hero's `keyTakeaways` are 3 / 5 / 7 by length, each closing with its `[m:ss]` (stored as written in `synthesis.keyTakeaways` / `meta.keyTakeaways`); with the hero rewrite the takeaways keep that shape (below).
+- `QuizQuestion.timestamp: int | None` — the second the answer is spoken (`pipeline.enrichment.quiz[]`; read from seconds or a clock in the text, "4:32", "[1:02:05]"; negative or non-finite → None; past the video's end + 10 s → the question is dropped). Always seconds: `assembly/quiz_stamps` reads a stamp that equals its explanation's clock minutes as that clock, so a minutes-as-seconds stamp never ships (2.0 a).
+- `QuizQuestion.quote: str | None` — quiz v2's evidence, the speaker's words that settle the answer (≤ 25 words, blank → None); absent on rows stored before it and from the flag-off `enrich_quiz` call. Below.
+
+#### Output-quality hero and quiz (2026-10)
+
+Phase 2 (`dev/active/output-quality/`) is additive under `PIPELINE_VERSION` v10: every field below is optional, so older rows keep reading as before. Flow: [summarizer-workflow.md](./summarizer-workflow.md#hero-rewrite--quiz-v2-output-quality-21--21b).
+
+- **Hero meta (2.1 / 2.2).** The hero rewrite (`HERO_REWRITE_ENABLED`) writes `VIEResponseMeta` (TS `vie-response.ts`, Pydantic `vie_response_v2.py` / `domain_types.py`; parity sample `readingMinutes` in `tests/test_ts_pydantic_parity.py`): `tldr`; `brief?: string` — 3–5 sentences, `masterSummary` carries the same text for older readers; `keyTakeaways: string[]` — **still strings**, each `"<claim> [m:ss]"` (`[h:mm:ss]` past an hour), the stamp copied from the extraction item the takeaway cites (`hero_rewrite.takeaway_line`), 3 / 5 / 7 by length; `worthItFor?: string` and `skipIf?: string` — one line each, ≤ 20 words, `""` when the validators dropped it (D18); `seoDescription`; `readingMinutes?: number` — whole minutes ≥ 1, counted by code over the shipped hero + every non-overview tab at 238 words a minute, written to `meta` only after the late group (`settle_tab_references`). Absent, never null, on rows stored before the hero rewrite and on a run whose hero call gave none (then `masterSummary` is the synthesis call's).
+- **Where it lands.** `meta` = the assembled meta; `pipeline.synthesis` = `hero_meta`'s dict (the same keys without `readingMinutes`); the API relay's top-level `synthesis` gains `brief`, `worthItFor`, `skipIf`, `readingMinutes` from `synthesis_complete` (below, `filledSynthesisFields`); a cache hit's `synthesis_complete` carries the hero keys the stored `meta` has (`cached_response.resolve_synthesis`).
+- **Quiz questions (2.1b).** `QuizQuestion.quote` (Pydantic `pipeline_types.QuizQuestion`, TS `QuizQuestion`) is the evidence line; the assembled `quiz_arena` / `quick_quiz` question ships `{question, options, correctIndex, explanation, timestamp?, quote?, quoteTranslated?}` (`normalizers._normalize_quiz_question`; the FE `quizQuestionSchema` and TS `QuizArenaQuestion` declare both). `timestamp` is set from where the quote is found in the transcript when it is found.
+- **Quote check (2.0 d).** `quote_verify` checks every quote against the transcript the run read, on a copy; the stored `pipeline.extraction` keeps the model's text. On the copy: `verified` kept; `unverified` (English source, not found) → `quote: null` (a `quotes` list item leaves the list); `translated` (non-English source, not found) → kept, flagged **`quoteTranslated: true`** — carried on `SpotItem`, `MomentItem`, `NarrativeQuote` and the quiz question, rendered as prose without quote marks (D12). `quoteStatus` is bookkeeping on that copy: no tab prop type in `@vie/types` declares it, and the overview drops it (`assemblers_learning._quote_scalars`).
+- **D13 extended (2.0 c).** A verdict ships only with its `timestamp` **and** a verified `quote`: the review `rating` (and its sub-scores' rows), the verdict `badge`, a tier-list `tier`, a claim `status` (TS/Pydantic `quote` on `ReviewRating`, `ReviewVerdict` and its `subScores[]`, `TierListItem`, `ClaimItem`; `derived_guard.QUOTED_FIELDS`, `has_quote`). Missing either, the item stays and the verdict goes. A tier list with no tier stated and quoted ships as an `info_grid` of its items with `degradedFrom: "tier_list"`, its goal minus any clause naming tiers or ranks (`tab_references.goal_without_lost_structure`).
+- **Dropped tabs (2.0 b).** `pipeline.assembly.droppedTabs` gains two reasons for a *planned* tab, both counted in `tabsDropped`: `filmstrip_shadowed_by_moments` (a `moment_track` with ≥ 8 frame-backed items makes a `video_filmstrip` redundant — the web's rule, run server-side, again after the moment fill) and `empty_props` (no content anywhere in its props). A tab assembly added itself leaves no row. A hero or goal sentence naming a dropped tab is removed (`tab_references.scrub_tab_references`).
 
 #### Component density gates (`densityGates`) and domain policy
 
@@ -269,7 +281,7 @@ One row per video **version** (`version`, `isLatest` below); the served row is s
     version: 4,                     // 2: the 1h/5m cache-write split on llmCalls (pipeline-1min 2.0); 3: ttftMs on llmCalls (3.4); 4: refusals (4.0b) — "Refusal" llmFailures rows, refusedModel stamps, counts.refusals / refusalFallbacks / refusalsUnanswered, fallbacks = cross-provider + model swaps only, costUsd incl. refused calls
     startedAt: Date,
     totalMs: number,
-    phases: [{ name: string, startMs: number, endMs: number, wallMs: number }],  // metadata, transcript_frames (phase 2: text, transcript, transcript_audio = the audio re-run after the tier probe judged the captions unusable (2.5; that run also has a second tier_probe llmCall), plan, memory, frames, frames.* sub-steps incl. frames.tier_wait), visual_inject (name kept: the annotations render), extraction, split_extraction (EXTRACTION_PARALLEL: the group-extraction member of phase 2, which then also spans transcript_frames; extraction = plan-done → last group; quiz_call = the quiz call it started once the quiz's groups landed), assembly (moment_fill, synthesis, enrichment = the quiz, run inside it), translation
+    phases: [{ name: string, startMs: number, endMs: number, wallMs: number }],  // metadata, transcript_frames (phase 2: text, transcript, transcript_audio = the audio re-run after the tier probe judged the captions unusable (2.5; that run also has a second tier_probe llmCall), plan, memory, frames, frames.* sub-steps incl. frames.tier_wait), visual_inject (name kept: the annotations render), extraction, split_extraction (EXTRACTION_PARALLEL: the group-extraction member of phase 2, which then also spans transcript_frames; extraction = plan-done → last group; quiz_call = the quiz call it started once the quiz's groups landed; hero_call = the hero rewrite it started once every text group landed, `synthesis` being then only the wait for it), assembly (moment_fill, synthesis, enrichment = the quiz, run inside it), translation
     milestones: { metadataMs?, synthesisCompleteMs?, firstTabReadyMs?, firstAssembledTabMs?, completeMs?, doneMs? },  // firstTabReadyMs = first tab_ready of any kind — since 2.1 the provisional Moments tab at plan-done; firstAssembledTabMs = first non-provisional tab_ready (the first tab assembly built)
     llmCalls: [{ feature, span, model, responseModel, startMs, wallMs, inputTokens, outputTokens,
                  cacheReadTokens,     // Anthropic cache_read_input_tokens, or OpenAI cached input (prompt_tokens_details.cached_tokens; 0 for OpenAI before v2)
@@ -407,7 +419,9 @@ One row per video **version** (`version`, `isLatest` below); the served row is s
   // its <total> items ship elsewhere (<id>)"; never counted in tabsDropped)
   // and steps_are_the_timeline (a moment_track tab of a food / fitness /
   // project response navigated by its steps, D6; the row goes again when the
-  // dedupe drops the step tab and the Moments come back); an info_grid tab
+  // dedupe drops the step tab and the Moments come back); output-quality 2.0
+  // adds filmstrip_shadowed_by_moments and empty_props (see "Output-quality
+  // hero and quiz"); an info_grid tab
   // left without a valued row is validation_empty_list with detail "no row
   // with a value (R5)" and dataSource ""; a
   // requirement_evidence_false entry is assembly's backstop record of a
@@ -428,12 +442,19 @@ One row per video **version** (`version`, `isLatest` below); the served row is s
   // keyTakeaways; the synthesis-done superset adds masterSummary +
   // seoDescription; either can be missing on a failure path. A partial never
   // overwrites a stored masterSummary. $unset on every (re-)dispatch of the
-  // row. Rules: docs/API-REFERENCE.md#synthesis_complete.
+  // row. A hero-rewrite run (output-quality 2.2) adds brief / worthItFor /
+  // skipIf with the superset and readingMinutes with the corrected one sent
+  // after the late group — three emissions at most. Rules:
+  // docs/API-REFERENCE.md#synthesis_complete.
   synthesis: {
     tldr?: string,
-    keyTakeaways?: string[],
+    keyTakeaways?: string[],      // each may close with its "[m:ss]"
     masterSummary?: string,
-    seoDescription?: string
+    seoDescription?: string,
+    brief?: string,
+    worthItFor?: string,
+    skipIf?: string,
+    readingMinutes?: number
   } | absent,
 
   // Multi-language support
@@ -465,6 +486,10 @@ One row per video **version** (`version`, `isLatest` below); the served row is s
     keyTakeaways: string[],
     masterSummary: string,
     seoDescription: string,
+    brief?: string,             // hero rewrite (output-quality 2.2); masterSummary carries the same text
+    worthItFor?: string,
+    skipIf?: string,
+    readingMinutes?: number,
     language: string,           // ISO 639-1 code
     isRTL: boolean              // Whether language is RTL
   } | null,

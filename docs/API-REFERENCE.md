@@ -1352,7 +1352,7 @@ The summarization pipeline uses SSE to stream results progressively, allowing th
 | `cached` | 0 | Cache hit — a fast replay follows (`metadata`, `triage_complete`, `meta`, `tab_ready[]` — every tab once, `final: true`, `position` = its index — `synthesis_complete`, `done`) |
 | `metadata` | 1 | Video metadata (title, channel, thumbnailUrl, duration) |
 | `transcript_ready` | 2 | Transcript extraction complete (authoritative `duration`) |
-| `synthesis_complete` | 2 + 3 | Up to twice: `{tldr, keyTakeaways}` at memory-done (the hero), then the four-field superset in assembly's late group — see [synthesis_complete](#synthesis_complete) |
+| `synthesis_complete` | 2 + 3 | Up to three times: `{tldr, keyTakeaways}` at memory-done (the hero), then the superset in assembly's late group (the four synthesis fields; the hero rewrite adds `brief`, `worthItFor`, `skipIf`), then a corrected superset after it when the hero changed (the hero rewrite's adds `readingMinutes`) — see [synthesis_complete](#synthesis_complete) |
 | `triage_complete` | 2 | Content tags, tab layout, confidence, `contentFormat`, `evidence` (the reconciled view), `planEvidence` / `memoryEvidence`, `terms` — at plan-done (plan ∥ memory both in, after reconcile) |
 | `meta` | 2 | VIEResponseMeta with videoId, contentTags, tab labels — emitted with `triage_complete`; again at frames-done when the screen-code check changed the tab list |
 | `frames` | 2 | Extracted frame set (presigned URLs), from the frames branch of phase 2 |
@@ -1416,11 +1416,12 @@ events `detection_result`, `chapter_ready`, `concepts_complete` are no longer em
 │  ┌──────────────────────────────────────────────────────────────────────┐   │
 │  │  Output events: description_analysis, tab_ready previews of the      │   │
 │  │    tabs the client lacks (the overview, tabs assembly added or       │   │
-│  │    the last groups changed), then moment fill ∥ synthesis ∥          │   │
-│  │    quiz: moment tabs (framed, heartbeats meanwhile),                 │   │
-│  │    synthesis_complete (superset), enrichment_complete; then the      │   │
-│  │    final re-emit: every tab not yet final, `final: true`, at its     │   │
-│  │    final position (the overview last)                                │   │
+│  │    the last groups changed), then moment fill ∥ hero rewrite (else   │   │
+│  │    synthesis) ∥ quiz: moment tabs (framed, heartbeats meanwhile),    │   │
+│  │    synthesis_complete (superset), enrichment_complete, a corrected   │   │
+│  │    synthesis_complete when the hero changed; then the final          │   │
+│  │    re-emit: every tab not yet final, `final: true`, at its final     │   │
+│  │    position (the overview last)                                      │   │
 │  └──────────────────────────────────────────────────────────────────────┘   │
 │                                                                             │
 │  PHASE 4: SAVE & DONE                                                       │
@@ -1547,9 +1548,15 @@ VIEResponseMeta with video identity and synthesis results.
   "tldr": "Comprehensive guide to React Hooks covering useState, useEffect, and custom hooks...",
   "keyTakeaways": ["useState manages component state", "useEffect handles side effects"],
   "masterSummary": "This tutorial walks through...",
-  "seoDescription": "Learn React Hooks..."
+  "seoDescription": "Learn React Hooks...",
+  "brief": "This tutorial walks through...",
+  "worthItFor": "Developers who know React classes and want hooks without the guesswork.",
+  "skipIf": "You want a deep dive into concurrent rendering: it is not covered.",
+  "readingMinutes": 6
 }
 ```
+
+The sample is the shape of the stored `meta` (`VIEResponseMeta`: the document a finished run saves and a cache hit replays). The live `meta` event is lighter — `title`, `contentTags`, `modifiers`, `primaryTag`, `tabCount`, `tabLabels`, `contentFormat`, `language`, `isRTL` (`phases/triage._meta_payload`) — and the synthesis fields reach a streaming client through [synthesis_complete](#synthesis_complete). The last four fields are the hero rewrite's (output-quality 2.2), all optional and absent from rows stored before it or from a run whose hero call gave none: `brief` is the 3–5 sentence overview (`masterSummary` carries the same text for older readers), `worthItFor` / `skipIf` are one line each (≤ 20 words), `readingMinutes` is the whole minutes to read the shipped page, counted by code once the tabs are final. With the hero rewrite `keyTakeaways` stay strings, each closing with the `[m:ss]` (`[h:mm:ss]`) of the moment it rests on.
 
 ### tab_ready
 
@@ -1641,8 +1648,13 @@ arrive without a label there — `complete.tabIds` is authoritative.
    groups or the frames changed.
 5. Late group, in parallel: the `moment_track` tabs once framed (replacing the
    provisional by id, or under another id with `replaces`; final when no quiz
-   is pending), `synthesis_complete` (superset), `enrichment_complete` (the
-   quiz call started when the groups holding its domains' fields landed).
+   is pending), `synthesis_complete` (superset — the hero rewrite's, started
+   when the text groups landed, or the synthesis call's), `enrichment_complete`
+   (the quiz call started when the groups holding its domains' fields landed).
+   5½. Settle, after the late group: a corrected `synthesis_complete` when the
+   hero no longer reads as the last one sent — always on a hero-rewrite page
+   (it adds `readingMinutes`), otherwise only when the dropped-tab scrub changed
+   the hero.
 6. The **final re-emit**: every tab not yet received final, `final: true` at
    its final position, links and attachments included — the overview last.
 7. `complete {tabCount, tabIds}`, then `done` (non-English: after translation).
@@ -1660,7 +1672,9 @@ With `EXTRACTION_PARALLEL=false` (one extraction call after frames-done):
    is pending.
 4. Late group, in parallel: the `moment_track` tabs once framed (replacing the
    provisional by id, or under another id with `replaces`; final when no quiz
-   is pending), `synthesis_complete` (superset), `enrichment_complete`.
+   is pending), `synthesis_complete` (superset; the hero rewrite's call is made
+   here, over the whole extraction), `enrichment_complete`; then the same
+   settle step (a corrected `synthesis_complete`).
 5. The **final re-emit**: every tab not yet received final, in order, `final:
    true` at its final position — with a quiz, every tab of the response
    including the new quiz tab (last); without one, typically just the
@@ -1740,7 +1754,7 @@ Clients should not cache frame URLs beyond a session.
 
 ### synthesis_complete
 
-Emitted **up to twice per run**, every field optional:
+Emitted **up to three times per run**, every field optional:
 
 1. **Memory-done** (phase 2, only when memory produced a tldr or takeaways) — the hero:
 
@@ -1749,29 +1763,48 @@ Emitted **up to twice per run**, every field optional:
   "event": "synthesis_complete",
   "tldr": "This video explains how to use React Hooks...",
   "keyTakeaways": [
-    "useState is the most fundamental hook",
-    "useEffect handles side effects",
-    "Custom hooks enable code reuse"
+    "useState is the most fundamental hook [0:45]",
+    "useEffect handles side effects [3:10]",
+    "Custom hooks enable code reuse [6:30]"
   ]
 }
 ```
 
-2. **Synthesis-done** (phase 5, after the first tabs) — the four-field superset:
-   `{tldr, keyTakeaways, masterSummary, seoDescription}`. `tldr`/`keyTakeaways` are
-   memory's; synthesis writes them only when memory left one empty. A failed
-   synthesis still emits it: memory's hero, empty `masterSummary`/`seoDescription`.
-   A cached replay sends one superset event.
+2. **Synthesis-done** (phase 5, after the first tabs) — the superset
+   `{tldr, keyTakeaways, masterSummary, seoDescription}`. With
+   `HERO_REWRITE_ENABLED` (default) the late group's slot is the **hero rewrite**
+   (`hero_rewrite.hero_meta`): its `tldr` and `keyTakeaways` replace memory's,
+   `masterSummary` is the `brief`, and the event adds the hero's own keys
+   (`phases/synthesis.synthesis_event`, `HERO_KEYS`): `brief` (3–5 sentences),
+   `worthItFor` and `skipIf` (≤ 20 words each; `""` when the call dropped the
+   line). `keyTakeaways` are still strings, each closing with the `[m:ss]` of the
+   moment it rests on. The keys are never `null` — absent until set, and absent
+   altogether on the synthesis path. On the synthesis path (flag off, or the
+   hero call gave none) `tldr`/`keyTakeaways` are memory's; synthesis writes
+   them only when memory left one empty, and a failed synthesis still emits the
+   event: memory's hero, empty `masterSummary`/`seoDescription`.
+3. **Corrected** (after the late group, `phases/synthesis.settle_tab_references`) —
+   the same superset again, sent only when the hero no longer reads as the last
+   one sent: the dropped-tab scrub removed a sentence naming a tab that does not
+   ship, or — on every hero-rewrite page — `readingMinutes` joined (a whole number
+   ≥ 1, counted by code over the final hero + tabs). It replaces the client's and
+   the relay's copy.
+
+A cached replay sends one superset event: the stored `meta`'s four synthesis
+fields plus the hero keys the row carries (`cached_response.resolve_synthesis`;
+older rows send the four fields only).
 
 **Merge rules** (one rule, two consumers — `filledSynthesisFields` in `@vie/types`):
 
 - An empty string or array never counts as set, so a later emission never blanks a
-  field an earlier one filled; filled fields merge field by field.
+  field an earlier one filled; filled fields merge field by field — `brief`,
+  `worthItFor`, `skipIf` and `readingMinutes` included.
 - The superset wins: once a `masterSummary` is held, an emission without one (a
   reconnect replaying the partial) is ignored.
 - Web: `handleSynthesisComplete` in `stream-event-processor.ts`. API relay
   (`stream.routes.ts` → `VideoRepository.mergeSynthesis` → `buildSynthesisMerge`):
   dotted `$set` of the filled `synthesis.*` fields; a partial is guarded by
-  `synthesis.masterSummary ∈ {null, ""}`. Re-applying either emission is idempotent.
+  `synthesis.masterSummary ∈ {null, ""}`. Re-applying any emission is idempotent.
 - Every (re-)dispatch of a row (new version, retry, stale-version regen, stall)
   first `$unset`s its `synthesis`, so a previous run's `masterSummary` can't block
   this run's partial.
