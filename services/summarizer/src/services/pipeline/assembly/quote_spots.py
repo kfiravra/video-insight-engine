@@ -26,11 +26,14 @@ def _quote_text(item: dict) -> str:
 
 def is_quote_list(data: Any) -> bool:
     """A validated quote list: every item carries a line (``quote`` / ``text``) and a
-    ``speaker`` key, and no card name of its own."""
+    ``speaker`` key, and no card name of its own — nor a ``question`` / ``answer``
+    (an interview exchange, ``podcast.qa``, whose Q and A a quote card would drop)."""
     items = [item for item in data if isinstance(item, dict)] if isinstance(data, list) else []
     return bool(items) and all(
         ("quote" in item or "text" in item)
         and "speaker" in item
+        and "question" not in item
+        and "answer" not in item
         and not (item.get("name") or item.get("title"))
         for item in items
     )

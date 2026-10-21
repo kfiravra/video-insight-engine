@@ -237,7 +237,9 @@ class TestStatedNumbersOnly:
     def test_should_ask_for_no_rest_time_the_instructor_did_not_say(self) -> None:
         exercise = slice_skeleton("fitness", ["exercises"])["exercises"][0]
 
-        assert exercise["sets"] is None and exercise["rest"].startswith("Only if the instructor")
+        # The skeleton holds no sentence a model could echo (review-p1 R13-W1);
+        # the NUMBERS line of the schema carries the only-as-stated rule.
+        assert (exercise["sets"], exercise["rest"]) == (None, None)
 
 
 # ─── Every goal a fallback can emit names the viewer's outcome ───

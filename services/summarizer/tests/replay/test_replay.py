@@ -52,7 +52,9 @@ _VIDEOS = available_cassettes()
 # assembles last.
 _TABS_ADDED_SINCE_RECORDING: dict[str, list[str]] = {
     "uC45_4nnEAI": ["frames-gallery"],
-    "T1dQhQAm8Tc": ["quiz"],
+    # output-quality p1.8: Moments are capped strictly by the §9 bands (19 min → 6), so
+    # the moment gallery no longer stands in for the frames and the filmstrip is back.
+    "T1dQhQAm8Tc": ["frames-gallery", "quiz"],
 }
 
 # Tabs the code under test no longer assembles: jMq8lEu-of0 is a recipe whose
@@ -60,7 +62,9 @@ _TABS_ADDED_SINCE_RECORDING: dict[str, list[str]] = {
 # it; with no moment gallery showing the frames, the recorded "Visual Moments"
 # filmstrip is back.
 _TABS_REMOVED_SINCE_RECORDING: dict[str, list[str]] = {
-    "jMq8lEu-of0": ["key_moments"],
+    # chef_tips: output-quality p1.6 (R6) — an info_grid never stands alone; the tips
+    # fold into the step tab that answers them.
+    "jMq8lEu-of0": ["key_moments", "chef_tips"],
 }
 
 

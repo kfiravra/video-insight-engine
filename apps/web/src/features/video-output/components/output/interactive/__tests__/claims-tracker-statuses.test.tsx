@@ -52,12 +52,43 @@ describe('ClaimsTracker statuses (D11)', () => {
     expect(screen.queryByText(/claimed by/i)).not.toBeInTheDocument();
   });
 
-  it('should read an unknown status as stated', () => {
-    expect(claimStatus(undefined)).toBe('stated');
+  it('should read a missing status as no status', () => {
+    expect(claimStatus(undefined)).toBeNull();
   });
 
   it('should accept claims without a source when the tab props are validated', () => {
     expect(parsesClaims([{ claim: 'A', status: 'stated' }, { claim: 'B', status: 'supported' }])).toBe(true);
+  });
+
+  // p1 review R9: a claim with no timestamp ships without a status — nobody could
+  // check it, so it shows no badge and counts toward no status filter.
+  describe('claim without a status', () => {
+    const claims: ClaimItem[] = [
+      { claim: 'Agents wrote 150,000 lines in August', status: 'supported', timestamp: 660 },
+      { claim: 'Ruby is a joy to write' },
+    ];
+
+    it('should accept a claim without a status when the tab props are validated', () => {
+      expect(parsesClaims([{ claim: 'A' }, { claim: 'B', status: null }])).toBe(true);
+    });
+
+    it('should badge only the claims that carry a status', () => {
+      render(<ClaimsTracker claims={claims} />);
+
+      expect(badges()).toEqual(['Supported']);
+    });
+
+    it('should count a status-less claim under All only', () => {
+      render(<ClaimsTracker claims={claims} />);
+
+      expect(screen.queryByRole('button', { name: /^Stated/ })).not.toBeInTheDocument();
+    });
+
+    it('should still list a status-less claim', () => {
+      render(<ClaimsTracker claims={claims} />);
+
+      expect(screen.getByText('Ruby is a joy to write')).toBeInTheDocument();
+    });
   });
 
   it('should reject a claim whose status is outside both vocabularies', () => {

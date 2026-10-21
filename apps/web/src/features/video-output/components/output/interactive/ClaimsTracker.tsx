@@ -34,7 +34,8 @@ function formatTimestamp(seconds: number): string {
 /**
  * ClaimsTracker — the news signature surface, and a talk's or podcast's on
  * has_claims (D11). Renders each claim with who made it and a status badge
- * saying what the video does with it (stated / supported / contested), plus an
+ * saying what the video does with it (stated / supported / contested) — none on a
+ * claim without a timestamp, which ships no status (listed under All only) — plus an
  * optional evidence line and a seek-to-timestamp button. A status filter bar
  * lets the reader isolate contested claims — the accountability lens that
  * separates a news artifact from a plain summary.
@@ -44,7 +45,10 @@ export const ClaimsTracker = memo(function ClaimsTracker({ claims, onSeek }: Cla
 
   const counts = useMemo(() => {
     const acc: Record<ClaimStatus, number> = { stated: 0, supported: 0, contested: 0 };
-    for (const c of claims) acc[claimStatus(c.status)] += 1;
+    for (const c of claims) {
+      const status = claimStatus(c.status);
+      if (status) acc[status] += 1;
+    }
     return acc;
   }, [claims]);
 
@@ -87,18 +91,20 @@ export const ClaimsTracker = memo(function ClaimsTracker({ claims, onSeek }: Cla
 
       <ul className="flex flex-col gap-3" aria-label="Tracked claims">
         {visible.map((claim, i) => {
-          const meta = STATUS_META[claimStatus(claim.status)];
-          const { Icon } = meta;
+          const status = claimStatus(claim.status);
+          const meta = status ? STATUS_META[status] : null;
           return (
             <FadeIn key={`${claim.claim}-${i}`} index={i}>
               <li>
                 <GlassCard className="flex flex-col gap-2.5 p-4">
                   <div className="flex items-start justify-between gap-3">
                     <p className="text-base font-medium leading-snug text-foreground">{claim.claim}</p>
-                    <Badge variant={meta.variant} className="shrink-0">
-                      <Icon className="size-3 shrink-0" aria-hidden="true" />
-                      {meta.label}
-                    </Badge>
+                    {meta && (
+                      <Badge variant={meta.variant} className="shrink-0">
+                        <meta.Icon className="size-3 shrink-0" aria-hidden="true" />
+                        {meta.label}
+                      </Badge>
+                    )}
                   </div>
 
                   {/* The verification evidence carries the accountability value

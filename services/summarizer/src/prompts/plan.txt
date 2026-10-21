@@ -35,8 +35,9 @@ transcript actually contains.
 
 Step 4 — Design 3–6 tabs, only tabs the content supports, using the component toolkit below.
 - First tab = the answer tab: what the viewer came for, readable as a list without a click
-  (spot_explorer, checklist, step_player, comparison, claims_tracker, tier_list). Never
-  concept_canvas, step_flow_canvas, video_filmstrip or info_grid first; never an overview.
+  (spot_explorer, checklist, step_player, comparison, claims_tracker, tier_list — and
+  step_flow_canvas when the steps are the answer: it opens as a list). Never concept_canvas,
+  video_filmstrip or info_grid first; never an overview.
 - Every tab needs a "goal" — the viewer-outcome line of <goal_rule>, at most 15 words — and
   a "brief" telling extraction what to pull for it (see <brief_rules>)
 - Labels name the content, never a count ("🛒 Ingredients", not "🛒 14 Ingredients") —
@@ -186,7 +187,7 @@ Video: "React Server Components Explained" (25 min, tech explainer with code on 
   "tabs": [
     {"id": "code", "label": "💻 Code", "emoji": "💻", "component": "code_playground", "dataSource": "tech.snippets", "goal": "After this you can paste each snippet into your editor; each builds on the last.", "brief": {"what": "every snippet verbatim with its filename and why it is written that way; rebuild functions split across screen shares", "where": ["4:10-21:30"], "expect": 8}},
     {"id": "concepts", "label": "🧠 Concepts", "emoji": "🧠", "component": "concept_canvas", "dataSource": "learning.concepts", "goal": "After this you know how the server/client boundary, streaming and Suspense fit together.", "brief": {"what": "each RSC concept with a one-line definition, a timestamp and the concepts it connects to — server/client boundary, streaming, Suspense, serialization", "where": ["1:00-4:10", "12:00-15:30"], "expect": 5}},
-    {"id": "moments", "label": "🎬 Moments", "emoji": "🎬", "component": "moment_track", "dataSource": "learning.timestamps", "goal": "After this you can jump to each demo knowing what it proved.", "brief": {"what": "one beat per three minutes: what each live-coding demo established, with the line; never a chapter title", "where": ["0:00-24:30"], "expect": 8}},
+    {"id": "moments", "label": "🎬 Moments", "emoji": "🎬", "component": "moment_track", "dataSource": "learning.timestamps", "goal": "After this you can jump to each demo knowing what it proved.", "brief": {"what": "one beat per four minutes: what each live-coding demo established, with the line; never a chapter title", "where": ["0:00-24:30"], "expect": 8}},
     {"id": "quiz", "label": "✅ Test Yourself", "emoji": "✅", "component": "quiz_arena", "dataSource": "enrichment.quiz", "goal": "After this you know whether you can place a component on the server or client.", "brief": {"what": "checks on where a component runs (server or client) and why, each answerable at a timestamp", "where": ["1:00-24:30"], "expect": 5}}
   ]
 }
@@ -321,6 +322,31 @@ Video: "7-Day Tokyo Trip — Packing + Itinerary" (18 min, travel)
 </example>
 
 <example>
+Video: "20-Minute HIIT — Full Body" (22 min, fitness — the exercises are the timeline, so no Moments tab)
+{
+  "contentTags": ["fitness"],
+  "modifiers": [],
+  "primaryTag": "fitness",
+  "confidence": 0.96,
+  "userGoal": "Follow the HIIT workout end-to-end with no scrubbing",
+  "corePromise": "Do the 20-minute HIIT workout with form cues and rest timers handled for you",
+  "uniqueAngle": "Coach corrects form on camera for every move — the frames show what right looks like",
+  "identity": {"creatorType": "fitness coach", "tone": "enthusiastic-fast"},
+  "extractionGuidance": {
+    "primaryFocus": "Every exercise with its sets, reps or duration and rest exactly as the coach says them, form cues and timestamp",
+    "watchOutFor": "A rest or rep count the coach never states stays null; modifications announced verbally (\"easier version: on your knees\")"
+  },
+  "terms": ["burpee", "mountain climber", "Tabata = 20 s on, 10 s off"],
+  "evidence": {"has_steps": false, "has_ingredients": false, "has_materials": false, "has_code": false, "has_drills": true, "has_comparison": false, "has_ranking": false, "has_lineup": false, "has_claims": false, "has_lyrics": false, "has_itinerary": false, "has_packing": false, "is_learnable": false},
+  "tabs": [
+    {"id": "exercises", "label": "💪 Exercises", "emoji": "💪", "component": "workout_room", "dataSource": "fitness.exercises", "goal": "After this you can run the whole workout, sets and rests counted for you.", "brief": {"what": "every exercise with sets, reps or duration and rest as the coach says them, form cues and the easier modification", "where": ["2:00-20:30"], "expect": 12}},
+    {"id": "coach_tips", "label": "🧭 Coach's Tips", "emoji": "🧭", "component": "spot_explorer", "dataSource": "fitness.tips", "goal": "After this you know the form and breathing rules and why each one protects you.", "brief": {"what": "the form, breathing and pacing rules with the reason the coach gives for each", "where": ["0:30-2:00", "20:30-21:40"], "expect": 4}},
+    {"id": "form_checks", "label": "🎞️ Form Checks", "emoji": "🎞️", "component": "video_filmstrip", "dataSource": "frames", "goal": "After this you have seen what right form looks like for each move.", "brief": {"what": "the on-camera form corrections — wrong and right side by side for each exercise", "where": ["2:00-20:30"], "expect": 8}}
+  ]
+}
+</example>
+
+<example>
 Video: "OP-29 Booster Box Opening — Chasing the Alt Art!" (26 min, gaming, unboxing)
 {
   "contentTags": ["gaming"],
@@ -340,7 +366,7 @@ Video: "OP-29 Booster Box Opening — Chasing the Alt Art!" (26 min, gaming, unb
   "tabs": [
     {"id": "pulls", "label": "🃏 The Pulls", "emoji": "🃏", "component": "tier_list", "dataSource": "gaming.rankings", "goal": "After this you know which pulls mattered and why each sits in its tier.", "brief": {"what": "every notable pulled card: name as item, rarity or value bracket as tier, why it matters as reason", "where": ["3:00-24:30"], "expect": 20}},
     {"id": "highlights", "label": "🎬 Pull Moments", "emoji": "🎬", "component": "moment_track", "dataSource": "gaming.highlights", "goal": "After this you can jump to each big reveal and see the card held up.", "brief": {"what": "each big reveal: the card, his reaction in a line, with the card held up to camera", "where": ["3:00-24:30"], "expect": 10}},
-    {"id": "set_facts", "label": "📋 Set Facts", "emoji": "📋", "component": "info_grid", "dataSource": "gaming.loadout", "goal": "After this you know the box odds and the chase cards before you buy.", "brief": {"what": "box odds, set details and the chase cards he names, one short cell each", "where": ["0:20-3:00"], "expect": 6}}
+    {"id": "set_facts", "label": "🎯 Set & Chase Cards", "emoji": "🎯", "component": "spot_explorer", "dataSource": "gaming.loadout", "goal": "After this you know the box odds and the chase cards before you buy.", "brief": {"what": "the chase cards and box odds he names, each with why it matters and the market value when he gives it", "where": ["0:20-3:00"], "expect": 6}}
   ]
 }
 </example>
@@ -368,8 +394,9 @@ Per-domain guidance (choices, not requirements):
 - language: flash_deck (vocabulary) when the video teaches 3+ words with definitions;
   step_player for drills.
 - science: spot_explorer on the key facts or ideas first; concept_canvas as a later tab when
-  2+ concepts come WITH connections; flash_deck only for flat concept lists with no
-  connections. Add moment_track if the video has demonstrations.
+  the concepts come WITH connections (the toolkit's density table sets the minimum);
+  flash_deck only for flat concept lists with no connections. Add moment_track if the video
+  has demonstrations.
 - learning: the answer tab is the argument — spot_explorer on learning.keyIdeas (see
   <spoken_word>); moment_track for the beats (what was established at each, never chapter
   navigation); concept_canvas only after the list tab and only when the video TEACHES how
@@ -385,8 +412,8 @@ Per-domain guidance (choices, not requirements):
 - news: claims_tracker is the news signature — every factual claim + who said it +
   stated/supported/contested status (what the report does with it, never our verdict); it
   makes a news artifact accountable rather than a summary.
-  Use moment_track for the story timeline, spot_explorer for people/orgs, info_grid (short
-  cells) for background context.
+  Use moment_track for the story timeline, spot_explorer for people/orgs; background context
+  is short lookup cells folded into the tab that answers (info_grid never stands alone).
 - gaming: tier_list when the video ranks 4+ items (characters, weapons, maps, pulled cards) —
   a draggable S/A/B/C/D ranking. Use moment_track for highlight plays, checklist for the
   build/loadout, and step_flow_canvas for a multi-stage walkthrough ({step_flow_threshold}+ stages).
@@ -405,7 +432,7 @@ flash_deck restrictions:
   the domain isn't "learning". Concepts in science, tech terms, language vocabulary all qualify.
 - Maximum 1 flash_deck per video.
 - Never use flash_deck for: tips, features, analysis, trivia, narrative moments. Those go to
-  info_grid (browse) or moment_track (jump).
+  spot_explorer (read, with the why) or moment_track (jump).
 
 quiz_arena restrictions:
 - quiz_arena tabs are for content the viewer studies (is_learnable=true): learning, language,
@@ -436,18 +463,18 @@ Detect intent from video title and content structure:
 ┌──────────┬─────────────────────────────────┬──────────────────────────────────┬───────────────────────────┐
 │ Domain   │ DO something                    │ LEARN something                  │ DECIDE something          │
 ├──────────┼─────────────────────────────────┼──────────────────────────────────┼───────────────────────────┤
-│ food     │ step_player + checklist         │ info_grid + flash_deck           │ spot_explorer (methods)   │
-│ project  │ step_flow_canvas + checklist    │ info_grid (techniques)           │ comparison (skill lvls)   │
+│ food     │ step_player + checklist         │ spot_explorer + flash_deck       │ spot_explorer (methods)   │
+│ project  │ step_flow_canvas + checklist    │ spot_explorer (techniques)       │ comparison (skill lvls)   │
 │ tech     │ code_playground (guided)        │ concept_canvas + quiz_arena      │ comparison + ReviewSummary│
-│ review   │ —                               │ info_grid (specs)                │ comparison_radar (4+ axes)│
-│ travel   │ spot_explorer + packing_mission │ info_grid + video_filmstrip      │ comparison (routes)       │
+│ review   │ —                               │ specs folded into comparison     │ comparison_radar (4+ axes)│
+│ travel   │ spot_explorer + packing_mission │ spot_explorer + video_filmstrip  │ comparison (routes)       │
 │ fitness  │ workout_room                    │ flash_deck (form cues)           │ comparison (programs)     │
-│ music    │ lyrics_karaoke                  │ info_grid (theory)               │ —                         │
+│ music    │ lyrics_karaoke                  │ spot_explorer (theory)           │ —                         │
 │ learning │ quiz_arena / step_player        │ spot_explorer (key ideas)        │ comparison                │
 │ language │ step_player (drills)            │ flash_deck (vocabulary)          │ spot_explorer (phrases)   │
 │ science  │ step_player (labs)              │ concept_canvas + quiz_arena      │ comparison (theories)     │
 │ podcast  │ moment_track (segments)         │ spot_explorer (positions)        │ spot_explorer (guests)    │
-│ news     │ moment_track (timeline)         │ info_grid (context)              │ claims_tracker (claims)   │
+│ news     │ moment_track (timeline)         │ spot_explorer (people, orgs)     │ claims_tracker (claims)   │
 │ gaming   │ step_flow_canvas (walkthrough)  │ checklist (loadout)              │ tier_list (rankings)      │
 │ sport    │ moment_track (match events)     │ formation_diagram (lineup)       │ comparison (stat compare) │
 └──────────┴─────────────────────────────────┴──────────────────────────────────┴───────────────────────────┘
@@ -509,7 +536,8 @@ A talk, a lecture, a podcast or an interview is an argument, and reading it is t
   (podcast.segments: what was concluded, with the speaker); an interview adds podcast.qa
   (the question, who answered, the answer in a line).
 - Asks and calls to action → checklist on learning.takeaways, only when the video has 3+.
-- concept_canvas only as a later tab, only when the video teaches how 6+ concepts relate.
+- concept_canvas only as a later tab, only when the video teaches how the concepts relate
+  (the toolkit's density table sets the minimum).
 - Quotes ride on the items (one per item, at most 25 words, verbatim) — no quote tab.
 - No Moments tab when the steps ARE the timeline (a recipe, a workout, a step tutorial).
 </spoken_word>
@@ -546,9 +574,12 @@ and the last ten minutes of the video must be represented:
 | 45–90 min | 12–16, grouped by section | 12–18 (one per 5 min)    | 8    |
 | > 90 min  | 16–20, grouped            | one per 6 min, by hour   | 8    |
 
-Steps, ingredients, exercises, snippets, claims: exactly as many as the video has. expect never
-exceeds the dataSource's cap in <extraction_caps>; when the video has more, keep expect at the
-cap and say in brief.what how to choose (by salience, by section).
+Key ideas / positions: the table is a floor, not a budget — expect = every distinct claim you
+counted, up to the cap in <extraction_caps>; the argument is never sampled (assembly ranks what
+lies beyond the table). Moments and quiz: strictly the table. Steps, ingredients, exercises,
+snippets, claims: exactly as many as the video has. expect never exceeds the dataSource's cap in
+<extraction_caps>; when any list other than key ideas has more, keep expect at the cap and say
+in brief.what how to choose (by salience, by section).
 </sizing>
 
 <extraction_caps>
@@ -568,14 +599,16 @@ no real pairs survive. Hitting the 3-row minimum is YOUR responsibility — the 
 will ship a 1-row comparison if that's all you give it, and a 1-row table is a bad UX.
 
 NEVER use comparison for:
-- Term-and-definition lists (use info_grid for browsable lookup, flash_deck for memorization).
+- Term-and-definition lists (use flash_deck for memorization, concept_canvas when they connect).
 - "Here are 29 concepts" — that's a glossary, not a comparison.
-- Pros without a counterpart (use info_grid).
+- Pros without a counterpart (use spot_explorer — each with its why and a timestamp).
 - Reviews where only one product is examined — fold the conclusion into the `comparison` tab's ReviewSummary header (pass `verdict` data through extraction.review.verdict).
 
 If the video introduces many concepts WITHOUT explicitly weighing them against alternatives,
-the right component is info_grid (browsable cards) or flash_deck (memorization). Reserve
-comparison for moments where the speaker explicitly says "X is better than Y because…".
+the right component is spot_explorer (a claim, its why and a timestamp per item) or flash_deck
+(memorization); short lookup cells (specs, odds, dates) live inside the tab that answers them,
+never in a standalone info_grid. Reserve comparison for moments where the speaker explicitly
+says "X is better than Y because…".
 </comparison_routing>
 
 <density_gates>

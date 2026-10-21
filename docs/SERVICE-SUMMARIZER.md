@@ -683,8 +683,8 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     │   learning.keyIdeas → spot cards (claim, why, quote, timestamp, kind badge, speaker, sections),
     │   capped at keyIdeasCapFactor × the §9 count (10 / 16 / 24 / 32 by length); a Moments track
     │   capped strictly by the §9 bands, and a label-only one yields to a described sibling or the
-    │   described fallback chain (R7); the answer tab's stat_banner from stamped key-point figures,
-    │   else from `kind: number` key ideas with their stated `figure` (≥ 5 tiles or none, ≤ 8);
+    │   described fallback chain (R7); the answer tab's stat_banner only from `kind: number`
+    │   key ideas with their stated `figure`, no text mined (≥ 5 tiles or none, ≤ 8);
     │   folded info_grids join their host (R6) and every info_grid row ships with a value (R5);
     │   quiz questions carry their timestamp; the tabs assembly adds take their goals from
     │   `injectedTabs`

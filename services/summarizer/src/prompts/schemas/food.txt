@@ -23,6 +23,7 @@ Extract a complete, followable recipe.
     }
   ],
 > UI: Ingredients → ChecklistInteractive with progress bar. Fill displayAmount + unit for readable labels, notes for prep sub-text. Group field creates collapsible sections.
+> AMOUNTS: amount, displayAmount and unit only as the chef states them, else null — never a typical quantity; no amount said → amount null, displayAmount "".
   "steps": [
     {
       "number": 1,
@@ -69,7 +70,7 @@ Extract a complete, followable recipe.
     {"name": "pecorino romano", "amount": 1.5, "displayAmount": "1 1/2", "unit": "cups", "group": "For the sauce", "notes": "finely grated"}
   ],
   "steps": [
-    {"number": 1, "instruction": "Render guanciale in a cold pan over medium heat for 8-10 minutes until crispy and fat is golden", "duration": "10 min", "tips": "Start cold — the fat renders evenly without burning", "timestamp": 145}
+    {"number": 1, "instruction": "Render guanciale in a cold pan over medium heat for 8-10 minutes until crispy and fat is golden", "duration": "8-10 min", "tips": "Start cold — the fat renders evenly without burning", "timestamp": 145}
   ]
 }
 
@@ -78,7 +79,7 @@ INGREDIENT AMOUNT RULES:
 - Convert fractions: 1/2 → amount: 0.5, displayAmount: "1/2". 1 1/2 → amount: 1.5, displayAmount: "1 1/2"
 - Ranges: use midpoint for amount. "3-4 cloves" → amount: 3.5, displayAmount: "3-4"
 - "a pinch" / "to taste" / "liberally" → amount: 0, displayAmount: the chef's words ("a pinch", "to taste", "liberally")
-- No amount said → amount: 0, displayAmount: "" — never "amount not stated"
+- No amount said → amount: null, displayAmount: "" — never "amount not stated", never a typical quantity
 - Integer amounts are still floats: "2 cups" → amount: 2.0, displayAmount: "2"
 
 RULES:

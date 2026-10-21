@@ -19,9 +19,10 @@ function isLegacyStatus(value: string): value is LegacyClaimStatus {
 }
 
 /** A claim's status in D11's words: a legacy word is mapped, anything unknown is
- *  "stated" — the non-asserting word. */
-export function claimStatus(status: ClaimItem['status'] | undefined): ClaimStatus {
-  if (!status) return 'stated';
+ *  "stated" — the non-asserting word. No status → null: a claim without a timestamp
+ *  ships none (nobody could check it), so it gets no badge and no filter count. */
+export function claimStatus(status: ClaimItem['status']): ClaimStatus | null {
+  if (!status) return null;
   if (isClaimStatus(status)) return status;
   return isLegacyStatus(status) ? LEGACY_STATUS[status] : 'stated';
 }

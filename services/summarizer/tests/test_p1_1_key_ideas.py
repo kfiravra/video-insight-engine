@@ -1,9 +1,10 @@
 """p1.1 — ``learning.keyIdeas`` (D10): the argued idea of a talk, lecture or podcast.
 
 Item shape ``{claim, why, quote, timestamp, section, kind}``, kind one of
-thesis | argument | announcement | number | story | ask; registry cap 20 and
-components ``[spot_explorer, stat_banner]``. Assembly ships the ideas as spot
-cards — claim → name, why → description, quote, timestamp, section → the spot
+thesis | argument | announcement | number | story | ask; registry cap 32 (the 2×
+§9 ceiling of the longest band — p1 review) and components
+``[spot_explorer, stat_banner]``. Assembly ships the ideas as spot cards —
+claim → name, why → description, quote, timestamp, section → the spot
 sections, kind → the category badge — and the answer tab's numbers strip reads
 their stamped figures. keyPoints stays for explainers.
 """
@@ -140,7 +141,7 @@ class TestKeyIdeaRegistry:
         assert spec is not None
         assert (spec["components"], spec["cap"], spec["kind"]) == (
             ["spot_explorer", "stat_banner"],
-            20,
+            32,
             "list",
         )
 
@@ -156,12 +157,14 @@ class TestKeyIdeaRegistry:
 
         assert {"keyPoints", "keyIdeas"} <= set(skeleton)
 
-    def test_should_cap_key_ideas_at_twenty_when_the_plan_reads_the_caps(self) -> None:
+    def test_should_cap_key_ideas_at_the_two_times_ceiling_when_the_plan_reads_the_caps(
+        self,
+    ) -> None:
         learning = next(
             ln for ln in render_extraction_caps().splitlines() if ln.startswith("- learning:")
         )
 
-        assert "keyIdeas ≤ 20" in learning
+        assert "keyIdeas ≤ 32" in learning
 
 
 # ─── Assembly ───

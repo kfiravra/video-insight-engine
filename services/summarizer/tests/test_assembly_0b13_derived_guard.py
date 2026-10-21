@@ -284,7 +284,7 @@ class TestTiers:
 
 
 class TestClaimStatus:
-    def test_should_downgrade_an_unanchored_verified_status_to_stated(self):
+    def test_should_show_no_status_on_an_unanchored_claim(self):
         data = [
             {"claim": "4 failing states", "status": "verified"},
             {"claim": "3 wars", "status": "disputed", "timestamp": 2},
@@ -292,8 +292,9 @@ class TestClaimStatus:
 
         out = assemble_claims_tracker({}, data, {}, None)
 
-        # D11's words since output-quality 1.4: the legacy "disputed" reads "contested".
-        assert [c["status"] for c in out["claims"]] == ["stated", "contested"]
+        # D11's words since output-quality 1.4: the legacy "disputed" reads "contested";
+        # an unanchored claim ships without a status (phase-1 review R9).
+        assert [c.get("status") for c in out["claims"]] == [None, "contested"]
 
     def test_should_ship_the_anchor_that_let_a_status_through(self):
         # Any anchor key lets a status through; that second is the reader's seek point.
@@ -436,14 +437,23 @@ class TestRadarAxes:
 
 class TestStatBannerAnchor:
     def test_should_skip_unanchored_figures(self):
-        points = [
-            {"title": f"{i + 1}0 million users", "detail": "d", "timestamp": 60 * i}
+        # Only the figures the model stated on its number key ideas tile (phase-1 review).
+        ideas = [
+            {
+                "claim": f"Claim {i}",
+                "why": "w",
+                "kind": "number",
+                "figure": {"value": f"{i + 1}0 million", "label": "users"},
+                "timestamp": 60 * i,
+            }
             for i in range(5)
         ]
-        points.append({"title": "99% of the time", "detail": "d"})
+        ideas.append(
+            {"claim": "c", "why": "w", "kind": "number", "figure": {"value": "99%", "label": "x"}}
+        )
         tab = {"id": "answer", "component": "spot_explorer", "props": {"spots": []}}
 
-        extraction = {"learning": {"keyPoints": points}}
+        extraction = {"learning": {"keyIdeas": ideas}}
 
         attachments = attach_secondaries(
             tab, extraction, None, None, "learning", is_answer_tab=True

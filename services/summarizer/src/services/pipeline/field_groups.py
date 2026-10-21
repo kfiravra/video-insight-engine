@@ -3,11 +3,11 @@
 ``build_groups`` buckets the text fields by domain (a modifier is its own
 domain), splits a bucket by field once Σ weight × expect exceeds
 ``groupOutputBudget`` (a slice under ``minGroupOutput`` rides with the one
-before it), keeps at most ``maxTextGroups`` text groups and orders
-them by the first tab they serve, the first planned tab's group first (text1 =
-the warm-up call). Every other field — the ``waitsForVisual`` ones — forms ONE
-visual group; ``visual_group`` re-cuts it at frames-done from what no fired
-group asked for. Pure; the fields come from ``field_requests``.
+before it — a small first slice with the one after it), keeps at most
+``maxTextGroups`` text groups and orders them by the first tab they serve, the
+first planned tab's group first (text1 = the warm-up call). Every other field —
+the ``waitsForVisual`` ones — forms ONE visual group; ``visual_group`` re-cuts
+it at frames-done from what no fired group asked for. Pure; the fields come from ``field_requests``.
 """
 
 from __future__ import annotations
@@ -59,15 +59,24 @@ def _split_by_budget(fields: Sequence[FieldRequest], budget: int) -> list[list[F
     return slices
 
 
+def _slice_cost(piece: Sequence[FieldRequest]) -> int:
+    return sum(f.est_output_tokens for f in piece)
+
+
 def _absorb_small(slices: list[list[FieldRequest]], minimum: int) -> list[list[FieldRequest]]:
     """A slice estimated under ``minimum`` tokens joins the previous one (L16): its own
-    call would re-read the cached transcript for a few hundred tokens of answer."""
+    call would re-read the cached transcript for a few hundred tokens of answer. A
+    small FIRST slice has no previous one, so it leads the next (plan order kept) —
+    the call count must not depend on which field the plan names first."""
     kept: list[list[FieldRequest]] = []
     for piece in slices:
-        if kept and sum(f.est_output_tokens for f in piece) < minimum:
+        if kept and _slice_cost(piece) < minimum:
             kept[-1].extend(piece)
         else:
             kept.append(piece)
+    if len(kept) > 1 and _slice_cost(kept[0]) < minimum:
+        first = kept.pop(0)
+        kept[0] = [*first, *kept[0]]
     return kept
 
 

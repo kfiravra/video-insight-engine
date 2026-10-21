@@ -190,12 +190,13 @@ class TestClaimsAssembly:
         assert props is not None
         assert [c["status"] for c in props["claims"]] == ["supported", "contested", "stated"]
 
-    def test_should_state_a_status_the_video_cannot_be_checked_at(self) -> None:
+    def test_should_show_no_status_the_video_cannot_be_checked_at(self) -> None:
+        # Phase-1 review R9: an unanchored claim ships without a status, not as "stated".
         unanchored = [{"claim": "a", "status": "supported"}, {"claim": "b", "status": "contested"}]
 
         props = assemble_claims_tracker({}, unanchored, {}, None)
 
-        assert props is not None and {c["status"] for c in props["claims"]} == {"stated"}
+        assert props is not None and all("status" not in c for c in props["claims"])
 
     def test_should_omit_the_source_when_the_video_names_no_one(self) -> None:
         props = assemble_claims_tracker({}, _CLAIMS, {}, None)

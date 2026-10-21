@@ -76,6 +76,9 @@ MIN_TAKEAWAYS = 3
 # Kfir 2026-10-21): up to 15 min → 3, up to 45 min → 5, longer → 7.
 TAKEAWAYS_BY_DURATION: tuple[tuple[int, int], ...] = ((900, 3), (2700, 5))
 MAX_TAKEAWAYS = 7
+# A video of unknown length is sized as one of the middle band (up to 45 min):
+# 5 takeaways here, and the quiz's count for the same length (enrichment.py).
+UNKNOWN_LENGTH_SECONDS = TAKEAWAYS_BY_DURATION[-1][0]
 
 _WHITESPACE_RE = re.compile(r"\s+")
 _BOOL_STRINGS: dict[str, bool] = {"true": True, "false": False}
@@ -284,13 +287,32 @@ def _drop_stamp_past_the_end(text: str, duration: int | None) -> str:
 
 
 def takeaway_count(duration: int | None) -> int:
-    """How many takeaways the hero carries for a video of ``duration`` seconds (3 / 5 / 7)."""
+    """How many takeaways the hero carries for a video of ``duration`` seconds (3 / 5 / 7);
+    an unknown length counts as ``UNKNOWN_LENGTH_SECONDS``."""
     if duration is None:
-        return TAKEAWAYS_BY_DURATION[-1][1]
+        duration = UNKNOWN_LENGTH_SECONDS
     for limit, count in TAKEAWAYS_BY_DURATION:
         if duration <= limit:
             return count
     return MAX_TAKEAWAYS
+
+
+def _cut_stamps_past_the_end(raw: list[object], duration: int | None) -> list[str]:
+    """Each item collapsed (``""`` when not text), a closing stamp past the end cut —
+    logged with the cut stamps, so a model that stamps past the end is visible."""
+    texts: list[str] = []
+    cut: list[str] = []
+    for item in raw:
+        text = _collapse(item) if isinstance(item, str) else ""
+        kept = _drop_stamp_past_the_end(text, duration)
+        if kept != text:
+            cut.append(text[len(kept) :].strip())
+        texts.append(kept)
+    if cut:
+        logger.warning(
+            "Takeaways: cut %d stamp(s) past the %ss end: %s", len(cut), duration, ", ".join(cut)
+        )
+    return texts
 
 
 def repair_takeaways(raw: object, duration: int | None = None) -> list[str]:
@@ -303,8 +325,7 @@ def repair_takeaways(raw: object, duration: int | None = None) -> list[str]:
         return []
     takeaways: list[str] = []
     seen: set[str] = set()
-    for item in raw:
-        text = _drop_stamp_past_the_end(_collapse(item), duration) if isinstance(item, str) else ""
+    for text in _cut_stamps_past_the_end(raw, duration):
         if text and text.casefold() not in seen:
             seen.add(text.casefold())
             takeaways.append(text)

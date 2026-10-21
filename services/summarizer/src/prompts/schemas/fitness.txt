@@ -17,8 +17,8 @@ Extract a complete, followable workout plan.
       "name": "Exact exercise name",
       "emoji": "matching emoji",
       "sets": null,
-      "reps": "As the instructor says it (\"10\", \"30 seconds\") — only if stated, else null",
-      "duration": "Only if the instructor states it, else null",
+      "reps": null,
+      "duration": null,
       "rest": null,
       "difficulty": null,
       "formCues": ["Keep elbows at 45 degrees", "Squeeze at the top"],
@@ -35,9 +35,9 @@ Extract a complete, followable workout plan.
       "name": "Exact exercise name as the instructor says it",
       "emoji": "matching emoji",
       "sets": null,
-      "reps": "As the instructor says it (\"8-12\") — only if stated, else null",
+      "reps": null,
       "duration": null,
-      "rest": "Only if the instructor states it (\"60 seconds\"), else null",
+      "rest": null,
       "difficulty": "beginner | intermediate | advanced",
       "formCues": ["Exact form cue from the instructor"],
       "modifications": [],
@@ -45,7 +45,7 @@ Extract a complete, followable workout plan.
     }
   ],
 > UI: Each exercise → ExerciseInteractive card with set tracker. Fill formCues for expandable detail, modifications for alternatives, rest for timer.
-> NUMBERS: sets, reps, duration, rest, the workout's duration and calories only as the instructor states them for THAT exercise or workout — never a typical value, never one carried over from another exercise; not stated → null.
+> NUMBERS: sets, reps, duration, rest, the workout's duration and calories only as the instructor states them for THAT exercise or workout (reps and rest as said: "8-12", "60 seconds") — never a typical value, never one carried over from another exercise; only if stated, else null.
   "cooldown": [],
   "timer": {
     "intervals": [

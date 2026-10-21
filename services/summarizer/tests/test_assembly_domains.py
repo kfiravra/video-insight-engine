@@ -165,9 +165,10 @@ class TestNewsAssembly:
         assert out["meta"]["primaryTag"] == "news"
         claims_tab = next(t for t in out["tabs"] if t["component"] == "claims_tracker")
         assert len(claims_tab["props"]["claims"]) == 3
-        statuses = {c["status"] for c in claims_tab["props"]["claims"]}
-        # The stored pre-1.4 words read in D11's vocabulary (verified → supported, …).
-        assert statuses == {"contested", "supported", "stated"}
+        statuses = {c.get("status") for c in claims_tab["props"]["claims"]}
+        # The stored pre-1.4 words read in D11's vocabulary (verified → supported, …);
+        # the unanchored "context" claim shows no status (phase-1 review R9).
+        assert statuses == {"contested", "supported", None}
 
 
 class TestGamingAssembly:

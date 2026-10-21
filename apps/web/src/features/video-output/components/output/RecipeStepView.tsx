@@ -366,9 +366,13 @@ function StudyQuestion({ question, forceRevealed, onSeek }: StudyQuestionProps) 
               {question.explanation && (
                 <div className="flex items-start gap-2 text-sm text-info bg-info/5 rounded-lg px-3 py-2">
                   <Lightbulb className="h-4 w-4 shrink-0 mt-0.5" aria-hidden="true" />
-                  {/* Same seek chips as the quiz tab: each "(m:ss)" in the explanation jumps the video. */}
+                  {/* Same seek chips as the quiz tab: each "(m:ss)" in the explanation jumps the
+                      video, checked against the question's timestamp; "Watch this part" below
+                      seeks to the timestamp itself, so no trailing chip repeats it. */}
                   <QuizExplanation
                     text={question.explanation}
+                    timestamp={question.timestamp}
+                    stampChip={false}
                     onSeek={onSeek}
                     className="min-w-0 leading-5 text-info"
                   />

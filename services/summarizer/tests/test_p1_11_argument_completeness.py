@@ -47,12 +47,16 @@ _MEASURED_RULE = (
 _ARGUMENT_RULE = (
     "Arguments the same way: every distinct claim, its reasoning and the sentence that "
     "carries it — never merge two claims into one, never skip the last 10 minutes (the close "
-    "is where a talk lands its ask and a conversation its verdict)."
+    "is where a talk lands its ask and a conversation its verdict); within the tab's cap — "
+    "when the talk argues more claims than it allows, keep the ones the speaker weighs most, "
+    "the close included."
 )
+# One D13 wording, shared byte for byte with quality_rules.txt (review-p1 R5-W2).
 _NUMBERS_RULE = (
-    "Never invent a number: a duration, rest time, quantity, count or score the speaker does "
-    "not state stays null — complete means every item the transcript supports, never a figure "
-    "it does not."
+    "Never invent a number: a duration, rest time, quantity, count or score the speaker did "
+    'not state stays null; a text field keeps the words as said ("give it a sec" stays '
+    '"give it a sec", never "rest 10 minutes"). Complete means every item the transcript '
+    "supports, never a figure it does not."
 )
 _TALK_OPEN = '<argument_example field="learning.keyIdeas" primary="learning">'
 _PODCAST_OPEN = '<argument_example field="learning.keyIdeas" primary="podcast">'
@@ -63,7 +67,10 @@ _S01_QUOTE = (
 _S02_QUOTE = "don't start thinking about the risk start thinking about the goals"
 _KEY_IDEA_KEYS = {"claim", "why", "quote", "timestamp", "section", "kind"}
 _KINDS = {"thesis", "argument", "announcement", "number", "story", "ask"}
-_NO_INVENTION = "Never state a duration, rest time, quantity or number the speaker did not say"
+_NO_INVENTION = (
+    "Never invent a number: a duration, rest time, quantity, count or score the speaker did "
+    "not state stays null; a text field keeps the words as said"
+)
 # Retired names the stale map carried (L15) — none may survive in either path.
 _RETIRED = ["FlashDeck", "CodeExplorer", "ExerciseTracker", "Verdict (score ring", "MomentTrack"]
 # A renderer id (component-registry.tsx) the registry's component list gains with 1.1/1.2.

@@ -31,6 +31,7 @@ import pytest
 from pydantic import BaseModel
 
 from src.models import domain_types as dt
+from src.models import pipeline_types as pt
 from src.models import vie_response_v2 as v2
 from src.models.idea_types import KeyIdeaFigure
 
@@ -83,10 +84,11 @@ def _strip_comments(block: str) -> str:
 
 
 @lru_cache(maxsize=1)
-def _parse_interfaces() -> dict[str, list[str]]:
-    """Parse every `export interface` into {name: [own+inherited field names]}."""
+def flat_interface_bodies() -> dict[str, tuple[list[str], str]]:
+    """Every `export interface` → (its bases, its body with comments and nested
+    object-literal / generic / tuple bodies dropped — the top-level members only)."""
     src = _ts_source()
-    raw: dict[str, tuple[list[str], list[str]]] = {}
+    bodies: dict[str, tuple[list[str], str]] = {}
 
     for match in _INTERFACE_RE.finditer(src):
         name = match.group(1)
@@ -109,8 +111,17 @@ def _parse_interfaces() -> dict[str, list[str]]:
                 depth2 -= 1
             elif depth2 == 0:
                 flat.append(ch)
-        fields = _FIELD_RE.findall("".join(flat))
-        raw[name] = (bases, fields)
+        bodies[name] = (bases, "".join(flat))
+    return bodies
+
+
+@lru_cache(maxsize=1)
+def _parse_interfaces() -> dict[str, list[str]]:
+    """Parse every `export interface` into {name: [own+inherited field names]}."""
+    raw: dict[str, tuple[list[str], list[str]]] = {
+        name: (bases, _FIELD_RE.findall(flat))
+        for name, (bases, flat) in flat_interface_bodies().items()
+    }
 
     def resolve(name: str, seen: frozenset[str] = frozenset()) -> list[str]:
         if name not in raw or name in seen:
@@ -275,6 +286,8 @@ ITEM_MAPPINGS = [
     Mapping("SportStatComparison", dt.SportStatComparison),
     Mapping("NarrativeKeyMoment", dt.NarrativeKeyMoment),
     Mapping("NarrativeQuote", dt.NarrativeQuote),
+    # The quiz enrichment's item — its answer timestamp (output-quality 1.13).
+    Mapping("QuizQuestion", pt.QuizQuestion),
 ]
 
 # Domain envelopes: assert top-level field coverage (children covered above).
@@ -289,6 +302,7 @@ DOMAIN_MAPPINGS = [
     Mapping("TechData", dt.TechData),
     Mapping("TechSetup", dt.TechSetup),
     Mapping("FitnessData", dt.FitnessData),
+    Mapping("FitnessMeta", dt.FitnessMeta),
     Mapping("MusicData", dt.MusicData),
     Mapping(
         "LearningData",

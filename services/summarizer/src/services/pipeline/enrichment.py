@@ -19,6 +19,7 @@ import asyncio
 import json
 import logging
 import math
+import re
 import time
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -38,7 +39,7 @@ from ...utils.json_parsing import parse_json_response
 from ...utils.language_utils import ENGLISH_OUTPUT_DIRECTIVE
 from ...utils.llm_retry import call_llm_with_retry
 from .assembly.attachments import SPARSE_THRESHOLD, can_host_quick_quiz
-from .memory import format_clock
+from .memory import UNKNOWN_LENGTH_SECONDS, format_clock
 from .pipeline_helpers import sanitize_for_prompt
 from .pipeline_timing import record_llm_failure
 from .prompt_builder import load_prompt_text
@@ -60,7 +61,12 @@ QUIZ_MAX_TOKENS = 2048
 QUIZ_TIMESTAMP_TOLERANCE_S = 10.0
 HERO_TAKEAWAYS_MAX = 7
 EMPTY_HERO = "Not available"
-UNKNOWN_VIDEO_LENGTH = "unknown"
+# Where every question's timestamp must lie: "{timestamp_range}" renders this,
+# followed by "(0:00–<length>)" when the length is known.
+INSIDE_THE_VIDEO = "inside the video"
+# Without a usable length the prompt names no length at all: a parenthetical
+# that carries it ("({video_length})") goes, never "(unknown)" / "(0:00–unknown)".
+_LENGTH_CLAUSE_RE = re.compile(r" ?\([^()]*\{video_length\}[^()]*\)")
 # The whole stage, retry included, ends within the brief's 30 s. The quiz runs
 # on the fast model (no cross-provider fallback), so it is two attempts: 14 s
 # each plus the 1 s backoff fit inside the cap, and a slow first answer still
@@ -191,25 +197,39 @@ def quiz_count_bands() -> tuple[tuple[float, int], ...]:
     )
 
 
+def _known_seconds(duration_s: float | None) -> float | None:
+    """The video's length in seconds; None when it is missing, 0, negative or not finite."""
+    seconds = float(duration_s or 0)
+    return seconds if math.isfinite(seconds) and seconds > 0 else None
+
+
 def quiz_question_count(duration_s: float | None, cap: int) -> int:
     """How many questions a video of ``duration_s`` seconds gets, at most ``cap``.
 
-    An unknown length (None, 0, NaN) is the shortest band.
+    An unknown length (None, 0, NaN) is sized as memory sizes it
+    (``UNKNOWN_LENGTH_SECONDS``: the middle band); a length past every bounded
+    band takes the last band.
     """
     bands = quiz_count_bands()
-    seconds = float(duration_s or 0)
+    seconds = _known_seconds(duration_s) or UNKNOWN_LENGTH_SECONDS
     for limit, count in bands:
         if seconds <= limit:
             return min(count, cap)
-    return min(bands[0][1], cap)
+    return min(bands[-1][1], cap)
 
 
-def _video_length(duration_s: float | None) -> str:
-    """``m:ss`` / ``h:mm:ss`` of the video, or "unknown" without a usable length."""
-    seconds = float(duration_s or 0)
-    if not math.isfinite(seconds) or seconds <= 0:
-        return UNKNOWN_VIDEO_LENGTH
-    return format_clock(int(seconds))
+def _with_video_length(template: str, duration_s: float | None) -> str:
+    """``{video_length}`` as ``m:ss`` / ``h:mm:ss`` and ``{timestamp_range}`` as
+    "inside the video (0:00–<length>)"; without a usable length the range is
+    "inside the video" and every parenthetical carrying the length is dropped."""
+    seconds = _known_seconds(duration_s)
+    if seconds is None:
+        unbounded = template.replace("{timestamp_range}", INSIDE_THE_VIDEO)
+        return _LENGTH_CLAUSE_RE.sub("", unbounded)
+    length = format_clock(int(seconds))
+    return template.replace("{timestamp_range}", f"{INSIDE_THE_VIDEO} (0:00–{length})").replace(
+        "{video_length}", length
+    )
 
 
 def _compact_json(data: Mapping[str, Any]) -> str:
@@ -237,10 +257,9 @@ def build_quiz_prompt(
     if not flavor:
         return None
     body = (
-        load_prompt_text(PROMPT_PATH)
+        _with_video_length(load_prompt_text(PROMPT_PATH), duration_s)
         .replace("{flavor}", flavor)
         .replace("{question_count}", str(quiz_question_count(duration_s, _quiz_cap())))
-        .replace("{video_length}", _video_length(duration_s))
         .replace("{hero}", hero or EMPTY_HERO)
         .replace("{tab_goals}", render_tab_goals(tabs))
         .replace("{video_memory}", video_memory or EMPTY_VIDEO_MEMORY)
@@ -292,7 +311,19 @@ def parse_quiz(data: object, cap: int, duration_s: float | None = None) -> list[
             dropped,
             len(questions),
         )
-    return questions[:cap]
+    kept = questions[:cap]
+    _log_stampless(kept)
+    return kept
+
+
+def _log_stampless(questions: Sequence[QuizQuestion]) -> None:
+    """Count the kept questions without a timestamp — the prompt asks every one for
+    its own, so a stampless question is a rule the model broke (no seek chip)."""
+    stampless = sum(1 for question in questions if question.timestamp is None)
+    if stampless:
+        logger.warning(
+            "Quiz: %d of %d kept question(s) carry no timestamp", stampless, len(questions)
+        )
 
 
 def _quiz_cap() -> int:

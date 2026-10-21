@@ -21,23 +21,9 @@ from src.shared_config.assembly_policy import assembly_policy
 from src.shared_config.domain_config import quiz_policy
 
 from .registry import ASSEMBLER_REGISTRY
-from .stat_banner import _CLAUSE_BREAK as _CLAUSE_BREAK
-from .stat_banner import _CLAUSE_EDGE as _CLAUSE_EDGE
-from .stat_banner import _LABEL_DANGLING as _LABEL_DANGLING
-from .stat_banner import _NUMBER_RE as _NUMBER_RE
 from .stat_banner import _STAT_BANNER_MAX as _STAT_BANNER_MAX
 from .stat_banner import _STAT_BANNER_MIN as _STAT_BANNER_MIN
-from .stat_banner import _STAT_LABEL_MAX_CHARS as _STAT_LABEL_MAX_CHARS
-from .stat_banner import _STAT_LABEL_MAX_WORDS as _STAT_LABEL_MAX_WORDS
-from .stat_banner import _YEAR as _YEAR
-from .stat_banner import _is_figure as _is_figure
-from .stat_banner import _key_points as _key_points
-from .stat_banner import _phrase as _phrase
 from .stat_banner import _stat_banner_attachment as _stat_banner_attachment
-from .stat_banner import _stat_figure as _stat_figure
-from .stat_banner import _stat_label as _stat_label
-from .stat_banner import _stat_tile as _stat_tile
-from .stat_banner import _stat_value as _stat_value
 from .text_utils import truncate_words
 
 logger = logging.getLogger(__name__)
@@ -282,7 +268,7 @@ def attach_secondaries(
     """Decide and build secondary attachments for a single assembled tab.
 
     The answer tab carries a top "In short" summary_header (the extraction
-    summary) and, with enough figures in its key points, a bottom stat_banner
+    summary) and, with enough figures stated on its key ideas, a bottom stat_banner
     (C8) — both whatever its size or shape. Another dense tab (≥
     _DENSE_THRESHOLD items), or a dense answer tab with no summary, gets a
     "First up" header (its first item). A sparse tab (≤ SPARSE_THRESHOLD items)

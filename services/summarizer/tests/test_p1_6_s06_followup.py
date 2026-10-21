@@ -15,6 +15,7 @@ import pytest
 from src.services.pipeline.assembly import assemble_response
 from src.services.pipeline.assembly.assemblers_primary import assemble_checklist
 from src.services.pipeline.assembly.core import build_fallback_candidates
+from src.services.pipeline.assembly.ingredients import ingredient_row
 from src.services.pipeline.extraction_prompt import load_schema_text
 from src.services.pipeline.plan_prompt import goal_rule_violation
 
@@ -80,6 +81,23 @@ class TestIngredientRows:
 
     def test_should_keep_the_unit_beside_a_bare_number(self) -> None:
         assert _rows()[3]["label"] == "1 cup whole milk"
+
+    @pytest.mark.parametrize(
+        ("amount", "unit", "name", "label"),
+        [
+            ("1 1/2", "cups", "flour", "1 1/2 cups flour"),
+            ("3-4", "cloves", "garlic", "3-4 cloves garlic"),
+            ("1/2", "cup", "sugar", "1/2 cup sugar"),
+            ("1½", "cups", "stock", "1½ cups stock"),
+            ("2 to 3", "tablespoons", "butter", "2 to 3 tablespoons butter"),
+        ],
+    )
+    def test_should_keep_the_unit_beside_a_mixed_number_range_or_fraction(
+        self, amount: str, unit: str, name: str, label: str
+    ) -> None:
+        item = {"name": name, "amount": 0, "unit": unit, "displayAmount": amount, "notes": ""}
+
+        assert ingredient_row(item)["label"] == label
 
     def test_should_build_the_amount_from_its_number_and_unit_when_none_is_displayed(self) -> None:
         assert _rows()[5]["label"] == "6 tablespoons unsalted butter"

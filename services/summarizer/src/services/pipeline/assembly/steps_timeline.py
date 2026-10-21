@@ -3,7 +3,7 @@
 Moved out of ``core`` (task 1.8) with the one rule it lacked: D6 decides on the
 assembled tabs before the dedupe, so a step tab the dedupe then drops as a twin
 of another tab would leave neither the steps nor the Moments — the Moments tabs
-D6 removed come back (``restore_moments_without_steps``).
+D6 removed come back (``restore_moments_without_steps``) and are deduped then.
 """
 
 from __future__ import annotations
@@ -87,8 +87,10 @@ def dedupe_under_steps_timeline(
     sources: Mapping[str, str],
     dedupe: Callable[[list[dict], list[dict], Collection[str], Mapping[str, str]], None],
 ) -> bool:
-    """D6, then ``dedupe``, then D6 undone when no step tab outlived the dedupe;
-    True when the steps are the timeline of what ships."""
+    """D6, then ``dedupe``, then D6 undone when no step tab outlived the dedupe —
+    and ``dedupe`` once more over the restored Moments tabs, which skipped the first
+    pass (two twin tracks would both ship); True when the steps are the timeline of
+    what ships."""
     removed: list[tuple[int, dict]] = []
     steps_timeline = drop_moments_when_steps_are_the_timeline(
         tabs, dropped_sink, primary_tag, required, sources, removed
@@ -97,5 +99,6 @@ def dedupe_under_steps_timeline(
     if steps_timeline and restore_moments_without_steps(
         tabs, dropped_sink, removed, primary_tag, required
     ):
+        dedupe(tabs, dropped_sink, required, sources)
         return False
     return steps_timeline

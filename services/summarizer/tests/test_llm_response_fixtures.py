@@ -28,6 +28,7 @@ from src.models.pipeline_types import EnrichmentData, PlanResult, SynthesisResul
 from src.services.pipeline.assembly import assemble_response
 from src.services.pipeline.assembly.core import _COMPONENT_REQUIRED_LISTS
 from src.services.pipeline.plan import _validate_tabs
+from src.services.pipeline.reconcile_pass import is_quiz_tab
 from src.shared_config.domain_config import quiz_enrichment
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures" / "llm_responses"
@@ -49,6 +50,16 @@ _EXPECTED_COMPONENTS: dict[str, list[set[str]]] = {
 
 def _load(domain: str) -> dict[str, Any]:
     return json.loads((FIXTURES_DIR / f"{domain}.json").read_text())
+
+
+def _quiz_domains(*, with_enrichment: bool) -> list[str]:
+    """The fixtures' quiz domains whose enrichment is given (or null)."""
+    return [
+        d
+        for d in DOMAINS
+        if d in quiz_enrichment()["quizDomains"]
+        and (_load(d)["enrichment_response"] is not None) == with_enrichment
+    ]
 
 
 def _assemble(fixture: dict[str, Any]) -> dict[str, Any]:
@@ -121,22 +132,23 @@ class TestFixturePayloadsStayValid:
         assert synthesis.tldr
         assert synthesis.key_takeaways
 
-    @pytest.mark.parametrize(
-        "domain",
-        # Only quiz domains get a quiz call (1d.1), and only when the plan uses one
-        # (news joined the quiz domains in output-quality 1.5; its fixture run
-        # planned no quiz, so it carries null like the others).
-        [
-            d
-            for d in DOMAINS
-            if d in quiz_enrichment()["quizDomains"] and _load(d)["enrichment_response"]
-        ],
-    )
+    # Only quiz domains get a quiz call (1d.1), and only when the plan uses one
+    # (news joined the quiz domains in output-quality 1.5; its fixture run
+    # planned no quiz, so it carries null like the others).
+    @pytest.mark.parametrize("domain", _quiz_domains(with_enrichment=True))
     def test_enrichment_response_validates(self, domain):
         fixture = _load(domain)
         enrichment = EnrichmentData.model_validate(fixture["enrichment_response"])
         dumped = enrichment.model_dump(by_alias=True)
         assert any(v for v in dumped.values())
+
+    @pytest.mark.parametrize("domain", _quiz_domains(with_enrichment=False))
+    def test_should_plan_no_quiz_tab_when_a_quiz_domain_fixture_has_no_enrichment(self, domain):
+        """A null enrichment is only honest for a plan that asked for no quiz — a
+        planned quiz tab with nothing to show would be a skipped check (p1 R10)."""
+        tabs = _load(domain)["plan_response"]["tabs"]
+
+        assert not any(is_quiz_tab(tab) for tab in tabs)
 
 
 # ─── Assembly drift canary ──────────────────────────────────────────────

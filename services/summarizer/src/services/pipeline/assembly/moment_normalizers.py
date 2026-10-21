@@ -22,10 +22,13 @@ _MOMENT_LABEL_KEYS = ("label", "title", "name")
 _MOMENT_DESCRIPTION_KEYS = ("description", "summary", "instruction", "answer")
 # An interview exchange (``podcast.qa``, C10): its question is the row's title —
 # whole up to _QUESTION_LABEL_CAP characters, else its first sentence, else cut at a
-# word — and rides along whole as ``question``.
+# word — and rides along whole as ``question`` when the title is not all of it.
 _MOMENT_QUESTION_KEY = "question"
 _QUESTION_LABEL_CAP = 140
 _SENTENCE_END = re.compile(r"[?.!](?=\s|$)")
+# A first "sentence" shorter than this ends at an abbreviation ("Dr. Cho, with …"
+# is no title "Dr."), so the next sentence end is read instead.
+_QUESTION_SENTENCE_MIN = 20
 _MOMENT_START_KEYS = ("seconds", "startSeconds", "timestamp", "start_time", "startTime")
 # The clock a ``learning.timestamps`` item writes beside its ``seconds`` ("2:10").
 _MOMENT_CLOCK_KEY = "time"
@@ -108,10 +111,11 @@ def _moment_start(item: dict) -> int | None:
 
 def _question_label(question: str) -> str:
     """The row title of an interview question: the whole question when it fits,
-    else its first sentence when that fits, else a word-boundary cut."""
+    else its first sentence of at least _QUESTION_SENTENCE_MIN characters when that
+    fits, else a word-boundary cut."""
     if len(question) <= _QUESTION_LABEL_CAP:
         return question
-    end = _SENTENCE_END.search(question)
+    end = _SENTENCE_END.search(question, _QUESTION_SENTENCE_MIN - 1)
     if end is not None and end.end() <= _QUESTION_LABEL_CAP:
         return question[: end.end()]
     return truncate_words(question, _QUESTION_LABEL_CAP)
@@ -121,8 +125,10 @@ def _moment_text(item: dict) -> tuple[str, str | None] | None:
     """(label, description) from whichever fields carry prose; None when none does.
 
     The label comes from label/title/name, else from an interview question
-    (``_question_label``), else from the head of the description; the
-    description is dropped when it only repeats the label.
+    (``_question_label``), else from the head of the description. A description
+    that only repeats the source's own label is dropped; one the label was cut
+    from stays whole — it is what the moment established (``narrative.keyMoments``
+    carry no label; a short one used to ship label-only).
     """
     label = _first_prose(item, _MOMENT_LABEL_KEYS)
     if label is not None and _MOMENT_PLACEHOLDER.match(label):
@@ -132,10 +138,23 @@ def _moment_text(item: dict) -> tuple[str, str | None] | None:
     if label is None and question is not None:
         label = _question_label(question)
     if label is None and description is not None:
-        label = truncate_words(description, _MOMENT_LABEL_CAP)
+        return truncate_words(description, _MOMENT_LABEL_CAP), description
     if label is None:
         return None
     return label, (None if description == label else description)
+
+
+def _passthrough(item: dict, label: str) -> dict[str, Any]:
+    """The extras a moment carries as the source gave them; the whole ``question``
+    only where the row's title is a cut of it (else it would repeat the title)."""
+    extras = {
+        key: value
+        for key in _MOMENT_PASSTHROUGH_KEYS
+        if (value := item.get(key)) is not None and value != ""
+    }
+    if _prose(extras.get(_MOMENT_QUESTION_KEY)) == label:
+        extras.pop(_MOMENT_QUESTION_KEY)
+    return extras
 
 
 def _normalize_moment_item(item: Any, index: int) -> dict | None:
@@ -169,10 +188,7 @@ def _normalize_moment_item(item: Any, index: int) -> dict | None:
         normalized["endSeconds"] = end_seconds
     if description is not None:
         normalized["description"] = description
-    for key in _MOMENT_PASSTHROUGH_KEYS:
-        value = item.get(key)
-        if value is not None and value != "":
-            normalized[key] = value
+    normalized.update(_passthrough(item, label))
     tags = item.get("tags")
     if isinstance(tags, list) and tags:
         normalized["tags"] = [str(t) for t in tags if t is not None]

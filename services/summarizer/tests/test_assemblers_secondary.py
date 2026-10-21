@@ -85,9 +85,10 @@ class TestAssembleClaimsTracker:
         assert claims[0]["timestamp"] == 210
 
     def test_unknown_status_defaults_to_stated(self):
+        # An anchored claim; an unanchored one shows no status (phase-1 review R9).
         data = [
-            {"claim": "A bold assertion", "source": "Pundit", "status": "true"},
-            {"claim": "Another assertion", "source": "Pundit"},
+            {"claim": "A bold assertion", "source": "Pundit", "status": "true", "timestamp": 10},
+            {"claim": "Another assertion", "source": "Pundit", "timestamp": 20},
         ]
         result = assemble_claims_tracker({}, data, {}, None)
         assert result["claims"][0]["status"] == "stated"

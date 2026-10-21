@@ -140,10 +140,11 @@ class TestCarryDescription:
 
         assert result is not None and result["label"] == "Meatballs"
 
-    def test_should_not_repeat_the_label_as_description(self) -> None:
+    def test_should_keep_the_description_its_label_was_cut_from(self) -> None:
+        # Phase-1 review R4: what the moment established stays (the FE shows it once).
         result = _normalize_moment_item({"description": "Short note", "seconds": 10}, 0)
 
-        assert result is not None and "description" not in result
+        assert result is not None and result["description"] == "Short note"
 
     def test_should_strip_whitespace_from_the_carried_description(self) -> None:
         result = _normalize_moment_item(

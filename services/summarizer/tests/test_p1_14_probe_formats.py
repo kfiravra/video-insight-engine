@@ -19,7 +19,6 @@ from unittest.mock import patch
 import pytest
 
 from src.models.probe_types import DEFAULT_FORMAT, VALID_FORMATS, TierProbe
-from src.services.media import visual_tier
 from src.services.media.visual_tier import derive_tier
 from src.services.pipeline import tier_probe
 from src.services.pipeline.phases.triage import probe_hint
@@ -35,13 +34,6 @@ from src.shared_config.domain_config import effective_requirements, get_playbook
 _TEMPLATE = tier_probe.PROMPT_PATH.read_text(encoding="utf-8")
 _FORMAT_LINE = re.compile(r"^- ([a-z_]+): (.+)$", re.MULTILINE)
 _PLACEHOLDER = re.compile(r"\{[a-z_]+\}")
-# The shipped visual-criticality table (test_visual_tier.py reads the same one).
-_TIER_TABLE = {
-    "highDomains": ["travel", "food", "fitness", "project", "sport"],
-    "lowDomains": ["podcast", "news"],
-    "highTitleKeywords": ["unboxing", "opening", "pulls", "box break", "haul"],
-    "highFormats": ["unboxing"],
-}
 _TALK_PLAYBOOK = {
     "required": [],
     "preferred": ["spot_explorer", "checklist", "moment_track"],
@@ -181,12 +173,6 @@ class TestSpokenWordWording:
 
 
 @pytest.fixture
-def tier_table() -> Iterator[None]:
-    with patch.object(visual_tier, "visual_criticality_config", return_value=_TIER_TABLE):
-        yield
-
-
-@pytest.fixture
 def talk_playbook() -> Iterator[None]:
     """The registry with a ``learning:talk`` playbook (what 1.6 adds)."""
     config = copy.deepcopy(domain_config.get_config())
@@ -196,23 +182,21 @@ def talk_playbook() -> Iterator[None]:
 
 
 class TestFormatConsumers:
-    @pytest.mark.usefixtures("tier_table")
+    """``derive_tier`` reads the shipped ``visualCriticality`` table, never a copy."""
+
     def test_should_keep_a_keynote_at_the_standard_frame_tier(self) -> None:
         title = "Rails World 2026 Keynote - DHH"
         assert derive_tier(_probe("learning", "talk"), title) == "standard"
 
-    @pytest.mark.usefixtures("tier_table")
     def test_should_let_a_reveal_keyword_in_the_title_outrank_the_talk_format(self) -> None:
-        # S01's real title carries "opening" (a highTitleKeywords entry meant for
-        # pack openings): the keyword rule runs before the format, as shipped.
-        title = "Rails World 2026 Opening Keynote - DHH"
+        # The keyword rule runs before the format: a title that announces an
+        # unboxing is visual-critical whatever the probe says the format is.
+        title = "Unboxing the new Rails stack — a keynote"
         assert derive_tier(_probe("learning", "talk"), title) == "high"
 
-    @pytest.mark.usefixtures("tier_table")
     def test_should_put_a_guest_show_without_a_demo_at_the_low_tier(self) -> None:
         assert derive_tier(_probe("podcast", "interview"), "Max Tegmark: Life 3.0") == "low"
 
-    @pytest.mark.usefixtures("tier_table")
     def test_should_lift_a_guest_show_with_a_demo_off_the_low_tier(self) -> None:
         probe = _probe("podcast", "interview", visual=True)
         assert derive_tier(probe, "Omarchy stand-up") == "standard"

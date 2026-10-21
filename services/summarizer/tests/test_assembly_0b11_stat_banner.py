@@ -1,49 +1,47 @@
-"""0b.11 — stat_banner builder (C8): numeric key points → value + meaning + timestamp.
+"""0b.11 — stat_banner builder (C8): stated figures → value + meaning + timestamp.
 
 The answer tab (first content tab) carries a bottom numbers strip when at
-least _STAT_BANNER_MIN key points hold a figure and a timestamp. Each tile
-matches the FE contract — ``label`` + ``value`` strings (tab-prop-schemas.ts
+least _STAT_BANNER_MIN key ideas carry a figure the model stated (``kind:
+number`` with ``figure`` ``{value, label}``) and a timestamp. Each tile matches
+the FE contract — ``label`` + ``value`` strings (tab-prop-schemas.ts
 ``statBannerSchema``, StatBanner.tsx ``StatBannerStat``) — and carries
-``meaning`` + ``timestamp`` through the schema's passthrough. The label is a
-short phrase from the title (the full title is the ``meaning``); a bare year or
-a bare single digit ("Rails 8", "in 2023") is a name, not a figure.
+``meaning`` + ``timestamp`` through the schema's passthrough. Since the phase-1
+review (Kfir 2026-10-21, decision 2) nothing is mined from text: a key point's
+title holding a figure is no tile.
 """
 
 from __future__ import annotations
 
-import pytest
-
 from src.services.pipeline.assembly.attachments import (
     _STAT_BANNER_MAX,
     _STAT_BANNER_MIN,
-    _STAT_LABEL_MAX_CHARS,
-    _STAT_LABEL_MAX_WORDS,
-    _stat_figure,
-    _stat_label,
-    _stat_value,
     attach_response_secondaries,
     attach_secondaries,
 )
 
-_TITLES = [
-    "150,000 lines in one month vs ~30,000 per year",
-    "Ruby fell from over half of his work to about 3%",
-    "Agent evals saturated at 95% completion, so the bar was raised",
-    "Rust backend: 99% less CPU and 95% less memory",
-    "About $20 million raised for Omarchy",
-    "Omarchy install time: 3:33 to 35 seconds to 9 seconds",
-    "2 trillion photos a year, up from a trickle",
-    "1,000x gap: worst programmer without tools vs best with them",
-    "ATMs and Jevons' paradox: 30,000 to 40,000 bank tellers",
+_FIGURES = [
+    ("150,000 lines", "in one month"),
+    ("3%", "Ruby share of his work"),
+    ("95%", "agent eval completion"),
+    ("99%", "less backend CPU"),
+    ("$20 million", "raised for Omarchy"),
+    ("9 seconds", "Omarchy install"),
+    ("2 trillion", "photos a year"),
+    ("1,000x", "tool gap"),
+    ("40,000", "bank tellers after the ATM"),
 ]
 
 
-def _key_points(n: int, timestamp: bool = True) -> list[dict]:
+def _key_ideas(n: int, timestamp: bool = True) -> list[dict]:
     return [
         {
-            "emoji": "📈",
-            "title": _TITLES[i % len(_TITLES)],
-            "detail": "d",
+            "claim": f"Claim {i} turns on {_FIGURES[i % len(_FIGURES)][0]}",
+            "why": "w",
+            "kind": "number",
+            "figure": {
+                "value": _FIGURES[i % len(_FIGURES)][0],
+                "label": _FIGURES[i % len(_FIGURES)][1],
+            },
             **({"timestamp": 60 * (i + 1)} if timestamp else {}),
         }
         for i in range(n)
@@ -51,7 +49,7 @@ def _key_points(n: int, timestamp: bool = True) -> list[dict]:
 
 
 def _extraction(n: int = _STAT_BANNER_MIN, **kwargs) -> dict:
-    return {"learning": {"keyPoints": _key_points(n, **kwargs)}}
+    return {"learning": {"keyIdeas": _key_ideas(n, **kwargs)}}
 
 
 def _answer_tab() -> dict:
@@ -65,159 +63,6 @@ def _answer_tab() -> dict:
 
 def _banner(attachments: list[dict]) -> dict | None:
     return next((a for a in attachments if a["component"] == "stat_banner"), None)
-
-
-class TestStatValue:
-    @pytest.mark.parametrize(
-        ("title", "expected"),
-        [
-            ("150,000 lines in one month vs ~30,000 per year", "150,000 lines"),
-            ("Ruby fell from over half of his work to about 3%", "3%"),
-            ("About $20 million raised for Omarchy", "$20 million"),
-            ("1,000x gap: worst programmer vs best", "1,000x"),
-            ("Optimization within reach: 0.5 MB vs Spotify's 1.2 GB", "0.5 MB"),
-            ("Omarchy install time: 3:33 to 35 seconds", "3:33"),
-            ("10 percent better", "10 percent"),
-            ("2 trillion photos a year", "2 trillion"),
-            ("3x faster builds", "3x"),
-        ],
-    )
-    def test_headline_figure(self, title: str, expected: str):
-        assert _stat_value(title) == expected
-
-    @pytest.mark.parametrize(
-        ("title", "expected"),
-        [("Revenue hit $5, then doubled", "$5"), ("Grew to 150,000, then stalled", "150,000")],
-    )
-    def test_should_not_swallow_a_trailing_comma(self, title: str, expected: str):
-        assert _stat_value(title) == expected
-
-    @pytest.mark.parametrize(
-        ("title", "expected"),
-        [
-            ("A 0.5MB binary", "0.5MB"),
-            ("100ms p99 latency", "100ms"),
-            ("50GB of RAM", "50GB"),
-            ("Ships in 2days", "2days"),
-        ],
-    )
-    def test_should_read_a_unit_glued_to_its_number(self, title: str, expected: str):
-        assert _stat_value(title) == expected
-
-    @pytest.mark.parametrize(
-        "title",
-        [
-            "In 2023, Basecamp left the cloud",
-            "Founded in 1999",
-            "Rails 8 ships Solid Queue",
-            "Python 3 drops the GIL",
-            "6 native apps kicked off in about a week",
-        ],
-    )
-    def test_should_not_count_a_bare_year_or_single_digit(self, title: str):
-        assert _stat_value(title) is None
-
-    def test_should_skip_a_bare_year_for_a_later_figure(self):
-        assert _stat_value("In 2023, revenue grew 40%") == "40%"
-
-    def test_should_keep_a_two_digit_bare_number(self):
-        assert _stat_value("Founded in 1999 by 12 people") == "12"
-
-    def test_should_not_read_the_tail_of_a_decimal_comma(self):
-        assert _stat_value("1,5 million users") is None
-
-    def test_a_figure_with_a_unit_beats_an_earlier_bare_number(self):
-        assert _stat_value("Basecamp 5 got 99% faster") == "99%"
-
-    def test_a_multi_digit_number_beats_an_earlier_single_digit(self):
-        assert _stat_value("Basecamp 5: 20 or 30 vibe-coded PRs") == "20"
-
-    @pytest.mark.parametrize(
-        "title",
-        ["Choose P-bloom over P-doom", "Panic in the 1950s", "React v2.5 and x86 chips"],
-    )
-    def test_no_figure_yields_none(self, title: str):
-        assert _stat_value(title) is None
-
-    @pytest.mark.parametrize(
-        ("title", "expected"),
-        [
-            ("$1.2B", "$1.2B"),
-            ("$20.5M", "$20.5M"),
-            ("45.5k", "45.5k"),
-            ("$3.4bn", "$3.4bn"),
-            ("1,000,000s", "1,000,000s"),
-        ],
-    )
-    def test_should_never_cut_a_figure_before_its_decimal_group_or_magnitude(
-        self, title: str, expected: str
-    ):
-        assert _stat_value(title) == expected
-
-    def test_should_read_a_glued_magnitude_inside_a_title(self):
-        assert _stat_value("Valued at $1.2B after the round") == "$1.2B"
-
-    def test_should_not_read_a_spaced_letter_as_a_magnitude(self):
-        assert _stat_value("Top 10 K-pop hits") == "10"
-
-    def test_should_keep_every_field_of_a_clock(self):
-        assert _stat_value("Kipchoge ran the marathon in 2:01:09") == "2:01:09"
-
-    def test_should_keep_a_clock_with_a_leading_zero_hour(self):
-        assert _stat_value("01:09:30") == "01:09:30"
-
-    @pytest.mark.parametrize("title", ["3:333", "16:9", "2:01:09:30"])
-    def test_should_read_no_fragment_after_the_colon_of_a_malformed_clock(self, title: str):
-        """Close-out review W2: the match never restarts after a colon ("3:333" → "333")."""
-        assert _stat_value(title) is None
-
-
-def _label(title: str) -> str:
-    figure = _stat_figure(title)
-    assert figure is not None
-    return _stat_label(title, figure)
-
-
-class TestStatLabel:
-    @pytest.mark.parametrize(
-        ("title", "expected"),
-        [
-            ("Rust backend: 99% less CPU and 95% less memory", "Rust backend"),
-            ("Omarchy install time: 3:33 to 35 seconds to 9 seconds", "Omarchy install time"),
-            ("Half as much code in 20 months as in the previous 21 years", "Half as much code"),
-            (
-                "Agent evals saturated at 95% completion, so the bar was raised",
-                "Agent evals saturated",
-            ),
-        ],
-    )
-    def test_should_label_with_the_clause_before_the_figure(self, title: str, expected: str):
-        assert _label(title) == expected
-
-    @pytest.mark.parametrize(
-        ("title", "expected"),
-        [
-            ("150,000 lines in one month vs ~30,000 per year", "in one month"),
-            ("2 trillion photos a year, up from a trickle", "photos a year"),
-            ("1,000x gap: worst programmer without tools vs best with them", "gap"),
-        ],
-    )
-    def test_should_label_with_the_clause_after_a_leading_figure(self, title: str, expected: str):
-        assert _label(title) == expected
-
-    def test_should_skip_a_lone_hedge_before_the_figure(self):
-        assert _label("About $20 million raised for Omarchy") == "raised for Omarchy"
-
-    def test_should_trim_dangling_connectives(self):
-        assert _label("Ruby fell from over half of his work to about 3%") == "Ruby fell"
-
-    def test_should_cap_the_label_in_words(self):
-        title = "Every single one of the many enterprise teams surveyed: 40% faster"
-
-        assert len(_label(title).split()) <= _STAT_LABEL_MAX_WORDS
-
-    def test_should_fall_back_to_the_title_when_no_word_is_left(self):
-        assert _label("99%") == "99%"
 
 
 class TestBuilder:
@@ -243,8 +88,7 @@ class TestBuilder:
         assert tile == {
             "label": "in one month",
             "value": "150,000 lines",
-            "emoji": "📈",
-            "meaning": "150,000 lines in one month vs ~30,000 per year",
+            "meaning": "Claim 0 turns on 150,000 lines",
             "timestamp": 60,
         }
 
@@ -271,22 +115,6 @@ class TestBuilder:
         assert banner is not None
         assert all(isinstance(t["timestamp"], int) for t in banner["props"]["stats"])
 
-    def test_long_title_is_capped_in_the_label_but_whole_in_meaning(self):
-        long_title = "99% of the " + "very " * 20 + "long sentence"
-        extraction = {"learning": {"keyPoints": _key_points(_STAT_BANNER_MIN)}}
-        extraction["learning"]["keyPoints"][0]["title"] = long_title
-
-        banner = _banner(
-            attach_secondaries(
-                _answer_tab(), extraction, None, None, "learning", is_answer_tab=True
-            )
-        )
-
-        assert banner is not None
-        tile = banner["props"]["stats"][0]
-        assert len(tile["label"]) <= _STAT_LABEL_MAX_CHARS
-        assert tile["meaning"] == long_title
-
     def test_strip_is_capped(self):
         banner = _banner(
             attach_secondaries(
@@ -311,7 +139,7 @@ class TestBuilder:
 
         assert banner is not None
 
-    def test_key_points_from_a_secondary_domain_are_used(self):
+    def test_key_ideas_from_a_secondary_domain_are_used(self):
         extraction = {"tech": {"topics": []}, **_extraction()}
 
         banner = _banner(
@@ -334,7 +162,7 @@ class TestGates:
 
         assert _banner(out) is None
 
-    def test_key_points_without_timestamps_do_not_count(self):
+    def test_key_ideas_without_timestamps_do_not_count(self):
         out = attach_secondaries(
             _answer_tab(),
             _extraction(8, timestamp=False),
@@ -346,18 +174,16 @@ class TestGates:
 
         assert _banner(out) is None
 
-    def test_key_points_without_a_figure_do_not_count(self):
-        extraction = {
-            "learning": {
-                "keyPoints": [
-                    {"title": "Choose P-bloom over P-doom", "timestamp": 10 * i} for i in range(8)
-                ]
-            }
-        }
+    def test_key_points_with_a_figure_in_the_title_do_not_count(self):
+        points = [
+            {"title": f"{value} {label}", "detail": "d", "timestamp": 60 * (i + 1)}
+            for i, (value, label) in enumerate(_FIGURES)
+        ]
 
         out = attach_secondaries(
-            _answer_tab(), extraction, None, None, "learning", is_answer_tab=True
-        )
+            _answer_tab(), {"learning": {"keyPoints": points}}, None, None, "learning",
+            is_answer_tab=True,
+        )  # fmt: skip
 
         assert _banner(out) is None
 

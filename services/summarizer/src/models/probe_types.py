@@ -12,9 +12,13 @@ replay cassette or a malformed value keeps the transcript and the probe.
 
 from __future__ import annotations
 
+import logging
+
 from pydantic import BaseModel, ConfigDict, field_validator
 
 from ..shared_config.domain_config import valid_content_tags
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_FORMAT = "commentary"
 
@@ -80,7 +84,12 @@ class TierProbe(BaseModel):
     @classmethod
     def _known_format(cls, value: object) -> str:
         fmt = _enum_id(value)
-        return fmt if fmt in VALID_FORMATS else DEFAULT_FORMAT
+        if fmt in VALID_FORMATS:
+            return fmt
+        # Logged: a label the probe invented ("keynote", "fireside") loses the
+        # playbook its real format would have routed to.
+        logger.warning("Probe format %r is not a known format; using %r", value, DEFAULT_FORMAT)
+        return DEFAULT_FORMAT
 
     @field_validator("confidence")
     @classmethod

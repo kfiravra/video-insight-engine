@@ -66,8 +66,14 @@ const spotExplorerSchema = z
 
 const momentTrackSchema = z
   .object({
-    // `seconds` drives seeking — an item without it can't render as a moment.
-    items: z.array(z.object({ label: z.string(), seconds: z.number() }).passthrough()),
+    // `seconds` drives seeking — an item without it can't render as a moment. The
+    // row renders `quote` (the speaker's line) and `question` (an interview's whole
+    // question) as text, so a non-string there would render garbage.
+    items: z.array(
+      z
+        .object({ label: z.string(), seconds: z.number(), quote: optionalString, question: optionalString })
+        .passthrough(),
+    ),
   })
   .passthrough();
 
@@ -222,7 +228,10 @@ const claimsTrackerSchema = z
           source: optionalString,
           // Mirrors ClaimStatus | LegacyClaimStatus in @vie/types — D11's three
           // words, plus the pre-1.4 words stored rows carry (the tracker maps them).
-          status: z.enum(['stated', 'supported', 'contested', 'verified', 'disputed', 'context']),
+          // Absent on a claim without a timestamp: nobody could check it (p1 review R9).
+          status: z
+            .enum(['stated', 'supported', 'contested', 'verified', 'disputed', 'context'])
+            .nullish(),
         })
         .passthrough(),
     ),

@@ -63,8 +63,9 @@ EXPLORATION — user browses and discovers:
       • The first tab — a lookup table is never the answer.
 
   concept_canvas  ⭐ NEW — frame-aware
-    PICK WHEN: 2+ concepts with definitions AND meaningful connections[]
-      between them. The video TEACHES how concepts relate, not just lists.
+    PICK WHEN: concepts with definitions AND meaningful connections[]
+      between them (the density table below sets the minimum). The video
+      TEACHES how concepts relate, not just lists.
     SHIPS: Opens as a list (definition + example + timestamp inline); the
       drag-and-drop concept map (React Flow) is a toggle. Each node is a
       concept card; edges from connections[]. Positions persist per video.
@@ -230,7 +231,7 @@ ANTI-PATTERNS (the assembler will drop these — don't plan them)
 ✗ comparison with 1 row, or with one    → at least 3 rows AND both sides
    side empty                              filled; otherwise route to info_grid.
 ✗ comparison_radar with <4 axes         → falls back to comparison table.
-✗ concept_canvas with <2 concepts       → falls back to flash_deck / info_grid.
+✗ concept_canvas under the density min  → falls back to flash_deck / info_grid.
 ✗ flash_deck for tips/features/trivia   → forbidden; use info_grid.
 ✗ standalone "verdict" tab               → fold the conclusion into
                                              comparison's ReviewSummary OR the
@@ -242,8 +243,10 @@ ANTI-PATTERNS (the assembler will drop these — don't plan them)
                                              INSIDE moment_track / step_player /
                                              code_playground via VisualEvidence.
 ✗ Two tabs covering the same data        → pick one component per concept.
-✗ concept_canvas / step_flow_canvas /    → the first tab is a list the viewer
-   info_grid as the first tab               reads without a click.
+✗ info_grid as the first tab, or a      → the first tab is a list the viewer
+   concept_canvas there                     reads without a click; step_flow_canvas
+                                             opens first only when the steps are the
+                                             answer (it opens as a list).
 ✗ moment_track of chapter titles or      → what was established at each beat,
    "Moment N"                                with the line that carries it.
 ✗ A count in the label ("12 Key Ideas")  → "Key Ideas"; assembly prefixes the

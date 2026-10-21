@@ -105,10 +105,11 @@ class TestLabelOnlyMomentsAreDropped:
 
 
 class TestConceptTimestamp:
+    # A transcript clock is read as seconds since the p1 review (R4-W5).
     @pytest.mark.parametrize(
-        ("raw", "expected"), [(95, 95), ("95", 95), (-1, None), ("1:35", None)]
+        ("raw", "expected"), [(95, 95), ("95", 95), (-1, None), ("1:35", 95), ("soon", None)]
     )
-    def test_should_keep_a_concept_timestamp_only_when_it_is_whole_seconds(
+    def test_should_keep_a_concept_timestamp_only_when_it_is_seconds_or_a_clock(
         self, raw: object, expected: int | None
     ) -> None:
         concept = LearningConcept.model_validate({"name": "C", "timestamp": raw})
@@ -168,7 +169,7 @@ class TestDescribedSiblingSource:
     def test_should_keep_the_planned_list_when_it_is_described(self) -> None:
         planned = [{**m, "description": f"What {m['label']} set."} for m in _LABELS[:6]]
 
-        data = described_moment_source(
+        data, _ = described_moment_source(
             "learning.timestamps", planned, {"narrative": {"keyMoments": _DESCRIBED}}
         )
 
@@ -177,7 +178,7 @@ class TestDescribedSiblingSource:
     def test_should_keep_the_planned_list_when_another_tab_ships_the_sibling(self) -> None:
         extraction = {"narrative": {"keyMoments": _DESCRIBED}}
 
-        data = described_moment_source(
+        data, _ = described_moment_source(
             "learning.timestamps", _LABELS, extraction, claimed={"narrative.keyMoments"}
         )
 
@@ -186,4 +187,4 @@ class TestDescribedSiblingSource:
     def test_should_keep_the_planned_list_when_the_sibling_is_label_only_too(self) -> None:
         extraction = {"narrative": {"keyMoments": [{"timestamp": 5, "label": "x"}]}}
 
-        assert described_moment_source("learning.timestamps", _LABELS, extraction) is _LABELS
+        assert described_moment_source("learning.timestamps", _LABELS, extraction)[0] is _LABELS

@@ -69,6 +69,9 @@ export const MomentTimelineRow = memo(function MomentTimelineRow({
       ? Math.max(0, Math.min(duration, currentTime - item.seconds))
       : null;
   const label = resolveLabel(item);
+  // A long interview question's label is only its head: the row shows it whole.
+  const heading = item.question?.trim() || label;
+  const quote = item.quote?.trim();
   const chipContent = (
     <>
       <Clock className="h-3 w-3" aria-hidden="true" />
@@ -187,11 +190,18 @@ export const MomentTimelineRow = memo(function MomentTimelineRow({
                 <div className="flex-1 basis-56 min-w-0 space-y-1.5">
                   {/* No clamp: in this view the label IS the substance for
                       most videos (R7), so it always renders in full. */}
-                  <p className="text-sm font-semibold leading-snug">{label}</p>
+                  <p className="text-sm font-semibold leading-snug">{heading}</p>
                   {item.description && item.description !== label && (
                     <p className="text-xs leading-relaxed text-muted-foreground">
                       {item.description}
                     </p>
+                  )}
+                  {/* Verbatim beats paraphrase (R10): the speaker's own line, one quiet
+                      line in the same quote style as the spot cards. */}
+                  {quote && (
+                    <blockquote className="border-s-2 border-[var(--vie-accent)]/40 ps-2.5 text-xs italic leading-relaxed text-foreground/85">
+                      {quote}
+                    </blockquote>
                   )}
                   {item.tags && item.tags.length > 0 && (
                     <div className="flex flex-wrap gap-1">

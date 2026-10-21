@@ -465,29 +465,28 @@ function useShowcaseEntries(): ShowcaseEntry[] {
       {
         testId: 'claims-tracker',
         name: 'ClaimsTracker',
-        description: 'The news signature surface: every factual claim with who said it and a verified / disputed / context status badge, plus optional source citation and a status filter.',
-        whatsNew: 'New (P5b) · status badges · disputed-claim filter · seek-to-timestamp',
+        description: 'The news signature surface: every claim with who made it and what the video does with it — a stated / supported / contested status badge — plus optional evidence and a status filter.',
+        whatsNew: 'New (P5b) · status badges · contested-claim filter · seek-to-timestamp',
         render: () => (
           <ClaimsTracker
             claims={[
               {
                 claim: 'The plan creates 1,200 jobs',
                 source: 'Mayor Diaz',
-                status: 'disputed',
+                status: 'contested',
                 sourceCitation: 'Independent analysts put the figure near 700.',
                 timestamp: 210,
               },
               {
                 claim: 'Fares will rise 15% in 2026',
                 source: 'Transit Authority',
-                status: 'verified',
+                status: 'supported',
                 sourceCitation: 'Approved fare schedule, council record.',
                 timestamp: 540,
               },
               {
                 claim: 'The city faces a structural deficit',
-                source: 'Reporter',
-                status: 'context',
+                status: 'stated',
                 timestamp: 60,
               },
             ]}

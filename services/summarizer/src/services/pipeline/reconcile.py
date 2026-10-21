@@ -19,8 +19,8 @@ The same goes for a required component ``has_code`` gates (tech's
 ``code_playground``) that no tab was planned for: its backfill is deferred
 too — code on screen adds it, else it is recorded ``not_backfilled``; its field
 waits for frames as well, so it joins the visual group at no latency cost.
-Whenever something was deferred, frames-done re-runs the backfill, quiz and
-3–6 steps over the decided tabs. Steps 1b–5 (the primary's moment source,
+Whenever something was deferred, frames-done re-runs the backfill, quiz, fold
+and 3–6 steps over the decided tabs. Steps 1b–5 (the primary's moment source,
 required backfill, quiz, dedupe, the info_grid fold, 3–6 tabs) live in
 ``reconcile_pass``. The plan-parse guard (``plan_reconcile``) keeps the checks
 that need no evidence (unregistered path, inactive domain).
@@ -274,7 +274,9 @@ def reconcile_at_plan_done(
     return run.outcome()
 
 
-_FRAMES_DONE_STEPS = (required_step, quiz_step, size_step)
+# fold before size, as at plan-done: a grid a frames-done backfill or fall-back
+# leaves standing folds into its host before the trim counts it as a tab.
+_FRAMES_DONE_STEPS = (required_step, quiz_step, fold_step, size_step)
 
 
 def resolve_screen_code(
@@ -285,9 +287,10 @@ def resolve_screen_code(
 ) -> ReconcileOutcome:
     """Frames-done: keep ``plan``'s deferred code tabs when the screen shows code,
     else fall them back as step 1 would — no frames or vision = the transcript
-    decides. Then steps 2, 3 and 5 (backfill, quiz last, 3–6) re-run over the
-    decided tabs whenever something was deferred: code on screen backfills a
-    deferred code requirement, none records it ``not_backfilled``."""
+    decides. Then steps 2, 3, 4b and 5 (backfill, quiz last, the info_grid fold,
+    3–6) re-run over the decided tabs whenever something was deferred: code on
+    screen backfills a deferred code requirement, none records it
+    ``not_backfilled``."""
     deferred = set(plan.deferred_tabs)
     shows = plan.awaits_screen and screen_shows_code(frame_descriptions, all_frames)
     run = ReconcilePass(

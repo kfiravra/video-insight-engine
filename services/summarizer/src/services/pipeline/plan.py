@@ -151,7 +151,9 @@ def _validate_tabs(tabs: list[dict]) -> list[dict]:
             component = ""
         if not component:
             component = infer_component(tid)
-        goal = tab.get("goal", "")
+        # A null / list goal ships as "" — it must not raise here, where any
+        # exception replaces the whole plan with the fallback (run_plan).
+        goal = _str_or_empty(tab.get("goal"))
         # Observability only (task 1.10): a goal naming the component or the topic still ships.
         if why := goal_rule_violation(goal):
             logger.info("Tab '%s' goal breaks the viewer-outcome rule: %s", tid, why)
@@ -161,7 +163,7 @@ def _validate_tabs(tabs: list[dict]) -> list[dict]:
                 "id": tid,
                 "label": tab["label"],
                 "emoji": tab.get("emoji", ""),
-                "dataSource": _coerce_data_source(tab.get("dataSource")),
+                "dataSource": _str_or_empty(tab.get("dataSource")),
                 "component": component,
                 "goal": goal,
                 "brief": TabBrief.from_raw(tab.get("brief")).model_dump(),
@@ -171,8 +173,8 @@ def _validate_tabs(tabs: list[dict]) -> list[dict]:
     return valid_tabs
 
 
-def _coerce_data_source(raw: object) -> str:
-    """The LLM's dataSource as a string; null/list/dict → "" (an unset source)."""
+def _str_or_empty(raw: object) -> str:
+    """An LLM string field as a string; null/list/dict → "" (unset)."""
     return raw if isinstance(raw, str) else ""
 
 

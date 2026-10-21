@@ -81,6 +81,7 @@ export const SpotExplorer = memo(function SpotExplorer({
     const hasActions = Boolean(spot.mapQuery || spot.bookingSearch);
     const quote = spot.quote?.trim();
     const speaker = showSpeaker ? spot.speaker?.trim() : undefined;
+    const category = spot.category?.trim();
 
     return (
       <FadeIn key={spotIndex} index={fadeIdx}>
@@ -105,6 +106,12 @@ export const SpotExplorer = memo(function SpotExplorer({
             <div className="flex-1 min-w-0 space-y-1.5">
               <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
                 <span className="font-semibold text-[0.9375rem]">{spot.name}</span>
+                {/* A key idea's kind ("Thesis", "Ask") — a quiet outline tag beside the claim. */}
+                {category && (
+                  <Badge variant="muted" className="border border-border/60 bg-transparent px-2 text-[11px]">
+                    {category}
+                  </Badge>
+                )}
                 {spot.pronunciation && (
                   <span className="font-mono text-xs text-muted-foreground">
                     {spot.pronunciation}

@@ -94,9 +94,9 @@ class TestQuizQuestionCount:
     @pytest.mark.parametrize(
         ("duration_s", "expected"),
         [
-            (None, 3),
-            (0, 3),
-            (math.nan, 3),
+            (None, 5),
+            (0, 5),
+            (math.nan, 5),
             (_TEN_MIN, 3),
             (15 * 60, 3),
             (15 * 60 + 1, 5),
@@ -145,8 +145,10 @@ class TestPromptByDuration:
     ) -> None:
         assert f"inside the video (0:00–{length})" in _prompt(duration_s)
 
-    def test_should_say_the_length_is_unknown_when_none_is_given(self) -> None:
-        assert "write 3 questions" in _prompt(None) and "(unknown)" in _prompt(None)
+    def test_should_size_an_unknown_length_as_memory_does_and_name_no_range(self) -> None:
+        prompt = _prompt(None)
+
+        assert "write 5 questions" in prompt and "inside the video." in prompt
 
     def test_should_keep_the_registry_cap_as_the_ceiling(self) -> None:
         with patch.object(enrichment_mod, "_quiz_cap", return_value=5):

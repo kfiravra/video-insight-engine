@@ -1016,6 +1016,31 @@ def key_idea_caps(sources: Mapping[str, str], duration: float | None) -> dict[st
     return {tab_id: cap for tab_id, source in sources.items() if source == _KEY_IDEAS_SOURCE}
 
 
+def _join_folds(
+    host: dict,
+    folds: list,
+    source: str,
+    extraction: dict | None,
+    enrichment: dict | None,
+    duration: float | None,
+) -> int | None:
+    """Join the host's folded grids (R6) once each side is capped as it would ship
+    alone — the host's own items by its cap (``key_idea_cap`` on a key-ideas host),
+    each grid by info_grid's — and return the host's capped list length, the cap
+    the post-process keeps (None for an uncapped host): folded rows never cut the
+    host's own (a talk's key ideas)."""
+    host_id, component = str(host.get("id", "")), str(host.get("component") or "")
+    override = key_idea_caps({host_id: source}, duration).get(host_id)
+    _cap_tab_items(component, host["props"], duration, None, override)
+    apply_folds(
+        host, folds, extraction, enrichment, resolve_data_source,
+        cap_rows=lambda grid: _cap_tab_items("info_grid", grid, duration),
+    )  # fmt: skip
+    list_key = _COUNT_KEYS.get(component)
+    items = host["props"].get(list_key) if list_key else None
+    return len(items) if isinstance(items, list) else None
+
+
 def _post_process_tabs(
     tabs: list[dict],
     video_duration: float | None = None,
@@ -1430,10 +1455,11 @@ def build_fallback_candidates(
 ) -> list[dict]:
     """Build fallback tab candidates from synthesis.
 
-    Priority: overview > info_grid. No moment_track candidate: the
-    always-Moments tab (``moment_fallback.always_moments_tab``) already added
-    one from the chapters — or a better source — where the domain allows it.
-    Skips candidates that duplicate existing components or IDs.
+    Priority: overview > the takeaways as a checklist (Key Info — never a
+    standalone info_grid, R6; its goal the registry's). No moment_track
+    candidate: the always-Moments tab (``moment_fallback.always_moments_tab``)
+    already added one from the chapters — or a better source — where the domain
+    allows it. Skips candidates that duplicate existing components or IDs.
     """
     candidates: list[dict] = []
     synthesis = synthesis or {}
@@ -1459,24 +1485,30 @@ def build_fallback_candidates(
                 }
             )
 
-    # Fallback 2: info_grid from synthesis keyTakeaways
-    if "info_grid" not in existing_components and "key_info" not in existing_ids:
-        key_takeaways = synthesis.get("keyTakeaways", [])
-        if len(key_takeaways) >= 2:
-            items = [{"key": f"Takeaway {i + 1}", "value": t} for i, t in enumerate(key_takeaways)]
+    # Fallback 2: the synthesis keyTakeaways as a checklist, a blank one never a row
+    if "checklist" not in existing_components and "key_info" not in existing_ids:
+        takeaways = _stated_takeaways(synthesis.get("keyTakeaways"))
+        if len(takeaways) >= 2:
             candidates.append(
                 {
                     "id": "key_info",
                     "label": _KEY_INFO_TAB["label"],
                     "emoji": _KEY_INFO_TAB["emoji"],
-                    "component": "info_grid",
-                    "props": {"items": items},
+                    "component": "checklist",
+                    "props": {"items": [{"label": takeaway} for takeaway in takeaways]},
                     "goal": _KEY_INFO_TAB["goal"],
                     "crossTabLinks": [],
                 }
             )
 
     return candidates
+
+
+def _stated_takeaways(takeaways: Any) -> list[str]:
+    """The non-blank takeaway strings, stripped (R5: no row without its text)."""
+    if not isinstance(takeaways, list):
+        return []
+    return [t.strip() for t in takeaways if isinstance(t, str) and t.strip()]
 
 
 # ─────────────────────────────────────────────────────
@@ -1563,8 +1595,12 @@ def assemble_response(
     dropped_tabs: list[dict] = []
     # Planned sources read with data of their own — the sibling fallback refuses them.
     claims = _planned_claims(raw_tabs, extraction, enrichment)
-    # Tab id → planned dataSource of every planned tab that ships (drop records).
+    # Tab id → the dataSource every planned tab ships from (drop records, caps): the
+    # planned one, or the described moment sibling it borrowed.
     sources: dict[str, str] = {}
+    # Tab id → the item count a host ships once its folded grids joined it (R6):
+    # the post-process cap keeps it, so folded rows never cut the host's own.
+    fold_caps: dict[str, int] = {}
 
     for raw_tab in raw_tabs:
         if not isinstance(raw_tab, dict):
@@ -1617,9 +1653,13 @@ def assemble_response(
             elif component == "moment_track":
                 data = (extraction.get("learning") or {}).get("timestamps")
 
-        # A label-only Moments list yields to a described registry sibling (R7, 1.2).
+        # A label-only Moments list yields to a described registry sibling (R7, 1.2),
+        # claimed from then on so no second tab borrows it (R5).
+        shipped_source = data_source
         if component == "moment_track":
-            data = described_moment_source(data_source, data, extraction, claims)
+            data, shipped_source = described_moment_source(data_source, data, extraction, claims)
+            if shipped_source != data_source:
+                claims[shipped_source] += 1
 
         # moment_track is never dropped for lack of data (Kfir, phase-1 close):
         # when the planned source yields nothing, the moments come from the
@@ -1766,6 +1806,8 @@ def assemble_response(
                 }
             )
             _release_claim(claims, data_source)
+            if shipped_source != data_source:
+                _release_claim(claims, shipped_source)
             # A lost host gives the grids folded into it back as tabs (R6, never drop).
             folds = raw_tab.get(FOLDS_KEY) or []
             for source, unfolded in unfolded_tabs(
@@ -1787,12 +1829,15 @@ def assemble_response(
                 **({"degradedFrom": degraded_from} if degraded_from else {}),
             }
         )
-        sources[tab_id] = data_source
+        sources[tab_id] = shipped_source
         # The info_grid tabs reconcile folded into this one (R6) join it now.
         if raw_tab.get(FOLDS_KEY):
-            apply_folds(
-                assembled_tabs[-1], raw_tab[FOLDS_KEY], extraction, enrichment, resolve_data_source
-            )
+            joined = _join_folds(
+                assembled_tabs[-1], raw_tab[FOLDS_KEY], shipped_source, extraction, enrichment,
+                (video_meta or {}).get("duration"),
+            )  # fmt: skip
+            if joined is not None:
+                fold_caps[tab_id] = joined
 
     # Hallucinated timestamps (beyond the video's end) can never seek or
     # match a frame — drop them before the backfill and post-assembly
@@ -1855,14 +1900,11 @@ def assemble_response(
     # left, the fallback chain's tab joins after the planned and required ones —
     # after the requirements, so a backfill from extraction data wins. Unless
     # the steps are the timeline (D6): then no Moments tab, planned or not.
+    forbidden = effective_requirements(primary_tag, triage.get("contentFormat"))["forbidden"]
     moments = None
     if not steps_timeline:
         moments = always_moments_tab(
-            assembled_tabs,
-            raw_tabs,
-            video_meta,
-            description_analysis,
-            effective_requirements(primary_tag, triage.get("contentFormat"))["forbidden"],
+            assembled_tabs, raw_tabs, video_meta, description_analysis, forbidden
         )
     if moments is not None:
         _frame_moment_tab(moments, frames, all_frames, frame_descriptions, frame_used)
@@ -1911,7 +1953,10 @@ def assemble_response(
         # mostly talking-head footage; lectures with one slide drown in noise.
         has_enough_frames = len(filmstrip_frames) >= 10
         has_good_captions = non_generic_count >= len(filmstrip_frames) * 0.7
-        _domain_blocked = primary_tag in assembly_policy()["noFilmstripDomains"]
+        # A playbook that forbids the filmstrip (a talk, a podcast, a review) gets none.
+        _domain_blocked = (
+            primary_tag in assembly_policy()["noFilmstripDomains"] or "video_filmstrip" in forbidden
+        )
         # A planner-designed filmstrip tab already shows these frames — a
         # second auto-appended gallery is pure duplication.
         _has_filmstrip_tab = any(t.get("component") == "video_filmstrip" for t in assembled_tabs)
@@ -1960,7 +2005,7 @@ def assemble_response(
         assembled_tabs,
         (video_meta or {}).get("duration"),
         collect_moment_anchors(extraction, synthesis),
-        key_idea_caps(sources, (video_meta or {}).get("duration")),
+        {**key_idea_caps(sources, (video_meta or {}).get("duration")), **fold_caps},
     )
     # After post-processing: a link's text is its target's FINAL label (emoji
     # prefix stripped, "Untitled Chapter N" renamed), never the raw plan label.

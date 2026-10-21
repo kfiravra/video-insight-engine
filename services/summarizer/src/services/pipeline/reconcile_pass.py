@@ -6,7 +6,9 @@
 that shape the tab list once the evidence is settled:
 
 1b. moment source — a Moments tab on learning's generic ``learning.timestamps``
-   reads the primary's own moment source (a podcast's segments) instead;
+   reads the primary's own moment source instead (a podcast's segments, news's
+   story timeline, sport's match events, music's structure) — never a source
+   read off the screen (``waitsForVisual``: gaming's highlights);
 2. required — the primary domain's required components are backfilled from
    its defaultTabs unless their ``requirementEvidence`` key is doubly false
    (``not_backfilled``, naming the defaultTab it would have added); a key the
@@ -21,8 +23,8 @@ that shape the tab list once the evidence is settled:
 4b. fold — a planned info_grid tab joins the planned tab whose question it
    answers as one of its ``folds`` (R6; ``assembly/info_grid_fold.py``);
 5. size — 3–6 tabs: beyond 6 the last other planned tab is trimmed (never a
-   required tab, a moment_track or the quiz), a short plan is filled from the
-   primary's defaultTabs.
+   required tab, a moment_track, the quiz or a tab carrying folds), a short
+   plan is filled from the primary's defaultTabs.
 """
 
 from __future__ import annotations
@@ -226,14 +228,21 @@ GENERIC_MOMENT_SOURCE = "learning.timestamps"
 MOMENT_COMPONENT = "moment_track"
 
 
+def _reads_the_screen(path: str) -> bool:
+    spec = data_source(path)
+    return spec is not None and spec["waitsForVisual"]
+
+
 def primary_moment_source(run: ReconcilePass) -> str | None:
     """The primary domain's first moment_track defaultTab source (podcast.segments,
     news.storyTimeline, …) when the primary is active, not learning, and its
-    evidence allows it; None otherwise."""
+    evidence allows it; None otherwise. A source read off the screen
+    (``waitsForVisual``: gaming.highlights) never replaces the transcript's list:
+    its moments wait for frames and are gone on a run without vision."""
     if run.primary == "learning" or run.primary not in run.active:
         return None
     sources = datasources_for_component(run.primary, MOMENT_COMPONENT)
-    if not sources or sources[0] == GENERIC_MOMENT_SOURCE:
+    if not sources or sources[0] == GENERIC_MOMENT_SOURCE or _reads_the_screen(sources[0]):
         return None
     return sources[0] if source_allowed(run, sources[0]) else None
 
@@ -396,12 +405,13 @@ def fold_step(run: ReconcilePass) -> None:
 
 def _trimmable(run: ReconcilePass) -> list[int]:
     """Indices of the tabs a trim may remove: not required, not a moment_track,
-    not the quiz (it sits last by policy, not because it matters least)."""
+    not the quiz (it sits last by policy, not because it matters least), not a
+    host carrying folds (its folded grids would vanish with it, unrecorded)."""
     protected = NEVER_DROPPED | _required_family(run)
     return [
         i
         for i, tab in enumerate(run.tabs)
-        if tab["component"] not in protected and not is_quiz_tab(tab)
+        if tab["component"] not in protected and not is_quiz_tab(tab) and not tab.get(FOLDS_KEY)
     ]
 
 

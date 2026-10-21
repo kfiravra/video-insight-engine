@@ -93,7 +93,7 @@ class TestValidateGroup:
             "ingredients"
         ]
 
-        assert (eggs["amount"], eggs["displayAmount"], eggs["unit"]) == (0.0, "", None)
+        assert (eggs["amount"], eggs["displayAmount"], eggs["unit"]) == (None, "", None)
 
     def test_should_drop_an_invalid_item_and_report_it(self) -> None:
         raw = {"ingredients": [{"name": "eggs"}, {"amount": 2}]}

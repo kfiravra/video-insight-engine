@@ -248,11 +248,22 @@ class TestEffectiveRequirements:
         assert merged["required"] == ["spot_explorer"]
         assert "quiz_arena" in merged["forbidden"]
 
-    def test_educational_domains_allow_quiz(self):
+    def test_should_run_the_quiz_call_exactly_where_the_requirements_allow_a_quiz(self, config):
+        # Two hand-synced registry lists (p1 review R10): the quiz call's domains and
+        # the domains whose requirements do not forbid quiz_arena.
+        allowed = {
+            domain
+            for domain, rules in config["domainRequirements"].items()
+            if "quiz_arena" not in rules.get("forbidden", [])
+        }
+
+        assert set(config["quizEnrichment"]["quizDomains"]) == allowed
+
+    def test_educational_domains_allow_quiz(self, config):
         from src.shared_config.domain_config import effective_requirements
 
         # A podcast or news explainer is learnable too (output-quality D9).
-        for domain in ("learning", "language", "tech", "science", "podcast", "news"):
+        for domain in config["quizEnrichment"]["quizDomains"]:
             merged = effective_requirements(domain, None)
             assert "quiz_arena" not in merged["forbidden"], domain
             assert merged["max"].get("quiz_arena") == 1, domain
@@ -260,7 +271,7 @@ class TestEffectiveRequirements:
     def test_non_educational_domains_forbid_quiz(self, config):
         from src.shared_config.domain_config import effective_requirements
 
-        educational = {"learning", "language", "tech", "science", "podcast", "news"}
+        educational = set(config["quizEnrichment"]["quizDomains"])
         for domain in config["domainRequirements"]:
             if domain in educational:
                 continue

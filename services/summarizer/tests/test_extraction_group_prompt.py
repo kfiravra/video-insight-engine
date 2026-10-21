@@ -107,13 +107,16 @@ _COMPLETENESS = (
 _ARGUMENTS = (
     "Arguments the same way: every distinct claim, its reasoning and the sentence that "
     "carries it — never merge two claims into one, never skip the last 10 minutes (the close "
-    "is where a talk lands its ask and a conversation its verdict)."
+    "is where a talk lands its ask and a conversation its verdict); within the tab's cap — "
+    "when the talk argues more claims than it allows, keep the ones the speaker weighs most, "
+    "the close included."
 )
 # Kfir 2026-10-21 (D13, S06 iteration): the completeness rule repeats "never invent numbers".
 _NUMBERS = (
-    "Never invent a number: a duration, rest time, quantity, count or score the speaker does "
-    "not state stays null — complete means every item the transcript supports, never a figure "
-    "it does not."
+    "Never invent a number: a duration, rest time, quantity, count or score the speaker did "
+    'not state stays null; a text field keeps the words as said ("give it a sec" stays '
+    '"give it a sec", never "rest 10 minutes"). Complete means every item the transcript '
+    "supports, never a figure it does not."
 )
 
 

@@ -8,6 +8,11 @@ export interface MomentItem {
   endSeconds?: number;
   label: string;
   description?: string;
+  /** The speaker's line that carries the moment, verbatim (output-quality R7/R10). */
+  quote?: string;
+  /** An interview exchange's whole question — sent only when it differs from the
+   *  label (the label is then its first sentence). */
+  question?: string;
   mood?: string;
   emoji?: string;
   speaker?: string;

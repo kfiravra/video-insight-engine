@@ -101,7 +101,6 @@ def _key_idea_spot(item: dict) -> dict | None:
             "description": item.get("why") or "",
             "quote": item.get("quote"),
             "timestamp": item.get("timestamp"),
-            "emoji": item.get("emoji"),
         }
     )
     if spot is None:
@@ -115,15 +114,24 @@ def _key_idea_spot(item: dict) -> dict | None:
     return spot
 
 
+# Where the ideas that name no section go once the others are sectioned.
+_UNSECTIONED = "Other"
+
+
 def _key_idea_sections(labels: list[str]) -> list[dict]:
-    """``section`` → spot sections in first-appearance order; none below two
-    sections (one section is the whole list, the FE shows no nav for it)."""
+    """``section`` → spot sections in first-appearance order, the ideas that name
+    none in a trailing "Other" (so every section view adds up to the whole list);
+    none below two named sections (one section is the whole list, the FE shows no
+    nav for it)."""
     indices: dict[str, list[int]] = {}
     for index, label in enumerate(labels):
         if label:
             indices.setdefault(label, []).append(index)
     if len(indices) < 2:
         return []
+    unsectioned = [index for index, label in enumerate(labels) if not label]
+    if unsectioned:
+        indices[_UNSECTIONED] = sorted([*indices.get(_UNSECTIONED, []), *unsectioned])
     return [{"label": label, "spotIndices": spots} for label, spots in indices.items()]
 
 

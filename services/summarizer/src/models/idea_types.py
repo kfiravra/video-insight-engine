@@ -7,27 +7,40 @@ and the answer it got (C10); ``TechTopic`` a concept a tutorial explains, with
 where it explains it (L25); ``Claim`` a checkable claim a news piece, talk,
 podcast or tutorial makes and what the video does with it (D11). Each mirrors its TS interface
 (``packages/types/src/vie-response.ts``; ``tests/test_ts_pydantic_parity.py``).
-Validation is lenient on everything but the heading field: a malformed stamp or
-an unknown kind becomes ``None``, so one bad value never drops the item.
+Validation is lenient on everything but the heading field (and an exchange's
+answer): a malformed stamp or an unknown kind becomes ``None``, so one bad value
+never drops the item.
 """
 
 from __future__ import annotations
 
+import logging
+import re
 from typing import Any
 
 from pydantic import AliasChoices, BaseModel, Field, field_validator
+
+from ..utils.data_helpers import parse_timestamp_to_seconds
+
+logger = logging.getLogger(__name__)
 
 # The six kinds of argued idea (D10) — the spot card's category badge.
 KEY_IDEA_KINDS: tuple[str, ...] = ("thesis", "argument", "announcement", "number", "story", "ask")
 # What the video does with a claim (D11): states it, supports it with evidence, or
 # contests it. Never a verdict of ours — "verified" and "disputed" are not words here.
 CLAIM_STATUSES: tuple[str, ...] = ("stated", "supported", "contested")
+# A whole transcript clock, bracketed or not: "1:35", "1:02:05", "[4:32]" (the
+# groups after the first are clock digits, so "12:60" is no clock).
+_CLOCK_RE = re.compile(r"\[?(\d{1,3}(?::[0-5]\d){1,2})\]?")
 
 
 def seconds_or_none(value: Any) -> int | None:
-    """Seconds into the video: a non-negative whole number, else None."""
+    """Seconds into the video: a non-negative whole number or a transcript clock
+    (``"1:35"`` → 95), else None."""
     if value is None or value == "" or isinstance(value, bool):
         return None
+    if isinstance(value, str) and (clock := _CLOCK_RE.fullmatch(value.strip())):
+        return parse_timestamp_to_seconds(clock.group(1))
     try:
         seconds = int(value)
     except (ValueError, TypeError, OverflowError):
@@ -109,11 +122,20 @@ class PodcastQA(BaseModel):
     """
 
     question: str
-    answer: str = Field(default="", validation_alias=AliasChoices("answer", "description"))
+    # Required: an exchange without its answer is dropped by validation instead of
+    # shipping as a label-only moment.
+    answer: str = Field(validation_alias=AliasChoices("answer", "description"))
     # Who answers — the guest, usually.
     speaker: str | None = None
     timestamp: int | None = None
     quote: str | None = None
+
+    @field_validator("answer")
+    @classmethod
+    def require_answer(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("an exchange needs its answer")
+        return v
 
     @field_validator("timestamp", mode="before")
     @classmethod
@@ -164,7 +186,11 @@ class Claim(BaseModel):
     @classmethod
     def check_status(cls, v: Any) -> str | None:
         status = (text_or_none(v) or "").lower()
-        return status if status in CLAIM_STATUSES else None
+        if status in CLAIM_STATUSES:
+            return status
+        if status:
+            logger.warning("Claim status %r refused (not one of %s)", v, ", ".join(CLAIM_STATUSES))
+        return None
 
     @field_validator("timestamp", mode="before")
     @classmethod

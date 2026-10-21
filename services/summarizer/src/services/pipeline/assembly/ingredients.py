@@ -28,7 +28,12 @@ _QUANTITY = re.compile(
     r"litres?|ounces?|oz|pounds?|lbs?)\b",
     re.IGNORECASE,
 )
-_BARE_NUMBER = re.compile(r"^\d+(?:[.,/]\d+)?$")
+# An amount that is only a number: whole, decimal, a fraction or a vulgar one, a
+# mixed number ("1 1/2", "1½") or a range ("3-4", "2 to 3") — it needs its unit.
+_NUMBER = r"(?:\d+(?:[.,]\d+)?(?:/\d+)?|\d*[½⅓⅔¼¾⅛⅜⅝⅞])"
+_BARE_NUMBER = re.compile(
+    rf"^{_NUMBER}(?:(?:\s*[-–—]\s*|\s+(?:to|or)\s+|\s+){_NUMBER})*$", re.IGNORECASE
+)
 
 
 def display_amount(item: dict) -> str:
@@ -38,7 +43,8 @@ def display_amount(item: dict) -> str:
 
 
 def _with_unit(amount: str, unit: Any) -> str:
-    """A bare number gains its unit ("1" + "cup" → "1 cup"); anything else stays."""
+    """A bare number gains its unit ("1" + "cup" → "1 cup", "1 1/2" + "cups" →
+    "1 1/2 cups", "3-4" + "cloves" → "3-4 cloves"); anything else stays."""
     unit_text = str(unit or "").strip()
     if unit_text and _BARE_NUMBER.match(amount):
         return f"{amount} {unit_text}"
@@ -46,7 +52,8 @@ def _with_unit(amount: str, unit: Any) -> str:
 
 
 def _numeric_amount(item: dict) -> str:
-    """ "6 tablespoons" from the numeric amount + unit; '' without a positive amount."""
+    """ "6 tablespoons" from the numeric amount + unit; '' without a positive amount
+    (an unstated amount is None or 0 — never a quantity)."""
     amount = item.get("amount")
     if not amount:
         return ""

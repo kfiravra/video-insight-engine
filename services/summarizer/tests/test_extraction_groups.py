@@ -349,7 +349,7 @@ class TestRunGroupCall:
             (outcome.data or {})["food"]["ingredients"][0]["amount"],
         ) == (
             ["food"],
-            0.0,
+            None,
         )
 
     async def test_should_mark_the_group_failed_when_its_answer_holds_none_of_its_keys(

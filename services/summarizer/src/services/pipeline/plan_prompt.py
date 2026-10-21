@@ -65,7 +65,19 @@ _TOPIC_OPENER = re.compile(
     re.IGNORECASE,
 )
 _ARTICLE_OPENER = re.compile(r"^(?:a|an|the)\b", re.IGNORECASE)
-_VIEWER = re.compile(r"\byou(?:'ll|'re|'ve|r)?\b", re.IGNORECASE)
+# An article goal describes the surface only when a component word sits in its
+# opening words ("A timeline of…", "An interactive map…"); further in, the
+# word is usually a verb aimed at the viewer ("The tricks you can map to…").
+_ARTICLE_SPAN_TOKENS = 3
+_VIEWER = re.compile(r"\byou(?:'ll|'re|'ve|r|rself)?\b", re.IGNORECASE)
+
+
+def _opens_on_component(text: str) -> bool:
+    """True when the goal opens on the component rather than the viewer's outcome."""
+    if _COMPONENT_WORDS.match(text):
+        return True
+    opening = " ".join(text.split()[:_ARTICLE_SPAN_TOKENS])
+    return bool(_ARTICLE_OPENER.match(text) and _COMPONENT_WORDS.search(opening))
 
 
 def goal_rule_violation(goal: str) -> str | None:
@@ -81,9 +93,7 @@ def goal_rule_violation(goal: str) -> str | None:
         return "empty"
     if any(name in text.lower() for name in valid_components() if "_" in name):
         return "names a component"
-    if _COMPONENT_WORDS.match(text) or (
-        _ARTICLE_OPENER.match(text) and _COMPONENT_WORDS.search(text)
-    ):
+    if _opens_on_component(text):
         return "describes the component, not what the viewer gets"
     if _TOPIC_OPENER.match(text):
         return "names the topic, not what the viewer gets"

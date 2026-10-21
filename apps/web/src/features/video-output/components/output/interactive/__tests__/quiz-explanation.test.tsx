@@ -38,4 +38,34 @@ describe('QuizExplanation', () => {
       expect(screen.getByText('0:00')).toBeInTheDocument();
     });
   });
+
+  // p1 review R6: the explanation's (m:ss) is the model's word, unchecked; the
+  // question's timestamp passed the enrichment's range check.
+  describe('checked timestamp wins', () => {
+    it('should seek to the checked timestamp when the cited time is beyond tolerance', async () => {
+      const user = userEvent.setup();
+      const onSeek = vi.fn();
+      render(<QuizExplanation text="Said at (59:40) exactly." timestamp={900} onSeek={onSeek} />);
+      await user.click(screen.getByRole('button', { name: /jump to/i }));
+      expect(onSeek).toHaveBeenCalledWith(900);
+    });
+
+    it('should keep the cited time when it sits within tolerance of the timestamp', async () => {
+      const user = userEvent.setup();
+      const onSeek = vi.fn();
+      render(<QuizExplanation text="Said at (2:40) exactly." timestamp={165} onSeek={onSeek} />);
+      await user.click(screen.getByRole('button', { name: 'Jump to 2:40' }));
+      expect(onSeek).toHaveBeenCalledWith(160);
+    });
+
+    it('should keep the cited time when no timestamp was checked', () => {
+      render(<QuizExplanation text="Said at (59:40) exactly." onSeek={vi.fn()} />);
+      expect(screen.getByRole('button', { name: 'Jump to 59:40' })).toBeInTheDocument();
+    });
+
+    it('should append no chip when the caller seeks to the timestamp itself', () => {
+      render(<QuizExplanation text="Said later." timestamp={272} stampChip={false} onSeek={vi.fn()} />);
+      expect(screen.queryByRole('button', { name: /jump to/i })).not.toBeInTheDocument();
+    });
+  });
 });

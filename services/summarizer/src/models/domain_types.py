@@ -225,7 +225,8 @@ class FoodIngredient(BaseModel):
     model_config = {"populate_by_name": True}
 
     name: str
-    amount: float = 0.0
+    # Only as the speaker states it (D13): no stated number → None, never 0.
+    amount: float | None = None
     display_amount: str = Field("", alias="displayAmount")
     unit: str | None = None
     group: str | None = None
@@ -233,15 +234,13 @@ class FoodIngredient(BaseModel):
 
     @field_validator("amount", mode="before")
     @classmethod
-    def coerce_amount(cls, v: Any) -> float:
-        if v is None:
-            return 0.0
-        if isinstance(v, str):
-            try:
-                return float(v)
-            except ValueError:
-                return 0.0
-        return float(v)
+    def coerce_amount(cls, v: Any) -> float | None:
+        if v is None or isinstance(v, bool):
+            return None
+        try:
+            return float(v)
+        except (ValueError, TypeError):
+            return None
 
 
 class FoodStep(BaseModel):

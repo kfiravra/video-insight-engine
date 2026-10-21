@@ -232,8 +232,8 @@ _LEGACY_CLAIM_STATUSES: dict[str, str] = {
     "disputed": "contested",
     "context": "stated",
 }
-# What the video does with a claim it gives no status for, or none it can be
-# checked at: it states it (the non-asserting word, D11 / D13).
+# What the video does with an anchored claim it gives no status for: it states it
+# (the non-asserting word, D11 / D13). An unanchored claim shows no status at all.
 _STATED = "stated"
 _CLAIMS_MIN = 2
 
@@ -247,29 +247,34 @@ def _claim_status(item: dict) -> str:
 
 
 def _normalize_claim(item: Any) -> dict | None:
-    """Coerce a claim item to {claim, status, source?, sourceCitation?, timestamp?}.
+    """Coerce a claim item to {claim, source?, status?, sourceCitation?, timestamp?}.
 
-    Drops the row when there is no claim text. ``status`` is stated /
-    supported / contested only (D11) — never "verified": an unknown, missing or
-    unanchored status is ``stated``. ``source`` is who the video says made the
-    claim, absent when it attributes it to no one (never an invented "Reporter").
+    Drops the row when there is no claim text. ``source`` is who the video says
+    made the claim, absent when it attributes it to no one (never an invented
+    "Reporter"). Only a claim anchored at a timestamp the reader can check carries
+    a ``status`` — stated / supported / contested only (D11), never "verified"; an
+    unknown or missing one is ``stated`` — and its ``sourceCitation`` (the
+    counter-evidence of a "contested"). An unanchored claim ships as the claim and
+    its source alone: no status shown, no citation under a status it lost (D13).
     """
     if not isinstance(item, dict):
         return None
     claim = str(item.get("claim") or item.get("text") or "").strip()
     if not claim:
         return None
-    result: dict[str, Any] = {"claim": claim, "status": _claim_status(item)}
+    result: dict[str, Any] = {"claim": claim}
     source = str(item.get("source") or item.get("speaker") or "").strip()
     if source:
         result["source"] = source
+    timestamp = anchor_seconds(item)
+    if timestamp is None:
+        return result
+    result["status"] = _claim_status(item)
     citation = item.get("sourceCitation") or item.get("citation")
     if citation:
         result["sourceCitation"] = str(citation).strip()
-    # The anchor that let a status through is the seek point the reader checks it at.
-    timestamp = anchor_seconds(item)
-    if timestamp is not None:
-        result["timestamp"] = timestamp
+    # The anchor that let the status through is the seek point the reader checks it at.
+    result["timestamp"] = timestamp
     return result
 
 
@@ -282,9 +287,10 @@ def assemble_claims_tracker(
     """Build ClaimsTracker props from a claims list — news's signature surface, and a
     talk's, podcast's or tech talk's on ``has_claims`` (D11).
 
-    Each claim carries the assertion, a stated / supported / contested status,
-    who made it and an optional source citation. Needs ≥2 real claims to justify
-    the tab; otherwise the data folds into info_grid / overview via the fallback layer.
+    Each claim carries the assertion and who made it; an anchored one also its
+    stated / supported / contested status and an optional source citation. Needs
+    ≥2 real claims to justify the tab; otherwise the data folds into info_grid /
+    overview via the fallback layer.
     """
     if isinstance(data, dict):
         data = data.get("claims") or data.get("items") or []

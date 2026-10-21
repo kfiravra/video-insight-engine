@@ -4,7 +4,9 @@ A Moments tab planned on a list of titles (``learning.timestamps`` stored before
 phase 1: S01 shipped 46 chapter-like labels) ships its registry sibling instead
 when the same run extracted that sibling with what each beat established
 (S01's ``narrative.keyMoments``: 20 of 20 described, planned nowhere). A sibling
-another planned tab ships from is never borrowed (R5). Read before the moment
+another planned tab ships from is never borrowed (R5); a borrowed one is the
+tab's source from then on — claimed, so no second tab borrows it, and recorded
+as the dataSource the tab ships from. Read before the moment
 fallback chain, which only fills a track that has nothing at all. And past the
 assembler, a track that fails the moment gate yields to a described fallback
 (``described_or_fallback``).
@@ -41,11 +43,12 @@ def _described(value: Any) -> bool:
 
 def described_moment_source(
     planned: str, data: Any, extraction: dict | None, claimed: Collection[str] = ()
-) -> Any:
-    """``data`` when it is a described track; else the first described registry
-    sibling of ``planned`` no other tab ships from; else ``data`` unchanged."""
+) -> tuple[Any, str]:
+    """``(data, planned)`` when ``data`` is a described track; else the first described
+    registry sibling of ``planned`` no other tab ships from, with its own path; else
+    ``(data, planned)`` unchanged."""
     if data is None or _described(data):
-        return data
+        return data, planned
     spec = data_source(planned)
     for sibling in spec["siblings"] if spec else []:
         if sibling in claimed:
@@ -58,8 +61,8 @@ def described_moment_source(
                 sibling,
                 len(value) if isinstance(value, list) else 0,
             )
-            return value
-    return data
+            return value, sibling
+    return data, planned
 
 
 def described_or_fallback(props: dict, fallback: Callable[[], dict | None]) -> dict:

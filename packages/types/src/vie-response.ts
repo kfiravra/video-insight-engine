@@ -231,7 +231,9 @@ export interface MomentItem extends FrameEvidence {
   description?: string;
   /** The speaker's line that carries the moment, verbatim (output-quality R7/R10). */
   quote?: string;
-  /** An interview exchange's full question (`podcast.qa`); its head is the label. */
+  /** An interview exchange's whole question (`podcast.qa`) — present only when it
+   *  differs from the label (a long question's label is its first sentence); the
+   *  timeline row then heads with it. */
   question?: string;
   mood?: string;
   emoji?: string;
@@ -462,8 +464,11 @@ export interface ClaimItem extends FrameEvidence {
   claim: string;
   /** Who said / made the claim; absent when the video attributes it to no one. */
   source?: string | null;
-  status: ClaimStatus | LegacyClaimStatus;
-  /** Where the claim's verification comes from (study, outlet, official record). */
+  /** What the video does with the claim — absent when the claim carries no timestamp
+   *  (a status nobody can check is not shown: no badge, no filter count). */
+  status?: ClaimStatus | LegacyClaimStatus | null;
+  /** Where the claim's verification comes from (study, outlet, official record);
+   *  absent with the status. */
   sourceCitation?: string;
   timestamp?: number;
 }
@@ -521,6 +526,9 @@ export interface QuizQuestion {
   options: string[];
   correctIndex: number;
   explanation: string;
+  /** Where the transcript gives the answer, in seconds (output-quality 1.13);
+   *  range-checked by the enrichment — absent on older rows. */
+  timestamp?: number | null;
 }
 
 /** Alias for QuizQuestion for domain usage. */
@@ -594,7 +602,8 @@ export interface TravelData {
 // --- Food ---
 export interface FoodIngredient {
   name: string;
-  amount: number;
+  /** Only as the speaker states it (D13): no stated number → null, never 0. */
+  amount?: number | null;
   displayAmount: string;
   unit?: string;
   group?: string;
@@ -689,16 +698,19 @@ export interface FitnessTimer {
   rounds: number;
 }
 
+export interface FitnessMeta {
+  type: string;
+  /** Absent when the video states no level. */
+  difficulty?: 'beginner' | 'intermediate' | 'advanced';
+  /** Absent when the instructor states no length (D13) — never a default 0. */
+  duration?: number | null;
+  muscleGroups: string[];
+  equipment: string[];
+  caloriesBurned?: number;
+}
+
 export interface FitnessData {
-  meta: {
-    type: string;
-    /** Absent when the video states no level. */
-    difficulty?: 'beginner' | 'intermediate' | 'advanced';
-    duration: number;
-    muscleGroups: string[];
-    equipment: string[];
-    caloriesBurned?: number;
-  };
+  meta: FitnessMeta;
   warmup: FitnessExercise[];
   exercises: FitnessExercise[];
   cooldown: FitnessExercise[];

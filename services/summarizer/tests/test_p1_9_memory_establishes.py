@@ -128,7 +128,7 @@ class TestMemoryPromptAsksForTheThesis:
 
         assert [memory_mod._TRAILING_STAMP_RE.search(t) is not None for t in takeaways] == [
             True
-        ] * 3
+        ] * memory_mod.takeaway_count(EXAMPLE_DURATION)
 
     def test_should_keep_its_example_tldr_within_the_cap(self) -> None:
         assert len(_prompt_example()["tldr"]) <= memory_mod.TLDR_MAX_CHARS

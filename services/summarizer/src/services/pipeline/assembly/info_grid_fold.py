@@ -17,6 +17,8 @@ every reader sees one tab list (the per-group previews included):
   as cards (key → name, value → description, the row's timestamp, evidence →
   quote, category badge) in a section named after the fold's label, a row with
   no value dropped (R5); any other host takes the grid as a bottom attachment.
+  Each side is capped as it would ship alone first (``cap_rows`` for the grid,
+  the caller for the host), so folded rows never cut the host's own items.
 
 A host that does not ship gives its folds back as tabs of their own
 (:func:`unfolded_tabs`). A grid the assemblers only reach by demotion is no
@@ -133,12 +135,16 @@ def apply_folds(
     extraction: dict | None,
     enrichment: dict | None,
     resolve: Resolve,
+    cap_rows: Callable[[dict], None] | None = None,
 ) -> None:
-    """Assemble each folded grid over its own field and join it to the shipped host."""
+    """Assemble each folded grid over its own field — capped in place by ``cap_rows``
+    as a grid tab would be — and join it to the shipped host."""
     for fold in folds:
         props = _fold_props(fold, extraction, enrichment, resolve)
         if props is None:
             continue
+        if cap_rows is not None:
+            cap_rows(props)
         label = str(fold.get("label") or fold.get("id") or "")
         if host.get("component") == _SPOTS:
             _into_spots(host, props, label)

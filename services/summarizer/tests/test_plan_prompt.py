@@ -3,8 +3,8 @@
 The planner reads the FULL marked transcript (no 3,000-char preview), gets an
 explicit output-language block (D16), registry-rendered caps (one per
 dataSource) and domain requirements conditional on its own evidence (D15),
-and eight examples in the new output schema (four of them spoken word,
-output-quality 1.10).
+and nine examples in the new output schema (four of them spoken word,
+output-quality 1.10; the compact fitness one restored by the phase-1 review).
 """
 
 from __future__ import annotations
@@ -287,8 +287,8 @@ def _cap(path: str) -> int:
     return spec["cap"] if spec else 0
 
 
-def test_should_ship_eight_examples_when_prompt_is_read() -> None:
-    assert len(_EXAMPLES) == 8
+def test_should_ship_nine_examples_when_prompt_is_read() -> None:
+    assert len(_EXAMPLES) == 9
 
 
 def test_should_send_the_output_schema_as_valid_json_when_rendering() -> None:

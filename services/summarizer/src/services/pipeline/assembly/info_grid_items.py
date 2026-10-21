@@ -312,19 +312,27 @@ def _value_attachments(tab: dict) -> None:
 
 
 # A grid of nothing but short names (a tech stack, a cast list) is no key/value
-# table missing its values: it ships as a tag cloud of those names.
+# table missing its values: it ships as a tag cloud of those names. A row with an
+# evidence line or a category has a value to give (``valued_row``) — the tag cloud
+# renders only the key, so such a row is never a tag.
 _NAME_MAX_CHARS = 40
 _NAME_MAX_WORDS = 5
 
 
+def _is_name(row: dict) -> bool:
+    key = str(row.get("key") or "")
+    return (
+        not str(row.get("value") or "").strip()
+        and not row.get("evidence")
+        and not row.get("category")
+        and len(key) <= _NAME_MAX_CHARS
+        and len(key.split()) <= _NAME_MAX_WORDS
+    )
+
+
 def _is_name_list(items: list) -> bool:
     rows = [row for row in items if isinstance(row, dict)]
-    return bool(rows) and all(
-        not str(row.get("value") or "").strip()
-        and len(str(row.get("key") or "")) <= _NAME_MAX_CHARS
-        and len(str(row.get("key") or "").split()) <= _NAME_MAX_WORDS
-        for row in rows
-    )
+    return bool(rows) and all(_is_name(row) for row in rows)
 
 
 def require_grid_values(tabs: list[dict], dropped: list[dict]) -> None:

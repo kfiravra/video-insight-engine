@@ -1,9 +1,9 @@
 """Tests for assembly minimum 3-tab guarantee."""
 
 from src.services.pipeline.assembly.core import (
-    build_fallback_candidates,
     _validate_assembled_props,
     assemble_response,
+    build_fallback_candidates,
 )
 
 
@@ -18,15 +18,17 @@ class TestBuildFallbackCandidates:
         assert candidates[0]["component"] == "overview"
         assert candidates[0]["props"]["summary"] == "Great video"
 
-    def test_info_grid_from_takeaways(self):
+    def test_checklist_from_takeaways(self):
+        """The takeaways fallback is a checklist — info_grid never stands alone (R6)."""
         candidates = build_fallback_candidates(
             synthesis={"keyTakeaways": ["t1", "t2", "t3"]},
             existing_components={"overview"},
             existing_ids={"overview"},
         )
-        grid_candidates = [c for c in candidates if c["component"] == "info_grid"]
-        assert len(grid_candidates) == 1
-        assert len(grid_candidates[0]["props"]["items"]) == 3
+        takeaway_candidates = [c for c in candidates if c["id"] == "key_info"]
+        assert len(takeaway_candidates) == 1
+        assert takeaway_candidates[0]["component"] == "checklist"
+        assert len(takeaway_candidates[0]["props"]["items"]) == 3
 
     def test_skips_existing_components(self):
         candidates = build_fallback_candidates(
@@ -52,13 +54,13 @@ class TestBuildFallbackCandidates:
         )
         assert len(candidates) == 0
 
-    def test_insufficient_takeaways_no_info_grid(self):
+    def test_insufficient_takeaways_no_takeaways_tab(self):
         candidates = build_fallback_candidates(
             synthesis={"keyTakeaways": ["only_one"]},
             existing_components={"overview"},
             existing_ids=set(),
         )
-        assert all(c["component"] != "info_grid" for c in candidates)
+        assert all(c["id"] != "key_info" for c in candidates)
 
     def test_fallbacks_pass_validation(self):
         candidates = build_fallback_candidates(
@@ -168,7 +170,7 @@ class TestAssembleResponseMinTabs:
         assert len(result["tabs"]) >= 3
 
     def test_0_tabs_with_chapters_gets_moment_track(self):
-        """0 assembled tabs + no synthesis + chapters → the always-Moments tab, from the chapters."""
+        """0 assembled tabs + no synthesis + chapters → the always-Moments tab, from chapters."""
         triage = self._base_triage(
             [
                 {

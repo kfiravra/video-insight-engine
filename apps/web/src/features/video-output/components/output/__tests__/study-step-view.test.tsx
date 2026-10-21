@@ -89,10 +89,28 @@ describe('StudyStepView', () => {
   it('should turn an (m:ss) reference in the explanation into a seek chip', async () => {
     const user = userEvent.setup();
     const onSeek = vi.fn();
-    render(<StudyHarness onSeek={onSeek} questions={[{ ...QUESTIONS[0], explanation: 'Covered at (2:05).' }]} />);
+    const unstamped = { ...QUESTIONS[0], explanation: 'Covered at (2:05).', timestamp: undefined };
+    render(<StudyHarness onSeek={onSeek} questions={[unstamped]} />);
     await user.click(screen.getByRole('button', { name: /Reveal answer/ }));
     await user.click(screen.getByRole('button', { name: 'Jump to 2:05' }));
     expect(onSeek).toHaveBeenCalledWith(125);
+  });
+
+  // p1 review R6: Study checks the explanation's time against the question's, like the quiz tab.
+  it('should seek the explanation chip to the checked timestamp when the cited time is off', async () => {
+    const user = userEvent.setup();
+    const onSeek = vi.fn();
+    render(<StudyHarness onSeek={onSeek} questions={[{ ...QUESTIONS[0], explanation: 'Covered at (2:05).' }]} />);
+    await user.click(screen.getByRole('button', { name: /Reveal answer/ }));
+    await user.click(screen.getByRole('button', { name: /^Jump to/ }));
+    expect(onSeek).toHaveBeenCalledWith(680);
+  });
+
+  it('should offer one seek control when the explanation cites no time', async () => {
+    const user = userEvent.setup();
+    render(<StudyHarness onSeek={vi.fn()} questions={[{ ...QUESTIONS[0], explanation: 'He compares it to the Brownie.' }]} />);
+    await user.click(screen.getByRole('button', { name: /Reveal answer/ }));
+    expect(screen.queryByRole('button', { name: /^Jump to/ })).not.toBeInTheDocument();
   });
 
   it('should show the answer of a question marked Done without a Reveal click', async () => {
