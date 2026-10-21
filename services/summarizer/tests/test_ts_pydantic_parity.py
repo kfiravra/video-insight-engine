@@ -203,7 +203,11 @@ ITEM_MAPPINGS = [
     Mapping(
         "SpotItem",
         dt.TravelSpot,
-        exceptions={f: _ASSEMBLER_INJECTED for f in _FRAME_EVIDENCE_FIELDS},
+        exceptions={
+            **{f: _ASSEMBLER_INJECTED for f in _FRAME_EVIDENCE_FIELDS},
+            # A key idea's kind as the card's badge (output-quality 1.1).
+            "category": _ASSEMBLER_INJECTED,
+        },
     ),
     Mapping(
         "StepItem",
@@ -224,6 +228,7 @@ ITEM_MAPPINGS = [
         },
     ),
     Mapping("KeyPointItem", dt.LearningKeyPoint),
+    Mapping("KeyIdeaItem", dt.LearningKeyIdea),
     Mapping(
         "ClaimItem",
         dt.NewsClaim,
@@ -337,6 +342,7 @@ _LIST_FIELD_SAMPLES: dict[str, object] = {
     "themes": ["love"],
     "genre": ["pop"],
     "keyPoints": [{"title": "K", "detail": "d"}],
+    "keyIdeas": [{"claim": "C", "why": "w", "kind": "thesis"}],
     "concepts": [{"name": "C", "definition": "d"}],
     "takeaways": ["t"],
     "pros": ["fast"],

@@ -16,6 +16,7 @@ from pydantic import (
 
 from ..shared_config.domain_config import valid_content_tags, valid_modifiers
 from .domain_validation import ValidationReport, merge_report, validate_block_items
+from .idea_types import LearningKeyIdea, seconds_or_none
 
 logger = logging.getLogger(__name__)
 
@@ -54,13 +55,7 @@ class TravelSpot(BaseModel):
     @classmethod
     def coerce_timestamp(cls, v: Any) -> int | None:
         """Seconds into the video: a non-negative integer, else None."""
-        if v is None or v == "" or isinstance(v, bool):
-            return None
-        try:
-            seconds = int(v)
-        except (ValueError, TypeError):
-            return None
-        return seconds if seconds >= 0 else None
+        return seconds_or_none(v)
 
     @field_validator("rating", mode="before")
     @classmethod
@@ -371,6 +366,8 @@ class LearningData(BaseModel):
     model_config = {"populate_by_name": True}
 
     key_points: list[LearningKeyPoint] = Field([], alias="keyPoints")
+    # The argument tab of a talk, lecture or podcast (D10); keyPoints stays for explainers.
+    key_ideas: list[LearningKeyIdea] = Field([], alias="keyIdeas")
     concepts: list[LearningConcept] = []
     takeaways: list[str] = []
     timestamps: list[LearningTimestamp] = []

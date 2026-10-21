@@ -1,7 +1,8 @@
 """Assemblers — learning/media family.
 
 exercise_tracker, quiz, flash_deck, scenario, verdict, budget, overview,
-gallery, lyrics_player, display_section.
+gallery, lyrics_player, display_section; the key-idea spot cards
+(``key_idea_props``) spot_explorer ships for ``learning.keyIdeas``.
 
 Signature: (tab, data, extraction, enrichment) -> props dict | None
 Returning None means the tab should be dropped (no data).
@@ -11,6 +12,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from src.models.idea_types import KEY_IDEA_KINDS
+
 from .derived_guard import stated_block_scalars
 from .normalizers import (
     _CATEGORY_FRONTS,
@@ -19,6 +22,7 @@ from .normalizers import (
     _normalize_exercise,
     _normalize_quiz_question,
     _normalize_scenario_item,
+    _normalize_to_spot,
     _normalize_verdict,
     _to_flash_card,
 )
@@ -65,6 +69,78 @@ def assemble_quiz(
     if not questions:
         return None
     return {"questions": questions}
+
+
+# ─── Key ideas (output-quality 1.1, D10) ───
+
+
+def is_key_idea_list(data: Any) -> bool:
+    """A validated ``learning.keyIdeas`` list: every item carries ``claim`` and ``why``.
+
+    A news claim has a ``claim`` but never a ``why``, so a claims list that walks
+    the demote ladder down to spot_explorer is not read as key ideas.
+    """
+    items = [item for item in data if isinstance(item, dict)] if isinstance(data, list) else []
+    return bool(items) and all("claim" in item and "why" in item for item in items)
+
+
+def _key_idea_badge(kind: Any) -> str | None:
+    """A key idea's kind as its badge text ("Thesis"); None for no stated kind."""
+    if not isinstance(kind, str) or kind.strip().lower() not in KEY_IDEA_KINDS:
+        return None
+    return kind.strip().capitalize()
+
+
+def _key_idea_spot(item: dict) -> dict | None:
+    """One key idea as a spot card: claim → name, why → description; the quote and the
+    seek point as the spot normalizer reads them, the kind as the category badge."""
+    spot = _normalize_to_spot(
+        {
+            "name": item.get("claim") or "",
+            "description": item.get("why") or "",
+            "quote": item.get("quote"),
+            "timestamp": item.get("timestamp"),
+            "emoji": item.get("emoji"),
+        }
+    )
+    badge = _key_idea_badge(item.get("kind"))
+    if spot is not None and badge:
+        spot["category"] = badge
+    return spot
+
+
+def _key_idea_sections(labels: list[str]) -> list[dict]:
+    """``section`` → spot sections in first-appearance order; none below two
+    sections (one section is the whole list, the FE shows no nav for it)."""
+    indices: dict[str, list[int]] = {}
+    for index, label in enumerate(labels):
+        if label:
+            indices.setdefault(label, []).append(index)
+    if len(indices) < 2:
+        return []
+    return [{"label": label, "spotIndices": spots} for label, spots in indices.items()]
+
+
+def key_idea_props(data: list) -> dict:
+    """spot_explorer props for a key-idea list: ``{spots, sections?}``, source order kept.
+
+    An idea without a claim or without anything to show beside it is dropped by
+    the spot normalizer; the caller applies spot_explorer's minimum.
+    """
+    spots: list[dict] = []
+    labels: list[str] = []
+    for item in (i for i in data if isinstance(i, dict)):
+        spot = _key_idea_spot(item)
+        if spot is None:
+            continue
+        spots.append(spot)
+        section = item.get("section")
+        labels.append(section.strip() if isinstance(section, str) else "")
+    props: dict[str, Any] = {"spots": spots}
+    sections = _key_idea_sections(labels)
+    if sections:
+        props["sections"] = sections
+    return props
 
 
 def assemble_flash_deck(

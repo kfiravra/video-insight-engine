@@ -13,6 +13,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from .assemblers_learning import is_key_idea_list, key_idea_props
 from .info_grid_items import _INFO_EVIDENCE_FIELDS as _INFO_EVIDENCE_FIELDS
 from .info_grid_items import _INFO_KEY_FIELDS as _INFO_KEY_FIELDS
 from .info_grid_items import _INFO_STRING_MAX as _INFO_STRING_MAX
@@ -60,10 +61,15 @@ def assemble_spot_explorer(
     dicts; string arrays are almost always a symptom of keyword-list pollution
     via cross-domain fallback. Requires `_MIN_SPOTS` valid spots to ship; below
     that, the tab is dropped and the fallback layer (overview/info_grid) takes
-    over so the content still surfaces.
+    over so the content still surfaces. A ``learning.keyIdeas`` list ships as
+    key-idea cards (`key_idea_props`: claim, why, quote, timestamp, sections, badge).
     """
     if not isinstance(data, list) or len(data) == 0:
         return None
+
+    if is_key_idea_list(data):
+        props = key_idea_props(data)
+        return props if len(props["spots"]) >= _MIN_SPOTS else None
 
     first = data[0] if isinstance(data[0], dict) else {}
     if ("day" in first or "city" in first) and "spots" in first:

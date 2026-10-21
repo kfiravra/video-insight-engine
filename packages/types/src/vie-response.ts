@@ -129,6 +129,8 @@ export interface SpotItem extends FrameEvidence {
   timestamp?: number | null;
   /** The speaker's verbatim line about the spot (output-quality R10). */
   quote?: string | null;
+  /** Category badge text — a key idea's kind ("Thesis", "Ask"), set by the assembler. */
+  category?: string;
 }
 
 export interface TipItem {
@@ -186,6 +188,26 @@ export interface KeyPointItem {
   title: string;
   detail: string;
   timestamp?: number;
+}
+
+/** What kind of argued idea a key idea is (output-quality D10) — its badge. */
+export type KeyIdeaKind = 'thesis' | 'argument' | 'announcement' | 'number' | 'story' | 'ask';
+
+/** One argued idea of a talk, lecture or podcast (`learning.keyIdeas`, D10). The
+ *  assembler ships it as a spot card: claim → name, why → description, quote,
+ *  timestamp, section → the spot sections, kind → the category badge. */
+export interface KeyIdeaItem {
+  /** The idea as the speaker argues it — one sentence a reader could disagree with. */
+  claim: string;
+  /** The speaker's reasoning or evidence for the claim. */
+  why: string;
+  /** The speaker's own words that carry the claim, verbatim (≤ 25 words). */
+  quote?: string | null;
+  /** Seconds into the video where the claim is said. */
+  timestamp?: number | null;
+  /** The part of the video the idea belongs to. */
+  section?: string | null;
+  kind?: KeyIdeaKind | null;
 }
 
 export interface MomentItem extends FrameEvidence {
@@ -687,6 +709,8 @@ export interface MusicData {
 export interface LearningData {
   keyQuestion?: string;
   keyPoints: KeyPointItem[];
+  /** The argument tab of a talk, lecture or podcast; keyPoints stays for explainers. */
+  keyIdeas?: KeyIdeaItem[];
   concepts: ConceptItem[];
   takeaways: string[];
   timestamps: MomentItem[];

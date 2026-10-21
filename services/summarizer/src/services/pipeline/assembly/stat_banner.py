@@ -1,8 +1,9 @@
 """The answer tab's numbers strip — stat_banner (C8, output-quality 0b.11).
 
-A key point whose title holds a figure and whose item carries a timestamp
-becomes a tile: ``{label, value, emoji?, meaning, timestamp}``. ``value`` is the
-figure exactly as the title states it, ``label`` a short phrase from the title
+A key point (or, on a talk, a key idea — its claim read as the title) whose
+title holds a figure and whose item carries a timestamp becomes a tile:
+``{label, value, emoji?, meaning, timestamp}``. ``value`` is the figure exactly
+as the title states it, ``label`` a short phrase from the title
 around it, ``meaning`` the whole title. ``attachments`` decides which tab
 carries the strip and re-exports these names.
 """
@@ -105,15 +106,30 @@ def _stat_label(title: str, figure: re.Match[str]) -> str:
     return truncate_words(label or title, _STAT_LABEL_MAX_CHARS)
 
 
+def _key_idea_points(ideas: list) -> list[dict]:
+    """Key ideas (D10) in the key-point shape a tile reads: the claim is the title."""
+    return [
+        {"title": idea.get("claim"), "timestamp": idea.get("timestamp"), "emoji": idea.get("emoji")}
+        for idea in ideas
+        if isinstance(idea, dict)
+    ]
+
+
 def _key_points(extraction: dict | None, domain: str) -> list[dict]:
-    """The first ``keyPoints`` list in the extraction, primary domain first."""
+    """The first ``keyPoints`` list in the extraction, primary domain first — else the
+    first ``keyIdeas`` list (a talk ships key ideas, not key points), as key points."""
     if not isinstance(extraction, dict):
         return []
     ordered = [extraction.get(domain), *(v for k, v in extraction.items() if k != domain)]
-    for domain_data in ordered:
-        points = domain_data.get("keyPoints") if isinstance(domain_data, dict) else None
+    blocks = [d for d in ordered if isinstance(d, dict)]
+    for domain_data in blocks:
+        points = domain_data.get("keyPoints")
         if isinstance(points, list) and points:
             return [kp for kp in points if isinstance(kp, dict)]
+    for domain_data in blocks:
+        ideas = domain_data.get("keyIdeas")
+        if isinstance(ideas, list) and ideas:
+            return _key_idea_points(ideas)
     return []
 
 

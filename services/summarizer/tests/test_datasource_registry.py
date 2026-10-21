@@ -37,6 +37,7 @@ from src.shared_config.domain_config import (
     quiz_policy,
     render_valid_datasources,
     requirement_evidence,
+    secondary_components,
     sibling_datasources,
     valid_components,
 )
@@ -124,7 +125,10 @@ class TestDataSourceEntries:
     def test_should_list_only_known_components_when_registered(self, path):
         components = data_sources()[path]["components"]
 
-        assert components and set(components) <= valid_components()
+        # The first renders the tab; an attachment may render it too (learning.keyIdeas'
+        # stat_banner, output-quality 1.1) but is never planned.
+        assert components and components[0] in valid_components()
+        assert set(components) <= valid_components() | secondary_components()
 
     @pytest.mark.parametrize("path", _ALL_PATHS)
     def test_should_name_vocabulary_evidence_when_gated(self, path):
@@ -414,12 +418,13 @@ class TestValidDatasourcesRender:
     def test_should_render_the_pre_registry_list_plus_fitness_tips(self):
         # The hardcoded toolkit block this placeholder replaced (8d52e23^),
         # with fitness.tips — the one path the registry added — appended,
+        # learning.keyIdeas after keyPoints (output-quality 1.1, D10),
         # enrichment.flashcards/scenarios gone with quiz-only enrichment (1d.1)
         # and has_code on every tech code path (3.2, Kfir's decision 7).
         expected = "\n".join(
             [
                 "tech: tech.snippets [has_code], tech.patterns [has_code], tech.cheatSheet [has_code], tech.setup.commands [has_code], tech.topics",
-                "learning: learning.keyPoints, learning.concepts, learning.takeaways, learning.timestamps",
+                "learning: learning.keyPoints, learning.keyIdeas, learning.concepts, learning.takeaways, learning.timestamps",
                 "project: project.steps [has_steps], project.materials [has_materials], project.tools, project.safetyWarnings",
                 "food: food.ingredients [has_ingredients], food.steps [has_steps], food.tips, food.equipment, food.substitutions",
                 "travel: travel.itinerary [has_itinerary], travel.budget, travel.packingList [has_packing]",

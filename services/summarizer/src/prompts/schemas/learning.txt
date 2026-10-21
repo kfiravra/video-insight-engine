@@ -12,6 +12,18 @@ Extract structured educational content.
       "timestamp": null
     }
   ],
+  "keyIdeas": [
+    {
+      "claim": "The idea as the speaker argues it — one full sentence a reader could disagree with",
+      "why": "The speaker's reasoning or evidence for it, 1-2 sentences with the names and numbers used",
+      "quote": "The speaker's own words that carry the claim, verbatim, at most 25 words — or null",
+      "timestamp": null,
+      "section": "Short name of the part of the video the idea belongs to",
+      "kind": "thesis | argument | announcement | number | story | ask"
+    }
+  ],
+> UI: Key ideas → spot cards (claim, why, quote, seek chip) grouped by section; the kind is the card's badge, and stamped figures also feed the answer tab's numbers strip.
+> KEY IDEAS: for a talk, lecture or podcast — what the speaker wants you to believe or do. One distinct claim per item, never two merged; `timestamp` = the second the claim is said; `quote` = the exact words, never a paraphrase; `kind`: thesis (the video's central claim), argument, announcement, number (a figure used as evidence), story (an anecdote that carries a point), ask (what the speaker asks the audience to do). keyPoints stays for an explainer that teaches facts.
   "concepts": [
     {
       "name": "Term as the speaker uses it",
@@ -48,6 +60,9 @@ Extract structured educational content.
   "keyPoints": [
     {"emoji": "🧠", "title": "Compound interest works both ways", "detail": "Not just savings — debt compounds too. A $5,000 credit card balance at 24% APR becomes $6,200 in one year without payments.", "timestamp": 145}
   ],
+  "keyIdeas": [
+    {"claim": "Paying off high-interest debt beats investing the same dollar", "why": "A 24% APR balance costs more each year than the 7% a typical index fund returns, so the payoff is a guaranteed 24% return.", "quote": "Every dollar on that card is losing you twenty-four cents a year.", "timestamp": 312, "section": "Debt first", "kind": "argument"}
+  ],
   "concepts": [
     {"name": "Time value of money", "emoji": "💵", "definition": "A dollar today is worth more than a dollar tomorrow because you can invest it. The speaker uses the example: '$100 invested at 7% doubles in ~10 years.'", "example": "$100 invested at 7% doubles in ~10 years", "analogy": null, "group": "Foundations", "connections": [{"to": "Compound interest", "type": "causes"}]}
   ]
@@ -58,6 +73,7 @@ COMPLETENESS:
 
 RULES:
 - keyPoints teach one specific thing each — no filler
+- keyIdeas carry the speaker's argument: claim + why + quote + timestamp on every item; cover the whole video, the last minutes included
 - Concepts: only include what's actually explained in the video
 - Takeaways: be specific ("Use Redis for session storage to handle 10x more concurrent users")
 - Timestamps: cover introduction, topic changes, demos, conclusions
