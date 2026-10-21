@@ -128,12 +128,19 @@ def get_playbook(domain: str, content_format: str | None) -> dict:
     """Layout playbook for a ``<domain>:<format>`` pair, or {} when none exists.
 
     Playbooks refine domain requirements for a video subtype (e.g.
-    ``gaming:unboxing``) — see ``playbooksNote`` in domains.json.
+    ``gaming:unboxing``) — see ``playbooksNote`` in domains.json. A probe format
+    that is another name for a playbook's format reaches it through
+    ``playbookAliases`` (a review's ``commentary`` → ``review:review``); the
+    pair's own playbook wins.
     """
     if not content_format:
         return {}
-    playbooks = get_config().get("playbooks", {})
-    return dict(playbooks.get(f"{domain}:{content_format}", {}))
+    cfg = get_config()
+    playbooks = cfg.get("playbooks", {})
+    key = f"{domain}:{content_format}"
+    if key not in playbooks:
+        key = cfg.get("playbookAliases", {}).get(key, key)
+    return dict(playbooks.get(key, {}))
 
 
 def ruled_out_requirements(domain: str, evidence: Mapping[str, bool] | None) -> dict[str, str]:
@@ -170,6 +177,11 @@ def effective_requirements(domain: str, content_format: str | None = None) -> di
         "preferred": list(playbook.get("preferred", [])),
         "planGuidance": playbook.get("planGuidance", ""),
     }
+
+
+def info_grid_hosts() -> list[str]:
+    """Components a standalone info_grid folds into, best first — see ``infoGridHostsNote``."""
+    return list(get_config().get("infoGridHosts", []))
 
 
 def visual_criticality_config() -> dict:

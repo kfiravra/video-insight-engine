@@ -378,5 +378,6 @@ def attach_response_secondaries(
         if not secondaries:
             continue
         answer_pending = False
-        tab["attachments"] = secondaries
+        # After a folded info_grid (R6) the tab may already carry an attachment.
+        tab["attachments"] = [*secondaries, *(tab.get("attachments") or [])]
         used_kinds |= {a["component"] for a in secondaries if a["component"] in ONCE_PER_RESPONSE}

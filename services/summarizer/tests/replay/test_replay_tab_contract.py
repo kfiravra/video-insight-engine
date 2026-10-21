@@ -386,26 +386,31 @@ class TestSplitPathEmission:
 # (id, position, final, provisional, replaces) per tab_ready, captured on b7a2077;
 # jMq8lEu-of0 lost its provisional key_moments preview to D6 (output-quality 0b).
 _TODAYS_SEQUENCE: dict[str, list[tuple[str, int, bool, bool, str | None]]] = {
+    # output-quality 1.2: the cassette's label-only learning.timestamps no longer
+    # validate (a moment states what it established), so key_moments comes from the
+    # fallback chain with fewer frames and the filmstrip joins at 5.
     "T1dQhQAm8Tc": [
         ("key_moments", 3, False, True, None),
         ("overview", 0, False, False, None),
         ("stack_explorer", 1, False, False, None),
         ("code_snippets", 2, False, False, None),
         ("concepts", 4, False, False, None),
+        ("frames-gallery", 5, False, False, None),
         ("key_moments", 3, False, False, None),
         ("overview", 0, True, False, None),
         ("stack_explorer", 1, True, False, None),
         ("code_snippets", 2, True, False, None),
         ("key_moments", 3, True, False, None),
         ("concepts", 4, True, False, None),
-        ("quiz", 5, True, False, None),
+        ("frames-gallery", 5, True, False, None),
+        ("quiz", 6, True, False, None),
     ],
+    # output-quality 1.6 (R6): the planned chef_tips grid rides inside cook_steps.
     "jMq8lEu-of0": [
         ("overview", 0, False, False, None),
         ("ingredients", 1, True, False, None),
         ("cook_steps", 2, True, False, None),
-        ("chef_tips", 3, True, False, None),
-        ("frames-gallery", 4, True, False, None),
+        ("frames-gallery", 3, True, False, None),
         ("overview", 0, True, False, None),
     ],
     "uC45_4nnEAI": [

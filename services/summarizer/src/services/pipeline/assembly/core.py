@@ -37,6 +37,7 @@ from .dedupe import _dedupe_tabs as _dedupe_tabs
 from .dedupe import _item_fingerprint as _item_fingerprint
 from .dedupe import tab_fingerprints as tab_fingerprints
 from .density import enforce_density
+from .info_grid_fold import FOLDS_KEY, apply_folds, unfolded_tabs
 from .item_timestamps import clear_impossible_item_timestamps
 from .labels import _LABEL_COUNT_KEYS as _LABEL_COUNT_KEYS
 from .labels import _LEADING_COUNT as _LEADING_COUNT
@@ -1774,6 +1775,13 @@ def assemble_response(
                 }
             )
             _release_claim(claims, data_source)
+            # A lost host gives the grids folded into it back as tabs (R6, never drop).
+            folds = raw_tab.get(FOLDS_KEY) or []
+            for source, unfolded in unfolded_tabs(
+                folds, extraction, enrichment, resolve_data_source
+            ):
+                assembled_tabs.append(unfolded)
+                sources[unfolded["id"]] = source
             continue
 
         assembled_tabs.append(
@@ -1789,6 +1797,11 @@ def assemble_response(
             }
         )
         sources[tab_id] = data_source
+        # The info_grid tabs reconcile folded into this one (R6) join it now.
+        if raw_tab.get(FOLDS_KEY):
+            apply_folds(
+                assembled_tabs[-1], raw_tab[FOLDS_KEY], extraction, enrichment, resolve_data_source
+            )
 
     # Hallucinated timestamps (beyond the video's end) can never seek or
     # match a frame — drop them before the backfill and post-assembly

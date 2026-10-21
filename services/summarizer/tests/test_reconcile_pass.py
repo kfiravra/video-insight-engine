@@ -178,9 +178,11 @@ class TestQuizDedupeSize:
 
         assert all(tab["component"] != "overview" for tab in outcome.tabs)
 
+    # No info_grid among the fixtures: a planned grid with a host folds into it
+    # (R6, output-quality 1.6) before the size step counts the tabs.
     def test_should_trim_the_last_other_tab_never_a_required_or_moment_tab(self):
         tabs = [
-            _tab("a", "info_grid", "tech.topics"),
+            _tab("a", "spot_explorer", "tech.topics"),
             _tab("b", "spot_explorer", "tech.cheatSheet"),
             _tab("c", "concept_canvas", "learning.concepts"),
             _tab("d", "flash_deck", "learning.keyPoints"),
@@ -195,7 +197,7 @@ class TestQuizDedupeSize:
 
     def test_should_keep_the_quiz_when_a_backfill_overfills_a_full_plan(self):
         tabs = [
-            _tab("a", "info_grid", "tech.topics"),
+            _tab("a", "spot_explorer", "tech.topics"),
             _tab("b", "spot_explorer", "tech.cheatSheet"),
             _tab("c", "concept_canvas", "learning.concepts"),
             _tab("d", "checklist", "learning.takeaways"),
@@ -210,11 +212,11 @@ class TestQuizDedupeSize:
 
     def test_should_keep_a_planned_moment_tab_when_two_backfills_overfill_a_full_plan(self):
         tabs = [
-            _tab("tips", "info_grid", "food.tips"),
+            _tab("tips", "spot_explorer", "food.tips"),
             _tab("x", "spot_explorer", "food.ingredients"),
             _tab("moments", "moment_track", "food.steps"),
-            _tab("y", "info_grid", "food.equipment"),
-            _tab("z", "info_grid", "food.substitutions"),
+            _tab("y", "spot_explorer", "food.equipment"),
+            _tab("z", "spot_explorer", "food.substitutions"),
             _tab("v", "overview", "food.tips"),
         ]
 

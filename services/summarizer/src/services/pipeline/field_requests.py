@@ -1,8 +1,9 @@
 """Requested extraction fields — what the split extraction asks for (phase 3.3).
 
 ``requested_fields`` is the union over the reconciled tabs of: each tab's
-planned dataSource, the registry ``siblings`` assembly swaps in when it is
-empty ("fallbacks", active domains only), the side reads of the component that
+planned dataSource (and those of the info_grid tabs folded into it, R6), the
+registry ``siblings`` assembly swaps in when it is empty ("fallbacks", active
+domains only), the side reads of the component that
 renders the tab ("upgrades"), the overview hero's reads of the primary domain
 (tips + level — the overview is in every response, planned or not), and the
 scalar keys of every requested domain.
@@ -37,6 +38,7 @@ from ...shared_config.domain_config import (
     data_sources,
     valid_modifiers,
 )
+from .assembly.info_grid_fold import FOLDS_KEY
 from .assembly.normalizers import _TIP_FIELDS
 
 logger = logging.getLogger(__name__)
@@ -279,6 +281,22 @@ def _planned(
     return []
 
 
+def _folded(
+    tab: Mapping[str, object], registry: Mapping[str, DataSourceSpec], scalars_of: ScalarsOf
+) -> list[_Draft]:
+    """The fields of the info_grid tabs reconcile folded into ``tab`` (R6): requested for
+    ``tab``, which waits for them and ships them inside it."""
+    folds = tab.get(FOLDS_KEY)
+    if not isinstance(folds, list):
+        return []
+    return [
+        draft
+        for fold in folds
+        if isinstance(fold, Mapping)
+        for draft in _planned({**fold, "id": _tab_id(tab)}, registry, scalars_of)
+    ]
+
+
 def _fallbacks(
     planned: Sequence[_Draft],
     registry: Mapping[str, DataSourceSpec],
@@ -413,7 +431,7 @@ def requested_fields(
     active = _active_domains(content_tags, modifiers)
     drafts: dict[tuple[str, str], _Draft] = {}
     for tab in (t for t in tabs if _reads_extraction(t)):
-        planned = _planned(tab, registry, scalars_of)
+        planned = [*_planned(tab, registry, scalars_of), *_folded(tab, registry, scalars_of)]
         fallbacks = _fallbacks(planned, registry, active, _tab_id(tab))
         upgrades = _side_reads(tab, registry, active, primary_tag)
         for draft in [*planned, *fallbacks, *upgrades]:

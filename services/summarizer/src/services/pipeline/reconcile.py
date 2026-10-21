@@ -21,9 +21,9 @@ too — code on screen adds it, else it is recorded ``not_backfilled``; its fiel
 waits for frames as well, so it joins the visual group at no latency cost.
 Whenever something was deferred, frames-done re-runs the backfill, quiz and
 3–6 steps over the decided tabs. Steps 1b–5 (the primary's moment source,
-required backfill, quiz, dedupe, 3–6 tabs) live in ``reconcile_pass``. The plan-parse guard
-(``plan_reconcile``) keeps the checks that need no evidence (unregistered
-path, inactive domain).
+required backfill, quiz, dedupe, the info_grid fold, 3–6 tabs) live in
+``reconcile_pass``. The plan-parse guard (``plan_reconcile``) keeps the checks
+that need no evidence (unregistered path, inactive domain).
 """
 
 from __future__ import annotations
@@ -49,6 +49,7 @@ from .reconcile_pass import (
     ReconcilePass,
     dedupe_step,
     drop,
+    fold_step,
     is_quiz_tab,
     moment_source_step,
     quiz_step,
@@ -240,6 +241,7 @@ _PLAN_DONE_STEPS = (
     required_step,
     quiz_step,
     dedupe_step,
+    fold_step,
     size_step,
 )
 _SCREEN_KEYS = frozenset({SCREEN_KEY})

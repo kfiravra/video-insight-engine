@@ -18,6 +18,8 @@ that shape the tab list once the evidence is settled:
    assembly promotes it to counting as one (flash_deck → concept_canvas): a tab
    the primary requires (or its equivalent) wins over one it does not, else the
    first wins; assembly dedupes again on the assembled items (``assembly/dedupe.py``);
+4b. fold — a planned info_grid tab joins the planned tab whose question it
+   answers as one of its ``folds`` (R6; ``assembly/info_grid_fold.py``);
 5. size — 3–6 tabs: beyond 6 the last other planned tab is trimmed (never a
    required tab, a moment_track or the quiz), a short plan is filled from the
    primary's defaultTabs.
@@ -41,6 +43,7 @@ from ...shared_config.domain_config import (
     quiz_policy,
     requirement_evidence,
 )
+from .assembly.info_grid_fold import FOLDS_KEY, INFO_GRID, fold_entry, fold_host
 from .assembly.promotion import COMPONENT_PROMOTIONS
 from .enrichment import QUIZ_COMPONENT, QUIZ_DATA_SOURCE
 from .plan_reconcile import NEVER_DROPPED
@@ -372,6 +375,23 @@ def dedupe_step(run: ReconcilePass) -> None:
             continue
         kept.append(tab)
     run.tabs = kept
+
+
+def fold_step(run: ReconcilePass) -> None:
+    """info_grid never stands alone (R6): a planned info_grid tab joins the planned tab
+    whose question it answers (``assembly.info_grid_fold.fold_host``) as one of its
+    ``folds``; with no host it stays. Never below ``MIN_TABS`` planned tabs — the
+    fill would only add a default tab back."""
+    for grid in [tab for tab in run.tabs if tab["component"] == INFO_GRID]:
+        # A tab deferred to frames-done may still go: it neither hosts nor counts.
+        if len([t for t in run.tabs if t["id"] not in run.deferred]) <= MIN_TABS:
+            return
+        host = fold_host(run.tabs, grid, run.deferred)
+        if host is None:
+            continue
+        host[FOLDS_KEY] = [*(host.get(FOLDS_KEY) or []), fold_entry(grid)]
+        run.tabs.remove(grid)
+        record(run, grid, Action("folded", "info_grid_alone", to=host["id"]))
 
 
 def _trimmable(run: ReconcilePass) -> list[int]:

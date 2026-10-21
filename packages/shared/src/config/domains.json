@@ -119,7 +119,47 @@
       "preferred": ["comparison", "info_grid", "moment_track"],
       "forbidden": ["quiz_arena", "code_playground", "workout_room", "claims_tracker"],
       "planGuidance": "Product unboxing: lead with what was revealed and first impressions. Specs and contents as info_grid, reveal moments as moment_track. Never quiz the viewer on an unboxing."
+    },
+    "learning:talk": {
+      "preferred": ["spot_explorer", "checklist", "moment_track", "quiz_arena"],
+      "forbidden": ["video_filmstrip", "flash_deck"],
+      "planGuidance": "Talk / keynote (content-model §1): open on Key ideas — spot_explorer on learning.keyIdeas (claim, why, quote, timestamp, kind), sectioned by the talk's parts; its figures ride as the numbers strip and its terms as a section of that tab, never an info_grid tab of their own. Then What they asked — checklist on learning.takeaways, only with 3+ asks; Moments — moment_track on learning.timestamps, what each beat established; Test yourself last when is_learnable. A concept_canvas only as a later tab when 6+ concepts connect; claims_tracker on learning.claims only with has_claims, after the key ideas."
+    },
+    "learning:lecture": {
+      "preferred": ["concept_canvas", "spot_explorer", "moment_track", "quiz_arena"],
+      "forbidden": ["video_filmstrip"],
+      "planGuidance": "Lecture (content-model §3): open on Concepts — concept_canvas on learning.concepts (definition, example, timestamp; it reads as a list first), the glossary inside it, never a second tab on the same source. Then Evidence & examples — spot_explorer on learning.keyIdeas (the experiments, studies and running examples, kind story / number); Moments — moment_track on learning.timestamps, what each section established; Test yourself last."
+    },
+    "podcast:podcast": {
+      "preferred": ["spot_explorer", "moment_track", "quiz_arena"],
+      "forbidden": ["video_filmstrip", "flash_deck"],
+      "planGuidance": "Podcast (content-model §2): open on Positions — spot_explorer on learning.keyIdeas (the claim, who holds it as speaker, why, the line, timestamp); stories (kind story) and the books / tools / people mentioned are sections of it, never their own info_grid tab. Then the Conversation map — moment_track on podcast.segments, what each segment concluded; Test yourself last only when is_learnable. No concept canvas unless 6+ concepts connect; quotes ride on the positions."
+    },
+    "podcast:interview": {
+      "preferred": ["spot_explorer", "moment_track", "quiz_arena"],
+      "forbidden": ["video_filmstrip", "flash_deck"],
+      "planGuidance": "Interview (content-model §4): open on Positions — spot_explorer on learning.keyIdeas, the guest's positions with speaker, disagreements as kind argument. Then Q&A — moment_track on podcast.qa, every substantive question with its answer; then the Conversation map — moment_track on podcast.segments; Test yourself last only when is_learnable. A guest card (spot_explorer on podcast.guests) only with 2+ guests."
+    },
+    "review:review": {
+      "preferred": ["comparison", "spot_explorer", "moment_track"],
+      "forbidden": ["quiz_arena", "flash_deck"],
+      "planGuidance": "Product review (content-model §7): open on Verdict & pros/cons — comparison on review.pros (the verdict rides in it). Then Features — spot_explorer on review.specs, the specs as its cells, never a standalone info_grid; vs competitors — comparison on review.comparisons (comparison_radar only when 4+ axes are numbers); Moments — the test scenes on learning.timestamps when learning is tagged."
+    },
+    "news:explainer": {
+      "preferred": ["claims_tracker", "moment_track", "spot_explorer", "quiz_arena"],
+      "forbidden": ["flash_deck"],
+      "planGuidance": "News explainer (content-model §8): open on Claims — claims_tracker on news.claims (stated / supported / contested, the evidence, timestamp). Then Timeline — moment_track on news.storyTimeline, what happened at each step; Actors — spot_explorer on news.entities, the background context as its section, never an info_grid tab; Test yourself last only when is_learnable."
     }
+  },
+  "infoGridHostsNote": "info_grid never stands alone (output-quality R6): after the dedupe a standalone info_grid tab folds into the shipped tab that answers its question — the first tab whose component comes earliest in this list, a tab of the grid's own domain first among equals (assembly/info_grid_fold.py). A spot_explorer host takes the rows as cards in a section named after the grid; any other host takes the grid as a bottom attachment. No host → the grid stays a tab; a fold never leaves fewer than 3 tabs.",
+  "infoGridHosts": ["comparison", "comparison_radar", "spot_explorer", "step_player", "step_flow_canvas", "workout_room", "checklist", "claims_tracker", "concept_canvas", "code_playground"],
+  "playbookAliasesNote": "Probe formats that are another name for a playbook's format, per '<domain>:<format>' key (get_playbook in the summarizer's shared_config/domain_config.py reads a playbook's own key first, then its alias): a product review arrives as commentary or comparison, a news explainer as news, documentary or news_commentary (S07 commentary, S08 documentary).",
+  "playbookAliases": {
+    "review:commentary": "review:review",
+    "review:comparison": "review:review",
+    "news:news": "news:explainer",
+    "news:documentary": "news:explainer",
+    "news:news_commentary": "news:explainer"
   },
   "visualCriticalityNote": "Adaptive frame-pipeline effort (derive_tier in media/visual_tier.py). HIGH: the visuals are the content (unboxings, travel, food) — over-select candidates and vision-describe them all so subject-matter frames win over presenter shots. LOW: talky formats where frames are decoration — skip vision. Everything else STANDARD. Derived from the tier probe (domain, format, has_visual_demo — derive_tier(probe, title)) which runs at transcript-ready; the frames branch waits for it at most 3 s before Step 6b, then falls back to the metadata rule (category/title keywords). highFormats: a probe format that alone makes a video HIGH.",
   "visualCriticality": {
