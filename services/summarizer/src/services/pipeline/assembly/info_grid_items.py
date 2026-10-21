@@ -264,3 +264,89 @@ def _normalize_info_grid_item(item: Any) -> dict | None:
     if not isinstance(item, dict):
         return None
     return _with_category(_normalize_info_grid_dict(item), item)
+
+
+def valued_row(row: dict) -> dict | None:
+    """A row with a value, or None (R5, output-quality 1.7: no key without a value).
+
+    A key-only chip gets a value where the item has one to give — its evidence
+    line, else (a one-sentence tip) the sentence itself under its category badge
+    ("Chef tip" · "Brown the meat in batches") — and is dropped otherwise.
+    """
+    if str(row.get("value") or "").strip():
+        return row
+    rest = {k: v for k, v in row.items() if k not in ("value", "evidence", "category")}
+    if row.get("evidence"):
+        return {**rest, "value": row["evidence"], **_kept(row, "category")}
+    if row.get("category"):
+        return {**rest, "key": row["category"], "value": row["key"]}
+    return None
+
+
+def _kept(row: dict, key: str) -> dict:
+    return {key: row[key]} if row.get(key) else {}
+
+
+def _valued_rows(rows: Any) -> list[dict]:
+    return [r for r in (valued_row(row) for row in rows if isinstance(row, dict)) if r]
+
+
+def _value_attachments(tab: dict) -> None:
+    """The folded grids a tab carries keep their valued rows (a names-only one
+    becomes a tag cloud); an emptied one goes."""
+    attachments = tab.get("attachments")
+    if not attachments:
+        return
+    kept: list[dict] = []
+    for attachment in attachments:
+        props = attachment.get("props") or {}
+        if attachment.get("component") == "info_grid" and _is_name_list(props.get("items") or []):
+            props["mode"] = "tag_cloud"
+        elif attachment.get("component") == "info_grid":
+            items = _valued_rows(props.get("items") or [])
+            if not items:
+                continue
+            attachment["props"]["items"] = items
+        kept.append(attachment)
+    tab["attachments"] = kept
+
+
+# A grid of nothing but short names (a tech stack, a cast list) is no key/value
+# table missing its values: it ships as a tag cloud of those names.
+_NAME_MAX_CHARS = 40
+_NAME_MAX_WORDS = 5
+
+
+def _is_name_list(items: list) -> bool:
+    rows = [row for row in items if isinstance(row, dict)]
+    return bool(rows) and all(
+        not str(row.get("value") or "").strip()
+        and len(str(row.get("key") or "")) <= _NAME_MAX_CHARS
+        and len(str(row.get("key") or "").split()) <= _NAME_MAX_WORDS
+        for row in rows
+    )
+
+
+def require_grid_values(tabs: list[dict], dropped: list[dict]) -> None:
+    """R5 over what ships: every info_grid row — a tab's or a folded attachment's —
+    has a value (``valued_row``); a grid of short names only becomes a tag cloud;
+    a grid tab left with no row goes, recorded in ``dropped``. Runs once the tabs
+    are settled, before the labels count them; the assembler and the promotion
+    still see the headline chips they reason about.
+    """
+    for tab in list(tabs):
+        _value_attachments(tab)
+        if tab.get("component") != "info_grid" or not isinstance(tab.get("props"), dict):
+            continue
+        items = tab["props"].get("items") or []
+        if _is_name_list(items):
+            tab["props"]["mode"] = "tag_cloud"
+            continue
+        tab["props"]["items"] = _valued_rows(items)
+        if tab["props"]["items"]:
+            continue
+        tabs.remove(tab)
+        dropped.append(
+            {"id": tab.get("id", ""), "component": "info_grid", "dataSource": "",
+             "reason": "validation_empty_list", "detail": "no row with a value (R5)"}
+        )  # fmt: skip

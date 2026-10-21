@@ -104,6 +104,8 @@ interface QuizEnrichment {
 interface GroupingConfig {
   maxTextGroups: number;
   groupOutputBudget: number;
+  /** A slice estimated under this many output tokens joins its domain's previous slice. */
+  minGroupOutput: number;
 }
 
 interface DomainsConfig {

@@ -135,7 +135,8 @@ class TestSchemaAsksForTheFields:
     ) -> None:
         spec = data_source("learning.timestamps")
 
-        assert spec is not None and spec["outputWeight"] == 150
+        # 48 tokens a label-only moment weighed before the description joined it.
+        assert spec is not None and spec["outputWeight"] > 48 * 2
 
 
 # ─── Assembly ───

@@ -13,7 +13,7 @@ import logging
 from collections.abc import Collection, Mapping
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal, TypedDict
+from typing import Literal, NotRequired, TypedDict
 
 logger = logging.getLogger(__name__)
 
@@ -365,8 +365,12 @@ class QuizEnrichment(TypedDict):
 
 
 class GroupingConfig(TypedDict):
+    """``grouping`` — see ``groupingNote`` in domains.json."""
+
     maxTextGroups: int
     groupOutputBudget: int
+    # Optional so a caller's own limits (tests, tools) need not name it.
+    minGroupOutput: NotRequired[int]
 
 
 def _registry() -> dict[str, DataSourceSpec]:

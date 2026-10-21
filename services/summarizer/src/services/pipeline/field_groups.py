@@ -2,7 +2,8 @@
 
 ``build_groups`` buckets the text fields by domain (a modifier is its own
 domain), splits a bucket by field once Σ weight × expect exceeds
-``groupOutputBudget``, keeps at most ``maxTextGroups`` text groups and orders
+``groupOutputBudget`` (a slice under ``minGroupOutput`` rides with the one
+before it), keeps at most ``maxTextGroups`` text groups and orders
 them by the first tab they serve, the first planned tab's group first (text1 =
 the warm-up call). Every other field — the ``waitsForVisual`` ones — forms ONE
 visual group; ``visual_group`` re-cuts it at frames-done from what no fired
@@ -58,10 +59,26 @@ def _split_by_budget(fields: Sequence[FieldRequest], budget: int) -> list[list[F
     return slices
 
 
-def _domain_pieces(domain: str, fields: Sequence[FieldRequest], budget: int) -> list[_Piece]:
-    """One domain's text fields split by budget; its scalars join the first slice."""
+def _absorb_small(slices: list[list[FieldRequest]], minimum: int) -> list[list[FieldRequest]]:
+    """A slice estimated under ``minimum`` tokens joins the previous one (L16): its own
+    call would re-read the cached transcript for a few hundred tokens of answer."""
+    kept: list[list[FieldRequest]] = []
+    for piece in slices:
+        if kept and sum(f.est_output_tokens for f in piece) < minimum:
+            kept[-1].extend(piece)
+        else:
+            kept.append(piece)
+    return kept
+
+
+def _domain_pieces(
+    domain: str, fields: Sequence[FieldRequest], config: GroupingConfig
+) -> list[_Piece]:
+    """One domain's text fields split by budget, a small slice absorbed by the one
+    before it; its scalars join the first slice."""
     text = [f for f in fields if f.domain == domain and not f.visual]
-    slices = _split_by_budget([f for f in text if f.kind != "scalar"], budget) or [[]]
+    split = _split_by_budget([f for f in text if f.kind != "scalar"], config["groupOutputBudget"])
+    slices = _absorb_small(split, config.get("minGroupOutput", 0)) or [[]]
     slices[0].extend(f for f in text if f.kind == "scalar")
     return [_Piece(domain, s) for s in slices if s]
 
@@ -165,11 +182,7 @@ def build_groups(
     """
     rank = {f: i for i, f in enumerate(fields)}
     domains = dict.fromkeys(f.domain for f in fields if not f.visual)
-    pieces = [
-        piece
-        for domain in domains
-        for piece in _domain_pieces(domain, fields, config["groupOutputBudget"])
-    ]
+    pieces = [piece for domain in domains for piece in _domain_pieces(domain, fields, config)]
     pieces = _merge_to_limit(pieces, config["maxTextGroups"], rank)
     ordered = _order_pieces(pieces, tabs)
     groups = [_group(f"text{i}", p.fields, visual=False) for i, p in enumerate(ordered, start=1)]

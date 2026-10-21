@@ -38,6 +38,7 @@ from .dedupe import _item_fingerprint as _item_fingerprint
 from .dedupe import tab_fingerprints as tab_fingerprints
 from .density import enforce_density
 from .info_grid_fold import FOLDS_KEY, apply_folds, unfolded_tabs
+from .info_grid_items import require_grid_values
 from .item_timestamps import clear_impossible_item_timestamps
 from .labels import _LABEL_COUNT_KEYS as _LABEL_COUNT_KEYS
 from .labels import _LEADING_COUNT as _LEADING_COUNT
@@ -1863,6 +1864,8 @@ def assemble_response(
         assembled_tabs, dropped_tabs, primary_tag, required, sources
     )
     _dedupe_tabs(assembled_tabs, dropped_tabs, required, sources)
+    # R5: no info_grid row ships a key without a value.
+    require_grid_values(assembled_tabs, dropped_tabs)
 
     # A Moments tab always exists (Kfir 2026-10-12): with no moment_track tab
     # left, the fallback chain's tab joins after the planned and required ones —
