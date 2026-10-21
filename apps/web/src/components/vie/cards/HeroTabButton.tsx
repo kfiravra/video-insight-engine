@@ -7,7 +7,8 @@ import type { TabDefinition } from '@vie/types';
 
 export interface VideoHeroTab extends TabDefinition {
   preview?: string;
-  /** An early placeholder the stream will replace — marked in the strip. */
+  /** An early placeholder the stream will replace — labelled "Preview" in the
+   *  strip until the real tab lands under the same id (D5). */
   provisional?: boolean;
   /** The number of items the tab really ships (inferItemCount); replaces the
    *  planner's guessed count in the label. */
@@ -53,13 +54,13 @@ export function HeroTabButton({ tab, isActive, isCompleted, domainGradient, onTa
       )}
       <span>{label}</span>
       {tab.provisional && (
-        <>
+        <span className="inline-flex shrink-0 items-center gap-1 rounded-md border border-current/30 px-1.5 py-px text-[0.65rem] font-medium uppercase tracking-wide opacity-80">
           <span
             aria-hidden="true"
-            className="size-1.5 shrink-0 rounded-full bg-current opacity-60 animate-pulse motion-reduce:animate-none"
+            className="size-1.5 shrink-0 rounded-full bg-current animate-pulse motion-reduce:animate-none"
           />
-          <span className="sr-only">(early preview)</span>
-        </>
+          Preview
+        </span>
       )}
       {isCompleted && !isActive && (
         <Check className="h-3.5 w-3.5 shrink-0 text-success" aria-label="Completed" />

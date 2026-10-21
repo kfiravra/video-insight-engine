@@ -4,7 +4,8 @@ A moment_track tab is never dropped for lack of data. When its planned
 dataSource cannot feed it (no data, an inactive domain, or every moment past
 the video's end), the moments come from the first source that has entries:
 
-1. the memory outline (``video_meta["outline"]``: start/end/title sections),
+1. the memory outline (``video_meta["outline"]``: start/end/title sections; a
+   section's ``establishes`` line rides as the moment's description — D5 / R7),
 2. the YouTube chapters (``video_meta["chapters"]``),
 3. the description's timestamps (``description_analysis["timestamps"]``).
 
@@ -45,8 +46,15 @@ _ALWAYS_MOMENTS_GOAL = "Jump to any part of the video."
 
 
 def _outline_entries(video_meta: Mapping[str, Any]) -> list[dict]:
+    # What the section establishes is the moment's description (1.9); an
+    # outline from before the line (or one that only repeats the title) ships
+    # the title alone, as the chapter shape always did.
     return [
-        {"start_time": s.get("start"), "title": s.get("title", "")}
+        {
+            "start_time": s.get("start"),
+            "title": s.get("title", ""),
+            "description": s.get("establishes"),
+        }
         for s in video_meta.get("outline") or []
         if isinstance(s, dict)
     ]

@@ -1,5 +1,5 @@
 <role>
-You read one video's full transcript and write its memory: an outline with real boundaries, evidence flags, the video's angle in one line, and its key takeaways. Later stages build on this memory — be exact and never guess.
+You read one video's full transcript and write its memory: an outline with real boundaries and what each section establishes, evidence flags, the video's thesis in one line, and its key takeaways with the moment each is said. Later stages build on this memory — be exact and never guess.
 </role>
 
 <video>
@@ -21,6 +21,7 @@ Split the video into 4–12 sections at its real topic shifts. A video shorter t
 - Every section is at least 1 minute long.
 - Spread the sections across the WHOLE video — never cluster them in the first part.
 - "title": at most 8 words naming what happens in that section, with its specifics ("toast chiles, blend, braise" — not "Cooking").
+- "establishes": at most 12 words saying what the section establishes — the finding, decision or argument the viewer leaves it with ("a bare simmer for 3.5 hours keeps the chuck tender", "English beats Ruby because vagueness is now a feature") — not its topic and not the title again.
 </outline_rules>
 
 <evidence_rules>
@@ -41,18 +42,18 @@ Answer EVERY key below. true only when the transcript itself contains that conte
 </evidence_rules>
 
 <summary_rules>
-- "tldr": one sentence of at most 150 characters with the video's angle — what makes THIS video different — not its topic.
-- "takeaways": 3–5 items. Each one carries a specific number, name or measurement from the video. No generic advice.
+- "tldr": one sentence of at most 150 characters stating what the video claims — its thesis, a position a reader could disagree with — not its topic, not what it covers, not a list of its numbers. A recipe or a tutorial claims what its method gets you that the usual way does not.
+- "takeaways": 3–5 claims the video makes, in its own terms, each ending with the [m:ss] marker of the transcript line where it is said. A number belongs in a takeaway only when the number IS the claim. No generic advice, no topic labels.
 </summary_rules>
 
 <output_language>
-Write the outline titles, the tldr and the takeaways in English, even when the transcript is in another language — translate the meaning, do not copy the original language. Numbers and units stay exactly as said.
+Write the outline titles and establishes lines, the tldr and the takeaways in English, even when the transcript is in another language — translate the meaning, do not copy the original language. Numbers, units and [m:ss] markers stay exactly as said.
 </output_language>
 
 <output_format>
 Return ONLY the JSON object — no code fences, no text before or after it, no explanation. Example for a 19-minute cooking video:
-{"outline": [{"start": "0:00", "end": "1:10", "title": "intro — what makes this birria different"}, {"start": "1:10", "end": "2:40", "title": "ingredients for the consommé and the tacos"}, {"start": "2:40", "end": "13:00", "title": "toast chiles, blend, braise the beef"}, {"start": "13:00", "end": "19:00", "title": "assemble, dip and plate the tacos"}],
+{"outline": [{"start": "0:00", "end": "1:10", "title": "intro — what makes this birria different", "establishes": "the consommé, not the oven, is what makes the meat fall apart"}, {"start": "1:10", "end": "2:40", "title": "ingredients for the consommé and the tacos", "establishes": "guajillo and ancho chiles carry the flavour; chuck is the cut"}, {"start": "2:40", "end": "13:00", "title": "toast chiles, blend, braise the beef", "establishes": "a bare simmer for 3.5 hours keeps the chuck tender"}, {"start": "13:00", "end": "19:00", "title": "assemble, dip and plate the tacos", "establishes": "the tortilla dipped in consommé fat is what crisps on the griddle"}],
  "evidence": {"has_steps": true, "has_ingredients": true, "has_materials": false, "has_code": false, "has_drills": false, "has_comparison": false, "has_ranking": false, "has_lineup": false, "has_claims": false, "has_lyrics": false, "has_itinerary": false, "has_packing": false, "is_learnable": false},
- "tldr": "A chef's one-pot birria that braises in its own consommé — no oven, ready in 4 hours",
- "takeaways": ["Toast the 6 guajillo chiles 30 seconds per side — longer turns them bitter", "Braise 3 lb of chuck at a bare simmer for 3.5 hours", "Dip each tortilla in the consommé fat before it hits the 400°F griddle"]}
+ "tldr": "Birria works because the beef braises in its own consommé: skip the oven and the dip, and you lose the dish",
+ "takeaways": ["Toast the 6 guajillo chiles 30 seconds per side — longer turns them bitter [3:05]", "Braise 3 lb of chuck at a bare simmer for 3.5 hours — a boil toughens it [6:40]", "Dip each tortilla in the consommé fat before it hits the 400°F griddle [14:20]"]}
 </output_format>

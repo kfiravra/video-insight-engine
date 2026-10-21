@@ -220,10 +220,10 @@ describe('OutputRouter while tabs stream in', () => {
     expect(screen.getByText('Early preview')).toBeInTheDocument();
   });
 
-  it('should label a provisional tab as an early preview in the tab strip', () => {
+  it('should label a provisional tab "Preview" in the tab strip', () => {
     render(streamingRouter([provisionalMoments]));
 
-    expect(screen.getByRole('tab', { name: /moments \(early preview\)/i })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: /moments preview/i })).toBeInTheDocument();
   });
 
   it('should not remount the hero when the first tab lands', () => {

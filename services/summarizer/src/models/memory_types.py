@@ -26,13 +26,20 @@ class MemoryInput(BaseModel):
 
 
 class OutlineSection(BaseModel):
-    """One outline section; boundaries are whole seconds on the video timeline."""
+    """One outline section; boundaries are whole seconds on the video timeline.
+
+    ``establishes`` is what the section establishes — a finding, a decision,
+    an argument — in one short line (D5 / R7): the provisional Moments tab
+    ships it as the moment's description. Empty for a memory output that
+    predates it; the tab then shows the title alone, as before.
+    """
 
     model_config = {"frozen": True}
 
     start: int = Field(ge=0)
     end: int = Field(gt=0)
     title: str
+    establishes: str = ""
 
 
 class MemoryResult(BaseModel):

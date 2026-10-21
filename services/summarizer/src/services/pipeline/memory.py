@@ -1,7 +1,9 @@
 """Video memory — one fast-model read of the full transcript, in parallel with the plan.
 
-Produces the outline (real section boundaries), the Appendix C evidence booleans,
-the hero tldr and the key takeaways (prompt: ``prompts/memory.txt``).
+Produces the outline (real section boundaries, each with what it establishes),
+the Appendix C evidence booleans, the hero tldr — the video's thesis — and the
+key takeaways, each closing with the ``[m:ss]`` it is said at (prompt:
+``prompts/memory.txt``; output-quality 1.9).
 
 Never raises into the pipeline. ``None`` means the stage failed and every consumer
 falls back: no outline (chapter_detect only when batching needs it), evidence = the
@@ -42,7 +44,10 @@ PROMPT_PATH = Path(__file__).parent.parent.parent / "prompts" / "memory.txt"
 
 MEMORY_FEATURE = "summarize:memory"
 MEMORY_STAGE = "memory"
-MEMORY_MAX_TOKENS = 1200
+# 1.9 added one establishes line per section and a stamp per takeaway: about
+# +250 output tokens on a 12-section talk, whose answer already ran to 901 at
+# the old cap of 1200. A cut-off JSON loses the whole memory, so headroom.
+MEMORY_MAX_TOKENS = 1600
 MEMORY_TIMEOUT_S = 25.0
 # One attempt: memory runs alongside the plan inside the phase-2 group, and a
 # retry budget became primary-primary-fallback (up to 3 x 25 s) once the
@@ -62,12 +67,17 @@ MAX_UNCOVERED_FLOOR_SECONDS = 300
 MIN_SECTIONS = 4
 MAX_SECTIONS = 12
 OUTLINE_TITLE_MAX_CHARS = 60
+# One short line per section — what it establishes; the provisional Moments
+# tab's description (D5 / R7).
+ESTABLISHES_MAX_CHARS = 120
 TLDR_MAX_CHARS = 150
 MIN_TAKEAWAYS = 3
 MAX_TAKEAWAYS = 5
 
 _WHITESPACE_RE = re.compile(r"\s+")
 _BOOL_STRINGS: dict[str, bool] = {"true": True, "false": False}
+# A takeaway's closing "[m:ss]" — the transcript marker where the claim is said.
+_TRAILING_STAMP_RE = re.compile(r"\s*\[((?:\d{1,2}:)?\d{1,3}:\d{2})\]\s*$")
 
 
 # ─── Prompt ───
@@ -130,6 +140,13 @@ def _to_seconds(raw: object) -> int | None:
     return parse_timestamp_to_seconds(raw)
 
 
+def _repair_establishes(raw: object) -> str:
+    """The section's establishes line, collapsed and cut to fit; ``""`` when unreadable."""
+    if not isinstance(raw, str):
+        return ""
+    return truncate_words(_collapse(raw), ESTABLISHES_MAX_CHARS)
+
+
 def _parse_section(item: object, duration: int) -> OutlineSection | None:
     """One raw section → clamped section, or None when it can't be read."""
     if not isinstance(item, dict):
@@ -143,7 +160,9 @@ def _parse_section(item: object, duration: int) -> OutlineSection | None:
     if end <= start:
         return None
     title = truncate_words(_collapse(title), OUTLINE_TITLE_MAX_CHARS)
-    return OutlineSection(start=start, end=end, title=title)
+    return OutlineSection(
+        start=start, end=end, title=title, establishes=_repair_establishes(item.get("establishes"))
+    )
 
 
 def _make_contiguous(sections: list[OutlineSection], duration: int) -> list[OutlineSection]:
@@ -159,7 +178,7 @@ def _make_contiguous(sections: list[OutlineSection], duration: int) -> list[Outl
     starts = [0, *(s.start for s in unique[1:])]
     ends = [*starts[1:], duration]
     return [
-        OutlineSection(start=start, end=end, title=section.title)
+        section.model_copy(update={"start": start, "end": end})
         for section, start, end in zip(unique, starts, ends, strict=True)
     ]
 
@@ -249,14 +268,28 @@ def repair_tldr(raw: object) -> str:
     return truncate_words(_collapse(raw), TLDR_MAX_CHARS)
 
 
-def repair_takeaways(raw: object) -> list[str]:
-    """3–5 distinct non-empty takeaways, else ``[]`` (synthesis's takeaways are used)."""
+def _drop_stamp_past_the_end(text: str, duration: int | None) -> str:
+    """Cut a closing ``[m:ss]`` past the video's end; the claim stays (0b.10's range check)."""
+    match = _TRAILING_STAMP_RE.search(text)
+    if match is None or duration is None:
+        return text
+    seconds = parse_timestamp_to_seconds(match.group(1))
+    if seconds is not None and seconds <= duration:
+        return text
+    return text[: match.start()].rstrip()
+
+
+def repair_takeaways(raw: object, duration: int | None = None) -> list[str]:
+    """3–5 distinct non-empty takeaways, else ``[]`` (synthesis's takeaways are used).
+
+    With ``duration``, a takeaway's closing ``[m:ss]`` past the end is cut.
+    """
     if not isinstance(raw, list):
         return []
     takeaways: list[str] = []
     seen: set[str] = set()
     for item in raw:
-        text = _collapse(item) if isinstance(item, str) else ""
+        text = _drop_stamp_past_the_end(_collapse(item), duration) if isinstance(item, str) else ""
         if text and text.casefold() not in seen:
             seen.add(text.casefold())
             takeaways.append(text)
@@ -272,14 +305,15 @@ def parse_memory_output(data: object, duration: int) -> MemoryResult | None:
         outline=repair_outline(data.get("outline"), duration),
         evidence=repair_evidence(data.get("evidence")),
         tldr=repair_tldr(data.get("tldr")),
-        takeaways=repair_takeaways(data.get("takeaways")),
+        takeaways=repair_takeaways(data.get("takeaways"), duration),
     )
     if result.is_empty():
         logger.warning("Memory response had no usable field; falling back")
         return None
     logger.info(
-        "Memory: outline=%d sections, evidence=%d/%d keys, tldr=%s, takeaways=%d",
+        "Memory: outline=%d sections (%d establish), evidence=%d/%d keys, tldr=%s, takeaways=%d",
         len(result.outline),
+        sum(1 for s in result.outline if s.establishes),
         len(result.evidence),
         len(EVIDENCE_KEYS),
         "yes" if result.tldr else "no",

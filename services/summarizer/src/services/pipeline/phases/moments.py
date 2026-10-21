@@ -5,10 +5,12 @@ when it designed one, else the tab assembly adds from the fallback chain
 (``assembly/moment_fallback.always_moments_tab``). The chain — memory outline
 → YouTube chapters → description timestamps — needs no extraction, so a
 provisional copy streams as soon as the plan and memory are done: the id,
-label and position estimate of the tab that replaces it by id later. No
-source with an entry → no tab; a plan whose steps are the timeline (D6) →
-no tab. The copy is a best-effort preview: a failure to build it logs a
-warning and streams nothing, never failing the run.
+label and position estimate of the tab that replaces it by id later, each
+outline moment described by what its section establishes (D5 / R7, 1.9).
+The event's ``provisional`` flag is what the web marks "Preview" in the strip
+until the replacement lands. No source with an entry → no tab; a plan whose
+steps are the timeline (D6) → no tab. The copy is a best-effort preview: a
+failure to build it logs a warning and streams nothing, never failing the run.
 """
 
 from __future__ import annotations
