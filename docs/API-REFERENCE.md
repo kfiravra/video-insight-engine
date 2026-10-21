@@ -1801,7 +1801,7 @@ older rows send the four fields only).
   `worthItFor`, `skipIf` and `readingMinutes` included.
 - The superset wins: once a `masterSummary` is held, an emission without one (a
   reconnect replaying the partial) is ignored.
-- Web: `handleSynthesisComplete` in `stream-event-processor.ts`. API relay
+- Web: `handleSynthesisComplete` in `stream-event-processor.ts`; the hero (`VideoHero`) renders `brief` (else `masterSummary`), `worthItFor` / `skipIf`, the takeaways' `[m:ss]` markers as ▶ seek chips and `readingMinutes` as "Read: N min · Watch: M min" ([FRONTEND.md](./FRONTEND.md)). API relay
   (`stream.routes.ts` → `VideoRepository.mergeSynthesis` → `buildSynthesisMerge`):
   dotted `$set` of the filled `synthesis.*` fields; a partial is guarded by
   `synthesis.masterSummary ∈ {null, ""}`. Re-applying any emission is idempotent.
