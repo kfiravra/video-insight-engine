@@ -53,7 +53,8 @@ FILMSTRIP_SHADOWED = "filmstrip_shadowed_by_moments"
 EMPTY_PROPS = "empty_props"
 # refreshFrameUrls (api) signs a thumbnailUrl for every object whose s3Key lies here.
 _FRAME_KEY_PREFIX = "videos/"
-_META_TEXT_KEYS = ("tldr", "masterSummary", "seoDescription")
+# The hero rewrite's lines (output-quality 2.2) are scrubbed like the rest of the hero.
+_META_TEXT_KEYS = ("tldr", "masterSummary", "seoDescription", "brief", "worthItFor", "skipIf")
 _OVERVIEW_TEXT_KEYS = ("subtitle", "tldr", "masterSummary")
 _TAKEAWAYS_KEY = "keyTakeaways"
 _SENTENCE_BREAK = re.compile(r"(?<=[.!?…])\s+")

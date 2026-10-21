@@ -1046,9 +1046,19 @@ export interface VIEResponseMeta {
   primaryTag: ContentTag;
   userGoal: string;
   tldr?: string;
+  /** Each a claim closing with the `[m:ss]` (`[h:mm:ss]`) where it is said, when known. */
   keyTakeaways?: string[];
   masterSummary?: string;
   seoDescription?: string;
+  /** The hero rewrite's 3–5 sentence brief (output-quality 2.2); `masterSummary`
+   *  carries the same text for older readers. Absent on older rows. */
+  brief?: string;
+  /** Who gets what from watching (≤ 20 words); absent or empty when not written. */
+  worthItFor?: string;
+  /** What someone might come for that the video does not contain (≤ 20 words). */
+  skipIf?: string;
+  /** Minutes to read the page, counted by code over the shipped hero + tabs. */
+  readingMinutes?: number;
   /** ISO 639-1 language code (e.g., "en", "he"). */
   language?: string;
   /** Whether the video content is in a right-to-left language. */

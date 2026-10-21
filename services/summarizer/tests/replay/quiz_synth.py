@@ -42,7 +42,7 @@ def is_quiz_v2_call(key: LLMKey) -> bool:
     return key.feature == QUIZ_KEY.feature and key.span == QUIZ_V2_SPAN
 
 
-def _request_text(messages: Sequence[Mapping[str, Any]]) -> str:
+def request_text(messages: Sequence[Mapping[str, Any]]) -> str:
     parts: list[str] = []
     for message in messages:
         content = message.get("content")
@@ -96,7 +96,7 @@ def synthesize_quiz_v2(
     quiz: LLMEntry, memory: LLMEntry | None, key: LLMKey, messages: Sequence[Mapping[str, Any]]
 ) -> LLMEntry:
     """The v2 answer in the recorded-entry shape (module docstring)."""
-    request = _request_text(messages)
+    request = request_text(messages)
     output = json.dumps(quiz_v2_answer(recorded_answer(quiz), transcript_lines(request)))
     share = len(output) / max(len(quiz.output), 1)
     return LLMEntry(

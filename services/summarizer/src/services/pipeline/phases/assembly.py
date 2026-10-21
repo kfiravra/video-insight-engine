@@ -5,7 +5,8 @@ Order (pipeline-1min 1d.1/1d.3; every ``tab_ready`` through the run's
 
 1. the description analysis (capped wait) — meta + its SSE event;
 2. synthesis FIRST only when memory left the hero empty: the overview and the
-   minimum-3 Key Info fallback need its tldr/takeaways;
+   minimum-3 Key Info fallback need its tldr/takeaways ("synthesis" = the synthesis
+   slot: the hero rewrite when enabled, else the synthesis call — ``phases/synthesis``);
 3. every tab but the moment tabs streams at once (the quiz is not in yet) —
    final where no late phase can change it;
 4. the late group — the moment fill (streams the moment tabs, framed),
@@ -50,6 +51,7 @@ from src.services.pipeline.phases.moments import video_meta
 from src.services.pipeline.phases.qdrant_index import index_in_qdrant
 from src.services.pipeline.phases.synthesis import (
     apply_synthesis_to_assembled,
+    carry_hero_keys,
     needs_hero_fallback,
     seed_synthesis_dict,
     settle_tab_references,
@@ -119,6 +121,7 @@ def _assemble(
     )
     ctx.assembled_tabs = assembled.get("tabs", [])
     ctx.assembled_meta = assembled.get("meta", {})
+    carry_hero_keys(ctx.assembled_meta, synthesis)
     # The tab that takes the plan-done provisional's place under another id
     # carries ``replaces`` on its first emission.
     ctx.tab_ledger.track_response(ctx.assembled_tabs)

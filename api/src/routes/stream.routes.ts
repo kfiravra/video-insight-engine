@@ -34,9 +34,11 @@ interface RelayContext {
  * synthesis (crash-recovery display: SEO, sharing). Raw triage/output/
  * enrichment are not stored — the summarizer saves the final meta + tabs.
  * `tab_ready` is relay-only for the same reason: a provisional or non-final
- * tab never reaches the stored output. Both synthesis emissions (memory-done
- * partial, synthesis-done superset) are merged; the repository keeps a
- * partial from overwriting the superset.
+ * tab never reaches the stored output. Every synthesis emission (memory-done
+ * partial, synthesis-done superset, the corrected superset after the late
+ * group — the hero rewrite's carries brief / worthItFor / skipIf /
+ * readingMinutes) is merged; the repository keeps a partial from overwriting
+ * a superset.
  */
 function persistRelayedEvent(ctx: RelayContext, event: RelayedEvent): void {
   const { fastify, req, videoSummaryId, pendingWrites } = ctx;

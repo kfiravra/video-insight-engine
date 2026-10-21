@@ -9,6 +9,7 @@ Handles three document shapes:
 from typing import Any, AsyncGenerator
 
 from src.services.pipeline.pipeline_helpers import sse_event
+from src.services.pipeline.synthesis import HERO_KEYS
 
 
 def build_frontend_response(doc: dict) -> dict:
@@ -116,6 +117,9 @@ def resolve_synthesis(entry: dict[str, Any]) -> dict[str, Any]:
         or synthesis.get("masterSummary")
         or summary.get("masterSummary", ""),
         "seoDescription": meta.get("seoDescription") or synthesis.get("seoDescription", ""),
+        # The hero rewrite's own fields (output-quality 2.2): a row carries them in meta
+        # only; older rows have none, so the event stays the four fields.
+        **{key: meta[key] for key in HERO_KEYS if meta.get(key) is not None},
     }
 
 

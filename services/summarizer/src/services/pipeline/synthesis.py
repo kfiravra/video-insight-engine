@@ -79,6 +79,9 @@ _KEYS_WITH_HERO = '"masterSummary", "seoDescription", "tldr" and "keyTakeaways"'
 # The meta keys assembly writes from the synthesis dict (assembly/core.py), in
 # the order today's dict has them.
 SYNTHESIS_KEYS = ("tldr", "keyTakeaways", "masterSummary", "seoDescription")
+# The meta keys only the hero rewrite writes (output-quality 2.2, ``hero_rewrite.hero_meta``):
+# optional for every reader — the synthesis path and older rows carry none of them.
+HERO_KEYS = ("brief", "worthItFor", "skipIf", "readingMinutes")
 
 
 class SynthesisInput(BaseModel):

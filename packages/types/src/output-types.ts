@@ -20,9 +20,19 @@ export function isValidOutputType(value: string): value is OutputType {
 
 export interface SynthesisResult {
   tldr: string;
+  /** Each a claim closing with the `[m:ss]` (`[h:mm:ss]`) where it is said, when known. */
   keyTakeaways: string[];
   masterSummary: string;
   seoDescription: string;
+  /** The hero rewrite's own fields (output-quality 2.2) — absent on the synthesis
+   *  path and on older rows. `brief` is also sent as `masterSummary`. */
+  brief?: string;
+  /** Who gets what from watching (≤ 20 words). */
+  worthItFor?: string;
+  /** What someone might come for that the video does not contain (≤ 20 words). */
+  skipIf?: string;
+  /** Minutes to read the shipped page, counted by code once the tabs are final. */
+  readingMinutes?: number;
 }
 
 /**
@@ -37,6 +47,10 @@ export function filledSynthesisFields(synthesis: Partial<SynthesisResult>): Part
   if (synthesis.keyTakeaways?.length) filled.keyTakeaways = synthesis.keyTakeaways;
   if (synthesis.masterSummary) filled.masterSummary = synthesis.masterSummary;
   if (synthesis.seoDescription) filled.seoDescription = synthesis.seoDescription;
+  if (synthesis.brief) filled.brief = synthesis.brief;
+  if (synthesis.worthItFor) filled.worthItFor = synthesis.worthItFor;
+  if (synthesis.skipIf) filled.skipIf = synthesis.skipIf;
+  if (synthesis.readingMinutes) filled.readingMinutes = synthesis.readingMinutes;
   return filled;
 }
 

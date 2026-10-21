@@ -346,9 +346,10 @@ class TestMeta:
 
         meta = hero_meta(result, minutes=4)
 
+        # 2.2: takeaways stay ``string[]`` — the claim + the closing [m:ss] memory writes.
         assert (meta["masterSummary"], meta["keyTakeaways"][0], meta["readingMinutes"]) == (
             meta["brief"],
-            {"text": "Hand-written code no longer pays.", "timestamp": 60},
+            "Hand-written code no longer pays. [1:00]",
             4,
         )
 

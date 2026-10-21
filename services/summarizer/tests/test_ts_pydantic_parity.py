@@ -157,6 +157,7 @@ _SAMPLE_OVERRIDES: dict[str, object] = {
     "keyTakeaways": ["takeaway"],
     "isRTL": True,
     "degraded": True,
+    "readingMinutes": 3,
     "timestamp": 42,
     "endTimestamp": 90,
     "seconds": 42,

@@ -8,10 +8,10 @@ once — text1 warms the shared prefix — and the visual group once frames are
 done, cut from the tabs frames-done decided. Each landed group sends an
 ``extraction_progress`` (``section="groups"``) followed by previews of the
 tabs it completed (``group_emission``, 3.6: non-final; the quiz starts once
-its groups are in); each group's answer was validated and cut to its own keys
-as it landed, and when all landed they are merged (``group_merge``, 3.5) into
-ONE ``extraction_complete``. Assembly runs after the whole phase-2 group and
-sends every tab final.
+its groups are in, the hero rewrite (2.2) once every text group is); each
+group's answer was validated and cut to its own keys as it landed, and when all
+landed they are merged (``group_merge``, 3.5) into ONE ``extraction_complete``.
+Assembly runs after the whole phase-2 group and sends every tab final.
 """
 
 from __future__ import annotations
@@ -53,6 +53,7 @@ from src.services.pipeline.phases.extraction import (
     record_validation,
 )
 from src.services.pipeline.phases.group_emission import GroupLanding
+from src.services.pipeline.phases.synthesis import cancel_hero_task
 from src.services.pipeline.pipeline_helpers import sse_event
 from src.services.pipeline.pipeline_timing import timed_step
 from src.services.pipeline.prompt_builder import format_gallery_frames_for_extraction
@@ -201,7 +202,7 @@ async def _land(
     """
     per_chunk = len(run.text_groups) + int(visual_planned)
     progress = _Progress(of=len(run.chunks) * per_chunk, visual_planned=visual_planned)
-    landing = GroupLanding.for_run(ctx, run.text_groups, len(run.chunks))
+    landing = GroupLanding.for_run(ctx, run.text_groups, len(run.chunks), run)
     yield progress.event()
     async for outcome in fire_groups(run, _visual_cutter(ctx, run.chunks)):
         if outcome is None:
@@ -277,7 +278,7 @@ async def _complete(ctx: PipelineContext, outcomes: Sequence[GroupOutcome]) -> l
 async def run_phase_split_extraction(ctx: PipelineContext) -> AsyncGenerator[str, None]:
     """From plan-done: fire the field groups, stream their progress + tabs, then the merged result.
 
-    A run that fails or is cancelled here stops the quiz call it started.
+    A run that fails or is cancelled here stops the quiz and hero calls it started.
     """
     await ctx.plan_done.wait()
     if ctx.plan_result is None:
@@ -292,4 +293,5 @@ async def run_phase_split_extraction(ctx: PipelineContext) -> AsyncGenerator[str
                 yield event
     except BaseException:
         cancel_quiz_task(ctx)
+        cancel_hero_task(ctx)
         raise

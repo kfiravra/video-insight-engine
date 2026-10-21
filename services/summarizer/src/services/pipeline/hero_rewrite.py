@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -44,7 +45,7 @@ from typing import TYPE_CHECKING, Any
 from llm_common.context import llm_feature_var
 
 from ...config import settings
-from ...models.hero_types import HeroRewriteResult
+from ...models.hero_types import HeroRewriteResult, HeroTakeaway
 from ...utils.json_parsing import parse_json_response, strip_markdown_fences
 from ...utils.language_utils import ENGLISH_OUTPUT_DIRECTIVE
 from ...utils.llm_retry import call_llm_with_retry
@@ -295,7 +296,7 @@ async def run_hero_rewrite(
     return result
 
 
-# ─── The run's entry point (2.2 wires it) ───
+# ─── The run's entry point (``phases/synthesis`` awaits it) ───
 
 
 def page_tab_labels(tabs: Sequence[Mapping[str, Any]]) -> list[str]:
@@ -331,30 +332,52 @@ async def hero_rewrite_for_run(
     ctx: PipelineContext, extraction: Mapping[str, Any], run: SplitRun | None = None
 ) -> HeroRewriteResult | None:
     """The hero for this run over ``extraction`` (the text groups' merge); None = keep
-    memory's hero + synthesis. ``run`` = the split run (None on ``EXTRACTION_PARALLEL=false``)."""
-    return await run_hero_rewrite(ctx.llm_service, hero_request(ctx, extraction, run))
+    memory's hero + synthesis. ``run`` = the split run (None on ``EXTRACTION_PARALLEL=false``).
+    Never raises, as ``run_hero_rewrite``: the synthesis it replaces never failed a run."""
+    try:
+        request = hero_request(ctx, extraction, run)
+        llm_service = ctx.llm_service
+    except Exception:  # noqa: BLE001 — the hero is optional; memory's + synthesis stay on a bug here
+        logger.exception("Hero rewrite: the request could not be built; synthesis runs")
+        return None
+    return await run_hero_rewrite(llm_service, request)
 
 
 # ─── Meta ───
 
+READING_MINUTES_KEY = "readingMinutes"
+# A closing "[m:ss]" the model wrote despite the prompt — code writes the stamp.
+_TRAILING_MARKER_RE = re.compile(r"\s*\[(?:\d{1,2}:)?\d{1,3}:\d{2}\]\s*$")
+
+
+def takeaway_line(takeaway: HeroTakeaway) -> str:
+    """``"<claim> [m:ss]"`` (``[h:mm:ss]`` past an hour) — the closing marker memory's
+    takeaways carry, so every reader keeps ``keyTakeaways: string[]`` and the page
+    seeks to the cited item's second."""
+    claim = _TRAILING_MARKER_RE.sub("", takeaway.text)
+    return f"{claim} [{format_clock(takeaway.timestamp)}]"
+
 
 def hero_meta(result: HeroRewriteResult, minutes: int | None = None) -> dict[str, Any]:
-    """The meta fields 2.2 persists; ``masterSummary`` = the brief for older readers.
+    """The meta fields the run persists; ``masterSummary`` = the brief for older readers.
 
-    ``minutes`` = ``reading_minutes(meta, tabs)`` over the shipped page (None until then).
+    ``minutes`` = ``reading_minutes(meta, tabs)`` over the shipped page; until it is
+    counted the key is absent (never null — the relay and the web read a number or nothing).
     """
     if minutes is None:
         minutes = result.reading_minutes
-    return {
+    meta: dict[str, Any] = {
         "tldr": result.tldr,
         "brief": result.brief,
         "masterSummary": result.brief,
-        "keyTakeaways": [takeaway.model_dump() for takeaway in result.key_takeaways],
+        "keyTakeaways": [takeaway_line(takeaway) for takeaway in result.key_takeaways],
         "worthItFor": result.worth_it_for,
         "skipIf": result.skip_if,
-        "readingMinutes": minutes,
         "seoDescription": result.seo_description,
     }
+    if minutes is not None:
+        meta[READING_MINUTES_KEY] = minutes
+    return meta
 
 
 # ─── Reading time ───
@@ -398,17 +421,20 @@ def _words_in(value: object) -> int:
     return 0
 
 
+def _takeaway_text(takeaway: object) -> object:
+    """A takeaway's words: its ``text``, or the string without its closing ``[m:ss]``."""
+    if isinstance(takeaway, Mapping):
+        return takeaway.get("text")
+    return _TRAILING_MARKER_RE.sub("", takeaway) if isinstance(takeaway, str) else None
+
+
 def reading_minutes(meta: Mapping[str, Any], tabs: Sequence[Mapping[str, Any]]) -> int:
     """Minutes to read the shipped page at ``READING_WPM``: the hero (tldr, brief,
     takeaways, both lines) + every tab's label, goal and props — the overview tab
     repeats the hero, so it is not counted twice. At least 1."""
     hero = sum(_words_in(meta.get(key)) for key in _HERO_TEXT_KEYS)
     takeaways = meta.get("keyTakeaways")
-    hero += _words_in(
-        [t.get("text") if isinstance(t, Mapping) else t for t in takeaways]
-        if isinstance(takeaways, list)
-        else []
-    )
+    hero += _words_in([_takeaway_text(t) for t in takeaways] if isinstance(takeaways, list) else [])
     content = sum(
         _words_in([tab.get("label"), tab.get("goal"), tab.get("props")])
         for tab in tabs

@@ -135,14 +135,20 @@ export function validateMetadataEvent(data: unknown): VideoMetadata {
 }
 
 // Every content field is optional: the memory-done partial carries only
-// tldr + keyTakeaways, a failure path can carry nothing. `satisfies` ties the
-// schema to the shared event type so the two can't drift apart.
+// tldr + keyTakeaways, a failure path can carry nothing, and only the hero
+// rewrite's supersets carry brief / worthItFor / skipIf (readingMinutes on the
+// corrected one after the late group). `satisfies` ties the schema to the
+// shared event type so the two can't drift apart.
 const synthesisCompleteEventSchema = z.object({
   event: z.literal('synthesis_complete'),
   tldr: z.string().optional(),
   keyTakeaways: z.array(z.string()).optional(),
   masterSummary: z.string().optional(),
   seoDescription: z.string().optional(),
+  brief: z.string().optional(),
+  worthItFor: z.string().optional(),
+  skipIf: z.string().optional(),
+  readingMinutes: z.number().int().positive().optional(),
 }) satisfies z.ZodType<SSESynthesisCompleteEvent>;
 
 /**

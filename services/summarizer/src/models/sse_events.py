@@ -81,6 +81,12 @@ class SynthesisCompleteEvent(_SSEEvent):
     key_takeaways: list[Any] = Field([], alias="keyTakeaways")
     master_summary: str = Field("", alias="masterSummary")
     seo_description: str = Field("", alias="seoDescription")
+    # The hero rewrite's own fields (output-quality 2.2) — absent on the synthesis
+    # path; ``readingMinutes`` only on the corrected superset after the late group.
+    brief: str | None = None
+    worth_it_for: str | None = Field(None, alias="worthItFor")
+    skip_if: str | None = Field(None, alias="skipIf")
+    reading_minutes: int | None = Field(None, alias="readingMinutes", ge=1)
 
 
 class FramesEvent(_SSEEvent):

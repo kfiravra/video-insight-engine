@@ -26,6 +26,10 @@ The quiz starts from here too (``ctx.quiz_task``, B.6): once every text group
 holding a field of a ``quizDomains`` domain has landed — the visual group when
 no text group holds one — over the extraction merged so far. A strip-only quiz
 (no quiz tab) also waits until frames-done can no longer drop its host.
+
+So does the hero rewrite (``ctx.hero_task``, output-quality 2.2, D1): once every
+text group landed on every chunk (text-groups-done), over the extraction merged so
+far, reading the run's cached blocks; assembly's synthesis slot awaits it.
 """
 
 from __future__ import annotations
@@ -38,12 +42,14 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from src.config import settings
 from src.models.sse_events import SSEEventValidationError
 from src.services.pipeline.assembly import assemble_response
 from src.services.pipeline.enrichment import QUIZ_COMPONENT, QUIZ_DATA_SOURCE
 from src.services.pipeline.group_merge import merge_groups
 from src.services.pipeline.phases.enrichment import start_quiz_task
 from src.services.pipeline.phases.moments import video_meta
+from src.services.pipeline.phases.synthesis import start_hero_task
 from src.services.pipeline.quote_verify import run_quote_index
 from src.services.pipeline.reconcile_pass import MAX_TABS
 from src.services.pipeline.synthesis import build_synthesis_dict
@@ -52,7 +58,7 @@ from src.shared_config.domain_config import quiz_enrichment
 
 if TYPE_CHECKING:
     from src.services.pipeline.context import PipelineContext
-    from src.services.pipeline.extraction_groups import GroupOutcome
+    from src.services.pipeline.extraction_groups import GroupOutcome, SplitRun
     from src.services.pipeline.field_groups import ExtractionGroup
     from src.services.pipeline.field_requests import FieldRequest
 
@@ -133,7 +139,8 @@ def _waits(fields: Sequence[FieldRequest]) -> dict[str, set[str]]:
 
 
 def _ready(tab: dict, waits: Mapping[str, set[str]], landed: frozenset[str]) -> bool:
-    """A planned tab whose requested fields all landed (not the overview, a moment tab or the quiz)."""
+    """A planned tab whose requested fields all landed (not the overview, a moment tab or
+    the quiz)."""
     if tab.get("component") in _HELD_PER_GROUP or tab_id(tab) == _OVERVIEW:
         return False
     paths = waits.get(tab_id(tab))
@@ -242,6 +249,8 @@ class GroupLanding:
     ctx: PipelineContext
     calls_per_group: int  # the run's chunks
     quiz_owners: frozenset[str]  # empty → the visual group owns the quiz
+    # The split run: its text groups gate the hero, its blocks feed it (None → no early hero).
+    run: SplitRun | None = None
     group_calls: Counter[str] = field(default_factory=Counter)
     path_calls: Counter[str] = field(default_factory=Counter)
     # The landed fields the last partial assembly saw.
@@ -249,11 +258,15 @@ class GroupLanding:
 
     @classmethod
     def for_run(
-        cls, ctx: PipelineContext, text_groups: Sequence[ExtractionGroup], chunks: int
+        cls,
+        ctx: PipelineContext,
+        text_groups: Sequence[ExtractionGroup],
+        chunks: int,
+        run: SplitRun | None = None,
     ) -> GroupLanding:
         """The run's landing state; from here on no tab is final until every group landed."""
         ctx.tab_ledger.expect_groups()
-        return cls(ctx, max(chunks, 1), _quiz_owners(text_groups))
+        return cls(ctx, max(chunks, 1), _quiz_owners(text_groups), run)
 
     def _all_landed(self, group_id: str) -> bool:
         return self.group_calls[group_id] >= self.calls_per_group
@@ -277,6 +290,14 @@ class GroupLanding:
     def _quiz_due(self, outcome: GroupOutcome) -> bool:
         return self._owners_landed(outcome) and self._quiz_host_settled()
 
+    def _hero_run(self) -> SplitRun | None:
+        """The split run once the hero is due — text-groups-done: every text group landed
+        on every chunk — and none started yet; else None."""
+        run = self.run
+        if run is None or not settings.HERO_REWRITE_ENABLED or self.ctx.hero_task is not None:
+            return None
+        return run if all(self._all_landed(g.group_id) for g in run.text_groups) else None
+
     def landed(self) -> frozenset[str]:
         return frozenset(p for p, n in self.path_calls.items() if n >= self.calls_per_group)
 
@@ -286,25 +307,30 @@ class GroupLanding:
         outcomes: Sequence[GroupOutcome],
         fields: Sequence[FieldRequest],
     ) -> list[str]:
-        """Count ``outcome`` in; start the quiz when its groups are in; the tabs now ready.
+        """Count ``outcome`` in; start the quiz when its groups are in and the hero at
+        text-groups-done; the tabs now ready.
 
         ``outcomes`` = every call landed so far (``outcome`` included);
         ``fields`` = what the run's tabs request now (frames-done may have
         re-pointed a tab). A quiz whose groups brought nothing usable is tried
         again as later groups land (else the late group makes the call). A
         call that completes no field (a long video's earlier chunks) changes
-        no tab: nothing is merged or assembled for it unless the quiz is due.
+        no tab: nothing is merged or assembled for it unless the quiz or the
+        hero is due.
         """
         self.group_calls[outcome.group.group_id] += 1
         self.path_calls.update(f.path for f in outcome.group.fields)
         landed = self.landed()
         grew = landed != self.assembled_over
         quiz_due = self.ctx.quiz_task is None and self._quiz_due(outcome)
-        if not grew and not quiz_due:
+        hero_run = self._hero_run()
+        if not grew and not quiz_due and hero_run is None:
             return []
         merged, _ = merge_groups(outcomes)
         if quiz_due:
             start_quiz_task(self.ctx, merged)
+        if hero_run is not None:
+            start_hero_task(self.ctx, merged, hero_run)
         if not grew:
             return []
         self.assembled_over = landed

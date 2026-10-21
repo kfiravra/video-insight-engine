@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 from src.services.pipeline.tab_ledger import TabLedger
 
 if TYPE_CHECKING:
+    from src.models.hero_types import HeroRewriteResult
     from src.models.memory_types import MemoryResult
     from src.models.pipeline_types import EnrichmentData, PlanResult
     from src.models.probe_types import TierProbe
@@ -163,6 +164,10 @@ class PipelineContext:
     # groups holding its domains' fields landed; assembly's late group awaits
     # it. None on today's path (the late group makes the call).
     quiz_task: asyncio.Task[EnrichmentData | None] | None = None
+    # Split path (output-quality 2.2): the hero rewrite, started once every text
+    # group landed on every chunk; assembly's synthesis slot awaits it. None on
+    # today's path (that slot makes the call) and with HERO_REWRITE_ENABLED off.
+    hero_task: asyncio.Task[HeroRewriteResult | None] | None = None
     # Coverage metric: how far into the video the timestamped extraction
     # reaches vs. duration, plus dropped-batch counts. Surfaced into meta.
     extraction_coverage: dict[str, Any] | None = None

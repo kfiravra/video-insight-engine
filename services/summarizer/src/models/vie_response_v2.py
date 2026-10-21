@@ -82,6 +82,11 @@ class VIEResponseMeta(BaseModel):
     key_takeaways: list[str] | None = Field(None, alias="keyTakeaways")
     master_summary: str | None = Field(None, alias="masterSummary")
     seo_description: str | None = Field(None, alias="seoDescription")
+    # The hero rewrite's own fields (output-quality 2.2); absent on older rows.
+    brief: str | None = None
+    worth_it_for: str | None = Field(None, alias="worthItFor")
+    skip_if: str | None = Field(None, alias="skipIf")
+    reading_minutes: int | None = Field(None, alias="readingMinutes")
     language: str | None = None
     is_rtl: bool | None = Field(None, alias="isRTL")
     # Partial-result flag (dropped extraction batches / critical coverage) —

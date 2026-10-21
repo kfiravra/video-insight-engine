@@ -153,17 +153,25 @@ export interface SSECompleteEvent {
   cached?: boolean;
 }
 
-/** Emitted up to twice per run: early at memory-done with only `tldr` +
+/** Emitted up to three times per run: early at memory-done with only `tldr` +
  *  `keyTakeaways` (drives the hero), then the full superset at
- *  synthesis-done. Either can be missing on a failure path and a reconnect
- *  can replay them in any order, so every content field is optional and
- *  consumers merge emissions — a partial never overwrites the superset. */
+ *  synthesis-done (the hero rewrite's, with `brief` / `worthItFor` /
+ *  `skipIf`, when it wrote the hero), then — when the final tab list changed
+ *  the hero or the hero rewrite wrote it — a corrected superset after the
+ *  late group (the hero rewrite's carries `readingMinutes`). Any can be
+ *  missing on a failure path and a reconnect can replay them in any order, so
+ *  every content field is optional and consumers merge emissions — a partial
+ *  never overwrites the superset. */
 export interface SSESynthesisCompleteEvent {
   event: 'synthesis_complete';
   tldr?: string;
   keyTakeaways?: string[];
   masterSummary?: string;
   seoDescription?: string;
+  brief?: string;
+  worthItFor?: string;
+  skipIf?: string;
+  readingMinutes?: number;
 }
 
 export interface SSEFramesEvent {

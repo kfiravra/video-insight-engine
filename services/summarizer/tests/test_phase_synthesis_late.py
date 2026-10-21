@@ -15,6 +15,9 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
+from src.config import settings
 from src.models.domain_types import validate_domain_output
 from src.models.memory_types import MemoryResult
 from src.models.pipeline_types import PlanResult, SynthesisResult
@@ -26,6 +29,13 @@ from src.services.pipeline.synthesis import build_synthesis_dict
 _FOOD_FIXTURE = Path(__file__).parent / "fixtures" / "llm_responses" / "food.json"
 _MEMORY = MemoryResult(tldr="Memory tldr.", takeaways=["m1", "m2", "m3"])
 _SYNTHESIS = SynthesisResult(master_summary="The full summary.", seo_description="SEO.")
+
+
+@pytest.fixture(autouse=True)
+def _flag_off_hero(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests pin today's synthesis call; the hero rewrite rides the same phase
+    and is covered by ``test_p2_2_hero_wiring`` (output-quality 2.2)."""
+    monkeypatch.setattr(settings, "HERO_REWRITE_ENABLED", False)
 
 
 def _ctx(**overrides: Any) -> Any:
