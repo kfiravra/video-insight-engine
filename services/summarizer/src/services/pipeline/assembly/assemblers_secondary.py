@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from src.models.idea_types import CLAIM_STATUSES
+
 from .assemblers_overhaul import (
     _connection_target,
     assemble_quiz_arena,
@@ -222,35 +224,45 @@ def assemble_quick_quiz(
     return assemble_quiz_arena(tab, data, extraction, enrichment)
 
 
-_CLAIM_STATUSES = frozenset({"verified", "disputed", "context"})
+# The pre-1.4 vocabulary stored extractions still carry, read in D11's words:
+# a "verified" claim is one the video supports, a "disputed" one it contests,
+# "context" one it only states.
+_LEGACY_CLAIM_STATUSES: dict[str, str] = {
+    "verified": "supported",
+    "disputed": "contested",
+    "context": "stated",
+}
+# What the video does with a claim it gives no status for, or none it can be
+# checked at: it states it (the non-asserting word, D11 / D13).
+_STATED = "stated"
 _CLAIMS_MIN = 2
 
 
-def _normalize_claim(item: Any) -> dict | None:
-    """Coerce a claim item to {claim, source, status, sourceCitation?, timestamp?}.
+def _claim_status(item: dict) -> str:
+    """The claim's status in D11's three words — only as the anchored item states
+    it (D13), the legacy words read as theirs, anything else ``stated``."""
+    raw = str(stated_scalars(item, ("status",)).get("status") or "").strip().lower()
+    status = _LEGACY_CLAIM_STATUSES.get(raw, raw)
+    return status if status in CLAIM_STATUSES else _STATED
 
-    Drops the row when there is no claim text. status defaults to "context"
-    (the safe, non-asserting default) when the LLM omits or supplies an
-    unknown value — we never silently upgrade an unverified claim to verified.
-    ``source`` is who the video says made the claim; unattributed, it is ""
-    (ClaimsTracker then prints no "Claimed by" line), never an invented
-    "Reporter". The key stays because the FE schema requires a string.
+
+def _normalize_claim(item: Any) -> dict | None:
+    """Coerce a claim item to {claim, status, source?, sourceCitation?, timestamp?}.
+
+    Drops the row when there is no claim text. ``status`` is stated /
+    supported / contested only (D11) — never "verified": an unknown, missing or
+    unanchored status is ``stated``. ``source`` is who the video says made the
+    claim, absent when it attributes it to no one (never an invented "Reporter").
     """
     if not isinstance(item, dict):
         return None
     claim = str(item.get("claim") or item.get("text") or "").strip()
     if not claim:
         return None
-    # verified / disputed are assertions: they ship only when the claim is
-    # anchored in the video (D13); otherwise the non-asserting "context".
-    status = str(stated_scalars(item, ("status",)).get("status") or "").strip().lower()
-    if status not in _CLAIM_STATUSES:
-        status = "context"
-    result: dict[str, Any] = {
-        "claim": claim,
-        "source": str(item.get("source") or item.get("speaker") or "").strip(),
-        "status": status,
-    }
+    result: dict[str, Any] = {"claim": claim, "status": _claim_status(item)}
+    source = str(item.get("source") or item.get("speaker") or "").strip()
+    if source:
+        result["source"] = source
     citation = item.get("sourceCitation") or item.get("citation")
     if citation:
         result["sourceCitation"] = str(citation).strip()
@@ -267,11 +279,12 @@ def assemble_claims_tracker(
     extraction: dict,
     enrichment: dict | None,
 ) -> dict | None:
-    """Build ClaimsTracker props from news.claims — the news signature surface.
+    """Build ClaimsTracker props from a claims list — news's signature surface, and a
+    talk's, podcast's or tech talk's on ``has_claims`` (D11).
 
-    Each claim carries the assertion, who made it, a verified/disputed/context
-    status, and an optional source citation. Needs ≥2 real claims to justify the
-    tab; otherwise the data folds into info_grid / overview via the fallback layer.
+    Each claim carries the assertion, a stated / supported / contested status,
+    who made it and an optional source citation. Needs ≥2 real claims to justify
+    the tab; otherwise the data folds into info_grid / overview via the fallback layer.
     """
     if isinstance(data, dict):
         data = data.get("claims") or data.get("items") or []

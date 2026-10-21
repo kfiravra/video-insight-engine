@@ -284,7 +284,7 @@ class TestTiers:
 
 
 class TestClaimStatus:
-    def test_should_downgrade_an_unanchored_verified_status_to_context(self):
+    def test_should_downgrade_an_unanchored_verified_status_to_stated(self):
         data = [
             {"claim": "4 failing states", "status": "verified"},
             {"claim": "3 wars", "status": "disputed", "timestamp": 2},
@@ -292,7 +292,8 @@ class TestClaimStatus:
 
         out = assemble_claims_tracker({}, data, {}, None)
 
-        assert [c["status"] for c in out["claims"]] == ["context", "disputed"]
+        # D11's words since output-quality 1.4: the legacy "disputed" reads "contested".
+        assert [c["status"] for c in out["claims"]] == ["stated", "contested"]
 
     def test_should_ship_the_anchor_that_let_a_status_through(self):
         # Any anchor key lets a status through; that second is the reader's seek point.

@@ -16,7 +16,14 @@ from pydantic import (
 
 from ..shared_config.domain_config import valid_content_tags, valid_modifiers
 from .domain_validation import ValidationReport, merge_report, validate_block_items
-from .idea_types import LearningKeyIdea, PodcastQA, TechTopic, seconds_or_none, text_or_none
+from .idea_types import (
+    Claim,
+    LearningKeyIdea,
+    PodcastQA,
+    TechTopic,
+    seconds_or_none,
+    text_or_none,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -401,6 +408,8 @@ class LearningData(BaseModel):
     concepts: list[LearningConcept] = []
     takeaways: list[str] = []
     timestamps: list[LearningTimestamp] = []
+    # Checkable claims of a talk or lecture (D11) — claims_tracker on has_claims.
+    claims: list[Claim] = []
     key_question: str = Field("", alias="keyQuestion")
     summary: str = ""
 
@@ -416,6 +425,13 @@ class ReviewRating(BaseModel):
     score: float = 0.0
     max_score: float = Field(10.0, alias="maxScore")
     label: str = ""
+    # Where the reviewer gives the score — without it the score never renders (D13).
+    timestamp: int | None = None
+
+    @field_validator("timestamp", mode="before")
+    @classmethod
+    def coerce_timestamp(cls, v: Any) -> int | None:
+        return seconds_or_none(v)
 
     @field_validator("score", mode="before")
     @classmethod
@@ -469,11 +485,18 @@ class ReviewVerdict(BaseModel):
     not_for: list[str] = Field([], alias="notFor")
     bottom_line: str = Field("", alias="bottomLine")
     sub_scores: list[dict] | None = Field(None, alias="subScores")
+    # Where the reviewer states the verdict — the badge renders only with it (R2).
+    timestamp: int | None = None
 
     @field_validator("badge", mode="before")
     @classmethod
     def coerce_badge(cls, v: Any) -> str | None:
         return v if v in VERDICT_BADGES else None
+
+    @field_validator("timestamp", mode="before")
+    @classmethod
+    def coerce_timestamp(cls, v: Any) -> int | None:
+        return seconds_or_none(v)
 
 
 class ReviewData(BaseModel):
@@ -545,6 +568,8 @@ class TechData(BaseModel):
     snippets: list[TechSnippet] = []
     patterns: list[TechPattern] = []
     cheat_sheet: list[TechCheatSheetItem] = Field([], alias="cheatSheet")
+    # Checkable claims a tech talk makes (benchmarks, adoption figures — D11).
+    claims: list[Claim] = []
 
     @model_validator(mode="before")
     @classmethod
@@ -1057,6 +1082,8 @@ class PodcastData(BaseModel):
     guests: list[PodcastGuest] = []
     quotes: list[PodcastQuote] = []
     topics: list[PodcastTopic] = []
+    # Checkable claims made on the show (D11).
+    claims: list[Claim] = []
 
 
 # ─────────────────────────────────────────────────────
@@ -1077,21 +1104,8 @@ class NewsEntity(BaseModel):
     emoji: str = ""
 
 
-class NewsClaim(BaseModel):
-    model_config = {"populate_by_name": True}
-
-    claim: str
-    # None when the video attributes the claim to no one — never an invented "Reporter".
-    source: str | None = None
-    status: str = "context"
-    source_citation: str | None = Field(None, alias="sourceCitation")
-    timestamp: int | None = None
-
-    @field_validator("status", mode="before")
-    @classmethod
-    def coerce_status(cls, v: Any) -> str:
-        valid = ("verified", "disputed", "context")
-        return v if v in valid else "context"
+# The news claim is the generic claim (D11): one shape on every has_claims domain.
+NewsClaim = Claim
 
 
 class NewsContextItem(BaseModel):
@@ -1136,6 +1150,13 @@ class GamingRanking(BaseModel):
     tier: str | None = None
     reason: str = ""
     emoji: str = ""
+    # Where the creator places it — a tier renders only with it (D13).
+    timestamp: int | None = None
+
+    @field_validator("timestamp", mode="before")
+    @classmethod
+    def coerce_timestamp(cls, v: Any) -> int | None:
+        return seconds_or_none(v)
 
     @field_validator("tier", mode="before")
     @classmethod

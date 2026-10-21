@@ -9,20 +9,19 @@ const claims: ClaimItem[] = [
   {
     claim: 'The plan creates 1,200 jobs',
     source: 'Mayor Diaz',
-    status: 'disputed',
+    status: 'contested',
     sourceCitation: 'Independent analysts put the figure near 700.',
     timestamp: 210,
   },
   {
     claim: 'Fares will rise 15% in 2026',
     source: 'Transit Authority',
-    status: 'verified',
+    status: 'supported',
     timestamp: 540,
   },
   {
     claim: 'The city faces a structural deficit',
-    source: 'Reporter',
-    status: 'context',
+    status: 'stated',
   },
 ];
 
@@ -38,9 +37,9 @@ describe('ClaimsTracker', () => {
   it('renders a status badge per claim', () => {
     render(<ClaimsTracker claims={claims} />);
     const list = screen.getByRole('list', { name: /tracked claims/i });
-    expect(within(list).getByText('Verified')).toBeInTheDocument();
-    expect(within(list).getByText('Disputed')).toBeInTheDocument();
-    expect(within(list).getByText('Context')).toBeInTheDocument();
+    expect(within(list).getByText('Supported')).toBeInTheDocument();
+    expect(within(list).getByText('Contested')).toBeInTheDocument();
+    expect(within(list).getByText('Stated')).toBeInTheDocument();
   });
 
   it('shows the source citation when present', () => {
@@ -55,10 +54,10 @@ describe('ClaimsTracker', () => {
     render(<ClaimsTracker claims={claims} />);
     // Filters are toggle buttons in a group (no tabpanels → not a tablist).
     const group = screen.getByRole('group', { name: /filter claims by status/i });
-    const disputed = within(group).getByRole('button', { name: /disputed/i });
-    expect(disputed).toHaveAttribute('aria-pressed', 'false');
-    await user.click(disputed);
-    expect(disputed).toHaveAttribute('aria-pressed', 'true');
+    const contested = within(group).getByRole('button', { name: /contested/i });
+    expect(contested).toHaveAttribute('aria-pressed', 'false');
+    await user.click(contested);
+    expect(contested).toHaveAttribute('aria-pressed', 'true');
     const list = screen.getByRole('list', { name: /tracked claims/i });
     expect(within(list).getByText('The plan creates 1,200 jobs')).toBeInTheDocument();
     expect(within(list).queryByText('Fares will rise 15% in 2026')).not.toBeInTheDocument();

@@ -9,8 +9,9 @@ THINKING GUIDE:
 - The story timeline is the chronological backbone — how the story developed.
 - Entities are the people, organizations, and places at the center.
 - Claims are the heart of the artifact: every factual assertion, who made it,
-  and whether it is verified, disputed, or just context. This is what separates
-  a news artifact from a glossary — surface accountability.
+  and what the report does with it — states it, supports it with evidence, or
+  shows it contested. This is what separates a news artifact from a glossary —
+  surface accountability without judging truth yourself.
 - Context items are background facts a viewer needs to understand the story.
 
 {
@@ -35,13 +36,13 @@ THINKING GUIDE:
   "claims": [
     {
       "claim": "The factual assertion, stated plainly",
-      "source": "Who made the claim (speaker, official, outlet)",
-      "status": "verified | disputed | context",
-      "sourceCitation": "Where verification comes from (study, record, outlet), or null",
+      "source": "Who made the claim (speaker, official, outlet) — or null when the report names no one",
+      "status": "stated | supported | contested",
+      "sourceCitation": "The evidence the report gives for or against it (study, record, outlet), or null",
       "timestamp": 0
     }
   ],
-> UI: claims → ClaimsTracker. status drives a colored badge: verified (confirmed), disputed (contested), context (background, not a truth-claim). source = who said it; sourceCitation = the backing evidence.
+> UI: claims → ClaimsTracker. status drives a colored badge: stated (asserted, no evidence given), supported (the report gives evidence — name it in sourceCitation), contested (someone in the report disputes it, or counter-evidence is given). source = who said it; sourceCitation = the evidence. timestamp = the second the claim is made — a status without one is not shown.
   "context": [
     {
       "key": "Background fact label",
@@ -64,9 +65,9 @@ THINKING GUIDE:
     {"name": "Transit Authority", "role": "Implementing body", "description": "Runs the city bus and rail network", "emoji": "🚇"}
   ],
   "claims": [
-    {"claim": "The plan creates 1,200 jobs", "source": "Mayor Diaz", "status": "disputed", "sourceCitation": "Independent analysts put the figure near 700", "timestamp": 210},
-    {"claim": "Fares will rise 15% in 2026", "source": "Transit Authority", "status": "verified", "sourceCitation": "Approved fare schedule, council record", "timestamp": 540},
-    {"claim": "The city faces a structural deficit", "source": "Reporter", "status": "context", "sourceCitation": null, "timestamp": 60}
+    {"claim": "The plan creates 1,200 jobs", "source": "Mayor Diaz", "status": "contested", "sourceCitation": "Independent analysts put the figure near 700", "timestamp": 210},
+    {"claim": "Fares will rise 15% in 2026", "source": "Transit Authority", "status": "supported", "sourceCitation": "Approved fare schedule, council record", "timestamp": 540},
+    {"claim": "The city faces a structural deficit", "source": null, "status": "stated", "sourceCitation": null, "timestamp": 60}
   ],
   "context": [
     {"key": "Current annual budget", "value": "$3.4B"},
@@ -75,15 +76,17 @@ THINKING GUIDE:
 }
 
 RULES:
-- A claim's status MUST be one of: verified, disputed, context. When the report
-  does not establish truth, use "context" — never guess "verified".
-- Attribute every claim to a source — an unattributed claim is "Reporter".
+- A claim's status MUST be one of: stated, supported, contested — what the
+  report does with the claim, never your judgment of its truth. No evidence in
+  the report = "stated". Never write "verified" or "disputed".
+- Attribute a claim to the source the report names; when it names none, source
+  is null — never invent "Reporter".
 - Preserve numbers and quotes exactly; do not round or paraphrase figures.
 - storyTimeline timestamps must be ascending, in seconds.
 - Do NOT editorialize — report the status the source material supports.
 
 COMMON MISTAKES:
-- Marking every claim "verified" — most reporting weighs competing claims.
-- Treating opinion as a verifiable claim — opinions are "context".
+- Marking a claim "supported" without naming the evidence in sourceCitation.
+- Treating opinion as a checkable claim — an opinion is at most "stated".
 - Collapsing distinct claims into one row — one assertion per claim.
 </domain_schema>

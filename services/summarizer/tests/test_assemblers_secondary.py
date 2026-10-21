@@ -79,19 +79,19 @@ class TestAssembleClaimsTracker:
         assert result is not None
         claims = result["claims"]
         assert len(claims) == 2
-        assert claims[0]["status"] == "disputed"
+        assert claims[0]["status"] == "contested"
         assert claims[0]["source"] == "Mayor"
         assert claims[0]["sourceCitation"] == "Analysts say 700"
         assert claims[0]["timestamp"] == 210
 
-    def test_unknown_status_defaults_to_context(self):
+    def test_unknown_status_defaults_to_stated(self):
         data = [
             {"claim": "A bold assertion", "source": "Pundit", "status": "true"},
             {"claim": "Another assertion", "source": "Pundit"},
         ]
         result = assemble_claims_tracker({}, data, {}, None)
-        assert result["claims"][0]["status"] == "context"
-        assert result["claims"][1]["status"] == "context"
+        assert result["claims"][0]["status"] == "stated"
+        assert result["claims"][1]["status"] == "stated"
 
     def test_should_leave_an_unattributed_claim_blank_never_reporter(self):
         data = [
@@ -99,7 +99,7 @@ class TestAssembleClaimsTracker:
             {"claim": "Claim two", "status": "verified"},
         ]
         result = assemble_claims_tracker({}, data, {}, None)
-        assert result["claims"][0]["source"] == ""
+        assert "source" not in result["claims"][0]
 
     def test_should_leave_a_validated_unattributed_claim_blank(self):
         claims = [{"claim": "Claim one"}, {"claim": "Claim two", "source": "Mayor"}]
@@ -107,7 +107,7 @@ class TestAssembleClaimsTracker:
 
         result = assemble_claims_tracker({}, news["claims"], {}, None)
 
-        assert [c["source"] for c in result["claims"]] == ["", "Mayor"]
+        assert [c.get("source") for c in result["claims"]] == [None, "Mayor"]
 
     def test_dict_wrapper_with_claims_key(self):
         data = {

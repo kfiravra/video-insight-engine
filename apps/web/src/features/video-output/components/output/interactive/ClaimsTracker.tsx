@@ -4,6 +4,7 @@ import { cn } from '@/lib/utils';
 import type { ClaimItem, ClaimStatus } from '@vie/types';
 import { GlassCard, FadeIn, Badge } from '@/components/vie';
 import { EmptyTabState } from './EmptyTabState';
+import { claimStatus } from './claim-status';
 
 interface ClaimsTrackerProps {
   claims: ClaimItem[];
@@ -12,16 +13,17 @@ interface ClaimsTrackerProps {
 
 type StatusFilter = ClaimStatus | 'all';
 
+/** What the video does with a claim (output-quality D11) — never a verdict of ours. */
 const STATUS_META: Record<
   ClaimStatus,
   { label: string; variant: 'success' | 'warning' | 'muted'; Icon: typeof CheckCircle2 }
 > = {
-  verified: { label: 'Verified', variant: 'success', Icon: CheckCircle2 },
-  disputed: { label: 'Disputed', variant: 'warning', Icon: AlertTriangle },
-  context: { label: 'Context', variant: 'muted', Icon: Info },
+  stated: { label: 'Stated', variant: 'muted', Icon: Info },
+  supported: { label: 'Supported', variant: 'success', Icon: CheckCircle2 },
+  contested: { label: 'Contested', variant: 'warning', Icon: AlertTriangle },
 };
 
-const FILTER_ORDER: StatusFilter[] = ['all', 'verified', 'disputed', 'context'];
+const FILTER_ORDER: StatusFilter[] = ['all', 'stated', 'supported', 'contested'];
 
 function formatTimestamp(seconds: number): string {
   const m = Math.floor(seconds / 60);
@@ -30,23 +32,24 @@ function formatTimestamp(seconds: number): string {
 }
 
 /**
- * ClaimsTracker — the news signature surface. Renders each factual claim with
- * who made it and a status badge (verified / disputed / context), plus an
- * optional source citation and a seek-to-timestamp button. A status filter bar
- * lets the reader isolate disputed claims — the accountability lens that
+ * ClaimsTracker — the news signature surface, and a talk's or podcast's on
+ * has_claims (D11). Renders each claim with who made it and a status badge
+ * saying what the video does with it (stated / supported / contested), plus an
+ * optional evidence line and a seek-to-timestamp button. A status filter bar
+ * lets the reader isolate contested claims — the accountability lens that
  * separates a news artifact from a plain summary.
  */
 export const ClaimsTracker = memo(function ClaimsTracker({ claims, onSeek }: ClaimsTrackerProps) {
   const [filter, setFilter] = useState<StatusFilter>('all');
 
   const counts = useMemo(() => {
-    const acc: Record<ClaimStatus, number> = { verified: 0, disputed: 0, context: 0 };
-    for (const c of claims) acc[c.status] = (acc[c.status] ?? 0) + 1;
+    const acc: Record<ClaimStatus, number> = { stated: 0, supported: 0, contested: 0 };
+    for (const c of claims) acc[claimStatus(c.status)] += 1;
     return acc;
   }, [claims]);
 
   const visible = useMemo(
-    () => (filter === 'all' ? claims : claims.filter((c) => c.status === filter)),
+    () => (filter === 'all' ? claims : claims.filter((c) => claimStatus(c.status) === filter)),
     [claims, filter],
   );
 
@@ -84,7 +87,7 @@ export const ClaimsTracker = memo(function ClaimsTracker({ claims, onSeek }: Cla
 
       <ul className="flex flex-col gap-3" aria-label="Tracked claims">
         {visible.map((claim, i) => {
-          const meta = STATUS_META[claim.status];
+          const meta = STATUS_META[claimStatus(claim.status)];
           const { Icon } = meta;
           return (
             <FadeIn key={`${claim.claim}-${i}`} index={i}>

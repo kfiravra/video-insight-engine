@@ -9,8 +9,10 @@ Extract a structured product review or comparison.
   "rating": {
     "score": 0.0,
     "maxScore": 10.0,
-    "label": "Score label (e.g., 'Great', 'Average')"
+    "label": "Score label (e.g., 'Great', 'Average')",
+    "timestamp": null
   },
+> RATING: only a score the reviewer actually gives, with timestamp = the second they give it; no stated score = leave the whole rating out. A score is never derived.
   "pros": [
     "Specific pro with real details: '5000mAh battery lasts 2 full days'"
   ],
@@ -39,20 +41,22 @@ Extract a structured product review or comparison.
     "notFor": ["Specific use cases to avoid this product"],
     "bottomLine": "One-sentence verdict",
     "subScores": [
-      {"category": "Camera", "score": 9.0},
-      {"category": "Battery", "score": 7.5}
-    ]
+      {"category": "Camera", "score": 9.0, "timestamp": null},
+      {"category": "Battery", "score": 7.5, "timestamp": null}
+    ],
+    "timestamp": null
   }
+> VERDICT: timestamp = the second the reviewer states the verdict — the badge is shown only with it; a badge the reviewer never states stays null. subScores only as the reviewer scores them, each with its timestamp.
 }
 
 // Example for a phone review:
 {
   "product": "Google Pixel 8 Pro", "price": "$999",
-  "rating": {"score": 8.5, "maxScore": 10.0, "label": "Great"},
+  "rating": {"score": 8.5, "maxScore": 10.0, "label": "Great", "timestamp": 612},
   "pros": ["Best camera in this price range — night mode is class-leading", "7 years of OS updates", "Tensor G3 chip enables on-device AI features"],
   "cons": ["Battery life is average — heavy users need a mid-day charge", "No headphone jack", "Runs warm during extended camera use"],
   "specs": [{"key": "Display", "value": "6.7-inch LTPO OLED, 120Hz"}, {"key": "Battery", "value": "5050mAh"}],
-  "verdict": {"badge": "recommended", "bestFor": ["Photography enthusiasts", "Long-term Android users"], "notFor": ["Power users who need all-day battery", "Gamers"], "bottomLine": "The best camera phone under $1000, if you can live with average battery life.", "subScores": [{"category": "Camera", "score": 9.5}, {"category": "Battery", "score": 7.0}]}
+  "verdict": {"badge": "recommended", "bestFor": ["Photography enthusiasts", "Long-term Android users"], "notFor": ["Power users who need all-day battery", "Gamers"], "bottomLine": "The best camera phone under $1000, if you can live with average battery life.", "subScores": [{"category": "Camera", "score": 9.5, "timestamp": 301}, {"category": "Battery", "score": 7.0, "timestamp": 455}], "timestamp": 598}
 }
 
 RULES:

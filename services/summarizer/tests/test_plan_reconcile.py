@@ -19,10 +19,14 @@ def _tab(tab_id: str, component: str, data_source: str) -> dict:
 
 
 def _9vng_tabs() -> list[dict]:
-    """9VNG0h4pLh0 (prod 2026-10-08): news.claims planned on a learning/tech video."""
+    """9VNG0h4pLh0 (prod 2026-10-08): news.claims planned on a learning/tech video.
+
+    Since output-quality 1.4 (D11) claims are unfenced: the tab re-points to
+    ``learning.claims``. The drop is pinned on a path no active domain can take
+    (a sport formation on the same video)."""
     return [
         _tab("concepts", "concept_canvas", "learning.concepts"),
-        _tab("real_world_cases", "claims_tracker", "news.claims"),
+        _tab("real_world_cases", "formation_diagram", "sport.formation"),
         _tab("moments", "moment_track", "learning.timestamps"),
         _tab("quiz", "quiz_arena", "enrichment.quiz"),
     ]
@@ -40,8 +44,8 @@ class TestInactiveDomain:
         assert records == [
             {
                 "tabId": "real_world_cases",
-                "component": "claims_tracker",
-                "from": "news.claims",
+                "component": "formation_diagram",
+                "from": "sport.formation",
                 "to": None,
                 "reason": "inactive_domain",
                 "action": "dropped",
@@ -56,8 +60,8 @@ class TestInactiveDomain:
         assert dropped == [
             {
                 "id": "real_world_cases",
-                "component": "claims_tracker",
-                "dataSource": "news.claims",
+                "component": "formation_diagram",
+                "dataSource": "sport.formation",
                 "reason": "reconcile_inactive_domain",
             }
         ]

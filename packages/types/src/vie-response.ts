@@ -440,17 +440,21 @@ export interface DiagramCardProps {
 // claims_tracker — news signature component
 // ─────────────────────────────────────────────────────
 
-/** Fact-check status for a single claim. `context` = neither confirmed nor
- *  refuted, surfaced for background. */
-export type ClaimStatus = 'verified' | 'disputed' | 'context';
+/** What the video does with a claim (output-quality D11): it states it, supports
+ *  it with evidence, or someone in it contests it — never a verdict of ours. */
+export type ClaimStatus = 'stated' | 'supported' | 'contested';
+
+/** The pre-1.4 words stored rows still carry; the tracker reads verified as
+ *  supported, disputed as contested and context as stated (D7). */
+export type LegacyClaimStatus = 'verified' | 'disputed' | 'context';
 
 /** A single claim made in the video: the assertion, who made it, its
  *  verification status, and the supporting source (if any). */
 export interface ClaimItem extends FrameEvidence {
   claim: string;
-  /** Who said / made the claim (speaker, reporter, or named source). */
-  source: string;
-  status: ClaimStatus;
+  /** Who said / made the claim; absent when the video attributes it to no one. */
+  source?: string | null;
+  status: ClaimStatus | LegacyClaimStatus;
   /** Where the claim's verification comes from (study, outlet, official record). */
   sourceCitation?: string;
   timestamp?: number;
@@ -474,6 +478,8 @@ export interface TierListItem {
   tier?: TierRank;
   reason?: string;
   emoji?: string;
+  /** Where the creator places the item (seconds); a tier ships only with it (D13). */
+  timestamp?: number;
 }
 
 export interface TierListProps {
@@ -651,6 +657,8 @@ export interface TechData {
   snippets: TechSnippet[];
   patterns: TechPattern[];
   cheatSheet: TechCheatSheetItem[];
+  /** Checkable claims a tech talk makes (output-quality D11). */
+  claims?: ClaimItem[];
 }
 
 // --- Fitness ---
@@ -728,6 +736,8 @@ export interface LearningData {
   keyPoints: KeyPointItem[];
   /** The argument tab of a talk, lecture or podcast; keyPoints stays for explainers. */
   keyIdeas?: KeyIdeaItem[];
+  /** Checkable claims of a talk or lecture (output-quality D11). */
+  claims?: ClaimItem[];
   concepts: ConceptItem[];
   takeaways: string[];
   timestamps: MomentItem[];
@@ -739,6 +749,8 @@ export interface ReviewRating {
   score: number;
   maxScore: number;
   label: string;
+  /** Where the reviewer gives the score (seconds); the score renders only with it. */
+  timestamp?: number | null;
 }
 
 export interface ReviewSpec {
@@ -761,6 +773,8 @@ export interface ReviewVerdict {
   notFor: string[];
   bottomLine: string;
   subScores?: Array<{ category: string; score: number }>;
+  /** Where the reviewer states the verdict (seconds); the badge renders only with it. */
+  timestamp?: number | null;
 }
 
 export interface ReviewData {
@@ -852,6 +866,8 @@ export interface PodcastData {
   guests: PodcastGuest[];
   quotes: PodcastQuote[];
   topics: PodcastTopic[];
+  /** Checkable claims made on the show (output-quality D11). */
+  claims?: ClaimItem[];
 }
 
 // --- News ---

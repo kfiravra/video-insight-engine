@@ -211,10 +211,11 @@ const claimsTrackerSchema = z
       z
         .object({
           claim: z.string(),
-          source: z.string(),
-          // Mirrors ClaimStatus in @vie/types — an unknown status would render
-          // an unstyled badge.
-          status: z.enum(['verified', 'disputed', 'context']),
+          // Absent when the video attributes the claim to no one (output-quality 1.4).
+          source: optionalString,
+          // Mirrors ClaimStatus | LegacyClaimStatus in @vie/types — D11's three
+          // words, plus the pre-1.4 words stored rows carry (the tracker maps them).
+          status: z.enum(['stated', 'supported', 'contested', 'verified', 'disputed', 'context']),
         })
         .passthrough(),
     ),

@@ -419,13 +419,13 @@ class TestValidDatasourcesRender:
         # The hardcoded toolkit block this placeholder replaced (8d52e23^),
         # with fitness.tips — the one path the registry added — appended,
         # learning.keyIdeas after keyPoints (output-quality 1.1, D10), podcast.qa
-        # after segments (1.3, C10),
+        # after segments (1.3, C10), a claims path on learning / tech / podcast (1.4, D11),
         # enrichment.flashcards/scenarios gone with quiz-only enrichment (1d.1)
         # and has_code on every tech code path (3.2, Kfir's decision 7).
         expected = "\n".join(
             [
-                "tech: tech.snippets [has_code], tech.patterns [has_code], tech.cheatSheet [has_code], tech.setup.commands [has_code], tech.topics",
-                "learning: learning.keyPoints, learning.keyIdeas, learning.concepts, learning.takeaways, learning.timestamps",
+                "tech: tech.snippets [has_code], tech.patterns [has_code], tech.cheatSheet [has_code], tech.setup.commands [has_code], tech.topics, tech.claims [has_claims]",
+                "learning: learning.keyPoints, learning.keyIdeas, learning.concepts, learning.takeaways, learning.timestamps, learning.claims [has_claims]",
                 "project: project.steps [has_steps], project.materials [has_materials], project.tools, project.safetyWarnings",
                 "food: food.ingredients [has_ingredients], food.steps [has_steps], food.tips, food.equipment, food.substitutions",
                 "travel: travel.itinerary [has_itinerary], travel.budget, travel.packingList [has_packing]",
@@ -434,7 +434,7 @@ class TestValidDatasourcesRender:
                 "music: music.analysis, music.structure, music.lyrics [has_lyrics], music.credits",
                 "language: language.phrases, language.rules, language.drills [has_drills], language.vocabulary",
                 "science: science.concepts, science.keyFacts, science.experiments",
-                "podcast: podcast.segments, podcast.qa, podcast.guests, podcast.quotes, podcast.topics",
+                "podcast: podcast.segments, podcast.qa, podcast.guests, podcast.quotes, podcast.topics, podcast.claims [has_claims]",
                 "news: news.storyTimeline, news.entities, news.claims [has_claims], news.context",
                 "gaming: gaming.highlights, gaming.loadout, gaming.walkthrough, gaming.rankings [has_ranking]",
                 "sport: sport.matchEvents, sport.formation [has_lineup], sport.statComparison",

@@ -69,11 +69,13 @@ class TestAssembleVerdict:
     folded under `verdict`. ReviewSummary in ComparisonInteractive renders it."""
 
     def test_valid_verdict_returns_comparison_shape(self):
+        # The badge renders only with the second the verdict is said (R2, p1.4).
         data = {
             "badge": "recommended",
             "bottomLine": "Great product",
             "bestFor": ["students"],
             "notFor": ["pros"],
+            "timestamp": 598,
         }
         result = assemble_verdict({}, data, {}, None)
         assert result is not None

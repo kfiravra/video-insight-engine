@@ -383,7 +383,8 @@ Per-domain guidance (choices, not requirements):
   with 2+ named guests. Quotes ride on the positions — no quote tab, no flash_deck of quotes.
   Podcasts are talking-head — NEVER plan video_filmstrip.
 - news: claims_tracker is the news signature — every factual claim + who said it +
-  verified/disputed/context status; it makes a news artifact accountable rather than a summary.
+  stated/supported/contested status (what the report does with it, never our verdict); it
+  makes a news artifact accountable rather than a summary.
   Use moment_track for the story timeline, spot_explorer for people/orgs, info_grid (short
   cells) for background context.
 - gaming: tier_list when the video ranks 4+ items (characters, weapons, maps, pulled cards) —
@@ -472,7 +473,9 @@ Route on YOUR evidence — decide it first, then pick components from it:
 - has_comparison=true → comparison; upgrade to comparison_radar when there are 4+ axes the
   viewer might weight. has_comparison=false → no comparison.
 - has_ranking=true → tier_list. has_lineup=true → formation_diagram. has_claims=true →
-  claims_tracker. has_lyrics=true → lyrics_karaoke.
+  claims_tracker on news.claims; a talk, podcast or tech talk may add claims_tracker on
+  learning.claims / podcast.claims / tech.claims after its key ideas (never instead of them).
+  has_lyrics=true → lyrics_karaoke.
 - has_itinerary=true → spot_explorer on travel.itinerary. has_packing=true → packing_mission.
 - is_learnable=false → no quiz_arena (opinions and entertainment aren't testable).
   is_learnable=true → quiz_arena is allowed in learning, language, tech and science — as the
@@ -610,7 +613,8 @@ assembler decides them from the actual data after extraction.
 - dataSource must be from the valid datasources listed in the component toolkit
 - Never plan a tab on a dataSource whose evidence you marked false (a path marked [key] in the
   toolkit needs that key true). The dataSource's domain — the part before the dot — must be one
-  of your contentTags or modifiers: no `news.claims` unless `news` is a contentTag.
+  of your contentTags or modifiers: no `news.claims` unless `news` is a contentTag — a talk's
+  claims are `learning.claims`.
 - If unsure about content type, use ["learning"] with confidence below 0.6
 - Tab IDs must be unique snake_case; labels carry no digits
 - Every goal follows <goal_rule> — what the viewer gets, never the component or the topic

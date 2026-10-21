@@ -62,8 +62,18 @@ THINKING GUIDE:
       "topic": "Subject discussed",
       "detail": "The gist / the take in one short sentence"
     }
-  ]
+  ],
 > UI: Topics → InfoGrid. Keep detail short (≤120 chars) — it's a searchable index, not an essay.
+  "claims": [
+    {
+      "claim": "A checkable claim the speaker makes — a fact, figure or prediction, stated plainly",
+      "source": "Who makes it, as the video attributes it — or null",
+      "status": "stated | supported | contested",
+      "sourceCitation": "The evidence the video gives for or against it (a study, a figure, a demo), or null",
+      "timestamp": null
+    }
+  ]
+> CLAIMS: status says what the VIDEO does with the claim — stated (asserted, no evidence given), supported (the video gives evidence: name it in sourceCitation), contested (someone in the video disputes it or counter-evidence is given). Never judge truth yourself; never "verified" or "disputed". timestamp = the second the claim is made — a status without one is not shown. source = null when the video names no one.
 }
 
 // Example for a tech interview podcast:

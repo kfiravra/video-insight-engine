@@ -4,7 +4,8 @@
 holds it, the line that carries it, where it is said, the part of the video it
 belongs to and what kind of idea it is. ``PodcastQA`` is an interview's question
 and the answer it got (C10); ``TechTopic`` a concept a tutorial explains, with
-where it explains it (L25). Each mirrors its TS interface
+where it explains it (L25); ``Claim`` a checkable claim a news piece, talk,
+podcast or tutorial makes and what the video does with it (D11). Each mirrors its TS interface
 (``packages/types/src/vie-response.ts``; ``tests/test_ts_pydantic_parity.py``).
 Validation is lenient on everything but the heading field: a malformed stamp or
 an unknown kind becomes ``None``, so one bad value never drops the item.
@@ -18,6 +19,9 @@ from pydantic import AliasChoices, BaseModel, Field, field_validator
 
 # The six kinds of argued idea (D10) — the spot card's category badge.
 KEY_IDEA_KINDS: tuple[str, ...] = ("thesis", "argument", "announcement", "number", "story", "ask")
+# What the video does with a claim (D11): states it, supports it with evidence, or
+# contests it. Never a verdict of ours — "verified" and "disputed" are not words here.
+CLAIM_STATUSES: tuple[str, ...] = ("stated", "supported", "contested")
 
 
 def seconds_or_none(value: Any) -> int | None:
@@ -109,3 +113,41 @@ class TechTopic(BaseModel):
     @classmethod
     def coerce_timestamp(cls, v: Any) -> int | None:
         return seconds_or_none(v)
+
+
+class Claim(BaseModel):
+    """A checkable claim (D11; ``news.claims`` generalised to learning, podcast, tech).
+
+    ``status`` is one of ``CLAIM_STATUSES`` or nothing: any other word fails
+    validation, and the item validator then drops the status, never the claim.
+    A status is read only beside the ``timestamp`` it can be checked at (D13).
+    """
+
+    model_config = {"populate_by_name": True}
+
+    claim: str
+    # None when the video attributes the claim to no one — never an invented "Reporter".
+    source: str | None = None
+    status: str | None = None
+    source_citation: str | None = Field(None, alias="sourceCitation")
+    timestamp: int | None = None
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def check_status(cls, v: Any) -> str | None:
+        status = text_or_none(v)
+        if status is None:
+            return None
+        if status.lower() not in CLAIM_STATUSES:
+            raise ValueError(f"a claim's status is one of {', '.join(CLAIM_STATUSES)}")
+        return status.lower()
+
+    @field_validator("timestamp", mode="before")
+    @classmethod
+    def coerce_timestamp(cls, v: Any) -> int | None:
+        return seconds_or_none(v)
+
+    @field_validator("source", "source_citation", mode="before")
+    @classmethod
+    def coerce_optional_text(cls, v: Any) -> str | None:
+        return text_or_none(v)

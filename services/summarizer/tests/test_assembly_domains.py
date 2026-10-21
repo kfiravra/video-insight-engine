@@ -166,7 +166,8 @@ class TestNewsAssembly:
         claims_tab = next(t for t in out["tabs"] if t["component"] == "claims_tracker")
         assert len(claims_tab["props"]["claims"]) == 3
         statuses = {c["status"] for c in claims_tab["props"]["claims"]}
-        assert statuses == {"disputed", "verified", "context"}
+        # The stored pre-1.4 words read in D11's vocabulary (verified → supported, …).
+        assert statuses == {"contested", "supported", "stated"}
 
 
 class TestGamingAssembly:

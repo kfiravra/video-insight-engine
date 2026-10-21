@@ -593,6 +593,8 @@ def _backfill_required_component(
     enrichment: dict | None,
     synthesis: dict | None,
     video_meta: dict | None,
+    *,
+    claimed: Collection[str] = (),
 ) -> bool:
     """Append a tab for a missing required component from the registry defaults.
 
@@ -600,7 +602,8 @@ def _backfill_required_component(
     ``code_playground``) by betting every tab on a field this video left empty.
     Rather than only warning, try each defaultTab in `primary_tag` whose component
     is accepted, resolving its dataSource with the same fallbacks the main loop
-    uses. On the first one that has real data and assembles + validates, append it.
+    uses — and, like them, never borrowing a source another tab ships (``claimed``,
+    R5). On the first one that has real data and assembles + validates, append it.
     """
     existing_ids = {t.get("id") for t in tabs}
     for cand in build_fallback_tabs(primary_tag):
@@ -611,8 +614,10 @@ def _backfill_required_component(
         data = resolve_data_source(data_source, extraction, enrichment)
         if is_empty_data(data):
             data = _cross_domain_fallback(
-                data_source, extraction, enrichment
-            ) or _in_domain_sibling_fallback(data_source, component, extraction, enrichment)
+                data_source, extraction, enrichment, claimed
+            ) or _in_domain_sibling_fallback(
+                data_source, component, extraction, enrichment, claimed
+            )
         if is_empty_data(data):
             continue
         tab_with_hints = {
@@ -771,6 +776,7 @@ def _validate_domain_requirements(
     dropped_sink: list[dict] | None = None,
     content_format: str | None = None,
     evidence: Mapping[str, bool] | None = None,
+    claimed: Collection[str] = (),
 ) -> None:
     """Validate assembled tabs against domain requirements in-place.
 
@@ -795,7 +801,14 @@ def _validate_domain_requirements(
             live = {str(t.get("id", "")) for t in tabs}
             _record_evidence_skip(primary_tag, req, ruled_out[req], dropped_sink, live)
         elif not _backfill_required_component(
-            tabs, primary_tag, accepted, extraction, enrichment, synthesis, video_meta
+            tabs,
+            primary_tag,
+            accepted,
+            extraction,
+            enrichment,
+            synthesis,
+            video_meta,
+            claimed=claimed,
         ):
             logger.warning(
                 "Domain '%s' requires '%s' but it's missing from assembled tabs",
@@ -1818,6 +1831,7 @@ def assemble_response(
         dropped_sink=dropped_tabs,
         content_format=triage.get("contentFormat"),
         evidence=evidence,
+        claimed=claims,
     )
 
     # No Moments tab when the steps are the timeline (D6) — before the dedupe,

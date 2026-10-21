@@ -108,16 +108,17 @@ EXPLORATION — user browses and discovers:
     NEVER USE FOR: Podcast / talking-head videos.
 
   claims_tracker  ⭐ NEW (news signature)
-    PICK WHEN: News / journalism / current-events content makes 2+ factual
-      claims worth holding to account.
+    PICK WHEN: has_claims — news makes 2+ factual claims worth holding to
+      account; a talk, podcast or tech talk asserts 3+ checkable facts, figures
+      or predictions (an extra tab after its key ideas).
     SHIPS: A list of claims, each with the assertion, who made it, and a status
-      badge — verified (confirmed), disputed (contested), or context (background,
-      not a truth-claim) — plus an optional source citation.
-    SHAPE: { claim, source, status: "verified"|"disputed"|"context",
-      sourceCitation?, timestamp? }.
-    DATASOURCE: news.claims.
-    NEVER USE FOR: opinions presented as facts (those are "context"), or
-      non-news domains.
+      badge saying what the video does with it — stated (asserted), supported
+      (evidence given), contested (disputed in the video) — plus the evidence.
+    SHAPE: { claim, source?, status: "stated"|"supported"|"contested",
+      sourceCitation?, timestamp }.
+    DATASOURCE: news.claims, learning.claims, podcast.claims, tech.claims.
+    NEVER USE FOR: opinions or arguments (those are key ideas), or as a talk's
+      first tab.
 
   tier_list  ⭐ NEW (gaming signature)
     PICK WHEN: Gaming content RANKS 3+ items (characters, weapons, maps,

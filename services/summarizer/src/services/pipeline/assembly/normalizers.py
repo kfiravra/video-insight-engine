@@ -172,9 +172,11 @@ def _normalize_comparison(item: dict) -> dict:
 def _normalize_verdict(verdict: dict, rating: Any) -> dict[str, Any]:
     """A review verdict as ReviewSummary renders it.
 
-    The badge ships only as the reviewer stated it (absent, never a default) and
+    The badge ships only as the reviewer stated it (absent, never a default),
     only as one of the four verdicts the validator allows (``VERDICT_BADGES`` —
-    a raw, unvalidated "RECOMMENDED" is no verdict); the sub-scores and the
+    a raw, unvalidated "RECOMMENDED" is no verdict) and only with the timestamp
+    the verdict is said at (R2, output-quality 1.4) — the verdict's seek point,
+    shipped whenever the extraction has it; the sub-scores and the
     score / maxScore only as the extraction anchors them (D13 — S07 shipped a
     "9.0" and five sub-scores the reviewer never gave). ``rating`` holds the
     score: the review's rating block, or the verdict itself for a legacy
@@ -185,9 +187,12 @@ def _normalize_verdict(verdict: dict, rating: Any) -> dict[str, Any]:
         "bestFor": verdict.get("bestFor") or [],
         "notFor": verdict.get("notFor") or [],
     }
-    badge = verdict.get("badge")
-    if badge in VERDICT_BADGES:
-        props["badge"] = badge
+    # The badge is the reviewer's call: it renders only where the video says it (R2).
+    anchor = anchor_seconds(verdict)
+    if anchor is not None:
+        props["timestamp"] = anchor
+        if verdict.get("badge") in VERDICT_BADGES:
+            props["badge"] = verdict["badge"]
     sub_scores = stated_rows(verdict.get("subScores"), "score")
     if sub_scores:
         props["subScores"] = sub_scores
