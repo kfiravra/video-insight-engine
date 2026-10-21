@@ -426,6 +426,12 @@ class ReviewComparison(BaseModel):
         return v if v in valid else None
 
 
+# The four verdicts ReviewSummary renders (``ReviewVerdict.badge`` in
+# vie-response.ts); anything else is no verdict, in the validator and in assembly
+# (``normalizers._normalize_verdict``) alike.
+VERDICT_BADGES: tuple[str, ...] = ("recommended", "not_recommended", "conditional", "best_in_class")
+
+
 class ReviewVerdict(BaseModel):
     model_config = {"populate_by_name": True}
 
@@ -440,8 +446,7 @@ class ReviewVerdict(BaseModel):
     @field_validator("badge", mode="before")
     @classmethod
     def coerce_badge(cls, v: Any) -> str | None:
-        valid = ("recommended", "not_recommended", "conditional", "best_in_class")
-        return v if v in valid else None
+        return v if v in VERDICT_BADGES else None
 
 
 class ReviewData(BaseModel):

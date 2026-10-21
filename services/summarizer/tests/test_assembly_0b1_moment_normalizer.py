@@ -255,6 +255,23 @@ class TestClockBeatsADefaultedZero:
 
         assert normalize_moment_items(data)[0]["seconds"] == 0
 
+    def test_should_let_a_positive_sibling_stamp_beat_a_zero_seconds(self) -> None:
+        """Close-out review W4: a 0 ``seconds`` is no stamp beside a ``startSeconds``."""
+        item = _normalize_moment_item({"seconds": 0, "startSeconds": 95, "label": "Setup"}, 0)
+
+        assert item is not None and item["seconds"] == 95
+
+    @pytest.mark.parametrize("bad", [float("inf"), -float("inf"), float("nan")])
+    def test_should_place_a_non_finite_seconds_by_its_clock(self, bad: float) -> None:
+        """Close-out review W3: Infinity raised OverflowError out of ``int()``."""
+        item = _normalize_moment_item({"seconds": bad, "time": "2:10", "label": "Setup"}, 0)
+
+        assert item is not None and item["seconds"] == 130
+
+    @pytest.mark.parametrize("bad", [float("inf"), float("nan")])
+    def test_should_refuse_a_non_finite_seconds_without_a_clock(self, bad: float) -> None:
+        assert normalize_moment_items([{"seconds": bad, "label": "Setup"}]) == []
+
     def test_should_ship_both_through_the_moment_track_assembler(self) -> None:
         data = self._validated(
             {"time": "2:10", "seconds": None, "label": "Setup"},

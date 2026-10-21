@@ -183,8 +183,12 @@ class TestTwinsKeepTheirOwnItems:
         assert count_dropped_tabs([{"reason": DUPLICATE_ITEMS}, {"reason": DUPLICATE_TAB}]) == 1
 
     def test_should_remap_the_sections_of_a_trimmed_itinerary(self) -> None:
-        spots = [{"name": n} for n in "ABC"]
-        days = [{"label": "Day 1", "spotIndices": [0, 1]}, {"label": "Day 2", "spotIndices": [2]}]
+        """Four spots, so the trim leaves ``_MIN_SPOTS`` (close-out review W1)."""
+        spots = [{"name": n} for n in "ABCD"]
+        days = [
+            {"label": "Day 1", "spotIndices": [0, 1]},
+            {"label": "Day 2", "spotIndices": [2, 3]},
+        ]
         later = _assembled("days", "spot_explorer", spots, "spots")
         later["props"]["sections"] = days
         tabs = [_assembled("top", "spot_explorer", spots[:2], "spots"), later]
@@ -192,8 +196,8 @@ class TestTwinsKeepTheirOwnItems:
         _dedupe_tabs(tabs, [])
 
         assert later["props"] == {
-            "spots": [{"name": "C"}],
-            "sections": [{"label": "Day 2", "spotIndices": [0]}],
+            "spots": [{"name": "C"}, {"name": "D"}],
+            "sections": [{"label": "Day 2", "spotIndices": [0, 1]}],
         }
 
     def test_should_drop_a_trimmed_canvas_edge_to_a_trimmed_concept(self) -> None:
@@ -235,6 +239,36 @@ class TestTwinsKeepTheirOwnItems:
         _dedupe_tabs(tabs, [])
 
         assert [(t["id"], len(t["props"]["comparisons"])) for t in tabs] == [("a", 2), ("b", 2)]
+
+    def test_should_ship_a_comparison_twin_whole_when_a_trim_would_leave_one_row(self) -> None:
+        """Close-out review W1: one row is below ``_MIN_COMPARISON_ROWS`` — the pro the
+        twin keeps does not buy a trim the assembler would have refused."""
+        rows = [{"feature": "Price"}, {"feature": "Weight"}, {"feature": "Battery"}]
+        later = {"id": "cmp", "component": "comparison",
+                 "props": {"comparisons": rows, "pros": ["Cheap"]}}  # fmt: skip
+        tabs = [_assembled("grid", "info_grid", _keys("Price", "Weight", "Screen")), later]
+
+        _dedupe_tabs(tabs, [])
+
+        assert len(later["props"]["comparisons"]) == 3
+
+    def test_should_trim_a_twin_whose_own_items_meet_the_minimum(self) -> None:
+        rows = [{"feature": f} for f in ("Price", "Weight", "Battery", "Screen")]
+        later = {"id": "cmp", "component": "comparison", "props": {"comparisons": rows}}
+        tabs = [_assembled("grid", "info_grid", _keys("Price", "Weight")), later]
+
+        _dedupe_tabs(tabs, [])
+
+        assert [r["feature"] for r in later["props"]["comparisons"]] == ["Battery", "Screen"]
+
+    def test_should_ship_a_radar_twin_whole_below_its_axis_threshold(self) -> None:
+        rows = [{"feature": f} for f in ("Price", "Weight", "Battery", "Screen")]
+        later = {"id": "radar", "component": "comparison_radar", "props": {"comparisons": rows}}
+        tabs = [_assembled("grid", "info_grid", _keys("Price", "Weight")), later]
+
+        _dedupe_tabs(tabs, [])
+
+        assert len(later["props"]["comparisons"]) == 4
 
     def test_should_trim_an_earlier_twin_of_a_required_tab_to_its_own_items(self) -> None:
         tabs = [

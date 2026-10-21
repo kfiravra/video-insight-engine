@@ -7,6 +7,7 @@ stays importable from ``normalizers`` through its explicit re-exports.
 
 from __future__ import annotations
 
+import math
 import re
 from typing import Any
 
@@ -43,12 +44,13 @@ def _first_prose(item: dict, keys: tuple[str, ...]) -> str | None:
 
 
 def _coerce_int(value: Any) -> int | None:
-    """Parse int or return None on failure."""
-    if value is None:
+    """Parse int or return None on failure; a NaN or ±Infinity (JSON from the
+    model may carry them) is no number."""
+    if value is None or (isinstance(value, float) and not math.isfinite(value)):
         return None
     try:
         return int(value)
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, OverflowError):
         return None
 
 
@@ -72,19 +74,22 @@ def _clock_start(item: dict) -> int | None:
 def _moment_start(item: dict) -> int | None:
     """The second a source item starts at; None when it states none.
 
-    A ``seconds`` of 0, or none, is no stamp when the item carries a ``time``
-    clock: ``LearningTimestamp`` defaults a missing ``seconds`` to 0, so a chip
-    reading 2:10 seeked to 0:00 and the real opening was deduped away (phase-0
-    review W-B1) — the clock decides. A negative is a sentinel, never a second:
-    the clock decides, else None. A 0 without a clock is the opening.
+    The first positive stamp among ``_MOMENT_START_KEYS`` wins. A ``seconds`` of
+    0, or none, is no stamp beside a positive sibling ``startSeconds`` /
+    ``timestamp`` (close-out review W4) or a ``time`` clock: ``LearningTimestamp``
+    defaults a missing ``seconds`` to 0, so a chip reading 2:10 seeked to 0:00
+    and the real opening was deduped away (phase-0 review W-B1) — the clock
+    decides. A negative is a sentinel, never a second: the clock decides, else
+    None. A 0 stated first, without either, is the opening.
     """
-    stated = _first_int(item, _MOMENT_START_KEYS)
-    if stated is not None and stated > 0:
-        return stated
+    stated = [v for key in _MOMENT_START_KEYS if (v := _coerce_int(item.get(key))) is not None]
+    positive = next((v for v in stated if v > 0), None)
+    if positive is not None:
+        return positive
     clock = _clock_start(item)
     if clock is not None:
         return clock
-    return 0 if stated == 0 else None
+    return 0 if stated and stated[0] == 0 else None
 
 
 def _moment_text(item: dict) -> tuple[str, str | None] | None:

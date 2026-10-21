@@ -163,6 +163,14 @@ class TestStatValue:
     def test_should_keep_every_field_of_a_clock(self):
         assert _stat_value("Kipchoge ran the marathon in 2:01:09") == "2:01:09"
 
+    def test_should_keep_a_clock_with_a_leading_zero_hour(self):
+        assert _stat_value("01:09:30") == "01:09:30"
+
+    @pytest.mark.parametrize("title", ["3:333", "16:9", "2:01:09:30"])
+    def test_should_read_no_fragment_after_the_colon_of_a_malformed_clock(self, title: str):
+        """Close-out review W2: the match never restarts after a colon ("3:333" → "333")."""
+        assert _stat_value(title) is None
+
 
 def _label(title: str) -> str:
     figure = _stat_figure(title)

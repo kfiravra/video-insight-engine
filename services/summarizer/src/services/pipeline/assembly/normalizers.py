@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from src.models.domain_types import VERDICT_BADGES
+
 from .derived_guard import anchor_seconds, stated_number, stated_rows, stated_scalars
 from .moment_normalizers import _chapter_end as _chapter_end
 from .moment_normalizers import _chapters_to_moments as _chapters_to_moments
@@ -170,11 +172,13 @@ def _normalize_comparison(item: dict) -> dict:
 def _normalize_verdict(verdict: dict, rating: Any) -> dict[str, Any]:
     """A review verdict as ReviewSummary renders it.
 
-    The badge ships only as the reviewer stated it (absent, never a default);
-    the sub-scores and the score / maxScore only as the extraction anchors them
-    (D13 — S07 shipped a "9.0" and five sub-scores the reviewer never gave).
-    ``rating`` holds the score: the review's rating block, or the verdict
-    itself for a legacy verdict tab.
+    The badge ships only as the reviewer stated it (absent, never a default) and
+    only as one of the four verdicts the validator allows (``VERDICT_BADGES`` —
+    a raw, unvalidated "RECOMMENDED" is no verdict); the sub-scores and the
+    score / maxScore only as the extraction anchors them (D13 — S07 shipped a
+    "9.0" and five sub-scores the reviewer never gave). ``rating`` holds the
+    score: the review's rating block, or the verdict itself for a legacy
+    verdict tab.
     """
     props: dict[str, Any] = {
         "bottomLine": verdict.get("bottomLine", ""),
@@ -182,8 +186,8 @@ def _normalize_verdict(verdict: dict, rating: Any) -> dict[str, Any]:
         "notFor": verdict.get("notFor") or [],
     }
     badge = verdict.get("badge")
-    if isinstance(badge, str) and badge.strip():
-        props["badge"] = badge.strip()
+    if badge in VERDICT_BADGES:
+        props["badge"] = badge
     sub_scores = stated_rows(verdict.get("subScores"), "score")
     if sub_scores:
         props["subScores"] = sub_scores

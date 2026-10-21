@@ -235,6 +235,16 @@ class TestReviewScore:
 
         assert "badge" not in out["verdict"]
 
+    @pytest.mark.parametrize("badge", ["RECOMMENDED", "yes", "", 1])
+    def test_should_omit_a_badge_outside_the_four_verdicts(self, badge: object):
+        """Close-out review W6: a raw verdict ships its badge only as the validator allows."""
+        review = _review({"score": 9})
+        review["review"]["verdict"]["badge"] = badge
+
+        out = assemble_comparison({}, ROWS, review, None)
+
+        assert "badge" not in out["verdict"]
+
     def test_should_keep_the_verdict_prose_without_a_score(self):
         out = assemble_comparison({}, ROWS, _review({"score": 9}), None)
 

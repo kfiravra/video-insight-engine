@@ -7,7 +7,8 @@ ship at least ``DUPLICATE_OVERLAP`` on a tab that stays is its twin. An item
 one tab ships is never lost: a twin goes only when every item it ships also
 ships elsewhere; a twin with items of its own sheds the shared ones and stays
 (``duplicate_items``) — a procedure (``SEQUENTIAL_COMPONENTS``) ships whole
-instead. A tab's items are its component's own list
+instead, and so does a twin a trim would leave below its component's own
+minimum (``_LIST_MINIMUMS``). A tab's items are its component's own list
 (``component_lists.item_list_keys`` — a canvas's group labels never dilute the
 overlap); every list prop only for a component the table does not know.
 ``core`` re-exports the public names.
@@ -20,7 +21,11 @@ from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
+from .assemblers_overhaul import _CONNECT_MIN_PAIRS
+from .assemblers_primary import _MIN_COMPARISON_ROWS, _MIN_SPOTS
+from .assemblers_secondary import _CLAIMS_MIN, _FORMATION_MIN, _TIER_LIST_MIN
 from .component_lists import COMPONENT_LIST_KEYS, SEQUENTIAL_COMPONENTS, item_list_keys
+from .promotion import RADAR_AXIS_THRESHOLD
 
 logger = logging.getLogger(__name__)
 
@@ -168,12 +173,31 @@ def _prune_concept_graph(props: dict) -> None:
         props["groups"] = list(dict.fromkeys(c["group"] for c in concepts if c.get("group")))
 
 
-def _empties_its_list(tab: Mapping[str, Any], elsewhere: frozenset[str]) -> bool:
-    """Every item of the list the tab was validated on (``COMPONENT_LIST_KEYS``) ships
-    elsewhere — a comparison whose own items are pros, not rows."""
-    key = COMPONENT_LIST_KEYS.get(str(tab.get("component", "")))
+# The fewest items a component's validated list (``COMPONENT_LIST_KEYS``) ships —
+# the assemblers' own thresholds, so a trim never leaves what the assembler would
+# have refused (phase-0 close-out review W1). Unlisted: non-empty.
+_LIST_MINIMUMS: dict[str, int] = {
+    "comparison": _MIN_COMPARISON_ROWS,
+    "comparison_radar": RADAR_AXIS_THRESHOLD,
+    "spot_explorer": _MIN_SPOTS,
+    "connect_canvas": _CONNECT_MIN_PAIRS,
+    "claims_tracker": _CLAIMS_MIN,
+    "tier_list": _TIER_LIST_MIN,
+    "formation_diagram": _FORMATION_MIN,
+}
+
+
+def _trim_breaks_minimum(tab: Mapping[str, Any], elsewhere: frozenset[str]) -> bool:
+    """A trim would leave the list the tab was validated on (``COMPONENT_LIST_KEYS``)
+    below its component's minimum (``_LIST_MINIMUMS``, else empty) — a comparison
+    whose own items are pros, not rows, or one left with a single row."""
+    component = str(tab.get("component", ""))
+    key = COMPONENT_LIST_KEYS.get(component)
     items = tab["props"].get(key) if key else None
-    return isinstance(items, list) and all(_item_fingerprint(item) in elsewhere for item in items)
+    if not isinstance(items, list):
+        return False
+    left = sum(1 for item in items if _item_fingerprint(item) not in elsewhere)
+    return left < _LIST_MINIMUMS.get(component, 1)
 
 
 def _trim(tab: dict, elsewhere: frozenset[str]) -> int:
@@ -263,7 +287,7 @@ def _settle(run: _Pass, twin: _Kept, survivor: _Kept, elsewhere: frozenset[str])
     own; else trimmed to its own items. The entry that stays.
 
     A procedure ships whole, and so does a twin a trim would leave without the list
-    it was validated on — its own items would not ship.
+    it was validated on, or below that list's minimum — its own items would not ship.
     """
     tab, own = twin
     unique = own - elsewhere
@@ -271,7 +295,7 @@ def _settle(run: _Pass, twin: _Kept, survivor: _Kept, elsewhere: frozenset[str])
         run.remove(tab)
         _record_duplicate(run, twin, survivor)
         return None
-    if tab.get("component") in SEQUENTIAL_COMPONENTS or _empties_its_list(tab, elsewhere):
+    if tab.get("component") in SEQUENTIAL_COMPONENTS or _trim_breaks_minimum(tab, elsewhere):
         return twin
     total = _item_count(tab)
     _record_trim(run, tab, survivor, _trim(tab, elsewhere), total)
