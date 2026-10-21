@@ -98,4 +98,5 @@ dev/active/*/*-session-snapshot.json
 
 # output-quality research captures (69 MB of PNGs) and the blind-review packets (regenerable from data/ + screenshots/)
 dev/active/output-quality/screenshots/
+dev/active/output-quality/screenshots-*/
 dev/active/output-quality/data/packets/
