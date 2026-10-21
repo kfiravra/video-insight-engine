@@ -20,9 +20,12 @@ _MOMENT_LABEL_KEYS = ("label", "title", "name")
 # FoodStep.instruction, PodcastQA.answer. (A chapter, outline section or
 # description timestamp carries a title only.)
 _MOMENT_DESCRIPTION_KEYS = ("description", "summary", "instruction", "answer")
-# An interview exchange (``podcast.qa``, C10): its question heads the row, cut to the
-# label length; the whole question rides along as ``question``.
+# An interview exchange (``podcast.qa``, C10): its question is the row's title —
+# whole up to _QUESTION_LABEL_CAP characters, else its first sentence, else cut at a
+# word — and rides along whole as ``question``.
 _MOMENT_QUESTION_KEY = "question"
+_QUESTION_LABEL_CAP = 140
+_SENTENCE_END = re.compile(r"[?.!](?=\s|$)")
 _MOMENT_START_KEYS = ("seconds", "startSeconds", "timestamp", "start_time", "startTime")
 # The clock a ``learning.timestamps`` item writes beside its ``seconds`` ("2:10").
 _MOMENT_CLOCK_KEY = "time"
@@ -103,12 +106,23 @@ def _moment_start(item: dict) -> int | None:
     return 0 if stated and stated[0] == 0 else None
 
 
+def _question_label(question: str) -> str:
+    """The row title of an interview question: the whole question when it fits,
+    else its first sentence when that fits, else a word-boundary cut."""
+    if len(question) <= _QUESTION_LABEL_CAP:
+        return question
+    end = _SENTENCE_END.search(question)
+    if end is not None and end.end() <= _QUESTION_LABEL_CAP:
+        return question[: end.end()]
+    return truncate_words(question, _QUESTION_LABEL_CAP)
+
+
 def _moment_text(item: dict) -> tuple[str, str | None] | None:
     """(label, description) from whichever fields carry prose; None when none does.
 
-    The label comes from label/title/name, else from the head of an interview
-    question, else from the head of the description; the description is dropped
-    when it only repeats the label.
+    The label comes from label/title/name, else from an interview question
+    (``_question_label``), else from the head of the description; the
+    description is dropped when it only repeats the label.
     """
     label = _first_prose(item, _MOMENT_LABEL_KEYS)
     if label is not None and _MOMENT_PLACEHOLDER.match(label):
@@ -116,7 +130,7 @@ def _moment_text(item: dict) -> tuple[str, str | None] | None:
     description = _first_prose(item, _MOMENT_DESCRIPTION_KEYS)
     question = _prose(item.get(_MOMENT_QUESTION_KEY))
     if label is None and question is not None:
-        label = truncate_words(question, _MOMENT_LABEL_CAP)
+        label = _question_label(question)
     if label is None and description is not None:
         label = truncate_words(description, _MOMENT_LABEL_CAP)
     if label is None:

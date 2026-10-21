@@ -36,9 +36,16 @@ function addBoundsIssue(ctx: z.RefinementCtx, path: (string | number)[], message
 
 // `timestamp` (seconds) drives the seek chip; a non-numeric or negative value
 // would render as a garbage chip (or seek before 0), so it is bounded here.
-// `quote` is the speaker's verbatim line (output-quality R2/R10).
+// `quote` is the speaker's verbatim line (output-quality R2/R10); `speaker` the
+// holder of a podcast position and `category` a key idea's kind badge (1.1 / 1.3).
 const spotItemSchema = z
-  .object({ name: z.string(), timestamp: z.number().min(0).nullish(), quote: optionalString })
+  .object({
+    name: z.string(),
+    timestamp: z.number().min(0).nullish(),
+    quote: optionalString,
+    speaker: optionalString,
+    category: optionalString,
+  })
   .passthrough();
 
 const spotExplorerSchema = z

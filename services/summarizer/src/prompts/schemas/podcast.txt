@@ -40,6 +40,7 @@ THINKING GUIDE:
     }
   ],
 > UI: Q&A → MomentTrack rows (question as the row title, answer below, speaker chip). Only for an interview: a host questioning a guest. timestamp = the second the question is asked.
+> Q&A COMPLETENESS: every question a host puts to the guest that gets a substantive answer, across the WHOLE conversation — the last 10 minutes included — one item per question, never two merged, never banter or a "how are you". An interview of 40+ minutes has about 8-15 such exchanges.
   "guests": [
     {
       "name": "Guest full name",

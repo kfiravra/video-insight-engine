@@ -24,6 +24,7 @@ from src.models.pipeline_types import PlanResult
 from src.services.pipeline.assembly import assemble_response
 from src.services.pipeline.assembly.assemblers_primary import assemble_spot_explorer
 from src.services.pipeline.assembly.moment_normalizers import normalize_moment_items
+from src.services.pipeline.extraction_prompt import load_schema_text
 from src.services.pipeline.reconcile import reconcile_at_plan_done
 from src.services.pipeline.schema_fields import slice_skeleton
 from src.shared_config.domain_config import data_source
@@ -144,12 +145,38 @@ class TestQaMoments:
 
         item = normalize_moment_items([raw])[0]
 
-        assert len(item["label"]) <= 60 and _QUESTION.startswith(item["label"].rstrip("…"))
+        assert item["label"] == _QUESTION
         assert (item["question"], item["description"], item["speaker"]) == (
             _QUESTION,
             "The wrapper could not do offline.",
             "DHH",
         )
+
+    def test_should_title_a_long_question_by_its_first_sentence_without_an_ellipsis(
+        self,
+    ) -> None:
+        question = (
+            "With the $8 million you just got, how is it being used? What's your vision for "
+            "making Linux on the desktop happen, and where's that money going?"
+        )
+
+        item = normalize_moment_items([{"question": question, "answer": "a", "timestamp": 9}])[0]
+
+        assert item["label"] == "With the $8 million you just got, how is it being used?"
+
+    def test_should_cut_a_long_single_sentence_question_at_a_word(self) -> None:
+        question = "Why " + "really " * 30 + "now?"
+
+        label = normalize_moment_items([{"question": question, "answer": "a", "timestamp": 9}])[0][
+            "label"
+        ]
+
+        assert len(label) <= 140 and label.endswith("…") and " really" in label
+
+    def test_should_ask_for_every_question_of_the_whole_conversation(self) -> None:
+        podcast = load_schema_text("podcast")
+
+        assert "the last 10 minutes included" in podcast and "8-15" in podcast
 
     def test_should_ship_an_interview_qa_tab_through_assembly(self) -> None:
         qa = [
