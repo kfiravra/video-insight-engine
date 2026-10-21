@@ -409,6 +409,7 @@ class Settings(BaseSettings):
         "synthesis": "LLM_SYNTHESIS_MODEL",
         "enrichment": "LLM_ENRICHMENT_MODEL",
         "extraction": "LLM_EXTRACTION_MODEL",
+        "hero_rewrite": "LLM_EXTRACTION_MODEL",
         "memory": "LLM_MEMORY_MODEL",
         # Quiz v2 (output-quality 2.1b): Haiku 5.5, no model key of its own.
         "quiz_v2": "LLM_MEMORY_MODEL",
