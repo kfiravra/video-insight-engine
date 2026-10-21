@@ -5,9 +5,11 @@ follow steps, drag items into a suitcase, run code in a sandbox, mark
 sets complete, sync lyrics to playback, drag a concept graph, decide
 between options on a radar.
 
-A component that only displays text is a fail mode — text walls belong
-in info_grid ONLY when they are short reference cells, never long
-paragraphs.
+Text the viewer READS is the product when the video is an argument — a
+talk, a lecture, a podcast, an interview: a list with the claim, the why,
+the verbatim line and the timestamp (spot_explorer on learning.keyIdeas),
+read in order. The fail modes are a canvas as the first read, info_grid
+cells over 120 chars, and a tile that is a title alone.
 
 Frame intelligence is woven through this layer: components marked
 frame-aware automatically receive thumbnailUrl + frameCaption +
@@ -37,30 +39,40 @@ WHEN TO PICK EACH COMPONENT
 
 EXPLORATION — user browses and discovers:
 
-  spot_explorer
+  spot_explorer ⭐ THE ARGUMENT TAB for spoken word — frame-aware
     PICK WHEN: 2+ items each with a name AND a real description.
-    SHIPS: Browsable cards with expandable detail, thumbnail (when frame
-      available), map/booking actions.
-    GOOD FOR: Places (travel), products (review), phrases (language),
-      key facts (science), topics (any).
+    SHIPS: Cards read in order with the claim, the why, the verbatim quote
+      beneath it, a seek chip per item, a kind badge and sections;
+      expandable detail, thumbnail (when frame available), map/booking
+      actions.
+    GOOD FOR: The key ideas / positions of a talk, lecture, podcast or
+      interview (learning.keyIdeas: claim + why + quote + timestamp +
+      section + kind), places (travel), products (review), phrases
+      (language), key facts (science), tips with their reason (any).
 
-  info_grid ⭐ THE REFERENCE TABLE — keep cells SHORT
-    PICK WHEN: 3+ short reference rows users LOOK UP, not READ.
+  info_grid — THE LOOKUP TABLE — keep cells SHORT
+    PICK WHEN: 3+ short reference rows users LOOK UP, not READ — specs,
+      odds, a glossary, setup facts.
     SHIPS: Searchable card grid (or table). Optional `evidence` field
       renders below the value in italic for sources/examples.
     NEVER USE FOR:
+      • Arguments, positions, key ideas, tips with their reason → spot_explorer
       • Definitions of complex concepts → use concept_canvas or flash_deck
       • Step-by-step processes → use step_player / step_flow_canvas
       • Comparisons with two sides → use comparison / comparison_radar
+      • The first tab — a lookup table is never the answer.
 
   concept_canvas  ⭐ NEW — frame-aware
     PICK WHEN: 2+ concepts with definitions AND meaningful connections[]
       between them. The video TEACHES how concepts relate, not just lists.
-    SHIPS: Drag-and-drop concept map (React Flow). Each node is a concept
-      card; edges from connections[]. Click a node to expand definition +
-      example + analogy. Positions persist per video to localStorage.
+    SHIPS: Opens as a list (definition + example + timestamp inline); the
+      drag-and-drop concept map (React Flow) is a toggle. Each node is a
+      concept card; edges from connections[]. Positions persist per video.
     GOOD FOR: 3Blue1Brown-style math explainers, science concepts that
       build on each other, language grammar relationships.
+    NEVER the first tab of a talk, lecture, podcast or interview — the
+      key-ideas list is; plan it after it, and only when the video teaches
+      how the concepts relate.
     DATASOURCE: learning.concepts (must have connections[]).
     FALLS BACK TO: flash_deck when no connections, info_grid when ≥10 flat
       definitions, overview when <3 items.
@@ -162,28 +174,39 @@ ACTION — user completes a task:
 LEARNING — user tests understanding:
 
   quiz_arena
-    PICK WHEN: 2+ knowledge checks.
-    SHIPS: Single question per screen, streak counter, optional 10s
-      timer, frame context above the question (when extraction has a
-      thumbnail), best-score localStorage, retry + wrong-answer summary.
+    PICK WHEN: is_learnable and the content is a lesson or an argument;
+      3 / 5 / 8 questions by length (<sizing>), always the LAST tab.
+    SHIPS: Single question per screen, untimed by default, streak
+      counter, a seek chip to the answer, frame context above the
+      question (when extraction has a thumbnail), best-score
+      localStorage, retry + wrong-answer summary.
     DATASOURCE: enrichment.quiz.
 
   flash_deck
     PICK WHEN: 3+ concept-definition pairs to MEMORIZE — and there are
       no meaningful connections between them. If concepts are
       interrelated, use concept_canvas instead.
-    NEVER USE FOR: tips, features, song analysis, narrative moments.
+    NEVER USE FOR: tips, features, song analysis, narrative moments,
+      quotes (quotes ride on the key-ideas items — no quote deck).
 
 MEDIA — user navigates the source video:
 
-  moment_track ⭐ THE TIMELINE — frame-aware (primary)
-    PICK WHEN: 3+ navigable points in the video worth jumping to.
+  moment_track ⭐ THE BEATS — frame-aware (primary)
+    PICK WHEN: 3+ beats worth jumping to — each item says what was
+      established there, with the line that carries it; never chapter
+      titles, never "Moment N". One per 3–6 min by length (<sizing>),
+      ranked by salience.
     SHIPS: Vertical timeline where points (dots) and highlight spans
-      (capsules) share one spine. Expanded items show VisualEvidence
-      (caption + OCR + scene type) at the matching frame.
+      (capsules) share one spine; the description and quote render in
+      the row. Expanded items show VisualEvidence (caption + OCR + scene
+      type) at the matching frame.
     USE endSeconds ONLY for replayable spans (15s–3min). OMIT for
       navigation points.
-    DATASOURCE: learning.timestamps, narrative.keyMoments, music.structure.
+    DATASOURCE: learning.timestamps, narrative.keyMoments,
+      podcast.segments (speaker + what was concluded), podcast.qa (the
+      question + who answered + the answer), music.structure.
+    NEVER USE FOR: a recipe, a workout or a step tutorial — the steps are
+      the timeline.
 
   lyrics_karaoke  ⭐ NEW (replaces lyrics_player)
     PICK WHEN: Music video with lyrics + section structure.
@@ -218,6 +241,12 @@ ANTI-PATTERNS (the assembler will drop these — don't plan them)
                                              INSIDE moment_track / step_player /
                                              code_playground via VisualEvidence.
 ✗ Two tabs covering the same data        → pick one component per concept.
+✗ concept_canvas / step_flow_canvas /    → the first tab is a list the viewer
+   info_grid as the first tab               reads without a click.
+✗ moment_track of chapter titles or      → what was established at each beat,
+   "Moment N"                                with the line that carries it.
+✗ A count in the label ("12 Key Ideas")  → "Key Ideas"; assembly prefixes the
+                                             shipped count.
 
 <frame_intelligence>
 Components marked "frame-aware" above (moment_track, step_player,
