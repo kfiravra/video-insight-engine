@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
@@ -26,6 +27,7 @@ from src.services.pipeline.hero_rewrite import (
     reading_minutes,
     run_hero_rewrite,
 )
+from src.services.pipeline.quote_verify import QuoteIndex
 
 _MEMORY = "<video_memory>\noutline: 0:00 Opening — the Kodak Brownie\n</video_memory>"
 _TABS = [
@@ -91,7 +93,11 @@ _CHUNK = ExtractionChunk(0, "[0:00] hello [1:00] it no longer pays")
 _CHUNKS = (ExtractionChunk(0, "[0:00] first half"), ExtractionChunk(1, "[5:00] second half"))
 
 
-def _request(*, chunks: tuple[ExtractionChunk, ...] | None = (_CHUNK,)) -> HeroRequest:
+def _request(
+    *,
+    chunks: tuple[ExtractionChunk, ...] | None = (_CHUNK,),
+    quote_index: QuoteIndex | None = None,
+) -> HeroRequest:
     return HeroRequest(
         title="Alice on agents",
         duration=600,
@@ -99,7 +105,17 @@ def _request(*, chunks: tuple[ExtractionChunk, ...] | None = (_CHUNK,)) -> HeroR
         tab_labels=["💡 Key Ideas", "🎬 Moments"],
         video_memory=_MEMORY,
         blocks=GroupBlocks(_prompt(), chunks) if chunks is not None else None,
+        quote_index=quote_index,
     )
+
+
+def _segments(said: str, at: int) -> list[dict[str, Any]]:
+    """A transcript opening on the Brownie and saying ``said`` at second ``at``."""
+    return [{"text": "We open on the Kodak Brownie.", "start": 0}, {"text": said, "start": at}]
+
+
+# K1's quote ("It no longer pays", stamped 60) said 43 s after the item's stamp.
+_K1_SAID = "And honestly, it no longer pays at all."
 
 
 def _answer(**changes: Any) -> str:
@@ -195,6 +211,17 @@ class TestRequestShape:
 
         assert llm.features == ["summarize:hero_rewrite"]  # type: ignore[attr-defined]
 
+    async def test_should_ask_for_a_140_character_tldr_and_16_word_lines(
+        self, llm: AsyncMock
+    ) -> None:
+        await run_hero_rewrite(object(), _request())  # type: ignore[arg-type]
+
+        job = _blocks(llm)[-1]["text"]
+        asks = [f"{key}: {size}" in job for key, size in _ASKED_SIZES]
+        examples = re.findall(r'From another video: "([^"]+)"', job)
+        longest = max(len([w for w in example.split() if w != "—"]) for example in examples)
+        assert (asks, len(examples), longest <= 16) == ([True, True, True], 2, True)
+
     async def test_should_list_the_tab_labels_without_emoji_in_the_job(
         self, llm: AsyncMock
     ) -> None:
@@ -242,6 +269,25 @@ class TestParsing:
         result = await run_hero_rewrite(object(), _request())  # type: ignore[arg-type]
 
         assert result is not None and result.key_takeaways[2].timestamp == 480
+
+
+_ASKED_SIZES = (
+    ("tldr", "one sentence, at most 140 characters"),
+    ("worthItFor", "at most 16 words"),
+    ("skipIf", "at most 16 words"),
+)
+
+
+class TestStampsAtQuotes:
+    async def test_should_stamp_a_takeaway_where_the_cited_items_quote_is_said(
+        self, llm: AsyncMock
+    ) -> None:
+        index = QuoteIndex.build(_segments(_K1_SAID, 103))
+
+        result = await run_hero_rewrite(object(), _request(quote_index=index))  # type: ignore[arg-type]
+
+        assert result is not None
+        assert [t.timestamp for t in result.key_takeaways] == [103, 245, 400]
 
 
 class TestRetry:
@@ -305,6 +351,16 @@ class TestFallback:
         llm.replies.extend([_answer(keyTakeaways=short), _answer(keyTakeaways=short)])  # type: ignore[attr-defined]
 
         assert await run_hero_rewrite(object(), _request()) is None  # type: ignore[arg-type]
+
+    async def test_should_return_none_rather_than_cut_a_tldr_over_200_characters_twice(
+        self, llm: AsyncMock
+    ) -> None:
+        tldr = "Hand-written code stopped paying, so let agents write it " * 4  # 228 chars
+        llm.replies.extend([_answer(tldr=tldr), _answer(tldr=tldr)])  # type: ignore[attr-defined]
+
+        result = await run_hero_rewrite(object(), _request())  # type: ignore[arg-type]
+
+        assert (result, "at most 200" in _blocks(llm, 1)[-1]["text"]) == (None, True)
 
     async def test_should_return_none_when_the_tldr_states_a_number_not_in_the_video(
         self, llm: AsyncMock
@@ -392,11 +448,35 @@ class TestHeroRequestFromContext:
         )
 
     def test_should_read_no_group_blocks_without_a_split_run(self) -> None:
-        ctx = SimpleNamespace(
-            video_data=SimpleNamespace(title="t", duration=600),
-            plan_result=SimpleNamespace(tabs=_TABS),
-            triage=None,
-            video_memory="",
-        )
+        assert hero_request(_ctx(), _EXTRACTION).blocks is None  # type: ignore[arg-type]
 
-        assert hero_request(ctx, _EXTRACTION).blocks is None  # type: ignore[arg-type]
+    def test_should_carry_the_runs_quote_index_built_from_its_transcript(self) -> None:
+        ctx = _ctx(transcript_data=SimpleNamespace(segments=_segments(_K1_SAID, 103)))
+
+        request = hero_request(ctx, _EXTRACTION)  # type: ignore[arg-type]
+
+        assert request.quote_index is not None and request.quote_index is ctx.quote_index
+
+    def test_should_carry_no_quote_index_when_the_run_has_no_transcript(self) -> None:
+        assert hero_request(_ctx(), _EXTRACTION).quote_index is None  # type: ignore[arg-type]
+
+    def test_should_build_the_request_without_an_index_when_the_index_cannot_be_built(
+        self,
+    ) -> None:
+        broken = patch.object(hero_rewrite, "run_quote_index", side_effect=ValueError("bad"))
+
+        with broken:
+            request = hero_request(_ctx(), _EXTRACTION)  # type: ignore[arg-type]
+
+        assert (request.title, request.quote_index) == ("t", None)
+
+
+def _ctx(**fields: Any) -> SimpleNamespace:
+    return SimpleNamespace(
+        video_data=SimpleNamespace(title="t", duration=600),
+        plan_result=SimpleNamespace(tabs=_TABS),
+        triage=None,
+        video_memory="",
+        quote_index=None,
+        **fields,
+    )

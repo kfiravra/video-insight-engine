@@ -10,8 +10,10 @@ from src.services.pipeline.hero_compact import (
     HERO_EXTRACTION_MAX_TOKENS,
     compact_for_hero,
     estimate_tokens,
+    stamps_at_quotes,
 )
 from src.services.pipeline.hero_validate import (
+    HERO_TLDR_MAX_CHARS,
     HeroDraft,
     HeroEvidence,
     Problem,
@@ -20,6 +22,7 @@ from src.services.pipeline.hero_validate import (
     numbers_in,
     parse_draft,
 )
+from src.services.pipeline.quote_verify import QuoteIndex
 
 _EVIDENCE_TEXT = (
     "Alice on agents. [0:30] Alice argues 37signals went pencils down in 2025 and wrote "
@@ -105,6 +108,34 @@ class TestWorthItForAndSkipIf:
 
     def test_should_pass_a_content_word_that_also_judges_when_it_names_an_idea(self) -> None:
         assert _problems(worthItFor="Rails teams weighing boring technology against agents.") == []
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "You want a structured Q&A.",
+            "You want an AI API walkthrough in C++ or .NET.",
+            "You want the FAQs answered one by one.",
+        ],
+    )
+    def test_should_pass_a_format_word_or_acronym_the_video_does_not_contain(
+        self, line: str
+    ) -> None:
+        assert _problems(skipIf=line) == []
+
+    @pytest.mark.parametrize(
+        ("line", "name"),
+        [
+            ("You want Netflix-style drama.", "Netflix"),
+            ("You came for a Kubernetes tutorial.", "Kubernetes"),
+            ("Polaroid Brownie fans get the history of the camera.", "Polaroid"),
+        ],
+    )
+    def test_should_fail_a_name_the_video_does_not_contain(self, line: str, name: str) -> None:
+        problems = _problems(skipIf=line)
+
+        assert [p.message for p in problems] == [
+            f'skipIf names "{name}", which the video does not contain'
+        ]
 
     def test_should_pass_a_clock_inside_the_video(self) -> None:
         assert _problems(skipIf="You want code: the only demo starts at 8:20.") == []
@@ -209,6 +240,24 @@ class TestFinalize:
 
         assert result is not None and result.brief == " ".join(_draft().sentences)
 
+    @pytest.mark.parametrize("length", [151, HERO_TLDR_MAX_CHARS])
+    def test_should_ship_a_tldr_of_up_to_200_characters_whole(self, length: int) -> None:
+        tldr = _tldr(length)
+        draft = _draft(tldr=tldr)
+
+        result = finalize(draft, check_hero(draft, _evidence()), 3)
+
+        assert result is not None and (result.tldr, len(result.tldr)) == (tldr, length)
+
+    def test_should_fail_a_tldr_over_200_characters_and_never_cut_it(self) -> None:
+        draft = _draft(tldr=_tldr(HERO_TLDR_MAX_CHARS + 1))
+        problems = check_hero(draft, _evidence())
+
+        assert ([(p.field, p.repair) for p in problems], finalize(draft, problems, 3)) == (
+            [("tldr", "fail")],
+            None,
+        )
+
     def test_should_return_none_when_the_tldr_fails(self) -> None:
         draft = _draft(tldr="It all began in 1946.")
 
@@ -229,6 +278,13 @@ class TestFinalize:
         result = finalize(draft, check_hero(draft, _evidence()), 3)
 
         assert result is not None and result.brief.endswith("It is optimistic.")
+
+
+def _tldr(length: int) -> str:
+    """A thesis of exactly ``length`` characters (no number, no tab named)."""
+    return ("Agents now write the code and hand-written code no longer pays " * 4)[
+        : length - 1
+    ] + "."
 
 
 # ─── The compacted extraction ───
@@ -303,8 +359,55 @@ class TestCompactForHero:
 
         assert (compact.stamps.get("K60"), compact.stamps.get("K1")) == (3600, 60)
 
+    def test_should_record_the_quote_of_each_id_whose_item_carries_one(self) -> None:
+        quotes = compact_for_hero(_SMALL, 600).quotes
+
+        assert (sorted(quotes), quotes["K1"]) == (["K1", "K2"], _idea(1, 60)["quote"])
+
     def test_should_render_the_same_bytes_for_the_same_extraction(self) -> None:
         assert compact_for_hero(_SMALL, 600) == compact_for_hero(_SMALL, 600)
 
     def test_should_return_nothing_for_an_empty_extraction(self) -> None:
         assert compact_for_hero({}, 600).text == ""
+
+
+# ─── Stamps where the quotes are said ───
+
+# S01: key idea K stamped 680 s, its own quote said at 723 s.
+_QUOTED = {
+    "learning": {
+        "keyIdeas": [
+            {"claim": "Pencils down", "quote": "I put the pencil down for good", "timestamp": 680}
+        ]
+    }
+}
+
+
+def _index(said: str, at: int) -> QuoteIndex:
+    return QuoteIndex.build(
+        [{"text": "We open on the Kodak Brownie.", "start": 0}, {"text": said, "start": at}]
+    )
+
+
+class TestStampsAtQuotes:
+    def test_should_move_a_quoted_items_stamp_to_where_its_quote_is_said(self) -> None:
+        index = _index("So that is when I put the pencil down for good.", 723)
+
+        assert stamps_at_quotes(compact_for_hero(_QUOTED, 1200), index) == {"K1": 723}
+
+    @pytest.mark.parametrize(
+        ("said", "at"),
+        [
+            ("So that is when I put the pencil down for good.", 680 + 181),  # > 180 s away
+            ("So that is when I picked the pencil back up.", 723),  # never said: unverified
+        ],
+    )
+    def test_should_keep_the_items_stamp_when_its_quote_is_far_or_unverified(
+        self, said: str, at: int
+    ) -> None:
+        assert stamps_at_quotes(compact_for_hero(_QUOTED, 1200), _index(said, at)) == {"K1": 680}
+
+    def test_should_keep_every_stamp_without_a_quote_index(self) -> None:
+        compact = compact_for_hero(_SMALL, 600)
+
+        assert stamps_at_quotes(compact, None) == dict(compact.stamps)

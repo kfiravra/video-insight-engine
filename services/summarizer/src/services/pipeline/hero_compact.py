@@ -15,6 +15,12 @@ names the same item at every budget level. The text fits
 then quotes), and only then do long lists keep an even spread of their items —
 the tail of the video stays in (S01's brief lost the second half once).
 Deterministic: the same extraction always gives the same bytes.
+
+An item's stamp is where the extraction put the item, not always where its words
+are said (S01: K's 680 s, its quote said at 723 s). Each id's quote is kept beside
+its stamp, and ``stamps_at_quotes`` moves the stamp to where the run's transcript
+says the quote (2.0's ``verify_quote``) — only a verified quote, and only within
+``QUOTE_STAMP_MAX_SHIFT_S`` of the item's stamp.
 """
 
 from __future__ import annotations
@@ -26,8 +32,12 @@ from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 
 from .memory import format_clock
+from .quote_verify import VERIFIED, QuoteIndex, verify_quote
 
 HERO_EXTRACTION_MAX_TOKENS = 5000
+# A quote found farther than this from its item's stamp is the line said again
+# elsewhere (or another item's words), not where the item is: its stamp stays.
+QUOTE_STAMP_MAX_SHIFT_S = 180
 # Measured on S01 (2026-10-21 trace): the memory call's 53.1 K characters of marked
 # transcript + prompt billed 17,490 input tokens on the Claude 5.5 tokenizer — 3.03
 # characters a token. The project's word estimator (``extractor._estimate_tokens``,
@@ -121,10 +131,12 @@ _LEVELS = (
 
 @dataclass(frozen=True)
 class CompactExtraction:
-    """The ``<extracted>`` body and the seconds of every id it shows."""
+    """The ``<extracted>`` body, the seconds of every id it shows and the quote of
+    every shown id whose item carries one."""
 
     text: str
     stamps: Mapping[str, int] = field(default_factory=dict)
+    quotes: Mapping[str, str] = field(default_factory=dict)
 
     @property
     def evidence(self) -> str:
@@ -233,6 +245,7 @@ class _Render:
     duration: int | None
     lines: list[str] = field(default_factory=list)
     stamps: dict[str, int] = field(default_factory=dict)
+    quotes: dict[str, str] = field(default_factory=dict)
     counts: Counter[str] = field(default_factory=Counter)
 
     def _id(self, name: str) -> str:
@@ -249,6 +262,7 @@ class _Render:
             text = text or (_words(item, self.level.head_words) if isinstance(item, str) else "")
             if item_id is not None and seconds is not None:
                 self.stamps[item_id] = seconds
+                self._keep_quote(item_id, item)
                 self.lines.append(f"{indent}{item_id} [{format_clock(seconds)}] {text}")
             elif text:
                 self.lines.append(f"{indent}- {text}")
@@ -256,6 +270,11 @@ class _Render:
             for key, value in item.items():
                 if _is_item_list(value):
                     self.items(f"{indent}  ", key, value, shown)
+
+    def _keep_quote(self, item_id: str, item: object) -> None:
+        quote = item.get(_QUOTE_KEY) if isinstance(item, Mapping) else None
+        if isinstance(quote, str) and quote.strip():
+            self.quotes[item_id] = quote
 
     def items(self, indent: str, name: str, items: Sequence[object], shown: bool) -> None:
         kept = _spread(len(items), self.level.list_cap)
@@ -313,7 +332,33 @@ def compact_for_hero(
         render = _render(extraction, level, duration)
         text = "\n".join(render.lines)
         if estimate_tokens(text) <= max_tokens:
-            return CompactExtraction(text, render.stamps)
+            return CompactExtraction(text, render.stamps, render.quotes)
     text = _cut_to(text, int(max_tokens * CHARS_PER_TOKEN))
     shown = {line.strip().split(" ", 1)[0] for line in text.split("\n")}
-    return CompactExtraction(text, {k: v for k, v in render.stamps.items() if k in shown})
+    return CompactExtraction(
+        text,
+        {k: v for k, v in render.stamps.items() if k in shown},
+        {k: v for k, v in render.quotes.items() if k in shown},
+    )
+
+
+def _quote_second(quote: str, stamp: int, index: QuoteIndex) -> int | None:
+    """Where ``quote`` is said — verified and within the shift of ``stamp`` — else None."""
+    found = verify_quote(quote, index, near_seconds=stamp)
+    if found.status != VERIFIED or found.seconds is None:
+        return None
+    return found.seconds if abs(found.seconds - stamp) <= QUOTE_STAMP_MAX_SHIFT_S else None
+
+
+def stamps_at_quotes(compact: CompactExtraction, index: QuoteIndex | None) -> dict[str, int]:
+    """Every id's stamp, a quoted item's moved to where its quote is said (module
+    docstring); the items' own stamps without a quote index."""
+    stamps = dict(compact.stamps)
+    if index is None:
+        return stamps
+    for item_id, quote in compact.quotes.items():
+        stamp = stamps.get(item_id)
+        said = None if stamp is None else _quote_second(quote, stamp, index)
+        if said is not None:
+            stamps[item_id] = said
+    return stamps

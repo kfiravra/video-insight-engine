@@ -2,29 +2,35 @@
 
 Every check reads the answer against what the call read about the video
 (``HeroEvidence``: the transcript when it was sent, ``<video_memory>``, the
-compacted extraction — never the job's own instructions, whose "20 words" is no
+compacted extraction — never the job's own instructions, whose "16 words" is no
 fact about the video):
 
 - numbers (G1-6, D13): every number in the tldr, brief, takeaways, both lines and
   the SEO line appears in the evidence (thousands separators and leading zeros
   ignored; a clock ``m:ss`` counts as a seek inside the video, not a fact). A
   brief sentence or a takeaway that states another number fails;
-- sizes: brief 3–5 sentences, tldr ≤ 150 characters, takeaways = the 3 / 5 / 7
-  band, worthItFor / skipIf ≤ 20 words each (D18);
+- sizes: brief 3–5 sentences, tldr ≤ 200 characters (the prompt asks for 140),
+  takeaways = the 3 / 5 / 7 band, worthItFor / skipIf ≤ 20 words each (D18; the
+  prompt asks for 16);
 - stamps: each takeaway resolves to a second of the video — the cited id's
   stamp (code copies it), else the model's own ``m:ss`` inside the video;
 - tabs: no tldr / brief / line names a planned tab (the 2.0 scrub's matcher)
   or points at the page ("check out", "this page") — assembly may still drop a tab;
 - D18 heuristics: a line judging the creator matches a small explicit lexicon
-  (``_CREATOR_JUDGEMENT_RE``), and a capitalized word past a sentence's first
-  word that the evidence never contains reads as a fact from outside the video.
-  Both are proxies — they catch "the host rambles" and an invented "Netflix",
-  not every judgement or outside fact.
+  (``_CREATOR_JUDGEMENT_RE``), and a word that reads as a proper name and the
+  evidence never contains reads as a fact from outside the video. A name is a
+  Capitalized word past a sentence's first word, or any word of a run of two or
+  more Capitalized words; never a token with a non-letter other than an inner
+  hyphen / apostrophe ("Q&A", "C++", ".NET", "3D" — its numbers have their own
+  check), an all-caps acronym of ≤ 4 letters ("AI", "CLI") or a format word
+  (``_FORMAT_WORDS``). Both are proxies — they catch "the host rambles" and an
+  invented "Netflix", not every judgement or outside fact.
 
 ``finalize`` turns a checked draft into the result: a failing optional line
 (worthItFor / skipIf / seoDescription) is dropped, a brief sentence that fails is
-dropped while 3 remain, a too-long tldr is cut; a failing tldr, brief or
-takeaway set means no result (the caller keeps memory's hero).
+dropped while 3 remain; a failing tldr (a long one too — a cut thesis is the first
+thing the page shows), brief or takeaway set means no result (the caller keeps
+memory's hero).
 """
 
 from __future__ import annotations
@@ -37,8 +43,11 @@ from typing import Literal
 from ...models.hero_types import HeroRewriteResult
 from ...utils.data_helpers import parse_timestamp_to_seconds
 from .assembly.tab_references import TabNames, bare_label
-from .memory import TLDR_MAX_CHARS, truncate_words
+from .memory import truncate_words
 
+# The hero's own cap, never a cut: memory's ``TLDR_MAX_CHARS`` (150) sizes its preview,
+# and a thesis that runs past it (S01: 151) ships whole or fails to the retry.
+HERO_TLDR_MAX_CHARS = 200
 LINE_MAX_WORDS = 20
 BRIEF_MIN_SENTENCES = 3
 BRIEF_MAX_SENTENCES = 5
@@ -52,7 +61,13 @@ _MARKER_RE = re.compile(r"\[\d+(?::\d{2}){1,2}\]")
 _CLOCK_RE = re.compile(r"(?<![\d:])\d{1,2}(?::\d{2}){1,2}(?![\d:])")
 _NUMBER_RE = re.compile(r"\d+(?:[.,]\d+)*")
 _THOUSANDS_RE = re.compile(r"\d{1,3}(?:,\d{3})+(?:\.\d+)?")
-_WORD_RE = re.compile(r"[A-Za-z][\w&'’.-]*")
+# A word a name can be: letters, joined only by inner hyphens / apostrophes.
+_NAME_WORD_RE = re.compile(r"[^\W\d_]+(?:['’-][^\W\d_]+)*")
+_CLITIC_RE = re.compile(r"['’](?:s|m|d|ll|ve|re)$", re.I)
+_OPENERS = "\"“‘'(["
+_CLOSERS = ".,;:!?\"”’')]…"
+# Punctuation after a word that ends a run of names ("Rails, Kodak" is two names).
+_RUN_BREAKS = (",", ";", ":", ")", "—")
 _REF_RE = re.compile(r"\b([A-Z]\d+)\b")
 # Pointing the reader at the page, whatever the tab is called.
 _PAGE_POINTER_RE = re.compile(r"\bcheck\s+(?:\w+\s+)?out\b|\b(?:this|the)\s+page\b", re.I)
@@ -69,7 +84,10 @@ _CREATOR_JUDGEMENT_RE = re.compile(
     r"|comes across)\b",
     re.I,
 )
-_ALWAYS_CAPITALIZED = frozenset({"I"})
+_ACRONYM_MAX_LETTERS = 4
+# Format / genre words, never a fact from outside the video however they are cased
+# (the plurals the acronym rule misses: "FAQs" is not all caps).
+_FORMAT_WORDS = frozenset({"q&a", "faq", "faqs", "ama", "amas", "diy", "asmr", "tl;dr"})
 
 Repair = Literal["fail", "drop_sentence", "truncate"]
 
@@ -207,18 +225,47 @@ def unknown_numbers(text: str, evidence: HeroEvidence) -> list[str]:
     return [*late, *sorted(numbers_in(rest) - evidence.numbers)]
 
 
-def _capitalized_words(sentence: str) -> list[str]:
-    """Capitalized words past the sentence's first word (hyphen parts apart, "'s" off)."""
-    words = [m.group(0).rstrip(".'’-") for m in _WORD_RE.finditer(sentence)][1:]
-    parts = [part for word in words for part in word.split("-") if part]
-    stripped = [re.sub(r"['’]s$", "", part) for part in parts]
-    return [w for w in stripped if w[:1].isupper() and w not in _ALWAYS_CAPITALIZED]
+def _capitalized_runs(sentence: str) -> list[tuple[int, list[str]]]:
+    """Runs of consecutive Capitalized tokens: (the run's first token's index, tokens)."""
+    runs: list[tuple[int, list[str]]] = []
+    open_run = False
+    for index, raw in enumerate(sentence.split()):
+        token = raw.lstrip(_OPENERS).rstrip(_CLOSERS)
+        if not token[:1].isupper():
+            open_run = False
+            continue
+        if open_run:
+            runs[-1][1].append(token)
+        else:
+            runs.append((index, [token]))
+        open_run = not raw.endswith(_RUN_BREAKS)
+    return runs
+
+
+def _is_acronym(word: str) -> bool:
+    return word.isupper() and len(word) <= _ACRONYM_MAX_LETTERS
+
+
+def _name_parts(token: str) -> list[str]:
+    """The words of a name token that can name something ("Netflix" of "Netflix-style";
+    none of "Q&A", "C++", "3D", "API", "FAQs")."""
+    word = _CLITIC_RE.sub("", token)
+    if word.casefold() in _FORMAT_WORDS or not _NAME_WORD_RE.fullmatch(word):
+        return []
+    parts = [part for part in word.split("-") if part]
+    return [part for part in parts if part[:1].isupper() and not _is_acronym(part)]
+
+
+def _names_in(sentence: str) -> list[str]:
+    """Words that read as names: Capitalized past the first word, or in a run of 2+."""
+    runs = [run for start, run in _capitalized_runs(sentence) if start > 0 or len(run) > 1]
+    return [part for run in runs for token in run for part in _name_parts(token)]
 
 
 def outside_names(text: str, evidence: HeroEvidence) -> list[str]:
-    """Capitalized words the evidence never contains — the outside-fact proxy."""
-    names = [w for s in sentences_of(text) for w in _capitalized_words(s)]
-    return sorted({w for w in names if not evidence.contains_word(w)})
+    """Names the evidence never contains — the outside-fact proxy (module docstring)."""
+    names = [name for sentence in sentences_of(text) for name in _names_in(sentence)]
+    return sorted({name for name in names if not evidence.contains_word(name)})
 
 
 def _names_a_tab(sentence: str, tabs: TabNames) -> bool:
@@ -245,9 +292,9 @@ def _check_tldr(draft: HeroDraft, evidence: HeroEvidence, tabs: TabNames) -> lis
     if not draft.tldr:
         return [Problem("tldr", "tldr is empty")]
     problems: list[Problem] = []
-    if len(draft.tldr) > TLDR_MAX_CHARS:
-        message = f"tldr has {len(draft.tldr)} characters — at most {TLDR_MAX_CHARS}"
-        problems.append(Problem("tldr", message, "truncate"))
+    if len(draft.tldr) > HERO_TLDR_MAX_CHARS:
+        message = f"tldr has {len(draft.tldr)} characters — at most {HERO_TLDR_MAX_CHARS}"
+        problems.append(Problem("tldr", message))
     if unknown := unknown_numbers(draft.tldr, evidence):
         problems.append(Problem("tldr", _not_in_video("tldr states", unknown)))
     if _names_a_tab(draft.tldr, tabs):
@@ -362,7 +409,7 @@ def finalize(
     draft: HeroDraft, problems: Sequence[Problem], takeaway_count: int
 ) -> HeroRewriteResult | None:
     """The result after the last attempt: a failing optional line dropped, failing brief
-    sentences dropped, a long tldr cut; None when the tldr, brief or takeaways fail."""
+    sentences dropped; None when the tldr, brief or takeaways fail (never a cut tldr)."""
     if any(p.field in CORE_FIELDS and p.repair == "fail" for p in problems):
         return None
     brief = _brief(draft, problems)
@@ -372,7 +419,7 @@ def finalize(
     failed = {p.field for p in problems if p.repair == "fail"}
     return HeroRewriteResult.model_validate(
         {
-            "tldr": truncate_words(draft.tldr, TLDR_MAX_CHARS),
+            "tldr": draft.tldr,
             "brief": brief,
             "keyTakeaways": takeaways,
             "worthItFor": "" if "worthItFor" in failed else draft.worth_it_for,

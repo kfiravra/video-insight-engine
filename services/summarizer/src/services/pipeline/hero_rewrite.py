@@ -19,6 +19,9 @@ call runs on the groups' model, with their JSON mode, effort and no system promp
    extraction (``hero_compact``, ≤ 5 K tokens, stamped items under ids) + the
    tab labels.
 
+A takeaway takes the stamp of the id it cites; with the run's quote index (2.0) a
+quoted item's stamp is first moved to where its quote is said (``stamps_at_quotes``).
+
 Without group blocks (``EXTRACTION_PARALLEL=false``) the request is block 3
 alone: no group call wrote blocks 1 / 2, so sending them would WRITE them (block
 1 at 2× for an hour it never serves) for rules the hero does not need.
@@ -53,11 +56,12 @@ from ..llm_messages import TextBlock, text_block
 from ..llm_model_rules import LLMRefusalError
 from .assembly.tab_references import bare_label
 from .extraction_group_prompt import head_block, prefix_block
-from .hero_compact import CompactExtraction, compact_for_hero, estimate_tokens
+from .hero_compact import CompactExtraction, compact_for_hero, estimate_tokens, stamps_at_quotes
 from .hero_validate import HeroDraft, HeroEvidence, Problem, check_hero, finalize, parse_draft
 from .memory import format_clock, takeaway_count
 from .pipeline_helpers import sanitize_for_prompt
 from .prompt_builder import PROMPTS_DIR, load_prompt_text
+from .quote_verify import QuoteIndex, run_quote_index
 from .synthesis import format_tab_labels
 
 if TYPE_CHECKING:
@@ -95,7 +99,8 @@ class GroupBlocks:
 
 @dataclass(frozen=True)
 class HeroRequest:
-    """Everything one hero call is built from; ``blocks`` None = no group blocks to read."""
+    """Everything one hero call is built from; ``blocks`` None = no group blocks to read;
+    ``quote_index`` None = the takeaways keep the items' own stamps."""
 
     title: str
     duration: int | None
@@ -103,6 +108,7 @@ class HeroRequest:
     tab_labels: Sequence[str] = ()
     video_memory: str = ""
     blocks: GroupBlocks | None = None
+    quote_index: QuoteIndex | None = None
 
     @property
     def reads_transcript(self) -> bool:
@@ -173,7 +179,7 @@ def hero_evidence(request: HeroRequest, compact: CompactExtraction) -> HeroEvide
         parts.append(request.blocks.chunks[0].transcript)
     return HeroEvidence(
         text="\n".join(parts),
-        stamps=compact.stamps,
+        stamps=stamps_at_quotes(compact, request.quote_index),
         duration=request.duration,
         tab_labels=tuple(request.tab_labels),
         takeaway_count=takeaway_count(request.duration),
@@ -254,12 +260,7 @@ async def rewrite_hero(llm_service: LLMService, request: HeroRequest) -> HeroRew
         return None
     evidence = hero_evidence(request, compact)
     cached = cached_blocks(request)
-    logger.info(
-        "Hero rewrite: blocks=%s, extraction ≈ %d tokens, %d ids",
-        "1+2" if len(cached) == 2 else "1" if cached else "job only",
-        estimate_tokens(compact.text),
-        len(compact.stamps),
-    )
+    _log_request(cached, compact, evidence)
     first = await _attempt(llm_service, [*cached, text_block(job_text(request, compact))], evidence)
     if first.passed or first.refused:
         return _final(first, evidence)
@@ -269,6 +270,19 @@ async def rewrite_hero(llm_service: LLMService, request: HeroRequest) -> HeroRew
     if not second.passed:
         _log_problems(second)
     return _final(second, evidence) or _final(first, evidence)
+
+
+def _log_request(
+    cached: list[TextBlock], compact: CompactExtraction, evidence: HeroEvidence
+) -> None:
+    moved = sum(evidence.stamps.get(k) != v for k, v in compact.stamps.items())
+    logger.info(
+        "Hero rewrite: blocks=%s, extraction ≈ %d tokens, %d ids (%d moved to their quote)",
+        "1+2" if len(cached) == 2 else "1" if cached else "job only",
+        estimate_tokens(compact.text),
+        len(compact.stamps),
+        moved,
+    )
 
 
 def _log_problems(attempt: _Attempt) -> None:
@@ -311,10 +325,20 @@ def page_tab_labels(tabs: Sequence[Mapping[str, Any]]) -> list[str]:
     return labels
 
 
+def _run_quote_index(ctx: PipelineContext) -> QuoteIndex | None:
+    """The run's quote index; None (the items' own stamps) when it cannot be built."""
+    try:
+        return run_quote_index(ctx)
+    except Exception:  # noqa: BLE001 — moving stamps is a refinement; the hero stays without it
+        logger.exception("Hero rewrite: no quote index — takeaways keep the items' stamps")
+        return None
+
+
 def hero_request(
     ctx: PipelineContext, extraction: Mapping[str, Any], run: SplitRun | None = None
 ) -> HeroRequest:
-    """The request from the run: video, reconciled tabs, memory; the split run's blocks."""
+    """The request from the run: video, reconciled tabs, memory, the quote index; the
+    split run's blocks."""
     video = ctx.video_data
     assert video is not None
     plan_tabs = ctx.plan_result.tabs if ctx.plan_result else ctx.triage.tabs if ctx.triage else []
@@ -325,6 +349,7 @@ def hero_request(
         tab_labels=page_tab_labels(plan_tabs),
         video_memory=ctx.video_memory,
         blocks=GroupBlocks(run.prompt, run.chunks) if run is not None else None,
+        quote_index=_run_quote_index(ctx),
     )
 
 
