@@ -205,8 +205,10 @@ ITEM_MAPPINGS = [
         dt.TravelSpot,
         exceptions={
             **{f: _ASSEMBLER_INJECTED for f in _FRAME_EVIDENCE_FIELDS},
-            # A key idea's kind as the card's badge (output-quality 1.1).
+            # A key idea's kind as the card's badge (output-quality 1.1) and its
+            # holder's name (1.3).
             "category": _ASSEMBLER_INJECTED,
+            "speaker": _ASSEMBLER_INJECTED,
         },
     ),
     Mapping(
@@ -256,6 +258,8 @@ ITEM_MAPPINGS = [
     Mapping("PodcastSegment", dt.PodcastSegment),
     Mapping("PodcastGuest", dt.PodcastGuest),
     Mapping("PodcastQuote", dt.PodcastQuote),
+    Mapping("PodcastQAItem", dt.PodcastQA),
+    Mapping("TechTopic", dt.TechTopic),
     Mapping("PodcastTopic", dt.PodcastTopic),
     Mapping("NewsTimelineEvent", dt.NewsTimelineEvent),
     Mapping("NewsEntity", dt.NewsEntity),
@@ -354,6 +358,7 @@ _LIST_FIELD_SAMPLES: dict[str, object] = {
     "tools": [{"name": "Saw", "required": True}],
     "safetyWarnings": ["Careful"],
     "segments": [{"title": "Intro"}],
+    "qa": [{"question": "Why?", "answer": "Because."}],
     "guests": [{"name": "Guest"}],
     "quotes": [{"quote": "q"}, {"text": "q", "speaker": "s"}],
     "storyTimeline": [{"label": "Event"}],

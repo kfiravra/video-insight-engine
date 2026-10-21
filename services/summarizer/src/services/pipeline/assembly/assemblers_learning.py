@@ -93,7 +93,8 @@ def _key_idea_badge(kind: Any) -> str | None:
 
 def _key_idea_spot(item: dict) -> dict | None:
     """One key idea as a spot card: claim → name, why → description; the quote and the
-    seek point as the spot normalizer reads them, the kind as the category badge."""
+    seek point as the spot normalizer reads them, the kind as the category badge, the
+    speaker (a podcast position's holder) as the card's attribution."""
     spot = _normalize_to_spot(
         {
             "name": item.get("claim") or "",
@@ -103,9 +104,14 @@ def _key_idea_spot(item: dict) -> dict | None:
             "emoji": item.get("emoji"),
         }
     )
+    if spot is None:
+        return None
     badge = _key_idea_badge(item.get("kind"))
-    if spot is not None and badge:
+    if badge:
         spot["category"] = badge
+    speaker = item.get("speaker")
+    if isinstance(speaker, str) and speaker.strip():
+        spot["speaker"] = speaker.strip()
     return spot
 
 

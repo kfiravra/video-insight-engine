@@ -280,15 +280,11 @@ def _examples() -> list[dict]:
 
 _EXAMPLES = _examples()
 _IDS = [ex["tabs"][0]["id"] + "-" + ex["primaryTag"] for ex in _EXAMPLES]
-# Paths the examples name before the registry lane lands them (p1.1 adds
-# learning.keyIdeas, p1.3 adds podcast.qa; caps per proposal.md §3). Delete
-# once ``data_source`` knows both.
-_PENDING_REGISTRY_CAPS = {"learning.keyIdeas": 20, "podcast.qa": 20}
 
 
 def _cap(path: str) -> int:
     spec = data_source(path)
-    return spec["cap"] if spec else _PENDING_REGISTRY_CAPS.get(path, 0)
+    return spec["cap"] if spec else 0
 
 
 def test_should_ship_eight_examples_when_prompt_is_read() -> None:
@@ -338,7 +334,6 @@ class TestExamples:
             or (
                 tab["dataSource"] not in NON_EXTRACTION_DATASOURCES
                 and data_source(tab["dataSource"]) is None
-                and tab["dataSource"] not in _PENDING_REGISTRY_CAPS
             )
         ]
         assert bad == []

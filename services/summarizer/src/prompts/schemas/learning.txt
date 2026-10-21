@@ -19,7 +19,8 @@ Extract structured educational content.
       "quote": "The speaker's own words that carry the claim, verbatim, at most 25 words — or null",
       "timestamp": null,
       "section": "Short name of the part of the video the idea belongs to",
-      "kind": "thesis | argument | announcement | number | story | ask"
+      "kind": "thesis | argument | announcement | number | story | ask",
+      "speaker": "Who holds the idea — only when more than one person speaks (a podcast, a panel), else null"
     }
   ],
 > UI: Key ideas → spot cards (claim, why, quote, seek chip) grouped by section; the kind is the card's badge, and stamped figures also feed the answer tab's numbers strip.

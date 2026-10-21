@@ -17,13 +17,15 @@ Extract a complete, actionable trip plan.
           "cost": "Entry fee or estimated cost with currency, or null",
           "duration": "How long to spend (e.g., '2-3 hours')",
           "mapQuery": "Place Name, City, Country (Google Maps searchable)",
-          "tips": "Specific tip from the video (e.g., 'Book online to skip the 2-hour line')"
+          "tips": "Specific tip from the video (e.g., 'Book online to skip the 2-hour line')",
+          "timestamp": null,
+          "quote": "The creator's own line about the spot, verbatim, at most 25 words — or null"
         }
       ],
       "tips": ["Day-level tips from the video"]
     }
   ],
-> UI: Each spot becomes a SpotExplorer card. Fill emoji + mapQuery + cost + duration for rich expandable cards. Missing mapQuery = no "Open in Maps" button.
+> UI: Each spot becomes a SpotExplorer card. Fill emoji + mapQuery + cost + duration for rich expandable cards. Missing mapQuery = no "Open in Maps" button. timestamp = the second the spot is shown or discussed (the card's seek chip).
 
   "budget": {
     "total": 0,

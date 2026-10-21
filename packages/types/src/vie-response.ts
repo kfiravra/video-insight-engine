@@ -131,6 +131,8 @@ export interface SpotItem extends FrameEvidence {
   quote?: string | null;
   /** Category badge text — a key idea's kind ("Thesis", "Ask"), set by the assembler. */
   category?: string;
+  /** Who holds a key idea when more than one person speaks — set by the assembler. */
+  speaker?: string;
 }
 
 export interface TipItem {
@@ -208,6 +210,8 @@ export interface KeyIdeaItem {
   /** The part of the video the idea belongs to. */
   section?: string | null;
   kind?: KeyIdeaKind | null;
+  /** Who holds the idea when more than one person speaks (a podcast's positions). */
+  speaker?: string | null;
 }
 
 export interface MomentItem extends FrameEvidence {
@@ -219,6 +223,8 @@ export interface MomentItem extends FrameEvidence {
   description?: string;
   /** The speaker's line that carries the moment, verbatim (output-quality R7/R10). */
   quote?: string;
+  /** An interview exchange's full question (`podcast.qa`); its head is the label. */
+  question?: string;
   mood?: string;
   emoji?: string;
   speaker?: string;
@@ -628,10 +634,19 @@ export interface TechCheatSheetItem {
   description: string;
 }
 
+/** A concept a tutorial explains, with where it explains it (output-quality 1.3). */
+export interface TechTopic {
+  name: string;
+  description: string;
+  /** Seconds into the video where the topic is explained. */
+  timestamp?: number | null;
+}
+
 export interface TechData {
   languages: string[];
   frameworks: string[];
-  topics: string[];
+  /** Objects since output-quality 1.3; rows stored before it carry bare names. */
+  topics: Array<TechTopic | string>;
   setup: TechSetup;
   snippets: TechSnippet[];
   patterns: TechPattern[];
@@ -795,6 +810,19 @@ export interface PodcastSegment {
   timestamp?: number;
   endSeconds?: number;
   speaker?: string;
+  /** The line that carries the segment's conclusion, verbatim. */
+  quote?: string | null;
+}
+
+/** One interview exchange (`podcast.qa`, output-quality 1.3): ships as a moment —
+ *  the question heads the row, the answer is its description. */
+export interface PodcastQAItem {
+  question: string;
+  answer: string;
+  /** Who answers — the guest, usually. */
+  speaker?: string | null;
+  timestamp?: number | null;
+  quote?: string | null;
 }
 
 export interface PodcastGuest {
@@ -819,6 +847,8 @@ export interface PodcastData {
   show?: string;
   host?: string;
   segments: PodcastSegment[];
+  /** An interview's questions and answers (output-quality 1.3). */
+  qa?: PodcastQAItem[];
   guests: PodcastGuest[];
   quotes: PodcastQuote[];
   topics: PodcastTopic[];

@@ -5,6 +5,8 @@
 (:class:`ReconcilePass`, the ``pipeline.reconcile`` row writer) and the steps
 that shape the tab list once the evidence is settled:
 
+1b. moment source — a Moments tab on learning's generic ``learning.timestamps``
+   reads the primary's own moment source (a podcast's segments) instead;
 2. required — the primary domain's required components are backfilled from
    its defaultTabs unless their ``requirementEvidence`` key is doubly false
    (``not_backfilled``, naming the defaultTab it would have added); a key the
@@ -32,6 +34,7 @@ from ...models.pipeline_types import TabBrief
 from ...shared_config.domain_config import (
     build_fallback_tabs,
     data_source,
+    datasources_for_component,
     default_tab_id,
     effective_requirements,
     quiz_enrichment,
@@ -207,6 +210,48 @@ def _default_tab(
         if component not in refused and _usable_default(run, cand, fresh):
             return {**cand, "brief": TabBrief().model_dump()}
     return None
+
+
+# ─── Step 1b: the primary's own moment source ───
+
+# The moment list every domain may read (learning's); a primary with a moment
+# source of its own reads that instead (output-quality 1.3, L9): a podcast's
+# Moments tab is its segment map with what each segment concluded, never
+# learning's chapter list (S02 planned ``learning.timestamps`` and no
+# ``podcast.*`` path at all).
+GENERIC_MOMENT_SOURCE = "learning.timestamps"
+MOMENT_COMPONENT = "moment_track"
+
+
+def primary_moment_source(run: ReconcilePass) -> str | None:
+    """The primary domain's first moment_track defaultTab source (podcast.segments,
+    news.storyTimeline, …) when the primary is active, not learning, and its
+    evidence allows it; None otherwise."""
+    if run.primary == "learning" or run.primary not in run.active:
+        return None
+    sources = datasources_for_component(run.primary, MOMENT_COMPONENT)
+    if not sources or sources[0] == GENERIC_MOMENT_SOURCE:
+        return None
+    return sources[0] if source_allowed(run, sources[0]) else None
+
+
+def moment_source_step(run: ReconcilePass) -> None:
+    """A Moments tab on learning's generic list reads the primary's own moment source,
+    unless another Moments tab already does (that one would only be duplicated)."""
+    target = primary_moment_source(run)
+    if target is None:
+        return
+    pairs = {(t.get("dataSource"), t.get("component")) for t in run.tabs}
+    if (target, MOMENT_COMPONENT) in pairs:
+        return
+    for index, tab in enumerate(run.tabs):
+        if (tab.get("dataSource"), tab.get("component")) == (
+            GENERIC_MOMENT_SOURCE,
+            MOMENT_COMPONENT,
+        ):
+            record(run, tab, Action("repointed", "primary_moment_source", to=target))
+            run.tabs[index] = {**tab, "dataSource": target}
+            return
 
 
 # ─── Step 2: required components ───

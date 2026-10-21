@@ -23,6 +23,7 @@ Return it under its own "narrative" key, next to the domain keys.
       "context": "Brief context for the quote"
     }
   ],
+> UI: Quotes → FlashDeck or SpotExplorer quote cards (speaker, the line, its context, a seek chip). Set timestamp on every quote.
   "takeaways": [
     "Narrative-driven takeaways or lessons from the story"
   ]

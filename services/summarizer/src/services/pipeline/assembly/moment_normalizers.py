@@ -17,14 +17,25 @@ from .text_utils import truncate_words
 
 _MOMENT_LABEL_KEYS = ("label", "title", "name")
 # Prose a moment source may carry under another name: PodcastSegment.summary,
-# FoodStep.instruction. (A chapter, outline section or description timestamp
-# carries a title only.)
-_MOMENT_DESCRIPTION_KEYS = ("description", "summary", "instruction")
+# FoodStep.instruction, PodcastQA.answer. (A chapter, outline section or
+# description timestamp carries a title only.)
+_MOMENT_DESCRIPTION_KEYS = ("description", "summary", "instruction", "answer")
+# An interview exchange (``podcast.qa``, C10): its question heads the row, cut to the
+# label length; the whole question rides along as ``question``.
+_MOMENT_QUESTION_KEY = "question"
 _MOMENT_START_KEYS = ("seconds", "startSeconds", "timestamp", "start_time", "startTime")
 # The clock a ``learning.timestamps`` item writes beside its ``seconds`` ("2:10").
 _MOMENT_CLOCK_KEY = "time"
 _MOMENT_END_KEYS = ("endSeconds", "end_seconds", "endTimestamp", "end_time", "endTime")
-_MOMENT_PASSTHROUGH_KEYS = ("quote", "mood", "emoji", "speaker", "thumbnailUrl", "s3Key")
+_MOMENT_PASSTHROUGH_KEYS = (
+    "quote",
+    "question",
+    "mood",
+    "emoji",
+    "speaker",
+    "thumbnailUrl",
+    "s3Key",
+)
 _MOMENT_LABEL_CAP = 60
 # A placeholder label is no text: the track never ships "Moment 3" (R5). Exact form only —
 # a lowercase "moment 3" is a source's own words, not the old positional default.
@@ -95,13 +106,17 @@ def _moment_start(item: dict) -> int | None:
 def _moment_text(item: dict) -> tuple[str, str | None] | None:
     """(label, description) from whichever fields carry prose; None when none does.
 
-    The label comes from label/title/name, else from the head of the
-    description; the description is dropped when it only repeats the label.
+    The label comes from label/title/name, else from the head of an interview
+    question, else from the head of the description; the description is dropped
+    when it only repeats the label.
     """
     label = _first_prose(item, _MOMENT_LABEL_KEYS)
     if label is not None and _MOMENT_PLACEHOLDER.match(label):
         label = None
     description = _first_prose(item, _MOMENT_DESCRIPTION_KEYS)
+    question = _prose(item.get(_MOMENT_QUESTION_KEY))
+    if label is None and question is not None:
+        label = truncate_words(question, _MOMENT_LABEL_CAP)
     if label is None and description is not None:
         label = truncate_words(description, _MOMENT_LABEL_CAP)
     if label is None:

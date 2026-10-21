@@ -16,7 +16,7 @@ from pydantic import (
 
 from ..shared_config.domain_config import valid_content_tags, valid_modifiers
 from .domain_validation import ValidationReport, merge_report, validate_block_items
-from .idea_types import LearningKeyIdea, seconds_or_none, text_or_none
+from .idea_types import LearningKeyIdea, PodcastQA, TechTopic, seconds_or_none, text_or_none
 
 logger = logging.getLogger(__name__)
 
@@ -539,7 +539,8 @@ class TechData(BaseModel):
 
     languages: list[str] = []
     frameworks: list[str] = []
-    topics: list[str] = []
+    # Objects since output-quality 1.3 (L25): a bare string is a topic's name.
+    topics: list[TechTopic] = []
     setup: TechSetup = Field(default_factory=TechSetup)
     snippets: list[TechSnippet] = []
     patterns: list[TechPattern] = []
@@ -556,7 +557,15 @@ class TechData(BaseModel):
                 data["topics"] = data.pop("concepts")
         return data
 
-    @field_validator("languages", "frameworks", "topics", mode="before")
+    @field_validator("topics", mode="before")
+    @classmethod
+    def _coerce_topics(cls, v: Any) -> Any:
+        """A bare string topic (the pre-1.3 shape, still in cached rows) is its name."""
+        if not isinstance(v, list):
+            return v
+        return [{"name": item} if isinstance(item, str) else item for item in v]
+
+    @field_validator("languages", "frameworks", mode="before")
     @classmethod
     def _coerce_string_lists(cls, v: Any) -> list[str]:
         """Coerce list items to strings — LLM sometimes returns objects like {name: '...'}."""
@@ -1000,6 +1009,13 @@ class PodcastSegment(BaseModel):
     timestamp: int | None = None
     end_seconds: int | None = Field(None, alias="endSeconds")
     speaker: str | None = None
+    # The line that carries the segment's conclusion, verbatim (R7, R10).
+    quote: str | None = None
+
+    @field_validator("quote", mode="before")
+    @classmethod
+    def coerce_quote(cls, v: Any) -> str | None:
+        return text_or_none(v)
 
     @model_validator(mode="before")
     @classmethod
@@ -1036,6 +1052,8 @@ class PodcastData(BaseModel):
     show: str | None = None
     host: str | None = None
     segments: list[PodcastSegment] = []
+    # An interview's questions and answers (C10) — moment_track with speaker + question.
+    qa: list[PodcastQA] = []
     guests: list[PodcastGuest] = []
     quotes: list[PodcastQuote] = []
     topics: list[PodcastTopic] = []

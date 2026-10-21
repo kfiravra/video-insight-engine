@@ -348,7 +348,7 @@ class TestTechData:
                 "concepts": ["REST API", "GraphQL"],
             }
         )
-        assert data.topics == ["REST API", "GraphQL"]
+        assert [t.name for t in data.topics] == ["REST API", "GraphQL"]
 
     def test_concepts_not_migrated_when_topics_present(self):
         """If both 'concepts' and 'topics' exist, 'topics' takes precedence."""
@@ -358,7 +358,7 @@ class TestTechData:
                 "concepts": ["Old Concept"],
             }
         )
-        assert data.topics == ["New Topic"]
+        assert [t.name for t in data.topics] == ["New Topic"]
 
     def test_pattern_alias(self):
         pattern = TechPattern.model_validate(
@@ -700,17 +700,17 @@ class TestSingleTagWrappedOutput:
     def test_should_unwrap_tag_keyed_response(self):
         result = validate_domain_output(["tech"], [], {"tech": {"topics": self._TOPICS}})
 
-        assert result["tech"]["topics"][0] == "DHH on Rails"
+        assert result["tech"]["topics"][0]["name"] == "DHH on Rails"
 
     def test_should_unwrap_tag_data_keyed_response(self):
         result = validate_domain_output(["tech"], [], {"techData": {"topics": self._TOPICS}})
 
-        assert result["tech"]["topics"][0] == "DHH on Rails"
+        assert result["tech"]["topics"][0]["name"] == "DHH on Rails"
 
     def test_should_validate_flat_response_unchanged(self):
         result = validate_domain_output(["tech"], [], {"topics": self._TOPICS})
 
-        assert result["tech"]["topics"][0] == "DHH on Rails"
+        assert result["tech"]["topics"][0]["name"] == "DHH on Rails"
 
     def test_should_keep_modifier_block_next_to_wrapped_domain(self):
         data = {
@@ -786,7 +786,7 @@ class TestMixedWrappedAndFlatShape:
 
         result = validate_domain_output(["tech"], [], data)
 
-        assert result["tech"]["topics"] == ["Wrapped", "Flat"]
+        assert [t["name"] for t in result["tech"]["topics"]] == ["Wrapped", "Flat"]
 
     def test_should_keep_wrapper_only_fields_when_single_tag_is_also_flat(self):
         data = {"techData": {"languages": ["Ruby"]}, "topics": ["Flat"]}
@@ -800,7 +800,7 @@ class TestMixedWrappedAndFlatShape:
 
         result = validate_domain_output(["tech"], [], data)
 
-        assert result["tech"]["topics"] == ["Same", "New"]
+        assert [t["name"] for t in result["tech"]["topics"]] == ["Same", "New"]
 
     def test_should_merge_flat_fields_into_wrapped_block_when_multi_tag(self):
         data = {

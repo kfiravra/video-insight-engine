@@ -7,7 +7,10 @@ THINKING GUIDE:
 - A podcast is a CONVERSATION, not a tutorial. The value is WHO is talking, WHAT
   was said, and WHERE the interesting moments are — not steps to follow.
 - Segments are the spine: each is a chunk of the conversation a listener would
-  jump to (an intro, a topic deep-dive, a tangent, a guest's story).
+  jump to (an intro, a topic deep-dive, a tangent, a guest's story) — and its
+  summary says what was concluded there, not only what was discussed.
+- An interview's questions and answers go in qa[]: the question as asked and the
+  answer the guest gave, never banter.
 - Capture every distinct guest. A solo monologue podcast has the host as the
   only "guest"-shaped entry — skip guests[] if there is no named guest.
 - Quotes are the lines worth remembering — punchy, quotable, opinionated.
@@ -19,13 +22,24 @@ THINKING GUIDE:
   "segments": [
     {
       "title": "Short label for this part of the conversation",
-      "summary": "1-2 sentences on what's discussed here",
+      "summary": "1-2 sentences on what was concluded here, with the names and numbers used",
       "timestamp": 0,
       "endSeconds": null,
-      "speaker": "Who leads this segment, if notable (or null)"
+      "speaker": "Who leads this segment, if notable (or null)",
+      "quote": "The line that carries the conclusion, verbatim, at most 25 words — or null"
     }
   ],
-> UI: Segments → MomentTrack. Set timestamp (seconds) on every segment so listeners can jump. Use endSeconds only for a replayable highlight span.
+> UI: Segments → MomentTrack (the conversation map). Set timestamp (seconds) on every segment so listeners can jump. Use endSeconds only for a replayable highlight span.
+  "qa": [
+    {
+      "question": "The question as asked, close to verbatim",
+      "answer": "The answer in 1-2 sentences — what the guest actually said",
+      "speaker": "Who answers",
+      "timestamp": 0,
+      "quote": "The answer's key line, verbatim, at most 25 words — or null"
+    }
+  ],
+> UI: Q&A → MomentTrack rows (question as the row title, answer below, speaker chip). Only for an interview: a host questioning a guest. timestamp = the second the question is asked.
   "guests": [
     {
       "name": "Guest full name",
@@ -42,7 +56,7 @@ THINKING GUIDE:
       "timestamp": 0
     }
   ],
-> UI: Quotes → FlashDeck (quote front, speaker/context back).
+> UI: Quotes → FlashDeck (quote front, speaker/context back) or SpotExplorer quote cards (speaker, the line, a seek chip). Set timestamp on every quote.
   "topics": [
     {
       "topic": "Subject discussed",
@@ -57,8 +71,11 @@ THINKING GUIDE:
   "show": "The Developer Hour",
   "host": "Sam Rivera",
   "segments": [
-    {"title": "Intro & guest welcome", "summary": "Sam introduces Dr. Lena Cho and her work on distributed systems.", "timestamp": 0, "endSeconds": null, "speaker": "Sam Rivera"},
-    {"title": "Why consensus is hard", "summary": "Lena breaks down the CAP theorem with a real outage story.", "timestamp": 480, "endSeconds": null, "speaker": "Lena Cho"}
+    {"title": "Intro & guest welcome", "summary": "Sam introduces Dr. Lena Cho and her work on distributed systems.", "timestamp": 0, "endSeconds": null, "speaker": "Sam Rivera", "quote": null},
+    {"title": "Why consensus is hard", "summary": "Lena concludes a partition forces a choice: the 2019 outage kept availability and lost writes.", "timestamp": 480, "endSeconds": null, "speaker": "Lena Cho", "quote": "You can't beat physics — you can only hide the latency."}
+  ],
+  "qa": [
+    {"question": "Would you pick Raft again today?", "answer": "Yes — Raft won on understandability, and the team that maintains it matters more than a faster protocol.", "speaker": "Dr. Lena Cho", "timestamp": 1320, "quote": "Understandable beats clever every single time."}
   ],
   "guests": [
     {"name": "Dr. Lena Cho", "role": "Principal engineer, distributed systems", "description": "Spent a decade building consensus protocols at scale", "emoji": "🧠"}
@@ -74,7 +91,7 @@ THINKING GUIDE:
 
 RULES:
 - Preserve quotes verbatim — do not paraphrase a quote.
-- Attribute every quote and segment to a speaker when the audio makes it clear.
+- Attribute every quote, segment and answer to a speaker when the audio makes it clear.
 - segments[] timestamps must be in ascending order; set them in seconds.
 - A talking-head podcast has NO visual sequence — do NOT invent a filmstrip.
 - topics detail stays short; long explanations belong in a segment summary.

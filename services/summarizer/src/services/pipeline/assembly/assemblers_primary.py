@@ -33,6 +33,7 @@ from .normalizers import (
     _normalize_verdict,
     normalize_moment_items,
 )
+from .quote_spots import is_quote_list, quote_spots
 
 # ─────────────────────────────────────────────────────
 # Assembler Functions
@@ -62,7 +63,8 @@ def assemble_spot_explorer(
     via cross-domain fallback. Requires `_MIN_SPOTS` valid spots to ship; below
     that, the tab is dropped and the fallback layer (overview/info_grid) takes
     over so the content still surfaces. A ``learning.keyIdeas`` list ships as
-    key-idea cards (`key_idea_props`: claim, why, quote, timestamp, sections, badge).
+    key-idea cards (`key_idea_props`: claim, why, quote, timestamp, sections, badge),
+    a quote list as quote cards (`quote_spots`: speaker, the line, its seek point).
     """
     if not isinstance(data, list) or len(data) == 0:
         return None
@@ -70,6 +72,9 @@ def assemble_spot_explorer(
     if is_key_idea_list(data):
         props = key_idea_props(data)
         return props if len(props["spots"]) >= _MIN_SPOTS else None
+    if is_quote_list(data):
+        spots = quote_spots(data)
+        return {"spots": spots} if len(spots) >= _MIN_SPOTS else None
 
     first = data[0] if isinstance(data[0], dict) else {}
     if ("day" in first or "city" in first) and "spots" in first:

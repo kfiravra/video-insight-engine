@@ -62,7 +62,7 @@ class TestKeyIdeaModel:
     def test_should_keep_every_field_when_the_idea_is_complete(self) -> None:
         idea = LearningKeyIdea.model_validate(_IDEAS[0]).model_dump()
 
-        assert idea == _IDEAS[0]
+        assert idea == {**_IDEAS[0], "speaker": None}
 
     @pytest.mark.parametrize("kind", ["Thesis", " ASK ", "number"])
     def test_should_lower_case_the_kind_when_it_is_in_the_vocabulary(self, kind: str) -> None:
@@ -125,17 +125,12 @@ class TestKeyIdeaRegistry:
             "list",
         )
 
-    def test_should_ask_for_the_six_fields_when_the_schema_is_sliced(self) -> None:
+    def test_should_ask_for_the_six_d10_fields_when_the_schema_is_sliced(self) -> None:
         sliced = slice_skeleton("learning", ["keyIdeas"])
 
-        assert set(sliced["keyIdeas"][0]) == {
-            "claim",
-            "why",
-            "quote",
-            "timestamp",
-            "section",
-            "kind",
-        }
+        assert {"claim", "why", "quote", "timestamp", "section", "kind"} <= set(
+            sliced["keyIdeas"][0]
+        )
 
     def test_should_keep_key_points_when_key_ideas_join_the_schema(self) -> None:
         skeleton = load_domain_schema("learning").skeleton

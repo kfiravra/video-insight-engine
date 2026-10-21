@@ -6,7 +6,14 @@ Extract structured programming/tech content.
 {
   "languages": ["Exact language names used"],
   "frameworks": ["Exact framework/library names with versions if mentioned"],
-  "topics": ["Programming topics covered"],
+  "topics": [
+    {
+      "name": "Topic or concept as the video names it (a hook, an API, a pattern)",
+      "description": "What the video explains about it, 2-4 sentences with its own example",
+      "timestamp": null
+    }
+  ],
+> UI: Topics → SpotExplorer cards (name, explanation, seek chip). timestamp = the second the topic is explained.
   "setup": {
     "commands": ["Exact CLI commands shown"],
     "dependencies": [
