@@ -12,17 +12,31 @@ output, which stays unmodified:
    ``<video_memory>`` — the same bytes for every group of a chunk;
 3. the group's job (``extraction_group_job.txt``, uncached): the emit-only
    line + output shape, the tabs it serves, the primary's emphasis; the visual
-   group adds the annotation guide and the chunk's annotations and key frames.
+   group adds the annotation guide and the chunk's annotations and key frames;
+   the group extracting ``learning.keyIdeas`` adds the rules file's argument
+   example of the run's primary domain (p1.11).
 
 The 1-hour breakpoint precedes the 5-minute one (Anthropic rejects the other
 order): two breakpoints of the four allowed. The schema and example are cut
 from the UNBOUND tail — schemas and example are filled at template time, and no
 on-screen text (late-bound) can sit between the tags there.
+
+``extraction_group_rules.txt`` has two shares: its completeness rule (block 1,
+every group of every run) and its ``<argument_example field=… primary=…>``
+elements (block 3). An example is the one worked item of a talk (S01) or a
+conversation (S02); it rides at the end of the ruled prompt's tail (one read
+of the file per run — R40 B1) and ``job_block`` keeps it only where it
+teaches — the group whose ``fields`` request the example's ``field``, in a run
+whose ``GroupJob.primary_tag`` is the example's ``primary``. That is the
+selection the builder can make: it knows the group's paths and the run's
+domains, not the plan's content format (a talk or lecture is primary
+``learning``; an interview is primary ``podcast``).
 """
 
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 
@@ -56,6 +70,13 @@ _EXAMPLE_TAG = "extraction_example"
 _UNSLICED_LEAD = "Emit ONLY these keys (anything else is discarded): "
 _UNSLICED_MORE = "Also emit (shapes as in <schema>): "
 _LABEL_MAX_CHARS = 80
+# One worked example per (field, primary domain) in extraction_group_rules.txt;
+# the attributes come in this order, the body may span lines.
+_ARGUMENT_EXAMPLE_RE = re.compile(
+    r'<argument_example field="(?P<field>[^"]+)" primary="(?P<primary>[^"]+)">'
+    r".*?</argument_example>\n*",
+    re.DOTALL,
+)
 
 
 @dataclass(frozen=True)
@@ -87,15 +108,29 @@ def _element(text: str, tag: str) -> str:
     return text[start : end + len(tag) + 3]
 
 
+def completeness_rule(rules: str) -> str:
+    """Block 1's share of the group rules: the text without its argument examples."""
+    return _ARGUMENT_EXAMPLE_RE.sub("", rules).strip()
+
+
+def argument_examples(rules: str) -> str:
+    """Block 3's share: the rules' ``<argument_example>`` elements, one per paragraph."""
+    return "\n\n".join(m.group(0).strip() for m in _ARGUMENT_EXAMPLE_RE.finditer(rules))
+
+
 def with_group_rules(prompt: ExtractionPrompt) -> ExtractionPrompt:
-    """``prompt`` whose rules end with the group calls' own — read once per run.
+    """``prompt`` whose rules end with the group calls' own and whose tail ends
+    with the rules' argument examples — the file read once per run.
 
     Where 4.0d round 2 measured the completeness rule: ``<quality_rules>``'s
-    last paragraph, after a blank line. Without exactly one
+    last paragraph, after a blank line (p1.11 appends the argument rule to
+    it; the examples stay out of block 1 — ``build_group_messages`` hands
+    them from the tail to the job block). Without exactly one
     ``</quality_rules>`` the rule has no measured place: logged, and the
     run keeps today's rules.
     """
-    rules = load_prompt_text(GROUP_RULES_PATH).strip()
+    text = load_prompt_text(GROUP_RULES_PATH)
+    rules, examples = completeness_rule(text), argument_examples(text)
     if not rules:
         return prompt
     system = prompt.system
@@ -103,7 +138,8 @@ def with_group_rules(prompt: ExtractionPrompt) -> ExtractionPrompt:
         logger.warning("extraction rules have no single </quality_rules>; group rules not added")
         return prompt
     at = system.index(_RULES_CLOSE)
-    return replace(prompt, system=f"{system[:at]}\n\n{rules}{system[at:]}")
+    tail = f"{prompt.tail.rstrip()}\n\n{examples}\n" if examples else prompt.tail
+    return replace(prompt, system=f"{system[:at]}\n\n{rules}{system[at:]}", tail=tail)
 
 
 def prefix_block(prompt: ExtractionPrompt) -> TextBlock:
@@ -219,15 +255,30 @@ def load_job_template() -> str:
     return load_prompt_text(JOB_TEMPLATE_PATH)
 
 
+def _taught_examples(examples: str, group: ExtractionGroup, job: GroupJob) -> str:
+    """The examples that teach this group: its field requested, its primary the run's."""
+    paths = {f.path for f in group.fields}
+
+    def keep(match: re.Match[str]) -> str:
+        applies = match["field"] in paths and match["primary"] == job.primary_tag
+        return match.group(0) if applies else ""
+
+    return _ARGUMENT_EXAMPLE_RE.sub(keep, examples).strip()
+
+
 def job_block(
     group: ExtractionGroup,
     chunk: ExtractionChunk,
     job: GroupJob,
     template: str | None = None,
+    examples: str = "",
 ) -> TextBlock:
-    """Block 3: the group's job; only the visual group carries frame text.
+    """Block 3: the group's job; only the visual group carries frame text, only
+    the group extracting an argument example's field in a run of its primary
+    domain carries that example, as the block's last element.
 
-    ``template`` = the run's job template (None → read it now).
+    ``template`` = the run's job template (None → read it now); ``examples`` =
+    the run's argument examples (``argument_examples``), none by default.
     """
     values = {
         "batch_context": chunk.batch_context,
@@ -244,8 +295,9 @@ def job_block(
     # Today's binding: the visual elements leave with empty inputs, and the
     # single pass never re-reads inserted text (on-screen code) for placeholders.
     raw = template if template is not None else load_job_template()
-    bound = _drop_absent_visual_blocks(raw, values)
-    return text_block(_fill(bound, values).rstrip() + "\n")
+    text = _fill(_drop_absent_visual_blocks(raw, values), values).rstrip()
+    taught = _taught_examples(examples, group, job)
+    return text_block(f"{text}\n\n{taught}\n" if taught else f"{text}\n")
 
 
 def build_group_messages(
@@ -255,9 +307,10 @@ def build_group_messages(
     job: GroupJob,
     template: str | None = None,
 ) -> list[TextBlock]:
-    """The user content of one group call: block 1 (1h), block 2 (5m), the job."""
+    """The user content of one group call: block 1 (1h), block 2 (5m), the job
+    (with the argument example the ruled prompt's tail carries for this group)."""
     return [
         prefix_block(prompt),
         head_block(prompt, chunk),
-        job_block(group, chunk, job, template),
+        job_block(group, chunk, job, template, argument_examples(prompt.tail)),
     ]

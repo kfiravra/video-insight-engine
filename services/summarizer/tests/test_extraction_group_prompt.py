@@ -99,10 +99,15 @@ def _blocks(group: ExtractionGroup, chunk: ExtractionChunk | None = None) -> lis
 
 
 # The rule 4.0d round 2 measured (scripts/_model_ab_variants.py) — the group
-# calls' own rules since the 4.0 picks.
+# calls' own rules since the 4.0 picks; p1.11 appends the argument rule to it.
 _COMPLETENESS = (
     "Completeness: emit every distinct step, item or command the transcript supports "
     "— never merge two into one, never skip one."
+)
+_ARGUMENTS = (
+    "Arguments the same way: every distinct claim, its reasoning and the sentence that "
+    "carries it — never merge two claims into one, never skip the last 10 minutes (the close "
+    "is where a talk lands its ask and a conversation its verdict)."
 )
 
 
@@ -203,13 +208,14 @@ class TestGroupRules:
     def test_should_end_the_rules_with_the_completeness_rule(self) -> None:
         system = with_group_rules(_prompt()).system
 
-        assert f"quality rules text\n\n{_COMPLETENESS}\n</quality_rules>" in system
+        assert f"quality rules text\n\n{_COMPLETENESS}\n{_ARGUMENTS}\n</quality_rules>" in system
 
-    def test_should_change_nothing_but_the_rules(self) -> None:
+    def test_should_change_nothing_but_the_rules_and_the_tails_examples(self) -> None:
         prompt = _prompt()
         ruled = with_group_rules(prompt)
 
-        assert (ruled.head, ruled.tail) == (prompt.head, prompt.tail)
+        # p1.11: the tail carries the rules' argument examples for the job block.
+        assert (ruled.head, ruled.tail.startswith(prompt.tail.rstrip())) == (prompt.head, True)
 
     def test_should_keep_the_completeness_rule_out_of_the_single_call(self) -> None:
         assert "Completeness:" not in _prompt().system
