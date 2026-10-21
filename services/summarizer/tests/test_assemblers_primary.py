@@ -109,7 +109,8 @@ class TestAssembleChecklist:
         # section heading from the (translated) tab.label. Only the items
         # contract matters here.
         assert result["items"][0]["label"] == "2 cups flour"
-        assert result["items"][1]["label"] == "to taste salt"
+        # An amount that is no quantity leads the note, never the label (S06 iteration).
+        assert (result["items"][1]["label"], result["items"][1]["note"]) == ("salt", "to taste")
 
     def test_packing_items(self):
         data = [{"item": "Passport", "category": "Documents", "essential": True}]

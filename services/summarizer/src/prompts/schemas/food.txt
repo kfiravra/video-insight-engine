@@ -25,13 +25,14 @@ Extract a complete, followable recipe.
   "steps": [
     {
       "number": 1,
-      "instruction": "Clear instruction with temps, times, visual cues",
+      "instruction": "Clear instruction with the temps, times and visual cues the chef gives for this step",
       "duration": null,
       "tips": "Pro tip for this step if mentioned",
       "timestamp": null
     }
   ],
 > UI: Steps → StepByStepInteractive. Fill tips for expandable pro-tip callout, duration for timer badge, timestamp for video jump link.
+> TIMES: a step's duration — and any time in its instruction or tips — only when the chef states it FOR THAT STEP. A bake time is never a rest time; "give it a sec" or "let it sit" is not a number; with no stated time, give the cue ("until golden", "until it slices clean") and leave duration null.
   "tips": [
     {
       "type": "chef_tip | warning | substitution | storage",
@@ -75,14 +76,15 @@ INGREDIENT AMOUNT RULES:
 - "amount" is a NUMERIC float for math (scaling servings). "displayAmount" is the human-readable string.
 - Convert fractions: 1/2 → amount: 0.5, displayAmount: "1/2". 1 1/2 → amount: 1.5, displayAmount: "1 1/2"
 - Ranges: use midpoint for amount. "3-4 cloves" → amount: 3.5, displayAmount: "3-4"
-- "a pinch" / "to taste" → amount: 0, displayAmount: "to taste"
+- "a pinch" / "to taste" / "liberally" → amount: 0, displayAmount: the chef's words ("a pinch", "to taste", "liberally")
+- No amount said → amount: 0, displayAmount: "" — never "amount not stated"
 - Integer amounts are still floats: "2 cups" → amount: 2.0, displayAmount: "2"
 
 RULES:
 - Include every ingredient with exact measurements — missing one ruins the recipe
 - Steps in correct chronological order
 - All temperatures with units (F or C)
-- All timing specific: "8-10 minutes" not "until done"
+- Timing as the chef states it for that step ("8-10 minutes"); never a number the chef did not say for it
 - Include visual cues: "until golden brown", "when bubbles form"
 - Never invent nutritional values — empty array if not mentioned
 - Equipment: everything the chef uses, be specific

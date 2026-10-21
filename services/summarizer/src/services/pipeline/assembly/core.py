@@ -66,6 +66,12 @@ from .sampling import (
 
 logger = logging.getLogger(__name__)
 
+# Goals of the tabs assembly adds itself — the viewer-outcome rule (task 1.10) holds
+# for them too (``plan_prompt.goal_rule_violation``).
+_OVERVIEW_GOAL = "After this you know what the video says and whether to watch it."
+_TAKEAWAYS_GOAL = "After this you know the video's main takeaways at a glance."
+_FILMSTRIP_GOAL = "After this you can see each stage as it looks on screen."
+
 
 # ─────────────────────────────────────────────────────
 # Data Source Resolution
@@ -1375,7 +1381,7 @@ def _ensure_overview_first(
             "emoji": "📋",
             "component": "overview",
             "props": props,
-            "goal": "Quick summary of what this video covers",
+            "goal": _OVERVIEW_GOAL,
             "crossTabLinks": [],
         },
     )
@@ -1462,7 +1468,7 @@ def build_fallback_candidates(
                         "keyTakeaways": key_takeaways,
                         "tldr": synthesis.get("tldr", ""),
                     },
-                    "goal": "Quick summary of what this video covers",
+                    "goal": _OVERVIEW_GOAL,
                     "crossTabLinks": [],
                 }
             )
@@ -1479,7 +1485,7 @@ def build_fallback_candidates(
                     "emoji": "📊",
                     "component": "info_grid",
                     "props": {"items": items},
-                    "goal": "Key takeaways from this video at a glance",
+                    "goal": _TAKEAWAYS_GOAL,
                     "crossTabLinks": [],
                 }
             )
@@ -1959,7 +1965,7 @@ def assemble_response(
                     "emoji": "\U0001f5bc\ufe0f",
                     "component": "video_filmstrip",
                     "props": {"frames": filmstrip_frames},
-                    "goal": "Browse key visual moments from the video",
+                    "goal": _FILMSTRIP_GOAL,
                     "crossTabLinks": [],
                 }
             )

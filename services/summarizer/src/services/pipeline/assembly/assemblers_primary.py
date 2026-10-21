@@ -25,6 +25,7 @@ from .info_grid_items import _split_long_sentence as _split_long_sentence
 from .info_grid_items import _split_string_info_item as _split_string_info_item
 from .info_grid_items import _text_only_info_item as _text_only_info_item
 from .info_grid_items import _with_category as _with_category
+from .ingredients import ingredient_row
 from .normalizers import (
     _normalize_code_snippet,
     _normalize_comparison,
@@ -358,21 +359,6 @@ def assemble_info_grid(
     return None
 
 
-# A display amount that only says the amount is unknown ("amount not stated")
-# is not an amount: the ingredient ships by its name alone (R10).
-_UNSTATED_AMOUNT = re.compile(
-    r"^(?:amount\s+)?(?:not\s+(?:stated|given|specified|mentioned|shown)"
-    r"|unspecified|unknown|n/?a)\.?$",
-    re.IGNORECASE,
-)
-
-
-def _display_amount(item: dict) -> str:
-    """The item's displayAmount, or '' when it only says the amount is unknown."""
-    shown = str(item.get("displayAmount", "")).strip()
-    return "" if _UNSTATED_AMOUNT.match(shown) else shown
-
-
 def assemble_checklist(
     tab: dict,
     data: Any,
@@ -388,17 +374,7 @@ def assemble_checklist(
             items.append({"label": item})
         elif isinstance(item, dict):
             if "name" in item and ("amount" in item or "unit" in item or "displayAmount" in item):
-                da = _display_amount(item)
-                if da:
-                    items.append({"label": f"{da} {item['name']}", "note": item.get("notes")})
-                else:
-                    parts: list[str] = []
-                    if item.get("amount") and item["amount"] != 0:
-                        parts.append(str(item["amount"]))
-                    if item.get("unit"):
-                        parts.append(str(item["unit"]))
-                    parts.append(str(item["name"]))
-                    items.append({"label": " ".join(parts), "note": item.get("notes")})
+                items.append(ingredient_row(item))
             elif "item" in item:
                 items.append(
                     {
