@@ -28,7 +28,7 @@ from ...utils.llm_retry import call_llm_with_retry
 from ..llm_messages import CacheTTL, UserContent, text_block
 from ..llm_model_rules import Effort
 from .assembly import infer_component
-from .plan_prompt import PROMPT_PATH, PlanPrompt, PlanVideo, render_plan_parts
+from .plan_prompt import PROMPT_PATH, PlanPrompt, PlanVideo, goal_rule_violation, render_plan_parts
 from .plan_reconcile import reconcile_plan_tabs
 
 if TYPE_CHECKING:
@@ -151,6 +151,10 @@ def _validate_tabs(tabs: list[dict]) -> list[dict]:
             component = ""
         if not component:
             component = infer_component(tid)
+        goal = tab.get("goal", "")
+        # Observability only (task 1.10): a goal naming the component or the topic still ships.
+        if why := goal_rule_violation(goal):
+            logger.info("Tab '%s' goal breaks the viewer-outcome rule: %s", tid, why)
 
         valid_tabs.append(
             {
@@ -159,7 +163,7 @@ def _validate_tabs(tabs: list[dict]) -> list[dict]:
                 "emoji": tab.get("emoji", ""),
                 "dataSource": _coerce_data_source(tab.get("dataSource")),
                 "component": component,
-                "goal": tab.get("goal", ""),
+                "goal": goal,
                 "brief": TabBrief.from_raw(tab.get("brief")).model_dump(),
             }
         )
