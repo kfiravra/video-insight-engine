@@ -31,12 +31,8 @@ from src.services.pipeline.enrichment import build_quiz_prompt, parse_quiz
 from src.services.pipeline.phases import assembly as phase
 from src.services.pipeline.phases import enrichment as enrichment_phase
 from src.services.pipeline.phases import synthesis as synthesis_phase
-from src.services.pipeline.quiz_v2 import (
-    QuizV2Request,
-    build_quiz_v2_prompt,
-    enrich_quiz_v2,
-    restates_takeaway,
-)
+from src.services.pipeline.quiz_v2 import QuizV2Request, enrich_quiz_v2, restates_takeaway
+from src.services.pipeline.quiz_v2_prompt import build_quiz_v2_prompts
 from src.services.pipeline.quote_verify import QuoteIndex
 from tests.test_phase_assembly_order import _SYNTHESIS, _events, _saved, _tech_ctx
 
@@ -115,9 +111,8 @@ def _v1_prompt() -> str:
 
 
 def _v2_prompt() -> str:
-    prompt = build_quiz_v2_prompt(_request())
-    assert prompt is not None
-    return prompt
+    (call,) = build_quiz_v2_prompts(_request())
+    return call.text
 
 
 # ─── D6: no "Which is NOT / FALSE" question in quiz v2 ───

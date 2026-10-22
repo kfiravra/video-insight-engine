@@ -29,17 +29,18 @@ from src.models.pipeline_types import QuizQuestion
 from src.services.pipeline.phases import enrichment as enrichment_phase
 from src.services.pipeline.quiz_v2 import (
     QuizV2Request,
-    build_quiz_v2_prompt,
     enrich_quiz_v2,
     keyed_option,
     restates_the_hero,
 )
+from src.services.pipeline.quiz_v2_prompt import build_quiz_v2_prompts
 from src.services.pipeline.quiz_v2_select import (
     length_tell,
     select_quiz,
     shuffle_quiz,
     stretch_bounds,
     stretch_of,
+    stretch_quotas,
 )
 from src.services.pipeline.quote_verify import QuoteIndex
 
@@ -337,31 +338,55 @@ class TestLateRefill:
 # ─── The prompt ───
 
 
-def _prompt(duration_s: float | None) -> str:
+# S03's p3i1 key-idea stamps: 17 in its first third, 12 in the second, 3 in the last.
+_S03_IDEA_STAMPS = [75, 144, 180, 280, 320, 341, 382, 421, 500, 516, 561, 640, 700, 720, 880,
+                    921, 1018, 1183, 1220, 1300, 1303, 1342, 1500, 1582, 1681, 1800, 1895, 2196,
+                    2278, 2381, 2421, 2880]  # fmt: skip
+
+
+def _ideas(stamps: list[int]) -> dict[str, Any]:
+    ideas = [{"claim": f"Claim at {s}", "why": "Because.", "timestamp": s} for s in stamps]
+    return {"learning": {"keyIdeas": ideas}}
+
+
+def _prompt(duration_s: float | None, extraction: dict[str, Any] | None = None) -> str:
+    """The first call's prompt (one whole-video call without stamped key ideas)."""
     request = QuizV2Request(
         primary_tag="learning",
         title="Behavioral biology",
         duration_s=duration_s,
         transcript="[0:00] We start off with a scenario.",
-        extraction={},
+        extraction=extraction or {},
     )
-    prompt = build_quiz_v2_prompt(request)
-    assert prompt is not None
-    return prompt
+    first, *_ = build_quiz_v2_prompts(request)
+    return first.text
+
+
+class TestStretchQuotas:
+    def test_should_ask_every_stretch_that_holds_a_key_idea_for_a_question(self) -> None:
+        assert stretch_quotas(_S03_IDEA_STAMPS, _S03_S, 10) == [5, 3, 2]
+
+    def test_should_ask_for_the_whole_count_across_the_stretches(self) -> None:
+        assert sum(stretch_quotas(_S03_IDEA_STAMPS, _S03_S, 7)) == 7
+
+    def test_should_ask_nothing_of_a_stretch_without_key_ideas(self) -> None:
+        assert stretch_quotas([100, 200, 3000], _S03_S, 5)[1] == 0
+
+    def test_should_return_no_quotas_when_the_length_is_unknown(self) -> None:
+        assert stretch_quotas(_S03_IDEA_STAMPS, None, 10) == []
+
+    def test_should_return_no_quotas_when_no_key_idea_is_stamped(self) -> None:
+        assert stretch_quotas([], _S03_S, 10) == []
 
 
 class TestPrompt:
-    def test_should_name_the_videos_thirds_in_the_task_when_its_length_is_known(self) -> None:
-        assert "Stretches: 0:00–19:05 · 19:05–38:10 · 38:10–57:14\n</task>" in _prompt(_S03_S)
+    def test_should_ask_to_spread_the_questions_to_the_last_key_ideas(self) -> None:
+        prompt = _prompt(_S03_S, _ideas(_S03_IDEA_STAMPS))
 
-    def test_should_name_no_stretches_when_the_length_is_unknown(self) -> None:
-        assert "Stretches:" not in _prompt(None)
+        assert "spread the questions across <key_ideas>, its last entries included" in prompt
 
-    def test_should_ask_for_a_question_from_each_stretch(self) -> None:
-        assert "at least one question from each stretch <task> names" in _prompt(_S03_S)
-
-    def test_should_ask_for_options_of_about_the_same_length(self) -> None:
-        assert "within about ±20% of each other's length" in _prompt(_S03_S)
+    def test_should_ask_for_wrong_options_built_from_the_correct_one(self) -> None:
+        assert "within 2 words of the correct option's length" in _prompt(_S03_S)
 
     def test_should_not_ask_the_model_to_vary_the_key_position(self) -> None:
         assert "vary that position" not in _prompt(_S03_S)

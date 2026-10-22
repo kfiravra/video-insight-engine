@@ -21,8 +21,9 @@ the model's order — most important key idea first:
   is left;
 - **the spread** (G2-4): gate 2 shipped S03's 8 questions all inside 0:00–21:37 of a
   57-minute lecture. The video is cut into :data:`QUIZ_STRETCHES` stretches (thirds,
-  :func:`stretch_bounds` — the prompt names the same ones); :func:`select_quiz` ships
-  the first clean question of each stretch, then fills the count in rank order.
+  :func:`stretch_bounds`); each stretch holding a key idea gets its own call, sized by
+  :func:`stretch_quotas` (``quiz_v2_prompt``), and :func:`select_quiz` ships the first
+  clean question of each stretch, then fills the count in rank order.
 
 The shipped questions keep the model's importance order, not the video's: the prompt
 asks for the most important first, and the late refill (``phases.enrichment.
@@ -51,7 +52,8 @@ logger = logging.getLogger(__name__)
 # one, and the split gate 2's S03 check reads ("the last 36 minutes are untested").
 QUIZ_STRETCHES = 3
 # A key this many times the mean wrong option's length (characters) is the tell the
-# gate-2 reviewers named; the prompt asks for all four within about ±20 % of each other.
+# gate-2 reviewers named; the prompt builds every wrong option from the key, within
+# 2 words of its length.
 LENGTH_TELL_RATIO = 1.5
 # The prompt's four options: the key positions a quiz deals out evenly (a question
 # with fewer options takes its slot modulo its own count).
@@ -133,6 +135,34 @@ def stretch_of(stamp: int | None, duration_s: float | None) -> int | None:
     if stamp is None or span is None:
         return None
     return min(max(stamp, 0) * QUIZ_STRETCHES // span, QUIZ_STRETCHES - 1)
+
+
+def _held_per_stretch(stamps: Sequence[int], duration_s: float | None) -> list[int]:
+    """How many of ``stamps`` fall in each stretch."""
+    held = [0] * QUIZ_STRETCHES
+    for stamp in stamps:
+        stretch = stretch_of(stamp, duration_s)
+        if stretch is not None:
+            held[stretch] += 1
+    return held
+
+
+def stretch_quotas(stamps: Sequence[int], duration_s: float | None, asked: int) -> list[int]:
+    """Questions each stretch's call asks for, ``asked`` in all: one for each stretch that
+    holds a key idea, the rest in proportion to the key ideas each holds (largest
+    remainder); ``[]`` without a known length or a stamped key idea — then one call
+    writes the whole quiz (``quiz_v2_prompt``)."""
+    held = _held_per_stretch(stamps, duration_s)
+    total = sum(held)
+    if not total:
+        return []
+    floor = [1 if n else 0 for n in held]
+    shares = [max(asked - sum(floor), 0) * n / total for n in held]
+    quotas = [base + int(share) for base, share in zip(floor, shares, strict=True)]
+    by_remainder = sorted(range(QUIZ_STRETCHES), key=lambda i: int(shares[i]) - shares[i])
+    for i in by_remainder[: max(asked - sum(quotas), 0)]:
+        quotas[i] += 1
+    return quotas
 
 
 def _first_per_stretch(

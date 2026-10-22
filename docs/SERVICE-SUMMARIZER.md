@@ -84,7 +84,9 @@ services/summarizer/
     │   │   ├── enrichment.py         # The quiz only (quizEnrichment domains, demand-gated by the plan; 3/5/8 questions by length, each stamped)
     │   │   ├── synthesis.py          # masterSummary + seoDescription (hero from memory; fast tier) — now only when the hero rewrite is off or gave none
     │   │   ├── hero_rewrite.py       # The hero rewrite (HERO_REWRITE_ENABLED): one cache-reading LLM_EXTRACTION_MODEL call replaces synthesis; hero_job.py builds its request (cached blocks, job text, the evidence), hero_validate.py checks its answer (hero_text.py holds the prose readers), hero_compact.py renders the extraction it reads
-    │   │   ├── quiz_v2.py            # Quiz v2 (QUIZ_V2_ENABLED): LLM_MEMORY_MODEL (Haiku 5.5) from the transcript + key ideas; every question's quote checked
+    │   │   ├── quiz_v2.py            # Quiz v2 (QUIZ_V2_ENABLED): LLM_MEMORY_MODEL (Haiku 5.5) from the transcript + key ideas, one call per third in parallel; every question's quote checked
+    │   │   ├── quiz_v2_prompt.py     # Quiz v2's prompts: one per third holding a key idea (its quota, range, ideas, lines ± 30 s), else one over the whole video
+    │   │   ├── quiz_v2_ideas.py      # Quiz v2's key ideas: the dataSources per domain and their prompt lines
     │   │   ├── quiz_v2_parse.py      # Quiz v2's reply read question by question when its JSON envelope is broken (G2-1)
     │   │   ├── quiz_v2_select.py     # What ships: one question per third first, a key that tells by its length last; keys dealt evenly over the positions; the late refill's spare
     │   │   ├── quote_verify.py       # Is a quote in the transcript? The extraction pre-pass + the run's index (verified / unverified / translated); re-exports quote_index

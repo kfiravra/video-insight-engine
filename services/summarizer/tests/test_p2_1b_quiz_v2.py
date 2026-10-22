@@ -21,18 +21,12 @@ from src.config import settings
 from src.models.pipeline_types import EnrichmentData, PlanResult, QuizQuestion
 from src.services.llm import LLMService
 from src.services.llm_provider import LLMProvider
-from src.services.pipeline import quiz_v2
+from src.services.pipeline import quiz_v2_prompt
 from src.services.pipeline.assembly.normalizers import _normalize_quiz_question
 from src.services.pipeline.phases import enrichment as enrichment_phase
-from src.services.pipeline.quiz_v2 import (
-    KEY_IDEA_SOURCES,
-    NO_KEY_IDEAS,
-    QuizV2Request,
-    build_quiz_v2_prompt,
-    clip_quote,
-    enrich_quiz_v2,
-    key_idea_items,
-)
+from src.services.pipeline.quiz_v2 import QuizV2Request, clip_quote, enrich_quiz_v2
+from src.services.pipeline.quiz_v2_ideas import KEY_IDEA_SOURCES, NO_KEY_IDEAS, key_idea_items
+from src.services.pipeline.quiz_v2_prompt import build_quiz_v2_prompts
 from src.services.pipeline.quote_verify import QUOTE_TRANSLATED_KEY, QuoteIndex
 from src.shared_config.domain_config import data_source, quiz_enrichment
 from tests.replay.quiz_synth import quiz_v2_answer, transcript_lines
@@ -127,10 +121,15 @@ async def _quiz(
     return result, llm
 
 
+def _prompts(**overrides: Any) -> list[str]:
+    return [call.text for call in build_quiz_v2_prompts(_request(**overrides))]
+
+
 def _prompt(**overrides: Any) -> str:
-    prompt = build_quiz_v2_prompt(_request(**overrides))
-    assert prompt is not None
-    return prompt
+    """The first call's prompt: this file's key ideas (0:30, 4:00) sit in the first two
+    thirds of the 10-minute video, so it is written in two stretch calls (p3.0)."""
+    first, *_ = _prompts(**overrides)
+    return first
 
 
 # ─── The request ───
@@ -158,7 +157,7 @@ class _FakeProvider:
 
 
 class TestRequest:
-    async def test_should_send_one_uncached_user_message_to_haiku_when_the_quiz_runs(
+    async def test_should_send_each_call_as_one_uncached_user_message_to_haiku(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(settings, "LLM_MEMORY_MODEL", _HAIKU_55)
@@ -168,13 +167,12 @@ class TestRequest:
         with patch("src.services.llm_provider.acompletion", fake.acompletion):
             await enrich_quiz_v2(service, _request(), _index())
 
-        (request,) = fake.requests
-        assert (request["model"], [m["role"] for m in request["messages"]]) == (
-            _HAIKU_55,
-            ["user"],
-        )
-        assert isinstance(request["messages"][0]["content"], str)
-        assert "cache_control" not in json.dumps(request["messages"])
+        assert [(r["model"], [m["role"] for m in r["messages"]]) for r in fake.requests] == [
+            (_HAIKU_55, ["user"]),
+            (_HAIKU_55, ["user"]),
+        ]
+        assert all(isinstance(r["messages"][0]["content"], str) for r in fake.requests)
+        assert "cache_control" not in json.dumps([r["messages"] for r in fake.requests])
 
     async def test_should_call_stage_quiz_v2_on_the_fast_tier_with_one_retry_when_the_quiz_runs(
         self, monkeypatch: pytest.MonkeyPatch
@@ -205,7 +203,7 @@ class TestRequest:
         prompt = _prompt()
 
         order = [prompt.index(tag) for tag in ("<key_ideas>", "<transcript>", "<quiz_rules>")]
-        assert order == sorted(order) and _TRANSCRIPT in prompt
+        assert order == sorted(order) and _TRANSCRIPT.splitlines()[0] in prompt
 
     def test_should_render_each_key_idea_with_its_marker_and_reason(self) -> None:
         assert "- [0:30] Pay the card before investing — 24% beats 7%" in _prompt()
@@ -222,7 +220,7 @@ class TestRequest:
         assert result is None and not llm.await_count
 
     def test_should_build_no_prompt_when_the_transcript_is_empty(self) -> None:
-        assert build_quiz_v2_prompt(_request(transcript="  ")) is None
+        assert build_quiz_v2_prompts(_request(transcript="  ")) == []
 
 
 # ─── Count by duration ───
@@ -230,12 +228,14 @@ class TestRequest:
 
 class TestCount:
     @pytest.mark.parametrize(
-        ("duration_s", "asked"), [(_TEN_MIN, 5), (_THIRTY_MIN, 7), (_HOUR_PLUS, 10)]
+        ("duration_s", "asked"), [(_TEN_MIN, 7), (_THIRTY_MIN, 9), (_HOUR_PLUS, 12)]
     )
-    def test_should_ask_the_videos_count_plus_two_spares_when_the_length_is_known(
+    def test_should_ask_the_videos_count_plus_four_spares_across_the_calls_when_the_length_is_known(
         self, duration_s: int, asked: int
     ) -> None:
-        assert f"Questions to write: {asked}\n" in _prompt(duration_s=duration_s)
+        calls = build_quiz_v2_prompts(_request(duration_s=duration_s))
+
+        assert sum(call.asked for call in calls) == asked
 
     @pytest.mark.parametrize(("duration_s", "count"), [(_TEN_MIN, 3), (_THIRTY_MIN, 5)])
     async def test_should_ship_at_most_the_videos_count_when_spares_pass(
@@ -380,13 +380,19 @@ class TestKeyIdeaSources:
     def test_should_send_only_the_lines_near_key_ideas_when_the_transcript_is_over_budget(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(quiz_v2, "TRANSCRIPT_MAX_CHARS", 200)
-        monkeypatch.setattr(quiz_v2, "KEY_IDEA_WINDOW_S", 20)
+        monkeypatch.setattr(quiz_v2_prompt, "TRANSCRIPT_MAX_CHARS", 200)
+        monkeypatch.setattr(quiz_v2_prompt, "KEY_IDEA_WINDOW_S", 20)
 
-        sent = _prompt().split("<transcript>\n", 1)[1].split("\n</transcript>", 1)[0]
+        sent = [
+            line
+            for prompt in _prompts()
+            for line in prompt.split("<transcript>\n", 1)[1]
+            .split("\n</transcript>", 1)[0]
+            .splitlines()
+        ]
 
         near = [line for line in _TRANSCRIPT.splitlines() if line.startswith(("[0:30]", "[4:00]"))]
-        assert sent.splitlines() == near
+        assert sent == near
 
 
 # ─── The phase: flag on → v2, flag off → today's call ───

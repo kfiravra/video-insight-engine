@@ -1,11 +1,13 @@
 """Quiz v2 (output-quality 2.1b, D9 / D13) — every answer proved by the speaker's words.
 
-One call on ``LLM_MEMORY_MODEL`` (Haiku 5.5, stage ``quiz_v2``) reads the run's
-marked transcript and the key ideas (:data:`KEY_IDEA_SOURCES`) and writes the quiz:
+Calls on ``LLM_MEMORY_MODEL`` (Haiku 5.5, stage ``quiz_v2``) read the run's marked
+transcript and the key ideas (``quiz_v2_ideas.KEY_IDEA_SOURCES``) and write the quiz:
 3 / 5 / 8 questions by length (``quizPolicy``, :func:`enrichment.quiz_question_count`)
-plus :data:`SPARE_QUESTIONS` candidates, each with its answer's ``timestamp`` in
-seconds and a ≤ 25-word evidence ``quote``. Every question then passes the 2.0
-quote check (``quote_verify``) or is dropped:
+plus ``SPARE_QUESTIONS`` candidates, each with its answer's ``timestamp`` in seconds
+and a ≤ 25-word evidence ``quote``. With a known length and stamped key ideas it is one
+call per stretch (third) of the video that holds a key idea, in parallel, each reading
+only its third (``quiz_v2_prompt``, G2-4); otherwise one call over the whole video.
+Every question then passes the 2.0 quote check (``quote_verify``) or is dropped:
 
 - **verified** — the stamp is set from where the quote was found (segment-precise;
   the model's stamp is the marker of a ~25 s prompt line); a stamp that moves more
@@ -16,11 +18,14 @@ quote check (``quote_verify``) or is dropped:
   ``quoteTranslated`` and the page shows it as prose;
 - no quote — dropped.
 
-The reply is read item by item when its envelope is broken (``quiz_v2_parse``, G2-1);
-a reply in which no question parses is asked for once more — the stage's only second
-call. Of the checked questions the video's count is chosen one stretch (third) of the
-video first, a key that gives itself away by its length last, and the shipped keys
-are dealt evenly over the four positions (``quiz_v2_select``: G2-4, G2-5, G2-2).
+Each reply is read item by item when its envelope is broken (``quiz_v2_parse``, G2-1);
+a reply in which no question parses is asked for once more — that call's only second
+call. Every call shares one deadline, :data:`QUIZ_V2_TOTAL_TIMEOUT_S` from the stage's
+start: a call that fails or runs out of time loses only its own stretch. The calls'
+candidates merge by rank (every call's first, then every call's second …); of the
+checked ones the video's count is chosen one stretch first, a key that gives itself
+away by its length last, and the shipped keys are dealt evenly over the four positions
+(``quiz_v2_select``: G2-4, G2-5, G2-2).
 
 Fewer than :data:`MIN_QUIZ_V2_QUESTIONS` shipped → no quiz (no quiz tab). The checked
 questions not shipped travel on as ``EnrichmentData.spares``: once the hero rewrite
@@ -29,11 +34,11 @@ takeaway goes and a spare takes its place (:func:`restates_takeaway`,
 ``phases.enrichment.settle_late_quiz`` — p2 review D7).
 
 No prompt cache: memory sends its transcript without a breakpoint, so there is no
-shared prefix to read, and a breakpoint on this request alone pays its 1.25x write
-on every run to save only on the rare retry. On S01 (63 min) the whole request is
-≈ 21 K tokens in + ≈ 2 K out ≈ $0.003, the transcript ≈ $0.0015 of it (Haiku 5.5
-$0.10 / $0.50 per MTok); past :data:`TRANSCRIPT_MAX_CHARS` only the lines around the
-key ideas go, which keeps the prompt in the ≤ 100 K-token price tier.
+shared prefix to read, and the stretch calls share only the hero and the rules. On
+S01 (63 min) one call was ≈ 21 K tokens in + ≈ 2 K out ≈ $0.003 (Haiku 5.5 $0.10 /
+$0.50 per MTok); its three stretch calls read each third once (± 30 s) and the shared
+part three times, ≈ 26 K tokens in all (≈ +$0.0004); past ``TRANSCRIPT_MAX_CHARS`` only the
+lines around the key ideas go, which keeps every prompt in the ≤ 100 K-token price tier.
 
 Never raises: ``None`` means no quiz, as for the flag-off ``enrich_quiz``.
 """
@@ -46,24 +51,18 @@ import re
 import time
 from collections import Counter
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
-from pathlib import Path
+from itertools import chain, zip_longest
 from typing import TYPE_CHECKING, Any
 
 from ...config import settings
 from ...models.pipeline_types import EnrichmentData, QuizQuestion
-from ...shared_config.domain_config import data_source, quiz_enrichment
-from ...utils.language_utils import ENGLISH_OUTPUT_DIRECTIVE
 from ...utils.llm_retry import call_llm_with_retry
-from ..transcript.render import marker_seconds
 from .assembly.quiz_stamps import END_SLACK_S
-from .enrichment import EMPTY_HERO, _quiz_cap, parse_quiz, quiz_question_count
-from .memory import format_clock, truncate_words
-from .pipeline_helpers import sanitize_for_prompt
+from .enrichment import _quiz_cap, parse_quiz, quiz_question_count
 from .pipeline_timing import record_llm_failure
-from .prompt_builder import load_prompt_text
 from .quiz_v2_parse import quiz_items
-from .quiz_v2_select import select_quiz, shuffle_quiz, stretch_bounds
+from .quiz_v2_prompt import QuizV2Prompt, QuizV2Request, build_quiz_v2_prompts
+from .quiz_v2_select import select_quiz, shuffle_quiz
 from .quote_verify import TRANSLATED, VERIFIED, QuoteIndex, verify_quote
 
 if TYPE_CHECKING:
@@ -71,13 +70,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-PROMPT_PATH = Path(__file__).parent.parent.parent / "prompts" / "quiz_v2.txt"
-
 QUIZ_V2_STAGE = "quiz_v2"
-# Extra candidates past the video's count: a dropped question must not take a
-# short video's quiz (3) below the minimum, and the choice per stretch / past a
-# length tell needs room (``quiz_v2_select``). Never shipped beyond the count.
-SPARE_QUESTIONS = 2
 MIN_QUIZ_V2_QUESTIONS = 3
 QUOTE_MAX_WORDS = 25
 # A verified quote's location this far from the model's stamp moves the stamp (logged).
@@ -85,34 +78,11 @@ STAMP_AGREEMENT_S = 30
 # Up to 10 questions with a quote each run ~2 K tokens; a cut-off JSON loses all.
 QUIZ_V2_MAX_TOKENS = 4096
 # Haiku 5.5 answered memory's 17.5 K-in / 1.3 K-out in ~7 s: 18 s per attempt,
-# one retry after the 1 s backoff, the whole stage bounded.
+# one retry after the 1 s backoff, the whole stage (every call) bounded.
 QUIZ_V2_ATTEMPT_TIMEOUT_S = 18.0
 QUIZ_V2_TOTAL_TIMEOUT_S = 37.0
 QUIZ_V2_MAX_RETRIES = 1
-# ≈ 80 K Haiku 5.5 tokens (≈ 3 chars / token on S01's memory call): five hours of talk.
-TRANSCRIPT_MAX_CHARS = 240_000
-# Past the budget, the transcript lines this close to a key idea's stamp.
-KEY_IDEA_WINDOW_S = 90
-KEY_IDEA_TEXT_MAX_CHARS = 300
-TITLE_MAX_CHARS = 200
-NO_KEY_IDEAS = "Not available — test the claims the transcript argues."
 
-# Where a domain's key ideas live: registered dataSources, the first non-empty one
-# wins. learning.keyIdeas (D10) first everywhere — talks, lectures, podcasts and
-# tech explainers all carry it; then each quiz domain's nearest equivalent.
-KEY_IDEA_SOURCES: dict[str, tuple[str, ...]] = {
-    "learning": ("learning.keyIdeas", "learning.keyPoints", "learning.takeaways"),
-    "science": ("learning.keyIdeas", "science.keyFacts", "science.concepts"),
-    "tech": ("learning.keyIdeas", "tech.topics", "tech.patterns"),
-    "language": ("learning.keyIdeas", "language.rules", "language.phrases"),
-    "podcast": ("learning.keyIdeas", "podcast.claims", "podcast.qa"),
-    "news": ("learning.keyIdeas", "news.claims", "news.storyTimeline"),
-}
-_DEFAULT_SOURCES = ("learning.keyIdeas",)
-# An item's line: its statement, the reason / detail behind it, and its stamp.
-_MAIN_KEYS = ("claim", "title", "name", "label", "phrase", "question", "text", "statement")
-_DETAIL_KEYS = ("why", "detail", "description", "definition", "explanation", "answer")
-_STAMP_KEYS = ("timestamp", "seconds", "startSeconds")
 
 # A keyed option restates a takeaway when this share of its content words is in it —
 # the moment-anchor rule's share (``assembly.sampling``) — and at least this many of
@@ -130,158 +100,6 @@ _STOPWORDS = frozenset(
     "have has had how what why when where which who while also all any some such only own same "
     "other new now out up down off".split()
 )
-
-
-@dataclass(frozen=True)
-class QuizV2Request:
-    """What the call reads; ``transcript`` is the run's ``[m:ss]``-marked prompt transcript."""
-
-    primary_tag: str
-    title: str
-    duration_s: float | None
-    transcript: str
-    extraction: Mapping[str, Any]
-    hero: str = ""
-
-
-# ─── Key ideas ───
-
-
-def _resolve(extraction: Mapping[str, Any], source: str) -> object:
-    """The extraction value at a registered dataSource (``domain`` + dotted ``field``)."""
-    spec = data_source(source)
-    if spec is None:
-        return None
-    node: object = extraction.get(spec["domain"])
-    for key in spec["field"].split("."):
-        node = node.get(key) if isinstance(node, Mapping) else None
-    return node
-
-
-def key_idea_items(primary_tag: str, extraction: Mapping[str, Any]) -> list[object]:
-    """The first non-empty key-idea list of the domain's sources; ``[]`` when none."""
-    for source in KEY_IDEA_SOURCES.get(primary_tag, _DEFAULT_SOURCES):
-        items = _resolve(extraction, source)
-        if isinstance(items, list) and items:
-            return items
-    return []
-
-
-def _first_text(item: Mapping[str, Any], keys: Sequence[str], skip: str = "") -> str:
-    for key in keys:
-        value = item.get(key)
-        if isinstance(value, str) and value.strip() and value.strip() != skip:
-            return value.strip()
-    return ""
-
-
-def _item_seconds(item: object) -> int | None:
-    if not isinstance(item, Mapping):
-        return None
-    for key in _STAMP_KEYS:
-        value = item.get(key)
-        if isinstance(value, int | float) and not isinstance(value, bool) and value >= 0:
-            return int(value)
-    return None
-
-
-def _clip(text: str) -> str:
-    return truncate_words(sanitize_for_prompt(text, len(text)), KEY_IDEA_TEXT_MAX_CHARS)
-
-
-def _item_parts(item: object) -> tuple[str, str, str]:
-    """(statement, detail, speaker) of a key-idea item; a plain string is its statement."""
-    if isinstance(item, str):
-        return item.strip(), "", ""
-    if not isinstance(item, Mapping):
-        return "", "", ""
-    main = _first_text(item, _MAIN_KEYS)
-    return main, _first_text(item, _DETAIL_KEYS, skip=main), _first_text(item, ("speaker",))
-
-
-def _item_line(item: object) -> str:
-    """``- [m:ss] (speaker) statement — detail``; ``""`` for an item with no statement."""
-    main, detail, speaker = _item_parts(item)
-    if not main:
-        return ""
-    text = _clip(main) + (f" — {_clip(detail)}" if detail else "")
-    if speaker:
-        text = f"({_clip(speaker)}) {text}"
-    seconds = _item_seconds(item)
-    return f"- [{format_clock(seconds)}] {text}" if seconds is not None else f"- {text}"
-
-
-def render_key_ideas(items: Sequence[object]) -> str:
-    lines = [line for line in (_item_line(item) for item in items) if line]
-    return "\n".join(lines) or NO_KEY_IDEAS
-
-
-# ─── Transcript ───
-
-
-def _near_a_key_idea(line: str, stamps: Sequence[int]) -> bool:
-    seconds = marker_seconds(line[:12])
-    return bool(seconds) and any(abs(seconds[0] - s) <= KEY_IDEA_WINDOW_S for s in stamps)
-
-
-def fit_transcript(transcript: str, items: Sequence[object]) -> str:
-    """The whole transcript within budget; past it, the lines around the key ideas."""
-    if len(transcript) <= TRANSCRIPT_MAX_CHARS:
-        return transcript
-    stamps = [s for s in (_item_seconds(item) for item in items) if s is not None]
-    lines = [line for line in transcript.splitlines() if _near_a_key_idea(line, stamps)]
-    logger.info(
-        "Quiz v2: transcript of %d chars over budget; %d lines around %d key ideas",
-        len(transcript), len(lines), len(stamps),
-    )  # fmt: skip
-    return "\n".join(lines or transcript.splitlines())[:TRANSCRIPT_MAX_CHARS]
-
-
-# ─── Prompt ───
-
-
-def asked_count(duration_s: float | None) -> int:
-    """Questions the call is asked for: the video's count plus the spares."""
-    return quiz_question_count(duration_s, _quiz_cap()) + SPARE_QUESTIONS
-
-
-def _stretches_line(duration_s: float | None) -> str:
-    """The stretches the questions spread over (``quiz_v2_select``); "" without a length."""
-    bounds = stretch_bounds(duration_s)
-    spans = " · ".join(f"{format_clock(start)}–{format_clock(end)}" for start, end in bounds)
-    return f"Stretches: {spans}\n" if spans else ""
-
-
-def _task_block(request: QuizV2Request, flavor: str) -> str:
-    seconds = request.duration_s if request.duration_s and request.duration_s > 0 else None
-    length = f"0:00–{format_clock(int(seconds))}" if seconds else "its whole length"
-    title = sanitize_for_prompt(request.title or "Untitled", TITLE_MAX_CHARS)
-    return (
-        f"<task>\nVideo: {title}\nFocus: {flavor}\n"
-        f"Questions to write: {asked_count(request.duration_s)}\n"
-        f"Every timestamp lies inside the video ({length}).\n"
-        f"{_stretches_line(request.duration_s)}</task>"
-    )
-
-
-def build_quiz_v2_prompt(request: QuizV2Request) -> str | None:
-    """Data first (task, hero, key ideas, transcript), the rules last; ``None`` when the
-    domain has no flavor line or the run has no transcript to quote."""
-    flavor = quiz_enrichment()["flavor"].get(request.primary_tag)
-    if not flavor or not request.transcript.strip():
-        return None
-    items = key_idea_items(request.primary_tag, request.extraction)
-    transcript = fit_transcript(request.transcript, items)
-    return "\n\n".join(
-        (
-            ENGLISH_OUTPUT_DIRECTIVE,
-            _task_block(request, flavor),
-            f"<hero>\n{request.hero or EMPTY_HERO}\n</hero>",
-            f"<key_ideas>\n{render_key_ideas(items)}\n</key_ideas>",
-            f"<transcript>\n{sanitize_for_prompt(transcript, len(transcript))}\n</transcript>",
-            load_prompt_text(PROMPT_PATH).strip(),
-        )
-    )
 
 
 # ─── The quote check ───
@@ -390,13 +208,14 @@ def restates_the_hero(question: Mapping[str, Any], takeaways: Sequence[str]) -> 
 # ─── Stage ───
 
 
-async def _call_quiz_v2_llm(llm_service: LLMService, prompt: str) -> str | None:
-    """The reply, bounded by the stage deadline (recorded here: the deadline cancels the
-    attempt in flight, so neither the provider nor the retry wrapper sees it)."""
+async def _call_quiz_v2_llm(llm_service: LLMService, prompt: str, deadline: float) -> str | None:
+    """The reply, bounded by the stage's shared ``deadline`` (loop time; recorded here: the
+    deadline cancels the attempt in flight, so neither the provider nor the retry wrapper
+    sees it)."""
     model = settings.get_stage_model(QUIZ_V2_STAGE)
     started = time.monotonic()
     try:
-        async with asyncio.timeout(QUIZ_V2_TOTAL_TIMEOUT_S):
+        async with asyncio.timeout_at(deadline):
             return await call_llm_with_retry(
                 llm_service,
                 prompt,
@@ -419,34 +238,82 @@ async def _call_quiz_v2_llm(llm_service: LLMService, prompt: str) -> str | None:
         raise
 
 
-def _candidates(raw: str, request: QuizV2Request) -> list[QuizQuestion]:
-    return parse_quiz(quiz_items(raw), asked_count(request.duration_s), request.duration_s)
+def _candidates(raw: str, call: QuizV2Prompt, duration_s: float | None) -> list[QuizQuestion]:
+    return parse_quiz(quiz_items(raw), call.asked, duration_s)
 
 
 async def _reply_candidates(
-    llm_service: LLMService, request: QuizV2Request, prompt: str
+    llm_service: LLMService, call: QuizV2Prompt, duration_s: float | None, deadline: float
 ) -> list[QuizQuestion] | None:
     """The reply's valid questions; ``None`` when the call failed. A reply in which no
     question parses is asked for once more (G2-1) — never a third time."""
-    raw = await _call_quiz_v2_llm(llm_service, prompt)
+    raw = await _call_quiz_v2_llm(llm_service, call.text, deadline)
     if not raw:
         return None
-    candidates = _candidates(raw, request)
+    candidates = _candidates(raw, call, duration_s)
     if candidates:
         return candidates
     logger.warning("Quiz v2: no question parsed from a %d-char reply; asking once more", len(raw))
-    raw = await _call_quiz_v2_llm(llm_service, prompt)
+    raw = await _call_quiz_v2_llm(llm_service, call.text, deadline)
     if not raw:
         return None
-    candidates = _candidates(raw, request)
+    candidates = _candidates(raw, call, duration_s)
     logger.info("Quiz v2: the second reply parsed %d question(s)", len(candidates))
     return candidates
 
 
+async def _call_candidates(
+    llm_service: LLMService, call: QuizV2Prompt, duration_s: float | None, deadline: float
+) -> list[QuizQuestion] | None:
+    """One call's candidates; a call that runs out of time loses only its own stretch."""
+    try:
+        return await _reply_candidates(llm_service, call, duration_s, deadline)
+    except TimeoutError:
+        logger.warning(
+            "Quiz v2: a %d-question call got no answer within %.0f s",
+            call.asked, QUIZ_V2_TOTAL_TIMEOUT_S,
+        )  # fmt: skip
+        return None
+
+
+def merge_by_rank(replies: Sequence[Sequence[QuizQuestion]]) -> list[QuizQuestion]:
+    """Every reply's first candidate, then every reply's second, …; a question two calls
+    both wrote is kept once."""
+    merged: list[QuizQuestion] = []
+    seen: set[str] = set()
+    for question in chain.from_iterable(zip_longest(*replies)):
+        if question is None or question.question.casefold() in seen:
+            continue
+        seen.add(question.question.casefold())
+        merged.append(question)
+    return merged
+
+
+async def _all_candidates(
+    llm_service: LLMService, calls: Sequence[QuizV2Prompt], duration_s: float | None
+) -> list[QuizQuestion] | None:
+    """Every call at once under one deadline, merged by rank; ``None`` when none answered."""
+    deadline = asyncio.get_running_loop().time() + QUIZ_V2_TOTAL_TIMEOUT_S
+    replies = await asyncio.gather(
+        *(_call_candidates(llm_service, call, duration_s, deadline) for call in calls)
+    )
+    answered = [reply for reply in replies if reply is not None]
+    if len(calls) > 1:
+        counts = " / ".join("-" if reply is None else str(len(reply)) for reply in replies)
+        logger.info(
+            "Quiz v2: %d of %d stretch calls answered (candidates %s)",
+            len(answered), len(calls), counts,
+        )  # fmt: skip
+    return merge_by_rank(answered) if answered else None
+
+
 async def _run(
-    llm_service: LLMService, request: QuizV2Request, prompt: str, index: QuoteIndex
+    llm_service: LLMService,
+    request: QuizV2Request,
+    calls: Sequence[QuizV2Prompt],
+    index: QuoteIndex,
 ) -> EnrichmentData | None:
-    candidates = await _reply_candidates(llm_service, request, prompt)
+    candidates = await _all_candidates(llm_service, calls, request.duration_s)
     if candidates is None:
         logger.warning("Quiz v2 LLM call failed after retries for %s", request.primary_tag)
         return None
@@ -467,21 +334,19 @@ async def enrich_quiz_v2(
     """The checked quiz (3 to the video's count of questions); ``None`` on any failure.
 
     ``index`` is the run's quote index (``run_quote_index``): without one no quote can
-    be checked, so no call is made. Each call is bounded by ``QUIZ_V2_TOTAL_TIMEOUT_S``
-    (a second one only after a reply with no question in it); never raises.
+    be checked, so no call is made. Every call — one per stretch, or the one call, and
+    each one's second call after a reply with no question in it — ends by
+    ``QUIZ_V2_TOTAL_TIMEOUT_S`` after the stage starts; never raises.
     """
     if index is None:
         logger.info("Quiz v2: no timed transcript to check quotes against; no quiz")
         return None
     try:
-        prompt = build_quiz_v2_prompt(request)
-        if prompt is None:
+        calls = build_quiz_v2_prompts(request)
+        if not calls:
             logger.info("Quiz v2: no flavor line or no transcript for %r", request.primary_tag)
             return None
-        return await _run(llm_service, request, prompt, index)
-    except TimeoutError:
-        logger.warning("Quiz v2: no answer within %.0f s; no quiz", QUIZ_V2_TOTAL_TIMEOUT_S)
-        return None
+        return await _run(llm_service, request, calls, index)
     except Exception:  # noqa: BLE001 — the quiz is optional; a bug here must not fail the run
         logger.exception("Quiz v2 stage crashed; continuing without a quiz")
         return None
