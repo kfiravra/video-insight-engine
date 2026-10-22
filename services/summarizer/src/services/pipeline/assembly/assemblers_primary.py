@@ -10,7 +10,6 @@ Returning None means the tab should be dropped (no data).
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
 from src.services.pipeline.quote_verify import mark_translated_quote
@@ -200,14 +199,36 @@ def _is_real_comparison_pair(row: dict) -> bool:
 # audited "comparison with one row" failure mode — fall through to None so
 # the caller can route the data into info_grid / flash_deck instead.
 _MIN_COMPARISON_ROWS = 2
-# A competitor is "named" in its cell when one of its identifying words (≥ this
-# long — skips "vs", "II" — and not a filler word) appears there as a whole
-# word, any case; a name with no such word ("LG", "Mi 11", "Mini Pro") must
-# appear whole. Otherwise the cell is prefixed.
-_COMPETITOR_WORD_MIN = 3
-# Words that ride along in product names without saying whose a cell is: "the"
-# of "The Galaxy S24" and "Pro" of "iPhone 15 Pro" match cells about any product.
-_COMPETITOR_FILLER = frozenset({"the", "and", "pro", "max", "plus", "mini", "ultra", "lite", "new"})
+# The review block a comparison tab reads its pros / cons from when planned on any
+# of its paths (``review.comparisons``, ``review.pros`` …) — a side read
+# (``field_requests._REVIEW_COMPARISON``).
+_REVIEW_DOMAIN = "review"
+# A review plan with a rows tab and a Pros & cons tab ships each half once (4.3): the
+# rows on the rows tab, the pros and cons on the other — whatever the tab order, so the
+# dedupe never drops one as the other's twin. Assembly hands every planned tab the
+# plan's comparison sources under this key (``planned_comparison_sources``).
+PLANNED_COMPARISONS_KEY = "_plannedComparisons"
+_ROWS_SOURCE = "review.comparisons"
+_PROS_CONS_SOURCES = frozenset({_REVIEW_DOMAIN, "review.pros", "review.cons"})
+_COMPARISON_COMPONENTS = frozenset({"comparison", "comparison_radar"})
+
+
+def planned_comparison_sources(tabs: Any) -> frozenset[str]:
+    """The dataSources of the plan's comparison tabs."""
+    planned = tabs if isinstance(tabs, list) else []
+    return frozenset(
+        str(t.get("dataSource") or "")
+        for t in planned
+        if isinstance(t, dict) and t.get("component") in _COMPARISON_COMPONENTS
+    )
+
+
+def _halves_elsewhere(tab: dict) -> tuple[bool, bool]:
+    """(the rows ride another planned tab, the pros / cons ride another planned tab)."""
+    planned = tab.get(PLANNED_COMPARISONS_KEY) or frozenset()
+    source = str(tab.get("dataSource") or "")
+    rows_elsewhere = source in _PROS_CONS_SOURCES and _ROWS_SOURCE in planned
+    return rows_elsewhere, source == _ROWS_SOURCE and bool(planned & _PROS_CONS_SOURCES)
 
 
 def _competitor_names(rows: list[dict]) -> list[str]:
@@ -222,49 +243,46 @@ def _competitor_names(rows: list[dict]) -> list[str]:
     return names
 
 
-def _competitor_patterns(name: str) -> list[str]:
-    """What identifies the competitor in a cell: its long non-filler words, else
-    its whole name."""
-    words = re.findall(r"\w+", name)
-    identifying = [
-        re.escape(w)
-        for w in words
-        if len(w) >= _COMPETITOR_WORD_MIN and w.casefold() not in _COMPETITOR_FILLER
-    ]
-    if identifying or not words:
-        return identifying
-    return [r"\W+".join(re.escape(w) for w in words)]
+def _comparison_rows(data: Any) -> list[dict]:
+    """The real pairs a comparison ships: a review dict's ``comparisons`` or a row
+    list's feature rows, each with a feature and both sides."""
+    if isinstance(data, dict):
+        raw = data.get("comparisons") or []
+        rows = [_normalize_comparison(c) for c in raw if isinstance(c, dict)]
+    elif isinstance(data, list):
+        rows = [
+            _normalize_comparison(item)
+            for item in data
+            if isinstance(item, dict)
+            and "feature" in item
+            and ("thisProduct" in item or "competitor" in item)
+        ]
+    else:
+        rows = []
+    return [r for r in rows if str(r.get("feature") or "").strip() and _is_real_comparison_pair(r)]
 
 
-def _cell_names_competitor(cell: str, name: str) -> bool:
-    """Whether the cell already says whose it is (whole words, any case).
+def _stated_lines(value: Any) -> list[str]:
+    """The non-blank strings of a pros / cons list, in order."""
+    if not isinstance(value, list):
+        return []
+    return [line for line in value if isinstance(line, str) and line.strip()]
 
-    A name with no word characters has nothing to look for, so it never
-    prefixes a cell.
+
+def _pros_cons(tab: dict, data: Any, review_data: Any) -> tuple[list[str], list[str]]:
+    """The reviewer's own pros and cons — never derived from a row's `winner` (0b.9).
+
+    A tab planned on the review block itself reads its lists; a tab planned on any
+    other review path (``review.comparisons``, ``review.pros``) reads the review
+    block's (4.3: S07 planned ``review.comparisons`` and shipped none of its 14 pros
+    and 7 cons; a tab on ``review.pros`` shipped nothing at all).
     """
-    patterns = _competitor_patterns(name)
-    if not patterns:
-        return True
-    return any(re.search(rf"\b{p}\b", cell, re.IGNORECASE) for p in patterns)
-
-
-def _name_competitor_cells(rows: list[dict], names: list[str]) -> list[dict]:
-    """With several competitors, each competitor cell says whose it is.
-
-    The two-column renderer heads the right column with every competitor, so
-    a cell that does not mention its own competitor is prefixed with the
-    extraction's `competitorName` (never a label the assembler made up).
-    """
-    if len(names) < 2:
-        return rows
-    named: list[dict] = []
-    for row in rows:
-        name = str(row.get("competitorName") or "").strip()
-        cell = row.get("competitor")
-        if name and isinstance(cell, str) and not _cell_names_competitor(cell, name):
-            row = {**row, "competitor": f"{name} — {cell}"}
-        named.append(row)
-    return named
+    source = data if isinstance(data, dict) else None
+    if source is None and str(tab.get("dataSource") or "").split(".")[0] == _REVIEW_DOMAIN:
+        source = review_data if isinstance(review_data, dict) else None
+    if source is None:
+        return [], []
+    return _stated_lines(source.get("pros")), _stated_lines(source.get("cons"))
 
 
 def assemble_comparison(
@@ -275,42 +293,27 @@ def assemble_comparison(
 ) -> dict | None:
     """Build comparison props with strict pair requirements.
 
-    Requires at least 2 rows where BOTH sides have content — otherwise the
-    output is the audited "video title as column header / empty third column"
-    failure mode. When the LLM produced single-sided items (concepts with no
-    competitor), this routes through to None so the data can flow into
-    info_grid or flash_deck via the fallback layer instead.
+    Requires at least 2 rows where BOTH sides have content, or the reviewer's own
+    pros / cons — otherwise the output is the audited "video title as column header
+    / empty third column" failure mode, and the data flows into info_grid or
+    flash_deck via the fallback layer instead.
 
-    The leftLabel/rightLabel are only set when the data is actually a product
-    review with an explicit competitor — never from the video title. The right
-    column keeps one name per competitor, and pros/cons come only from the
-    review's own `pros`/`cons` — never derived from `winner` (0b.9, R10).
+    The leftLabel is only set from the review's product — never from the video
+    title. Each row keeps its `competitorName`, which heads that competitor's own
+    table (4.3, Q5); `rightLabel` names the competitor only when the rows name one.
+    Pros/cons come only from the review's own `pros` / `cons` (``_pros_cons``); a plan
+    with both a rows tab and a Pros & cons tab ships each half once (``_halves_elsewhere``).
     """
-    review_data = extraction.get("review") if isinstance(extraction, dict) else None
+    review_data = extraction.get(_REVIEW_DOMAIN) if isinstance(extraction, dict) else None
     product_name: str | None = None
     if isinstance(review_data, dict):
         candidate = review_data.get("product")
         if isinstance(candidate, str) and candidate.strip():
             product_name = candidate.strip()
 
-    pros: list[str] = []
-    cons: list[str] = []
-    rows: list[dict] = []
-
-    if isinstance(data, dict):
-        pros = list(data.get("pros") or [])
-        cons = list(data.get("cons") or [])
-        raw_rows = data.get("comparisons") or []
-        rows = [_normalize_comparison(c) for c in raw_rows if isinstance(c, dict)]
-    elif isinstance(data, list):
-        for item in data:
-            if not isinstance(item, dict):
-                continue
-            if "feature" in item and ("thisProduct" in item or "competitor" in item):
-                rows.append(_normalize_comparison(item))
-
-    rows = [r for r in rows if str(r.get("feature") or "").strip() and _is_real_comparison_pair(r)]
-
+    rows_elsewhere, pros_cons_elsewhere = _halves_elsewhere(tab)
+    rows = [] if rows_elsewhere else _comparison_rows(data)
+    pros, cons = ([], []) if pros_cons_elsewhere else _pros_cons(tab, data, review_data)
     # Enforce the documented contract: a comparison tab needs either ≥2 real
     # pairs OR a populated pros/cons set. A lone row with no pros/cons is the
     # "info_grid in disguise" failure mode the refactor was supposed to close.
@@ -318,19 +321,18 @@ def assemble_comparison(
         return None
 
     names = _competitor_names(rows)
-
     props: dict[str, Any] = {
         "pros": pros,
         "cons": cons,
-        "comparisons": _name_competitor_cells(rows, names),
+        "comparisons": rows,
         "leftLabel": product_name or "",
-        "rightLabel": " · ".join(names),
+        "rightLabel": names[0] if len(names) == 1 else "",
     }
 
     # Verdict header data is folded into ComparisonInteractive — when the
-    # review extraction includes a verdict block, attach it so ReviewSummary
-    # renders above the table. Standalone VerdictInteractive was retired in
-    # the video-to-action overhaul; the comparison renderer absorbs its role.
+    # review extraction includes a verdict block, attach it (the web lifts it
+    # into the hero on a review, 4.3). Standalone VerdictInteractive was retired
+    # in the video-to-action overhaul; the comparison renderer absorbs its role.
     if isinstance(review_data, dict):
         verdict = review_data.get("verdict")
         if isinstance(verdict, dict) and verdict.get("bottomLine"):

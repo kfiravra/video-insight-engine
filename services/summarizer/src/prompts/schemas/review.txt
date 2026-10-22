@@ -38,8 +38,8 @@ Extract a structured product review or comparison.
 > UI: Comparisons → ComparisonInteractive table. Fill feature + thisProduct + competitor + competitorName for each row.
   "verdict": {
     "badge": "recommended | not_recommended | conditional | best_in_class",
-    "bestFor": ["Specific use cases this product excels at"],
-    "notFor": ["Specific use cases to avoid this product"],
+    "bestFor": ["Who or what the reviewer says it is for, as stated"],
+    "notFor": ["Who the reviewer says should skip it, as stated"],
     "bottomLine": "One-sentence verdict",
     "subScores": [
       {"category": "Camera", "score": null, "quote": null, "timestamp": null},
@@ -48,7 +48,7 @@ Extract a structured product review or comparison.
     "quote": "The reviewer's words that state the verdict, verbatim, at most 25 words — or null",
     "timestamp": null
   }
-> VERDICT: timestamp = the second the reviewer states the verdict, quote = the words that state it — the badge is shown only with both; a badge the reviewer never states stays null. subScores only as the reviewer scores them, each with its timestamp and quote.
+> VERDICT: timestamp = the second the reviewer states the verdict, quote = the words that state it — the badge is shown only with both; a badge the reviewer never states stays null. subScores only as the reviewer scores them, each with its timestamp and quote. bestFor / notFor only when the reviewer states them — none stated, [].
 }
 
 // Example for a phone review:

@@ -28,8 +28,9 @@ from src.utils.data_helpers import is_empty_data
 
 from .assemblers_learning import assemble_display_section
 from .assemblers_overhaul import _normalize_filmstrip_frame
+from .assemblers_primary import PLANNED_COMPARISONS_KEY, planned_comparison_sources
 from .attachments import attach_response_secondaries
-from .component_lists import COMPONENT_LIST_KEYS, SEQUENTIAL_COMPONENTS
+from .component_lists import COMPONENT_LIST_KEYS, SEQUENTIAL_COMPONENTS, item_list_keys
 from .cross_tab import resolve_cross_tab_links
 from .dedupe import _ITEM_TEXT_KEYS as _ITEM_TEXT_KEYS
 from .dedupe import DUPLICATE_ITEMS as DUPLICATE_ITEMS
@@ -841,23 +842,22 @@ _COMPONENT_REQUIRED_LISTS: dict[str, str] = COMPONENT_LIST_KEYS
 def _validate_assembled_props(component: str, props: dict) -> bool:
     """Validate assembled props — return False if the tab should be dropped.
 
-    Only enforces the required list (must be non-empty). Per-component density
+    Only enforces the required list (must be non-empty) — for a comparison any of
+    its rows, pros and cons (``component_lists.item_list_keys``, 4.3: a review's
+    Pros & cons tab on ``review.pros`` ships no rows). Per-component density
     minimums live inside the individual assemblers (e.g. spot_explorer's
     `_MIN_SPOTS`, comparison's real-pair check) so we can keep their thresholds
     co-located with their normalization logic.
     """
-    required_key = _COMPONENT_REQUIRED_LISTS.get(component)
-    if required_key is None:
+    keys = item_list_keys(component)
+    if not keys or any(isinstance(props.get(key), list) and props[key] for key in keys):
         return True
-    data_list = props.get(required_key)
-    if not isinstance(data_list, list) or len(data_list) == 0:
-        logger.warning(
-            "Validation: component=%r has empty required list %r — dropping tab",
-            component,
-            required_key,
-        )
-        return False
-    return True
+    logger.warning(
+        "Validation: component=%r has empty required list %r — dropping tab",
+        component,
+        " / ".join(keys),
+    )
+    return False
 
 
 # Per-component user-facing item caps. Long videos otherwise produce
@@ -1609,6 +1609,8 @@ def assemble_response(
     # Tab id → the item count a host ships once its folded grids joined it (R6):
     # the post-process cap keeps it, so folded rows never cut the host's own.
     fold_caps: dict[str, int] = {}
+    # A review's rows and its pros / cons each ship on one planned tab (4.3).
+    comparisons = planned_comparison_sources(raw_tabs)
 
     for raw_tab in raw_tabs:
         if not isinstance(raw_tab, dict):
@@ -1703,6 +1705,7 @@ def assemble_response(
             "_primary_tag": primary_tag,
             "_synthesis": synthesis,
             "_video_meta": video_meta,
+            PLANNED_COMPARISONS_KEY: comparisons,
         }
 
         drop_reason: str | None = None

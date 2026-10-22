@@ -1,7 +1,7 @@
 """output-quality 0b.9 — food/project steps never promote to the canvas (D8: S06
-ships step_player, Cooking mode); a comparison keeps one name per competitor,
-derives no pros/cons from `winner`, and becomes a radar only on numeric axes
-(R10, R12; component-audit §2 #3, #11)."""
+ships step_player, Cooking mode); a comparison keeps each row's competitor (one
+table per competitor on the web since 4.3), derives no pros/cons from `winner`,
+and becomes a radar only on numeric axes (R10, R12; component-audit §2 #3, #11)."""
 
 import pytest
 
@@ -118,13 +118,13 @@ class TestStepsStayAListForFollowAlongDomains:
 
 
 class TestComparisonKeepsEveryCompetitor:
-    def test_should_head_the_right_column_with_every_named_competitor(self):
+    """Each competitor heads its own table on the web (4.3, Q5): rows keep their
+    `competitorName` and their cells as extracted; no joined right column."""
+
+    def test_should_leave_the_right_label_empty_when_the_rows_name_several_competitors(self):
         out = assemble_comparison({}, S07_ROWS, {"review": {"product": "AirPods Pro 2"}}, None)
 
-        assert out["rightLabel"] == (
-            "Sony WF-1000XM4 · Bose QuietComfort Earbuds II · Bose, Samsung Buds, Pixel Buds"
-            " · Samsung Buds, Pixel Buds"
-        )
+        assert out["rightLabel"] == ""
 
     def test_should_keep_the_competitor_name_on_every_row(self):
         out = assemble_comparison({}, S07_ROWS, {}, None)
@@ -133,19 +133,21 @@ class TestComparisonKeepsEveryCompetitor:
             r["competitorName"] for r in S07_ROWS
         ]
 
-    def test_should_name_the_competitor_in_a_cell_that_does_not_mention_it(self):
+    def test_should_keep_every_competitor_cell_as_extracted_when_several_are_named(self):
         out = assemble_comparison({}, S07_ROWS, {}, None)
 
-        assert out["comparisons"][1]["competitor"] == (
-            "Bose QuietComfort Earbuds II — ranked just above the AirPods Pro 2"
-        )
+        assert [r["competitor"] for r in out["comparisons"]] == [r["competitor"] for r in S07_ROWS]
 
-    def test_should_leave_a_cell_that_already_names_its_competitor(self):
-        out = assemble_comparison({}, S07_ROWS, {}, None)
+    @pytest.mark.parametrize(
+        ("name", "cell"),
+        [("Bose QC", "Boses are louder"), ("LG", "worse contrast"), ("iPhone 15 Pro", "Pro-grade")],
+    )
+    def test_should_not_prefix_a_cell_with_its_competitor_name(self, name: str, cell: str):
+        out = assemble_comparison({}, _two_competitors(cell, name), {}, None)
 
-        assert out["comparisons"][2]["competitor"] == S07_ROWS[2]["competitor"]
+        assert out["comparisons"][0]["competitor"] == cell
 
-    def test_should_not_prefix_cells_when_there_is_a_single_competitor(self):
+    def test_should_name_the_single_competitor_in_the_right_label(self):
         rows = [
             {"feature": "Battery", "thisProduct": "6 h", "competitor": "8 h"},
             {"feature": "Price", "thisProduct": "$249", "competitor": "$279"},
@@ -155,56 +157,7 @@ class TestComparisonKeepsEveryCompetitor:
 
         out = assemble_comparison({}, rows, {}, None)
 
-        assert out["rightLabel"] == "X1"
-        assert out["comparisons"][0]["competitor"] == "8 h"
-
-    def test_should_name_the_competitor_when_its_word_is_only_inside_another(self):
-        out = assemble_comparison({}, _two_competitors("Boses are louder", "Bose QC"), {}, None)
-
-        assert out["comparisons"][0]["competitor"] == "Bose QC — Boses are louder"
-
-    def test_should_name_a_short_word_competitor_its_cell_does_not_mention(self):
-        out = assemble_comparison({}, _two_competitors("worse contrast", "LG"), {}, None)
-
-        assert out["comparisons"][0]["competitor"] == "LG — worse contrast"
-
-    def test_should_leave_a_cell_that_names_a_short_word_competitor(self):
-        out = assemble_comparison({}, _two_competitors("LG has worse contrast", "LG"), {}, None)
-
-        assert out["comparisons"][0]["competitor"] == "LG has worse contrast"
-
-    @pytest.mark.parametrize(
-        ("name", "cell"),
-        [
-            ("The Galaxy S24", "The best screen of the lot"),
-            ("iPhone 15 Pro", "Pro-grade video, but heavier"),
-        ],
-    )
-    def test_should_name_the_competitor_when_only_a_filler_word_matches(self, name: str, cell: str):
-        out = assemble_comparison({}, _two_competitors(cell, name), {}, None)
-
-        assert out["comparisons"][0]["competitor"] == f"{name} — {cell}"
-
-    @pytest.mark.parametrize(
-        ("name", "cell"),
-        [("The Galaxy S24", "Galaxy S24 lasts longer"), ("iPhone 15 Pro", "the iPhone is lighter")],
-    )
-    def test_should_leave_a_cell_that_names_the_competitor_past_its_fillers(
-        self, name: str, cell: str
-    ):
-        out = assemble_comparison({}, _two_competitors(cell, name), {}, None)
-
-        assert out["comparisons"][0]["competitor"] == cell
-
-    def test_should_match_an_all_filler_name_whole(self):
-        out = assemble_comparison({}, _two_competitors("Mini Pro is louder", "Mini Pro"), {}, None)
-
-        assert out["comparisons"][0]["competitor"] == "Mini Pro is louder"
-
-    def test_should_match_the_competitor_in_any_case(self):
-        out = assemble_comparison({}, _two_competitors("bose wins on ANC", "Bose QC"), {}, None)
-
-        assert out["comparisons"][0]["competitor"] == "bose wins on ANC"
+        assert (out["rightLabel"], out["comparisons"][0]["competitor"]) == ("X1", "8 h")
 
     def test_should_count_names_differing_only_in_case_as_one_competitor(self):
         rows = _two_competitors("quieter", "sony wf")

@@ -7,15 +7,18 @@ interface CollapsibleSectionProps {
    *  and the `<span id>` referenced by the section's `aria-labelledby`. */
   baseId: string;
   label: string;
+  /** Shown beside the label and read with it (a review's verdict badge), so a
+   *  collapsed row still says the call. */
+  accessory?: ReactNode;
   open: boolean;
   onToggle: () => void;
   children: ReactNode;
 }
 
-/** Shared collapsible primitive for the Brief and Key takeaways surfaces.
- *  Renders an eyebrow row with left dash + label + flex-spacer dash + chevron,
- *  followed by a grid-rows morphing content panel. */
-export function CollapsibleSection({ baseId, label, open, onToggle, children }: CollapsibleSectionProps) {
+/** Shared collapsible primitive for the hero's Brief, Key takeaways and Verdict
+ *  rows. Renders an eyebrow row with left dash + label +
+ *  flex-spacer dash + chevron, followed by a grid-rows morphing content panel. */
+export function CollapsibleSection({ baseId, label, accessory, open, onToggle, children }: CollapsibleSectionProps) {
   const labelId = `${baseId}-label`;
   const contentId = `${baseId}-content`;
   return (
@@ -29,6 +32,7 @@ export function CollapsibleSection({ baseId, label, open, onToggle, children }: 
       >
         <span aria-hidden="true" className="h-px w-5 bg-border" />
         <span id={labelId} className="type-eyebrow">{label}</span>
+        {accessory}
         <span aria-hidden="true" className="h-px flex-1 bg-border/60" />
         <ChevronDown
           aria-hidden="true"

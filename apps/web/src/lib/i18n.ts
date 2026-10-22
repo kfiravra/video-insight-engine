@@ -54,8 +54,12 @@ export interface Labels {
   description: string;
   example: string;
   goForIt: string;
+  /** Eyebrow over one competitor's table — {name} is interpolated. */
+  versusName: string;
   /** Who answers an interview question — {speaker} is interpolated ("A · Tegmark"). */
   answerBy: string;
+  /** Column head for the other side of a review's comparison. */
+  competitor: string;
   // Overview
   level: string;
   items: string;
@@ -71,6 +75,10 @@ export interface Labels {
   /** The hero's "should I watch?" lines (output-quality 2.3). */
   worthItFor: string;
   skipIf: string;
+  /** A review's hero verdict row and the reviewer's lists that replace those lines (4.3). */
+  verdict: string;
+  bestFor: string;
+  notFor: string;
   /** The hero's reading-time promise and the video's length beside it;
    *  {minutes} is interpolated. */
   readMinutes: string;
@@ -147,7 +155,9 @@ const EN: Labels = {
   description: 'Description',
   example: 'Example',
   goForIt: 'Go for it if...',
+  versusName: 'vs {name}',
   answerBy: 'A · {speaker}',
+  competitor: 'Competitor',
   level: 'Level',
   items: 'Items',
   brief: 'Brief',
@@ -159,6 +169,9 @@ const EN: Labels = {
   hideTakeaways: 'Hide takeaways',
   worthItFor: 'Worth it for',
   skipIf: 'Skip if',
+  verdict: 'Verdict',
+  bestFor: 'Best for',
+  notFor: 'Not for',
   readMinutes: 'Read: {minutes} min',
   watchMinutes: 'Watch: {minutes} min',
   showMoreSections: 'Show {count} more sections',
@@ -206,6 +219,7 @@ const EN: Labels = {
     itinerary: 'Day-by-day trip plan',
     packing: 'Packing checklist',
     budget: 'Cost breakdown',
+    verdict: 'Final verdict and scoring',
     pros_cons: 'Pros and cons side by side',
     specs: 'Specifications and features',
     materials: 'Materials needed',
@@ -264,7 +278,9 @@ const TRANSLATIONS: Record<string, Labels> = {
     description: 'תיאור',
     example: 'דוגמה',
     goForIt: 'שווה את זה אם...',
+    versusName: 'מול {name}',
     answerBy: 'תשובה · {speaker}',
+    competitor: 'מתחרה',
     level: 'רמה',
     items: 'פריטים',
     brief: 'תקציר',
@@ -276,6 +292,9 @@ const TRANSLATIONS: Record<string, Labels> = {
     hideTakeaways: 'הסתר תובנות מפתח',
     worthItFor: 'שווה צפייה עבור',
     skipIf: 'דלגו אם',
+    verdict: 'פסק הדין',
+    bestFor: 'מתאים במיוחד ל',
+    notFor: 'לא מתאים ל',
     readMinutes: 'קריאה: {minutes} דק׳',
     watchMinutes: 'צפייה: {minutes} דק׳',
     showMoreSections: 'הצג עוד {count} מקטעים',
@@ -323,6 +342,7 @@ const TRANSLATIONS: Record<string, Labels> = {
       itinerary: 'תוכנית טיול יום אחר יום',
       packing: 'רשימת אריזה',
       budget: 'פירוט עלויות',
+      verdict: 'פסק דין וציון סופי',
       pros_cons: 'יתרונות וחסרונות זה מול זה',
       specs: 'מפרטים ותכונות',
       materials: 'חומרים נדרשים',
@@ -378,7 +398,9 @@ const TRANSLATIONS: Record<string, Labels> = {
     description: 'الوصف',
     example: 'مثال',
     goForIt: 'اختره إذا...',
+    versusName: 'مقابل {name}',
     answerBy: 'الجواب · {speaker}',
+    competitor: 'المنافس',
     level: 'المستوى',
     items: 'العناصر',
     brief: 'موجز',
@@ -390,6 +412,9 @@ const TRANSLATIONS: Record<string, Labels> = {
     hideTakeaways: 'إخفاء النقاط الرئيسية',
     worthItFor: 'يستحق المشاهدة لـ',
     skipIf: 'تخطَّه إذا',
+    verdict: 'الحكم',
+    bestFor: 'الأنسب لـ',
+    notFor: 'غير مناسب لـ',
     readMinutes: 'قراءة: {minutes} دقيقة',
     watchMinutes: 'مشاهدة: {minutes} دقيقة',
     showMoreSections: 'عرض {count} أقسام إضافية',
@@ -437,6 +462,7 @@ const TRANSLATIONS: Record<string, Labels> = {
       itinerary: 'خطة رحلة يوماً بيوم',
       packing: 'قائمة التعبئة',
       budget: 'تفصيل التكاليف',
+      verdict: 'الحكم النهائي والتقييم',
       pros_cons: 'المزايا والعيوب جنباً إلى جنب',
       specs: 'المواصفات والميزات',
       materials: 'المواد المطلوبة',

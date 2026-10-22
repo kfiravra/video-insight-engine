@@ -181,7 +181,7 @@
     "review:review": {
       "preferred": ["comparison", "spot_explorer", "moment_track"],
       "forbidden": ["quiz_arena", "flash_deck"],
-      "planGuidance": "Product review (content-model §7): open on Verdict & pros/cons — comparison on review.pros (the verdict rides in it). Then Features — spot_explorer on review.specs, the specs as its cells, never a standalone info_grid; vs competitors — comparison on review.comparisons (comparison_radar only when 4+ axes are numbers); Moments — the test scenes on learning.timestamps when learning is tagged."
+      "planGuidance": "Product review (content-model §7): open on Pros & cons — comparison on review.pros, the pros and cons as the reviewer states them; the verdict rides in the hero, never in a tab. Then Features — spot_explorer on review.specs, the specs as its cells, never a standalone info_grid; vs competitors — comparison on review.comparisons (comparison_radar only when 4+ axes are numbers); Moments — the test scenes on learning.timestamps when learning is tagged."
     },
     "news:explainer": {
       "preferred": ["claims_tracker", "moment_track", "spot_explorer", "quiz_arena"],

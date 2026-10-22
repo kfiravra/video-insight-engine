@@ -13,6 +13,7 @@ import { HeroBrief } from './HeroBrief';
 import { HeroDigest } from './HeroDigest';
 import { VideoHeroStrip, type VideoHeroTab } from './VideoHeroStrip';
 import type { ContentTag } from '@vie/types';
+import type { HeroVerdictData } from '@/features/video-output/lib/hero-verdict';
 
 interface PendingTab {
   id: string;
@@ -37,6 +38,9 @@ interface VideoHeroProps {
   /** "Worth it for / Skip if" — two short lines under the takeaways (C2). */
   worthItFor?: string;
   skipIf?: string;
+  /** A review's verdict, lifted out of its comparison tab (output-quality 4.3):
+   *  a "Verdict" row in the worth-it lines' place. */
+  verdict?: HeroVerdictData;
   /** Minutes to read the page: the identity strip then shows
    *  "Read: N min · Watch: M min" in place of the bare duration. */
   readingMinutes?: number;
@@ -280,6 +284,7 @@ interface HeroFlagsInput {
   keyTakeaways: string[];
   worthItFor?: string;
   skipIf?: string;
+  hasVerdict: boolean;
   hasTabs: boolean;
   /** The caller's explicit streaming flag, when it passed one. */
   isStreamingProp?: boolean;
@@ -302,6 +307,7 @@ function heroFlags({
   keyTakeaways,
   worthItFor,
   skipIf,
+  hasVerdict,
   hasTabs,
   isStreamingProp,
   isPlayerOpen,
@@ -314,7 +320,7 @@ function heroFlags({
   const pendingKnown = isStreaming && isStreamingProp !== undefined;
   const showPendingStrip = !hasTabs && pendingKnown;
   const showTakeaways = keyTakeaways.length > 0 || isStreaming;
-  const showWorth = Boolean(worthItFor?.trim() || skipIf?.trim());
+  const showWorth = hasVerdict || Boolean(worthItFor?.trim() || skipIf?.trim());
   return {
     isStreaming,
     showPendingStrip,
@@ -329,13 +335,14 @@ function heroFlags({
 }
 
 export const VideoHero = memo(function VideoHero(props: VideoHeroProps) {
-  const { tldr, keyTakeaways = NO_TAKEAWAYS, worthItFor, skipIf, youtubeId, className } = props;
+  const { tldr, keyTakeaways = NO_TAKEAWAYS, worthItFor, skipIf, verdict, youtubeId, className } = props;
   const { tabs = NO_TABS, activeTabId, onTabSelect, completedTabs, domainGradient } = props;
   const { isStreaming: isStreamingProp, pendingTabs = NO_PENDING } = props;
   const isPhone = useMediaQuery(PHONE_QUERY);
   const { isPlayerOpen } = useVideoPlayer();
   const hasTabs = tabs.length > 0;
-  const flags = heroFlags({ tldr, keyTakeaways, worthItFor, skipIf, hasTabs, isStreamingProp, isPlayerOpen });
+  const hasVerdict = verdict !== undefined;
+  const flags = heroFlags({ tldr, keyTakeaways, worthItFor, skipIf, hasVerdict, hasTabs, isStreamingProp, isPlayerOpen });
 
   return (
     <motion.section
@@ -356,6 +363,7 @@ export const VideoHero = memo(function VideoHero(props: VideoHeroProps) {
         keyTakeaways={keyTakeaways}
         worthItFor={worthItFor}
         skipIf={skipIf}
+        verdict={verdict}
         showTakeaways={flags.showTakeaways}
         showWorth={flags.showWorth}
         isStreaming={flags.isStreaming}

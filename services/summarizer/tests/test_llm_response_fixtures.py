@@ -26,7 +26,7 @@ import pytest
 from src.models.domain_types import DOMAIN_MODELS, validate_domain_output
 from src.models.pipeline_types import EnrichmentData, PlanResult, SynthesisResult
 from src.services.pipeline.assembly import assemble_response
-from src.services.pipeline.assembly.core import _COMPONENT_REQUIRED_LISTS
+from src.services.pipeline.assembly.component_lists import item_list_keys
 from src.services.pipeline.plan import _validate_tabs
 from src.services.pipeline.reconcile_pass import is_quiz_tab
 from src.shared_config.domain_config import quiz_enrichment
@@ -182,12 +182,13 @@ class TestAssemblyOverFixtures:
             assert isinstance(tab["props"], dict) and tab["props"], (
                 f"tab {tab['id']} has empty props"
             )
-            required_key = _COMPONENT_REQUIRED_LISTS.get(tab["component"])
-            if required_key is not None:
-                data_list = tab["props"].get(required_key)
-                assert isinstance(data_list, list) and data_list, (
-                    f"{domain}/{tab['id']}: required list {required_key!r} empty"
-                )
+            # Any of the component's item lists (a comparison ships on rows, pros or
+            # cons — the review's Pros & cons tab has no rows, 4.3).
+            keys = item_list_keys(tab["component"])
+            if keys:
+                assert any(
+                    isinstance(tab["props"].get(k), list) and tab["props"][k] for k in keys
+                ), f"{domain}/{tab['id']}: every required list {keys!r} empty"
 
     @pytest.mark.parametrize("domain", DOMAINS)
     def test_meta_carries_domain_and_synthesis(self, domain):

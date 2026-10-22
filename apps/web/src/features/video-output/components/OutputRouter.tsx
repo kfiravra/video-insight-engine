@@ -8,6 +8,7 @@ import { CommandDeck, TabPanel, type PendingTabLabel, type ShellTabDef } from '.
 import { TabStateProvider } from '@/features/video-output/contexts/TabStateContext';
 import { GlassCard } from './output/GlassCard';
 import type { StreamTab } from '@/features/video-output/lib/streaming/stream-tabs';
+import { liftReviewVerdict } from '@/features/video-output/lib/hero-verdict';
 import { StreamingPlaceholder, StreamErrorCard } from './StreamingPlaceholder';
 import { stripLeadingEmoji } from '@/lib/string-utils';
 import { DirectionProvider } from '@/contexts/DirectionContext';
@@ -151,17 +152,21 @@ export function OutputRouter({
   // The filmstrip tab is likewise suppressed when a moment_track tab carries
   // rich frame coverage (≥8 frame-backed items) — its grid view already IS a
   // filmstrip with context, so a second frame strip would just repeat frames.
+  // A review's verdict lives in the hero only (4.3): lifted from the UNFILTERED
+  // tabs (the overview's spread is its fallback) and dropped from its tab.
+  const lifted = useMemo(() => liftReviewVerdict(tabs, primaryTag), [tabs, primaryTag]);
   const orderedTabs = useMemo(() => {
-    if (!tabs || tabs.length === 0) return tabs;
-    const hasRichMomentTrack = tabs.some(
+    const source = lifted.tabs;
+    if (!source || source.length === 0) return source;
+    const hasRichMomentTrack = source.some(
       (t) => t.component === 'moment_track' && countFrameBackedItems(t.props) >= 8,
     );
-    return tabs.filter((t) => {
+    return source.filter((t) => {
       if (t.id === 'overview' || t.component === 'overview') return false;
       if (t.component === 'video_filmstrip' && hasRichMomentTrack) return false;
       return true;
     });
-  }, [tabs]);
+  }, [lifted.tabs]);
 
   const tabDefs = useMemo((): ShellTabDef[] => {
     if (!orderedTabs || orderedTabs.length === 0) return [];
@@ -229,6 +234,7 @@ export function OutputRouter({
               duration={duration}
               synthesis={synthesis}
               keyQuestion={keyQuestion}
+              verdict={lifted.verdict}
               youtubeId={youtubeId}
               tabDefs={tabDefs}
               pendingTabs={hasData ? pendingTabs : tabLabels}

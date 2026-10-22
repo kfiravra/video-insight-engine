@@ -21,7 +21,7 @@ from .moment_normalizers import _moment_text as _moment_text
 from .moment_normalizers import _normalize_moment_item as _normalize_moment_item
 from .moment_normalizers import _seconds_to_time_str as _seconds_to_time_str
 from .moment_normalizers import normalize_moment_items as normalize_moment_items
-from .moment_normalizers import quote_en
+from .moment_normalizers import quote_en, quote_fields
 from .quiz_stamps import reconcile_quiz_time
 
 # Category-like front values that indicate flash_deck front corruption
@@ -187,7 +187,8 @@ def _normalize_verdict(verdict: dict, rating: Any) -> dict[str, Any]:
     the verdict is said at (R2, output-quality 1.4) — the verdict's seek point,
     shipped whenever the extraction has it; the sub-scores and the
     score / maxScore only as the extraction anchors them (D13 — S07 shipped a
-    "9.0" and five sub-scores the reviewer never gave). ``rating`` holds the
+    "9.0" and five sub-scores the reviewer never gave); the words that state it as
+    the quote pass kept them (4.3, the hero verdict's quote). ``rating`` holds the
     score: the review's rating block, or the verdict itself for a legacy
     verdict tab.
     """
@@ -205,6 +206,7 @@ def _normalize_verdict(verdict: dict, rating: Any) -> dict[str, Any]:
         badge = stated_scalars(verdict, ("badge",)).get("badge")
         if badge in VERDICT_BADGES:
             props["badge"] = badge
+    props.update(quote_fields(verdict))
     sub_scores = stated_rows(verdict.get("subScores"), "score")
     if sub_scores:
         props["subScores"] = sub_scores

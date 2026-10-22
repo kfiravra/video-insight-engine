@@ -4,6 +4,7 @@ import { ErrorBoundary } from '@/components/ui/error-boundary';
 import { VideoHero } from '@/components/vie';
 import type { VideoHeroTab } from '@/components/vie/cards/VideoHeroStrip';
 import type { StreamPhase } from '@/features/video-output/hooks/use-summary-stream';
+import type { HeroVerdictData } from '@/features/video-output/lib/hero-verdict';
 import { ComposableOutput } from './ComposableOutput';
 import { GlassCard } from './GlassCard';
 import { ProvisionalTabNotice } from './ProvisionalTabNotice';
@@ -29,6 +30,8 @@ interface CommandDeckProps {
    *  (`data.keyQuestion`), which the router filters from the strip, so the
    *  router hands it over separately. */
   keyQuestion?: string;
+  /** A review's verdict, lifted out of its comparison tab by the router (4.3). */
+  verdict?: HeroVerdictData;
   youtubeId?: string;
   tabDefs: ShellTabDef[];
   pendingTabs: PendingTabLabel[];
@@ -47,6 +50,7 @@ export function CommandDeck({
   duration,
   synthesis,
   keyQuestion,
+  verdict,
   youtubeId,
   tabDefs,
   pendingTabs,
@@ -73,6 +77,7 @@ export function CommandDeck({
       masterSummary={synthesis?.masterSummary}
       worthItFor={synthesis?.worthItFor}
       skipIf={synthesis?.skipIf}
+      verdict={verdict}
       readingMinutes={synthesis?.readingMinutes}
       keyQuestion={keyQuestion}
       youtubeId={youtubeId}
