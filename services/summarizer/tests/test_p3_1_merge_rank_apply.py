@@ -22,11 +22,10 @@ from src.services.pipeline.merge_rank_apply import (
     MergeRankAnswer,
     apply_merge_rank,
     refill_windows,
-    section_titles,
-    stamp_section,
     window_of,
 )
 from src.services.pipeline.merge_rank_render import MergeRankRequest, RenderInput, build_request
+from src.services.pipeline.merge_rank_sections import section_titles, stamp_section
 
 _DURATION = 3600
 _CHUNKS = (
