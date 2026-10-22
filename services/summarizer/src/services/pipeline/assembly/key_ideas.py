@@ -19,6 +19,7 @@ from typing import Any
 from src.models.idea_types import KEY_IDEA_KINDS
 from src.services.pipeline.quote_verify import mark_translated_quote
 
+from .moment_normalizers import QUOTE_EN_KEY
 from .normalizers import _normalize_to_spot
 from .talk_asks import shown_kind
 
@@ -41,14 +42,16 @@ def _key_idea_badge(kind: Any) -> str | None:
 
 
 def _key_idea_spot(item: dict) -> dict | None:
-    """One key idea as a spot card: claim → name, why → description; the quote and the
-    seek point as the spot normalizer reads them, the kind as the category badge, the
-    speaker (a podcast position's holder) as the card's attribution."""
+    """One key idea as a spot card: claim → name, why → description; the quote (with
+    its English, D12) and the seek point as the spot normalizer reads them, the kind
+    as the category badge, the speaker (a podcast position's holder) as the card's
+    attribution."""
     spot = _normalize_to_spot(
         {
             "name": item.get("claim") or "",
             "description": item.get("why") or "",
             "quote": item.get("quote"),
+            QUOTE_EN_KEY: item.get(QUOTE_EN_KEY),
             "timestamp": item.get("timestamp"),
         }
     )

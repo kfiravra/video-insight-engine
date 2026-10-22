@@ -80,6 +80,23 @@ ENGLISH_OUTPUT_DIRECTIVE = (
     "field names and tab IDs stay in English."
 )
 
+# The extraction's one exception on a non-English run (output-quality 4.2, D12): a
+# quote stays the speaker's own words, its English beside it. Never sent on an
+# English run, so an English run's prompt keeps every byte.
+SOURCE_QUOTE_DIRECTIVE = (
+    "QUOTES — the one exception: every `quote` is copied verbatim from the transcript, "
+    "in the transcript's language, never translated; put its English beside it as "
+    "`quoteEn`. A `qa` question is copied the same way, its English as `questionEn`."
+)
+
+
+def output_language_directive(source_language: str | None) -> str:
+    """The extraction's output-language lines: ``ENGLISH_OUTPUT_DIRECTIVE``, plus the
+    verbatim-quote exception when the transcript is not English (None = English)."""
+    if not source_language or source_language == "en":
+        return ENGLISH_OUTPUT_DIRECTIVE
+    return f"{ENGLISH_OUTPUT_DIRECTIVE}\n{SOURCE_QUOTE_DIRECTIVE}"
+
 
 def is_rtl(language: str) -> bool:
     """Check if a language code is RTL."""

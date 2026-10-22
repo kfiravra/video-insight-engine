@@ -21,6 +21,7 @@ from .idea_types import (
     LearningKeyIdea,
     PodcastQA,
     TechTopic,
+    absent,
     seconds_or_none,
     text_or_none,
 )
@@ -55,6 +56,8 @@ class TravelSpot(BaseModel):
     timestamp: int | None = None
     # The speaker's verbatim line about the spot (output-quality R10).
     quote: str | None = None
+    # The quote's English when the speaker is not speaking English (D12, 4.2).
+    quote_en: str | None = Field(None, alias="quoteEn", exclude_if=absent)
 
     model_config = {"populate_by_name": True}
 
@@ -63,6 +66,11 @@ class TravelSpot(BaseModel):
     def coerce_timestamp(cls, v: Any) -> int | None:
         """Seconds into the video: a non-negative integer, else None."""
         return seconds_or_none(v)
+
+    @field_validator("quote_en", mode="before")
+    @classmethod
+    def coerce_quote_en(cls, v: Any) -> str | None:
+        return text_or_none(v)
 
     @field_validator("rating", mode="before")
     @classmethod
@@ -377,6 +385,7 @@ class LearningTimestamp(BaseModel):
     label: str = ""
     description: str = Field(validation_alias=AliasChoices("description", "summary", "detail"))
     quote: str | None = None
+    quote_en: str | None = Field(None, alias="quoteEn", exclude_if=absent)
 
     @field_validator("seconds", mode="before")
     @classmethod
@@ -392,7 +401,7 @@ class LearningTimestamp(BaseModel):
             raise ValueError("a moment states what was established")
         return v.strip()
 
-    @field_validator("quote", mode="before")
+    @field_validator("quote", "quote_en", mode="before")
     @classmethod
     def coerce_quote(cls, v: Any) -> str | None:
         return text_or_none(v)
@@ -495,6 +504,7 @@ class ReviewVerdict(BaseModel):
     # renders only with both (R2, D13, output-quality 2.0 c).
     timestamp: int | None = None
     quote: str | None = None
+    quote_en: str | None = Field(None, alias="quoteEn", exclude_if=absent)
 
     @field_validator("badge", mode="before")
     @classmethod
@@ -506,7 +516,7 @@ class ReviewVerdict(BaseModel):
     def coerce_timestamp(cls, v: Any) -> int | None:
         return seconds_or_none(v)
 
-    @field_validator("quote", mode="before")
+    @field_validator("quote", "quote_en", mode="before")
     @classmethod
     def coerce_quote(cls, v: Any) -> str | None:
         return text_or_none(v)
@@ -1050,8 +1060,9 @@ class PodcastSegment(BaseModel):
     speaker: str | None = None
     # The line that carries the segment's conclusion, verbatim (R7, R10).
     quote: str | None = None
+    quote_en: str | None = Field(None, alias="quoteEn", exclude_if=absent)
 
-    @field_validator("quote", mode="before")
+    @field_validator("quote", "quote_en", mode="before")
     @classmethod
     def coerce_quote(cls, v: Any) -> str | None:
         return text_or_none(v)
@@ -1085,8 +1096,14 @@ class PodcastGuest(BaseModel):
 
 class PodcastQuote(BaseModel):
     quote: str
+    quote_en: str | None = Field(None, alias="quoteEn", exclude_if=absent)
     speaker: str | None = None
     timestamp: int | None = None
+
+    @field_validator("quote_en", mode="before")
+    @classmethod
+    def coerce_quote_en(cls, v: Any) -> str | None:
+        return text_or_none(v)
 
 
 class PodcastTopic(BaseModel):

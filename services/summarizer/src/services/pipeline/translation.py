@@ -13,6 +13,11 @@ takes about one small call's time and a large video is fully translated rather
 than capped), and applies the translations back into a deep copy that becomes
 the ``sourceLanguage`` artifact ({code, name, isRTL, tabs, meta}).
 
+A speaker's verbatim line (a found ``quote``, a verified interview ``question``)
+is already in the source language: it is never sent, and the English rendering
+beside it (``quoteEn`` / ``questionEn``) is left out of the source-language copy
+(D12, output-quality 4.2).
+
 On any failure (LLM error, length mismatch, mirror detection): returns the
 input unchanged (no ``sourceLanguage`` key) so the FE simply renders no toggle.
 
@@ -34,6 +39,9 @@ from ...utils.language_utils import (
     get_native_name,
     is_rtl,
 )
+from .assembly.moment_normalizers import QUOTE_EN_KEY
+from .assembly.qa_questions import QUESTION_STATUS_KEY
+from .quote_verify import QUOTE_TRANSLATED_KEY, VERIFIED
 from .translation_flat import (
     TRANSLATION_BATCH_CHARS,
     char_batches,
@@ -106,6 +114,20 @@ _SKIP_KEYS: frozenset[str] = frozenset(
     }
 )
 
+# D12 (4.2): a line already in the source language never goes EN→source — the model
+# could rewrite the speaker's words, and their echo counts toward the mirror check.
+# On a non-English run a ``quote`` without the ``quoteTranslated`` flag is the quote
+# pass's verbatim find (a flagged one is English prose and IS translated); a
+# ``question`` the question check verified is the host's own words (4.0 c), and so is
+# its exchange row's ``label`` unless the question's English titles the row.
+_QUOTE_KEY = "quote"
+_QUESTION_KEY = "question"
+_LABEL_KEY = "label"
+_QUESTION_EN_KEY = "questionEn"
+# The English renderings beside those lines: English already, and the source view
+# shows the verbatim line alone, so they leave its copy.
+_ENGLISH_ONLY_KEYS: frozenset[str] = frozenset({QUOTE_EN_KEY, _QUESTION_EN_KEY})
+
 # Min collected-string length (after strip). Skips numerics, single tokens,
 # 1-3 char strings that are usually labels in another vocabulary (status,
 # enum-ish remnants, etc.).
@@ -140,6 +162,20 @@ JsonPath = tuple[str | int, ...]
 # ─── Walker ──────────────────────────────────────────────────────────────────
 
 
+def _is_verbatim_line(parent: dict[str, Any], key: str) -> bool:
+    """Whether ``parent[key]`` is a speaker's line in the source language (D12)."""
+    if key == _QUOTE_KEY:
+        return parent.get(QUOTE_TRANSLATED_KEY) is not True
+    if parent.get(QUESTION_STATUS_KEY) != VERIFIED:
+        return False
+    return key == _QUESTION_KEY or (key == _LABEL_KEY and not parent.get(_QUESTION_EN_KEY))
+
+
+def _kept_as_is(parent: dict[str, Any], key: str) -> bool:
+    """A string leaf the walker never sends to translation."""
+    return key in _SKIP_KEYS or key in _ENGLISH_ONLY_KEYS or _is_verbatim_line(parent, key)
+
+
 def _collect_strings(
     obj: Any,
     path: JsonPath,
@@ -149,7 +185,8 @@ def _collect_strings(
     """Recursively append ``(path, value)`` for every translatable string.
 
     Container nodes (list/dict) are ALWAYS recursed. The deny-list applies
-    ONLY when the value at a key is a primitive string — see ``_SKIP_KEYS``.
+    ONLY when the value at a key is a primitive string — see ``_SKIP_KEYS``; so
+    do D12's verbatim lines and their English renderings (``_kept_as_is``).
     Bounded by ``_MAX_RECURSION_DEPTH`` and ``_MAX_COLLECTED_STRINGS`` so a
     runaway payload can't waste a 90s LLM call or stack-overflow. Truncation
     is observed by ``translate_to_source`` after the walk completes, since
@@ -169,9 +206,23 @@ def _collect_strings(
     if isinstance(obj, dict):
         for key, value in obj.items():
             # Leaf-only: skip only when the deny-listed key holds a string.
-            if key in _SKIP_KEYS and isinstance(value, str):
+            if isinstance(value, str) and _kept_as_is(obj, key):
                 continue
             _collect_strings(value, path + (key,), pairs, depth + 1)
+
+
+def _drop_english_only(obj: Any, depth: int = 0) -> None:
+    """Remove every ``_ENGLISH_ONLY_KEYS`` leaf from the source-language copy, in place."""
+    if depth > _MAX_RECURSION_DEPTH:
+        return
+    if isinstance(obj, list):
+        for item in obj:
+            _drop_english_only(item, depth + 1)
+    elif isinstance(obj, dict):
+        for key in _ENGLISH_ONLY_KEYS & obj.keys():
+            del obj[key]
+        for value in obj.values():
+            _drop_english_only(value, depth + 1)
 
 
 def _set_at_path(root: Any, path: JsonPath, value: str) -> None:
@@ -383,6 +434,7 @@ async def translate_to_source(
     translated = copy.deepcopy(output)
     for (path, _), value in zip(pairs, translations):
         _set_at_path(translated, path, value)
+    _drop_english_only(translated)
     if isinstance(translated.get("meta"), dict):
         translated["meta"]["language"] = target_lang
         translated["meta"]["isRTL"] = is_rtl(target_lang)

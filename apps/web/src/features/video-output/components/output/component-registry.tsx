@@ -357,8 +357,8 @@ export const COMPONENT_REGISTRY: Record<string, (props: Record<string, unknown>,
   // Attachment-only: rendered by <TabAttachments> around a primary, never as a
   // standalone tab. Registered here so REGISTERED_COMPONENT_NAMES includes them
   // and the parity test stays green.
-  stat_banner: (props) => (
-    <StatBanner stats={(props.stats as StatBannerStat[] | undefined) ?? []} />
+  stat_banner: (props, nav) => (
+    <StatBanner stats={(props.stats as StatBannerStat[] | undefined) ?? []} onSeek={nav.onSeek} />
   ),
 
   tip_callout: (props) => (

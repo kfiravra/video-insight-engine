@@ -21,6 +21,7 @@ from .moment_normalizers import _moment_text as _moment_text
 from .moment_normalizers import _normalize_moment_item as _normalize_moment_item
 from .moment_normalizers import _seconds_to_time_str as _seconds_to_time_str
 from .moment_normalizers import normalize_moment_items as normalize_moment_items
+from .moment_normalizers import quote_en
 from .quiz_stamps import reconcile_quiz_time
 
 # Category-like front values that indicate flash_deck front corruption
@@ -99,7 +100,8 @@ _SPOT_STATED_FIELDS: tuple[str, ...] = ("cost", "duration", "rating")
 
 def _spot_extras(item: dict) -> dict:
     """A spot's optional fields: the passthroughs, its seek point, the speaker's
-    verbatim ``quote`` and the facts its anchor states.
+    verbatim ``quote`` (with its English, ``quoteEn``, D12) and the facts its anchor
+    states.
 
     The seek point is the item's anchor as ``derived_guard`` reads it — whole
     seconds ≥ 0, else none: the FE schema refuses the whole tab over a negative
@@ -116,6 +118,7 @@ def _spot_extras(item: dict) -> dict:
     quote = item.get("quote")
     if isinstance(quote, str) and quote.strip():
         extras["quote"] = quote.strip()
+        extras.update(quote_en(item))
     extras.update(stated_scalars(item, _SPOT_STATED_FIELDS))
     if isinstance(role := item.get("role"), str) and role.strip():
         extras["category"] = role.strip()  # a guest's role is its card's badge (4.1)
@@ -249,6 +252,18 @@ def _normalize_step(item: dict, index: int) -> dict:
     }
 
 
+def _quote_card(item: dict) -> dict:
+    """A quote (``podcast.quotes`` / ``narrative.quotes``) as a flash card (4.2): the line
+    in front; behind it its English (D12), then who said it and when, else its context."""
+    seconds = anchor_seconds(item)
+    clock = _seconds_to_time_str(seconds) if seconds is not None else ""
+    said = " · ".join(part for part in (str(item.get("speaker") or "").strip(), clock) if part)
+    behind = f"— {said}" if said else str(item.get("context") or "").strip()
+    back = " ".join(part for part in (*quote_en(item).values(), behind) if part)
+    front = str(item.get("quote") or item.get("text") or "").strip()
+    return {"front": front, "back": back, "emoji": item.get("emoji")}
+
+
 def _to_flash_card(item: dict) -> dict:
     """Convert a domain object to {front, back, emoji} flash card format.
 
@@ -311,6 +326,8 @@ def _to_flash_card(item: dict) -> dict:
             "back": item.get("description") or item.get("text") or "",
             "emoji": item.get("emoji"),
         }
+    if "speaker" in item and ("quote" in item or "text" in item):
+        return _quote_card(item)
     if "text" in item and "front" not in item:
         return {"front": item.get("type", ""), "back": item["text"], "emoji": item.get("emoji")}
     if "aspect" in item and "detail" in item:

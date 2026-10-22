@@ -133,6 +133,7 @@ async def _split_run(ctx: PipelineContext) -> tuple[SplitRun, bool]:
             video_memory=ctx.video_memory,
             frame_context="",
             visual_annotations="",
+            source_language=ctx.source_language_code,
         )
     )
     run = SplitRun(

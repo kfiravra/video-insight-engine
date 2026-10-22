@@ -53,4 +53,25 @@ describe('MomentTimelineRow exchange', () => {
     render(<MomentTrack items={[plainMoment]} />);
     expect(screen.queryByText(/^A · /)).not.toBeInTheDocument();
   });
+
+  describe('with an English rendering of a Hebrew question', () => {
+    const HEBREW_Q = 'האם מכונות יחליטו מה חשוב לנו?';
+    const ENGLISH_Q = 'Will machines decide what matters to us?';
+    const hebrewExchange: MomentItem = { ...exchange, question: HEBREW_Q, questionEn: ENGLISH_Q };
+
+    it('should head the row with questionEn when it is present', () => {
+      render(<MomentTrack items={[hebrewExchange]} />);
+      expect(screen.getByText(ENGLISH_Q).tagName).toBe('P');
+    });
+
+    it('should show the verbatim question beneath as a quotation when questionEn heads the row', () => {
+      render(<MomentTrack items={[hebrewExchange]} />);
+      expect(screen.getByText(HEBREW_Q).closest('blockquote')).not.toBeNull();
+    });
+
+    it('should read the verbatim Hebrew question right to left when it is shown beneath', () => {
+      render(<MomentTrack items={[hebrewExchange]} />);
+      expect(screen.getByText(HEBREW_Q).closest('blockquote')).toHaveAttribute('dir', 'auto');
+    });
+  });
 });

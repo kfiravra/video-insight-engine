@@ -26,7 +26,7 @@ from dataclasses import dataclass
 
 from ...models.pipeline_types import TabBrief
 from ...shared_config.domain_config import NON_EXTRACTION_DATASOURCES, DataSourceSpec, data_source
-from ...utils.language_utils import ENGLISH_OUTPUT_DIRECTIVE
+from ...utils.language_utils import output_language_directive
 from ..llm_messages import TextBlock, text_block
 from ..transcript.render import format_marker
 from .pipeline_helpers import sanitize_for_prompt
@@ -77,6 +77,8 @@ class ExtractionPromptInput:
     example and the priority line. ``tabs`` are the plan's tab dicts (``label``, ``component``, ``dataSource``,
     ``goal``, ``brief``); ``video_memory`` and ``visual_annotations`` are the
     rendered ``<video_memory>`` / ``<visual_annotations>`` blocks ("" = absent).
+    ``source_language`` (the run's ``source_language_code``; None = English) adds the
+    verbatim-quote exception to the output-language line (4.2, D12).
     """
 
     content_tags: Sequence[str]
@@ -89,6 +91,7 @@ class ExtractionPromptInput:
     video_memory: str = ""
     frame_context: str = ""
     visual_annotations: str = ""
+    source_language: str | None = None
 
 
 # ─── Files ───
@@ -312,7 +315,7 @@ def build_extraction_template(inp: ExtractionPromptInput) -> str:
         "primary_tag": primary_tag,
         "domain_example": example,
     }
-    return f"{ENGLISH_OUTPUT_DIRECTIVE}\n\n{_fill(template, values)}"
+    return f"{output_language_directive(inp.source_language)}\n\n{_fill(template, values)}"
 
 
 # ─── Sections + per-call binding ───

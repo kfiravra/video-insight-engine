@@ -48,6 +48,9 @@ export interface SpotItem extends FrameEvidence {
   /** The quote is the English rendering of non-English speech (output-quality 2.0 d,
    *  D12): shown as prose, never in quote styling. Set by the quote check. */
   quoteTranslated?: boolean;
+  /** The quote's English when the speaker is not speaking English (D12, 4.2): shown
+   *  beneath the verbatim quote. Absent on an English video. */
+  quoteEn?: string;
   /** Category badge text — a key idea's kind ("Thesis", "Ask"), set by the assembler. */
   category?: string;
   /** Who holds a key idea when more than one person speaks — set by the assembler. */
@@ -132,6 +135,8 @@ export interface KeyIdeaItem {
   why: string;
   /** The speaker's own words that carry the claim, verbatim (≤ 25 words). */
   quote?: string | null;
+  /** The quote's English on a non-English video (D12, 4.2). */
+  quoteEn?: string | null;
   /** Seconds into the video where the claim is said. */
   timestamp?: number | null;
   /** The part of the video the idea belongs to. */
@@ -160,10 +165,14 @@ export interface MomentItem extends FrameEvidence {
   quote?: string;
   /** The quote is the English rendering of non-English speech (2.0 d, D12): prose. */
   quoteTranslated?: boolean;
-  /** An interview exchange's whole question (`podcast.qa`) — present only when it
-   *  differs from the label (a long question's label is its first sentence); the
-   *  timeline row then heads with it. */
+  /** The quote's English when the speaker is not speaking English (D12, 4.2): shown
+   *  beneath the verbatim quote. Absent on an English video. */
+  quoteEn?: string;
+  /** An interview exchange's whole question (`podcast.qa`): the timeline row heads
+   *  with it (a long question's label is its first sentence). */
   question?: string;
+  /** The question's English when it was asked in another language (D12, 4.2). */
+  questionEn?: string;
   mood?: string;
   emoji?: string;
   speaker?: string;
@@ -206,6 +215,12 @@ export interface ClaimItem extends FrameEvidence {
   sourceCitation?: string;
   /** The words that make the claim, verbatim — the status needs them (D13, 2.0 c). */
   quote?: string | null;
+  /** The quote is the English rendering of non-English speech (2.0 d, D12): prose.
+   *  Set by the quote check. */
+  quoteTranslated?: boolean;
+  /** The quote's English when the speaker is not speaking English (D12, 4.2): shown
+   *  beneath the verbatim quote. Absent on an English video. */
+  quoteEn?: string | null;
   timestamp?: number;
 }
 

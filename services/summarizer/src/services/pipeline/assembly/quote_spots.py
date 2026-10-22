@@ -3,9 +3,10 @@
 ``podcast.quotes`` ``{quote, speaker, timestamp}`` and ``narrative.quotes``
 ``{text, speaker, timestamp, context}`` rendered only as flash cards; a
 spot_explorer tab on either now ships one card per quote: the speaker as the
-card's name, the line verbatim as its ``quote``, the context (narrative) as its
-description and the seek point. An unattributed quote is named by its own head,
-never by an invented speaker.
+card's name, the line verbatim as its ``quote`` (with its English, ``quoteEn``, on
+a non-English run — D12), the context (narrative) as its description and the seek
+point. An unattributed quote is named by its own head, never by an invented
+speaker.
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ from typing import Any
 
 from src.services.pipeline.quote_verify import mark_translated_quote
 
+from .moment_normalizers import QUOTE_EN_KEY
 from .normalizers import _normalize_to_spot
 from .text_utils import truncate_words
 
@@ -54,6 +56,7 @@ def _quote_spot(item: dict) -> dict | None:
             "name": name,
             "description": item.get("context") or "",
             "quote": line if line != name else None,
+            QUOTE_EN_KEY: item.get(QUOTE_EN_KEY),
             "timestamp": item.get("timestamp"),
         }
     )

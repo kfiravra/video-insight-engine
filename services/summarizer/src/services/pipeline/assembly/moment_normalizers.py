@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import math
 import re
+from collections.abc import Mapping
 from typing import Any
 
 from src.services.pipeline.quote_verify import QUOTE_TRANSLATED_KEY
@@ -36,12 +37,19 @@ _MOMENT_START_KEYS = ("seconds", "startSeconds", "timestamp", "start_time", "sta
 # The clock a ``learning.timestamps`` item writes beside its ``seconds`` ("2:10").
 _MOMENT_CLOCK_KEY = "time"
 _MOMENT_END_KEYS = ("endSeconds", "end_seconds", "endTimestamp", "end_time", "endTime")
+# The English rendering a non-English run writes beside a verbatim line (D12, 4.2): a
+# ``quote``'s, and an interview ``question``'s. Each ships only beside the line it renders.
+QUOTE_EN_KEY = "quoteEn"
+_QUESTION_EN_KEY = "questionEn"
+_ENGLISH_OF = {QUOTE_EN_KEY: "quote", _QUESTION_EN_KEY: _MOMENT_QUESTION_KEY}
 _MOMENT_PASSTHROUGH_KEYS = (
     "quote",
     # A translated quote (2.0 d, D12) renders as prose: its flag rides with it.
     QUOTE_TRANSLATED_KEY,
+    QUOTE_EN_KEY,
     "question",
     QUESTION_STATUS_KEY,
+    _QUESTION_EN_KEY,
     "mood",
     "emoji",
     "speaker",
@@ -64,6 +72,31 @@ def _prose(value: Any) -> str | None:
 
 def _first_prose(item: dict, keys: tuple[str, ...]) -> str | None:
     return next((text for key in keys if (text := _prose(item.get(key))) is not None), None)
+
+
+def quote_en(item: Mapping[str, Any]) -> dict[str, str]:
+    """``{quoteEn}`` when the item carries one, else {} — a caller adds it only beside
+    the quote it ships, so a cleared quote never leaves its English behind."""
+    text = _prose(item.get(QUOTE_EN_KEY))
+    return {QUOTE_EN_KEY: text} if text is not None else {}
+
+
+def quote_fields(item: Mapping[str, Any]) -> dict[str, Any]:
+    """A kept quote as a card ships it (4.2, R10): ``quote``, its ``quoteTranslated``
+    flag (prose, 2.0 d) and ``quoteEn`` (D12); {} when the quote pass cleared it."""
+    quote = _prose(item.get("quote"))
+    if quote is None:
+        return {}
+    flag = {QUOTE_TRANSLATED_KEY: True} if item.get(QUOTE_TRANSLATED_KEY) is True else {}
+    return {"quote": quote, **flag, **quote_en(item)}
+
+
+def _with_their_lines(extras: dict[str, Any]) -> dict[str, Any]:
+    """``extras`` without an English rendering whose line it does not carry."""
+    for english, line in _ENGLISH_OF.items():
+        if line not in extras:
+            extras.pop(english, None)
+    return extras
 
 
 def _coerce_int(value: Any) -> int | None:
@@ -131,16 +164,18 @@ def _moment_text(item: dict) -> tuple[str, str | None] | None:
     """(label, description) from whichever fields carry prose; None when none does.
 
     The label comes from label/title/name, else from an interview question
-    (``_question_label``), else from the head of the description. A description
-    that only repeats the source's own label is dropped; one the label was cut
-    from stays whole — it is what the moment established (``narrative.keyMoments``
-    carry no label; a short one used to ship label-only).
+    (``_question_label``; its English ``questionEn`` first), else from the head of
+    the description. A description that only repeats the source's own label is
+    dropped; one the label was cut from stays whole — it is what the moment
+    established (``narrative.keyMoments`` carry no label; a short one used to ship
+    label-only).
     """
     label = _first_prose(item, _MOMENT_LABEL_KEYS)
     if label is not None and _MOMENT_PLACEHOLDER.match(label):
         label = None
     description = _first_prose(item, _MOMENT_DESCRIPTION_KEYS)
-    question = _prose(item.get(_MOMENT_QUESTION_KEY))
+    # A non-English interview's verbatim question titles the row in its English (D12).
+    question = _first_prose(item, (_QUESTION_EN_KEY, _MOMENT_QUESTION_KEY))
     if label is None and question is not None:
         label = _question_label(question)
     if label is None and description is not None:
@@ -153,11 +188,13 @@ def _moment_text(item: dict) -> tuple[str, str | None] | None:
 def _passthrough(item: dict) -> dict[str, Any]:
     """The extras a moment carries as the source gave them — an exchange's whole
     ``question`` too, even when it is all of the row's title (4.1)."""
-    return {
-        key: value
-        for key in _MOMENT_PASSTHROUGH_KEYS
-        if (value := item.get(key)) is not None and value != ""
-    }
+    return _with_their_lines(
+        {
+            key: value
+            for key in _MOMENT_PASSTHROUGH_KEYS
+            if (value := item.get(key)) is not None and value != ""
+        }
+    )
 
 
 def _normalize_moment_item(item: Any, index: int) -> dict | None:

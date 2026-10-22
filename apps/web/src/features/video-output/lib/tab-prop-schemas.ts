@@ -45,6 +45,7 @@ const spotItemSchema = z
     name: z.string(),
     timestamp: z.number().min(0).nullish(),
     quote: optionalString,
+    quoteEn: optionalString,
     quoteTranslated: z.boolean().nullish(),
     speaker: optionalString,
     category: optionalString,
@@ -79,8 +80,10 @@ const momentTrackSchema = z
           label: z.string(),
           seconds: z.number(),
           quote: optionalString,
+          quoteEn: optionalString,
           quoteTranslated: z.boolean().nullish(),
           question: optionalString,
+          questionEn: optionalString,
         })
         .passthrough(),
     ),
@@ -192,6 +195,7 @@ const quizQuestionSchema = z
     explanation: optionalString,
     timestamp: optionalNumber,
     quote: optionalString,
+    quoteEn: optionalString,
     quoteTranslated: z.boolean().nullish(),
   })
   .passthrough()
@@ -240,6 +244,9 @@ const claimsTrackerSchema = z
           claim: z.string(),
           // Absent when the video attributes the claim to no one (output-quality 1.4).
           source: optionalString,
+          // The claim's verbatim words (D13) and their English rendering (D12).
+          quote: optionalString,
+          quoteEn: optionalString,
           // Mirrors ClaimStatus | LegacyClaimStatus in @vie/types — D11's three
           // words, plus the pre-1.4 words stored rows carry (the tracker maps them).
           // Absent on a claim without a timestamp: nobody could check it (p1 review R9).

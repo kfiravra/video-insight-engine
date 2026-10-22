@@ -64,6 +64,13 @@ def text_or_none(value: Any) -> str | None:
     return value.strip() or None
 
 
+def absent(value: Any) -> bool:
+    """``exclude_if`` of a field only a non-English run writes (``quoteEn``,
+    ``questionEn``, 4.2): unset, it is left out of the dump, so an English run's
+    extraction keeps its bytes."""
+    return value is None
+
+
 class KeyIdeaFigure(BaseModel):
     """The figure a number key idea states, as the speaker says it (Kfir 2026-10-21):
     the numbers strip shows it as given — nothing is mined from the claim's text."""
@@ -90,6 +97,8 @@ class LearningKeyIdea(BaseModel):
     why: str = ""
     # The speaker's own words that carry the claim, verbatim (R10).
     quote: str | None = None
+    # The quote's English when the speaker is not speaking English (D12, 4.2).
+    quote_en: str | None = Field(None, alias="quoteEn", exclude_if=absent)
     # Where the claim is said, in seconds — the seek chip (R2).
     timestamp: int | None = None
     # The part of the video the idea belongs to — the card's section.
@@ -110,7 +119,7 @@ class LearningKeyIdea(BaseModel):
     def coerce_timestamp(cls, v: Any) -> int | None:
         return seconds_or_none(v)
 
-    @field_validator("quote", "section", "speaker", mode="before")
+    @field_validator("quote", "quote_en", "section", "speaker", mode="before")
     @classmethod
     def coerce_optional_text(cls, v: Any) -> str | None:
         return text_or_none(v)
@@ -131,6 +140,8 @@ class PodcastQA(BaseModel):
     """
 
     question: str
+    # The question's English when it was asked in another language (D12, 4.2).
+    question_en: str | None = Field(None, alias="questionEn", exclude_if=absent)
     # Required: an exchange without its answer is dropped by validation instead of
     # shipping as a label-only moment.
     answer: str = Field(validation_alias=AliasChoices("answer", "description"))
@@ -138,6 +149,7 @@ class PodcastQA(BaseModel):
     speaker: str | None = None
     timestamp: int | None = None
     quote: str | None = None
+    quote_en: str | None = Field(None, alias="quoteEn", exclude_if=absent)
 
     @field_validator("answer")
     @classmethod
@@ -151,7 +163,7 @@ class PodcastQA(BaseModel):
     def coerce_timestamp(cls, v: Any) -> int | None:
         return seconds_or_none(v)
 
-    @field_validator("speaker", "quote", mode="before")
+    @field_validator("speaker", "quote", "quote_en", "question_en", mode="before")
     @classmethod
     def coerce_optional_text(cls, v: Any) -> str | None:
         return text_or_none(v)
@@ -191,6 +203,7 @@ class Claim(BaseModel):
     status: str | None = None
     source_citation: str | None = Field(None, alias="sourceCitation")
     quote: str | None = None
+    quote_en: str | None = Field(None, alias="quoteEn", exclude_if=absent)
     timestamp: int | None = None
 
     @field_validator("status", mode="before")
@@ -208,7 +221,7 @@ class Claim(BaseModel):
     def coerce_timestamp(cls, v: Any) -> int | None:
         return seconds_or_none(v)
 
-    @field_validator("source", "source_citation", "quote", mode="before")
+    @field_validator("source", "source_citation", "quote", "quote_en", mode="before")
     @classmethod
     def coerce_optional_text(cls, v: Any) -> str | None:
         return text_or_none(v)

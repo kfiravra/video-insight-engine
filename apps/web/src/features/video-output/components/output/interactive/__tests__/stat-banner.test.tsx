@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 
 import { StatBanner } from '../StatBanner';
 
@@ -39,5 +40,26 @@ describe('StatBanner', () => {
   it('renders nothing for an empty stats array', () => {
     const { container } = render(<StatBanner stats={[]} />);
     expect(container.innerHTML).toBe('');
+  });
+});
+
+describe('StatBanner meaning and seek', () => {
+  const tiles = [{ label: 'Latency', value: '40 ms', meaning: 'Fast enough for voice.', timestamp: 125 }];
+
+  it('should show the meaning line when a tile carries one', () => {
+    render(<StatBanner stats={tiles} />);
+    expect(screen.getByText('Fast enough for voice.')).toBeInTheDocument();
+  });
+
+  it('should seek the player when the tile chip is clicked', async () => {
+    const onSeek = vi.fn();
+    render(<StatBanner stats={tiles} onSeek={onSeek} />);
+    await userEvent.setup().click(screen.getByRole('button', { name: /2:05/ }));
+    expect(onSeek).toHaveBeenCalledWith(125);
+  });
+
+  it('should show a static time marker when no seek handler exists', () => {
+    render(<StatBanner stats={tiles} />);
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
   });
 });

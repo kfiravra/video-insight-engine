@@ -249,7 +249,10 @@ ITEM_MAPPINGS = [
     Mapping(
         "ClaimItem",
         dt.NewsClaim,
-        exceptions={f: _ASSEMBLER_INJECTED for f in _FRAME_EVIDENCE_FIELDS},
+        exceptions={
+            **{f: _ASSEMBLER_INJECTED for f in _FRAME_EVIDENCE_FIELDS},
+            "quoteTranslated": _QUOTE_CHECK_INJECTED,
+        },
     ),
     Mapping("TierListItem", dt.GamingRanking),
     Mapping("FormationPosition", dt.SportPosition),

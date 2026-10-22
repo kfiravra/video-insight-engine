@@ -5,6 +5,7 @@ import { useLabels } from '@/lib/i18n';
 import type { SpotItem } from '@vie/types';
 import { GlassCard, FadeIn, SectionNav, Badge, MapLink, SeekChip, VisualEvidence } from '@/components/vie';
 import { EmptyTabState } from './EmptyTabState';
+import { QuoteLine } from './QuoteLine';
 
 
 interface SpotSection {
@@ -79,7 +80,6 @@ export const SpotExplorer = memo(function SpotExplorer({
 
     const hasFrame = Boolean(spot.thumbnailUrl || spot.frameCaption || spot.frameOcr);
     const hasActions = Boolean(spot.mapQuery || spot.bookingSearch);
-    const quote = spot.quote?.trim();
     const speaker = showSpeaker ? spot.speaker?.trim() : undefined;
     const category = spot.category?.trim();
 
@@ -126,16 +126,9 @@ export const SpotExplorer = memo(function SpotExplorer({
                   {spot.description}
                 </p>
               )}
-              {/* Verbatim beats paraphrase (R10): the speaker's own line, set apart. A
-                  translated quote is not the speaker's words (2.0 d, D12): plain prose. */}
-              {quote && !spot.quoteTranslated && (
-                <blockquote className="border-s-2 border-[var(--vie-accent)]/40 ps-2.5 text-sm italic leading-relaxed text-foreground/85">
-                  {quote}
-                </blockquote>
-              )}
-              {quote && spot.quoteTranslated && (
-                <p className="text-sm leading-relaxed text-muted-foreground">{quote}</p>
-              )}
+              {/* Verbatim beats paraphrase (R10); QuoteLine sets it apart and puts the
+                  English beneath a non-English line (D12). */}
+              <QuoteLine quote={spot.quote} quoteEn={spot.quoteEn} translated={spot.quoteTranslated} />
               {speaker && <p className="text-xs font-medium text-muted-foreground">— {speaker}</p>}
               {spot.specs && (
                 <p className="text-xs italic text-muted-foreground">

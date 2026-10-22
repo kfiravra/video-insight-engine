@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils';
 import { useLabels } from '@/lib/i18n';
 
 import { getMoodColor } from '../../../lib/moodColors';
+import { QuoteLine } from './QuoteLine';
 import { formatDuration, isClip, resolveLabel, type MomentItem } from './moment-utils';
 
 interface MomentTimelineRowProps {
@@ -72,12 +73,13 @@ export const MomentTimelineRow = memo(function MomentTimelineRow({
       : null;
   const label = resolveLabel(item);
   // A long interview question's label is only its head: the row shows it whole.
-  const heading = item.question?.trim() || label;
+  const question = item.question?.trim();
+  const questionEn = item.questionEn?.trim();
+  const heading = (question && questionEn) || question || label;
   // An exchange row (question present): the speaker answers, so the chip must not sit
   // in the header where it reads as the asker — it leads the answer instead.
   const isExchange = Boolean(item.question?.trim());
   const speaker = item.speaker?.trim();
-  const quote = item.quote?.trim();
   const chipContent = (
     <>
       <Clock className="h-3 w-3" aria-hidden="true" />
@@ -197,6 +199,9 @@ export const MomentTimelineRow = memo(function MomentTimelineRow({
                   {/* No clamp: in this view the label IS the substance for
                       most videos (R7), so it always renders in full. */}
                   <p className="text-sm font-semibold leading-snug">{heading}</p>
+                  {question && questionEn && question !== questionEn && (
+                    <QuoteLine quote={question} size="xs" />
+                  )}
                   {isExchange && (item.description || speaker) ? (
                     <p className="text-xs leading-relaxed text-muted-foreground">
                       {speaker && (
@@ -211,17 +216,9 @@ export const MomentTimelineRow = memo(function MomentTimelineRow({
                       {item.description}
                     </p>
                   )}
-                  {/* Verbatim beats paraphrase (R10): the speaker's own line, one quiet
-                      line in the same quote style as the spot cards. A translated quote
-                      is not the speaker's words (2.0 d, D12): plain prose. */}
-                  {quote && !item.quoteTranslated && (
-                    <blockquote className="border-s-2 border-[var(--vie-accent)]/40 ps-2.5 text-xs italic leading-relaxed text-foreground/85">
-                      {quote}
-                    </blockquote>
-                  )}
-                  {quote && item.quoteTranslated && (
-                    <p className="text-xs leading-relaxed text-muted-foreground">{quote}</p>
-                  )}
+                  {/* Verbatim beats paraphrase (R10): the speaker's own line, one quiet line;
+                      QuoteLine adds the English beneath a non-English line (D12). */}
+                  <QuoteLine quote={item.quote} quoteEn={item.quoteEn} translated={item.quoteTranslated} size="xs" />
                   {item.tags && item.tags.length > 0 && (
                     <div className="flex flex-wrap gap-1">
                       {item.tags.map((tag, i) => (

@@ -292,7 +292,8 @@ class TestUnanchoredClaim:
         assert _normalize_claim(claim) == {"claim": "X works"}
 
     def test_should_keep_an_anchored_claims_status_and_citation(self) -> None:
-        # Anchored and quoted (2.0 c): the status and its citation ship.
+        # Anchored and quoted (2.0 c): the status and its citation ship — and the
+        # quote itself (4.2).
         claim = {
             "claim": "X",
             "status": "contested",
@@ -303,6 +304,7 @@ class TestUnanchoredClaim:
 
         assert _normalize_claim(claim) == {
             "claim": "X",
+            "quote": "X, they say.",
             "status": "contested",
             "sourceCitation": "A study",
             "timestamp": 90,

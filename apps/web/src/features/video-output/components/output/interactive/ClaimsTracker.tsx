@@ -1,11 +1,11 @@
 import { memo, useMemo, useState } from 'react';
-import { CheckCircle2, AlertTriangle, Info, Clock, BadgeCheck, BookOpen } from 'lucide-react';
+import { CheckCircle2, AlertTriangle, Info, BadgeCheck, BookOpen } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { useLabels } from '@/lib/i18n';
 import type { ClaimItem, ClaimStatus } from '@vie/types';
-import { GlassCard, FadeIn, Badge } from '@/components/vie';
+import { GlassCard, FadeIn, Badge, SeekChip } from '@/components/vie';
 import { EmptyTabState } from './EmptyTabState';
 import { claimStatus } from './claim-status';
+import { QuoteLine } from './QuoteLine';
 
 interface ClaimsTrackerProps {
   claims: ClaimItem[];
@@ -25,34 +25,6 @@ const STATUS_META: Record<
 };
 
 const FILTER_ORDER: StatusFilter[] = ['all', 'stated', 'supported', 'contested'];
-
-function formatTimestamp(seconds: number): string {
-  const m = Math.floor(seconds / 60);
-  const s = Math.floor(seconds % 60);
-  return `${m}:${s.toString().padStart(2, '0')}`;
-}
-
-interface ClaimSeekButtonProps {
-  seconds: number;
-  onSeek: (seconds: number) => void;
-}
-
-/** The claim's seek chip — its accessible name in the page's language (`jumpTo`). */
-function ClaimSeekButton({ seconds, onSeek }: ClaimSeekButtonProps) {
-  const t = useLabels();
-  const time = formatTimestamp(seconds);
-  return (
-    <button
-      type="button"
-      onClick={() => onSeek(seconds)}
-      className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 font-medium text-[var(--vie-accent)] hover:bg-[var(--vie-accent)]/10"
-      aria-label={t.jumpTo.replace('{time}', time)}
-    >
-      <Clock className="size-3 shrink-0" aria-hidden="true" />
-      <span dir="ltr">{time}</span>
-    </button>
-  );
-}
 
 /**
  * ClaimsTracker — the news signature surface, and a talk's or podcast's on
@@ -130,6 +102,13 @@ export const ClaimsTracker = memo(function ClaimsTracker({ claims, onSeek }: Cla
                     )}
                   </div>
 
+                  {/* The words that make the claim, verbatim (D13). */}
+                  <QuoteLine
+                    quote={claim.quote}
+                    quoteEn={claim.quoteEn}
+                    translated={claim.quoteTranslated}
+                  />
+
                   {/* The verification evidence carries the accountability value
                       of this surface — promoted above the attribution line. */}
                   {claim.sourceCitation ? (
@@ -150,7 +129,7 @@ export const ClaimsTracker = memo(function ClaimsTracker({ claims, onSeek }: Cla
                       </span>
                     ) : null}
                     {claim.timestamp != null && onSeek ? (
-                      <ClaimSeekButton seconds={claim.timestamp} onSeek={onSeek} />
+                      <SeekChip seconds={claim.timestamp} onSeek={onSeek} />
                     ) : null}
                   </div>
                 </GlassCard>

@@ -92,3 +92,26 @@ describe('ClaimsTracker', () => {
     expect(screen.getByRole('status')).toHaveTextContent(/no claims/i);
   });
 });
+
+describe('ClaimsTracker quotes and time', () => {
+  const quoted: ClaimItem[] = [
+    { claim: 'Compute doubles yearly', source: 'Host', status: 'stated', quote: 'It doubles every year.', timestamp: 4282 },
+  ];
+
+  it('should show the claim quote when the claim carries one', () => {
+    render(<ClaimsTracker claims={quoted} />);
+    expect(screen.getByText('It doubles every year.')).toBeInTheDocument();
+  });
+
+  it('should print an hour-aware time on a claim past 1:00:00', () => {
+    render(<ClaimsTracker claims={quoted} onSeek={vi.fn()} />);
+    expect(screen.getByRole('button', { name: /1:11:22/ })).toBeInTheDocument();
+  });
+
+  it('should seek to the claim second when its chip is clicked', async () => {
+    const onSeek = vi.fn();
+    render(<ClaimsTracker claims={quoted} onSeek={onSeek} />);
+    await userEvent.setup().click(screen.getByRole('button', { name: /1:11:22/ }));
+    expect(onSeek).toHaveBeenCalledWith(4282);
+  });
+});

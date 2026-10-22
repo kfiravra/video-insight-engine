@@ -148,6 +148,7 @@ async def extract(
     video_context: str = "",
     frame_context: str = "",
     visual_annotations: str = "",
+    source_language: str | None = None,
 ) -> AsyncGenerator[dict, None]:
     """Adaptive extraction yielding progress events and final result.
 
@@ -161,7 +162,8 @@ async def extract(
 
     ``video_context`` is the run's ``<video_memory>`` block; ``frame_context``
     the ≤ 12 key-frame lines; ``visual_annotations`` the ``<visual_annotations>``
-    block ("" = no frames/OCR, and the prompt then carries no visual guide).
+    block ("" = no frames/OCR, and the prompt then carries no visual guide);
+    ``source_language`` the run's ``source_language_code`` (None = English).
     """
     word_count = len(transcript.split())
     duration_seconds = video_data.get("duration", 0)
@@ -180,6 +182,7 @@ async def extract(
         video_memory=video_context,
         frame_context=frame_context,
         visual_annotations=visual_annotations,
+        source_language=source_language,
     )
 
     # Strategy selection: chunked for long videos with chapters
@@ -237,8 +240,11 @@ def _build_prompt(
     video_memory: str,
     frame_context: str,
     visual_annotations: str,
+    source_language: str | None = None,
 ) -> ExtractionPrompt:
-    """The run's prompt: system rules, cached ``[video + transcript + memory]``, job tail."""
+    """The run's prompt: system rules, cached ``[video + transcript + memory]``, job tail.
+
+    ``source_language``: the run's ``source_language_code`` (None = English, 4.2)."""
     rules_path = PROMPTS_DIR / "quality_rules.txt"
     quality_rules = _load_prompt(str(rules_path.resolve())) if rules_path.exists() else ""
     return build_extraction_prompt(
@@ -253,6 +259,7 @@ def _build_prompt(
             video_memory=video_memory,
             frame_context=frame_context,
             visual_annotations=visual_annotations,
+            source_language=source_language,
         )
     )
 

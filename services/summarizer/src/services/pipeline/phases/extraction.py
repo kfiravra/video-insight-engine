@@ -315,6 +315,7 @@ async def run_phase_extraction(ctx: PipelineContext) -> AsyncGenerator[str, None
             video_context=ctx.video_memory,
             frame_context=frame_context,
             visual_annotations=ctx.visual_annotations,
+            source_language=ctx.source_language_code,
         ):
             event_name = evt["event"]
             yield sse_event(event_name, {k: v for k, v in evt.items() if k not in _INTERNAL_KEYS})

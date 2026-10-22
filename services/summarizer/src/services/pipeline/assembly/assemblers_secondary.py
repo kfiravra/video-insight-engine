@@ -20,6 +20,7 @@ from .assemblers_overhaul import (
     assemble_video_filmstrip,
 )
 from .derived_guard import anchor_seconds, has_quote, stated_scalars
+from .moment_normalizers import quote_fields
 from .normalizers import (
     _coerce_float,
     _coerce_int,
@@ -248,17 +249,18 @@ def _claim_status(item: dict) -> str:
 
 
 def _normalize_claim(item: Any) -> dict | None:
-    """Coerce a claim item to {claim, source?, status?, sourceCitation?, timestamp?}.
+    """Coerce a claim item to {claim, source?, quote?, status?, sourceCitation?, timestamp?}.
 
     Drops the row when there is no claim text. ``source`` is who the video says
     made the claim, absent when it attributes it to no one (never an invented
-    "Reporter"). An anchored claim ships its seek point (R2). Only a claim anchored
-    at a timestamp the reader can check AND carrying the words that make it
-    (``quote``, verified by 2.0 d) carries a ``status`` — stated / supported /
-    contested only (D11), never "verified"; an unknown or missing one is ``stated``
-    — and its ``sourceCitation`` (the counter-evidence of a "contested"). Any other
-    claim ships as the claim, its source and its stamp: no status shown, no
-    citation under a status it lost (D13).
+    "Reporter"). The claim's verbatim words ship whenever the quote pass kept them
+    (``quote_fields`` — S14 shipped 0 of its 20). An anchored claim ships its seek
+    point (R2). Only a claim anchored at a timestamp the reader can check AND
+    carrying the words that make it (``quote``, verified by 2.0 d) carries a
+    ``status`` — stated / supported / contested only (D11), never "verified"; an
+    unknown or missing one is ``stated`` — and its ``sourceCitation`` (the
+    counter-evidence of a "contested"). Any other claim ships as the claim, its
+    source and its stamp: no status shown, no citation under a status it lost (D13).
     """
     if not isinstance(item, dict):
         return None
@@ -269,6 +271,7 @@ def _normalize_claim(item: Any) -> dict | None:
     source = str(item.get("source") or item.get("speaker") or "").strip()
     if source:
         result["source"] = source
+    result.update(quote_fields(item))
     timestamp = anchor_seconds(item)
     if timestamp is None:
         return result

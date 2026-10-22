@@ -24,6 +24,7 @@ from src.shared_config.assembly_policy import assembly_policy
 from .assemblers_overhaul import assemble_concept_canvas
 from .assemblers_primary import assemble_spot_explorer
 from .derived_guard import has_quote, is_numeric_axis
+from .moment_normalizers import quote_en
 
 logger = logging.getLogger(__name__)
 
@@ -163,15 +164,15 @@ def checked_quotes(data: Any) -> dict[str, dict]:
 
 def spot_evidence(spot: dict, row: dict, quotes: dict[str, dict]) -> dict:
     """A grid row's evidence on its spot card (R10, 2.0 d): the card's ``quote`` only
-    when it IS its item's checked quote, with the item's translated flag; any other
-    evidence — an example, a source, a note, an analogy — is prose after the
-    description, never the speaker's words."""
+    when it IS its item's checked quote, with the item's translated flag and its English
+    (``quoteEn``, D12, 4.2); any other evidence — an example, a source, a note, an
+    analogy — is prose after the description, never the speaker's words."""
     evidence = str(row.get("evidence") or "").strip()
     if not evidence:
         return spot
     item = quotes.get(evidence)
     if item is not None:
-        spot["quote"] = evidence
+        spot.update({"quote": evidence, **quote_en(item)})
         return mark_translated_quote(spot, item)
     description = str(spot.get("description") or "").strip()
     spot["description"] = f"{description} — {evidence}" if description else evidence

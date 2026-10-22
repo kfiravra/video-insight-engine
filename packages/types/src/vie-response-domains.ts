@@ -258,6 +258,8 @@ export interface ReviewVerdict {
    *  the words that state it (`quote`, 2.0 c). */
   timestamp?: number | null;
   quote?: string | null;
+  /** The quote's English on a non-English video (D12, 4.2). */
+  quoteEn?: string | null;
 }
 
 export interface ReviewData {
@@ -309,17 +311,23 @@ export interface PodcastSegment {
   speaker?: string;
   /** The line that carries the segment's conclusion, verbatim. */
   quote?: string | null;
+  /** The quote's English on a non-English video (D12, 4.2). */
+  quoteEn?: string | null;
 }
 
 /** One interview exchange (`podcast.qa`, output-quality 1.3): ships as a moment —
  *  the question heads the row, the answer is its description. */
 export interface PodcastQAItem {
   question: string;
+  /** The question's English when it was asked in another language (D12, 4.2). */
+  questionEn?: string | null;
   answer: string;
   /** Who answers — the guest, usually. */
   speaker?: string | null;
   timestamp?: number | null;
   quote?: string | null;
+  /** The quote's English on a non-English video (D12, 4.2). */
+  quoteEn?: string | null;
 }
 
 export interface PodcastGuest {
@@ -333,6 +341,8 @@ export interface PodcastGuest {
 
 export interface PodcastQuote {
   quote: string;
+  /** The quote's English on a non-English video (D12, 4.2). */
+  quoteEn?: string | null;
   speaker?: string;
   timestamp?: number;
 }

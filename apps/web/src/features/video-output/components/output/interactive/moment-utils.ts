@@ -12,9 +12,13 @@ export interface MomentItem {
   quote?: string;
   /** The quote is the English rendering of non-English speech (2.0 d, D12): prose. */
   quoteTranslated?: boolean;
+  /** English rendering of a verbatim non-English quote (D12), shown beneath it. */
+  quoteEn?: string;
   /** An interview exchange's whole question — sent only when it differs from the
    *  label (the label is then its first sentence). */
   question?: string;
+  /** English rendering of a non-English `question` (D12): heads the row, the verbatim question sits beneath. */
+  questionEn?: string;
   mood?: string;
   emoji?: string;
   speaker?: string;

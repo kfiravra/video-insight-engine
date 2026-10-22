@@ -9,9 +9,11 @@ right after the quote pass, with the quote matcher's own rules (``verify_quote``
 - found → the row's ``timestamp`` becomes the second the question is asked (the row
   seeks to the question, never to its answer's quote) and ``questionStatus: verified``;
 - not found on an English source → the exchange leaves the list;
-- not found on any other source → kept as ``questionStatus: translated``: the
-  extraction runs in English, so a Hebrew interview's question is a translation
-  (D12, until 4.2);
+- not found on any other source → kept as ``questionStatus: translated``. Since 4.2
+  (D12) a non-English run copies the question verbatim in the transcript's language,
+  its English beside it as ``questionEn``, so a Hebrew interview's question is found
+  and verified as above; ``translated`` is left for a question the transcript does not
+  say in those words (the model's English rendering) — kept, its stamp unmoved;
 - fewer than ``MIN_QUESTIONS`` left → the list empties.
 
 A Q&A tab with no exchange left drops before any fallback (``drop_emptied_qa``): no
