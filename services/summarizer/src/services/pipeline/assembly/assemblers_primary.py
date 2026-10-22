@@ -15,7 +15,6 @@ from typing import Any
 
 from src.services.pipeline.quote_verify import mark_translated_quote
 
-from .assemblers_learning import is_key_idea_list, key_idea_props
 from .info_grid_items import _INFO_EVIDENCE_FIELDS as _INFO_EVIDENCE_FIELDS
 from .info_grid_items import _INFO_KEY_FIELDS as _INFO_KEY_FIELDS
 from .info_grid_items import _INFO_STRING_MAX as _INFO_STRING_MAX
@@ -28,6 +27,7 @@ from .info_grid_items import _split_string_info_item as _split_string_info_item
 from .info_grid_items import _text_only_info_item as _text_only_info_item
 from .info_grid_items import _with_category as _with_category
 from .ingredients import ingredient_row
+from .key_ideas import is_key_idea_list, key_idea_props
 from .normalizers import (
     _normalize_code_snippet,
     _normalize_comparison,
