@@ -735,17 +735,19 @@ class TestSpotCapSectionsRemap:
         assert all(len(s["spotIndices"]) >= 1 for s in sections)
         assert len(tabs[0]["props"]["spots"]) <= 25
 
-    def test_more_sections_than_cap_keeps_one_each_for_first_cap(self):
+    def test_more_sections_than_cap_keeps_one_each_for_an_even_pick_with_the_last_day(self):
         from src.services.pipeline.assembly.core import _post_process_tabs
 
-        # 30 days x 2 spots = 60 spots -> first 25 days keep one spot each.
+        # 30 days x 2 spots = 60 spots -> 25 days evenly picked keep one spot each;
+        # the tail survives (output-quality 3.3: no head-slice of the sections).
         tab = self._build_tab(n_spots=60, spots_per_day=2)
         tabs = [tab]
         _post_process_tabs(tabs)
 
         sections = tabs[0]["props"]["sections"]
+        labels = [s["label"] for s in sections]
         assert len(sections) == 25
-        assert [s["label"] for s in sections] == [f"Day {d}" for d in range(1, 26)]
+        assert labels[0] == "Day 1" and labels[-1] == "Day 30"
         assert all(len(s["spotIndices"]) == 1 for s in sections)
         assert len(tabs[0]["props"]["spots"]) == 25
 

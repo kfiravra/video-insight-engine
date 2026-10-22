@@ -11,7 +11,8 @@ output, which stays unmodified:
 2. 5 minutes: today's head block — ``<video>`` + the chunk's transcript +
    ``<video_memory>`` — the same bytes for every group of a chunk;
 3. the group's job (``extraction_group_job.txt``, uncached): the emit-only
-   line + output shape, the tabs it serves, the primary's emphasis; the visual
+   line + output shape, the tabs it serves (a long video's chunk expecting its
+   share of each count — output-quality 3.3), the primary's emphasis; the visual
    group adds the annotation guide and the chunk's annotations and key frames;
    the group extracting ``learning.keyIdeas`` adds the rules file's argument
    example of the run's primary domain (p1.11).
@@ -240,12 +241,13 @@ def _support_line(tab: Mapping[str, object]) -> str:
     return f"- supports: {clean} ({tab.get('component', '')})"
 
 
-def tabs_to_serve(group: ExtractionGroup, job: GroupJob) -> str:
+def tabs_to_serve(group: ExtractionGroup, job: GroupJob, share: float = 1.0) -> str:
     """Full brief lines (what/where/expect/cap) for the tabs whose own field the group
-    extracts; a bare ``supports:`` line, no count, for tabs it only backs up."""
+    extracts; a bare ``supports:`` line, no count, for tabs it only backs up. ``share`` =
+    the chunk's share of the video (``ExtractionChunk.share``): its part of each count."""
     tabs = _group_tabs(group, job.tabs)
     owned = [tab for tab in tabs if _owns(group, tab)]
-    lines = [render_tabs_to_serve(owned, job.active)] if owned else []
+    lines = [render_tabs_to_serve(owned, job.active, share)] if owned else []
     lines += [_support_line(tab) for tab in tabs if not _owns(group, tab)]
     return "\n".join(lines) or render_tabs_to_serve([], job.active)
 
@@ -283,7 +285,7 @@ def job_block(
     values = {
         "batch_context": chunk.batch_context,
         "emit_only": emit_only(group),
-        "tabs_to_serve": tabs_to_serve(group, job),
+        "tabs_to_serve": tabs_to_serve(group, job, chunk.share),
         "content_emphasis": get_content_emphasis(job.primary_tag),
         "visual_annotations": (
             chunk_annotations(job.visual_annotations, chunk) if group.visual else ""

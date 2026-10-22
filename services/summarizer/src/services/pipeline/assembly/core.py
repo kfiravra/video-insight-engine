@@ -61,6 +61,7 @@ from .registry import ASSEMBLER_REGISTRY, infer_component
 from .sampling import (
     MomentAnchors,
     collect_moment_anchors,
+    even_indices,
     item_richness,
     key_idea_cap,
     moment_track_cap,
@@ -949,8 +950,9 @@ def _cap_spots_with_sections(props: dict, spots: list, cap: int) -> None:
     silently vanishing from an itinerary), so quotas are allocated per
     section — largest remainder with a floor of 1 — and rank-sampled by
     richness WITHIN each section (equals even-sampled, R9). Sections'
-    spotIndices are remapped to the rebuilt spots list; only when the section
-    count itself exceeds the cap are trailing sections dropped.
+    spotIndices are remapped to the rebuilt spots list. Only when the section
+    count itself reaches the cap do sections go: an even pick of them, first
+    and last kept (output-quality 3.3), so a long video's tail sections survive.
     """
     valid: list[dict] = []
     for section in props["sections"]:
@@ -968,7 +970,7 @@ def _cap_spots_with_sections(props: dict, spots: list, cap: int) -> None:
         return
 
     if len(valid) >= cap:
-        valid = valid[:cap]
+        valid = [valid[i] for i in even_indices(len(valid), cap)]
         quotas = [1] * len(valid)
     else:
         total = sum(len(s["spotIndices"]) for s in valid)

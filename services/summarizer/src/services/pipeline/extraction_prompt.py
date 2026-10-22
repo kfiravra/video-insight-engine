@@ -4,7 +4,8 @@ The template has three sections: the rules (no per-video text), the video —
 title, length, ``{transcript}``, ``<video_memory>`` — and the job (what to emit,
 the planned tabs' briefs and caps, schemas, example, visual annotations, key
 frames). Counts come from the plan's briefs and the registry caps, never from
-the video's duration.
+the video's duration; a long video's chunk expects its share of each count
+(``render_tabs_to_serve(..., share)``, output-quality 3.3).
 
 Cache layout (A26): the rules go out as the system prompt — byte-identical for
 every video — and the user message is two blocks: ``[video + transcript +
@@ -182,18 +183,25 @@ def _serves_extraction(tab: Mapping[str, object], emitted: Collection[str]) -> b
     )
 
 
-def _amount(expect: int, spec: DataSourceSpec | None) -> str:
+def _scaled(expect: int, share: float) -> int:
+    """A part's share of the whole video's count (at least one); the count itself at 1.0."""
+    return expect if share >= 1.0 else max(1, round(expect * share))
+
+
+def _amount(expect: int, spec: DataSourceSpec | None, share: float = 1.0) -> str:
     """``expect ~14, cap 30`` — the plan's count (never above the cap) and the
-    registry's cap; an object field is ``one object``, with no count."""
+    registry's cap; an object field is ``one object``, with no count. A long
+    video's chunk (``share`` < 1, output-quality 3.3) expects its share of the
+    count; the cap holds per call."""
     if spec is not None and spec["kind"] == "object":
         return "one object"
     if spec is None:
-        return f"expect ~{expect}" if expect else ""
-    expected = f"expect ~{min(expect, spec['cap'])}, " if expect else ""
+        return f"expect ~{_scaled(expect, share)}" if expect else ""
+    expected = f"expect ~{_scaled(min(expect, spec['cap']), share)}, " if expect else ""
     return f"{expected}cap {spec['cap']}"
 
 
-def _tab_line(tab: Mapping[str, object]) -> str:
+def _tab_line(tab: Mapping[str, object], share: float = 1.0) -> str:
     brief = TabBrief.from_raw(tab.get("brief"))
     source = _data_source(tab)
     label = _clean(str(tab.get("label") or tab.get("id") or "Tab"), _LABEL_MAX_CHARS)
@@ -204,16 +212,36 @@ def _tab_line(tab: Mapping[str, object]) -> str:
         parts.append(f"goal: {_clean(goal, _BRIEF_MAX_CHARS)}")
     if brief.where:
         parts.append("where " + ", ".join(r.replace("-", "–") for r in brief.where))
-    if amount := _amount(brief.expect, data_source(source)):
+    if amount := _amount(brief.expect, data_source(source), share):
         parts.append(amount)
     return " — ".join(parts)
 
 
-def render_tabs_to_serve(tabs: Sequence[Mapping[str, object]], emitted: Collection[str]) -> str:
+def render_tabs_to_serve(
+    tabs: Sequence[Mapping[str, object]], emitted: Collection[str], share: float = 1.0
+) -> str:
     """One line per planned tab that reads a field of an ``emitted`` domain or
-    modifier: brief + count + cap."""
-    lines = [_tab_line(tab) for tab in tabs if _serves_extraction(tab, emitted)]
+    modifier: brief + count + cap — the count scaled by a chunk's ``share``."""
+    lines = [_tab_line(tab, share) for tab in tabs if _serves_extraction(tab, emitted)]
     return "\n".join(lines) or _NO_TABS
+
+
+# A chunk's ``<batch_partial_context>`` (``extractor._build_batch_context``): whether the
+# counts in its job are the whole video's or the part's share (output-quality 3.3).
+_WHOLE_VIDEO_COUNTS = (
+    "- The briefs, expected counts and caps below describe the whole video: "
+    "take the items inside this part, never pad toward a count.\n"
+)
+_PART_COUNTS = (
+    "- The briefs below describe the whole video; each expected count is this part's share "
+    "and each cap holds per part: take the items inside this part, never pad toward a count.\n"
+)
+
+
+def batch_counts_line(counts_scaled: bool) -> str:
+    """The batch context's counts line: whole-video counts, or (the split path's chunks,
+    whose jobs expect ``share`` × each count) the part's share with the caps per part."""
+    return _PART_COUNTS if counts_scaled else _WHOLE_VIDEO_COUNTS
 
 
 # ─── Template ───

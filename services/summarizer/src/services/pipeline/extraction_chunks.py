@@ -20,6 +20,12 @@ limits, one chunk per part — today's force-split path; one chunk only when
 that split gives fewer than two parts. At frames-done each chunk's key frames
 are formatted from the gallery frames in its window (``key_frames_by_chunk``).
 
+A chunk's jobs expect its share of each planned count (output-quality 3.3, L19):
+``ExtractionChunk.share`` = the window over the video's clock (S01's 0–39:21 and
+39:21–1:03:07: 0.62 and 0.38), so N chunks no longer each aim at the whole video's
+count; the caps stay per call, and its ``<batch_partial_context>`` says so. One chunk
+has share 1.0 and today's bytes.
+
 The window also bounds what a chunk's call may stamp (output-quality 0b.10, R10 /
 L21): ``window_stamps`` keeps an item's ``timestamp`` / ``seconds`` only inside the
 chunk's window (a marker-interval of grace at an inner edge, none past the video's
@@ -85,6 +91,17 @@ class ExtractionChunk:
     end_s: float | None = None
     video_end_s: float | None = None
 
+    @property
+    def share(self) -> float:
+        """The window's share of the video's clock, ``(end − start) / video end`` — what
+        the chunk's jobs scale each expected count by (output-quality 3.3; the windows of a
+        run's chunks add up to 1). 1.0 for the open chunk of a video one batch covers, and
+        without a video end to divide by."""
+        if _window_open(self) or not self.video_end_s:
+            return 1.0
+        end = self.video_end_s if self.end_s is None else self.end_s
+        return min(1.0, max(0.0, (end - (self.start_s or 0)) / self.video_end_s))
+
 
 # ─── Planning ───
 
@@ -120,7 +137,8 @@ def _forced_batches(transcript: str, duration: float) -> list[list[ChapterChunk]
 
 
 def _batch_chunks(batches: list[list[ChapterChunk]]) -> list[ExtractionChunk]:
-    """One chunk per batch: today's batch transcript, context and annotation window."""
+    """One chunk per batch: today's batch transcript and annotation window; its context
+    says the job's counts are the chunk's share (``ExtractionChunk.share``)."""
     full_duration = max(ch.end_seconds for batch in batches for ch in batch)
     opens = [_batch_start_seconds(batch) for batch in batches]
     last = len(batches) - 1
@@ -128,7 +146,9 @@ def _batch_chunks(batches: list[list[ChapterChunk]]) -> list[ExtractionChunk]:
         ExtractionChunk(
             index=k,
             transcript=_build_batch_transcript(batch),
-            batch_context=_build_batch_context(k, len(batches), batch, full_duration),
+            batch_context=_build_batch_context(
+                k, len(batches), batch, full_duration, counts_scaled=True
+            ),
             start_s=opens[k] if k else None,
             end_s=opens[k + 1] if k < last else None,
             video_end_s=full_duration,
