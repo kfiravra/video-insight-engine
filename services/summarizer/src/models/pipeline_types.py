@@ -131,6 +131,10 @@ class EnrichmentData(BaseModel):
     # refills from them when it drops a question that restates a shipped hero
     # takeaway (p2 review D7, ``phases.enrichment.settle_late_quiz``). Never dumped.
     spares: list[QuizQuestion] = Field(default_factory=list, exclude=True)
+    # The parts quiz v2 was written over — ``(start, end)`` seconds of each chunk window
+    # or third (output-quality 4.0 b): the refill takes a dropped question's spare from
+    # its own part (``quiz_v2_select.spare_for``). Never dumped.
+    parts: list[tuple[int, int]] = Field(default_factory=list, exclude=True)
 
     model_config = {"populate_by_name": True}
 

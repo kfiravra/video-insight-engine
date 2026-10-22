@@ -205,8 +205,8 @@ class TestRequest:
         order = [prompt.index(tag) for tag in ("<key_ideas>", "<transcript>", "<quiz_rules>")]
         assert order == sorted(order) and _TRANSCRIPT.splitlines()[0] in prompt
 
-    def test_should_render_each_key_idea_with_its_marker_and_reason(self) -> None:
-        assert "- [0:30] Pay the card before investing — 24% beats 7%" in _prompt()
+    def test_should_render_each_key_idea_with_its_id_marker_and_reason(self) -> None:
+        assert "- K1 [0:30] Pay the card before investing — 24% beats 7%" in _prompt()
 
     def test_should_carry_the_hero_no_question_may_be_answerable_from(self) -> None:
         assert "tldr: Debt before investing." in _prompt()
@@ -320,12 +320,14 @@ class TestQuoteCheck:
 
 
 class TestTranslatedSource:
-    async def test_should_keep_an_unlocated_quote_when_the_source_is_not_english(self) -> None:
+    async def test_should_stamp_an_unlocated_quote_at_its_key_idea_when_the_source_is_not_english(
+        self,
+    ) -> None:
         reply = _reply(*(_question(n, _FABRICATED, 30 + n) for n in range(3)))
 
         result, _ = await _quiz(reply, language="he")
 
-        assert result is not None and [q.timestamp for q in result.quiz] == [30, 31, 32]
+        assert result is not None and [q.timestamp for q in result.quiz] == [30, 30, 30]
 
     async def test_should_drop_an_unlocated_quote_whose_stamp_is_past_the_end(self) -> None:
         reply = _reply(

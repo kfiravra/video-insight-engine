@@ -15,6 +15,10 @@ from Q, so the replay exercises the real v2 parse and quote check:
   a–b (the video runs 0:00–L)") answers only the questions whose place lies in its
   stretch, so every recorded question is answered by one call; the places are spread
   over L, the video's length;
+* each answered question names the id of the request's ``<key_ideas>`` entry stamped
+  nearest its place (an unstamped entry when none is), one question per id
+  (output-quality 4.0 b: a question naming no target idea, with none stamped near it,
+  is dropped);
 * the entry answers on the model the recorded memory call ran on — quiz v2 runs on
   memory's model (``LLM_MEMORY_MODEL``, blank → memory's fallback);
 * usage: input = request chars / 3.6, output = Q's tokens scaled by the answer's
@@ -44,6 +48,8 @@ _CLOCK = r"\d{1,2}(?::\d{2}){1,2}"
 _STRETCH_RE = re.compile(
     rf"inside this stretch of the video: ({_CLOCK})–({_CLOCK}) \(the video runs 0:00–({_CLOCK})\)"
 )
+_KEY_IDEAS_RE = re.compile(r"<key_ideas>\n(.*?)\n</key_ideas>", re.DOTALL)
+_IDEA_RE = re.compile(rf"^- (K\d+)(?: \[({_CLOCK})\])? ")
 
 
 def is_quiz_v2_call(key: LLMKey) -> bool:
@@ -87,6 +93,27 @@ def stretch_of_request(request: str) -> tuple[int, int, int] | None:
     return start, end, length
 
 
+def key_ideas(request: str) -> list[tuple[str, int | None]]:
+    """(id, seconds or None) of every entry of the request's ``<key_ideas>``."""
+    match = _KEY_IDEAS_RE.search(request)
+    ideas: list[tuple[str, int | None]] = []
+    for line in match.group(1).splitlines() if match else []:
+        parsed = _IDEA_RE.match(line)
+        if parsed:
+            idea, clock = parsed.groups()
+            ideas.append((idea, _seconds(clock) if clock else None))
+    return ideas
+
+
+def _idea_near(place: int, ideas: Sequence[tuple[str, int | None]], used: set[str]) -> str | None:
+    """The unused id stamped nearest ``place``, else the first unused unstamped one."""
+    free = [(idea, seconds) for idea, seconds in ideas if idea not in used]
+    stamped = [(idea, seconds) for idea, seconds in free if seconds is not None]
+    if stamped:
+        return min(stamped, key=lambda entry: abs((entry[1] or 0) - place))[0]
+    return free[0][0] if free else None
+
+
 def _line_at(lines: Sequence[tuple[int, str]], seconds: int) -> tuple[int, str]:
     """The line holding ``seconds``: the last one starting at or before it."""
     held = [line for line in lines if line[0] <= seconds]
@@ -107,25 +134,33 @@ def _in_stretch(place: int, stretch: tuple[int, int, int] | None) -> bool:
     return start <= place < end or (end == length and place >= end)
 
 
+def _answered(item: Mapping[str, Any], line: tuple[int, str], idea: str | None) -> dict[str, Any]:
+    start, text = line
+    named = {"idea": idea} if idea is not None else {}
+    return {**item, **named, "timestamp": start, "quote": " ".join(text.split()[:QUOTE_WORDS])}
+
+
 def quiz_v2_answer(
     recorded: Mapping[str, Any],
     lines: Sequence[tuple[int, str]],
     stretch: tuple[int, int, int] | None = None,
+    ideas: Sequence[tuple[str, int | None]] = (),
 ) -> dict:
-    """Q's quiz with a stamp and a quote per question — a stretch call's only those placed
-    in its stretch (module docstring)."""
+    """Q's quiz with a stamp, a quote and a key idea's id per question — a stretch call's
+    only those placed in its stretch (module docstring)."""
     quiz = recorded.get("quiz")
     items: list[Any] = quiz if isinstance(quiz, list) else []
     total = sum(1 for item in items if isinstance(item, dict))
     last = stretch[2] if stretch else (lines[-1][0] if lines else 0)
     answered: list[Any] = []
+    used: set[str] = set()
     for position, item in enumerate(item for item in items if isinstance(item, dict)):
         place = _place(item, position, total, last)
         if lines and _in_stretch(place, stretch):
-            start, text = _line_at(lines, place)
-            answered.append(
-                {**item, "timestamp": start, "quote": " ".join(text.split()[:QUOTE_WORDS])}
-            )
+            idea = _idea_near(place, ideas, used)
+            if idea is not None:
+                used.add(idea)
+            answered.append(_answered(item, _line_at(lines, place), idea))
     answered.extend(item for item in items if not isinstance(item, dict))
     return {"quiz": answered}
 
@@ -136,7 +171,10 @@ def synthesize_quiz_v2(
     """The v2 answer in the recorded-entry shape (module docstring)."""
     request = request_text(messages)
     answer = quiz_v2_answer(
-        recorded_answer(quiz), transcript_lines(request), stretch_of_request(request)
+        recorded_answer(quiz),
+        transcript_lines(request),
+        stretch_of_request(request),
+        key_ideas(request),
     )
     output = json.dumps(answer)
     share = len(output) / max(len(quiz.output), 1)

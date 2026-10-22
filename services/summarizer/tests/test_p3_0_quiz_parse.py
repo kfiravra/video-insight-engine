@@ -21,9 +21,11 @@ from src.services.pipeline.quote_verify import QuoteIndex
 
 _PATCH_LLM = "src.services.pipeline.quiz_v2.call_llm_with_retry"
 # S02 (Fridman / Tegmark, 83 min): the gate-2 quiz_v2 reply's last three questions as
-# Haiku wrote them (``data/S02/trace.json``), its broken ending kept: "}}]}".
+# Haiku wrote them (``data/S02/trace.json``), its broken ending kept: "}}]}" — each now
+# naming the key idea it tests, as the prompt asks since 4.0 b.
 _S02_REPLY_TAIL = (
-    '{"quiz": [{"question": "What does Tegmark identify as the two parts of the value '
+    '{"quiz": [{"idea": "K1", '
+    '"question": "What does Tegmark identify as the two parts of the value '
     'alignment problem?", "options": ["A technical problem of making machines adopt our '
     'goals, and a philosophical problem of whose values", "Making machines faster and '
     'making them cheaper", "Choosing a programming language and choosing a hardware '
@@ -32,7 +34,7 @@ _S02_REPLY_TAIL = (
     "understand and retain goals from the harder question of which human values to "
     'encode.", "quote": "there\'s the technical value alignment problem of figuring out '
     'just how to make machines understand our goals adopt them and retain them", '
-    '"timestamp": "45:20"}, {"question": "Why does Tegmark say we should start with '
+    '"timestamp": "45:20"}, {"idea": "K1", "question": "Why does Tegmark say we should start with '
     'kindergarten ethics instead of waiting for full value consensus?", "options": '
     '["Refusing to act until consensus exists guarantees failure, and perfect should not '
     'be the enemy of good", "Kindergarten ethics are the only values that are '
@@ -42,7 +44,8 @@ _S02_REPLY_TAIL = (
     "hardwire widely shared basic values like airplanes not flying into buildings and "
     'grow the list over time.", "quote": "we shouldn\'t let perfect be the enemy of good '
     'instead we should start with the kindergarten ethics", "timestamp": "47:20"}, '
-    '{"question": "Why does Tegmark say trust in advanced AI systems should come from '
+    '{"idea": "K1", '
+    '"question": "Why does Tegmark say trust in advanced AI systems should come from '
     'verifiable understanding rather than from training data alone?", "options": '
     "[\"Understanding and proofs give assurance about behavior, while 'trained on tons of "
     'data\' gives none", "Training data is always corrupted and therefore useless", '
@@ -76,6 +79,7 @@ _S02_SEGMENTS = [
 
 def _item(n: int) -> dict[str, Any]:
     return {
+        "idea": "K1",
         "question": f"Why does the speaker say so (#{n})?",
         "options": ["Because of A", "Because of B", "Because of C", "Because of D"],
         "correctIndex": 0,

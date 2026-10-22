@@ -543,7 +543,7 @@
   "quizEnrichment": {
     "quizDomains": ["learning", "language", "tech", "science", "podcast", "news"],
     "flavor": {
-      "learning": "Test understanding with specific details from the content (not trivia) — actionable knowledge the viewer can apply immediately.",
+      "learning": "Test the speaker's claims and the reasoning behind them — what is argued, why, and the figures it turns on — never a detail for its own sake.",
       "language": "Test comprehension of vocabulary, grammar rules, and usage — practical language skills the viewer can use immediately.",
       "tech": "Think like a senior developer onboarding a teammate — test understanding of technical decisions, code patterns, and commands from the video.",
       "science": "Test understanding of scientific concepts, facts, and relationships — and their real-world applications.",

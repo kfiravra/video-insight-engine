@@ -80,20 +80,34 @@ def _dumped(n: int, answer: str = "") -> dict[str, Any]:
     return QuizQuestion.model_validate(_question(n, answer, quote=quote)).model_dump(by_alias=True)
 
 
-def _request(duration_s: float = _TEN_MIN) -> QuizV2Request:
+# One key idea per quoted line: a question tests the idea stamped near it (4.0 b).
+_IDEAS = [
+    {"claim": "Card first", "timestamp": 30},
+    {"claim": "Fund second", "timestamp": 160},
+    {"claim": "Cash buffer", "timestamp": 240},
+]
+
+
+def _request(
+    duration_s: float = _TEN_MIN, ideas: list[dict[str, Any]] | None = None
+) -> QuizV2Request:
     return QuizV2Request(
         primary_tag="learning",
         title="Pay the card first",
         duration_s=duration_s,
         transcript=_TRANSCRIPT,
-        extraction={"learning": {"keyIdeas": [{"claim": "Card first", "timestamp": 30}]}},
+        extraction={"learning": {"keyIdeas": _IDEAS if ideas is None else ideas}},
     )
 
 
-async def _quiz_v2(reply: list[dict[str, Any]], language: str | None = None) -> EnrichmentData:
+async def _quiz_v2(
+    reply: list[dict[str, Any]],
+    language: str | None = None,
+    ideas: list[dict[str, Any]] | None = None,
+) -> EnrichmentData:
     with patch(_PATCH_LLM, new=AsyncMock(return_value=json.dumps({"quiz": reply}))):
         result = await enrich_quiz_v2(
-            MagicMock(), _request(), QuoteIndex.build(_SEGMENTS, language)
+            MagicMock(), _request(ideas=ideas), QuoteIndex.build(_SEGMENTS, language)
         )
     assert result is not None
     return result
@@ -168,9 +182,10 @@ class TestMarkerAsWritten:
     async def test_should_read_the_marker_as_seconds_when_a_translated_quote_keeps_it(
         self,
     ) -> None:
-        reply = [_question(n, quote=_FABRICATED, timestamp=f"2:4{n}") for n in range(3)]
+        # Its idea has no stamp and no quote, so the translated quote keeps the model's.
+        reply = [_question(n, quote=_FABRICATED, timestamp=f"2:4{n}", idea="K1") for n in range(3)]
 
-        result = await _quiz_v2(reply, language="he")
+        result = await _quiz_v2(reply, language="he", ideas=[{"claim": "Card first"}])
 
         assert [q.timestamp for q in result.quiz] == [160, 161, 162]
 

@@ -1,13 +1,14 @@
 """Quiz v2 (output-quality 2.1b, D9 / D13) — every answer proved by the speaker's words.
 
 Calls on ``LLM_MEMORY_MODEL`` (Haiku 5.5, stage ``quiz_v2``) read the run's marked
-transcript and the key ideas (``quiz_v2_ideas.KEY_IDEA_SOURCES``) and write the quiz:
-3 / 5 / 8 questions by length (``quizPolicy``, :func:`enrichment.quiz_question_count`)
-plus ``SPARE_QUESTIONS`` candidates, each with its answer's ``timestamp`` in seconds
-and a ≤ 25-word evidence ``quote``. With a known length, stamped key ideas and more
-than 3 questions (past the 15-min band) it is one call per stretch (third) of the video
-that holds a key idea, in parallel, each reading only its third (``quiz_v2_prompt``,
-G2-4); otherwise one call over the whole video.
+transcript and the target key ideas (``quiz_v2_ideas.quiz_targets``: thesis / argument
+/ number, each with an id) and write the quiz: 3 / 5 / 8 questions by length
+(``quizPolicy``, :func:`enrichment.quiz_question_count`) plus ``SPARE_QUESTIONS``
+candidates, each naming the idea it tests, with its answer's ``timestamp`` in seconds
+and a ≤ 25-word evidence ``quote``. It is one call per part of the video that holds a
+target — each extraction chunk of a chunked run, else each third past the 15-min band —
+in parallel, each reading only its part (``quiz_v2_prompt``, G2-4, 4.0 b); otherwise one
+call over the whole video.
 Every question then passes the 2.0 quote check (``quote_verify``) or is dropped:
 
 - **verified** — the stamp is set from where the quote was found (segment-precise;
@@ -15,18 +16,23 @@ Every question then passes the 2.0 quote check (``quote_verify``) or is dropped:
   than :data:`STAMP_AGREEMENT_S` is logged;
 - **unverified** (an English source, not found) — dropped;
 - **translated** (any other source, not found: the quote is an English rendering,
-  D12) — kept only when its stamp lies inside the video; assembly flags the quote
+  D12) — stamped at its idea's location, else kept only with a stamp inside its call's
+  part (``quiz_v2_targets.translated_place``, G3-3); assembly flags the quote
   ``quoteTranslated`` and the page shows it as prose;
 - no quote — dropped.
+
+and must test a target idea: the one it names, else the one stamped within 90 s of it,
+else it is dropped; a second question on one idea ranks behind every first one
+(``quiz_v2_targets``).
 
 Each reply is read item by item when its envelope is broken (``quiz_v2_parse``, G2-1);
 a reply in which no question parses is asked for once more — that call's only second
 call. Every call shares one deadline, :data:`QUIZ_V2_TOTAL_TIMEOUT_S` from the stage's
-start: a call that fails or runs out of time loses only its own stretch. The calls'
+start: a call that fails or runs out of time loses only its own part. The calls'
 candidates merge by rank (every call's first, then every call's second …); of the
-checked ones the video's count is chosen one stretch first, a key that gives itself
-away by its length last, and the shipped keys are dealt evenly over the four positions
-(``quiz_v2_select``: G2-4, G2-5, G2-2).
+checked ones the video's count is chosen one part first, then one per untested outline
+section, a key that gives itself away by its length last, and the shipped keys are
+dealt evenly over the four positions (``quiz_v2_select``: G2-4, G2-5, G2-2).
 
 Fewer than :data:`MIN_QUIZ_V2_QUESTIONS` shipped → no quiz (no quiz tab). The checked
 questions not shipped travel on as ``EnrichmentData.spares``: once the hero rewrite
@@ -35,11 +41,12 @@ takeaway goes and a spare takes its place (:func:`restates_takeaway`,
 ``phases.enrichment.settle_late_quiz`` — p2 review D7).
 
 No prompt cache: memory sends its transcript without a breakpoint, so there is no
-shared prefix to read, and the stretch calls share only the hero and the rules. On
+shared prefix to read, and the part calls share only the hero and the rules. On
 S01 (63 min) one call was ≈ 21 K tokens in + ≈ 2 K out ≈ $0.003 (Haiku 5.5 $0.10 /
-$0.50 per MTok); its three stretch calls read each third once (± 30 s) and the shared
-part three times, ≈ 26 K tokens in all (≈ +$0.0004); past ``TRANSCRIPT_MAX_CHARS`` only the
-lines around the key ideas go, which keeps every prompt in the ≤ 100 K-token price tier.
+$0.50 per MTok); its part calls read each part once (± 30 s) and the shared part once
+per call — two chunk calls ≈ 24 K tokens in all, three thirds ≈ 26 K; past
+``TRANSCRIPT_MAX_CHARS`` only the lines around the target ideas go, which keeps every
+prompt in the ≤ 100 K-token price tier.
 
 Never raises: ``None`` means no quiz, as for the flag-off ``enrich_quiz``.
 """
@@ -52,18 +59,19 @@ import re
 import time
 from collections import Counter
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from itertools import chain, zip_longest
 from typing import TYPE_CHECKING, Any
 
 from ...config import settings
-from ...models.pipeline_types import EnrichmentData, QuizQuestion
+from ...models.pipeline_types import EnrichmentData
 from ...utils.llm_retry import call_llm_with_retry
-from .assembly.quiz_stamps import END_SLACK_S
 from .enrichment import _quiz_cap, parse_quiz, quiz_question_count
 from .pipeline_timing import record_llm_failure
 from .quiz_v2_parse import quiz_items
 from .quiz_v2_prompt import QuizV2Prompt, QuizV2Request, build_quiz_v2_prompts
-from .quiz_v2_select import select_quiz, shuffle_quiz
+from .quiz_v2_select import quiz_parts, select_quiz, shuffle_quiz
+from .quiz_v2_targets import Candidate, aimed, candidates, ideas_first, translated_place
 from .quote_verify import TRANSLATED, VERIFIED, QuoteIndex, verify_quote
 
 if TYPE_CHECKING:
@@ -114,16 +122,11 @@ def clip_quote(quote: str | None) -> str:
     return f"{' '.join(words[:QUOTE_MAX_WORDS])}…"
 
 
-def _inside(stamp: int | None, duration_s: float | None) -> bool:
-    if stamp is None:
-        return False
-    return not duration_s or duration_s <= 0 or stamp <= duration_s + END_SLACK_S
-
-
-def check_question(
-    question: QuizQuestion, index: QuoteIndex, duration_s: float | None
-) -> tuple[QuizQuestion | None, str]:
-    """The question with its checked quote and stamp, or None — and the verdict's name."""
+def _quote_checked(
+    candidate: Candidate, index: QuoteIndex, duration_s: float | None
+) -> tuple[Candidate | None, str]:
+    """The candidate with its checked quote and stamp, or None — and the verdict's name."""
+    question = candidate.question
     quote = clip_quote(question.quote)
     if not quote:
         return None, "unquoted"
@@ -132,26 +135,45 @@ def check_question(
     if verdict.status == VERIFIED and verdict.seconds is not None:
         moved = stamp is None or abs(stamp - verdict.seconds) > STAMP_AGREEMENT_S
         checked = question.model_copy(update={"quote": quote, "timestamp": verdict.seconds})
-        return checked, "stamp_set" if moved else VERIFIED
-    if verdict.status == TRANSLATED and _inside(stamp, duration_s):
-        return question.model_copy(update={"quote": quote}), TRANSLATED
-    return None, verdict.status
+        return replace(candidate, question=checked), "stamp_set" if moved else VERIFIED
+    if verdict.status != TRANSLATED:
+        return None, verdict.status
+    placed = translated_place(candidate, index, duration_s)
+    if placed is None:
+        return None, "translated_outside"
+    return replace(placed, question=placed.question.model_copy(update={"quote": quote})), TRANSLATED
+
+
+def check_question(
+    candidate: Candidate, index: QuoteIndex, duration_s: float | None
+) -> tuple[Candidate | None, str]:
+    """The candidate checked and aimed at its target idea, or None — and the verdict's name."""
+    checked, outcome = _quote_checked(candidate, index, duration_s)
+    if checked is None:
+        return None, outcome
+    targeted = aimed(checked)
+    return (targeted, outcome) if targeted is not None else (None, "untargeted")
 
 
 def keep_checked(
-    questions: Sequence[QuizQuestion], index: QuoteIndex, duration_s: float | None
-) -> list[QuizQuestion]:
-    """The questions whose evidence passes, in order (module docstring)."""
-    kept: list[QuizQuestion] = []
+    questions: Sequence[Candidate], index: QuoteIndex, duration_s: float | None
+) -> list[Candidate]:
+    """The questions whose evidence passes and whose idea is a target, in order (module
+    docstring)."""
+    kept: list[Candidate] = []
     outcomes: Counter[str] = Counter()
     for question in questions:
         checked, outcome = check_question(question, index, duration_s)
         outcomes[outcome if checked is not None else f"dropped_{outcome}"] += 1
         if checked is not None:
             kept.append(checked)
+    matched = sum(1 for c in kept if c.target is not None and not c.named)
+    ideas = {c.target.id for c in kept if c.target is not None}
     logger.info(
-        "Quiz v2: kept %d of %d after the quote check (%s)",
+        "Quiz v2: kept %d of %d after the quote check (%s); %d matched to an idea by stamp, "
+        "%d distinct ideas",
         len(kept), len(questions), ", ".join(f"{k}={v}" for k, v in sorted(outcomes.items())),
+        matched, len(ideas),
     )  # fmt: skip
     return kept
 
@@ -239,13 +261,16 @@ async def _call_quiz_v2_llm(llm_service: LLMService, prompt: str, deadline: floa
         raise
 
 
-def _candidates(raw: str, call: QuizV2Prompt, duration_s: float | None) -> list[QuizQuestion]:
-    return parse_quiz(quiz_items(raw), call.asked, duration_s)
+def _candidates(raw: str, call: QuizV2Prompt, duration_s: float | None) -> list[Candidate]:
+    """The reply's valid questions, each with the target idea it names (``quiz_v2_targets``)."""
+    items = quiz_items(raw)
+    questions = parse_quiz(items, call.asked, duration_s)
+    return candidates(questions, items, call.part, call.targets)
 
 
 async def _reply_candidates(
     llm_service: LLMService, call: QuizV2Prompt, duration_s: float | None, deadline: float
-) -> list[QuizQuestion] | None:
+) -> list[Candidate] | None:
     """The reply's valid questions; ``None`` when the call failed. A reply in which no
     question parses is asked for once more (G2-1) — never a third time."""
     raw = await _call_quiz_v2_llm(llm_service, call.text, deadline)
@@ -265,8 +290,8 @@ async def _reply_candidates(
 
 async def _call_candidates(
     llm_service: LLMService, call: QuizV2Prompt, duration_s: float | None, deadline: float
-) -> list[QuizQuestion] | None:
-    """One call's candidates; a call that runs out of time loses only its own stretch."""
+) -> list[Candidate] | None:
+    """One call's candidates; a call that runs out of time loses only its own part."""
     try:
         return await _reply_candidates(llm_service, call, duration_s, deadline)
     except TimeoutError:
@@ -277,22 +302,23 @@ async def _call_candidates(
         return None
 
 
-def merge_by_rank(replies: Sequence[Sequence[QuizQuestion]]) -> list[QuizQuestion]:
+def merge_by_rank(replies: Sequence[Sequence[Candidate]]) -> list[Candidate]:
     """Every reply's first candidate, then every reply's second, …; a question two calls
-    both wrote is kept once."""
-    merged: list[QuizQuestion] = []
+    both wrote is kept once. (A second question on one idea moves behind every first
+    after the check, which settles each one's idea: ``quiz_v2_targets.ideas_first``.)"""
+    merged: list[Candidate] = []
     seen: set[str] = set()
-    for question in chain.from_iterable(zip_longest(*replies)):
-        if question is None or question.question.casefold() in seen:
+    for candidate in chain.from_iterable(zip_longest(*replies)):
+        if candidate is None or candidate.question.question.casefold() in seen:
             continue
-        seen.add(question.question.casefold())
-        merged.append(question)
+        seen.add(candidate.question.question.casefold())
+        merged.append(candidate)
     return merged
 
 
 async def _all_candidates(
     llm_service: LLMService, calls: Sequence[QuizV2Prompt], duration_s: float | None
-) -> list[QuizQuestion] | None:
+) -> list[Candidate] | None:
     """Every call at once under one deadline, merged by rank; ``None`` when none answered."""
     deadline = asyncio.get_running_loop().time() + QUIZ_V2_TOTAL_TIMEOUT_S
     replies = await asyncio.gather(
@@ -302,7 +328,7 @@ async def _all_candidates(
     if len(calls) > 1:
         counts = " / ".join("-" if reply is None else str(len(reply)) for reply in replies)
         logger.info(
-            "Quiz v2: %d of %d stretch calls answered (candidates %s)",
+            "Quiz v2: %d of %d part calls answered (candidates %s)",
             len(answered), len(calls), counts,
         )  # fmt: skip
     return merge_by_rank(answered) if answered else None
@@ -314,19 +340,20 @@ async def _run(
     calls: Sequence[QuizV2Prompt],
     index: QuoteIndex,
 ) -> EnrichmentData | None:
-    candidates = await _all_candidates(llm_service, calls, request.duration_s)
-    if candidates is None:
+    merged = await _all_candidates(llm_service, calls, request.duration_s)
+    if merged is None:
         logger.warning("Quiz v2 LLM call failed after retries for %s", request.primary_tag)
         return None
+    checked = ideas_first(keep_checked(merged, index, request.duration_s))
+    parts = quiz_parts(request.duration_s, request.windows)
     count = quiz_question_count(request.duration_s, _quiz_cap())
-    checked = keep_checked(candidates, index, request.duration_s)
-    quiz, spares = select_quiz(checked, count, request.duration_s)
+    quiz, spares = select_quiz([c.question for c in checked], count, parts, request.outline)
     if len(quiz) < MIN_QUIZ_V2_QUESTIONS:
         logger.warning(
             "Quiz v2 for %s kept %d checked question(s); no quiz", request.primary_tag, len(checked)
         )
         return None
-    return EnrichmentData(quiz=shuffle_quiz(quiz), spares=shuffle_quiz(spares))
+    return EnrichmentData(quiz=shuffle_quiz(quiz), spares=shuffle_quiz(spares), parts=parts)
 
 
 async def enrich_quiz_v2(
@@ -335,7 +362,7 @@ async def enrich_quiz_v2(
     """The checked quiz (3 to the video's count of questions); ``None`` on any failure.
 
     ``index`` is the run's quote index (``run_quote_index``): without one no quote can
-    be checked, so no call is made. Every call — one per stretch, or the one call, and
+    be checked, so no call is made. Every call — one per part, or the one call, and
     each one's second call after a reply with no question in it — ends by
     ``QUIZ_V2_TOTAL_TIMEOUT_S`` after the stage starts; never raises.
     """

@@ -128,7 +128,7 @@ class TestUnstampedKeyIdeas:
 
         calls = build_quiz_v2_prompts(_request(_S03_S, ideas))
 
-        assert ["- The unstamped idea — Why." in _key_ideas_block(c.text) for c in calls] == [
+        assert ["- K2 The unstamped idea — Why." in _key_ideas_block(c.text) for c in calls] == [
             True,
             True,
         ]

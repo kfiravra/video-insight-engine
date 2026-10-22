@@ -49,6 +49,7 @@ _SUMMARIZER = Path(__file__).resolve().parents[1]
 # S03 (Stanford BIO 150, 57:14): its thirds and the stamps of the 8 questions gate 2 shipped.
 _S03_S = 3434
 _S03_SHIPPED_STAMPS = [382, 421, 659, 694, 1205, 906, 991, 1297]
+_THIRDS = stretch_bounds(_S03_S)
 _TEN_MIN = 600
 
 
@@ -205,19 +206,19 @@ class TestLengthTell:
     def test_should_ship_a_clean_spare_instead_of_a_flagged_question(self) -> None:
         questions = [_told(0), _question(1), _question(2), _question(3)]
 
-        shipped, _ = select_quiz(questions, 3, None)
+        shipped, _ = select_quiz(questions, 3, [])
 
         assert _numbers(shipped) == [1, 2, 3]
 
     def test_should_ship_a_flagged_question_when_nothing_clean_is_left(self) -> None:
-        shipped, _ = select_quiz([_told(0), _question(1), _question(2)], 3, None)
+        shipped, _ = select_quiz([_told(0), _question(1), _question(2)], 3, [])
 
         assert _numbers(shipped) == [0, 1, 2]
 
     def test_should_hand_a_flagged_question_on_after_the_clean_spares(self) -> None:
         questions = [_told(0), _question(1), _question(2), _question(3), _question(4)]
 
-        _, spares = select_quiz(questions, 3, None)
+        _, spares = select_quiz(questions, 3, [])
 
         assert _numbers(spares) == [4, 0]
 
@@ -236,13 +237,13 @@ class TestStretches:
         assert stretch_bounds(duration_s) == []
 
     def test_should_count_a_stamp_past_the_end_in_the_last_third(self) -> None:
-        assert stretch_of(_S03_S + 8, _S03_S) == 2
+        assert stretch_of(_S03_S + 8, _THIRDS) == 2
 
     def test_should_place_a_stretchs_first_second_in_that_stretch(self) -> None:
-        assert [stretch_of(stamp, _S03_S) for stamp in (1144, 1145, 2289, 2290)] == [0, 1, 1, 2]
+        assert [stretch_of(stamp, _THIRDS) for stamp in (1144, 1145, 2289, 2290)] == [0, 1, 1, 2]
 
     def test_should_show_s03s_gate_2_quiz_missing_its_last_third(self) -> None:
-        assert {stretch_of(stamp, _S03_S) for stamp in _S03_SHIPPED_STAMPS} == {0, 1}
+        assert {stretch_of(stamp, _THIRDS) for stamp in _S03_SHIPPED_STAMPS} == {0, 1}
 
 
 class TestSpreadSelection:
@@ -250,15 +251,15 @@ class TestSpreadSelection:
         stamps = [100, 200, 300, 400, 500, 600, 700, 800, 1500, 3000]
         questions = [_question(n, stamp) for n, stamp in enumerate(stamps)]
 
-        shipped, _ = select_quiz(questions, 8, _S03_S)
+        shipped, _ = select_quiz(questions, 8, _THIRDS)
 
-        assert {stretch_of(q.timestamp, _S03_S) for q in shipped} == {0, 1, 2}
+        assert {stretch_of(q.timestamp, _THIRDS) for q in shipped} == {0, 1, 2}
 
     def test_should_ship_in_the_models_order_when_a_later_question_covers_a_third(self) -> None:
         stamps = [100, 200, 300, 400, 3000]
         questions = [_question(n, stamp) for n, stamp in enumerate(stamps)]
 
-        shipped, spares = select_quiz(questions, 3, _S03_S)
+        shipped, spares = select_quiz(questions, 3, _THIRDS)
 
         assert (_numbers(shipped), _numbers(spares)) == ([0, 1, 4], [2, 3])
 
@@ -268,28 +269,28 @@ class TestSpreadSelection:
         stamps = [100, 200, 300, 2500, 3000]
         questions = [_question(n, stamp) for n, stamp in enumerate(stamps)]
 
-        shipped, _ = select_quiz(questions, 3, _S03_S)
+        shipped, _ = select_quiz(questions, 3, _THIRDS)
 
         assert _numbers(shipped) == [0, 1, 3]
 
     def test_should_fill_in_the_models_order_when_a_third_has_no_question(self) -> None:
         questions = [_question(n, stamp) for n, stamp in enumerate([100, 200, 300, 1500])]
 
-        shipped, _ = select_quiz(questions, 3, _S03_S)
+        shipped, _ = select_quiz(questions, 3, _THIRDS)
 
         assert _numbers(shipped) == [0, 1, 3]
 
     def test_should_ship_the_first_questions_when_the_length_is_unknown(self) -> None:
         questions = [_question(n, stamp) for n, stamp in enumerate([100, 200, 300, 3000])]
 
-        shipped, _ = select_quiz(questions, 3, None)
+        shipped, _ = select_quiz(questions, 3, [])
 
         assert _numbers(shipped) == [0, 1, 2]
 
     def test_should_cover_a_third_with_a_clean_question_only(self) -> None:
         questions = [_question(0, 100), _question(1, 200), _question(2, 300), _told(3, 3000)]
 
-        shipped, _ = select_quiz(questions, 3, _S03_S)
+        shipped, _ = select_quiz(questions, 3, _THIRDS)
 
         assert _numbers(shipped) == [0, 1, 2]
 
@@ -364,26 +365,26 @@ def _prompt(duration_s: float | None, extraction: dict[str, Any] | None = None) 
 
 class TestStretchQuotas:
     def test_should_ask_every_stretch_that_holds_a_key_idea_for_a_question(self) -> None:
-        assert stretch_quotas(_S03_IDEA_STAMPS, _S03_S, 10) == [5, 3, 2]
+        assert stretch_quotas(_S03_IDEA_STAMPS, _THIRDS, 10) == [5, 3, 2]
 
     def test_should_ask_for_the_whole_count_across_the_stretches(self) -> None:
-        assert sum(stretch_quotas(_S03_IDEA_STAMPS, _S03_S, 7)) == 7
+        assert sum(stretch_quotas(_S03_IDEA_STAMPS, _THIRDS, 7)) == 7
 
     def test_should_ask_nothing_of_a_stretch_without_key_ideas(self) -> None:
-        assert stretch_quotas([100, 200, 3000], _S03_S, 5)[1] == 0
+        assert stretch_quotas([100, 200, 3000], _THIRDS, 5)[1] == 0
 
     def test_should_return_no_quotas_when_the_length_is_unknown(self) -> None:
-        assert stretch_quotas(_S03_IDEA_STAMPS, None, 10) == []
+        assert stretch_quotas(_S03_IDEA_STAMPS, stretch_bounds(None), 10) == []
 
     def test_should_return_no_quotas_when_no_key_idea_is_stamped(self) -> None:
-        assert stretch_quotas([], _S03_S, 10) == []
+        assert stretch_quotas([], _THIRDS, 10) == []
 
 
 class TestPrompt:
     def test_should_ask_to_spread_the_questions_to_the_last_key_ideas(self) -> None:
         prompt = _prompt(_S03_S, _ideas(_S03_IDEA_STAMPS))
 
-        assert "spread the questions across <key_ideas>, its last entries included" in prompt
+        assert "spread them across <key_ideas>, its last entries included" in prompt
 
     def test_should_ask_for_wrong_options_built_from_the_correct_one(self) -> None:
         assert "within 2 words of the correct option's length" in _prompt(_S03_S)

@@ -367,7 +367,7 @@ class GroupLanding:
             return []
         merged, _ = merge_groups(outcomes)
         if quiz_due:
-            start_quiz_task(self.ctx, merged)
+            start_quiz_task(self.ctx, merged, self.run.chunks if self.run else ())
         text_done.start(self.ctx, merged, outcomes)
         if not grew:
             return []

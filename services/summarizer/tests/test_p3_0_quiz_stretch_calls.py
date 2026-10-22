@@ -22,13 +22,15 @@ from src.models.pipeline_types import QuizQuestion
 from src.services.pipeline import quiz_v2
 from src.services.pipeline.quiz_v2 import QuizV2Request, enrich_quiz_v2, merge_by_rank
 from src.services.pipeline.quiz_v2_prompt import build_quiz_v2_prompts, stretch_transcript
-from src.services.pipeline.quiz_v2_select import stretch_of, stretch_quotas
+from src.services.pipeline.quiz_v2_select import stretch_bounds, stretch_of, stretch_quotas
+from src.services.pipeline.quiz_v2_targets import Candidate
 from src.services.pipeline.quote_verify import QuoteIndex
 from tests.replay.quiz_synth import quiz_v2_answer, transcript_lines
 
 _PATCH_LLM = "src.services.pipeline.quiz_v2.call_llm_with_retry"
 # S03 (57:14): thirds 0:00–19:05 · 19:05–38:10 · 38:10–57:14; key ideas in all three.
 _S03_S = 3434
+_THIRDS = stretch_bounds(_S03_S)
 _IDEA_STAMPS = [75, 382, 921, 1220, 1500, 1800, 2381, 2880]
 _LAST_THIRD = "inside this stretch of the video: 38:10–57:14 (the video runs 0:00–57:14)"
 _SECOND_THIRD = "inside this stretch of the video: 19:05–38:10"
@@ -88,7 +90,7 @@ async def _quiz(llm: AsyncMock, request: QuizV2Request | None = None) -> Any:
 
 
 def _stretches(result: Any) -> set[int | None]:
-    return {stretch_of(question.timestamp, _S03_S) for question in result.quiz}
+    return {stretch_of(question.timestamp, _THIRDS) for question in result.quiz}
 
 
 # ─── The calls ───
@@ -105,7 +107,7 @@ class TestStretchCalls:
     def test_should_ask_each_stretch_for_its_quota(self) -> None:
         calls = build_quiz_v2_prompts(_request())
 
-        assert [call.asked for call in calls] == stretch_quotas(_IDEA_STAMPS, _S03_S, 12)
+        assert [call.asked for call in calls] == stretch_quotas(_IDEA_STAMPS, _THIRDS, 12)
 
     def test_should_name_the_stretch_and_its_count_in_the_task_when_a_stretch_call_is_built(
         self,
@@ -119,8 +121,8 @@ class TestStretchCalls:
         ideas = last.split("<key_ideas>\n", 1)[1].split("\n</key_ideas>", 1)[0]
 
         assert ideas.splitlines() == [
-            "- [39:41] Idea at 2381 — Because.",
-            "- [48:00] Idea at 2880 — Because.",
+            "- K7 [39:41] Idea at 2381 — Because.",
+            "- K8 [48:00] Idea at 2880 — Because.",
         ]
 
     def test_should_give_a_stretch_call_only_its_lines_within_half_a_minute(self) -> None:
@@ -180,8 +182,8 @@ class TestOneCallLosesOnlyItsStretch:
 # ─── The merge ───
 
 
-def _q(name: str) -> QuizQuestion:
-    return QuizQuestion.model_validate({**_question(0), "question": name})
+def _q(name: str) -> Candidate:
+    return Candidate(QuizQuestion.model_validate({**_question(0), "question": name}))
 
 
 class TestMergeByRank:
@@ -190,12 +192,12 @@ class TestMergeByRank:
 
         merged = merge_by_rank(replies)
 
-        assert [q.question for q in merged] == ["a1", "b1", "c1", "a2", "c2", "c3"]
+        assert [c.question.question for c in merged] == ["a1", "b1", "c1", "a2", "c2", "c3"]
 
     def test_should_keep_a_question_once_when_two_calls_write_it(self) -> None:
         merged = merge_by_rank([[_q("Same?"), _q("a2")], [_q("same?")]])
 
-        assert [q.question for q in merged] == ["Same?", "a2"]
+        assert [c.question.question for c in merged] == ["Same?", "a2"]
 
 
 # ─── No quotas: one call over the whole video ───

@@ -38,7 +38,7 @@ class TestKeyIdeaSources:
         idea = {"claim": "We are alone", "why": "Fermi", "timestamp": 181, "speaker": "Max"}
         extraction = {"learning": {"keyIdeas": [idea]}}
 
-        assert "- [3:01] (Max) We are alone — Fermi" in _prompt(extraction=extraction)
+        assert "- K1 [3:01] (Max) We are alone — Fermi" in _prompt(extraction=extraction)
 
     def test_should_say_so_when_the_run_has_no_key_ideas(self) -> None:
         assert NO_KEY_IDEAS in _prompt(extraction={"learning": {"keyIdeas": []}})

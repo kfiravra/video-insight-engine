@@ -3,7 +3,8 @@
 Today's path makes the call in assembly's late group, over the whole
 extraction. The split path (3.6) starts it earlier as ``ctx.quiz_task``, over
 the extraction merged once the groups holding its domains' fields landed
-(``start_quiz_task``, B.6); the late group then awaits that task instead.
+(``start_quiz_task``, B.6), with the split run's chunks — quiz v2 is written chunk
+by chunk on a chunked run (4.0 b); the late group then awaits that task instead.
 The started call is timed as ``quiz_call`` (``enrichment`` is then the wait).
 
 Which call (output-quality 2.1b): ``QUIZ_V2_ENABLED`` (default) writes quiz v2 on
@@ -22,7 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, AsyncGenerator
 
 from llm_common.context import llm_feature_var
@@ -42,20 +43,28 @@ from src.services.pipeline.quiz_v2 import (
     enrich_quiz_v2,
     restates_the_hero,
 )
-from src.services.pipeline.quiz_v2_select import in_slot_of, spare_for
+from src.services.pipeline.quiz_v2_select import (
+    Part,
+    chunk_windows,
+    in_slot_of,
+    spare_for,
+    stretch_bounds,
+)
 from src.services.pipeline.quote_verify import run_quote_index
 
 if TYPE_CHECKING:
     from src.models.pipeline_types import EnrichmentData, PlanResult
     from src.services.pipeline.context import PipelineContext
+    from src.services.pipeline.extraction_chunks import ExtractionChunk
 
 logger = logging.getLogger(__name__)
 
 # pipeline.timing step of a quiz call the split extraction started.
 QUIZ_CALL_STEP = "quiz_call"
-# Quiz v2's spares in the run's enrichment record until settle_late_quiz takes them
-# out — never emitted, never stored.
+# Quiz v2's spares and parts in the run's enrichment record until settle_late_quiz
+# takes them out — never emitted, never stored.
 QUIZ_SPARES_KEY = "spares"
+QUIZ_PARTS_KEY = "parts"
 
 
 def _skip_reason(ctx: PipelineContext, extraction: Mapping[str, Any]) -> str | None:
@@ -93,10 +102,20 @@ async def _quiz_v1(
     )
 
 
+def _outline_starts(ctx: PipelineContext) -> tuple[int, ...]:
+    """Where memory's outline sections start: quiz v2 ships one question per section
+    before two in one."""
+    return tuple(sorted(section.start for section in ctx.memory.outline)) if ctx.memory else ()
+
+
 async def _quiz_v2(
-    ctx: PipelineContext, plan: PlanResult, extraction: Mapping[str, Any]
+    ctx: PipelineContext,
+    plan: PlanResult,
+    extraction: Mapping[str, Any],
+    windows: tuple[Part, ...],
 ) -> EnrichmentData | None:
-    """Quiz v2: the marked transcript + the key ideas in, every quote checked on the run's index."""
+    """Quiz v2: the marked transcript + the key ideas in, every quote checked on the run's
+    index; written per chunk window (``()`` → per third)."""
     request = QuizV2Request(
         primary_tag=plan.primary_tag,
         title=ctx.video_data.title if ctx.video_data else "",
@@ -104,11 +123,15 @@ async def _quiz_v2(
         transcript=ctx.prompt_transcript,
         extraction=extraction,
         hero=_hero(ctx),
+        windows=windows,
+        outline=_outline_starts(ctx),
     )
     return await enrich_quiz_v2(ctx.llm_service, request, run_quote_index(ctx))
 
 
-async def _quiz(ctx: PipelineContext, extraction: Mapping[str, Any]) -> EnrichmentData | None:
+async def _quiz(
+    ctx: PipelineContext, extraction: Mapping[str, Any], windows: tuple[Part, ...] = ()
+) -> EnrichmentData | None:
     """The quiz over ``extraction`` (None = skipped / failed), logged as ``pipeline.enrichment``."""
     llm_feature_var.set("summarize:enrichment")
     plan = ctx.plan_result
@@ -121,7 +144,7 @@ async def _quiz(ctx: PipelineContext, extraction: Mapping[str, Any]) -> Enrichme
         return None
 
     if settings.QUIZ_V2_ENABLED:
-        result = await _quiz_v2(ctx, plan, extraction)
+        result = await _quiz_v2(ctx, plan, extraction, windows)
     else:
         result = await _quiz_v1(ctx, plan, extraction)
     logger.info(
@@ -134,21 +157,27 @@ async def _quiz(ctx: PipelineContext, extraction: Mapping[str, Any]) -> Enrichme
     return result
 
 
-async def _timed_quiz(ctx: PipelineContext, extraction: Mapping[str, Any]) -> EnrichmentData | None:
+async def _timed_quiz(
+    ctx: PipelineContext, extraction: Mapping[str, Any], windows: tuple[Part, ...]
+) -> EnrichmentData | None:
     with timed_step(QUIZ_CALL_STEP):
-        return await _quiz(ctx, extraction)
+        return await _quiz(ctx, extraction, windows)
 
 
-def start_quiz_task(ctx: PipelineContext, extraction: Mapping[str, Any]) -> bool:
-    """Start the quiz over ``extraction`` now (split path); False when no call starts.
+def start_quiz_task(
+    ctx: PipelineContext, extraction: Mapping[str, Any], chunks: Sequence[ExtractionChunk] = ()
+) -> bool:
+    """Start the quiz over ``extraction`` now (split path), one part per chunk of a
+    chunked run; False when no call starts.
 
     No call: one already started, the plan cannot use a quiz, or the extraction
     is still empty — the late group then calls over the whole extraction.
     """
     if ctx.quiz_task is not None or _skip_reason(ctx, extraction) is not None:
         return False
+    windows = chunk_windows(chunks, _duration_s(ctx))
     ctx.quiz_task = asyncio.create_task(
-        _timed_quiz(ctx, extraction), name=f"quiz_{ctx.video_summary_id}"
+        _timed_quiz(ctx, extraction, windows), name=f"quiz_{ctx.video_summary_id}"
     )
     return True
 
@@ -178,6 +207,8 @@ async def run_phase_enrichment(ctx: PipelineContext) -> AsyncGenerator[str, None
         if result.spares:
             spares = [question.model_dump(by_alias=True) for question in result.spares]
             ctx.enrichment_data[QUIZ_SPARES_KEY] = spares
+        if result.parts:
+            ctx.enrichment_data[QUIZ_PARTS_KEY] = list(result.parts)
         yield event
 
 
@@ -193,10 +224,10 @@ def _refilled(
     quiz: list[dict[str, Any]],
     spares: list[dict[str, Any]],
     takeaways: list[str],
-    duration_s: float | None,
+    parts: Sequence[Part],
 ) -> list[dict[str, Any]]:
     """The quiz without the questions restating a takeaway, each dropped one replaced at
-    the end by a spare from its stretch of the video, else the next spare
+    the end by a spare from its part of the video, else the next spare
     (``quiz_v2_select.spare_for``), keyed at the dropped one's position so the deal
     stays even (``in_slot_of``) — at most the quiz's own length."""
     kept = [question for question in quiz if not restates_the_hero(question, takeaways)]
@@ -204,13 +235,20 @@ def _refilled(
     for dropped in (question for question in quiz if restates_the_hero(question, takeaways)):
         if not left:
             break
-        kept.append(in_slot_of(left.pop(spare_for(dropped, left, duration_s)), dropped))
+        kept.append(in_slot_of(left.pop(spare_for(dropped, left, parts)), dropped))
     return kept
+
+
+def _record_parts(record: dict[str, Any], duration_s: float | None) -> list[Part]:
+    """The parts the quiz was written over, out of the record; the thirds when it holds none."""
+    stored = record.pop(QUIZ_PARTS_KEY, None) or []
+    parts = [(int(start), int(end)) for start, end in stored]
+    return parts or stretch_bounds(duration_s)
 
 
 def settle_late_quiz(ctx: PipelineContext) -> None:
     """Once the hero and the quiz both landed, no shipped quiz v2 question restates a
-    shipped takeaway (module docstring); the spares leave the record either way.
+    shipped takeaway (module docstring); the spares and parts leave the record either way.
 
     Fewer than ``MIN_QUIZ_V2_QUESTIONS`` left after a drop → no quiz (no quiz tab).
     """
@@ -218,6 +256,7 @@ def settle_late_quiz(ctx: PipelineContext) -> None:
     if not record:
         return
     spares = record.pop(QUIZ_SPARES_KEY, None) or []
+    parts = _record_parts(record, _duration_s(ctx))
     if not settings.QUIZ_V2_ENABLED:
         return
     takeaways = _shipped_takeaways(ctx)
@@ -225,7 +264,7 @@ def settle_late_quiz(ctx: PipelineContext) -> None:
     restating = sum(1 for question in quiz if restates_the_hero(question, takeaways))
     if not restating:
         return
-    kept = _refilled(quiz, spares, takeaways, _duration_s(ctx))
+    kept = _refilled(quiz, spares, takeaways, parts)
     logger.info(
         "Quiz v2: %d of %d question(s) restate a shipped takeaway; %d ship",
         restating, len(quiz), len(kept),
