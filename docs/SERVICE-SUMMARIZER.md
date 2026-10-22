@@ -133,7 +133,7 @@ services/summarizer/
     │   │   ├── frame_manifest.py     # Manifest-v2 frame cache (S3 sidecar: timestamps, hiresCount, vision descriptions)
     │   │   ├── frame_scorer.py       # Frame scoring (visual, face, skin, center-detail, text, uniqueness)
     │   │   ├── frame_analyzer.py     # Vision (LLM_VISION_MODEL, Sonnet 5.5) in ≤5 parallel batches of ≤8 frames (vision.txt)
-    │   │   ├── visual_tier.py        # Adaptive visual tier (high/standard/low from metadata)
+    │   │   ├── visual_tier.py        # Adaptive visual tier (high/standard/low from probe or metadata) + the talking-head frames skip (skips_frames, 3.5)
     │   │   ├── scene_detect.py       # Scene detection + zero-candidate ladder (0.3 → 0.15 → uniform seeks)
     │   │   ├── hires_refiner.py      # Pass-2 720p re-extraction of selected frames (local file seeks)
     │   │   ├── hires_prefetch.py     # The run's one 720p file (ctx.hires_video): frames + moment fill
@@ -278,6 +278,7 @@ LLM_VISION_MODEL=anthropic/claude-sonnet-5-5  # 4.0d pick (both composes default
 HERO_REWRITE_ENABLED=true              # true: one hero_rewrite call on LLM_EXTRACTION_MODEL (reads the extraction's prompt cache) replaces the synthesis call; false: memory hero + synthesis
 QUIZ_V2_ENABLED=true                   # true: quiz v2 on LLM_MEMORY_MODEL (timestamp + checked evidence quote per question); false: the enrich_quiz call on LLM_ENRICHMENT_MODEL
 MERGE_RANK_ENABLED=true                # true: a chunked run (> 40 min) makes one merge_rank call on LLM_MEMORY_MODEL (dedupe across chunks and tabs, key-idea sections, rank cut); false: the code merge alone
+FRAMES_SKIP_WHEN_NO_VISUAL_DEMO=true   # true: a video > 30 min with no visual demo (probe), tier not HIGH, and tier LOW or a visualCriticality.skipFormats format skips scene detection + vision; the moment fill frames every moment; false: frames as before
 
 # Extraction concurrency + chunking
 EXTRACTION_PARALLEL=true               # Field groups (text at plan-done, visual at frames-done); false = today's single call / chunked batches one at a time (extraction only: reconcile, evidence ranges, toolkit markers, PIPELINE_VERSION stay)
@@ -388,6 +389,13 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     │       while frames still run
     │
     └─▶ FRAMES (smart frame selection, two-pass, non-critical)
+        └─▶ Talking-head skip (output-quality 3.5, FRAMES_SKIP_WHEN_NO_VISUAL_DEMO, default on):
+        │   a video > 30 min waits ≤ 5 s for the tier probe first; a usable probe with no
+        │   visual demo, a tier not HIGH, and tier LOW or a probe format in domains.json
+        │   visualCriticality.skipFormats ([talk, interview, podcast]; [] = LOW only) → none of
+        │   the steps below: the 360p download closes, ctx.frames_skipped, no frames event /
+        │   gallery / filmstrip / vision / hi-res pass (timing frames.skip_check + frames.skipped);
+        │   the moment fill frames every moment from the 720p file. ≤ 30 min / flag off: no wait.
         └─▶ S3 cache check (media/frame_manifest.py) — MANIFEST-only: `videos/{id}/{SCENE_S3_PREFIX}/manifest.json`
         │   (v2) carries per-frame timestamps, galleryIndices, hiresCount and the
         │   persisted visionDescriptions. A hit skips extraction AND restores the
@@ -785,7 +793,8 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     │   └─▶ Moment fill (assembly/moment_frame_fill.py): a frame AT each still-frameless
     │   │   moment's timestamp by seeking the run's one local ≤720p file (downloaded by the
     │   │   frames phase; a manifest cache hit starts it here for ≥ 3 moments only, inside the
-    │   │   budget with 30 s kept for seeks; cap 12 frames, 150 s) → the moment tabs stream
+    │   │   budget with 30 s kept for seeks; cap 12 frames — the moment cap, 60, on a run
+    │   │   that skipped its frames (3.5, fill_cap) — 150 s) → the moment tabs stream
     │   │   WITH their images (replacing the provisional Moments tab by id, or under another
     │   │   id with `replaces: "<provisional id>"`); the file is
     │   │   deleted after it (its last reader). The 720p file not on disk yet when the late

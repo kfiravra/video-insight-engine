@@ -103,6 +103,9 @@ class PipelineContext:
     # True when the run gave up on that pass (its 720p file never landed in
     # time): the frames stay 360p, so the run is degraded (run_timing).
     hires_upgrade_abandoned: bool = False
+    # A long talking head skipped scene detection + vision (output-quality 3.5,
+    # FRAMES_SKIP_WHEN_NO_VISUAL_DEMO): the moment fill then frames every moment.
+    frames_skipped: bool = False
     scene_frames_for_assembly: list[dict] = field(default_factory=list)
     scene_frames_all: list[dict] = field(
         default_factory=list

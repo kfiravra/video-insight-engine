@@ -134,6 +134,7 @@ class Settings(BaseSettings):
     # LLM_ENRICHMENT_MODEL, as before.
     QUIZ_V2_ENABLED: bool = True
     MERGE_RANK_ENABLED: bool = True  # chunked runs: merge_rank (3.1); false: code merge only
+    FRAMES_SKIP_WHEN_NO_VISUAL_DEMO: bool = True  # long talking heads skip frames (3.5, D2)
 
     # Timeout constants for pipeline stages
     TRANSCRIPT_FETCH_TIMEOUT: float = 30.0

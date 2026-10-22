@@ -200,7 +200,7 @@
     "news:documentary": "news:explainer",
     "news:news_commentary": "news:explainer"
   },
-  "visualCriticalityNote": "Adaptive frame-pipeline effort (derive_tier in media/visual_tier.py). HIGH: the visuals are the content (unboxings, travel, food) — over-select candidates and vision-describe them all so subject-matter frames win over presenter shots. LOW: talky formats where frames are decoration — skip vision. Everything else STANDARD. Derived from the tier probe (domain, format, has_visual_demo — derive_tier(probe, title)) which runs at transcript-ready; the frames branch waits for it at most 3 s before Step 6b, then falls back to the metadata rule (category/title keywords). highFormats: a probe format that alone makes a video HIGH.",
+  "visualCriticalityNote": "Adaptive frame-pipeline effort (derive_tier in media/visual_tier.py). HIGH: the visuals are the content (unboxings, travel, food) — over-select candidates and vision-describe them all so subject-matter frames win over presenter shots. LOW: talky formats where frames are decoration — skip vision. Everything else STANDARD. Derived from the tier probe (domain, format, has_visual_demo — derive_tier(probe, title)) which runs at transcript-ready; the frames branch waits for it at most 3 s before Step 6b, then falls back to the metadata rule (category/title keywords). highFormats: a probe format that alone makes a video HIGH. highTitleKeywords match as substrings (\"pack opening\" / \"box opening\", never a bare \"opening\" — an opening keynote is a talk, output-quality 3.5). skipFormats (output-quality 3.5, D2, read only by skips_frames behind FRAMES_SKIP_WHEN_NO_VISUAL_DEMO): a video over 30 min whose probe saw no visual demo and whose tier is not HIGH skips scene detection + vision when its tier is LOW or its probe format is listed here; [] = LOW only. Lectures stay off the list — their slides are content.",
   "visualCriticality": {
     "tiers": {
       "high": { "overselect": 40, "visionMax": 40, "keep": 25 },
@@ -209,8 +209,9 @@
     },
     "highDomains": ["travel", "food", "fitness", "project", "sport"],
     "lowDomains": ["podcast", "news"],
-    "highTitleKeywords": ["unboxing", "opening", "pulls", "box break", "haul", "asmr", "makeup", "grwm"],
-    "highFormats": ["unboxing"]
+    "highTitleKeywords": ["unboxing", "pack opening", "box opening", "pulls", "box break", "haul", "asmr", "makeup", "grwm"],
+    "highFormats": ["unboxing"],
+    "skipFormats": ["talk", "interview", "podcast"]
   },
   "domains": {
     "learning": {

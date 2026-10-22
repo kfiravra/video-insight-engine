@@ -3,6 +3,12 @@
 Runs in parallel with the transcript phase. Both only need youtube_id
 and video_data from metadata; the one link is the visual tier, which waits
 (at most 3 s, at Step 6b) for the tier probe the transcript's arrival starts.
+
+A long talking head skips the phase's work (output-quality 3.5, D2,
+``FRAMES_SKIP_WHEN_NO_VISUAL_DEMO``): a video over 30 min waits for the probe
+at the top, and when ``visual_tier.skips_frames`` says so the 360p download is
+closed and the phase returns — no frames event, gallery, vision or hi-res pass;
+the moment fill frames the moments from the kept 720p file.
 """
 
 from __future__ import annotations
@@ -22,7 +28,17 @@ from src.services.media.scene_extractor import (
     cleanup_temp_dir,
     extract_scene_keyframes,
 )
-from src.services.media.visual_tier import VisualTier, resolve_tier, tier_settings
+from src.services.media.visual_tier import (
+    VisualTier,
+    await_probe,
+    derive_tier,
+    frames_skip_considered,
+    resolve_tier,
+    skips_frames,
+    tier_settings,
+    usable_probe,
+)
+from src.services.pipeline.phases.probe import PLAN_PROBE_WAIT_SECONDS
 from src.services.pipeline.pipeline_timing import mark_step
 from src.services.pipeline.scene_frames import process_scene_frames
 
@@ -209,6 +225,39 @@ class _TierGate:
         return overselect, _make_reselect_hook(self._ctx, int(knobs.get("visionMax", overselect)))
 
 
+# ─── Talking-head skip (output-quality 3.5, D2) ───
+
+
+async def _talking_head(ctx: PipelineContext) -> bool:
+    """Whether the run skips scene detection + vision (``visual_tier.skips_frames``).
+
+    Only a video over 30 min with ``FRAMES_SKIP_WHEN_NO_VISUAL_DEMO`` on waits for
+    the tier probe here, as long as the plan does (the 360p download keeps running
+    meanwhile; detection waits for it anyway); every other run returns at once.
+    """
+    video = ctx.video_data
+    assert video is not None
+    if not settings.FRAMES_SKIP_WHEN_NO_VISUAL_DEMO or not frames_skip_considered(video.duration):
+        return False
+    started = time.monotonic()
+    probe_task = getattr(ctx, "tier_probe_task", None)
+    probe = usable_probe(await await_probe(probe_task, PLAN_PROBE_WAIT_SECONDS))
+    skip = skips_frames(probe, derive_tier(probe, video.title or ""), video.duration)
+    mark_step("frames.skip_check", started)
+    return skip
+
+
+async def _skip_frames(ctx: PipelineContext) -> None:
+    """Close the 360p download (the moment fill's 720p gets its bandwidth) and mark
+    the run; frames-done still follows plan-done, with empty annotations."""
+    started = time.monotonic()
+    ctx.frames_skipped = True
+    if ctx.lowres_video is not None:
+        await ctx.lowres_video.close()
+    mark_step("frames.skipped", started)
+    logger.info("Frames skipped for %s: a long video with no visual demo", ctx.youtube_id)
+
+
 async def run_phase_frames(ctx: PipelineContext) -> AsyncGenerator[str, None]:
     """Extract scene keyframes, score, select, run OCR + vision, and prepare for assembly.
 
@@ -217,6 +266,7 @@ async def run_phase_frames(ctx: PipelineContext) -> AsyncGenerator[str, None]:
     best, refines them from the run's 720p file when it is already on disk
     (else starts the deferred hi-res pass after vision), uploads to S3, runs OCR
     and vision analysis in parallel, and stores enriched frames on context.
+    A long talking head does none of it (``_talking_head``).
     """
     if not settings.SCENE_EXTRACTION_ENABLED:
         return
@@ -226,6 +276,9 @@ async def run_phase_frames(ctx: PipelineContext) -> AsyncGenerator[str, None]:
 
     temp_dir = None
     try:
+        if await _talking_head(ctx):
+            await _skip_frames(ctx)
+            return
         # Adaptive frame effort: HIGH tier over-selects + vision-reselects
         # (the visuals ARE the content), LOW skips vision (frames are
         # decoration), STANDARD keeps the classic top-8 vision pass. The

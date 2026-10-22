@@ -135,6 +135,9 @@ interface DomainsConfig {
     highDomains: string[];
     lowDomains: string[];
     highTitleKeywords: string[];
+    highFormats?: string[];
+    /** Probe formats D2's vision skip covers besides tier LOW (output-quality 3.5); [] = LOW only. */
+    skipFormats?: string[];
   };
   domains: Record<ContentTag, DomainEntry>;
   modifiers: Record<Modifier, ModifierEntry>;

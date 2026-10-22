@@ -128,7 +128,7 @@ async def test_should_save_the_synthesis_patched_meta() -> None:
 async def test_should_run_synthesis_while_the_moment_fill_runs() -> None:
     order: list[str] = []
 
-    async def slow_fill(_tabs: list, _yt: str, _hires: Any) -> int:
+    async def slow_fill(_tabs: list, _yt: str, _hires: Any, _max_frames: int) -> int:
         await asyncio.sleep(0.05)
         order.append("fill-end")
         return 0

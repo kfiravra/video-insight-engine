@@ -47,7 +47,11 @@ from src.services.cache.response_cache import response_cache
 from src.services.media.s3_client import S3Client
 from src.services.pipeline.assembly import assemble_response
 from src.services.pipeline.assembly.core import count_dropped_tabs
-from src.services.pipeline.assembly.moment_frame_fill import fill_moment_frames, pending_fill
+from src.services.pipeline.assembly.moment_frame_fill import (
+    fill_cap,
+    fill_moment_frames,
+    pending_fill,
+)
 from src.services.pipeline.enrichment import needs_quiz
 from src.services.pipeline.group_failures import group_drops
 from src.services.pipeline.phases import run_phase_enrichment, run_phase_synthesis
@@ -151,11 +155,13 @@ async def run_phase_moment_fill(ctx: PipelineContext) -> AsyncGenerator[str, Non
     moment_track tabs are held back until then so they stream WITH their
     guaranteed images. Best-effort: ``fill_moment_frames`` never raises. A fill
     deferred past ``complete`` streams nothing: ``_land_moment_frames`` sends them.
+    A run that skipped its frames (3.5) frames every moment (``fill_cap``).
     """
     tabs = ctx.assembled_tabs or []
     positions = _moment_positions(tabs)
     if positions:
-        await fill_moment_frames(tabs, ctx.youtube_id, getattr(ctx, "hires_video", None))
+        cap = fill_cap(getattr(ctx, "frames_skipped", False))
+        await fill_moment_frames(tabs, ctx.youtube_id, getattr(ctx, "hires_video", None), cap)
     if ctx.tab_ledger.frames_pending:
         return
     for position in positions:
@@ -167,7 +173,8 @@ def _defer_moment_fill(ctx: PipelineContext) -> bool:
     runs after ``complete`` (output-quality 3.7). Leaves what it will add on
     ``ctx.pending_moment_frames``."""
     hires_video = getattr(ctx, "hires_video", None)
-    pending = pending_fill(ctx.assembled_tabs or [], hires_video)
+    cap = fill_cap(getattr(ctx, "frames_skipped", False))
+    pending = pending_fill(ctx.assembled_tabs or [], hires_video, cap)
     deferred = bool(pending) and hires_video is not None and not hires_video.finished
     ctx.pending_moment_frames = pending if deferred else {}
     return deferred
