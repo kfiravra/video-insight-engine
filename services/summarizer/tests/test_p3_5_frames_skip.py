@@ -26,7 +26,6 @@ from src.models.probe_types import VALID_FORMATS, TierProbe
 from src.services.media import visual_tier
 from src.services.media.visual_tier import derive_tier, metadata_tier, skips_frames
 from src.services.pipeline.assembly import moment_frame_fill as mff
-from src.services.pipeline.assembly.sampling import MOMENT_CAP_MAX
 from src.services.pipeline.phases import assembly as assembly_phase
 from src.services.pipeline.phases import frames as frames_phase
 from src.services.pipeline.phases import frames_done
@@ -168,7 +167,10 @@ def _frames_ctx(probe_task: Any, duration: float = _LONG) -> Any:
         youtube_id="yt",
         video_data=video,
         tier_probe_task=probe_task,
-        lowres_video=MagicMock(close=AsyncMock()),
+        # A cold run's 360p download, already on disk.
+        lowres_video=MagicMock(
+            started=True, close=AsyncMock(), path=AsyncMock(return_value=Path("/tmp/yt.mp4"))
+        ),
         hires_video=None,
         frame_descriptions=[],
         frames_skipped=False,
@@ -303,8 +305,8 @@ async def _fill(ctx: Any) -> list[str]:
 
 
 class TestMomentFill:
-    def test_should_raise_the_cap_to_the_moment_cap_when_the_run_skipped(self) -> None:
-        assert (mff.fill_cap(True), mff.fill_cap(False)) == (MOMENT_CAP_MAX, mff._FILL_MAX_FRAMES)
+    def test_should_lift_the_cap_when_the_run_skipped(self) -> None:
+        assert (mff.fill_cap(True), mff.fill_cap(False)) == (None, mff._FILL_MAX_FRAMES)
 
     async def test_should_frame_every_moment_when_the_run_skipped_its_frames(self) -> None:
         tabs = [_moment_tab("timestamps", 18), _moment_tab("segments", 18)]

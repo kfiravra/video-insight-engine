@@ -10,6 +10,6 @@ You tidy the item lists the extraction wrote for the long video above. The video
 
 <output_format>
 Return ONLY a JSON object — no code fences, no text before or after it:
-{"duplicates": [{"keep": "Q3", "drop": ["K9", "S4"]}], "rank": ["K7", "K1"]}
+{"duplicates": [{"keep": "K9", "drop": ["Q3", "S4"]}], "rank": ["K7", "K1"]}
 Copy every id exactly as <lists> writes it. "duplicates": [] when nothing repeats; leave out "rank" when no list is marked for it.
 </output_format>

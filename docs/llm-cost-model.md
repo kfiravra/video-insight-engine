@@ -254,7 +254,9 @@ it runs on the groups' model, with their JSON mode and effort and no system prom
   run has one head per chunk and a request can read one prefix, so it reads block 1
   alone and block 3 carries `<video>` + `<video_memory>`;
 - **block 3** = the hero job (`prompts/hero_rewrite.txt` + the compacted merged
-  extraction, at most `HERO_EXTRACTION_MAX_TOKENS` = 5 000 tokens, + the tab labels),
+  extraction, at most `HERO_EXTRACTION_MAX_TOKENS` = 5 000 tokens —
+  `HERO_EXTRACTION_PARTED_MAX_TOKENS` = 5 500 when a chunked run's scalars show part by
+  part — + the tab labels),
   uncached. A retry (one, with the failed checks appended; made only when the hero would
   be None or a D18 line would drop) changes block 3 only, so it reads the cache too.
 
@@ -290,7 +292,7 @@ restores the previous call. The `feature` column is `llm_usage.feature`
 |------|--------------|-------|-----------|---------------|
 | Hero rewrite | `hero_rewrite` | `LLM_EXTRACTION_MODEL` (Sonnet 5.5) | `summarize:hero_rewrite` | `HERO_REWRITE_ENABLED`: once per run (a retry is a second row), fired at text-groups-done; reads the groups' cached blocks (above). **Replaces** the synthesis call |
 | Synthesis | `synthesis` | the fast tier | `summarize:synthesis` | the flag off, or the hero call gave no hero (`phases/synthesis._synthesis_dict`) — then exactly as before |
-| Quiz v2 | `quiz_v2` | `LLM_MEMORY_MODEL` (Haiku 5.5; no model key of its own) | `summarize:enrichment` | `QUIZ_V2_ENABLED`, a plan with a quiz host: one call per third of the video holding a key idea (up to 3 rows, in parallel; one call when the length or the key ideas' stamps are missing), 18 s per attempt, 1 retry, every call inside one 37 s stage deadline; a call whose reply parses no question, even item by item, is made once more (a row of its own; output-quality 3.0, G2-1 / G2-4). **Replaces** `enrich_quiz` |
+| Quiz v2 | `quiz_v2` | `LLM_MEMORY_MODEL` (Haiku 5.5; no model key of its own) | `summarize:enrichment` | `QUIZ_V2_ENABLED`, a plan with a quiz host: one call per third of the video holding a key idea (up to 3 rows, in parallel; one call when the length or the key ideas' stamps are missing, or the quiz has 3 questions — ≤ 15 min), 18 s per attempt, 1 retry, every call inside one 37 s stage deadline; a call whose reply parses no question, even item by item, is made once more (a row of its own; output-quality 3.0, G2-1 / G2-4). **Replaces** `enrich_quiz` |
 | Quiz v1 | `enrichment` | `LLM_ENRICHMENT_MODEL` (gpt-4o-mini) | `summarize:enrichment` | `QUIZ_V2_ENABLED=false` |
 | Judge: hero + quiz | `faithfulness` (up to two calls) | `LLM_JUDGE_MODEL` (gpt-6-luna) | `summarize:faithfulness` | after assembly, when the doc has a stamped takeaway / quiz question, the sample rate is above 0, and — per call — the hero rewrite wrote the hero / `QUIZ_V2_ENABLED` is on (flag-off runs make no extra judge call) |
 

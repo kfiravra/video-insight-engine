@@ -22,7 +22,8 @@ code renders it here:
   sections the key ideas by it: ``merge_rank_apply``);
 - one block per list a planned tab reads (its ``dataSource``, the first tab naming it),
   in plan order; the header names the tab and its component, and ``[rank]`` marks a
-  rankable list (:data:`RANKED_FIELDS`, not a timeline) over its assembly cap;
+  rankable list (:data:`RANKED_FIELDS`, not a timeline) over the cap assembly ships it
+  at (:func:`shipping_cap`);
 - one line per item: its id (one letter per list + its 1-based position), its clock and
   the part (chunk) the clock falls in, its head and its body.
 
@@ -45,7 +46,8 @@ from typing import Any
 from ...models.memory_types import OutlineSection
 from ...shared_config.assembly_policy import moment_caps_by_duration
 from ...shared_config.domain_config import assembler_item_caps, density_gates
-from .assembly.sampling import key_idea_cap
+from .assembly.component_lists import COMPONENT_LIST_KEYS, SEQUENTIAL_COMPONENTS
+from .assembly.sampling import key_idea_cap, moment_cap_for_duration
 from .assembly.tab_references import bare_label
 from .extraction_chunks import ExtractionChunk
 from .memory import format_clock
@@ -114,8 +116,10 @@ class ListSpec:
     """One list the call reads: where it lives, the tab that shows it and its guards.
 
     ``floor`` = the fewest items the dedupe may leave (``densityGates`` min, a timeline's
-    §9 band minimum); ``cap`` = the assembly cap a ranked list is cut to (None = no rank);
-    ``sectioned`` = code titles its items by the outline section holding their stamps.
+    §9 band minimum); ``ships`` = the most items assembly ships of it (None = all,
+    :func:`shipping_cap`); ``cap`` = the cap a ranked list over it is cut to (None = no
+    rank); ``sectioned`` = code titles its items (``merge_rank_apply``: the outline
+    section holding their stamps, else their own labels joined).
     """
 
     path: str
@@ -123,6 +127,7 @@ class ListSpec:
     component: str
     letter: str
     floor: int
+    ships: int | None = None
     cap: int | None = None
     sectioned: bool = False
 
@@ -152,9 +157,6 @@ class MergeRankRequest:
     items: Mapping[str, RankedItem]
     outline: tuple[OutlineSection, ...]
     duration: int | None
-
-    def spec(self, path: str) -> ListSpec | None:
-        return next((spec for spec in self.lists if spec.path == path), None)
 
 
 # ─── Items ───
@@ -264,30 +266,44 @@ def _floor(component: str, duration: int | None) -> int:
     return band if band is not None else _gate_minimum(component)
 
 
-def _cap(path: str, component: str, count: int, duration: int | None) -> int | None:
-    """The assembly cap a rankable list over it is cut to by rank (None = no rank)."""
+def shipping_cap(path: str, component: str, duration: int | None) -> int | None:
+    """The most items of ``path`` a ``component`` tab ships — the cap assembly cuts it to
+    (``core._cap_tab_items``: a key-ideas tab's ``key_idea_cap``, else the component's
+    ``assemblerItemCaps``); None when it ships whole (no cap, or a procedure). A timeline
+    gets the lower of its two §9 caps, the label-only track's: which one applies is read
+    off the assembled moments, so a list within it ships whole either way."""
+    caps = assembler_item_caps()
+    cap = caps.get(component)
+    if cap is None or component not in COMPONENT_LIST_KEYS or component in SEQUENTIAL_COMPONENTS:
+        return None
+    if path == KEY_IDEAS_PATH:
+        return key_idea_cap(duration, caps.get("spot_explorer", 25))
+    if component == TIMELINE_COMPONENT:
+        return moment_cap_for_duration(duration, cap)
+    return cap
+
+
+def _rank_cap(path: str, component: str, count: int, ships: int | None) -> int | None:
+    """The cap a rankable list over it is cut to by rank (None = no rank)."""
     if path not in RANKED_FIELDS or component == TIMELINE_COMPONENT:
         return None
-    caps = assembler_item_caps()
-    if path == KEY_IDEAS_PATH:
-        cap: int | None = key_idea_cap(duration, caps.get("spot_explorer", 25))
-    else:
-        cap = caps.get(component)
-    return cap if cap is not None and count > cap else None
+    return ships if ships is not None and count > ships else None
 
 
 def _spec(
     path: str, tab: Mapping[str, Any], count: int, source: RenderInput, taken: set[str]
 ) -> ListSpec:
     component = str(tab.get("component") or "")
+    ships = shipping_cap(path, component, source.duration)
     return ListSpec(
         path=path,
         label=bare_label(tab.get("label")) or path,
         component=component,
         letter=_letter(path.partition(".")[2], taken),
         floor=_floor(component, source.duration),
-        cap=_cap(path, component, count, source.duration),
-        sectioned=len(source.outline) >= 2 and path == KEY_IDEAS_PATH,
+        ships=ships,
+        cap=_rank_cap(path, component, count, ships),
+        sectioned=path == KEY_IDEAS_PATH,
     )
 
 

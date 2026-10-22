@@ -1427,8 +1427,9 @@ events `detection_result`, `chapter_ready`, `concepts_complete` are no longer em
 │  PHASE 4: SAVE & DONE                                                       │
 │  ┌──────────────────────────────────────────────────────────────────────┐   │
 │  │  - Emit "complete" (tabCount, tabIds, processingTimeMs, degraded)    │   │
-│  │  - A moment fill still waiting for the 720p file runs here:          │   │
-│  │    the moment tabs' final tab_ready (framed), heartbeats meanwhile   │   │
+│  │  - A moment fill still waiting for the 720p file is joined here      │   │
+│  │    (it started with the late group): the moment tabs' final          │   │
+│  │    tab_ready (framed), heartbeats meanwhile                          │   │
 │  │  - Save the result to MongoDB; Redis response cache (English,        │   │
 │  │    awaited, best-effort); Qdrant + S3 raw transcript in the          │   │
 │  │    background                                                        │   │
@@ -1688,7 +1689,9 @@ With `EXTRACTION_PARALLEL=false` (one extraction call after frames-done):
 
 **Moment frames still downloading** (output-quality 3.7, both modes): when the
 moment fill would seek frames and the run's 720p file has not landed when the
-late group starts, the fill runs after `complete` instead. The `moment_track`
+late group starts, `complete` does not wait for the fill: it starts beside the
+late group (its seeks overlap the quiz and the hero once the file lands) and is
+joined after `complete`. The `moment_track`
 tabs then stream right after the final assembly (step 4 above; step 3 without
 the field groups) with the frames they already have, `final: false`; the final
 re-emit leaves only them non-final (re-sent only when changed); `complete`
@@ -1696,8 +1699,11 @@ follows — `tabIds` include them, `processingTimeMs` is the text-done time; the
 with heartbeats while the fill waits, each moment tab's `final: true` emission,
 framed (replace by id); then the save and `done`, whose `processingTimeMs` (and
 the stored doc's) count the fill. A filmstrip the framed Moments would shadow is
-dropped before `complete`, counting the frames still to come. A 720p file
-already on disk keeps the order above.
+dropped before `complete`, counting the frames still to come — and stays gone
+when the fill then falls short (a failed or late 720p: the moments keep their
+glyph plates), since `tabIds` were final; the stored doc records the case
+(`pipeline.assembly.momentFill`: `pending`, `filled`,
+`filmstripDroppedOnPending`). A 720p file already on disk keeps the order above.
 
 A **cache hit** (completed row, or the Redis response cache) sends `cached`,
 `metadata`, `triage_complete`, `meta`, then every stored tab once with

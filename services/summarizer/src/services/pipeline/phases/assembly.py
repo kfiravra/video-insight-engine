@@ -26,10 +26,13 @@ step 5 sends the overview last.
 
 Moment frames off the critical path (output-quality 3.7): when the fill would
 seek frames and the run's 720p file is not on disk yet, the fill leaves the late
-group. Step 3 streams the moment tabs too, with the frames they have, non-final;
-the filmstrip decision counts the frames the fill will add (``pending_fill``);
-step 5 leaves only the moment tabs non-final; ``complete`` goes out; then the fill
-runs (heartbeats meanwhile), the moment tabs go final, framed, and the save and
+group: it starts beside it as a task (``phases/late_moment_fill`` — its seeks
+overlap the quiz and the hero once the file lands) and nothing waits for it
+before ``complete``. Step 3 streams the moment tabs too, with the frames they
+have, non-final; the filmstrip decision counts the frames the fill has still to
+add; step 5 leaves only the moment tabs non-final; ``complete`` goes out; then
+the fill is joined (heartbeats meanwhile), the moment tabs go final, framed, the
+row records what it added (``pipeline.assembly.momentFill``), and the save and
 ``done`` follow. ``complete.processingTimeMs`` is the text-done time, the saved
 row's and ``done``'s the time after the fill. A 720p file already on disk keeps
 the order above exactly.
@@ -62,8 +65,13 @@ from src.services.pipeline.phases.assembly_save import (
     tabs_designed,
 )
 from src.services.pipeline.phases.enrichment import cancel_quiz_task, settle_late_quiz
-from src.services.pipeline.phases.frames import hires_upgrade_pending
 from src.services.pipeline.phases.group_emission import assembled_tab_events
+from src.services.pipeline.phases.late_moment_fill import (
+    LateMomentFill,
+    close_hires_video,
+    land_late_fill,
+    start_late_fill,
+)
 from src.services.pipeline.phases.late_quiz import carry_moment_props
 from src.services.pipeline.phases.metadata import await_description_analysis
 from src.services.pipeline.phases.moments import video_meta
@@ -284,6 +292,24 @@ def _add_late_quiz(
     return assembled
 
 
+async def _stream_late_group(
+    ctx: PipelineContext, late: list[PhaseFn], split: bool
+) -> AsyncGenerator[str, None]:
+    """The tabs after the final assembly, then the late group's events."""
+    for event in _assembled_events(ctx, split):
+        yield event
+    async for event in run_parallel_phases(late, ctx):
+        yield event
+
+
+def _settle(ctx: PipelineContext, assembled: dict, fill: LateMomentFill | None) -> str | None:
+    """The Moments are framed (or a deferred fill's frames still to come counted) and the
+    hero written: nothing names a tab that does not ship (``settle_tab_references``)."""
+    if fill is not None:
+        fill.before_settle(ctx)
+    return settle_tab_references(ctx, assembled)
+
+
 async def run_phase_assembly(ctx: PipelineContext) -> AsyncGenerator[str, None]:
     """Emit the tabs, run the late group, then save, cache and finish (module docstring)."""
     assert ctx.video_data is not None
@@ -305,60 +331,42 @@ async def run_phase_assembly(ctx: PipelineContext) -> AsyncGenerator[str, None]:
     synthesis_input = dict(ctx.synthesis_dict or {})
     assembled = _assemble(ctx, description, synthesis_input)
     late = _start_late_group(ctx, synthesized_first)
-    for event in _assembled_events(ctx, split):
-        yield event
-
-    async for event in run_parallel_phases(late, ctx):
-        yield event
-    settle_late_quiz(ctx)  # both late calls landed: the shipped hero is known
-    if ctx.enrichment_data:
-        assembled = _add_late_quiz(ctx, description, synthesis_input, synthesized_first)
-    # The Moments are framed (or their frames counted) and the hero written:
-    # nothing names a tab that does not ship.
-    if (corrected_hero := settle_tab_references(ctx, assembled)) is not None:
-        yield corrected_hero
-    for event in ctx.tab_ledger.closing_events(ctx.assembled_tabs or []):
-        yield event
-    if not ctx.tab_ledger.frames_pending:
-        await _close_hires_video(ctx)
-
-    async for event in _finish(ctx, assembled):
-        yield event
-
-
-# ─── The 720p file, the deferred moment frames, save, shared artifacts, done ───
+    fill = start_late_fill(ctx, run_phase_moment_fill)  # deferred: joined after `complete`
+    try:
+        async for event in _stream_late_group(ctx, late, split):
+            yield event
+        settle_late_quiz(ctx)  # both late calls landed: the shipped hero is known
+        if ctx.enrichment_data:
+            assembled = _add_late_quiz(ctx, description, synthesis_input, synthesized_first)
+        if (corrected_hero := _settle(ctx, assembled, fill)) is not None:
+            yield corrected_hero
+        for event in ctx.tab_ledger.closing_events(ctx.assembled_tabs or []):
+            yield event
+        if not ctx.tab_ledger.frames_pending:
+            await close_hires_video(ctx)
+        async for event in _finish(ctx, assembled, fill):
+            yield event
+    finally:
+        if fill is not None:
+            fill.cancel()  # the run failed or was cancelled before joining it
 
 
-async def _close_hires_video(ctx: PipelineContext) -> None:
-    """Moment fill was the 720p file's last reader — free the disk now, unless the
-    deferred hi-res pass still reads it (the runner closes it after)."""
-    hires_video = getattr(ctx, "hires_video", None)
-    if hires_video is not None and not hires_upgrade_pending(ctx):
-        await hires_video.close()
+# ─── complete, the deferred moment frames, save, shared artifacts, done ───
 
 
-async def _land_moment_frames(ctx: PipelineContext) -> AsyncGenerator[str, None]:
-    """After ``complete``: the deferred moment fill (heartbeats keep the stream open while
-    it waits for the 720p file), the moment tabs final and framed, then the file goes."""
-    async for event in run_parallel_phases([run_phase_moment_fill], ctx):
-        yield event
-    ctx.tab_ledger.frames_landed()
-    ctx.pending_moment_frames = {}
-    for event in ctx.tab_ledger.closing_events(ctx.assembled_tabs or []):
-        yield event
-    await _close_hires_video(ctx)
-
-
-async def _finish(ctx: PipelineContext, assembled: dict) -> AsyncGenerator[str, None]:
+async def _finish(
+    ctx: PipelineContext, assembled: dict, fill: LateMomentFill | None
+) -> AsyncGenerator[str, None]:
     """``complete``, the moment frames when their fill waited for it, the save, the
     shared artifacts, then ``done`` (English only)."""
     degraded = coverage_is_degraded(getattr(ctx, "extraction_coverage", None))
     accounting = _drop_accounting(ctx, assembled)
     processing_time = int(ctx.timer.elapsed() * 1000)
     yield complete_event(ctx, processing_time, degraded)
-    if ctx.tab_ledger.frames_pending:
-        async for event in _land_moment_frames(ctx):
+    if fill is not None:
+        async for event in land_late_fill(ctx, fill):
             yield event
+        accounting["momentFill"] = fill.record(ctx.assembled_tabs or [])
         processing_time = int(ctx.timer.elapsed() * 1000)
 
     result = result_document(

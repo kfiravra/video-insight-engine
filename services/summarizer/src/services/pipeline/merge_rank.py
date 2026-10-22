@@ -17,7 +17,7 @@ feature ``summarize:merge_rank``, timing step ``merge_rank_call``), JSON mode. T
 is code-rendered (``merge_rank_render``: the outline + every list a planned tab reads,
 each item under an id); the answer is ids only::
 
-    {"duplicates": [{"keep": "Q3", "drop": ["K9", "S4"]}], "rank": ["K7", "K1"]}
+    {"duplicates": [{"keep": "K9", "drop": ["Q3", "S4"]}], "rank": ["K7", "K1"]}
 
 The key ideas' sections are code's (``merge_rank_apply``: the outline section holding each
 idea's stamp): asked for them, the call placed none of S13's 33 ideas where its stamp
@@ -37,8 +37,9 @@ before ``extraction_complete``. The hero and the quiz read the extraction as it 
 text-groups-done — they start at the same moment, and a dropped twin leaves its kept
 twin on the page.
 
-Never raises: any failure leaves the code merge as it is; the outcome is recorded as
-``pipeline.extraction._mergeRank``.
+Never raises: a call that does not answer drops and cuts nothing — the key ideas are
+still sectioned, which is code — and a bug here leaves the code merge as it is; the
+outcome is recorded as ``pipeline.extraction._mergeRank``.
 """
 
 from __future__ import annotations
@@ -198,8 +199,8 @@ async def run_merge_rank(
     try:
         status, data = await _reply(llm_service, merge_rank_prompt(request))
         answer = read_answer(data, request) if status == OK else MergeRankAnswer(status, request)
-    except Exception:  # noqa: BLE001 — merge_rank is optional; the code merge stands on a bug here
-        logger.exception("merge_rank crashed; the code merge stands")
+    except Exception:  # noqa: BLE001 — merge_rank is optional; its lists stand on a bug here
+        logger.exception("merge_rank crashed; no drop or rank cut (the sections still apply)")
         answer = MergeRankAnswer(CRASHED, request)
     return replace(answer, ms=int((time.monotonic() - started) * 1000))
 
@@ -278,8 +279,9 @@ def _log_record(ctx: PipelineContext, record: Mapping[str, Any]) -> None:
 
 
 async def merge_rank_extraction(ctx: PipelineContext, extraction: dict[str, Any]) -> dict[str, Any]:
-    """The final merge with the started call's answer applied — ``extraction`` itself when
-    no call started or anything failed; the outcome on ``ctx.merge_rank_record``."""
+    """The final merge with the started call's answer applied (the sections alone when the
+    call did not answer) — ``extraction`` itself when no call started or the edit failed;
+    the outcome on ``ctx.merge_rank_record``."""
     task = getattr(ctx, "merge_rank_task", None)
     if task is None:
         return extraction

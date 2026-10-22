@@ -21,14 +21,11 @@ from src.config import settings
 from src.models.pipeline_types import EnrichmentData, PlanResult, QuizQuestion
 from src.services.llm import LLMService
 from src.services.llm_provider import LLMProvider
-from src.services.pipeline import quiz_v2_prompt
 from src.services.pipeline.assembly.normalizers import _normalize_quiz_question
 from src.services.pipeline.phases import enrichment as enrichment_phase
 from src.services.pipeline.quiz_v2 import QuizV2Request, clip_quote, enrich_quiz_v2
-from src.services.pipeline.quiz_v2_ideas import KEY_IDEA_SOURCES, NO_KEY_IDEAS, key_idea_items
 from src.services.pipeline.quiz_v2_prompt import build_quiz_v2_prompts
 from src.services.pipeline.quote_verify import QUOTE_TRANSLATED_KEY, QuoteIndex
-from src.shared_config.domain_config import data_source, quiz_enrichment
 from tests.replay.quiz_synth import quiz_v2_answer, transcript_lines
 
 _PATCH_LLM = "src.services.pipeline.quiz_v2.call_llm_with_retry"
@@ -126,8 +123,8 @@ def _prompts(**overrides: Any) -> list[str]:
 
 
 def _prompt(**overrides: Any) -> str:
-    """The first call's prompt: this file's key ideas (0:30, 4:00) sit in the first two
-    thirds of the 10-minute video, so it is written in two stretch calls (p3.0)."""
+    """The first call's prompt: a 10-minute video's 3-question quiz is one call over the
+    whole video (p3 review A6); a longer one is written stretch by stretch."""
     first, *_ = _prompts(**overrides)
     return first
 
@@ -161,11 +158,14 @@ class TestRequest:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(settings, "LLM_MEMORY_MODEL", _HAIKU_55)
-        fake = _FakeProvider(_reply(*_verified(3)))
+        fake = _FakeProvider(_reply(*_verified(5)))
         service = LLMService(LLMProvider(model=_HAIKU_55, fast_model=_HAIKU_55))
+        # Key ideas in two thirds of a 5-question video: two stretch calls (p3.0).
+        ideas = [{"claim": "Card first", "timestamp": 30}, {"claim": "Buffer", "timestamp": 900}]
+        request = _request(_THIRTY_MIN, extraction={"learning": {"keyIdeas": ideas}})
 
         with patch("src.services.llm_provider.acompletion", fake.acompletion):
-            await enrich_quiz_v2(service, _request(), _index())
+            await enrich_quiz_v2(service, request, _index())
 
         assert [(r["model"], [m["role"] for m in r["messages"]]) for r in fake.requests] == [
             (_HAIKU_55, ["user"]),
@@ -181,7 +181,7 @@ class TestRequest:
 
         _, llm = await _quiz(_reply(*_verified(3)))
 
-        kwargs = llm.await_args.kwargs
+        kwargs = llm.await_args_list[-1].kwargs
         assert (kwargs["stage_name"], kwargs["model_override"], kwargs["max_retries"]) == (
             "quiz_v2",
             _HAIKU_55,
@@ -346,59 +346,13 @@ class TestTranslatedSource:
         assert result is not None and len(result.quiz) == 3
 
 
-# ─── Key ideas per domain ───
-
-
-class TestKeyIdeaSources:
-    def test_should_name_only_registered_data_sources(self) -> None:
-        sources = {source for chain in KEY_IDEA_SOURCES.values() for source in chain}
-
-        assert [source for source in sorted(sources) if data_source(source) is None] == []
-
-    def test_should_cover_every_quiz_domain(self) -> None:
-        assert set(quiz_enrichment()["quizDomains"]) <= set(KEY_IDEA_SOURCES)
-
-    def test_should_read_learning_key_ideas_first_when_a_podcast_carries_them(self) -> None:
-        extraction = {**_EXTRACTION, "podcast": {"claims": [{"claim": "Other"}]}}
-
-        assert key_idea_items("podcast", extraction) == _EXTRACTION["learning"]["keyIdeas"]
-
-    def test_should_fall_back_to_the_domains_claims_when_key_ideas_are_empty(self) -> None:
-        extraction = {"learning": {"keyIdeas": []}, "podcast": {"claims": [{"claim": "C"}]}}
-
-        assert key_idea_items("podcast", extraction) == [{"claim": "C"}]
-
-    def test_should_name_the_speaker_of_a_key_idea_when_one_is_given(self) -> None:
-        idea = {"claim": "We are alone", "why": "Fermi", "timestamp": 181, "speaker": "Max"}
-        extraction = {"learning": {"keyIdeas": [idea]}}
-
-        assert "- [3:01] (Max) We are alone — Fermi" in _prompt(extraction=extraction)
-
-    def test_should_say_so_when_the_run_has_no_key_ideas(self) -> None:
-        assert NO_KEY_IDEAS in _prompt(extraction={"learning": {"keyIdeas": []}})
-
-    def test_should_send_only_the_lines_near_key_ideas_when_the_transcript_is_over_budget(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setattr(quiz_v2_prompt, "TRANSCRIPT_MAX_CHARS", 200)
-        monkeypatch.setattr(quiz_v2_prompt, "KEY_IDEA_WINDOW_S", 20)
-
-        sent = [
-            line
-            for prompt in _prompts()
-            for line in prompt.split("<transcript>\n", 1)[1]
-            .split("\n</transcript>", 1)[0]
-            .splitlines()
-        ]
-
-        near = [line for line in _TRANSCRIPT.splitlines() if line.startswith(("[0:30]", "[4:00]"))]
-        assert sent == near
+# Key ideas per domain: ``test_p2_1b_quiz_v2_ideas.py`` (split out at the p3 review, A8).
 
 
 # ─── The phase: flag on → v2, flag off → today's call ───
 
 
-def _ctx() -> SimpleNamespace:
+def _ctx() -> Any:
     plan = PlanResult.model_validate(
         {
             "primaryTag": "learning",
@@ -455,7 +409,7 @@ class TestPhaseWiring:
     ) -> None:
         _, v2 = await _phase(True, monkeypatch)
 
-        _, request, index = v2.await_args.args
+        _, request, index = v2.await_args_list[-1].args
         assert request.transcript == _TRANSCRIPT and isinstance(index, QuoteIndex)
 
 

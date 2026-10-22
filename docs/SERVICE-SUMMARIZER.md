@@ -84,14 +84,14 @@ services/summarizer/
     │   │   ├── enrichment.py         # The quiz only (quizEnrichment domains, demand-gated by the plan; 3/5/8 questions by length, each stamped)
     │   │   ├── synthesis.py          # masterSummary + seoDescription (hero from memory; fast tier) — now only when the hero rewrite is off or gave none
     │   │   ├── hero_rewrite.py       # The hero rewrite (HERO_REWRITE_ENABLED): one cache-reading LLM_EXTRACTION_MODEL call replaces synthesis; hero_job.py builds its request (cached blocks, job text, the evidence), hero_validate.py checks its answer (hero_text.py holds the prose readers), hero_compact.py renders the extraction it reads
-    │   │   ├── quiz_v2.py            # Quiz v2 (QUIZ_V2_ENABLED): LLM_MEMORY_MODEL (Haiku 5.5) from the transcript + key ideas, one call per third in parallel; every question's quote checked
-    │   │   ├── quiz_v2_prompt.py     # Quiz v2's prompts: one per third holding a key idea (its quota, range, ideas, lines ± 30 s), else one over the whole video
+    │   │   ├── quiz_v2.py            # Quiz v2 (QUIZ_V2_ENABLED): LLM_MEMORY_MODEL (Haiku 5.5) from the transcript + key ideas, one call per third in parallel past 15 min; every question's quote checked
+    │   │   ├── quiz_v2_prompt.py     # Quiz v2's prompts: past 15 min one per third holding a key idea (its quota, range, ideas + the unstamped ones, lines ± 30 s), else one over the whole video
     │   │   ├── quiz_v2_ideas.py      # Quiz v2's key ideas: the dataSources per domain and their prompt lines
     │   │   ├── quiz_v2_parse.py      # Quiz v2's reply read question by question when its JSON envelope is broken (G2-1)
     │   │   ├── quiz_v2_select.py     # What ships: one question per third first, a key that tells by its length last; keys dealt evenly over the positions; the late refill's spare
     │   │   ├── merge_rank.py         # merge_rank (MERGE_RANK_ENABLED, chunked runs): one LLM_MEMORY_MODEL (Haiku 5.5) call at text-groups-done beside the hero; reads the ids-only answer, applies it to the final merge
     │   │   ├── merge_rank_render.py  # merge_rank's input: the outline + every planned list, one id'd line per item, ≤ 10 K tokens (texts shorten, no item dropped)
-    │   │   ├── merge_rank_apply.py   # merge_rank's edit: twins out under five guards, ranked lists cut to their cap by rank, key-idea sections from the outline (≤ 8)
+    │   │   ├── merge_rank_apply.py   # merge_rank's edit: twins out under four guards (one: the keep must be sure to ship), ranked lists cut to their cap by rank, key-idea sections from the outline (≤ 8) even when the call failed
     │   │   ├── quote_verify.py       # Is a quote in the transcript? The extraction pre-pass + the run's index (verified / unverified / translated); re-exports quote_index
     │   │   ├── quote_index.py        # The quote matcher: QuoteIndex (normalized exact-first, else fuzzy; a "…"-cut quote is fragments in order within 40 words and 60 s)
     │   │   ├── pipeline_timing.py    # pipeline.timing recorder v4 (phases, LLM calls, failures incl. refusals, downloads, counts)
@@ -278,7 +278,7 @@ LLM_VISION_MODEL=anthropic/claude-sonnet-5-5  # 4.0d pick (both composes default
 HERO_REWRITE_ENABLED=true              # true: one hero_rewrite call on LLM_EXTRACTION_MODEL (reads the extraction's prompt cache) replaces the synthesis call; false: memory hero + synthesis
 QUIZ_V2_ENABLED=true                   # true: quiz v2 on LLM_MEMORY_MODEL (timestamp + checked evidence quote per question); false: the enrich_quiz call on LLM_ENRICHMENT_MODEL
 MERGE_RANK_ENABLED=true                # true: a chunked run (> 40 min) makes one merge_rank call on LLM_MEMORY_MODEL (dedupe across chunks and tabs, key-idea sections, rank cut); false: the code merge alone
-FRAMES_SKIP_WHEN_NO_VISUAL_DEMO=true   # true: a video > 30 min with no visual demo (probe), tier not HIGH, and tier LOW or a visualCriticality.skipFormats format skips scene detection + vision; the moment fill frames every moment; false: frames as before
+FRAMES_SKIP_WHEN_NO_VISUAL_DEMO=true   # true: a video > 30 min with no visual demo (probe), tier not HIGH, and tier LOW or a visualCriticality.skipFormats format skips scene detection + vision; the moment fill frames every moment; false: the skip only (the 3.5 highTitleKeywords fix — "pack opening" / "box opening", no bare "opening" — applies either way)
 
 # Extraction concurrency + chunking
 EXTRACTION_PARALLEL=true               # Field groups (text at plan-done, visual at frames-done); false = today's single call / chunked batches one at a time (extraction only: reconcile, evidence ranges, toolkit markers, PIPELINE_VERSION stay)
@@ -390,12 +390,14 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     │
     └─▶ FRAMES (smart frame selection, two-pass, non-critical)
         └─▶ Talking-head skip (output-quality 3.5, FRAMES_SKIP_WHEN_NO_VISUAL_DEMO, default on):
-        │   a video > 30 min waits ≤ 5 s for the tier probe first; a usable probe with no
-        │   visual demo, a tier not HIGH, and tier LOW or a probe format in domains.json
-        │   visualCriticality.skipFormats ([talk, interview, podcast]; [] = LOW only) → none of
-        │   the steps below: the 360p download closes, ctx.frames_skipped, no frames event /
-        │   gallery / filmstrip / vision / hi-res pass (timing frames.skip_check + frames.skipped);
-        │   the moment fill frames every moment from the 720p file. ≤ 30 min / flag off: no wait.
+        │   a video > 30 min with its 360p download running (a cached manifest never skips)
+        │   waits for the tier probe while that file is on its way (≥ 5 s); a usable probe
+        │   (confidence > 0.6) with no visual demo, a tier not HIGH, and tier LOW or a probe
+        │   format in domains.json visualCriticality.skipFormats ([talk, interview, podcast];
+        │   [] = LOW only) → none of the steps below: the 720p download starts if nothing
+        │   started it, the 360p one closes, ctx.frames_skipped, no frames event / gallery /
+        │   filmstrip / vision / hi-res pass (timing frames.skip_check + frames.skipped); the
+        │   moment fill frames every moment from the 720p file. ≤ 30 min / flag off: no wait.
         └─▶ S3 cache check (media/frame_manifest.py) — MANIFEST-only: `videos/{id}/{SCENE_S3_PREFIX}/manifest.json`
         │   (v2) carries per-frame timestamps, galleryIndices, hiresCount and the
         │   persisted visionDescriptions. A hit skips extraction AND restores the
@@ -657,8 +659,9 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     │   (later duplicates by name/label/term/title/ingredient/tool/location dropped), first
     │   non-empty scalar wins, number/step/order/index renumbered only when 1..n in every list.
     │   Quality = requested fields filled; `pipeline.extraction._groups` (one row per call). A
-    │   chunked run's merge_rank answer is applied to the merge first (twins out under five guards,
-    │   ranked lists cut to their cap, key-idea sections; `pipeline.extraction._mergeRank`). ONE
+    │   chunked run's merge_rank answer is applied to the merge first (twins out under four guards,
+    │   ranked lists cut to their cap, key-idea sections — those also without an answer;
+    │   `pipeline.extraction._mergeRank`). ONE
     │   `extraction_complete`
     └─▶ `pipeline.timing` on this path: `transcript_frames` spans the extraction too;
     │   `split_extraction` = the member (from the group's start), `extraction` = plan-done → last
@@ -793,21 +796,23 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     │   └─▶ Moment fill (assembly/moment_frame_fill.py): a frame AT each still-frameless
     │   │   moment's timestamp by seeking the run's one local ≤720p file (downloaded by the
     │   │   frames phase; a manifest cache hit starts it here for ≥ 3 moments only, inside the
-    │   │   budget with 30 s kept for seeks; cap 12 frames — the moment cap, 60, on a run
-    │   │   that skipped its frames (3.5, fill_cap) — 150 s) → the moment tabs stream
+    │   │   budget with 30 s kept for seeks; cap 12 frames — none on a run that skipped
+    │   │   its frames (3.5, fill_cap: every moment of every moment tab) — 150 s) → the moment tabs stream
     │   │   WITH their images (replacing the provisional Moments tab by id, or under another
     │   │   id with `replaces: "<provisional id>"`); the file is
     │   │   deleted after it (its last reader). The 720p file not on disk yet when the late
     │   │   group starts (output-quality 3.7: `pending_fill` > 0 and the download unfinished)
-    │   │   → the fill leaves the late group and runs after `complete` (below); the moment tabs
-    │   │   stream with the first tabs, with the frames they have, `final: false`
+    │   │   → the fill leaves the late group: it starts beside it as a task (phases/late_moment_fill.py;
+    │   │   its seeks overlap the quiz and the hero once the file lands) and is joined after
+    │   │   `complete` (below); the moment tabs stream with the first tabs, with the frames they
+    │   │   have, `final: false`
     │   └─▶ The synthesis slot (unless it ran first; phases/synthesis.py). With HERO_REWRITE_ENABLED
     │   │   the hero rewrite (pipeline/hero_rewrite.py, hero_rewrite.txt): ONE call on
     │   │   LLM_EXTRACTION_MODEL (Sonnet 5.5), JSON mode, 2,000 max tokens, 25 s, one retry that
     │   │   carries the failed checks — only when the hero would be None or a D18 line would drop;
     │   │   what finalize repairs itself costs no second call. It reads the field groups' cached blocks 1 (+ 2 on a one-chunk
     │   │   run) and the extraction compacted to ≤ 5,000 tokens with ids (hero_compact.py; a chunked
-    │   │   run's summary / keyQuestion part by part, group_merge.chunk_scalars — 3.2), so
+    │   │   run's summary / keyQuestion part by part, group_merge.chunk_scalars — 3.2 — in ≤ 5,500), so
     │   │   code copies each takeaway's timestamp from the item it cites; hero_validate.py checks
     │   │   numbers, sizes, stamps (no transcript read → a typed stamp only within 30 s of a clock the
     │   │   call read), quoted spans of 3+ words (quote_verify), tab names and D18 (worthItFor /
@@ -828,14 +833,15 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     │       quizEnrichment domain). QUIZ_V2_ENABLED (default): quiz v2 (pipeline/quiz_v2.py,
     │       quiz_v2.txt) on LLM_MEMORY_MODEL (Haiku 5.5), 18 s per attempt, 1 retry, 37 s total, no
     │       cache breakpoint — reads the marked transcript and the key ideas (learning.keyIdeas
-    │       first), writes the video's count (3 / 5 / 8, `quizPolicy.questionsByDuration`) + 2 spare
+    │       first), writes the video's count (3 / 5 / 8, `quizPolicy.questionsByDuration`) + 4 spare
     │       questions, each with a ≤ 25-word evidence quote and the answer's timestamp; every quote
     │       is checked against the transcript (quote_verify): found → the stamp is set from where it
     │       is said; an English-source quote not found → the question is dropped; a translated one
     │       is kept as prose with an in-video stamp; fewer than 3 survivors → no quiz tab. The
-    │       checked questions past the count stay as 2 spares (never dumped): once the hero
+    │       checked questions past the count stay as up to 4 spares (never dumped): once the hero
     │       landed too, settle_late_quiz (phases/enrichment.py) drops a question whose keyed option
-    │       restates a shipped takeaway and refills from them; fewer than 3 left → no quiz tab. False:
+    │       restates a shipped takeaway and refills from them, each spare keyed at the dropped
+    │       question's position; fewer than 3 left → no quiz tab. False:
     │       one enrich_quiz call on LLM_ENRICHMENT_MODEL (gpt-4o-mini), 30 s total (14 s per
     │       attempt, 1 retry), ≥ 2 valid questions; it asks for 3 / 5 / 8 by length, reads the video
     │       length and the memory hero (no question the hero alone answers), and every question
@@ -860,10 +866,13 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     └─▶ SSE: complete (tabCount, tabIds = the final tab order, processingTimeMs, degraded) →
     │   save. A tab streamed earlier but missing from tabIds was withdrawn (logged)
     └─▶ Deferred moment fill (output-quality 3.7; only when the 720p file was still
-    │   downloading): the fill runs now (heartbeats while it waits), then the moment tabs go
-    │   out `final: true`, framed (TabLedger.frames_landed + the closing re-emit), then the 720p
-    │   file is deleted. The save and `done` follow; complete.processingTimeMs = text done, the
-    │   doc's and done's = after the fill
+    │   downloading): the fill started with the late group is joined now (heartbeats while it
+    │   waits), then the moment tabs go out `final: true`, framed (TabLedger.frames_landed + the
+    │   closing re-emit), then the 720p file is deleted. The settle step counted the frames it
+    │   had still to add for the filmstrip decision; a filmstrip dropped on them stays gone if
+    │   the fill falls short — `pipeline.assembly.momentFill` {pending, filled,
+    │   filmstripDroppedOnPending} records it (a warning logs the shortfall). The save and
+    │   `done` follow; complete.processingTimeMs = text done, the doc's and done's = after the fill
     └─▶ Store result to MongoDB + Redis cache (if enabled). Redis response-cache keys are
     │   namespaced by PIPELINE_VERSION (packages/shared/src/config/pipeline-version.json,
     │   currently v10 — bumped v9→v10 by the pipeline-1min 4.0 model refresh).

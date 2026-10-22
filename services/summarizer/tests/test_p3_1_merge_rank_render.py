@@ -14,6 +14,8 @@ from src.models.memory_types import OutlineSection
 from src.services.pipeline.extraction_chunks import ExtractionChunk
 from src.services.pipeline.merge_rank_render import (
     MERGE_RANK_INPUT_MAX_TOKENS,
+    ListSpec,
+    MergeRankRequest,
     RenderInput,
     build_request,
     estimate_tokens,
@@ -73,6 +75,10 @@ def _source(
         duration=_DURATION,
         title="A keynote",
     )
+
+
+def _spec(request: MergeRankRequest | None, path: str) -> ListSpec:
+    return next(spec for spec in (request.lists if request else ()) if spec.path == path)
 
 
 def _lines(text: str) -> list[str]:
@@ -144,12 +150,12 @@ class TestGuards:
     def test_should_set_a_timelines_floor_to_its_band_minimum(self) -> None:
         request = build_request(_source())
 
-        assert request is not None and request.spec("learning.timestamps").floor == 12  # type: ignore[union-attr]
+        assert _spec(request, "learning.timestamps").floor == 12
 
     def test_should_set_a_lists_floor_to_its_density_gate_minimum(self) -> None:
         request = build_request(_source())
 
-        assert request is not None and request.spec("learning.keyIdeas").floor == 2  # type: ignore[union-attr]
+        assert _spec(request, "learning.keyIdeas").floor == 2
 
     def test_should_ask_for_a_rank_only_when_the_list_is_over_its_assembly_cap(self) -> None:
         ideas = [_idea(n, 60 * n) for n in range(1, 31)]  # 60 min → the cap is 24
@@ -171,11 +177,12 @@ class TestGuards:
 
         assert request is not None and "[sections]" not in request.text
 
-    def test_should_section_the_key_ideas_in_code_only_with_an_outline(self) -> None:
+    def test_should_section_the_key_ideas_in_code_with_or_without_an_outline(self) -> None:
+        # Without one, the chunks' labels are joined (review p3 B2).
         with_outline, without = build_request(_source()), build_request(_source(outline=()))
 
         assert with_outline is not None and without is not None
-        assert (with_outline.lists[0].sectioned, without.lists[0].sectioned) == (True, False)
+        assert (with_outline.lists[0].sectioned, without.lists[0].sectioned) == (True, True)
 
 
 class TestBudget:

@@ -6,13 +6,18 @@ checked against the request); this module edits a deep copy of the extraction
 
 1. **Duplicates.** Each group's drops leave their lists. An id is applied only while its
    item is still where the call saw it — same (path, index), same fingerprint (stamp +
-   head start); a group whose keep moved is skipped. Five guards hold a drop back
-   (recorded under ``held``): a list never loses more than :data:`MAX_DROP_SHARE` of its
-   items to the dedupe; a non-timeline list keeps its ``densityGates`` minimum, a timeline
-   (``moment_track``) its §9 band minimum (``ListSpec.floor``); and no drop empties a
-   :data:`WINDOW_S` window the list covered — windows counted back from the video's end,
-   so the last ten minutes are one window (the long-video rubric: the last 10 minutes in
-   ≥ 2 tabs).
+   head start); a group whose keep moved is skipped. Four guards hold a drop back
+   (recorded under ``held`` by name): ``share`` — a list never loses more than
+   :data:`MAX_DROP_SHARE` of its items to the dedupe; ``minimum`` — a non-timeline list
+   keeps its ``densityGates`` minimum, a timeline (``moment_track``) its §9 band minimum
+   (``ListSpec.floor``); ``window`` — no drop empties a :data:`WINDOW_S` window the list
+   covered, windows counted back from the video's end, so the last ten minutes are one
+   window (the long-video rubric: the last 10 minutes in ≥ 2 tabs); :data:`KEEP_CUT` — a
+   group drops only while its keep is sure to ship: its list is cut by rank below (a kept
+   twin outranks every tier, while at most ``cap`` are kept), or it already fits the cap
+   assembly ships it at (``ListSpec.ships``). A keep in a timeline over its §9 cap, or in
+   a list left to assembly's richness cut, could be sampled out after its twins left,
+   and the point would be on no tab (review p3 B1: S02, a Q kept over its K and S).
 2. **Rank (D-B).** A ranked list (``learning.keyIdeas`` / ``keyPoints`` / ``takeaways``,
    not a timeline) still over its assembly cap is cut to it with ``rank_sample``: the
    call's rank in thirds → tiers 3 / 2 / 1, unranked 0, a kept twin above them all (its
@@ -21,18 +26,21 @@ checked against the request); this module edits a deep copy of the extraction
    best-ranked item back in place of the lowest-ranked one of a window that keeps two.
    A list the call ranked none of is left to assembly. Timelines stay with
    ``sample_moments``.
-3. **Sections.** ``learning.keyIdeas[].section`` = the title of the outline section whose
-   [start, end) holds the idea's stamp — code, not the call: asked for them (p3i3, S13),
-   Haiku packed 33 ideas spanning 42 minutes into sections 1–4 of 11 in list order, none
-   where its stamp lies. At most :data:`MAX_SECTIONS` distinct: the smallest section
-   joins its smaller neighbour (on a tie the earlier) until they fit, and a joined
-   section takes the title of its member holding the most ideas — S02 shipped 24
-   one-item sections from the chunks' own labels. An idea without a stamp loses the
-   chunk's label (it shows under "Other").
+3. **Sections** — code, not the call, so they apply whether or not the call answered.
+   ``learning.keyIdeas[].section`` = the title of the outline section whose [start, end)
+   holds the idea's stamp: asked for them (p3i3, S13), Haiku packed 33 ideas spanning 42
+   minutes into sections 1–4 of 11 in list order, none where its stamp lies. At most
+   :data:`MAX_SECTIONS` distinct: the smallest section joins its smaller neighbour (on a
+   tie the earlier) until they fit, and a joined section takes the title of its member
+   holding the most ideas — S02 shipped 24 one-item sections from the chunks' own labels.
+   An idea without a stamp loses the chunk's label (it shows under "Other"). Without an
+   outline (fewer than two sections) the chunks' own labels, in list order, are joined
+   the same way.
 
-The ``_mergeRank`` record: ``{status, ms}`` and, when the call answered, ``dropped``
+The ``_mergeRank`` record: ``{status, ms, sectioned}`` (``sectioned`` = ``{items,
+sections}``, ``{}`` when no idea was titled) and, when the call answered, ``dropped``
 (``{path, id, head, keep}``), ``held`` (``{path, id, guard}``), ``ranked`` (``{path,
-from, to}``), ``sectioned`` (``{items, sections}``) and ``moved`` (ids whose item moved).
+from, to}``) and ``moved`` (ids whose item moved).
 """
 
 from __future__ import annotations
@@ -58,6 +66,8 @@ OK = "ok"
 MAX_DROP_SHARE = (2, 5)  # 40 %, as a fraction: integer floors, no float edge
 WINDOW_S = 600
 MAX_SECTIONS = 8
+# The guard that holds a group whose keep assembly could still cut (module docstring).
+KEEP_CUT = "keep_cut"
 # A kept twin outranks every rank tier (3 / 2 / 1 / 0) in the cut.
 _KEEP_TIER = 4
 _RECORD_HEAD_CHARS = 120
@@ -73,7 +83,8 @@ class DuplicateGroup:
 
 @dataclass(frozen=True)
 class MergeRankAnswer:
-    """The call's checked answer; ``status`` != ``ok`` leaves the extraction alone.
+    """The call's checked answer; ``status`` != ``ok``: no drop and no rank cut (the
+    sections are code's and still apply).
 
     ``rank`` = ids most → least central.
     """
@@ -173,21 +184,47 @@ def _drop_row(item: RankedItem, keep: str) -> dict[str, Any]:
     return {"path": item.path, "id": item.item_id, "head": head, "keep": keep}
 
 
+def _keep_ships(edit: _Edit, keep: RankedItem, ranked: frozenset[str]) -> bool:
+    """``keep`` is on the page whatever assembly's caps do (module docstring): its list is
+    cut by rank (``ranked`` = the paths the rank names) with room for one more kept twin,
+    or the whole list, before any drop, is within the cap assembly ships it at."""
+    lane = edit.lanes[keep.path]
+    spec = lane.spec
+    if spec.cap is not None and spec.path in ranked:
+        pinned = {k for k in edit.keeps if edit.resolved[k].path == spec.path}
+        return keep.item_id in pinned or len(pinned) < spec.cap
+    return spec.ships is None or len(lane.items) <= spec.ships
+
+
+def _drop_group(
+    edit: _Edit, group: DuplicateGroup, keep_ships: bool
+) -> tuple[list[dict], list[dict]]:
+    """One group's drops the guards allow — the dropped rows and the held ones."""
+    dropped: list[dict] = []
+    held: list[dict] = []
+    for item in (edit.resolved[i] for i in group.drop if i in edit.resolved):
+        lane = edit.lanes[item.path]
+        guard = _guard(edit, lane, item.index) if keep_ships else KEEP_CUT
+        if guard is not None:
+            held.append({"path": item.path, "id": item.item_id, "guard": guard})
+            continue
+        lane.removed.add(item.index)
+        lane.drops += 1
+        edit.keeps.add(group.keep)
+        dropped.append(_drop_row(item, group.keep))
+    return dropped, held
+
+
 def _drop_duplicates(edit: _Edit, answer: MergeRankAnswer) -> tuple[list[dict], list[dict]]:
     """Every answered drop the guards allow — the dropped rows and the held ones."""
+    ranked = frozenset(edit.resolved[i].path for i in answer.rank if i in edit.resolved)
     dropped: list[dict] = []
     held: list[dict] = []
     for group in (g for g in answer.duplicates if g.keep in edit.resolved):
-        for item in (edit.resolved[i] for i in group.drop if i in edit.resolved):
-            lane = edit.lanes[item.path]
-            guard = _guard(edit, lane, item.index)
-            if guard is not None:
-                held.append({"path": item.path, "id": item.item_id, "guard": guard})
-                continue
-            lane.removed.add(item.index)
-            lane.drops += 1
-            edit.keeps.add(group.keep)
-            dropped.append(_drop_row(item, group.keep))
+        keep_ships = _keep_ships(edit, edit.resolved[group.keep], ranked)
+        group_dropped, group_held = _drop_group(edit, group, keep_ships)
+        dropped.extend(group_dropped)
+        held.extend(group_held)
     return dropped, held
 
 
@@ -280,13 +317,18 @@ def _title(section: OutlineSection) -> str:
     return text[:1].upper() + text[1:] if first.islower() else text
 
 
-def section_titles(counts: Counter[int], outline: Sequence[OutlineSection]) -> dict[int, str]:
-    """Outline index → the title its ideas ship under (module docstring)."""
+def _joined_titles(counts: Counter[int], names: Sequence[str]) -> dict[int, str]:
+    """Section index → the name its ideas ship under once the sections are joined."""
     titles: dict[int, str] = {}
     for group in _joined(counts):
         lead = max(group, key=lambda index: (counts[index], -index))
-        titles.update(dict.fromkeys(group, _title(outline[lead])))
+        titles.update(dict.fromkeys(group, names[lead]))
     return titles
+
+
+def section_titles(counts: Counter[int], outline: Sequence[OutlineSection]) -> dict[int, str]:
+    """Outline index → the title its ideas ship under (module docstring)."""
+    return _joined_titles(counts, [_title(section) for section in outline])
 
 
 def stamp_section(seconds: int | None, outline: Sequence[OutlineSection]) -> int | None:
@@ -297,20 +339,42 @@ def stamp_section(seconds: int | None, outline: Sequence[OutlineSection]) -> int
     return next((i for i, section in enumerate(outline) if seconds < section.end), len(outline) - 1)
 
 
-def _write_sections(edit: _Edit, outline: Sequence[OutlineSection]) -> dict[str, int]:
-    """The sectioned list's kept ideas under the titles of the sections their stamps fall
-    in (module docstring)."""
-    lane = next((lane for lane in edit.lanes.values() if lane.spec.sectioned), None)
-    if lane is None or not outline:
-        return {}
+Places = tuple[dict[int, int], list[str]]
+
+
+def _outline_places(edit: _Edit, lane: _Lane, outline: Sequence[OutlineSection]) -> Places:
+    """Kept index → the outline section its stamp falls in, and the sections' titles."""
     placed: dict[int, int] = {}
     for index in lane.kept():
         section = stamp_section(item_seconds(lane.items[index], edit.duration), outline)
         if section is not None:
             placed[index] = section
+    return placed, [_title(section) for section in outline]
+
+
+def _label(idea: object) -> str:
+    section = idea.get("section") if isinstance(idea, Mapping) else None
+    return " ".join(section.split()) if isinstance(section, str) else ""
+
+
+def _label_places(lane: _Lane) -> Places:
+    """Without an outline: kept index → its own label, the labels numbered in list order."""
+    labels = {index: _label(lane.items[index]) for index in lane.kept()}
+    names = list(dict.fromkeys(label for label in labels.values() if label))
+    number = {name: position for position, name in enumerate(names)}
+    return {index: number[label] for index, label in labels.items() if label}, names
+
+
+def _write_sections(edit: _Edit, outline: Sequence[OutlineSection]) -> dict[str, int]:
+    """The sectioned list's kept ideas under the titles of the sections their stamps fall
+    in — without an outline, under their own labels joined (module docstring)."""
+    lane = next((lane for lane in edit.lanes.values() if lane.spec.sectioned), None)
+    if lane is None:
+        return {}
+    placed, names = _outline_places(edit, lane, outline) if outline else _label_places(lane)
     if not placed:
         return {}
-    titles = section_titles(Counter(placed.values()), outline)
+    titles = _joined_titles(Counter(placed.values()), names)
     for index in lane.kept():
         idea = lane.items[index]
         if isinstance(idea, dict) and index in placed:
@@ -330,12 +394,14 @@ def _record(answer: MergeRankAnswer, **outcome: Any) -> dict[str, Any]:
 def apply_merge_rank(
     extraction: dict[str, Any], answer: MergeRankAnswer
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """The extraction with the answer applied and the ``_mergeRank`` record; the
-    extraction itself, unchanged, unless the call answered."""
+    """The extraction with the answer applied and the ``_mergeRank`` record; without a
+    request, the extraction itself; without an answer, the sections alone."""
     request = answer.request
-    if answer.status != OK or request is None:
+    if request is None:
         return extraction, _record(answer)
     edit = _Edit.start(extraction, request)
+    if answer.status != OK:
+        return edit.result(), _record(answer, sectioned=_write_sections(edit, request.outline))
     dropped, held = _drop_duplicates(edit, answer)
     ranked = _rank_cut(edit, answer)
     sectioned = _write_sections(edit, request.outline)

@@ -4,8 +4,9 @@ At text-groups-done on a run of more than one chunk, ``GroupLanding`` starts mer
 beside the hero, over the same merge: one call on ``LLM_MEMORY_MODEL`` under its own
 stage and ledger feature. ``split_extraction._complete`` applies the answer to the final
 merge before ``extraction_complete`` and records ``pipeline.extraction._mergeRank``; the
-hero keeps reading the extraction as it was. One chunk, the flag off, a timeout, a
-refusal or a crash → the code merge as it is. The LLM is faked at the retry wrapper; the
+hero keeps reading the extraction as it was. One chunk or the flag off → the code merge
+as it is; a timeout, a refusal or a crash → its lists as they are (the key ideas are still
+sectioned, which is code). The LLM is faked at the retry wrapper; the
 hero call at ``hero_rewrite_for_run``.
 """
 
@@ -77,7 +78,7 @@ _ITEMS: dict[tuple[str, int], list[dict[str, Any]]] = {
         for n in range(1, 8)
     ],
 }
-_ANSWER = json.dumps({"duplicates": [{"keep": "K5", "drop": ["K6"]}], "sections": {"2": ["K6"]}})
+_ANSWER = json.dumps({"duplicates": [{"keep": "K5", "drop": ["K6"]}]})
 _MEMORY_MODEL = "anthropic/claude-haiku-5-5"
 
 
@@ -243,7 +244,7 @@ class TestCall:
 
         await split.ctx.merge_rank_task
 
-        kwargs = llm.await_args.kwargs
+        kwargs = llm.call_args.kwargs
         assert (kwargs["stage_name"], kwargs["json_mode"]) == ("merge_rank", True)
 
     async def test_should_bill_its_own_ledger_feature(self, llm: AsyncMock) -> None:
@@ -265,7 +266,7 @@ class TestCall:
 
         await split.ctx.merge_rank_task
 
-        assert llm.await_args.kwargs["model_override"] == _MEMORY_MODEL
+        assert llm.call_args.kwargs["model_override"] == _MEMORY_MODEL
 
     async def test_should_record_its_timing_step(self, llm: AsyncMock) -> None:
         token = pipeline_timing._recorder_var.set(None)

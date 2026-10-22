@@ -5,8 +5,9 @@ aimed at it: S01 (two chunks, 0–39:21 and 39:21–1:03:07) extracted 44 key id
 expect 16, S02 (three chunks) 60 for expect 20. A chunk's job now expects
 ``round(min(expect, cap) × share)`` (≥ 1), ``share`` = its window over the video's
 clock, and its ``<batch_partial_context>`` says the counts are the part's share and the
-caps hold per part. One chunk (share 1.0) keeps today's bytes, and so does the
-``EXTRACTION_PARALLEL=false`` chunked path (it keeps today's sentence).
+caps hold per part. One chunk (share 1.0) keeps today's bytes; the
+``EXTRACTION_PARALLEL=false`` chunked path keeps today's counts sentence (its
+context differs only by 3.4's ``Clock:`` line).
 
 The residual tail loss in assembly: an itinerary-style spot list with at least as
 many sections as its cap kept the FIRST ``cap`` sections; it keeps an even pick now —

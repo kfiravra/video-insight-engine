@@ -205,11 +205,13 @@ Content type and tab layout come from the **plan** (primary model, Sonnet 5.5), 
 │     │   quiz (Haiku 5.5, every quote checked); the synthesis call only      │
 │     │   when the hero gives none; the quiz only for a plan with a host      │
 │     └── Cross-tab links; final re-emit: every tab final once, the           │
-│         overview last                                                       │
+│         overview last — a moment fill still waiting for the 720p file       │
+│         runs beside the group instead and its Moments tabs stay non-final   │
 │                                                                             │
 │  4. SAVE + COMPLETE                                                         │
-│     ├── SSE complete (tabIds = the final order) → MongoDB (meta + tabs      │
-│     │   + language + isRTL + pipeline.*)                                    │
+│     ├── SSE complete (tabIds = the final order); a waiting moment fill is   │
+│     │   joined, its Moments tabs final (framed) after complete              │
+│     ├── MongoDB (meta + tabs + language + isRTL + pipeline.*)               │
 │     ├── Redis response cache (English; awaited, best-effort); Qdrant        │
 │     │   points + S3 raw transcript in the background (no Redis or           │
 │     │   Qdrant for an eval-user run; S3 unless it came from S3)             │

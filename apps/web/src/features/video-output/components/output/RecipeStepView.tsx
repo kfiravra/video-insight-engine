@@ -15,7 +15,7 @@ import { formatDuration, formatDurationHuman } from '@/lib/string-utils';
 import { useTabState } from '@/features/video-output/contexts/TabStateContext';
 import { buildStepIngredientMap } from '@/features/video-output/components/output/lib/ingredient-step-matcher';
 import { parseStepDurationSeconds } from '@/features/video-output/lib/step-duration';
-import { shuffleQuizQuestion } from '@/features/video-output/lib/quiz-shuffle';
+import { dealQuizOptions } from '@/features/video-output/lib/quiz-shuffle';
 import type { StepItem, QuizArenaQuestion } from '@vie/types';
 
 import { QuizExplanation } from './interactive/QuizExplanation';
@@ -281,11 +281,9 @@ export const StudyStepView = memo(function StudyStepView({
   onSeek,
 }: StudyStepViewProps) {
   const tabState = useTabState();
-  // Same per-question order as the quiz tab (stored keys cluster at option 0).
-  const question = useMemo(() => {
-    const stored = questions[currentStep];
-    return stored ? shuffleQuizQuestion(stored) : undefined;
-  }, [questions, currentStep]);
+  // The quiz tab's order: stored when the server dealt the keys, else dealt per quiz.
+  const dealt = useMemo(() => dealQuizOptions(questions), [questions]);
+  const question = dealt[currentStep];
   if (!question) return null;
 
   const isDone = tabState.isStepCompleted(currentStep);
@@ -330,6 +328,7 @@ function StudyOptionList({ question, shown }: { question: QuizArenaQuestion; sho
               {String.fromCharCode(65 + i)}.
             </span>
             <span>{option}</span>
+            {isAnswer && <span className="sr-only">(correct answer)</span>}
             {isAnswer && <Check className="ms-auto h-4 w-4 shrink-0" aria-hidden="true" />}
           </li>
         );

@@ -2,10 +2,11 @@
 
 Reading: an unknown id goes, a keep never drops itself, an id two groups claim stays
 with the first, the rank keeps the ranked lists' ids. Applying: drops by id while the
-item is still where the call saw it, under five guards (40 % per list, the density-gate
-minimum, a timeline's band minimum, no 10-minute window emptied); a ranked list over its
-cap is cut by rank tier with every window kept; each key idea takes the title of the
-outline section its stamp falls in (≤ 8 titles) — whatever the answer says (p3i3 S13).
+item is still where the call saw it, under four guards (40 % per list, the density-gate
+or a timeline's band minimum, no 10-minute window emptied, a keep sure to ship — the last
+in test_p3_review_h); a ranked list over its cap is cut by rank tier with every window
+kept; each key idea takes the title of the outline section its stamp falls in (≤ 8
+titles) — whatever the answer says (p3i3 S13), and whether or not the call answered.
 """
 
 from __future__ import annotations
@@ -169,8 +170,11 @@ class TestDrops:
 
     def test_should_hold_a_timeline_drop_below_the_band_minimum(self) -> None:
         moments = [_moment(n, 200 * n) for n in range(1, 14)]  # 13; 60 min → minimum 12
-        extraction, request = _request({"timestamps": moments}, tabs=("moments",))
-        answer = {"duplicates": [{"keep": "M1", "drop": ["M2", "M4"]}]}
+        learning = {"keyIdeas": _ideas(6), "timestamps": moments}
+        extraction, request = _request(learning, tabs=("ideas", "moments"))
+        # The keep is a key idea: the 13 moments are over their cap of 12, so a moment
+        # kept for its twins could be sampled out (test_p3_review_h).
+        answer = {"duplicates": [{"keep": "K1", "drop": ["M2", "M4"]}]}
 
         _, record = _applied(extraction, request, answer)
 
@@ -211,12 +215,12 @@ class TestDrops:
 
 
 class TestNoAnswer:
-    def test_should_return_the_extraction_itself_when_the_call_failed(self) -> None:
+    def test_should_drop_nothing_when_the_call_failed(self) -> None:
         extraction, request = _request({"keyIdeas": _ideas(6)})
 
         result, record = apply_merge_rank(extraction, MergeRankAnswer("timeout", request, ms=25))
 
-        assert (result is extraction, record) == (True, {"status": "timeout", "ms": 25})
+        assert (_claims(result), record["status"]) == (_claims(extraction), "timeout")
 
 
 # ─── Rank ───

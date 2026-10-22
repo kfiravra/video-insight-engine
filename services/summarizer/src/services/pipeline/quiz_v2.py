@@ -4,9 +4,10 @@ Calls on ``LLM_MEMORY_MODEL`` (Haiku 5.5, stage ``quiz_v2``) read the run's mark
 transcript and the key ideas (``quiz_v2_ideas.KEY_IDEA_SOURCES``) and write the quiz:
 3 / 5 / 8 questions by length (``quizPolicy``, :func:`enrichment.quiz_question_count`)
 plus ``SPARE_QUESTIONS`` candidates, each with its answer's ``timestamp`` in seconds
-and a ≤ 25-word evidence ``quote``. With a known length and stamped key ideas it is one
-call per stretch (third) of the video that holds a key idea, in parallel, each reading
-only its third (``quiz_v2_prompt``, G2-4); otherwise one call over the whole video.
+and a ≤ 25-word evidence ``quote``. With a known length, stamped key ideas and more
+than 3 questions (past the 15-min band) it is one call per stretch (third) of the video
+that holds a key idea, in parallel, each reading only its third (``quiz_v2_prompt``,
+G2-4); otherwise one call over the whole video.
 Every question then passes the 2.0 quote check (``quote_verify``) or is dropped:
 
 - **verified** — the stamp is set from where the quote was found (segment-precise;

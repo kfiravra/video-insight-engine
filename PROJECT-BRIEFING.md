@@ -126,7 +126,9 @@ metadata (one extract_info) → t=0 group in the background: captions · descrip
                      frames-done; each landed group streams non-final tab previews
    → faithfulness judge (background)
    → assembly (pure code) → late group: moment fill ∥ hero rewrite (else synthesis) ∥ quiz
+                     (720p still downloading: the fill runs beside the group, joined after complete)
    → final re-emit (every tab final, overview last) → complete → save → Redis / Qdrant / S3
+                     (a waiting moment fill: the Moments tabs' final, framed, follows complete, before save)
    → [ translation ]  (non-English only) → done
 ```
 
@@ -331,7 +333,7 @@ Four-layer component model: (1) shadcn/ui primitives, (2) the domain-free VIE li
 React Router 7: `/` (Landing, public), `/login`, `/register`, `/board` (folder explorer + video grid, protected), `/generate` (URL intake, protected), `/video/:id` (output, protected), `/s/:slug` (public share).
 
 ### Streaming consumption & resilience
-- SSE at `/api/videos/:id/stream`: `triage_complete` → pending-tab strip + domain accent; `tab_ready[]` → progressive render **sorted by `position`**, replaced by id (the provisional Moments tab at plan-done, non-final previews per extraction group, moment tabs after their frame fill, then every tab once `final: true`); `complete` → celebration. UI phases derive from milestone events via `SSE_PHASE_MAP` (`StreamPhase`: idle | connecting | metadata | transcript | extraction | building | translation | done | cancelled | error, plus `phaseDetail`). On load, `resolve-display-tabs` prefers a completed DB doc over a partial stream.
+- SSE at `/api/videos/:id/stream`: `triage_complete` → pending-tab strip + domain accent; `tab_ready[]` → progressive render **sorted by `position`**, replaced by id (the provisional Moments tab at plan-done, non-final previews per extraction group, moment tabs after their frame fill, then every tab once `final: true` — a Moments tab whose fill waits for the 720p download gets its final after `complete`); `complete` → the final tab order; `done` → celebration. UI phases derive from milestone events via `SSE_PHASE_MAP` (`StreamPhase`: idle | connecting | metadata | transcript | extraction | building | translation | done | cancelled | error, plus `phaseDetail`). On load, `resolve-display-tabs` prefers a completed DB doc over a partial stream.
 - `useProcessingManager` (init in `App.tsx`) watches the video list; for any `pending`/`processing` video it reconnects an SSE stream into a Zustand `processing-store` keyed by `videoSummaryId` → **auto-resume after refresh**, shared between sidebar spinner and detail page.
 - `use-websocket` delivers `video.status`/`video.metadata` → invalidates React Query lists, keeps sidebar titles synced.
 

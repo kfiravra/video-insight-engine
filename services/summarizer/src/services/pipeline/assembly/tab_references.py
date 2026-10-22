@@ -30,7 +30,8 @@ scrubs once the tab list is final; the pipeline runs :func:`settle_shipped_tabs`
 again after the late group (``phases.synthesis.settle_tab_references``), because
 the moment fill frames the Moments and synthesis writes the hero after assembly.
 A moment fill that waits for the 720p file past ``complete`` (output-quality 3.7)
-has not framed them yet: the frames it will add count as framed (``pending``).
+may not have framed them all yet: the frames it has still to add count as framed
+(``pending``); ``shadowed_on_pending`` tells when only they shadow the filmstrip.
 """
 
 from __future__ import annotations
@@ -101,19 +102,36 @@ def frame_backed_count(props: object) -> int:
     return sum(1 for item in items if _frame_backed(item)) if isinstance(items, list) else 0
 
 
+def framed_moments(tabs: list[dict]) -> dict[str, int]:
+    """Moment tab id → its frame-backed items."""
+    return {
+        str(tab.get("id", "")): frame_backed_count(tab.get("props"))
+        for tab in tabs
+        if tab.get("component") == MOMENT_COMPONENT
+    }
+
+
+def _rich_moments(tabs: list[dict], pending: Mapping[str, int]) -> bool:
+    """A Moments tab carries ``RICH_MOMENT_FRAMES`` framed items, ``pending`` counted as framed."""
+    return any(
+        framed + pending.get(tab_id, 0) >= RICH_MOMENT_FRAMES
+        for tab_id, framed in framed_moments(tabs).items()
+    )
+
+
+def shadowed_on_pending(tabs: list[dict], pending: Mapping[str, int]) -> bool:
+    """A filmstrip of ``tabs`` is shadowed only once the ``pending`` frames land."""
+    has_filmstrip = any(tab.get("component") == FILMSTRIP_COMPONENT for tab in tabs)
+    return has_filmstrip and _rich_moments(tabs, pending) and not _rich_moments(tabs, {})
+
+
 def drop_shadowed_filmstrips(
     tabs: list[dict], pending: Mapping[str, int] | None = None
 ) -> list[dict]:
     """Remove every filmstrip tab when a Moments tab carries ``RICH_MOMENT_FRAMES`` framed
     items — ``pending`` (tab id → frames the deferred moment fill adds) counted as framed.
     Mutates ``tabs``; returns the removed tabs."""
-    frames = pending or {}
-    rich = any(
-        tab.get("component") == MOMENT_COMPONENT
-        and frame_backed_count(tab.get("props")) + frames.get(str(tab.get("id", "")), 0)
-        >= RICH_MOMENT_FRAMES
-        for tab in tabs
-    )
+    rich = _rich_moments(tabs, pending or {})
     removed = [tab for tab in tabs if rich and tab.get("component") == FILMSTRIP_COMPONENT]
     if removed:
         tabs[:] = [tab for tab in tabs if tab.get("component") != FILMSTRIP_COMPONENT]

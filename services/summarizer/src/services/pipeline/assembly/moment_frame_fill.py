@@ -17,9 +17,9 @@ leaves the item on its glyph-plate fallback.
 ``pending_fill`` counts what the fill would add before it runs (output-quality
 3.7): a 720p file still downloading moves the fill past ``complete``, and the
 filmstrip decision counts those frames as landed. Both take the same
-``max_frames``: ``fill_cap`` raises it to the moment cap on a run that skipped
-its frames (output-quality 3.5) — no scene frame exists to inject there, so the
-fill is every moment's only image.
+``max_frames``: ``fill_cap`` lifts it on a run that skipped its frames
+(output-quality 3.5) — no scene frame exists to inject there, so the fill is
+every moment's only image, in every moment tab.
 """
 
 from __future__ import annotations
@@ -32,7 +32,6 @@ from src.services.media.frame_extractor import extract_frame, frame_s3_key
 from src.services.media.s3_client import s3_client
 
 from .core import _item_timestamp
-from .sampling import MOMENT_CAP_MAX
 
 if TYPE_CHECKING:
     from src.services.media.hires_prefetch import LocalHiresSource
@@ -56,10 +55,11 @@ _FILL_CONCURRENCY = 3
 FillTarget = tuple[dict, int]
 
 
-def fill_cap(frames_skipped: bool) -> int:
-    """The fill's frame cap: the largest moment track on a run that skipped its
-    frames, else ``_FILL_MAX_FRAMES``."""
-    return MOMENT_CAP_MAX if frames_skipped else _FILL_MAX_FRAMES
+def fill_cap(frames_skipped: bool) -> int | None:
+    """The fill's frame cap: ``_FILL_MAX_FRAMES``, or none (``None``) on a run that
+    skipped its frames — the fill is every moment's only image there, and a podcast's
+    two moment tabs reach two moment caps past 3 h; ``_FILL_TIMEOUT`` still bounds it."""
+    return None if frames_skipped else _FILL_MAX_FRAMES
 
 
 def _collect_frameless(tabs: list[dict]) -> list[FillTarget]:
@@ -145,15 +145,18 @@ def _count_filled(targets: list[FillTarget]) -> int:
 
 
 def pending_fill(
-    tabs: list[dict], hires_video: LocalHiresSource | None, max_frames: int = _FILL_MAX_FRAMES
+    tabs: list[dict],
+    hires_video: LocalHiresSource | None,
+    max_frames: int | None = _FILL_MAX_FRAMES,
 ) -> dict[str, int]:
     """Per moment tab id, the frames ``fill_moment_frames`` would seek — {} when it seeks none.
 
     The fill's own gates (S3 up, a 720p source, a download the fill would start
     itself only for ``_FILL_DOWNLOAD_MIN_TARGETS`` moments) and its cap (pass the
-    fill's ``max_frames``), taken in tab order as the fill takes them.
+    fill's ``max_frames``; None = none), taken in tab order as the fill takes them.
     """
-    budget = min(len(_collect_frameless(tabs)), max_frames)
+    frameless = len(_collect_frameless(tabs))
+    budget = frameless if max_frames is None else min(frameless, max_frames)
     if not budget or hires_video is None or not s3_client.is_available():
         return {}
     if not hires_video.started and budget < _FILL_DOWNLOAD_MIN_TARGETS:
@@ -167,8 +170,8 @@ def pending_fill(
     return pending
 
 
-def _cap_targets(targets: list[FillTarget], max_frames: int) -> list[FillTarget]:
-    capped = targets[:max_frames]
+def _cap_targets(targets: list[FillTarget], max_frames: int | None) -> list[FillTarget]:
+    capped = targets[:max_frames]  # None keeps them all
     if len(targets) > len(capped):
         logger.warning(
             "moment_frame_fill: %d frameless moments exceed the %d-frame cap — "
@@ -205,13 +208,13 @@ async def fill_moment_frames(
     tabs: list[dict],
     youtube_id: str,
     hires_video: LocalHiresSource | None,
-    max_frames: int = _FILL_MAX_FRAMES,
+    max_frames: int | None = _FILL_MAX_FRAMES,
 ) -> int:
     """Guarantee moment_track image coverage; returns the number filled.
 
-    Seeks at most ``max_frames`` (``fill_cap``). Mutates items in place
-    (thumbnailUrl + s3Key). Never raises — every failure path logs and returns
-    what was filled so far.
+    Seeks at most ``max_frames`` (``fill_cap``; None = every frameless moment).
+    Mutates items in place (thumbnailUrl + s3Key). Never raises — every failure
+    path logs and returns what was filled so far.
     """
     targets = _collect_frameless(tabs)
     if not targets:

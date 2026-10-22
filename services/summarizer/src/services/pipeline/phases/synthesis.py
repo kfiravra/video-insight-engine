@@ -260,7 +260,8 @@ def settle_tab_references(ctx: PipelineContext, assembled: dict[str, Any]) -> st
     if meta is None or tabs is None:
         return None
     plan = [tab for tab in ctx.triage_dict.get("tabs") or [] if isinstance(tab, dict)]
-    # A moment fill deferred past ``complete`` (output-quality 3.7): its frames count as framed.
+    # A moment fill joined after ``complete`` (output-quality 3.7): the frames it has still to
+    # add count as framed (``late_moment_fill.LateMomentFill.before_settle``).
     pending = getattr(ctx, "pending_moment_frames", None)
     drops = settle_shipped_tabs(meta, tabs, [*plan, *tabs], planned_tab_sources(plan), pending)
     assembled.setdefault("dropped", []).extend(drops)

@@ -4,12 +4,18 @@ Data first — the task, the hero, the key ideas, the transcript — the rules l
 (``quiz_v2.txt``). With a known length and key ideas stamped in it, the quiz is written
 stretch by stretch: one call per third of the video that holds a key idea
 (``quiz_v2_select.stretch_quotas`` sizes each, the counts adding up to the video's count
-plus the spares), its task naming that third's count and range, its key ideas only those
-stamped there, its transcript only the lines within :data:`STRETCH_MARGIN_S` of the
-third. Told "at least one question per stretch" (p3i1), then given a count per stretch
-beside its grouped ideas (p3i2), Haiku still wrote nothing past 37:30 of S03's 57:14; a
-call that sees only the last third can only ask about it. Without quotas (an unknown
-length, no stamped key idea) the quiz is one call over the whole transcript, as before.
+plus the spares), its task naming that third's count and range, its key ideas those
+stamped there plus every unstamped one (its place is unknown; the call quotes only its
+own lines, so the call whose lines hold it can test it), its transcript only the lines
+within :data:`STRETCH_MARGIN_S` of the third. Told "at least one question per stretch"
+(p3i1), then given a count per stretch beside its grouped ideas (p3i2), Haiku still
+wrote nothing past 37:30 of S03's 57:14; a call that sees only the last third can only
+ask about it. Without quotas the quiz is one call over the whole transcript, as before:
+an unknown length, no stamped key idea, or a quiz of no more questions than stretches —
+the 3-question band, ≤ 15 min (``quizPolicy``). There the whole transcript is a few
+thousand words, ``select_quiz`` still ships one question per third from the one call's
+count + spares, and three calls would ask a stretch holding one key idea for two or
+three questions against the rule "one question per key idea" (p3 review A6).
 """
 
 from __future__ import annotations
@@ -28,7 +34,7 @@ from .memory import format_clock
 from .pipeline_helpers import sanitize_for_prompt
 from .prompt_builder import load_prompt_text
 from .quiz_v2_ideas import item_seconds, key_idea_items, render_key_ideas
-from .quiz_v2_select import stretch_bounds, stretch_of, stretch_quotas
+from .quiz_v2_select import QUIZ_STRETCHES, stretch_bounds, stretch_of, stretch_quotas
 
 logger = logging.getLogger(__name__)
 
@@ -154,14 +160,25 @@ def _prompt_text(
 def _stretch_prompt(
     request: QuizV2Request, flavor: str, items: Sequence[object], stretch: int, quota: int
 ) -> QuizV2Prompt:
-    """Stretch ``stretch``'s call: its count, its range, its key ideas, its lines."""
+    """Stretch ``stretch``'s call: its count, its range, its key ideas (and the unstamped
+    ones), its lines."""
     bounds = stretch_bounds(request.duration_s)[stretch]
     ideas = [
-        item for item in items if stretch_of(item_seconds(item), request.duration_s) == stretch
+        item
+        for item in items
+        if stretch_of(item_seconds(item), request.duration_s) in (stretch, None)
     ]
     transcript = stretch_transcript(request.transcript, bounds) or request.transcript
     task = _task_block(request, flavor, quota, bounds)
     return QuizV2Prompt(_prompt_text(request, task, ideas, transcript), quota)
+
+
+def _quotas(request: QuizV2Request, items: Sequence[object], asked: int) -> list[int]:
+    """Each stretch call's count; ``[]`` → one call over the whole video (module docstring)."""
+    if quiz_question_count(request.duration_s, _quiz_cap()) <= QUIZ_STRETCHES:
+        return []
+    stamps = [s for s in (item_seconds(item) for item in items) if s is not None]
+    return stretch_quotas(stamps, request.duration_s, asked)
 
 
 def build_quiz_v2_prompts(request: QuizV2Request) -> list[QuizV2Prompt]:
@@ -173,8 +190,7 @@ def build_quiz_v2_prompts(request: QuizV2Request) -> list[QuizV2Prompt]:
         return []
     items = key_idea_items(request.primary_tag, request.extraction)
     asked = asked_count(request.duration_s)
-    stamps = [s for s in (item_seconds(item) for item in items) if s is not None]
-    quotas = stretch_quotas(stamps, request.duration_s, asked)
+    quotas = _quotas(request, items, asked)
     if not quotas:
         task = _task_block(request, flavor, asked, None)
         return [QuizV2Prompt(_prompt_text(request, task, items, request.transcript), asked)]

@@ -11,9 +11,10 @@ types is a guess). One line per item, in the extraction's own order:
 
 Ids are numbered over the WHOLE extraction before anything is cut, so an id
 names the same item at every budget level. The text fits
-``HERO_EXTRACTION_MAX_TOKENS``: text fields shorten level by level (bodies,
-then quotes), and only then do long lists keep an even spread of their items —
-the tail of the video stays in (S01's brief lost the second half once).
+``HERO_EXTRACTION_MAX_TOKENS`` (``HERO_EXTRACTION_PARTED_MAX_TOKENS`` when a
+chunked run's scalars show part by part, below): text fields shorten level by
+level (bodies, then quotes), and only then do long lists keep an even spread of
+their items — the tail of the video stays in (S01's brief lost the second half once).
 Deterministic: the same extraction always gives the same bytes.
 
 A scalar is the first chunk's on a chunked run (``group_merge``): S01's ``summary`` ends
@@ -56,9 +57,12 @@ from .quote_verify import (
     verify_quote,
 )
 
-# 5.5 K: a long video's per-chunk summaries (output-quality 3.2, ≈ 0.3 K on S01) would
-# otherwise cut every item's detail a level (S01: 30 → 20 words) at 5 K.
-HERO_EXTRACTION_MAX_TOKENS = 5500
+HERO_EXTRACTION_MAX_TOKENS = 5000
+# With a chunked run's per-part scalars (output-quality 3.2, ≈ 0.3 K on S01), which would
+# otherwise cut every item's detail a level at 5 K (S01: 30 → 20 words). Only then: a run
+# without parts keeps 5 K and its bytes (S04's one-chunk compact: 4291 tokens at 5 K, a
+# richer 5049 at 5.5 K — review p3 B3).
+HERO_EXTRACTION_PARTED_MAX_TOKENS = 5500
 # A quote found farther than this from its item's stamp is the line said again
 # elsewhere (or another item's words), not where the item is: its stamp stays. An
 # answer runs on past its question's stamp (S02: the claim and its quote 184 s in).
@@ -131,6 +135,9 @@ _TAG_WORDS = 4
 # A chunked run's scalar: ``learning.summary (one per part of the video):``.
 _PARTS_HEADER = "(one per part of the video)"
 _STAMP_PREFIX_RE = re.compile(r"^(\s*)[A-Z]\d+ \[\d+(?::\d{2}){1,2}\] ", re.MULTILINE)
+# A part's window (``extraction_chunks.window_label``): "- (0:00–39:21) ", "- (1:03:07–end) ".
+_CLOCK = r"\d+(?::\d{2}){1,2}"
+_PART_WINDOW_RE = re.compile(rf"^- \({_CLOCK}–(?:{_CLOCK}|end)\) ", re.MULTILINE)
 _WHITESPACE_RE = re.compile(r"\s+")
 
 
@@ -173,8 +180,9 @@ class CompactExtraction:
 
     @property
     def evidence(self) -> str:
-        """The text as video content: without the ids and stamps code put in front."""
-        return _STAMP_PREFIX_RE.sub(r"\1", self.text)
+        """The text as video content: without the ids and stamps, nor a part's window, that
+        code put in front — a chunk boundary (39:21) is no number the video states."""
+        return _PART_WINDOW_RE.sub("- ", _STAMP_PREFIX_RE.sub(r"\1", self.text))
 
 
 def estimate_tokens(text: str) -> int:
@@ -372,14 +380,20 @@ def _said_quotes_only(
     return extraction if checked is None else checked
 
 
+def hero_budget(chunk_scalars: ChunkScalars | None) -> int:
+    """The compact's token budget: 5.5 K with per-part scalars to show, else 5 K."""
+    return HERO_EXTRACTION_PARTED_MAX_TOKENS if chunk_scalars else HERO_EXTRACTION_MAX_TOKENS
+
+
 def compact_for_hero(
     extraction: Mapping[str, object] | None,
     duration: int | None = None,
-    max_tokens: int = HERO_EXTRACTION_MAX_TOKENS,
+    max_tokens: int | None = None,
     quote_index: QuoteIndex | None = None,
     chunk_scalars: ChunkScalars | None = None,
 ) -> CompactExtraction:
-    """The extraction as id'd lines within ``max_tokens`` (empty for no extraction).
+    """The extraction as id'd lines within ``max_tokens`` (``hero_budget`` when None;
+    empty for no extraction).
 
     ``duration`` (seconds) leaves a stamp past the video's end without an id;
     ``quote_index`` (the run's) leaves out every quote it reads as never said;
@@ -388,13 +402,14 @@ def compact_for_hero(
     """
     if not extraction:
         return CompactExtraction("")
+    budget = hero_budget(chunk_scalars) if max_tokens is None else max_tokens
     extraction = _said_quotes_only(extraction, quote_index)
     for level in _LEVELS:
         render = _render(extraction, level, duration, chunk_scalars or {})
         text = "\n".join(render.lines)
-        if estimate_tokens(text) <= max_tokens:
+        if estimate_tokens(text) <= budget:
             return CompactExtraction(text, render.stamps, render.quotes)
-    text = _cut_to(text, int(max_tokens * CHARS_PER_TOKEN))
+    text = _cut_to(text, int(budget * CHARS_PER_TOKEN))
     shown = {line.strip().split(" ", 1)[0] for line in text.split("\n")}
     return CompactExtraction(
         text,

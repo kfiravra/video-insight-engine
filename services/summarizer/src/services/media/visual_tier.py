@@ -15,9 +15,9 @@ metadata (category + title/tag keywords). ``visualCriticality`` in
 packages/shared/src/config/domains.json single-sources the tier table.
 
 ``skips_frames`` is D2's talking-head rule (output-quality 3.5,
-``FRAMES_SKIP_WHEN_NO_VISUAL_DEMO``): a long video whose probe saw no visual
-demo skips scene detection and vision altogether when its tier is LOW or its
-format is one of ``visualCriticality.skipFormats``.
+``FRAMES_SKIP_WHEN_NO_VISUAL_DEMO``): a long video whose confident probe saw no
+visual demo skips scene detection and vision altogether when its tier is LOW or
+its format is one of ``visualCriticality.skipFormats``.
 """
 
 from __future__ import annotations
@@ -40,6 +40,10 @@ PROBE_WAIT_CAP_SECONDS = 3.0
 # D2: only a video longer than this may skip its frames — below it the 360p
 # pass is cheap and the probe wait at the top of the frames phase pure latency.
 FRAMES_SKIP_MIN_SECONDS = 1800.0
+# The skip drops every frame of a run, so it trusts the probe only as far as the
+# plan does: = phases/triage.PROBE_CONFIDENCE_THRESHOLD (a test pins the two; this
+# module sits below the phases, which import it, so it cannot import that one).
+SKIP_MIN_PROBE_CONFIDENCE = 0.6
 
 
 def _title_keyword_hit(cfg: dict, *texts: str) -> bool:
@@ -168,12 +172,14 @@ def skips_frames(probe: TierProbe | None, tier: VisualTier, duration_s: float | 
     """D2's talking-head rule: no scene detection and no vision for this run.
 
     All of: longer than 30 min · ``tier`` (``derive_tier`` from this probe) not
-    HIGH · a usable probe that saw no visual demo · ``tier`` LOW or the probe's
-    format in ``skipFormats`` (an empty list = LOW only). No probe, or one that
-    read an unusable transcript, never skips. Lectures stay off the list: their
-    slides are content.
+    HIGH · a usable probe, confident above ``SKIP_MIN_PROBE_CONFIDENCE``, that saw
+    no visual demo · ``tier`` LOW or the probe's format in ``skipFormats`` (an
+    empty list = LOW only). No probe, or one that read an unusable transcript,
+    never skips. Lectures stay off the list: their slides are content.
     """
     if probe is None or not probe.transcript_usable or probe.has_visual_demo:
+        return False
+    if probe.confidence <= SKIP_MIN_PROBE_CONFIDENCE:
         return False
     if not frames_skip_considered(duration_s) or tier == "high":
         return False

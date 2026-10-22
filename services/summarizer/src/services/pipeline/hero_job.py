@@ -13,7 +13,7 @@ call runs on the groups' model, with their JSON mode, effort and no system promp
    run reads block 1 alone and block 3 carries ``<video>`` + ``<video_memory>``;
 3. the hero job (uncached): ``prompts/hero_rewrite.txt`` + the compacted merged
    extraction (``hero_compact``, ≤ 5 K tokens, stamped items under ids; a chunked
-   run's scalars part by part, 3.2) + the tab labels.
+   run's scalars part by part, 3.2, in ≤ 5.5 K) + the tab labels.
 
 Without group blocks (``EXTRACTION_PARALLEL=false``) the request is block 3
 alone: no group call wrote blocks 1 / 2, so sending them would WRITE them (block

@@ -28,6 +28,7 @@ metadata (+ t=0 background: captions · description analysis · downloads)
           each landed group streams tab previews  (EXTRACTION_PARALLEL=false: one call after the group)
 → assembly (code, no LLM calls) → late group: moment fill ∥ hero rewrite (else synthesis) ∥ quiz
 → final re-emit (every tab final, overview last) → complete → save
+      (720p still downloading: the fill runs beside the late group; the Moments tabs' final follows complete)
 → [translation] (non-English only) → done
 ```
 - **14 domains** (fitness, food, gaming, language, learning, music, news, podcast, project, review, science, sport, tech, travel — see `domains.json`, the single source) + **2 modifiers** (narrative, finance). Evidence keys (`has_steps`, `has_code`, `is_learnable`, …) from the plan and the memory gate requirements, reconcile and the quiz. `domains.json` also carries per-domain **forbidden** components (quiz_arena = educational-only), format **playbooks** (`gaming:unboxing`, `review:unboxing`), and **visualCriticality** tiers for the frame pipeline.

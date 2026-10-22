@@ -87,7 +87,8 @@ class TabLedger:
     # Late phases still to land that change already-assembled tabs.
     quiz_pending: bool = False
     synthesis_pending: bool = False
-    # The moment fill runs after ``complete`` (output-quality 3.7): moment tabs stay non-final.
+    # A moment fill waiting for the 720p file is joined after ``complete`` (output-quality
+    # 3.7, ``phases/late_moment_fill``): moment tabs stay non-final.
     frames_pending: bool = False
     # Split extraction (3.6): extraction groups still landing — nothing final.
     groups_pending: bool = False

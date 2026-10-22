@@ -21,16 +21,19 @@ the model's order — most important key idea first:
   is left;
 - **the spread** (G2-4): gate 2 shipped S03's 8 questions all inside 0:00–21:37 of a
   57-minute lecture. The video is cut into :data:`QUIZ_STRETCHES` stretches (thirds,
-  :func:`stretch_bounds`); each stretch holding a key idea gets its own call, sized by
-  :func:`stretch_quotas` (``quiz_v2_prompt``), and :func:`select_quiz` ships the first
-  clean question of each stretch, then fills the count in rank order.
+  :func:`stretch_bounds`); past the 3-question band each stretch holding a key idea gets
+  its own call, sized by :func:`stretch_quotas` (``quiz_v2_prompt``), and
+  :func:`select_quiz` ships the first clean question of each stretch, then fills the
+  count in rank order.
 
 The shipped questions keep the model's importance order, not the video's: the prompt
 asks for the most important first, and the late refill (``phases.enrichment.
 settle_late_quiz``) appends spares at the end — an order only importance keeps true.
 A question that refill drops (it restates a shipped takeaway) is replaced by the first
 clean spare from its own stretch, else the next spare (:func:`spare_for`), so the drop
-does not leave its third of the video untested.
+does not leave its third of the video untested; the spare's key moves to the dropped
+question's position (:func:`in_slot_of`), so the shipped quiz keeps its even deal (the
+spares' own deck put 2 of 3 keys on one position in half of the 3-question refills).
 """
 
 from __future__ import annotations
@@ -52,8 +55,8 @@ logger = logging.getLogger(__name__)
 # one, and the split gate 2's S03 check reads ("the last 36 minutes are untested").
 QUIZ_STRETCHES = 3
 # A key this many times the mean wrong option's length (characters) is the tell the
-# gate-2 reviewers named; the prompt builds every wrong option from the key, within
-# 2 words of its length.
+# gate-2 reviewers named; the prompt asks for every wrong option within 2 words of the
+# key's length.
 LENGTH_TELL_RATIO = 1.5
 # The prompt's four options: the key positions a quiz deals out evenly (a question
 # with fewer options takes its slot modulo its own count).
@@ -237,3 +240,18 @@ def spare_for(
         and stretch_of(_stored_int(spare, "timestamp"), duration_s) == stretch
     )
     return next(same, 0)
+
+
+def in_slot_of(spare: Mapping[str, Any], dropped: Mapping[str, Any]) -> dict[str, Any]:
+    """A copy of the stored ``spare`` with its keyed option at ``dropped``'s key position
+    (modulo its own option count), the wrong options in their order; unchanged when
+    either holds no key."""
+    options, key = spare.get("options"), _stored_int(spare, "correctIndex")
+    slot = _stored_int(dropped, "correctIndex")
+    if slot is None or not isinstance(options, list) or key is None:
+        return dict(spare)
+    if not 0 <= key < len(options):
+        return dict(spare)
+    slot %= len(options)
+    wrong = [option for i, option in enumerate(options) if i != key]
+    return {**spare, "options": [*wrong[:slot], options[key], *wrong[slot:]], "correctIndex": slot}

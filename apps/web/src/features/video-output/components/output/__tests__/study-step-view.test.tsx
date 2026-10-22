@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { TabStateProvider, useTabState } from '@/features/video-output/contexts/TabStateContext';
 import { StudyStepView } from '../RecipeStepView';
@@ -142,12 +142,47 @@ describe('StudyStepView', () => {
   });
 });
 
+/** The option rows, in the order shown. */
+function shownRows(): HTMLElement[] {
+  return screen.getAllByRole('listitem');
+}
+
+/** The rows announced as the correct answer. */
+function markedRows(): HTMLElement[] {
+  return shownRows().filter((li) => within(li).queryByText('(correct answer)') !== null);
+}
+
+// Legacy rows (flag-off / pre-3.0): every key stored at option 0, so the page deals them.
+const LEGACY_EN: QuizArenaQuestion[] = [
+  { question: 'Which camera did the speaker call the great equalizer?', options: ['Kodak Brownie', 'Leica M3', 'Polaroid SX-70', 'Hasselblad 500'], correctIndex: 0, timestamp: 95 },
+  { question: 'What did the speaker say made film cheap?', options: ['Mass production', 'Tax cuts', 'Silver mines', 'Digital sensors'], correctIndex: 0, timestamp: 410 },
+];
+const LEGACY_ES: QuizArenaQuestion[] = [
+  { question: '¿Qué cámara llamó el orador el gran igualador?', options: ['Kodak Brownie (es)', 'Leica M3 (es)', 'Polaroid SX-70 (es)', 'Hasselblad 500 (es)'], correctIndex: 0, timestamp: 95 },
+  { question: '¿Qué dijo el orador que abarató la película?', options: ['Producción en masa', 'Recortes de impuestos', 'Minas de plata', 'Sensores digitales'], correctIndex: 0, timestamp: 410 },
+];
+
 describe('StudyStepView option order', () => {
-  it('should mark the keyed option as the answer after reveal regardless of its shuffled position', async () => {
+  it('should mark the keyed option as the answer after reveal regardless of its position', async () => {
     const user = userEvent.setup();
-    render(<StudyHarness />);
+    render(<StudyHarness questions={LEGACY_EN} />);
     await user.click(screen.getByRole('button', { name: /reveal answer/i }));
-    const marked = screen.getAllByRole('listitem').filter((li) => li.className.includes('text-success'));
-    expect(marked.map((li) => li.textContent)).toEqual([expect.stringContaining('Kodak Brownie')]);
+    expect(markedRows().map((li) => li.textContent)).toEqual([expect.stringContaining('Kodak Brownie')]);
+  });
+
+  // p3 review A1: QUESTIONS' keys sit at positions 0 and 1 — the server's deal.
+  it('should show the options in their stored order when the server dealt the keys', () => {
+    render(<StudyHarness />);
+    expect(shownRows().map((li) => li.textContent)).toEqual(['A.Kodak Brownie', 'B.Leica camera', 'C.Polaroid']);
+  });
+
+  // p3 review A4: the same question keeps its key's row when the language switches.
+  it('should keep the answer on the same row when a legacy quiz switches language', async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<StudyHarness questions={LEGACY_EN} />);
+    await user.click(screen.getByRole('button', { name: /reveal answer/i }));
+    const before = shownRows().indexOf(markedRows()[0]);
+    rerender(<StudyHarness questions={LEGACY_ES} />);
+    expect(shownRows().indexOf(markedRows()[0])).toBe(before);
   });
 });
