@@ -5,7 +5,8 @@ title, length, ``{transcript}``, ``<video_memory>`` — and the job (what to emi
 the planned tabs' briefs and caps, schemas, example, visual annotations, key
 frames). Counts come from the plan's briefs and the registry caps, never from
 the video's duration; a long video's chunk expects its share of each count
-(``render_tabs_to_serve(..., share)``, output-quality 3.3).
+(``render_tabs_to_serve(..., share)``, output-quality 3.3), and an argument list's
+``where`` windows are hints inside the chunk's part, never a limit (``where_hints``, 4.0).
 
 Cache layout (A26): the rules go out as the system prompt — byte-identical for
 every video — and the user message is two blocks: ``[video + transcript +
@@ -31,6 +32,7 @@ from ..transcript.render import format_marker
 from .pipeline_helpers import sanitize_for_prompt
 from .prompt_builder import PROMPTS_DIR, load_prompt_text
 from .visual_annotations import CLOSE_TAG, OPEN_TAG, annotation_entries
+from .where_hints import PartWindow, where_part
 
 logger = logging.getLogger(__name__)
 
@@ -201,7 +203,7 @@ def _amount(expect: int, spec: DataSourceSpec | None, share: float = 1.0) -> str
     return f"{expected}cap {spec['cap']}"
 
 
-def _tab_line(tab: Mapping[str, object], share: float = 1.0) -> str:
+def _tab_line(tab: Mapping[str, object], share: float = 1.0, part: PartWindow | None = None) -> str:
     brief = TabBrief.from_raw(tab.get("brief"))
     source = _data_source(tab)
     label = _clean(str(tab.get("label") or tab.get("id") or "Tab"), _LABEL_MAX_CHARS)
@@ -210,19 +212,23 @@ def _tab_line(tab: Mapping[str, object], share: float = 1.0) -> str:
         parts.append(f"what: {_clean(brief.what, _BRIEF_MAX_CHARS)}")
     elif isinstance(goal := tab.get("goal"), str) and goal:
         parts.append(f"goal: {_clean(goal, _BRIEF_MAX_CHARS)}")
-    if brief.where:
-        parts.append("where " + ", ".join(r.replace("-", "–") for r in brief.where))
+    if where := where_part(source, brief.where, part):
+        parts.append(where)
     if amount := _amount(brief.expect, data_source(source), share):
         parts.append(amount)
     return " — ".join(parts)
 
 
 def render_tabs_to_serve(
-    tabs: Sequence[Mapping[str, object]], emitted: Collection[str], share: float = 1.0
+    tabs: Sequence[Mapping[str, object]],
+    emitted: Collection[str],
+    share: float = 1.0,
+    part: PartWindow | None = None,
 ) -> str:
     """One line per planned tab that reads a field of an ``emitted`` domain or
-    modifier: brief + count + cap — the count scaled by a chunk's ``share``."""
-    lines = [_tab_line(tab, share) for tab in tabs if _serves_extraction(tab, emitted)]
+    modifier: brief + count + cap — the count scaled by a chunk's ``share``, an
+    argument list's windows read as hints inside a chunk's ``part`` (``where_hints``)."""
+    lines = [_tab_line(tab, share, part) for tab in tabs if _serves_extraction(tab, emitted)]
     return "\n".join(lines) or _NO_TABS
 
 
