@@ -3,6 +3,7 @@
 # ================================================
 dev/research/*
 dev/completed/*
+dev/completed/
 # golden-dataset: eval CI reads baseline.json + videos.yaml — keep those in git
 dev/golden-dataset/*
 !dev/golden-dataset/baseline.json
