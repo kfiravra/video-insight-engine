@@ -39,7 +39,9 @@ a stamped dict reached as a value) or, when the stamp is a list item (``seconds`
 without it, is cleared too. Every move is
 counted per field path (``StampReport``) for the validation report — gate 1's
 timestamp-drift reading (D17). One chunk is open at both ends: nothing is checked
-and the data is returned as is (the ≤ 40-min replay stays byte-identical).
+and the data is returned as is (the ≤ 40-min replay stays byte-identical). Inside the
+window, ``stamp_anchor`` then ties each stamp to its item's verified quote and to its
+list's order (output-quality 4.0, G3-3), counted in the same report.
 """
 
 from __future__ import annotations
@@ -97,7 +99,7 @@ class ExtractionChunk:
         the chunk's jobs scale each expected count by (output-quality 3.3; the windows of a
         run's chunks add up to 1). 1.0 for the open chunk of a video one batch covers, and
         without a video end to divide by."""
-        if _window_open(self) or not self.video_end_s:
+        if window_open(self) or not self.video_end_s:
             return 1.0
         end = self.video_end_s if self.end_s is None else self.end_s
         return min(1.0, max(0.0, (end - (self.start_s or 0)) / self.video_end_s))
@@ -238,28 +240,34 @@ _HOUR_S = 3600
 _MAX_HOURS = 24
 _CLOCK_PATTERN = re.compile(r"^\s*(?:(\d+):)?(\d{1,2}):(\d{2})\s*$")
 _MOVES = ("dropped", "restamped", "cleared")
+# The stamp anchor's moves (``stamp_anchor``, output-quality 4.0): an entry carries them
+# only where they happened, so a window-only entry keeps its four keys.
+ANCHOR_MOVES = ("anchored", "reordered")
+STAMP_MOVES = (*_MOVES, *ANCHOR_MOVES)
 
 
 @dataclass
 class StampReport:
-    """What ``window_stamps`` did to one call's data, per field path (``learning.keyPoints``,
-    the label ``ValidationReport.dropped`` uses): the items dropped, the stamps restamped
-    (the hour put back, or a ``seconds`` read from its clock) and cleared, out of the
-    ``total`` items at that path."""
+    """What ``window_stamps`` (and then ``stamp_anchor.anchor_stamps``) did to one call's
+    data, per field path (``learning.keyPoints``, the label ``ValidationReport.dropped``
+    uses): the items dropped, the stamps restamped (the hour put back, or a ``seconds``
+    read from its clock) and cleared, out of the ``total`` items at that path — plus the
+    stamps anchored to their verified quote and those reordered by the list's order."""
 
     counts: dict[str, dict[str, int]] = field(default_factory=dict)
 
     def tally(self, path: str, kind: str, n: int = 1) -> None:
         entry = self.counts.setdefault(path, {**dict.fromkeys(_MOVES, 0), "total": 0})
-        entry[kind] += n
+        entry[kind] = entry.get(kind, 0) + n
 
     @property
     def paths(self) -> dict[str, dict[str, int]]:
-        """``{path: {dropped, restamped, cleared, total}}`` for every path a stamp moved on."""
-        return {p: dict(c) for p, c in self.counts.items() if any(c[k] for k in _MOVES)}
+        """``{path: {dropped, restamped, cleared, total}}`` (``anchored`` / ``reordered``
+        where they happened) for every path a stamp moved on."""
+        return {p: dict(c) for p, c in self.counts.items() if any(c.get(k) for k in STAMP_MOVES)}
 
     def _sum(self, kind: str) -> int:
-        return sum(c[kind] for c in self.counts.values())
+        return sum(c.get(kind, 0) for c in self.counts.values())
 
     @property
     def dropped(self) -> int:
@@ -274,11 +282,20 @@ class StampReport:
         return self._sum("cleared")
 
     @property
+    def anchored(self) -> int:
+        return self._sum("anchored")
+
+    @property
+    def reordered(self) -> int:
+        return self._sum("reordered")
+
+    @property
     def changed(self) -> bool:
         return bool(self.paths)
 
 
-def _window_open(chunk: ExtractionChunk) -> bool:
+def window_open(chunk: ExtractionChunk) -> bool:
+    """Whether the chunk is a one-chunk run's whole video (no window to hold stamps to)."""
     return chunk.start_s is None and chunk.end_s is None
 
 
@@ -288,7 +305,7 @@ def window_label(chunk: ExtractionChunk) -> str:
     return f"{_format_time(chunk.start_s or 0)}–{_format_time(end) if end is not None else 'end'}"
 
 
-def _holds(seconds: int, chunk: ExtractionChunk) -> bool:
+def holds_stamp(seconds: int, chunk: ExtractionChunk) -> bool:
     """Whether ``seconds`` lies in the chunk's window: a grace interval at an inner edge,
     none past the video's end."""
     after_start = chunk.start_s is None or seconds >= chunk.start_s - WINDOW_GRACE_S
@@ -303,13 +320,13 @@ def restamp(seconds: int, chunk: ExtractionChunk) -> int | None:
     video, and neither it nor a 0 is ever hour-restored: + 1 h would fabricate a stamp."""
     if seconds < 0:
         return None
-    if _holds(seconds, chunk):
+    if holds_stamp(seconds, chunk):
         return seconds
     if seconds == 0:
         return None
     for hours in range(1, _MAX_HOURS + 1):
         candidate = seconds + hours * _HOUR_S
-        if _holds(candidate, chunk):
+        if holds_stamp(candidate, chunk):
             return candidate
     return None
 
@@ -335,7 +352,7 @@ def _clock_placed(item: dict[str, Any], chunk: ExtractionChunk) -> int | None:
     """The item's ``time`` clock (the video clock of a ``seconds`` item) when it lies inside
     the window."""
     clock = _clock_seconds(item.get(_CLOCK_KEY))
-    return clock if clock is not None and _holds(clock, chunk) else None
+    return clock if clock is not None and holds_stamp(clock, chunk) else None
 
 
 def _place(item: dict[str, Any], key: str, value: int, chunk: ExtractionChunk) -> int | None:
@@ -450,7 +467,7 @@ def window_stamps(
     batch covers.
     """
     report = StampReport()
-    if _window_open(chunk):
+    if window_open(chunk):
         return data, report
     placed = _restamp_value(data, chunk, "", report)
     return placed, report

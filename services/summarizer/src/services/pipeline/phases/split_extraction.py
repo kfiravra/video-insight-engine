@@ -60,12 +60,14 @@ from src.services.pipeline.phases.synthesis import cancel_hero_task
 from src.services.pipeline.pipeline_helpers import sse_event
 from src.services.pipeline.pipeline_timing import timed_step
 from src.services.pipeline.prompt_builder import format_gallery_frames_for_extraction
+from src.services.pipeline.quote_verify import run_quote_index
 from src.services.pipeline.schema_fields import scalar_fields
 from src.shared_config.domain_config import grouping_config
 
 if TYPE_CHECKING:
     from src.models.pipeline_types import PlanResult
     from src.services.pipeline.context import PipelineContext
+    from src.services.pipeline.quote_verify import QuoteIndex
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +99,17 @@ def _job(
     )
 
 
+def _quote_index(ctx: PipelineContext) -> QuoteIndex | None:
+    """The run's quote index for the stamp anchor (4.0): the transcript is final by
+    plan-done (the caption fallback ran before the plan). None when it cannot be built —
+    a chunk call's stamps then stay as the window check leaves them."""
+    try:
+        return run_quote_index(ctx)
+    except Exception:  # noqa: BLE001 — anchoring is a refinement; the extraction runs without it
+        logger.exception("Split extraction: no quote index — chunk stamps are not anchored")
+        return None
+
+
 async def _split_run(ctx: PipelineContext) -> tuple[SplitRun, bool]:
     """The run's calls at plan-done, and whether a visual group is planned.
 
@@ -105,7 +118,8 @@ async def _split_run(ctx: PipelineContext) -> tuple[SplitRun, bool]:
     The prompt is today's plus the group rules, built without frame inputs:
     blocks 1 and 2 never carry them; the visual group's job binds them at
     frames-done. The job template and the group rules are read here once for
-    every call of the run.
+    every call of the run, and so is the transcript's quote index (a chunk call's quoted
+    stamps are anchored to it, ``stamp_anchor``).
     """
     chunks = await plan_chunks(ctx)
     plan, triage, video = ctx.plan_result, ctx.triage, ctx.video_data
@@ -130,6 +144,7 @@ async def _split_run(ctx: PipelineContext) -> tuple[SplitRun, bool]:
         tuple(plan.content_tags),
         tuple(plan.modifiers),
         job_template=load_job_template(),
+        quote_index=_quote_index(ctx),
     )
     return run, len(groups) > len(text_groups)
 

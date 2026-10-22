@@ -408,7 +408,11 @@ One row per video **version** (`version`, `isLatest` below); the served row is s
   // validation cut ("learning.keyPoints"); on a chunked split run the
   // per-chunk timestamp window (output-quality 0b.10) adds restamped and
   // cleared to each path it moved a stamp on — {dropped, total, restamped,
-  // cleared}, its dropped items counted in dropped; split path only:
+  // cleared}, its dropped items counted in dropped — and the stamp anchor
+  // (output-quality 4.0) adds anchored (stamps moved to their verified
+  // quote) and reordered (stamps > 300 s out of their list's order pulled
+  // back, cleared or their moment dropped), each only where it happened;
+  // split path only:
   // _groups = [{group, chunk, fields[],
   // status, outputTokens, wallMs, retried?: "parse" | "empty" | "stream"}], one
   // row per group call — alone when no group landed); chunked split runs
