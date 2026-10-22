@@ -133,6 +133,7 @@ class Settings(BaseSettings):
     # timestamp and a verified evidence quote. false: the enrich_quiz call on
     # LLM_ENRICHMENT_MODEL, as before.
     QUIZ_V2_ENABLED: bool = True
+    MERGE_RANK_ENABLED: bool = True  # chunked runs: merge_rank (3.1); false: code merge only
 
     # Timeout constants for pipeline stages
     TRANSCRIPT_FETCH_TIMEOUT: float = 30.0
@@ -411,8 +412,8 @@ class Settings(BaseSettings):
         "extraction": "LLM_EXTRACTION_MODEL",
         "hero_rewrite": "LLM_EXTRACTION_MODEL",
         "memory": "LLM_MEMORY_MODEL",
-        # Quiz v2 (output-quality 2.1b): Haiku 5.5, no model key of its own.
-        "quiz_v2": "LLM_MEMORY_MODEL",
+        "quiz_v2": "LLM_MEMORY_MODEL",  # quiz v2 (2.1b): Haiku 5.5, no model key of its own
+        "merge_rank": "LLM_MEMORY_MODEL",  # merge_rank (3.1): the same, no key of its own
         "faithfulness": "LLM_JUDGE_MODEL",
         # The stage names the translation calls send (pipeline/translation_flat.py:
         # the output's source-language pass, and translate_text for the title).
@@ -423,8 +424,11 @@ class Settings(BaseSettings):
         "vision": "LLM_VISION_MODEL",
     }
 
-    # A stage whose blank setting follows another stage's model.
-    _STAGE_FALLBACK: ClassVar[dict[str, str]] = {"memory": "extraction", "quiz_v2": "memory"}
+    _STAGE_FALLBACK: ClassVar[dict[str, str]] = {  # a blank setting → the mapped stage's model
+        "memory": "extraction",
+        "quiz_v2": "memory",
+        "merge_rank": "memory",
+    }
 
     def get_stage_model(self, stage_name: str) -> str | None:
         """Return the per-stage model override or None to use fast/primary."""

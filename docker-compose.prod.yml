@@ -65,6 +65,7 @@ x-summarizer-env: &summarizer-env
   # Output-quality phase-2 rollback levers (literal defaults = config.py; a blank bool crash-loops)
   HERO_REWRITE_ENABLED: ${HERO_REWRITE_ENABLED:-true}
   QUIZ_V2_ENABLED: ${QUIZ_V2_ENABLED:-true}
+  MERGE_RANK_ENABLED: ${MERGE_RANK_ENABLED:-true}
   ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
   OPENAI_API_KEY: ${OPENAI_API_KEY:-}
   GEMINI_API_KEY: ${GEMINI_API_KEY:-}

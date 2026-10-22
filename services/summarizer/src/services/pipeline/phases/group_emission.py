@@ -29,7 +29,9 @@ no text group holds one — over the extraction merged so far. A strip-only quiz
 
 So does the hero rewrite (``ctx.hero_task``, output-quality 2.2, D1): once every
 text group landed on every chunk (text-groups-done), over the extraction merged so
-far, reading the run's cached blocks; assembly's synthesis slot awaits it.
+far, reading the run's cached blocks; assembly's synthesis slot awaits it. On a
+chunked run merge_rank starts beside it (``ctx.merge_rank_task``, 3.1) over the same
+merge; the split extraction applies its answer to the final merge.
 """
 
 from __future__ import annotations
@@ -47,6 +49,7 @@ from src.models.sse_events import SSEEventValidationError
 from src.services.pipeline.assembly import assemble_response
 from src.services.pipeline.enrichment import QUIZ_COMPONENT, QUIZ_DATA_SOURCE
 from src.services.pipeline.group_merge import merge_groups
+from src.services.pipeline.merge_rank import start_merge_rank_task
 from src.services.pipeline.phases.enrichment import start_quiz_task
 from src.services.pipeline.phases.moments import video_meta
 from src.services.pipeline.phases.synthesis import start_hero_task
@@ -239,6 +242,24 @@ def _plans_quiz_tab(tabs: Sequence[Mapping[str, Any]]) -> bool:
     )
 
 
+@dataclass(frozen=True)
+class _TextDoneCalls:
+    """The split run for each call text-groups-done starts now (None = not due)."""
+
+    hero: SplitRun | None = None
+    merge_rank: SplitRun | None = None
+
+    def __bool__(self) -> bool:
+        return self.hero is not None or self.merge_rank is not None
+
+    def start(self, ctx: PipelineContext, merged: Mapping[str, Any]) -> None:
+        """Start the due calls over the same merge: neither reads the other's answer."""
+        if self.hero is not None:
+            start_hero_task(ctx, merged, self.hero)
+        if self.merge_rank is not None:
+            start_merge_rank_task(ctx, merged, self.merge_rank)
+
+
 @dataclass
 class GroupLanding:
     """What landed so far on the split path; each landed call streams its ready tabs.
@@ -290,13 +311,23 @@ class GroupLanding:
     def _quiz_due(self, outcome: GroupOutcome) -> bool:
         return self._owners_landed(outcome) and self._quiz_host_settled()
 
-    def _hero_run(self) -> SplitRun | None:
-        """The split run once the hero is due — text-groups-done: every text group landed
-        on every chunk — and none started yet; else None."""
+    def _text_groups_done(self) -> SplitRun | None:
+        """The split run once every text group landed on every chunk; else None."""
         run = self.run
-        if run is None or not settings.HERO_REWRITE_ENABLED or self.ctx.hero_task is not None:
+        if run is None or not all(self._all_landed(g.group_id) for g in run.text_groups):
             return None
-        return run if all(self._all_landed(g.group_id) for g in run.text_groups) else None
+        return run
+
+    def _text_done_calls(self) -> _TextDoneCalls:
+        """The calls text-groups-done starts and has not started yet: the hero rewrite, and
+        merge_rank on a chunked run."""
+        run = self._text_groups_done()
+        if run is None:
+            return _TextDoneCalls()
+        hero = settings.HERO_REWRITE_ENABLED and self.ctx.hero_task is None
+        ranks = settings.MERGE_RANK_ENABLED and len(run.chunks) > 1
+        ranks = ranks and self.ctx.merge_rank_task is None
+        return _TextDoneCalls(run if hero else None, run if ranks else None)
 
     def landed(self) -> frozenset[str]:
         return frozenset(p for p, n in self.path_calls.items() if n >= self.calls_per_group)
@@ -307,30 +338,29 @@ class GroupLanding:
         outcomes: Sequence[GroupOutcome],
         fields: Sequence[FieldRequest],
     ) -> list[str]:
-        """Count ``outcome`` in; start the quiz when its groups are in and the hero at
-        text-groups-done; the tabs now ready.
+        """Count ``outcome`` in; start the quiz when its groups are in, the hero and
+        merge_rank at text-groups-done; the tabs now ready.
 
         ``outcomes`` = every call landed so far (``outcome`` included);
         ``fields`` = what the run's tabs request now (frames-done may have
         re-pointed a tab). A quiz whose groups brought nothing usable is tried
         again as later groups land (else the late group makes the call). A
         call that completes no field (a long video's earlier chunks) changes
-        no tab: nothing is merged or assembled for it unless the quiz or the
-        hero is due.
+        no tab: nothing is merged or assembled for it unless the quiz, the
+        hero or merge_rank is due.
         """
         self.group_calls[outcome.group.group_id] += 1
         self.path_calls.update(f.path for f in outcome.group.fields)
         landed = self.landed()
         grew = landed != self.assembled_over
         quiz_due = self.ctx.quiz_task is None and self._quiz_due(outcome)
-        hero_run = self._hero_run()
-        if not grew and not quiz_due and hero_run is None:
+        text_done = self._text_done_calls()
+        if not grew and not quiz_due and not text_done:
             return []
         merged, _ = merge_groups(outcomes)
         if quiz_due:
             start_quiz_task(self.ctx, merged)
-        if hero_run is not None:
-            start_hero_task(self.ctx, merged, hero_run)
+        text_done.start(self.ctx, merged)
         if not grew:
             return []
         self.assembled_over = landed

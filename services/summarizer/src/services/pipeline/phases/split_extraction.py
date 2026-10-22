@@ -8,9 +8,11 @@ once — text1 warms the shared prefix — and the visual group once frames are
 done, cut from the tabs frames-done decided. Each landed group sends an
 ``extraction_progress`` (``section="groups"``) followed by previews of the
 tabs it completed (``group_emission``, 3.6: non-final; the quiz starts once
-its groups are in, the hero rewrite (2.2) once every text group is); each
-group's answer was validated and cut to its own keys as it landed, and when all
-landed they are merged (``group_merge``, 3.5) into ONE ``extraction_complete``.
+its groups are in, the hero rewrite (2.2) — and on a chunked run merge_rank
+(output-quality 3.1) — once every text group is); each group's answer was
+validated and cut to its own keys as it landed, and when all landed they are
+merged (``group_merge``, 3.5), merge_rank's answer applied, into ONE
+``extraction_complete``.
 Assembly runs after the whole phase-2 group and sends every tab final.
 """
 
@@ -46,6 +48,7 @@ from src.services.pipeline.field_requests import (
 )
 from src.services.pipeline.group_failures import flag_failed_groups
 from src.services.pipeline.group_merge import merge_groups, merge_order, requested_quality
+from src.services.pipeline.merge_rank import cancel_merge_rank_task, merge_rank_extraction
 from src.services.pipeline.phases.enrichment import cancel_quiz_task
 from src.services.pipeline.phases.extraction import (
     fail_extraction,
@@ -254,7 +257,8 @@ async def _complete(ctx: PipelineContext, outcomes: Sequence[GroupOutcome]) -> l
     groups count as batches, so a failed group marks the run degraded; the
     quality score counts the fields the groups were asked for. The group rows
     and the degraded flag are kept either way: assembly names the tabs failed
-    groups cost (3.8).
+    groups cost (3.8). A chunked run's merge_rank answer (output-quality 3.1) is
+    applied to the merge first — ``extraction_complete`` carries the deduped lists.
     """
     landed = [o for o in outcomes if o.status == "ok" and o.data is not None]
     empty_by_design = not outcomes and _nothing_to_extract(ctx)
@@ -268,6 +272,7 @@ async def _complete(ctx: PipelineContext, outcomes: Sequence[GroupOutcome]) -> l
         )
         return [await fail_extraction(ctx)]
     merged, report = merge_groups(outcomes)
+    merged = await merge_rank_extraction(ctx, merged)
     record_validation(ctx, report)
     ctx.extraction_data = merged
     quality = requested_quality([f for o in outcomes for f in o.group.fields], merged)
@@ -278,7 +283,7 @@ async def _complete(ctx: PipelineContext, outcomes: Sequence[GroupOutcome]) -> l
 async def run_phase_split_extraction(ctx: PipelineContext) -> AsyncGenerator[str, None]:
     """From plan-done: fire the field groups, stream their progress + tabs, then the merged result.
 
-    A run that fails or is cancelled here stops the quiz and hero calls it started.
+    A run that fails or is cancelled here stops the quiz, hero and merge_rank calls it started.
     """
     await ctx.plan_done.wait()
     if ctx.plan_result is None:
@@ -294,4 +299,5 @@ async def run_phase_split_extraction(ctx: PipelineContext) -> AsyncGenerator[str
     except BaseException:
         cancel_quiz_task(ctx)
         cancel_hero_task(ctx)
+        cancel_merge_rank_task(ctx)
         raise

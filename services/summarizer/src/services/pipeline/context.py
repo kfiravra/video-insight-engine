@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from src.repositories.mongodb_repository import MongoDBVideoRepository
     from src.services.llm import LLMService
     from src.services.media.hires_prefetch import LocalHiresSource, LocalLowresSource
+    from src.services.pipeline.merge_rank_apply import MergeRankAnswer
     from src.services.pipeline.pipeline_helpers import (
         PipelineTimer,
         TranscriptData,
@@ -168,6 +169,11 @@ class PipelineContext:
     # group landed on every chunk; assembly's synthesis slot awaits it. None on
     # today's path (that slot makes the call) and with HERO_REWRITE_ENABLED off.
     hero_task: asyncio.Task[HeroRewriteResult | None] | None = None
+    # Split path, chunked runs (output-quality 3.1): the merge_rank call, started
+    # beside the hero; the split extraction applies its answer to the final merge
+    # and keeps the outcome — pipeline.extraction._mergeRank.
+    merge_rank_task: asyncio.Task[MergeRankAnswer] | None = None
+    merge_rank_record: dict[str, Any] | None = None
     # Coverage metric: how far into the video the timestamped extraction
     # reaches vs. duration, plus dropped-batch counts. Surfaced into meta.
     extraction_coverage: dict[str, Any] | None = None

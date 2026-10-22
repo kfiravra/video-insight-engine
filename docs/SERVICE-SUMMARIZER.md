@@ -89,6 +89,9 @@ services/summarizer/
     │   │   ├── quiz_v2_ideas.py      # Quiz v2's key ideas: the dataSources per domain and their prompt lines
     │   │   ├── quiz_v2_parse.py      # Quiz v2's reply read question by question when its JSON envelope is broken (G2-1)
     │   │   ├── quiz_v2_select.py     # What ships: one question per third first, a key that tells by its length last; keys dealt evenly over the positions; the late refill's spare
+    │   │   ├── merge_rank.py         # merge_rank (MERGE_RANK_ENABLED, chunked runs): one LLM_MEMORY_MODEL (Haiku 5.5) call at text-groups-done beside the hero; reads the ids-only answer, applies it to the final merge
+    │   │   ├── merge_rank_render.py  # merge_rank's input: the outline + every planned list, one id'd line per item, ≤ 10 K tokens (texts shorten, no item dropped)
+    │   │   ├── merge_rank_apply.py   # merge_rank's edit: twins out under five guards, ranked lists cut to their cap by rank, key-idea sections from the outline (≤ 8)
     │   │   ├── quote_verify.py       # Is a quote in the transcript? The extraction pre-pass + the run's index (verified / unverified / translated); re-exports quote_index
     │   │   ├── quote_index.py        # The quote matcher: QuoteIndex (normalized exact-first, else fuzzy; a "…"-cut quote is fragments in order within 40 words and 60 s)
     │   │   ├── pipeline_timing.py    # pipeline.timing recorder v4 (phases, LLM calls, failures incl. refusals, downloads, counts)
@@ -165,6 +168,7 @@ services/summarizer/
     │   ├── enrich_quiz.txt       # The quiz prompt when QUIZ_V2_ENABLED=false (flavor per quizEnrichment domain; {question_count}, {video_length}, <hero>)
     │   ├── quiz_v2.txt           # Quiz v2 rules (evidence quote + timestamp as written, m:ss, per question; the task / hero / key ideas / transcript are bound around it, no placeholders)
     │   ├── hero_rewrite.txt      # Hero rewrite job ({takeaway_count}, {duration}, {tab_labels}, {stamp_rule}, {video}, {extracted})
+    │   ├── merge_rank.txt        # merge_rank rules (duplicates / sections / rank, ids only; the video, outline and lists are bound before it, no placeholder)
     │   ├── vision.txt            # Frame-vision prompt (registry summarizer:vision)
     │   ├── description_analysis.txt, translate_flat.txt
     │   ├── synthesis.txt         # Synthesis prompt (masterSummary + seo; hero fields only as fallback) — used when the hero rewrite is off or gave none
@@ -270,9 +274,10 @@ FRAME_VISION_ENABLED=true              # Frame descriptions by the vision model;
 FRAME_VISION_PARALLEL=true             # Vision in parallel batches; false = one call with every frame
 LLM_VISION_MODEL=anthropic/claude-sonnet-5-5  # 4.0d pick (both composes default to it); empty outside compose = the primary model
 
-# Output-quality phase 2 rollback levers (config.py + both compose anchors carry the same literal)
+# Output-quality rollback levers (config.py + both compose anchors carry the same literal)
 HERO_REWRITE_ENABLED=true              # true: one hero_rewrite call on LLM_EXTRACTION_MODEL (reads the extraction's prompt cache) replaces the synthesis call; false: memory hero + synthesis
 QUIZ_V2_ENABLED=true                   # true: quiz v2 on LLM_MEMORY_MODEL (timestamp + checked evidence quote per question); false: the enrich_quiz call on LLM_ENRICHMENT_MODEL
+MERGE_RANK_ENABLED=true                # true: a chunked run (> 40 min) makes one merge_rank call on LLM_MEMORY_MODEL (dedupe across chunks and tabs, key-idea sections, rank cut); false: the code merge alone
 
 # Extraction concurrency + chunking
 EXTRACTION_PARALLEL=true               # Field groups (text at plan-done, visual at frames-done); false = today's single call / chunked batches one at a time (extraction only: reconcile, evidence ranges, toolkit markers, PIPELINE_VERSION stay)
@@ -637,18 +642,23 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     │   The hero rewrite starts here too (`ctx.hero_task`, HERO_REWRITE_ENABLED): once every text
     │   group has landed on every chunk (text-groups-done) `GroupLanding` hands the extraction merged
     │   so far to `phases/synthesis.start_hero_task`; the late group awaits it (timing step
-    │   `hero_call`). A failed or cancelled run stops both the quiz and the hero call
+    │   `hero_call`). On a run of more than one chunk merge_rank starts beside it over the same
+    │   merge (`ctx.merge_rank_task`, MERGE_RANK_ENABLED, timing step `merge_rank_call`). A failed
+    │   or cancelled run stops the quiz, the hero and the merge_rank call
     └─▶ Merge, once every call landed: ONE merge — chunk-major, text1..N, visual; lists concatenate
     │   (later duplicates by name/label/term/title/ingredient/tool/location dropped), first
     │   non-empty scalar wins, number/step/order/index renumbered only when 1..n in every list.
-    │   Quality = requested fields filled; `pipeline.extraction._groups` (one row per call). ONE
+    │   Quality = requested fields filled; `pipeline.extraction._groups` (one row per call). A
+    │   chunked run's merge_rank answer is applied to the merge first (twins out under five guards,
+    │   ranked lists cut to their cap, key-idea sections; `pipeline.extraction._mergeRank`). ONE
     │   `extraction_complete`
     └─▶ `pipeline.timing` on this path: `transcript_frames` spans the extraction too;
     │   `split_extraction` = the member (from the group's start), `extraction` = plan-done → last
     │   group landed (the DONE log's `extraction=`); `frames` includes its wait for plan-done and the
     │   `visual_inject` step; group calls are `llmCalls` spans `extraction_<group>` (`_c<k>` per
     │   later chunk; ledger feature `summarize:extraction:<group>`), the streamed warm-up call with
-    │   `ttftMs`; a started quiz call is the `quiz_call` step, a started hero call the `hero_call` step
+    │   `ttftMs`; a started quiz call is the `quiz_call` step, a started hero call the `hero_call` step,
+    │   a started merge_rank call the `merge_rank_call` step
     └─▶ Failure paths (3.8, `group_failures.py`): `{}` or the group's keys answered `null`/`{}`
     │   = an empty group that landed (a later chunk's window, a video without that content).
     │   A lost answer — not a JSON object, no key of the group, content validation dropped or

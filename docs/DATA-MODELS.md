@@ -411,7 +411,10 @@ One row per video **version** (`version`, `isLatest` below); the served row is s
   // cleared}, its dropped items counted in dropped; split path only:
   // _groups = [{group, chunk, fields[],
   // status, outputTokens, wallMs, retried?: "parse" | "empty" | "stream"}], one
-  // row per group call — alone when no group landed) / .enrichment /
+  // row per group call — alone when no group landed); chunked split runs
+  // only (output-quality 3.1): _mergeRank = {status, ms, dropped?[{path, id,
+  // head, keep}], held?[{path, id, guard}], ranked?[{path, from, to}],
+  // sectioned?{items, sections}, moved?} — the merge_rank call's outcome) / .enrichment /
   // .synthesis / .assembly (tab drop accounting: tabsDesigned, tabsAssembled,
   // tabsDropped, droppedTabs[{id, component, dataSource, reason, detail?}] —
   // output-quality 0b adds reason duplicate_tab (the post-promotion dedupe;

@@ -314,6 +314,21 @@ restores the previous call. The `feature` column is `llm_usage.feature`
 - No `PIPELINE_VERSION` bump: the stored shapes the new calls write are additive
   ([DATA-MODELS.md](./DATA-MODELS.md#output-quality-hero-and-quiz-2026-10)).
 
+## Output-quality phase 3: merge_rank
+
+One added call, on chunked runs only (> 40 min; `MERGE_RANK_ENABLED`, default `true` —
+`false` keeps the code merge alone):
+
+| Call | Span / stage | Model | `feature` | When it bills |
+|------|--------------|-------|-----------|---------------|
+| merge_rank | `merge_rank` | `LLM_MEMORY_MODEL` (Haiku 5.5; no model key of its own — a blank setting follows memory's) | `summarize:merge_rank` | a split run of more than one chunk: once, at text-groups-done beside the hero (a wrapper retry or the one re-ask after a reply that is no JSON object is a second row); 12 s per attempt, the stage inside 25 s |
+
+- **No cache.** The input is code-rendered lists, not a prefix any other call sends.
+  Offline renders of the stored extractions: S02 (83 min, 113 items) ≈ 27.8 K characters
+  ≈ 9.3 K tokens with the rules, S13 (42 min, 52 items) ≈ 13.6 K ≈ 4.5 K; the answer is
+  ids only (≈ 0.5 K tokens). ≈ $0.001–0.002 a long video on Haiku 5.5 ($0.10 / $0.50 per
+  MTok); ≤ 40-min runs never make the call.
+
 ## How 1h writes are priced
 
 Anthropic returns `usage.cache_creation.{ephemeral_5m_input_tokens,
