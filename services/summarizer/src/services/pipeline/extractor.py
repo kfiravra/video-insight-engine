@@ -18,6 +18,7 @@ from .extraction_merger import merge_batch_extractions
 from .extraction_prompt import (
     ExtractionPrompt,
     ExtractionPromptInput,
+    batch_clock_line,
     batch_counts_line,
     build_extraction_prompt,
     slice_visual_annotations,
@@ -270,7 +271,7 @@ def _build_batch_context(
     absolute time range): the plan's briefs, counts and caps describe the whole
     video, so a batch must neither pad toward them nor read absence from them.
     ``counts_scaled`` (the split path's chunks, output-quality 3.3): the counts
-    are the part's share and the caps hold per part.
+    are the part's share and the caps hold per part. Both paths state the clock (3.4).
     """
     if total_batches <= 1:
         return ""
@@ -282,6 +283,7 @@ def _build_batch_context(
         "<batch_partial_context>\n"
         f"You are extracting from BATCH {batch_idx + 1} of {total_batches} parallel batches.\n"
         f"This part covers ~{batch_minutes} minutes ({span}) of the full {full_minutes}-minute video.\n"
+        f"{batch_clock_line(_batch_start_seconds(batch))}"
         "- Extract only what this part of the transcript contains; a merger combines every batch's output.\n"
         "- Return empty arrays for fields this part does not cover — other batches cover them.\n"
         f"{batch_counts_line(counts_scaled)}"

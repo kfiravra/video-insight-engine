@@ -244,6 +244,19 @@ def batch_counts_line(counts_scaled: bool) -> str:
     return _PART_COUNTS if counts_scaled else _WHOLE_VIDEO_COUNTS
 
 
+def batch_clock_line(first_marker_s: float) -> str:
+    """The batch context's clock line (output-quality 3.4, L21): a part past one hour
+    reads ``[h:mm:ss]`` markers, and one read without its hour stamps the item an hour
+    early (S02's last chunk wrote 1:13:41 as 821 s) — so the line names the part's first
+    marker in seconds. It rides in the job (block 3); the cached blocks never carry it."""
+    first = max(0, int(first_marker_s))
+    return (
+        "Clock: markers read [m:ss] before 1:00:00 and [h:mm:ss] after; every timestamp is "
+        f"seconds on the whole video's clock — this part's first marker {format_marker(first)} "
+        f"is {first}.\n"
+    )
+
+
 # ─── Template ───
 
 
