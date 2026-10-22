@@ -6,7 +6,7 @@ checked against the request); this module edits a deep copy of the extraction
 
 1. **Duplicates.** Each group's drops leave their lists. An id is applied only while its
    item is still where the call saw it — same (path, index), same fingerprint (stamp +
-   head start); a group whose keep moved is skipped. Four guards hold a drop back
+   head start); a group whose keep moved is skipped. Five guards hold a drop back
    (recorded under ``held`` by name): ``share`` — a list never loses more than
    :data:`MAX_DROP_SHARE` of its items to the dedupe; ``minimum`` — a non-timeline list
    keeps its ``densityGates`` minimum, a timeline (``moment_track``) its §9 band minimum
@@ -18,6 +18,8 @@ checked against the request); this module edits a deep copy of the extraction
    assembly ships it at (``ListSpec.ships``). A keep in a timeline over its §9 cap, or in
    a list left to assembly's richness cut, could be sampled out after its twins left,
    and the point would be on no tab (review p3 B1: S02, a Q kept over its K and S).
+   :data:`QA_TWIN` — a ``podcast.qa`` question never drops for a twin in another list
+   (S02 lost 10 of 25 that way); twins inside the Q&A list still drop.
 2. **Rank (D-B).** A ranked list (``learning.keyIdeas`` / ``keyPoints`` / ``takeaways``,
    not a timeline) still over its assembly cap is cut to it with ``rank_sample``: the
    call's rank in thirds → tiers 3 / 2 / 1, unranked 0, a kept twin above them all (its
@@ -66,6 +68,10 @@ MAX_DROP_SHARE = (2, 5)  # 40 %, as a fraction: integer floors, no float edge
 WINDOW_S = 600
 # The guard that holds a group whose keep assembly could still cut (module docstring).
 KEEP_CUT = "keep_cut"
+# A Q&A question is never dropped for a twin in another list (owner decision 2026-10-22,
+# "keep every question"): the position says the answer, not that the host asked it.
+QA_PATH = "podcast.qa"
+QA_TWIN = "qa_twin"
 # A kept twin outranks every rank tier (3 / 2 / 1 / 0) in the cut.
 _KEEP_TIER = 4
 _RECORD_HEAD_CHARS = 120
@@ -200,9 +206,13 @@ def _drop_group(
     """One group's drops the guards allow — the dropped rows and the held ones."""
     dropped: list[dict] = []
     held: list[dict] = []
+    keep_path = edit.resolved[group.keep].path
     for item in (edit.resolved[i] for i in group.drop if i in edit.resolved):
         lane = edit.lanes[item.path]
-        guard = _guard(edit, lane, item.index) if keep_ships else KEEP_CUT
+        if item.path == QA_PATH and keep_path != QA_PATH:
+            guard: str | None = QA_TWIN
+        else:
+            guard = _guard(edit, lane, item.index) if keep_ships else KEEP_CUT
         if guard is not None:
             held.append({"path": item.path, "id": item.item_id, "guard": guard})
             continue
@@ -305,7 +315,8 @@ def apply_merge_rank(
         return extraction, _record(answer)
     edit = _Edit.start(extraction, request)
     if answer.status != OK:
-        return edit.result(), _record(answer, sectioned=write_sections(edit, request.outline))
+        sectioned = write_sections(edit, request.outline)
+        return edit.result(), _record(answer, sectioned=sectioned)
     dropped, held = _drop_duplicates(edit, answer)
     ranked = _rank_cut(edit, answer)
     sectioned = write_sections(edit, request.outline)

@@ -91,7 +91,8 @@ services/summarizer/
     │   │   ├── quiz_v2_select.py     # What ships: one question per third first, a key that tells by its length last; keys dealt evenly over the positions; the late refill's spare
     │   │   ├── merge_rank.py         # merge_rank (MERGE_RANK_ENABLED, chunked runs): one LLM_MEMORY_MODEL (Haiku 5.5) call at text-groups-done beside the hero; reads the ids-only answer, applies it to the final merge
     │   │   ├── merge_rank_render.py  # merge_rank's input: the outline + every planned list, one id'd line per item, ≤ 10 K tokens (texts shorten, no item dropped)
-    │   │   ├── merge_rank_apply.py   # merge_rank's edit: twins out under four guards (one: the keep must be sure to ship), ranked lists cut to their cap by rank, key-idea sections from the outline (≤ 8) even when the call failed
+    │   │   ├── merge_rank_apply.py   # merge_rank's edit: twins out under five guards (one: the keep must be sure to ship; one: a Q&A question never drops for a position), ranked lists cut to their cap by rank, key-idea sections (merge_rank_sections.py) even when the call failed
+    │   │   ├── merge_rank_sections.py # key-idea sections: the stamp's outline section, the neighbour only on a clear word match, whole-phrase titles, video order
     │   │   ├── quote_verify.py       # Is a quote in the transcript? The extraction pre-pass + the run's index (verified / unverified / translated); re-exports quote_index
     │   │   ├── quote_index.py        # The quote matcher: QuoteIndex (normalized exact-first, else fuzzy; a "…"-cut quote is fragments in order within 40 words and 60 s)
     │   │   ├── pipeline_timing.py    # pipeline.timing recorder v4 (phases, LLM calls, failures incl. refusals, downloads, counts)
