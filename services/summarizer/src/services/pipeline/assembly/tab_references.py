@@ -29,6 +29,8 @@ shows:
 scrubs once the tab list is final; the pipeline runs :func:`settle_shipped_tabs`
 again after the late group (``phases.synthesis.settle_tab_references``), because
 the moment fill frames the Moments and synthesis writes the hero after assembly.
+A moment fill that waits for the 720p file past ``complete`` (output-quality 3.7)
+has not framed them yet: the frames it will add count as framed (``pending``).
 """
 
 from __future__ import annotations
@@ -99,12 +101,17 @@ def frame_backed_count(props: object) -> int:
     return sum(1 for item in items if _frame_backed(item)) if isinstance(items, list) else 0
 
 
-def drop_shadowed_filmstrips(tabs: list[dict]) -> list[dict]:
+def drop_shadowed_filmstrips(
+    tabs: list[dict], pending: Mapping[str, int] | None = None
+) -> list[dict]:
     """Remove every filmstrip tab when a Moments tab carries ``RICH_MOMENT_FRAMES`` framed
-    items. Mutates ``tabs``; returns the removed tabs."""
+    items — ``pending`` (tab id → frames the deferred moment fill adds) counted as framed.
+    Mutates ``tabs``; returns the removed tabs."""
+    frames = pending or {}
     rich = any(
         tab.get("component") == MOMENT_COMPONENT
-        and frame_backed_count(tab.get("props")) >= RICH_MOMENT_FRAMES
+        and frame_backed_count(tab.get("props")) + frames.get(str(tab.get("id", "")), 0)
+        >= RICH_MOMENT_FRAMES
         for tab in tabs
     )
     removed = [tab for tab in tabs if rich and tab.get("component") == FILMSTRIP_COMPONENT]
@@ -426,12 +433,17 @@ def scrub_tab_references(meta: dict, tabs: list[dict], candidates: Iterable[Any]
 
 
 def settle_shipped_tabs(
-    meta: dict, tabs: list[dict], candidates: Sequence[Any], planned: Mapping[str, str]
+    meta: dict,
+    tabs: list[dict],
+    candidates: Sequence[Any],
+    planned: Mapping[str, str],
+    pending: Mapping[str, int] | None = None,
 ) -> list[dict]:
     """Once the late group is done: a filmstrip the now-framed Moments shadow goes (its
     links too, the overview recounts) and nothing names a tab that does not ship.
+    ``pending``: the frames a deferred moment fill adds, per moment tab id.
     Returns droppedTabs records for the planned tabs it removed."""
-    removed = drop_shadowed_filmstrips(tabs)
+    removed = drop_shadowed_filmstrips(tabs, pending)
     if removed:
         prune_links(tabs)
         recount_overview(tabs)

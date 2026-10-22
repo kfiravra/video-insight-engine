@@ -778,7 +778,10 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     │   │   budget with 30 s kept for seeks; cap 12 frames, 150 s) → the moment tabs stream
     │   │   WITH their images (replacing the provisional Moments tab by id, or under another
     │   │   id with `replaces: "<provisional id>"`); the file is
-    │   │   deleted after it (its last reader)
+    │   │   deleted after it (its last reader). The 720p file not on disk yet when the late
+    │   │   group starts (output-quality 3.7: `pending_fill` > 0 and the download unfinished)
+    │   │   → the fill leaves the late group and runs after `complete` (below); the moment tabs
+    │   │   stream with the first tabs, with the frames they have, `final: false`
     │   └─▶ The synthesis slot (unless it ran first; phases/synthesis.py). With HERO_REWRITE_ENABLED
     │   │   the hero rewrite (pipeline/hero_rewrite.py, hero_rewrite.txt): ONE call on
     │   │   LLM_EXTRACTION_MODEL (Sonnet 5.5), JSON mode, 2,000 max tokens, 25 s, one retry that
@@ -823,7 +826,8 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     │       enrichment_complete, the quiz tab last; the quick_quiz host, links and overview
     │       count follow
     └─▶ Settle (phases/synthesis.settle_tab_references, after the late group): the filmstrip the
-    │   framed Moments shadow is dropped, every hero / goal sentence naming a tab that does not ship
+    │   framed Moments shadow is dropped (a deferred fill's frames, `ctx.pending_moment_frames`,
+    │   counted as framed), every hero / goal sentence naming a tab that does not ship
     │   is removed (assembly/tab_references.py), and a hero page gets meta.readingMinutes (code, 238
     │   words a minute over the final hero + tabs) → SSE synthesis_complete again (a corrected
     │   superset marked `final: true`, which replaces the consumers' copy) when the hero changed —
@@ -831,9 +835,15 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     └─▶ SSE: the final re-emit — every tab not yet sent final goes out `final: true` at its
     │   final position, in order (all tabs when a quiz was pending or the tabs streamed per
     │   group — then the overview goes last; else the overview after a late synthesis); each tab
-    │   of the response gets exactly one final emission
+    │   of the response gets exactly one final emission (a deferred fill's moment tabs stay
+    │   non-final here, re-sent only when changed)
     └─▶ SSE: complete (tabCount, tabIds = the final tab order, processingTimeMs, degraded) →
     │   save. A tab streamed earlier but missing from tabIds was withdrawn (logged)
+    └─▶ Deferred moment fill (output-quality 3.7; only when the 720p file was still
+    │   downloading): the fill runs now (heartbeats while it waits), then the moment tabs go
+    │   out `final: true`, framed (TabLedger.frames_landed + the closing re-emit), then the 720p
+    │   file is deleted. The save and `done` follow; complete.processingTimeMs = text done, the
+    │   doc's and done's = after the fill
     └─▶ Store result to MongoDB + Redis cache (if enabled). Redis response-cache keys are
     │   namespaced by PIPELINE_VERSION (packages/shared/src/config/pipeline-version.json,
     │   currently v10 — bumped v9→v10 by the pipeline-1min 4.0 model refresh).
@@ -1086,7 +1096,7 @@ list against the model registry.
 | `synthesis_complete` | Up to three times: `{tldr, keyTakeaways}` at memory-done, then the superset `{tldr, keyTakeaways, masterSummary, seoDescription}` after the first tabs (the hero rewrite adds `brief`, `worthItFor`, `skipIf`), then a corrected superset after the late group when the hero changed (the hero rewrite's adds `readingMinutes`; marked `final: true`); consumers merge the earlier emissions and replace with the final one (API-REFERENCE.md#synthesis_complete) |
 | `frames` | `{videoId, frames: [{index, timestamp, url, s3Key?, ocrText?}]}` (scene frames) |
 | `meta` | `{title, contentTags, modifiers, primaryTag, tabCount, tabLabels, contentFormat?, language?, isRTL?, degraded?}` — at plan-done after reconcile (the plan's tabs, before any `tab_ready`), again at frames-done when the deferred code tabs changed the tab list; a cached serve sends the stored tabs and `degraded` |
-| `tab_ready` | `{id, label, emoji, component, props, goal?, crossTabLinks?, attachments?, degradedFrom?, position, final, provisional?, replaces?}` (progressive tab; contract in `pipeline/tab_ledger.py`, API-REFERENCE.md#tab_ready). `position` = index in the response's tab order, exact when `final` (an estimate before); `final: true` = the tab's last emission this run, exactly one per tab of the response; `provisional: true` = the plan-done Moments placeholder, never final, replaced by id (or by the tab whose `replaces` names it). A corrected `final` can follow for the same id — the last final wins. A tab id can arrive several times — clients replace by id and sort by `position`. With the field groups (default) a tab first arrives as a **preview** once its group(s) landed (`final: false`, without `crossTabLinks` / `attachments`, at its plan-order position) and goes final in the closing re-emit, the overview last. Cached serves send every tab once, `final: true` |
+| `tab_ready` | `{id, label, emoji, component, props, goal?, crossTabLinks?, attachments?, degradedFrom?, position, final, provisional?, replaces?}` (progressive tab; contract in `pipeline/tab_ledger.py`, API-REFERENCE.md#tab_ready). `position` = index in the response's tab order, exact when `final` (an estimate before); `final: true` = the tab's last emission this run, exactly one per tab of the response; `provisional: true` = the plan-done Moments placeholder, never final, replaced by id (or by the tab whose `replaces` names it). A corrected `final` can follow for the same id — the last final wins. A tab id can arrive several times — clients replace by id and sort by `position`. With the field groups (default) a tab first arrives as a **preview** once its group(s) landed (`final: false`, without `crossTabLinks` / `attachments`, at its plan-order position) and goes final in the closing re-emit, the overview last. A moment fill waiting for the 720p download (output-quality 3.7) sends the moment tabs' final after `complete`, before `done`. Cached serves send every tab once, `final: true` |
 | `complete` | `{tabCount, tabIds, processingTimeMs, degraded}` (v2 completion; `tabIds` = the final tab order — a tab streamed but missing here was withdrawn) |
 | `error` | `{message, code?}` — `code` is an `ErrorCode` value (see docs/ERROR-HANDLING.md) |
 | `token` | `{phase, token}` — legacy token streaming; protocol slot kept, no current emitter |
@@ -1129,7 +1139,7 @@ no lock) are swept by `scripts/expire_leaked_pipeline_streams.py` (dry run by de
 
 ## Output Schema
 
-The save (`phases/assembly.py:_result_document` → `repository.save_structured_result`,
+The save (`phases/assembly_save.py:result_document` → `repository.save_structured_result`,
 allowlisted keys) writes the current shape; older rows can still hold the v1 / v2 fields
 (`triage`, `output`, `assembledMeta`, `assembledTabs`), which the cached serve and the API
 read as fallbacks (Frontend Meta Resolution below). Field-level detail:

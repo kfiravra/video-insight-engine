@@ -1358,7 +1358,7 @@ The summarization pipeline uses SSE to stream results progressively, allowing th
 | `frames` | 2 | Extracted frame set (presigned URLs), from the frames branch of phase 2 |
 | `extraction_progress` | 2 | Per landed extraction group call (`section: "groups"`, `batch` / `of`); with `EXTRACTION_PARALLEL=false` after phase 2: per chunked batch (`"chunked"` / `"chunked-sequential"`) or `"all"` for one call |
 | `extraction_complete` | 2 | The merged extraction, once every group landed (with `EXTRACTION_PARALLEL=false`: after phase 2) |
-| `tab_ready` | 2 + 3 | One tab, with `position` (sort key) and `final`. The provisional Moments tab (`provisional: true`) streams at plan-done; with `EXTRACTION_PARALLEL` (default) non-final previews stream as each extraction group lands, the rest from assembly; a tab id can arrive more than once and the later emission replaces the earlier by id (a tab taking the provisional's place under another id names it in `replaces`). Each tab of the final response gets a `final: true` emission before `complete` — the last final wins — see [tab_ready](#tab_ready) |
+| `tab_ready` | 2 + 3 | One tab, with `position` (sort key) and `final`. The provisional Moments tab (`provisional: true`) streams at plan-done; with `EXTRACTION_PARALLEL` (default) non-final previews stream as each extraction group lands, the rest from assembly; a tab id can arrive more than once and the later emission replaces the earlier by id (a tab taking the provisional's place under another id names it in `replaces`). Each tab of the final response gets a `final: true` emission before `complete` — but a `moment_track` tab whose frames still wait for the run's 720p download: its final follows `complete`, before `done` — the last final wins — see [tab_ready](#tab_ready) |
 | `description_analysis` | 3 | Links, resources extracted from description — emitted at assembly (assembly waits ≤ 5 s for the analysis started at metadata-end; past that, nothing) |
 | `enrichment_complete` | 3 | The quiz landed (only for a plan with a quiz host; in assembly's late group) |
 | `heartbeat` | Any | Keep-alive during long-running steps (e.g. moment frame fill) — carries `ts`, safe to ignore |
@@ -1427,6 +1427,8 @@ events `detection_result`, `chapter_ready`, `concepts_complete` are no longer em
 │  PHASE 4: SAVE & DONE                                                       │
 │  ┌──────────────────────────────────────────────────────────────────────┐   │
 │  │  - Emit "complete" (tabCount, tabIds, processingTimeMs, degraded)    │   │
+│  │  - A moment fill still waiting for the 720p file runs here:          │   │
+│  │    the moment tabs' final tab_ready (framed), heartbeats meanwhile   │   │
 │  │  - Save the result to MongoDB; Redis response cache (English,        │   │
 │  │    awaited, best-effort); Qdrant + S3 raw transcript in the          │   │
 │  │    background                                                        │   │
@@ -1588,7 +1590,9 @@ attachments?, degradedFrom?`) plus four stream fields. Typed as `SSETabReadyEven
   value — a final emission wins over a non-final one at the same value.
 - **`final`**: `true` = this is the tab's **last** emission of the run: its
   content and position will not change. Every tab of the final response gets a
-  final emission before `complete`, normally exactly one. Should a tab still
+  final emission, normally exactly one, before `complete` — but a `moment_track`
+  tab whose frames still wait for the run's 720p download (see **Moment frames
+  still downloading** below): its final follows `complete`. Should a tab still
   change after it (a contract slip the summarizer logs as an error), a
   **corrected final follows for the same id: the last final wins** — never
   freeze a tab on its first final. `false` = a later `tab_ready` with the same
@@ -1648,7 +1652,8 @@ arrive without a label there — `complete.tabIds` is authoritative.
    groups or the frames changed.
 5. Late group, in parallel: the `moment_track` tabs once framed (replacing the
    provisional by id, or under another id with `replaces`; final when no quiz
-   is pending), `synthesis_complete` (superset — the hero rewrite's, started
+   is pending; a fill waiting for the 720p download is not here — below),
+   `synthesis_complete` (superset — the hero rewrite's, started
    when the text groups landed, or the synthesis call's), `enrichment_complete`
    (the quiz call started when the groups holding its domains' fields landed).
    5½. Settle, after the late group: a corrected `synthesis_complete` when the
@@ -1681,6 +1686,19 @@ With `EXTRACTION_PARALLEL=false` (one extraction call after frames-done):
    synthesis-patched overview.
 6. `complete {tabCount, tabIds}`, then `done` (non-English: after translation).
 
+**Moment frames still downloading** (output-quality 3.7, both modes): when the
+moment fill would seek frames and the run's 720p file has not landed when the
+late group starts, the fill runs after `complete` instead. The `moment_track`
+tabs then stream right after the final assembly (step 4 above; step 3 without
+the field groups) with the frames they already have, `final: false`; the final
+re-emit leaves only them non-final (re-sent only when changed); `complete`
+follows — `tabIds` include them, `processingTimeMs` is the text-done time; then,
+with heartbeats while the fill waits, each moment tab's `final: true` emission,
+framed (replace by id); then the save and `done`, whose `processingTimeMs` (and
+the stored doc's) count the fill. A filmstrip the framed Moments would shadow is
+dropped before `complete`, counting the frames still to come. A 720p file
+already on disk keeps the order above.
+
 A **cache hit** (completed row, or the Redis response cache) sends `cached`,
 `metadata`, `triage_complete`, `meta`, then every stored tab once with
 `final: true` and `position` = its index, `synthesis_complete`, `done` — no
@@ -1702,6 +1720,10 @@ empties the stream).
 
 - **`tabIds`**: the final response's tab ids in order (`tabCount` of them).
   Any tab streamed earlier but absent here was withdrawn.
+- **`processingTimeMs`**: the run's time when the text output was done. When the
+  moment fill waits for the 720p download (**Moment frames still downloading**
+  above), the moment tabs' final emissions follow, and `done.processingTimeMs`
+  includes the fill.
 
 ### Frame URLs (presigned, re-signed on serve)
 

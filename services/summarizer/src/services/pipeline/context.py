@@ -178,6 +178,10 @@ class PipelineContext:
     # Every tab_ready of the run (the provisional Moments tab at plan-done,
     # assembly's emissions, the final re-emit) — the tab emission contract.
     tab_ledger: TabLedger = field(default_factory=TabLedger)
+    # Moment tab id → frames a moment fill deferred past ``complete`` will add
+    # (output-quality 3.7); the filmstrip decision counts them. Empty when the
+    # fill runs in the late group.
+    pending_moment_frames: dict[str, int] = field(default_factory=dict)
 
     # Language support. The pipeline is English-canonical: ALL generation runs
     # in English, so ``language``/``is_rtl`` always describe the English-primary

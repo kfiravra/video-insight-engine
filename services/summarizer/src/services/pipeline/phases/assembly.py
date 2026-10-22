@@ -23,6 +23,16 @@ so step 3 previews only what the client lacks — the overview, tabs assembly
 added, tabs the last groups changed — the quiz call the split extraction
 started is awaited in step 4 (cancelled when the plan no longer uses it), and
 step 5 sends the overview last.
+
+Moment frames off the critical path (output-quality 3.7): when the fill would
+seek frames and the run's 720p file is not on disk yet, the fill leaves the late
+group. Step 3 streams the moment tabs too, with the frames they have, non-final;
+the filmstrip decision counts the frames the fill will add (``pending_fill``);
+step 5 leaves only the moment tabs non-final; ``complete`` goes out; then the fill
+runs (heartbeats meanwhile), the moment tabs go final, framed, and the save and
+``done`` follow. ``complete.processingTimeMs`` is the text-done time, the saved
+row's and ``done``'s the time after the fill. A 720p file already on disk keeps
+the order above exactly.
 """
 
 from __future__ import annotations
@@ -30,7 +40,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import AsyncGenerator, Callable
-from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from src.config import settings
@@ -38,12 +47,17 @@ from src.services.cache.response_cache import response_cache
 from src.services.media.s3_client import S3Client
 from src.services.pipeline.assembly import assemble_response
 from src.services.pipeline.assembly.core import count_dropped_tabs
-from src.services.pipeline.assembly.moment_frame_fill import fill_moment_frames
+from src.services.pipeline.assembly.moment_frame_fill import fill_moment_frames, pending_fill
 from src.services.pipeline.enrichment import needs_quiz
 from src.services.pipeline.group_failures import group_drops
 from src.services.pipeline.phases import run_phase_enrichment, run_phase_synthesis
+from src.services.pipeline.phases.assembly_save import (
+    complete_event,
+    flag_coverage,
+    result_document,
+    tabs_designed,
+)
 from src.services.pipeline.phases.enrichment import cancel_quiz_task, settle_late_quiz
-from src.services.pipeline.phases.extraction import extraction_record
 from src.services.pipeline.phases.frames import hires_upgrade_pending
 from src.services.pipeline.phases.group_emission import assembled_tab_events
 from src.services.pipeline.phases.late_quiz import carry_moment_props
@@ -63,11 +77,8 @@ from src.services.pipeline.pipeline_helpers import (
     spawn_background,
     sse_event,
 )
-from src.services.pipeline.plan_reconcile import PLAN_PARSE
 from src.services.pipeline.post_processor import coverage_is_degraded
 from src.services.pipeline.quote_verify import run_quote_index
-from src.services.pipeline.reconcile_pass import ADDED_ACTIONS
-from src.services.pipeline.tab_ledger import tab_id
 from src.services.status_callback import send_video_status_background
 from src.services.video.description_analyzer import DescriptionAnalysis
 
@@ -126,18 +137,8 @@ def _assemble(
     # The tab that takes the plan-done provisional's place under another id
     # carries ``replaces`` on its first emission.
     ctx.tab_ledger.track_response(ctx.assembled_tabs)
-    _flag_coverage(ctx)
+    flag_coverage(ctx)
     return assembled
-
-
-def _flag_coverage(ctx: PipelineContext) -> None:
-    """Coverage metric on meta, plus ``degraded`` for a partial result (FE retry affordance)."""
-    coverage = getattr(ctx, "extraction_coverage", None)
-    if not coverage or ctx.assembled_meta is None:
-        return
-    ctx.assembled_meta["extractionCoverage"] = coverage
-    if coverage_is_degraded(coverage):
-        ctx.assembled_meta["degraded"] = True
 
 
 def _moment_positions(tabs: list[dict]) -> list[int]:
@@ -148,31 +149,28 @@ async def run_phase_moment_fill(ctx: PipelineContext) -> AsyncGenerator[str, Non
     """Frame every still-frameless moment at its own timestamp, then stream the moment tabs.
 
     moment_track tabs are held back until then so they stream WITH their
-    guaranteed images. Best-effort: ``fill_moment_frames`` never raises.
+    guaranteed images. Best-effort: ``fill_moment_frames`` never raises. A fill
+    deferred past ``complete`` streams nothing: ``_land_moment_frames`` sends them.
     """
     tabs = ctx.assembled_tabs or []
     positions = _moment_positions(tabs)
     if positions:
         await fill_moment_frames(tabs, ctx.youtube_id, getattr(ctx, "hires_video", None))
+    if ctx.tab_ledger.frames_pending:
+        return
     for position in positions:
         yield ctx.tab_ledger.event(tabs[position], position)
 
 
-def _tabs_designed(ctx: PipelineContext, plan_dropped: list[dict]) -> int:
-    """What the planner designed: its drops plus its surviving tabs.
-
-    Reconcile (3.2) also adds tabs (required backfill, fill to 3) — never the
-    planner's. When the domain defaults stand in (``planFallback``) only the
-    parse drops were the planner's: later reconcile drops hit default tabs.
-    """
-    assert ctx.triage is not None
-    plan = ctx.plan_result
-    rows = plan.reconcile if plan else []
-    if plan is not None and plan.plan_fallback:
-        later = [r for r in rows if r.get("action") == "dropped" and r.get("stage") != PLAN_PARSE]
-        return len(plan_dropped) - len(later)
-    added = {r.get("tabId") for r in rows if r.get("action") in ADDED_ACTIONS}
-    return len(plan_dropped) + sum(1 for tab in ctx.triage.tabs if tab.get("id") not in added)
+def _defer_moment_fill(ctx: PipelineContext) -> bool:
+    """Whether the moment fill would wait for a 720p file still on its way — it then
+    runs after ``complete`` (output-quality 3.7). Leaves what it will add on
+    ``ctx.pending_moment_frames``."""
+    hires_video = getattr(ctx, "hires_video", None)
+    pending = pending_fill(ctx.assembled_tabs or [], hires_video)
+    deferred = bool(pending) and hires_video is not None and not hires_video.finished
+    ctx.pending_moment_frames = pending if deferred else {}
+    return deferred
 
 
 def _drop_accounting(ctx: PipelineContext, assembled: dict) -> dict:
@@ -187,7 +185,7 @@ def _drop_accounting(ctx: PipelineContext, assembled: dict) -> dict:
     dropped_tabs = [*plan_dropped, *group_drops(ctx, assembled.get("dropped", []))]
     plan_fallback = bool(ctx.plan_result and ctx.plan_result.plan_fallback)
     accounting = {
-        "tabsDesigned": _tabs_designed(ctx, plan_dropped),
+        "tabsDesigned": tabs_designed(ctx, plan_dropped),
         "tabsAssembled": len(assembled.get("tabs", [])),
         # Evidence-skipped requirements are listed but were never tabs (1d.7).
         "tabsDropped": count_dropped_tabs(dropped_tabs),
@@ -216,10 +214,11 @@ def _first_tab_events(ctx: PipelineContext) -> list[str]:
 
     ``position`` is the tab's index in the persisted order, so the client slots
     a late tab where the DB doc will have it. The payload is a copy — the
-    persisted tab dict never gains ``position`` or ``final``.
+    persisted tab dict never gains ``position`` or ``final``. A fill deferred
+    past ``complete`` holds nothing back: the moment tabs go out non-final.
     """
     tabs = ctx.assembled_tabs or []
-    held_back = set(_moment_positions(tabs))
+    held_back = set() if ctx.tab_ledger.frames_pending else set(_moment_positions(tabs))
     return [
         ctx.tab_ledger.event(tab, position)
         for position, tab in enumerate(tabs)
@@ -227,9 +226,21 @@ def _first_tab_events(ctx: PipelineContext) -> list[str]:
     ]
 
 
-def _late_phases(ctx: PipelineContext, synthesized: bool) -> list[PhaseFn]:
-    """Moment fill, synthesis unless it already ran, and the quiz when the plan can use one."""
-    phases: list[PhaseFn] = [run_phase_moment_fill]
+def _assembled_events(ctx: PipelineContext, split: bool) -> list[str]:
+    """The tabs after the final assembly: today's first emissions, or on the split path
+    the previews the client lacks plus — a fill deferred past ``complete`` — the moment
+    tabs with the frames they have (non-final)."""
+    if not split:
+        return _first_tab_events(ctx)
+    tabs = ctx.assembled_tabs or []
+    moments = _moment_positions(tabs) if ctx.tab_ledger.frames_pending else []
+    return [*assembled_tab_events(ctx), *(ctx.tab_ledger.event(tabs[p], p) for p in moments)]
+
+
+def _late_phases(ctx: PipelineContext, synthesized: bool, frames_deferred: bool) -> list[PhaseFn]:
+    """Moment fill unless it waits past ``complete``, synthesis unless it already ran, and
+    the quiz when the plan can use one."""
+    phases: list[PhaseFn] = [] if frames_deferred else [run_phase_moment_fill]
     if not synthesized:
         phases.append(run_phase_synthesis)
     if needs_quiz(ctx.plan_result, ctx.content_format):
@@ -239,11 +250,14 @@ def _late_phases(ctx: PipelineContext, synthesized: bool) -> list[PhaseFn]:
 
 def _start_late_group(ctx: PipelineContext, synthesized: bool) -> list[PhaseFn]:
     """The late phases, declared to the ledger; a started quiz no late phase awaits stops."""
-    late = _late_phases(ctx, synthesized)
+    frames_deferred = _defer_moment_fill(ctx)
+    late = _late_phases(ctx, synthesized, frames_deferred)
     if run_phase_enrichment not in late:
         cancel_quiz_task(ctx)  # e.g. a strip-only quiz whose host frames-done dropped
     ctx.tab_ledger.expect_late_changes(
-        quiz=run_phase_enrichment in late, synthesis=run_phase_synthesis in late
+        quiz=run_phase_enrichment in late,
+        synthesis=run_phase_synthesis in late,
+        frames=frames_deferred,
     )
     return late
 
@@ -284,7 +298,7 @@ async def run_phase_assembly(ctx: PipelineContext) -> AsyncGenerator[str, None]:
     synthesis_input = dict(ctx.synthesis_dict or {})
     assembled = _assemble(ctx, description, synthesis_input)
     late = _start_late_group(ctx, synthesized_first)
-    for event in assembled_tab_events(ctx) if split else _first_tab_events(ctx):
+    for event in _assembled_events(ctx, split):
         yield event
 
     async for event in run_parallel_phases(late, ctx):
@@ -292,90 +306,57 @@ async def run_phase_assembly(ctx: PipelineContext) -> AsyncGenerator[str, None]:
     settle_late_quiz(ctx)  # both late calls landed: the shipped hero is known
     if ctx.enrichment_data:
         assembled = _add_late_quiz(ctx, description, synthesis_input, synthesized_first)
-    # The Moments are framed and the hero written: nothing names a tab that does not ship.
+    # The Moments are framed (or their frames counted) and the hero written:
+    # nothing names a tab that does not ship.
     if (corrected_hero := settle_tab_references(ctx, assembled)) is not None:
         yield corrected_hero
     for event in ctx.tab_ledger.closing_events(ctx.assembled_tabs or []):
         yield event
-    # Moment fill was the 720p file's last reader — free the disk now, unless
-    # the deferred hi-res pass still reads it (the runner closes it after).
-    hires_video = getattr(ctx, "hires_video", None)
-    if hires_video is not None and not hires_upgrade_pending(ctx):
-        await hires_video.close()
+    if not ctx.tab_ledger.frames_pending:
+        await _close_hires_video(ctx)
 
     async for event in _finish(ctx, assembled):
         yield event
 
 
-# ─── Save, shared artifacts, done ───
+# ─── The 720p file, the deferred moment frames, save, shared artifacts, done ───
 
 
-def _result_document(
-    ctx: PipelineContext, accounting: dict, processing_time: int, degraded: bool
-) -> dict:
-    """The row the save writes. Non-English videos stay "processing": the
-    translation phase persists the sourceLanguage block and owns "completed",
-    so an interrupted translation leaves a retriable doc, not a fake-completed one."""
-    assert ctx.video_data is not None
-    result: dict = {
-        "status": "processing" if ctx.source_language_code else "completed",
-        "youtubeId": ctx.youtube_id,
-        "title": ctx.video_data.title,
-        "creator": ctx.video_data.channel,
-        "duration": ctx.video_data.duration,
-        "thumbnailUrl": ctx.video_data.thumbnail_url,
-        "meta": ctx.assembled_meta or {},
-        "tabs": ctx.assembled_tabs or [],
-        "language": ctx.language,
-        "isRTL": ctx.is_rtl,
-        # Version stamp — the api's serve path regens docs whose stored
-        # version differs from the canonical pipeline-version.json; docs
-        # WITHOUT the field predate stamping and are served as-is.
-        "pipelineVersion": settings.PIPELINE_VERSION,
-        "pipeline": {
-            "triage": ctx.triage_dict,
-            "reconcile": ctx.plan_result.reconcile if ctx.plan_result else [],
-            "extraction": extraction_record(ctx),
-            "enrichment": ctx.enrichment_data,
-            "synthesis": ctx.synthesis_dict,
-            "assembly": accounting,
-        },
-        "processedAt": datetime.now(timezone.utc),
-        "processingTimeMs": processing_time,
-    }
-    if degraded:
-        # Top-level mirror of meta.degraded — queryable by the admin run badge
-        # without unpacking meta. Only written when True; absence means clean
-        # (or pre-feature doc).
-        result["degraded"] = True
-    return result
+async def _close_hires_video(ctx: PipelineContext) -> None:
+    """Moment fill was the 720p file's last reader — free the disk now, unless the
+    deferred hi-res pass still reads it (the runner closes it after)."""
+    hires_video = getattr(ctx, "hires_video", None)
+    if hires_video is not None and not hires_upgrade_pending(ctx):
+        await hires_video.close()
 
 
-def _complete_event(ctx: PipelineContext, processing_time: int, degraded: bool) -> str:
-    """``complete`` with the final tab order — a streamed tab missing from it was withdrawn."""
-    tabs = ctx.assembled_tabs or []
-    withdrawn = ctx.tab_ledger.withdrawn(tabs)
-    if withdrawn:
-        logger.info("Streamed tabs the final response withdrew: %s", withdrawn)
-    return sse_event(
-        "complete",
-        {
-            "tabCount": len(tabs),
-            "tabIds": [tab_id(tab) for tab in tabs],
-            "processingTimeMs": processing_time,
-            "degraded": degraded,
-        },
-    )
+async def _land_moment_frames(ctx: PipelineContext) -> AsyncGenerator[str, None]:
+    """After ``complete``: the deferred moment fill (heartbeats keep the stream open while
+    it waits for the 720p file), the moment tabs final and framed, then the file goes."""
+    async for event in run_parallel_phases([run_phase_moment_fill], ctx):
+        yield event
+    ctx.tab_ledger.frames_landed()
+    ctx.pending_moment_frames = {}
+    for event in ctx.tab_ledger.closing_events(ctx.assembled_tabs or []):
+        yield event
+    await _close_hires_video(ctx)
 
 
 async def _finish(ctx: PipelineContext, assembled: dict) -> AsyncGenerator[str, None]:
-    """``complete``, the save, the shared artifacts, then ``done`` (English only)."""
+    """``complete``, the moment frames when their fill waited for it, the save, the
+    shared artifacts, then ``done`` (English only)."""
     degraded = coverage_is_degraded(getattr(ctx, "extraction_coverage", None))
     accounting = _drop_accounting(ctx, assembled)
     processing_time = int(ctx.timer.elapsed() * 1000)
-    yield _complete_event(ctx, processing_time, degraded)
+    yield complete_event(ctx, processing_time, degraded)
+    if ctx.tab_ledger.frames_pending:
+        async for event in _land_moment_frames(ctx):
+            yield event
+        processing_time = int(ctx.timer.elapsed() * 1000)
 
-    result = _result_document(ctx, accounting, processing_time, degraded)
+    result = result_document(
+        ctx, accounting, processing_time, degraded, pipeline_version=settings.PIPELINE_VERSION
+    )
     saved = await asyncio.to_thread(
         ctx.repository.save_structured_result, ctx.video_summary_id, result
     )

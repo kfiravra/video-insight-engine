@@ -250,7 +250,9 @@ def settle_tab_references(ctx: PipelineContext, assembled: dict[str, Any]) -> st
     if meta is None or tabs is None:
         return None
     plan = [tab for tab in ctx.triage_dict.get("tabs") or [] if isinstance(tab, dict)]
-    drops = settle_shipped_tabs(meta, tabs, [*plan, *tabs], planned_tab_sources(plan))
+    # A moment fill deferred past ``complete`` (output-quality 3.7): its frames count as framed.
+    pending = getattr(ctx, "pending_moment_frames", None)
+    drops = settle_shipped_tabs(meta, tabs, [*plan, *tabs], planned_tab_sources(plan), pending)
     assembled.setdefault("dropped", []).extend(drops)
     if wrote_hero(ctx.synthesis_dict):
         meta[READING_MINUTES_KEY] = reading_minutes(meta, tabs)

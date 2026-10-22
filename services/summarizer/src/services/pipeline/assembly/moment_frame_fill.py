@@ -13,6 +13,10 @@ extraction (manifest cache hit) starts that download here — capped so the
 seeks keep part of the budget — and only when enough moments need it.
 Best-effort by design: any failure (no file, extraction timeout, S3 down)
 leaves the item on its glyph-plate fallback.
+
+``pending_fill`` counts what the fill would add before it runs (output-quality
+3.7): a 720p file still downloading moves the fill past ``complete``, and the
+filmstrip decision counts those frames as landed.
 """
 
 from __future__ import annotations
@@ -128,6 +132,27 @@ async def _fill_from_local(
 
 def _count_filled(targets: list[FillTarget]) -> int:
     return sum(1 for item, _ in targets if item.get("thumbnailUrl"))
+
+
+def pending_fill(tabs: list[dict], hires_video: LocalHiresSource | None) -> dict[str, int]:
+    """Per moment tab id, the frames ``fill_moment_frames`` would seek — {} when it seeks none.
+
+    The fill's own gates (S3 up, a 720p source, a download the fill would start
+    itself only for ``_FILL_DOWNLOAD_MIN_TARGETS`` moments) and its cap, taken in
+    tab order as the fill takes them.
+    """
+    budget = min(len(_collect_frameless(tabs)), _FILL_MAX_FRAMES)
+    if not budget or hires_video is None or not s3_client.is_available():
+        return {}
+    if not hires_video.started and budget < _FILL_DOWNLOAD_MIN_TARGETS:
+        return {}
+    pending: dict[str, int] = {}
+    for tab in tabs:
+        count = min(len(_collect_frameless([tab])), budget)
+        if count:
+            pending[str(tab.get("id", ""))] = count
+            budget -= count
+    return pending
 
 
 def _cap_targets(targets: list[FillTarget]) -> list[FillTarget]:
