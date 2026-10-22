@@ -4,6 +4,7 @@ import { Check, Clock, Maximize2, Play, Share2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge, EvidenceImage, FadeIn, GlassCard } from '@/components/vie';
 import { cn } from '@/lib/utils';
+import { useLabels } from '@/lib/i18n';
 
 import { getMoodColor } from '../../../lib/moodColors';
 import { formatDuration, isClip, resolveLabel, type MomentItem } from './moment-utils';
@@ -58,6 +59,7 @@ export const MomentTimelineRow = memo(function MomentTimelineRow({
     [setFocusRef, originalIndex],
   );
 
+  const t = useLabels();
   const clip = isClip(item);
   const moodColor = getMoodColor(item.mood);
   const duration = clip ? (item.endSeconds as number) - item.seconds : 0;
@@ -71,6 +73,10 @@ export const MomentTimelineRow = memo(function MomentTimelineRow({
   const label = resolveLabel(item);
   // A long interview question's label is only its head: the row shows it whole.
   const heading = item.question?.trim() || label;
+  // An exchange row (question present): the speaker answers, so the chip must not sit
+  // in the header where it reads as the asker — it leads the answer instead.
+  const isExchange = Boolean(item.question?.trim());
+  const speaker = item.speaker?.trim();
   const quote = item.quote?.trim();
   const chipContent = (
     <>
@@ -174,9 +180,9 @@ export const MomentTimelineRow = memo(function MomentTimelineRow({
                     </Badge>
                   </span>
                 )}
-                {item.speaker && (
+                {speaker && !isExchange && (
                   <span className="text-xs font-medium text-muted-foreground/70 italic">
-                    {item.speaker}
+                    {speaker}
                   </span>
                 )}
               </div>
@@ -191,7 +197,16 @@ export const MomentTimelineRow = memo(function MomentTimelineRow({
                   {/* No clamp: in this view the label IS the substance for
                       most videos (R7), so it always renders in full. */}
                   <p className="text-sm font-semibold leading-snug">{heading}</p>
-                  {item.description && item.description !== label && (
+                  {isExchange && (item.description || speaker) ? (
+                    <p className="text-xs leading-relaxed text-muted-foreground">
+                      {speaker && (
+                        <span className="me-1 font-semibold text-foreground/80">
+                          {t.answerBy.replace('{speaker}', speaker)}
+                        </span>
+                      )}
+                      {item.description}
+                    </p>
+                  ) : item.description && item.description !== label && (
                     <p className="text-xs leading-relaxed text-muted-foreground">
                       {item.description}
                     </p>

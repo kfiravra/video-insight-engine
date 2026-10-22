@@ -54,6 +54,8 @@ export interface Labels {
   description: string;
   example: string;
   goForIt: string;
+  /** Who answers an interview question — {speaker} is interpolated ("A · Tegmark"). */
+  answerBy: string;
   // Overview
   level: string;
   items: string;
@@ -145,6 +147,7 @@ const EN: Labels = {
   description: 'Description',
   example: 'Example',
   goForIt: 'Go for it if...',
+  answerBy: 'A · {speaker}',
   level: 'Level',
   items: 'Items',
   brief: 'Brief',
@@ -203,7 +206,6 @@ const EN: Labels = {
     itinerary: 'Day-by-day trip plan',
     packing: 'Packing checklist',
     budget: 'Cost breakdown',
-    verdict: 'Final verdict and scoring',
     pros_cons: 'Pros and cons side by side',
     specs: 'Specifications and features',
     materials: 'Materials needed',
@@ -262,6 +264,7 @@ const TRANSLATIONS: Record<string, Labels> = {
     description: 'תיאור',
     example: 'דוגמה',
     goForIt: 'שווה את זה אם...',
+    answerBy: 'תשובה · {speaker}',
     level: 'רמה',
     items: 'פריטים',
     brief: 'תקציר',
@@ -320,7 +323,6 @@ const TRANSLATIONS: Record<string, Labels> = {
       itinerary: 'תוכנית טיול יום אחר יום',
       packing: 'רשימת אריזה',
       budget: 'פירוט עלויות',
-      verdict: 'פסק דין וציון סופי',
       pros_cons: 'יתרונות וחסרונות זה מול זה',
       specs: 'מפרטים ותכונות',
       materials: 'חומרים נדרשים',
@@ -376,6 +378,7 @@ const TRANSLATIONS: Record<string, Labels> = {
     description: 'الوصف',
     example: 'مثال',
     goForIt: 'اختره إذا...',
+    answerBy: 'الجواب · {speaker}',
     level: 'المستوى',
     items: 'العناصر',
     brief: 'موجز',
@@ -434,7 +437,6 @@ const TRANSLATIONS: Record<string, Labels> = {
       itinerary: 'خطة رحلة يوماً بيوم',
       packing: 'قائمة التعبئة',
       budget: 'تفصيل التكاليف',
-      verdict: 'الحكم النهائي والتقييم',
       pros_cons: 'المزايا والعيوب جنباً إلى جنب',
       specs: 'المواصفات والميزات',
       materials: 'المواد المطلوبة',

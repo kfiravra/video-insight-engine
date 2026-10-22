@@ -24,8 +24,17 @@ from ..utils.data_helpers import parse_timestamp_to_seconds
 
 logger = logging.getLogger(__name__)
 
-# The six kinds of argued idea (D10) — the spot card's category badge.
-KEY_IDEA_KINDS: tuple[str, ...] = ("thesis", "argument", "announcement", "number", "story", "ask")
+# The kinds of argued idea (D10) — the spot card's category badge; ``disagreement``
+# (4.1) is where host and guest differ or one pushes back.
+KEY_IDEA_KINDS: tuple[str, ...] = (
+    "thesis",
+    "argument",
+    "announcement",
+    "number",
+    "story",
+    "ask",
+    "disagreement",
+)
 # What the video does with a claim (D11): states it, supports it with evidence, or
 # contests it. Never a verdict of ours — "verified" and "disputed" are not words here.
 CLAIM_STATUSES: tuple[str, ...] = ("stated", "supported", "contested")

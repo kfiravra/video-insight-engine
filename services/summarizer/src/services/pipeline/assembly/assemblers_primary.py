@@ -15,6 +15,7 @@ from typing import Any
 
 from src.services.pipeline.quote_verify import mark_translated_quote
 
+from .derived_guard import anchor_seconds
 from .info_grid_items import _INFO_EVIDENCE_FIELDS as _INFO_EVIDENCE_FIELDS
 from .info_grid_items import _INFO_KEY_FIELDS as _INFO_KEY_FIELDS
 from .info_grid_items import _INFO_STRING_MAX as _INFO_STRING_MAX
@@ -27,7 +28,7 @@ from .info_grid_items import _split_string_info_item as _split_string_info_item
 from .info_grid_items import _text_only_info_item as _text_only_info_item
 from .info_grid_items import _with_category as _with_category
 from .ingredients import ingredient_row
-from .key_ideas import is_key_idea_list, key_idea_props
+from .key_ideas import is_key_idea_list, key_idea_props, podcast_guests
 from .normalizers import (
     _normalize_code_snippet,
     _normalize_comparison,
@@ -79,7 +80,7 @@ def assemble_spot_explorer(
         return None
 
     if is_key_idea_list(data):
-        props = key_idea_props(data)
+        props = key_idea_props(data, podcast_guests(extraction))
         return props if len(props["spots"]) >= _MIN_SPOTS else None
     if is_quote_list(data):
         spots = quote_spots(data)
@@ -367,6 +368,43 @@ def assemble_info_grid(
     return None
 
 
+def _checklist_dict_row(item: dict) -> dict | None:
+    """One dict item as a checklist row, by the field that carries its text.
+
+    A dict with no text field (e.g. an itinerary day a fallback routed here) has no
+    checklist label; str() of it leaked a Python repr into the UI, so it is dropped.
+    """
+    if "name" in item and ("amount" in item or "unit" in item or "displayAmount" in item):
+        return ingredient_row(item)
+    if "item" in item:
+        return {
+            "label": str(item["item"]),
+            "note": item.get("category"),
+            "emoji": "⚠️" if item.get("essential") else None,
+        }
+    if "text" in item:
+        return {"label": str(item["text"]), "note": item.get("notes")}
+    if "title" in item:
+        return {"label": str(item["title"]), "note": item.get("detail") or item.get("notes")}
+    if "label" in item:
+        return {"label": str(item["label"]), "note": item.get("note") or item.get("notes")}
+    if "name" in item:
+        return {"label": str(item["name"]), "note": item.get("notes")}
+    return None
+
+
+def _checklist_row(item: Any) -> dict | None:
+    """One checklist row; a dict item's row keeps the item's seek point (4.1 — a talk's
+    asks rows, ``talk_asks.ask_rows``, lost theirs here)."""
+    if not isinstance(item, dict):
+        return {"label": str(item)}
+    row = _checklist_dict_row(item)
+    timestamp = anchor_seconds(item)
+    if row is None or timestamp is None or "timestamp" in row:
+        return row
+    return {**row, "timestamp": timestamp}
+
+
 def assemble_checklist(
     tab: dict,
     data: Any,
@@ -375,39 +413,7 @@ def assemble_checklist(
 ) -> dict | None:
     if not isinstance(data, list) or len(data) < 1:
         return None
-
-    items: list[dict] = []
-    for item in data:
-        if isinstance(item, str):
-            items.append({"label": item})
-        elif isinstance(item, dict):
-            if "name" in item and ("amount" in item or "unit" in item or "displayAmount" in item):
-                items.append(ingredient_row(item))
-            elif "item" in item:
-                items.append(
-                    {
-                        "label": str(item["item"]),
-                        "note": item.get("category"),
-                        "emoji": "⚠️" if item.get("essential") else None,
-                    }
-                )
-            elif "text" in item:
-                items.append({"label": str(item["text"]), "note": item.get("notes")})
-            elif "title" in item:
-                items.append(
-                    {"label": str(item["title"]), "note": item.get("detail") or item.get("notes")}
-                )
-            elif "label" in item:
-                items.append(
-                    {"label": str(item["label"]), "note": item.get("note") or item.get("notes")}
-                )
-            elif "name" in item:
-                items.append({"label": str(item["name"]), "note": item.get("notes")})
-            # A dict with no text field (e.g. an itinerary day a fallback routed here) has no
-            # checklist label; str() of it leaked a Python repr into the UI, so it is dropped.
-        else:
-            items.append({"label": str(item)})
-
+    items = [row for row in map(_checklist_row, data) if row is not None]
     return {"items": items} if items else None
 
 

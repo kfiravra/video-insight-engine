@@ -14,6 +14,7 @@ from typing import Any
 from src.services.pipeline.quote_verify import QUOTE_TRANSLATED_KEY
 from src.utils.data_helpers import parse_timestamp_to_seconds
 
+from .qa_questions import QUESTION_STATUS_KEY
 from .text_utils import truncate_words
 
 _MOMENT_LABEL_KEYS = ("label", "title", "name")
@@ -23,7 +24,8 @@ _MOMENT_LABEL_KEYS = ("label", "title", "name")
 _MOMENT_DESCRIPTION_KEYS = ("description", "summary", "instruction", "answer")
 # An interview exchange (``podcast.qa``, C10): its question is the row's title —
 # whole up to _QUESTION_LABEL_CAP characters, else its first sentence, else cut at a
-# word — and rides along whole as ``question`` when the title is not all of it.
+# word — and rides along whole as ``question`` on every exchange row: the web tells an
+# exchange from a moment by its ``question`` (4.1). Its ``questionStatus`` (4.0 c) rides too.
 _MOMENT_QUESTION_KEY = "question"
 _QUESTION_LABEL_CAP = 140
 _SENTENCE_END = re.compile(r"[?.!](?=\s|$)")
@@ -39,6 +41,7 @@ _MOMENT_PASSTHROUGH_KEYS = (
     # A translated quote (2.0 d, D12) renders as prose: its flag rides with it.
     QUOTE_TRANSLATED_KEY,
     "question",
+    QUESTION_STATUS_KEY,
     "mood",
     "emoji",
     "speaker",
@@ -147,17 +150,14 @@ def _moment_text(item: dict) -> tuple[str, str | None] | None:
     return label, (None if description == label else description)
 
 
-def _passthrough(item: dict, label: str) -> dict[str, Any]:
-    """The extras a moment carries as the source gave them; the whole ``question``
-    only where the row's title is a cut of it (else it would repeat the title)."""
-    extras = {
+def _passthrough(item: dict) -> dict[str, Any]:
+    """The extras a moment carries as the source gave them — an exchange's whole
+    ``question`` too, even when it is all of the row's title (4.1)."""
+    return {
         key: value
         for key in _MOMENT_PASSTHROUGH_KEYS
         if (value := item.get(key)) is not None and value != ""
     }
-    if _prose(extras.get(_MOMENT_QUESTION_KEY)) == label:
-        extras.pop(_MOMENT_QUESTION_KEY)
-    return extras
 
 
 def _normalize_moment_item(item: Any, index: int) -> dict | None:
@@ -191,7 +191,7 @@ def _normalize_moment_item(item: Any, index: int) -> dict | None:
         normalized["endSeconds"] = end_seconds
     if description is not None:
         normalized["description"] = description
-    normalized.update(_passthrough(item, label))
+    normalized.update(_passthrough(item))
     tags = item.get("tags")
     if isinstance(tags, list) and tags:
         normalized["tags"] = [str(t) for t in tags if t is not None]

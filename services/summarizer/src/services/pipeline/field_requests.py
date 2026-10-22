@@ -104,6 +104,9 @@ _SIDE_READS: dict[str, _SideRead] = {
     "comparison": _REVIEW_COMPARISON,
     # assemblers_overhaul.py `assemble_comparison_radar` hands off to assemble_comparison.
     "comparison_radar": _REVIEW_COMPARISON,
+    # assemblers_primary.py `assemble_spot_explorer`: a podcast's guests open Positions
+    # as its first section (4.1), so any spot tab of a podcast run asks for them.
+    "spot_explorer": _SideRead(("podcast",), ("guests",)),
     # assembly/core.py `assemble_response`: an empty moment_track tab reads
     # extraction["learning"]["timestamps"].
     "moment_track": _SideRead(("learning",), ("timestamps",)),

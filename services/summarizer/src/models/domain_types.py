@@ -1074,6 +1074,13 @@ class PodcastGuest(BaseModel):
     role: str | None = None
     description: str = ""
     emoji: str = ""
+    # The second the guest is introduced — the guest card's seek chip (4.1).
+    timestamp: int | None = None
+
+    @field_validator("timestamp", mode="before")
+    @classmethod
+    def coerce_timestamp(cls, v: Any) -> int | None:
+        return seconds_or_none(v)
 
 
 class PodcastQuote(BaseModel):

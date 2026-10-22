@@ -111,8 +111,16 @@ export interface KeyPointItem {
   timestamp?: number;
 }
 
-/** What kind of argued idea a key idea is (output-quality D10) — its badge. */
-export type KeyIdeaKind = 'thesis' | 'argument' | 'announcement' | 'number' | 'story' | 'ask';
+/** What kind of argued idea a key idea is (output-quality D10) — its badge;
+ *  `disagreement` (4.1) is where host and guest differ or one pushes back. */
+export type KeyIdeaKind =
+  | 'thesis'
+  | 'argument'
+  | 'announcement'
+  | 'number'
+  | 'story'
+  | 'ask'
+  | 'disagreement';
 
 /** One argued idea of a talk, lecture or podcast (`learning.keyIdeas`, D10). The
  *  assembler ships it as a spot card: claim → name, why → description, quote,

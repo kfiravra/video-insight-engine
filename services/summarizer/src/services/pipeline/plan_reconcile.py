@@ -44,11 +44,16 @@ NEVER_DROPPED = frozenset({"moment_track"})
 # extraction, so its domain is switched on rather than the tab re-pointed (S13,
 # 2026-10-21: tagged podcast + tech, its Positions tab became the guest list).
 ARGUMENT_PATHS = frozenset({"learning.keyIdeas"})
+# 4.1: an interview's Q&A and guest card are podcast extraction whatever domain the
+# probe gave (S14 arrives as learning + interview through ``playbookAliases``): a plan
+# that names them has asked for podcast, never for learning.timestamps in their place.
+INTERVIEW_PATHS = frozenset({"podcast.qa", "podcast.guests"})
+_ACTIVATING_PATHS = ARGUMENT_PATHS | INTERVIEW_PATHS
 MAX_CONTENT_TAGS = 3
 
 
 def activate_argument_domains(tabs: Sequence[Mapping], content_tags: Sequence[str]) -> list[str]:
-    """``content_tags`` plus the domain of every argument path a tab reads.
+    """``content_tags`` plus the domain of every argument or interview path a tab reads.
 
     When that pushes the list past :data:`MAX_CONTENT_TAGS`, tags no tab reads
     (never the primary, the first) give way from the end.
@@ -56,7 +61,7 @@ def activate_argument_domains(tabs: Sequence[Mapping], content_tags: Sequence[st
     tags = list(content_tags)
     for tab in tabs:
         spec = data_source(str(tab.get("dataSource") or ""))
-        if spec is not None and tab.get("dataSource") in ARGUMENT_PATHS:
+        if spec is not None and tab.get("dataSource") in _ACTIVATING_PATHS:
             if spec["domain"] not in tags:
                 tags.append(spec["domain"])
     return _trim_unused_tags(tags, tabs)

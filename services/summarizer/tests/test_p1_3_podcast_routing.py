@@ -135,7 +135,7 @@ class TestModels:
 
 
 class TestQaMoments:
-    def test_should_head_the_row_with_the_whole_question_and_not_repeat_it(self) -> None:
+    def test_should_head_the_row_with_the_whole_question_and_keep_it(self) -> None:
         raw = {
             "question": _QUESTION,
             "answer": "The wrapper could not do offline.",
@@ -146,9 +146,10 @@ class TestQaMoments:
         item = normalize_moment_items([raw])[0]
 
         assert item["label"] == _QUESTION
-        # The whole question is the title: no ``question`` repeats it (phase-1 review R7).
+        # The whole question rides along even when it is the title: the web tells an
+        # exchange row by it and heads the row with it once (4.1).
         assert (item.get("question"), item["description"], item["speaker"]) == (
-            None,
+            _QUESTION,
             "The wrapper could not do offline.",
             "DHH",
         )

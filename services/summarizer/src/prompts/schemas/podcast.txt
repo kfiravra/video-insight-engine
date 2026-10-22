@@ -41,15 +41,17 @@ THINKING GUIDE:
   ],
 > UI: Q&A → MomentTrack rows (question as the row title, answer below, speaker chip). Only for an interview: a host questioning a guest. timestamp = the second the question is asked.
 > Q&A COMPLETENESS: every question a host puts to the guest that gets a substantive answer, across the WHOLE conversation — the last 10 minutes included — one item per question, never two merged, never banter or a "how are you". An interview of 40+ minutes has about 8-15 such exchanges.
+> DISAGREEMENTS: where host and guest differ or one pushes back, that learning.keyIdeas item is kind "disagreement" — speaker = who pushes back, why = both sides, quote = the pushback.
   "guests": [
     {
       "name": "Guest full name",
       "role": "Their title / why they're on the show",
       "description": "One-line background / bio as described in the episode",
-      "emoji": "relevant emoji"
+      "emoji": "relevant emoji",
+      "timestamp": 0
     }
   ],
-> UI: Guests → SpotExplorer cards. Fill role + description for expandable context.
+> UI: Guests → the first section of Positions, one card per guest (a single guest included): role as its badge, description below; timestamp = the second the guest is introduced.
   "quotes": [
     {
       "quote": "The memorable line, verbatim",
@@ -90,7 +92,7 @@ THINKING GUIDE:
     {"question": "Would you pick Raft again today?", "answer": "Yes — Raft won on understandability, and the team that maintains it matters more than a faster protocol.", "speaker": "Dr. Lena Cho", "timestamp": 1320, "quote": "Understandable beats clever every single time."}
   ],
   "guests": [
-    {"name": "Dr. Lena Cho", "role": "Principal engineer, distributed systems", "description": "Spent a decade building consensus protocols at scale", "emoji": "🧠"}
+    {"name": "Dr. Lena Cho", "role": "Principal engineer, distributed systems", "description": "Spent a decade building consensus protocols at scale", "emoji": "🧠", "timestamp": 12}
   ],
   "quotes": [
     {"quote": "You can't beat physics — you can only hide the latency.", "speaker": "Dr. Lena Cho", "timestamp": 612}

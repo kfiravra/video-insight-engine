@@ -117,6 +117,8 @@ def _spot_extras(item: dict) -> dict:
     if isinstance(quote, str) and quote.strip():
         extras["quote"] = quote.strip()
     extras.update(stated_scalars(item, _SPOT_STATED_FIELDS))
+    if isinstance(role := item.get("role"), str) and role.strip():
+        extras["category"] = role.strip()  # a guest's role is its card's badge (4.1)
     return extras
 
 

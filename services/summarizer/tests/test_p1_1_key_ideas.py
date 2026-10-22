@@ -103,8 +103,17 @@ class TestKeyIdeaModel:
 
         assert (idea.quote, idea.section) == (None, None)
 
-    def test_should_name_six_kinds_when_the_vocabulary_is_read(self) -> None:
-        assert KEY_IDEA_KINDS == ("thesis", "argument", "announcement", "number", "story", "ask")
+    def test_should_name_seven_kinds_when_the_vocabulary_is_read(self) -> None:
+        # 4.1 adds disagreement (an interview's pushback) to the six of D10.
+        assert KEY_IDEA_KINDS == (
+            "thesis",
+            "argument",
+            "announcement",
+            "number",
+            "story",
+            "ask",
+            "disagreement",
+        )
 
 
 class TestKeyIdeaValidation:

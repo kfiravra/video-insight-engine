@@ -124,12 +124,13 @@ class TestQuestionMoments:
 
         assert items[0]["label"].startswith("Dr. Cho, with everything")
 
-    def test_should_drop_the_question_when_it_is_the_whole_title(self) -> None:
+    def test_should_keep_the_question_when_it_is_the_whole_title(self) -> None:
+        # Every exchange row carries its question (4.1): the web tells it from a moment.
         items = normalize_moment_items(
             [{"timestamp": 60, "question": "Why Rails?", "answer": "A."}]
         )
 
-        assert "question" not in items[0]
+        assert items[0]["question"] == "Why Rails?"
 
     def test_should_keep_the_whole_question_when_the_title_cuts_it(self) -> None:
         items = normalize_moment_items(

@@ -176,7 +176,7 @@
     "podcast:interview": {
       "preferred": ["spot_explorer", "moment_track", "quiz_arena"],
       "forbidden": ["video_filmstrip", "flash_deck"],
-      "planGuidance": "Interview (content-model §4): open on Positions — spot_explorer on learning.keyIdeas, the guest's positions with speaker, disagreements as kind argument. Then Q&A — moment_track on podcast.qa, every substantive question, in the host's own words, with its answer; then the Conversation map — moment_track on podcast.segments; Test yourself last only when is_learnable. A guest card (spot_explorer on podcast.guests) only with 2+ guests."
+      "planGuidance": "Interview (content-model §4; tags podcast + learning): open on Positions — spot_explorer on learning.keyIdeas, the guest's positions with speaker, disagreements as kind disagreement; the guests ride as its first section, never a tab of their own. Then Q&A — moment_track on podcast.qa, every substantive question, in the host's own words, with its answer; then the Conversation map — moment_track on podcast.segments; claims_tracker on podcast.claims only with has_claims, after the Q&A; Test yourself last only when is_learnable."
     },
     "review:review": {
       "preferred": ["comparison", "spot_explorer", "moment_track"],
@@ -191,8 +191,9 @@
   },
   "infoGridHostsNote": "info_grid never stands alone (output-quality R6): the plan decides the fold — at plan-done (and again at frames-done) the reconcile pass (reconcile_pass.fold_step) moves a planned info_grid tab onto the planned tab that answers its question as one of its `folds` — the first tab whose component comes earliest in this list, a tab of the grid's own domain first among equals (assembly/info_grid_fold.fold_host). At assembly (apply_folds) a spot_explorer host takes the rows as cards in a section named after the grid; any other host takes the grid as a bottom attachment; a host that does not ship gives its folds back as tabs. No host → the grid stays a tab; a fold never leaves fewer than 3 planned tabs.",
   "infoGridHosts": ["comparison", "comparison_radar", "spot_explorer", "step_player", "step_flow_canvas", "workout_room", "checklist", "claims_tracker", "concept_canvas", "code_playground"],
-  "playbookAliasesNote": "Probe formats that are another name for a playbook's format, per '<domain>:<format>' key (get_playbook in the summarizer's shared_config/domain_config.py reads a playbook's own key first, then its alias): a product review arrives as commentary or comparison, a news explainer as news, documentary or news_commentary (S07 commentary, S08 documentary), a podcast as commentary — also the probe's fallback for a label it does not know (keynote, fireside, conversation). learning:commentary has no alias on purpose: an explainer keeps keyPoints (D10), not the talk playbook.",
+  "playbookAliasesNote": "Probe formats that are another name for a playbook's format, per '<domain>:<format>' key (get_playbook in the summarizer's shared_config/domain_config.py reads a playbook's own key first, then its alias): a product review arrives as commentary or comparison, a news explainer as news, documentary or news_commentary (S07 commentary, S08 documentary), a podcast as commentary — also the probe's fallback for a label it does not know (keynote, fireside, conversation). learning:commentary has no alias on purpose: an explainer keeps keyPoints (D10), not the talk playbook. An interview the probe files under learning (a Talks at Google fireside, S14) arrives as learning:interview.",
   "playbookAliases": {
+    "learning:interview": "podcast:interview",
     "podcast:commentary": "podcast:podcast",
     "review:commentary": "review:review",
     "review:comparison": "review:review",

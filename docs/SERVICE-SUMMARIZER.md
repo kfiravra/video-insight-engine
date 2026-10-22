@@ -60,7 +60,7 @@ services/summarizer/
     │   │   ├── plan.py / plan_prompt.py # Plan (Sonnet 5.5, effort medium): full marked transcript → tabs + briefs,
     │   │   │                         #   evidence, terms (+ _render_playbook, _enforce_domain_policy)
     │   │   ├── memory.py             # Memory (LLM_MEMORY_MODEL) ∥ plan: outline + establishes lines, evidence, tldr (the thesis), 3/5/7 stamped takeaways
-    │   │   ├── plan_reconcile.py     # Plan-parse guard: unregistered path, inactive domain; a learning.keyIdeas tab switches learning on
+    │   │   ├── plan_reconcile.py     # Plan-parse guard: unregistered path, inactive domain; a learning.keyIdeas tab switches learning on, a podcast.qa / podcast.guests tab podcast
     │   │   ├── reconcile.py          # Plan-done reconcile: doubly-false view, step 1, screen-code check
     │   │   ├── reconcile_pass.py     # Reconcile steps 1b–5 (primary moment source, backfill, quiz, dedupe, info_grid fold, 3–6) + row writer
     │   │   ├── video_memory.py       # <video_memory> block (plan + memory) for every {video_context} slot
@@ -524,7 +524,7 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     │   │   content-model §9); a tab goal names the viewer's outcome (`<goal_rule>`) — one
     │   │   that does not is logged at validation (`plan_prompt.goal_rule_violation`), the tab
     │   │   ships. A tab on learning.keyIdeas switches the learning domain on
-    │   │   (`plan_reconcile.activate_argument_domains`, ≤ 3 content tags)
+    │   │   (a podcast.qa / podcast.guests tab, the podcast domain; `plan_reconcile.activate_argument_domains`, ≤ 3 content tags)
     │   └─▶ Memory: LLM_MEMORY_MODEL (Haiku 5.5), 25 s, ONE attempt, temperature 0 (dropped for Haiku 5.5),
     │   │   1,600 max tokens → outline (4-12 contiguous sections, each with an `establishes`
     │   │   line; dropped when it stops short of the duration), evidence, tldr (the thesis),
@@ -735,7 +735,7 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     └─▶ Output-quality shapes and caps (module map: summarizer-workflow.md §Assembly notes; sets and
     │   bands from domains.json `assemblyPolicy` / `momentCapsByDuration` / `injectedTabs`):
     │   learning.keyIdeas → spot cards (claim, why, quote, timestamp, kind badge — an ask without its quote reads Argument —, speaker, sections); a talk's "What they asked" checklist on learning.takeaways ships the quoted kind-ask key ideas (≥ 3, else the tab drops; then Key Ideas sheds those cards — each ask shows once; a run without key ideas keeps its takeaways — assembly/talk_asks.py, dedupe.py),
-    │   capped at keyIdeasCapFactor × the §9 count (10 / 16 / 24 / 32 by length); a Moments track
+    │   capped at keyIdeasCapFactor × the §9 count (10 / 16 / 24 / 32 by length) plus the guest cards; a Moments track
     │   capped strictly by the §9 bands, and a label-only one yields to a described sibling or the
     │   described fallback chain (R7); the answer tab's stat_banner only from `kind: number`
     │   key ideas with their stated `figure`, no text mined (≥ 5 tiles or none, ≤ 8);

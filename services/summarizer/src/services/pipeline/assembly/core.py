@@ -42,6 +42,7 @@ from .density import drop_empty_tabs, enforce_density
 from .info_grid_fold import FOLDS_KEY, apply_folds, unfolded_tabs
 from .info_grid_items import require_grid_values
 from .item_timestamps import clear_impossible_item_timestamps
+from .key_ideas import guest_spots, podcast_guests
 from .labels import _LABEL_COUNT_KEYS as _LABEL_COUNT_KEYS
 from .labels import _LEADING_COUNT as _LEADING_COUNT
 from .labels import _list_len as _list_len
@@ -1026,10 +1027,15 @@ def _cap_spots_with_sections(props: dict, spots: list, cap: int) -> None:
 _KEY_IDEAS_SOURCE = "learning.keyIdeas"
 
 
-def key_idea_caps(sources: Mapping[str, str], duration: float | None) -> dict[str, int]:
+def key_idea_caps(
+    sources: Mapping[str, str], duration: float | None, extraction: dict | None = None
+) -> dict[str, int]:
     """Tab id → the key-ideas cap for every tab planned on ``learning.keyIdeas``: the
-    argument is never sampled down to a screen (Kfir 2026-10-21, ``key_idea_cap``)."""
-    cap = key_idea_cap(duration, _TAB_ITEM_CAPS.get("spot_explorer", 25))
+    argument is never sampled down to a screen (Kfir 2026-10-21, ``key_idea_cap``). The
+    run's guest cards, which open Positions (4.1), ride on top of it, so a guest never
+    pushes the last idea out."""
+    guests = len(guest_spots(podcast_guests(extraction)))
+    cap = key_idea_cap(duration, _TAB_ITEM_CAPS.get("spot_explorer", 25)) + guests
     return {tab_id: cap for tab_id, source in sources.items() if source == _KEY_IDEAS_SOURCE}
 
 
@@ -1047,7 +1053,7 @@ def _join_folds(
     the post-process keeps (None for an uncapped host): folded rows never cut the
     host's own (a talk's key ideas)."""
     host_id, component = str(host.get("id", "")), str(host.get("component") or "")
-    override = key_idea_caps({host_id: source}, duration).get(host_id)
+    override = key_idea_caps({host_id: source}, duration, extraction).get(host_id)
     _cap_tab_items(component, host["props"], duration, None, override)
     apply_folds(
         host, folds, extraction, enrichment, resolve_data_source,
@@ -2015,7 +2021,7 @@ def assemble_response(
         assembled_tabs,
         (video_meta or {}).get("duration"),
         collect_moment_anchors(extraction, synthesis),
-        {**key_idea_caps(sources, (video_meta or {}).get("duration")), **fold_caps},
+        {**key_idea_caps(sources, (video_meta or {}).get("duration"), extraction), **fold_caps},
     )
     # The web's rule, server-side (2.0 b): a Moments track framed as it ships (after
     # the caps) shadows every filmstrip; no tab ships with empty props. Before links,

@@ -327,6 +327,8 @@ export interface PodcastGuest {
   role?: string;
   description?: string;
   emoji?: string;
+  /** The second the guest is introduced — the guest card's seek chip (4.1). */
+  timestamp?: number | null;
 }
 
 export interface PodcastQuote {

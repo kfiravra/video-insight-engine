@@ -80,6 +80,8 @@ _SKIP_KEYS: frozenset[str] = frozenset(
         "correctIndex",
         "difficulty",
         "mood",
+        # An exchange row's question check ("verified" / "translated", 4.0 c / 4.1).
+        "questionStatus",
         # ``videoTitle`` is the raw YouTube metadata title — source-language even in
         # the English-canonical meta. The translation phase handles it explicitly in
         # both directions via ``_translate_title``, so the batch walker skips it;
