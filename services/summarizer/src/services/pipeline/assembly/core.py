@@ -56,6 +56,7 @@ from .moment_fallback import (
 from .moment_fallback import steps_are_the_timeline as steps_are_the_timeline
 from .moment_sources import described_moment_source, described_or_fallback
 from .promotion import demote_component, promote_component
+from .qa_questions import check_questions, drop_emptied_qa
 from .quiz_stamps import with_reconciled_quiz
 from .registry import ASSEMBLER_REGISTRY, infer_component
 from .sampling import (
@@ -82,6 +83,7 @@ from .tab_references import (
     recount_overview,
     scrub_tab_references,
 )
+from .talk_asks import asks_data
 
 logger = logging.getLogger(__name__)
 
@@ -1528,6 +1530,8 @@ def assemble_response(
     if quote_index is not None:
         checked = verify_extraction_quotes(extraction, enrichment, quote_index)
         extraction, enrichment = checked.extraction, checked.enrichment
+        # An interview's questions in the host's words, each row at its question (4.0 c).
+        extraction, _ = check_questions(extraction, quote_index)
     video_meta = video_meta or {}
 
     # Inject normalized filmstrip frames into extraction so a tab planned as
@@ -1615,6 +1619,9 @@ def assemble_response(
             component = "overview"
 
         data = resolve_data_source(data_source, extraction, enrichment)
+        # A Q&A tab with no checked question drops here, before any fallback (4.0 c).
+        if drop_emptied_qa(raw_tab, component, data, dropped_tabs):
+            continue
         data_resolved = data is not None
 
         # Treat empty collections as missing — lets fallback logic try other domains
@@ -1668,6 +1675,9 @@ def assemble_response(
             if fallback is not None:
                 data = fallback
                 data_resolved = True
+
+        # A talk's asks tab is its quoted asks, after every fallback: [] drops it (4.0 d).
+        data = asks_data(component, data_source, extraction, data)
 
         # Components that build from synthesis/meta, not extraction data
         _SELF_SUFFICIENT = {"overview", "budget"}

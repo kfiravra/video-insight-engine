@@ -31,6 +31,7 @@ from .normalizers import (
     _normalize_verdict,
     _to_flash_card,
 )
+from .talk_asks import shown_kind
 
 
 def assemble_exercise_tracker(
@@ -110,7 +111,7 @@ def _key_idea_spot(item: dict) -> dict | None:
     )
     if spot is None:
         return None
-    badge = _key_idea_badge(item.get("kind"))
+    badge = _key_idea_badge(shown_kind(item))
     if badge:
         spot["category"] = badge
     speaker = item.get("speaker")

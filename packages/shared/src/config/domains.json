@@ -161,7 +161,7 @@
     "learning:talk": {
       "preferred": ["spot_explorer", "checklist", "moment_track", "quiz_arena"],
       "forbidden": ["video_filmstrip", "flash_deck"],
-      "planGuidance": "Talk / keynote (content-model §1): open on Key ideas — spot_explorer on learning.keyIdeas (claim, why, quote, timestamp, kind), sectioned by the talk's parts; its figures ride as the numbers strip and its terms as a section of that tab, never an info_grid tab of their own. Then What they asked — checklist on learning.takeaways, only with 3+ asks; Moments — moment_track on learning.timestamps, what each beat established; Test yourself last when is_learnable. A concept_canvas only as a later tab when the concepts connect (the density table sets the minimum); claims_tracker on learning.claims only with has_claims, after the key ideas."
+      "planGuidance": "Talk / keynote (content-model §1): open on Key ideas — spot_explorer on learning.keyIdeas (claim, why, quote, timestamp, kind), sectioned by the talk's parts; its figures ride as the numbers strip and its terms as a section of that tab, never an info_grid tab of their own. Then What they asked — checklist on learning.takeaways, only when the speaker makes 3+ explicit requests of the audience (an imperative said to the room, quotable) — never the speaker's own practices; Moments — moment_track on learning.timestamps, what each beat established; Test yourself last when is_learnable. A concept_canvas only as a later tab when the concepts connect (the density table sets the minimum); claims_tracker on learning.claims only with has_claims, after the key ideas."
     },
     "learning:lecture": {
       "preferred": ["concept_canvas", "spot_explorer", "moment_track", "quiz_arena"],
@@ -176,7 +176,7 @@
     "podcast:interview": {
       "preferred": ["spot_explorer", "moment_track", "quiz_arena"],
       "forbidden": ["video_filmstrip", "flash_deck"],
-      "planGuidance": "Interview (content-model §4): open on Positions — spot_explorer on learning.keyIdeas, the guest's positions with speaker, disagreements as kind argument. Then Q&A — moment_track on podcast.qa, every substantive question with its answer; then the Conversation map — moment_track on podcast.segments; Test yourself last only when is_learnable. A guest card (spot_explorer on podcast.guests) only with 2+ guests."
+      "planGuidance": "Interview (content-model §4): open on Positions — spot_explorer on learning.keyIdeas, the guest's positions with speaker, disagreements as kind argument. Then Q&A — moment_track on podcast.qa, every substantive question, in the host's own words, with its answer; then the Conversation map — moment_track on podcast.segments; Test yourself last only when is_learnable. A guest card (spot_explorer on podcast.guests) only with 2+ guests."
     },
     "review:review": {
       "preferred": ["comparison", "spot_explorer", "moment_track"],

@@ -10,7 +10,8 @@ ships elsewhere; a twin with items of its own sheds the shared ones and stays
 instead, and so does a twin a trim would leave below its component's own
 minimum (``_LIST_MINIMUMS``). A tab's items are its component's own list
 (``component_lists.item_list_keys`` — a canvas's group labels never dilute the
-overlap); every list prop only for a component the table does not know.
+overlap); every list prop only for a component the table does not know. The
+asks tab outranks Key Ideas, whose ask cards it ships (``_settle_asks_view``).
 ``core`` re-exports the public names.
 """
 
@@ -26,6 +27,7 @@ from .assemblers_primary import _MIN_COMPARISON_ROWS, _MIN_SPOTS
 from .assemblers_secondary import _CLAIMS_MIN, _FORMATION_MIN, _TIER_LIST_MIN
 from .component_lists import COMPONENT_LIST_KEYS, SEQUENTIAL_COMPONENTS, item_list_keys
 from .promotion import RADAR_AXIS_THRESHOLD
+from .talk_asks import KEY_IDEAS_SOURCE, is_asks_view
 
 logger = logging.getLogger(__name__)
 
@@ -318,6 +320,30 @@ def _settle_earlier_twins(run: _Pass, entry: _Kept, twins: list[int]) -> None:
             run.kept[index] = settled
 
 
+def _source(run: _Pass, tab: Mapping[str, Any]) -> str | None:
+    return run.sources.get(str(tab.get("id", "")))
+
+
+def _settle_asks_view(run: _Pass) -> None:
+    """Each ask shows once (4.0 d, G3-2): the key-ideas tab sheds the cards the asks tab
+    (``talk_asks``) ships — unless shedding would leave it under its minimum: then the
+    cards stay and the asks tab goes. Before the twin rule, whatever the tab order."""
+    view = next((t for t in run.tabs if is_asks_view(t.get("component"), _source(run, t))), None)
+    asks = tab_fingerprints(view) if view is not None else frozenset()
+    holders = [
+        t for t in run.tabs if _source(run, t) == KEY_IDEAS_SOURCE and tab_fingerprints(t) & asks
+    ]
+    if view is None or not holders:
+        return
+    if any(_trim_breaks_minimum(holder, asks) for holder in holders):
+        run.remove(view)
+        _record_duplicate(run, (view, asks), (holders[0], tab_fingerprints(holders[0])))
+        return
+    for holder in holders:
+        total = _item_count(holder)
+        _record_trim(run, holder, (view, asks), _trim(holder, asks), total)
+
+
 def _dedupe_tabs(
     tabs: list[dict],
     dropped_sink: list[dict],
@@ -336,6 +362,7 @@ def _dedupe_tabs(
     ``sources`` (tab id → planned dataSource) labels each record.
     """
     run = _Pass(tabs, dropped_sink, sources or {})
+    _settle_asks_view(run)
     for tab in [t for t in tabs if t.get("component") != "overview"]:
         entry = (tab, tab_fingerprints(tab))
         twins = _twins(entry[1], run.kept)

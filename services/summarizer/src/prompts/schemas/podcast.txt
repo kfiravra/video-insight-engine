@@ -32,8 +32,8 @@ THINKING GUIDE:
 > UI: Segments → MomentTrack (the conversation map). Set timestamp (seconds) on every segment so listeners can jump. Use endSeconds only for a replayable highlight span.
   "qa": [
     {
-      "question": "The question as asked, close to verbatim",
-      "answer": "The answer in 1-2 sentences — what the guest actually said",
+      "question": "The host's question in the host's own words, copied from the transcript: one unbroken run of at most 25 words — the question itself, not its preamble — or two such runs joined by \"…\"; never reworded, never two questions merged",
+      "answer": "The guest's answer in 1-2 sentences, with only the names and numbers said in that answer",
       "speaker": "Who answers",
       "timestamp": 0,
       "quote": "The answer's key line, verbatim, at most 25 words — or null"

@@ -111,6 +111,7 @@ services/summarizer/
     │   │   │   ├── normalizers.py, density.py, cross_tab.py, text_utils.py
     │   │   │   ├── quiz_stamps.py, tab_references.py # Quiz times in seconds; no hero / goal sentence names a tab that does not ship (summarizer-workflow.md §Assembly notes)
     │   │   │   ├── moment_sources.py, steps_timeline.py, info_grid_fold.py, quote_spots.py, ingredients.py # R7 / D6 / R6 / quote cards / ingredient rows (summarizer-workflow.md §Assembly notes)
+    │   │   │   ├── qa_questions.py, talk_asks.py # podcast.qa questions checked against the transcript; a talk's asks tab from its quoted kind-ask key ideas (4.0 c / d)
     │   │   ├── phases/               # Phase runners (metadata, text, transcript, transcript_fallback,
     │   │   │                         #   probe, triage=plan, memory, moments, frames, frames_done,
     │   │   │                         #   split_extraction, group_emission, extraction, enrichment,
@@ -728,12 +729,12 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     └─▶ Assembly: code, 0 LLM calls — transforms extraction → component-addressed TabEntry[]. First a
     │   quote pre-pass on a copy of the extraction and the quiz (pipeline/quote_verify.py: a quote
     │   not found in the transcript is cleared, or kept as prose when the source is not English),
-    │   and the quiz's stamps are read in seconds (assembly/quiz_stamps.py)
+    │   then an interview's questions (assembly/qa_questions.py: a `podcast.qa` question the transcript does not say leaves the list on an English source, a found one stamps its row at the question, fewer than 3 left → no Q&A tab, never refilled from the outline), and the quiz's stamps are read in seconds (assembly/quiz_stamps.py)
     └─▶ 29 assemblers in ASSEMBLER_REGISTRY (assembly/registry.py — spot_explorer, moment_track,
     │   code_playground, quiz_arena, tier_list, claims_tracker, … + secondary/attachment assemblers)
     └─▶ Output-quality shapes and caps (module map: summarizer-workflow.md §Assembly notes; sets and
     │   bands from domains.json `assemblyPolicy` / `momentCapsByDuration` / `injectedTabs`):
-    │   learning.keyIdeas → spot cards (claim, why, quote, timestamp, kind badge, speaker, sections),
+    │   learning.keyIdeas → spot cards (claim, why, quote, timestamp, kind badge — an ask without its quote reads Argument —, speaker, sections); a talk's "What they asked" checklist on learning.takeaways ships the quoted kind-ask key ideas (≥ 3, else the tab drops; then Key Ideas sheds those cards — each ask shows once; a run without key ideas keeps its takeaways — assembly/talk_asks.py, dedupe.py),
     │   capped at keyIdeasCapFactor × the §9 count (10 / 16 / 24 / 32 by length); a Moments track
     │   capped strictly by the §9 bands, and a label-only one yields to a described sibling or the
     │   described fallback chain (R7); the answer tab's stat_banner only from `kind: number`
