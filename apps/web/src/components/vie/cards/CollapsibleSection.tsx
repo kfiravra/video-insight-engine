@@ -15,14 +15,14 @@ interface CollapsibleSectionProps {
   children: ReactNode;
 }
 
-/** Shared collapsible primitive for the hero's Brief, Key takeaways and Verdict
- *  rows. Renders an eyebrow row with left dash + label +
+/** Shared collapsible primitive for the hero's Brief, Key takeaways, Verdict
+ *  and (phones) Worth it rows. Renders an eyebrow row with left dash + label +
  *  flex-spacer dash + chevron, followed by a grid-rows morphing content panel. */
 export function CollapsibleSection({ baseId, label, accessory, open, onToggle, children }: CollapsibleSectionProps) {
   const labelId = `${baseId}-label`;
   const contentId = `${baseId}-content`;
   return (
-    <section aria-labelledby={labelId} className="space-y-3">
+    <section aria-labelledby={labelId}>
       <button
         type="button"
         onClick={onToggle}
@@ -54,7 +54,12 @@ export function CollapsibleSection({ baseId, label, accessory, open, onToggle, c
           open ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0',
         )}
       >
-        <div className="overflow-hidden">{children}</div>
+        {/* The gap under the row sits inside the clipped panel: a collapsed
+            row takes only its own line (three stacked rows on a phone would
+            otherwise carry 36 px of empty space). */}
+        <div className="overflow-hidden">
+          <div className="pt-3">{children}</div>
+        </div>
       </div>
     </section>
   );

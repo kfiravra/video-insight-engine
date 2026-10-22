@@ -1,6 +1,7 @@
-import { memo } from 'react';
+import { memo, useCallback, useState } from 'react';
 import { cn } from '@/lib/utils';
 import { useLabels } from '@/lib/i18n';
+import { CollapsibleSection } from './CollapsibleSection';
 
 interface HeroWorthItProps {
   /** Who gets what from watching (the hero rewrite, ≤ 20 words). */
@@ -71,5 +72,24 @@ export const HeroWorthIt = memo(function HeroWorthIt({ worthItFor, skipIf, bestF
         </div>
       ))}
     </dl>
+  );
+});
+
+interface HeroWorthItRowProps {
+  worthItFor?: string;
+  skipIf?: string;
+}
+
+/** Phones: the worth-it lines behind a third collapsed "Worth it?" row under
+ *  Brief and Key takeaways. Open, they cost ≈ 150 px and push the tab panel
+ *  past 60 % of the first screen (output-quality 4.4). */
+export const HeroWorthItRow = memo(function HeroWorthItRow({ worthItFor, skipIf }: HeroWorthItRowProps) {
+  const t = useLabels();
+  const [open, setOpen] = useState(false);
+  const toggle = useCallback(() => setOpen((prev) => !prev), []);
+  return (
+    <CollapsibleSection baseId="vie-hero-worth" label={t.worthIt} open={open} onToggle={toggle}>
+      <HeroWorthIt worthItFor={worthItFor} skipIf={skipIf} />
+    </CollapsibleSection>
   );
 });

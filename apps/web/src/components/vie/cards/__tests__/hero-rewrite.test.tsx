@@ -202,11 +202,25 @@ describe('VideoHero — rewritten hero', () => {
       expect(screen.getByRole('button', { name: /^brief$/i })).toHaveAttribute('aria-expanded', 'false');
     });
 
-    it('should keep the worth-it lines readable on phones while the brief and takeaways are collapsed', () => {
+    it('should fold the worth-it lines into a third collapsed row when on a phone', () => {
       mockPhoneViewport();
       renderHero();
 
+      expect(screen.getByRole('button', { name: 'Worth it?' })).toHaveAttribute('aria-expanded', 'false');
+    });
+
+    it('should keep the worth-it lines out of reach until their row is opened when on a phone', () => {
+      mockPhoneViewport();
+      renderHero();
+
+      expect(screen.getByText(NEW_HERO.worthItFor as string).closest('[inert]')).not.toBeNull();
+    });
+
+    it('should keep the worth-it lines open with no extra row when on desktop', () => {
+      renderHero();
+
       expect(screen.getByText(NEW_HERO.worthItFor as string).closest('[inert]')).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Worth it?' })).not.toBeInTheDocument();
     });
 
     it('should show three takeaways on phones with a "+N" control for the rest', async () => {

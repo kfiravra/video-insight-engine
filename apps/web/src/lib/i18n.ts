@@ -75,6 +75,8 @@ export interface Labels {
   /** The hero's "should I watch?" lines (output-quality 2.3). */
   worthItFor: string;
   skipIf: string;
+  /** Phones: the collapsed hero row that holds those two lines (4.4). */
+  worthIt: string;
   /** A review's hero verdict row and the reviewer's lists that replace those lines (4.3). */
   verdict: string;
   bestFor: string;
@@ -169,6 +171,7 @@ const EN: Labels = {
   hideTakeaways: 'Hide takeaways',
   worthItFor: 'Worth it for',
   skipIf: 'Skip if',
+  worthIt: 'Worth it?',
   verdict: 'Verdict',
   bestFor: 'Best for',
   notFor: 'Not for',
@@ -292,6 +295,7 @@ const TRANSLATIONS: Record<string, Labels> = {
     hideTakeaways: 'הסתר תובנות מפתח',
     worthItFor: 'שווה צפייה עבור',
     skipIf: 'דלגו אם',
+    worthIt: 'שווה צפייה?',
     verdict: 'פסק הדין',
     bestFor: 'מתאים במיוחד ל',
     notFor: 'לא מתאים ל',
@@ -412,6 +416,7 @@ const TRANSLATIONS: Record<string, Labels> = {
     hideTakeaways: 'إخفاء النقاط الرئيسية',
     worthItFor: 'يستحق المشاهدة لـ',
     skipIf: 'تخطَّه إذا',
+    worthIt: 'هل يستحق المشاهدة؟',
     verdict: 'الحكم',
     bestFor: 'الأنسب لـ',
     notFor: 'غير مناسب لـ',

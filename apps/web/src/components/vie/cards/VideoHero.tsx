@@ -35,7 +35,8 @@ interface VideoHeroProps {
   /** The long-form brief (synthesis.masterSummary). Rendered as a collapsible
    *  "Brief" under the tldr — open on desktop, collapsed on phones (R11). */
   masterSummary?: string;
-  /** "Worth it for / Skip if" — two short lines under the takeaways (C2). */
+  /** "Worth it for / Skip if" — two short lines under the takeaways (C2);
+   *  on phones behind a collapsed "Worth it?" row. */
   worthItFor?: string;
   skipIf?: string;
   /** A review's verdict, lifted out of its comparison tab (output-quality 4.3):
@@ -134,14 +135,19 @@ function IdentityStrip({ primaryTag, level, durationStr, readWatch, creator }: I
   }
   if (creator) chips.push({ key: 'creator', node: <span className="truncate max-w-[24ch]">{creator}</span> });
   if (chips.length === 0) return null;
+  // Every chip leads with its separator, and the row is pulled one separator
+  // wide past the start edge and clipped there: a line that wraps (the creator
+  // on a phone) starts with its text, not a stray "·".
   return (
-    <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs text-muted-foreground">
-      {chips.map((chip, i) => (
-        <span key={chip.key} className="inline-flex items-center gap-2.5">
-          {i > 0 && <span aria-hidden="true" className="text-muted-foreground/40">·</span>}
-          {chip.node}
-        </span>
-      ))}
+    <div className="overflow-x-clip">
+      <div className="-ms-6 flex flex-wrap items-center gap-y-1 text-xs text-muted-foreground">
+        {chips.map((chip) => (
+          <span key={chip.key} className="inline-flex items-center">
+            <span aria-hidden="true" className="w-6 shrink-0 text-center text-muted-foreground/40">·</span>
+            {chip.node}
+          </span>
+        ))}
+      </div>
     </div>
   );
 }
