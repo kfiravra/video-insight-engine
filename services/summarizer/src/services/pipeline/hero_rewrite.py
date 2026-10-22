@@ -38,7 +38,7 @@ from ...utils.json_parsing import parse_json_response, strip_markdown_fences
 from ...utils.llm_retry import call_llm_with_retry
 from ..llm_messages import TextBlock, text_block
 from ..llm_model_rules import LLMRefusalError
-from .hero_compact import CompactExtraction, compact_for_hero, estimate_tokens
+from .hero_compact import ChunkScalars, CompactExtraction, compact_for_hero, estimate_tokens
 from .hero_job import GroupBlocks, HeroRequest, cached_blocks, hero_evidence, job_text
 from .hero_validate import (
     HeroDraft,
@@ -143,7 +143,10 @@ async def rewrite_hero(llm_service: LLMService, request: HeroRequest) -> HeroRew
     """The hero from one call and at most one retry (module docstring); None when no
     valid hero came back."""
     compact = compact_for_hero(
-        request.extraction, request.duration, quote_index=request.quote_index
+        request.extraction,
+        request.duration,
+        quote_index=request.quote_index,
+        chunk_scalars=request.chunk_scalars,
     )
     if not compact.text:
         logger.info("Hero rewrite skipped: nothing was extracted")
@@ -225,10 +228,13 @@ def _run_quote_index(ctx: PipelineContext) -> QuoteIndex | None:
 
 
 def hero_request(
-    ctx: PipelineContext, extraction: Mapping[str, Any], run: SplitRun | None = None
+    ctx: PipelineContext,
+    extraction: Mapping[str, Any],
+    run: SplitRun | None = None,
+    chunk_scalars: ChunkScalars | None = None,
 ) -> HeroRequest:
     """The request from the run: video, reconciled tabs, memory, the quote index; the
-    split run's blocks."""
+    split run's blocks and a chunked run's scalars part by part."""
     video = ctx.video_data
     assert video is not None
     plan_tabs = ctx.plan_result.tabs if ctx.plan_result else ctx.triage.tabs if ctx.triage else []
@@ -240,17 +246,22 @@ def hero_request(
         video_memory=ctx.video_memory,
         blocks=GroupBlocks(run.prompt, run.chunks) if run is not None else None,
         quote_index=_run_quote_index(ctx),
+        chunk_scalars=chunk_scalars or {},
     )
 
 
 async def hero_rewrite_for_run(
-    ctx: PipelineContext, extraction: Mapping[str, Any], run: SplitRun | None = None
+    ctx: PipelineContext,
+    extraction: Mapping[str, Any],
+    run: SplitRun | None = None,
+    chunk_scalars: ChunkScalars | None = None,
 ) -> HeroRewriteResult | None:
     """The hero for this run over ``extraction`` (the text groups' merge); None = keep
-    memory's hero + synthesis. ``run`` = the split run (None on ``EXTRACTION_PARALLEL=false``).
+    memory's hero + synthesis. ``run`` = the split run (None on ``EXTRACTION_PARALLEL=false``);
+    ``chunk_scalars`` = its scalars part by part (3.2; none on today's path).
     Never raises, as ``run_hero_rewrite``: the synthesis it replaces never failed a run."""
     try:
-        request = hero_request(ctx, extraction, run)
+        request = hero_request(ctx, extraction, run, chunk_scalars)
         llm_service = ctx.llm_service
     except Exception:  # noqa: BLE001 — the hero is optional; memory's + synthesis stay on a bug here
         logger.exception("Hero rewrite: the request could not be built; synthesis runs")

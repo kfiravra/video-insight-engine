@@ -16,6 +16,15 @@ then quotes), and only then do long lists keep an even spread of their items —
 the tail of the video stays in (S01's brief lost the second half once).
 Deterministic: the same extraction always gives the same bytes.
 
+A scalar is the first chunk's on a chunked run (``group_merge``): S01's ``summary`` ends
+at 38:06 of 63 minutes. Given ``chunk_scalars`` (output-quality 3.2), a scalar the
+chunks wrote apart shows every part under its window instead, at the level's scalar
+length::
+
+    learning.summary (one per part of the video):
+    - (0:00–39:21) DHH calls it AI euphoria …
+    - (39:21–1:03:07) The second half turns to architecture …
+
 With the run's quote index the extraction is read as 2.0's pre-pass leaves it
 (``verify_extraction_quotes``): a quote the transcript never says is out of the item's
 line, the evidence and ``quotes`` (a quote list loses the item) — a number or name
@@ -47,7 +56,9 @@ from .quote_verify import (
     verify_quote,
 )
 
-HERO_EXTRACTION_MAX_TOKENS = 5000
+# 5.5 K: a long video's per-chunk summaries (output-quality 3.2, ≈ 0.3 K on S01) would
+# otherwise cut every item's detail a level (S01: 30 → 20 words) at 5 K.
+HERO_EXTRACTION_MAX_TOKENS = 5500
 # A quote found farther than this from its item's stamp is the line said again
 # elsewhere (or another item's words), not where the item is: its stamp stays. An
 # answer runs on past its question's stamp (S02: the claim and its quote 184 s in).
@@ -117,8 +128,14 @@ _SKIP_KEYS = frozenset(
 )
 # A string this short is a tag (kind=thesis, speaker=DHH, tier=S), not a body.
 _TAG_WORDS = 4
+# A chunked run's scalar: ``learning.summary (one per part of the video):``.
+_PARTS_HEADER = "(one per part of the video)"
 _STAMP_PREFIX_RE = re.compile(r"^(\s*)[A-Z]\d+ \[\d+(?::\d{2}){1,2}\] ", re.MULTILINE)
 _WHITESPACE_RE = re.compile(r"\s+")
+
+
+# A chunked run's scalars: path → (the chunk's window, its value) per part, in chunk order.
+ChunkScalars = Mapping[str, Sequence[tuple[str, str]]]
 
 
 @dataclass(frozen=True)
@@ -259,6 +276,7 @@ class _Render:
 
     level: _Level
     duration: int | None
+    parts: ChunkScalars = field(default_factory=dict)
     lines: list[str] = field(default_factory=list)
     stamps: dict[str, int] = field(default_factory=dict)
     quotes: dict[str, str] = field(default_factory=dict)
@@ -297,10 +315,19 @@ class _Render:
         for index, item in enumerate(items):
             self._emit(indent, name, item, shown and index in kept)
 
+    def _parted(self, path: str, parts: Sequence[tuple[str, str]]) -> None:
+        """A scalar the chunks wrote apart: a header + one ``- (window) text`` line per part."""
+        self.lines.append(f"{path} {_PARTS_HEADER}:")
+        for window, text in parts:
+            self.lines.append(f"- ({window}) {_words(text, self.level.scalar_words)}")
+
     def field(self, path: str, name: str, value: object) -> None:
-        """One extraction field: a header + its items (a mapping is one item), or one
-        ``path: text`` line."""
-        if isinstance(value, list | Mapping) and value:
+        """One extraction field: a header + its items (a mapping is one item), a chunked
+        run's scalar part by part, or one ``path: text`` line."""
+        parts = self.parts.get(path)
+        if parts and isinstance(value, str):
+            self._parted(path, parts)
+        elif isinstance(value, list | Mapping) and value:
             self.lines.append(f"{path}:")
             if isinstance(value, list):
                 self.items("", name, value, shown=True)
@@ -320,8 +347,10 @@ def _fields(extraction: Mapping[str, object]) -> Iterator[tuple[str, str, object
                 yield f"{domain}.{name}", str(name), value
 
 
-def _render(extraction: Mapping[str, object], level: _Level, duration: int | None) -> _Render:
-    render = _Render(level, duration)
+def _render(
+    extraction: Mapping[str, object], level: _Level, duration: int | None, parts: ChunkScalars
+) -> _Render:
+    render = _Render(level, duration, parts)
     for path, name, value in _fields(extraction):
         render.field(path, name, value)
     return render
@@ -348,17 +377,20 @@ def compact_for_hero(
     duration: int | None = None,
     max_tokens: int = HERO_EXTRACTION_MAX_TOKENS,
     quote_index: QuoteIndex | None = None,
+    chunk_scalars: ChunkScalars | None = None,
 ) -> CompactExtraction:
     """The extraction as id'd lines within ``max_tokens`` (empty for no extraction).
 
     ``duration`` (seconds) leaves a stamp past the video's end without an id;
-    ``quote_index`` (the run's) leaves out every quote it reads as never said.
+    ``quote_index`` (the run's) leaves out every quote it reads as never said;
+    ``chunk_scalars`` (a chunked run's, ``group_merge.chunk_scalars``) shows each such
+    scalar part by part instead of the first chunk's value — none, today's bytes.
     """
     if not extraction:
         return CompactExtraction("")
     extraction = _said_quotes_only(extraction, quote_index)
     for level in _LEVELS:
-        render = _render(extraction, level, duration)
+        render = _render(extraction, level, duration, chunk_scalars or {})
         text = "\n".join(render.lines)
         if estimate_tokens(text) <= max_tokens:
             return CompactExtraction(text, render.stamps, render.quotes)

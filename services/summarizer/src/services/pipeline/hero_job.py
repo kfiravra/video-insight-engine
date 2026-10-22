@@ -12,8 +12,8 @@ call runs on the groups' model, with their JSON mode, effort and no system promp
    extraction (S01's brief lost the second half once) for +$0.002, so a chunked
    run reads block 1 alone and block 3 carries ``<video>`` + ``<video_memory>``;
 3. the hero job (uncached): ``prompts/hero_rewrite.txt`` + the compacted merged
-   extraction (``hero_compact``, ≤ 5 K tokens, stamped items under ids) + the
-   tab labels.
+   extraction (``hero_compact``, ≤ 5 K tokens, stamped items under ids; a chunked
+   run's scalars part by part, 3.2) + the tab labels.
 
 Without group blocks (``EXTRACTION_PARALLEL=false``) the request is block 3
 alone: no group call wrote blocks 1 / 2, so sending them would WRITE them (block
@@ -31,14 +31,14 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from ...utils.language_utils import ENGLISH_OUTPUT_DIRECTIVE
 from ..llm_messages import TextBlock
 from .assembly.tab_references import bare_label
 from .extraction_group_prompt import head_block, prefix_block
-from .hero_compact import CompactExtraction, stamps_at_quotes
+from .hero_compact import ChunkScalars, CompactExtraction, stamps_at_quotes
 from .hero_validate import HeroEvidence, clock_seconds
 from .memory import format_clock, takeaway_count
 from .pipeline_helpers import sanitize_for_prompt
@@ -78,7 +78,8 @@ class GroupBlocks:
 @dataclass(frozen=True)
 class HeroRequest:
     """Everything one hero call is built from; ``blocks`` None = no group blocks to read;
-    ``quote_index`` None = the takeaways keep the items' own stamps."""
+    ``quote_index`` None = the takeaways keep the items' own stamps; ``chunk_scalars`` = a
+    chunked run's scalars part by part (``group_merge.chunk_scalars``; empty = the merge's)."""
 
     title: str
     duration: int | None
@@ -87,6 +88,7 @@ class HeroRequest:
     video_memory: str = ""
     blocks: GroupBlocks | None = None
     quote_index: QuoteIndex | None = None
+    chunk_scalars: ChunkScalars = field(default_factory=dict)
 
     @property
     def reads_transcript(self) -> bool:

@@ -66,6 +66,7 @@ if TYPE_CHECKING:
     from src.models.pipeline_types import SynthesisResult
     from src.services.pipeline.context import PipelineContext
     from src.services.pipeline.extraction_groups import SplitRun
+    from src.services.pipeline.hero_compact import ChunkScalars
 
 logger = logging.getLogger(__name__)
 
@@ -148,17 +149,26 @@ async def _synthesize(ctx: PipelineContext) -> SynthesisResult | None:
 
 
 async def _timed_hero(
-    ctx: PipelineContext, extraction: Mapping[str, Any], run: SplitRun
+    ctx: PipelineContext,
+    extraction: Mapping[str, Any],
+    run: SplitRun,
+    chunk_scalars: ChunkScalars | None,
 ) -> HeroRewriteResult | None:
     with timed_step(HERO_CALL_STEP):
-        return await hero_rewrite_for_run(ctx, extraction, run)
+        return await hero_rewrite_for_run(ctx, extraction, run, chunk_scalars=chunk_scalars)
 
 
-def start_hero_task(ctx: PipelineContext, extraction: Mapping[str, Any], run: SplitRun) -> None:
+def start_hero_task(
+    ctx: PipelineContext,
+    extraction: Mapping[str, Any],
+    run: SplitRun,
+    chunk_scalars: ChunkScalars | None = None,
+) -> None:
     """Start the hero rewrite now (split path: every text group landed) over ``extraction``,
-    reading ``run``'s cached blocks; the synthesis slot awaits it."""
+    reading ``run``'s cached blocks and a chunked run's scalars part by part
+    (output-quality 3.2); the synthesis slot awaits it."""
     ctx.hero_task = asyncio.create_task(
-        _timed_hero(ctx, extraction, run), name=f"hero_{ctx.video_summary_id}"
+        _timed_hero(ctx, extraction, run, chunk_scalars), name=f"hero_{ctx.video_summary_id}"
     )
 
 

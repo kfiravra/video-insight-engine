@@ -797,7 +797,8 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     │   │   LLM_EXTRACTION_MODEL (Sonnet 5.5), JSON mode, 2,000 max tokens, 25 s, one retry that
     │   │   carries the failed checks — only when the hero would be None or a D18 line would drop;
     │   │   what finalize repairs itself costs no second call. It reads the field groups' cached blocks 1 (+ 2 on a one-chunk
-    │   │   run) and the extraction compacted to ≤ 5,000 tokens with ids (hero_compact.py), so
+    │   │   run) and the extraction compacted to ≤ 5,000 tokens with ids (hero_compact.py; a chunked
+    │   │   run's summary / keyQuestion part by part, group_merge.chunk_scalars — 3.2), so
     │   │   code copies each takeaway's timestamp from the item it cites; hero_validate.py checks
     │   │   numbers, sizes, stamps (no transcript read → a typed stamp only within 30 s of a clock the
     │   │   call read), quoted spans of 3+ words (quote_verify), tab names and D18 (worthItFor /

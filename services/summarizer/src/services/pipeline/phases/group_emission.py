@@ -29,7 +29,8 @@ no text group holds one — over the extraction merged so far. A strip-only quiz
 
 So does the hero rewrite (``ctx.hero_task``, output-quality 2.2, D1): once every
 text group landed on every chunk (text-groups-done), over the extraction merged so
-far, reading the run's cached blocks; assembly's synthesis slot awaits it. On a
+far, reading the run's cached blocks and — on a chunked run — every chunk's
+scalars (``group_merge.chunk_scalars``, 3.2); assembly's synthesis slot awaits it. On a
 chunked run merge_rank starts beside it (``ctx.merge_rank_task``, 3.1) over the same
 merge; the split extraction applies its answer to the final merge.
 """
@@ -48,7 +49,7 @@ from src.config import settings
 from src.models.sse_events import SSEEventValidationError
 from src.services.pipeline.assembly import assemble_response
 from src.services.pipeline.enrichment import QUIZ_COMPONENT, QUIZ_DATA_SOURCE
-from src.services.pipeline.group_merge import merge_groups
+from src.services.pipeline.group_merge import chunk_scalars, merge_groups
 from src.services.pipeline.merge_rank import start_merge_rank_task
 from src.services.pipeline.phases.enrichment import start_quiz_task
 from src.services.pipeline.phases.moments import video_meta
@@ -252,10 +253,17 @@ class _TextDoneCalls:
     def __bool__(self) -> bool:
         return self.hero is not None or self.merge_rank is not None
 
-    def start(self, ctx: PipelineContext, merged: Mapping[str, Any]) -> None:
-        """Start the due calls over the same merge: neither reads the other's answer."""
+    def start(
+        self,
+        ctx: PipelineContext,
+        merged: Mapping[str, Any],
+        outcomes: Sequence[GroupOutcome],
+    ) -> None:
+        """Start the due calls over the same merge: neither reads the other's answer. The
+        hero also reads a chunked run's scalars part by part (output-quality 3.2)."""
         if self.hero is not None:
-            start_hero_task(ctx, merged, self.hero)
+            parts = chunk_scalars(outcomes, self.hero.chunks)
+            start_hero_task(ctx, merged, self.hero, chunk_scalars=parts)
         if self.merge_rank is not None:
             start_merge_rank_task(ctx, merged, self.merge_rank)
 
@@ -360,7 +368,7 @@ class GroupLanding:
         merged, _ = merge_groups(outcomes)
         if quiz_due:
             start_quiz_task(self.ctx, merged)
-        text_done.start(self.ctx, merged)
+        text_done.start(self.ctx, merged, outcomes)
         if not grew:
             return []
         self.assembled_over = landed
