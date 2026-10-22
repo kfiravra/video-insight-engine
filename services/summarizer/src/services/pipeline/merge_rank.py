@@ -1,4 +1,4 @@
-"""merge_rank — one Haiku call dedupes, sections and ranks the lists (output-quality 3.1).
+"""merge_rank — one Haiku call dedupes and ranks a long video's lists (output-quality 3.1).
 
 A chunked run's field groups write every list once per chunk, and the code merge
 (``group_merge``) can drop a repeat only when its name matches exactly: a point made
@@ -17,8 +17,11 @@ feature ``summarize:merge_rank``, timing step ``merge_rank_call``), JSON mode. T
 is code-rendered (``merge_rank_render``: the outline + every list a planned tab reads,
 each item under an id); the answer is ids only::
 
-    {"duplicates": [{"keep": "Q3", "drop": ["K9", "S4"]}], "sections": {"3": ["K1"]},
-     "rank": ["K7", "K1"]}
+    {"duplicates": [{"keep": "Q3", "drop": ["K9", "S4"]}], "rank": ["K7", "K1"]}
+
+The key ideas' sections are code's (``merge_rank_apply``: the outline section holding each
+idea's stamp): asked for them, the call placed none of S13's 33 ideas where its stamp
+lies (p3i3).
 
 12 s an attempt and one wrapper retry, the whole stage inside 25 s (the deadline cancels
 the attempt in flight, so it is recorded here, as quiz v2's); a reply that is no JSON
@@ -27,9 +30,8 @@ object is asked for once more inside the same deadline, a refusal never. S02 (83
 the hero and the quiz.
 
 **Reading the answer:** an unknown id goes; a group whose keep an earlier group dropped
-goes; an id two groups claim stays with the first; a keep never drops itself; a section
-number outside the outline — or an idea the answer left out — takes the outline section
-its stamp falls in; the rank keeps the ids of the ``[rank]`` lists. ``merge_rank_apply``
+goes; an id two groups claim stays with the first; a keep never drops itself; the rank
+keeps the ids of the ``[rank]`` lists. ``merge_rank_apply``
 then edits the FINAL merge in ``split_extraction._complete`` (guards, rank cut, sections),
 before ``extraction_complete``. The hero and the quiz read the extraction as it was at
 text-groups-done — they start at the same moment, and a dropped twin leaves its kept
@@ -109,43 +111,6 @@ def read_duplicates(raw: object, known: Mapping[str, RankedItem]) -> tuple[Dupli
     return tuple(DuplicateGroup(keep, tuple(drops)) for keep, drops in groups.items())
 
 
-def _stamp_section(seconds: int | None, request: MergeRankRequest) -> int | None:
-    """The 0-based outline section a stamp falls in (the last holds the video's end)."""
-    if seconds is None or not request.outline:
-        return None
-    for index, section in enumerate(request.outline):
-        if seconds < section.end:
-            return index
-    return len(request.outline) - 1
-
-
-def _answered_sections(raw: object, count: int) -> dict[str, int | None]:
-    """id → the 0-based section the answer named for it (None = a number outside)."""
-    named: dict[str, int | None] = {}
-    for key, ids in raw.items() if isinstance(raw, Mapping) else ():
-        text = str(key).strip()
-        number = int(text) if text.isdigit() else 0
-        for item_id in _ids(ids):
-            named.setdefault(item_id, number - 1 if 1 <= number <= count else None)
-    return named
-
-
-def read_sections(raw: object, request: MergeRankRequest) -> dict[str, int]:
-    """Every idea of the ``[sections]`` list → its 0-based outline section (module
-    docstring); an idea with neither a valid number nor a stamp has none."""
-    named = _answered_sections(raw, len(request.outline))
-    sectioned = {spec.path for spec in request.lists if spec.sectioned}
-    placed: dict[str, int] = {}
-    for item_id, item in request.items.items():
-        if item.path not in sectioned:
-            continue
-        section = named.get(item_id)
-        section = section if section is not None else _stamp_section(item.seconds, request)
-        if section is not None:
-            placed[item_id] = section
-    return placed
-
-
 def read_rank(raw: object, request: MergeRankRequest) -> tuple[str, ...]:
     """The answer's rank over the ``[rank]`` lists' ids, each id once."""
     ranked = {spec.path for spec in request.lists if spec.cap is not None}
@@ -158,7 +123,6 @@ def read_answer(data: Mapping[str, Any], request: MergeRankRequest) -> MergeRank
         OK,
         request,
         duplicates=read_duplicates(data.get("duplicates"), request.items),
-        sections=read_sections(data.get("sections"), request),
         rank=read_rank(data.get("rank"), request),
     )
 

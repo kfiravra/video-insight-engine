@@ -11,18 +11,18 @@ code renders it here:
     </outline>
 
     <lists>
-    learning.keyIdeas — "Positions" (spot_explorer) [sections] [rank]
+    learning.keyIdeas — "Positions" (spot_explorer) [rank]
     K1 [2:28] (part 1) We are probably the only life … — Fridman opens by asking …
 
     podcast.qa — "Questions Asked" (moment_track)
     Q1 [2:28] (part 1) Do you think there's intelligent life … — Tegmark's guess is no …
     </lists>
 
-- the outline: memory's sections numbered from 1 — the numbers ``sections`` answers in;
+- the outline: memory's sections numbered from 1 — how the video runs (code, not the call,
+  sections the key ideas by it: ``merge_rank_apply``);
 - one block per list a planned tab reads (its ``dataSource``, the first tab naming it),
-  in plan order; the header names the tab and its component and what the call answers
-  for it: ``[sections]`` on ``learning.keyIdeas`` when memory gave an outline, ``[rank]``
-  on a rankable list (:data:`RANKED_FIELDS`, not a timeline) over its assembly cap;
+  in plan order; the header names the tab and its component, and ``[rank]`` marks a
+  rankable list (:data:`RANKED_FIELDS`, not a timeline) over its assembly cap;
 - one line per item: its id (one letter per list + its 1-based position), its clock and
   the part (chunk) the clock falls in, its head and its body.
 
@@ -114,7 +114,8 @@ class ListSpec:
     """One list the call reads: where it lives, the tab that shows it and its guards.
 
     ``floor`` = the fewest items the dedupe may leave (``densityGates`` min, a timeline's
-    §9 band minimum); ``cap`` = the assembly cap a ranked list is cut to (None = no rank).
+    §9 band minimum); ``cap`` = the assembly cap a ranked list is cut to (None = no rank);
+    ``sectioned`` = code titles its items by the outline section holding their stamps.
     """
 
     path: str
@@ -344,7 +345,7 @@ def _outline_block(outline: Sequence[OutlineSection]) -> str:
 
 
 def _header(spec: ListSpec) -> str:
-    asks = (" [sections]" if spec.sectioned else "") + (" [rank]" if spec.cap else "")
+    asks = " [rank]" if spec.cap else ""
     return f'{spec.path} — "{_clean(spec.label)}" ({spec.component}){asks}'
 
 

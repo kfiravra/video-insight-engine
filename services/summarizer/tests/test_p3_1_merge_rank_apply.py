@@ -1,11 +1,11 @@
 """merge_rank's answer read and applied (output-quality 3.1) — pure code, no LLM.
 
 Reading: an unknown id goes, a keep never drops itself, an id two groups claim stays
-with the first, a section number outside the outline falls back to the stamp's section,
-the rank keeps the ranked lists' ids. Applying: drops by id while the item is still
-where the call saw it, under five guards (40 % per list, the density-gate minimum, a
-timeline's band minimum, no 10-minute window emptied); a ranked list over its cap is cut
-by rank tier with every window kept; key ideas take ≤ 8 outline titles.
+with the first, the rank keeps the ranked lists' ids. Applying: drops by id while the
+item is still where the call saw it, under five guards (40 % per list, the density-gate
+minimum, a timeline's band minimum, no 10-minute window emptied); a ranked list over its
+cap is cut by rank tier with every window kept; each key idea takes the title of the
+outline section its stamp falls in (≤ 8 titles) — whatever the answer says (p3i3 S13).
 """
 
 from __future__ import annotations
@@ -16,17 +16,13 @@ from typing import Any
 
 from src.models.memory_types import OutlineSection
 from src.services.pipeline.extraction_chunks import ExtractionChunk
-from src.services.pipeline.merge_rank import (
-    read_answer,
-    read_duplicates,
-    read_rank,
-    read_sections,
-)
+from src.services.pipeline.merge_rank import read_answer, read_duplicates, read_rank
 from src.services.pipeline.merge_rank_apply import (
     MergeRankAnswer,
     apply_merge_rank,
     refill_windows,
     section_titles,
+    stamp_section,
     window_of,
 )
 from src.services.pipeline.merge_rank_render import MergeRankRequest, RenderInput, build_request
@@ -123,28 +119,6 @@ class TestReadDuplicates:
         groups = read_duplicates(answer, request.items)
 
         assert [g.keep for g in groups] == ["K1"]
-
-
-class TestReadSections:
-    def test_should_take_the_answered_section_when_it_is_in_the_outline(self) -> None:
-        _, request = _request({"keyIdeas": _ideas(2)})
-
-        assert read_sections({"7": ["K1"]}, request)["K1"] == 6
-
-    def test_should_fall_back_to_the_stamps_section_when_the_number_is_outside(self) -> None:
-        _, request = _request({"keyIdeas": [_idea(1, 1000)]})
-
-        assert read_sections({"40": ["K1"]}, request)["K1"] == 3
-
-    def test_should_place_an_idea_the_answer_left_out_by_its_stamp(self) -> None:
-        _, request = _request({"keyIdeas": [_idea(1, 3599)]})
-
-        assert read_sections({}, request) == {"K1": 11}
-
-    def test_should_place_no_idea_of_an_unsectioned_list(self) -> None:
-        _, request = _request({"timestamps": [_moment(1, 60)]}, tabs=("moments",))
-
-        assert read_sections({"1": ["M1"]}, request) == {}
 
 
 class TestReadRank:
@@ -352,3 +326,110 @@ class TestSections:
 
 def test_should_count_windows_back_from_the_videos_end() -> None:
     assert (window_of(3500, _DURATION), window_of(2999, _DURATION)) == (0, 1)
+
+
+# ─── Regression: p3i3 S13 (42 min, 11 outline sections) ───
+
+# Memory's outline of the run (start, end, title), and the 33 key ideas' stamps.
+_S13_OUTLINE = tuple(
+    OutlineSection(start=start, end=end, title=title)
+    for start, end, title in (
+        (0, 60, "intro — DHH on Omarchy and Linux desktop 2026"),
+        (60, 310, "Omarchy Quattro release, plugins and rewrite details"),
+        (310, 460, "announcing the $8M Omarchy Foundation and funders"),
+        (460, 640, "why 2026 is the year: hardware caught up to MacBook"),
+        (640, 780, "battery life anecdotes and agents on Linux vs macOS"),
+        (780, 1050, "macOS config pain and Raycast export frustrations"),
+        (1050, 1260, "how the $8M will be spent over five years"),
+        (1260, 1660, "supply chain security: dropping the AUR and self-hosting"),
+        (1660, 1800, "small teams beating giant companies in software"),
+        (1800, 2320, "QA process, release channels and snapshot resilience"),
+        (2320, 2532, "inclusive community stance and closing remarks"),
+    )
+)
+_S13_STAMPS = (
+    61, 100, 260, 300, 314, 381, 441, 600, 541, 762, 783, 885, 996, 1060, 1246, 1322, 1464,
+    1480, 1560, 1620, 1780, 1821, 1900, 1951, 2062, 2135, 2196, 2260, 2324, 2379, 2400, 2461,
+    2481,
+)  # fmt: skip
+# The answer Haiku gave: the 33 ideas in list order under sections 1–4 — none where its
+# stamp lies — and a rank whose tail is the list order.
+_S13_ANSWER = {
+    "duplicates": [{"keep": "K3", "drop": []}],
+    "sections": {
+        "1": ["K1", "K2", "K3", "K4"],
+        "2": ["K5", "K6", "K14", "K7", "K8", "K9", "K10", "K11", "K12", "K13", "K15"],
+        "3": [f"K{n}" for n in range(16, 29)],
+        "4": [f"K{n}" for n in range(29, 34)],
+    },
+    "rank": [
+        "K1", "K10", "K7", "K5", "K16", "K15", "K22", "K24", "K14", "K8", "K13", "K12", "K11",
+        "K9", "K2", "K3", "K4", "K6", *(f"K{n}" for n in range(17, 34) if n not in (22, 24)),
+    ],
+}  # fmt: skip
+
+
+def _s13_shipped() -> dict[int, str]:
+    ideas = [_idea(n, stamp) for n, stamp in enumerate(_S13_STAMPS, start=1)]
+    extraction = {"learning": {"keyIdeas": ideas}}
+    tabs = [_TABS["ideas"]]
+    source = RenderInput(extraction, tabs, _S13_OUTLINE, _CHUNKS, 2532)
+    request = build_request(source)
+    assert request is not None
+    result, _ = _applied(extraction, request, _S13_ANSWER)
+    return {idea["timestamp"]: idea["section"] for idea in result["learning"]["keyIdeas"]}
+
+
+class TestS13Sections:
+    def test_should_ship_the_foundation_idea_under_the_foundation_section(self) -> None:
+        assert _s13_shipped()[314] == "Announcing the $8M Omarchy Foundation and funders"
+
+    def test_should_ship_the_supply_chain_idea_under_the_supply_chain_section(self) -> None:
+        assert _s13_shipped()[1322] == "Supply chain security: dropping the AUR and self-hosting"
+
+    def test_should_ship_no_idea_past_7_40_under_an_opening_section(self) -> None:
+        opening = {"Intro — DHH on Omarchy and Linux desktop 2026",
+                   "Omarchy Quattro release, plugins and rewrite details",
+                   "Announcing the $8M Omarchy Foundation and funders"}  # fmt: skip
+
+        late = {title for stamp, title in _s13_shipped().items() if stamp >= 460}
+
+        assert late.isdisjoint(opening)
+
+    def test_should_ship_every_kept_idea_under_the_section_its_stamp_falls_in(self) -> None:
+        quattro, foundation = (
+            _S13_OUTLINE[1].title,
+            "Announcing the $8M Omarchy Foundation and funders",
+        )
+        why, battery = (
+            "Why 2026 is the year: hardware caught up to MacBook",
+            "Battery life anecdotes and agents on Linux vs macOS",
+        )
+        macos, spend = _S13_OUTLINE[5].title, "How the $8M will be spent over five years"
+        supply, qa = (
+            "Supply chain security: dropping the AUR and self-hosting",
+            _S13_OUTLINE[9].title,
+        )
+
+        assert _s13_shipped() == {
+            61: quattro, 100: quattro, 300: quattro, 314: foundation, 441: foundation,
+            600: why, 762: battery, 783: macos, 996: macos, 1060: spend, 1246: spend,
+            1322: supply, 1480: supply, 1620: supply, 1821: qa, 1951: qa,
+        }  # fmt: skip
+
+
+class TestStampSection:
+    def test_should_place_a_stamp_on_a_boundary_in_the_section_it_opens(self) -> None:
+        assert stamp_section(310, _S13_OUTLINE) == 2
+
+    def test_should_place_a_stamp_past_the_last_end_in_the_last_section(self) -> None:
+        assert stamp_section(2600, _S13_OUTLINE) == 10
+
+    def test_should_place_nothing_without_a_stamp(self) -> None:
+        assert stamp_section(None, _S13_OUTLINE) is None
+
+
+def test_should_keep_a_cased_first_word_when_it_titles_a_section() -> None:
+    titles = section_titles(Counter({5: 1}), _S13_OUTLINE)
+
+    assert titles[5] == "macOS config pain and Raycast export frustrations"

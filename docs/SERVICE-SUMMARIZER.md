@@ -168,7 +168,7 @@ services/summarizer/
     │   ├── enrich_quiz.txt       # The quiz prompt when QUIZ_V2_ENABLED=false (flavor per quizEnrichment domain; {question_count}, {video_length}, <hero>)
     │   ├── quiz_v2.txt           # Quiz v2 rules (evidence quote + timestamp as written, m:ss, per question; the task / hero / key ideas / transcript are bound around it, no placeholders)
     │   ├── hero_rewrite.txt      # Hero rewrite job ({takeaway_count}, {duration}, {tab_labels}, {stamp_rule}, {video}, {extracted})
-    │   ├── merge_rank.txt        # merge_rank rules (duplicates / sections / rank, ids only; the video, outline and lists are bound before it, no placeholder)
+    │   ├── merge_rank.txt        # merge_rank rules (duplicates / rank, ids only; the video, outline and lists are bound before it, no placeholder)
     │   ├── vision.txt            # Frame-vision prompt (registry summarizer:vision)
     │   ├── description_analysis.txt, translate_flat.txt
     │   ├── synthesis.txt         # Synthesis prompt (masterSummary + seo; hero fields only as fallback) — used when the hero rewrite is off or gave none

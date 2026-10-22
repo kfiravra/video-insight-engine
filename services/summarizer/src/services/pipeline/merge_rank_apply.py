@@ -21,11 +21,14 @@ checked against the request); this module edits a deep copy of the extraction
    best-ranked item back in place of the lowest-ranked one of a window that keeps two.
    A list the call ranked none of is left to assembly. Timelines stay with
    ``sample_moments``.
-3. **Sections.** ``learning.keyIdeas[].section`` = the outline title of the section the
-   call placed it in, at most :data:`MAX_SECTIONS` distinct: the smallest section joins
-   its smaller neighbour (on a tie the earlier) until they fit, and a joined section
-   takes the title of its member holding the most ideas — S02 shipped 24 one-item
-   sections from the chunks' own labels.
+3. **Sections.** ``learning.keyIdeas[].section`` = the title of the outline section whose
+   [start, end) holds the idea's stamp — code, not the call: asked for them (p3i3, S13),
+   Haiku packed 33 ideas spanning 42 minutes into sections 1–4 of 11 in list order, none
+   where its stamp lies. At most :data:`MAX_SECTIONS` distinct: the smallest section
+   joins its smaller neighbour (on a tie the earlier) until they fit, and a joined
+   section takes the title of its member holding the most ideas — S02 shipped 24
+   one-item sections from the chunks' own labels. An idea without a stamp loses the
+   chunk's label (it shows under "Other").
 
 The ``_mergeRank`` record: ``{status, ms}`` and, when the call answered, ``dropped``
 (``{path, id, head, keep}``), ``held`` (``{path, id, guard}``), ``ranked`` (``{path,
@@ -72,13 +75,12 @@ class DuplicateGroup:
 class MergeRankAnswer:
     """The call's checked answer; ``status`` != ``ok`` leaves the extraction alone.
 
-    ``sections`` = id → 0-based outline index; ``rank`` = ids most → least central.
+    ``rank`` = ids most → least central.
     """
 
     status: str
     request: MergeRankRequest | None = None
     duplicates: tuple[DuplicateGroup, ...] = ()
-    sections: Mapping[str, int] = field(default_factory=dict)
     rank: tuple[str, ...] = ()
     ms: int = 0
 
@@ -271,8 +273,11 @@ def _joined(counts: Counter[int]) -> list[list[int]]:
 
 
 def _title(section: OutlineSection) -> str:
+    """The outline title as a section label: a lower-case first word capitalised ("intro"
+    → "Intro"), a cased one kept ("macOS", "iPhone")."""
     text = " ".join(section.title.split())
-    return text[:1].upper() + text[1:]
+    first = text.split(" ", 1)[0]
+    return text[:1].upper() + text[1:] if first.islower() else text
 
 
 def section_titles(counts: Counter[int], outline: Sequence[OutlineSection]) -> dict[int, str]:
@@ -284,21 +289,28 @@ def section_titles(counts: Counter[int], outline: Sequence[OutlineSection]) -> d
     return titles
 
 
-def _write_sections(edit: _Edit, answer: MergeRankAnswer) -> dict[str, int]:
-    """The sectioned list's kept ideas under their outline titles; an idea the answer
-    did not place loses the chunk's own label (it shows under "Other")."""
+def stamp_section(seconds: int | None, outline: Sequence[OutlineSection]) -> int | None:
+    """The 0-based outline section whose [start, end) holds ``seconds`` (the last one
+    holds the video's end); None without a stamp or an outline."""
+    if seconds is None or not outline:
+        return None
+    return next((i for i, section in enumerate(outline) if seconds < section.end), len(outline) - 1)
+
+
+def _write_sections(edit: _Edit, outline: Sequence[OutlineSection]) -> dict[str, int]:
+    """The sectioned list's kept ideas under the titles of the sections their stamps fall
+    in (module docstring)."""
     lane = next((lane for lane in edit.lanes.values() if lane.spec.sectioned), None)
-    request = answer.request
-    if lane is None or request is None:
+    if lane is None or not outline:
         return {}
     placed: dict[int, int] = {}
-    for item_id, section in answer.sections.items():
-        item = edit.resolved.get(item_id)
-        if item is not None and item.path == lane.spec.path and item.index not in lane.removed:
-            placed[item.index] = section
+    for index in lane.kept():
+        section = stamp_section(item_seconds(lane.items[index], edit.duration), outline)
+        if section is not None:
+            placed[index] = section
     if not placed:
         return {}
-    titles = section_titles(Counter(placed.values()), request.outline)
+    titles = section_titles(Counter(placed.values()), outline)
     for index in lane.kept():
         idea = lane.items[index]
         if isinstance(idea, dict) and index in placed:
@@ -326,7 +338,7 @@ def apply_merge_rank(
     edit = _Edit.start(extraction, request)
     dropped, held = _drop_duplicates(edit, answer)
     ranked = _rank_cut(edit, answer)
-    sectioned = _write_sections(edit, answer)
+    sectioned = _write_sections(edit, request.outline)
     moved = len(request.items) - len(edit.resolved)
     return edit.result(), _record(
         answer, dropped=dropped, held=held, ranked=ranked, sectioned=sectioned, moved=moved

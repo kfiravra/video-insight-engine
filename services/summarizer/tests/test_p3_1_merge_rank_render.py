@@ -95,9 +95,7 @@ class TestBytes:
         request = build_request(_source())
 
         assert request is not None
-        assert _lines(request.text)[0] == (
-            'learning.keyIdeas — "Positions" (spot_explorer) [sections]'
-        )
+        assert _lines(request.text)[0] == ('learning.keyIdeas — "Positions" (spot_explorer)')
 
     def test_should_print_an_item_with_its_id_clock_part_head_and_body(self) -> None:
         request = build_request(_source())
@@ -158,7 +156,7 @@ class TestGuards:
 
         request = build_request(_source({"learning": {"keyIdeas": ideas}}, [_IDEAS_TAB]))
 
-        assert request is not None and _lines(request.text)[0].endswith("[sections] [rank]")
+        assert request is not None and _lines(request.text)[0].endswith("(spot_explorer) [rank]")
 
     def test_should_never_rank_a_timeline(self) -> None:
         moments = [_moment(n, 50 * n) for n in range(1, 71)]
@@ -167,10 +165,17 @@ class TestGuards:
 
         assert request is not None and request.lists[0].cap is None
 
-    def test_should_ask_for_no_sections_without_an_outline(self) -> None:
-        request = build_request(_source(outline=()))
+    def test_should_ask_the_call_for_no_sections_when_there_is_an_outline(self) -> None:
+        # p3i3 S13: asked, Haiku placed none of 33 ideas where its stamp lies — code does.
+        request = build_request(_source())
 
         assert request is not None and "[sections]" not in request.text
+
+    def test_should_section_the_key_ideas_in_code_only_with_an_outline(self) -> None:
+        with_outline, without = build_request(_source()), build_request(_source(outline=()))
+
+        assert with_outline is not None and without is not None
+        assert (with_outline.lists[0].sectioned, without.lists[0].sectioned) == (True, False)
 
 
 class TestBudget:

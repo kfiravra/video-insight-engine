@@ -325,8 +325,9 @@ One added call, on chunked runs only (> 40 min; `MERGE_RANK_ENABLED`, default `t
 
 - **No cache.** The input is code-rendered lists, not a prefix any other call sends.
   Offline renders of the stored extractions: S02 (83 min, 113 items) ≈ 27.8 K characters
-  ≈ 9.3 K tokens with the rules, S13 (42 min, 52 items) ≈ 13.6 K ≈ 4.5 K; the answer is
-  ids only (≈ 0.5 K tokens). ≈ $0.001–0.002 a long video on Haiku 5.5 ($0.10 / $0.50 per
+  ≈ 9.3 K tokens with the rules, S13 (42 min, 52 items) ≈ 13.6 K ≈ 4.5 K — billed 5 408
+  in / 324 out on the p3i3 run (ids and clocks tokenize denser than prose); the answer is
+  ids only. ≈ $0.001–0.002 a long video on Haiku 5.5 ($0.10 / $0.50 per
   MTok); ≤ 40-min runs never make the call.
 
 ## How 1h writes are priced
