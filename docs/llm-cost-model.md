@@ -290,7 +290,7 @@ restores the previous call. The `feature` column is `llm_usage.feature`
 |------|--------------|-------|-----------|---------------|
 | Hero rewrite | `hero_rewrite` | `LLM_EXTRACTION_MODEL` (Sonnet 5.5) | `summarize:hero_rewrite` | `HERO_REWRITE_ENABLED`: once per run (a retry is a second row), fired at text-groups-done; reads the groups' cached blocks (above). **Replaces** the synthesis call |
 | Synthesis | `synthesis` | the fast tier | `summarize:synthesis` | the flag off, or the hero call gave no hero (`phases/synthesis._synthesis_dict`) — then exactly as before |
-| Quiz v2 | `quiz_v2` | `LLM_MEMORY_MODEL` (Haiku 5.5; no model key of its own) | `summarize:enrichment` | `QUIZ_V2_ENABLED`, a plan with a quiz host: one call, 18 s per attempt, 1 retry, 37 s stage cap. **Replaces** `enrich_quiz` |
+| Quiz v2 | `quiz_v2` | `LLM_MEMORY_MODEL` (Haiku 5.5; no model key of its own) | `summarize:enrichment` | `QUIZ_V2_ENABLED`, a plan with a quiz host: one call, 18 s per attempt, 1 retry, 37 s stage cap; a second call (its own cap, its own row, ≈ $0.003) only when no question of the reply parses, even item by item (output-quality 3.0, G2-1). **Replaces** `enrich_quiz` |
 | Quiz v1 | `enrichment` | `LLM_ENRICHMENT_MODEL` (gpt-4o-mini) | `summarize:enrichment` | `QUIZ_V2_ENABLED=false` |
 | Judge: hero + quiz | `faithfulness` (up to two calls) | `LLM_JUDGE_MODEL` (gpt-6-luna) | `summarize:faithfulness` | after assembly, when the doc has a stamped takeaway / quiz question, the sample rate is above 0, and — per call — the hero rewrite wrote the hero / `QUIZ_V2_ENABLED` is on (flag-off runs make no extra judge call) |
 

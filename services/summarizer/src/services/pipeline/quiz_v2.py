@@ -16,10 +16,16 @@ quote check (``quote_verify``) or is dropped:
   ``quoteTranslated`` and the page shows it as prose;
 - no quote — dropped.
 
-Fewer than :data:`MIN_QUIZ_V2_QUESTIONS` survivors → no quiz (no quiz tab). The
-checked questions past the count travel on as ``EnrichmentData.spares``: once the
-hero rewrite (written in parallel) lands, a question whose keyed option restates a
-shipped takeaway goes and a spare takes its place (:func:`restates_takeaway`,
+The reply is read item by item when its envelope is broken (``quiz_v2_parse``, G2-1);
+a reply in which no question parses is asked for once more — the stage's only second
+call. Of the checked questions the video's count is chosen one stretch (third) of the
+video first, a key that gives itself away by its length last, and the shipped keys
+are dealt evenly over the four positions (``quiz_v2_select``: G2-4, G2-5, G2-2).
+
+Fewer than :data:`MIN_QUIZ_V2_QUESTIONS` shipped → no quiz (no quiz tab). The checked
+questions not shipped travel on as ``EnrichmentData.spares``: once the hero rewrite
+(written in parallel) lands, a question whose keyed option restates a shipped
+takeaway goes and a spare takes its place (:func:`restates_takeaway`,
 ``phases.enrichment.settle_late_quiz`` — p2 review D7).
 
 No prompt cache: memory sends its transcript without a breakpoint, so there is no
@@ -47,7 +53,6 @@ from typing import TYPE_CHECKING, Any
 from ...config import settings
 from ...models.pipeline_types import EnrichmentData, QuizQuestion
 from ...shared_config.domain_config import data_source, quiz_enrichment
-from ...utils.json_parsing import parse_json_response
 from ...utils.language_utils import ENGLISH_OUTPUT_DIRECTIVE
 from ...utils.llm_retry import call_llm_with_retry
 from ..transcript.render import marker_seconds
@@ -57,6 +62,8 @@ from .memory import format_clock, truncate_words
 from .pipeline_helpers import sanitize_for_prompt
 from .pipeline_timing import record_llm_failure
 from .prompt_builder import load_prompt_text
+from .quiz_v2_parse import quiz_items
+from .quiz_v2_select import select_quiz, shuffle_quiz, stretch_bounds
 from .quote_verify import TRANSLATED, VERIFIED, QuoteIndex, verify_quote
 
 if TYPE_CHECKING:
@@ -68,7 +75,8 @@ PROMPT_PATH = Path(__file__).parent.parent.parent / "prompts" / "quiz_v2.txt"
 
 QUIZ_V2_STAGE = "quiz_v2"
 # Extra candidates past the video's count: a dropped question must not take a
-# short video's quiz (3) below the minimum. Never shipped beyond the count.
+# short video's quiz (3) below the minimum, and the choice per stretch / past a
+# length tell needs room (``quiz_v2_select``). Never shipped beyond the count.
 SPARE_QUESTIONS = 2
 MIN_QUIZ_V2_QUESTIONS = 3
 QUOTE_MAX_WORDS = 25
@@ -237,6 +245,13 @@ def asked_count(duration_s: float | None) -> int:
     return quiz_question_count(duration_s, _quiz_cap()) + SPARE_QUESTIONS
 
 
+def _stretches_line(duration_s: float | None) -> str:
+    """The stretches the questions spread over (``quiz_v2_select``); "" without a length."""
+    bounds = stretch_bounds(duration_s)
+    spans = " · ".join(f"{format_clock(start)}–{format_clock(end)}" for start, end in bounds)
+    return f"Stretches: {spans}\n" if spans else ""
+
+
 def _task_block(request: QuizV2Request, flavor: str) -> str:
     seconds = request.duration_s if request.duration_s and request.duration_s > 0 else None
     length = f"0:00–{format_clock(int(seconds))}" if seconds else "its whole length"
@@ -244,7 +259,8 @@ def _task_block(request: QuizV2Request, flavor: str) -> str:
     return (
         f"<task>\nVideo: {title}\nFocus: {flavor}\n"
         f"Questions to write: {asked_count(request.duration_s)}\n"
-        f"Every timestamp lies inside the video ({length}).\n</task>"
+        f"Every timestamp lies inside the video ({length}).\n"
+        f"{_stretches_line(request.duration_s)}</task>"
     )
 
 
@@ -403,24 +419,46 @@ async def _call_quiz_v2_llm(llm_service: LLMService, prompt: str) -> str | None:
         raise
 
 
+def _candidates(raw: str, request: QuizV2Request) -> list[QuizQuestion]:
+    return parse_quiz(quiz_items(raw), asked_count(request.duration_s), request.duration_s)
+
+
+async def _reply_candidates(
+    llm_service: LLMService, request: QuizV2Request, prompt: str
+) -> list[QuizQuestion] | None:
+    """The reply's valid questions; ``None`` when the call failed. A reply in which no
+    question parses is asked for once more (G2-1) — never a third time."""
+    raw = await _call_quiz_v2_llm(llm_service, prompt)
+    if not raw:
+        return None
+    candidates = _candidates(raw, request)
+    if candidates:
+        return candidates
+    logger.warning("Quiz v2: no question parsed from a %d-char reply; asking once more", len(raw))
+    raw = await _call_quiz_v2_llm(llm_service, prompt)
+    if not raw:
+        return None
+    candidates = _candidates(raw, request)
+    logger.info("Quiz v2: the second reply parsed %d question(s)", len(candidates))
+    return candidates
+
+
 async def _run(
     llm_service: LLMService, request: QuizV2Request, prompt: str, index: QuoteIndex
 ) -> EnrichmentData | None:
-    raw = await _call_quiz_v2_llm(llm_service, prompt)
-    if not raw:
+    candidates = await _reply_candidates(llm_service, request, prompt)
+    if candidates is None:
         logger.warning("Quiz v2 LLM call failed after retries for %s", request.primary_tag)
         return None
-    candidates = parse_quiz(
-        parse_json_response(raw), asked_count(request.duration_s), request.duration_s
-    )
     count = quiz_question_count(request.duration_s, _quiz_cap())
     checked = keep_checked(candidates, index, request.duration_s)
-    if len(checked[:count]) < MIN_QUIZ_V2_QUESTIONS:
+    quiz, spares = select_quiz(checked, count, request.duration_s)
+    if len(quiz) < MIN_QUIZ_V2_QUESTIONS:
         logger.warning(
             "Quiz v2 for %s kept %d checked question(s); no quiz", request.primary_tag, len(checked)
         )
         return None
-    return EnrichmentData(quiz=checked[:count], spares=checked[count:])
+    return EnrichmentData(quiz=shuffle_quiz(quiz), spares=shuffle_quiz(spares))
 
 
 async def enrich_quiz_v2(
@@ -429,7 +467,8 @@ async def enrich_quiz_v2(
     """The checked quiz (3 to the video's count of questions); ``None`` on any failure.
 
     ``index`` is the run's quote index (``run_quote_index``): without one no quote can
-    be checked, so no call is made. Bounded by ``QUIZ_V2_TOTAL_TIMEOUT_S``; never raises.
+    be checked, so no call is made. Each call is bounded by ``QUIZ_V2_TOTAL_TIMEOUT_S``
+    (a second one only after a reply with no question in it); never raises.
     """
     if index is None:
         logger.info("Quiz v2: no timed transcript to check quotes against; no quiz")

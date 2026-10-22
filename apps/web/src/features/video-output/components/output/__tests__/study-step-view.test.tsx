@@ -141,3 +141,13 @@ describe('StudyStepView', () => {
     expect(screen.getByRole('button', { name: /Reveal answer/ })).toBeInTheDocument();
   });
 });
+
+describe('StudyStepView option order', () => {
+  it('should mark the keyed option as the answer after reveal regardless of its shuffled position', async () => {
+    const user = userEvent.setup();
+    render(<StudyHarness />);
+    await user.click(screen.getByRole('button', { name: /reveal answer/i }));
+    const marked = screen.getAllByRole('listitem').filter((li) => li.className.includes('text-success'));
+    expect(marked.map((li) => li.textContent)).toEqual([expect.stringContaining('Kodak Brownie')]);
+  });
+});

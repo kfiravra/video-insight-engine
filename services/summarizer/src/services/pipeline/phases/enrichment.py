@@ -42,6 +42,7 @@ from src.services.pipeline.quiz_v2 import (
     enrich_quiz_v2,
     restates_the_hero,
 )
+from src.services.pipeline.quiz_v2_select import spare_for
 from src.services.pipeline.quote_verify import run_quote_index
 
 if TYPE_CHECKING:
@@ -189,12 +190,21 @@ def _shipped_takeaways(ctx: PipelineContext) -> list[str]:
 
 
 def _refilled(
-    quiz: list[dict[str, Any]], spares: list[dict[str, Any]], takeaways: list[str]
+    quiz: list[dict[str, Any]],
+    spares: list[dict[str, Any]],
+    takeaways: list[str],
+    duration_s: float | None,
 ) -> list[dict[str, Any]]:
-    """The quiz without the questions restating a takeaway, refilled from the spares in
-    order, at most its own length."""
-    pool = [question for question in [*quiz, *spares] if not restates_the_hero(question, takeaways)]
-    return pool[: len(quiz)]
+    """The quiz without the questions restating a takeaway, each dropped one replaced at
+    the end by a spare from its stretch of the video, else the next spare
+    (``quiz_v2_select.spare_for``) — at most the quiz's own length."""
+    kept = [question for question in quiz if not restates_the_hero(question, takeaways)]
+    left = [spare for spare in spares if not restates_the_hero(spare, takeaways)]
+    for dropped in (question for question in quiz if restates_the_hero(question, takeaways)):
+        if not left:
+            break
+        kept.append(left.pop(spare_for(dropped, left, duration_s)))
+    return kept
 
 
 def settle_late_quiz(ctx: PipelineContext) -> None:
@@ -214,7 +224,7 @@ def settle_late_quiz(ctx: PipelineContext) -> None:
     restating = sum(1 for question in quiz if restates_the_hero(question, takeaways))
     if not restating:
         return
-    kept = _refilled(quiz, spares, takeaways)
+    kept = _refilled(quiz, spares, takeaways, _duration_s(ctx))
     logger.info(
         "Quiz v2: %d of %d question(s) restate a shipped takeaway; %d ship",
         restating, len(quiz), len(kept),

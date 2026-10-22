@@ -15,6 +15,7 @@ import { formatDuration, formatDurationHuman } from '@/lib/string-utils';
 import { useTabState } from '@/features/video-output/contexts/TabStateContext';
 import { buildStepIngredientMap } from '@/features/video-output/components/output/lib/ingredient-step-matcher';
 import { parseStepDurationSeconds } from '@/features/video-output/lib/step-duration';
+import { shuffleQuizQuestion } from '@/features/video-output/lib/quiz-shuffle';
 import type { StepItem, QuizArenaQuestion } from '@vie/types';
 
 import { QuizExplanation } from './interactive/QuizExplanation';
@@ -280,7 +281,11 @@ export const StudyStepView = memo(function StudyStepView({
   onSeek,
 }: StudyStepViewProps) {
   const tabState = useTabState();
-  const question = questions[currentStep];
+  // Same per-question order as the quiz tab (stored keys cluster at option 0).
+  const question = useMemo(() => {
+    const stored = questions[currentStep];
+    return stored ? shuffleQuizQuestion(stored) : undefined;
+  }, [questions, currentStep]);
   if (!question) return null;
 
   const isDone = tabState.isStepCompleted(currentStep);

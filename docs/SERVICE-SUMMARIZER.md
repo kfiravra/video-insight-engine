@@ -85,6 +85,8 @@ services/summarizer/
     │   │   ├── synthesis.py          # masterSummary + seoDescription (hero from memory; fast tier) — now only when the hero rewrite is off or gave none
     │   │   ├── hero_rewrite.py       # The hero rewrite (HERO_REWRITE_ENABLED): one cache-reading LLM_EXTRACTION_MODEL call replaces synthesis; hero_job.py builds its request (cached blocks, job text, the evidence), hero_validate.py checks its answer (hero_text.py holds the prose readers), hero_compact.py renders the extraction it reads
     │   │   ├── quiz_v2.py            # Quiz v2 (QUIZ_V2_ENABLED): LLM_MEMORY_MODEL (Haiku 5.5) from the transcript + key ideas; every question's quote checked
+    │   │   ├── quiz_v2_parse.py      # Quiz v2's reply read question by question when its JSON envelope is broken (G2-1)
+    │   │   ├── quiz_v2_select.py     # What ships: one question per third first, a key that tells by its length last; keys dealt evenly over the positions; the late refill's spare
     │   │   ├── quote_verify.py       # Is a quote in the transcript? The extraction pre-pass + the run's index (verified / unverified / translated); re-exports quote_index
     │   │   ├── quote_index.py        # The quote matcher: QuoteIndex (normalized exact-first, else fuzzy; a "…"-cut quote is fragments in order within 40 words and 60 s)
     │   │   ├── pipeline_timing.py    # pipeline.timing recorder v4 (phases, LLM calls, failures incl. refusals, downloads, counts)

@@ -726,7 +726,7 @@ Each tab's `component` field maps to a renderer in `output/component-registry.ts
 | `moment_track` | MomentTrack | **Value gallery** (not a nav strip): grid/timeline view toggle; the default follows the items (timeline when ≥ 50 % carry a description the row shows, else grid) and a toggle choice holds for the tab, never persisted. Clicking a card opens the `Lightbox` (never seeks); the explicit **Jump** pill seeks. Timeline mode uses the `use-focus-band` scroll focus band and shows descriptions unclamped. Split into `MomentGalleryCard` / `MomentTimelineRow` / `moment-utils`. |
 | `video_filmstrip` | VideoFilmstrip (`mode="tab"`) | Enriched scrubber: wide cells, visible captions, whole-cell seek. The filmstrip tab is **suppressed by OutputRouter** when a `moment_track` tab has ≥8 frame-backed items. |
 | `code_playground` | CodePlayground | Tech snippets with run/navigate modes |
-| `quiz_arena` | QuizArena | Quiz flow (educational domains only — see `domains.json` `forbidden`); untimed unless `withTimer` (default false); each `(m:ss)` in an explanation renders as a `SeekChip` (`QuizExplanation`) |
+| `quiz_arena` | QuizArena | Quiz flow (educational domains only — see `domains.json` `forbidden`); untimed unless `withTimer` (default false); each `(m:ss)` in an explanation renders as a `SeekChip` (`QuizExplanation`); options are shown in a per-question stable shuffled order (`features/video-output/lib/quiz-shuffle.ts`, seeded from the question text, `correctIndex` remapped) in QuizArena and Study mode, because stored keys cluster at option 0 |
 | `packing_mission` | PackingMission | Gamified packing checklist |
 | `workout_room` | WorkoutRoom | Exercises + warmup/cooldown with seek |
 | `lyrics_karaoke` | LyricsKaraoke | Per-line synced karaoke view |

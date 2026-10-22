@@ -290,7 +290,9 @@ def _settle_ctx(
     if spares:
         record[enrichment_phase.QUIZ_SPARES_KEY] = spares
     synthesis = {"brief": "The hero rewrite's brief.", "keyTakeaways": takeaways}
-    return SimpleNamespace(enrichment_data=record, synthesis_dict=synthesis, video_summary_id="v")
+    return SimpleNamespace(
+        enrichment_data=record, synthesis_dict=synthesis, video_summary_id="v", video_data=None
+    )
 
 
 def _keyed(record: dict[str, Any] | None) -> list[str]:

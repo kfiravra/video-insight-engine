@@ -49,8 +49,9 @@ from .quote_verify import (
 
 HERO_EXTRACTION_MAX_TOKENS = 5000
 # A quote found farther than this from its item's stamp is the line said again
-# elsewhere (or another item's words), not where the item is: its stamp stays.
-QUOTE_STAMP_MAX_SHIFT_S = 180
+# elsewhere (or another item's words), not where the item is: its stamp stays. An
+# answer runs on past its question's stamp (S02: the claim and its quote 184 s in).
+QUOTE_STAMP_MAX_SHIFT_S = 240
 # Measured on S01 (2026-10-21 trace): the memory call's 53.1 K characters of marked
 # transcript + prompt billed 17,490 input tokens on the Claude 5.5 tokenizer — 3.03
 # characters a token. The project's word estimator (``extractor._estimate_tokens``,

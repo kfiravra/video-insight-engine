@@ -398,7 +398,7 @@ class TestStampsAtQuotes:
     @pytest.mark.parametrize(
         ("said", "at"),
         [
-            ("So that is when I put the pencil down for good.", 680 + 181),  # > 180 s away
+            ("So that is when I put the pencil down for good.", 680 + 241),  # > 240 s away
             ("So that is when I picked the pencil back up.", 723),  # never said: unverified
         ],
     )

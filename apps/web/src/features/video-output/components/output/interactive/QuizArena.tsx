@@ -28,6 +28,7 @@ import { Celebration } from '../Celebration';
 import { EmptyTabState } from './EmptyTabState';
 import { QuizExplanation } from './QuizExplanation';
 import { useLabels } from '@/lib/i18n';
+import { shuffleQuizQuestions } from '@/features/video-output/lib/quiz-shuffle';
 import { usePrefersReducedMotion } from '@/hooks/use-prefers-reduced-motion';
 
 export interface QuizArenaQuestion {
@@ -135,7 +136,7 @@ const CountdownRing = memo(function CountdownRing({
  * score persistence (only when `videoId` is provided).
  */
 export const QuizArena = memo(function QuizArena({
-  questions,
+  questions: storedQuestions,
   nextTab,
   onNavigateTab,
   videoId,
@@ -144,6 +145,8 @@ export const QuizArena = memo(function QuizArena({
   onSeek,
 }: QuizArenaProps) {
   const t = useLabels();
+  // Stored keys cluster at option 0; the order is fixed per question text.
+  const questions = useMemo(() => shuffleQuizQuestions(storedQuestions), [storedQuestions]);
   const reducedMotion = usePrefersReducedMotion();
   const [currentIndex, setCurrentIndex] = useState(0);
   const [answers, setAnswers] = useState<Map<number, number>>(new Map());
