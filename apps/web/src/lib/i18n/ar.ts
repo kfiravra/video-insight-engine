@@ -66,6 +66,8 @@ export const AR: Labels = {
   price: 'السعر',
   score: 'النتيجة',
   subScores: 'الدرجات حسب الفئة',
+  more: 'المزيد',
+  moreBrief: 'المزيد من الموجز',
   libraryChatPlaceholder: 'اطرح سؤالاً عبر جميع مقاطع الفيديو الخاصة بك...',
   libraryChatEmptyTitle: 'ابدأ محادثة',
   libraryChatEmptyBody: 'اطرح أسئلة حول مقاطع الفيديو والمحتوى المحفوظ.',

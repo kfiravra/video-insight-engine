@@ -66,6 +66,8 @@ export const EN: Labels = {
   price: 'Price',
   score: 'Score',
   subScores: 'Scores by category',
+  more: 'more',
+  moreBrief: 'Read more of the brief',
   libraryChatPlaceholder: 'Ask a question across your videos...',
   libraryChatEmptyTitle: 'Start a conversation',
   libraryChatEmptyBody: 'Ask questions about your videos and saved content.',

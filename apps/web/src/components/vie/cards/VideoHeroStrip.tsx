@@ -97,7 +97,7 @@ export const VideoHeroStrip = memo(function VideoHeroStrip({
           aria-label="Video insight sections"
           className={cn(
             'flex items-center gap-1.5 overflow-x-auto scroll-smooth snap-x snap-proximity',
-            'rounded-b-2xl px-3 py-2.5 md:px-4',
+            'rounded-b-2xl px-3 py-2.5 md:px-4 md:py-2',
             '[mask-image:linear-gradient(to_right,transparent,black_16px,black_calc(100%-16px),transparent)]',
             '[&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]',
           )}

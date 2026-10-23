@@ -1,4 +1,5 @@
 import { memo, useCallback, useId, useState } from 'react';
+import { cn } from '@/lib/utils';
 import { useLabels } from '@/lib/i18n';
 import { useVideoPlayer } from '@/features/video-output/contexts/VideoPlayerContext';
 import { Button } from '@/components/ui/button';
@@ -7,11 +8,10 @@ import { FadeIn } from '@/components/vie/feedback/FadeIn';
 import { CollapsibleSection } from './CollapsibleSection';
 import { splitTakeawayStamps } from './takeaway-stamps';
 
-// Mobile rule (audit §2 #15): the hero must leave the first viewport to the
-// tab panel — three takeaways on phones, all seven the sizing table allows on
-// desktop (an hour-long video carries 7, Kfir 2026-10-21), the rest behind "+N".
-const TAKEAWAY_CAP_DESKTOP = 7;
-const TAKEAWAY_CAP_PHONE = 3;
+// The hero must leave the first screen to the tab panel (audit §2 #15; on
+// desktop ≤ 420 px at 1280 × 800, output-quality 4.6a): three takeaways show,
+// the rest behind "+N".
+const TAKEAWAY_CAP = 3;
 
 interface HeroTakeawaysProps {
   takeaways: string[];
@@ -62,23 +62,68 @@ function TakeawayItem({ takeaway, index, onSeek }: TakeawayItemProps) {
       <span>
         {text}
         {stamps.map((seconds, i) => (
-          <SeekChip key={i} seconds={seconds} onSeek={onSeek} className="ms-1.5 align-baseline" />
+          <SeekChip key={i} seconds={seconds} onSeek={onSeek} className="ms-1.5 align-baseline md:py-0" />
         ))}
       </span>
     </li>
   );
 }
 
-/** Key takeaways — open on load as a dense two-column grid (they ARE the
- *  landing summary); after the user engages the player they auto-collapse
- *  (once) into the slim "Key takeaways · N" disclosure, which stays as the
- *  reopen affordance. Phones start collapsed. No persistence: every load is a
- *  fresh read-first arrival. */
+interface MoreToggleProps {
+  hidden: number;
+  showAll: boolean;
+  listId: string;
+  onToggle: () => void;
+  className?: string;
+}
+
+/** "+N · More takeaways" / "Hide": in the row on desktop, under the list on phones. */
+function MoreToggle({ hidden, showAll, listId, onToggle, className }: MoreToggleProps) {
+  const t = useLabels();
+  return (
+    <Button
+      variant="ghost"
+      size="bare"
+      onClick={onToggle}
+      aria-expanded={showAll}
+      aria-controls={listId}
+      aria-label={showAll ? t.hideTakeaways : undefined}
+      className={cn('text-xs font-medium text-[var(--vie-accent)] hover:underline', className)}
+    >
+      {showAll ? t.hide : `+${hidden} · ${t.moreTakeaways}`}
+    </Button>
+  );
+}
+
+interface TakeawaysOpen {
+  open: boolean;
+  setUserOpen: (open: boolean) => void;
+}
+
+/** Open on desktop until the reader first engages the player (a one-shot
+ *  auto-collapse, adjusted during render; while streaming it waits until the
+ *  stream settles so content isn't yanked mid-arrival), collapsed on phones.
+ *  `userOpen` null = untouched; a manual toggle takes permanent ownership. */
+function useTakeawaysOpen(isStreaming: boolean, isPhone: boolean): TakeawaysOpen {
+  const { hasEngaged } = useVideoPlayer();
+  const [userOpen, setUserOpen] = useState<boolean | null>(null);
+  const [autoCollapsed, setAutoCollapsed] = useState(false);
+  if (!autoCollapsed && userOpen === null && hasEngaged && !isStreaming) {
+    setAutoCollapsed(true);
+  }
+  return { open: userOpen ?? (!autoCollapsed && !isPhone), setUserOpen };
+}
+
+/** Key takeaways — open on load (they ARE the landing summary): three in one
+ *  row on a desktop-wide hero, "+N" in the row for the rest; after the user
+ *  engages the player they auto-collapse (once) into the slim "Key takeaways ·
+ *  N" disclosure, which stays as the reopen affordance. Phones start
+ *  collapsed, "+N" under the list. No persistence: every load is a fresh
+ *  read-first arrival. */
 export const HeroTakeaways = memo(function HeroTakeaways({ takeaways, isStreaming, isPhone }: HeroTakeawaysProps) {
   const t = useLabels();
-  const { hasEngaged, seekTo } = useVideoPlayer();
-  // `userOpen` null = untouched; a manual toggle takes permanent ownership.
-  const [userOpen, setUserOpen] = useState<boolean | null>(null);
+  const { seekTo } = useVideoPlayer();
+  const { open, setUserOpen } = useTakeawaysOpen(isStreaming, isPhone);
   // A seek from a takeaway chip is the reader using the list, so it stays open
   // for the next chip — the one-shot auto-collapse is for engagement elsewhere.
   const handleSeek = useCallback(
@@ -86,57 +131,44 @@ export const HeroTakeaways = memo(function HeroTakeaways({ takeaways, isStreamin
       setUserOpen(true);
       seekTo(seconds);
     },
-    [seekTo],
+    [seekTo, setUserOpen],
   );
-  const [autoCollapsed, setAutoCollapsed] = useState(false);
-  // One-shot auto-collapse on first engagement (seek or player open), adjusted
-  // during render. While streaming it waits until the stream settles so
-  // content isn't yanked mid-arrival.
-  if (!autoCollapsed && userOpen === null && hasEngaged && !isStreaming) {
-    setAutoCollapsed(true);
-  }
-  const open = userOpen ?? (!autoCollapsed && !isPhone);
-  const toggle = useCallback(() => {
-    setUserOpen(!open);
-  }, [open]);
-
+  const toggle = useCallback(() => setUserOpen(!open), [open, setUserOpen]);
   const [showAll, setShowAll] = useState(false);
+  // "+N" in a collapsed desktop row opens the row as well.
+  const toggleAll = useCallback(() => {
+    if (!showAll && !open) setUserOpen(true);
+    setShowAll(!showAll);
+  }, [showAll, open, setUserOpen]);
   const listId = useId();
-  const cap = isPhone ? TAKEAWAY_CAP_PHONE : TAKEAWAY_CAP_DESKTOP;
-  const visible = showAll ? takeaways : takeaways.slice(0, cap);
+  const visible = showAll ? takeaways : takeaways.slice(0, TAKEAWAY_CAP);
   const hidden = takeaways.length - visible.length;
 
   if (visible.length === 0) return <TakeawaysSkeleton label={t.keyTakeaways} />;
+  const more = (hidden > 0 || showAll) && (
+    <MoreToggle hidden={hidden} showAll={showAll} listId={listId} onToggle={toggleAll} className={isPhone ? 'mt-2.5' : 'shrink-0'} />
+  );
 
   return (
     <FadeIn>
       <CollapsibleSection
         baseId="vie-hero-takeaways"
         label={`${t.keyTakeaways} · ${takeaways.length}`}
+        action={!isPhone && more ? more : undefined}
         open={open}
         onToggle={toggle}
       >
-        {/* Uniform fine dot marker (not per-item emoji) keeps both columns
-            left-aligned and reads as a crisp, ordered list. Tight 13px type
+        {/* Uniform fine dot marker (not per-item emoji) keeps the columns
+            start-aligned and reads as a crisp, ordered list. Tight 13px type
             sits clearly below the brief in hierarchy. */}
-        <ul id={listId} className="grid grid-cols-1 gap-x-7 gap-y-2 sm:grid-cols-2">
-          {visible.map((takeaway, i) => (
-            <TakeawayItem key={i} takeaway={takeaway} index={i} onSeek={handleSeek} />
-          ))}
-        </ul>
-        {(hidden > 0 || showAll) && (
-          <Button
-            variant="ghost"
-            size="bare"
-            onClick={() => setShowAll(!showAll)}
-            aria-expanded={showAll}
-            aria-controls={listId}
-            aria-label={showAll ? t.hideTakeaways : undefined}
-            className="mt-2.5 text-xs font-medium text-[var(--vie-accent)] hover:underline"
-          >
-            {showAll ? t.hide : `+${hidden} · ${t.moreTakeaways}`}
-          </Button>
-        )}
+        <div className="@container">
+          <ul id={listId} className="grid grid-cols-1 gap-x-7 gap-y-2 sm:grid-cols-2 @2xl:grid-cols-3">
+            {visible.map((takeaway, i) => (
+              <TakeawayItem key={i} takeaway={takeaway} index={i} onSeek={handleSeek} />
+            ))}
+          </ul>
+        </div>
+        {isPhone && more}
       </CollapsibleSection>
     </FadeIn>
   );

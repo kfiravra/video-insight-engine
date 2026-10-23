@@ -11,6 +11,8 @@ interface HeroWorthItProps {
   /** A review's stated Best for / Not for: each replaces its hero line when non-empty (4.3). */
   bestFor?: string[];
   notFor?: string[];
+  /** Desktop (4.6a): each line on one line, label run in, the rest truncated. */
+  oneLine?: boolean;
   className?: string;
 }
 
@@ -29,11 +31,39 @@ function lineOf(text: string | undefined): string[] {
   return stated(text ? [text] : undefined);
 }
 
-/** "Worth it for / Skip if" — the hero's two-line answer to "should I watch
- *  this?" (C2, D18): side by side on desktop, stacked on phones. On a review
+function ToneDot({ dot }: { dot: string }) {
+  return <span aria-hidden="true" className={cn('h-1.5 w-1.5 rounded-full shrink-0', dot)} />;
+}
+
+/** Desktop: one line each, the label run in and the text cut with an ellipsis
+ *  (the whole line stays in the DOM for screen readers and in the tooltip);
+ *  a list reads as one "a · b" line. */
+function OneLineWorth({ lines, className }: { lines: WorthLine[]; className?: string }) {
+  return (
+    <dl className={cn('space-y-0.5', className)}>
+      {lines.map((line) => {
+        const text = line.items.join(' · ');
+        return (
+          <div key={line.key} className="flex min-w-0 items-center gap-2.5">
+            <dt className="type-eyebrow flex shrink-0 items-center gap-2">
+              <ToneDot dot={line.dot} />
+              {line.label}
+            </dt>
+            <dd title={text} className="min-w-0 truncate text-sm leading-snug text-foreground/80">
+              {text}
+            </dd>
+          </div>
+        );
+      })}
+    </dl>
+  );
+}
+
+/** "Worth it for / Skip if" — the hero's answer to "should I watch this?"
+ *  (C2, D18): one line each on desktop, stacked in full on phones. On a review
  *  the reviewer's own Best for / Not for lists take each line's place. The tone
  *  rides on a dot so the labels keep the eyebrow's contrast in both themes. */
-export const HeroWorthIt = memo(function HeroWorthIt({ worthItFor, skipIf, bestFor, notFor, className }: HeroWorthItProps) {
+export const HeroWorthIt = memo(function HeroWorthIt({ worthItFor, skipIf, bestFor, notFor, oneLine, className }: HeroWorthItProps) {
   const t = useLabels();
   const best = stated(bestFor);
   const not = stated(notFor);
@@ -46,13 +76,14 @@ export const HeroWorthIt = memo(function HeroWorthIt({ worthItFor, skipIf, bestF
       : { key: 'skip', label: t.skipIf, items: lineOf(skipIf), dot: 'bg-warning' },
   ].filter((line) => line.items.length > 0);
   if (lines.length === 0) return null;
+  if (oneLine) return <OneLineWorth lines={lines} className={className} />;
 
   return (
     <dl className={cn('grid grid-cols-1 gap-x-7 gap-y-3 sm:grid-cols-2', className)}>
       {lines.map((line) => (
         <div key={line.key} className="space-y-1.5">
           <dt className="type-eyebrow flex items-center gap-2">
-            <span aria-hidden="true" className={cn('h-1.5 w-1.5 rounded-full shrink-0', line.dot)} />
+            <ToneDot dot={line.dot} />
             {line.label}
           </dt>
           <dd className="max-w-[68ch] text-sm leading-relaxed text-foreground/80 text-pretty">

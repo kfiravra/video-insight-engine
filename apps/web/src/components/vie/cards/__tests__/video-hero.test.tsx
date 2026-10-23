@@ -161,10 +161,9 @@ describe('VideoHero', () => {
       expect(tldr.compareDocumentPosition(brief) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     });
 
-    it('should render masterSummary as a Brief section open on desktop', () => {
+    it('should render masterSummary as a Brief region open on desktop', () => {
       renderWithPlayer(<VideoHero {...DEFAULT_PROPS} />);
-      expect(screen.getByRole('button', { name: /^brief$/i })).toHaveAttribute('aria-expanded', 'true');
-      expect(screen.getByText(DEFAULT_PROPS.masterSummary)).toBeInTheDocument();
+      expect(screen.getByRole('region', { name: 'Brief' })).toHaveTextContent(DEFAULT_PROPS.masterSummary);
     });
 
     it('should collapse the Brief by default on phones', () => {
@@ -173,14 +172,15 @@ describe('VideoHero', () => {
       expect(screen.getByRole('button', { name: /^brief$/i })).toHaveAttribute('aria-expanded', 'false');
     });
 
-    it('should toggle the Brief when its disclosure is clicked', async () => {
+    it('should toggle the Brief when its disclosure is clicked on a phone', async () => {
+      mockPhoneViewport();
       const user = userEvent.setup();
       renderWithPlayer(<VideoHero {...DEFAULT_PROPS} />);
       const briefBtn = screen.getByRole('button', { name: /^brief$/i });
       await user.click(briefBtn);
-      expect(briefBtn).toHaveAttribute('aria-expanded', 'false');
-      await user.click(briefBtn);
       expect(briefBtn).toHaveAttribute('aria-expanded', 'true');
+      await user.click(briefBtn);
+      expect(briefBtn).toHaveAttribute('aria-expanded', 'false');
     });
 
     it('should render the key question as the first line of the brief when present', () => {
@@ -191,10 +191,9 @@ describe('VideoHero', () => {
           masterSummary={'First paragraph.\n\nSecond paragraph.'}
         />,
       );
-      const question = screen.getByText('What does agent-written code mean for programmers?');
-      const firstParagraph = screen.getByText('First paragraph.');
-      expect(question.compareDocumentPosition(firstParagraph) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-      expect(screen.getByText('Second paragraph.')).toBeInTheDocument();
+      expect(screen.getByRole('region', { name: 'Brief' })).toHaveTextContent(
+        /What does agent-written code mean for programmers\?\s*First paragraph\.\s*Second paragraph\./,
+      );
     });
 
     it('should not render a Brief section when masterSummary is absent', () => {
@@ -226,19 +225,19 @@ describe('VideoHero', () => {
       expect(screen.getByText('Takeaway three')).toBeInTheDocument();
     });
 
-    it('should show seven takeaways on desktop with a "+N" more control for the rest', () => {
+    it('should show three takeaways on desktop with a "+N" more control for the rest', () => {
       const tooMany = Array.from({ length: 9 }, (_, i) => `Takeaway ${i + 1}`);
       renderWithPlayer(<VideoHero {...DEFAULT_PROPS} keyTakeaways={tooMany} />);
-      expect(screen.getByText('Takeaway 7')).toBeInTheDocument();
-      expect(screen.queryByText('Takeaway 8')).not.toBeInTheDocument();
-      expect(screen.getByRole('button', { name: /^\+2 · More takeaways$/ })).toBeInTheDocument();
+      expect(screen.getByText('Takeaway 3')).toBeInTheDocument();
+      expect(screen.queryByText('Takeaway 4')).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^\+6 · More takeaways$/ })).toBeInTheDocument();
     });
 
     it('should reveal all takeaways when "+N" is clicked', async () => {
       const user = userEvent.setup();
       const tooMany = Array.from({ length: 9 }, (_, i) => `Takeaway ${i + 1}`);
       renderWithPlayer(<VideoHero {...DEFAULT_PROPS} keyTakeaways={tooMany} />);
-      await user.click(screen.getByRole('button', { name: /^\+2 · More takeaways$/ }));
+      await user.click(screen.getByRole('button', { name: /^\+6 · More takeaways$/ }));
       expect(screen.getByText('Takeaway 9')).toBeInTheDocument();
     });
 
@@ -264,7 +263,7 @@ describe('VideoHero', () => {
       const user = userEvent.setup();
       const tooMany = Array.from({ length: 9 }, (_, i) => `Takeaway ${i + 1}`);
       renderWithPlayer(<VideoHero {...DEFAULT_PROPS} keyTakeaways={tooMany} />);
-      await user.click(screen.getByRole('button', { name: /^\+2 · More takeaways$/ }));
+      await user.click(screen.getByRole('button', { name: /^\+6 · More takeaways$/ }));
       expect(screen.getByRole('button', { name: 'Hide takeaways' })).toBeInTheDocument();
     });
 
@@ -273,20 +272,21 @@ describe('VideoHero', () => {
       expect(screen.queryByRole('button', { name: /More takeaways/ })).not.toBeInTheDocument();
     });
 
-    it('should clamp a long brief until "Show all" is clicked', async () => {
+    it('should clamp a long brief to two lines until "more" is clicked on desktop', async () => {
       const user = userEvent.setup();
       const long = Array.from({ length: 8 }, (_, i) => `Sentence number ${i + 1} of a long brief that runs well past five lines.`).join(' ');
       renderWithPlayer(<VideoHero {...DEFAULT_PROPS} masterSummary={long} />);
-      const showAll = screen.getByRole('button', { name: /^show all$/i });
-      expect(showAll).toBeInTheDocument();
-      await user.click(showAll);
+      await user.click(screen.getByRole('button', { name: 'Read more of the brief' }));
       expect(screen.getByRole('button', { name: 'Hide brief' })).toBeInTheDocument();
     });
 
-    it('should count the key question against the five-line clamp budget', () => {
+    it('should count the key question against the five-line clamp budget on a phone', async () => {
+      mockPhoneViewport();
+      const user = userEvent.setup();
       const question = 'Q'.repeat(200);
       const body = 'B'.repeat(200);
       renderWithPlayer(<VideoHero {...DEFAULT_PROPS} keyQuestion={question} masterSummary={body} />);
+      await user.click(screen.getByRole('button', { name: /^brief$/i }));
       expect(screen.getByRole('button', { name: /^show all$/i })).toBeInTheDocument();
     });
 

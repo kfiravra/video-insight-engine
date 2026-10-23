@@ -94,6 +94,10 @@ export interface Labels {
   score: string;
   /** Accessible name of the hero verdict's stated sub-scores ("Battery 9/10" chips). */
   subScores: string;
+  /** Desktop hero (4.6a): the visible "more" that unrolls a two-line brief,
+   *  and its accessible name (it contains the visible word). */
+  more: string;
+  moreBrief: string;
   // Library chat (cross-video assistant when no single video is open)
   libraryChatPlaceholder: string;
   libraryChatEmptyTitle: string;

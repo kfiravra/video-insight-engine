@@ -66,6 +66,8 @@ export const HE: Labels = {
   price: 'מחיר',
   score: 'ציון',
   subScores: 'ציונים לפי קטגוריה',
+  more: 'עוד',
+  moreBrief: 'עוד מהתקציר',
   libraryChatPlaceholder: 'שאלו שאלה על כל הסרטונים שלכם...',
   libraryChatEmptyTitle: 'התחילו שיחה',
   libraryChatEmptyBody: 'שאלו שאלות על הסרטונים והתוכן השמור שלכם.',

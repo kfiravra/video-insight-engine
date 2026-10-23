@@ -28,7 +28,10 @@ interface HeroVerdictProps {
 /** The reviewer's call as a tone pill beside the row label, so a collapsed row still says it. */
 function VerdictBadge({ badge }: { badge: string }) {
   return (
-    <Badge variant={BADGE_TONE[badge] ?? 'muted'} className="py-0 text-[0.6875rem] font-semibold uppercase tracking-wider">
+    <Badge
+      variant={BADGE_TONE[badge] ?? 'muted'}
+      className="py-0 text-[0.6875rem] leading-[0.875rem] font-semibold uppercase tracking-wider"
+    >
       {badge.replace(/_/g, ' ')}
     </Badge>
   );
@@ -47,7 +50,7 @@ function VerdictStatement({ verdict, onSeek }: VerdictStatementProps) {
   return (
     <div className="flex items-start gap-4">
       {score !== undefined && <ScoreRing score={score} total={maxScore} label={t.score} size="sm" />}
-      <p className="min-w-0 max-w-[68ch] text-sm font-medium leading-relaxed text-foreground/90 text-pretty">
+      <p className="min-w-0 text-sm font-medium leading-relaxed text-foreground/90 text-pretty">
         {bottomLine}
         {timestamp !== undefined && <SeekChip seconds={timestamp} onSeek={onSeek} className="ms-1.5 align-baseline" />}
       </p>
@@ -83,33 +86,45 @@ function SubScoreList({ subScores, maxScore }: SubScoreListProps) {
 }
 
 /** A review's verdict in the hero (output-quality 4.3, Kfir 2026-10-22: the
- *  hero only): a "Verdict" row with the badge, the bottom line, its moment,
- *  the reviewer's words and stated sub-scores, then Best for / Not for in place
- *  of Worth it / Skip if. Open on desktop, collapsed on phones like the rows
- *  above it. */
+ *  hero only): a "Verdict" row whose badge says the call, opening onto the
+ *  bottom line, its moment, the reviewer's words and stated sub-scores; Best
+ *  for / Not for take the place of Worth it / Skip if. The row starts
+ *  collapsed: on desktop the two lines stay open under it, one line each, so
+ *  the hero keeps to the first screen (4.6a); on phones they sit inside it,
+ *  like the rows above it (4.4). */
 export const HeroVerdict = memo(function HeroVerdict({ verdict, worthItFor, skipIf, isPhone }: HeroVerdictProps) {
   const t = useLabels();
   const { seekTo } = useVideoPlayer();
-  // A manual toggle owns the open state from then on.
-  const [userOpen, setUserOpen] = useState<boolean | null>(null);
-  const open = userOpen ?? !isPhone;
-  const toggle = useCallback(() => setUserOpen((prev) => !(prev ?? !isPhone)), [isPhone]);
+  const [open, setOpen] = useState(false);
+  const toggle = useCallback(() => setOpen((prev) => !prev), []);
+  const lines = (
+    <HeroWorthIt
+      worthItFor={worthItFor}
+      skipIf={skipIf}
+      bestFor={verdict.bestFor}
+      notFor={verdict.notFor}
+      oneLine={!isPhone}
+    />
+  );
   return (
-    <CollapsibleSection
-      baseId="vie-hero-verdict"
-      label={t.verdict}
-      accessory={verdict.badge ? <VerdictBadge badge={verdict.badge} /> : undefined}
-      open={open}
-      onToggle={toggle}
-    >
-      <div className="space-y-4">
-        <div className="space-y-2">
-          <VerdictStatement verdict={verdict} onSeek={seekTo} />
-          <QuoteLine quote={verdict.quote} quoteEn={verdict.quoteEn} translated={verdict.quoteTranslated} />
-          {verdict.subScores && <SubScoreList subScores={verdict.subScores} maxScore={verdict.maxScore} />}
+    <div className="space-y-1">
+      <CollapsibleSection
+        baseId="vie-hero-verdict"
+        label={t.verdict}
+        accessory={verdict.badge ? <VerdictBadge badge={verdict.badge} /> : undefined}
+        open={open}
+        onToggle={toggle}
+      >
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <VerdictStatement verdict={verdict} onSeek={seekTo} />
+            <QuoteLine quote={verdict.quote} quoteEn={verdict.quoteEn} translated={verdict.quoteTranslated} />
+            {verdict.subScores && <SubScoreList subScores={verdict.subScores} maxScore={verdict.maxScore} />}
+          </div>
+          {isPhone && lines}
         </div>
-        <HeroWorthIt worthItFor={worthItFor} skipIf={skipIf} bestFor={verdict.bestFor} notFor={verdict.notFor} />
-      </div>
-    </CollapsibleSection>
+      </CollapsibleSection>
+      {!isPhone && lines}
+    </div>
   );
 });

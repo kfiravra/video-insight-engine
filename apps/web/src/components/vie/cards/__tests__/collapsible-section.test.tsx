@@ -35,6 +35,24 @@ describe('CollapsibleSection', () => {
     expect(screen.getByText('inside')).toBeInTheDocument();
   });
 
+  it('should keep a row action out of the toggle so it does not join its accessible name', () => {
+    render(
+      <CollapsibleSection baseId="sec" label="Key takeaways" action={<Button>+4 more</Button>} open onToggle={vi.fn()}>
+        <p>inside</p>
+      </CollapsibleSection>,
+    );
+    expect(screen.getByRole('button', { name: 'Key takeaways' })).toBeInTheDocument();
+  });
+
+  it('should keep a row action reachable when the section is collapsed', () => {
+    render(
+      <CollapsibleSection baseId="sec" label="Key takeaways" action={<Button>+4 more</Button>} open={false} onToggle={vi.fn()}>
+        <p>inside</p>
+      </CollapsibleSection>,
+    );
+    expect(screen.getByRole('button', { name: '+4 more' })).toBeInTheDocument();
+  });
+
   it('should call onToggle when the eyebrow row is clicked', async () => {
     const user = userEvent.setup();
     const onToggle = vi.fn();

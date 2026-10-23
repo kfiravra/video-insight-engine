@@ -10,39 +10,46 @@ interface CollapsibleSectionProps {
   /** Shown beside the label and read with it (a review's verdict badge), so a
    *  collapsed row still says the call. */
   accessory?: ReactNode;
+  /** A control of its own at the row's end, outside the toggle (the desktop
+   *  takeaways' "+N more", 4.6a): it costs no line of its own. */
+  action?: ReactNode;
   open: boolean;
   onToggle: () => void;
   children: ReactNode;
 }
 
-/** Shared collapsible primitive for the hero's Brief, Key takeaways, Verdict
- *  and (phones) Worth it rows. Renders an eyebrow row with left dash + label +
- *  flex-spacer dash + chevron, followed by a grid-rows morphing content panel. */
-export function CollapsibleSection({ baseId, label, accessory, open, onToggle, children }: CollapsibleSectionProps) {
+/** Shared collapsible primitive for the hero's Key takeaways, Verdict and
+ *  (phones) Brief and Worth it rows. Renders an eyebrow row with left dash +
+ *  label + flex-spacer dash + chevron, followed by a grid-rows morphing
+ *  content panel. */
+export function CollapsibleSection({ baseId, label, accessory, action, open, onToggle, children }: CollapsibleSectionProps) {
   const labelId = `${baseId}-label`;
   const contentId = `${baseId}-content`;
   return (
     <section aria-labelledby={labelId}>
-      <button
-        type="button"
-        onClick={onToggle}
-        aria-expanded={open}
-        aria-controls={contentId}
-        className="group flex w-full items-center gap-2.5 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      >
-        <span aria-hidden="true" className="h-px w-5 bg-border" />
-        <span id={labelId} className="type-eyebrow">{label}</span>
-        {accessory}
-        <span aria-hidden="true" className="h-px flex-1 bg-border/60" />
-        <ChevronDown
-          aria-hidden="true"
-          className={cn(
-            'h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform duration-200',
-            'group-hover:text-foreground',
-            !open && '-rotate-90 rtl:rotate-90',
-          )}
-        />
-      </button>
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-expanded={open}
+          aria-controls={contentId}
+          className="group flex min-w-0 flex-1 items-center gap-2.5 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <span aria-hidden="true" className="h-px w-5 bg-border" />
+          <span id={labelId} className="type-eyebrow">{label}</span>
+          {accessory}
+          <span aria-hidden="true" className="h-px flex-1 bg-border/60" />
+          <ChevronDown
+            aria-hidden="true"
+            className={cn(
+              'h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform duration-200',
+              'group-hover:text-foreground',
+              !open && '-rotate-90 rtl:rotate-90',
+            )}
+          />
+        </button>
+        {action}
+      </div>
       {/* Collapsed content is still mounted (the grid-rows morph animates it
           back in) but must leave the focus order and the accessibility tree. */}
       <div
@@ -58,7 +65,7 @@ export function CollapsibleSection({ baseId, label, accessory, open, onToggle, c
             row takes only its own line (three stacked rows on a phone would
             otherwise carry 36 px of empty space). */}
         <div className="overflow-hidden">
-          <div className="pt-3">{children}</div>
+          <div className="pt-3 md:pt-1.5">{children}</div>
         </div>
       </div>
     </section>

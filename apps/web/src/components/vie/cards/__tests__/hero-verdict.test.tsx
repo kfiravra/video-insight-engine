@@ -61,18 +61,32 @@ afterEach(() => {
   window.matchMedia = originalMatchMedia;
 });
 
+/** The verdict row starts collapsed on desktop too (4.6a): open it to reach the statement. */
+async function openVerdict(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+  await user.click(screen.getByRole('button', { name: /^Verdict/ }));
+}
+
 describe('VideoHero — review verdict', () => {
   describe('desktop', () => {
-    it('should open the verdict row with its badge when the review states one', () => {
+    it('should show the verdict row collapsed with its badge when the review states one', () => {
       renderHero();
 
-      expect(screen.getByRole('button', { name: /^Verdict\s*recommended$/i })).toHaveAttribute('aria-expanded', 'true');
+      expect(screen.getByRole('button', { name: /^Verdict\s*recommended$/i })).toHaveAttribute('aria-expanded', 'false');
     });
 
-    it('should show the bottom line when the verdict row is open', () => {
+    it('should show the bottom line when the verdict row is opened', async () => {
+      const user = userEvent.setup();
       renderHero();
 
+      await openVerdict(user);
+
       expect(screen.getByText(VERDICT.bottomLine).closest('[inert]')).toBeNull();
+    });
+
+    it('should keep the Best for and Skip if lines open under the collapsed verdict row', () => {
+      renderHero();
+
+      expect(screen.getByText(REVIEW_HERO.skipIf as string).closest('[inert]')).toBeNull();
     });
 
     it("should show the reviewer's words when the verdict carries a quote", () => {
@@ -84,32 +98,41 @@ describe('VideoHero — review verdict', () => {
     it("should open the player when the verdict's timestamp chip is clicked", async () => {
       const user = userEvent.setup();
       renderHero();
+      await openVerdict(user);
 
       await user.click(screen.getByRole('button', { name: 'Jump to 10:41' }));
 
       expect(screen.getByRole('button', { name: 'Hide' })).toHaveAttribute('aria-expanded', 'true');
     });
 
-    it('should render no score when the verdict carries none', () => {
+    it('should render no score when the verdict carries none', async () => {
+      const user = userEvent.setup();
       renderHero();
+      await openVerdict(user);
 
       expect(screen.queryByRole('img', { name: /^Score:/ })).not.toBeInTheDocument();
     });
 
-    it('should render the score when the reviewer gives one at the verdict moment', () => {
+    it('should render the score when the reviewer gives one at the verdict moment', async () => {
+      const user = userEvent.setup();
       renderHero({ verdict: { ...VERDICT, score: 8, maxScore: 10 } });
+      await openVerdict(user);
 
       expect(screen.getByRole('img', { name: /^Score: 8\.0/ })).toBeInTheDocument();
     });
 
-    it('should show a stated score when the verdict sentence has no timestamp', () => {
+    it('should show a stated score when the verdict sentence has no timestamp', async () => {
+      const user = userEvent.setup();
       renderHero({ verdict: { ...VERDICT, timestamp: undefined, score: 8, maxScore: 10 } });
+      await openVerdict(user);
 
       expect(screen.getByRole('img', { name: /^Score: 8\.0/ })).toBeInTheDocument();
     });
 
-    it('should show stated sub-scores in the hero when the reviewer scores categories', () => {
+    it('should show stated sub-scores in the hero when the reviewer scores categories', async () => {
+      const user = userEvent.setup();
       renderHero({ verdict: { ...VERDICT, score: 8, maxScore: 10, subScores: SUB_SCORES } });
+      await openVerdict(user);
 
       const list = screen.getByRole('list', { name: 'Scores by category' });
       expect(within(list).getAllByRole('listitem')).toHaveLength(2);
@@ -121,15 +144,19 @@ describe('VideoHero — review verdict', () => {
       expect(screen.getByText('9/10')).toBeInTheDocument();
     });
 
-    it('should show a bare sub-score when the reviewer states no scale', () => {
+    it('should show a bare sub-score when the reviewer states no scale', async () => {
+      const user = userEvent.setup();
       renderHero({ verdict: { ...VERDICT, subScores: SUB_SCORES } });
+      await openVerdict(user);
 
       const list = screen.getByRole('list', { name: 'Scores by category' });
       expect(within(list).getByText('9')).toBeInTheDocument();
     });
 
-    it('should render no sub-score list when the verdict carries none', () => {
+    it('should render no sub-score list when the verdict carries none', async () => {
+      const user = userEvent.setup();
       renderHero();
+      await openVerdict(user);
 
       expect(screen.queryByRole('list', { name: 'Scores by category' })).not.toBeInTheDocument();
     });
@@ -141,10 +168,10 @@ describe('VideoHero — review verdict', () => {
       expect(screen.queryByText('Worth it for')).not.toBeInTheDocument();
     });
 
-    it('should list every Best for entry when the reviewer names several', () => {
+    it('should list every Best for entry on its one line when the reviewer names several', () => {
       renderHero();
 
-      expect(screen.getByText(VERDICT.bestFor[1])).toBeInTheDocument();
+      expect(screen.getByText(/Anyone who wants better sound at the same price/)).toBeInTheDocument();
     });
 
     it('should keep the Skip if line when the reviewer names no Not for', () => {
@@ -217,12 +244,14 @@ describe('VideoHero — review verdict', () => {
       expect(screen.getByText('מתאים במיוחד ל')).toBeInTheDocument();
     });
 
-    it('should name the sub-score list in Hebrew when the output is Hebrew', () => {
+    it('should name the sub-score list in Hebrew when the output is Hebrew', async () => {
+      const user = userEvent.setup();
       renderHero({ verdict: { ...VERDICT, subScores: SUB_SCORES } }, (ui) => (
         <DirectionProvider language="he" isRTL>
           {ui}
         </DirectionProvider>
       ));
+      await user.click(screen.getByRole('button', { name: /^פסק הדין/ }));
 
       expect(screen.getByRole('list', { name: 'ציונים לפי קטגוריה' })).toBeInTheDocument();
     });

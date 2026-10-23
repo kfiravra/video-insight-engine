@@ -32,8 +32,8 @@ interface VideoHeroProps {
   /** The hero rewrite's 3–5 sentence brief (output-quality 2.2). Wins over
    *  `masterSummary`, which older rows carry instead. */
   brief?: string;
-  /** The long-form brief (synthesis.masterSummary). Rendered as a collapsible
-   *  "Brief" under the tldr — open on desktop, collapsed on phones (R11). */
+  /** The long-form brief (synthesis.masterSummary). Rendered under the tldr
+   *  (R11): two lines + "more" on desktop, a collapsed "Brief" row on phones. */
   masterSummary?: string;
   /** "Worth it for / Skip if" — two short lines under the takeaways (C2);
    *  on phones behind a collapsed "Worth it?" row. */
@@ -167,7 +167,7 @@ function PendingStrip({ pendingTabs }: { pendingTabs: PendingTab[] }) {
       aria-hidden="true"
       className={cn(
         'flex items-center gap-1.5 overflow-x-hidden',
-        'border-t border-border/60 rounded-b-2xl px-3 py-2.5 md:px-4',
+        'border-t border-border/60 rounded-b-2xl px-3 py-2.5 md:px-4 md:py-2',
         '[mask-image:linear-gradient(to_right,transparent,black_16px,black_calc(100%-16px),transparent)]',
       )}
     >
@@ -197,11 +197,13 @@ function HeroHeader({ title, identity, youtubeId }: HeroHeaderProps) {
     <div className="flex items-start justify-between gap-4">
       <div className="min-w-0">
         <IdentityStrip {...identity} />
+        {/* The leading follows the size classes: cn()'s merge drops a
+            leading-* that precedes a text-* size. */}
         <h2
           id="vie-hero-title"
           className={cn(
-            'font-semibold tracking-tight leading-[1.15] text-balance break-words line-clamp-2 text-xl md:text-2xl',
-            hasIdentity(identity) && 'mt-2.5',
+            'font-semibold tracking-tight text-balance break-words line-clamp-2 text-xl md:text-2xl md:leading-[1.15]',
+            hasIdentity(identity) && 'mt-2.5 md:mt-2',
           )}
         >
           {title || t.processing}
@@ -247,7 +249,7 @@ function HeroPlayer({ youtubeId }: { youtubeId: string }) {
 /** The tldr under the title, or its skeleton while the stream is still writing it. */
 function Tldr({ tldr, isStreaming }: { tldr?: string; isStreaming: boolean }) {
   if (tldr) {
-    return <p className="mt-3 max-w-[68ch] text-[0.95rem] leading-relaxed text-foreground/85 text-pretty">{tldr}</p>;
+    return <p className="mt-3 max-w-[68ch] text-[0.95rem] leading-relaxed text-foreground/85 text-pretty md:mt-1.5">{tldr}</p>;
   }
   if (!isStreaming) return null;
   return (
@@ -277,7 +279,7 @@ function HeroTop({ hero, isStreaming, isPhone, padBottom }: HeroTopProps) {
   // Older rows carry only `masterSummary`; the hero rewrite's brief wins.
   const briefText = brief?.trim() ? brief : masterSummary;
   return (
-    <div className={cn('px-6 pt-5 md:px-7 md:pt-6', padBottom && 'pb-5 md:pb-6')}>
+    <div className={cn('px-6 pt-5 md:px-7 md:pt-4', padBottom && 'pb-5 md:pb-6')}>
       <HeroHeader title={title} identity={identity} youtubeId={youtubeId} />
       <Tldr tldr={tldr} isStreaming={isStreaming} />
       {briefText?.trim() && <HeroBrief masterSummary={briefText} keyQuestion={keyQuestion} isPhone={isPhone} />}
