@@ -19,6 +19,9 @@ export interface MomentItem {
   question?: string;
   /** English rendering of a non-English `question` (D12): heads the row, the verbatim question sits beneath. */
   questionEn?: string;
+  /** Assembly's check of `question` against the transcript: `translated` = the
+   *  model's rendering, not the host's words — prose, never set as a quotation. */
+  questionStatus?: 'verified' | 'translated';
   mood?: string;
   emoji?: string;
   speaker?: string;

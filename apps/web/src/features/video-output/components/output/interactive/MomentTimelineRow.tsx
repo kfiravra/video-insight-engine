@@ -13,6 +13,10 @@ import { formatDuration, isClip, resolveLabel, type MomentItem } from './moment-
 interface MomentTimelineRowProps {
   item: MomentItem;
   originalIndex: number;
+  /** The track is an interview's Q&A (any row carries a `question`): every row
+   *  leads its answer with "A · speaker". Decided per track because rows stored
+   *  before 4.1 dropped `question` when it equalled the label. */
+  isExchange: boolean;
   /** Position within the filtered list — drives the FadeIn stagger. */
   index: number;
   isActive: boolean;
@@ -42,6 +46,7 @@ interface MomentTimelineRowProps {
 export const MomentTimelineRow = memo(function MomentTimelineRow({
   item,
   originalIndex,
+  isExchange,
   index,
   isActive,
   pulsing,
@@ -76,9 +81,12 @@ export const MomentTimelineRow = memo(function MomentTimelineRow({
   const question = item.question?.trim();
   const questionEn = item.questionEn?.trim();
   const heading = (question && questionEn) || question || label;
-  // An exchange row (question present): the speaker answers, so the chip must not sit
-  // in the header where it reads as the asker — it leads the answer instead.
-  const isExchange = Boolean(item.question?.trim());
+  // The host's own words beneath an English heading — never a question the transcript
+  // does not say (`translated`: the model's rendering is prose, D12).
+  const verbatimBeneath =
+    Boolean(question && questionEn && question !== questionEn) && item.questionStatus !== 'translated';
+  // An exchange row: the speaker answers, so the chip must not sit in the header
+  // where it reads as the asker — it leads the answer instead.
   const speaker = item.speaker?.trim();
   const chipContent = (
     <>
@@ -199,9 +207,7 @@ export const MomentTimelineRow = memo(function MomentTimelineRow({
                   {/* No clamp: in this view the label IS the substance for
                       most videos (R7), so it always renders in full. */}
                   <p className="text-sm font-semibold leading-snug">{heading}</p>
-                  {question && questionEn && question !== questionEn && (
-                    <QuoteLine quote={question} size="xs" />
-                  )}
+                  {verbatimBeneath && <QuoteLine quote={question} size="xs" />}
                   {isExchange && (item.description || speaker) ? (
                     <p className="text-xs leading-relaxed text-muted-foreground">
                       {speaker && (

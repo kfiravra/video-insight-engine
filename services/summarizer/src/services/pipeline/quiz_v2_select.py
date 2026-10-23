@@ -27,7 +27,9 @@ the model's order — most important key idea first:
   without chunks only past the 3-question band), and :func:`select_quiz` ships the first
   clean question of each part, then the first clean one of each memory-outline section
   not yet tested (one per section before two in one: S14 shipped two metformin
-  questions), then fills the count in rank order.
+  questions), then fills the count in rank order. A second question on an idea
+  (``quiz_v2_targets.repeats``) takes no part's or section's slot and ranks after every
+  first: one question per idea before any second (review p4 B-W2).
 
 The shipped questions keep the model's importance order, not the video's: the prompt
 asks for the most important first, and the late refill (``phases.enrichment.
@@ -46,7 +48,7 @@ import logging
 import math
 import random
 from bisect import bisect_right
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from itertools import pairwise
 from statistics import fmean
 from typing import TYPE_CHECKING, Any
@@ -64,8 +66,8 @@ Part = tuple[int, int]
 # one, and the split gate 2's S03 check reads ("the last 36 minutes are untested").
 QUIZ_STRETCHES = 3
 # A run of this many extraction chunks or more is quizzed chunk by chunk; fewer keep the
-# thirds (Kfir's call pending, design §6.1). 1 makes a one-chunk run one part: one call
-# over the whole video, the failure mode the thirds fixed on S03.
+# thirds (Kfir 2026-10-22: one-chunk videos keep the thirds). 1 makes a one-chunk run one
+# part: one call over the whole video, the failure mode the thirds fixed on S03.
 QUIZ_PARTS_MIN_CHUNKS = 2
 # A key this many times the mean wrong option's length (characters) is the tell the
 # gate-2 reviewers named; the prompt asks for every wrong option within 2 words of the
@@ -263,13 +265,17 @@ def select_quiz(
     count: int,
     parts: Sequence[Part],
     outline: Sequence[int] = (),
+    repeats: Collection[int] = frozenset(),
 ) -> tuple[list[QuizQuestion], list[QuizQuestion]]:
     """``(shipped, spares)``: ``count`` questions — one per part, then one per untested
-    outline section (``outline`` = the sections' starts), then by rank, clean before
-    flagged — shipped in the model's order; the rest are the spares, in rank order."""
-    ranked = sorted(range(len(questions)), key=lambda i: length_tell(questions[i]))
-    picked = _first_per_stretch(questions, ranked, parts)[:count]
-    picked += _first_per_section(questions, ranked, picked, outline)[: count - len(picked)]
+    outline section (``outline`` = the sections' starts), then by rank: a first question
+    on its idea before a repeat (``repeats`` = their indices, never in the part or section
+    step), clean before flagged — shipped in the model's order; the rest are the spares,
+    in rank order."""
+    ranked = sorted(range(len(questions)), key=lambda i: (i in repeats, length_tell(questions[i])))
+    firsts = [i for i in ranked if i not in repeats]
+    picked = _first_per_stretch(questions, firsts, parts)[:count]
+    picked += _first_per_section(questions, firsts, picked, outline)[: count - len(picked)]
     picked += [i for i in ranked if i not in picked][: count - len(picked)]
     _log_selection(questions, picked, parts, outline)
     shipped = [questions[i] for i in sorted(picked)]

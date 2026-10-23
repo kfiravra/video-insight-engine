@@ -7,7 +7,7 @@ import { ScoreRing } from '@/components/vie/data/ScoreRing';
 import { SeekChip } from '@/components/vie/data/SeekChip';
 import { CollapsibleSection } from './CollapsibleSection';
 import { HeroWorthIt } from './HeroWorthIt';
-import type { HeroVerdictData } from '@/features/video-output/lib/hero-verdict';
+import type { HeroSubScore, HeroVerdictData } from '@/features/video-output/lib/hero-verdict';
 
 const BADGE_TONE: Record<string, 'success' | 'warning' | 'destructive'> = {
   recommended: 'success',
@@ -40,7 +40,7 @@ interface VerdictStatementProps {
 }
 
 /** The bottom line with a ▶ chip to where it is said; a score ring only when
- *  the reviewer gave a score at that moment (D13 — never derived). */
+ *  assembly ships the reviewer's stated score (D13 — never derived). */
 function VerdictStatement({ verdict, onSeek }: VerdictStatementProps) {
   const t = useLabels();
   const { bottomLine, timestamp, score, maxScore = 10 } = verdict;
@@ -55,10 +55,38 @@ function VerdictStatement({ verdict, onSeek }: VerdictStatementProps) {
   );
 }
 
+interface SubScoreListProps {
+  subScores: HeroSubScore[];
+  maxScore?: number;
+}
+
+/** The categories the reviewer scores on camera, as assembly kept them (stated
+ *  rows only, D13): one wrapping line of "category score/max" chips, the scale
+ *  only when stated. */
+function SubScoreList({ subScores, maxScore }: SubScoreListProps) {
+  const t = useLabels();
+  return (
+    <ul aria-label={t.subScores} className="flex flex-wrap gap-1.5">
+      {subScores.map((sub, i) => (
+        <li
+          key={`${sub.category}-${i}`}
+          className="inline-flex items-baseline gap-1.5 rounded-md border border-border/50 bg-muted/30 px-2 py-0.5 text-xs"
+        >
+          <span className="text-muted-foreground">{sub.category}</span>
+          <span dir="ltr" className="font-semibold tabular-nums text-foreground/90">
+            {maxScore ? `${sub.score}/${maxScore}` : sub.score}
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 /** A review's verdict in the hero (output-quality 4.3, Kfir 2026-10-22: the
- *  hero only): a "Verdict" row with the badge, the bottom line, its moment and
- *  the reviewer's words, then Best for / Not for in place of Worth it / Skip
- *  if. Open on desktop, collapsed on phones like the rows above it. */
+ *  hero only): a "Verdict" row with the badge, the bottom line, its moment,
+ *  the reviewer's words and stated sub-scores, then Best for / Not for in place
+ *  of Worth it / Skip if. Open on desktop, collapsed on phones like the rows
+ *  above it. */
 export const HeroVerdict = memo(function HeroVerdict({ verdict, worthItFor, skipIf, isPhone }: HeroVerdictProps) {
   const t = useLabels();
   const { seekTo } = useVideoPlayer();
@@ -78,6 +106,7 @@ export const HeroVerdict = memo(function HeroVerdict({ verdict, worthItFor, skip
         <div className="space-y-2">
           <VerdictStatement verdict={verdict} onSeek={seekTo} />
           <QuoteLine quote={verdict.quote} quoteEn={verdict.quoteEn} translated={verdict.quoteTranslated} />
+          {verdict.subScores && <SubScoreList subScores={verdict.subScores} maxScore={verdict.maxScore} />}
         </div>
         <HeroWorthIt worthItFor={worthItFor} skipIf={skipIf} bestFor={verdict.bestFor} notFor={verdict.notFor} />
       </div>

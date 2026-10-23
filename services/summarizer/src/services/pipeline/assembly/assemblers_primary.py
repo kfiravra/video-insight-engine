@@ -28,6 +28,7 @@ from .info_grid_items import _text_only_info_item as _text_only_info_item
 from .info_grid_items import _with_category as _with_category
 from .ingredients import ingredient_row
 from .key_ideas import is_key_idea_list, key_idea_props, podcast_guests
+from .moment_normalizers import quote_fields
 from .normalizers import (
     _normalize_code_snippet,
     _normalize_comparison,
@@ -206,29 +207,37 @@ _REVIEW_DOMAIN = "review"
 # A review plan with a rows tab and a Pros & cons tab ships each half once (4.3): the
 # rows on the rows tab, the pros and cons on the other — whatever the tab order, so the
 # dedupe never drops one as the other's twin. Assembly hands every planned tab the
-# plan's comparison sources under this key (``planned_comparison_sources``).
+# plan's comparison tabs, ``(id, dataSource)`` in plan order, under this key
+# (``planned_comparison_sources``).
 PLANNED_COMPARISONS_KEY = "_plannedComparisons"
 _ROWS_SOURCE = "review.comparisons"
 _PROS_CONS_SOURCES = frozenset({_REVIEW_DOMAIN, "review.pros", "review.cons"})
 _COMPARISON_COMPONENTS = frozenset({"comparison", "comparison_radar"})
 
+# One planned comparison tab: (tab id, dataSource).
+_Planned = tuple[tuple[str, str], ...]
 
-def planned_comparison_sources(tabs: Any) -> frozenset[str]:
-    """The dataSources of the plan's comparison tabs."""
+
+def planned_comparison_sources(tabs: Any) -> _Planned:
+    """The plan's comparison tabs as ``(id, dataSource)``, in plan order."""
     planned = tabs if isinstance(tabs, list) else []
-    return frozenset(
-        str(t.get("dataSource") or "")
+    return tuple(
+        (str(t.get("id") or ""), str(t.get("dataSource") or ""))
         for t in planned
         if isinstance(t, dict) and t.get("component") in _COMPARISON_COMPONENTS
     )
 
 
+def _planned(tab: dict) -> _Planned:
+    return tab.get(PLANNED_COMPARISONS_KEY) or ()
+
+
 def _halves_elsewhere(tab: dict) -> tuple[bool, bool]:
     """(the rows ride another planned tab, the pros / cons ride another planned tab)."""
-    planned = tab.get(PLANNED_COMPARISONS_KEY) or frozenset()
+    sources = {source for _, source in _planned(tab)}
     source = str(tab.get("dataSource") or "")
-    rows_elsewhere = source in _PROS_CONS_SOURCES and _ROWS_SOURCE in planned
-    return rows_elsewhere, source == _ROWS_SOURCE and bool(planned & _PROS_CONS_SOURCES)
+    rows_elsewhere = source in _PROS_CONS_SOURCES and _ROWS_SOURCE in sources
+    return rows_elsewhere, source == _ROWS_SOURCE and bool(sources & _PROS_CONS_SOURCES)
 
 
 def _competitor_names(rows: list[dict]) -> list[str]:
@@ -285,6 +294,27 @@ def _pros_cons(tab: dict, data: Any, review_data: Any) -> tuple[list[str], list[
     return _stated_lines(source.get("pros")), _stated_lines(source.get("cons"))
 
 
+def _verdict_tab(planned: _Planned, states_pros_or_cons: bool) -> str:
+    """The id of the one planned tab that carries a review's verdict: the Pros & cons tab
+    when one is planned and the review states pros or cons (it ships them), else the
+    first comparison tab — a rows tab before a Pros & cons tab that ships nothing."""
+    pros_cons = [tab_id for tab_id, source in planned if source in _PROS_CONS_SOURCES]
+    if pros_cons and states_pros_or_cons:
+        return pros_cons[0]
+    rows = [tab_id for tab_id, source in planned if source not in _PROS_CONS_SOURCES]
+    return (rows or [tab_id for tab_id, _ in planned])[0]
+
+
+def _carries_verdict(tab: dict, review_data: dict) -> bool:
+    """Whether this tab carries the review's verdict (C-C1): one tab only, so the hero
+    that lifts it is its only place. A tab assembled outside a plan keeps it."""
+    planned = _planned(tab)
+    if not planned:
+        return True
+    states = bool(_stated_lines(review_data.get("pros")) or _stated_lines(review_data.get("cons")))
+    return str(tab.get("id") or "") == _verdict_tab(planned, states)
+
+
 def assemble_comparison(
     tab: dict,
     data: Any,
@@ -302,7 +332,8 @@ def assemble_comparison(
     title. Each row keeps its `competitorName`, which heads that competitor's own
     table (4.3, Q5); `rightLabel` names the competitor only when the rows name one.
     Pros/cons come only from the review's own `pros` / `cons` (``_pros_cons``); a plan
-    with both a rows tab and a Pros & cons tab ships each half once (``_halves_elsewhere``).
+    with both a rows tab and a Pros & cons tab ships each half once (``_halves_elsewhere``)
+    and the review's verdict once (``_carries_verdict``).
     """
     review_data = extraction.get(_REVIEW_DOMAIN) if isinstance(extraction, dict) else None
     product_name: str | None = None
@@ -330,10 +361,10 @@ def assemble_comparison(
     }
 
     # Verdict header data is folded into ComparisonInteractive — when the
-    # review extraction includes a verdict block, attach it (the web lifts it
-    # into the hero on a review, 4.3). Standalone VerdictInteractive was retired
-    # in the video-to-action overhaul; the comparison renderer absorbs its role.
-    if isinstance(review_data, dict):
+    # review extraction includes a verdict block, attach it to one planned tab (the
+    # web lifts it into the hero on a review, 4.3). Standalone VerdictInteractive was
+    # retired in the video-to-action overhaul; the comparison renderer absorbs its role.
+    if isinstance(review_data, dict) and _carries_verdict(tab, review_data):
         verdict = review_data.get("verdict")
         if isinstance(verdict, dict) and verdict.get("bottomLine"):
             props["verdict"] = _normalize_verdict(verdict, review_data.get("rating"))
@@ -397,14 +428,17 @@ def _checklist_dict_row(item: dict) -> dict | None:
 
 def _checklist_row(item: Any) -> dict | None:
     """One checklist row; a dict item's row keeps the item's seek point (4.1 — a talk's
-    asks rows, ``talk_asks.ask_rows``, lost theirs here)."""
+    asks rows, ``talk_asks.ask_rows``, lost theirs here) and its kept quote with the
+    quote's flag and English (``quote_fields``: an ask's ``quoteEn`` stays, and the
+    translation walk knows its “note” for the speaker's own line — D12)."""
     if not isinstance(item, dict):
         return {"label": str(item)}
     row = _checklist_dict_row(item)
+    if row is None:
+        return None
     timestamp = anchor_seconds(item)
-    if row is None or timestamp is None or "timestamp" in row:
-        return row
-    return {**row, "timestamp": timestamp}
+    stamp = {} if timestamp is None or "timestamp" in row else {"timestamp": timestamp}
+    return {**row, **stamp, **quote_fields(item)}
 
 
 def assemble_checklist(

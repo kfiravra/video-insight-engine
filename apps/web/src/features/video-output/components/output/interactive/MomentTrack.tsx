@@ -83,6 +83,9 @@ export const MomentTrack = memo(function MomentTrack({
 
   const hasClips = useMemo(() => items.some(isClip), [items]);
   const hasMoments = useMemo(() => items.some((i) => !isClip(i)), [items]);
+  // Only `podcast.qa` moments carry a question: one is enough to read the whole
+  // track as exchanges, so a stored interview never mixes two row layouts.
+  const isExchangeTrack = useMemo(() => items.some((i) => Boolean(i.question?.trim())), [items]);
   const showTypeFilter = hasClips && hasMoments;
 
   const activeIndex = useMemo(() => {
@@ -359,6 +362,7 @@ export const MomentTrack = memo(function MomentTrack({
                   key={originalIndex}
                   item={item}
                   originalIndex={originalIndex}
+                  isExchange={isExchangeTrack}
                   index={index}
                   isActive={activeIndex === originalIndex}
                   pulsing={pulseKey === originalIndex && !reducedMotion}

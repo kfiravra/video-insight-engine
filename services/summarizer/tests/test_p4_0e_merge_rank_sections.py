@@ -21,7 +21,7 @@ from src.services.pipeline.merge_rank_sections import (
     _joined_titles,
     idea_words,
     place_stamp,
-    section_titles,
+    section_names,
 )
 
 _DURATION = 3600
@@ -114,7 +114,9 @@ class TestTitles:
     def test_should_fall_back_to_the_largest_member_when_no_words_fit(self) -> None:
         counts = Counter({n: 5 for n in range(9)} | {0: 3, 1: 1})
 
-        titles = section_titles(counts, [_section(n, n + 1, f"part {n + 1}") for n in range(9)])
+        names = section_names([_section(n, n + 1, f"part {n + 1}") for n in range(9)])
+
+        titles = _joined_titles(counts, names, lambda group, member: 0)
 
         assert titles[1] == titles[0] == "Part 1"
 
@@ -125,18 +127,16 @@ class TestTitles:
             "phone-number and number-series demonstrations of…",
         ]
 
-        shipped = section_titles(
-            Counter(dict.fromkeys(range(3), 1)), [_section(n, n + 1, t) for n, t in enumerate(cut)]
-        )
+        shipped = section_names([_section(n, n + 1, t) for n, t in enumerate(cut)])
 
-        assert list(shipped.values()) == [
+        assert shipped == [
             "Three intellectual challenges",
             "Defining longevity, lifespan vs healthspan",
             "Phone-number and number-series demonstrations",
         ]
 
     def test_should_leave_a_title_that_was_not_cut_as_it_is(self) -> None:
-        shipped = section_titles(Counter({0: 1}), [_section(0, 1, "macOS config pain")])
+        shipped = section_names([_section(0, 1, "macOS config pain")])
 
         assert shipped[0] == "macOS config pain"
 

@@ -165,10 +165,10 @@ class TestFlashCardFromAQuote:
 
         assert card["back"] == "— Jobs · 1:15"
 
-    def test_should_lead_the_back_with_the_english_of_a_verbatim_quote(self):
+    def test_should_ship_the_english_of_a_verbatim_quote_beside_the_back(self):
         card = _to_flash_card({"quote": _HE, "quoteEn": _EN, "speaker": "Ran", "timestamp": 5})
 
-        assert card["back"] == f"{_EN} — Ran · 0:05"
+        assert (card["back"], card["quoteEn"]) == ("— Ran · 0:05", _EN)
 
     def test_should_fall_back_to_the_context_without_speaker_or_time(self):
         card = _to_flash_card({"text": "Four score.", "speaker": "", "context": "Gettysburg"})

@@ -13,10 +13,10 @@ takes about one small call's time and a large video is fully translated rather
 than capped), and applies the translations back into a deep copy that becomes
 the ``sourceLanguage`` artifact ({code, name, isRTL, tabs, meta}).
 
-A speaker's verbatim line (a found ``quote``, a verified interview ``question``)
-is already in the source language: it is never sent, and the English rendering
-beside it (``quoteEn`` / ``questionEn``) is left out of the source-language copy
-(D12, output-quality 4.2).
+A speaker's verbatim line (a found ``quote`` and any leaf of its card restating it, a
+verified interview ``question``) is already in the source language: it is never sent,
+and the English rendering beside it (``quoteEn`` / ``questionEn``) is left out of the
+source-language copy (D12, output-quality 4.2).
 
 On any failure (LLM error, length mismatch, mirror detection): returns the
 input unchanged (no ``sourceLanguage`` key) so the FE simply renders no toggle.
@@ -117,10 +117,13 @@ _SKIP_KEYS: frozenset[str] = frozenset(
 # D12 (4.2): a line already in the source language never goes EN→source — the model
 # could rewrite the speaker's words, and their echo counts toward the mirror check.
 # On a non-English run a ``quote`` without the ``quoteTranslated`` flag is the quote
-# pass's verbatim find (a flagged one is English prose and IS translated); a
-# ``question`` the question check verified is the host's own words (4.0 c), and so is
-# its exchange row's ``label`` unless the question's English titles the row.
+# pass's verbatim find (a flagged one is English prose and IS translated), and so is any
+# other leaf of its dict that restates it — a quote flash card's ``front``, an asks row's
+# “``note``” (C-W1); a ``question`` the question check verified is the host's own words
+# (4.0 c), and so is its exchange row's ``label`` unless the question's English titles it.
 _QUOTE_KEY = "quote"
+# The marks an assembler wraps a restated quote in (``talk_asks``: “line”).
+_QUOTE_MARKS = '“”"'
 _QUESTION_KEY = "question"
 _LABEL_KEY = "label"
 _QUESTION_EN_KEY = "questionEn"
@@ -162,18 +165,31 @@ JsonPath = tuple[str | int, ...]
 # ─── Walker ──────────────────────────────────────────────────────────────────
 
 
-def _is_verbatim_line(parent: dict[str, Any], key: str) -> bool:
-    """Whether ``parent[key]`` is a speaker's line in the source language (D12)."""
+def _restates_quote(parent: dict[str, Any], value: str) -> bool:
+    """Whether ``value`` is ``parent``'s verbatim quote again, bare or in quotation marks."""
+    quote = parent.get(_QUOTE_KEY)
+    if not isinstance(quote, str) or parent.get(QUOTE_TRANSLATED_KEY) is True:
+        return False
+    line = quote.strip()
+    return bool(line) and value.strip().strip(_QUOTE_MARKS).strip() == line
+
+
+def _is_verbatim_line(parent: dict[str, Any], key: str, value: str) -> bool:
+    """Whether ``parent[key]`` (``value``) is a speaker's line in the source language (D12)."""
     if key == _QUOTE_KEY:
         return parent.get(QUOTE_TRANSLATED_KEY) is not True
+    if _restates_quote(parent, value):
+        return True
     if parent.get(QUESTION_STATUS_KEY) != VERIFIED:
         return False
     return key == _QUESTION_KEY or (key == _LABEL_KEY and not parent.get(_QUESTION_EN_KEY))
 
 
-def _kept_as_is(parent: dict[str, Any], key: str) -> bool:
+def _kept_as_is(parent: dict[str, Any], key: str, value: str) -> bool:
     """A string leaf the walker never sends to translation."""
-    return key in _SKIP_KEYS or key in _ENGLISH_ONLY_KEYS or _is_verbatim_line(parent, key)
+    if key in _SKIP_KEYS or key in _ENGLISH_ONLY_KEYS:
+        return True
+    return _is_verbatim_line(parent, key, value)
 
 
 def _collect_strings(
@@ -206,7 +222,7 @@ def _collect_strings(
     if isinstance(obj, dict):
         for key, value in obj.items():
             # Leaf-only: skip only when the deny-listed key holds a string.
-            if isinstance(value, str) and _kept_as_is(obj, key):
+            if isinstance(value, str) and _kept_as_is(obj, key, value):
                 continue
             _collect_strings(value, path + (key,), pairs, depth + 1)
 

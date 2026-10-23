@@ -5,12 +5,13 @@ in the prompt.
 :data:`KEY_IDEA_SOURCES` names the registered dataSources a domain's key ideas live in
 (the first non-empty one wins). Of that list only the items of a kind in
 :data:`QUIZ_KINDS` are targets (4.0 b, Kfir 2026-10-22: every question tests a thesis,
-an argument or a number, never an incidental fact — a story's detail, an
-announcement); a list whose items carry no kind (``news.claims``, ``tech.topics`` …)
-is all targets, a claim being no incidental fact. Each target gets an id, ``K1`` … in
-list order, once per quiz, so every call names the same idea the same way; it renders
-as one line — ``- K3 [m:ss] argument: (speaker) statement — detail`` — and a part's
-call reads only the targets stamped in it (``quiz_v2_prompt``).
+an argument or a number — or an interview's disagreement, both sides argued; never an
+incidental fact, a story's detail, an announcement); a list whose items carry no kind
+(``news.claims``, ``tech.topics`` …) is all targets, a claim being no incidental fact.
+Each target gets an id, ``K1`` … in list order, once per quiz, so every call names the
+same idea the same way; it renders as one line — ``- K3 [m:ss] argument: (speaker)
+statement — detail`` — and a part's call reads only the targets stamped in it
+(``quiz_v2_prompt``).
 """
 
 from __future__ import annotations
@@ -38,9 +39,10 @@ KEY_IDEA_SOURCES: dict[str, tuple[str, ...]] = {
     "news": ("learning.keyIdeas", "news.claims", "news.storyTimeline"),
 }
 _DEFAULT_SOURCES = ("learning.keyIdeas",)
-# The key-idea kinds a question may test (schemas/learning.txt); story, ask and
-# announcement are left out.
-QUIZ_KINDS = ("thesis", "argument", "number")
+# The key-idea kinds a question may test (schemas/learning.txt, podcast.txt); story, ask
+# and announcement are left out. An interview's disagreement (4.1) was filed as an
+# argument before it had a kind of its own (review p4 A-W2).
+QUIZ_KINDS = ("thesis", "argument", "number", "disagreement")
 TARGET_ID_PREFIX = "K"
 # An item's line: its statement, the reason / detail behind it, and its stamp.
 _MAIN_KEYS = ("claim", "title", "name", "label", "phrase", "question", "text", "statement")

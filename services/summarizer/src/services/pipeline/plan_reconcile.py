@@ -48,22 +48,38 @@ ARGUMENT_PATHS = frozenset({"learning.keyIdeas"})
 # probe gave (S14 arrives as learning + interview through ``playbookAliases``): a plan
 # that names them has asked for podcast, never for learning.timestamps in their place.
 INTERVIEW_PATHS = frozenset({"podcast.qa", "podcast.guests"})
-_ACTIVATING_PATHS = ARGUMENT_PATHS | INTERVIEW_PATHS
+# Only on a run the probe calls an interview or a podcast (phase-4 review A-W4): a talk
+# or lecture plan that names podcast.qa for its audience questions is re-pointed to
+# learning.timestamps as before, never podcast-tagged (podcast.txt in block 1, a "Guest"
+# section in Key Ideas). With no probe format (an override, a failed probe) nothing says
+# otherwise, so the plan's tab stands.
+INTERVIEW_FORMATS = frozenset({"interview", "podcast"})
 MAX_CONTENT_TAGS = 3
 
 
-def activate_argument_domains(tabs: Sequence[Mapping], content_tags: Sequence[str]) -> list[str]:
-    """``content_tags`` plus the domain of every argument or interview path a tab reads.
+def _activating(path: str, content_format: str | None) -> bool:
+    if path in ARGUMENT_PATHS:
+        return True
+    return path in INTERVIEW_PATHS and (
+        content_format is None or content_format in INTERVIEW_FORMATS
+    )
+
+
+def activate_argument_domains(
+    tabs: Sequence[Mapping], content_tags: Sequence[str], content_format: str | None = None
+) -> list[str]:
+    """``content_tags`` plus the domain of every argument path a tab reads, and of every
+    interview path on an interview or podcast run (``content_format``, the probe's).
 
     When that pushes the list past :data:`MAX_CONTENT_TAGS`, tags no tab reads
     (never the primary, the first) give way from the end.
     """
     tags = list(content_tags)
     for tab in tabs:
-        spec = data_source(str(tab.get("dataSource") or ""))
-        if spec is not None and tab.get("dataSource") in _ACTIVATING_PATHS:
-            if spec["domain"] not in tags:
-                tags.append(spec["domain"])
+        path = str(tab.get("dataSource") or "")
+        spec = data_source(path)
+        if spec is not None and _activating(path, content_format) and spec["domain"] not in tags:
+            tags.append(spec["domain"])
     return _trim_unused_tags(tags, tabs)
 
 

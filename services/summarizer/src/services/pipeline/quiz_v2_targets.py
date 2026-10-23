@@ -10,8 +10,10 @@ name the one it tests in ``"idea"``. Code holds the questions to it:
   ``KEY_IDEA_WINDOW_S`` (90 s) of its checked stamp; with none the question is dropped
   (``dropped_untargeted``) — a call shown no target (a run without key ideas) keeps
   every question, as before;
-- :func:`ideas_first` ranks a second question on one idea behind every first one: it
-  ships only when the firsts run out, else it rides on as a spare;
+- :func:`ideas_first` ranks a second question on one idea behind every first one, and
+  :func:`repeats` names it to ``quiz_v2_select.select_quiz``: it never takes a part's or
+  a section's slot and ships only when the firsts run out, else it rides on as a spare
+  (review p4 B-W2: a repeat that alone covered a part shipped while a first waited);
 - :func:`translated_place`: a translated quote (a Hebrew talk's English rendering) is
   never found in the transcript, so its question used to keep the model's stamp — S15's
   third-stretch call copied the hero's 1:20 / 27:20 / 44:01 into its 47:35–1:11:22
@@ -145,14 +147,22 @@ def aimed(candidate: Candidate) -> Candidate | None:
     return None if target is None else replace(candidate, target=target)
 
 
+def repeats(checked: Sequence[Candidate]) -> frozenset[int]:
+    """The positions in ``checked`` of every second question on an idea (an earlier one
+    tests the same target)."""
+    tested: set[str] = set()
+    second: set[int] = set()
+    for position, candidate in enumerate(checked):
+        idea = candidate.target.id if candidate.target is not None else ""
+        if idea in tested:
+            second.add(position)
+        elif idea:
+            tested.add(idea)
+    return frozenset(second)
+
+
 def ideas_first(checked: Sequence[Candidate]) -> list[Candidate]:
     """``checked`` in order, every second question on an idea moved behind every first."""
-    tested: set[str] = set()
-    firsts: list[Candidate] = []
-    repeats: list[Candidate] = []
-    for candidate in checked:
-        idea = candidate.target.id if candidate.target is not None else ""
-        (repeats if idea in tested else firsts).append(candidate)
-        if idea:
-            tested.add(idea)
-    return firsts + repeats
+    second = repeats(checked)
+    firsts = [candidate for position, candidate in enumerate(checked) if position not in second]
+    return firsts + [checked[position] for position in sorted(second)]

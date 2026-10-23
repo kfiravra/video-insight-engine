@@ -299,6 +299,9 @@ export interface Flashcard {
 export interface FlashcardItem extends Flashcard {
   emoji?: string;
   category?: string;
+  /** A quote card's English when its front is a verbatim non-English line (D12, 4.2):
+   *  shown on the back above "— speaker · m:ss". Absent on an English video. */
+  quoteEn?: string;
 }
 
 export interface ScenarioOption {

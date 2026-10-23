@@ -255,15 +255,15 @@ def _normalize_step(item: dict, index: int) -> dict:
 
 
 def _quote_card(item: dict) -> dict:
-    """A quote (``podcast.quotes`` / ``narrative.quotes``) as a flash card (4.2): the line
-    in front; behind it its English (D12), then who said it and when, else its context."""
+    """A quote (``podcast.quotes`` / ``narrative.quotes``) as a flash card (4.2): the line in
+    front with its ``quote_fields`` (D12), who said it and when behind, else its context."""
     seconds = anchor_seconds(item)
     clock = _seconds_to_time_str(seconds) if seconds is not None else ""
     said = " · ".join(part for part in (str(item.get("speaker") or "").strip(), clock) if part)
-    behind = f"— {said}" if said else str(item.get("context") or "").strip()
-    back = " ".join(part for part in (*quote_en(item).values(), behind) if part)
+    back = f"— {said}" if said else str(item.get("context") or "").strip()
     front = str(item.get("quote") or item.get("text") or "").strip()
-    return {"front": front, "back": back, "emoji": item.get("emoji")}
+    line = quote_fields({**item, "quote": front})
+    return {"front": front, "back": back, "emoji": item.get("emoji"), **line}
 
 
 def _to_flash_card(item: dict) -> dict:

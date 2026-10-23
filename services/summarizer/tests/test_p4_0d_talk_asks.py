@@ -79,7 +79,7 @@ def _checklist_rows(ideas: list[dict[str, Any]]) -> list[tuple[str, str]]:
     """The asks checklist's rows as the tab assembles them, after the quote pass."""
     extraction = {"learning": {"keyIdeas": ideas, "takeaways": _TAKEAWAYS}}
     checked = verify_extraction_quotes(extraction, None, QuoteIndex.build(_SEGMENTS)).extraction
-    data = asks_data("checklist", "learning.takeaways", checked, _TAKEAWAYS)
+    data = asks_data("checklist", "learning.takeaways", checked, _TAKEAWAYS, "talk")
     props = assemble_checklist({}, data, checked or {}, None) or {"items": []}
     return [(item["label"], item["note"]) for item in props["items"]]
 

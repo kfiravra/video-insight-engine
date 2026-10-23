@@ -65,7 +65,7 @@ class TestInterviewRouting:
         assert '<playbook for="learning:interview">' in block and "podcast.qa" in block
 
     def test_should_tell_the_probe_a_moderated_qa_is_an_interview(self) -> None:
-        line = next(line for line in _probe_guidance().splitlines() if "Talks at Google" in line)
+        line = next(line for line in _probe_guidance().splitlines() if "throughout" in line)
 
         assert 'makes an "interview"' in line and 'stays "talk"' in line
 

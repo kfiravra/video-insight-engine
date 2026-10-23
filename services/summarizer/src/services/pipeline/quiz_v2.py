@@ -22,8 +22,8 @@ Every question then passes the 2.0 quote check (``quote_verify``) or is dropped:
 - no quote — dropped.
 
 and must test a target idea: the one it names, else the one stamped within 90 s of it,
-else it is dropped; a second question on one idea ranks behind every first one
-(``quiz_v2_targets``).
+else it is dropped; a second question on one idea ranks behind every first one and
+ships only when the firsts run out (``quiz_v2_targets``).
 
 Each reply is read item by item when its envelope is broken (``quiz_v2_parse``, G2-1);
 a reply in which no question parses is asked for once more — that call's only second
@@ -71,7 +71,14 @@ from .pipeline_timing import record_llm_failure
 from .quiz_v2_parse import quiz_items
 from .quiz_v2_prompt import QuizV2Prompt, QuizV2Request, build_quiz_v2_prompts
 from .quiz_v2_select import quiz_parts, select_quiz, shuffle_quiz
-from .quiz_v2_targets import Candidate, aimed, candidates, ideas_first, translated_place
+from .quiz_v2_targets import (
+    Candidate,
+    aimed,
+    candidates,
+    ideas_first,
+    repeats,
+    translated_place,
+)
 from .quote_verify import TRANSLATED, VERIFIED, QuoteIndex, verify_quote
 
 if TYPE_CHECKING:
@@ -347,7 +354,8 @@ async def _run(
     checked = ideas_first(keep_checked(merged, index, request.duration_s))
     parts = quiz_parts(request.duration_s, request.windows)
     count = quiz_question_count(request.duration_s, _quiz_cap())
-    quiz, spares = select_quiz([c.question for c in checked], count, parts, request.outline)
+    questions = [c.question for c in checked]
+    quiz, spares = select_quiz(questions, count, parts, request.outline, repeats(checked))
     if len(quiz) < MIN_QUIZ_V2_QUESTIONS:
         logger.warning(
             "Quiz v2 for %s kept %d checked question(s); no quiz", request.primary_tag, len(checked)

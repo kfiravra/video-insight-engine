@@ -54,6 +54,51 @@ describe('MomentTimelineRow exchange', () => {
     expect(screen.queryByText(/^A · /)).not.toBeInTheDocument();
   });
 
+  describe('on a stored interview where only some rows kept their question', () => {
+    // Rows stored before 4.1 lost `question` whenever it equalled the label.
+    const storedRows: MomentItem[] = [
+      exchange,
+      { time: '6:00', seconds: 360, label: 'What should regulators do first?', description: 'License the largest training runs.', speaker: 'Max Tegmark' },
+      { time: '8:20', seconds: 500, label: 'Is it too late?', description: 'No — but the window is closing.', speaker: 'Max Tegmark' },
+    ];
+
+    it('should label every answer with its speaker when one row of the track carries a question', () => {
+      render(<MomentTrack items={storedRows} />);
+      expect(screen.getAllByText('A · Max Tegmark')).toHaveLength(3);
+    });
+
+    it('should show no header speaker chip on any row when one row of the track carries a question', () => {
+      render(<MomentTrack items={storedRows} />);
+      expect(screen.queryByText('Max Tegmark')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('with a question the transcript does not say in those words', () => {
+    const RENDERED_Q = 'האם מכונות יחליטו מה חשוב לנו?';
+    const ENGLISH_Q = 'Will machines decide what matters to us?';
+    const translatedExchange: MomentItem = {
+      ...exchange,
+      question: RENDERED_Q,
+      questionEn: ENGLISH_Q,
+      questionStatus: 'translated',
+    };
+
+    it('should not set a translated question as a quotation', () => {
+      render(<MomentTrack items={[translatedExchange]} />);
+      expect(screen.queryByText(RENDERED_Q)).not.toBeInTheDocument();
+    });
+
+    it('should head the row with the English question when the question is translated', () => {
+      render(<MomentTrack items={[translatedExchange]} />);
+      expect(screen.getByText(ENGLISH_Q).closest('blockquote')).toBeNull();
+    });
+
+    it('should head the row with the question as prose when a translated question has no English beside it', () => {
+      render(<MomentTrack items={[{ ...exchange, questionStatus: 'translated' }]} />);
+      expect(screen.getByText(QUESTION).closest('blockquote')).toBeNull();
+    });
+  });
+
   describe('with an English rendering of a Hebrew question', () => {
     const HEBREW_Q = 'האם מכונות יחליטו מה חשוב לנו?';
     const ENGLISH_Q = 'Will machines decide what matters to us?';

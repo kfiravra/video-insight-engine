@@ -1685,7 +1685,7 @@ def assemble_response(
                 data_resolved = True
 
         # A talk's asks tab is its quoted asks, after every fallback: [] drops it (4.0 d).
-        data = asks_data(component, data_source, extraction, data)
+        data = asks_data(component, data_source, extraction, data, triage.get("contentFormat"))
 
         # Components that build from synthesis/meta, not extraction data
         _SELF_SUFFICIENT = {"overview", "budget"}

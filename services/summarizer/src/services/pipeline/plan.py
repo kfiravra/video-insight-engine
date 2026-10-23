@@ -272,7 +272,7 @@ def _normalize_plan_data(data: dict, content_format: str | None) -> None:
         content_tags = [content_tags]
     if not content_tags:
         content_tags = ["learning"]
-    content_tags = activate_argument_domains(validated_tabs, content_tags)
+    content_tags = activate_argument_domains(validated_tabs, content_tags, content_format)
     data["contentTags"] = content_tags
 
     primary_tag = data.get("primaryTag", content_tags[0])

@@ -249,7 +249,7 @@ previous `main` (`config.py`).
 | `food` | `schemas/food.txt` | overview, ingredients, steps, tips |
 | `fitness` | `schemas/fitness.txt` | overview, exercises, timer, tips |
 | `travel` | `schemas/travel.txt` | overview, itinerary, packing, budget |
-| `review` | `schemas/review.txt` | overview, verdict, pros_cons, specs |
+| `review` | `schemas/review.txt` | pros_cons, comparison, specs (the verdict rides in the hero) |
 | `music` | `schemas/music.txt` | overview, analysis, structure, lyrics |
 | `project` | `schemas/project.txt` | overview, materials, tools, steps |
 | `language` | `schemas/language.txt` | phrases, rules, drills, vocabulary |

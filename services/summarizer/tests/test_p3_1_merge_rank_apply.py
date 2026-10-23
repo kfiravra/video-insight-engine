@@ -25,7 +25,7 @@ from src.services.pipeline.merge_rank_apply import (
     window_of,
 )
 from src.services.pipeline.merge_rank_render import MergeRankRequest, RenderInput, build_request
-from src.services.pipeline.merge_rank_sections import section_titles, stamp_section
+from src.services.pipeline.merge_rank_sections import _joined_titles, section_names, stamp_section
 
 _DURATION = 3600
 _CHUNKS = (
@@ -307,14 +307,14 @@ class TestSections:
     def test_should_title_a_joined_section_after_its_largest_member(self) -> None:
         counts = Counter({n: 5 for n in range(9)} | {0: 3, 1: 1})
 
-        titles = section_titles(counts, _OUTLINE)
+        titles = _joined_titles(counts, section_names(_OUTLINE), lambda group, member: 0)
 
         assert titles[1] == titles[0] == "Part 1"
 
     def test_should_join_the_smallest_section_to_its_smaller_neighbour(self) -> None:
         counts = Counter({n: 5 for n in range(9)} | {4: 1, 3: 2, 5: 4})
 
-        titles = section_titles(counts, _OUTLINE)
+        titles = _joined_titles(counts, section_names(_OUTLINE), lambda group, member: 0)
 
         assert titles[4] == titles[3] == "Part 4"
 
@@ -433,6 +433,6 @@ class TestStampSection:
 
 
 def test_should_keep_a_cased_first_word_when_it_titles_a_section() -> None:
-    titles = section_titles(Counter({5: 1}), _S13_OUTLINE)
+    titles = section_names(_S13_OUTLINE)
 
     assert titles[5] == "macOS config pain and Raycast export frustrations"

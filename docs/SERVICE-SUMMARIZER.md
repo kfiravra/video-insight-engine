@@ -72,6 +72,8 @@ services/summarizer/
     │   │   ├── field_requests.py     # Split extraction: the fields the reconciled tabs read (+ siblings, side reads, scalars)
     │   │   ├── field_groups.py       # ... cut into ≤ maxTextGroups text groups (text1 first) + one visual group
     │   │   ├── extraction_chunks.py  # ... over the run's chunks (one, or chapter batches for long videos)
+    │   │   ├── where_hints.py        # chunked runs: an argument list's plan windows are hints, never a limit (4.0)
+    │   │   ├── stamp_anchor.py       # chunk stamps tied to the item's verified quote and its list's order (4.0 a, G3-3)
     │   │   ├── extraction_group_prompt.py # ... each call's three blocks: 1h rules+schemas+example / 5m video+chunk+memory / job
     │   │   ├── extraction_groups.py  # ... fired warm-first under the run's semaphore; one more call for a lost answer
     │   │   ├── group_merge.py        # ... per-group validation + key filter, the deterministic merge
@@ -84,15 +86,16 @@ services/summarizer/
     │   │   ├── enrichment.py         # The quiz only (quizEnrichment domains, demand-gated by the plan; 3/5/8 questions by length, each stamped)
     │   │   ├── synthesis.py          # masterSummary + seoDescription (hero from memory; fast tier) — now only when the hero rewrite is off or gave none
     │   │   ├── hero_rewrite.py       # The hero rewrite (HERO_REWRITE_ENABLED): one cache-reading LLM_EXTRACTION_MODEL call replaces synthesis; hero_job.py builds its request (cached blocks, job text, the evidence), hero_validate.py checks its answer (hero_text.py holds the prose readers), hero_compact.py renders the extraction it reads
-    │   │   ├── quiz_v2.py            # Quiz v2 (QUIZ_V2_ENABLED): LLM_MEMORY_MODEL (Haiku 5.5) from the transcript + key ideas, one call per third in parallel past 15 min; every question's quote checked
-    │   │   ├── quiz_v2_prompt.py     # Quiz v2's prompts: past 15 min one per third holding a key idea (its quota, range, ideas + the unstamped ones, lines ± 30 s), else one over the whole video
-    │   │   ├── quiz_v2_ideas.py      # Quiz v2's key ideas: the dataSources per domain and their prompt lines
+    │   │   ├── quiz_v2.py            # Quiz v2 (QUIZ_V2_ENABLED): LLM_MEMORY_MODEL (Haiku 5.5) from the transcript + target key ideas, one call per part in parallel (each extraction chunk, else each third past 15 min); every question names the idea it tests (quiz_v2_targets) and its quote is checked
+    │   │   ├── quiz_v2_prompt.py     # Quiz v2's prompts: one per part holding a target (chunk, else third past 15 min): its quota, range, targets + the unstamped ones, lines ± 30 s, the hero without other parts' takeaways (part_hero); else one over the whole video
+    │   │   ├── quiz_v2_ideas.py      # Quiz v2's targets: the thesis / argument / number / disagreement items (ids K1…) of the first non-empty KEY_IDEA_SOURCES list (quiz_targets), and their prompt lines
     │   │   ├── quiz_v2_parse.py      # Quiz v2's reply read question by question when its JSON envelope is broken (G2-1)
-    │   │   ├── quiz_v2_select.py     # What ships: one question per third first, a key that tells by its length last; keys dealt evenly over the positions; the late refill's spare
+    │   │   ├── quiz_v2_targets.py    # Quiz v2's targets: the idea each question names (else the one within 90 s), one question per idea before any second, a translated question's stamp (4.0 b)
+    │   │   ├── quiz_v2_select.py     # What ships: one question per part, then per untested outline section (a repeat on an idea takes neither slot), a key that tells by its length last; keys dealt evenly over the positions; the late refill's spare
     │   │   ├── merge_rank.py         # merge_rank (MERGE_RANK_ENABLED, chunked runs): one LLM_MEMORY_MODEL (Haiku 5.5) call at text-groups-done beside the hero; reads the ids-only answer, applies it to the final merge
     │   │   ├── merge_rank_render.py  # merge_rank's input: the outline + every planned list, one id'd line per item, ≤ 10 K tokens (texts shorten, no item dropped)
-    │   │   ├── merge_rank_apply.py   # merge_rank's edit: twins out under five guards (one: the keep must be sure to ship; one: a Q&A question never drops for a position), ranked lists cut to their cap by rank, key-idea sections (merge_rank_sections.py) even when the call failed
-    │   │   ├── merge_rank_sections.py # key-idea sections: the stamp's outline section, the neighbour only on a clear word match, whole-phrase titles, video order
+    │   │   ├── merge_rank_apply.py   # merge_rank's edit: twins out under five guards (one: the keep must be sure to ship; one: a Q&A question never drops for a position; the group's other Q&A drops leave as its twins), ranked lists cut to their cap by rank, key-idea sections (merge_rank_sections.py) even when the call failed
+    │   │   ├── merge_rank_sections.py # key-idea sections: the stamp's outline section, the neighbour only on a clear word match and never out of video order, whole-phrase titles no two sections share, video order
     │   │   ├── quote_verify.py       # Is a quote in the transcript? The extraction pre-pass + the run's index (verified / unverified / translated); re-exports quote_index
     │   │   ├── quote_index.py        # The quote matcher: QuoteIndex (normalized exact-first, else fuzzy; a "…"-cut quote is fragments in order within 40 words and 60 s)
     │   │   ├── pipeline_timing.py    # pipeline.timing recorder v4 (phases, LLM calls, failures incl. refusals, downloads, counts)
@@ -111,6 +114,7 @@ services/summarizer/
     │   │   │   ├── normalizers.py, density.py, cross_tab.py, text_utils.py
     │   │   │   ├── quiz_stamps.py, tab_references.py # Quiz times in seconds; no hero / goal sentence names a tab that does not ship (summarizer-workflow.md §Assembly notes)
     │   │   │   ├── moment_sources.py, steps_timeline.py, info_grid_fold.py, quote_spots.py, ingredients.py # R7 / D6 / R6 / quote cards / ingredient rows (summarizer-workflow.md §Assembly notes)
+    │   │   │   ├── key_ideas.py          # learning.keyIdeas → spot cards + sections, guests first, Disagreements last (re-exported by assemblers_learning)
     │   │   │   ├── qa_questions.py, talk_asks.py # podcast.qa questions checked against the transcript; a talk's asks tab from its quoted kind-ask key ideas (4.0 c / d)
     │   │   ├── phases/               # Phase runners (metadata, text, transcript, transcript_fallback,
     │   │   │                         #   probe, triage=plan, memory, moments, frames, frames_done,
@@ -834,10 +838,13 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     │       sparse quick_quiz host with evidence that doesn't rule learning out, in a
     │       quizEnrichment domain). QUIZ_V2_ENABLED (default): quiz v2 (pipeline/quiz_v2.py,
     │       quiz_v2.txt) on LLM_MEMORY_MODEL (Haiku 5.5), 18 s per attempt, 1 retry, 37 s total, no
-    │       cache breakpoint — reads the marked transcript and the key ideas (learning.keyIdeas
-    │       first), writes the video's count (3 / 5 / 8, `quizPolicy.questionsByDuration`) + 4 spare
-    │       questions, each with a ≤ 25-word evidence quote and the answer's timestamp; every quote
-    │       is checked against the transcript (quote_verify): found → the stamp is set from where it
+    │       cache breakpoint — reads the marked transcript and the target key ideas
+    │       (quiz_v2_ideas.quiz_targets: the thesis / argument / number items of the first non-empty
+    │       KEY_IDEA_SOURCES list, ids K1…) — one call per part in parallel, each extraction chunk
+    │       of a chunked run, else each third past 15 min — and writes the video's count (3 / 5 / 8,
+    │       `quizPolicy.questionsByDuration`) + 4 spare questions, each with a ≤ 25-word evidence
+    │       quote and the answer's timestamp and naming the id it tests (no valid id → the target
+    │       stamped within 90 s, else dropped, quiz_v2_targets); every quote is checked against the transcript (quote_verify): found → the stamp is set from where it
     │       is said; an English-source quote not found → the question is dropped; a translated one
     │       is kept as prose with an in-video stamp; fewer than 3 survivors → no quiz tab. The
     │       checked questions past the count stay as up to 4 spares (never dumped): once the hero
@@ -891,8 +898,12 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     │   transcript; ctx.language is always "en" — the English-primary output)
     └─▶ translate_to_source() — batched, salvage-tolerant translation
     │   └─▶ Walks the assembled tree, collects every translatable prose
-    │   │   string into one flat list (`_collect_strings` + `_SKIP_KEYS`
-    │   │   leaf-only deny-list for structural/asset/enum keys)
+    │   │   string into one flat list (`_collect_strings`: the `_SKIP_KEYS` leaf-only
+    │   │   deny-list for structural/asset/enum keys, plus D12's verbatim lines — a `quote`
+    │   │   without `quoteTranslated` and any leaf of its dict restating it, a verified
+    │   │   `question` and the `label` cut from it — and `quoteEn` / `questionEn`,
+    │   │   `_kept_as_is`; the source-language copy drops `quoteEn` / `questionEn`,
+    │   │   `_drop_english_only`, 4.2)
     │   └─▶ Fast-model calls (`translation_full`) on LLM_TRANSLATION_MODEL
     │   │   (default openai/gpt-6-luna, reasoning off) via
     │   │   src/prompts/translate_flat.txt (flat-list

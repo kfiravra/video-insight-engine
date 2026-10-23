@@ -1,14 +1,27 @@
-"""merge_rank's sections (output-quality 3.1): the key ideas' ``section`` is code's, not the call's.
+"""merge_rank's sections (output-quality 3.1, 4.0 e): the key ideas' ``section`` is code's,
+not the call's (module docstring of ``merge_rank_apply``, item 3). Pure code: it runs
+whether or not the call answered.
 
-``learning.keyIdeas[].section`` = the title of the outline section whose [start, end)
-holds the idea's stamp (module docstring of ``merge_rank_apply``, item 3). Pure code: it
-runs whether or not the call answered.
+- **Place.** An idea files under the outline section whose [start, end) holds its stamp —
+  or under the neighbour across that section's edge, when the stamp lies within
+  :data:`EDGE_S` of it and the neighbour shares :data:`WORD_MARGIN` more of the idea's
+  words (S03's Challenge 2 sat 3 minutes into the next section). A move that would file
+  an idea out of video order against another idea is undone, so the sections read in
+  stamp order end to end (review p4 B-W1: S02's 4241 s went back past 4200 s).
+- **Join.** At most :data:`MAX_SECTIONS`: the smallest section joins its smaller
+  neighbour until they fit; a joined section takes the title of the member whose words
+  fit its ideas best, then the one holding the most ideas, then the earliest.
+- **Title.** A title memory cut at 60 characters ("…") ships as a whole phrase, and never
+  as one another section ships (review p4 B-W5: two "audience Q&A: …" titles merged).
+- **Order.** The kept ideas are written section by section, each in stamp order — the
+  video's order; an idea without a place last.
 """
 
 from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
+from itertools import permutations
 from typing import TYPE_CHECKING, NamedTuple
 
 from ...models.memory_types import OutlineSection
@@ -43,53 +56,91 @@ def _joined(counts: Counter[int]) -> list[list[int]]:
     return groups
 
 
-def _whole_phrase(text: str) -> str:
-    """A title memory cut at 60 characters ("…") back to a whole phrase: before its first
-    ":" (when two words stay), else before its last ", " / " and " / "; ", else without
-    its trailing function words. A title that was not cut is returned as it is."""
-    if not text.endswith("…"):
-        return text
-    body = text.removesuffix("…").rstrip()
-    lead = body.partition(":")[0]
-    if ":" in body and len(lead.split()) >= 2:
-        return lead.strip()
-    cuts = [body.rfind(separator) for separator in _PHRASE_BREAKS]
-    if (cut := max(cuts)) > 0 and len(body[:cut].split()) >= 2:
-        return body[:cut].strip(" ,;")
+def _lead(body: str) -> str:
+    """The text before the first ":" when it holds two words or more; else ``""``."""
+    lead, colon, _ = body.partition(":")
+    return lead.strip() if colon and len(lead.split()) >= 2 else ""
+
+
+def _last_phrase(body: str) -> str:
+    """The text before the last ", " / " and " / "; " when it holds two words or more;
+    else ``""``."""
+    cut = max(body.rfind(separator) for separator in _PHRASE_BREAKS)
+    return body[:cut].strip(" ,;") if cut > 0 and len(body[:cut].split()) >= 2 else ""
+
+
+def _kept_word(word: str) -> bool:
+    """A closing word the strip keeps: a content word, or an acronym ("AI", "UK")."""
+    return bool(content_words(word)) or sum(char.isupper() for char in word) >= 2
+
+
+def _stripped(body: str) -> str:
+    """``body`` without its trailing function words; ``body`` itself when none is left."""
     words = body.split()
-    while words and not content_words(words[-1]):
+    while words and not _kept_word(words[-1]):
         words.pop()
     return " ".join(words) or body
 
 
-def _title(section: OutlineSection) -> str:
-    """The outline title as a section label: a lower-case first word capitalised ("intro"
-    → "Intro"), a cased one kept ("macOS", "iPhone")."""
-    text = _whole_phrase(" ".join(section.title.split()))
+def _whole_phrase(text: str, lead: bool = True) -> str:
+    """A title memory cut at 60 characters ("…") back to a whole phrase: before its first
+    ":" (when two words stay; never with ``lead=False``), else before its last ", " /
+    " and " / "; ", else without its trailing function words. A title that was not cut
+    is returned as it is."""
+    if not text.endswith("…"):
+        return text
+    body = text.removesuffix("…").rstrip()
+    phrase = _lead(body) if lead else ""
+    return phrase or _last_phrase(body) or _stripped(body)
+
+
+def _capitalised(text: str) -> str:
+    """A lower-case first word capitalised ("intro" → "Intro"), a cased one kept ("macOS",
+    "iPhone")."""
     first = text.split(" ", 1)[0]
     return text[:1].upper() + text[1:] if first.islower() else text
+
+
+def _title(section: OutlineSection, lead: bool = True) -> str:
+    """The outline title as a section label (:func:`_whole_phrase`, :func:`_capitalised`)."""
+    return _capitalised(_whole_phrase(" ".join(section.title.split()), lead))
+
+
+def _cut_text(section: OutlineSection) -> str:
+    """The cut title as memory wrote it, "…" kept."""
+    return _capitalised(" ".join(section.title.split()))
+
+
+def _no_lead(section: OutlineSection) -> str:
+    return _title(section, lead=False)
+
+
+def section_names(outline: Sequence[OutlineSection]) -> list[str]:
+    """Each outline section's label (:func:`_title`). A cut title whose label another
+    section's label repeats falls back to its last ", " / " and " phrase, then to the cut
+    text itself: two sections never merge on a shared lead (module docstring)."""
+    names = [_title(section) for section in outline]
+    for fallback in (_no_lead, _cut_text):
+        repeated = Counter(names)
+        for index, section in enumerate(outline):
+            if repeated[names[index]] > 1 and _cut_text(section).endswith("…"):
+                names[index] = fallback(section)
+    return names
 
 
 def _joined_titles(
     counts: Counter[int],
     names: Sequence[str],
-    fits: Callable[[Sequence[int], int], int] | None = None,
+    fits: Callable[[Sequence[int], int], int],
 ) -> dict[int, str]:
     """Section index → the name its ideas ship under once the sections are joined: the
     member whose words fit the group's ideas best (``fits(group, member)``), then the one
     holding the most ideas, then the earliest."""
     titles: dict[int, str] = {}
     for group in _joined(counts):
-        lead = max(
-            group, key=lambda index: (fits(group, index) if fits else 0, counts[index], -index)
-        )
+        lead = max(group, key=lambda index: (fits(group, index), counts[index], -index))
         titles.update(dict.fromkeys(group, names[lead]))
     return titles
-
-
-def section_titles(counts: Counter[int], outline: Sequence[OutlineSection]) -> dict[int, str]:
-    """Outline index → the title its ideas ship under (module docstring)."""
-    return _joined_titles(counts, [_title(section) for section in outline])
 
 
 def stamp_section(seconds: int | None, outline: Sequence[OutlineSection]) -> int | None:
@@ -147,17 +198,51 @@ def _section_words(section: OutlineSection) -> frozenset[str]:
     return content_words(f"{section.title} {section.establishes}")
 
 
+def _out_of_order(placed: Mapping[int, int], stamps: Mapping[int, int]) -> set[int]:
+    """Both ideas of every pair filed against the video's order: the earlier stamp in the
+    later section."""
+    return {
+        index
+        for early, late in permutations(placed, 2)
+        if stamps[early] < stamps[late] and placed[early] > placed[late]
+        for index in (early, late)
+    }
+
+
+def place_stamps(
+    stamps: Mapping[int, int],
+    words: Mapping[int, frozenset[str]],
+    outline: Sequence[OutlineSection],
+) -> dict[int, int]:
+    """Idea → outline section: :func:`place_stamp` for each, then every edge move that
+    files an idea out of video order undone — the idea goes back to its stamp's own
+    section (module docstring)."""
+    homes = {
+        index: home
+        for index, seconds in stamps.items()
+        if (home := stamp_section(seconds, outline)) is not None
+    }
+    placed = {
+        index: section
+        for index in homes
+        if (section := place_stamp(stamps[index], words[index], outline)) is not None
+    }
+    while undo := {i for i in _out_of_order(placed, stamps) if placed[i] != homes[i]}:
+        placed.update({index: homes[index] for index in undo})
+    return placed
+
+
 def _outline_places(edit: _Edit, lane: _Lane, outline: Sequence[OutlineSection]) -> Placement:
-    """Kept index → the outline section its stamp falls in, and the sections' titles."""
-    placed: dict[int, int] = {}
+    """Kept index → its outline section (:func:`place_stamps`), and the sections' names."""
     words = {index: idea_words(lane.items[index]) for index in lane.kept()}
-    for index in lane.kept():
-        seconds = item_seconds(lane.items[index], edit.duration)
-        section = place_stamp(seconds, words[index], outline)
-        if section is not None:
-            placed[index] = section
-    names = [_title(section) for section in outline]
-    return Placement(placed, names, [_section_words(s) for s in outline], words)
+    stamps = {
+        index: seconds
+        for index in lane.kept()
+        if (seconds := item_seconds(lane.items[index], edit.duration)) is not None
+    }
+    placed = place_stamps(stamps, words, outline)
+    sections = [_section_words(section) for section in outline]
+    return Placement(placed, section_names(outline), sections, words)
 
 
 def _label_places(lane: _Lane) -> Placement:
@@ -184,8 +269,9 @@ def _best_fit(plan: Placement) -> Callable[[Sequence[int], int], int]:
 
 
 def _in_video_order(lane: _Lane, placed: Mapping[int, int], duration: int | None) -> None:
-    """The kept ideas written section by section, each in stamp order; an unplaced idea
-    keeps its place at the end. The removed items follow, still removed."""
+    """The kept ideas written section by section, each in stamp order — the video's order,
+    :func:`place_stamps` files no idea against it; an unplaced idea keeps its place at the
+    end. The removed items follow, still removed."""
     kept = lane.kept()
     dropped = [lane.items[index] for index in sorted(lane.removed)]
 

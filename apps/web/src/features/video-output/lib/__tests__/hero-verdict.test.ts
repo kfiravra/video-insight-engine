@@ -58,16 +58,56 @@ describe('liftReviewVerdict', () => {
     expect(liftReviewVerdict(tabs, 'review').tabs?.[0].props).not.toHaveProperty('verdict');
   });
 
-  it('should keep the verdict in the tab when the tab has nothing else', () => {
-    const tabs = [comparisonTab({ comparisons: [], pros: [], cons: [], verdict: VERDICT })];
+  it('should leave a verdict-only comparison tab out of the tabs when its verdict is lifted', () => {
+    const tabs = [OVERVIEW, comparisonTab({ comparisons: [], pros: [], cons: [], verdict: VERDICT })];
 
-    expect(liftReviewVerdict(tabs, 'review').tabs?.[0].props.verdict).toBe(VERDICT);
+    expect(liftReviewVerdict(tabs, 'review').tabs?.map((tab) => tab.id)).toEqual(['overview']);
+  });
+
+  it('should keep a verdict-only comparison tab that carries attachments when its verdict is lifted', () => {
+    const tab: TabEntry = {
+      ...comparisonTab({ verdict: VERDICT }),
+      attachments: [{ slot: 'top', component: 'tip_callout', props: { text: 'Check the fit first.' } }],
+    };
+
+    expect(liftReviewVerdict([tab], 'review').tabs?.[0].props).not.toHaveProperty('verdict');
+  });
+
+  it('should strip the verdict from both comparison tabs when a review ships Pros & cons and vs competitors', () => {
+    const tabs = [
+      OVERVIEW,
+      { ...comparisonTab({ pros: ['Better battery'], cons: ['Price'], comparisons: [], verdict: VERDICT }), id: 'pros_cons' },
+      { ...comparisonTab({ comparisons: ROWS, pros: [], cons: [], verdict: VERDICT }, 'comparison_radar'), id: 'vs' },
+    ];
+
+    const lifted = liftReviewVerdict(tabs, 'review').tabs ?? [];
+
+    expect(lifted.filter((tab) => 'verdict' in tab.props).map((tab) => tab.id)).toEqual([]);
+  });
+
+  it('should keep a comparison tab whose verdict states a different bottom line', () => {
+    const other = { ...VERDICT, bottomLine: 'A different call on another product.' };
+    const tabs = [comparisonTab({ comparisons: ROWS, verdict: VERDICT }), comparisonTab({ comparisons: ROWS, verdict: other })];
+
+    expect(liftReviewVerdict(tabs, 'review').tabs?.[1].props.verdict).toBe(other);
   });
 
   it("should take the quote from the overview's spread when it states the same verdict", () => {
     const { verdict } = liftReviewVerdict(S07_TABS, 'review');
 
     expect(verdict?.quote).toBe(QUOTE);
+  });
+
+  it("should not borrow the overview's quote when it is said at another moment on the same bottom line", () => {
+    // The spread puts a stated rating first: its moment and quote, the verdict's bottom line.
+    const ratingSpread: TabEntry = {
+      ...OVERVIEW,
+      props: { data: { score: 8, maxScore: 10, label: 'Great', timestamp: 600, quote: "I'd give these an eight.", bottomLine: BOTTOM_LINE } },
+    };
+
+    const { verdict } = liftReviewVerdict([ratingSpread, S07_TABS[1]], 'review');
+
+    expect(verdict?.quote).toBeUndefined();
   });
 
   it("should not borrow the overview's quote when it states a different verdict", () => {
@@ -85,6 +125,17 @@ describe('liftReviewVerdict', () => {
     const { verdict } = liftReviewVerdict([OVERVIEW, comparisonTab({ comparisons: ROWS })], 'review');
 
     expect(verdict).toMatchObject({ badge: 'recommended', bottomLine: BOTTOM_LINE, timestamp: 641, quote: QUOTE });
+  });
+
+  it("should take only the bottom line and badge from the overview when a stated rating leads its spread", () => {
+    const ratingSpread: TabEntry = {
+      ...OVERVIEW,
+      props: { data: { score: 8, maxScore: 10, label: 'Great', timestamp: 600, quote: "I'd give these an eight.", badge: 'recommended', bottomLine: BOTTOM_LINE } },
+    };
+
+    const { verdict } = liftReviewVerdict([ratingSpread, comparisonTab({ comparisons: ROWS })], 'review');
+
+    expect(verdict).toEqual({ bottomLine: BOTTOM_LINE, badge: 'recommended', bestFor: [], notFor: [] });
   });
 
   it('should lift from a comparison_radar tab when that is the comparison', () => {
@@ -115,11 +166,32 @@ describe('liftReviewVerdict', () => {
     expect(liftReviewVerdict(tabs, 'review').verdict).toMatchObject({ score: 8, maxScore: 10 });
   });
 
-  it('should drop a score when the verdict has no timestamp', () => {
-    const unanchored = { ...VERDICT, timestamp: undefined, score: 9, maxScore: 10 };
+  it('should keep a stated score when the verdict sentence has no timestamp', () => {
+    // Assembly ships the score only from a stated rating, which carries its own anchor.
+    const unanchored = { ...VERDICT, timestamp: undefined, score: 8, maxScore: 10 };
     const tabs = [comparisonTab({ comparisons: ROWS, verdict: unanchored })];
 
-    expect(liftReviewVerdict(tabs, 'review').verdict?.score).toBeUndefined();
+    expect(liftReviewVerdict(tabs, 'review').verdict).toMatchObject({ score: 8, maxScore: 10 });
+  });
+
+  it('should carry the stated sub-scores into the hero verdict when assembly ships them', () => {
+    const subScores = [
+      { category: 'Battery', score: 9, timestamp: 300, quote: 'battery gets a nine' },
+      { category: 'Camera', score: 7, timestamp: 420, quote: 'camera a seven' },
+    ];
+    const tabs = [comparisonTab({ pros: ['Battery'], verdict: { ...VERDICT, subScores } })];
+
+    expect(liftReviewVerdict(tabs, 'review').verdict?.subScores).toEqual([
+      { category: 'Battery', score: 9 },
+      { category: 'Camera', score: 7 },
+    ]);
+  });
+
+  it('should skip a sub-score row without a category or a number when one ships malformed', () => {
+    const subScores = [{ category: '', score: 9 }, { category: 'Fit', score: '8/10' }, { category: 'Sound', score: 8 }];
+    const tabs = [comparisonTab({ comparisons: ROWS, verdict: { ...VERDICT, subScores } })];
+
+    expect(liftReviewVerdict(tabs, 'review').verdict?.subScores).toEqual([{ category: 'Sound', score: 8 }]);
   });
 
   it('should leave out blank Best for entries when the extraction ships them', () => {

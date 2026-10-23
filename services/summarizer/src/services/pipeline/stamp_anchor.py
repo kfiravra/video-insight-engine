@@ -20,17 +20,26 @@ reads the result:
      cleared; a moment's ``time`` clock is rewritten.
    A translated or unverified quote moves nothing, nor does one said outside the window.
 2. **Order guard**, on the lists the model writes in the video's order (``learning.*``,
-   ``podcast.segments``, ``podcast.qa``; never a rankings list). The stamps off the list's
-   longest non-decreasing run are bracketed by the run's stamps before and after them
-   (the window's edges at the list's ends). One more than ``ORDER_GAP_S`` outside its
-   bracket goes back to the bracket's earlier stamp when the bracket is at most
-   ``ORDER_GAP_S`` wide, else it is cleared; a moment, whose stamp it IS, is dropped
-   instead, and a range that moves loses its end (read on the same wrong clock). A 0 is
-   the model's "no stamp" and is left out of the order.
+   ``podcast.segments``; never a rankings list, never ``podcast.qa``, whose stamps the
+   question check owns: a verified question is re-stamped where it is asked, a translated
+   one keeps its row — Kfir: keep every question). The stamps off the list's longest
+   non-decreasing run are bracketed by the run's stamps before and after them (the
+   window's edges at the list's ends). The guard is one-sided (phase-4 review A-C1): only
+   a stamp more than ``ORDER_GAP_S`` LATE past its bracket moves, since every miss found
+   was the model writing a later marker; one listed after later items but stamped early
+   is left alone (S15's closing claim, said at 56:24 and listed after 1:08:41), and so is
+   any item whose verified quote holds its stamp after pass 1. A late stamp goes back to
+   the bracket's earlier stamp when the bracket is at most ``ORDER_GAP_S`` wide, else it
+   is cleared. On a timeline list (moments, segments) the stamp is the item's place: it
+   goes to the first second from there that no other item of the list holds (assembly
+   keeps one item per second), and one left unstamped is dropped. A range that moves
+   loses its end (read on the same wrong clock). A 0 is the model's "no stamp" and is
+   left out of the order.
 
 Every move is counted per field path in the window's ``StampReport`` (``anchored`` /
-``reordered``). Pure: the input is never mutated, and the same object comes back when
-nothing moved — always for an open window (a one-chunk run: Kfir's scope, 2026-10-22).
+``reordered``, and ``dropped`` for an item the guard drops). Pure: the input is never
+mutated, and the same object comes back when nothing moved — always for an open window
+(a one-chunk run: Kfir's scope, 2026-10-22).
 """
 
 from __future__ import annotations
@@ -59,7 +68,7 @@ _END_KEYS = ("endSeconds", "endTimestamp")
 _CLOCK_KEY = "time"
 _QUOTE_KEY = "quote"
 _CHRONOLOGICAL_DOMAINS = ("learning.",)
-_CHRONOLOGICAL_LISTS = frozenset({"podcast.segments", "podcast.qa"})
+_CHRONOLOGICAL_LISTS = frozenset({"podcast.segments"})
 
 
 @dataclass(frozen=True)
@@ -219,45 +228,83 @@ def _bracket(
     return low, high
 
 
-def _out_of_order(stamps: Sequence[int], chunk: ExtractionChunk) -> dict[int, int | None]:
-    """``{position: new stamp}`` for every stamp more than ``ORDER_GAP_S`` outside its
-    bracket: the bracket's earlier stamp, or None when the bracket is wider than that."""
+def _late(stamps: Sequence[int], chunk: ExtractionChunk) -> dict[int, int | None]:
+    """``{position: new stamp}`` for every stamp more than ``ORDER_GAP_S`` past its
+    bracket's later stamp: the bracket's earlier stamp, or None when the bracket is wider
+    than that. A stamp before its bracket is never moved (module docstring, one-sided)."""
     run = _longest_run(stamps)
     off_run = {p: _bracket(stamps, run, p, chunk) for p in range(len(stamps)) if p not in run}
     return {
         position: int(low) if high - low <= ORDER_GAP_S else None
         for position, (low, high) in off_run.items()
-        if not low - ORDER_GAP_S <= stamps[position] <= high + ORDER_GAP_S
+        if stamps[position] > high + ORDER_GAP_S
     }
 
 
-def _reordered(item: dict[str, Any], seconds: int | None) -> dict[str, Any] | None:
-    """``item`` at ``seconds`` without its end; None (dropped) for a moment left unstamped."""
+def _held_by_quote(item: Any, run: _Pass) -> bool:
+    """Whether the item's quote is VERIFIED inside the window: after pass 1 its stamp is
+    where (a range: within the span of where) the quote is said, so the order is wrong,
+    not the stamp."""
+    key = _stamp_key(item)
+    return key is not None and _said(item, key, run) is not None
+
+
+def _free_second(seconds: int, taken: set[int]) -> int:
+    """The first second from ``seconds`` on that ``taken`` does not hold."""
+    while seconds in taken:
+        seconds += 1
+    return seconds
+
+
+def _placed(items: list[Any], moves: dict[int, int | None], path: str) -> dict[int, int | None]:
+    """``moves`` with each timeline item's new second its own: assembly keeps one moment per
+    second (``normalize_moment_items``), so one pulled onto its neighbour's is lost."""
+    if path not in _timeline_paths():
+        return moves
+    taken = {
+        s for i, item in enumerate(items) if i not in moves and (s := _stamp(item)) is not None
+    }
+    placed: dict[int, int | None] = {}
+    for position, seconds in sorted(moves.items()):
+        if seconds is not None:
+            seconds = _free_second(seconds, taken)
+            taken.add(seconds)
+        placed[position] = seconds
+    return placed
+
+
+def _reordered(item: dict[str, Any], seconds: int | None, path: str) -> dict[str, Any] | None:
+    """``item`` at ``seconds`` without its end; None (dropped) for a moment or a timeline
+    item left unstamped — its stamp is its place (a moment's ``time`` clock would
+    otherwise revive the wrong one)."""
     key = _stamp_key(item)
     assert key is not None  # only stamped items are ordered
-    if seconds is None and key == _ITEM_IS_STAMP:
+    if seconds is None and (key == _ITEM_IS_STAMP or path in _timeline_paths()):
         return None
     moved = {**item, **{end: None for end in _END_KEYS if _is_stamp(item.get(end))}}
     return _restamped(moved, key, seconds)
 
 
 def _rebuilt(items: list[Any], moves: dict[int, int | None], path: str, run: _Pass) -> list[Any]:
-    """``items`` with each moved one at its new stamp (a dropped one left out), counted."""
-    for _ in moves:
-        _count(run, path, "reordered", len(items))
-    rebuilt = [_reordered(item, moves[i]) if i in moves else item for i, item in enumerate(items)]
+    """``items`` with each moved one at its new stamp, a dropped one left out; each move
+    counted ``reordered``, each drop ``dropped``."""
+    placed = _placed(items, moves, path)
+    rebuilt = [_reordered(it, placed[i], path) if i in placed else it for i, it in enumerate(items)]
+    for position in placed:
+        _count(run, path, "dropped" if rebuilt[position] is None else "reordered", len(items))
     return [new for new, old in zip(rebuilt, items) if new is not None or old is None]
 
 
 def _ordered(items: list[Any], path: str, run: _Pass) -> list[Any]:
-    """The list with every stamp far outside its order pulled back, cleared or dropped."""
+    """The list with every stamp far past its order pulled back, cleared or dropped."""
     places = [i for i, item in enumerate(items) if _order_stamp(item) is not None]
     if len(places) < _MIN_ORDERED:
         return items
-    moves = _out_of_order([_order_stamp(items[i]) or 0 for i in places], run.chunk)
+    late = _late([_order_stamp(items[i]) or 0 for i in places], run.chunk)
+    moves = {places[p]: s for p, s in late.items() if not _held_by_quote(items[places[p]], run)}
     if not moves:
         return items
-    return _rebuilt(items, {places[p]: seconds for p, seconds in moves.items()}, path, run)
+    return _rebuilt(items, moves, path, run)
 
 
 # ─── The walk ───

@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import type { ComponentProps, ReactNode } from 'react';
@@ -16,6 +16,11 @@ const VERDICT: HeroVerdictData = {
   timestamp: 641,
   quote: "It's the better battery life. It's the better sound quality.",
 };
+
+const SUB_SCORES = [
+  { category: 'Battery', score: 9 },
+  { category: 'Camera', score: 7 },
+];
 
 const REVIEW_HERO: ComponentProps<typeof VideoHero> = {
   title: 'AirPods Pro 2 Review: 1 Underrated Thing!',
@@ -95,6 +100,38 @@ describe('VideoHero — review verdict', () => {
       renderHero({ verdict: { ...VERDICT, score: 8, maxScore: 10 } });
 
       expect(screen.getByRole('img', { name: /^Score: 8\.0/ })).toBeInTheDocument();
+    });
+
+    it('should show a stated score when the verdict sentence has no timestamp', () => {
+      renderHero({ verdict: { ...VERDICT, timestamp: undefined, score: 8, maxScore: 10 } });
+
+      expect(screen.getByRole('img', { name: /^Score: 8\.0/ })).toBeInTheDocument();
+    });
+
+    it('should show stated sub-scores in the hero when the reviewer scores categories', () => {
+      renderHero({ verdict: { ...VERDICT, score: 8, maxScore: 10, subScores: SUB_SCORES } });
+
+      const list = screen.getByRole('list', { name: 'Scores by category' });
+      expect(within(list).getAllByRole('listitem')).toHaveLength(2);
+    });
+
+    it('should show each sub-score against the stated scale when the reviewer gives one', () => {
+      renderHero({ verdict: { ...VERDICT, score: 8, maxScore: 10, subScores: SUB_SCORES } });
+
+      expect(screen.getByText('9/10')).toBeInTheDocument();
+    });
+
+    it('should show a bare sub-score when the reviewer states no scale', () => {
+      renderHero({ verdict: { ...VERDICT, subScores: SUB_SCORES } });
+
+      const list = screen.getByRole('list', { name: 'Scores by category' });
+      expect(within(list).getByText('9')).toBeInTheDocument();
+    });
+
+    it('should render no sub-score list when the verdict carries none', () => {
+      renderHero();
+
+      expect(screen.queryByRole('list', { name: 'Scores by category' })).not.toBeInTheDocument();
     });
 
     it('should replace Worth it for with Best for when the reviewer names who it is for', () => {
@@ -178,6 +215,16 @@ describe('VideoHero — review verdict', () => {
 
       expect(screen.getByText('פסק הדין')).toBeInTheDocument();
       expect(screen.getByText('מתאים במיוחד ל')).toBeInTheDocument();
+    });
+
+    it('should name the sub-score list in Hebrew when the output is Hebrew', () => {
+      renderHero({ verdict: { ...VERDICT, subScores: SUB_SCORES } }, (ui) => (
+        <DirectionProvider language="he" isRTL>
+          {ui}
+        </DirectionProvider>
+      ));
+
+      expect(screen.getByRole('list', { name: 'ציונים לפי קטגוריה' })).toBeInTheDocument();
     });
   });
 });

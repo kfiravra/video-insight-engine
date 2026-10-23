@@ -12,6 +12,13 @@ const rows = [
   { feature: 'Price', thisProduct: '$249', competitor: '$299', competitorName: 'Jabra Elite' },
 ];
 
+// Model-written casing variants of one competitor; the assembler merges them ("Sony" and "sony" are one).
+const CASE_VARIANTS = [
+  { feature: 'ANC', thisProduct: 'Class-leading', competitor: 'Strong', competitorName: 'Sony WF-1000XM4' },
+  { feature: 'Fit', thisProduct: 'Snug', competitor: 'Loose', competitorName: 'Sony WF-1000XM4 ' },
+  { feature: 'Battery', thisProduct: '6 h', competitor: '8 h', competitorName: 'sony WF-1000XM4' },
+];
+
 describe('ComparisonInteractive per-competitor tables', () => {
   it('should render one table per competitor when the rows name two or more', () => {
     render(<ComparisonInteractive comparisons={rows} type="table" view="table" />);
@@ -54,6 +61,11 @@ describe('ComparisonInteractive per-competitor tables', () => {
     expect(screen.getByLabelText(/Radar comparing .* and Competitor/)).toBeInTheDocument();
   });
 
+  it('should keep one table when two rows spell the competitor in different case', () => {
+    render(<ComparisonInteractive comparisons={CASE_VARIANTS} type="table" view="table" />);
+    expect(screen.getAllByRole('table')).toHaveLength(1);
+  });
+
   it('should group versus cards per competitor when the rows name two or more', () => {
     render(<ComparisonInteractive comparisons={rows} type="versus" view="table" />);
     expect(screen.getByRole('heading', { name: 'vs Jabra Elite' })).toBeInTheDocument();
@@ -68,5 +80,9 @@ describe('groupByCompetitor', () => {
       ['Bose QC', [2]],
       ['Jabra Elite', [3]],
     ]);
+  });
+
+  it('should keep the first-seen spelling when two rows spell the competitor in different case', () => {
+    expect(groupByCompetitor(CASE_VARIANTS).map((g) => [g.name, g.rows.length])).toEqual([['Sony WF-1000XM4', 3]]);
   });
 });

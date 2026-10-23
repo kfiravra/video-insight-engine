@@ -232,7 +232,7 @@ export const FlashDeckInteractive = memo(function FlashDeckInteractive({
                 </Badge>
               )}
               {card.emoji && <span className="text-3xl mb-3" aria-hidden="true">{card.emoji}</span>}
-              <p className="font-semibold text-base leading-snug tracking-tight">{card.front}</p>
+              <p dir="auto" className="font-semibold text-base leading-snug tracking-tight">{card.front}</p>
               {cardNeedsReview.has(currentCard) && (
                 <Badge variant="warning" className="mt-2 text-xs font-medium inline-flex items-center gap-1">
                   <EmojiMarker emoji="🔄" size="sm" animated={false} />
@@ -254,7 +254,10 @@ export const FlashDeckInteractive = memo(function FlashDeckInteractive({
               )}
               style={{ backfaceVisibility: 'hidden', transform: 'rotateY(180deg)' }}
             >
-              <p className="text-sm leading-relaxed text-muted-foreground">{card.back}</p>
+              {card.quoteEn && (
+                <p lang="en" dir="ltr" className="mb-2 text-sm leading-relaxed text-foreground/85">{card.quoteEn}</p>
+              )}
+              <p dir="auto" className="text-sm leading-relaxed text-muted-foreground">{card.back}</p>
             </div>
           </div>
           </div>

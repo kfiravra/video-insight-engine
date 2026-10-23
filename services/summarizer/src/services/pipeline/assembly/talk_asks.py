@@ -5,13 +5,16 @@ strings with no quote and no stamp, where the speaker's own practices passed for
 (G3-4: S01 shipped six of DHH's and lost his one real ask to merge_rank). When the run
 has key ideas, that tab is a view of them instead — the numbers strip's precedent
 (``stat_banner``): ``ask_rows`` returns the ideas of kind ``ask`` whose quote survived
-the quote pass, ``{label: claim, note: “quote”, timestamp}``; fewer than the registry's
-checklist minimum is an empty list, so the tab drops and nothing refills it. A run
-without key ideas (an explainer keeps keyPoints, D10) keeps its takeaways checklist.
+the quote pass, ``{label: claim, note: “quote”, timestamp}`` plus the quote's own fields
+(``quote_fields``: the verbatim line, its translated flag, its English — D12); fewer than
+the registry's checklist minimum is an empty list, so the tab drops and nothing refills
+it. Only a talk's checklist is the asks view (C-W2): a lecture's or an explainer's
+Takeaways checklist keeps its takeaways, and so does a run without key ideas (an
+explainer keeps keyPoints, D10).
 
 An ask is the words that ask: one whose quote did not survive is badged as an
 argument on the key-ideas tab (``shown_kind``). Each ask shows once (G3-2): when the
-asks tab ships, the key-ideas tab sheds its ask cards (``dedupe``, ``is_asks_view``).
+asks tab ships, the key-ideas tab sheds its ask cards (``dedupe``, ``is_asks_tab``).
 """
 
 from __future__ import annotations
@@ -24,9 +27,12 @@ from src.services.pipeline.quote_verify import QUOTE_TRANSLATED_KEY
 from src.shared_config.domain_config import density_gates
 
 from .derived_guard import anchor_seconds
+from .moment_normalizers import quote_fields
 
 ASKS_SOURCE = "learning.takeaways"
 ASKS_COMPONENT = "checklist"
+# The probe format whose playbook plans the asks tab (``learning:talk``).
+TALK_FORMAT = "talk"
 KEY_IDEAS_SOURCE = "learning.keyIdeas"
 ASK_KIND = "ask"
 _ARGUMENT_KIND = "argument"
@@ -66,7 +72,7 @@ def _ask_row(idea: dict[str, Any]) -> dict[str, Any] | None:
     if not _is_ask(idea) or not claim or not quote:
         return None
     note = quote if idea.get(QUOTE_TRANSLATED_KEY) is True else f"“{quote}”"
-    row: dict[str, Any] = {"label": claim, "note": note}
+    row: dict[str, Any] = {"label": claim, "note": note, **quote_fields(idea)}
     timestamp = anchor_seconds(idea)
     if timestamp is not None:
         row["timestamp"] = timestamp
@@ -88,12 +94,28 @@ def is_asks_view(component: Any, source: Any) -> bool:
     return component == ASKS_COMPONENT and source == ASKS_SOURCE
 
 
+def is_asks_tab(tab: Mapping[str, Any], source: Any) -> bool:
+    """Whether an assembled tab IS a talk's asks view: the asks checklist whose every row
+    carries its ask's quote (``ask_rows``) — a Takeaways checklist that kept its
+    takeaways is not one, so the key-ideas tab never sheds a card for it."""
+    props = tab.get("props")
+    items = props.get("items") if isinstance(props, Mapping) else None
+    if not is_asks_view(tab.get("component"), source) or not isinstance(items, list) or not items:
+        return False
+    return all(isinstance(item, Mapping) and _text(item.get("quote")) for item in items)
+
+
 def asks_data(
-    component: str, data_source: str, extraction: dict[str, Any] | None, data: Any
+    component: str,
+    data_source: str,
+    extraction: dict[str, Any] | None,
+    data: Any,
+    content_format: str | None = None,
 ) -> Any:
-    """What a tab assembles from: a takeaways checklist on a run with key ideas gets its
-    ask rows (an empty list drops the tab); every other tab keeps ``data``."""
-    if not is_asks_view(component, data_source):
+    """What a tab assembles from: a talk's takeaways checklist (``content_format`` is the
+    run's probe format) on a run with key ideas gets its ask rows (an empty list drops
+    the tab); every other tab keeps ``data``."""
+    if content_format != TALK_FORMAT or not is_asks_view(component, data_source):
         return data
     rows = ask_rows(extraction)
     return data if rows is None else rows

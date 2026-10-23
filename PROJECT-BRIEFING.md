@@ -179,7 +179,7 @@ metadata (one extract_info) → t=0 group in the background: captions · descrip
 - food: overview, ingredients, steps, tips
 - fitness: overview, exercises, timer, tips
 - travel: overview, itinerary, packing, budget
-- review: overview, verdict, pros_cons, specs
+- review: pros_cons (Pros & cons), comparison (vs competitors, one table per competitor), specs / features — the verdict sits in the hero, never a tab (4.3)
 - music: overview, analysis, structure, lyrics, credits
 - project: overview, materials, tools, steps, safety
 - language: phrases, rules, drills, vocabulary

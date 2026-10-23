@@ -27,7 +27,7 @@ from .assemblers_primary import _MIN_COMPARISON_ROWS, _MIN_SPOTS
 from .assemblers_secondary import _CLAIMS_MIN, _FORMATION_MIN, _TIER_LIST_MIN
 from .component_lists import COMPONENT_LIST_KEYS, SEQUENTIAL_COMPONENTS, item_list_keys
 from .promotion import RADAR_AXIS_THRESHOLD
-from .talk_asks import KEY_IDEAS_SOURCE, is_asks_view
+from .talk_asks import KEY_IDEAS_SOURCE, is_asks_tab
 
 logger = logging.getLogger(__name__)
 
@@ -327,8 +327,9 @@ def _source(run: _Pass, tab: Mapping[str, Any]) -> str | None:
 def _settle_asks_view(run: _Pass) -> None:
     """Each ask shows once (4.0 d, G3-2): the key-ideas tab sheds the cards the asks tab
     (``talk_asks``) ships — unless shedding would leave it under its minimum: then the
-    cards stay and the asks tab goes. Before the twin rule, whatever the tab order."""
-    view = next((t for t in run.tabs if is_asks_view(t.get("component"), _source(run, t))), None)
+    cards stay and the asks tab goes. Before the twin rule, whatever the tab order; a
+    Takeaways checklist that is no asks view is left to the twin rule (C-W2)."""
+    view = next((t for t in run.tabs if is_asks_tab(t, _source(run, t))), None)
     asks = tab_fingerprints(view) if view is not None else frozenset()
     holders = [
         t for t in run.tabs if _source(run, t) == KEY_IDEAS_SOURCE and tab_fingerprints(t) & asks

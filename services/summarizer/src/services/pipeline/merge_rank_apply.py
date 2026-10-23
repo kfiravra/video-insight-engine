@@ -19,7 +19,9 @@ checked against the request); this module edits a deep copy of the extraction
    a list left to assembly's richness cut, could be sampled out after its twins left,
    and the point would be on no tab (review p3 B1: S02, a Q kept over its K and S).
    :data:`QA_TWIN` — a ``podcast.qa`` question never drops for a twin in another list
-   (S02 lost 10 of 25 that way); twins inside the Q&A list still drop.
+   (S02 lost 10 of 25 that way); twins inside the Q&A list still drop. In a group kept
+   outside the Q&A list, its first Q&A drop stays (held as ``qa_twin``) and the group's
+   other Q&A drops leave, under the guards, as twins of that question (review p4 B-W4).
 2. **Rank (D-B).** A ranked list (``learning.keyIdeas`` / ``keyPoints`` / ``takeaways``,
    not a timeline) still over its assembly cap is cut to it with ``rank_sample``: the
    call's rank in thirds → tiers 3 / 2 / 1, unranked 0, a kept twin above them all (its
@@ -28,16 +30,20 @@ checked against the request); this module edits a deep copy of the extraction
    best-ranked item back in place of the lowest-ranked one of a window that keeps two.
    A list the call ranked none of is left to assembly. Timelines stay with
    ``sample_moments``.
-3. **Sections** — code, not the call, so they apply whether or not the call answered.
-   ``learning.keyIdeas[].section`` = the title of the outline section whose [start, end)
-   holds the idea's stamp: asked for them (p3i3, S13), Haiku packed 33 ideas spanning 42
-   minutes into sections 1–4 of 11 in list order, none where its stamp lies. At most
+3. **Sections** — code, not the call, so they apply whether or not the call answered
+   (``merge_rank_sections``). ``learning.keyIdeas[].section`` = the title of the outline
+   section whose [start, end) holds the idea's stamp — or the neighbour's across an edge
+   within 120 s whose words fit the idea by two more, never against the video's order:
+   asked for them (p3i3, S13), Haiku packed 33 ideas spanning 42 minutes into sections
+   1–4 of 11 in list order, none where its stamp lies. At most
    :data:`.merge_rank_sections.MAX_SECTIONS` distinct: the smallest section joins its
    smaller neighbour (on a tie the earlier) until they fit, and a joined section takes the
-   title of its member holding the most ideas — S02 shipped 24 one-item sections from the
-   chunks' own labels. An idea without a stamp loses the chunk's label (it shows under
-   "Other"). Without an outline (fewer than two sections) the chunks' own labels, in list
-   order, are joined the same way.
+   title of the member whose words fit its ideas best, then the one holding the most ideas
+   — S02 shipped 24 one-item sections from the chunks' own labels. A title memory cut
+   ("…") ships as a whole phrase no other section ships; the ideas are written in video
+   order. An idea without a stamp loses the chunk's label (it shows under "Other").
+   Without an outline (fewer than two sections) the chunks' own labels, in list order,
+   are joined the same way.
 
 The ``_mergeRank`` record: ``{status, ms, sectioned}`` (``sectioned`` = ``{items,
 sections}``, ``{}`` when no idea was titled) and, when the call answered, ``dropped``
@@ -200,26 +206,46 @@ def _keep_ships(edit: _Edit, keep: RankedItem, ranked: frozenset[str]) -> bool:
     return spec.ships is None or len(lane.items) <= spec.ships
 
 
+def _qa_held(edit: _Edit, group: DuplicateGroup) -> str | None:
+    """A group kept outside the Q&A list: its first Q&A drop — it stays (:data:`QA_TWIN`)
+    and is the keep of the group's other Q&A drops (module docstring); else None."""
+    if edit.resolved[group.keep].path == QA_PATH:
+        return None
+    asked = (i for i in group.drop if i in edit.resolved and edit.resolved[i].path == QA_PATH)
+    return next(asked, None)
+
+
+def _drop_guard(edit: _Edit, item: RankedItem, keep: str, ranked: frozenset[str]) -> str | None:
+    """Why ``item`` may not leave for ``keep``: :data:`KEEP_CUT` while assembly could still
+    cut ``keep`` (read before any drop: a lane's length never shrinks here), else
+    :func:`_guard`'s reason; None when it may."""
+    if not _keep_ships(edit, edit.resolved[keep], ranked):
+        return KEEP_CUT
+    return _guard(edit, edit.lanes[item.path], item.index)
+
+
+def _remove(edit: _Edit, item: RankedItem, keep: str) -> None:
+    lane = edit.lanes[item.path]
+    lane.removed.add(item.index)
+    lane.drops += 1
+    edit.keeps.add(keep)
+
+
 def _drop_group(
-    edit: _Edit, group: DuplicateGroup, keep_ships: bool
+    edit: _Edit, group: DuplicateGroup, ranked: frozenset[str]
 ) -> tuple[list[dict], list[dict]]:
     """One group's drops the guards allow — the dropped rows and the held ones."""
     dropped: list[dict] = []
     held: list[dict] = []
-    keep_path = edit.resolved[group.keep].path
+    qa_keep = _qa_held(edit, group)
     for item in (edit.resolved[i] for i in group.drop if i in edit.resolved):
-        lane = edit.lanes[item.path]
-        if item.path == QA_PATH and keep_path != QA_PATH:
-            guard: str | None = QA_TWIN
-        else:
-            guard = _guard(edit, lane, item.index) if keep_ships else KEEP_CUT
+        keep = qa_keep if qa_keep is not None and item.path == QA_PATH else group.keep
+        guard = QA_TWIN if item.item_id == qa_keep else _drop_guard(edit, item, keep, ranked)
         if guard is not None:
             held.append({"path": item.path, "id": item.item_id, "guard": guard})
             continue
-        lane.removed.add(item.index)
-        lane.drops += 1
-        edit.keeps.add(group.keep)
-        dropped.append(_drop_row(item, group.keep))
+        _remove(edit, item, keep)
+        dropped.append(_drop_row(item, keep))
     return dropped, held
 
 
@@ -229,8 +255,7 @@ def _drop_duplicates(edit: _Edit, answer: MergeRankAnswer) -> tuple[list[dict], 
     dropped: list[dict] = []
     held: list[dict] = []
     for group in (g for g in answer.duplicates if g.keep in edit.resolved):
-        keep_ships = _keep_ships(edit, edit.resolved[group.keep], ranked)
-        group_dropped, group_held = _drop_group(edit, group, keep_ships)
+        group_dropped, group_held = _drop_group(edit, group, ranked)
         dropped.extend(group_dropped)
         held.extend(group_held)
     return dropped, held

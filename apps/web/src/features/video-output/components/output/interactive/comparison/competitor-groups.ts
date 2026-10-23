@@ -8,16 +8,19 @@ export interface CompetitorGroup {
 }
 
 /**
- * Group comparison rows by `competitorName` in first-seen order. Rows without a
- * name keep a group of their own — never dropped.
+ * Group comparison rows by `competitorName` in first-seen order. Names match as
+ * the assembler's `_competitor_names` does — trimmed, case-insensitive ("Sony"
+ * and "sony" are one) — and a group keeps its first-seen spelling. Rows without
+ * a name keep a group of their own — never dropped.
  */
 export function groupByCompetitor(comparisons: ComparisonRow[]): CompetitorGroup[] {
   const groups = new Map<string, CompetitorGroup>();
   comparisons.forEach((row, index) => {
     const name = row.competitorName?.trim() ?? '';
-    const group = groups.get(name) ?? { name, rows: [] };
+    const key = name.toLowerCase();
+    const group = groups.get(key) ?? { name, rows: [] };
     group.rows.push({ row, index });
-    groups.set(name, group);
+    groups.set(key, group);
   });
   return [...groups.values()];
 }

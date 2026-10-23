@@ -50,7 +50,7 @@ Pick exactly one — this decides presentation style:
 - "commentary" means opinions and analysis without hands-on demonstration
 - Spoken-word formats, by what the speaker is doing: "talk" makes a CASE to an audience (keynote, conference or TED-style talk — a thesis, predictions, a call to action; still "talk" when it inspires or provokes), "lecture" TEACHES a subject (a class or course session), "interview" has a host QUESTIONING a guest whose answers are the content, "podcast" is the regular host(s) talking among themselves or one person's long-form monologue
 - An episode built around a guest is "interview", not "podcast": a "Name: topic" title or the host introducing a guest in the opening minutes is the signal; with no guest at the centre it is "podcast"
-- A moderator who reads the guest's bio and puts questions to them throughout (Talks at Google, book events, firesides) makes an "interview", whatever the series is called; a talk that takes audience questions only at the end stays "talk"
+- A host who introduces a guest and then puts questions to them throughout makes an "interview", whatever the series or venue is called; a speaker who is introduced, presents alone and takes questions only at the end stays "talk" (an introduction alone is no interview)
 - The "podcast" DOMAIN (formats interview or podcast) is where WHO is talking and WHAT they said is the value — not a how-to.
 - "news" reports on real-world EVENTS and makes verifiable CLAIMS. Choose "news" over "learning" when the content is about what happened and who is accountable, not about teaching a concept.
 - "gaming" is about PLAYING a video game — gameplay, playthroughs, builds, tier lists, esports. A video teaching game development is "tech", not "gaming".
