@@ -32,7 +32,9 @@
   --card-foreground: oklch(16% 0.03 280);
   --popover: oklch(99% 0.004 285);
   --popover-foreground: oklch(16% 0.03 280);
-  --primary: oklch(58% 0.24 292);
+  /* 52.5% (was 58%): primary is also TEXT on its own tints (active nav,
+     bg-primary/10 chips, /15 count badges) and needs AA ≥4.5:1 there. */
+  --primary: oklch(52.5% 0.24 292);
   --primary-foreground: oklch(99% 0 0);
   /* CTA — plum/berry for primary actions.
      Separates identity (violet --primary, hue 292) from action (plum --cta, hue 340)
@@ -51,7 +53,7 @@
   --destructive-foreground: oklch(99% 0 0);
   --border: oklch(89% 0.012 285);
   --input: oklch(89% 0.012 285);
-  --ring: oklch(58% 0.24 292);
+  --ring: oklch(52.5% 0.24 292);
   --radius: 0.75rem;
   --border-width: 1px;
 
@@ -82,8 +84,9 @@
   --chart-7: oklch(70% 0.15 90);
   --chart-8: oklch(65% 0.15 20);
 
-  /* Feedback colors (semantic) */
-  --success: oklch(55% 0.16 155);
+  /* Feedback colors (semantic). Success is 48.5% (was 55%) so text-success
+     reads at AA on bg-success/10 (Badge) and on the page. */
+  --success: oklch(48.5% 0.12 155);
   --success-foreground: oklch(98% 0.01 155);
   --success-soft: oklch(96% 0.04 155);
   --warning: oklch(78% 0.15 80);
@@ -113,14 +116,19 @@
   --popover: oklch(16% 0.025 280);
   --popover-foreground: oklch(94% 0.008 285);
   --primary: oklch(68% 0.26 292);
-  --primary-foreground: oklch(99% 0 0);
+  /* Ink, not white: no violet reaches AA both under white text and as text on
+     this canvas, and text-primary must stay readable here. Ink on the fill
+     reads 5.5:1 (white read 3.4:1). Same move as Lagoon's teal fill. */
+  --primary-foreground: oklch(16% 0.03 280);
   /* CTA — brighter plum/berry in dark for luminous warmth on deep canvas. */
   --cta: oklch(66% 0.18 340);
   --cta-foreground: oklch(99% 0 0);
   --secondary: oklch(22% 0.025 280);
   --secondary-foreground: oklch(90% 0.008 285);
   --muted: oklch(20% 0.02 280);
-  --muted-foreground: oklch(72% 0.015 280);
+  /* 74% (was 72%): muted text is also drawn at /70 opacity (step tips,
+     "Q 1 of 8") and must keep AA there. */
+  --muted-foreground: oklch(74% 0.015 280);
   --accent: oklch(22% 0.03 310);
   --accent-foreground: oklch(90% 0.008 285);
   --destructive: oklch(65% 0.22 18);
@@ -206,7 +214,8 @@
   --secondary: oklch(29% 0.05 200);
   --secondary-foreground: oklch(90% 0.02 185);
   --muted: oklch(27% 0.045 200);
-  --muted-foreground: oklch(75% 0.03 192);
+  /* 78% (was 75%): keeps AA when drawn at /70 opacity, as in dark. */
+  --muted-foreground: oklch(78% 0.03 192);
   --accent: oklch(31% 0.06 196);
   --accent-foreground: oklch(92% 0.02 185);
   --destructive: oklch(66% 0.21 22);
@@ -269,14 +278,19 @@
    Primary (use freely): --vie-coral, --vie-plum, --vie-mint
    Rare (semantic only):  --vie-sky, --vie-honey, --vie-rose, --vie-forest, --vie-peach
    Rule: max 4 accent colors on any single screen
+   Contrast: a domain accent (coral, plum, sky, mint, honey, rose) is also
+   the TEXT colour of chips and labels on its own /5–/15 tint, so each theme
+   sets it to the lightness that keeps that text at WCAG AA ≥4.5:1 (light:
+   ≤52.5%, chroma trimmed to stay in sRGB). Guarded by
+   styles/__tests__/theme-contrast.test.ts.
    ═══════════════════════════════════════════════════ */
 :root {
-  --vie-coral: oklch(72% 0.18 25);
+  --vie-coral: oklch(51.5% 0.18 25);
   --vie-plum: oklch(52% 0.2 310);
-  --vie-sky: oklch(72% 0.14 230);
-  --vie-mint: oklch(78% 0.14 165);
-  --vie-honey: oklch(82% 0.15 80);
-  --vie-rose: oklch(68% 0.16 350);
+  --vie-sky: oklch(49.5% 0.095 230);
+  --vie-mint: oklch(48.5% 0.1 165);
+  --vie-honey: oklch(50.5% 0.1 80);
+  --vie-rose: oklch(52% 0.16 350);
   --vie-forest: oklch(55% 0.12 145);
   --vie-peach: oklch(82% 0.1 55);
 
@@ -439,6 +453,9 @@
      accent overrides; this :root value is the no-wrapper default. */
   --vie-accent-ink-l: min(l, 0.52);
   --vie-accent-ink: oklch(from var(--vie-accent) var(--vie-accent-ink-l) c h);
+  /* The accent on the code surface, which is dark in every theme: the dark
+     theme's ink lift, so a light theme's deep accent stays readable there. */
+  --vie-accent-on-code: oklch(from var(--vie-accent) max(l, 0.74) c h);
 
   /* ─────────────────────────────────────────────
      TYPOGRAPHY SYSTEM
@@ -523,12 +540,35 @@
   --shadow-popover: 0 8px 24px -6px oklch(20% 0.02 285 / 0.14), 0 2px 6px -1px oklch(20% 0.02 285 / 0.06);
 }
 
+/* TabLayout re-binds --vie-accent on its [data-domain] wrapper (inline style),
+   and the code surface below re-binds it again. A custom property computes
+   where it is declared, so the derived tokens are declared again wherever the
+   accent is re-bound: inherited from :root they would still follow primary
+   (frost text on a light mint fill). Same formulas as :root above. */
+[data-domain],
+.bg-code-bg {
+  --vie-accent-foreground: oklch(
+    from var(--vie-accent) calc(0.18 + 0.8 * clamp(0, (0.62 - l) * 100, 1)) 0.015 280
+  );
+  --vie-accent-ink: oklch(from var(--vie-accent) var(--vie-accent-ink-l) c h);
+}
+[data-domain] {
+  --vie-accent-on-code: oklch(from var(--vie-accent) max(l, 0.74) c h);
+}
+
+/* Code surfaces (CodeSnippet, CodePlayground) re-bind the accent to its
+   on-code lift, so accent chips and Run buttons drawn on them stay AA. */
+.bg-code-bg {
+  --vie-accent: var(--vie-accent-on-code);
+  --vie-accent-ink: var(--vie-accent-on-code);
+}
+
 [data-theme="dark"] {
   /* Dark canvas inverts the ink clamp — lift dim accents instead of capping. */
   --vie-accent-ink-l: max(l, 0.74);
 
   --vie-coral: oklch(75% 0.16 25);
-  --vie-plum: oklch(62% 0.18 310);
+  --vie-plum: oklch(64.5% 0.18 310);
   --vie-sky: oklch(75% 0.12 230);
   --vie-mint: oklch(80% 0.12 165);
   --vie-honey: oklch(84% 0.13 80);
@@ -617,7 +657,7 @@
 
   /* Warm accents stay vivid — they are the "pops" against the cool canvas */
   --vie-coral: oklch(74% 0.17 30);
-  --vie-plum: oklch(64% 0.17 310);
+  --vie-plum: oklch(71.5% 0.17 310);
   --vie-sky: oklch(76% 0.12 215);
   --vie-mint: oklch(80% 0.13 165);
   --vie-honey: oklch(84% 0.14 82);

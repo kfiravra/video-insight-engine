@@ -168,6 +168,8 @@ means extending all of those selectors plus the `index.html` pre-paint script.
 - **Per-output gradients**: Each output type has a unique gradient token
 - **Light mode**: Cool blue-gray (hue ~250), low chroma
 - **Dark mode**: Warm amber-brown (hue ~55), low chroma
+- **Contrast contract (WCAG AA, every theme)**: text tokens keep ≥ 4.5:1 where they are drawn — body/card text, `--primary-foreground` on `--primary` (dark draws ink `oklch(16% 0.03 280)` on its violet fill, like Lagoon), `--muted-foreground` down to `/70` opacity, and each domain accent (`--primary`, coral, plum, sky, mint, honey, rose) plus `--success` as text on its own `/5`–`/15` tint (light keeps them at ≤ 52.5 % lightness). `[data-domain]` (TabLayout) and `.bg-code-bg` re-declare `--vie-accent-foreground` / `--vie-accent-ink`; code surfaces bind `--vie-accent` to `--vie-accent-on-code` (lightness ≥ 0.74). Guarded by `src/styles/__tests__/theme-contrast.test.ts`; muted text below `/70` is outside the contract.
+- **`FadeIn` inside lists**: `FadeIn` renders a `<div>`, so in a `<ul>`/`<ol>` it wraps each `<li>`'s content (`<li><FadeIn>…</FadeIn></li>`), never the `<li>` itself (axe `listitem`).
 
 ### Fonts
 

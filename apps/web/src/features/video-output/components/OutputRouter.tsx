@@ -289,7 +289,7 @@ export function OutputRouter({
           </TabStateProvider>
         </TabCoordinationProvider>
 
-        <p className="text-center text-xs text-muted-foreground/60">
+        <p className="text-center text-xs text-muted-foreground/70">
           AI-generated summary. Verify important details with the original video.
         </p>
       </div>

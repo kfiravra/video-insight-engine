@@ -88,9 +88,10 @@ export const ClaimsTracker = memo(function ClaimsTracker({ claims, onSeek }: Cla
         {visible.map((claim, i) => {
           const status = claimStatus(claim.status);
           const meta = status ? STATUS_META[status] : null;
+          // The <li> stays the list's direct child (FadeIn renders a <div>).
           return (
-            <FadeIn key={`${claim.claim}-${i}`} index={i}>
-              <li>
+            <li key={`${claim.claim}-${i}`}>
+              <FadeIn index={i}>
                 <GlassCard className="flex flex-col gap-2.5 p-4">
                   <div className="flex items-start justify-between gap-3">
                     <p className="text-base font-medium leading-snug text-foreground">{claim.claim}</p>
@@ -133,8 +134,8 @@ export const ClaimsTracker = memo(function ClaimsTracker({ claims, onSeek }: Cla
                     ) : null}
                   </div>
                 </GlassCard>
-              </li>
-            </FadeIn>
+              </FadeIn>
+            </li>
           );
         })}
       </ul>

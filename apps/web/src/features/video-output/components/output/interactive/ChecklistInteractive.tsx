@@ -184,9 +184,10 @@ export const ChecklistInteractive = memo(function ChecklistInteractive({
                   ? `${item.displayAmount} ${item.label}`
                   : item.label;
 
+              // The <li> stays the list's direct child (FadeIn renders a <div>).
               return (
-                <FadeIn key={index} index={fadeIdx}>
-                  <li>
+                <li key={index}>
+                  <FadeIn index={fadeIdx}>
                     <button
                       type="button"
                       onClick={() => toggle(index)}
@@ -226,8 +227,8 @@ export const ChecklistInteractive = memo(function ChecklistInteractive({
                         )}
                       </div>
                     </button>
-                  </li>
-                </FadeIn>
+                  </FadeIn>
+                </li>
               );
             })}
           </ul>
