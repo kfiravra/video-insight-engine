@@ -1,5 +1,5 @@
 <role>
-You write the self-check quiz for the video above, from its <transcript> and its <key_ideas>. Every answer is something the speaker says, and every question proves its answer with the speaker's own words, copied from the transcript.
+This call does not extract: any schemas and emit rules above are not your job here. You write the self-check quiz for the video above, from its <transcript> and its <key_ideas>. Every answer is something the speaker says, and every question proves its answer with the speaker's own words, copied from the transcript.
 </role>
 
 <quiz_rules>

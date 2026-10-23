@@ -20,6 +20,13 @@ than thirds, the 3-question band, ≤ 15 min (``quizPolicy``). There the whole t
 is a few thousand words, ``select_quiz`` still ships one question per third from the one
 call's count + spares, and three calls would ask a third holding one key idea for two or
 three questions against the rule "one question per key idea" (p3 review A6).
+
+Where the transcript comes from (output-quality 4.6e): with the split run's blocks
+(``QuizV2Request.blocks``) a call reads it from the extraction's cache instead of the
+lines above — block 1 + its chunk's head, then the job without a transcript
+(``quiz_v2_blocks``): a chunked run's part call still reads only its part (its chunk),
+a one-chunk run's third reads the whole head and is held to its stretch by its range
+line and its targets. Without blocks the transcript stays inline, as described above.
 """
 
 from __future__ import annotations
@@ -28,17 +35,22 @@ import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ...shared_config.domain_config import quiz_enrichment
 from ...utils.language_utils import ENGLISH_OUTPUT_DIRECTIVE
+from ..llm_messages import TextBlock, UserContent, text_block
 from ..transcript.render import marker_seconds
 from .enrichment import EMPTY_HERO, _quiz_cap, quiz_question_count
 from .memory import format_clock
 from .pipeline_helpers import sanitize_for_prompt
 from .prompt_builder import load_prompt_text
+from .quiz_v2_blocks import cached_prefix
 from .quiz_v2_ideas import QuizTarget, quiz_targets, render_targets
 from .quiz_v2_select import QUIZ_STRETCHES, Part, quiz_parts, stretch_of, stretch_quotas
+
+if TYPE_CHECKING:
+    from .hero_job import GroupBlocks
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +62,7 @@ PROMPT_PATH = Path(__file__).parent.parent.parent / "prompts" / "quiz_v2.txt"
 # split over three part calls, two spares left S03 a question short when 3 of its
 # 10 quotes were not found (p3.0 harness, 2026-10-22).
 SPARE_QUESTIONS = 4
-# ≈ 80 K Haiku 5.5 tokens (≈ 3 chars / token on S01's memory call): five hours of talk.
+# ≈ 80 K tokens (≈ 3 chars / token on S01's memory call): five hours of talk (inline only).
 TRANSCRIPT_MAX_CHARS = 240_000
 # Past the budget, the transcript lines this close to a key idea's stamp.
 KEY_IDEA_WINDOW_S = 90
@@ -64,7 +76,8 @@ TITLE_MAX_CHARS = 200
 class QuizV2Request:
     """What the call reads; ``transcript`` is the run's ``[m:ss]``-marked prompt transcript,
     ``windows`` the split run's chunk windows (``quiz_v2_select.chunk_windows``; ``()`` →
-    thirds), ``outline`` the starts of memory's outline sections."""
+    thirds), ``outline`` the starts of memory's outline sections, ``blocks`` the split
+    run's cached prefix (None → the transcript inline)."""
 
     primary_tag: str
     title: str
@@ -74,17 +87,25 @@ class QuizV2Request:
     hero: str = ""
     windows: tuple[Part, ...] = ()
     outline: tuple[int, ...] = ()
+    blocks: GroupBlocks | None = None
 
 
 @dataclass(frozen=True)
 class QuizV2Prompt:
-    """One quiz call: its prompt, the number of questions it asks for, the part it reads
-    (None = the whole video) and the target ideas it shows."""
+    """One quiz call: its prompt (the job after ``cached``, else the whole inline prompt),
+    the number of questions it asks for, the part it reads (None = the whole video), the
+    target ideas it shows and the cached blocks it reads first (``()`` = none)."""
 
     text: str
     asked: int
     part: Part | None = None
     targets: tuple[QuizTarget, ...] = ()
+    cached: tuple[TextBlock, ...] = ()
+
+    @property
+    def content(self) -> UserContent:
+        """What the call sends: the cached blocks and the job, or the one inline message."""
+        return [*self.cached, text_block(self.text)] if self.cached else self.text
 
 
 # ─── Transcript ───
@@ -164,18 +185,51 @@ def part_hero(hero: str, parts: Sequence[Part], part: int) -> str:
     )
 
 
-def _prompt_text(task: str, hero: str, targets: Sequence[QuizTarget], transcript: str) -> str:
-    fitted = fit_transcript(transcript, targets)
-    return "\n\n".join(
-        (
-            ENGLISH_OUTPUT_DIRECTIVE,
-            task,
-            f"<hero>\n{hero or EMPTY_HERO}\n</hero>",
-            f"<key_ideas>\n{render_targets(targets)}\n</key_ideas>",
-            f"<transcript>\n{sanitize_for_prompt(fitted, len(fitted))}\n</transcript>",
-            load_prompt_text(PROMPT_PATH).strip(),
-        )
+@dataclass(frozen=True)
+class _Job:
+    """One call's data: its task block, its hero, the targets it shows, its count."""
+
+    task: str
+    hero: str
+    targets: tuple[QuizTarget, ...]
+    asked: int
+
+
+def _data_sections(job: _Job) -> tuple[str, ...]:
+    return (
+        ENGLISH_OUTPUT_DIRECTIVE,
+        job.task,
+        f"<hero>\n{job.hero or EMPTY_HERO}\n</hero>",
+        f"<key_ideas>\n{render_targets(job.targets)}\n</key_ideas>",
     )
+
+
+def _prompt_text(job: _Job, transcript: str) -> str:
+    """The inline prompt: the data, the transcript, the rules last."""
+    fitted = fit_transcript(transcript, job.targets)
+    lines = f"<transcript>\n{sanitize_for_prompt(fitted, len(fitted))}\n</transcript>"
+    return "\n\n".join((*_data_sections(job), lines, load_prompt_text(PROMPT_PATH).strip()))
+
+
+def _job_text(job: _Job) -> str:
+    """Block 3 of a call that reads the cache: the data and the rules — the transcript
+    is in the cached head above."""
+    return "\n\n".join((*_data_sections(job), load_prompt_text(PROMPT_PATH).strip()))
+
+
+def _quiz_call(
+    request: QuizV2Request, job: _Job, part: int | None = None, parts: Sequence[Part] = ()
+) -> QuizV2Prompt:
+    """One call (``part`` None = the whole video): after the cached prefix when the run
+    has one for it (``quiz_v2_blocks``), else with its lines inline — the part's, or the
+    whole transcript."""
+    bounds = parts[part] if part is not None else None
+    cached = cached_prefix(request.blocks, part, request.windows)
+    if cached:
+        return QuizV2Prompt(_job_text(job), job.asked, bounds, job.targets, cached)
+    lines = stretch_transcript(request.transcript, bounds) if bounds else ""
+    text = _prompt_text(job, lines or request.transcript)
+    return QuizV2Prompt(text, job.asked, bounds, job.targets)
 
 
 def _part_prompt(
@@ -188,12 +242,10 @@ def _part_prompt(
 ) -> QuizV2Prompt:
     """Part ``part``'s call: its count, its range, its targets (and the unstamped ones),
     its hero, its lines."""
-    bounds = parts[part]
     shown = tuple(t for t in targets if stretch_of(t.seconds, parts) in (part, None))
-    transcript = stretch_transcript(request.transcript, bounds) or request.transcript
-    task = _task_block(request, flavor, quota, bounds)
-    hero = part_hero(request.hero, parts, part)
-    return QuizV2Prompt(_prompt_text(task, hero, shown, transcript), quota, bounds, shown)
+    task = _task_block(request, flavor, quota, parts[part])
+    job = _Job(task, part_hero(request.hero, parts, part), shown, quota)
+    return _quiz_call(request, job, part, parts)
 
 
 def _quotas(request: QuizV2Request, targets: Sequence[QuizTarget], asked: int) -> list[int]:
@@ -217,8 +269,7 @@ def build_quiz_v2_prompts(request: QuizV2Request) -> list[QuizV2Prompt]:
     quotas = _quotas(request, targets, asked)
     if not quotas:
         task = _task_block(request, flavor, asked, None)
-        text = _prompt_text(task, request.hero, targets, request.transcript)
-        return [QuizV2Prompt(text, asked, None, targets)]
+        return [_quiz_call(request, _Job(task, request.hero, targets, asked))]
     parts = quiz_parts(request.duration_s, request.windows)
     return [
         _part_prompt(request, flavor, targets, parts, part, quota)

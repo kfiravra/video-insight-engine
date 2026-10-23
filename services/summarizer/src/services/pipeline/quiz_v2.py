@@ -1,14 +1,18 @@
 """Quiz v2 (output-quality 2.1b, D9 / D13) — every answer proved by the speaker's words.
 
-Calls on ``LLM_MEMORY_MODEL`` (Haiku 5.5, stage ``quiz_v2``) read the run's marked
-transcript and the target key ideas (``quiz_v2_ideas.quiz_targets``: thesis / argument
-/ number, each with an id) and write the quiz: 3 / 5 / 8 questions by length
-(``quizPolicy``, :func:`enrichment.quiz_question_count`) plus ``SPARE_QUESTIONS``
-candidates, each naming the idea it tests, with its answer's ``timestamp`` in seconds
-and a ≤ 25-word evidence ``quote``. It is one call per part of the video that holds a
-target — each extraction chunk of a chunked run, else each third past the 15-min band —
-in parallel, each reading only its part (``quiz_v2_prompt``, G2-4, 4.0 b); otherwise one
-call over the whole video.
+Calls on the extraction groups' model (output-quality 4.6e: ``LLM_EXTRACTION_MODEL``,
+Sonnet 5.5 — the prompt cache is per model; stage / span ``quiz_v2``, no model key of
+its own) read the run's marked transcript and the target key ideas
+(``quiz_v2_ideas.quiz_targets``: thesis / argument / number / disagreement, each with an
+id) and write the quiz: 3 / 5 / 8 questions by length (``quizPolicy``,
+:func:`enrichment.quiz_question_count`) plus ``SPARE_QUESTIONS`` candidates, each naming
+the idea it tests, with its answer's ``timestamp`` in seconds and a ≤ 25-word evidence
+``quote``. It is one call per part of the video that holds a target — each extraction
+chunk of a chunked run, else each third past the 15-min band — in parallel
+(``quiz_v2_prompt``, G2-4, 4.0 b); otherwise one call over the whole video. On the
+split path each call reads the transcript from the extraction's prompt cache — block 1
+and its chunk's head, the hero rewrite's pattern (``quiz_v2_blocks``); without the
+run's blocks the transcript goes inline.
 Every question then passes the 2.0 quote check (``quote_verify``) or is dropped:
 
 - **verified** — the stamp is set from where the quote was found (segment-precise;
@@ -40,13 +44,14 @@ questions not shipped travel on as ``EnrichmentData.spares``: once the hero rewr
 takeaway goes and a spare takes its place (:func:`restates_takeaway`,
 ``phases.enrichment.settle_late_quiz`` — p2 review D7).
 
-No prompt cache: memory sends its transcript without a breakpoint, so there is no
-shared prefix to read, and the part calls share only the hero and the rules. On
-S01 (63 min) one call was ≈ 21 K tokens in + ≈ 2 K out ≈ $0.003 (Haiku 5.5 $0.10 /
-$0.50 per MTok); its part calls read each part once (± 30 s) and the shared part once
-per call — two chunk calls ≈ 24 K tokens in all, three thirds ≈ 26 K; past
-``TRANSCRIPT_MAX_CHARS`` only the lines around the target ideas go, which keeps every
-prompt in the ≤ 100 K-token price tier.
+Why Sonnet, and why the cache (Kfir 2026-10-23, gate 4 decision 5 e): every gate-4 quiz
+scored 2.0 on Haiku 5.5; the extraction's own quotes, on Sonnet 5.5, verify 98.8 %. The
+prefix the group calls wrote is read at 0.1× (Sonnet 5.5: $2 in, $0.20 cache read,
+$10 out per MTok), so the answer is most of the bill — offline, from the stored runs'
+cache reads and their quiz jobs rendered: S03 (57 min, two chunk calls) ≈ 33.5 K cached
++ ≈ 4.0 K of job + ≈ 2.7 K out ≈ $0.041; S05 (13 min, one call) ≈ 12.7 K cached
++ ≈ 3.3 K of job + ≈ 1.0 K out ≈ $0.019 (Haiku 5.5 uncached: $0.0037 and $0.0013).
+A one-chunk run's thirds each read the whole head (≈ $0.003 a call).
 
 Never raises: ``None`` means no quiz, as for the flag-off ``enrich_quiz``.
 """
@@ -83,6 +88,7 @@ from .quote_verify import TRANSLATED, VERIFIED, QuoteIndex, verify_quote
 
 if TYPE_CHECKING:
     from ...services.llm import LLMService
+    from ..llm_messages import UserContent
 
 logger = logging.getLogger(__name__)
 
@@ -93,11 +99,14 @@ QUOTE_MAX_WORDS = 25
 STAMP_AGREEMENT_S = 30
 # Up to 10 questions with a quote each run ~2 K tokens; a cut-off JSON loses all.
 QUIZ_V2_MAX_TOKENS = 4096
-# Haiku 5.5 answered memory's 17.5 K-in / 1.3 K-out in ~7 s: 18 s per attempt,
-# one retry after the 1 s backoff, the whole stage (every call) bounded.
-QUIZ_V2_ATTEMPT_TIMEOUT_S = 18.0
-QUIZ_V2_TOTAL_TIMEOUT_S = 37.0
+# Sonnet 5.5 writes ≈ 95–125 tokens a second (the hero calls, TTFT included): a part
+# call's ≤ 7 questions (≈ 1.6 K) ≈ 15 s, a whole-video call's 12 (≈ 2.7 K) ≈ 25 s. 30 s
+# per attempt; one retry after the 1 s backoff (a provider error) inside the stage's 40 s.
+QUIZ_V2_ATTEMPT_TIMEOUT_S = 30.0
+QUIZ_V2_TOTAL_TIMEOUT_S = 40.0
 QUIZ_V2_MAX_RETRIES = 1
+# The calls run on the extraction groups' model: their cached prefix is per model (4.6e).
+QUIZ_V2_MODEL_STAGE = "extraction"
 
 
 # A keyed option restates a takeaway when this share of its content words is in it —
@@ -238,11 +247,13 @@ def restates_the_hero(question: Mapping[str, Any], takeaways: Sequence[str]) -> 
 # ─── Stage ───
 
 
-async def _call_quiz_v2_llm(llm_service: LLMService, prompt: str, deadline: float) -> str | None:
+async def _call_quiz_v2_llm(
+    llm_service: LLMService, prompt: UserContent, deadline: float
+) -> str | None:
     """The reply, bounded by the stage's shared ``deadline`` (loop time; recorded here: the
     deadline cancels the attempt in flight, so neither the provider nor the retry wrapper
-    sees it)."""
-    model = settings.get_stage_model(QUIZ_V2_STAGE)
+    sees it). On the groups' model, JSON mode and effort, so the cached blocks are read."""
+    model = settings.get_stage_model(QUIZ_V2_MODEL_STAGE)
     started = time.monotonic()
     try:
         async with asyncio.timeout_at(deadline):
@@ -254,13 +265,12 @@ async def _call_quiz_v2_llm(llm_service: LLMService, prompt: str, deadline: floa
                 max_retries=QUIZ_V2_MAX_RETRIES,
                 stage_name=QUIZ_V2_STAGE,
                 json_mode=True,
-                use_fast_model=True,
                 model_override=model,
             )
     except TimeoutError as e:
         record_llm_failure(
             span=QUIZ_V2_STAGE,
-            model=model or llm_service.fast_model,
+            model=model or llm_service.model,
             error=e,
             start_monotonic=started,
             attempt=0,
@@ -280,14 +290,14 @@ async def _reply_candidates(
 ) -> list[Candidate] | None:
     """The reply's valid questions; ``None`` when the call failed. A reply in which no
     question parses is asked for once more (G2-1) — never a third time."""
-    raw = await _call_quiz_v2_llm(llm_service, call.text, deadline)
+    raw = await _call_quiz_v2_llm(llm_service, call.content, deadline)
     if not raw:
         return None
     candidates = _candidates(raw, call, duration_s)
     if candidates:
         return candidates
     logger.warning("Quiz v2: no question parsed from a %d-char reply; asking once more", len(raw))
-    raw = await _call_quiz_v2_llm(llm_service, call.text, deadline)
+    raw = await _call_quiz_v2_llm(llm_service, call.content, deadline)
     if not raw:
         return None
     candidates = _candidates(raw, call, duration_s)

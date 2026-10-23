@@ -210,8 +210,11 @@ class TestSplitRunWindows:
         monkeypatch.setattr(settings, "MERGE_RANK_ENABLED", False)
         ctx = _ctx()
         text1 = _group("text1", *_FIELDS)
+        # The run's prompt: the quiz calls read its cached blocks (4.6e).
         run = SimpleNamespace(
-            chunks=(_chunk(0, None, 300, 600), _chunk(1, 300, None, 600)), text_groups=(text1,)
+            prompt=object(),
+            chunks=(_chunk(0, None, 300, 600), _chunk(1, 300, None, 600)),
+            text_groups=(text1,),
         )
         landing = GroupLanding.for_run(ctx, [text1], 2, cast(Any, run))
         outcomes = [_outcome(text1, chunk=0), _outcome(text1, chunk=1)]

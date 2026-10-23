@@ -24,7 +24,9 @@ in the current context, so another run's assembly logs as usual.
 
 The quiz starts from here too (``ctx.quiz_task``, B.6): once every text group
 holding a field of a ``quizDomains`` domain has landed — the visual group when
-no text group holds one — over the extraction merged so far. A strip-only quiz
+no text group holds one — over the extraction merged so far, with the split run:
+its chunks are the quiz's parts and its cached blocks what each quiz call reads
+first (output-quality 4.6e, the hero rewrite's pattern). A strip-only quiz
 (no quiz tab) also waits until frames-done can no longer drop its host.
 
 So does the hero rewrite (``ctx.hero_task``, output-quality 2.2, D1): once every
@@ -367,7 +369,7 @@ class GroupLanding:
             return []
         merged, _ = merge_groups(outcomes)
         if quiz_due:
-            start_quiz_task(self.ctx, merged, self.run.chunks if self.run else ())
+            start_quiz_task(self.ctx, merged, self.run)
         text_done.start(self.ctx, merged, outcomes)
         if not grew:
             return []

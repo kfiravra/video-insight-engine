@@ -83,11 +83,13 @@ services/summarizer/
     │   │   ├── extractor.py          # Today's single call (EXTRACTION_PARALLEL=false): single/overflow/chunked
     │   │   ├── extraction_quality.py # Populated-dataSource score — a logged metric, no retry
     │   │   ├── extraction_merger.py  # Per-domain merge + dedup for chunked extraction (EXTRACTION_PARALLEL=false)
-    │   │   ├── enrichment.py         # The quiz only (quizEnrichment domains, demand-gated by the plan; 3/5/8 questions by length, each stamped)
+    │   │   ├── enrichment.py         # The quiz only (quizEnrichment domains on an instructional format, demand-gated by the plan; 3/5/8 questions by length, each stamped)
     │   │   ├── synthesis.py          # masterSummary + seoDescription (hero from memory; fast tier) — now only when the hero rewrite is off or gave none
     │   │   ├── hero_rewrite.py       # The hero rewrite (HERO_REWRITE_ENABLED): one cache-reading LLM_EXTRACTION_MODEL call replaces synthesis; hero_job.py builds its request (cached blocks, job text, the evidence), hero_validate.py checks its answer (hero_text.py holds the prose readers), hero_compact.py renders the extraction it reads
-    │   │   ├── quiz_v2.py            # Quiz v2 (QUIZ_V2_ENABLED): LLM_MEMORY_MODEL (Haiku 5.5) from the transcript + target key ideas, one call per part in parallel (each extraction chunk, else each third past 15 min); every question names the idea it tests (quiz_v2_targets) and its quote is checked
-    │   │   ├── quiz_v2_prompt.py     # Quiz v2's prompts: one per part holding a target (chunk, else third past 15 min): its quota, range, targets + the unstamped ones, lines ± 30 s, the hero without other parts' takeaways (part_hero); else one over the whole video
+    │   │   ├── quiz_v2.py            # Quiz v2 (QUIZ_V2_ENABLED): LLM_EXTRACTION_MODEL (Sonnet 5.5, 4.6e) reading the extraction's cached blocks, from the transcript + target key ideas, one call per part in parallel (each extraction chunk, else each third past 15 min); every question names the idea it tests (quiz_v2_targets) and its quote is checked
+    │   │   ├── quiz_v2_blocks.py     # Quiz v2's cached prefix (4.6e): block 1 + the head of the call's chunk, byte-identical to the group calls'; () → the transcript inline
+    │   │   ├── quiz_format.py        # The quiz's format gate (4.6e, D9 revised): quizPolicy.formats (lecture, tutorial); an unknown format rules nothing out
+    │   │   ├── quiz_v2_prompt.py     # Quiz v2's prompts: one per part holding a target (chunk, else third past 15 min): its quota, range, targets + the unstamped ones, its chunk's cached head (else its lines ± 30 s), the hero without other parts' takeaways (part_hero); else one over the whole video
     │   │   ├── quiz_v2_ideas.py      # Quiz v2's targets: the thesis / argument / number / disagreement items (ids K1…) of the first non-empty KEY_IDEA_SOURCES list (quiz_targets), and their prompt lines
     │   │   ├── quiz_v2_parse.py      # Quiz v2's reply read question by question when its JSON envelope is broken (G2-1)
     │   │   ├── quiz_v2_targets.py    # Quiz v2's targets: the idea each question names (else the one within 90 s), one question per idea before any second, a translated question's stamp (4.0 b)
@@ -234,7 +236,7 @@ LLM_MEMORY_MODEL=anthropic/claude-haiku-5-5                # Memory; blank = LLM
 LLM_JUDGE_MODEL=openai/gpt-6-luna                          # Faithfulness judge (reasoning off); blank = the fast tier (config only)
 LLM_DESCRIPTION_MODEL=openai/gpt-6-luna                    # Description analysis (reasoning off)
 LLM_TRANSLATION_MODEL=openai/gpt-6-luna                    # Output, title and RAG transcript translation (reasoning off)
-LLM_ENRICHMENT_MODEL=openai/gpt-4o-mini                    # The quiz when QUIZ_V2_ENABLED=false (quiz v2 runs on LLM_MEMORY_MODEL, no key of its own)
+LLM_ENRICHMENT_MODEL=openai/gpt-4o-mini                    # The quiz when QUIZ_V2_ENABLED=false (quiz v2 runs on LLM_EXTRACTION_MODEL, no key of its own)
 LLM_SYNTHESIS_MODEL=                                       # Blank = the fast tier; the synthesis call runs only when the hero rewrite is off or gave none
 # LLM_CHAPTER_DETECT_MODEL exists in config.py (blank = fast tier) but no compose anchor passes it
 # A refused answer is asked once of config.PREVIOUS_MODEL (Sonnet 5.5 → Sonnet 4.6,
@@ -282,7 +284,7 @@ LLM_VISION_MODEL=anthropic/claude-sonnet-5-5  # 4.0d pick (both composes default
 
 # Output-quality rollback levers (config.py + both compose anchors carry the same literal)
 HERO_REWRITE_ENABLED=true              # true: one hero_rewrite call on LLM_EXTRACTION_MODEL (reads the extraction's prompt cache) replaces the synthesis call; false: memory hero + synthesis
-QUIZ_V2_ENABLED=true                   # true: quiz v2 on LLM_MEMORY_MODEL (timestamp + checked evidence quote per question); false: the enrich_quiz call on LLM_ENRICHMENT_MODEL
+QUIZ_V2_ENABLED=true                   # true: quiz v2 on LLM_EXTRACTION_MODEL, reading the extraction's cache (timestamp + checked evidence quote per question); false: the enrich_quiz call on LLM_ENRICHMENT_MODEL
 MERGE_RANK_ENABLED=true                # true: a chunked run (> 40 min) makes one merge_rank call on LLM_MEMORY_MODEL (dedupe across chunks and tabs, key-idea sections, rank cut); false: the code merge alone
 FRAMES_SKIP_WHEN_NO_VISUAL_DEMO=true   # true: a video > 30 min with no visual demo (probe), tier not HIGH, and tier LOW or a visualCriticality.skipFormats format skips scene detection + vision; the moment fill frames every moment; false: the skip only (the 3.5 highTitleKeywords fix — "pack opening" / "box opening", no bare "opening" — applies either way)
 
@@ -562,7 +564,8 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     │   `repointed` / `primary_moment_source`); (2) the primary's required
     │   components backfilled from its defaultTabs unless doubly false (`not_backfilled`, under
     │   the defaultTab id it would have added) — tech's has_code-gated code_playground with no
-    │   tab planned for it is deferred too; (3) quiz dropped outside quizDomains or when
+    │   tab planned for it is deferred too; (3) quiz dropped outside quizDomains, on a format
+    │   quizPolicy.formats does not name (4.6e: lecture / tutorial only) or when
     │   is_learnable is doubly false, else moved last; (4) dedupe (dataSource, component) — the
     │   tab the primary requires (equivalents included) stays, else the first; (4b) a planned
     │   info_grid joins the planned tab that answers its question as one of its `folds`
@@ -654,7 +657,8 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     │   crossTabLinks/attachments, at its plan-order position, re-sent only when its content
     │   changed; never the overview, a moment_track tab or the quiz). The quiz call starts here
     │   (`ctx.quiz_task`) once the text groups holding a quizDomains field landed (the visual group
-    │   when none does; a strip-only quiz also waits until frames-done can no longer drop its host).
+    │   when none does; a strip-only quiz also waits until frames-done can no longer drop its host),
+    │   with the split run: its chunks are the quiz's parts, its cached blocks what each call reads.
     │   The hero rewrite starts here too (`ctx.hero_task`, HERO_REWRITE_ENABLED): once every text
     │   group has landed on every chunk (text-groups-done) `GroupLanding` hands the extraction merged
     │   so far to `phases/synthesis.start_hero_task`; the late group awaits it (timing step

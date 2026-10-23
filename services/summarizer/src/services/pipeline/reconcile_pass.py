@@ -14,8 +14,9 @@ that shape the tab list once the evidence is settled:
    (``not_backfilled``, naming the defaultTab it would have added); a key the
    screen can still answer (``has_code``) defers the decision to frames-done
    (``deferred_to_frames``) instead;
-3. quiz — dropped outside ``quizDomains`` or when ``is_learnable`` is doubly
-   false; otherwise moved last;
+3. quiz — dropped outside ``quizDomains``, on a format ``quizPolicy.formats`` does not
+   name (D9 revised, output-quality 4.6e: instructional only — ``quiz_format``) or when
+   ``is_learnable`` is doubly false; otherwise moved last;
 4. dedupe — one tab per ``(dataSource, component)``, a component and what
    assembly promotes it to counting as one (flash_deck → concept_canvas): a tab
    the primary requires (or its equivalent) wins over one it does not, else the
@@ -49,6 +50,7 @@ from .assembly.info_grid_fold import FOLDS_KEY, INFO_GRID, fold_entry, fold_host
 from .assembly.promotion import COMPONENT_PROMOTIONS
 from .enrichment import QUIZ_COMPONENT, QUIZ_DATA_SOURCE
 from .plan_reconcile import NEVER_DROPPED
+from .quiz_format import QUIZ_FORMAT_REASON, quiz_format_allowed
 
 logger = logging.getLogger(__name__)
 
@@ -315,6 +317,8 @@ def _quiz_drop_reason(run: ReconcilePass) -> tuple[str, str | None] | None:
     """``(reason, evidence key)`` when the quiz must go; None when it stays."""
     if run.primary not in quiz_enrichment()["quizDomains"]:
         return "quiz_domain", None
+    if not quiz_format_allowed(run.content_format):
+        return QUIZ_FORMAT_REASON, None
     key = quiz_policy()["requiresEvidence"]
     return ("evidence_false", key) if run.evidence.get(key) is False else None
 

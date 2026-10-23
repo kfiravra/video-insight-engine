@@ -129,9 +129,9 @@ class Settings(BaseSettings):
     # extraction's prompt cache, which is per model) writes the hero and
     # replaces the synthesis call. false: memory hero + synthesis, as before.
     HERO_REWRITE_ENABLED: bool = True
-    # true: quiz v2 on LLM_MEMORY_MODEL — every question carries its answer's
-    # timestamp and a verified evidence quote. false: the enrich_quiz call on
-    # LLM_ENRICHMENT_MODEL, as before.
+    # true: quiz v2 on LLM_EXTRACTION_MODEL (it reads the extraction's prompt cache,
+    # output-quality 4.6e) — every question carries its answer's timestamp and a
+    # verified evidence quote. false: the enrich_quiz call on LLM_ENRICHMENT_MODEL.
     QUIZ_V2_ENABLED: bool = True
     MERGE_RANK_ENABLED: bool = True  # chunked runs: merge_rank (3.1); false: code merge only
     FRAMES_SKIP_WHEN_NO_VISUAL_DEMO: bool = True  # long talking heads skip frames (3.5, D2)
@@ -413,7 +413,7 @@ class Settings(BaseSettings):
         "extraction": "LLM_EXTRACTION_MODEL",
         "hero_rewrite": "LLM_EXTRACTION_MODEL",
         "memory": "LLM_MEMORY_MODEL",
-        "quiz_v2": "LLM_MEMORY_MODEL",  # quiz v2 (2.1b): Haiku 5.5, no model key of its own
+        "quiz_v2": "LLM_EXTRACTION_MODEL",  # quiz v2 (4.6e): reads the groups' cache, no key
         "merge_rank": "LLM_MEMORY_MODEL",  # merge_rank (3.1): the same, no key of its own
         "faithfulness": "LLM_JUDGE_MODEL",
         # The stage names the translation calls send (pipeline/translation_flat.py:
@@ -427,7 +427,6 @@ class Settings(BaseSettings):
 
     _STAGE_FALLBACK: ClassVar[dict[str, str]] = {  # a blank setting → the mapped stage's model
         "memory": "extraction",
-        "quiz_v2": "memory",
         "merge_rank": "memory",
     }
 

@@ -1,6 +1,7 @@
 """Quiz v2 — every answer proved by the speaker's words (output-quality p2.1b, D9 / D13).
 
-One Haiku 5.5 call (``LLM_MEMORY_MODEL``, stage ``quiz_v2``) reads the marked
+One call on the extraction groups' model (``LLM_EXTRACTION_MODEL`` since 4.6e — Haiku 5.5
+on ``LLM_MEMORY_MODEL`` before; stage ``quiz_v2``) reads the marked
 transcript + the key ideas and writes 3 / 5 / 8 questions (plus spares), each with
 its answer's stamp and a ≤ 25-word evidence quote. The 2.0 quote check keeps a
 question only when its quote is in the transcript (the stamp is then set from where
@@ -30,6 +31,7 @@ from tests.replay.quiz_synth import quiz_v2_answer, transcript_lines
 
 _PATCH_LLM = "src.services.pipeline.quiz_v2.call_llm_with_retry"
 _HAIKU_55 = "anthropic/claude-haiku-5-5"
+_SONNET_55 = "anthropic/claude-sonnet-5-5"
 _TEN_MIN, _THIRTY_MIN, _HOUR_PLUS = 600, 1800, 3780
 _LONG_LINE = (
     "Every spare dollar goes to the card first because the interest compounds against you "
@@ -154,12 +156,14 @@ class _FakeProvider:
 
 
 class TestRequest:
-    async def test_should_send_each_call_as_one_uncached_user_message_to_haiku(
+    # 4.6e: the extraction groups' model, never memory's — the cached prefix is per model.
+    async def test_should_send_each_call_as_one_uncached_user_message_when_the_run_has_no_blocks(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        monkeypatch.setattr(settings, "LLM_EXTRACTION_MODEL", _SONNET_55)
         monkeypatch.setattr(settings, "LLM_MEMORY_MODEL", _HAIKU_55)
         fake = _FakeProvider(_reply(*_verified(5)))
-        service = LLMService(LLMProvider(model=_HAIKU_55, fast_model=_HAIKU_55))
+        service = LLMService(LLMProvider(model=_SONNET_55, fast_model=_HAIKU_55))
         # Key ideas in two thirds of a 5-question video: two stretch calls (p3.0).
         ideas = [{"claim": "Card first", "timestamp": 30}, {"claim": "Buffer", "timestamp": 900}]
         request = _request(_THIRTY_MIN, extraction={"learning": {"keyIdeas": ideas}})
@@ -168,15 +172,16 @@ class TestRequest:
             await enrich_quiz_v2(service, request, _index())
 
         assert [(r["model"], [m["role"] for m in r["messages"]]) for r in fake.requests] == [
-            (_HAIKU_55, ["user"]),
-            (_HAIKU_55, ["user"]),
+            (_SONNET_55, ["user"]),
+            (_SONNET_55, ["user"]),
         ]
         assert all(isinstance(r["messages"][0]["content"], str) for r in fake.requests)
         assert "cache_control" not in json.dumps([r["messages"] for r in fake.requests])
 
-    async def test_should_call_stage_quiz_v2_on_the_fast_tier_with_one_retry_when_the_quiz_runs(
+    async def test_should_call_stage_quiz_v2_on_the_extraction_model_with_one_retry_when_it_runs(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        monkeypatch.setattr(settings, "LLM_EXTRACTION_MODEL", _SONNET_55)
         monkeypatch.setattr(settings, "LLM_MEMORY_MODEL", _HAIKU_55)
 
         _, llm = await _quiz(_reply(*_verified(3)))
@@ -184,20 +189,15 @@ class TestRequest:
         kwargs = llm.await_args_list[-1].kwargs
         assert (kwargs["stage_name"], kwargs["model_override"], kwargs["max_retries"]) == (
             "quiz_v2",
-            _HAIKU_55,
+            _SONNET_55,
             1,
         )
-        assert kwargs["use_fast_model"] and kwargs["json_mode"]
 
-    def test_should_route_the_quiz_to_the_memory_model_when_it_is_set(self) -> None:
-        assert settings.get_stage_model("quiz_v2") == settings.get_stage_model("memory")
+    async def test_should_call_off_the_fast_tier_in_json_mode_when_the_quiz_runs(self) -> None:
+        _, llm = await _quiz(_reply(*_verified(3)))
 
-    def test_should_follow_memory_s_fallback_when_the_memory_setting_is_blank(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setattr(settings, "LLM_MEMORY_MODEL", None)
-
-        assert settings.get_stage_model("quiz_v2") == settings.get_stage_model("extraction")
+        kwargs = llm.await_args_list[-1].kwargs
+        assert not kwargs.get("use_fast_model") and kwargs["json_mode"]
 
     def test_should_put_the_transcript_and_key_ideas_before_the_rules(self) -> None:
         prompt = _prompt()

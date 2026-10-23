@@ -10,7 +10,9 @@ from Q, so the replay exercises the real v2 parse and quote check:
   video (Q predates stamps); the quote = the first ``QUOTE_WORDS`` words of the
   ``[m:ss]`` line of the request's ``<transcript>`` that holds that second, and the
   stamp = that line's marker. A recorded item that is not a question passes as is
-  (the parser drops it as it did);
+  (the parser drops it as it did). Since 4.6e the call reads the extraction's cached
+  blocks first: the transcript is the head block's (the last ``<transcript>`` of the
+  request — block 1's rules come before it), the task and key ideas are the job's;
 * a stretch call (output-quality 3.0 — its task names "this stretch of the video:
   a–b (the video runs 0:00–L)") answers only the questions whose place lies in its
   stretch, so every recorded question is answered by one call; the places are spread
@@ -19,8 +21,10 @@ from Q, so the replay exercises the real v2 parse and quote check:
   nearest its place (an unstamped entry when none is), one question per id
   (output-quality 4.0 b: a question naming no target idea, with none stamped near it,
   is dropped);
-* the entry answers on the model the recorded memory call ran on — quiz v2 runs on
-  memory's model (``LLM_MEMORY_MODEL``, blank → memory's fallback);
+* the entry answers on the model of the entry the harness hands it (``fake_llm``: the
+  recorded memory call's). Quiz v2 runs on the extraction groups' model since 4.6e,
+  and in every cassette memory ran on that model (``LLM_MEMORY_MODEL`` blank then → the
+  extraction model, D5), so the requested and the recorded model agree;
 * usage: input = request chars / 3.6, output = Q's tokens scaled by the answer's
   length, wall = Q's.
 
@@ -66,10 +70,11 @@ def request_text(messages: Sequence[Mapping[str, Any]]) -> str:
 
 
 def transcript_lines(request: str) -> list[tuple[int, str]]:
-    """(seconds, text) of every ``[m:ss]`` line in the request's ``<transcript>``."""
-    match = _TRANSCRIPT_RE.search(request)
+    """(seconds, text) of every ``[m:ss]`` line in the request's last ``<transcript>`` —
+    the cached head's, after block 1's rules (or the inline one)."""
+    found = _TRANSCRIPT_RE.findall(request)
     lines: list[tuple[int, str]] = []
-    for line in match.group(1).splitlines() if match else []:
+    for line in found[-1].splitlines() if found else []:
         parsed = _LINE_RE.match(line)
         if parsed:
             hours, minutes, seconds, text = parsed.groups()
@@ -166,9 +171,10 @@ def quiz_v2_answer(
 
 
 def synthesize_quiz_v2(
-    quiz: LLMEntry, memory: LLMEntry | None, key: LLMKey, messages: Sequence[Mapping[str, Any]]
+    quiz: LLMEntry, model_entry: LLMEntry | None, key: LLMKey, messages: Sequence[Mapping[str, Any]]
 ) -> LLMEntry:
-    """The v2 answer in the recorded-entry shape (module docstring)."""
+    """The v2 answer in the recorded-entry shape, on ``model_entry``'s model (module
+    docstring)."""
     request = request_text(messages)
     answer = quiz_v2_answer(
         recorded_answer(quiz),
@@ -180,7 +186,7 @@ def synthesize_quiz_v2(
     share = len(output) / max(len(quiz.output), 1)
     return LLMEntry(
         key=key,
-        model=memory.model if memory is not None else quiz.model,
+        model=model_entry.model if model_entry is not None else quiz.model,
         latency_ms=quiz.latency_ms,
         output=output,
         finish_reason="stop",

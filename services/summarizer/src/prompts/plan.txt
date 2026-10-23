@@ -213,8 +213,7 @@ Video: "Rails World 2026 Opening Keynote - DHH" (63 min, conference talk — one
   "tabs": [
     {"id": "key_ideas", "label": "💡 Key Ideas", "emoji": "💡", "component": "spot_explorer", "dataSource": "learning.keyIdeas", "goal": "After this you know what DHH claims, why, and where he says it.", "brief": {"what": "each claim with his why and the verbatim line, kind (thesis, argument, announcement, number, story, ask), grouped by the talk's four parts", "where": ["1:50-16:00", "16:00-33:00", "33:00-47:00", "47:00-62:40"], "expect": 12}},
     {"id": "asks", "label": "✅ What He Asked", "emoji": "✅", "component": "checklist", "dataSource": "learning.takeaways", "goal": "After this you can do what DHH asked the room to do, in his words.", "brief": {"what": "only the explicit asks, in his words — the CLI by next Friday, pencils down, judge agent output as a black box", "where": ["20:00-21:30", "35:00-36:00", "45:00-46:00"], "expect": 3}},
-    {"id": "moments", "label": "🎬 Moments", "emoji": "🎬", "component": "moment_track", "dataSource": "learning.timestamps", "goal": "After this you can jump to each beat and hear the line that made it.", "brief": {"what": "one beat per five minutes ranked by salience: what he established there plus the quote; never a chapter title", "where": ["1:50-62:40"], "expect": 12}},
-    {"id": "quiz", "label": "🧠 Test Yourself", "emoji": "🧠", "component": "quiz_arena", "dataSource": "enrichment.quiz", "goal": "After this you know whether the argument stuck, idea by idea.", "brief": {"what": "one question per key idea, each answerable at a timestamp, none from the hero alone", "where": ["5:00-62:40"], "expect": 8}}
+    {"id": "moments", "label": "🎬 Moments", "emoji": "🎬", "component": "moment_track", "dataSource": "learning.timestamps", "goal": "After this you can jump to each beat and hear the line that made it.", "brief": {"what": "one beat per five minutes ranked by salience: what he established there plus the quote; never a chapter title", "where": ["1:50-62:40"], "expect": 12}}
   ]
 }
 </example>
@@ -265,7 +264,7 @@ Video: "Max Tegmark: Life 3.0 | Lex Fridman Podcast #1" (83 min, podcast — hos
   "tabs": [
     {"id": "positions", "label": "💡 Positions", "emoji": "💡", "component": "spot_explorer", "dataSource": "learning.keyIdeas", "goal": "After this you know what Tegmark claims, why, and the line he said it in.", "brief": {"what": "each position with speaker, why and verbatim line, kind (thesis, argument, story, number); the stories (Germanwings, Hollywood) as kind story", "where": ["1:00-82:00"], "expect": 14}},
     {"id": "conversation_map", "label": "🗺️ Conversation Map", "emoji": "🗺️", "component": "moment_track", "dataSource": "podcast.segments", "goal": "After this you know what each stretch concluded and can jump straight to it.", "brief": {"what": "each segment with its span, who leads it and the one or two sentences of what was concluded, ranked by substance", "where": ["0:00-82:20"], "expect": 14}},
-    {"id": "quiz", "label": "🧠 Test Yourself", "emoji": "🧠", "component": "quiz_arena", "dataSource": "enrichment.quiz", "goal": "After this you know which of Tegmark's positions you can restate.", "brief": {"what": "one question per position, each answerable at a timestamp, none from the hero alone", "where": ["5:00-82:00"], "expect": 8}}
+    {"id": "concepts", "label": "🧠 Concepts", "emoji": "🧠", "component": "concept_canvas", "dataSource": "learning.concepts", "goal": "After this you can see how intelligence, goals and consciousness connect in Tegmark's case.", "brief": {"what": "each concept his case connects — substrate-independent intelligence, goal alignment, consciousness, perceptronium — with his one-line definition, a timestamp and the concepts it links to", "where": ["5:00-80:00"], "expect": 8}}
   ]
 }
 </example>
@@ -400,7 +399,8 @@ Per-domain guidance (choices, not requirements):
 - learning: the answer tab is the argument — spot_explorer on learning.keyIdeas (see
   <spoken_word>); moment_track for the beats (what was established at each, never chapter
   navigation); concept_canvas only after the list tab and only when the video TEACHES how
-  concepts relate; flash_deck for flat memorization; quiz_arena last for knowledge checks.
+  concepts relate; flash_deck for flat memorization; quiz_arena last for knowledge checks on
+  a lecture or a tutorial.
 - tech: code_playground for real code; a talk about tech with no code is <spoken_word>;
   info_grid only for a short tool or setup lookup.
 - podcast: spot_explorer on learning.keyIdeas for the positions (add learning to
@@ -435,11 +435,12 @@ flash_deck restrictions:
   spot_explorer (read, with the why) or moment_track (jump).
 
 quiz_arena restrictions:
-- quiz_arena tabs are for content the viewer studies (is_learnable=true): learning, language,
-  tech and science, plus a podcast or news explainer that is learnable. It is FORBIDDEN
-  everywhere else (gaming, review, travel, food, fitness, music, project, sport) and
-  validation removes it, so planning one there wastes a tab slot. Never quiz the viewer on
-  entertainment (unboxings, vlogs, reviews).
+- quiz_arena tabs are for content the viewer studies (is_learnable=true) in an instructional
+  format — a lecture or a tutorial (the Hint's format=lecture / format=tutorial) in learning,
+  language, tech and science. Never on a talk, an interview, a podcast or the news: the quiz
+  is dropped there. It is FORBIDDEN everywhere else (gaming, review, travel, food, fitness,
+  music, project, sport) and validation removes it, so planning one there wastes a tab slot.
+  Never quiz the viewer on entertainment (unboxings, vlogs, reviews).
 - A quiz_arena tab is always the LAST tab, untimed, sized by <sizing>.
 
 retired component names (DO NOT plan new tabs using these names):
@@ -505,8 +506,8 @@ Route on YOUR evidence — decide it first, then pick components from it:
   has_lyrics=true → lyrics_karaoke.
 - has_itinerary=true → spot_explorer on travel.itinerary. has_packing=true → packing_mission.
 - is_learnable=false → no quiz_arena (opinions and entertainment aren't testable).
-  is_learnable=true → quiz_arena is allowed in learning, language, tech and science, and in a
-  learnable podcast or news explainer — as the last tab.
+  is_learnable=true → quiz_arena is allowed only on a lecture or a tutorial (learning,
+  language, tech and science) — as the last tab; never on a talk, interview, podcast or news.
 Content shape the evidence keys don't cover:
 - Concepts the video connects to each other → concept_canvas as a later tab, never the first
   (replaces flash_deck for relational learning). For a learning/science PRACTICE or REVIEW tab where the viewer should

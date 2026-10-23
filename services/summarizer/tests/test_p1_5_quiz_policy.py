@@ -102,14 +102,14 @@ class TestWhereAQuizMayBe:
 
         assert needs_quiz(plan, "podcast")
 
-    def test_should_keep_a_podcast_quiz_and_move_it_last_at_plan_done(self) -> None:
+    def test_should_keep_a_lecture_quiz_and_move_it_last_at_plan_done(self) -> None:
         tabs = [
             _tab("quiz", "quiz_arena", "enrichment.quiz"),
-            _tab("map", "moment_track", "podcast.segments"),
+            _tab("map", "moment_track", "learning.timestamps"),
             _tab("ideas", "spot_explorer", "learning.keyIdeas"),
         ]
 
-        outcome = reconcile_at_plan_done(_plan("podcast", tabs), None, "podcast")
+        outcome = reconcile_at_plan_done(_plan("learning", tabs), None, "lecture")
 
         assert [t["id"] for t in outcome.tabs][-1] == "quiz"
 

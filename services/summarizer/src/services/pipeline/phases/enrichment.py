@@ -3,14 +3,20 @@
 Today's path makes the call in assembly's late group, over the whole
 extraction. The split path (3.6) starts it earlier as ``ctx.quiz_task``, over
 the extraction merged once the groups holding its domains' fields landed
-(``start_quiz_task``, B.6), with the split run's chunks — quiz v2 is written chunk
-by chunk on a chunked run (4.0 b); the late group then awaits that task instead.
+(``start_quiz_task``, B.6), with the split run — quiz v2 is written chunk by chunk on
+a chunked run (4.0 b), each call reading the run's cached blocks (4.6e); the late
+group then awaits that task instead.
 The started call is timed as ``quiz_call`` (``enrichment`` is then the wait).
 
-Which call (output-quality 2.1b): ``QUIZ_V2_ENABLED`` (default) writes quiz v2 on
-Haiku 5.5 from the transcript + the key ideas, every question's evidence quote
-checked against the transcript (``pipeline/quiz_v2``); false keeps ``enrich_quiz``.
+Which call (output-quality 2.1b): ``QUIZ_V2_ENABLED`` (default) writes quiz v2 on the
+extraction groups' model from the transcript + the key ideas, every question's evidence
+quote checked against the transcript (``pipeline/quiz_v2``; Sonnet 5.5 reading the
+extraction's prompt cache since 4.6e); false keeps ``enrich_quiz``.
 Both bill the ``summarize:enrichment`` ledger feature; the span tells them apart.
+
+Which videos (D9 revised, 4.6e): only an instructional format (``quizPolicy.formats``,
+``quiz_format``) gets a quiz call — a planned quiz on a talk, an interview, a podcast
+or the news makes none (``skipped: quiz_format``); reconcile drops its tab.
 
 The shipped hero (p2 review D7): quiz v2 reads memory's hero, the page's preview —
 the hero rewrite writes the shipped one in parallel. Once both late calls landed,
@@ -35,8 +41,10 @@ from src.services.pipeline.enrichment import (
     needs_quiz,
     render_hero,
 )
+from src.services.pipeline.hero_job import GroupBlocks
 from src.services.pipeline.pipeline_helpers import sse_event
 from src.services.pipeline.pipeline_timing import timed_step
+from src.services.pipeline.quiz_format import QUIZ_FORMAT_REASON, quiz_format_allowed
 from src.services.pipeline.quiz_v2 import (
     MIN_QUIZ_V2_QUESTIONS,
     QuizV2Request,
@@ -55,7 +63,7 @@ from src.services.pipeline.quote_verify import run_quote_index
 if TYPE_CHECKING:
     from src.models.pipeline_types import EnrichmentData, PlanResult
     from src.services.pipeline.context import PipelineContext
-    from src.services.pipeline.extraction_chunks import ExtractionChunk
+    from src.services.pipeline.extraction_groups import SplitRun
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +79,8 @@ def _skip_reason(ctx: PipelineContext, extraction: Mapping[str, Any]) -> str | N
     """Why this run needs no quiz call over ``extraction``, or None when it does."""
     if not needs_quiz(ctx.plan_result, ctx.content_format):
         return "no_demand"
+    if not quiz_format_allowed(ctx.content_format):
+        return QUIZ_FORMAT_REASON
     if not _has_meaningful_data(dict(extraction)):
         return "empty_extraction"
     return None
@@ -112,25 +122,28 @@ async def _quiz_v2(
     ctx: PipelineContext,
     plan: PlanResult,
     extraction: Mapping[str, Any],
-    windows: tuple[Part, ...],
+    run: SplitRun | None,
 ) -> EnrichmentData | None:
     """Quiz v2: the marked transcript + the key ideas in, every quote checked on the run's
-    index; written per chunk window (``()`` → per third)."""
+    index; written per chunk window of the split ``run`` (none → per third), each call
+    reading the run's cached blocks (no run → the transcript inline)."""
+    duration_s = _duration_s(ctx)
     request = QuizV2Request(
         primary_tag=plan.primary_tag,
         title=ctx.video_data.title if ctx.video_data else "",
-        duration_s=_duration_s(ctx),
+        duration_s=duration_s,
         transcript=ctx.prompt_transcript,
         extraction=extraction,
         hero=_hero(ctx),
-        windows=windows,
+        windows=chunk_windows(run.chunks, duration_s) if run is not None else (),
         outline=_outline_starts(ctx),
+        blocks=GroupBlocks(run.prompt, run.chunks) if run is not None else None,
     )
     return await enrich_quiz_v2(ctx.llm_service, request, run_quote_index(ctx))
 
 
 async def _quiz(
-    ctx: PipelineContext, extraction: Mapping[str, Any], windows: tuple[Part, ...] = ()
+    ctx: PipelineContext, extraction: Mapping[str, Any], run: SplitRun | None = None
 ) -> EnrichmentData | None:
     """The quiz over ``extraction`` (None = skipped / failed), logged as ``pipeline.enrichment``."""
     llm_feature_var.set("summarize:enrichment")
@@ -144,7 +157,7 @@ async def _quiz(
         return None
 
     if settings.QUIZ_V2_ENABLED:
-        result = await _quiz_v2(ctx, plan, extraction, windows)
+        result = await _quiz_v2(ctx, plan, extraction, run)
     else:
         result = await _quiz_v1(ctx, plan, extraction)
     logger.info(
@@ -158,26 +171,26 @@ async def _quiz(
 
 
 async def _timed_quiz(
-    ctx: PipelineContext, extraction: Mapping[str, Any], windows: tuple[Part, ...]
+    ctx: PipelineContext, extraction: Mapping[str, Any], run: SplitRun | None
 ) -> EnrichmentData | None:
     with timed_step(QUIZ_CALL_STEP):
-        return await _quiz(ctx, extraction, windows)
+        return await _quiz(ctx, extraction, run)
 
 
 def start_quiz_task(
-    ctx: PipelineContext, extraction: Mapping[str, Any], chunks: Sequence[ExtractionChunk] = ()
+    ctx: PipelineContext, extraction: Mapping[str, Any], run: SplitRun | None = None
 ) -> bool:
-    """Start the quiz over ``extraction`` now (split path), one part per chunk of a
-    chunked run; False when no call starts.
+    """Start the quiz over ``extraction`` now (split path): one part per chunk of a chunked
+    ``run``, every call reading the run's cached blocks (4.6e); False when no call starts.
 
-    No call: one already started, the plan cannot use a quiz, or the extraction
-    is still empty — the late group then calls over the whole extraction.
+    No call: one already started; the plan cannot use a quiz or the format carries none
+    (nor does the late group call); or the extraction is still empty — the late group
+    then calls over the whole extraction (without the run's blocks: the transcript inline).
     """
     if ctx.quiz_task is not None or _skip_reason(ctx, extraction) is not None:
         return False
-    windows = chunk_windows(chunks, _duration_s(ctx))
     ctx.quiz_task = asyncio.create_task(
-        _timed_quiz(ctx, extraction, windows), name=f"quiz_{ctx.video_summary_id}"
+        _timed_quiz(ctx, extraction, run), name=f"quiz_{ctx.video_summary_id}"
     )
     return True
 

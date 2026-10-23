@@ -139,9 +139,9 @@ incl. the above-100K tier; the assistant process does not register it).
 
 ## Where cache_control is set
 
-Four call types carry breakpoints — the plan, the extraction field groups, the
-`EXTRACTION_PARALLEL=false` single extraction call and (output-quality 2.1) the hero
-rewrite, which re-sends the field groups' blocks to read them — always on user content
+Five call types carry breakpoints — the plan, the extraction field groups, the
+`EXTRACTION_PARALLEL=false` single extraction call, (output-quality 2.1) the hero
+rewrite and (4.6e) quiz v2, which re-send the field groups' blocks to read them — always on user content
 blocks (Anthropic models only; `services/summarizer/src/services/llm_messages.py`
 strips every marker for other providers). `text_block(text, cache=True)` is the 5-minute default (no
 `ttl` key on the wire); `text_block(text, cache=True, ttl="1h")` asks for one
@@ -266,6 +266,23 @@ hour it never serves). Output cap `HERO_MAX_TOKENS` = 2 000, timeout `HERO_TIMEO
 = 25 s. Started at text-groups-done, after the groups' own writes, so the entries are
 already readable.
 
+**Quiz v2 — reads the field groups' blocks (output-quality 4.6e, `QUIZ_V2_ENABLED`).**
+The quiz runs on `LLM_EXTRACTION_MODEL` with the groups' JSON mode and effort and no
+system prompt; `quiz_v2_blocks.cached_prefix` sends each call as `[block 1, block 2, job]`:
+block 1 = `prefix_block` (the 1h entry), block 2 = `head_block` of the call's chunk — part
+k's own chunk on a chunked run, the one head on a one-chunk run (each third reads it) —
+both byte-identical to the group calls' and read at 0.1x; the job (`<task>`, `<hero>`,
+`<key_ideas>`, the rules — no transcript) is uncached. The re-ask after a reply with no
+question sends the same blocks, so it reads the cache too. Without group blocks
+(`EXTRACTION_PARALLEL=false`, the late group's own call, a whole-video call on a chunked
+run) the call is one uncached message with the transcript inline. The task starts when its
+owning groups landed — after their writes, so the entries are readable. Offline (the stored
+runs' cache reads, their quiz jobs rendered, the Haiku runs' answer lengths; Sonnet 5.5
+$2 in / $0.20 read / $10 out per MTok): S03 (57 min, two chunk calls) 33.5 K read + 4.0 K
+job + 2.7 K out ≈ $0.041; S05 (13 min, one call) 12.7 K read + 3.3 K job + 1.0 K out
+≈ $0.019 — the answer is about two thirds of it (Haiku 5.5 inline: $0.0037 / $0.0013).
+A one-chunk run's thirds read the one head three times (≈ $0.003 a call).
+
 **OpenAI calls (automatic caching).** OpenAI caches a prompt prefix by itself
 once it is identical to an earlier request's and at least 1,024 tokens long; it
 reports reads (`prompt_tokens_details.cached_tokens`) but no writes, and there
@@ -292,19 +309,14 @@ restores the previous call. The `feature` column is `llm_usage.feature`
 |------|--------------|-------|-----------|---------------|
 | Hero rewrite | `hero_rewrite` | `LLM_EXTRACTION_MODEL` (Sonnet 5.5) | `summarize:hero_rewrite` | `HERO_REWRITE_ENABLED`: once per run (a retry is a second row), fired at text-groups-done; reads the groups' cached blocks (above). **Replaces** the synthesis call |
 | Synthesis | `synthesis` | the fast tier | `summarize:synthesis` | the flag off, or the hero call gave no hero (`phases/synthesis._synthesis_dict`) — then exactly as before |
-| Quiz v2 | `quiz_v2` | `LLM_MEMORY_MODEL` (Haiku 5.5; no model key of its own) | `summarize:enrichment` | `QUIZ_V2_ENABLED`, a plan with a quiz host: one call per part holding a target key idea — each extraction chunk of a chunked run (S01 / S03 / S14 / S15 2 rows, S02 3), else each third (up to 3 rows) — in parallel; one call when the length or the targets' stamps are missing, or a one-chunk quiz has 3 questions — ≤ 15 min, 18 s per attempt, 1 retry, every call inside one 37 s stage deadline; a call whose reply parses no question, even item by item, is made once more (a row of its own; output-quality 3.0, G2-1 / G2-4). **Replaces** `enrich_quiz` |
+| Quiz v2 | `quiz_v2` | `LLM_EXTRACTION_MODEL` (Sonnet 5.5 since 4.6e, reading the groups' cache; no model key of its own) | `summarize:enrichment` | `QUIZ_V2_ENABLED`, an instructional format (`quizPolicy.formats`, 4.6e), a plan with a quiz host: one call per part holding a target key idea — each extraction chunk of a chunked run (S01 / S03 / S14 / S15 2 rows, S02 3), else each third (up to 3 rows) — in parallel; one call when the length or the targets' stamps are missing, or a one-chunk quiz has 3 questions — ≤ 15 min, 30 s per attempt, 1 retry, every call inside one 40 s stage deadline; a call whose reply parses no question, even item by item, is made once more (a row of its own; output-quality 3.0, G2-1 / G2-4). **Replaces** `enrich_quiz` |
 | Quiz v1 | `enrichment` | `LLM_ENRICHMENT_MODEL` (gpt-4o-mini) | `summarize:enrichment` | `QUIZ_V2_ENABLED=false` |
 | Judge: hero + quiz | `faithfulness` (up to two calls) | `LLM_JUDGE_MODEL` (gpt-6-luna) | `summarize:faithfulness` | after assembly, when the doc has a stamped takeaway / quiz question, the sample rate is above 0, and — per call — the hero rewrite wrote the hero / `QUIZ_V2_ENABLED` is on (flag-off runs make no extra judge call) |
 
-- **Quiz v2 reads no cache.** Memory sends its transcript without a breakpoint, so there
-  is no shared prefix to read, and a breakpoint on this request alone would pay its 1.25x
-  write on every run to save only on a rare retry (`quiz_v2` docstring). On the 63-minute
-  S01 one request was ≈ 21 K tokens in and ≈ 2 K out ≈ $0.003 on Haiku 5.5 ($0.10 / $0.50
-  per MTok); the part calls read each part once (± 30 s) and the hero + rules
-  once per call: two chunk calls ≈ 24 K in all, three thirds ≈ 26 K (S03: ≈ 28 K vs ≈ 24 K) —
-  ≈ +$0.0003 / +$0.0004 a video; past `TRANSCRIPT_MAX_CHARS` (240 000) only the lines within
-  `KEY_IDEA_WINDOW_S` of a key idea go, which keeps the prompt in the ≤ 100 K-token price
-  tier ([above](#cache-savings-calculation)).
+- **Quiz v2 reads the extraction's cache (4.6e).** Until 4.6e it read none (Haiku 5.5, the
+  transcript inline: S01 ≈ 21 K in + ≈ 2 K out ≈ $0.003). Each call now reads block 1 + its
+  chunk's head at 0.1x ([above](#where-cache_control-is-set)); the inline path (no group
+  blocks) pays Sonnet's full input rate for its transcript.
 - **The hero's bill is the job block plus the extraction's reads.** Blocks 1 (+ 2) are
   priced as cache reads when the group calls wrote them (the rates in the table
   above), block 3 is plain input, the answer is capped at 2 000 tokens. The synthesis

@@ -159,9 +159,9 @@
       "planGuidance": "Product unboxing: lead with what was revealed and first impressions. Specs and contents as info_grid, reveal moments as moment_track. Never quiz the viewer on an unboxing."
     },
     "learning:talk": {
-      "preferred": ["spot_explorer", "checklist", "moment_track", "quiz_arena"],
+      "preferred": ["spot_explorer", "checklist", "moment_track"],
       "forbidden": ["video_filmstrip", "flash_deck"],
-      "planGuidance": "Talk / keynote (content-model §1): open on Key ideas — spot_explorer on learning.keyIdeas (claim, why, quote, timestamp, kind), sectioned by the talk's parts; its figures ride as the numbers strip and its terms as a section of that tab, never an info_grid tab of their own. Then What they asked — checklist on learning.takeaways, only when the speaker makes 3+ explicit requests of the audience (an imperative said to the room, quotable) — never the speaker's own practices; Moments — moment_track on learning.timestamps, what each beat established; Test yourself last when is_learnable. A concept_canvas only as a later tab when the concepts connect (the density table sets the minimum); claims_tracker on learning.claims only with has_claims, after the key ideas."
+      "planGuidance": "Talk / keynote (content-model §1): open on Key ideas — spot_explorer on learning.keyIdeas (claim, why, quote, timestamp, kind), sectioned by the talk's parts; its figures ride as the numbers strip and its terms as a section of that tab, never an info_grid tab of their own. Then What they asked — checklist on learning.takeaways, only when the speaker makes 3+ explicit requests of the audience (an imperative said to the room, quotable) — never the speaker's own practices; Moments — moment_track on learning.timestamps, what each beat established. A concept_canvas only as a later tab when the concepts connect (the density table sets the minimum); claims_tracker on learning.claims only with has_claims, after the key ideas."
     },
     "learning:lecture": {
       "preferred": ["concept_canvas", "spot_explorer", "moment_track", "quiz_arena"],
@@ -169,14 +169,14 @@
       "planGuidance": "Lecture (content-model §3): open on Concepts — concept_canvas on learning.concepts (definition, example, timestamp; it reads as a list first), the glossary inside it, never a second tab on the same source. Then Evidence & examples — spot_explorer on learning.keyIdeas (the experiments, studies and running examples, kind story / number); Moments — moment_track on learning.timestamps, what each section established; Test yourself last."
     },
     "podcast:podcast": {
-      "preferred": ["spot_explorer", "moment_track", "quiz_arena"],
+      "preferred": ["spot_explorer", "moment_track"],
       "forbidden": ["video_filmstrip", "flash_deck"],
-      "planGuidance": "Podcast (content-model §2): open on Positions — spot_explorer on learning.keyIdeas (the claim, who holds it as speaker, why, the line, timestamp); stories (kind story) and the books / tools / people mentioned are sections of it, never their own info_grid tab. Then the Conversation map — moment_track on podcast.segments, what each segment concluded; Test yourself last only when is_learnable. No concept canvas unless the concepts connect (the density table sets the minimum); quotes ride on the positions."
+      "planGuidance": "Podcast (content-model §2): open on Positions — spot_explorer on learning.keyIdeas (the claim, who holds it as speaker, why, the line, timestamp); stories (kind story) and the books / tools / people mentioned are sections of it, never their own info_grid tab. Then the Conversation map — moment_track on podcast.segments, what each segment concluded. No concept canvas unless the concepts connect (the density table sets the minimum); quotes ride on the positions."
     },
     "podcast:interview": {
-      "preferred": ["spot_explorer", "moment_track", "quiz_arena"],
+      "preferred": ["spot_explorer", "moment_track"],
       "forbidden": ["video_filmstrip", "flash_deck"],
-      "planGuidance": "Interview (content-model §4; tags podcast + learning): open on Positions — spot_explorer on learning.keyIdeas, the guest's positions with speaker, disagreements as kind disagreement; the guests ride as its first section, never a tab of their own. Then Q&A — moment_track on podcast.qa, every substantive question, in the host's own words, with its answer; then the Conversation map — moment_track on podcast.segments; claims_tracker on podcast.claims only with has_claims, after the Q&A; Test yourself last only when is_learnable."
+      "planGuidance": "Interview (content-model §4; tags podcast + learning): open on Positions — spot_explorer on learning.keyIdeas, the guest's positions with speaker, disagreements as kind disagreement; the guests ride as its first section, never a tab of their own. Then Q&A — moment_track on podcast.qa, every substantive question, in the host's own words, with its answer; then the Conversation map — moment_track on podcast.segments; claims_tracker on podcast.claims only with has_claims, after the Q&A."
     },
     "review:review": {
       "preferred": ["comparison", "spot_explorer", "moment_track"],
@@ -184,9 +184,9 @@
       "planGuidance": "Product review (content-model §7): open on Pros & cons — comparison on review.pros, the pros and cons as the reviewer states them; the verdict rides in the hero, never in a tab. Then Features — spot_explorer on review.specs, the specs as its cells, never a standalone info_grid; vs competitors — comparison on review.comparisons (comparison_radar only when 4+ axes are numbers); Moments — the test scenes on learning.timestamps when learning is tagged."
     },
     "news:explainer": {
-      "preferred": ["claims_tracker", "moment_track", "spot_explorer", "quiz_arena"],
+      "preferred": ["claims_tracker", "moment_track", "spot_explorer"],
       "forbidden": ["flash_deck"],
-      "planGuidance": "News explainer (content-model §8): open on Claims — claims_tracker on news.claims (stated / supported / contested, the evidence, timestamp). Then Timeline — moment_track on news.storyTimeline, what happened at each step; Actors — spot_explorer on news.entities, the background context as its section, never an info_grid tab; Test yourself last only when is_learnable."
+      "planGuidance": "News explainer (content-model §8): open on Claims — claims_tracker on news.claims (stated / supported / contested, the evidence, timestamp). Then Timeline — moment_track on news.storyTimeline, what happened at each step; Actors — spot_explorer on news.entities, the background context as its section, never an info_grid tab."
     }
   },
   "infoGridHostsNote": "info_grid never stands alone (output-quality R6): the plan decides the fold — at plan-done (and again at frames-done) the reconcile pass (reconcile_pass.fold_step) moves a planned info_grid tab onto the planned tab that answers its question as one of its `folds` — the first tab whose component comes earliest in this list, a tab of the grid's own domain first among equals (assembly/info_grid_fold.fold_host). At assembly (apply_folds) a spot_explorer host takes the rows as cards in a section named after the grid; any other host takes the grid as a bottom attachment; a host that does not ship gives its folds back as tabs. No host → the grid stays a tab; a fold never leaves fewer than 3 planned tabs.",
@@ -528,10 +528,11 @@
     "sport": { "formation_diagram": "has_lineup" },
     "news": { "claims_tracker": "has_claims" }
   },
-  "quizPolicyNote": "Quiz placement, gating and size (output-quality D9, R12): the quiz is the LAST tab (reconcile at plan-done and the assembly backstop move it there), needs is_learnable not doubly false, is untimed (`timer` — the web registry passes it to QuizArena's withTimer) and gets `questionsByDuration`: the first band whose `maxMinutes` the video's length does not exceed (null = no upper bound) sets the count the quiz prompt asks for (enrichment.quiz_question_count; an unknown length is the first band), never above enrichment.quiz's registry cap. Bands = content-model §9: ≤ 15 min → 3, ≤ 45 min → 5, longer → 8. attachmentHostsExclude: components that never host the quick_quiz strip.",
+  "quizPolicyNote": "Quiz placement, gating and size (output-quality D9, R12; D9 revised 2026-10-23): the quiz is the LAST tab (reconcile at plan-done and the assembly backstop move it there), needs is_learnable not doubly false and ships only on the instructional `formats` — tier-probe format ids (prompts/tier_probe.txt, probe_types.VALID_FORMATS): `lecture` (a class, a course session, an explainer that builds up concepts) and `tutorial` (a how-to the viewer follows), never a talk, interview, podcast, news or any other format; a planned quiz on another format is dropped at reconcile (droppedTabs `reconcile_quiz_format`) and no quiz call is made (quiz_format.quiz_format_allowed; an unknown format — no probe answer, a category override — rules nothing out). It is untimed (`timer` — the web registry passes it to QuizArena's withTimer) and gets `questionsByDuration`: the first band whose `maxMinutes` the video's length does not exceed (null = no upper bound) sets the count the quiz prompt asks for (enrichment.quiz_question_count; an unknown length is sized as the middle band, memory.UNKNOWN_LENGTH_SECONDS), never above enrichment.quiz's registry cap. Bands = content-model §9: ≤ 15 min → 3, ≤ 45 min → 5, longer → 8. attachmentHostsExclude: components that never host the quick_quiz strip.",
   "quizPolicy": {
     "position": "last",
     "requiresEvidence": "is_learnable",
+    "formats": ["lecture", "tutorial"],
     "timer": false,
     "questionsByDuration": [
       { "maxMinutes": 15, "questions": 3 },

@@ -342,7 +342,7 @@ The per-stage defaults are the pipeline-1min 4.0d model A/B picks, rounds 1 + 2 
 | `MAX_TOKENS_PER_BATCH` / `MAX_MINUTES_PER_BATCH` | `50000` / `40` | Limits of one extraction batch: estimated transcript tokens, minutes of video |
 | `EXTRACTION_FORCE_SPLIT_CHUNKS` | `4` | Sub-batches when a long video's chunked transcript collapses to one batch |
 | `HERO_REWRITE_ENABLED` | `true` | Rollback lever: `true` = one `hero_rewrite` call on `LLM_EXTRACTION_MODEL` (reads the extraction's prompt cache) writes the hero and replaces the synthesis call; `false` = memory hero + synthesis |
-| `QUIZ_V2_ENABLED` | `true` | Rollback lever: `true` = quiz v2 on `LLM_MEMORY_MODEL` (every question carries its answer's timestamp and a verified evidence quote); `false` = the `enrich_quiz` call on `LLM_ENRICHMENT_MODEL` |
+| `QUIZ_V2_ENABLED` | `true` | Rollback lever: `true` = quiz v2 on `LLM_EXTRACTION_MODEL`, reading the extraction's prompt cache (every question carries its answer's timestamp and a verified evidence quote; instructional formats only — `quizPolicy.formats`); `false` = the `enrich_quiz` call on `LLM_ENRICHMENT_MODEL` |
 | `MERGE_RANK_ENABLED` | `true` | Rollback lever: `true` = one `merge_rank` call on `LLM_MEMORY_MODEL` on chunked runs (cross-tab dedupe, sections, rank); `false` = the code merge alone |
 | `FRAME_VISION_ENABLED` | `true` | Frame descriptions by the vision model; `false` = OCR only |
 | `FRAME_VISION_PARALLEL` | `true` | Vision in parallel batches; `false` = one call with every frame |

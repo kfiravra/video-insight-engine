@@ -169,14 +169,17 @@ class TestSpokenWordExamples:
             "podcast.qa",
         }
 
-    def test_should_size_the_quiz_to_length_when_a_spoken_word_plan_is_learnable(self) -> None:
-        sized = {
-            kind: [t["brief"]["expect"] for t in _tabs(example, "quiz_arena")]
-            for kind, (_, example) in _SPOKEN.items()
-            if example["evidence"]["is_learnable"]
-        }
+    def test_should_size_the_quiz_to_length_when_the_spoken_word_plan_is_a_lecture(self) -> None:
+        _, lecture = _SPOKEN["lecture"]
 
-        assert sized and all(counts == [8] for counts in sized.values())
+        assert [t["brief"]["expect"] for t in _tabs(lecture, "quiz_arena")] == [8]
+
+    # D9 revised (output-quality 4.6e): the quiz ships only on a lecture or a tutorial.
+    @pytest.mark.parametrize("kind", ("talk", "podcast", "interview"))
+    def test_should_plan_no_quiz_when_the_spoken_word_plan_is_not_instructional(
+        self, kind: str
+    ) -> None:
+        assert _tabs(_SPOKEN[kind][1], "quiz_arena") == []
 
 
 class TestEveryExample:
