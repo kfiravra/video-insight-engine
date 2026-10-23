@@ -131,7 +131,7 @@ export type KeyIdeaKind =
 export interface KeyIdeaItem {
   /** The idea as the speaker argues it — one sentence a reader could disagree with. */
   claim: string;
-  /** The speaker's reasoning or evidence for the claim. */
+  /** The reason or mechanism the speaker gives for the claim; "Stated without a reason" when they give none. */
   why: string;
   /** The speaker's own words that carry the claim, verbatim (≤ 25 words). */
   quote?: string | null;

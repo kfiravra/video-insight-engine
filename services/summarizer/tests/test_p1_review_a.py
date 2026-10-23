@@ -238,7 +238,10 @@ class TestGroupRules:
         assert "keep the ones the speaker weighs most, the close included" in argument_line
 
     def test_should_share_one_d13_wording_between_the_group_and_quality_rules(self) -> None:
-        assert _GROUP_RULES.splitlines()[2].startswith(_D13_RULE)
+        # By content, not index: p4.6d put the why rule before it.
+        d13_line = next(ln for ln in _GROUP_RULES.splitlines() if ln.startswith("Never invent"))
+
+        assert d13_line.startswith(_D13_RULE)
         assert f"- {_D13_RULE}" in _QUALITY_RULES
 
     def test_should_keep_the_talk_example_why_inside_its_excerpt(self) -> None:
@@ -246,7 +249,9 @@ class TestGroupRules:
         why = json.loads(next(ln for ln in talk.splitlines() if ln.startswith('{"claim"')))["why"]
 
         assert "retired" not in why and "quarter century" not in why
-        assert "professional maker of things" in talk.split("\n{")[0]
+        # p4.6d: the why is the evidence said at 37:24 — it sits in the excerpt too.
+        assert "60 times" in why
+        assert "about 60 times more code than my long-term running average" in talk.split("\n{")[0]
 
 
 # ─── R6: the quiz prompt ─────────────────────────────────────────────────

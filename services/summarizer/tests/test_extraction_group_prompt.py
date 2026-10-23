@@ -111,6 +111,14 @@ _ARGUMENTS = (
     "when the talk argues more claims than it allows, keep the ones the speaker weighs most, "
     "the close included."
 )
+# p4.6d (g4 G4-6): every key idea carries its why, right after the argument rule.
+_WHY = (
+    "Every key idea carries its why: the reason or mechanism the speaker gives for the claim "
+    "(how it works, what causes it, the evidence they cite), in the speaker's own terms and "
+    "often said a minute before or after the claim's line — never the claim again in other "
+    "words, never a reason of your own; when the speaker gives none, the why is "
+    '"Stated without a reason".'
+)
 # Kfir 2026-10-21 (D13, S06 iteration): the completeness rule repeats "never invent numbers".
 _NUMBERS = (
     "Never invent a number: a duration, rest time, quantity, count or score the speaker did "
@@ -218,8 +226,8 @@ class TestGroupRules:
         system = with_group_rules(_prompt()).system
 
         assert (
-            f"quality rules text\n\n{_COMPLETENESS}\n{_ARGUMENTS}\n{_NUMBERS}\n</quality_rules>"
-            in system
+            f"quality rules text\n\n{_COMPLETENESS}\n{_ARGUMENTS}\n{_WHY}\n{_NUMBERS}"
+            "\n</quality_rules>" in system
         )
 
     def test_should_change_nothing_but_the_rules_and_the_tails_examples(self) -> None:

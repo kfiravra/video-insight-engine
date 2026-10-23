@@ -15,7 +15,7 @@ Extract structured educational content.
   "keyIdeas": [
     {
       "claim": "The idea as the speaker argues it — one full sentence a reader could disagree with",
-      "why": "The speaker's reasoning or evidence for it, 1-2 sentences with the names and numbers used",
+      "why": "The reason or mechanism the speaker gives for it, 1-2 sentences with the names and numbers used — never the claim reworded; \"Stated without a reason\" when they give none",
       "quote": "The speaker's own words that carry the claim, verbatim, at most 25 words — or null",
       "timestamp": null,
       "section": "Short name of the part of the video the idea belongs to",

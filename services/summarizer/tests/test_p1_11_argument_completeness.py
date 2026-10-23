@@ -51,6 +51,14 @@ _ARGUMENT_RULE = (
     "when the talk argues more claims than it allows, keep the ones the speaker weighs most, "
     "the close included."
 )
+# p4.6d (g4 G4-6): every key idea carries its why, right after the argument rule.
+_WHY_RULE = (
+    "Every key idea carries its why: the reason or mechanism the speaker gives for the claim "
+    "(how it works, what causes it, the evidence they cite), in the speaker's own terms and "
+    "often said a minute before or after the claim's line — never the claim again in other "
+    "words, never a reason of your own; when the speaker gives none, the why is "
+    '"Stated without a reason".'
+)
 # One D13 wording, shared byte for byte with quality_rules.txt (review-p1 R5-W2).
 _NUMBERS_RULE = (
     "Never invent a number: a duration, rest time, quantity, count or score the speaker did "
@@ -177,7 +185,8 @@ class TestBlockOneRule:
         system = with_group_rules(_prompt()).system
 
         assert (
-            f"\n\n{_MEASURED_RULE}\n{_ARGUMENT_RULE}\n{_NUMBERS_RULE}\n</quality_rules>" in system
+            f"\n\n{_MEASURED_RULE}\n{_ARGUMENT_RULE}\n{_WHY_RULE}\n{_NUMBERS_RULE}\n</quality_rules>"
+            in system
         )
 
     def test_should_repeat_never_invent_numbers_in_the_completeness_rule(self) -> None:
