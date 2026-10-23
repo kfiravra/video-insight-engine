@@ -8,7 +8,8 @@ import { DirectionProvider } from '@/contexts/DirectionContext';
 
 // The desktop hero fits the first screen at 1280 × 800 (output-quality 4.6a):
 // the brief in two lines + "more", three takeaways + "+N", one line per
-// worth-it line. Collapsed text stays readable to screen readers.
+// worth-it line, "more" on a cut one (pC). Collapsed text stays readable to
+// screen readers.
 const BRIEF = Array.from(
   { length: 6 },
   (_, i) => `Sentence ${i + 1} of the brief walks through what the speaker argues and why it matters.`,
@@ -41,6 +42,21 @@ const hebrew = (ui: ReactNode) => (
 
 const originalMatchMedia = window.matchMedia;
 
+const layoutSpies: Array<{ mockRestore: () => void }> = [];
+
+/** jsdom lays nothing out: make the given text overflow its box, as a long
+ *  line does in a browser. */
+function mockCutText(text: string): void {
+  layoutSpies.push(
+    vi.spyOn(Element.prototype, 'scrollWidth', 'get').mockImplementation(function (this: Element) {
+      return this.textContent === text ? 900 : 0;
+    }),
+    vi.spyOn(Element.prototype, 'clientWidth', 'get').mockImplementation(function (this: Element) {
+      return this.textContent === text ? 400 : 0;
+    }),
+  );
+}
+
 function mockPhoneViewport(): void {
   window.matchMedia = vi.fn().mockImplementation((query: string) => ({
     matches: /max-width: 767px/.test(query) || /prefers-reduced-motion/.test(query),
@@ -56,6 +72,7 @@ function mockPhoneViewport(): void {
 
 afterEach(() => {
   window.matchMedia = originalMatchMedia;
+  layoutSpies.splice(0).forEach((spy) => spy.mockRestore());
 });
 
 describe('VideoHero — desktop first-screen fit', () => {
@@ -156,9 +173,70 @@ describe('VideoHero — desktop first-screen fit', () => {
 
   describe('worth-it lines', () => {
     it('should keep the whole worth-it line in the page when it is cut to one line on desktop', () => {
+      mockCutText(WORTH);
       renderHero();
 
-      expect(screen.getByText(WORTH)).toHaveAttribute('title', WORTH);
+      expect(screen.getByText(WORTH)).toBeInTheDocument();
+    });
+
+    it('should offer "more" on a worth-it line that is cut when on desktop', () => {
+      mockCutText(WORTH);
+      renderHero();
+
+      expect(screen.getByRole('button', { name: 'Read more: Worth it for' })).toHaveAttribute('aria-expanded', 'false');
+    });
+
+    it('should point the "more" toggle at the line it unfolds', () => {
+      mockCutText(WORTH);
+      renderHero();
+
+      const toggle = screen.getByRole('button', { name: 'Read more: Worth it for' });
+
+      expect(document.getElementById(toggle.getAttribute('aria-controls') ?? '')).toHaveTextContent(WORTH);
+    });
+
+    it('should unfold the cut line and keep focus on its toggle when "more" is clicked', async () => {
+      mockCutText(WORTH);
+      const user = userEvent.setup();
+      renderHero();
+
+      await user.click(screen.getByRole('button', { name: 'Read more: Worth it for' }));
+
+      expect(screen.getByRole('button', { name: 'Hide: Worth it for' })).toHaveFocus();
+    });
+
+    it('should report the line as unfolded once "more" is clicked', async () => {
+      mockCutText(WORTH);
+      const user = userEvent.setup();
+      renderHero();
+
+      await user.click(screen.getByRole('button', { name: 'Read more: Worth it for' }));
+
+      expect(screen.getByRole('button', { name: 'Hide: Worth it for' })).toHaveAttribute('aria-expanded', 'true');
+    });
+
+    it('should offer no "more" on a worth-it line that fits when on desktop', () => {
+      mockCutText('a line nobody renders');
+      renderHero();
+
+      expect(screen.queryByRole('button', { name: /^Read more: / })).not.toBeInTheDocument();
+    });
+
+    it('should name the line toggle in Hebrew when the output is Hebrew', () => {
+      mockCutText(WORTH);
+      renderHero({}, hebrew);
+
+      expect(screen.getByRole('button', { name: 'עוד: שווה צפייה עבור' })).toBeInTheDocument();
+    });
+
+    it('should offer "more" on a cut review list when on desktop', () => {
+      mockCutText('Commuters · Runners');
+      renderHero({
+        primaryTag: 'review',
+        verdict: { badge: 'recommended', bottomLine: 'Worth the upgrade.', bestFor: ['Commuters', 'Runners'], notFor: [] },
+      });
+
+      expect(screen.getByRole('button', { name: 'Read more: Best for' })).toBeInTheDocument();
     });
 
     it('should read a review list as one line when on desktop', () => {
@@ -172,12 +250,13 @@ describe('VideoHero — desktop first-screen fit', () => {
 
     it('should keep the full stacked lines inside the "Worth it?" row when on a phone', async () => {
       mockPhoneViewport();
+      mockCutText(WORTH);
       const user = userEvent.setup();
       renderHero();
 
       await user.click(screen.getByRole('button', { name: 'Worth it?' }));
 
-      expect(screen.getByText(WORTH)).not.toHaveAttribute('title');
+      expect(screen.queryByRole('button', { name: /^Read more: / })).not.toBeInTheDocument();
     });
   });
 });

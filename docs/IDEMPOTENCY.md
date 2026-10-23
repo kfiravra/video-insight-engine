@@ -118,7 +118,7 @@ Do **NOT** bump for:
 
 1. Pick a new version string. Convention: `v{N}` (e.g. `v8` → `v9`). Date-suffixed (`v9-2026-08-25`) is also fine for traceability.
 2. Edit `version` in `packages/shared/src/config/pipeline-version.json` — the single source for the api AND the summarizer.
-3. Restart both services (compose mounts the JSON read-only into both containers; both log `pipeline_version` at boot — the two lines must match).
+3. Recreate the three containers that mount it — `docker compose up -d --force-recreate vie-api vie-summarizer vie-summarizer-worker` (a single-file bind mount: a `git pull` replaces the file's inode, so a restart keeps the old content). Check all three: the api and summarizer boot logs print `pipeline_version` (the two lines must match); for the worker run `docker compose exec vie-summarizer-worker cat /app/shared/pipeline-version.json`.
 4. Old keys remain in `idempotencyKeys` until their TTL expires; they just no longer match new submissions. Old cache rows keep serving to users who already own them until they resubmit (stamped-stale docs then regen on the same row).
 5. Re-run the demo library: `scripts/demo_rerun.py` lists the videos still on the old version and the cost (dry run); `--apply` resubmits them as the demo user, on the owner's go.
 

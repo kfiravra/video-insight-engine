@@ -5,16 +5,11 @@ A1 the dropped-tab scrub never empties a hero field, drops a takeaway with its c
 "…"-cut quote's fragments sit in order and close together; A3 an untiered tier list
 ships as a spot list; A4 a degraded tab's goal no longer promises a ranking; A6 the quiz
 normalizer's extras; C2 a promoted / folded grid spot's quote is only its item's checked
-quote; D11 the re-assembly tool counts only verdicts without a stamp or quote.
-No LLM, no I/O beyond the gate tool's own module.
+quote. No LLM, no I/O.
 """
 
 from __future__ import annotations
 
-import importlib
-import sys
-from pathlib import Path
-from types import ModuleType
 from typing import Any
 
 import pytest
@@ -360,53 +355,3 @@ class TestFoldedSpotQuote:
         spot = self._folded(data)[1]
 
         assert (spot["quote"], spot.get("quoteTranslated")) == ("who gave it the keys", True)
-
-
-# ─── D11 the re-assembly tool's verdict count ───
-
-_TOOLS = Path(__file__).resolve().parents[3] / "dev" / "active" / "output-quality" / "tools"
-
-
-@pytest.fixture(scope="module")
-def reassemble() -> ModuleType:
-    if not (_TOOLS / "reassemble.py").is_file():
-        pytest.skip("the output-quality gate tools are archived")
-    with pytest.MonkeyPatch.context() as patch:
-        patch.chdir(Path.cwd())  # the tool chdirs to the summarizer on import
-        patch.syspath_prepend(str(_TOOLS))
-        module = importlib.import_module("reassemble")
-    sys.modules.pop("reassemble", None)
-    return module
-
-
-_TIER_TAB = {"component": "tier_list", "props": {"items": [{"item": "Loki", "tier": "S"}]}}
-
-
-class TestUnbackedVerdicts:
-    def test_should_count_a_verdict_without_a_stamp(self, reassemble: ModuleType) -> None:
-        assert reassemble.unbacked_verdicts([_TIER_TAB], {643}) == 1
-
-    def test_should_not_count_a_stamped_verdict_whose_words_the_extraction_holds(
-        self, reassemble: ModuleType
-    ) -> None:
-        tab = {"props": {"items": [{"item": "Loki", "tier": "S", "timestamp": 643}]}}
-        extraction = {"gaming": {"rankings": [{"item": "Loki", "timestamp": 643, "quote": "S"}]}}
-
-        assert reassemble.unbacked_verdicts([tab], reassemble.quoted_seconds(extraction)) == 0
-
-    def test_should_count_a_stamped_verdict_whose_quote_the_check_cleared(
-        self, reassemble: ModuleType
-    ) -> None:
-        tab = {"props": {"claims": [{"claim": "c", "status": "supported", "timestamp": 90}]}}
-        cleared = {
-            "news": {"claims": [{"timestamp": 90, "quote": None, "quoteStatus": UNVERIFIED}]}
-        }
-
-        assert reassemble.unbacked_verdicts([tab], reassemble.quoted_seconds(cleared)) == 1
-
-    def test_should_not_count_a_verdict_carrying_its_own_quote(
-        self, reassemble: ModuleType
-    ) -> None:
-        tab = {"props": {"spots": [{"name": "n", "rating": 4, "timestamp": 5, "quote": "four"}]}}
-
-        assert reassemble.unbacked_verdicts([tab], set()) == 0

@@ -23,6 +23,7 @@ const claims: ClaimItem[] = [
   {
     claim: 'The city faces a structural deficit',
     status: 'stated',
+    timestamp: 760,
   },
 ];
 

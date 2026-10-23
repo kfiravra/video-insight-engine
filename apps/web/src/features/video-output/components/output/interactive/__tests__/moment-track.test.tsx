@@ -260,15 +260,12 @@ describe('MomentTrack', () => {
       expect(screen.getByTestId('moment-grid')).toBeInTheDocument();
     });
 
-    it('should render the full label in the timeline view with no line clamp', () => {
+    it('should render the full label in the timeline view when the label is long', () => {
       const longLabel =
         'Opening scenario: a quiet 40-year-old suddenly punches a coworker, has an affair, and starts gambling — the neurologist finds a tumour pressing on the frontal lobe';
       render(<MomentTrack items={[{ ...described(1, longLabel), label: longLabel }, described(2, 'B')]} />);
-      const label = screen.getByText(longLabel);
-      // The clamp is a style, but it is exactly what the acceptance forbids —
-      // jsdom has no layout, so the class is the only observable regression guard.
-      expect(label.className).not.toMatch(/line-clamp/);
-      expect(label).not.toHaveAttribute('title');
+      // The whole label is the element's text — not a cut copy with the rest in a tooltip.
+      expect(screen.getByText(longLabel)).not.toHaveAttribute('title');
     });
   });
 

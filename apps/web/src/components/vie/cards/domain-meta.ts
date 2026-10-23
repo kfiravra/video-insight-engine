@@ -38,13 +38,20 @@ const LEADING_COUNT = /^\d{1,3}\s+(?=(\p{L}+))/u;
 // @vie/shared/config — domains.json `measureUnits`, the one list the summarizer
 // (assembly/labels.py) and the output-quality tools read too.
 
+// The unit list is English, so only a Latin-script word is judged. A label in
+// another script is a translation (the source-language page): "7 ימים בטוקיו"
+// can't be told from a count there, and its number came from the assembled
+// English label, already true (D7) — so it is left as written (pC review).
+const LATIN_WORD = /\p{Script=Latin}/u;
+
 /** Whether a label opens with a count claim: a leading number
- *  (`LEADING_COUNT`) whose next word is not a unit (`MEASURE_UNITS`). The
- *  app's one notion of a count claim — `stripCountPrefix` (the enter-mode
- *  context labels) and `trueCountLabel` follow it. */
+ *  (`LEADING_COUNT`) whose next word is a Latin-script word that is not a unit
+ *  (`MEASURE_UNITS`). The app's one notion of a count claim —
+ *  `stripCountPrefix` (the enter-mode context labels) and `trueCountLabel`
+ *  follow it. */
 export function hasLeadingCount(label: string): boolean {
   const word = LEADING_COUNT.exec(label)?.[1];
-  return word !== undefined && !MEASURE_UNITS.has(word.toLowerCase());
+  return word !== undefined && LATIN_WORD.test(word) && !MEASURE_UNITS.has(word.toLowerCase());
 }
 
 /** Strip an assembler-produced count prefix ("8 Steps" → "Steps"). Returns

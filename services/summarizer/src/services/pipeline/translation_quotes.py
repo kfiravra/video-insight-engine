@@ -3,20 +3,22 @@
 On a non-English run the page keeps the speaker's own words: a ``quote`` the quote pass
 verified (no ``quoteTranslated`` flag) and an interview ``question`` the question check
 verified (``questionStatus: "verified"``) ship in the transcript's language — on key
-ideas, spots, moments, claims, the verdict, quote cards and asks rows. The English page
-shows each with its English beneath (``quoteEn`` / ``questionEn``). The extraction model
-wrote that English on one call of S15's five (2 / 29, G4-1), so it is written here
-instead: one source→English pass in the translation phase, over the lines as they ship.
+ideas, spots, moments, claims, the verdict, quote cards, quiz evidence and asks rows. So does a line
+either check flagged that is not in Latin script: a source-language line it could not
+find, which the English page shows as prose (``translation_verbatim``, pC review). The
+English page shows each with its English beneath (``quoteEn`` / ``questionEn``). The
+extraction model wrote that English on one call of S15's five (2 / 29, G4-1), so it is
+written here instead: one source→English pass in the translation phase, over the lines
+as they ship.
 
 The pass is the flat translation call in the reverse direction
 (``translation.translate_in_batches``: the same batches, half retry, echo check and
 ``LLM_TRANSLATION_MODEL``). The lines are the ones the EN→source walk keeps as they
-are (``translation.is_verbatim_line``), so a line never gets both treatments. A line
-said twice (a key idea's quote that is also a moment's) is sent once. A line the pass
+are (``translation_verbatim.is_verbatim_line``), so a line never gets both treatments.
+A line said twice (a key idea's quote that is also a moment's) is sent once. A line the pass
 could not translate (salvaged, echoed, or English already) gets no English. An exchange
 row whose ``label`` was cut from its question is re-titled from the English, as
-assembly titles a row from ``questionEn``. The quiz's evidence quotes are left alone:
-the quiz card has no English line.
+assembly titles a row from ``questionEn``.
 """
 
 from __future__ import annotations
@@ -27,8 +29,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from .assembly.moment_normalizers import QUOTE_EN_KEY, _question_label
-from .enrichment import QUIZ_COMPONENT
-from .translation import is_verbatim_line, translate_in_batches
+from .translation import translate_in_batches
+from .translation_verbatim import is_verbatim_line
 
 if TYPE_CHECKING:
     from ...services.llm import LLMService
@@ -41,8 +43,6 @@ _QUESTION_EN_KEY = "questionEn"
 _LABEL_KEY = "label"
 # The line keys, each with the key its English is written under.
 _ENGLISH_KEY_OF: Mapping[str, str] = {_QUOTE_KEY: QUOTE_EN_KEY, _QUESTION_KEY: _QUESTION_EN_KEY}
-# Components whose cards show a quote with no English line under it.
-_NO_ENGLISH_LINE = frozenset({QUIZ_COMPONENT})
 _MAX_DEPTH = 32
 
 
@@ -71,7 +71,7 @@ def _collect(obj: Any, lines: list[VerbatimLine], depth: int) -> None:
         for item in obj:
             _collect(item, lines, depth + 1)
         return
-    if not isinstance(obj, dict) or obj.get("component") in _NO_ENGLISH_LINE:
+    if not isinstance(obj, dict):
         return
     lines.extend(line for key in _ENGLISH_KEY_OF if (line := _line_in(obj, key)) is not None)
     for value in obj.values():

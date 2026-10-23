@@ -39,10 +39,13 @@ _COMPONENT_LINK_RULES: list[tuple[str, str, str | None]] = [
     ("overview", "checklist", "food"),
     ("checklist", "step_player", "food"),
     ("step_player", "info_grid", "food"),
+    # Tips ship as cards since R6 (pC review): the method still links to them.
+    ("step_player", "spot_explorer", "food"),
     # Project domain flow
     ("overview", "checklist", "project"),
     ("checklist", "step_player", "project"),
     ("step_player", "info_grid", "project"),
+    ("step_player", "spot_explorer", "project"),
     # Travel domain flow
     ("overview", "spot_explorer", "travel"),
     ("spot_explorer", "budget", "travel"),
@@ -59,6 +62,7 @@ _COMPONENT_LINK_RULES: list[tuple[str, str, str | None]] = [
     # Fitness domain flow
     ("overview", "workout_room", "fitness"),
     ("workout_room", "info_grid", "fitness"),
+    ("workout_room", "spot_explorer", "fitness"),
     # Music domain flow
     ("overview", "lyrics_karaoke", "music"),
     ("lyrics_karaoke", "moment_track", "music"),

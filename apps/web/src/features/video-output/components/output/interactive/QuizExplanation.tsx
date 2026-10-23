@@ -1,6 +1,7 @@
 import { SeekChip } from '@/components/vie';
 import { cn } from '@/lib/utils';
 import { splitTimeRefs } from '@/features/video-output/lib/quiz-time-refs';
+import { QuoteLine } from './QuoteLine';
 
 interface QuizExplanationProps {
   text: string;
@@ -15,6 +16,8 @@ interface QuizExplanationProps {
   /** The speaker's words that settle the answer (quiz v2, output-quality 2.1b): one
    *  quiet line under the explanation, carrying the timestamp's chip. */
   quote?: string | null;
+  /** The quote's English on a non-English video (D12), shown beneath it. */
+  quoteEn?: string | null;
   /** The quote is the English rendering of non-English speech (2.0 d, D12): prose,
    *  never quote styling. */
   quoteTranslated?: boolean;
@@ -25,6 +28,7 @@ interface QuizExplanationProps {
 
 interface QuizEvidenceProps {
   quote: string;
+  quoteEn?: string | null;
   translated?: boolean;
   /** The chip's time; none when the explanation already cites one. */
   seconds: number | null;
@@ -45,25 +49,20 @@ function seekTarget(cited: number, checked: number | null | undefined): number {
   return checked;
 }
 
-/** The answer's evidence: the speaker's line in the quote style the spot cards and the
- *  moments use; a translated line reads as prose (2.0 d, D12). */
-function QuizEvidence({ quote, translated, seconds, onSeek }: QuizEvidenceProps) {
-  const chip = seconds != null && (
-    <SeekChip seconds={seconds} onSeek={onSeek} className={cn(CHIP_CLASS, 'not-italic')} />
-  );
-  if (translated) {
-    return (
-      <p className="text-xs leading-relaxed text-muted-foreground">
-        {quote}
-        {chip}
-      </p>
-    );
-  }
+/** The answer's evidence: the speaker's line as every verbatim line renders
+ *  (`QuoteLine`: its own direction, so a Hebrew line reads right-to-left on the
+ *  English page, with its English beneath — D12); a translated line reads as
+ *  prose (2.0 d). The chip follows on its own line, left-to-right. */
+function QuizEvidence({ quote, quoteEn, translated, seconds, onSeek }: QuizEvidenceProps) {
   return (
-    <blockquote className="border-s-2 border-[var(--vie-accent)]/40 ps-2.5 text-xs italic leading-relaxed text-foreground/85">
-      {quote}
-      {chip}
-    </blockquote>
+    <div className="space-y-1">
+      <QuoteLine quote={quote} quoteEn={quoteEn} translated={translated} size="xs" />
+      {seconds != null && (
+        <p className={translated ? undefined : 'ps-3'}>
+          <SeekChip seconds={seconds} onSeek={onSeek} className="px-1.5" />
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -74,6 +73,7 @@ export function QuizExplanation({
   timestamp,
   stampChip = true,
   quote,
+  quoteEn,
   quoteTranslated,
   onSeek,
   className,
@@ -105,7 +105,7 @@ export function QuizExplanation({
   return (
     <div className="space-y-1.5">
       {paragraph}
-      <QuizEvidence quote={evidence} translated={quoteTranslated} seconds={stamp} onSeek={onSeek} />
+      <QuizEvidence quote={evidence} quoteEn={quoteEn} translated={quoteTranslated} seconds={stamp} onSeek={onSeek} />
     </div>
   );
 }

@@ -37,8 +37,11 @@ describe('trueCountLabel', () => {
     expect(trueCountLabel('12', 5)).toBe('12');
   });
 
-  it('should replace the count in a Hebrew label', () => {
-    expect(trueCountLabel('12 רגעים מרכזיים', 7)).toBe('7 רגעים מרכזיים');
+  // pC review: a Hebrew / Arabic label is a translation whose number came from
+  // the assembled (true-count) English label; the English unit list can't tell
+  // its measures from its counts, so it is never rewritten.
+  it('should leave a Hebrew label as written when its number sits before a Hebrew word', () => {
+    expect(trueCountLabel('12 רגעים מרכזיים', 7)).toBe('12 רגעים מרכזיים');
   });
 
   it('should leave a measure verbatim when a unit follows the number', () => {

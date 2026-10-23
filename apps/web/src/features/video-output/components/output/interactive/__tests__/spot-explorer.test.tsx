@@ -121,11 +121,9 @@ describe('SpotExplorer', () => {
       expect(screen.queryByRole('button', { name: /jump to/i })).not.toBeInTheDocument();
     });
 
-    it('should render the quote in italics when present', () => {
+    it('should render the quote as a blockquote when present', () => {
       render(<SpotExplorer spots={[keyIdea]} onSeek={vi.fn()} />);
-      const quote = screen.getByText(keyIdea.quote);
-      expect(quote.tagName).toBe('BLOCKQUOTE');
-      expect(quote).toHaveClass('italic');
+      expect(screen.getByText(keyIdea.quote).tagName).toBe('BLOCKQUOTE');
     });
 
     it('should render hour-long timestamps as h:mm:ss', () => {

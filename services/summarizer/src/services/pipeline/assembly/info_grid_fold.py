@@ -21,6 +21,11 @@ every reader sees one tab list (the per-group previews included):
   bottom attachment.
   Each side is capped as it would ship alone first (``cap_rows`` for the grid,
   the caller for the host), so folded rows never cut the host's own items.
+  A fold keeps the rows its brief planned it for (pC review, S04): only a row inside
+  one of the brief's ``where`` windows (an unstamped row stays), never one a spot
+  host already shows (a row within ``SAME_ITEM_SECONDS`` of a host card's second —
+  the same item under its other name), and a fold left with no row joins as
+  nothing. Its section label loses its emoji, as a tab label does.
 
 A host that does not ship gives its folds back as tabs of their own
 (:func:`unfolded_tabs`). A grid the assemblers only reach by demotion is no
@@ -34,8 +39,10 @@ from collections.abc import Callable, Collection, Mapping, Sequence
 from typing import Any
 
 from src.shared_config.domain_config import info_grid_hosts
+from src.utils.data_helpers import parse_timestamp_to_seconds
 
 from .assemblers_primary import assemble_info_grid
+from .derived_guard import anchor_seconds
 from .normalizers import _normalize_to_spot
 from .promotion import _info_row_to_spot, checked_quotes, spot_evidence
 
@@ -46,6 +53,12 @@ INFO_GRID = "info_grid"
 _SPOTS = "spot_explorer"
 
 Resolve = Callable[[str, dict | None, dict | None], Any]
+# A folded row this close to a host card's second is that card again (S04: 15 of 20
+# rows of "Agent Workflow" sat on a key idea's second, a few one second off).
+SAME_ITEM_SECONDS = 5
+# How far past a brief window a row may sit and still be the fold's: the drift a
+# stamp may carry (the gates' ± 30 s).
+_WINDOW_SLACK_S = 30
 
 
 # ─── Plan-done: where a planned grid lives ───
@@ -100,11 +113,21 @@ def _row_spot(row: Any, quotes: dict[str, dict]) -> dict | None:
     return spot
 
 
+def _shown_by_host(row: Any, host_seconds: list[int]) -> bool:
+    """Whether a host card sits within ``SAME_ITEM_SECONDS`` of ``row``'s second."""
+    seconds = anchor_seconds(row)
+    return seconds is not None and any(
+        abs(seconds - shown) <= SAME_ITEM_SECONDS for shown in host_seconds
+    )
+
+
 def _into_spots(host: dict, grid_props: dict, label: str, quotes: dict[str, dict]) -> None:
-    """The grid's rows join the host's spots as a section named ``label``."""
+    """The grid's rows join the host's spots as a section named ``label`` — each row
+    the host does not already show."""
     props = host["props"]
     spots = props.get("spots") if isinstance(props.get("spots"), list) else []
-    rows = grid_props.get("items") or []
+    shown = [s for s in (anchor_seconds(spot) for spot in spots) if s is not None]
+    rows = [row for row in grid_props.get("items") or [] if not _shown_by_host(row, shown)]
     added = [spot for spot in (_row_spot(row, quotes) for row in rows) if spot is not None]
     if not added:
         return
@@ -130,9 +153,47 @@ def _fold_data(
     return resolve(str(fold.get("dataSource") or ""), extraction, enrichment)
 
 
+def _window(span: Any) -> tuple[int, int] | None:
+    """A ``where`` span in seconds ("17:00-18:40"; a lone time is both ends)."""
+    start, _, end = str(span).replace("–", "-").partition("-")
+    first = parse_timestamp_to_seconds(start)
+    last = parse_timestamp_to_seconds(end) if end else first
+    return None if first is None or last is None else (first, last)
+
+
+def _brief_windows(fold: Mapping[str, Any]) -> list[tuple[int, int]]:
+    """The fold brief's readable ``where`` windows; [] without one."""
+    brief = fold.get("brief")
+    where = brief.get("where") if isinstance(brief, Mapping) else None
+    spans = where if isinstance(where, list) else []
+    return [window for window in map(_window, spans) if window is not None]
+
+
+def _in_windows(row: Any, windows: list[tuple[int, int]]) -> bool:
+    """Whether ``row`` sits inside one of ``windows`` (with the slack); an unstamped row,
+    or a fold with no window, keeps it."""
+    seconds = anchor_seconds(row)
+    if seconds is None or not windows:
+        return True
+    return any(a - _WINDOW_SLACK_S <= seconds <= b + _WINDOW_SLACK_S for a, b in windows)
+
+
 def _fold_props(fold: Mapping[str, Any], data: Any) -> dict | None:
+    """The fold's grid over its field, kept to its brief's windows; None when no row is left."""
     props = assemble_info_grid(dict(fold), data, {}, None)
-    return props if props and props.get("items") else None
+    if not props:
+        return None
+    windows = _brief_windows(fold)
+    props["items"] = [row for row in props.get("items") or [] if _in_windows(row, windows)]
+    return props if props["items"] else None
+
+
+def _fold_label(fold: Mapping[str, Any]) -> str:
+    """The fold's section label without its leading emoji (as ``_post_process_tabs`` does
+    for a tab's)."""
+    label = str(fold.get("label") or fold.get("id") or "")
+    emoji = str(fold.get("emoji") or "")
+    return label[len(emoji) :].lstrip() if emoji and label.startswith(emoji) else label
 
 
 def apply_folds(
@@ -152,9 +213,8 @@ def apply_folds(
             continue
         if cap_rows is not None:
             cap_rows(props)
-        label = str(fold.get("label") or fold.get("id") or "")
         if host.get("component") == _SPOTS:
-            _into_spots(host, props, label, checked_quotes(data))
+            _into_spots(host, props, _fold_label(fold), checked_quotes(data))
         else:
             _as_attachment(host, props)
         logger.info("Assembly: folded grid %r joins %r (R6)", fold.get("id"), host.get("id"))

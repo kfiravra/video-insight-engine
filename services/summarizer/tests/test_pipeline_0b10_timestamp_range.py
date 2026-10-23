@@ -55,7 +55,7 @@ from src.services.pipeline.field_requests import FieldRequest
 from src.services.transcript.render import format_marker, marker_seconds
 from src.services.transcription.transcript_chunker import ChapterChunk
 
-# ─── S02 evidence (dev/active/output-quality/data/S02: doc.json + trace.json) ───
+# ─── S02 evidence (the output-quality task's stored S02 doc + trace, 2026-10) ───
 
 # trace.json, extraction_text3_c2 <batch_partial_context>: "BATCH 3 of 3 … (1:11:11–1:22:58)".
 _S02_START = 4271  # 1:11:11

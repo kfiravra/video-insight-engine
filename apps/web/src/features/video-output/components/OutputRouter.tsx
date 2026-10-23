@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { isContentTag } from '@vie/types';
 import type { SynthesisResult, ContentTag, VIEResponseMeta, TriageResult, TabEntry } from '@vie/types';
 import { getDomainGradient } from '@vie/shared/config';
@@ -12,6 +13,7 @@ import { liftReviewVerdict } from '@/features/video-output/lib/hero-verdict';
 import { StreamingPlaceholder, StreamErrorCard } from './StreamingPlaceholder';
 import { stripLeadingEmoji } from '@/lib/string-utils';
 import { DirectionProvider } from '@/contexts/DirectionContext';
+import { useHeaderSlot } from '@/components/layout/header-slot';
 import { getLabels } from '@/lib/i18n';
 import { isRTL as isRTLLanguage } from '@/lib/rtl';
 import type {
@@ -65,8 +67,23 @@ interface OutputRouterProps {
    *  with the peak moment). */
   onCancelStream?: () => void;
   /** Optional toggle for switching between original-language and English
-   *  content. Rendered at the top of the content area when present. */
+   *  content. Rendered in the app header when present (`LanguageToggleSlot`). */
   languageToggle?: React.ReactNode;
+}
+
+/** The language toggle sits in the app header, beside its other controls: a
+ *  row of its own above the hero cost 48 px of the first screen (output-quality
+ *  pC), and there it stays in reach while the page scrolls. Pinned LTR — English
+ *  is the default pill and the header's controls sit on the right — whatever
+ *  the content's direction. Outside a Layout it keeps its own row at the top. */
+function LanguageToggleSlot({ toggle }: { toggle: React.ReactNode }) {
+  const slot = useHeaderSlot();
+  if (slot) return createPortal(<div dir="ltr">{toggle}</div>, slot);
+  return (
+    <div dir="ltr" className="flex justify-end">
+      {toggle}
+    </div>
+  );
 }
 
 /** Count moment_track items that carry a usable frame thumbnail. */
@@ -210,13 +227,7 @@ export function OutputRouter({
   return (
     <DirectionProvider language={language} isRTL={isRTLProp ?? isRTLLanguage(language)}>
       <div className="mx-auto flex w-full max-w-5xl flex-col gap-4 px-3 pt-3 pb-8 md:px-6 md:pt-5 md:pb-12">
-        {/* Language toggle is intentionally pinned to the LTR-end (page right)
-            regardless of content direction. Rationale: English is the default
-            pill and English readers expect controls on the right; flipping
-            with RTL would put the active control where the eye doesn't look. */}
-        {languageToggle ? (
-          <div dir="ltr" className="flex justify-end">{languageToggle}</div>
-        ) : null}
+        {languageToggle ? <LanguageToggleSlot toggle={languageToggle} /> : null}
         {/* One tree from the first event to the last: the hero (and its inline
             player) never remounts when the first tab lands, and the initial
             tab is chosen once (sticky — a tab streamed in ahead of it never

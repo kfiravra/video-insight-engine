@@ -308,7 +308,8 @@ async def _reply_candidates(
 async def _call_candidates(
     llm_service: LLMService, call: QuizV2Prompt, duration_s: float | None, deadline: float
 ) -> list[Candidate] | None:
-    """One call's candidates; a call that runs out of time loses only its own part."""
+    """One call's candidates; a call that fails or runs out of time loses only its own
+    part. Never raises: a raise would leave the gather's sibling calls running unawaited."""
     try:
         return await _reply_candidates(llm_service, call, duration_s, deadline)
     except TimeoutError:
@@ -316,6 +317,9 @@ async def _call_candidates(
             "Quiz v2: a %d-question call got no answer within %.0f s",
             call.asked, QUIZ_V2_TOTAL_TIMEOUT_S,
         )  # fmt: skip
+        return None
+    except Exception:  # noqa: BLE001 — a provider 400 or a parse bug costs only this part
+        logger.exception("Quiz v2: a %d-question call failed; its part is lost", call.asked)
         return None
 
 

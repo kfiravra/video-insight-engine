@@ -25,14 +25,16 @@ interface HeroVerdictProps {
   isPhone: boolean;
 }
 
-/** The reviewer's call as a tone pill beside the row label, so a collapsed row still says it. */
+/** The reviewer's call as a tone pill beside the row label, so a collapsed row
+ *  still says it — in the page's language; a value with no label prints as stored. */
 function VerdictBadge({ badge }: { badge: string }) {
+  const t = useLabels();
   return (
     <Badge
       variant={BADGE_TONE[badge] ?? 'muted'}
       className="py-0 text-[0.6875rem] leading-[0.875rem] font-semibold uppercase tracking-wider"
     >
-      {badge.replace(/_/g, ' ')}
+      {t.verdictBadges[badge] ?? badge.replace(/_/g, ' ')}
     </Badge>
   );
 }

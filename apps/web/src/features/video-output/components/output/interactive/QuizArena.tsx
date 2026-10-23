@@ -46,6 +46,8 @@ export interface QuizArenaQuestion {
   /** The speaker's words that settle the answer (quiz v2, output-quality 2.1b):
    *  shown under the explanation once answered. */
   quote?: string | null;
+  /** The quote's English on a non-English video (D12), shown beneath it. */
+  quoteEn?: string | null;
   /** The quote is the English rendering of non-English speech (2.0 d, D12): prose. */
   quoteTranslated?: boolean;
 }
@@ -397,6 +399,7 @@ export const QuizArena = memo(function QuizArena({
               text={question.explanation}
               timestamp={question.timestamp}
               quote={question.quote}
+              quoteEn={question.quoteEn}
               quoteTranslated={question.quoteTranslated}
               onSeek={onSeek}
             />

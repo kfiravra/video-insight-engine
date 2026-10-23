@@ -19,10 +19,13 @@ function isLegacyStatus(value: string): value is LegacyClaimStatus {
 }
 
 /** A claim's status in D11's words: a legacy word is mapped, anything unknown is
- *  "stated" — the non-asserting word. No status → null: a claim without a timestamp
- *  ships none (nobody could check it), so it gets no badge and no filter count. */
-export function claimStatus(status: ClaimItem['status']): ClaimStatus | null {
-  if (!status) return null;
+ *  "stated" — the non-asserting word. No status, or no timestamp → null: a status
+ *  nobody can check is not shown (D13), so it gets no badge and no filter count.
+ *  The summarizer drops it now; rows stored before v11 still carry one beside a
+ *  missing timestamp, and are fixed here on render (D7). */
+export function claimStatus(claim: Pick<ClaimItem, 'status' | 'timestamp'>): ClaimStatus | null {
+  const { status, timestamp } = claim;
+  if (!status || timestamp == null) return null;
   if (isClaimStatus(status)) return status;
   return isLegacyStatus(status) ? LEGACY_STATUS[status] : 'stated';
 }

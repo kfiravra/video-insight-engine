@@ -98,6 +98,27 @@ export interface Labels {
    *  and its accessible name (it contains the visible word). */
   more: string;
   moreBrief: string;
+  /** Desktop hero (output-quality pC): a cut worth-it line's toggle — the
+   *  accessible names hold the visible "more" / "Hide"; {label} is the line's label. */
+  moreLine: string;
+  hideLine: string;
+  /** A review's verdict badge, by the stored value (recommended / conditional /
+   *  not_recommended / best_in_class); an unknown value prints as stored. */
+  verdictBadges: Record<string, string>;
+  // Comparison radar
+  /** Under a radar with lower-is-better spokes; {features} is interpolated. */
+  radarLowerWins: string;
+  // Canvases (list ⇄ graph switch) and the concept list's labelled lines
+  viewList: string;
+  viewMap: string;
+  viewFlow: string;
+  analogy: string;
+  // Enter-mode runner (Study / Listen)
+  revealAnswer: string;
+  watchThisPart: string;
+  /** Listen mode's play control; {time} / {start} / {end} are interpolated. */
+  playFrom: string;
+  playRange: string;
   // Library chat (cross-video assistant when no single video is open)
   libraryChatPlaceholder: string;
   libraryChatEmptyTitle: string;

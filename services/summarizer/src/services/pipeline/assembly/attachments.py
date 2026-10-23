@@ -20,6 +20,7 @@ from typing import Any
 from src.shared_config.assembly_policy import assembly_policy
 from src.shared_config.domain_config import quiz_policy
 
+from .component_lists import COMPONENT_LIST_KEYS, item_list_keys
 from .registry import ASSEMBLER_REGISTRY
 from .stat_banner import _STAT_BANNER_MAX as _STAT_BANNER_MAX
 from .stat_banner import _STAT_BANNER_MIN as _STAT_BANNER_MIN
@@ -56,23 +57,27 @@ _NO_SUMMARY_HEADER_COMPONENTS = frozenset({"flash_deck"})
 # every tab repeats the identical payload.
 ONCE_PER_RESPONSE = frozenset({"frame_strip", "quick_quiz", "tip_callout"})
 
-# Component → the props key holding its primary item list. Mirrors the frontend
-# COUNT_PROP_BY_COMPONENT so "how many items does this tab show" is consistent.
-_PRIMARY_LIST_KEY: dict[str, str] = {
-    "spot_explorer": "spots",
-    "moment_track": "items",
-    "info_grid": "items",
-    "checklist": "items",
-    "step_player": "steps",
-    "step_flow_canvas": "steps",
-    "flash_deck": "cards",
-    "comparison": "comparisons",
-    "comparison_radar": "comparisons",
-    "code_playground": "snippets",
-    "concept_canvas": "concepts",
-    "workout_room": "exercises",
-    "packing_mission": "items",
-}
+# The list components that host attachments → the props key of their primary list,
+# from ``component_lists`` (the one table). A tab's items are counted as the labels,
+# the validation and the dedupe count them (``item_list_keys``): a review's Pros &
+# cons tab ships pros and cons and no rows, and counted by its rows alone 17 items
+# read as a sparse tab (pC review, S07).
+_LIST_HOSTS: tuple[str, ...] = (
+    "spot_explorer",
+    "moment_track",
+    "info_grid",
+    "checklist",
+    "step_player",
+    "step_flow_canvas",
+    "flash_deck",
+    "comparison",
+    "comparison_radar",
+    "code_playground",
+    "concept_canvas",
+    "workout_room",
+    "packing_mission",
+)
+_PRIMARY_LIST_KEY: dict[str, str] = {host: COMPONENT_LIST_KEYS[host] for host in _LIST_HOSTS}
 
 # Components that already carry their own frames/quiz/visual hero — attaching a
 # frame_strip or quick_quiz would be redundant.
@@ -97,13 +102,20 @@ def can_host_quick_quiz(component: str) -> bool:
     return component not in quiz_policy()["attachmentHostsExclude"]
 
 
-def _primary_item_count(component: str, props: dict) -> int | None:
-    """Length of the tab's primary list, or None when it has no list."""
-    key = _PRIMARY_LIST_KEY.get(component)
-    if key is None:
+def _primary_items(component: str, props: dict) -> list | None:
+    """The tab's items in list order (a comparison's rows, pros, then cons), or None
+    when a host component ships no list."""
+    if component not in _PRIMARY_LIST_KEY:
         return None
-    value = props.get(key)
-    return len(value) if isinstance(value, list) else None
+    lists = [props.get(key) for key in item_list_keys(component)]
+    lists = [value for value in lists if isinstance(value, list)]
+    return [item for value in lists for item in value] if lists else None
+
+
+def _primary_item_count(component: str, props: dict) -> int | None:
+    """How many items the tab ships, or None when it has no list."""
+    items = _primary_items(component, props)
+    return None if items is None else len(items)
 
 
 def _build_attachment(
@@ -183,9 +195,8 @@ def _first_text(item: dict, keys: tuple[str, ...]) -> str | None:
 def _first_item_line(component: str, props: dict) -> str | None:
     """One line for the tab's first primary item: ``headline — body`` when the
     item carries both, else whichever it has. None for a textless item."""
-    key = _PRIMARY_LIST_KEY.get(component)
-    items = props.get(key) if key else None
-    if not isinstance(items, list) or not items:
+    items = _primary_items(component, props)
+    if not items:
         return None
     first = items[0]
     if isinstance(first, str):

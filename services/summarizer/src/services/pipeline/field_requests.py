@@ -40,6 +40,7 @@ from ...shared_config.domain_config import (
 )
 from .assembly.info_grid_fold import FOLDS_KEY
 from .assembly.normalizers import _TIP_FIELDS
+from .assembly.talk_asks import KEY_IDEAS_SOURCE, TALK_FORMAT, is_asks_view
 
 logger = logging.getLogger(__name__)
 
@@ -263,10 +264,16 @@ def reads_active_extraction(
 
 
 def _planned(
-    tab: Mapping[str, object], registry: Mapping[str, DataSourceSpec], scalars_of: ScalarsOf
+    tab: Mapping[str, object],
+    registry: Mapping[str, DataSourceSpec],
+    scalars_of: ScalarsOf,
+    content_format: str | None = None,
 ) -> list[_Draft]:
-    """The fields a tab's own dataSource names."""
+    """The fields a tab's own dataSource names — a talk's asks checklist reads the key
+    ideas of kind ask (``talk_asks.asks_data``), so it waits for them, never takeaways."""
     source = str(tab.get("dataSource") or "")
+    if content_format == TALK_FORMAT and is_asks_view(tab.get("component"), source):
+        source = KEY_IDEAS_SOURCE
     domain, _, rest = source.partition(".")
     if not reads_extraction(tab):
         return []
@@ -459,11 +466,13 @@ def requested_fields(
     scalars_of: ScalarsOf,
     *,
     primary_tag: str | None = None,
+    content_format: str | None = None,
 ) -> list[FieldRequest]:
     """Every field the reconciled tabs read, in plan order (scalars last).
 
-    Per tab: its planned field(s) (with the grids folded into it), then the planned
-    fields' siblings inside a planned domain, then its component's side reads
+    Per tab: its planned field(s) (with the grids folded into it; on a talk —
+    ``content_format``, the probe's — the asks checklist's is ``learning.keyIdeas``), then
+    the planned fields' siblings inside a planned domain, then its component's side reads
     (``primary_tag`` scopes the primary-only ones); then the overview's reads of the
     primary domain (``primary_tag``);
     finally the scalar keys of every domain that has a requested field.
@@ -475,7 +484,8 @@ def requested_fields(
     domains = _FallbackDomains(frozenset(active), _planned_domains(tabs, active))
     drafts: dict[tuple[str, str], _Draft] = {}
     for tab in (t for t in tabs if _reads_extraction(t)):
-        planned = [*_planned(tab, registry, scalars_of), *_folded(tab, registry, scalars_of)]
+        own = _planned(tab, registry, scalars_of, content_format)
+        planned = [*own, *_folded(tab, registry, scalars_of)]
         fallbacks = _fallbacks(planned, registry, domains, _tab_id(tab))
         upgrades = _side_reads(tab, registry, active, primary_tag, planned)
         for draft in [*planned, *fallbacks, *upgrades]:

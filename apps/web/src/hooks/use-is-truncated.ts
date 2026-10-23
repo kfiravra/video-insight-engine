@@ -1,5 +1,12 @@
 import { useState, useEffect, useRef, type RefObject } from "react";
 
+/**
+ * Whether a single-line, ellipsised element cuts its text (scrollWidth past
+ * clientWidth). Re-checked on every resize, so a line that wraps when opened
+ * reads as uncut and reads as cut again once it folds back. Shared by the
+ * sidebar rows (tooltip on a cut title) and the hero's one-line worth-it
+ * lines ("more" on a cut line).
+ */
 export function useIsTruncated(ref: RefObject<HTMLElement | null>): boolean {
   const [isTruncated, setIsTruncated] = useState(false);
   const rafRef = useRef<number | null>(null);
@@ -27,7 +34,7 @@ export function useIsTruncated(ref: RefObject<HTMLElement | null>): boolean {
       observer.disconnect();
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
-  }, []); // ref is a stable RefObject — no need to include
+  }, [ref]); // a stable RefObject: the effect runs once
 
   return isTruncated;
 }

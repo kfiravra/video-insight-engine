@@ -17,7 +17,7 @@ Your data powers these interactive components (the tab lines in <your_job> name 
 - exercises[] / warmup[] / cooldown[] / timer → workout_room (set counter, rest timer, form cues)
 - snippets[] / patterns[] / cheatSheet[] / setup.commands[] → code_playground (highlighted code with copy + run)
 - concepts[] / vocabulary[] → concept_canvas (draggable map, edges from connections[]) or flash_deck (flip cards: name=front, definition=back); quotes[] → flash_deck (quote front, speaker back)
-- pros / cons / comparisons / verdict / rating → comparison (side-by-side table; the verdict is its header, never a tab) or comparison_radar (4+ axes)
+- pros / cons / comparisons / verdict / rating → comparison (side-by-side table — a review's pros and cons need no competitor; the verdict is never a tab: a review's goes to the hero, any other is the table's header) or comparison_radar (4+ numeric axes)
 - itinerary[] → spot_explorer (cards with map links, cost badges) or moment_track; budget → budget (total + category bars + saving tips)
 - claims[] → claims_tracker (claim, source, status badge); rankings[] → tier_list; formation → formation_diagram; structure / lyrics → lyrics_karaoke
 - specs[] / rules[] / credits[] / analysis / context[] / substitutions[] / safetyWarnings[] → info_grid (short reference cells)

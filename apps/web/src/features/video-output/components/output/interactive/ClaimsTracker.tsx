@@ -30,7 +30,7 @@ const FILTER_ORDER: StatusFilter[] = ['all', 'stated', 'supported', 'contested']
  * ClaimsTracker — the news signature surface, and a talk's or podcast's on
  * has_claims (D11). Renders each claim with who made it and a status badge
  * saying what the video does with it (stated / supported / contested) — none on a
- * claim without a timestamp, which ships no status (listed under All only) — plus an
+ * claim without a timestamp, whose status nobody can check (listed under All only) — plus an
  * optional evidence line and a seek-to-timestamp button. A status filter bar
  * lets the reader isolate contested claims — the accountability lens that
  * separates a news artifact from a plain summary.
@@ -41,14 +41,14 @@ export const ClaimsTracker = memo(function ClaimsTracker({ claims, onSeek }: Cla
   const counts = useMemo(() => {
     const acc: Record<ClaimStatus, number> = { stated: 0, supported: 0, contested: 0 };
     for (const c of claims) {
-      const status = claimStatus(c.status);
+      const status = claimStatus(c);
       if (status) acc[status] += 1;
     }
     return acc;
   }, [claims]);
 
   const visible = useMemo(
-    () => (filter === 'all' ? claims : claims.filter((c) => claimStatus(c.status) === filter)),
+    () => (filter === 'all' ? claims : claims.filter((c) => claimStatus(c) === filter)),
     [claims, filter],
   );
 
@@ -86,7 +86,7 @@ export const ClaimsTracker = memo(function ClaimsTracker({ claims, onSeek }: Cla
 
       <ul className="flex flex-col gap-3" aria-label="Tracked claims">
         {visible.map((claim, i) => {
-          const status = claimStatus(claim.status);
+          const status = claimStatus(claim);
           const meta = status ? STATUS_META[status] : null;
           // The <li> stays the list's direct child (FadeIn renders a <div>).
           return (

@@ -68,12 +68,23 @@ async def _translate_both_ways(
     """The source-language copy and, in parallel, the English of every verbatim line
     (4.6c); returns the copy and how many lines got English. The English is written
     into ``output`` (the English tabs / meta) only once both returned: the copy is
-    cut from ``output`` after its own calls and must not carry it."""
+    cut from ``output`` after its own calls and must not carry it. The English is
+    optional: its pass failing costs only the English lines, never the copy; a failed
+    copy is raised once the English pass is done, so neither is left running."""
     lines = verbatim_lines(output)
     result, english = await asyncio.gather(
         translate_to_source(ctx.llm_service, output, source_language),
         english_of_lines(ctx.llm_service, lines, source_language),
+        return_exceptions=True,
     )
+    if isinstance(result, BaseException):
+        raise result
+    if isinstance(english, BaseException):
+        logger.warning(
+            "Verbatim lines: the English pass failed (%s); no English beneath %d lines",
+            source_language, len(lines), exc_info=english,
+        )  # fmt: skip
+        english = {}
     return result, apply_english(lines, english)
 
 

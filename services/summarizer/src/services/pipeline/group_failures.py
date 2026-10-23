@@ -101,15 +101,21 @@ def failed_paths(rows: Iterable[Mapping[str, Any]]) -> frozenset[str]:
 
 
 def failed_requests(
-    plan: PlanResult | None, rows: Iterable[Mapping[str, Any]]
+    plan: PlanResult | None, rows: Iterable[Mapping[str, Any]], content_format: str | None = None
 ) -> list[FieldRequest]:
-    """The fields the plan's tabs request — as the split extraction asks for them — whose
-    group call failed. The final plan's: frames-done may have re-pointed a tab."""
+    """The fields the plan's tabs request — as the split extraction asks for them, with the
+    probe's ``content_format`` — whose group call failed. The final plan's: frames-done may
+    have re-pointed a tab."""
     paths = failed_paths(rows)
     if plan is None or not paths:
         return []
     requests = requested_fields(
-        plan.tabs, plan.content_tags, plan.modifiers, scalar_fields, primary_tag=plan.primary_tag
+        plan.tabs,
+        plan.content_tags,
+        plan.modifiers,
+        scalar_fields,
+        primary_tag=plan.primary_tag,
+        content_format=content_format,
     )
     return [request for request in requests if request.path in paths]
 
@@ -154,7 +160,8 @@ def group_drops(ctx: PipelineContext, dropped: Sequence[Mapping[str, Any]]) -> l
     it records no group rows)."""
     # getattr: assembly's lightweight contexts (tests) predate the split path.
     rows = getattr(ctx, "extraction_groups", None) or []
-    return relabel_group_drops(dropped, failed_requests(ctx.plan_result, rows))
+    failed = failed_requests(ctx.plan_result, rows, getattr(ctx, "content_format", None))
+    return relabel_group_drops(dropped, failed)
 
 
 # ─── Degraded ───

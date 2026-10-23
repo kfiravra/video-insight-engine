@@ -25,7 +25,7 @@ describe('ClaimsTracker statuses (D11)', () => {
   it('should badge each claim with what the video does with it when the status is a D11 word', () => {
     const claims: ClaimItem[] = [
       { claim: 'Agents wrote 150,000 lines in August', status: 'supported', timestamp: 660 },
-      { claim: 'Hand-written code is not economically productive', status: 'stated' },
+      { claim: 'Hand-written code is not economically productive', status: 'stated', timestamp: 120 },
       { claim: 'P-doom is overstated', status: 'contested', timestamp: 3506 },
     ];
 
@@ -36,9 +36,9 @@ describe('ClaimsTracker statuses (D11)', () => {
 
   it('should never print "Verified" or "Disputed" when a stored row carries the old words', () => {
     const claims: ClaimItem[] = [
-      { claim: 'Fares rise 15%', source: 'Transit Authority', status: 'verified' },
-      { claim: 'The plan creates 1,200 jobs', source: 'Mayor', status: 'disputed' },
-      { claim: 'A structural deficit', status: 'context' },
+      { claim: 'Fares rise 15%', source: 'Transit Authority', status: 'verified', timestamp: 30 },
+      { claim: 'The plan creates 1,200 jobs', source: 'Mayor', status: 'disputed', timestamp: 95 },
+      { claim: 'A structural deficit', status: 'context', timestamp: 140 },
     ];
 
     render(<ClaimsTracker claims={claims} />);
@@ -53,7 +53,7 @@ describe('ClaimsTracker statuses (D11)', () => {
   });
 
   it('should read a missing status as no status', () => {
-    expect(claimStatus(undefined)).toBeNull();
+    expect(claimStatus({ status: undefined, timestamp: 60 })).toBeNull();
   });
 
   it('should accept claims without a source when the tab props are validated', () => {
@@ -88,6 +88,32 @@ describe('ClaimsTracker statuses (D11)', () => {
       render(<ClaimsTracker claims={claims} />);
 
       expect(screen.getByText('Ruby is a joy to write')).toBeInTheDocument();
+    });
+  });
+
+  // pC review: a v10 row's status was required and its timestamp optional, so a
+  // stored claim nobody can check still carries "verified" / "disputed" — the
+  // tracker drops it on render, as the summarizer now does (D13).
+  describe('stored claim with a status but no timestamp', () => {
+    const v10: ClaimItem[] = [
+      { claim: 'Fares rise 15%', status: 'verified', timestamp: 30 },
+      { claim: 'The plan creates 1,200 jobs', status: 'disputed' },
+    ];
+
+    it('should badge no status when the claim carries no timestamp', () => {
+      render(<ClaimsTracker claims={v10} />);
+
+      expect(badges()).toEqual(['Supported']);
+    });
+
+    it('should count no filter for a status nobody can check', () => {
+      render(<ClaimsTracker claims={v10} />);
+
+      expect(screen.queryByRole('button', { name: /^Contested/ })).not.toBeInTheDocument();
+    });
+
+    it('should read the status as none when the timestamp is missing', () => {
+      expect(claimStatus({ status: 'disputed', timestamp: null })).toBeNull();
     });
   });
 

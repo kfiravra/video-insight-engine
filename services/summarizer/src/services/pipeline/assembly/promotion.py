@@ -108,15 +108,19 @@ def _resolve_concept_source(
 ) -> list | None:
     """Find the concept list that backs a flash_deck tab.
 
-    Prefers the tab's own resolved data when it already carries connections;
-    otherwise falls back to the domain's `concepts` extraction block.
+    The tab's own resolved data when it carries connections; the domain's
+    `concepts` extraction block when the deck IS that list, or has no data of its
+    own. A deck over any other list — a quote deck (``podcast.quotes``, 4.2), key
+    points, vocabulary — stays a deck: promoted, its own items shipped nowhere, and
+    beside a planned concepts tab it dropped as that tab's twin (pC review).
     """
     if isinstance(data, list) and any(isinstance(x, dict) and x.get("connections") for x in data):
         return data
     dom = extraction.get(domain) if isinstance(extraction, dict) else None
-    if isinstance(dom, dict) and isinstance(dom.get("concepts"), list):
-        return dom["concepts"]
-    return None
+    concepts = dom.get("concepts") if isinstance(dom, dict) else None
+    if not isinstance(concepts, list):
+        return None
+    return concepts if not data or data == concepts else None
 
 
 def _promote_flash_deck(

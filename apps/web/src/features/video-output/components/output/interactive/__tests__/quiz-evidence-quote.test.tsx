@@ -72,6 +72,40 @@ describe('quiz evidence quote', () => {
     });
   });
 
+  // pC review (D12): a non-English lecture's evidence line is verbatim in the
+  // source language — it reads in its own direction, with its English beneath.
+  describe('non-English evidence line', () => {
+    const HEBREW = 'הבעיה האמיתית היא לא מה שהוא החליט, אלא מי נתן לו להחליט לבד.';
+    const ENGLISH = "The real problem isn't what he decided, but who let it decide on its own.";
+
+    it('should read the evidence line in its own direction when it is verbatim', () => {
+      render(<QuizExplanation text={EXPLANATION} timestamp={30} quote={HEBREW} />);
+
+      expect(screen.getByRole('blockquote')).toHaveAttribute('dir', 'auto');
+    });
+
+    it('should show the English beneath a verbatim line when the question carries it', () => {
+      render(<QuizExplanation text={EXPLANATION} timestamp={30} quote={HEBREW} quoteEn={ENGLISH} />);
+
+      expect(screen.getByText(ENGLISH)).toHaveAttribute('lang', 'en');
+    });
+
+    it('should keep the chip out of the right-to-left line when the quote is Hebrew', () => {
+      render(<QuizExplanation text={EXPLANATION} timestamp={30} quote={HEBREW} onSeek={vi.fn()} />);
+
+      expect(screen.getByRole('blockquote')).not.toContainElement(screen.getByRole('button', { name: 'Jump to 0:30' }));
+    });
+
+    it('should carry the English through the quiz once the question is answered', async () => {
+      const user = userEvent.setup();
+      render(<QuizArena questions={[{ ...question, quote: HEBREW, quoteEn: ENGLISH }]} onSeek={vi.fn()} />);
+
+      await user.click(screen.getByText('Card debt is forgiven'));
+
+      expect(screen.getByText(ENGLISH)).toBeInTheDocument();
+    });
+  });
+
   describe('QuizArena', () => {
     it('should not reveal the evidence quote before the question is answered', () => {
       render(<QuizArena questions={[question]} onSeek={vi.fn()} />);

@@ -1,10 +1,11 @@
-import { useRef, useCallback, useEffect, lazy, Suspense } from "react";
+import { useRef, useCallback, useEffect, useState, lazy, Suspense } from "react";
 import type { ReactNode } from "react";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { useUIStore } from "@/stores/ui-store";
 import { useSidebarToggle } from "@/hooks/use-sidebar-toggle";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { AppHeader } from "./AppHeader";
+import { HeaderSlotContext } from "./header-slot";
 import { LeftSidebarIconStrip } from "./LeftSidebarIconStrip";
 import { MobileBottomNav } from "./MobileBottomNav";
 import { ScrollContainer } from "@/components/ui/scroll-container";
@@ -64,6 +65,9 @@ export function Layout({ children, showSidebar = true }: LayoutProps) {
   const setSidebarWidth = useUIStore((s) => s.setSidebarWidth);
   const { setOpen: setSidebarOpen } = useSidebarToggle();
   const isMobile = useMediaQuery("(max-width: 767px)");
+  // The header's page-control slot, held in state so a page renders into it
+  // once it has mounted (a ref would not re-render the page).
+  const [headerSlot, setHeaderSlot] = useState<HTMLElement | null>(null);
 
   // Close sidebar on mobile on mount — drawer auto-opening is disorienting.
   // Ref guard keeps this as a mount-only reaction while still satisfying
@@ -223,14 +227,16 @@ export function Layout({ children, showSidebar = true }: LayoutProps) {
       )}
 
       {/* Right column: floating panel with header + content */}
-      <div className="flex-1 flex flex-col min-w-0 md:rounded-(--app-chrome-radius) md:overflow-hidden bg-background">
-        <AppHeader />
-        <main id="main-content" className="flex-1 flex flex-col min-h-0">
-          <ScrollContainer wrapperClassName="flex-1 min-w-0 min-h-0">
-            {children}
-          </ScrollContainer>
-        </main>
-      </div>
+      <HeaderSlotContext.Provider value={headerSlot}>
+        <div className="flex-1 flex flex-col min-w-0 md:rounded-(--app-chrome-radius) md:overflow-hidden bg-background">
+          <AppHeader slotRef={setHeaderSlot} />
+          <main id="main-content" className="flex-1 flex flex-col min-h-0">
+            <ScrollContainer wrapperClassName="flex-1 min-w-0 min-h-0">
+              {children}
+            </ScrollContainer>
+          </main>
+        </div>
+      </HeaderSlotContext.Provider>
 
       {/* Mobile bottom nav — floating persistent navigation for small screens */}
       {showSidebar && <MobileBottomNav />}

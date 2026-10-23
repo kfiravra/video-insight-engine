@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useId, useMemo, useRef, type ReactNode } 
 
 import { Button } from '@/components/ui/button';
 import { GlassCard, SeekChip } from '@/components/vie';
+import { useLabels } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 import type { ConceptItem } from '@vie/types';
 
@@ -70,6 +71,7 @@ const ConceptRow = memo(function ConceptRow({
   detailsId,
   inspector,
 }: ConceptRowProps) {
+  const t = useLabels();
   const { timestamp } = concept;
   const nameRef = useCallback(
     (button: HTMLButtonElement | null) => registerNameButton(id, button),
@@ -102,8 +104,8 @@ const ConceptRow = memo(function ConceptRow({
             {timestamp != null && <SeekChip seconds={timestamp} onSeek={onSeek} className="shrink-0" />}
           </div>
           <p className="text-sm leading-snug text-foreground/90">{concept.definition}</p>
-          {concept.example && <LabelledLine label="Example" text={concept.example} />}
-          {concept.analogy && <LabelledLine label="Analogy" text={concept.analogy} />}
+          {concept.example && <LabelledLine label={t.example} text={concept.example} />}
+          {concept.analogy && <LabelledLine label={t.analogy} text={concept.analogy} />}
         </div>
       </div>
       {inspector && <div id={detailsId}>{inspector}</div>}

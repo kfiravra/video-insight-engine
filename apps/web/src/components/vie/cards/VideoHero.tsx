@@ -203,7 +203,7 @@ function HeroHeader({ title, identity, youtubeId }: HeroHeaderProps) {
           id="vie-hero-title"
           className={cn(
             'font-semibold tracking-tight text-balance break-words line-clamp-2 text-xl md:text-2xl md:leading-[1.15]',
-            hasIdentity(identity) && 'mt-2.5 md:mt-2',
+            hasIdentity(identity) && 'mt-2.5 md:mt-1.5',
           )}
         >
           {title || t.processing}
@@ -249,7 +249,7 @@ function HeroPlayer({ youtubeId }: { youtubeId: string }) {
 /** The tldr under the title, or its skeleton while the stream is still writing it. */
 function Tldr({ tldr, isStreaming }: { tldr?: string; isStreaming: boolean }) {
   if (tldr) {
-    return <p className="mt-3 max-w-[68ch] text-[0.95rem] leading-relaxed text-foreground/85 text-pretty md:mt-1.5">{tldr}</p>;
+    return <p className="mt-3 max-w-[68ch] text-[0.95rem] leading-relaxed text-foreground/85 text-pretty md:mt-1.5 md:leading-normal">{tldr}</p>;
   }
   if (!isStreaming) return null;
   return (

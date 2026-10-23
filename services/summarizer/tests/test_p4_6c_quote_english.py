@@ -80,10 +80,10 @@ class TestVerbatimLines:
 
         assert _texts(_output(_tab("moment_track", "items", [row]))) == []
 
-    def test_should_skip_a_quiz_quote_when_the_quiz_card_has_no_english_line(self) -> None:
+    def test_should_collect_a_quiz_quote_when_the_quiz_card_shows_its_english_line(self) -> None:
         question = {"question": "Why?", "options": ["a", "b"], "quote": _HE}
 
-        assert _texts(_output(_tab("quiz_arena", "questions", [question]))) == []
+        assert _texts(_output(_tab("quiz_arena", "questions", [question]))) == [_HE]
 
     def test_should_collect_the_verdict_quote_when_it_is_nested_in_a_tab(self) -> None:
         tab = {"id": "vs", "component": "comparison", "props": {"verdict": {"quote": _HE}}}

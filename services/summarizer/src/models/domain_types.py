@@ -1176,6 +1176,13 @@ class GamingLoadoutItem(BaseModel):
     item: str
     category: str | None = None
     note: str = ""
+    # Its own slot, so a stamp never lands in the note as "[timestamp ~Ns]" (review-C).
+    timestamp: int | None = None
+
+    @field_validator("timestamp", mode="before")
+    @classmethod
+    def coerce_timestamp(cls, v: Any) -> int | None:
+        return seconds_or_none(v)
 
 
 class GamingWalkthroughStep(BaseModel):

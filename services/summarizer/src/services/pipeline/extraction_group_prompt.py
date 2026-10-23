@@ -97,6 +97,7 @@ class GroupJob:
     visual_annotations: str = ""
     frame_context: str = ""
     chunk_frame_context: Mapping[int, str] = field(default_factory=dict)
+    content_format: str | None = None  # the probe's: a talk's asks line names the key ideas
 
 
 # ─── Block 1 + 2 ───
@@ -252,7 +253,9 @@ def tabs_to_serve(
     ``part`` = the chunk's window, inside which an argument list's windows are hints."""
     tabs = _group_tabs(group, job.tabs)
     owned = [tab for tab in tabs if _owns(group, tab)]
-    lines = [render_tabs_to_serve(owned, job.active, share, part)] if owned else []
+    lines = (
+        [render_tabs_to_serve(owned, job.active, share, part, job.content_format)] if owned else []
+    )
     lines += [_support_line(tab) for tab in tabs if not _owns(group, tab)]
     return "\n".join(lines) or render_tabs_to_serve([], job.active)
 

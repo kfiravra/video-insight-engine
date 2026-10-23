@@ -19,8 +19,8 @@ name: Eval
 #                        the reports as an artifact. mode=noise-baseline runs
 #                        the set twice and also uploads noise.json. The
 #                        twice-a-month cron (`0 3 1,15 * *`) is re-enabled once
-#                        the secrets land — see
-#                        dev/completed/pipeline-1min/env-changes.md.
+#                        the five secrets below (EVAL_API_URL, EVAL_USER_*,
+#                        LANGFUSE_*) are set.
 
 on:
   pull_request:

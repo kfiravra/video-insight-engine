@@ -1,7 +1,9 @@
 """Plan prompt for spoken word (output-quality 1.10).
 
-A talk, a lecture, a podcast and an interview example open on a key-ideas
-list (spot_explorer on learning.keyIdeas), never a canvas; every goal names
+A talk, a podcast and an interview example open on a key-ideas list
+(spot_explorer on learning.keyIdeas), never a canvas; a lecture opens on its
+Concepts (concept_canvas, read as a list first — the lecture playbook,
+content-model §3) with the key ideas after it; every goal names
 what the viewer gets (the viewer-outcome rule, plan Q12); no label carries a
 digit; counts follow content-model §9 by duration; Moments say what was
 established, never chapter jumps.
@@ -23,6 +25,7 @@ _NEVER_FIRST = frozenset(
     {"concept_canvas", "step_flow_canvas", "video_filmstrip", "info_grid", "overview"}
 )
 _SPOKEN_WORD_KINDS = ("talk", "lecture", "podcast", "interview")
+_KEY_IDEAS_FIRST_KINDS = ("talk", "podcast", "interview")
 
 
 @pytest.fixture(autouse=True)
@@ -94,6 +97,10 @@ def _tabs(example: dict, component: str) -> list[dict]:
     return [tab for tab in example["tabs"] if tab["component"] == component]
 
 
+def _key_ideas_tab(example: dict) -> dict:
+    return next(tab for tab in example["tabs"] if tab["dataSource"] == "learning.keyIdeas")
+
+
 def _idea_band(minutes: int) -> range:
     """content-model §9: key ideas / positions by duration."""
     if minutes <= 15:
@@ -127,7 +134,7 @@ class TestSpokenWordExamples:
 
         assert all(any(kind in k for k in kinds) for kind in _SPOKEN_WORD_KINDS)
 
-    @pytest.mark.parametrize("kind", _SPOKEN_WORD_KINDS)
+    @pytest.mark.parametrize("kind", _KEY_IDEAS_FIRST_KINDS)
     def test_should_open_on_the_key_ideas_list_when_showing_a_spoken_word_plan(
         self, kind: str
     ) -> None:
@@ -135,13 +142,22 @@ class TestSpokenWordExamples:
 
         assert (first["component"], first["dataSource"]) == ("spot_explorer", "learning.keyIdeas")
 
+    def test_should_open_on_concepts_then_key_ideas_when_showing_the_lecture_plan(self) -> None:
+        """The lecture playbook (content-model §3, review-C-prompts W2): Concepts first."""
+        first, second = _SPOKEN["lecture"][1]["tabs"][:2]
+
+        assert [(t["component"], t["dataSource"]) for t in (first, second)] == [
+            ("concept_canvas", "learning.concepts"),
+            ("spot_explorer", "learning.keyIdeas"),
+        ]
+
     @pytest.mark.parametrize("kind", _SPOKEN_WORD_KINDS)
     def test_should_size_ideas_and_moments_to_length_when_showing_a_spoken_word_plan(
         self, kind: str
     ) -> None:
         header, example = _SPOKEN[kind]
         minutes = _minutes(header)
-        ideas = example["tabs"][0]["brief"]["expect"]
+        ideas = _key_ideas_tab(example)["brief"]["expect"]
         moments = [tab["brief"]["expect"] for tab in _tabs(example, "moment_track")]
 
         assert ideas in _idea_band(minutes) and all(m in _moment_band(minutes) for m in moments)
@@ -185,7 +201,10 @@ class TestSpokenWordExamples:
 class TestEveryExample:
     @pytest.mark.parametrize("header", list(_EXAMPLES), ids=_kind)
     def test_should_not_open_on_a_canvas_or_a_grid_when_showing_a_plan(self, header: str) -> None:
-        assert _EXAMPLES[header]["tabs"][0]["component"] not in _NEVER_FIRST
+        lecture = "lecture" in _kind(header)
+        never_first = _NEVER_FIRST - {"concept_canvas"} if lecture else _NEVER_FIRST
+
+        assert _EXAMPLES[header]["tabs"][0]["component"] not in never_first
 
     @pytest.mark.parametrize("header", list(_EXAMPLES), ids=_kind)
     def test_should_never_brief_moments_as_chapter_jumps_when_showing_a_plan(

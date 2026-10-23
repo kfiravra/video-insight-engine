@@ -47,7 +47,7 @@ function BriefTeaser({ paragraphs, keyQuestion }: BriefBodyProps) {
   const folded = clamps && !expanded;
   const [first, ...rest] = folded ? [joined] : paragraphs;
   return (
-    <section aria-labelledby={labelId} className="mt-1.5 max-w-[96ch] text-sm leading-relaxed text-foreground/80 text-pretty">
+    <section aria-labelledby={labelId} className="mt-1.5 max-w-[96ch] text-sm leading-normal text-foreground/80 text-pretty">
       <div className="relative">
         <div id={textId} className="space-y-2.5">
           <p className={cn(folded && 'line-clamp-2')}>
@@ -77,7 +77,7 @@ function BriefTeaser({ paragraphs, keyQuestion }: BriefBodyProps) {
               'text-xs font-medium text-[var(--vie-accent)] hover:underline',
               expanded
                 ? 'mt-1.5'
-                : 'absolute bottom-0 end-0 bg-gradient-to-l from-card from-60% to-transparent ps-10 leading-relaxed rtl:bg-gradient-to-r',
+                : 'absolute bottom-0 end-0 bg-gradient-to-l from-card from-60% to-transparent ps-10 leading-normal rtl:bg-gradient-to-r',
             )}
           >
             {expanded ? t.hide : t.more}

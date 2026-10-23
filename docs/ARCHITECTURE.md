@@ -202,8 +202,9 @@ Content type and tab layout come from the **plan** (primary model, Sonnet 5.5), 
 │     ├── Frame thumbnail injection (+ ±15s backfill)                         │
 │     ├── Late group, parallel: moment fill (exact-timestamp frames) ∥        │
 │     │   hero rewrite (Sonnet 5.5, reads the extraction's cache) ∥ the       │
-│     │   quiz (Haiku 5.5, every quote checked); the synthesis call only      │
-│     │   when the hero gives none; the quiz only for a plan with a host      │
+│     │   quiz (Sonnet 5.5 on the extraction's cache, every quote checked);   │
+│     │   the synthesis call only when the hero gives none; the quiz only     │
+│     │   on a lecture / tutorial with a host                                 │
 │     └── Cross-tab links; final re-emit: every tab final once, the           │
 │         overview last — a moment fill still waiting for the 720p file       │
 │         runs beside the group instead and its Moments tabs stay non-final   │
@@ -322,7 +323,7 @@ The pipeline uses Server-Sent Events (SSE) to stream results progressively with 
 
 ### LLM Calls Summary
 
-Per run, default path (`EXTRACTION_PARALLEL=true`). The model column names the routing setting and its default (`config.py` = both compose anchors; picked by the 4.0d model A/B rounds 1 + 2, `dev/completed/pipeline-1min/gates/g4-model-ab.md`). Under compose a blank or missing `.env` line keeps the default (`${LLM_X:-<default>}`); to change a stage, set a model (e.g. `openai/gpt-4o-mini`). Only `LLM_SYNTHESIS_MODEL` defaults blank, which means the fast tier. The fast tier is Haiku 4.5 by default (code and compose) and gpt-4o-mini with `LLM_FAST_PROVIDER=openai`, as both `.env` templates and prod set:
+Per run, default path (`EXTRACTION_PARALLEL=true`). The model column names the routing setting and its default (`config.py` = both compose anchors; picked by the 4.0d model A/B rounds 1 + 2, pipeline-1min gate g4-model-ab). Under compose a blank or missing `.env` line keeps the default (`${LLM_X:-<default>}`); to change a stage, set a model (e.g. `openai/gpt-4o-mini`). Only `LLM_SYNTHESIS_MODEL` defaults blank, which means the fast tier. The fast tier is Haiku 4.5 by default (code and compose) and gpt-4o-mini with `LLM_FAST_PROVIDER=openai`, as both `.env` templates and prod set:
 
 | Stage | Model | Calls | Timeout |
 |-------|-------|-------|---------|
@@ -333,15 +334,17 @@ Per run, default path (`EXTRACTION_PARALLEL=true`). The model column names the r
 | Frame vision | `LLM_VISION_MODEL` = Sonnet 5.5 | 0-5 batches of ≤ 8 frames (none on LOW tier / manifest hit) | 2× the expected wall, within 30s–`FRAME_VISION_TIMEOUT` |
 | Chapter detect | Fast tier (`LLM_CHAPTER_DETECT_MODEL` is not passed by compose) | 0-1 (long videos only) | 25s |
 | Extraction field groups | `LLM_EXTRACTION_MODEL` = Sonnet 5.5, effort low | 1-5 text + 0-1 visual, per chunk | 120-300s, from the group's estimated output |
-| Synthesis | `LLM_SYNTHESIS_MODEL` (blank → fast tier) | 1 | 20s |
-| Quiz (enrichment) | `LLM_ENRICHMENT_MODEL` = gpt-4o-mini | 0-1 (a plan with a quiz host) | 14s per attempt, 30s total |
-| Faithfulness judge | `LLM_JUDGE_MODEL` = gpt-6-luna (blank = the fast tier) | 0-6 (sampled claims, background) | 20s |
-| Translation | `LLM_TRANSLATION_MODEL` = gpt-6-luna | non-English only: output + title + RAG transcript batches | 90s per batch |
+| Hero rewrite | `LLM_EXTRACTION_MODEL` = Sonnet 5.5 (on the extraction's cache) | 1 (+1 retry when the hero would be None or a D18 line would drop) | 25s |
+| Merge rank | `LLM_MEMORY_MODEL` = Haiku 5.5 | 0-1 (chunked split runs, > 40 min) | 12s per attempt, 1 retry, 25s total |
+| Synthesis (fallback) | `LLM_SYNTHESIS_MODEL` (blank → fast tier) | 0-1 (only when `HERO_REWRITE_ENABLED=false` or the hero call gave none) | 20s |
+| Quiz v2 | `LLM_EXTRACTION_MODEL` = Sonnet 5.5 (on the extraction's cache) | 0-N, one per part (a lecture / tutorial plan with a quiz host) | 30s per attempt, 40s total — `QUIZ_V2_ENABLED=false`: `LLM_ENRICHMENT_MODEL` = gpt-4o-mini, 0-1, 14s per attempt, 30s total |
+| Faithfulness judge | `LLM_JUDGE_MODEL` = gpt-6-luna (blank = the fast tier) | 0-6 (sampled claims, background) + ≤ 2 after assembly (hero, quiz) | 20s |
+| Translation | `LLM_TRANSLATION_MODEL` = gpt-6-luna | non-English only: output + title + RAG transcript batches, plus one source→English pass for the quoteEn / questionEn lines (4.6c) | 90s per batch |
 | Assembly | None (code only) | 0 | instant, unless moment frame fill runs (60s + 150s budgets) |
 
 Every request is shaped for its model (thinking off + effort, accepted sampling params, no prefill), and a refused answer is asked once of the previous model (`config.PREVIOUS_MODEL`: Sonnet 5.5 → Sonnet 4.6, Haiku 5.5 → Haiku 4.5, gpt-6-luna → gpt-4o-mini) — [ERROR-HANDLING.md](./ERROR-HANDLING.md#llm-error-handling).
 
-**Total** varies per video: description analysis, tier probe, plan, memory, the extraction field groups (1–5 text + ≤ 1 visual, times the chunks of a long video), synthesis and the quiz when planned — plus 0–5 vision batches and ≤ 6 sampled judge calls; a non-English video adds the translation batches. The last measurement on prod is v9 **before** the 4.0 model refresh (`dev/completed/pipeline-1min/gates/g3.md` §Prod, 2026-10-13, runs with frames; the 3 benchmarks + the Hebrew regression video): $0.098–0.180 per video (T1dQhQAm8Tc $0.098 — a run that writes the plan's hourly cache entry adds ≈ $0.10 —, jMq8lEu-of0 $0.180, uC45_4nnEAI $0.148 (median of 2), Hebrew regression EqaMrzd9nZU $0.157; the others one run each), 9–25 LLM calls, `complete` at 59–93 s; prod v8 (g0) cost $0.114–0.216 and took 169–240 s on the first three. The Whisper fallback adds roughly $0.14 when captions are unavailable.
+**Total** varies per video: description analysis, tier probe, plan, memory, the extraction field groups (1–5 text + ≤ 1 visual, times the chunks of a long video), the hero rewrite (synthesis only as its fallback), merge_rank on a chunked run, the quiz on a lecture / tutorial when planned — plus 0–5 vision batches and ≤ 6 + 2 sampled judge calls; a non-English video adds the translation batches. The last measurement on prod is v9 **before** the 4.0 model refresh (pipeline-1min gate g3 §Prod, 2026-10-13, runs with frames; the 3 benchmarks + the Hebrew regression video): $0.098–0.180 per video (T1dQhQAm8Tc $0.098 — a run that writes the plan's hourly cache entry adds ≈ $0.10 —, jMq8lEu-of0 $0.180, uC45_4nnEAI $0.148 (median of 2), Hebrew regression EqaMrzd9nZU $0.157; the others one run each), 9–25 LLM calls, `complete` at 59–93 s; prod v8 (g0) cost $0.114–0.216 and took 169–240 s on the first three. The Whisper fallback adds roughly $0.14 when captions are unavailable.
 
 The plan starts once the tier probe answered (it waits at most the probe's 4 s budget + 1 s, `phases/probe.PLAN_PROBE_WAIT_SECONDS`); plan and memory then run concurrently. The plan's `PlanResult` (contentTags, tabs with briefs, evidence, terms) is reconciled against the memory at plan-done and rendered with the memory's outline / tldr / takeaways into `<video_memory>` — the `{video_context}` of every writer (extraction, synthesis, quiz).
 

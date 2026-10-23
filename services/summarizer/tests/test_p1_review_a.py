@@ -122,8 +122,8 @@ class TestPlanSizingFloor:
 class TestNeverFirst:
     def test_should_allow_step_flow_canvas_first_when_the_steps_are_the_answer(self) -> None:
         instructions = " ".join(_block(_PLAN, "instructions").split())
-        never_first = instructions[instructions.index("Never concept_canvas") :]
-        never_first = never_first[: never_first.index("first")]
+        never_first = instructions[instructions.index("Never video_filmstrip") :]
+        never_first = never_first[: never_first.index("never an overview")]
 
         assert "step_flow_canvas when the steps are the answer" in instructions
         assert "step_flow_canvas" not in never_first

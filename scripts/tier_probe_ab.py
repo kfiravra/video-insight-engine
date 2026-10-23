@@ -15,7 +15,7 @@ writes: the LLM calls go straight to LiteLLM with no callbacks registered.
 Usage (from the repo root, summarizer venv)::
 
     services/summarizer/.venv/bin/python scripts/tier_probe_ab.py \\
-        --cache-dir <scratch> --out-json dev/completed/pipeline-1min/gates/g0-tier-probe-ab.json
+        --cache-dir <scratch> --out-json <scratch>/g0-tier-probe-ab.json
     ... --dry-run   # gather inputs + render prompts, no LLM calls; with --out-json,
                     # refresh the saved report's inputs block (results untouched)
     ... --out-json <report> --rescore   # re-score the saved answers; nothing external

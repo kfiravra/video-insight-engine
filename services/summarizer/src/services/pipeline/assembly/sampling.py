@@ -87,11 +87,6 @@ def even_indices(n: int, cap: int) -> list[int]:
     return sorted({round(i * step) for i in range(cap)})
 
 
-def evenly_sample(items: Sequence[T], cap: int) -> list[T]:
-    """``cap`` items at evenly spaced indices, keeping first and last."""
-    return [items[i] for i in even_indices(len(items), cap)]
-
-
 def rank_sample(items: Sequence[T], cap: int, score: Callable[[T], int]) -> list[T]:
     """Keep ``cap`` items by score, in their original order.
 

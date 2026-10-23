@@ -10,7 +10,7 @@ import { Check, AlertTriangle, Lightbulb, Clock, ChevronLeft, ChevronRight, Eye,
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Timer, Badge } from '@/components/vie';
-import { useLabels } from '@/lib/i18n';
+import { useLabels, type Labels } from '@/lib/i18n';
 import { formatDuration, formatDurationHuman } from '@/lib/string-utils';
 import { useTabState } from '@/features/video-output/contexts/TabStateContext';
 import { buildStepIngredientMap } from '@/features/video-output/components/output/lib/ingredient-step-matcher';
@@ -338,6 +338,7 @@ function StudyOptionList({ question, shown }: { question: QuizArenaQuestion; sho
 }
 
 function StudyQuestion({ question, forceRevealed, onSeek }: StudyQuestionProps) {
+  const t = useLabels();
   const [revealed, setRevealed] = useState(false);
   const shown = revealed || forceRevealed;
   const answer = question.options[question.correctIndex];
@@ -358,7 +359,7 @@ function StudyQuestion({ question, forceRevealed, onSeek }: StudyQuestionProps) 
           {!shown ? (
             <Button variant="outline" size="sm" onClick={() => setRevealed(true)} className="gap-1.5">
               <Eye className="h-3.5 w-3.5" aria-hidden="true" />
-              Reveal answer
+              {t.revealAnswer}
             </Button>
           ) : (
             <>
@@ -383,7 +384,7 @@ function StudyQuestion({ question, forceRevealed, onSeek }: StudyQuestionProps) 
                 </div>
               )}
               {canSeek && question.timestamp != null && onSeek && (
-                <SeekButton seconds={question.timestamp} label="Watch this part" onSeek={onSeek} />
+                <SeekButton seconds={question.timestamp} label={t.watchThisPart} onSeek={onSeek} />
               )}
             </>
           )}
@@ -405,17 +406,18 @@ export interface ListenSegment {
   endSeconds?: number;
 }
 
-/** "2:28 – 5:44", or "from 58:12" when the end is unknown. */
-function formatPlayRange(segment: ListenSegment): string | null {
+/** "Play 2:28 – 5:44", or "Play from 58:12" when the end is unknown. */
+function formatPlayRange(segment: ListenSegment, t: Labels): string | null {
   if (segment.seconds == null) return null;
   const start = formatDuration(segment.seconds);
-  if (segment.endSeconds == null) return `Play from ${start}`;
-  return `Play ${start} – ${formatDuration(segment.endSeconds)}`;
+  if (segment.endSeconds == null) return t.playFrom.replace('{time}', start);
+  return t.playRange.replace('{start}', start).replace('{end}', formatDuration(segment.endSeconds));
 }
 
 /** The play-range control plus the segment length chip. */
 function PlayRangeRow({ segment, onSeek }: { segment: ListenSegment; onSeek?: (seconds: number) => void }) {
-  const range = formatPlayRange(segment);
+  const t = useLabels();
+  const range = formatPlayRange(segment, t);
   const length =
     segment.seconds != null && segment.endSeconds != null && segment.endSeconds > segment.seconds
       ? formatDurationHuman(segment.endSeconds - segment.seconds)

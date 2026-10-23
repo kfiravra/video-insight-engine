@@ -71,9 +71,9 @@ EXPLORATION — user browses and discovers:
       concept card; edges from connections[]. Positions persist per video.
     GOOD FOR: 3Blue1Brown-style math explainers, science concepts that
       build on each other, language grammar relationships.
-    NEVER the first tab of a talk, lecture, podcast or interview — the
-      key-ideas list is; plan it after it, and only when the video teaches
-      how the concepts relate.
+    NEVER the first tab of a talk, podcast or interview — the key-ideas
+      list is; plan it after it, and only when the video teaches how the
+      concepts relate. A lecture opens on it (it reads as a list first).
     DATASOURCE: learning.concepts (must have connections[]).
     FALLS BACK TO: flash_deck when no connections, info_grid when ≥10 flat
       definitions, overview when <3 items.
@@ -88,18 +88,20 @@ EXPLORATION — user browses and discovers:
 
   comparison
     PICK WHEN: The video EXPLICITLY weighs Option A against Option B on
-      the SAME criteria for 3 features. BOTH sides must have substance.
-    SHIPS: 3-column table with winner highlighting + ReviewSummary header
-      (score ring, best-for / not-for) when the review domain has a
-      verdict. Folds the retired Verdict tab into the same surface.
+      the SAME criteria for 3 features. BOTH sides must have substance —
+      except a review's Pros & cons on review.pros (no competitor needed).
+    SHIPS: 3-column table with winner highlighting, or the pros and cons;
+      on a non-review comparison a ReviewSummary header (score ring,
+      best-for / not-for) when the review domain has a verdict. A review's
+      verdict goes to the hero, never a tab.
 
   comparison_radar  ⭐ NEW
-    PICK WHEN: 4+ axes worth comparing AND the user might weight them
-      differently (a value-seeker vs a performance-seeker). Heavier than
-      comparison but answers "what's best for ME".
+    PICK WHEN: 4+ axes with numbers worth comparing AND the user might
+      weight them differently (a value-seeker vs a performance-seeker).
+      Heavier than comparison but answers "what's best for ME".
     SHIPS: Recharts radar chart, per-axis weight sliders, weighted
       winner badge that updates live.
-    FALLS BACK TO: comparison when axes < 4.
+    FALLS BACK TO: comparison when fewer than 4 axes carry numbers.
 
   video_filmstrip  ⭐ NEW (replaces standalone gallery) — frame-aware
     PICK WHEN: 3+ vision-tagged frames worth scrubbing as a strip — the
@@ -176,7 +178,8 @@ ACTION — user completes a task:
 LEARNING — user tests understanding:
 
   quiz_arena
-    PICK WHEN: is_learnable and the content is a lesson or an argument;
+    PICK WHEN: is_learnable and the format is a lecture or a tutorial (the
+      Hint's format) — never a talk, interview, podcast or news;
       3 / 5 / 8 questions by length (<sizing>), always the LAST tab.
     SHIPS: Single question per screen, untimed by default, streak
       counter, a seek chip to the answer, frame context above the
@@ -218,9 +221,9 @@ MEDIA — user navigates the source video:
 
 DISPLAY — user reads (MAX 1 per output, last resort):
 
-  verdict — DO NOT plan new "verdict" tabs. The conclusion folds into
-    the ReviewSummary header on comparison. Cached "verdict" tabs still
-    render via the legacy alias.
+  verdict — DO NOT plan new "verdict" tabs. A review's conclusion rides
+    in the hero; elsewhere it folds into the ReviewSummary header on
+    comparison. Cached "verdict" tabs still render via the legacy alias.
   budget — Total + category breakdown + saving tips. Travel/finance only.
 
 ═══════════════════════════════════════════════════════════════════
@@ -230,13 +233,13 @@ ANTI-PATTERNS (the assembler will drop these — don't plan them)
 ✗ info_grid with 2 items                → 3 minimum; otherwise use overview.
 ✗ comparison with 1 row, or with one    → at least 3 rows AND both sides
    side empty                              filled; otherwise route to info_grid.
-✗ comparison_radar with <4 axes         → falls back to comparison table.
+✗ comparison_radar with <4 numeric axes → falls back to comparison table.
 ✗ concept_canvas under the density min  → falls back to flash_deck / info_grid.
 ✗ flash_deck for tips/features/trivia   → forbidden; use info_grid.
-✗ standalone "verdict" tab               → fold the conclusion into
-                                             comparison's ReviewSummary OR the
-                                             overview hero. Verdict-as-tab is
-                                             retired.
+✗ standalone "verdict" tab               → a review's conclusion rides in the
+                                             overview hero; elsewhere it folds into
+                                             comparison's ReviewSummary.
+                                             Verdict-as-tab is retired.
 ✗ standalone "gallery" tab               → use video_filmstrip when 3+
                                              vision-tagged frames warrant a
                                              scrubber. Otherwise frames live
@@ -246,7 +249,8 @@ ANTI-PATTERNS (the assembler will drop these — don't plan them)
 ✗ info_grid as the first tab, or a      → the first tab is a list the viewer
    concept_canvas there                     reads without a click; step_flow_canvas
                                              opens first only when the steps are the
-                                             answer (it opens as a list).
+                                             answer, a concept_canvas only on a
+                                             lecture (both open as a list).
 ✗ moment_track of chapter titles or      → what was established at each beat,
    "Moment N"                                with the line that carries it.
 ✗ A count in the label ("12 Key Ideas")  → "Key Ideas"; assembly prefixes the

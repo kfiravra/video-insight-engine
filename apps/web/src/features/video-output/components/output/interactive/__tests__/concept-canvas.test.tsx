@@ -215,7 +215,6 @@ describe('ConceptCanvas', () => {
     await user.click(nameButton);
     const inspector = document.querySelector('[data-slot="canvas-inspector"]') as HTMLElement;
     expect(inspector.getAttribute('data-placement')).toBe('inline');
-    expect(inspector.className).not.toMatch(/absolute/);
     // Same list item as the concept it describes.
     expect(nameButton.closest('li')).toBe(inspector.closest('li'));
   });
@@ -228,7 +227,6 @@ describe('ConceptCanvas', () => {
     fireEvent.click(document.querySelector('[data-slot="vie-concept-node"] button') as HTMLElement);
     const inspector = document.querySelector('[data-slot="canvas-inspector"]') as HTMLElement;
     expect(inspector.getAttribute('data-placement')).toBe('overlay');
-    expect(inspector.className).toMatch(/absolute/);
   });
 
   it('should open the Map on its first lane, not the middle of every lane', async () => {

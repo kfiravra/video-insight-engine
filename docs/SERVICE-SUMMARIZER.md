@@ -102,6 +102,7 @@ services/summarizer/
     │   │   ├── quote_index.py        # The quote matcher: QuoteIndex (normalized exact-first, else fuzzy; a "…"-cut quote is fragments in order within 40 words and 60 s)
     │   │   ├── pipeline_timing.py    # pipeline.timing recorder v4 (phases, LLM calls, failures incl. refusals, downloads, counts)
     │   │   ├── translation.py        # Source-language translation (flat-list batched)
+    │   │   ├── translation_quotes.py # The English beneath verbatim lines (4.6c): quoteEn / questionEn on the English tabs, one source→English pass beside translate_to_source
     │   │   ├── translation_flat.py   # Flat-list translate call, batch sizing, mirror check (shared with RAG English)
     │   │   ├── faithfulness.py       # Faithfulness sampling (the extraction sample)
     │   │   ├── faithfulness_context.py    # Claim-localized transcript windows for the judge
@@ -244,7 +245,7 @@ LLM_SYNTHESIS_MODEL=                                       # Blank = the fast ti
 
 # Provider API Keys (set for providers you use)
 ANTHROPIC_API_KEY=sk-ant-...
-OPENAI_API_KEY=sk-...           # Required: the openai/* stage defaults (description, quiz, translation) + an openai fast tier; also Whisper
+OPENAI_API_KEY=sk-...           # Required: the openai/* stage defaults (description, translation; the quiz only with QUIZ_V2_ENABLED=false) + an openai fast tier; also Whisper
 GEMINI_API_KEY=                 # Enables Gemini audio transcription (faster than Whisper)
 GOOGLE_API_KEY=                 # Required if using Gemini as LLM provider
 
@@ -357,7 +358,7 @@ will be retrievable.
 
 ## Processing Pipeline (Plan-Driven)
 
-A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, tier probe, plan ∥ memory, the extraction field groups (1–5 text groups + at most one visual group, per chunk — a long video has several chunks), the hero rewrite (it replaces the synthesis call, which stays as its fallback), the quiz when demanded (quiz v2), plus 1-5 vision batches and the sampled faithfulness judge (its extraction sample, plus a hero and a quiz call after assembly); non-English videos add batched translation calls. With `EXTRACTION_PARALLEL=false` extraction is one call (or one per chapter batch). Output-quality phase 1 (registry, prompts, extraction schemas, assembly) adds no call and no setting and ships under v10; phase 2 swaps two calls behind two settings (`HERO_REWRITE_ENABLED`, `QUIZ_V2_ENABLED`) and adds the judge's two, also under v10 — the task's one bump, v10 → v11, comes at its close-out ([IDEMPOTENCY.md](./IDEMPOTENCY.md#when-to-bump-pipeline_version)); what each prompt asks for: [summarizer-workflow.md §6](./summarizer-workflow.md#what-each-prompt-asks-for-output-quality). Phase order lives in `routes/pipeline_orchestration.py`; the call-order walkthrough with file anchors is [summarizer-workflow.md](./summarizer-workflow.md):
+A plan-first pipeline (since v9; `PIPELINE_VERSION` v11): description analysis, tier probe, plan ∥ memory, the extraction field groups (1–5 text groups + at most one visual group, per chunk — a long video has several chunks), the hero rewrite (it replaces the synthesis call, which stays as its fallback), the quiz when demanded (quiz v2), plus 1-5 vision batches and the sampled faithfulness judge (its extraction sample, plus a hero and a quiz call after assembly); non-English videos add batched translation calls. With `EXTRACTION_PARALLEL=false` extraction is one call (or one per chapter batch). Output-quality phase 1 (registry, prompts, extraction schemas, assembly) adds no call and no setting and was built under v10; phase 2 swaps two calls behind two settings (`HERO_REWRITE_ENABLED`, `QUIZ_V2_ENABLED`) and adds the judge's two — the task's one bump, v10 → v11, shipped them all (C.1; [IDEMPOTENCY.md](./IDEMPOTENCY.md#when-to-bump-pipeline_version)); what each prompt asks for: [summarizer-workflow.md §6](./summarizer-workflow.md#what-each-prompt-asks-for-output-quality). Phase order lives in `routes/pipeline_orchestration.py`; the call-order walkthrough with file anchors is [summarizer-workflow.md](./summarizer-workflow.md):
 
 ```
  1. CONNECT via SSE
@@ -620,7 +621,7 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     │   key-frame window; a sentence force-split when the chain gives ≤ 1 batch.
     │   CHUNKED_EXTRACTION_THRESHOLD is not read on this path
     └─▶ Requested fields (pipeline/field_requests.py): the union over the reconciled tabs of the
-    │   planned dataSource (+ the fields of the info_grids folded into it), its registry siblings
+    │   planned dataSource (+ the fields of the info_grids folded into it; on a talk the asks checklist plans learning.keyIdeas, never learning.takeaways), its registry siblings
     │   (only inside a domain some tab plans on), the rendering component's side reads (no
     │   learning.timestamps stand-in for a Moments tab with a field of its own), the overview's
     │   tip/level reads, and every requested domain's scalars — never an inactive domain's fields,
@@ -840,9 +841,10 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     │   │   only, masterSummary/seo empty
     │   └─▶ The quiz (phases/enrichment.py, only when needs_quiz: a planned quiz tab, or a
     │       sparse quick_quiz host with evidence that doesn't rule learning out, in a
-    │       quizEnrichment domain). QUIZ_V2_ENABLED (default): quiz v2 (pipeline/quiz_v2.py,
-    │       quiz_v2.txt) on LLM_MEMORY_MODEL (Haiku 5.5), 18 s per attempt, 1 retry, 37 s total, no
-    │       cache breakpoint — reads the marked transcript and the target key ideas
+    │       quizEnrichment domain, on a quizPolicy.formats format: lecture / tutorial, another
+    │       format plans no quiz — reconcile_quiz_format). QUIZ_V2_ENABLED (default): quiz v2 (pipeline/quiz_v2.py,
+    │       quiz_v2.txt) on LLM_EXTRACTION_MODEL (Sonnet 5.5, 4.6e), 30 s per attempt, 1 retry, 40 s total,
+    │       on the field groups' cached blocks (quiz_v2_blocks.cached_prefix) — reads the marked transcript and the target key ideas
     │       (quiz_v2_ideas.quiz_targets: the thesis / argument / number items of the first non-empty
     │       KEY_IDEA_SOURCES list, ids K1…) — one call per part in parallel, each extraction chunk
     │       of a chunked run, else each third past 15 min — and writes the video's count (3 / 5 / 8,
@@ -888,7 +890,7 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     │   `done` follow; complete.processingTimeMs = text done, the doc's and done's = after the fill
     └─▶ Store result to MongoDB + Redis cache (if enabled). Redis response-cache keys are
     │   namespaced by PIPELINE_VERSION (packages/shared/src/config/pipeline-version.json,
-    │   currently v10 — bumped v9→v10 by the pipeline-1min 4.0 model refresh).
+    │   currently v11 — bumped v10→v11 by the output-quality close-out, C.1).
     │   bypassCache=true submissions arrive with force_refresh (worker payload) OR the
     │   `forceRefresh` flag stamped on the videoSummaryCache version row by the api —
     │   either skips the Redis response cache; the flag is $unset on completion.
@@ -903,11 +905,13 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     └─▶ translate_to_source() — batched, salvage-tolerant translation
     │   └─▶ Walks the assembled tree, collects every translatable prose
     │   │   string into one flat list (`_collect_strings`: the `_SKIP_KEYS` leaf-only
-    │   │   deny-list for structural/asset/enum keys, plus D12's verbatim lines — a `quote`
-    │   │   without `quoteTranslated` and any leaf of its dict restating it, a verified
-    │   │   `question` and the `label` cut from it — and `quoteEn` / `questionEn`,
+    │   │   deny-list for structural/asset/enum keys, plus D12's verbatim lines
+    │   │   (`translation_verbatim`) — a `quote` without `quoteTranslated`, or a flagged one
+    │   │   not in Latin script (a source-language line the check missed), and any leaf of
+    │   │   its dict restating it, a verified `question` (or a `translated` one not in Latin
+    │   │   script) and the `label` cut from it — and `quoteEn` / `questionEn`,
     │   │   `_kept_as_is`; the source-language copy drops `quoteEn` / `questionEn`,
-    │   │   `_drop_english_only`, 4.2)
+    │   │   `drop_english_only`, 4.2)
     │   └─▶ Fast-model calls (`translation_full`) on LLM_TRANSLATION_MODEL
     │   │   (default openai/gpt-6-luna, reasoning off) via
     │   │   src/prompts/translate_flat.txt (flat-list
@@ -930,7 +934,9 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     │   │   `is_mirror` per call) is retried once split in
     │   │   half; any half that still fails is salvaged as English
     │   │   (left untranslated) rather than discarding the whole
-    │   │   translation. Returns `(strings, salvaged_mask)` — a
+    │   │   translation. A batch whose call raises is kept as English the same
+    │   │   way, and every batch is awaited — one failure never leaves its
+    │   │   siblings running (`_all_batches`, pC review). Returns `(strings, salvaged_mask)` — a
     │   │   same-length boolean mask marking salvaged positions.
     │   └─▶ Mirror detection samples only genuinely-translated strings
     │       (salvaged positions excluded via `salvaged_mask`, so kept
@@ -938,12 +944,28 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     │       all 3 longest are byte-identical AND >50% of all strings are
     │       byte-identical (small-payload threshold: 33% under 10 strings).
     │       Protects against the "small model echoes input" failure mode.
-    │   └─▶ `_SKIP_KEYS` denies: id, component, language, url, s3Key, code,
+    │   └─▶ `_SKIP_KEYS` denies: id, component, degradedFrom, language, targetTab,
+    │       type, layout, platform, primaryTag, url, thumbnailUrl, s3Key, code,
     │       timestamp, time, seconds, startSeconds, endSeconds, emoji,
-    │       correctIndex, difficulty, mood, sets, frameCaption,
-    │       frameSceneType, frameEvidence. Notably does NOT deny
+    │       correctIndex, difficulty, mood, questionStatus, status, badge, winner,
+    │       slot, size, style, mode, videoTitle, sets, frameCaption,
+    │       frameSceneType, sceneType, frameEvidence — the enums the web matches in
+    │       English (a translated claim `status` failed the claims schema and the source
+    │       view showed the tab as display_section, pC review). Notably does NOT deny
     │       reps/rest/duration — the fitness schema emits prose at
     │       those keys ("30 שניות", "AMRAP", "until failure").
+    └─▶ In parallel with it (asyncio.gather, `_translate_both_ways`): translation_quotes —
+    │   every distinct verbatim line the English page shows (a quote without
+    │   `quoteTranslated` or a flagged one not in Latin script, a verified question or a
+    │   translated one not in Latin script; a quiz question's evidence quote too) is sent once source→en
+    │   through translate_in_batches (stage `translation_full`); `quoteEn` / `questionEn`
+    │   are written on the English tabs after both calls return (the sourceLanguage copy
+    │   never carries them); a row titled by its question is re-titled from `questionEn`.
+    │   With no sourceLanguage but English written, the English tabs are saved
+    │   `completed` (`_finalize_english_only`, 4.6c).
+    │   The pass is optional: a raise in it is logged (warning) and writes no English;
+    │   the copy still lands. A raise in translate_to_source still fails the phase, raised
+    │   once the English pass has returned (gather return_exceptions=True).
     └─▶ Promote English to primary on ctx.assembled_tabs / ctx.assembled_meta
     │   and stash the original-language artifact under sourceLanguage
     │   = {code, name, isRTL, tabs, meta} (tabs/meta deep-copied so a
@@ -1087,7 +1109,7 @@ PREVIOUS_MODEL = {
 
 The primary (`default`) model only reaches the plan and `/health`: every other stage
 is pinned per stage (Environment Variables above). Picks and evidence per call type:
-`dev/completed/pipeline-1min/gates/g4-model-ab.md` §Picks.
+pipeline-1min gate g4-model-ab §Picks.
 
 ---
 
@@ -1208,7 +1230,7 @@ read as fallbacks (Frontend Meta Resolution below). Field-level detail:
         }
     ],
     "language": "en", "isRTL": False,
-    "pipelineVersion": "v10",                # packages/shared/src/config/pipeline-version.json
+    "pipelineVersion": "v11",                # packages/shared/src/config/pipeline-version.json
     "pipeline": {                           # the summarizer's own record of the run
         "triage": {...},                    # the triage_complete payload (reconciled tabs + evidence)
         "reconcile": [...],                 # every plan-parse / plan-done / frames-done tab decision
@@ -1523,7 +1545,7 @@ transcript) plus the compact final extraction (≤ 6,000 chars), whatever the le
 
 Model routing by stage (defaults from the pipeline-1min 4.0d A/B — rule: quality within
 noise first, then latency, then cost; evidence per call type in
-`dev/completed/pipeline-1min/gates/g4-model-ab.md` §Picks). The tier probe, description,
+pipeline-1min gate g4-model-ab §Picks). The tier probe, description,
 quiz and translation calls pass `use_fast_model=True` + `model_override` (fast-model
 calls: no cross-provider fallback); memory and extraction pass `model_override` alone —
 primary-model calls with an override, so the cross-provider fallback applies wherever

@@ -4,8 +4,9 @@ Split out of assemblers_primary.py (output-quality 0b follow-ups): bare
 strings split into key/value pairs (0b.4), ``{type, text}`` tips headlined by
 their text with ``type`` as a category badge (0b.8), and the key / value /
 evidence field priorities. Whatever its shape, a row carries its item's emoji,
-evidence line and seek timestamp (0b review). Every name here stays importable
-from ``assemblers_primary`` through its explicit re-exports.
+evidence line and seek timestamp (0b review) — a marker written into its text
+lifted into that timestamp (``stamp_marker``, pC review). Every name here stays
+importable from ``assemblers_primary`` through its explicit re-exports.
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ import re
 from typing import Any
 
 from .derived_guard import anchor_seconds
+from .stamp_marker import lift_stamp_marker, split_stamp_marker
 
 _INFO_KEY_FIELDS: tuple[str, ...] = (
     "key",
@@ -257,12 +259,16 @@ def _normalize_info_grid_item(item: Any) -> dict | None:
 
     Returns None when nothing can headline the card (no key field, no tip
     text) — such rows would render as empty cards, the root cause of the
-    wall-of-empty-grid bug.
+    wall-of-empty-grid bug. A seek point written into the text ("… [timestamp
+    ~100s]") is lifted into the row's timestamp first (``stamp_marker``).
     """
     if isinstance(item, str):
-        return _split_string_info_item(item)
+        text, seconds = split_stamp_marker(item)
+        row = _split_string_info_item(text)
+        return row if row is None or seconds is None else {**row, "timestamp": seconds}
     if not isinstance(item, dict):
         return None
+    item = lift_stamp_marker(item)
     return _with_category(_normalize_info_grid_dict(item), item)
 
 

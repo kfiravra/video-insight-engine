@@ -6,9 +6,8 @@ import { useMediaQuery } from '@/hooks/use-media-query';
 
 import { useLabels } from '@/lib/i18n';
 import { EmptyTabState } from './EmptyTabState';
-import { ComparisonRadarHero } from './comparison/ComparisonRadarHero';
-import { hasMultipleCompetitors } from './comparison/competitor-groups';
-import { hasRadarAxes } from './comparison/radar-scoring';
+import { ComparisonRadars } from './comparison/ComparisonRadarHero';
+import { hasMultipleCompetitors, radarSets } from './comparison/competitor-groups';
 import { ComparisonTable } from './comparison/ComparisonTable';
 import { ReviewSummary } from './comparison/ReviewSummary';
 import { VersusCards } from './comparison/VersusCards';
@@ -28,9 +27,10 @@ interface ComparisonInteractiveProps {
   verdict?: VerdictData;
   /**
    * Force the radar hero on/off. When omitted the component decides by data:
-   * radar shows automatically for ≥3 comparison rows (scoreable axes). The
-   * `comparison_radar` registry alias passes `view="radar"` so the 1A
-   * promotion `comparison → comparison_radar` keeps surfacing the radar.
+   * radar shows automatically for ≥3 numeric axes — per competitor when the
+   * rows name several (`radarSets`). The `comparison_radar` registry alias
+   * passes `view="radar"` so the 1A promotion `comparison → comparison_radar`
+   * keeps surfacing the radar.
    */
   view?: 'auto' | 'radar' | 'table';
   nextTab?: string;
@@ -71,8 +71,10 @@ export const ComparisonInteractive = memo(function ComparisonInteractive({
 
   // Radar hero when the data has enough scoreable axes (or forced via `view`).
   // `view="radar"` still needs ≥3 axes — a 2-spoke radar is a line, so it
-  // gracefully falls back to the table.
-  const showRadar = view !== 'table' && hasComparisons && hasRadarAxes(comparisons);
+  // gracefully falls back to the table — and several competitors each need
+  // their own, or no radar draws.
+  const radars = view !== 'table' && hasComparisons ? radarSets(comparisons) : [];
+  const showRadar = radars.length > 0;
 
   if (!hasComparisons && !hasPros && !hasCons && !hasVerdictHeader) return <EmptyTabState message="No comparison data was extracted for this video." icon={Scale} />;
 
@@ -120,7 +122,7 @@ export const ComparisonInteractive = memo(function ComparisonInteractive({
 
       {/* Radar hero — when ≥3 scoreable axes (auto) or forced via view="radar" */}
       {showRadar && comparisonView === 'radar' && (
-        <ComparisonRadarHero comparisons={comparisons} colLeft={colLeft} colRight={colRight} />
+        <ComparisonRadars radars={radars} colLeft={colLeft} colRight={colRight} />
       )}
 
       {/* Feature comparison — table mode */}

@@ -29,10 +29,11 @@ THINKING GUIDE:
     {
       "item": "Weapon, perk, gear, or setting",
       "category": "Optional grouping (weapons, perks, settings)",
-      "note": "Why it's picked, short"
+      "note": "Why it's picked, short",
+      "timestamp": null
     }
   ],
-> UI: loadout → Checklist. The viewer ticks off what they've copied.
+> UI: loadout → Checklist. The viewer ticks off what they've copied. timestamp = the second the item is named (an integer) or null — never written into note.
   "walkthrough": [
     {
       "instruction": "What to do at this stage",

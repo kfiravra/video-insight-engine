@@ -36,8 +36,9 @@ transcript actually contains.
 Step 4 — Design 3–6 tabs, only tabs the content supports, using the component toolkit below.
 - First tab = the answer tab: what the viewer came for, readable as a list without a click
   (spot_explorer, checklist, step_player, comparison, claims_tracker, tier_list — and
-  step_flow_canvas when the steps are the answer: it opens as a list). Never concept_canvas,
-  video_filmstrip or info_grid first; never an overview.
+  step_flow_canvas when the steps are the answer, concept_canvas when a lecture opens on its
+  concepts: both open as a list). Never video_filmstrip or info_grid first, and no other
+  canvas; never an overview.
 - Every tab needs a "goal" — the viewer-outcome line of <goal_rule>, at most 15 words — and
   a "brief" telling extraction what to pull for it (see <brief_rules>)
 - Labels name the content, never a count ("🛒 Ingredients", not "🛒 14 Ingredients") —
@@ -212,7 +213,7 @@ Video: "Rails World 2026 Opening Keynote - DHH" (63 min, conference talk — one
   "evidence": {"has_steps": false, "has_ingredients": false, "has_materials": false, "has_code": false, "has_drills": false, "has_comparison": false, "has_ranking": false, "has_lineup": false, "has_claims": false, "has_lyrics": false, "has_itinerary": false, "has_packing": false, "is_learnable": true},
   "tabs": [
     {"id": "key_ideas", "label": "💡 Key Ideas", "emoji": "💡", "component": "spot_explorer", "dataSource": "learning.keyIdeas", "goal": "After this you know what DHH claims, why, and where he says it.", "brief": {"what": "each claim with his why and the verbatim line, kind (thesis, argument, announcement, number, story, ask), grouped by the talk's four parts", "where": ["1:50-16:00", "16:00-33:00", "33:00-47:00", "47:00-62:40"], "expect": 12}},
-    {"id": "asks", "label": "✅ What He Asked", "emoji": "✅", "component": "checklist", "dataSource": "learning.takeaways", "goal": "After this you can do what DHH asked the room to do, in his words.", "brief": {"what": "only the explicit asks, in his words — the CLI by next Friday, pencils down, judge agent output as a black box", "where": ["20:00-21:30", "35:00-36:00", "45:00-46:00"], "expect": 3}},
+    {"id": "asks", "label": "✅ What He Asked", "emoji": "✅", "component": "checklist", "dataSource": "learning.takeaways", "goal": "After this you can do what DHH asked the room to do, in his words.", "brief": {"what": "only the explicit asks, quoted, as key ideas (kind ask) — the CLI by next Friday, pencils down, judge agent output as a black box", "where": ["20:00-21:30", "35:00-36:00", "45:00-46:00"], "expect": 3}},
     {"id": "moments", "label": "🎬 Moments", "emoji": "🎬", "component": "moment_track", "dataSource": "learning.timestamps", "goal": "After this you can jump to each beat and hear the line that made it.", "brief": {"what": "one beat per five minutes ranked by salience: what he established there plus the quote; never a chapter title", "where": ["1:50-62:40"], "expect": 12}}
   ]
 }
@@ -236,8 +237,8 @@ Video: "1. Introduction to Human Behavioral Biology" (57 min, university lecture
   "terms": ["bucket = one-discipline explanation", "ethology", "sociobiology", "Konrad Lorenz (not Lorentz)"],
   "evidence": {"has_steps": false, "has_ingredients": false, "has_materials": false, "has_code": false, "has_drills": false, "has_comparison": false, "has_ranking": false, "has_lineup": false, "has_claims": false, "has_lyrics": false, "has_itinerary": false, "has_packing": false, "is_learnable": true},
   "tabs": [
-    {"id": "key_ideas", "label": "💡 Key Ideas", "emoji": "💡", "component": "spot_explorer", "dataSource": "learning.keyIdeas", "goal": "After this you know what the lecture establishes and the demonstration behind each point.", "brief": {"what": "each point with the demonstration or case that establishes it and his sentence, kind (argument, number, story), in lecture order", "where": ["0:30-57:00"], "expect": 12}},
     {"id": "concepts", "label": "🧠 Concepts", "emoji": "🧠", "component": "concept_canvas", "dataSource": "learning.concepts", "goal": "After this you can see how the buckets connect and why none explains behavior alone.", "brief": {"what": "every discipline he names as a bucket with its one-line definition, the example used, a timestamp, and which bucket it feeds", "where": ["8:00-25:00", "31:00-43:00"], "expect": 10}},
+    {"id": "key_ideas", "label": "💡 Key Ideas", "emoji": "💡", "component": "spot_explorer", "dataSource": "learning.keyIdeas", "goal": "After this you know what the lecture establishes and the demonstration behind each point.", "brief": {"what": "each point with the demonstration or case that establishes it and his sentence, kind (argument, number, story), in lecture order", "where": ["0:30-57:00"], "expect": 12}},
     {"id": "moments", "label": "🎬 Moments", "emoji": "🎬", "component": "moment_track", "dataSource": "learning.timestamps", "goal": "After this you can jump to each demonstration and hear what it proved.", "brief": {"what": "one beat per five minutes ranked by salience: what he established there plus the sentence; never a chapter title", "where": ["0:30-57:00"], "expect": 12}},
     {"id": "quiz", "label": "🧠 Test Yourself", "emoji": "🧠", "component": "quiz_arena", "dataSource": "enrichment.quiz", "goal": "After this you know which of the lecture's points you can explain back.", "brief": {"what": "one question per key idea, each answerable at a timestamp, none from the hero alone", "where": ["5:00-57:00"], "expect": 8}}
   ]
@@ -262,7 +263,7 @@ Video: "Max Tegmark: Life 3.0 | Lex Fridman Podcast #1" (83 min, podcast — hos
   "terms": ["Life 3.0 = his book", "AGI", "Future of Life Institute", "perceptronium", "Germanwings 9525 = the autopilot example"],
   "evidence": {"has_steps": false, "has_ingredients": false, "has_materials": false, "has_code": false, "has_drills": false, "has_comparison": false, "has_ranking": false, "has_lineup": false, "has_claims": false, "has_lyrics": false, "has_itinerary": false, "has_packing": false, "is_learnable": true},
   "tabs": [
-    {"id": "positions", "label": "💡 Positions", "emoji": "💡", "component": "spot_explorer", "dataSource": "learning.keyIdeas", "goal": "After this you know what Tegmark claims, why, and the line he said it in.", "brief": {"what": "each position with speaker, why and verbatim line, kind (thesis, argument, story, number); the stories (Germanwings, Hollywood) as kind story", "where": ["1:00-82:00"], "expect": 14}},
+    {"id": "positions", "label": "💡 Positions", "emoji": "💡", "component": "spot_explorer", "dataSource": "learning.keyIdeas", "goal": "After this you know what Tegmark claims, why, and the line he said it in.", "brief": {"what": "each position with speaker, why and verbatim line, kind (thesis, argument, story, number, disagreement); the stories (Germanwings, Hollywood) as kind story", "where": ["1:00-82:00"], "expect": 14}},
     {"id": "conversation_map", "label": "🗺️ Conversation Map", "emoji": "🗺️", "component": "moment_track", "dataSource": "podcast.segments", "goal": "After this you know what each stretch concluded and can jump straight to it.", "brief": {"what": "each segment with its span, who leads it and the one or two sentences of what was concluded, ranked by substance", "where": ["0:00-82:20"], "expect": 14}},
     {"id": "concepts", "label": "🧠 Concepts", "emoji": "🧠", "component": "concept_canvas", "dataSource": "learning.concepts", "goal": "After this you can see how intelligence, goals and consciousness connect in Tegmark's case.", "brief": {"what": "each concept his case connects — substrate-independent intelligence, goal alignment, consciousness, perceptronium — with his one-line definition, a timestamp and the concepts it links to", "where": ["5:00-80:00"], "expect": 8}}
   ]
@@ -287,8 +288,8 @@ Video: "DHH Omarchy Quattro Announcement | TheStandup" (42 min, interview — th
   "terms": ["Omarchy (captions: Omachi)", "DHH = the guest", "ThePrimeagen = the host", "Arch Linux"],
   "evidence": {"has_steps": false, "has_ingredients": false, "has_materials": false, "has_code": false, "has_drills": false, "has_comparison": false, "has_ranking": false, "has_lineup": false, "has_claims": false, "has_lyrics": false, "has_itinerary": false, "has_packing": false, "is_learnable": false},
   "tabs": [
-    {"id": "positions", "label": "💡 Positions", "emoji": "💡", "component": "spot_explorer", "dataSource": "learning.keyIdeas", "goal": "After this you know what DHH announced and the positions he took, with his words.", "brief": {"what": "the announcement (kind announcement) and each position with speaker, why and verbatim line; where a host pushes back, both sides", "where": ["0:00-41:46"], "expect": 10}},
-    {"id": "qa", "label": "❓ Questions Asked", "emoji": "❓", "component": "moment_track", "dataSource": "podcast.qa", "goal": "After this you know what the hosts asked and how DHH answered each question.", "brief": {"what": "each real question with who asked it, the answer in one or two sentences and its timestamp; skip banter", "where": ["4:00-41:00"], "expect": 10}},
+    {"id": "positions", "label": "💡 Positions", "emoji": "💡", "component": "spot_explorer", "dataSource": "learning.keyIdeas", "goal": "After this you know what DHH announced and the positions he took, with his words.", "brief": {"what": "the announcement (kind announcement) and each position with speaker, why and verbatim line; where a host pushes back, kind disagreement with both sides", "where": ["0:00-41:46"], "expect": 10}},
+    {"id": "qa", "label": "❓ Questions Asked", "emoji": "❓", "component": "moment_track", "dataSource": "podcast.qa", "goal": "After this you know what the hosts asked and how DHH answered each question.", "brief": {"what": "each real question in the host's words, who answered, the answer in a line, its timestamp; skip banter", "where": ["4:00-41:00"], "expect": 10}},
     {"id": "conversation_map", "label": "🗺️ Conversation Map", "emoji": "🗺️", "component": "moment_track", "dataSource": "podcast.segments", "goal": "After this you can jump to any stretch knowing what was settled there.", "brief": {"what": "each segment with its span, who leads it and what was concluded; the laptop and AMD tangents as their own segments", "where": ["0:00-41:46"], "expect": 10}}
   ]
 }
@@ -353,17 +354,17 @@ Video: "OP-29 Booster Box Opening — Chasing the Alt Art!" (26 min, gaming, unb
   "primaryTag": "gaming",
   "confidence": 0.95,
   "userGoal": "Relive the box break and know exactly which pulls matter",
-  "corePromise": "See every notable pull from the box, ranked by rarity and value, with jump-to moments",
+  "corePromise": "See every notable pull from the box, why each matters, with jump-to moments",
   "uniqueAngle": "Real-time pull reactions with card closeups — the frames show the actual cards revealed",
   "identity": {"creatorType": "TCG content creator", "tone": "hype-casual"},
   "extractionGuidance": {
-    "primaryFocus": "Every notable pull ranked by rarity/value with why it matters, plus pull moments with timestamps",
-    "watchOutFor": "Market-value and playability comments made mid-reaction — they are the tier reasons"
+    "primaryFocus": "Every notable pull with why it matters, plus pull moments with timestamps",
+    "watchOutFor": "Market-value and playability comments made mid-reaction — they are the reasons; a rarity is never a tier"
   },
   "terms": ["OP-29", "alt art = alternate-art card", "SEC = secret rare", "manga rare"],
   "evidence": {"has_steps": false, "has_ingredients": false, "has_materials": false, "has_code": false, "has_drills": false, "has_comparison": false, "has_ranking": true, "has_lineup": false, "has_claims": false, "has_lyrics": false, "has_itinerary": false, "has_packing": false, "is_learnable": false},
   "tabs": [
-    {"id": "pulls", "label": "🃏 The Pulls", "emoji": "🃏", "component": "tier_list", "dataSource": "gaming.rankings", "goal": "After this you know which pulls mattered and why each sits in its tier.", "brief": {"what": "every notable pulled card: name as item, rarity or value bracket as tier, why it matters as reason", "where": ["3:00-24:30"], "expect": 20}},
+    {"id": "pulls", "label": "🃏 The Pulls", "emoji": "🃏", "component": "tier_list", "dataSource": "gaming.rankings", "goal": "After this you know which pulls mattered and why each one counts.", "brief": {"what": "every notable pulled card: name as item, why it matters as reason; a tier only where he ranks it in words", "where": ["3:00-24:30"], "expect": 20}},
     {"id": "highlights", "label": "🎬 Pull Moments", "emoji": "🎬", "component": "moment_track", "dataSource": "gaming.highlights", "goal": "After this you can jump to each big reveal and see the card held up.", "brief": {"what": "each big reveal: the card, his reaction in a line, with the card held up to camera", "where": ["3:00-24:30"], "expect": 10}},
     {"id": "set_facts", "label": "🎯 Set & Chase Cards", "emoji": "🎯", "component": "spot_explorer", "dataSource": "gaming.loadout", "goal": "After this you know the box odds and the chase cards before you buy.", "brief": {"what": "the chase cards and box odds he names, each with why it matters and the market value when he gives it", "where": ["0:20-3:00"], "expect": 6}}
   ]
@@ -384,9 +385,10 @@ Per-domain guidance (choices, not requirements):
   A tasting or restaurant vlog with no recipe gets spot_explorer (dishes, places) and
   moment_track instead.
 - project: step_flow_canvas for builds with {step_flow_threshold}+ stages.
-- review: comparison carries the verdict — its ReviewSummary header folds the score, bottom
-  line and best-for / not-for into the same surface. Use comparison_radar when there are 4+
-  axes the viewer would weight differently.
+- review: open on Pros & cons — comparison on review.pros, the pros and cons as the reviewer
+  states them (no competitor needed); the verdict goes to the hero (pass it through
+  review.verdict), never a tab. A competitor table is comparison on review.comparisons;
+  comparison_radar only when 4+ axes are numbers the reviewer states.
 - travel: packing_mission when the video yields 4+ packing items (has_packing). Use
   video_filmstrip when the video has rich on-screen scene variety with 3+ vision-tagged frames.
 - music: lyrics_karaoke when lyrics are available (has_lyrics).
@@ -398,16 +400,17 @@ Per-domain guidance (choices, not requirements):
   has demonstrations.
 - learning: the answer tab is the argument — spot_explorer on learning.keyIdeas (see
   <spoken_word>); moment_track for the beats (what was established at each, never chapter
-  navigation); concept_canvas only after the list tab and only when the video TEACHES how
-  concepts relate; flash_deck for flat memorization; quiz_arena last for knowledge checks on
-  a lecture or a tutorial.
+  navigation); concept_canvas only when the video TEACHES how concepts relate — after the
+  list tab, except a lecture, which opens on it; flash_deck for flat memorization; quiz_arena
+  last for knowledge checks on a lecture or a tutorial.
 - tech: code_playground for real code; a talk about tech with no code is <spoken_word>;
   info_grid only for a short tool or setup lookup.
 - podcast: spot_explorer on learning.keyIdeas for the positions (add learning to
   contentTags); moment_track on podcast.segments for the conversation map — what was
   concluded in each segment, with the speaker; an interview adds moment_track on podcast.qa
-  (the question, who answered, the answer in a line). spot_explorer on podcast.guests only
-  with 2+ named guests. Quotes ride on the positions — no quote tab, no flash_deck of quotes.
+  (the question, who answered, the answer in a line). The guests ride as the first section
+  of Positions — no guests tab. Quotes ride on the positions — no quote tab, no flash_deck of
+  quotes.
   Podcasts are talking-head — NEVER plan video_filmstrip.
 - news: claims_tracker is the news signature — every factual claim + who said it +
   stated/supported/contested status (what the report does with it, never our verdict); it
@@ -415,8 +418,10 @@ Per-domain guidance (choices, not requirements):
   Use moment_track for the story timeline, spot_explorer for people/orgs; background context
   is short lookup cells folded into the tab that answers (info_grid never stands alone).
 - gaming: tier_list when the video ranks 4+ items (characters, weapons, maps, pulled cards) —
-  a draggable S/A/B/C/D ranking. Use moment_track for highlight plays, checklist for the
-  build/loadout, and step_flow_canvas for a multi-stage walkthrough ({step_flow_threshold}+ stages).
+  a draggable S/A/B/C/D ranking; a tier only where the creator ranks the item in words (a
+  rarity or price bracket is a reason, never a tier). Use moment_track for highlight plays,
+  checklist for the build/loadout, and step_flow_canvas for a multi-stage walkthrough
+  ({step_flow_threshold}+ stages).
 - sport: formation_diagram when the video shows a lineup/formation with player positions — a
   read-only tactical pitch diagram. Use moment_track for match events and comparison for the
   stat comparison (two teams/players on the same metrics).
@@ -444,8 +449,9 @@ quiz_arena restrictions:
 - A quiz_arena tab is always the LAST tab, untimed, sized by <sizing>.
 
 retired component names (DO NOT plan new tabs using these names):
-- `verdict` — folded into comparison's ReviewSummary header. Cached "verdict" tabs still
-  render via legacy alias, but DO NOT plan new ones.
+- `verdict` — a review's verdict rides in the hero; elsewhere it folds into comparison's
+  ReviewSummary header. Cached "verdict" tabs still render via legacy alias, but DO NOT plan
+  new ones.
 - `scenario` — retired; there is no scenario tab.
 - `gallery` (standalone) — use video_filmstrip when 3+ vision-tagged frames warrant a
   scrubber. Otherwise frames live INSIDE other components via VisualEvidence.
@@ -467,14 +473,14 @@ Detect intent from video title and content structure:
 │ food     │ step_player + checklist         │ spot_explorer + flash_deck       │ spot_explorer (methods)   │
 │ project  │ step_flow_canvas + checklist    │ spot_explorer (techniques)       │ comparison (skill lvls)   │
 │ tech     │ code_playground (guided)        │ concept_canvas + quiz_arena      │ comparison + ReviewSummary│
-│ review   │ —                               │ specs folded into comparison     │ comparison_radar (4+ axes)│
+│ review   │ —                               │ spot_explorer (features)         │ comparison (pros & cons)  │
 │ travel   │ spot_explorer + packing_mission │ spot_explorer + video_filmstrip  │ comparison (routes)       │
 │ fitness  │ workout_room                    │ flash_deck (form cues)           │ comparison (programs)     │
 │ music    │ lyrics_karaoke                  │ spot_explorer (theory)           │ —                         │
 │ learning │ quiz_arena / step_player        │ spot_explorer (key ideas)        │ comparison                │
 │ language │ step_player (drills)            │ flash_deck (vocabulary)          │ spot_explorer (phrases)   │
 │ science  │ step_player (labs)              │ concept_canvas + quiz_arena      │ comparison (theories)     │
-│ podcast  │ moment_track (segments)         │ spot_explorer (positions)        │ spot_explorer (guests)    │
+│ podcast  │ moment_track (segments)         │ spot_explorer (positions)        │ —                         │
 │ news     │ moment_track (timeline)         │ spot_explorer (people, orgs)     │ claims_tracker (claims)   │
 │ gaming   │ step_flow_canvas (walkthrough)  │ checklist (loadout)              │ tier_list (rankings)      │
 │ sport    │ moment_track (match events)     │ formation_diagram (lineup)       │ comparison (stat compare) │
@@ -498,8 +504,8 @@ Route on YOUR evidence — decide it first, then pick components from it:
   only names go to info_grid.
 - has_drills=true → workout_room for a workout, step_player for language drills. AVOID
   flash_deck for drills (practice, not memorization).
-- has_comparison=true → comparison; upgrade to comparison_radar when there are 4+ axes the
-  viewer might weight. has_comparison=false → no comparison.
+- has_comparison=true → comparison; upgrade to comparison_radar when there are 4+ axes with
+  numbers the viewer might weight. has_comparison=false → no comparison.
 - has_ranking=true → tier_list. has_lineup=true → formation_diagram. has_claims=true →
   claims_tracker on news.claims; a talk, podcast or tech talk may add claims_tracker on
   learning.claims / podcast.claims / tech.claims after its key ideas (never instead of them).
@@ -509,8 +515,8 @@ Route on YOUR evidence — decide it first, then pick components from it:
   is_learnable=true → quiz_arena is allowed only on a lecture or a tutorial (learning,
   language, tech and science) — as the last tab; never on a talk, interview, podcast or news.
 Content shape the evidence keys don't cover:
-- Concepts the video connects to each other → concept_canvas as a later tab, never the first
-  (replaces flash_deck for relational learning). For a learning/science PRACTICE or REVIEW tab where the viewer should
+- Concepts the video connects to each other → concept_canvas as a later tab, first only on a
+  lecture (replaces flash_deck for relational learning). For a learning/science PRACTICE or REVIEW tab where the viewer should
   test that they understand how concepts relate, use `connect_canvas` (a graded
   drag-to-connect quiz built from the same concept connections) instead of (or alongside)
   flash_deck/quiz_arena.
@@ -528,17 +534,21 @@ Content shape the evidence keys don't cover:
 A talk, a lecture, a podcast or an interview is an argument, and reading it is the job.
 - The answer tab is the argument: spot_explorer on learning.keyIdeas — items {claim, why,
   quote, timestamp, section, kind}, kind one of thesis | argument | announcement | number |
-  story | ask. One idea per item, sized by <sizing>, grouped by the video's own sections; a
-  number is evidence inside an idea, not an item of its own, unless the number IS the claim.
-  Never a canvas as the first tab, never info_grid for the arguments.
+  story | ask | disagreement (an interview: where host and guest differ, both sides in why).
+  One idea per item, sized by <sizing>, grouped by the video's own sections; a number is
+  evidence inside an idea, not an item of its own, unless the number IS the claim.
+  Never a canvas as the first tab — except a lecture, which opens on Concepts (concept_canvas,
+  read as a list first) with the key ideas after it; never info_grid for the arguments.
 - Moments (moment_track) say what was established at each beat — one per 3–6 minutes by
   length, ranked by salience, each with the line that carries it — never chapter jumps,
   never a title alone, never "Moment N". A podcast's moments are its segments
   (podcast.segments: what was concluded, with the speaker); an interview adds podcast.qa
   (the question, who answered, the answer in a line).
-- Asks and calls to action → checklist on learning.takeaways, only when the video has 3+.
-- concept_canvas only as a later tab, only when the video teaches how the concepts relate
-  (the toolkit's density table sets the minimum).
+- Asks and calls to action → key ideas of kind ask, each with the words that ask as its quote
+  (name them in the key-ideas brief); on a talk the checklist on learning.takeaways is built
+  from them — plan it only when the video has 3+.
+- concept_canvas only when the video teaches how the concepts relate
+  (the toolkit's density table sets the minimum): a later tab, the first only on a lecture.
 - Quotes ride on the items (one per item, at most 25 words, verbatim) — no quote tab.
 - No Moments tab when the steps ARE the timeline (a recipe, a workout, a step tutorial).
 </spoken_word>
@@ -595,15 +605,20 @@ conditions are met:
 - Each row has substance on BOTH sides — not "A is X, B is unspecified".
 - A user can DECIDE between A and B after reading the table.
 
-The assembler drops comparison rows where one side is empty and drops the tab entirely if
-no real pairs survive. Hitting the 3-row minimum is YOUR responsibility — the assembler
-will ship a 1-row comparison if that's all you give it, and a 1-row table is a bad UX.
+The one exception is a review's Pros & cons tab: comparison on review.pros ships the
+reviewer's pros and cons with no competitor needed, even when one product is examined; the
+verdict goes to the hero (pass it through extraction.review.verdict), never a tab.
+
+The assembler drops comparison rows where one side is empty and drops a rows table entirely
+if no real pairs survive (a Pros & cons tab survives on its pros and cons). Hitting the
+3-row minimum is YOUR responsibility — the assembler will ship a 1-row comparison if that's
+all you give it, and a 1-row table is a bad UX.
 
 NEVER use comparison for:
 - Term-and-definition lists (use flash_deck for memorization, concept_canvas when they connect).
 - "Here are 29 concepts" — that's a glossary, not a comparison.
-- Pros without a counterpart (use spot_explorer — each with its why and a timestamp).
-- Reviews where only one product is examined — fold the conclusion into the `comparison` tab's ReviewSummary header (pass `verdict` data through extraction.review.verdict).
+- Pros without a counterpart outside a review (use spot_explorer — each with its why and a
+  timestamp).
 
 If the video introduces many concepts WITHOUT explicitly weighing them against alternatives,
 the right component is spot_explorer (a claim, its why and a timestamp per item) or flash_deck

@@ -217,17 +217,6 @@ class TestPostProcessing:
         assert kept[0]["seconds"] < stride
         assert kept[-1]["seconds"] >= 16789 - stride
 
-    def test_evenly_sample_preserves_first_and_last(self):
-        from src.services.pipeline.assembly.sampling import evenly_sample
-
-        items = list(range(100))
-        sampled = evenly_sample(items, 10)
-        assert sampled[0] == 0
-        assert sampled[-1] == 99
-        assert len(sampled) <= 10
-        # Returns every item when already within cap.
-        assert evenly_sample([1, 2, 3], 10) == [1, 2, 3]
-
     def test_caps_oversized_info_grid_to_20(self):
         from src.services.pipeline.assembly.core import _post_process_tabs
 

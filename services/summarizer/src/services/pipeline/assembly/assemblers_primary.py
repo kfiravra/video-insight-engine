@@ -33,11 +33,11 @@ from .normalizers import (
     _normalize_code_snippet,
     _normalize_comparison,
     _normalize_step,
-    _normalize_to_spot,
     _normalize_verdict,
     normalize_moment_items,
 )
 from .quote_spots import is_quote_list, quote_spots
+from .tip_spots import spot_card
 
 # ─────────────────────────────────────────────────────
 # Assembler Functions
@@ -53,8 +53,9 @@ _MIN_SPOTS = 2
 
 
 def _spot_card(item: dict) -> dict | None:
-    """One item as a spot card, its translated-quote flag carried (2.0 d, D12)."""
-    spot = _normalize_to_spot(item)
+    """One item as a spot card (a tip or pick read as its grid row, ``tip_spots``, R6),
+    its translated-quote flag carried (2.0 d, D12)."""
+    spot = spot_card(item)
     return mark_translated_quote(spot, item) if spot is not None else None
 
 
@@ -66,7 +67,8 @@ def assemble_spot_explorer(
 ) -> dict | None:
     """Flatten TravelDay[] to SpotItem[] with section groupings.
 
-    Every spot passes through `_normalize_to_spot`, which drops entries lacking
+    Every spot passes through `spot_card` (`_normalize_to_spot`, else the item's
+    info_grid row — a tip or a pick, R6), which drops entries lacking
     a non-empty name or any descriptive/passthrough content. Bare-string input
     is rejected — extraction should produce structured `{name, description}`
     dicts; string arrays are almost always a symptom of keyword-list pollution

@@ -127,7 +127,7 @@
     "week", "weeks", "month", "months", "year", "years", "course", "courses",
     "km", "mile", "miles", "kg", "lb", "lbs", "pound", "pounds", "percent"
   ],
-  "domainRequirementsNote": "Per-domain assembled-output validation (_validate_domain_requirements in assembly/core.py): `required` components are backfilled from defaultTabs when the planner drops them (promotion equivalents count, e.g. comparison_radar satisfies comparison); `max` caps per-component tab counts; `forbidden` components are stripped at plan post-validation (before extraction burns tokens) AND again at assembly as a backstop — a forbidden component is never rendered for that domain regardless of what the planner emits. quiz_arena is allowed where the content is learnable (learning/language/tech/science, and a podcast or news explainer — output-quality D9; the quiz itself still needs is_learnable). Every domain must have an entry — an empty `required` is a deliberate decision (music: lyrics_karaoke optional so videos without per-line timing don't fail; podcast: moment_track segments are the spine; news: claims_tracker is the signature accountability surface; gaming: tier_list; sport: formation_diagram).",
+  "domainRequirementsNote": "Per-domain assembled-output validation (_validate_domain_requirements in assembly/core.py): `required` components are backfilled from defaultTabs when the planner drops them (promotion equivalents count, e.g. comparison_radar satisfies comparison); `max` caps per-component tab counts; `forbidden` components are stripped at plan post-validation (before extraction burns tokens) AND again at assembly as a backstop — a forbidden component is never rendered for that domain regardless of what the planner emits. quiz_arena is not forbidden for learning/language/tech/science/podcast/news, but it ships only where quizPolicy allows it: is_learnable and an instructional format — quizPolicy.formats (lecture, tutorial; output-quality D9 revised 2026-10-23), never a talk, interview, podcast or news (a podcast or news primary keeps a quiz only on a lecture or tutorial format). Every domain must have an entry — an empty `required` is a deliberate decision (music: lyrics_karaoke optional so videos without per-line timing don't fail; podcast: moment_track segments are the spine; news: claims_tracker is the signature accountability surface; gaming: tier_list; sport: formation_diagram).",
   "domainRequirements": {
     "food": { "required": ["step_player", "checklist"], "max": { "flash_deck": 1 }, "forbidden": ["quiz_arena"] },
     "project": { "required": ["step_player", "checklist"], "max": { "flash_deck": 1 }, "forbidden": ["quiz_arena"] },
@@ -148,9 +148,9 @@
   "playbooks": {
     "gaming:unboxing": {
       "required": ["tier_list"],
-      "preferred": ["moment_track", "info_grid", "checklist"],
+      "preferred": ["moment_track", "spot_explorer", "checklist"],
       "forbidden": ["quiz_arena", "code_playground", "workout_room", "claims_tracker"],
-      "planGuidance": "Box-opening / TCG pack-opening video: the pulls ARE the content. Rankings = the pulled cards (rarity or market-value bracket as tier, why it matters as reason). Highlights = the pull moments with timestamps. Never quiz the viewer on an unboxing."
+      "planGuidance": "Box-opening / TCG pack-opening video: the pulls ARE the content. Rankings = the pulled cards with the reason each matters (rarity, market value, playability); a tier only where the creator ranks the pull in words — a rarity or price bracket is a reason, never a tier. Highlights = the pull moments with timestamps. Never quiz the viewer on an unboxing."
     },
     "review:unboxing": {
       "required": [],
@@ -161,7 +161,7 @@
     "learning:talk": {
       "preferred": ["spot_explorer", "checklist", "moment_track"],
       "forbidden": ["video_filmstrip", "flash_deck"],
-      "planGuidance": "Talk / keynote (content-model §1): open on Key ideas — spot_explorer on learning.keyIdeas (claim, why, quote, timestamp, kind), sectioned by the talk's parts; its figures ride as the numbers strip and its terms as a section of that tab, never an info_grid tab of their own. Then What they asked — checklist on learning.takeaways, only when the speaker makes 3+ explicit requests of the audience (an imperative said to the room, quotable) — never the speaker's own practices; Moments — moment_track on learning.timestamps, what each beat established. A concept_canvas only as a later tab when the concepts connect (the density table sets the minimum); claims_tracker on learning.claims only with has_claims, after the key ideas."
+      "planGuidance": "Talk / keynote (content-model §1): open on Key ideas — spot_explorer on learning.keyIdeas (claim, why, quote, timestamp, kind), sectioned by the talk's parts; its figures ride as the numbers strip and its terms as a section of that tab, never an info_grid tab of their own. Then What they asked — checklist on learning.takeaways, built from the key ideas of kind ask (each with the words that ask as its quote, so the Key ideas brief names every ask), only when the speaker makes 3+ explicit requests of the audience (an imperative said to the room, quotable) — never the speaker's own practices; Moments — moment_track on learning.timestamps, what each beat established. A concept_canvas only as a later tab when the concepts connect (the density table sets the minimum); claims_tracker on learning.claims only with has_claims, after the key ideas."
     },
     "learning:lecture": {
       "preferred": ["concept_canvas", "spot_explorer", "moment_track", "quiz_arena"],

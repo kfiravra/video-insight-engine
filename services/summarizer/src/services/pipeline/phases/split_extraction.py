@@ -77,14 +77,22 @@ _PROGRESS_SECTION = "groups"
 # ─── Plan-done: fields → groups → the run ───
 
 
-def _requested(plan: PlanResult) -> list[FieldRequest]:
+def _requested(plan: PlanResult, content_format: str | None) -> list[FieldRequest]:
+    """The plan's field requests; ``content_format`` is the probe's (a talk's asks tab
+    waits for the key ideas, ``field_requests._planned``)."""
     return requested_fields(
-        plan.tabs, plan.content_tags, plan.modifiers, scalar_fields, primary_tag=plan.primary_tag
+        plan.tabs,
+        plan.content_tags,
+        plan.modifiers,
+        scalar_fields,
+        primary_tag=plan.primary_tag,
+        content_format=content_format,
     )
 
 
 def _job(
     plan: PlanResult,
+    content_format: str | None,
     visual_annotations: str = "",
     frame_context: str = "",
     chunk_frame_context: Mapping[int, str] | None = None,
@@ -96,6 +104,7 @@ def _job(
         visual_annotations=visual_annotations,
         frame_context=frame_context,
         chunk_frame_context=chunk_frame_context or {},
+        content_format=content_format,
     )
 
 
@@ -124,7 +133,7 @@ async def _split_run(ctx: PipelineContext) -> tuple[SplitRun, bool]:
     chunks = await plan_chunks(ctx)
     plan, triage, video = ctx.plan_result, ctx.triage, ctx.video_data
     assert plan is not None and triage is not None and video is not None
-    groups = build_groups(_requested(plan), plan.tabs, grouping_config())
+    groups = build_groups(_requested(plan, ctx.content_format), plan.tabs, grouping_config())
     text_groups = tuple(g for g in groups if not g.visual)
     prompt = with_group_rules(
         _build_prompt(
@@ -139,7 +148,7 @@ async def _split_run(ctx: PipelineContext) -> tuple[SplitRun, bool]:
     run = SplitRun(
         ctx.llm_service,
         prompt,
-        _job(plan),
+        _job(plan, ctx.content_format),
         tuple(chunks),
         text_groups,
         tuple(plan.content_tags),
@@ -160,13 +169,13 @@ def _visual_cutter(ctx: PipelineContext, chunks: Sequence[ExtractionChunk]) -> V
         await ctx.frames_done.wait()
         plan = ctx.plan_result
         assert plan is not None
-        group = visual_group(_requested(plan), fired)
+        group = visual_group(_requested(plan, ctx.content_format), fired)
         if group is None:
             return None
         gallery, descriptions = ctx.scene_frames_gallery, ctx.frame_descriptions
         frames = format_gallery_frames_for_extraction(gallery, descriptions)
         per_chunk = key_frames_by_chunk(gallery, descriptions, chunks)
-        return group, _job(plan, ctx.visual_annotations, frames, per_chunk)
+        return group, _job(plan, ctx.content_format, ctx.visual_annotations, frames, per_chunk)
 
     return cut
 
@@ -231,7 +240,8 @@ async def _land(
         _log_landed(ctx, outcome)
         yield progress.landed(outcome)
         assert ctx.plan_result is not None
-        for event in landing.events(outcome, outcomes, _requested(ctx.plan_result)):
+        requests = _requested(ctx.plan_result, ctx.content_format)
+        for event in landing.events(outcome, outcomes, requests):
             yield event
 
 

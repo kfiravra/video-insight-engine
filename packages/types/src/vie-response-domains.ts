@@ -405,6 +405,8 @@ export interface GamingLoadoutItem {
   item: string;
   category?: string;
   note?: string;
+  /** Where the item is named (seconds). */
+  timestamp?: number;
 }
 
 export interface GamingWalkthroughStep {

@@ -3,6 +3,8 @@
 Raw ``s[:N]`` slices cut mid-word with no ellipsis ("Rare, high-cost powe"),
 which reads as a rendering bug rather than a truncation. Every user-visible
 string cap in assembly goes through :func:`truncate_words` instead.
+:func:`in_latin_script` tells a line written in English's script from one that cannot
+be English (Hebrew, Arabic, Cyrillic, CJK …).
 """
 
 from __future__ import annotations
@@ -74,3 +76,18 @@ def truncate_words(text: str, cap: int) -> str:
     else:
         head = text[: _grapheme_start(text, cap - 1)]
     return head.rstrip() + "…"
+
+
+def _foreign_word(word: str) -> bool:
+    """Whether ``word`` holds a letter of a script other than Latin."""
+    return any(ch.isalpha() and "LATIN" not in unicodedata.name(ch, "") for ch in word)
+
+
+def in_latin_script(text: str) -> bool:
+    """Whether ``text`` reads in English's script: under a third of its words hold a
+    letter of another script (Hebrew, Arabic, Cyrillic, CJK …). Brand names inside a
+    Hebrew line leave it Hebrew, one foreign term leaves an English line English; a line
+    with no letter counts as Latin."""
+    words = [word for word in text.split() if any(ch.isalpha() for ch in word)]
+    foreign = sum(1 for word in words if _foreign_word(word))
+    return not words or 3 * foreign < len(words)

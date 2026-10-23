@@ -10,10 +10,12 @@ import {
 } from 'recharts';
 import { GlassCard, Badge } from '@/components/vie';
 import { Slider } from '@/components/ui/slider';
+import { useLabels } from '@/lib/i18n';
 
 import { DEFAULT_WEIGHT, MAX_SCORE, scoreComparisonAxes } from './radar-scoring';
 
 import type { ReviewComparison } from '@vie/types';
+import type { RadarSet } from './competitor-groups';
 import type { AxisScore } from './radar-scoring';
 
 function computeLeftPercent(scores: AxisScore[], weights: number[]): number {
@@ -42,6 +44,7 @@ export const ComparisonRadarHero = memo(function ComparisonRadarHero({
   colLeft,
   colRight,
 }: ComparisonRadarHeroProps) {
+  const t = useLabels();
   const scored = useMemo(() => scoreComparisonAxes(comparisons), [comparisons]);
   const [weights, setWeights] = useState<number[]>(() => scored.map(() => DEFAULT_WEIGHT));
   // One weight per scored axis, not per row: a prose row has no spoke, so it
@@ -155,7 +158,7 @@ export const ComparisonRadarHero = memo(function ComparisonRadarHero({
         </div>
         {lowerIsBetter.length > 0 && (
           <p className="mt-2 text-xs text-muted-foreground">
-            Further out is better — lower wins on {lowerIsBetter.join(', ')}.
+            {t.radarLowerWins.replace('{features}', lowerIsBetter.join(', '))}
           </p>
         )}
       </GlassCard>
@@ -215,3 +218,28 @@ export const ComparisonRadarHero = memo(function ComparisonRadarHero({
     </div>
   );
 });
+
+interface ComparisonRadarsProps {
+  radars: RadarSet[];
+  colLeft: string;
+  colRight: string;
+}
+
+/** The radar view: one radar for a single opponent; one per competitor under
+ *  its "vs {name}" eyebrow, as the tables and cards split (`radarSets`). */
+export function ComparisonRadars({ radars, colLeft, colRight }: ComparisonRadarsProps) {
+  const t = useLabels();
+  if (radars.length === 1 && !radars[0].name) {
+    return <ComparisonRadarHero comparisons={radars[0].rows} colLeft={colLeft} colRight={colRight} />;
+  }
+  return (
+    <div className="space-y-4">
+      {radars.map((radar) => (
+        <section key={radar.name} className="space-y-2">
+          <h4 className="type-eyebrow">{t.versusName.replace('{name}', radar.name)}</h4>
+          <ComparisonRadarHero comparisons={radar.rows} colLeft={colLeft} colRight={radar.name} />
+        </section>
+      ))}
+    </div>
+  );
+}

@@ -1,3 +1,4 @@
+import { hasRadarAxes } from './radar-scoring';
 import type { ComparisonRow } from './types';
 
 /** One competitor's rows. `index` is the row's position in the full list, so a
@@ -28,4 +29,26 @@ export function groupByCompetitor(comparisons: ComparisonRow[]): CompetitorGroup
 /** Two or more named competitors → the page reads as one table per competitor. */
 export function hasMultipleCompetitors(comparisons: ComparisonRow[]): boolean {
   return groupByCompetitor(comparisons).filter((g) => g.name).length >= 2;
+}
+
+/** One radar: its rows, and the competitor its second series is — empty for
+ *  a page with a single opponent, which keeps the page's column label. */
+export interface RadarSet {
+  name: string;
+  rows: ComparisonRow[];
+}
+
+/**
+ * The radars a comparison can draw honestly. One opponent → one radar when the
+ * rows hold ≥ 3 numeric axes. Two or more → one radar per competitor on its own
+ * rows, like the tables and cards — and none when any competitor lacks three
+ * axes: a pooled "Competitor" series plots one spoke per rival and crowns a
+ * product that does not exist (D13).
+ */
+export function radarSets(comparisons: ComparisonRow[]): RadarSet[] {
+  if (!hasMultipleCompetitors(comparisons)) {
+    return hasRadarAxes(comparisons) ? [{ name: '', rows: comparisons }] : [];
+  }
+  const groups = groupByCompetitor(comparisons).map((group) => ({ name: group.name, rows: group.rows.map((r) => r.row) }));
+  return groups.every((group) => group.name && hasRadarAxes(group.rows)) ? groups : [];
 }

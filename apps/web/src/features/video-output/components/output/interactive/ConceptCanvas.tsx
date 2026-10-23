@@ -4,6 +4,7 @@ import { Network } from 'lucide-react';
 import { CanvasViewToggle } from '@/components/vie/canvas/CanvasShell';
 import { CanvasInspector } from '@/components/vie/canvas/CanvasInspector';
 import { useIsDesktop } from '@/hooks/use-media-query';
+import { useLabels } from '@/lib/i18n';
 import type { ConceptItem } from '@vie/types';
 
 import { ConceptCanvasList } from './ConceptCanvasList';
@@ -20,10 +21,6 @@ interface ConceptCanvasProps {
 }
 
 type ConceptView = 'list' | 'map';
-const VIEW_OPTIONS = [
-  { value: 'list', label: 'List' },
-  { value: 'map', label: 'Map' },
-] as const satisfies ReadonlyArray<{ value: ConceptView; label: string }>;
 
 // ─── Canvas ───
 
@@ -39,6 +36,7 @@ export const ConceptCanvas = memo(function ConceptCanvas({
   groups: groupsProp,
   onSeek,
 }: ConceptCanvasProps) {
+  const t = useLabels();
   const isDesktop = useIsDesktop();
   const model = useMemo(() => buildConceptGraph(concepts, groupsProp), [concepts, groupsProp]);
 
@@ -69,7 +67,15 @@ export const ConceptCanvas = memo(function ConceptCanvas({
         <p className="text-xs font-medium tabular-nums text-muted-foreground" data-testid="concept-canvas-counts">
           {counts}
         </p>
-        <CanvasViewToggle label="Concept view" value={view} options={VIEW_OPTIONS} onChange={setView} />
+        <CanvasViewToggle
+          label="Concept view"
+          value={view}
+          options={[
+            { value: 'list', label: t.viewList },
+            { value: 'map', label: t.viewMap },
+          ]}
+          onChange={setView}
+        />
       </div>
 
       {view === 'map' ? (

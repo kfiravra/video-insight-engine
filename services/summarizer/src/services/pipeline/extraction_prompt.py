@@ -29,6 +29,7 @@ from ...shared_config.domain_config import NON_EXTRACTION_DATASOURCES, DataSourc
 from ...utils.language_utils import output_language_directive
 from ..llm_messages import TextBlock, text_block
 from ..transcript.render import format_marker
+from .assembly.talk_asks import ASK_KIND, KEY_IDEAS_SOURCE, TALK_FORMAT, is_asks_view
 from .pipeline_helpers import sanitize_for_prompt
 from .prompt_builder import PROMPTS_DIR, load_prompt_text
 from .visual_annotations import CLOSE_TAG, OPEN_TAG, annotation_entries
@@ -206,11 +207,21 @@ def _amount(expect: int, spec: DataSourceSpec | None, share: float = 1.0) -> str
     return f"{expected}cap {spec['cap']}"
 
 
-def _tab_line(tab: Mapping[str, object], share: float = 1.0, part: PartWindow | None = None) -> str:
+def _tab_line(
+    tab: Mapping[str, object],
+    share: float = 1.0,
+    part: PartWindow | None = None,
+    content_format: str | None = None,
+) -> str:
     brief = TabBrief.from_raw(tab.get("brief"))
     source = _data_source(tab)
+    # A talk's asks checklist is a view of the key ideas of kind ask (``talk_asks``): its
+    # line names the field the group extracts for it (``field_requests._planned``).
+    asks = content_format == TALK_FORMAT and is_asks_view(tab.get("component"), source)
+    source = KEY_IDEAS_SOURCE if asks else source
+    shown = f"{source} (kind {ASK_KIND})" if asks else source
     label = _clean(str(tab.get("label") or tab.get("id") or "Tab"), _LABEL_MAX_CHARS)
-    parts = [f"- {label} — {tab.get('component', '')} ← {source}"]
+    parts = [f"- {label} — {tab.get('component', '')} ← {shown}"]
     if brief.what:
         parts.append(f"what: {_clean(brief.what, _BRIEF_MAX_CHARS)}")
     elif isinstance(goal := tab.get("goal"), str) and goal:
@@ -227,11 +238,17 @@ def render_tabs_to_serve(
     emitted: Collection[str],
     share: float = 1.0,
     part: PartWindow | None = None,
+    content_format: str | None = None,
 ) -> str:
     """One line per planned tab that reads a field of an ``emitted`` domain or
     modifier: brief + count + cap — the count scaled by a chunk's ``share``, an
-    argument list's windows read as hints inside a chunk's ``part`` (``where_hints``)."""
-    lines = [_tab_line(tab, share, part) for tab in tabs if _serves_extraction(tab, emitted)]
+    argument list's windows read as hints inside a chunk's ``part`` (``where_hints``);
+    on a talk (``content_format``, the probe's) the asks checklist reads the key ideas."""
+    lines = [
+        _tab_line(tab, share, part, content_format)
+        for tab in tabs
+        if _serves_extraction(tab, emitted)
+    ]
     return "\n".join(lines) or _NO_TABS
 
 

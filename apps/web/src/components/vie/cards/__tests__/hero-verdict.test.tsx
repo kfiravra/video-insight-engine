@@ -67,6 +67,31 @@ async function openVerdict(user: ReturnType<typeof userEvent.setup>): Promise<vo
 }
 
 describe('VideoHero — review verdict', () => {
+  // pC review: the badge is a label in the page's language, not the stored value.
+  describe('badge language', () => {
+    it('should say the verdict badge in Hebrew when the output is Hebrew', () => {
+      renderHero({}, (ui) => (
+        <DirectionProvider language="he" isRTL>
+          {ui}
+        </DirectionProvider>
+      ));
+
+      expect(screen.getByRole('button', { name: /^פסק הדין\s*מומלץ$/ })).toBeInTheDocument();
+    });
+
+    it('should print "Not recommended" when the reviewer advises against it', () => {
+      renderHero({ verdict: { ...VERDICT, badge: 'not_recommended' } });
+
+      expect(screen.getByText('Not recommended')).toBeInTheDocument();
+    });
+
+    it('should print an unknown badge value as stored when no label exists for it', () => {
+      renderHero({ verdict: { ...VERDICT, badge: 'must_have' } });
+
+      expect(screen.getByText('must have')).toBeInTheDocument();
+    });
+  });
+
   describe('desktop', () => {
     it('should show the verdict row collapsed with its badge when the review states one', () => {
       renderHero();

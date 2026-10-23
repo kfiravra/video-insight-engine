@@ -1,6 +1,8 @@
-import { memo, useCallback, useState } from 'react';
+import { memo, useCallback, useId, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
 import { useLabels } from '@/lib/i18n';
+import { useIsTruncated } from '@/hooks/use-is-truncated';
+import { Button } from '@/components/ui/button';
 import { CollapsibleSection } from './CollapsibleSection';
 
 interface HeroWorthItProps {
@@ -11,7 +13,7 @@ interface HeroWorthItProps {
   /** A review's stated Best for / Not for: each replaces its hero line when non-empty (4.3). */
   bestFor?: string[];
   notFor?: string[];
-  /** Desktop (4.6a): each line on one line, label run in, the rest truncated. */
+  /** Desktop (4.6a): each line on one line, label run in; a cut line opens with "more". */
   oneLine?: boolean;
   className?: string;
 }
@@ -35,34 +37,65 @@ function ToneDot({ dot }: { dot: string }) {
   return <span aria-hidden="true" className={cn('h-1.5 w-1.5 rounded-full shrink-0', dot)} />;
 }
 
-/** Desktop: one line each, the label run in and the text cut with an ellipsis
- *  (the whole line stays in the DOM for screen readers and in the tooltip);
- *  a list reads as one "a · b" line. */
+/** One desktop line: the label run in, the text on one line with an
+ *  ellipsis. A cut line ends in "more", which unfolds it in place — for touch,
+ *  keyboard and screen readers alike (a `title` tooltip reaches none of them);
+ *  folded, the toggle shares the line, so the hero keeps its height (4.6a). */
+function OneLine({ line }: { line: WorthLine }) {
+  const t = useLabels();
+  const textRef = useRef<HTMLSpanElement>(null);
+  const cut = useIsTruncated(textRef);
+  const [open, setOpen] = useState(false);
+  const textId = useId();
+  return (
+    <div className={cn('flex min-w-0 gap-2.5', open ? 'items-baseline' : 'items-center')}>
+      <dt className="type-eyebrow flex shrink-0 items-center gap-2">
+        <ToneDot dot={line.dot} />
+        {line.label}
+      </dt>
+      {/* The toggle sits inside the <dd>: a <dl> group holds only <dt> / <dd>. */}
+      <dd className={cn('flex min-w-0 flex-1 gap-2.5', open ? 'items-baseline' : 'items-center')}>
+        <span
+          ref={textRef}
+          id={textId}
+          className={cn('min-w-0 text-sm leading-snug text-foreground/80', open ? 'text-pretty' : 'truncate')}
+        >
+          {line.items.join(' · ')}
+        </span>
+        {(cut || open) && (
+          <Button
+            variant="link"
+            size="bare"
+            onClick={() => setOpen(!open)}
+            aria-expanded={open}
+            aria-controls={textId}
+            aria-label={(open ? t.hideLine : t.moreLine).replace('{label}', line.label)}
+            className="shrink-0 text-xs font-medium text-[var(--vie-accent)] hover:underline"
+          >
+            {open ? t.hide : t.more}
+          </Button>
+        )}
+      </dd>
+    </div>
+  );
+}
+
+/** Desktop: one line each (a list reads as one "a · b" line). */
 function OneLineWorth({ lines, className }: { lines: WorthLine[]; className?: string }) {
   return (
     <dl className={cn('space-y-0.5', className)}>
-      {lines.map((line) => {
-        const text = line.items.join(' · ');
-        return (
-          <div key={line.key} className="flex min-w-0 items-center gap-2.5">
-            <dt className="type-eyebrow flex shrink-0 items-center gap-2">
-              <ToneDot dot={line.dot} />
-              {line.label}
-            </dt>
-            <dd title={text} className="min-w-0 truncate text-sm leading-snug text-foreground/80">
-              {text}
-            </dd>
-          </div>
-        );
-      })}
+      {lines.map((line) => (
+        <OneLine key={line.key} line={line} />
+      ))}
     </dl>
   );
 }
 
 /** "Worth it for / Skip if" — the hero's answer to "should I watch this?"
- *  (C2, D18): one line each on desktop, stacked in full on phones. On a review
- *  the reviewer's own Best for / Not for lists take each line's place. The tone
- *  rides on a dot so the labels keep the eyebrow's contrast in both themes. */
+ *  (C2, D18): one line each on desktop ("more" on a cut one), stacked in full
+ *  on phones. On a review the reviewer's own Best for / Not for lists take
+ *  each line's place. The tone rides on a dot so the labels keep the
+ *  eyebrow's contrast in both themes. */
 export const HeroWorthIt = memo(function HeroWorthIt({ worthItFor, skipIf, bestFor, notFor, oneLine, className }: HeroWorthItProps) {
   const t = useLabels();
   const best = stated(bestFor);

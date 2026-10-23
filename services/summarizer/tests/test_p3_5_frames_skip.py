@@ -94,7 +94,7 @@ class TestSkipsFrames:
         assert skips_frames(garbage, "low", _LONG) is False
 
 
-# The stored gate-2 probes (dev/active/output-quality/data/<code>/trace.json).
+# The stored gate-2 probes (the output-quality task's traces, 2026-10).
 _SAMPLE = [
     ("S01", "learning", "talk", False, 3787, "Rails World 2026 Opening Keynote - DHH"),
     ("S02", "podcast", "interview", False, 4978, "Max Tegmark: Life 3.0 | Lex Fridman Podcast #1"),

@@ -51,14 +51,42 @@ describe('ComparisonInteractive per-competitor tables', () => {
     expect(screen.queryByText(/wins \d+ of \d+ categories/)).not.toBeInTheDocument();
   });
 
-  it('should name the other side Competitor when two competitors have no rightLabel', () => {
-    const numeric = [
-      { feature: 'Battery', thisProduct: '6', competitor: '8', competitorName: 'Sony', winner: 'right' as const },
-      { feature: 'Weight', thisProduct: '5', competitor: '6', competitorName: 'Sony', winner: 'left' as const },
-      { feature: 'Price', thisProduct: '249', competitor: '299', competitorName: 'Bose', winner: 'left' as const },
+  // pC review: the radar splits per competitor like the tables — never one
+  // pooled "Competitor" series with a spoke per rival (D13).
+  describe('radar with two or more competitors', () => {
+    const numeric = (name: string) => [
+      { feature: 'Battery', thisProduct: '6', competitor: '8', competitorName: name, winner: 'right' as const },
+      { feature: 'Weight', thisProduct: '5', competitor: '6', competitorName: name, winner: 'left' as const },
+      { feature: 'Price', thisProduct: '249', competitor: '299', competitorName: name, winner: 'left' as const },
     ];
-    render(<ComparisonInteractive comparisons={numeric} view="radar" />);
-    expect(screen.getByLabelText(/Radar comparing .* and Competitor/)).toBeInTheDocument();
+
+    it('should draw one radar per competitor when each has three numeric axes', () => {
+      render(<ComparisonInteractive comparisons={[...numeric('Sony'), ...numeric('Bose')]} view="radar" />);
+      expect(screen.getAllByRole('img', { name: /^Radar comparing / }).map((el) => el.getAttribute('aria-label'))).toEqual([
+        'Radar comparing This Product and Sony',
+        'Radar comparing This Product and Bose',
+      ]);
+    });
+
+    it('should head each radar with its own competitor when there are two or more', () => {
+      render(<ComparisonInteractive comparisons={[...numeric('Sony'), ...numeric('Bose')]} view="radar" />);
+      expect(screen.getByRole('heading', { name: 'vs Bose' })).toBeInTheDocument();
+    });
+
+    it('should draw no radar when a competitor has fewer than three numeric axes', () => {
+      render(<ComparisonInteractive comparisons={[...numeric('Sony'), ...numeric('Bose').slice(0, 2)]} view="radar" />);
+      expect(screen.queryByRole('img', { name: /^Radar comparing / })).not.toBeInTheDocument();
+    });
+
+    it('should show the per-competitor tables when no radar can be drawn', () => {
+      render(<ComparisonInteractive comparisons={[...numeric('Sony'), ...numeric('Bose').slice(0, 2)]} view="radar" />);
+      expect(screen.getAllByRole('table')).toHaveLength(2);
+    });
+
+    it('should never crown a pooled Competitor series when the rows name two competitors', () => {
+      render(<ComparisonInteractive comparisons={[...numeric('Sony'), ...numeric('Bose')]} view="radar" />);
+      expect(screen.queryByText(/^Competitor wins by/)).not.toBeInTheDocument();
+    });
   });
 
   it('should keep one table when two rows spell the competitor in different case', () => {

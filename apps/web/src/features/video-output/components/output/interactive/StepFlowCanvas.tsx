@@ -4,6 +4,7 @@ import { AlertTriangle, Lightbulb, Workflow } from 'lucide-react';
 import { CanvasViewToggle } from '@/components/vie/canvas/CanvasShell';
 import { GlassCard, SeekChip, TextBlock, VisualEvidence } from '@/components/vie';
 import { cn } from '@/lib/utils';
+import { useLabels } from '@/lib/i18n';
 import { useTabState } from '@/features/video-output/contexts/TabStateContext';
 import { parseStepDurationSeconds } from '@/features/video-output/lib/step-duration';
 import type { StepItem } from '@vie/types';
@@ -21,10 +22,6 @@ interface StepFlowCanvasProps {
 }
 
 type StepView = 'list' | 'flow';
-const VIEW_OPTIONS = [
-  { value: 'list', label: 'List' },
-  { value: 'flow', label: 'Flow' },
-] as const satisfies ReadonlyArray<{ value: StepView; label: string }>;
 
 // ─── List row ───
 
@@ -105,6 +102,7 @@ export const StepFlowCanvas = memo(function StepFlowCanvas({
   onSeek,
   tabId = 'steps',
 }: StepFlowCanvasProps) {
+  const t = useLabels();
   // Completion lives in the shared TabStateContext (single source of truth) so
   // this canvas and StepByStepInteractive stay in sync, and pre-existing
   // completions are reflected the moment the canvas mounts.
@@ -135,7 +133,15 @@ export const StepFlowCanvas = memo(function StepFlowCanvas({
     <div className="space-y-3" data-tab-id={tabId}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-xs font-medium tabular-nums text-muted-foreground">{progress}</p>
-        <CanvasViewToggle label="Steps view" value={view} options={VIEW_OPTIONS} onChange={setView} />
+        <CanvasViewToggle
+          label="Steps view"
+          value={view}
+          options={[
+            { value: 'list', label: t.viewList },
+            { value: 'flow', label: t.viewFlow },
+          ]}
+          onChange={setView}
+        />
       </div>
 
       {view === 'flow' ? (
