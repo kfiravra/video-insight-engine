@@ -81,12 +81,12 @@ class TestMongoDocStamping:
         assert await _stamp_on_saved_doc("vtest") == "vtest"
 
     @pytest.mark.asyncio
-    async def test_should_report_v10_on_new_docs(self):
-        """pipeline-1min 4.0 bumps the canonical file to v10 (the model refresh:
-        extraction on Sonnet 5.5 with the completeness rule, memory on Haiku 5.5
-        — output changes); docs saved now carry the value settings read from it.
+    async def test_should_report_v11_on_new_docs(self):
+        """output-quality C.1 bumps the canonical file to v11 (the task's one bump:
+        hero rewrite, quiz v2, split-extraction fixes, assembly hygiene — output
+        changes); docs saved now carry the value settings read from it.
         Pins the bump — the next bump updates this literal."""
-        assert await _stamp_on_saved_doc(settings.PIPELINE_VERSION) == "v10"
+        assert await _stamp_on_saved_doc(settings.PIPELINE_VERSION) == "v11"
 
 
 async def _stamp_on_saved_doc(version: str) -> str:
