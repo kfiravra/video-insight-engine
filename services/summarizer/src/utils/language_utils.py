@@ -81,12 +81,13 @@ ENGLISH_OUTPUT_DIRECTIVE = (
 )
 
 # The extraction's one exception on a non-English run (output-quality 4.2, D12): a
-# quote stays the speaker's own words, its English beside it. Never sent on an
-# English run, so an English run's prompt keeps every byte.
+# quote stays the speaker's own words. Its English (``quoteEn`` / ``questionEn``) is
+# written by the translation phase from the verified line, never asked of the
+# extraction (4.6c, G4-1). Never sent on an English run, so an English run's prompt
+# keeps every byte.
 SOURCE_QUOTE_DIRECTIVE = (
     "QUOTES — the one exception: every `quote` is copied verbatim from the transcript, "
-    "in the transcript's language, never translated; put its English beside it as "
-    "`quoteEn`. A `qa` question is copied the same way, its English as `questionEn`."
+    "in the transcript's language, never translated. A `qa` question is copied the same way."
 )
 
 

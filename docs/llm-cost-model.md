@@ -333,6 +333,14 @@ One added call, on chunked runs only (> 40 min; `MERGE_RANK_ENABLED`, default `t
   ids only. ≈ $0.001–0.002 a long video on Haiku 5.5 ($0.10 / $0.50 per
   MTok); ≤ 40-min runs never make the call.
 
+## Output-quality phase 4: the English beneath verbatim quotes
+
+| Call | Span / stage | Model | `feature` | When it bills |
+|------|--------------|-------|-----------|---------------|
+| Verbatim lines → English | `translation_full` (source → en) | `LLM_TRANSLATION_MODEL` (gpt-6-luna) | `summarize:translation` | a non-English run with a verbatim quote or verified question: one call per ≤ 2,500-char / ≤ 100-string batch of distinct lines, in parallel with the output translation; English runs never |
+
+S15: 25 lines, ≈ 1.6 K chars → 1 call, ≈ 1 K in / 0.5 K out ≈ $0.0004 ($0.10 / $0.50 per MTok); the non-English extraction block 1 is 69 bytes shorter.
+
 ## How 1h writes are priced
 
 Anthropic returns `usage.cache_creation.{ephemeral_5m_input_tokens,

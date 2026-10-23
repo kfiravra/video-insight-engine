@@ -16,7 +16,8 @@ the ``sourceLanguage`` artifact ({code, name, isRTL, tabs, meta}).
 A speaker's verbatim line (a found ``quote`` and any leaf of its card restating it, a
 verified interview ``question``) is already in the source language: it is never sent,
 and the English rendering beside it (``quoteEn`` / ``questionEn``) is left out of the
-source-language copy (D12, output-quality 4.2).
+source-language copy (D12, output-quality 4.2). That English is written by the
+translation phase's source→English pass over the same lines (``translation_quotes``, 4.6c).
 
 On any failure (LLM error, length mismatch, mirror detection): returns the
 input unchanged (no ``sourceLanguage`` key) so the FE simply renders no toggle.
@@ -174,7 +175,7 @@ def _restates_quote(parent: dict[str, Any], value: str) -> bool:
     return bool(line) and value.strip().strip(_QUOTE_MARKS).strip() == line
 
 
-def _is_verbatim_line(parent: dict[str, Any], key: str, value: str) -> bool:
+def is_verbatim_line(parent: dict[str, Any], key: str, value: str) -> bool:
     """Whether ``parent[key]`` (``value``) is a speaker's line in the source language (D12)."""
     if key == _QUOTE_KEY:
         return parent.get(QUOTE_TRANSLATED_KEY) is not True
@@ -189,7 +190,7 @@ def _kept_as_is(parent: dict[str, Any], key: str, value: str) -> bool:
     """A string leaf the walker never sends to translation."""
     if key in _SKIP_KEYS or key in _ENGLISH_ONLY_KEYS:
         return True
-    return _is_verbatim_line(parent, key, value)
+    return is_verbatim_line(parent, key, value)
 
 
 def _collect_strings(
@@ -330,13 +331,15 @@ async def _translate_or_salvage(
     return out, salvaged_mask
 
 
-async def _translate_in_batches(
+async def translate_in_batches(
     llm_service: LLMService,
     strings: list[str],
     source_language: str,
     target_language: str,
 ) -> tuple[list[str], list[bool]] | None:
-    """Translate ``strings`` in concurrent size-bounded batches, concatenated in order.
+    """Translate ``strings`` in concurrent size-bounded batches, concatenated in order
+    (the output into the source language here; the verbatim lines into English,
+    ``translation_quotes``).
 
     Resilient to a single bad batch: a batch that fails (LLM error or a count
     mismatch) is retried once split in half, and any half that still fails falls
@@ -423,7 +426,7 @@ async def translate_to_source(
         target_lang,
     )
 
-    batched = await _translate_in_batches(llm_service, originals, "en", target_lang)
+    batched = await translate_in_batches(llm_service, originals, "en", target_lang)
     if batched is None:
         logger.warning(
             "Translation failed — returning input unchanged (no sourceLanguage)",
@@ -435,7 +438,7 @@ async def translate_to_source(
     # strings are their English originals by construction, so including them would
     # inflate the mirror ratio and could discard a genuinely-translated surface
     # just because part of it was salvaged. At least one non-salvaged string
-    # exists here (else _translate_in_batches returned None).
+    # exists here (else translate_in_batches returned None).
     mirror_originals = [o for o, sal in zip(originals, salvaged_mask) if not sal]
     mirror_translations = [t for t, sal in zip(translations, salvaged_mask) if not sal]
     if is_mirror(mirror_originals, mirror_translations):

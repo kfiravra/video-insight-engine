@@ -1,10 +1,11 @@
 """4.2 (D12): a non-English run's quotes stay verbatim, their English beside them.
 
-The extraction writes ``quoteEn`` next to every verbatim ``quote`` (and ``questionEn``
-next to a ``podcast.qa`` question) on a non-English run — no new call. The line that
-asks for it rides only in a non-English run's block 1, so an English run sends the
-same bytes as before; the models keep the two fields and leave them out of the dump
-when the run wrote none, so an English run's extraction keeps its bytes too.
+On a non-English run the extraction copies every ``quote`` (and a ``podcast.qa``
+question) verbatim; the line that asks for it rides only in a non-English run's block 1,
+so an English run sends the same bytes as before. The English beside the line
+(``quoteEn`` / ``questionEn``) is written by the translation phase since 4.6c, never
+asked of the extraction; the models keep the two fields and leave them out of the dump
+when unset, so an English run's extraction keeps its bytes too.
 """
 
 from __future__ import annotations
@@ -68,8 +69,13 @@ class TestOutputLanguageDirective:
     ) -> None:
         assert output_language_directive(source) == ENGLISH_OUTPUT_DIRECTIVE
 
-    def test_should_name_quote_en_and_question_en_when_the_line_is_read(self) -> None:
-        assert "`quoteEn`" in SOURCE_QUOTE_DIRECTIVE and "`questionEn`" in SOURCE_QUOTE_DIRECTIVE
+    def test_should_ask_for_no_quote_en_or_question_en_when_the_source_is_not_english(
+        self,
+    ) -> None:
+        # 4.6c (G4-1): the translation phase writes the English from the verified line.
+        directive = output_language_directive("he")
+
+        assert "quoteEn" not in directive and "questionEn" not in directive
 
 
 class TestExtractionPrompt:
