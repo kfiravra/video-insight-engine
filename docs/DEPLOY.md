@@ -290,6 +290,29 @@ aws ec2 start-instances --region eu-north-1 --instance-ids i-XXXX
 
 Docker is enabled at boot and every long-running service has `restart: unless-stopped`, so the stack comes back on its own. After a boot the services start in parallel, and any that need a dependency restart until it is ready. A container you stopped by hand stays stopped across reboots; bring it back with `dc up -d`.
 
+## h. Rollback levers
+
+Five flags switch off a pipeline stage without a redeploy. Each defaults to `true` in `services/summarizer/src/config.py` and in both compose anchors, and the server template sets them to `true`. **Removal target: 2026-12-01** — after that date the flags and the paths they fall back to are deleted.
+
+| Flag | `true` (default) | `false` |
+|---|---|---|
+| `HERO_REWRITE_ENABLED` | one `hero_rewrite` call on `LLM_EXTRACTION_MODEL` (reading the extraction's prompt cache) writes the hero: brief, takeaways, worth-it / skip-if | the memory hero plus the synthesis call (`masterSummary`), as before v11 |
+| `QUIZ_V2_ENABLED` | quiz v2 on `LLM_EXTRACTION_MODEL`, reading the extraction's cached blocks: every question carries its answer's timestamp and a verified evidence quote | the `enrich_quiz` call on `LLM_ENRICHMENT_MODEL` (`openai/gpt-4o-mini`, needs `OPENAI_API_KEY`). Either way the quiz ships only on lectures and tutorials (`quizPolicy.formats`) |
+| `MERGE_RANK_ENABLED` | chunked runs (> 40 min) get one `merge_rank` call on `LLM_MEMORY_MODEL`: it dedupes the lists across chunks, cuts over-cap lists by rank and sets key-idea sections | the code-only merge |
+| `FRAMES_SKIP_WHEN_NO_VISUAL_DEMO` | a video over 30 min whose probe finds no visual demo, and whose tier is not HIGH, skips scene detection and vision (LOW tier, or a talk / interview / podcast) | every video gets frames again: slower and costlier on long talking-head videos |
+| `EXTRACTION_PARALLEL` | field groups: the text groups start at plan-done, the visual group at frames-done | one extraction call after frames (long videos: chunked batches one at a time), with the same request bytes for the same plan |
+
+To flip one, set it in `.env` and recreate both pipeline containers. `dc restart` does not re-read `.env`.
+
+```bash
+cd ~/video-insight-engine
+sed -i 's|^QUIZ_V2_ENABLED=.*|QUIZ_V2_ENABLED=false|' .env   # the flag to flip
+dc up -d --force-recreate --no-deps vie-summarizer vie-summarizer-worker
+dc exec vie-summarizer-worker printenv QUIZ_V2_ENABLED        # prints false
+```
+
+A flip affects new runs only. Stored summaries keep the output they were made with, because a flag is not a `PIPELINE_VERSION` change. To see a stored video under the flipped flag, re-submit it with `"bypassCache": true` (`POST /videos`, [API-REFERENCE.md](./API-REFERENCE.md#post-videos)). A full rollback of the release is a redeploy of the previous `main`.
+
 ## Preload demo videos
 
 Use this when YouTube blocks the instance (section b), or to have finished videos ready before an interview. `scripts/demo-export.sh` runs on your machine against the local stack and needs `jq`. It exports the completed videos at the current pipeline version, plus the vector index that video chat uses. `scripts/demo-import.sh` loads that export on the server. Frames and transcripts are not in the export: they live in S3, and the server has its own bucket, so each exported video's `videos/<id>/` prefix is copied from the dev bucket to `BUCKET` as well. Without that copy the imported videos have no frames.
