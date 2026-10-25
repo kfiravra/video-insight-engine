@@ -268,8 +268,10 @@ class TestPlanDoneFiring:
         assert [("Completeness: emit every distinct step" in t) for t in firsts] == [True] * 3
 
     async def test_should_record_the_extraction_step_in_the_timing(
-        self, recorder: PipelineTimingRecorder
+        self, recorder: PipelineTimingRecorder, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        # The hero task the phase starts records its own step whenever the loop runs it.
+        monkeypatch.setattr(settings, "HERO_REWRITE_ENABLED", False)
         await _drain(_done(_ctx(["food"], _FOOD_TABS)), _Groups())
 
         assert [phase["name"] for phase in recorder.phases] == ["extraction"]

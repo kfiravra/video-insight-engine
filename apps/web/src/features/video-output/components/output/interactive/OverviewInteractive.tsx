@@ -254,9 +254,10 @@ export const OverviewInteractive = memo(function OverviewInteractive({
           }
         >
           <ul className="space-y-2">
+            {/* The <li> stays the list's direct child (FadeIn renders a <div>). */}
             {collapsibleItems.map((item, i) => (
-              <FadeIn key={i} index={i}>
-                <li className="flex items-start gap-2.5 text-sm leading-relaxed group">
+              <li key={i}>
+                <FadeIn index={i} className="flex items-start gap-2.5 text-sm leading-relaxed group">
                   <span className="text-lg shrink-0" aria-hidden="true">{item.emoji}</span>
                   <span className={cn(
                     'text-muted-foreground flex-1',
@@ -280,8 +281,8 @@ export const OverviewInteractive = memo(function OverviewInteractive({
                       />
                     </button>
                   )}
-                </li>
-              </FadeIn>
+                </FadeIn>
+              </li>
             ))}
           </ul>
         </ExpandableCard>

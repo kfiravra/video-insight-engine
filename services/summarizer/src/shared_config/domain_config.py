@@ -13,7 +13,7 @@ import logging
 from collections.abc import Collection, Mapping
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal, TypedDict
+from typing import Literal, NotRequired, TypedDict
 
 logger = logging.getLogger(__name__)
 
@@ -128,12 +128,19 @@ def get_playbook(domain: str, content_format: str | None) -> dict:
     """Layout playbook for a ``<domain>:<format>`` pair, or {} when none exists.
 
     Playbooks refine domain requirements for a video subtype (e.g.
-    ``gaming:unboxing``) — see ``playbooksNote`` in domains.json.
+    ``gaming:unboxing``) — see ``playbooksNote`` in domains.json. A probe format
+    that is another name for a playbook's format reaches it through
+    ``playbookAliases`` (a review's ``commentary`` → ``review:review``); the
+    pair's own playbook wins.
     """
     if not content_format:
         return {}
-    playbooks = get_config().get("playbooks", {})
-    return dict(playbooks.get(f"{domain}:{content_format}", {}))
+    cfg = get_config()
+    playbooks = cfg.get("playbooks", {})
+    key = f"{domain}:{content_format}"
+    if key not in playbooks:
+        key = cfg.get("playbookAliases", {}).get(key, key)
+    return dict(playbooks.get(key, {}))
 
 
 def ruled_out_requirements(domain: str, evidence: Mapping[str, bool] | None) -> dict[str, str]:
@@ -170,6 +177,11 @@ def effective_requirements(domain: str, content_format: str | None = None) -> di
         "preferred": list(playbook.get("preferred", [])),
         "planGuidance": playbook.get("planGuidance", ""),
     }
+
+
+def info_grid_hosts() -> list[str]:
+    """Components a standalone info_grid folds into, best first — see ``infoGridHostsNote``."""
+    return list(get_config().get("infoGridHosts", []))
 
 
 def visual_criticality_config() -> dict:
@@ -330,9 +342,20 @@ class DataSourceSpec(TypedDict):
     outputWeight: int
 
 
+class QuizBand(TypedDict):
+    """One ``questionsByDuration`` band: up to ``maxMinutes`` (None = no bound)."""
+
+    maxMinutes: float | None
+    questions: int
+
+
 class QuizPolicy(TypedDict):
+    """``quizPolicy`` — see ``quizPolicyNote`` in domains.json."""
+
     position: Literal["last"]
     requiresEvidence: str
+    timer: bool
+    questionsByDuration: list[QuizBand]
     attachmentHostsExclude: list[str]
 
 
@@ -342,8 +365,12 @@ class QuizEnrichment(TypedDict):
 
 
 class GroupingConfig(TypedDict):
+    """``grouping`` — see ``groupingNote`` in domains.json."""
+
     maxTextGroups: int
     groupOutputBudget: int
+    # Optional so a caller's own limits (tests, tools) need not name it.
+    minGroupOutput: NotRequired[int]
 
 
 def _registry() -> dict[str, DataSourceSpec]:
@@ -418,7 +445,7 @@ def render_extraction_caps() -> str:
 
 
 def quiz_policy() -> QuizPolicy:
-    """Quiz placement/attachment policy (position, evidence, excluded hosts)."""
+    """Quiz placement/attachment policy (position, evidence, timer, count bands, excluded hosts)."""
     return copy.deepcopy(get_config()["quizPolicy"])
 
 

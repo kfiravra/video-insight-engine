@@ -80,9 +80,19 @@ interface DataSourceEntry {
   outputWeight: number;
 }
 
+/** One quiz size band: up to `maxMinutes` of video (null = no bound). */
+interface QuizBand {
+  maxMinutes: number | null;
+  questions: number;
+}
+
+/** Quiz placement, gating and size — see `quizPolicyNote` in the JSON. */
 interface QuizPolicy {
   position: 'last';
   requiresEvidence: string;
+  /** A recall quiz is untimed (output-quality D9); the web registry passes it on. */
+  timer: boolean;
+  questionsByDuration: QuizBand[];
   attachmentHostsExclude: string[];
 }
 
@@ -94,6 +104,8 @@ interface QuizEnrichment {
 interface GroupingConfig {
   maxTextGroups: number;
   groupOutputBudget: number;
+  /** A slice estimated under this many output tokens joins its domain's previous slice. */
+  minGroupOutput: number;
 }
 
 interface DomainsConfig {
@@ -123,6 +135,9 @@ interface DomainsConfig {
     highDomains: string[];
     lowDomains: string[];
     highTitleKeywords: string[];
+    highFormats?: string[];
+    /** Probe formats D2's vision skip covers besides tier LOW (output-quality 3.5); [] = LOW only. */
+    skipFormats?: string[];
   };
   domains: Record<ContentTag, DomainEntry>;
   modifiers: Record<Modifier, ModifierEntry>;
@@ -137,6 +152,9 @@ interface DomainsConfig {
   /** Quiz-only enrichment config: allowed domains + per-domain flavor line. */
   quizEnrichment?: QuizEnrichment;
   grouping?: GroupingConfig;
+  /** Words that make a label's leading number a measure, not a count — see
+   *  `measureUnitsNote` (output-quality 1.8: one list for server, web and tools). */
+  measureUnits?: string[];
 }
 
 const config: DomainsConfig = domainsJson as DomainsConfig;
@@ -231,6 +249,14 @@ export function getDomainGradient(tag: ContentTag): string {
   return config.domains[tag]?.gradient ?? config.domains.learning.gradient;
 }
 
+/** Units that make a leading number a measure ("7 Days in Tokyo"), lower-case. */
+export const MEASURE_UNITS: ReadonlySet<string> = new Set(
+  (config.measureUnits ?? []).map((unit) => unit.toLowerCase()),
+);
+
+/** Whether QuizArena runs its per-question countdown (`quizPolicy.timer`; off when absent). */
+export const QUIZ_TIMER: boolean = config.quizPolicy?.timer ?? false;
+
 /** Full raw config (escape hatch). */
 export { config as rawConfig };
 export type {
@@ -240,6 +266,7 @@ export type {
   ModifierEntry,
   DomainsConfig,
   DataSourceEntry,
+  QuizBand,
   QuizPolicy,
   QuizEnrichment,
   GroupingConfig,

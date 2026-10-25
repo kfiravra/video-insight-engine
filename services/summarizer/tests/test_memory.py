@@ -404,7 +404,7 @@ class TestRunMemory:
 
         kwargs = mock_call.await_args.kwargs
         assert {k: kwargs[k] for k in ("max_tokens", "timeout", "max_retries", "temperature")} == {
-            "max_tokens": 1200,
+            "max_tokens": 1600,
             "timeout": 25.0,
             "max_retries": 0,
             "temperature": 0.0,

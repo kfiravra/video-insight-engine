@@ -30,6 +30,7 @@ from litellm.exceptions import Timeout as LitellmTimeout
 from src.config import settings
 from src.services.llm_call import call_deadline
 from src.services.llm_model_rules import LLMRefusalError
+from src.services.pipeline.memory import format_clock
 from src.services.pipeline.pipeline_timing import record_llm_failure
 from src.services.pipeline.prompt_builder import load_prompt_text
 from src.utils.llm_retry import TRANSIENT_LLM_ERRORS, retry_after_seconds
@@ -198,8 +199,7 @@ def vision_call_timeout(max_tokens: int, ceiling: float) -> float:
 
 
 def _frame_label(position: int, timestamp: float) -> str:
-    seconds = int(timestamp)
-    return f"Frame {position} (at {seconds // 60}:{seconds % 60:02d}):"
+    return f"Frame {position} (at {format_clock(int(timestamp))}):"  # the markers' clock (3.4)
 
 
 def _count_line(frame_count: int) -> str:

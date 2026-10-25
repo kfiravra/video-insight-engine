@@ -1,13 +1,13 @@
-import { memo, useState, useMemo } from 'react';
+import { memo, useState } from 'react';
 import { Check, X, Scale } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { GlassCard, FadeIn, Badge, ScoreRing } from '@/components/vie';
+import { GlassCard, FadeIn, Badge } from '@/components/vie';
 import { useMediaQuery } from '@/hooks/use-media-query';
 
 import { useLabels } from '@/lib/i18n';
 import { EmptyTabState } from './EmptyTabState';
-import { ComparisonRadarHero } from './comparison/ComparisonRadarHero';
-import { hasRadarAxes } from './comparison/radar-scoring';
+import { ComparisonRadars } from './comparison/ComparisonRadarHero';
+import { hasMultipleCompetitors, radarSets } from './comparison/competitor-groups';
 import { ComparisonTable } from './comparison/ComparisonTable';
 import { ReviewSummary } from './comparison/ReviewSummary';
 import { VersusCards } from './comparison/VersusCards';
@@ -27,9 +27,10 @@ interface ComparisonInteractiveProps {
   verdict?: VerdictData;
   /**
    * Force the radar hero on/off. When omitted the component decides by data:
-   * radar shows automatically for ≥3 comparison rows (scoreable axes). The
-   * `comparison_radar` registry alias passes `view="radar"` so the 1A
-   * promotion `comparison → comparison_radar` keeps surfacing the radar.
+   * radar shows automatically for ≥3 numeric axes — per competitor when the
+   * rows name several (`radarSets`). The `comparison_radar` registry alias
+   * passes `view="radar"` so the 1A promotion `comparison → comparison_radar`
+   * keeps surfacing the radar.
    */
   view?: 'auto' | 'radar' | 'table';
   nextTab?: string;
@@ -64,22 +65,16 @@ export const ComparisonInteractive = memo(function ComparisonInteractive({
   const competitorName = hasComparisons ? comparisons[0].competitorName : '';
   const isReview = Boolean(competitorName);
   const colLeft = leftLabel || (isReview ? 'This Product' : t.description);
-  const colRight = rightLabel || competitorName || (isReview ? 'Competitor' : t.example);
+  // Two or more competitors: no single name speaks for the other side.
+  const otherSide = hasMultipleCompetitors(comparisons) ? t.competitor : competitorName;
+  const colRight = rightLabel || otherSide || (isReview ? t.competitor : t.example);
 
   // Radar hero when the data has enough scoreable axes (or forced via `view`).
   // `view="radar"` still needs ≥3 axes — a 2-spoke radar is a line, so it
-  // gracefully falls back to the table.
-  const showRadar = view !== 'table' && hasComparisons && hasRadarAxes(comparisons);
-
-  // Verdict summary from winner fields
-  const verdictSummary = useMemo(() => {
-    const withWinner = comparisons.filter((c) => c.winner);
-    if (withWinner.length === 0) return null;
-    const leftWins = withWinner.filter((c) => c.winner === 'left').length;
-    const rightWins = withWinner.filter((c) => c.winner === 'right').length;
-    const ties = withWinner.filter((c) => c.winner === 'tie').length;
-    return { leftWins, rightWins, ties, total: withWinner.length };
-  }, [comparisons]);
+  // gracefully falls back to the table — and several competitors each need
+  // their own, or no radar draws.
+  const radars = view !== 'table' && hasComparisons ? radarSets(comparisons) : [];
+  const showRadar = radars.length > 0;
 
   if (!hasComparisons && !hasPros && !hasCons && !hasVerdictHeader) return <EmptyTabState message="No comparison data was extracted for this video." icon={Scale} />;
 
@@ -127,7 +122,7 @@ export const ComparisonInteractive = memo(function ComparisonInteractive({
 
       {/* Radar hero — when ≥3 scoreable axes (auto) or forced via view="radar" */}
       {showRadar && comparisonView === 'radar' && (
-        <ComparisonRadarHero comparisons={comparisons} colLeft={colLeft} colRight={colRight} />
+        <ComparisonRadars radars={radars} colLeft={colLeft} colRight={colRight} />
       )}
 
       {/* Feature comparison — table mode */}
@@ -144,30 +139,6 @@ export const ComparisonInteractive = memo(function ComparisonInteractive({
       {/* Versus mode */}
       {hasComparisons && type === 'versus' && (!showRadar || comparisonView === 'details') && (
         <VersusCards comparisons={comparisons} colLeft={colLeft} colRight={colRight} />
-      )}
-
-      {/* Verdict summary card */}
-      {verdictSummary && (
-        <FadeIn>
-          <GlassCard variant="accent" className="flex items-center gap-4">
-            <ScoreRing
-              score={verdictSummary.leftWins}
-              total={verdictSummary.total}
-              label={colLeft}
-              size="sm"
-            />
-            <div className="flex-1 space-y-1">
-              <p className="text-sm font-semibold leading-snug">
-                {colLeft} wins <span className="tabular-nums">{verdictSummary.leftWins}</span> of <span className="tabular-nums">{verdictSummary.total}</span> categories
-              </p>
-              {verdictSummary.ties > 0 && (
-                <p className="text-xs font-medium text-muted-foreground">
-                  <span className="tabular-nums">{verdictSummary.ties}</span> {verdictSummary.ties === 1 ? 'tie' : 'ties'}
-                </p>
-              )}
-            </div>
-          </GlassCard>
-        </FadeIn>
       )}
 
       {/* Go for it / Skip it recommendation cards */}

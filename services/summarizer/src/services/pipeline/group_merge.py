@@ -21,6 +21,12 @@ identity an earlier one holds is dropped — identity is the first of
 ``_IDENTITY_KEYS`` the item fills, in that fixed order. An ordering key is
 renumbered only when it ran 1..n in every contributing list (shirt numbers
 stay). ``requested_quality`` scores what the groups were asked for.
+
+A chunked run's scalars stay the first chunk's in the merge (S01's ``summary`` is
+"In short", ``keyQuestion`` the hero brief's first line — both one string); the hero
+rewrite reads every part as well (output-quality 3.2, L20): ``chunk_scalars`` gives each
+scalar path the chunks wrote differently its value per chunk, in chunk order, under the
+chunk's window on the video's clock.
 """
 
 from __future__ import annotations
@@ -29,19 +35,21 @@ import copy
 import json
 import logging
 import types
-from collections.abc import Mapping, Sequence
-from typing import TYPE_CHECKING, Any, Union, get_args, get_origin
+from collections.abc import Iterable, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, NamedTuple, Union, get_args, get_origin
 
 from pydantic import AliasChoices, BaseModel
 from pydantic.fields import FieldInfo
 
 from ...models.domain_validation import ValidationReport, merge_report, validate_block_items
+from .extraction_chunks import window_label
 from .extraction_quality import ExtractionQuality
 from .field_groups import ExtractionGroup
 from .field_requests import FieldRequest, active_domain_model
-from .schema_fields import keep_requested, load_domain_schema
+from .schema_fields import keep_requested, load_domain_schema, scalar_fields
 
 if TYPE_CHECKING:
+    from .extraction_chunks import ExtractionChunk
     from .extraction_groups import GroupOutcome
 
 logger = logging.getLogger(__name__)
@@ -315,6 +323,59 @@ def merge_groups(outcomes: Sequence[GroupOutcome]) -> tuple[dict[str, Any], Vali
         merge_report(report, validation.get("dropped") or {}, validation.get("defaulted", 0))
     contributions = [copy.deepcopy(o.data) for o in landed if o.data]
     return _union_objects(contributions), report
+
+
+# ─── A chunked run's scalars, part by part (output-quality 3.2) ───
+
+
+class ScalarPart(NamedTuple):
+    """One chunk's value of a scalar: the chunk's window (``39:21–1:03:07``) and the text."""
+
+    window: str
+    text: str
+
+
+def _chunk_values(outcomes: Sequence[GroupOutcome]) -> dict[str, dict[int, str]]:
+    """Scalar path → chunk → the first non-empty string a landed group gave it there."""
+    values: dict[str, dict[int, str]] = {}
+    for outcome in merge_order(outcomes):
+        if outcome.status != "ok" or not outcome.data:
+            continue
+        for domain, block in outcome.data.items():
+            if not isinstance(block, Mapping):
+                continue
+            for key in scalar_fields(domain):
+                value = block.get(key)
+                if isinstance(value, str) and value.strip():
+                    values.setdefault(f"{domain}.{key}", {}).setdefault(
+                        outcome.chunk, value.strip()
+                    )
+    return values
+
+
+def _distinct(texts: Iterable[str]) -> int:
+    return len({" ".join(text.casefold().split()) for text in texts})
+
+
+def chunk_scalars(
+    outcomes: Sequence[GroupOutcome], chunks: Sequence[ExtractionChunk]
+) -> dict[str, tuple[ScalarPart, ...]]:
+    """Every scalar path the landed chunks wrote at least two different strings for → its
+    parts in chunk order; ``{}`` for a one-chunk run (module docstring)."""
+    if len(chunks) < 2:
+        return {}
+    parted = {p: v for p, v in _chunk_values(outcomes).items() if _distinct(v.values()) >= 2}
+    if not parted:
+        return {}
+    by_index = {chunk.index: chunk for chunk in chunks}
+    return {
+        path: tuple(
+            ScalarPart(window_label(by_index[k]), text)
+            for k, text in sorted(values.items())
+            if k in by_index
+        )
+        for path, values in parted.items()
+    }
 
 
 # ─── Quality ───

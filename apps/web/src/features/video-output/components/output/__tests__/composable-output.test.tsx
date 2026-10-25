@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import type { VIEResponse, TabEntry } from '@vie/types';
+import type { VIEResponse, TabEntry, TabAttachment } from '@vie/types';
 
 // Mock cross-tab link dependencies
 vi.mock('../CrossTabLink', () => ({
@@ -216,6 +216,29 @@ describe('ComposableOutput', () => {
       ).toBeInTheDocument();
     });
 
+    it('should print the shipped count in place of the planner count in nav-grid labels (R3)', () => {
+      // "9 Core Arguments" over 24 spots — the planner guessed, the props are the truth.
+      const tabs = buildAssembledTabs();
+      tabs.push({
+        id: 'arguments',
+        label: '9 Core Arguments',
+        emoji: '🧠',
+        component: 'spot_explorer',
+        props: { spots: Array.from({ length: 24 }, (_, i) => ({ name: `Argument ${i + 1}` })) },
+      });
+      render(
+        <ComposableOutput
+          response={null}
+          tabs={tabs}
+          activeTab="overview"
+          onNavigateTab={vi.fn()}
+          videoSummaryId="vsum-1"
+        />,
+      );
+      expect(screen.getByRole('button', { name: 'Open 24 Core Arguments' })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Open 9 Core Arguments' })).not.toBeInTheDocument();
+    });
+
     it('should NOT render a duplicate hero card with title/subtitle/masterSummary or top takeaways', () => {
       const tabs = buildAssembledTabs();
       tabs[0].props = {
@@ -242,6 +265,80 @@ describe('ComposableOutput', () => {
       expect(screen.queryByText('A comprehensive guide…')).not.toBeInTheDocument();
       expect(screen.queryByText(/Long-form duplicate/)).not.toBeInTheDocument();
       expect(screen.queryByText('Profile before optimizing')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('cross-tab links (audit §2 #8)', () => {
+    function linkedTabs(): TabEntry[] {
+      return [
+        {
+          id: 'arguments',
+          label: '9 Core Arguments',
+          emoji: '🧠',
+          component: 'spot_explorer',
+          goal: 'Explore how the arguments connect',
+          props: { spots: Array.from({ length: 24 }, (_, i) => ({ name: `Argument ${i + 1}` })) },
+        },
+        {
+          id: 'numbers',
+          label: 'Numbers That Matter',
+          emoji: '📊',
+          component: 'spot_explorer',
+          goal: 'Check the numbers behind each argument',
+          props: { spots: [{ name: '150,000 lines' }] },
+        },
+        {
+          id: 'quiz',
+          label: 'Test Yourself',
+          emoji: '✅',
+          component: 'info_grid',
+          goal: 'See what stuck',
+          props: { items: [{ key: 'Q1', value: 'A' }] },
+        },
+      ];
+    }
+
+    it('should link a tab without explicit links to the next tab, labelled with the target goal', () => {
+      render(
+        <ComposableOutput response={null} tabs={linkedTabs()} activeTab="arguments" onNavigateTab={vi.fn()} />,
+      );
+      const link = screen.getByRole('button', { name: /Check the numbers behind each argument/ });
+      expect(link).toHaveTextContent('Next: Numbers That Matter');
+    });
+
+    it('should wrap the last tab to the first content tab so every tab has a way onward', () => {
+      render(
+        <ComposableOutput response={null} tabs={linkedTabs()} activeTab="quiz" onNavigateTab={vi.fn()} />,
+      );
+      expect(screen.getByRole('button', { name: /Explore how the arguments connect/ })).toHaveTextContent(
+        'Next: 24 Core Arguments',
+      );
+    });
+
+    it('should print the true count in an explicit assembler link label', () => {
+      const tabs = linkedTabs();
+      tabs[1].crossTabLinks = [{ targetTab: 'arguments', label: '9 Core Arguments' }];
+      render(<ComposableOutput response={null} tabs={tabs} activeTab="numbers" onNavigateTab={vi.fn()} />);
+      expect(screen.getByRole('button', { name: /Explore how the arguments connect/ })).toHaveTextContent(
+        'Next: 24 Core Arguments',
+      );
+    });
+
+    it('should render one link per target when an explicit link and the next tab coincide', () => {
+      const tabs = linkedTabs();
+      tabs[0].crossTabLinks = [{ targetTab: 'numbers', label: 'Numbers That Matter' }, { targetTab: 'overview', label: 'Overview' }];
+      render(<ComposableOutput response={null} tabs={tabs} activeTab="arguments" onNavigateTab={vi.fn()} />);
+      expect(screen.getAllByRole('button', { name: /Next:/ })).toHaveLength(1);
+    });
+
+    it('should navigate to the target when a link is clicked', async () => {
+      const user = userEvent.setup();
+      const onNavigateTab = vi.fn();
+      render(
+        <ComposableOutput response={null} tabs={linkedTabs()} activeTab="numbers" onNavigateTab={onNavigateTab} />,
+      );
+      await user.click(screen.getByRole('button', { name: /See what stuck/ }));
+      expect(onNavigateTab).toHaveBeenCalledWith('quiz');
     });
   });
 
@@ -455,6 +552,81 @@ describe('ComposableOutput', () => {
       // Bottom attachment (stat_banner)
       expect(screen.getByText('Cores')).toBeInTheDocument();
       expect(screen.getByText('8')).toBeInTheDocument();
+    });
+
+    function renderSpecs(goal: string, attachments: TabAttachment[]) {
+      const [tab] = tabWithAttachments();
+      render(
+        <ComposableOutput
+          response={null}
+          tabs={[{ ...tab, goal, attachments }]}
+          activeTab="specs"
+          onNavigateTab={vi.fn()}
+        />,
+      );
+    }
+
+    function header(summary: string, slot: 'top' | 'bottom' = 'top'): TabAttachment {
+      return { slot, component: 'summary_header', props: { summary, title: 'In short' } };
+    }
+
+    // Stored rows assembled before 0b.6: the summary_header text IS the goal.
+    it('should print the goal once when a stored summary_header repeats it (R4)', () => {
+      const goal = 'A quick spec overview';
+      renderSpecs(goal, [header(goal)]);
+      expect(screen.getAllByText(goal)).toHaveLength(1);
+    });
+
+    it('should keep the goal in the intro and drop a stored summary_header that repeats it', () => {
+      const goal = 'A quick spec overview';
+      renderSpecs(goal, [header(goal)]);
+      expect(screen.queryByRole('note')).not.toBeInTheDocument();
+    });
+
+    it('should drop a repeating header that differs only in case, spacing and trailing punctuation', () => {
+      renderSpecs('What does the machine cost?', [header('what does the  machine cost')]);
+      expect(screen.queryByRole('note')).not.toBeInTheDocument();
+    });
+
+    // Rows assembled from 0b.6 on: the header carries content of its own.
+    it('should print the goal once beside a summary_header with content of its own', () => {
+      const goal = 'Spec the machine at a glance';
+      renderSpecs(goal, [header('Battery — 6 h of mixed use')]);
+      expect(screen.getAllByText(goal)).toHaveLength(1);
+    });
+
+    it('should render a summary_header whose content differs from the goal', () => {
+      renderSpecs('Spec the machine at a glance', [header('Battery — 6 h of mixed use')]);
+      expect(screen.getByRole('note')).toHaveTextContent('Battery — 6 h of mixed use');
+    });
+
+    it('should keep the intro goal line when the summary_header carries a blank summary', () => {
+      const goal = 'Spec the machine at a glance';
+      renderSpecs(goal, [header('   ')]);
+      // The header prints nothing for a blank summary; the intro carries the goal.
+      expect(screen.getAllByText(goal)).toHaveLength(1);
+      expect(screen.queryByRole('note')).not.toBeInTheDocument();
+    });
+
+    it('should print the goal once when a bottom summary_header repeats it', () => {
+      const goal = 'Spec the machine at a glance';
+      renderSpecs(goal, [header(goal, 'bottom')]);
+      const goalNodes = screen.getAllByText(goal);
+      expect(goalNodes).toHaveLength(1);
+      expect(goalNodes[0].closest('[role="note"]')).toBeNull();
+    });
+
+    it('should keep the intro goal line on a tab without a summary_header', () => {
+      const goal = 'Spec the machine at a glance';
+      render(
+        <ComposableOutput
+          response={null}
+          tabs={[{ id: 'specs', label: 'Specs', emoji: '📊', component: 'info_grid', goal, props: { items: [{ key: 'CPU', value: 'M2' }] } }]}
+          activeTab="specs"
+          onNavigateTab={vi.fn()}
+        />,
+      );
+      expect(screen.getByText(goal)).toBeInTheDocument();
     });
 
     it('renders flat tabs (no attachments) exactly as before', () => {

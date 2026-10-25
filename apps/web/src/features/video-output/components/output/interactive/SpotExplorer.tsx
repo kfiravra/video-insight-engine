@@ -3,8 +3,9 @@ import { Star, Clock, MapPin } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useLabels } from '@/lib/i18n';
 import type { SpotItem } from '@vie/types';
-import { GlassCard, FadeIn, SectionNav, Badge, MapLink, VisualEvidence } from '@/components/vie';
+import { GlassCard, FadeIn, SectionNav, Badge, MapLink, SeekChip, VisualEvidence } from '@/components/vie';
 import { EmptyTabState } from './EmptyTabState';
+import { QuoteLine } from './QuoteLine';
 
 
 interface SpotSection {
@@ -17,6 +18,7 @@ interface SpotExplorerProps {
   sections?: SpotSection[];
   nextTab?: string;
   onNavigateTab?: (id: string) => void;
+  onSeek?: (seconds: number) => void;
 }
 
 /** Normalize spot data — backend may send `title`/`detail` (KeyPoint shape) instead of `name`/`description`. */
@@ -28,12 +30,26 @@ function normalizeSpot(raw: SpotItem): SpotItem {
   return r;
 }
 
+/** A seekable timestamp: a finite, non-negative number of seconds. The schema
+ *  bounds it too; this guards the direct (unvalidated) render path. */
+function hasSeekTimestamp(spot: SpotItem): spot is SpotItem & { timestamp: number } {
+  return typeof spot.timestamp === 'number' && Number.isFinite(spot.timestamp) && spot.timestamp >= 0;
+}
+
+/** Who holds each position, shown only when the tab mixes speakers (a host and a
+ *  guest): on a one-guest show the same name on every card is noise. */
+function attributesSpeakers(spots: SpotItem[]): boolean {
+  const speakers = new Set(spots.map((s) => s.speaker?.trim()).filter(Boolean));
+  return speakers.size >= 2;
+}
+
 /** SectionNav id for the synthetic "All" pill — no section label can collide. */
 const ALL_SECTION = '__all__';
 
 export const SpotExplorer = memo(function SpotExplorer({
   spots: rawSpots,
   sections,
+  onSeek,
 }: SpotExplorerProps) {
   const spots = rawSpots.map(normalizeSpot);
   const [activeSection, setActiveSection] = useState(ALL_SECTION);
@@ -55,6 +71,7 @@ export const SpotExplorer = memo(function SpotExplorer({
   // Dense frame-led collections read better as a gallery grid than a single
   // tall column — only when there are enough spots AND frames to justify it.
   const hasFrames = spots.some((s) => Boolean(s.thumbnailUrl || s.frameCaption || s.frameOcr));
+  const showSpeaker = attributesSpeakers(spots);
   const useGrid = spots.length > 8 && hasFrames;
 
   const renderSpotCard = (spotIndex: number, fadeIdx: number) => {
@@ -63,6 +80,8 @@ export const SpotExplorer = memo(function SpotExplorer({
 
     const hasFrame = Boolean(spot.thumbnailUrl || spot.frameCaption || spot.frameOcr);
     const hasActions = Boolean(spot.mapQuery || spot.bookingSearch);
+    const speaker = showSpeaker ? spot.speaker?.trim() : undefined;
+    const category = spot.category?.trim();
 
     return (
       <FadeIn key={spotIndex} index={fadeIdx}>
@@ -85,12 +104,21 @@ export const SpotExplorer = memo(function SpotExplorer({
           <div className="px-4 py-3 flex items-start gap-3">
             <span className="text-base shrink-0 mt-0.5" aria-hidden="true">{spot.emoji}</span>
             <div className="flex-1 min-w-0 space-y-1.5">
-              <span className="flex flex-wrap items-baseline gap-x-2">
+              <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
                 <span className="font-semibold text-[0.9375rem]">{spot.name}</span>
+                {/* A key idea's kind ("Thesis", "Ask") — a quiet outline tag beside the claim. */}
+                {category && (
+                  <Badge variant="muted" className="border border-border/60 bg-transparent px-2 text-[11px]">
+                    {category}
+                  </Badge>
+                )}
                 {spot.pronunciation && (
                   <span className="font-mono text-xs text-muted-foreground">
                     {spot.pronunciation}
                   </span>
+                )}
+                {hasSeekTimestamp(spot) && (
+                  <SeekChip seconds={spot.timestamp} onSeek={onSeek} className="ms-auto shrink-0" />
                 )}
               </span>
               {spot.description && (
@@ -98,6 +126,10 @@ export const SpotExplorer = memo(function SpotExplorer({
                   {spot.description}
                 </p>
               )}
+              {/* Verbatim beats paraphrase (R10); QuoteLine sets it apart and puts the
+                  English beneath a non-English line (D12). */}
+              <QuoteLine quote={spot.quote} quoteEn={spot.quoteEn} translated={spot.quoteTranslated} />
+              {speaker && <p className="text-xs font-medium text-muted-foreground">— {speaker}</p>}
               {spot.specs && (
                 <p className="text-xs italic text-muted-foreground">
                   {spot.specs}

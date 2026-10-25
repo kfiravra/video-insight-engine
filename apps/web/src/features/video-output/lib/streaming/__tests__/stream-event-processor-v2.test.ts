@@ -17,8 +17,11 @@ vi.mock('@/features/video-output/lib/streaming/sse-validators', async (importOri
     duration: event.duration,
   })),
   validateSynthesisComplete: vi.fn((event: Record<string, unknown>) => ({
-    tldr: typeof event.tldr === 'string' ? event.tldr : '',
-    keyTakeaways: Array.isArray(event.keyTakeaways) ? event.keyTakeaways : [],
+    fields: {
+      tldr: typeof event.tldr === 'string' ? event.tldr : '',
+      keyTakeaways: Array.isArray(event.keyTakeaways) ? event.keyTakeaways : [],
+    },
+    final: false,
   })),
   validateDoneEvent: vi.fn((event: Record<string, unknown>) => ({
     processingTimeMs: event.processingTimeMs ?? null,

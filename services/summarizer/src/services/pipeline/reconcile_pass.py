@@ -5,17 +5,27 @@
 (:class:`ReconcilePass`, the ``pipeline.reconcile`` row writer) and the steps
 that shape the tab list once the evidence is settled:
 
+1b. moment source — a Moments tab on learning's generic ``learning.timestamps``
+   reads the primary's own moment source instead (a podcast's segments, news's
+   story timeline, sport's match events, music's structure) — never a source
+   read off the screen (``waitsForVisual``: gaming's highlights);
 2. required — the primary domain's required components are backfilled from
    its defaultTabs unless their ``requirementEvidence`` key is doubly false
    (``not_backfilled``, naming the defaultTab it would have added); a key the
    screen can still answer (``has_code``) defers the decision to frames-done
    (``deferred_to_frames``) instead;
-3. quiz — dropped outside ``quizDomains`` or when ``is_learnable`` is doubly
-   false; otherwise moved last;
-4. dedupe — one tab per ``(dataSource, component)``, the first wins;
+3. quiz — dropped outside ``quizDomains``, on a format ``quizPolicy.formats`` does not
+   name (D9 revised, output-quality 4.6e: instructional only — ``quiz_format``) or when
+   ``is_learnable`` is doubly false; otherwise moved last;
+4. dedupe — one tab per ``(dataSource, component)``, a component and what
+   assembly promotes it to counting as one (flash_deck → concept_canvas): a tab
+   the primary requires (or its equivalent) wins over one it does not, else the
+   first wins; assembly dedupes again on the assembled items (``assembly/dedupe.py``);
+4b. fold — a planned info_grid tab joins the planned tab whose question it
+   answers as one of its ``folds`` (R6; ``assembly/info_grid_fold.py``);
 5. size — 3–6 tabs: beyond 6 the last other planned tab is trimmed (never a
-   required tab, a moment_track or the quiz), a short plan is filled from the
-   primary's defaultTabs.
+   required tab, a moment_track, the quiz or a tab carrying folds), a short
+   plan is filled from the primary's defaultTabs.
 """
 
 from __future__ import annotations
@@ -29,15 +39,18 @@ from ...models.pipeline_types import TabBrief
 from ...shared_config.domain_config import (
     build_fallback_tabs,
     data_source,
+    datasources_for_component,
     default_tab_id,
     effective_requirements,
     quiz_enrichment,
     quiz_policy,
     requirement_evidence,
 )
+from .assembly.info_grid_fold import FOLDS_KEY, INFO_GRID, fold_entry, fold_host
 from .assembly.promotion import COMPONENT_PROMOTIONS
 from .enrichment import QUIZ_COMPONENT, QUIZ_DATA_SOURCE
 from .plan_reconcile import NEVER_DROPPED
+from .quiz_format import QUIZ_FORMAT_REASON, quiz_format_allowed
 
 logger = logging.getLogger(__name__)
 
@@ -206,6 +219,55 @@ def _default_tab(
     return None
 
 
+# ─── Step 1b: the primary's own moment source ───
+
+# The moment list every domain may read (learning's); a primary with a moment
+# source of its own reads that instead (output-quality 1.3, L9): a podcast's
+# Moments tab is its segment map with what each segment concluded, never
+# learning's chapter list (S02 planned ``learning.timestamps`` and no
+# ``podcast.*`` path at all).
+GENERIC_MOMENT_SOURCE = "learning.timestamps"
+MOMENT_COMPONENT = "moment_track"
+
+
+def _reads_the_screen(path: str) -> bool:
+    spec = data_source(path)
+    return spec is not None and spec["waitsForVisual"]
+
+
+def primary_moment_source(run: ReconcilePass) -> str | None:
+    """The primary domain's first moment_track defaultTab source (podcast.segments,
+    news.storyTimeline, …) when the primary is active, not learning, and its
+    evidence allows it; None otherwise. A source read off the screen
+    (``waitsForVisual``: gaming.highlights) never replaces the transcript's list:
+    its moments wait for frames and are gone on a run without vision."""
+    if run.primary == "learning" or run.primary not in run.active:
+        return None
+    sources = datasources_for_component(run.primary, MOMENT_COMPONENT)
+    if not sources or sources[0] == GENERIC_MOMENT_SOURCE or _reads_the_screen(sources[0]):
+        return None
+    return sources[0] if source_allowed(run, sources[0]) else None
+
+
+def moment_source_step(run: ReconcilePass) -> None:
+    """A Moments tab on learning's generic list reads the primary's own moment source,
+    unless another Moments tab already does (that one would only be duplicated)."""
+    target = primary_moment_source(run)
+    if target is None:
+        return
+    pairs = {(t.get("dataSource"), t.get("component")) for t in run.tabs}
+    if (target, MOMENT_COMPONENT) in pairs:
+        return
+    for index, tab in enumerate(run.tabs):
+        if (tab.get("dataSource"), tab.get("component")) == (
+            GENERIC_MOMENT_SOURCE,
+            MOMENT_COMPONENT,
+        ):
+            record(run, tab, Action("repointed", "primary_moment_source", to=target))
+            run.tabs[index] = {**tab, "dataSource": target}
+            return
+
+
 # ─── Step 2: required components ───
 
 
@@ -255,6 +317,8 @@ def _quiz_drop_reason(run: ReconcilePass) -> tuple[str, str | None] | None:
     """``(reason, evidence key)`` when the quiz must go; None when it stays."""
     if run.primary not in quiz_enrichment()["quizDomains"]:
         return "quiz_domain", None
+    if not quiz_format_allowed(run.content_format):
+        return QUIZ_FORMAT_REASON, None
     key = quiz_policy()["requiresEvidence"]
     return ("evidence_false", key) if run.evidence.get(key) is False else None
 
@@ -283,29 +347,75 @@ def quiz_step(run: ReconcilePass) -> None:
 # ─── Steps 4–5: dedupe, size ───
 
 
+def _required_family(run: ReconcilePass) -> frozenset[str]:
+    """The primary's required components and what assembly promotes each to."""
+    required = effective_requirements(run.primary, run.content_format)["required"]
+    return frozenset().union(*(_equivalents(component) for component in required))
+
+
+def _dedupe_pair(tab: Mapping[str, Any]) -> tuple[str, str]:
+    """``(dataSource, component)`` with the component read as what assembly promotes it to."""
+    component: str = tab["component"]
+    return tab.get("dataSource") or "", COMPONENT_PROMOTIONS.get(component, component)
+
+
+def _dedupe_winners(run: ReconcilePass) -> dict[tuple[str, str], dict]:
+    """The tab that stays for each ``(dataSource, component)``: the first one the primary
+    requires (equivalents included), else the first."""
+    protected = _required_family(run)
+    winners: dict[tuple[str, str], dict] = {}
+    for tab in run.tabs:
+        pair = _dedupe_pair(tab)
+        held = winners.get(pair)
+        if held is None or (tab["component"] in protected and held["component"] not in protected):
+            winners[pair] = tab
+    return winners
+
+
 def dedupe_step(run: ReconcilePass) -> None:
-    """One tab per ``(dataSource, component)`` — the first wins."""
-    seen: set[tuple[str, str]] = set()
+    """One tab per ``(dataSource, component)``. A component and its promotion target
+    are the same component here: a flash_deck and a concept_canvas on one
+    ``concepts`` list ship the same items (S03, L26). A tab the primary requires
+    outlives an earlier twin it does not (phase-0 review W-A6: travel's planned
+    spot_explorer is never lost to an info_grid that merely could promote); else
+    the first wins."""
+    winners = _dedupe_winners(run)
     kept: list[dict] = []
     for tab in run.tabs:
-        pair = (tab.get("dataSource") or "", tab["component"])
-        if pair[0] and pair in seen:
+        pair = _dedupe_pair(tab)
+        if pair[0] and winners[pair] is not tab:
             drop(run, tab, "duplicate")
             continue
-        seen.add(pair)
         kept.append(tab)
     run.tabs = kept
 
 
+def fold_step(run: ReconcilePass) -> None:
+    """info_grid never stands alone (R6): a planned info_grid tab joins the planned tab
+    whose question it answers (``assembly.info_grid_fold.fold_host``) as one of its
+    ``folds``; with no host it stays. Never below ``MIN_TABS`` planned tabs — the
+    fill would only add a default tab back."""
+    for grid in [tab for tab in run.tabs if tab["component"] == INFO_GRID]:
+        # A tab deferred to frames-done may still go: it neither hosts nor counts.
+        if len([t for t in run.tabs if t["id"] not in run.deferred]) <= MIN_TABS:
+            return
+        host = fold_host(run.tabs, grid, run.deferred)
+        if host is None:
+            continue
+        host[FOLDS_KEY] = [*(host.get(FOLDS_KEY) or []), fold_entry(grid)]
+        run.tabs.remove(grid)
+        record(run, grid, Action("folded", "info_grid_alone", to=host["id"]))
+
+
 def _trimmable(run: ReconcilePass) -> list[int]:
     """Indices of the tabs a trim may remove: not required, not a moment_track,
-    not the quiz (it sits last by policy, not because it matters least)."""
-    required = effective_requirements(run.primary, run.content_format)["required"]
-    protected = NEVER_DROPPED.union(*(_equivalents(component) for component in required))
+    not the quiz (it sits last by policy, not because it matters least), not a
+    host carrying folds (its folded grids would vanish with it, unrecorded)."""
+    protected = NEVER_DROPPED | _required_family(run)
     return [
         i
         for i, tab in enumerate(run.tabs)
-        if tab["component"] not in protected and not is_quiz_tab(tab)
+        if tab["component"] not in protected and not is_quiz_tab(tab) and not tab.get(FOLDS_KEY)
     ]
 
 

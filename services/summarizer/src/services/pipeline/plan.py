@@ -28,8 +28,8 @@ from ...utils.llm_retry import call_llm_with_retry
 from ..llm_messages import CacheTTL, UserContent, text_block
 from ..llm_model_rules import Effort
 from .assembly import infer_component
-from .plan_prompt import PROMPT_PATH, PlanPrompt, PlanVideo, render_plan_parts
-from .plan_reconcile import reconcile_plan_tabs
+from .plan_prompt import PROMPT_PATH, PlanPrompt, PlanVideo, goal_rule_violation, render_plan_parts
+from .plan_reconcile import activate_argument_domains, reconcile_plan_tabs
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
@@ -151,15 +151,21 @@ def _validate_tabs(tabs: list[dict]) -> list[dict]:
             component = ""
         if not component:
             component = infer_component(tid)
+        # A null / list goal ships as "" — it must not raise here, where any
+        # exception replaces the whole plan with the fallback (run_plan).
+        goal = _str_or_empty(tab.get("goal"))
+        # Observability only (task 1.10): a goal naming the component or the topic still ships.
+        if why := goal_rule_violation(goal):
+            logger.info("Tab '%s' goal breaks the viewer-outcome rule: %s", tid, why)
 
         valid_tabs.append(
             {
                 "id": tid,
                 "label": tab["label"],
                 "emoji": tab.get("emoji", ""),
-                "dataSource": _coerce_data_source(tab.get("dataSource")),
+                "dataSource": _str_or_empty(tab.get("dataSource")),
                 "component": component,
-                "goal": tab.get("goal", ""),
+                "goal": goal,
                 "brief": TabBrief.from_raw(tab.get("brief")).model_dump(),
             }
         )
@@ -167,8 +173,8 @@ def _validate_tabs(tabs: list[dict]) -> list[dict]:
     return valid_tabs
 
 
-def _coerce_data_source(raw: object) -> str:
-    """The LLM's dataSource as a string; null/list/dict → "" (an unset source)."""
+def _str_or_empty(raw: object) -> str:
+    """An LLM string field as a string; null/list/dict → "" (unset)."""
     return raw if isinstance(raw, str) else ""
 
 
@@ -266,6 +272,7 @@ def _normalize_plan_data(data: dict, content_format: str | None) -> None:
         content_tags = [content_tags]
     if not content_tags:
         content_tags = ["learning"]
+    content_tags = activate_argument_domains(validated_tabs, content_tags, content_format)
     data["contentTags"] = content_tags
 
     primary_tag = data.get("primaryTag", content_tags[0])

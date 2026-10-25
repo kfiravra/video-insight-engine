@@ -2,14 +2,27 @@
 
 Pure item-shape coercions (dict soup -> component item contracts) used by
 more than one assembler family. Family-local normalizers stay in their
-family module.
+family module; the moment block lives in ``moment_normalizers`` and is
+re-exported here.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from .text_utils import truncate_words
+from src.models.domain_types import VERDICT_BADGES
+from src.services.pipeline.quote_verify import mark_translated_quote
+
+from .derived_guard import anchor_seconds, stated_number, stated_rows, stated_scalars
+from .moment_normalizers import _chapter_end as _chapter_end
+from .moment_normalizers import _chapters_to_moments as _chapters_to_moments
+from .moment_normalizers import _coerce_int as _coerce_int
+from .moment_normalizers import _moment_text as _moment_text
+from .moment_normalizers import _normalize_moment_item as _normalize_moment_item
+from .moment_normalizers import _seconds_to_time_str as _seconds_to_time_str
+from .moment_normalizers import normalize_moment_items as normalize_moment_items
+from .moment_normalizers import quote_en, quote_fields
+from .quiz_stamps import reconcile_quiz_time
 
 # Category-like front values that indicate flash_deck front corruption
 _CATEGORY_FRONTS = frozenset(
@@ -70,19 +83,46 @@ _TIP_FIELDS: tuple[str, ...] = (
 
 _SPOT_PASSTHROUGH_FIELDS: tuple[str, ...] = (
     "emoji",
-    "cost",
     "currency",
-    "duration",
     "mapQuery",
     "bookingSearch",
     "tips",
     "specs",
-    "rating",
     "thumbnailUrl",
     "s3Key",
     "pronunciation",
-    "timestamp",
 )
+# Facts a spot states only when it is anchored in the video (D13). spot_explorer
+# and info_grid are the demote rung of a refused tier list, comparison or claims
+# tracker, so an unanchored cost, duration or rating would re-enter there.
+_SPOT_STATED_FIELDS: tuple[str, ...] = ("cost", "duration", "rating")
+
+
+def _spot_extras(item: dict) -> dict:
+    """A spot's optional fields: the passthroughs, its seek point, the speaker's
+    verbatim ``quote`` (with its English, ``quoteEn``, D12) and the facts its anchor
+    states.
+
+    The seek point is the item's anchor as ``derived_guard`` reads it — whole
+    seconds ≥ 0, else none: the FE schema refuses the whole tab over a negative
+    or non-numeric stamp.
+    """
+    extras: dict = {
+        field: item[field]
+        for field in _SPOT_PASSTHROUGH_FIELDS
+        if item.get(field) not in (None, "")
+    }
+    timestamp = anchor_seconds(item)
+    if timestamp is not None:
+        extras["timestamp"] = timestamp
+    quote = item.get("quote")
+    if isinstance(quote, str) and quote.strip():
+        extras["quote"] = quote.strip()
+        extras.update(quote_en(item))
+    extras.update(stated_scalars(item, _SPOT_STATED_FIELDS))
+    if isinstance(role := item.get("role"), str) and role.strip():
+        extras["category"] = role.strip()  # a guest's role is its card's badge (4.1)
+    return extras
 
 
 def _normalize_to_spot(item: dict) -> dict | None:
@@ -100,6 +140,7 @@ def _normalize_to_spot(item: dict) -> dict | None:
         or item.get("aspect")
         or item.get("label")
         or item.get("key")  # ReviewSpec {key, value} — mirror promotion.py
+        or item.get("item")  # a tier-list row {item, reason} on its spot rung
         or ""
     )
     name = str(name_raw).strip()
@@ -114,33 +155,15 @@ def _normalize_to_spot(item: dict) -> dict | None:
         or item.get("translation")
         or item.get("context")
         or item.get("value")  # ReviewSpec {key, value}
+        or item.get("reason")  # a tier-list row's why
         or ""
     )
     description = str(desc_raw).strip()
 
-    result: dict = {"name": name, "description": description}
-    has_passthrough = False
-    for field in _SPOT_PASSTHROUGH_FIELDS:
-        if field not in item:
-            continue
-        value = item[field]
-        if value is None or value == "":
-            continue
-        result[field] = value
-        has_passthrough = True
-
-    if not description and not has_passthrough:
+    extras = _spot_extras(item)
+    if not description and not extras:
         return None
-    return result
-
-
-def _first_competitor_name(comparisons: list[dict]) -> str:
-    """Extract the first non-empty competitorName from comparison rows."""
-    for c in comparisons:
-        name = c.get("competitorName", "")
-        if name:
-            return str(name)
-    return ""
+    return {"name": name, "description": description, **extras}
 
 
 def _normalize_comparison(item: dict) -> dict:
@@ -153,6 +176,47 @@ def _normalize_comparison(item: dict) -> dict:
         "competitor": item.get("right", ""),
         "competitorName": item.get("competitorName", ""),
     }
+
+
+def _normalize_verdict(verdict: dict, rating: Any) -> dict[str, Any]:
+    """A review verdict as ReviewSummary renders it.
+
+    The badge ships only as the reviewer stated it (absent, never a default),
+    only as one of the four verdicts the validator allows (``VERDICT_BADGES`` —
+    a raw, unvalidated "RECOMMENDED" is no verdict) and only with the timestamp
+    the verdict is said at (R2, output-quality 1.4) — the verdict's seek point,
+    shipped whenever the extraction has it; the sub-scores and the
+    score / maxScore only as the extraction anchors them (D13 — S07 shipped a
+    "9.0" and five sub-scores the reviewer never gave); the words that state it as
+    the quote pass kept them (4.3, the hero verdict's quote). ``rating`` holds the
+    score: the review's rating block, or the verdict itself for a legacy
+    verdict tab.
+    """
+    props: dict[str, Any] = {
+        "bottomLine": verdict.get("bottomLine", ""),
+        "bestFor": verdict.get("bestFor") or [],
+        "notFor": verdict.get("notFor") or [],
+    }
+    # The badge is the reviewer's call: it renders only where the video says it (R2).
+    anchor = anchor_seconds(verdict)
+    if anchor is not None:
+        props["timestamp"] = anchor
+        # A verdict is a quoted field (D13, output-quality 2.0 c): the badge also
+        # needs the sentence that states it.
+        badge = stated_scalars(verdict, ("badge",)).get("badge")
+        if badge in VERDICT_BADGES:
+            props["badge"] = badge
+    props.update(quote_fields(verdict))
+    sub_scores = stated_rows(verdict.get("subScores"), "score")
+    if sub_scores:
+        props["subScores"] = sub_scores
+    score = stated_number(rating, "score")
+    if score is not None:
+        props["score"] = score
+        max_score = stated_number(rating, "maxScore")
+        if max_score is not None and max_score > 0:
+            props["maxScore"] = max_score
+    return props
 
 
 def _normalize_step(item: dict, index: int) -> dict:
@@ -178,14 +242,28 @@ def _normalize_step(item: dict, index: int) -> dict:
     return {
         "number": item.get("number", index + 1),
         "instruction": instruction,
-        "timestamp": item.get("timestamp") or item.get("seconds"),
-        "duration": item.get("duration"),
+        # One anchor for the seek point and the duration guard (D13): a step
+        # at 0:00 keeps both.
+        "timestamp": anchor_seconds(item),
+        "duration": stated_scalars(item, ("duration",)).get("duration"),
         "tips": tips,
         **({"title": title} if title else {}),
         **({"safetyNote": item["safetyNote"]} if item.get("safetyNote") else {}),
         **({"thumbnailUrl": item["thumbnailUrl"]} if item.get("thumbnailUrl") else {}),
         **({"s3Key": item["s3Key"]} if item.get("s3Key") else {}),
     }
+
+
+def _quote_card(item: dict) -> dict:
+    """A quote (``podcast.quotes`` / ``narrative.quotes``) as a flash card (4.2): the line in
+    front with its ``quote_fields`` (D12), who said it and when behind, else its context."""
+    seconds = anchor_seconds(item)
+    clock = _seconds_to_time_str(seconds) if seconds is not None else ""
+    said = " · ".join(part for part in (str(item.get("speaker") or "").strip(), clock) if part)
+    back = f"— {said}" if said else str(item.get("context") or "").strip()
+    front = str(item.get("quote") or item.get("text") or "").strip()
+    line = quote_fields({**item, "quote": front})
+    return {"front": front, "back": back, "emoji": item.get("emoji"), **line}
 
 
 def _to_flash_card(item: dict) -> dict:
@@ -207,8 +285,9 @@ def _to_flash_card(item: dict) -> dict:
         if item.get("formCues"):
             cues = item["formCues"]
             back_parts.append(", ".join(cues) if isinstance(cues, list) else str(cues))
-        if item.get("duration"):
-            back_parts.append(str(item["duration"]))
+        duration = stated_scalars(item, ("duration",)).get("duration")
+        if duration:
+            back_parts.append(str(duration))
         if item.get("difficulty"):
             back_parts.append(str(item["difficulty"]))
         if item.get("modifications"):
@@ -249,6 +328,8 @@ def _to_flash_card(item: dict) -> dict:
             "back": item.get("description") or item.get("text") or "",
             "emoji": item.get("emoji"),
         }
+    if "speaker" in item and ("quote" in item or "text" in item):
+        return _quote_card(item)
     if "text" in item and "front" not in item:
         return {"front": item.get("type", ""), "back": item["text"], "emoji": item.get("emoji")}
     if "aspect" in item and "detail" in item:
@@ -260,13 +341,6 @@ def _to_flash_card(item: dict) -> dict:
             "emoji": item.get("emoji"),
         }
     return item
-
-
-def _seconds_to_time_str(seconds: int) -> str:
-    """Convert seconds to M:SS or H:MM:SS time string."""
-    mins, secs = divmod(seconds, 60)
-    hours, mins = divmod(mins, 60)
-    return f"{hours}:{mins:02d}:{secs:02d}" if hours else f"{mins}:{secs:02d}"
 
 
 def _normalize_code_snippet(item: Any) -> dict | None:
@@ -299,16 +373,6 @@ def _normalize_code_snippet(item: Any) -> dict | None:
     }
 
 
-def _coerce_int(value: Any) -> int | None:
-    """Parse int or return None on failure."""
-    if value is None:
-        return None
-    try:
-        return int(value)
-    except (ValueError, TypeError):
-        return None
-
-
 def _coerce_float(value: Any) -> float | None:
     """Parse float or return None on failure."""
     if value is None:
@@ -317,67 +381,6 @@ def _coerce_float(value: Any) -> float | None:
         return float(value)
     except (ValueError, TypeError):
         return None
-
-
-def _normalize_moment_item(item: Any, index: int) -> dict | None:
-    """Normalize a moment/clip item to {label, time, seconds, endSeconds?, ...}.
-
-    Unified shape for MomentTrack: points (no endSeconds) and spans (with endSeconds).
-    Accepts the legacy field names from TimelineExplorer.entries and ClipPlayerInteractive.clips.
-    """
-    if isinstance(item, str):
-        stripped = item.strip()
-        return {"label": stripped, "time": "0:00", "seconds": 0} if stripped else None
-    if not isinstance(item, dict):
-        return None
-
-    description = item.get("description")
-    label_raw = (
-        item.get("label")
-        or item.get("title")
-        or item.get("name")
-        or (
-            truncate_words(description, 60)
-            if isinstance(description, str) and description
-            else None
-        )
-        or f"Moment {index + 1}"
-    )
-
-    seconds = _coerce_int(item.get("seconds"))
-    if seconds is None:
-        for key in ("startSeconds", "timestamp", "start_time", "startTime"):
-            seconds = _coerce_int(item.get(key))
-            if seconds is not None:
-                break
-    if seconds is None:
-        seconds = 0
-
-    end_seconds = None
-    for key in ("endSeconds", "end_seconds", "endTimestamp", "end_time", "endTime"):
-        end_seconds = _coerce_int(item.get(key))
-        if end_seconds is not None:
-            break
-    if end_seconds is not None and end_seconds <= seconds + 1:
-        end_seconds = None
-
-    time_str = item.get("time") or _seconds_to_time_str(seconds)
-
-    normalized: dict[str, Any] = {
-        "label": str(label_raw),
-        "time": time_str,
-        "seconds": seconds,
-    }
-    if end_seconds is not None:
-        normalized["endSeconds"] = end_seconds
-    for key in ("description", "mood", "emoji", "speaker", "thumbnailUrl", "s3Key"):
-        value = item.get(key)
-        if value is not None and value != "":
-            normalized[key] = value
-    tags = item.get("tags")
-    if isinstance(tags, list) and tags:
-        normalized["tags"] = [str(t) for t in tags if t is not None]
-    return normalized
 
 
 def _normalize_exercise(item: Any) -> dict | None:
@@ -397,14 +400,41 @@ def _normalize_exercise(item: Any) -> dict | None:
         "formCues": form_cues,
         "modifications": modifications,
     }
-    for key in ("sets", "reps", "duration", "rest", "difficulty", "timestamp", "description"):
+    for key in ("sets", "reps", "difficulty", "timestamp", "description"):
         if item.get(key) is not None:
             result[key] = item[key]
+    # Work and rest times are facts only on an exercise anchored in the video (D13).
+    result.update(stated_scalars(item, ("duration", "rest")))
     return result
 
 
-def _normalize_quiz_question(item: Any) -> dict | None:
-    """Normalize quiz question to {question, options[], correctIndex, explanation}."""
+def _quiz_extras(item: dict, duration_s: float | None) -> dict[str, Any]:
+    """A question's explanation, its seek point and its evidence line.
+
+    ``timestamp`` is the second the transcript answers the question (output-quality
+    1.13 / 1.5): the arena's seek chip, shipped whenever the item states one — in
+    seconds, checked against the explanation's own clock, and no bare second count
+    left in the explanation (2.0 a, ``quiz_stamps``; ``duration_s`` bounds both when
+    known — assembly reconciles enrichment.quiz with it before the tabs are built).
+    ``quote`` is quiz v2's evidence line (2.1b), shipped when the quote check left it;
+    ``quoteTranslated`` marks an English rendering of non-English speech (prose, D12).
+    """
+    timestamp, explanation = reconcile_quiz_time(
+        anchor_seconds(item), str(item.get("explanation") or ""), duration_s
+    )
+    extras: dict[str, Any] = {"explanation": explanation}
+    if timestamp is not None:
+        extras["timestamp"] = timestamp
+    quote = item.get("quote")
+    if isinstance(quote, str) and quote.strip():
+        extras["quote"] = quote.strip()
+        mark_translated_quote(extras, item)
+    return extras
+
+
+def _normalize_quiz_question(item: Any, duration_s: float | None = None) -> dict | None:
+    """Normalize quiz question to {question, options[], correctIndex, explanation, timestamp?,
+    quote?, quoteTranslated?} — the last four as ``_quiz_extras`` reads them."""
     if not isinstance(item, dict):
         return None
     question = item.get("question") or item.get("text") or ""
@@ -432,7 +462,7 @@ def _normalize_quiz_question(item: Any) -> dict | None:
         "question": str(question),
         "options": options,
         "correctIndex": correct_index,
-        "explanation": str(item.get("explanation") or ""),
+        **_quiz_extras(item, duration_s),
     }
 
 
@@ -466,30 +496,3 @@ def _normalize_scenario_item(item: Any) -> dict | None:
     if len(options) < 2:
         return None
     return {"question": str(question), "options": options}
-
-
-def _chapters_to_moments(chapters: list[dict], video_duration: int | None = None) -> list[dict]:
-    """Convert yt-dlp chapters to MomentTrack item format with endSeconds spans.
-
-    Each chapter becomes a span: endSeconds is the next chapter's start minus 1.
-    The final chapter uses video_duration - 1 when available.
-    """
-    items: list[dict] = []
-    for i, ch in enumerate(chapters):
-        start = _coerce_int(ch.get("start_time")) or 0
-        next_start: int | None = None
-        if i + 1 < len(chapters):
-            next_start = _coerce_int(chapters[i + 1].get("start_time"))
-        elif video_duration is not None:
-            next_start = int(video_duration)
-        end_seconds = next_start - 1 if next_start is not None and next_start > start + 1 else None
-        entry: dict[str, Any] = {
-            "time": _seconds_to_time_str(start),
-            "seconds": start,
-            "label": ch.get("title", ""),
-            "mood": "chapter",
-        }
-        if end_seconds is not None:
-            entry["endSeconds"] = end_seconds
-        items.append(entry)
-    return items

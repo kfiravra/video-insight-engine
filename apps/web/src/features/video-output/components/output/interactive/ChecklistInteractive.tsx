@@ -13,6 +13,8 @@ import { useTabCoordination } from '../TabCoordinationContext';
 interface ChecklistItem {
   label: string;
   note?: string;
+  /** A talk's ask quoted in another language: the note is the verbatim line, this its English (D12, 4.2). */
+  quoteEn?: string;
   emoji?: string;
   amount?: number;
   displayAmount?: string;
@@ -182,9 +184,10 @@ export const ChecklistInteractive = memo(function ChecklistInteractive({
                   ? `${item.displayAmount} ${item.label}`
                   : item.label;
 
+              // The <li> stays the list's direct child (FadeIn renders a <div>).
               return (
-                <FadeIn key={index} index={fadeIdx}>
-                  <li>
+                <li key={index}>
+                  <FadeIn index={fadeIdx}>
                     <button
                       type="button"
                       onClick={() => toggle(index)}
@@ -211,15 +214,21 @@ export const ChecklistInteractive = memo(function ChecklistInteractive({
                           <Badge variant="warning" className="ms-2 text-xs">essential</Badge>
                         )}
                         {item.note && (
-                          <p className={cn(
+                          <p dir="auto" className={cn(
                             'text-xs text-muted-foreground mt-0.5',
                             isChecked && 'line-through',
                           )}>{item.note}</p>
                         )}
+                        {item.quoteEn && (
+                          <p lang="en" dir="ltr" className={cn(
+                            'text-xs text-muted-foreground/80 mt-0.5',
+                            isChecked && 'line-through',
+                          )}>{item.quoteEn}</p>
+                        )}
                       </div>
                     </button>
-                  </li>
-                </FadeIn>
+                  </FadeIn>
+                </li>
               );
             })}
           </ul>

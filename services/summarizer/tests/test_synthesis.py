@@ -35,7 +35,7 @@ _RESPONSE = {
     "seoDescription": "Bake BA's best lasagna in three layers",
 }
 _TLDR_RULE = "- tldr: one sentence"
-_TAKEAWAYS_RULE = "- keyTakeaways: 3-5 items"
+_TAKEAWAYS_RULE = "- keyTakeaways: the claims that matter most"
 
 
 @pytest.fixture(autouse=True)

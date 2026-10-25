@@ -15,10 +15,16 @@ re-validates the result immediately afterward.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
+
+from src.services.pipeline.quote_verify import mark_translated_quote
+from src.shared_config.assembly_policy import assembly_policy
 
 from .assemblers_overhaul import assemble_concept_canvas
 from .assemblers_primary import assemble_spot_explorer
+from .derived_guard import has_quote, is_numeric_axis
+from .moment_normalizers import quote_en
 
 logger = logging.getLogger(__name__)
 
@@ -41,27 +47,54 @@ COMPONENT_PROMOTIONS: dict[str, str] = {
 
 # Domains whose `concepts` extraction carries a connection graph worth rendering
 # as a canvas rather than a flat flashcard deck.
-_CONCEPT_DOMAINS: frozenset[str] = frozenset({"learning", "science"})
+_CONCEPT_DOMAINS: frozenset[str] = frozenset(assembly_policy()["conceptPromotionDomains"])
+
+# Domains whose steps are a procedure to follow along (Cooking / Build mode
+# depend on step_player): they never render as a canvas, however long (D8).
+# domains.json ``assemblyPolicy``.
+STEP_LIST_DOMAINS: frozenset[str] = frozenset(assembly_policy()["stepListDomains"])
+
+# A rank ("1st", "22nd", "3RD") has the guard's number shape but is no
+# measurement: scaled as one, the worse rank would win its spoke. Twin of
+# ORDINAL_CELL in apps/web …/interactive/comparison/radar-scoring.ts.
+_ORDINAL_CELL = re.compile(r"^\d[\d,]*(?:st|nd|rd|th)$", re.IGNORECASE)
+
+
+def _is_ordinal(value: Any) -> bool:
+    return isinstance(value, str) and _ORDINAL_CELL.match(value.strip()) is not None
+
+
+def _is_radar_axis(row: Any) -> bool:
+    """A numeric axis (`derived_guard.is_numeric_axis`, D13) with no ranked side."""
+    return is_numeric_axis(row) and not (
+        _is_ordinal(row.get("thisProduct")) or _is_ordinal(row.get("competitor"))
+    )
 
 
 def _promote_comparison(props: dict) -> dict | None:
-    """comparison -> comparison_radar when there are enough scoreable axes.
+    """comparison -> comparison_radar when enough rows are numeric axes.
 
     `comparison_radar` shares the comparison data contract, so the props are
-    forwarded unchanged; the renderer chooses the radar visualization.
+    forwarded unchanged; the renderer chooses the radar visualization. An
+    axis is a row whose both sides are measurements (`_is_radar_axis`).
     """
     rows = props.get("comparisons")
-    if isinstance(rows, list) and len(rows) >= RADAR_AXIS_THRESHOLD:
+    if not isinstance(rows, list):
+        return None
+    if sum(1 for row in rows if _is_radar_axis(row)) >= RADAR_AXIS_THRESHOLD:
         return props
     return None
 
 
-def _promote_step_player(props: dict) -> dict | None:
+def _promote_step_player(props: dict, domain: str) -> dict | None:
     """step_player -> step_flow_canvas for long procedures.
 
     Same data contract as step_player; the canvas renderer lays the steps out
     as a connected flow once the list is long enough to benefit from it.
+    Never for `STEP_LIST_DOMAINS`, whose steps are followed, not browsed.
     """
+    if domain in STEP_LIST_DOMAINS:
+        return None
     steps = props.get("steps")
     if isinstance(steps, list) and len(steps) >= STEP_FLOW_THRESHOLD:
         return props
@@ -75,15 +108,19 @@ def _resolve_concept_source(
 ) -> list | None:
     """Find the concept list that backs a flash_deck tab.
 
-    Prefers the tab's own resolved data when it already carries connections;
-    otherwise falls back to the domain's `concepts` extraction block.
+    The tab's own resolved data when it carries connections; the domain's
+    `concepts` extraction block when the deck IS that list, or has no data of its
+    own. A deck over any other list — a quote deck (``podcast.quotes``, 4.2), key
+    points, vocabulary — stays a deck: promoted, its own items shipped nowhere, and
+    beside a planned concepts tab it dropped as that tab's twin (pC review).
     """
     if isinstance(data, list) and any(isinstance(x, dict) and x.get("connections") for x in data):
         return data
     dom = extraction.get(domain) if isinstance(extraction, dict) else None
-    if isinstance(dom, dict) and isinstance(dom.get("concepts"), list):
-        return dom["concepts"]
-    return None
+    concepts = dom.get("concepts") if isinstance(dom, dict) else None
+    if not isinstance(concepts, list):
+        return None
+    return concepts if not data or data == concepts else None
 
 
 def _promote_flash_deck(
@@ -108,36 +145,78 @@ def _promote_flash_deck(
     return None
 
 
+def _info_row_to_spot(row: dict) -> dict:
+    """info_grid row -> spot input: key -> name, value -> description.
+
+    `emoji` and `timestamp` ride along — the spot normalizer passes them
+    through, and the timestamp is the card's seek chip (R2).
+    """
+    spot = {"name": row.get("key", ""), "description": row.get("value", "")}
+    for field in ("emoji", "timestamp"):
+        if row.get(field) is not None and row.get(field) != "":
+            spot[field] = row[field]
+    return spot
+
+
+def checked_quotes(data: Any) -> dict[str, dict]:
+    """Each source item's ``quote`` (stripped) → the item. Assembly reads the checked
+    extraction (2.0 d): an unverified quote is already cleared, a translated one flagged."""
+    if not isinstance(data, list):
+        return {}
+    return {item["quote"].strip(): item for item in data if has_quote(item)}
+
+
+def spot_evidence(spot: dict, row: dict, quotes: dict[str, dict]) -> dict:
+    """A grid row's evidence on its spot card (R10, 2.0 d): the card's ``quote`` only
+    when it IS its item's checked quote, with the item's translated flag and its English
+    (``quoteEn``, D12, 4.2); any other evidence — an example, a source, a note, an
+    analogy — is prose after the description, never the speaker's words."""
+    evidence = str(row.get("evidence") or "").strip()
+    if not evidence:
+        return spot
+    item = quotes.get(evidence)
+    if item is not None:
+        spot.update({"quote": evidence, **quote_en(item)})
+        return mark_translated_quote(spot, item)
+    description = str(spot.get("description") or "").strip()
+    spot["description"] = f"{description} — {evidence}" if description else evidence
+    return spot
+
+
 def _promote_info_grid(
     props: dict,
+    data: Any,
     extraction: dict | None,
 ) -> dict | None:
     """info_grid -> spot_explorer when rows are description-heavy cards.
 
     A grid of short reference pairs stays a grid; a grid whose values are long
     descriptions is really a set of browsable cards, so we re-shape it through
-    the spot_explorer assembler (key -> name, value -> description).
+    the spot_explorer assembler. Each spot keeps its row's `timestamp`, its
+    `category` badge and its `evidence` — as the card's `quote` line only when
+    it is the item's checked quote (``spot_evidence``; R2, R5, R10). A row the
+    spot normalizer would refuse (a headline chip with no body) keeps the whole
+    tab a grid, where every row still renders — degrade, never drop.
     """
     items = props.get("items")
     if not isinstance(items, list):
         return None
-    long_items = [
-        it
-        for it in items
-        if isinstance(it, dict) and len(str(it.get("value") or "")) > INFO_GRID_LONG_VALUE
-    ]
-    if len(long_items) < INFO_GRID_LONG_MIN:
+    rows = [it for it in items if isinstance(it, dict)]
+    long_rows = [r for r in rows if len(str(r.get("value") or "")) > INFO_GRID_LONG_VALUE]
+    if len(long_rows) < INFO_GRID_LONG_MIN:
         return None
-    spot_input = [
-        {
-            "name": it.get("key", ""),
-            "description": it.get("value", ""),
-            **({"emoji": it["emoji"]} if it.get("emoji") else {}),
-        }
-        for it in items
-        if isinstance(it, dict)
-    ]
-    return assemble_spot_explorer({}, spot_input, extraction or {}, None)
+    spot_input = [_info_row_to_spot(r) for r in rows]
+    spot_props = assemble_spot_explorer({}, spot_input, extraction or {}, None)
+    # The assembler drops each row its normalizer refuses — one row short
+    # means a refused row, which keeps the whole tab a grid.
+    if spot_props is None or len(spot_props["spots"]) != len(rows):
+        return None
+    quotes = checked_quotes(data)
+    for spot, row in zip(spot_props["spots"], rows, strict=True):
+        spot_evidence(spot, row, quotes)
+        if row.get("category"):
+            spot["category"] = row["category"]
+    return spot_props
 
 
 def promote_component(
@@ -153,15 +232,21 @@ def promote_component(
     always returns re-shaped, render-valid props for the new component, which
     is ``COMPONENT_PROMOTIONS[component]``.
     """
+    if component == "step_flow_canvas" and domain in STEP_LIST_DOMAINS:
+        # The planner may pick the canvas outright; the step list is the same
+        # contract, so the tab ships as step_player (Cooking / Build mode).
+        logger.info("[assembly] step_flow_canvas -> step_player: %s steps are followed", domain)
+        return "step_player", props
+
     new_props: dict | None = None
     if component == "comparison":
         new_props = _promote_comparison(props)
     elif component == "step_player":
-        new_props = _promote_step_player(props)
+        new_props = _promote_step_player(props, domain)
     elif component == "flash_deck":
         new_props = _promote_flash_deck(data, extraction, domain)
     elif component == "info_grid":
-        new_props = _promote_info_grid(props, extraction)
+        new_props = _promote_info_grid(props, data, extraction)
 
     if new_props is None:
         return component, props
@@ -184,7 +269,9 @@ _DEMOTE_LADDER: dict[str, tuple[str, ...]] = {
     "step_flow_canvas": ("checklist", "display_section"),
     "spot_explorer": ("info_grid", "checklist", "display_section"),
     "info_grid": ("checklist", "display_section"),
-    "tier_list": ("info_grid", "display_section"),
+    # A tier list nobody ranked (2.0 c, D13) is a list of picks with their reasons:
+    # cards first — info_grid never stands alone (R6), so it is the last resort.
+    "tier_list": ("spot_explorer", "info_grid", "display_section"),
     "comparison": ("info_grid", "display_section"),
     "comparison_radar": ("info_grid", "display_section"),
     "concept_canvas": ("flash_deck", "info_grid", "display_section"),

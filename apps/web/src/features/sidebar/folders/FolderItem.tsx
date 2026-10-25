@@ -18,7 +18,7 @@ import { useUIStore, useSelectionMode } from "@/stores/ui-store";
 import { useDeleteFolder } from "@/hooks/use-folders";
 import { useSidebarTextClasses } from "@/features/sidebar/hooks/use-sidebar-text-size";
 import { useLongPress } from "@/features/sidebar/hooks/use-long-press";
-import { useIsTruncated } from "@/features/sidebar/hooks/use-is-truncated";
+import { useIsTruncated } from "@/hooks/use-is-truncated";
 import { useFolderDragDrop } from "@/features/sidebar/hooks/use-folder-drag-drop";
 import { FolderRenameInput } from "./FolderRenameInput";
 import { CreateSubfolderInput } from "./CreateSubfolderInput";

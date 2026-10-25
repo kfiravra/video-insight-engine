@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import type { ReactNode } from 'react';
 import { VideoHero } from '../VideoHero';
 import { VideoPlayerProvider, useVideoPlayer } from '@/features/video-output/contexts/VideoPlayerContext';
@@ -24,6 +24,27 @@ const SAMPLE_TABS = [
 function renderWithPlayer(ui: ReactNode): ReturnType<typeof render> {
   return render(<VideoPlayerProvider>{ui}</VideoPlayerProvider>);
 }
+
+const originalMatchMedia = window.matchMedia;
+
+/** Make the phone media query match for one test (the setup mock answers
+ *  false to everything except prefers-reduced-motion). */
+function mockPhoneViewport(): void {
+  window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+    matches: /max-width: 767px/.test(query) || /prefers-reduced-motion/.test(query),
+    media: query,
+    onchange: null,
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  }));
+}
+
+afterEach(() => {
+  window.matchMedia = originalMatchMedia;
+});
 
 /** Test-only sibling that exposes seekTo so tests can simulate a timestamp
  *  click from elsewhere in the output (MomentTrack, VisualEvidence, …). */
@@ -79,48 +100,11 @@ describe('VideoHero', () => {
     expect(screen.getAllByRole('tab')).toHaveLength(SAMPLE_TABS.length);
   });
 
-  it('should mark the active tab with aria-selected=true', () => {
-    renderWithPlayer(
-      <VideoHero {...DEFAULT_PROPS} tabs={SAMPLE_TABS} activeTabId="key_points" onTabSelect={() => {}} />,
-    );
-
-    const active = screen.getByRole('tab', { selected: true });
-    expect(active).toHaveTextContent('Key Points');
-  });
-
-  it('should fire onTabSelect with the tab id when a tab is clicked', async () => {
-    const onTabSelect = vi.fn();
-    const user = userEvent.setup();
-    renderWithPlayer(
-      <VideoHero {...DEFAULT_PROPS} tabs={SAMPLE_TABS} activeTabId="overview" onTabSelect={onTabSelect} />,
-    );
-
-    await user.click(screen.getByRole('tab', { name: /quizzes/i }));
-
-    expect(onTabSelect).toHaveBeenCalledWith('quizzes');
-  });
-
   it('should not render a tab bar when no tabs are provided', () => {
     renderWithPlayer(<VideoHero {...DEFAULT_PROPS} />);
 
     expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
     expect(screen.queryAllByRole('tab')).toHaveLength(0);
-  });
-
-  it('should apply the domain gradient to the active tab', () => {
-    const gradient = 'linear-gradient(135deg, oklch(70% 0.2 280), oklch(60% 0.2 320))';
-    renderWithPlayer(
-      <VideoHero
-        {...DEFAULT_PROPS}
-        tabs={SAMPLE_TABS}
-        activeTabId="overview"
-        onTabSelect={() => {}}
-        domainGradient={gradient}
-      />,
-    );
-
-    const active = screen.getByRole('tab', { selected: true });
-    expect(active.getAttribute('style') ?? '').toContain('linear-gradient');
   });
 
   it('should handle missing optional props gracefully', () => {
@@ -170,12 +154,65 @@ describe('VideoHero', () => {
       expect(screen.getByText('Advanced')).toBeInTheDocument();
     });
 
-    it('should render the brief inline with no Brief collapse toggle', () => {
+    it('should render the tldr inline above the brief', () => {
       renderWithPlayer(<VideoHero {...DEFAULT_PROPS} />);
-      // The brief now rides beside the action cluster as plain prose — there is
-      // no longer a "Brief" disclosure button.
-      expect(screen.getByText(DEFAULT_PROPS.tldr)).toBeInTheDocument();
+      const tldr = screen.getByText(DEFAULT_PROPS.tldr);
+      const brief = screen.getByText(DEFAULT_PROPS.masterSummary);
+      expect(tldr.compareDocumentPosition(brief) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+
+    it('should render masterSummary as a Brief region open on desktop', () => {
+      renderWithPlayer(<VideoHero {...DEFAULT_PROPS} />);
+      expect(screen.getByRole('region', { name: 'Brief' })).toHaveTextContent(DEFAULT_PROPS.masterSummary);
+    });
+
+    it('should collapse the Brief by default on phones', () => {
+      mockPhoneViewport();
+      renderWithPlayer(<VideoHero {...DEFAULT_PROPS} />);
+      expect(screen.getByRole('button', { name: /^brief$/i })).toHaveAttribute('aria-expanded', 'false');
+    });
+
+    it('should toggle the Brief when its disclosure is clicked on a phone', async () => {
+      mockPhoneViewport();
+      const user = userEvent.setup();
+      renderWithPlayer(<VideoHero {...DEFAULT_PROPS} />);
+      const briefBtn = screen.getByRole('button', { name: /^brief$/i });
+      await user.click(briefBtn);
+      expect(briefBtn).toHaveAttribute('aria-expanded', 'true');
+      await user.click(briefBtn);
+      expect(briefBtn).toHaveAttribute('aria-expanded', 'false');
+    });
+
+    it('should render the key question as the first line of the brief when present', () => {
+      renderWithPlayer(
+        <VideoHero
+          {...DEFAULT_PROPS}
+          keyQuestion="What does agent-written code mean for programmers?"
+          masterSummary={'First paragraph.\n\nSecond paragraph.'}
+        />,
+      );
+      expect(screen.getByRole('region', { name: 'Brief' })).toHaveTextContent(
+        /What does agent-written code mean for programmers\?\s*First paragraph\.\s*Second paragraph\./,
+      );
+    });
+
+    it('should not render a Brief section when masterSummary is absent', () => {
+      renderWithPlayer(<VideoHero {...DEFAULT_PROPS} masterSummary={undefined} />);
       expect(screen.queryByRole('button', { name: /^brief$/i })).not.toBeInTheDocument();
+    });
+
+    it('should not render the key question on its own when masterSummary is absent (it lives in the brief)', () => {
+      renderWithPlayer(<VideoHero {...DEFAULT_PROPS} masterSummary={undefined} keyQuestion="Why does it matter?" />);
+      expect(screen.queryByText('Why does it matter?')).not.toBeInTheDocument();
+    });
+
+    it('should hide collapsed section content from the focus order and the accessibility tree', () => {
+      mockPhoneViewport();
+      renderWithPlayer(<VideoHero {...DEFAULT_PROPS} />);
+      // Collapsed on phones: the takeaways are mounted but inert.
+      const content = document.getElementById('vie-hero-takeaways-content') as HTMLElement;
+      expect(content).toHaveAttribute('aria-hidden', 'true');
+      expect(content).toHaveAttribute('inert');
     });
 
     it('should render Key takeaways disclosure with a count when takeaways are present', () => {
@@ -188,11 +225,74 @@ describe('VideoHero', () => {
       expect(screen.getByText('Takeaway three')).toBeInTheDocument();
     });
 
-    it('should cap takeaways at six visible items', () => {
+    it('should show three takeaways on desktop with a "+N" more control for the rest', () => {
       const tooMany = Array.from({ length: 9 }, (_, i) => `Takeaway ${i + 1}`);
       renderWithPlayer(<VideoHero {...DEFAULT_PROPS} keyTakeaways={tooMany} />);
-      expect(screen.getByText('Takeaway 6')).toBeInTheDocument();
-      expect(screen.queryByText('Takeaway 7')).not.toBeInTheDocument();
+      expect(screen.getByText('Takeaway 3')).toBeInTheDocument();
+      expect(screen.queryByText('Takeaway 4')).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^\+6 · More takeaways$/ })).toBeInTheDocument();
+    });
+
+    it('should reveal all takeaways when "+N" is clicked', async () => {
+      const user = userEvent.setup();
+      const tooMany = Array.from({ length: 9 }, (_, i) => `Takeaway ${i + 1}`);
+      renderWithPlayer(<VideoHero {...DEFAULT_PROPS} keyTakeaways={tooMany} />);
+      await user.click(screen.getByRole('button', { name: /^\+6 · More takeaways$/ }));
+      expect(screen.getByText('Takeaway 9')).toBeInTheDocument();
+    });
+
+    it('should collapse the takeaways by default on phones', () => {
+      mockPhoneViewport();
+      renderWithPlayer(<VideoHero {...DEFAULT_PROPS} />);
+      expect(screen.getByRole('button', { name: /key takeaways/i })).toHaveAttribute('aria-expanded', 'false');
+    });
+
+    it('should show three takeaways on phones with a "+N" more control', async () => {
+      mockPhoneViewport();
+      const user = userEvent.setup();
+      const five = Array.from({ length: 5 }, (_, i) => `Takeaway ${i + 1}`);
+      renderWithPlayer(<VideoHero {...DEFAULT_PROPS} keyTakeaways={five} />);
+      // Phones start collapsed (the content is inert) — open the section first.
+      await user.click(screen.getByRole('button', { name: /key takeaways/i }));
+      expect(screen.getByText('Takeaway 3')).toBeInTheDocument();
+      expect(screen.queryByText('Takeaway 4')).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^\+2 · More takeaways$/ })).toBeInTheDocument();
+    });
+
+    it('should name the takeaways collapse control distinctly from the player and brief controls', async () => {
+      const user = userEvent.setup();
+      const tooMany = Array.from({ length: 9 }, (_, i) => `Takeaway ${i + 1}`);
+      renderWithPlayer(<VideoHero {...DEFAULT_PROPS} keyTakeaways={tooMany} />);
+      await user.click(screen.getByRole('button', { name: /^\+6 · More takeaways$/ }));
+      expect(screen.getByRole('button', { name: 'Hide takeaways' })).toBeInTheDocument();
+    });
+
+    it('should not show a more control when every takeaway fits', () => {
+      renderWithPlayer(<VideoHero {...DEFAULT_PROPS} />);
+      expect(screen.queryByRole('button', { name: /More takeaways/ })).not.toBeInTheDocument();
+    });
+
+    it('should clamp a long brief to two lines until "more" is clicked on desktop', async () => {
+      const user = userEvent.setup();
+      const long = Array.from({ length: 8 }, (_, i) => `Sentence number ${i + 1} of a long brief that runs well past five lines.`).join(' ');
+      renderWithPlayer(<VideoHero {...DEFAULT_PROPS} masterSummary={long} />);
+      await user.click(screen.getByRole('button', { name: 'Read more of the brief' }));
+      expect(screen.getByRole('button', { name: 'Hide brief' })).toBeInTheDocument();
+    });
+
+    it('should count the key question against the five-line clamp budget on a phone', async () => {
+      mockPhoneViewport();
+      const user = userEvent.setup();
+      const question = 'Q'.repeat(200);
+      const body = 'B'.repeat(200);
+      renderWithPlayer(<VideoHero {...DEFAULT_PROPS} keyQuestion={question} masterSummary={body} />);
+      await user.click(screen.getByRole('button', { name: /^brief$/i }));
+      expect(screen.getByRole('button', { name: /^show all$/i })).toBeInTheDocument();
+    });
+
+    it('should render a domain chip for podcast, news, gaming and sport', () => {
+      renderWithPlayer(<VideoHero {...DEFAULT_PROPS} primaryTag="podcast" />);
+      expect(screen.getByText('Podcast')).toBeInTheDocument();
     });
 
     it('should not render the Key takeaways block when none are present and not streaming', () => {

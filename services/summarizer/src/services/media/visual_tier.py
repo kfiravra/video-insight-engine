@@ -13,6 +13,11 @@ and ``has_visual_demo`` plus title keywords; without one — or with one that
 judged its transcript unusable, since it then classified garbage — from cheap
 metadata (category + title/tag keywords). ``visualCriticality`` in
 packages/shared/src/config/domains.json single-sources the tier table.
+
+``skips_frames`` is D2's talking-head rule (output-quality 3.5,
+``FRAMES_SKIP_WHEN_NO_VISUAL_DEMO``): a long video whose confident probe saw no
+visual demo skips scene detection and vision altogether when its tier is LOW or
+its format is one of ``visualCriticality.skipFormats``.
 """
 
 from __future__ import annotations
@@ -32,6 +37,13 @@ VisualTier = Literal["high", "standard", "low"]
 # probe answers in ~1 s, so the cap only bites when the transcript (hence the
 # probe) is late — Whisper/Gemini videos — and then the metadata rule decides.
 PROBE_WAIT_CAP_SECONDS = 3.0
+# D2: only a video longer than this may skip its frames — below it the 360p
+# pass is cheap and the probe wait at the top of the frames phase pure latency.
+FRAMES_SKIP_MIN_SECONDS = 1800.0
+# The skip drops every frame of a run, so it trusts the probe only as far as the
+# plan does: = phases/triage.PROBE_CONFIDENCE_THRESHOLD (a test pins the two; this
+# module sits below the phases, which import it, so it cannot import that one).
+SKIP_MIN_PROBE_CONFIDENCE = 0.6
 
 
 def _title_keyword_hit(cfg: dict, *texts: str) -> bool:
@@ -117,6 +129,15 @@ async def await_probe(
     return probe_task.result()
 
 
+def usable_probe(probe: TierProbe | None) -> TierProbe | None:
+    """The probe, or ``None`` when it read an unusable transcript: its domain and
+    ``has_visual_demo`` were then judged from word salad."""
+    if probe is not None and not probe.transcript_usable:
+        logger.info("Tier probe read an unusable transcript — metadata tier")
+        return None
+    return probe
+
+
 async def resolve_tier(
     probe_task: asyncio.Future[TierProbe | None] | None,
     title: str,
@@ -130,10 +151,7 @@ async def resolve_tier(
     A probe that read an unusable transcript counts as no probe: its domain
     and ``has_visual_demo`` were judged from word salad.
     """
-    probe = await await_probe(probe_task, cap_seconds)
-    if probe is not None and not probe.transcript_usable:
-        logger.info("Tier probe read an unusable transcript — metadata tier")
-        probe = None
+    probe = usable_probe(await await_probe(probe_task, cap_seconds))
     tier = derive_tier(probe, title, tags, category=category)
     logger.info("Visual tier %s from %s", tier, "probe" if probe is not None else "metadata")
     return tier
@@ -143,3 +161,27 @@ def tier_settings(tier: VisualTier) -> dict:
     """The tier's knob values from config (overselect / visionMax / keep)."""
     cfg = visual_criticality_config()
     return dict((cfg.get("tiers") or {}).get(tier, {}))
+
+
+def frames_skip_considered(duration_s: float | None) -> bool:
+    """Whether D2's skip may apply at all: a video longer than ``FRAMES_SKIP_MIN_SECONDS``."""
+    return duration_s is not None and duration_s > FRAMES_SKIP_MIN_SECONDS
+
+
+def skips_frames(probe: TierProbe | None, tier: VisualTier, duration_s: float | None) -> bool:
+    """D2's talking-head rule: no scene detection and no vision for this run.
+
+    All of: longer than 30 min · ``tier`` (``derive_tier`` from this probe) not
+    HIGH · a usable probe, confident above ``SKIP_MIN_PROBE_CONFIDENCE``, that saw
+    no visual demo · ``tier`` LOW or the probe's format in ``skipFormats`` (an
+    empty list = LOW only). No probe, or one that read an unusable transcript,
+    never skips. Lectures stay off the list: their slides are content.
+    """
+    if probe is None or not probe.transcript_usable or probe.has_visual_demo:
+        return False
+    if probe.confidence <= SKIP_MIN_PROBE_CONFIDENCE:
+        return False
+    if not frames_skip_considered(duration_s) or tier == "high":
+        return False
+    skip_formats = set(visual_criticality_config().get("skipFormats", []))
+    return tier == "low" or probe.format in skip_formats

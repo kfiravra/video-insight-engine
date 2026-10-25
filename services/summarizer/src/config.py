@@ -124,6 +124,17 @@ class Settings(BaseSettings):
     # Sub-batches when a long video's chunked input collapses to one batch;
     # they run in one round while EXTRACTION_PARALLEL_BATCHES >= this.
     EXTRACTION_FORCE_SPLIT_CHUNKS: int = 4
+    # Rollback levers for the output-quality phase-2 calls (both default on).
+    # true: one ``hero_rewrite`` call on LLM_EXTRACTION_MODEL (it reads the
+    # extraction's prompt cache, which is per model) writes the hero and
+    # replaces the synthesis call. false: memory hero + synthesis, as before.
+    HERO_REWRITE_ENABLED: bool = True
+    # true: quiz v2 on LLM_EXTRACTION_MODEL (it reads the extraction's prompt cache,
+    # output-quality 4.6e) — every question carries its answer's timestamp and a
+    # verified evidence quote. false: the enrich_quiz call on LLM_ENRICHMENT_MODEL.
+    QUIZ_V2_ENABLED: bool = True
+    MERGE_RANK_ENABLED: bool = True  # chunked runs: merge_rank (3.1); false: code merge only
+    FRAMES_SKIP_WHEN_NO_VISUAL_DEMO: bool = True  # long talking heads skip frames (3.5, D2)
 
     # Timeout constants for pipeline stages
     TRANSCRIPT_FETCH_TIMEOUT: float = 30.0
@@ -400,7 +411,10 @@ class Settings(BaseSettings):
         "synthesis": "LLM_SYNTHESIS_MODEL",
         "enrichment": "LLM_ENRICHMENT_MODEL",
         "extraction": "LLM_EXTRACTION_MODEL",
+        "hero_rewrite": "LLM_EXTRACTION_MODEL",
         "memory": "LLM_MEMORY_MODEL",
+        "quiz_v2": "LLM_EXTRACTION_MODEL",  # quiz v2 (4.6e): reads the groups' cache, no key
+        "merge_rank": "LLM_MEMORY_MODEL",  # merge_rank (3.1): the same, no key of its own
         "faithfulness": "LLM_JUDGE_MODEL",
         # The stage names the translation calls send (pipeline/translation_flat.py:
         # the output's source-language pass, and translate_text for the title).
@@ -411,8 +425,10 @@ class Settings(BaseSettings):
         "vision": "LLM_VISION_MODEL",
     }
 
-    # A stage whose blank setting follows another stage's model.
-    _STAGE_FALLBACK: ClassVar[dict[str, str]] = {"memory": "extraction"}
+    _STAGE_FALLBACK: ClassVar[dict[str, str]] = {  # a blank setting → the mapped stage's model
+        "memory": "extraction",
+        "merge_rank": "memory",
+    }
 
     def get_stage_model(self, stage_name: str) -> str | None:
         """Return the per-stage model override or None to use fast/primary."""

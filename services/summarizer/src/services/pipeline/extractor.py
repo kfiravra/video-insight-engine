@@ -18,6 +18,8 @@ from .extraction_merger import merge_batch_extractions
 from .extraction_prompt import (
     ExtractionPrompt,
     ExtractionPromptInput,
+    batch_clock_line,
+    batch_counts_line,
     build_extraction_prompt,
     slice_visual_annotations,
 )
@@ -146,6 +148,7 @@ async def extract(
     video_context: str = "",
     frame_context: str = "",
     visual_annotations: str = "",
+    source_language: str | None = None,
 ) -> AsyncGenerator[dict, None]:
     """Adaptive extraction yielding progress events and final result.
 
@@ -159,7 +162,8 @@ async def extract(
 
     ``video_context`` is the run's ``<video_memory>`` block; ``frame_context``
     the ≤ 12 key-frame lines; ``visual_annotations`` the ``<visual_annotations>``
-    block ("" = no frames/OCR, and the prompt then carries no visual guide).
+    block ("" = no frames/OCR, and the prompt then carries no visual guide);
+    ``source_language`` the run's ``source_language_code`` (None = English).
     """
     word_count = len(transcript.split())
     duration_seconds = video_data.get("duration", 0)
@@ -178,6 +182,7 @@ async def extract(
         video_memory=video_context,
         frame_context=frame_context,
         visual_annotations=visual_annotations,
+        source_language=source_language,
     )
 
     # Strategy selection: chunked for long videos with chapters
@@ -235,8 +240,11 @@ def _build_prompt(
     video_memory: str,
     frame_context: str,
     visual_annotations: str,
+    source_language: str | None = None,
 ) -> ExtractionPrompt:
-    """The run's prompt: system rules, cached ``[video + transcript + memory]``, job tail."""
+    """The run's prompt: system rules, cached ``[video + transcript + memory]``, job tail.
+
+    ``source_language``: the run's ``source_language_code`` (None = English, 4.2)."""
     rules_path = PROMPTS_DIR / "quality_rules.txt"
     quality_rules = _load_prompt(str(rules_path.resolve())) if rules_path.exists() else ""
     return build_extraction_prompt(
@@ -251,6 +259,7 @@ def _build_prompt(
             video_memory=video_memory,
             frame_context=frame_context,
             visual_annotations=visual_annotations,
+            source_language=source_language,
         )
     )
 
@@ -260,6 +269,7 @@ def _build_batch_context(
     total_batches: int,
     batch: list[ChapterChunk],
     full_duration_seconds: float,
+    counts_scaled: bool = False,
 ) -> str:
     """Build per-batch partial-extraction guidance.
 
@@ -267,6 +277,8 @@ def _build_batch_context(
     Otherwise an XML block telling the model it sees one slice (with its
     absolute time range): the plan's briefs, counts and caps describe the whole
     video, so a batch must neither pad toward them nor read absence from them.
+    ``counts_scaled`` (the split path's chunks, output-quality 3.3): the counts
+    are the part's share and the caps hold per part. Both paths state the clock (3.4).
     """
     if total_batches <= 1:
         return ""
@@ -278,9 +290,10 @@ def _build_batch_context(
         "<batch_partial_context>\n"
         f"You are extracting from BATCH {batch_idx + 1} of {total_batches} parallel batches.\n"
         f"This part covers ~{batch_minutes} minutes ({span}) of the full {full_minutes}-minute video.\n"
+        f"{batch_clock_line(_batch_start_seconds(batch))}"
         "- Extract only what this part of the transcript contains; a merger combines every batch's output.\n"
         "- Return empty arrays for fields this part does not cover — other batches cover them.\n"
-        "- The briefs, expected counts and caps below describe the whole video: take the items inside this part, never pad toward a count.\n"
+        f"{batch_counts_line(counts_scaled)}"
         "</batch_partial_context>\n"
     )
 

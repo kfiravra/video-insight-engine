@@ -1,0 +1,28 @@
+<hero_job>
+This call does not extract: the schemas and emit rules above are not your job here. Your job is the HERO of this video's page — the overview a viewer reads first, to decide whether the video is worth their time and what to take from it. Write it from this video only: the transcript and <video_memory> when they are above, <video_memory> and <video> below when they are not, and <extracted> — what the extraction pulled from the whole video, each stamped item under an id (K… a key idea, M… a moment, C… a claim, Q… a question, S… a segment, P… a step …) with its [m:ss].
+
+Answer with this JSON object and nothing else:
+{"tldr": "…", "brief": "…", "keyTakeaways": [{"text": "…", "ref": "K12"}], "worthItFor": "…", "skipIf": "…", "seoDescription": "…"}
+
+- tldr: one sentence, at most 140 characters — what the video claims or delivers: its thesis, a position a reader could disagree with; for a how-to, the result and the one thing that makes it work. Never its topic ("A talk about AI agents"), never a list of what it covers.
+- brief: 3 to 5 sentences, in the video's order — what is argued or shown and what is new in it. Where the video shows something a reader cannot get from text — a demo, a build, a moment on screen — name that one thing as <extracted> names it; where it shows nothing like that, say nothing about watching. Never a claim about delivery, tone or how a line lands. It describes the video, never this page: no tab, section or part of the page is named, and the reader is never told to see, check out or explore anything — the page's tabs can still change after you write.
+- keyTakeaways: exactly {takeaway_count} for this {duration} video — the claims that matter most, most important first. Each "text" is one sentence of at most 25 words in the video's own terms: a claim a viewer can act on or argue with — no topic label, no generic advice, no timestamp in the text. Each "ref" is the id of the <extracted> item the claim rests on; code copies that item's timestamp onto the takeaway, so a takeaway says only what that one item says — never two places, steps or claims from different moments in one sentence. {stamp_rule}
+- A cited item with a quote is stamped where that quote is said: the takeaway makes the claim the quote makes, never a remark the rest of the item's line adds (it may be said minutes away). One item, one subject: never "X and Y each …" over two items, and never an item's ref for what a line without an id says ("- …" lines have no stamp). Shorten by leaving words out, never by fusing two steps or claims into one.
+- worthItFor: at most 16 words — who gets what from watching, by what this video contains. (From another video: "Home bakers chasing an open crumb: the folds, the shaping and the bake.")
+- skipIf: at most 16 words — what someone might come for that this video does not contain. (From another video: "You want a price comparison: one robot vacuum, tested in one flat, no rivals.")
+- worthItFor and skipIf are plain and specific, addressed to the viewer — the outcome they get or miss, never the page and never a restated topic. They describe the video's content, never its creator: no verdict on the speaker, host or delivery ("rambles", "great presenter", "engaging", "annoying"). Nothing from outside the video: no name, product, date or number the video does not contain.
+- seoDescription: at most 160 characters, a plain description of the video for search results.
+
+Numbers: every number you write — a year, a count, a price, a duration, a version — appears as written in the transcript, <video_memory> or <extracted>. Never compute, convert, round or combine one; where the video gives no number, write none.
+
+Stance: as the video holds it. A possibility, a guess, a question or a view the speaker reports stays one — never written as what the video found or proved. Join two claims with "so", "because" or "which means" only where the video draws that link; write "each", "every" or "all" only where it gives that for every one.
+
+Quote marks: only around words copied exactly from the transcript or an <extracted> quote; anything else is written without them.
+
+{video}<extracted>
+{extracted}
+</extracted>
+
+The page's tabs (so you know what the page covers; never name them):
+{tab_labels}
+</hero_job>

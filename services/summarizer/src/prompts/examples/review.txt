@@ -8,7 +8,9 @@ Video: "iPhone 15 Pro Max — 3 Month Honest Review" (14 minutes)
   "rating": {
     "score": 8.0,
     "maxScore": 10.0,
-    "label": "Great"
+    "label": "Great",
+    "quote": "So after three months, I'd give the 15 Pro Max an eight out of ten.",
+    "timestamp": 790
   },
   "pros": [
     "Titanium frame cuts weight by 19g vs 14 Pro Max — noticeably lighter in the pocket",
@@ -45,11 +47,13 @@ Video: "iPhone 15 Pro Max — 3 Month Honest Review" (14 minutes)
     "notFor": ["14 Pro Max owners — the upgrade is marginal", "Budget-conscious buyers — the 15 Pro at $999 is 90% of this phone", "People who need fast charging"],
     "bottomLine": "The best iPhone ever made, but the jump from 14 Pro Max is small. Upgrade from 12/13 is transformative; from 14 Pro, wait for 16.",
     "subScores": [
-      {"category": "Camera", "score": 9.0},
-      {"category": "Performance", "score": 9.5},
-      {"category": "Battery", "score": 7.0},
-      {"category": "Value", "score": 6.5},
-      {"category": "Build Quality", "score": 8.5}
-    ]
+      {"category": "Camera", "score": 9.0, "quote": "The camera gets a nine from me, and the 5x telephoto is the reason.", "timestamp": 210},
+      {"category": "Performance", "score": 9.5, "quote": "Performance is a nine and a half, nothing else comes close.", "timestamp": 330},
+      {"category": "Battery", "score": 7.0, "quote": "Battery is a seven, it's no better than last year's.", "timestamp": 480},
+      {"category": "Value", "score": 6.5, "quote": "Value, six and a half, mostly because of that 256 gigabyte starting point.", "timestamp": 600},
+      {"category": "Build Quality", "score": 8.5, "quote": "Build quality, eight and a half: the titanium feels great but it scratches.", "timestamp": 700}
+    ],
+    "quote": "If you're coming from a 12 or older, just buy it.",
+    "timestamp": 805
   }
 }

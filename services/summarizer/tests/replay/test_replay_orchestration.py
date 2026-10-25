@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import pytest
 
+from src.config import settings
 from tests.replay.conftest import SCALED_SPEED, SPLIT_EXTRACTION
 from tests.replay.driver import ReplayResult
 
@@ -98,6 +99,11 @@ def test_hero_should_land_at_memory_done_before_frames(scaled_reference: ReplayR
     assert memory_end <= hero_ms < _phase(scaled_reference, "frames")["endMs"]
 
 
-def test_synthesis_complete_should_arrive_twice(scaled_reference: ReplayResult) -> None:
-    """Early {tldr, keyTakeaways} at memory-done, the full superset at synthesis-done."""
-    assert scaled_reference.event_names().count("synthesis_complete") == 2
+def test_synthesis_complete_should_arrive_once_per_hero_stage(
+    scaled_reference: ReplayResult,
+) -> None:
+    """Early {tldr, keyTakeaways} at memory-done, the full superset at synthesis-done —
+    and with the hero rewrite (output-quality 2.2) the corrected superset carrying the
+    page's readingMinutes once the tabs are final."""
+    expected = 3 if settings.HERO_REWRITE_ENABLED else 2
+    assert scaled_reference.event_names().count("synthesis_complete") == expected

@@ -1,7 +1,8 @@
 """Assemblers — learning/media family.
 
 exercise_tracker, quiz, flash_deck, scenario, verdict, budget, overview,
-gallery, lyrics_player, display_section.
+gallery, lyrics_player, display_section. The key-idea spot cards
+(``key_idea_props``) live in ``key_ideas`` and are re-exported here.
 
 Signature: (tab, data, extraction, enrichment) -> props dict | None
 Returning None means the tab should be dropped (no data).
@@ -11,6 +12,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from src.services.pipeline.quote_verify import QUOTE_STATUS_KEY, QUOTE_TRANSLATED_KEY
+
+from .derived_guard import stated_block_scalars
+from .key_ideas import is_key_idea_list as is_key_idea_list
+from .key_ideas import key_idea_props as key_idea_props
 from .normalizers import (
     _CATEGORY_FRONTS,
     _DOMAIN_EMOJI,
@@ -18,6 +24,7 @@ from .normalizers import (
     _normalize_exercise,
     _normalize_quiz_question,
     _normalize_scenario_item,
+    _normalize_verdict,
     _to_flash_card,
 )
 
@@ -127,28 +134,15 @@ def assemble_verdict(
     """
     if not isinstance(data, dict):
         return None
-    verdict_props: dict[str, Any] = {
-        "badge": data.get("badge", "neutral"),
-        "bottomLine": data.get("bottomLine", ""),
-        "bestFor": data.get("bestFor") or [],
-        "notFor": data.get("notFor") or [],
-    }
-    sub_scores = data.get("subScores")
-    if isinstance(sub_scores, list) and sub_scores:
-        verdict_props["subScores"] = sub_scores
-    score = data.get("score")
-    if isinstance(score, (int, float)):
-        verdict_props["score"] = score
-        max_score = data.get("maxScore")
-        if isinstance(max_score, (int, float)) and max_score > 0:
-            verdict_props["maxScore"] = max_score
+    # A legacy verdict block carries its own score / maxScore — the same D13
+    # guard as the comparison assembler's review rating.
     return {
         "pros": [],
         "cons": [],
         "comparisons": [],
         "leftLabel": "",
         "rightLabel": "",
-        "verdict": verdict_props,
+        "verdict": _normalize_verdict(data, data),
     }
 
 
@@ -210,6 +204,36 @@ def _collect_tips(extraction: dict | None, primary_tag: str, cap: int = 5) -> li
     return out
 
 
+def _quote_scalars(block: dict, key: str) -> dict[str, Any]:
+    """``stated_block_scalars`` minus the quote check's bookkeeping, and minus a
+    translated quote: the overview renders its ``quote`` as a quote (2.0 d, D12)."""
+    stated = stated_block_scalars(block, key)
+    if stated.pop(QUOTE_TRANSLATED_KEY, None) is True:
+        stated.pop("quote", None)
+    stated.pop(QUOTE_STATUS_KEY, None)
+    return stated
+
+
+def _domain_scalars(domain_data: dict) -> dict[str, Any]:
+    """The primary block's scalars and its dict children's, the first key winning.
+
+    Only what a reader may take as a fact (D13): a score, rating, tier, status,
+    duration or date passes only when its block is anchored (a score, tier or
+    status only when it is also quoted), and a ``rating`` block passes nothing
+    unstated. S07's overview shipped the review's unanchored score 9 / maxScore
+    10 / "Great" through this spread.
+    """
+    top_level = _quote_scalars(domain_data, "")
+    scalars: dict[str, Any] = {}
+    for key, value in domain_data.items():
+        if key in top_level:
+            scalars.setdefault(key, top_level[key])
+        elif isinstance(value, dict):
+            for child_key, child_value in _quote_scalars(value, key).items():
+                scalars.setdefault(child_key, child_value)
+    return scalars
+
+
 def assemble_overview(
     tab: dict,
     data: Any,
@@ -267,15 +291,8 @@ def assemble_overview(
 
     domain_data = extraction.get(primary_tag) if extraction else None
     if isinstance(domain_data, dict):
-        for key, value in domain_data.items():
-            if value is None or key in result:
-                continue
-            if isinstance(value, (str, int, float, bool)):
-                result[key] = value
-            elif isinstance(value, dict):
-                for k, v in value.items():
-                    if isinstance(v, (str, int, float, bool)) and v is not None and k not in result:
-                        result[k] = v
+        for key, value in _domain_scalars(domain_data).items():
+            result.setdefault(key, value)
 
     # Only the domain emoji was set — no real content to show.
     if set(result.keys()) <= {"emoji"}:
@@ -337,10 +354,10 @@ def assemble_lyrics_player(
                 else 999999
             )
             seg_lines = [
-                l
-                for l in lyric_lines
-                if l.get("timestamp") is not None
-                and seg_start <= int(l.get("timestamp") or 0) < next_start
+                line
+                for line in lyric_lines
+                if line.get("timestamp") is not None
+                and seg_start <= int(line.get("timestamp") or 0) < next_start
             ]
             sections.append(
                 {

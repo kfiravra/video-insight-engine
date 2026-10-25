@@ -100,7 +100,7 @@ async def test_heartbeats_flow_while_moment_fill_runs() -> None:
 
     ctx = _build_ctx()
 
-    async def slow_fill(_tabs, _yt, _hires_video) -> int:
+    async def slow_fill(_tabs, _yt, _hires_video, _max_frames) -> int:
         await asyncio.sleep(0.12)
         return 0
 
@@ -155,7 +155,7 @@ async def test_moment_fill_reads_the_runs_720p_file_and_closes_it_after() -> Non
     ctx = _build_ctx()
     ctx.hires_video = _HiresVideo(order)
 
-    async def fill(_tabs, _yt, hires_video) -> int:
+    async def fill(_tabs, _yt, hires_video, _max_frames) -> int:
         order.append("fill" if hires_video is ctx.hires_video else "fill-without-file")
         return 0
 

@@ -10,9 +10,9 @@
  */
 
 import type { ReactNode } from 'react';
-import { RecipeStepView } from './RecipeStepView';
+import { RecipeStepView, StudyStepView, ListenStepView, type ListenSegment } from './RecipeStepView';
 import type { FlowStepRenderArgs } from './FlowPlayer';
-import type { TabEntry, StepItem, FitnessExercise, SpotItem, QuizArenaQuestion } from '@vie/types';
+import type { TabEntry, StepItem, FitnessExercise, SpotItem, QuizArenaQuestion, MomentItem } from '@vie/types';
 
 /** A context-panel entry — a checkable orientation item (ingredient, material,
  *  vocabulary word, packing item, …). Mirrors the cooking ingredient shape so
@@ -47,11 +47,9 @@ export function findStepTab(tabs: TabEntry[]): TabEntry | undefined {
   return findComponent(tabs, 'step_player') ?? findComponent(tabs, 'step_flow_canvas');
 }
 
-/** Strip an assembler-produced count prefix ("8 Steps" → "Steps"). Mirrors the
- *  helper in component-registry so context labels read cleanly. */
-export function stripCountPrefix(label: string): string {
-  return label.replace(/^\d+\s+(?=\p{L})/u, '');
-}
+// One count-claim rule for the whole app (domain-meta's LEADING_COUNT) — the
+// enter-mode context labels and the registry's tab labels strip it alike.
+export { stripCountPrefix } from '@/components/vie/cards/domain-meta';
 
 /** Build a RecipeStepView-backed step renderer from a StepItem list. Every
  *  step-based mode (cooking, build, workout, practice, explore) shares this so
@@ -88,18 +86,49 @@ export function exercisesToSteps(exercises: FitnessExercise[]): StepItem[] {
   });
 }
 
-/** Normalize quiz questions into a study run sequence (reveal-the-answer). */
-export function questionsToSteps(questions: QuizArenaQuestion[]): StepItem[] {
-  return questions.map((q, i) => {
-    const answer = q.options?.[q.correctIndex];
+/** Build the Study run pane: one quiz question at a time, answer hidden until
+ *  "Reveal" (or until the question is marked done). */
+export function makeStudyStepRenderer(questions: QuizArenaQuestion[]): FlowStepRenderer {
+  return (args, onSeek) => (
+    <StudyStepView
+      questions={questions}
+      currentStep={args.currentStep}
+      onStepChange={args.onStepChange}
+      onComplete={args.onComplete}
+      onSeek={onSeek}
+    />
+  );
+}
+
+/** Normalize moment_track items into listen segments. A segment without an
+ *  explicit end (or with one that doesn't come after its start) plays until
+ *  the next segment starts; the last one is open-ended. */
+export function momentsToListenSegments(items: MomentItem[]): ListenSegment[] {
+  return items.map((item, i) => {
+    const next = items[i + 1]?.seconds;
+    const explicitEnd = item.endSeconds != null && item.endSeconds > item.seconds ? item.endSeconds : undefined;
+    const endSeconds = explicitEnd ?? (next != null && next > item.seconds ? next : undefined);
     return {
-      number: i + 1,
-      title: q.question,
-      instruction: answer ? `Answer: ${answer}` : 'Recall the answer, then mark done.',
-      tips: q.explanation || undefined,
-      timestamp: q.timestamp,
+      label: item.label || `Segment ${i + 1}`,
+      description: item.description || undefined,
+      speaker: item.speaker || undefined,
+      seconds: item.seconds,
+      endSeconds,
     };
   });
+}
+
+/** Build the Listen run pane: segment description + play range per segment. */
+export function makeListenStepRenderer(segments: ListenSegment[]): FlowStepRenderer {
+  return (args, onSeek) => (
+    <ListenStepView
+      segments={segments}
+      currentStep={args.currentStep}
+      onStepChange={args.onStepChange}
+      onComplete={args.onComplete}
+      onSeek={onSeek}
+    />
+  );
 }
 
 /** Normalize travel spots into a day-by-day explore sequence. */

@@ -4,13 +4,19 @@ import { Check, Clock, Maximize2, Play, Share2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge, EvidenceImage, FadeIn, GlassCard } from '@/components/vie';
 import { cn } from '@/lib/utils';
+import { useLabels } from '@/lib/i18n';
 
 import { getMoodColor } from '../../../lib/moodColors';
+import { QuoteLine } from './QuoteLine';
 import { formatDuration, isClip, resolveLabel, type MomentItem } from './moment-utils';
 
 interface MomentTimelineRowProps {
   item: MomentItem;
   originalIndex: number;
+  /** The track is an interview's Q&A (any row carries a `question`): every row
+   *  leads its answer with "A · speaker". Decided per track because rows stored
+   *  before 4.1 dropped `question` when it equalled the label. */
+  isExchange: boolean;
   /** Position within the filtered list — drives the FadeIn stagger. */
   index: number;
   isActive: boolean;
@@ -40,6 +46,7 @@ interface MomentTimelineRowProps {
 export const MomentTimelineRow = memo(function MomentTimelineRow({
   item,
   originalIndex,
+  isExchange,
   index,
   isActive,
   pulsing,
@@ -58,6 +65,7 @@ export const MomentTimelineRow = memo(function MomentTimelineRow({
     [setFocusRef, originalIndex],
   );
 
+  const t = useLabels();
   const clip = isClip(item);
   const moodColor = getMoodColor(item.mood);
   const duration = clip ? (item.endSeconds as number) - item.seconds : 0;
@@ -69,6 +77,17 @@ export const MomentTimelineRow = memo(function MomentTimelineRow({
       ? Math.max(0, Math.min(duration, currentTime - item.seconds))
       : null;
   const label = resolveLabel(item);
+  // A long interview question's label is only its head: the row shows it whole.
+  const question = item.question?.trim();
+  const questionEn = item.questionEn?.trim();
+  const heading = (question && questionEn) || question || label;
+  // The host's own words beneath an English heading — never a question the transcript
+  // does not say (`translated`: the model's rendering is prose, D12).
+  const verbatimBeneath =
+    Boolean(question && questionEn && question !== questionEn) && item.questionStatus !== 'translated';
+  // An exchange row: the speaker answers, so the chip must not sit in the header
+  // where it reads as the asker — it leads the answer instead.
+  const speaker = item.speaker?.trim();
   const chipContent = (
     <>
       <Clock className="h-3 w-3" aria-hidden="true" />
@@ -171,9 +190,9 @@ export const MomentTimelineRow = memo(function MomentTimelineRow({
                     </Badge>
                   </span>
                 )}
-                {item.speaker && (
+                {speaker && !isExchange && (
                   <span className="text-xs font-medium text-muted-foreground/70 italic">
-                    {item.speaker}
+                    {speaker}
                   </span>
                 )}
               </div>
@@ -185,17 +204,27 @@ export const MomentTimelineRow = memo(function MomentTimelineRow({
                   onto its own line BELOW the text, so the row top stays put. */}
               <div className="flex flex-wrap items-start gap-3">
                 <div className="flex-1 basis-56 min-w-0 space-y-1.5">
-                  <p
-                    className="text-sm font-semibold leading-snug line-clamp-2"
-                    title={label}
-                  >
-                    {label}
-                  </p>
-                  {item.description && item.description !== label && (
+                  {/* No clamp: in this view the label IS the substance for
+                      most videos (R7), so it always renders in full. */}
+                  <p className="text-sm font-semibold leading-snug">{heading}</p>
+                  {verbatimBeneath && <QuoteLine quote={question} size="xs" />}
+                  {isExchange && (item.description || speaker) ? (
+                    <p className="text-xs leading-relaxed text-muted-foreground">
+                      {speaker && (
+                        <span className="me-1 font-semibold text-foreground/80">
+                          {t.answerBy.replace('{speaker}', speaker)}
+                        </span>
+                      )}
+                      {item.description}
+                    </p>
+                  ) : item.description && item.description !== label && (
                     <p className="text-xs leading-relaxed text-muted-foreground">
                       {item.description}
                     </p>
                   )}
+                  {/* Verbatim beats paraphrase (R10): the speaker's own line, one quiet line;
+                      QuoteLine adds the English beneath a non-English line (D12). */}
+                  <QuoteLine quote={item.quote} quoteEn={item.quoteEn} translated={item.quoteTranslated} size="xs" />
                   {item.tags && item.tags.length > 0 && (
                     <div className="flex flex-wrap gap-1">
                       {item.tags.map((tag, i) => (

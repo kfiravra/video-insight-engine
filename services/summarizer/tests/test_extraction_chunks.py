@@ -366,8 +366,10 @@ class TestChunksTimesGroups:
 
         await _run(groups)
 
+        # The takeaways (~350 tokens) ride with the concepts since output-quality 1.7
+        # (grouping.minGroupOutput): two text groups and the visual one per chunk.
         assert sorted(groups.blocks) == [
-            (c, g) for c in range(3) for g in ("text1", "text2", "text3", "visual")
+            (c, g) for c in range(3) for g in ("text1", "text2", "visual")
         ]
 
     async def test_should_send_every_call_of_every_chunk_the_same_rules_block(self) -> None:
@@ -451,7 +453,7 @@ class TestWarmUpPerChunk:
 
         await _run(groups)
 
-        released = min(groups.at("start", 1, g) for g in ("text2", "text3"))
+        released = groups.at("start", 1, "text2")
         assert released >= groups.at("first_chunk", 1, "text1")
 
     async def test_should_not_hold_a_chunk_back_for_another_chunks_warm_up(self) -> None:

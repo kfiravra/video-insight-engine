@@ -8,6 +8,38 @@ import {
   type ContentTag,
   type Modifier,
 } from '@vie/shared/config';
+import type {
+  ConceptItem,
+  FlashcardItem,
+  FrameEvidence,
+  QuizItem,
+  ScenarioItem,
+  StepItem,
+} from './vie-response-items.js';
+import type {
+  FinanceData,
+  FitnessData,
+  FitnessExercise,
+  FoodData,
+  GamingData,
+  LearningData,
+  MusicData,
+  NarrativeData,
+  NewsData,
+  PodcastData,
+  ProjectData,
+  ReviewComparison,
+  ReviewData,
+  SportData,
+  TechData,
+  TechSnippet,
+  TravelData,
+} from './vie-response-domains.js';
+
+// Tab item types and domain data interfaces live in their own modules (the
+// 500-line rule); re-exported here so every import path stays as it was.
+export * from './vie-response-items.js';
+export * from './vie-response-domains.js';
 
 // ─────────────────────────────────────────────────────
 // Content Tags & Modifiers (derived from @vie/shared)
@@ -88,126 +120,6 @@ export interface TriageResult {
 }
 
 // ─────────────────────────────────────────────────────
-// Shared Item Types
-// ─────────────────────────────────────────────────────
-
-/** Frame-evidence fields the assembler attaches via `inject_frame_thumbnails`
- *  when a vision-LLM caption is available for the item's timestamp. Extended by
- *  `SpotItem`, `StepItem`, and `MomentItem` — the three item shapes that carry
- *  per-row timestamps. Components rendering those rows pick up these props
- *  uniformly so frame intelligence reaches the UI. */
-export interface FrameEvidence {
-  /** Vision-LLM single-line caption for the frame at this timestamp. */
-  frameCaption?: string;
-  /** Vision-LLM rationale for why this frame supports/illustrates the row. */
-  frameEvidence?: string;
-  /** On-screen text (Tesseract OCR or vision-read) visible in the frame. */
-  frameOcr?: string;
-  /** Scene type — "slide", "code", "diagram", "demo", "whiteboard", etc. */
-  frameSceneType?: string;
-  /** Durable S3 object key for the attached frame — the API re-signs a fresh
-   *  presigned URL from it on read (thumbnailUrl expires with the presign). */
-  s3Key?: string;
-}
-
-export interface SpotItem extends FrameEvidence {
-  name: string;
-  emoji: string;
-  description: string;
-  cost?: string;
-  currency?: string;
-  duration?: string;
-  mapQuery?: string;
-  bookingSearch?: string;
-  tips?: string;
-  specs?: string;
-  /** Phonetic guide for language-learning phrase cards (e.g. "su-mi-ma-sen"). */
-  pronunciation?: string;
-  rating?: number;
-  thumbnailUrl?: string;
-}
-
-export interface TipItem {
-  type: string;
-  text: string;
-}
-
-export interface StepItem extends FrameEvidence {
-  number: number;
-  title?: string;
-  instruction: string;
-  duration?: string;
-  tips?: string;
-  safetyNote?: string;
-  timestamp?: number;
-  thumbnailUrl?: string;
-}
-
-/**
- * Relationship type between two concepts, encoded on the canvas by line-style +
- * arrowhead (never hue — see DESIGN.md "One Domain, One Accent"):
- *   causes / requires → solid line + arrowhead (directional dependency)
- *   contrasts        → dashed line (opposition / trade-off)
- *   partOf / relatesTo → dotted line (loose association)
- */
-export type ConceptRelation = 'causes' | 'contrasts' | 'requires' | 'partOf' | 'relatesTo';
-
-export interface ConceptConnection {
-  /** EXACT name of another concept in the same `concepts` array. */
-  to: string;
-  type: ConceptRelation;
-}
-
-export interface ConceptItem extends FrameEvidence {
-  name: string;
-  emoji: string;
-  definition: string;
-  example?: string;
-  analogy?: string;
-  /** Short thematic cluster label (e.g. "Foundations"). Assembler defaults/derives one. */
-  group?: string;
-  /** Seconds into the video where this concept is explained — drives frame evidence. */
-  timestamp?: number;
-  /** Frame thumbnail injected by `inject_frame_thumbnails` when a timestamp matches. */
-  thumbnailUrl?: string;
-  /**
-   * Typed adjacency list. A bare string is legacy data (cached pre-v6 rows) and
-   * is treated as a `relatesTo` connection by the canvas normalizer.
-   */
-  connections: Array<string | ConceptConnection>;
-}
-
-export interface KeyPointItem {
-  emoji: string;
-  title: string;
-  detail: string;
-  timestamp?: number;
-}
-
-export interface MomentItem extends FrameEvidence {
-  time: string;
-  seconds: number;
-  /** Present ⇒ clip (span worth re-watching). Absent ⇒ moment (navigation point). */
-  endSeconds?: number;
-  label: string;
-  description?: string;
-  mood?: string;
-  emoji?: string;
-  speaker?: string;
-  tags?: string[];
-  thumbnailUrl?: string;
-}
-
-export interface MomentTrackProps {
-  items: MomentItem[];
-  filters?: boolean;
-  onSeek?: (seconds: number) => void;
-  currentTime?: number;
-  nextTab?: string;
-  onNavigateTab?: (id: string) => void;
-}
-
-// ─────────────────────────────────────────────────────
 // Video-to-Action overhaul: new component prop types
 // ─────────────────────────────────────────────────────
 
@@ -280,6 +192,11 @@ export interface QuizArenaQuestion extends FrameEvidence {
   kind?: 'standard' | 'scenario';
   thumbnailUrl?: string;
   timestamp?: number;
+  /** The speaker's words that settle the answer, verbatim from the transcript (quiz v2,
+   *  output-quality 2.1b) — shown under the explanation once the question is answered. */
+  quote?: string | null;
+  /** The quote is the English rendering of non-English speech (2.0 d, D12): prose. */
+  quoteTranslated?: boolean;
 }
 
 export interface QuizArenaProps {
@@ -357,6 +274,10 @@ export interface StatBannerStat {
   label: string;
   value: string;
   emoji?: string;
+  /** The key point the figure comes from — what the number means. */
+  meaning?: string;
+  /** Where the video states the figure, in seconds. */
+  timestamp?: number;
 }
 
 export interface StatBannerProps {
@@ -399,514 +320,6 @@ export interface DiagramCardProps {
 }
 
 // ─────────────────────────────────────────────────────
-// claims_tracker — news signature component
-// ─────────────────────────────────────────────────────
-
-/** Fact-check status for a single claim. `context` = neither confirmed nor
- *  refuted, surfaced for background. */
-export type ClaimStatus = 'verified' | 'disputed' | 'context';
-
-/** A single claim made in the video: the assertion, who made it, its
- *  verification status, and the supporting source (if any). */
-export interface ClaimItem extends FrameEvidence {
-  claim: string;
-  /** Who said / made the claim (speaker, reporter, or named source). */
-  source: string;
-  status: ClaimStatus;
-  /** Where the claim's verification comes from (study, outlet, official record). */
-  sourceCitation?: string;
-  timestamp?: number;
-}
-
-export interface ClaimsTrackerProps {
-  claims: ClaimItem[];
-}
-
-// ─────────────────────────────────────────────────────
-// tier_list — gaming signature component
-// ─────────────────────────────────────────────────────
-
-/** A tier in an S/A/B/C/D ranking. */
-export type TierRank = 'S' | 'A' | 'B' | 'C' | 'D';
-
-/** One rankable item. `tier` is the creator's suggested placement (the answer
- *  key); the viewer can drag it into any tier and the choice persists locally. */
-export interface TierListItem {
-  item: string;
-  tier?: TierRank;
-  reason?: string;
-  emoji?: string;
-}
-
-export interface TierListProps {
-  items: TierListItem[];
-  videoId?: string;
-  tabId?: string;
-}
-
-// ─────────────────────────────────────────────────────
-// formation_diagram — sport signature component
-// ─────────────────────────────────────────────────────
-
-/** One player placed on the pitch. x/y are 0-100 percentages: x = left→right,
- *  y = own-goal end (0) → attacking end (100). */
-export interface FormationPosition {
-  player: string;
-  role?: string;
-  x: number;
-  y: number;
-  number?: number;
-}
-
-export interface FormationDiagramProps {
-  positions: FormationPosition[];
-  name?: string;
-  team?: string;
-}
-
-export interface QuizQuestion {
-  question: string;
-  options: string[];
-  correctIndex: number;
-  explanation: string;
-}
-
-/** Alias for QuizQuestion for domain usage. */
-export type QuizItem = QuizQuestion;
-
-export interface Flashcard {
-  front: string;
-  back: string;
-}
-
-/** Extends Flashcard with optional display metadata */
-export interface FlashcardItem extends Flashcard {
-  emoji?: string;
-  category?: string;
-}
-
-export interface ScenarioOption {
-  text: string;
-  correct: boolean;
-  explanation: string;
-}
-
-export interface ScenarioItem {
-  question: string;
-  emoji?: string;
-  options: ScenarioOption[];
-}
-
-// ─────────────────────────────────────────────────────
-// Domain Data Interfaces (8 primary domains)
-// ─────────────────────────────────────────────────────
-
-// --- Travel ---
-export interface TravelDay {
-  day: number;
-  city?: string;
-  theme?: string;
-  dailyCost?: string;
-  spots: SpotItem[];
-  tips: string[];
-}
-
-export interface TravelBudget {
-  total: number;
-  currency: string;
-  breakdown: { category: string; amount: number; notes?: string }[];
-}
-
-export interface TravelPackingItem {
-  item: string;
-  category: string;
-  essential: boolean;
-  weight?: number;
-  emoji?: string;
-}
-
-export interface TravelTip {
-  text: string;
-  type: 'tip' | 'warning' | 'info';
-}
-
-export interface TravelData {
-  bestSeason?: string;
-  accommodationTips: TravelTip[];
-  transportationTips: TravelTip[];
-  itinerary: TravelDay[];
-  budget: TravelBudget;
-  packingList: TravelPackingItem[];
-}
-
-// --- Food ---
-export interface FoodIngredient {
-  name: string;
-  amount: number;
-  displayAmount: string;
-  unit?: string;
-  group?: string;
-  notes?: string;
-}
-
-export interface FoodMeta {
-  prepTime?: number;
-  cookTime?: number;
-  totalTime?: number;
-  servings?: number;
-  difficulty?: 'easy' | 'medium' | 'hard';
-  cuisine?: string;
-}
-
-export interface FoodData {
-  meta: FoodMeta;
-  ingredients: FoodIngredient[];
-  steps: StepItem[];
-  tips: TipItem[];
-  substitutions: { original: string; substitute: string; notes?: string }[];
-  nutrition: { nutrient: string; amount: string; unit?: string }[];
-  equipment: string[];
-}
-
-// --- Tech ---
-export interface TechSetup {
-  commands: string[];
-  dependencies: { name: string; version?: string }[];
-  envVars: { name: string; description: string; example?: string }[];
-}
-
-export interface TechSnippet {
-  filename?: string;
-  language: string;
-  code: string;
-  explanation: string;
-  timestamp?: number;
-}
-
-export interface TechPattern {
-  title: string;
-  doExample: string;
-  dontExample: string;
-  explanation: string;
-}
-
-export interface TechCheatSheetItem {
-  title: string;
-  code: string;
-  description: string;
-}
-
-export interface TechData {
-  languages: string[];
-  frameworks: string[];
-  topics: string[];
-  setup: TechSetup;
-  snippets: TechSnippet[];
-  patterns: TechPattern[];
-  cheatSheet: TechCheatSheetItem[];
-}
-
-// --- Fitness ---
-export interface FitnessExercise {
-  name: string;
-  emoji: string;
-  sets?: number;
-  reps?: string;
-  duration?: string;
-  rest?: string;
-  difficulty?: 'beginner' | 'intermediate' | 'advanced';
-  formCues: string[];
-  modifications: { label: string; description: string }[];
-  supersetWith?: string;
-  timestamp?: number;
-}
-
-export interface FitnessTimer {
-  intervals: { name: string; duration: number; type: 'work' | 'rest' | 'warmup' | 'cooldown' }[];
-  rounds: number;
-}
-
-export interface FitnessData {
-  meta: {
-    type: string;
-    difficulty: 'beginner' | 'intermediate' | 'advanced';
-    duration: number;
-    muscleGroups: string[];
-    equipment: string[];
-    caloriesBurned?: number;
-  };
-  warmup: FitnessExercise[];
-  exercises: FitnessExercise[];
-  cooldown: FitnessExercise[];
-  timer: FitnessTimer | null;
-  tips: TipItem[];
-}
-
-// --- Music ---
-
-export interface MusicCredit {
-  role: string;
-  name: string;
-}
-
-export interface MusicSection {
-  name: string;
-  timestamp?: number;
-  endTimestamp?: number;
-  duration?: number;
-  description: string;
-}
-
-export interface MusicAnalysisItem {
-  aspect: string;
-  emoji: string;
-  detail: string;
-}
-
-export interface MusicData {
-  title: string;
-  artist: string;
-  genre: string[];
-  credits: MusicCredit[];
-  analysis: MusicAnalysisItem[];
-  structure: MusicSection[];
-  lyrics: { timestamp?: number; line: string }[];
-  themes: string[];
-}
-
-// --- Learning ---
-export interface LearningData {
-  keyQuestion?: string;
-  keyPoints: KeyPointItem[];
-  concepts: ConceptItem[];
-  takeaways: string[];
-  timestamps: MomentItem[];
-  summary?: string;
-}
-
-// --- Review ---
-export interface ReviewRating {
-  score: number;
-  maxScore: number;
-  label: string;
-}
-
-export interface ReviewSpec {
-  key: string;
-  value: string;
-}
-
-export interface ReviewComparison {
-  feature: string;
-  thisProduct: string;
-  competitor: string;
-  competitorName: string;
-  winner?: 'left' | 'right' | 'tie';
-}
-
-export interface ReviewVerdict {
-  badge: 'recommended' | 'not_recommended' | 'conditional' | 'best_in_class';
-  bestFor: string[];
-  notFor: string[];
-  bottomLine: string;
-  subScores?: Array<{ category: string; score: number }>;
-}
-
-export interface ReviewData {
-  product: string;
-  price?: string;
-  rating: ReviewRating;
-  pros: string[];
-  cons: string[];
-  specs: ReviewSpec[];
-  comparisons: ReviewComparison[];
-  verdict: ReviewVerdict;
-}
-
-// --- Project ---
-
-export interface ProjectMaterial {
-  name: string;
-  quantity?: string;
-  cost?: string;
-  notes?: string;
-}
-
-export interface ProjectTool {
-  name: string;
-  required: boolean;
-  alternative?: string;
-}
-
-export interface ProjectData {
-  projectName: string;
-  difficulty: 'beginner' | 'intermediate' | 'advanced';
-  estimatedTime: string;
-  estimatedCost?: string;
-  materials: ProjectMaterial[];
-  tools: ProjectTool[];
-  steps: StepItem[];
-  safetyWarnings: string[];
-}
-
-// --- Podcast ---
-
-export interface PodcastSegment {
-  title: string;
-  summary?: string;
-  timestamp?: number;
-  endSeconds?: number;
-  speaker?: string;
-}
-
-export interface PodcastGuest {
-  name: string;
-  role?: string;
-  description?: string;
-  emoji?: string;
-}
-
-export interface PodcastQuote {
-  quote: string;
-  speaker?: string;
-  timestamp?: number;
-}
-
-export interface PodcastTopic {
-  topic: string;
-  detail?: string;
-}
-
-export interface PodcastData {
-  show?: string;
-  host?: string;
-  segments: PodcastSegment[];
-  guests: PodcastGuest[];
-  quotes: PodcastQuote[];
-  topics: PodcastTopic[];
-}
-
-// --- News ---
-
-export interface NewsTimelineEvent {
-  label: string;
-  description?: string;
-  timestamp?: number;
-}
-
-export interface NewsEntity {
-  name: string;
-  role?: string;
-  description?: string;
-  emoji?: string;
-}
-
-export interface NewsContextItem {
-  key: string;
-  value: string;
-}
-
-export interface NewsData {
-  headline?: string;
-  storyTimeline: NewsTimelineEvent[];
-  entities: NewsEntity[];
-  claims: ClaimItem[];
-  context: NewsContextItem[];
-}
-
-// --- Gaming ---
-
-export interface GamingHighlight {
-  label: string;
-  description?: string;
-  timestamp?: number;
-}
-
-export interface GamingLoadoutItem {
-  item: string;
-  category?: string;
-  note?: string;
-}
-
-export interface GamingWalkthroughStep {
-  instruction: string;
-  timestamp?: number;
-}
-
-export interface GamingData {
-  title?: string;
-  highlights: GamingHighlight[];
-  loadout: GamingLoadoutItem[];
-  walkthrough: GamingWalkthroughStep[];
-  /** Creator rankings — same shape as the tier_list component items. */
-  rankings: TierListItem[];
-}
-
-// --- Sport ---
-
-export interface SportMatchEvent {
-  label: string;
-  description?: string;
-  timestamp?: number;
-}
-
-export interface SportFormation {
-  name?: string;
-  team?: string;
-  /** Players placed on the pitch — same shape as formation_diagram positions. */
-  positions: FormationPosition[];
-}
-
-export interface SportStatRow {
-  feature: string;
-  left?: string;
-  right?: string;
-}
-
-export interface SportStatComparison {
-  leftLabel?: string;
-  rightLabel?: string;
-  comparisons: SportStatRow[];
-}
-
-export interface SportData {
-  title?: string;
-  matchEvents: SportMatchEvent[];
-  formation?: SportFormation;
-  statComparison?: SportStatComparison;
-}
-
-// ─────────────────────────────────────────────────────
-// Modifier Data Interfaces
-// ─────────────────────────────────────────────────────
-
-export interface NarrativeKeyMoment {
-  timestamp: number;
-  endTimestamp?: number;
-  description: string;
-  mood?: string;
-  emoji?: string;
-}
-
-export interface NarrativeQuote {
-  text: string;
-  speaker: string;
-  timestamp?: number;
-  context?: string;
-}
-
-export interface NarrativeData {
-  keyMoments: NarrativeKeyMoment[];
-  quotes: NarrativeQuote[];
-  takeaways: string[];
-}
-
-export interface FinanceData {
-  costs: { item: string; amount: number; currency: string; category: string }[];
-  savingTips: string[];
-}
-
-// ─────────────────────────────────────────────────────
 // VIE Response Meta
 // ─────────────────────────────────────────────────────
 
@@ -919,9 +332,19 @@ export interface VIEResponseMeta {
   primaryTag: ContentTag;
   userGoal: string;
   tldr?: string;
+  /** Each a claim closing with the `[m:ss]` (`[h:mm:ss]`) where it is said, when known. */
   keyTakeaways?: string[];
   masterSummary?: string;
   seoDescription?: string;
+  /** The hero rewrite's 3–5 sentence brief (output-quality 2.2); `masterSummary`
+   *  carries the same text for older readers. Absent on older rows. */
+  brief?: string;
+  /** Who gets what from watching (≤ 20 words); absent or empty when not written. */
+  worthItFor?: string;
+  /** What someone might come for that the video does not contain (≤ 20 words). */
+  skipIf?: string;
+  /** Minutes to read the page, counted by code over the shipped hero + tabs. */
+  readingMinutes?: number;
   /** ISO 639-1 language code (e.g., "en", "he"). */
   language?: string;
   /** Whether the video content is in a right-to-left language. */

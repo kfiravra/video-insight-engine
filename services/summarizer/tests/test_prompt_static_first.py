@@ -74,7 +74,7 @@ class TestSynthesisStaticFirst:
             _synthesis_prompt("A", hero_fallback=True), _synthesis_prompt("B", hero_fallback=True)
         )
 
-        assert "keyTakeaways: 3-5 items" in shared
+        assert "keyTakeaways: the claims that matter most" in shared
 
 
 def _quiz_prompt(tag: str, domain: str = "tech") -> str:

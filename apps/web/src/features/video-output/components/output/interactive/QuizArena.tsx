@@ -26,7 +26,9 @@ import { HelpCircle } from 'lucide-react';
 
 import { Celebration } from '../Celebration';
 import { EmptyTabState } from './EmptyTabState';
+import { QuizExplanation } from './QuizExplanation';
 import { useLabels } from '@/lib/i18n';
+import { dealQuizOptions } from '@/features/video-output/lib/quiz-shuffle';
 import { usePrefersReducedMotion } from '@/hooks/use-prefers-reduced-motion';
 
 export interface QuizArenaQuestion {
@@ -38,7 +40,16 @@ export interface QuizArenaQuestion {
   kind?: 'standard' | 'scenario';
   thumbnailUrl?: string;
   frameCaption?: string;
+  /** Where the transcript gives the answer, in seconds (output-quality 1.13):
+   *  the frame evidence's seek and, once answered, the explanation's chip. */
   timestamp?: number;
+  /** The speaker's words that settle the answer (quiz v2, output-quality 2.1b):
+   *  shown under the explanation once answered. */
+  quote?: string | null;
+  /** The quote's English on a non-English video (D12), shown beneath it. */
+  quoteEn?: string | null;
+  /** The quote is the English rendering of non-English speech (2.0 d, D12): prose. */
+  quoteTranslated?: boolean;
 }
 
 interface QuizArenaProps {
@@ -47,11 +58,13 @@ interface QuizArenaProps {
   nextTab?: string;
   onNavigateTab?: (id: string) => void;
   videoId?: string;
-  /** Per-question timer. Defaults to true. Disable for untimed practice. */
+  /** Per-question countdown. Off by default — a recall quiz is untimed
+   *  (output-quality R12/D9); opt in for drills. */
   withTimer?: boolean;
   /** Seconds allotted per question when timer is on. */
   timerSeconds?: number;
-  /** Seek callback for evidence-frame jump-to-moment. */
+  /** Seek callback for evidence-frame jump-to-moment, the explanation's
+   *  `(m:ss)` chips and the question's answer timestamp. */
   onSeek?: (seconds: number) => void;
 }
 
@@ -120,20 +133,23 @@ const CountdownRing = memo(function CountdownRing({
 });
 
 /**
- * Unified quiz + scenario component. Single question per screen with optional
- * 10s timer ring, streak counter, frame-evidence slot, and localStorage best
+ * Unified quiz + scenario component. Single question per screen with opt-in
+ * timer ring, streak counter, frame-evidence slot, and localStorage best
  * score persistence (only when `videoId` is provided).
  */
 export const QuizArena = memo(function QuizArena({
-  questions,
+  questions: storedQuestions,
   nextTab,
   onNavigateTab,
   videoId,
-  withTimer = true,
+  withTimer = false,
   timerSeconds = DEFAULT_TIMER_SECONDS,
   onSeek,
 }: QuizArenaProps) {
   const t = useLabels();
+  // A server-dealt quiz renders as stored; a legacy one (keys at option 0) is dealt
+  // here, by a seed a language switch leaves alone, so `answers` stays valid.
+  const questions = useMemo(() => dealQuizOptions(storedQuestions), [storedQuestions]);
   const reducedMotion = usePrefersReducedMotion();
   const [currentIndex, setCurrentIndex] = useState(0);
   const [answers, setAnswers] = useState<Map<number, number>>(new Map());
@@ -379,9 +395,14 @@ export const QuizArena = memo(function QuizArena({
             <span className="font-semibold text-xs uppercase tracking-wider text-muted-foreground block mb-1">
               Explanation
             </span>
-            <p className="text-sm leading-relaxed text-muted-foreground">
-              {question.explanation}
-            </p>
+            <QuizExplanation
+              text={question.explanation}
+              timestamp={question.timestamp}
+              quote={question.quote}
+              quoteEn={question.quoteEn}
+              quoteTranslated={question.quoteTranslated}
+              onSeek={onSeek}
+            />
           </div>
         </FadeIn>
       )}

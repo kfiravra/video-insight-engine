@@ -5,9 +5,12 @@ when it designed one, else the tab assembly adds from the fallback chain
 (``assembly/moment_fallback.always_moments_tab``). The chain — memory outline
 → YouTube chapters → description timestamps — needs no extraction, so a
 provisional copy streams as soon as the plan and memory are done: the id,
-label and position estimate of the tab that replaces it by id later. No
-source with an entry → no tab. The copy is a best-effort preview: a failure to
-build it logs a warning and streams nothing, never failing the run.
+label and position estimate of the tab that replaces it by id later, each
+outline moment described by what its section establishes (D5 / R7, 1.9).
+The event's ``provisional`` flag is what the web marks "Preview" in the strip
+until the replacement lands. No source with an entry → no tab; a plan whose
+steps are the timeline (D6) → no tab. The copy is a best-effort preview: a
+failure to build it logs a warning and streams nothing, never failing the run.
 """
 
 from __future__ import annotations
@@ -64,15 +67,17 @@ def provisional_moments_event(ctx: PipelineContext) -> str | None:
     """The provisional Moments ``tab_ready``, or None when no fallback source has an entry."""
     assert ctx.triage is not None
     assert ctx.video_data is not None
-    forbidden = effective_requirements(ctx.triage.primary_tag, ctx.content_format)["forbidden"]
+    primary = ctx.triage.primary_tag
+    requirements = effective_requirements(primary, ctx.content_format)
     built = provisional_moments_tab(
-        ctx.triage.tabs, video_meta(ctx), _landed_description(ctx), forbidden
+        ctx.triage.tabs, video_meta(ctx), _landed_description(ctx), primary, requirements
     )
     if built is None:
         return None
     tab, position = built
-    # The label and the item cap the real tab gets in assembly, so the
-    # replacement changes the moments, not the tab's name.
+    # Assembly's post-processing (emoji strip, item cap, label count) on the
+    # fallback moments: a label that states a count states the preview's, so the
+    # replacement may restate it with the count the real tab ships (D7).
     post_process_tabs([tab], ctx.video_data.duration)
     logger.info(
         "pipeline.moments_provisional",

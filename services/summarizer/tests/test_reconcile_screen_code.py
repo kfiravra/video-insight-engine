@@ -39,6 +39,9 @@ _CODE_FRAME = {
 }
 _TAGS = ["tech", "learning"]
 _TALK = ["stack", "concepts", "moments"]
+# Once the code tab is backfilled the plan has four tabs, so frames-done folds the
+# stack grid into its host (p1 review R11-W7: info_grid never stands alone).
+_TALK_WITH_CODE = ["concepts", "moments", "code"]
 
 
 def _workflow_tabs() -> list[dict]:
@@ -90,6 +93,7 @@ class TestKeptCodeTab:
         assert _rows(plan, "frames_done") == [
             ("workflow", "kept_screen_code"),
             ("code", "backfilled"),
+            ("stack", "folded"),
         ]
 
 
@@ -106,7 +110,7 @@ class TestDeferredRequirement:
     def test_should_backfill_it_when_the_screen_shows_code(self):
         plan = resolve_deferred(_reconciled(_talk_tabs()), [_CODE_FRAME], [], None)
 
-        assert _ids(plan.tabs) == [*_TALK, "code"]
+        assert _ids(plan.tabs) == _TALK_WITH_CODE
 
     def test_should_keep_the_tabs_when_the_screen_shows_no_code(self):
         plan = resolve_deferred(_reconciled(_talk_tabs()), [], [], None)
@@ -218,7 +222,7 @@ class TestSplitPath:
     async def test_should_announce_the_backfilled_code_tab_with_a_fresh_meta(self):
         _, frame_events = await _split([_CODE_FRAME])
 
-        assert _metas(frame_events) == [[*_TALK, "code"]]
+        assert _metas(frame_events) == [_TALK_WITH_CODE]
 
     async def test_should_fire_no_visual_group_when_the_screen_shows_no_code(self):
         calls, _ = await _split([])
@@ -246,12 +250,12 @@ class TestTodaysPath:
     async def test_should_hand_extraction_the_backfilled_code_tab(self):
         _, seen = await _drive(_orchestration_ctx(), _code_on_screen, _talk_text)
 
-        assert seen == [[*_TALK, "code"]]
+        assert seen == [_TALK_WITH_CODE]
 
     async def test_should_announce_it_with_a_fresh_meta_before_extraction(self):
         events, _ = await _drive(_orchestration_ctx(), _code_on_screen, _talk_text)
 
-        assert _metas(events) == [_TALK, [*_TALK, "code"]]
+        assert _metas(events) == [_TALK, _TALK_WITH_CODE]
 
     async def test_should_record_not_backfilled_when_the_screen_shows_no_code(self):
         ctx = _orchestration_ctx()

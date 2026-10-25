@@ -12,8 +12,13 @@ of the run's ``EXTRACTION_PARALLEL_BATCHES`` semaphore; the text1 calls are
 started first, so they take the first slots. Outcomes stream back as they land.
 
 A landed answer is validated and cut to the group's own keys
-(``group_merge.validate_group``, 3.5) before it is reported; one that says the
-group has nothing here (``{}``, its keys ``null``) lands empty. A lost answer —
+(``group_merge.validate_group``, 3.5), then every stamp it carries is held to
+the chunk's window (``extraction_chunks.window_stamps``, 0b.10: the hour put
+back or the stamp cleared; a ``learning.timestamps`` item no clock fits is
+dropped) and, on a chunked run, tied to its item's verified quote and to its
+list's order (``stamp_anchor``, 4.0, G3-3) before it is reported, each move
+counted per field path in the outcome's report; one that says the group has
+nothing here (``{}``, its keys ``null``) lands empty. A lost answer —
 not a JSON object, no key of the group, content validation dropped, or a
 warm-up stream that raised or brought nothing — is asked for ONCE more (3.8),
 unstreamed (a broken stream can never cost a group) and with no retry budget
@@ -41,16 +46,24 @@ from ...models.domain_validation import ValidationReport
 from ...utils.json_parsing import parse_json_response, strip_markdown_fences
 from ...utils.llm_retry import call_llm_with_retry
 from ..llm_model_rules import LLMRefusalError
-from .extraction_chunks import ExtractionChunk
+from .extraction_chunks import (
+    STAMP_MOVES,
+    ExtractionChunk,
+    StampReport,
+    window_label,
+    window_stamps,
+)
 from .extraction_group_prompt import GroupJob, build_group_messages
 from .extraction_prompt import ExtractionPrompt
 from .field_groups import ExtractionGroup
 from .group_failures import answer_lost
 from .group_merge import validate_group
 from .pipeline_timing import span_output_tokens
+from .stamp_anchor import anchor_stamps
 
 if TYPE_CHECKING:
     from ..llm import LLMService
+    from .quote_verify import QuoteIndex
 
 logger = logging.getLogger(__name__)
 
@@ -133,6 +146,9 @@ class SplitRun:
     # The group-job template, read once at plan-done (a registry miss must not
     # cost every call a fetch); None = each call reads it.
     job_template: str | None = None
+    # The run's transcript index: a chunk call's quoted stamps are anchored to it
+    # (``stamp_anchor``, 4.0); None = no quote anchor.
+    quote_index: QuoteIndex | None = None
 
 
 # ─── One call ───
@@ -184,7 +200,7 @@ def _read(raw: str | None, call: GroupCall, run: SplitRun) -> _Answer:
         return _Answer(None, None, "parse")
     data, report = validate_group(parsed, call.group, run.content_tags, run.modifiers)
     if data:
-        return _Answer(data, report, None)
+        return _Answer(_windowed(data, report, call, run), report, None)
     if not answer_lost(parsed, call.group, report):
         return _Answer({}, report, None)  # e.g. a later chunk's window without the content
     logger.warning(
@@ -193,6 +209,48 @@ def _read(raw: str | None, call: GroupCall, run: SplitRun) -> _Answer:
         sorted(parsed)[:_LOGGED_KEYS],
     )
     return _Answer(None, report, "empty")
+
+
+def _windowed(
+    data: dict[str, Any], report: ValidationReport, call: GroupCall, run: SplitRun
+) -> dict[str, Any]:
+    """``data`` with its stamps held to the call's chunk window, then tied to their verified
+    quotes and their list's order (``stamp_anchor``, 4.0); what moved joins the report."""
+    placed, stamps = window_stamps(data, call.chunk)
+    placed = anchor_stamps(placed, call.chunk, run.quote_index, stamps)
+    if stamps.changed:
+        _log_stamps(call, stamps)
+        _merge_stamps(report, stamps)
+    return placed
+
+
+def _merge_stamps(report: ValidationReport, stamps: StampReport) -> None:
+    """The window's moves join the validation report under their field path as
+    ``{dropped, restamped, cleared, total}``, plus the anchor's ``anchored`` /
+    ``reordered`` where they happened — gate 1 reads the timestamp drift there (D17). A
+    path validation already dropped items from keeps validation's ``total`` (the list as
+    the model wrote it), so the window's count of the same list is not added twice."""
+    dropped = report.setdefault("dropped", {})
+    for path, counts in stamps.paths.items():
+        entry = dropped.setdefault(path, {"dropped": 0, "total": counts["total"]})
+        for kind in STAMP_MOVES:
+            if kind in counts:
+                entry[kind] = entry.get(kind, 0) + counts[kind]
+
+
+def _log_stamps(call: GroupCall, stamps: StampReport) -> None:
+    logger.warning(
+        "[%s] stamps moved in the chunk window %s: %d restamped, %d cleared, %d dropped, "
+        "%d anchored to their quote, %d reordered %s",
+        call.stage_name,
+        window_label(call.chunk),
+        stamps.restamped,
+        stamps.cleared,
+        stamps.dropped,
+        stamps.anchored,
+        stamps.reordered,
+        sorted(stamps.paths),
+    )
 
 
 def _outcome(

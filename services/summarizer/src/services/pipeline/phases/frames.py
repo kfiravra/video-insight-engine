@@ -3,6 +3,14 @@
 Runs in parallel with the transcript phase. Both only need youtube_id
 and video_data from metadata; the one link is the visual tier, which waits
 (at most 3 s, at Step 6b) for the tier probe the transcript's arrival starts.
+
+A long talking head skips the phase's work (output-quality 3.5, D2,
+``FRAMES_SKIP_WHEN_NO_VISUAL_DEMO``): a video over 30 min whose frames are not
+cached waits for the probe at the top while its 360p file is still on the way,
+and when ``visual_tier.skips_frames`` says so the 360p download is closed, the
+720p one started if nothing has, and the phase returns — no frames event,
+gallery, vision or hi-res pass; the moment fill frames the moments from the
+720p file. A cached frame manifest is never skipped: its frames cost nothing.
 """
 
 from __future__ import annotations
@@ -17,16 +25,29 @@ from llm_common.context import llm_feature_var
 from src.config import settings
 from src.services.media.frame_manifest import persist_vision_descriptions
 from src.services.media.hires_upgrade import HiresUpgrade, upgrade_frames
+from src.services.media.local_video import LOWRES_DOWNLOAD_TIMEOUT
 from src.services.media.scene_extractor import (
     ReselectHook,
     cleanup_temp_dir,
     extract_scene_keyframes,
 )
-from src.services.media.visual_tier import VisualTier, resolve_tier, tier_settings
+from src.services.media.visual_tier import (
+    VisualTier,
+    await_probe,
+    derive_tier,
+    frames_skip_considered,
+    resolve_tier,
+    skips_frames,
+    tier_settings,
+    usable_probe,
+)
+from src.services.pipeline.phases.probe import PLAN_PROBE_WAIT_SECONDS
 from src.services.pipeline.pipeline_timing import mark_step
 from src.services.pipeline.scene_frames import process_scene_frames
 
 if TYPE_CHECKING:
+    from src.models.probe_types import TierProbe
+    from src.services.media.hires_prefetch import LocalLowresSource
     from src.services.pipeline.context import PipelineContext
 
 logger = logging.getLogger(__name__)
@@ -209,6 +230,153 @@ class _TierGate:
         return overselect, _make_reselect_hook(self._ctx, int(knobs.get("visionMax", overselect)))
 
 
+# ─── Talking-head skip (output-quality 3.5, D2) ───
+
+
+async def _probe_for_skip(
+    probe_task: asyncio.Future[TierProbe | None] | None, lowres: LocalLowresSource
+) -> TierProbe | None:
+    """The tier probe's usable answer, waited for while the 360p file is still on its way.
+
+    Scene detection cannot start before that file lands, so until then the wait
+    costs nothing and a probe held up by a slow transcript still counts; it lasts
+    at least ``PLAN_PROBE_WAIT_SECONDS``, as the plan's does.
+    """
+    if probe_task is None:
+        return None
+    started = time.monotonic()
+    landing = asyncio.ensure_future(lowres.path())
+    try:
+        await asyncio.wait(
+            {probe_task, landing},
+            timeout=LOWRES_DOWNLOAD_TIMEOUT,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+    finally:
+        # The reader only: the download stays shielded for scene detection.
+        landing.cancel()
+        await asyncio.gather(landing, return_exceptions=True)
+    left = max(0.0, PLAN_PROBE_WAIT_SECONDS - (time.monotonic() - started))
+    return usable_probe(await await_probe(probe_task, left))
+
+
+async def _talking_head(ctx: PipelineContext) -> bool:
+    """Whether the run skips scene detection + vision (``visual_tier.skips_frames``).
+
+    Only a video over 30 min with ``FRAMES_SKIP_WHEN_NO_VISUAL_DEMO`` on and its
+    360p download running waits for the tier probe here (``_probe_for_skip``);
+    every other run returns at once. No 360p download means metadata found the
+    frame manifest cached (``metadata._start_downloads``): those frames are free.
+    """
+    video = ctx.video_data
+    assert video is not None
+    if not settings.FRAMES_SKIP_WHEN_NO_VISUAL_DEMO or not frames_skip_considered(video.duration):
+        return False
+    lowres = ctx.lowres_video
+    if lowres is None or not lowres.started:
+        logger.info("Frames cached for %s — the long video keeps them", ctx.youtube_id)
+        return False
+    started = time.monotonic()
+    probe = await _probe_for_skip(getattr(ctx, "tier_probe_task", None), lowres)
+    skip = skips_frames(probe, derive_tier(probe, video.title or ""), video.duration)
+    mark_step("frames.skip_check", started)
+    return skip
+
+
+async def _skip_frames(ctx: PipelineContext) -> None:
+    """Start the 720p download if nothing has (the moment fill seeks it as soon as it
+    lands instead of starting it after ``complete``), close the 360p one (the 720p
+    gets its bandwidth) and mark the run; frames-done still follows plan-done, with
+    empty annotations."""
+    started = time.monotonic()
+    ctx.frames_skipped = True
+    if ctx.hires_video is not None:
+        ctx.hires_video.start()
+    if ctx.lowres_video is not None:
+        await ctx.lowres_video.close()
+    mark_step("frames.skipped", started)
+    logger.info("Frames skipped for %s: a long video with no visual demo", ctx.youtube_id)
+
+
+# ─── Scene frames ───
+
+
+async def _extract(ctx: PipelineContext) -> tuple[dict, VisualTier]:
+    """Scene extraction (the cached manifest or a fresh pass) and the tier it ran at.
+
+    Adaptive frame effort: HIGH tier over-selects + vision-reselects (the visuals
+    ARE the content), LOW skips vision (frames are decoration), STANDARD keeps the
+    classic top-8 vision pass. The tier is decided at Step 6b, not here (it waits
+    for the tier probe).
+    """
+    video = ctx.video_data
+    assert video is not None
+    gate = _TierGate(ctx) if settings.FRAME_TIER_ENABLED else None
+    extraction_result = await extract_scene_keyframes(
+        ctx.youtube_id,
+        duration_seconds=video.duration,
+        hires_video=ctx.hires_video,
+        lowres_video=ctx.lowres_video,
+        resolve_reselect=gate.reselect if gate is not None else None,
+        skip_cache=getattr(ctx, "cold_media", False),
+    )
+    return extraction_result, gate.tier if gate is not None else "standard"
+
+
+def _restore_descriptions(ctx: PipelineContext, extraction_result: dict) -> list[dict]:
+    """The frame manifest's vision descriptions (a cache hit) onto ``ctx``; returns them."""
+    cached_descriptions = extraction_result.get("vision_descriptions") or []
+    if cached_descriptions and not ctx.frame_descriptions:
+        ctx.frame_descriptions = cached_descriptions
+        logger.info(
+            "Restored %d vision descriptions from the frame manifest", len(cached_descriptions)
+        )
+    return cached_descriptions
+
+
+async def _ocr_and_vision(
+    ctx: PipelineContext, extraction_result: dict, tier: VisualTier
+) -> tuple[dict, str]:
+    """OCR + presigned URLs ∥ vision analysis: (the enriched result, the ``frames`` event).
+
+    Vision needs the local file paths (before cleanup), so it runs here. LOW tier
+    skips vision entirely; HIGH already described the frames in the reselect hook
+    (guarded inside ``_run_vision_analysis``).
+    """
+    ocr_task = process_scene_frames(extraction_result, ctx.youtube_id)
+    selected_frames = extraction_result.get("selected_frames", [])
+    vision_task = _run_vision_analysis(ctx, selected_frames) if tier != "low" else asyncio.sleep(0)
+    (enriched_result, event_str), _ = await asyncio.gather(ocr_task, vision_task)
+    return enriched_result, event_str
+
+
+async def _after_frames_event(
+    ctx: PipelineContext, extraction_result: dict, cached_descriptions: list[dict]
+) -> None:
+    """Persist a fresh run's descriptions, then start the deferred hi-res pass.
+
+    The descriptions go on the manifest so the next cache hit (regen, bypassCache)
+    keeps the same visual context; the pass starts after them because its own
+    manifest write is a read-modify-write that must not race them.
+    """
+    if ctx.frame_descriptions and not cached_descriptions:
+        await persist_vision_descriptions(ctx.youtube_id, ctx.frame_descriptions)
+    start_hires_upgrade(ctx, extraction_result.get("hires_upgrade"))
+
+
+def _store_for_assembly(ctx: PipelineContext, enriched_result: dict) -> None:
+    ctx.scene_frames_for_assembly = enriched_result.get("selected_frames", [])
+    ctx.scene_frames_all = enriched_result.get("all_frames", [])
+    ctx.scene_frames_gallery = enriched_result.get("gallery_frames", [])
+    logger.info(
+        "Frame extraction: %d all, %d selected, %d gallery, %d vision descriptions",
+        len(ctx.scene_frames_all),
+        len(ctx.scene_frames_for_assembly),
+        len(ctx.scene_frames_gallery),
+        len(ctx.frame_descriptions),
+    )
+
+
 async def run_phase_frames(ctx: PipelineContext) -> AsyncGenerator[str, None]:
     """Extract scene keyframes, score, select, run OCR + vision, and prepare for assembly.
 
@@ -217,79 +385,26 @@ async def run_phase_frames(ctx: PipelineContext) -> AsyncGenerator[str, None]:
     best, refines them from the run's 720p file when it is already on disk
     (else starts the deferred hi-res pass after vision), uploads to S3, runs OCR
     and vision analysis in parallel, and stores enriched frames on context.
+    A long talking head does none of it (``_talking_head``).
     """
-    if not settings.SCENE_EXTRACTION_ENABLED:
-        return
-
-    if not ctx.video_data:
+    if not settings.SCENE_EXTRACTION_ENABLED or not ctx.video_data:
         return
 
     temp_dir = None
     try:
-        # Adaptive frame effort: HIGH tier over-selects + vision-reselects
-        # (the visuals ARE the content), LOW skips vision (frames are
-        # decoration), STANDARD keeps the classic top-8 vision pass. The
-        # tier is decided at Step 6b, not here (it waits for the tier probe).
-        gate = _TierGate(ctx) if settings.FRAME_TIER_ENABLED else None
-        extraction_result = await extract_scene_keyframes(
-            ctx.youtube_id,
-            duration_seconds=ctx.video_data.duration,
-            hires_video=ctx.hires_video,
-            lowres_video=ctx.lowres_video,
-            resolve_reselect=gate.reselect if gate is not None else None,
-            skip_cache=getattr(ctx, "cold_media", False),
-        )
-        tier = gate.tier if gate is not None else "standard"
-
+        if await _talking_head(ctx):
+            await _skip_frames(ctx)
+            return
+        extraction_result, tier = await _extract(ctx)
         all_frames = extraction_result.get("all_frames", [])
-        selected_frames = extraction_result.get("selected_frames", [])
         temp_dir = all_frames[0].get("temp_dir") if all_frames else None
-
         if not all_frames:
             return
-
-        cached_descriptions = extraction_result.get("vision_descriptions") or []
-        if cached_descriptions and not ctx.frame_descriptions:
-            ctx.frame_descriptions = cached_descriptions
-            logger.info(
-                "Restored %d vision descriptions from the frame manifest", len(cached_descriptions)
-            )
-
-        # Run OCR/presigned-URLs and vision analysis in parallel.
-        # Vision needs local file paths (before cleanup), so it runs here.
-        # LOW tier skips vision entirely; HIGH already described frames in
-        # the reselect hook (guarded inside _run_vision_analysis).
-        ocr_task = process_scene_frames(extraction_result, ctx.youtube_id)
-        vision_task = (
-            _run_vision_analysis(ctx, selected_frames) if tier != "low" else asyncio.sleep(0)
-        )
-
-        (enriched_result, event_str), _ = await asyncio.gather(
-            ocr_task,
-            vision_task,
-        )
+        cached_descriptions = _restore_descriptions(ctx, extraction_result)
+        enriched_result, event_str = await _ocr_and_vision(ctx, extraction_result, tier)
         yield event_str
-
-        # Fresh run with descriptions: persist them so the next manifest
-        # cache hit (regen, bypassCache) keeps the same visual context.
-        if ctx.frame_descriptions and not cached_descriptions:
-            await persist_vision_descriptions(ctx.youtube_id, ctx.frame_descriptions)
-        # After the descriptions are on the manifest: the pass's own manifest
-        # write is a read-modify-write that must not race them.
-        start_hires_upgrade(ctx, extraction_result.get("hires_upgrade"))
-
-        # Store on context for assembly
-        ctx.scene_frames_for_assembly = enriched_result.get("selected_frames", [])
-        ctx.scene_frames_all = enriched_result.get("all_frames", [])
-        ctx.scene_frames_gallery = enriched_result.get("gallery_frames", [])
-
-        logger.info(
-            "Frame extraction: %d all, %d selected, %d gallery, %d vision descriptions",
-            len(ctx.scene_frames_all),
-            len(ctx.scene_frames_for_assembly),
-            len(ctx.scene_frames_gallery),
-            len(ctx.frame_descriptions),
-        )
+        await _after_frames_event(ctx, extraction_result, cached_descriptions)
+        _store_for_assembly(ctx, enriched_result)
     except Exception as e:
         logger.warning("Frame extraction failed (non-critical): %s", e)
     finally:

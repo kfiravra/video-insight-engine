@@ -8,10 +8,12 @@ once — text1 warms the shared prefix — and the visual group once frames are
 done, cut from the tabs frames-done decided. Each landed group sends an
 ``extraction_progress`` (``section="groups"``) followed by previews of the
 tabs it completed (``group_emission``, 3.6: non-final; the quiz starts once
-its groups are in); each group's answer was validated and cut to its own keys
-as it landed, and when all landed they are merged (``group_merge``, 3.5) into
-ONE ``extraction_complete``. Assembly runs after the whole phase-2 group and
-sends every tab final.
+its groups are in, the hero rewrite (2.2) — and on a chunked run merge_rank
+(output-quality 3.1) — once every text group is); each group's answer was
+validated and cut to its own keys as it landed, and when all landed they are
+merged (``group_merge``, 3.5), merge_rank's answer applied, into ONE
+``extraction_complete``.
+Assembly runs after the whole phase-2 group and sends every tab final.
 """
 
 from __future__ import annotations
@@ -46,6 +48,7 @@ from src.services.pipeline.field_requests import (
 )
 from src.services.pipeline.group_failures import flag_failed_groups
 from src.services.pipeline.group_merge import merge_groups, merge_order, requested_quality
+from src.services.pipeline.merge_rank import cancel_merge_rank_task, merge_rank_extraction
 from src.services.pipeline.phases.enrichment import cancel_quiz_task
 from src.services.pipeline.phases.extraction import (
     fail_extraction,
@@ -53,15 +56,18 @@ from src.services.pipeline.phases.extraction import (
     record_validation,
 )
 from src.services.pipeline.phases.group_emission import GroupLanding
+from src.services.pipeline.phases.synthesis import cancel_hero_task
 from src.services.pipeline.pipeline_helpers import sse_event
 from src.services.pipeline.pipeline_timing import timed_step
 from src.services.pipeline.prompt_builder import format_gallery_frames_for_extraction
+from src.services.pipeline.quote_verify import run_quote_index
 from src.services.pipeline.schema_fields import scalar_fields
 from src.shared_config.domain_config import grouping_config
 
 if TYPE_CHECKING:
     from src.models.pipeline_types import PlanResult
     from src.services.pipeline.context import PipelineContext
+    from src.services.pipeline.quote_verify import QuoteIndex
 
 logger = logging.getLogger(__name__)
 
@@ -71,14 +77,22 @@ _PROGRESS_SECTION = "groups"
 # ─── Plan-done: fields → groups → the run ───
 
 
-def _requested(plan: PlanResult) -> list[FieldRequest]:
+def _requested(plan: PlanResult, content_format: str | None) -> list[FieldRequest]:
+    """The plan's field requests; ``content_format`` is the probe's (a talk's asks tab
+    waits for the key ideas, ``field_requests._planned``)."""
     return requested_fields(
-        plan.tabs, plan.content_tags, plan.modifiers, scalar_fields, primary_tag=plan.primary_tag
+        plan.tabs,
+        plan.content_tags,
+        plan.modifiers,
+        scalar_fields,
+        primary_tag=plan.primary_tag,
+        content_format=content_format,
     )
 
 
 def _job(
     plan: PlanResult,
+    content_format: str | None,
     visual_annotations: str = "",
     frame_context: str = "",
     chunk_frame_context: Mapping[int, str] | None = None,
@@ -90,7 +104,19 @@ def _job(
         visual_annotations=visual_annotations,
         frame_context=frame_context,
         chunk_frame_context=chunk_frame_context or {},
+        content_format=content_format,
     )
+
+
+def _quote_index(ctx: PipelineContext) -> QuoteIndex | None:
+    """The run's quote index for the stamp anchor (4.0): the transcript is final by
+    plan-done (the caption fallback ran before the plan). None when it cannot be built —
+    a chunk call's stamps then stay as the window check leaves them."""
+    try:
+        return run_quote_index(ctx)
+    except Exception:  # noqa: BLE001 — anchoring is a refinement; the extraction runs without it
+        logger.exception("Split extraction: no quote index — chunk stamps are not anchored")
+        return None
 
 
 async def _split_run(ctx: PipelineContext) -> tuple[SplitRun, bool]:
@@ -101,12 +127,13 @@ async def _split_run(ctx: PipelineContext) -> tuple[SplitRun, bool]:
     The prompt is today's plus the group rules, built without frame inputs:
     blocks 1 and 2 never carry them; the visual group's job binds them at
     frames-done. The job template and the group rules are read here once for
-    every call of the run.
+    every call of the run, and so is the transcript's quote index (a chunk call's quoted
+    stamps are anchored to it, ``stamp_anchor``).
     """
     chunks = await plan_chunks(ctx)
     plan, triage, video = ctx.plan_result, ctx.triage, ctx.video_data
     assert plan is not None and triage is not None and video is not None
-    groups = build_groups(_requested(plan), plan.tabs, grouping_config())
+    groups = build_groups(_requested(plan, ctx.content_format), plan.tabs, grouping_config())
     text_groups = tuple(g for g in groups if not g.visual)
     prompt = with_group_rules(
         _build_prompt(
@@ -115,17 +142,19 @@ async def _split_run(ctx: PipelineContext) -> tuple[SplitRun, bool]:
             video_memory=ctx.video_memory,
             frame_context="",
             visual_annotations="",
+            source_language=ctx.source_language_code,
         )
     )
     run = SplitRun(
         ctx.llm_service,
         prompt,
-        _job(plan),
+        _job(plan, ctx.content_format),
         tuple(chunks),
         text_groups,
         tuple(plan.content_tags),
         tuple(plan.modifiers),
         job_template=load_job_template(),
+        quote_index=_quote_index(ctx),
     )
     return run, len(groups) > len(text_groups)
 
@@ -140,13 +169,13 @@ def _visual_cutter(ctx: PipelineContext, chunks: Sequence[ExtractionChunk]) -> V
         await ctx.frames_done.wait()
         plan = ctx.plan_result
         assert plan is not None
-        group = visual_group(_requested(plan), fired)
+        group = visual_group(_requested(plan, ctx.content_format), fired)
         if group is None:
             return None
         gallery, descriptions = ctx.scene_frames_gallery, ctx.frame_descriptions
         frames = format_gallery_frames_for_extraction(gallery, descriptions)
         per_chunk = key_frames_by_chunk(gallery, descriptions, chunks)
-        return group, _job(plan, ctx.visual_annotations, frames, per_chunk)
+        return group, _job(plan, ctx.content_format, ctx.visual_annotations, frames, per_chunk)
 
     return cut
 
@@ -201,7 +230,7 @@ async def _land(
     """
     per_chunk = len(run.text_groups) + int(visual_planned)
     progress = _Progress(of=len(run.chunks) * per_chunk, visual_planned=visual_planned)
-    landing = GroupLanding.for_run(ctx, run.text_groups, len(run.chunks))
+    landing = GroupLanding.for_run(ctx, run.text_groups, len(run.chunks), run)
     yield progress.event()
     async for outcome in fire_groups(run, _visual_cutter(ctx, run.chunks)):
         if outcome is None:
@@ -211,7 +240,8 @@ async def _land(
         _log_landed(ctx, outcome)
         yield progress.landed(outcome)
         assert ctx.plan_result is not None
-        for event in landing.events(outcome, outcomes, _requested(ctx.plan_result)):
+        requests = _requested(ctx.plan_result, ctx.content_format)
+        for event in landing.events(outcome, outcomes, requests):
             yield event
 
 
@@ -253,7 +283,8 @@ async def _complete(ctx: PipelineContext, outcomes: Sequence[GroupOutcome]) -> l
     groups count as batches, so a failed group marks the run degraded; the
     quality score counts the fields the groups were asked for. The group rows
     and the degraded flag are kept either way: assembly names the tabs failed
-    groups cost (3.8).
+    groups cost (3.8). A chunked run's merge_rank answer (output-quality 3.1) is
+    applied to the merge first — ``extraction_complete`` carries the deduped lists.
     """
     landed = [o for o in outcomes if o.status == "ok" and o.data is not None]
     empty_by_design = not outcomes and _nothing_to_extract(ctx)
@@ -267,6 +298,7 @@ async def _complete(ctx: PipelineContext, outcomes: Sequence[GroupOutcome]) -> l
         )
         return [await fail_extraction(ctx)]
     merged, report = merge_groups(outcomes)
+    merged = await merge_rank_extraction(ctx, merged)
     record_validation(ctx, report)
     ctx.extraction_data = merged
     quality = requested_quality([f for o in outcomes for f in o.group.fields], merged)
@@ -277,7 +309,7 @@ async def _complete(ctx: PipelineContext, outcomes: Sequence[GroupOutcome]) -> l
 async def run_phase_split_extraction(ctx: PipelineContext) -> AsyncGenerator[str, None]:
     """From plan-done: fire the field groups, stream their progress + tabs, then the merged result.
 
-    A run that fails or is cancelled here stops the quiz call it started.
+    A run that fails or is cancelled here stops the quiz, hero and merge_rank calls it started.
     """
     await ctx.plan_done.wait()
     if ctx.plan_result is None:
@@ -292,4 +324,6 @@ async def run_phase_split_extraction(ctx: PipelineContext) -> AsyncGenerator[str
                 yield event
     except BaseException:
         cancel_quiz_task(ctx)
+        cancel_hero_task(ctx)
+        cancel_merge_rank_task(ctx)
         raise

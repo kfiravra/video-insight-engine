@@ -1,15 +1,19 @@
 import { useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { isContentTag } from '@vie/types';
-import type { SynthesisResult, ContentTag, VIEResponseMeta, TriageResult } from '@vie/types';
+import type { SynthesisResult, ContentTag, VIEResponseMeta, TriageResult, TabEntry } from '@vie/types';
 import { getDomainGradient } from '@vie/shared/config';
+import { inferItemCount } from '@/components/vie/cards/domain-meta';
 import { TabCoordinationProvider } from './output/TabCoordinationContext';
 import { CommandDeck, TabPanel, type PendingTabLabel, type ShellTabDef } from './output/OutputTabShell';
 import { TabStateProvider } from '@/features/video-output/contexts/TabStateContext';
 import { GlassCard } from './output/GlassCard';
 import type { StreamTab } from '@/features/video-output/lib/streaming/stream-tabs';
+import { liftReviewVerdict } from '@/features/video-output/lib/hero-verdict';
 import { StreamingPlaceholder, StreamErrorCard } from './StreamingPlaceholder';
 import { stripLeadingEmoji } from '@/lib/string-utils';
 import { DirectionProvider } from '@/contexts/DirectionContext';
+import { useHeaderSlot } from '@/components/layout/header-slot';
 import { getLabels } from '@/lib/i18n';
 import { isRTL as isRTLLanguage } from '@/lib/rtl';
 import type {
@@ -63,8 +67,23 @@ interface OutputRouterProps {
    *  with the peak moment). */
   onCancelStream?: () => void;
   /** Optional toggle for switching between original-language and English
-   *  content. Rendered at the top of the content area when present. */
+   *  content. Rendered in the app header when present (`LanguageToggleSlot`). */
   languageToggle?: React.ReactNode;
+}
+
+/** The language toggle sits in the app header, beside its other controls: a
+ *  row of its own above the hero cost 48 px of the first screen (output-quality
+ *  pC), and there it stays in reach while the page scrolls. Pinned LTR — English
+ *  is the default pill and the header's controls sit on the right — whatever
+ *  the content's direction. Outside a Layout it keeps its own row at the top. */
+function LanguageToggleSlot({ toggle }: { toggle: React.ReactNode }) {
+  const slot = useHeaderSlot();
+  if (slot) return createPortal(<div dir="ltr">{toggle}</div>, slot);
+  return (
+    <div dir="ltr" className="flex justify-end">
+      {toggle}
+    </div>
+  );
 }
 
 /** Count moment_track items that carry a usable frame thumbnail. */
@@ -82,6 +101,17 @@ function countFrameBackedItems(props: Record<string, unknown> | undefined): numb
     }
   }
   return count;
+}
+
+/** The question the video answers — the assembler stores it on the overview
+ *  tab (`props.data.keyQuestion`), which the strip filters out, so the router
+ *  lifts it into the hero brief itself. Empty or non-string → nothing. */
+function overviewKeyQuestion(tabs: TabEntry[] | null): string | undefined {
+  const overview = tabs?.find((t) => t.id === 'overview' || t.component === 'overview');
+  const data = overview?.props?.data;
+  if (data == null || typeof data !== 'object') return undefined;
+  const { keyQuestion } = data as { keyQuestion?: unknown };
+  return typeof keyQuestion === 'string' && keyQuestion.trim().length > 0 ? keyQuestion : undefined;
 }
 
 export function OutputRouter({
@@ -139,17 +169,21 @@ export function OutputRouter({
   // The filmstrip tab is likewise suppressed when a moment_track tab carries
   // rich frame coverage (≥8 frame-backed items) — its grid view already IS a
   // filmstrip with context, so a second frame strip would just repeat frames.
+  // A review's verdict lives in the hero only (4.3): lifted from the UNFILTERED
+  // tabs (the overview's spread is its fallback) and dropped from its tab.
+  const lifted = useMemo(() => liftReviewVerdict(tabs, primaryTag), [tabs, primaryTag]);
   const orderedTabs = useMemo(() => {
-    if (!tabs || tabs.length === 0) return tabs;
-    const hasRichMomentTrack = tabs.some(
+    const source = lifted.tabs;
+    if (!source || source.length === 0) return source;
+    const hasRichMomentTrack = source.some(
       (t) => t.component === 'moment_track' && countFrameBackedItems(t.props) >= 8,
     );
-    return tabs.filter((t) => {
+    return source.filter((t) => {
       if (t.id === 'overview' || t.component === 'overview') return false;
       if (t.component === 'video_filmstrip' && hasRichMomentTrack) return false;
       return true;
     });
-  }, [tabs]);
+  }, [lifted.tabs]);
 
   const tabDefs = useMemo((): ShellTabDef[] => {
     if (!orderedTabs || orderedTabs.length === 0) return [];
@@ -160,8 +194,12 @@ export function OutputRouter({
       dataSource: '',
       preview: tabPreviews[t.id],
       provisional: t.provisional === true,
+      itemCount: inferItemCount(t),
     }));
   }, [orderedTabs, tabPreviews]);
+
+  // Read from the UNFILTERED tabs: the overview tab never reaches the strip.
+  const keyQuestion = overviewKeyQuestion(tabs);
 
   // Planned tabs (meta.tabLabels) that haven't streamed yet: inert pills in
   // the strip and the provisional notice's count. Nothing is pending once the
@@ -189,13 +227,7 @@ export function OutputRouter({
   return (
     <DirectionProvider language={language} isRTL={isRTLProp ?? isRTLLanguage(language)}>
       <div className="mx-auto flex w-full max-w-5xl flex-col gap-4 px-3 pt-3 pb-8 md:px-6 md:pt-5 md:pb-12">
-        {/* Language toggle is intentionally pinned to the LTR-end (page right)
-            regardless of content direction. Rationale: English is the default
-            pill and English readers expect controls on the right; flipping
-            with RTL would put the active control where the eye doesn't look. */}
-        {languageToggle ? (
-          <div dir="ltr" className="flex justify-end">{languageToggle}</div>
-        ) : null}
+        {languageToggle ? <LanguageToggleSlot toggle={languageToggle} /> : null}
         {/* One tree from the first event to the last: the hero (and its inline
             player) never remounts when the first tab lands, and the initial
             tab is chosen once (sticky — a tab streamed in ahead of it never
@@ -212,6 +244,8 @@ export function OutputRouter({
               creator={creator}
               duration={duration}
               synthesis={synthesis}
+              keyQuestion={keyQuestion}
+              verdict={lifted.verdict}
               youtubeId={youtubeId}
               tabDefs={tabDefs}
               pendingTabs={hasData ? pendingTabs : tabLabels}
@@ -266,7 +300,7 @@ export function OutputRouter({
           </TabStateProvider>
         </TabCoordinationProvider>
 
-        <p className="text-center text-xs text-muted-foreground/60">
+        <p className="text-center text-xs text-muted-foreground/70">
           AI-generated summary. Verify important details with the original video.
         </p>
       </div>

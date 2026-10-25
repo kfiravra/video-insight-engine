@@ -1,4 +1,4 @@
 {
   "description": "Single source of truth for the pipeline output-schema version. Read by api/src/config.ts (idempotency request hashes + videoSummaryCache.dedupKey + stale-doc regen check) and services/summarizer/src/config.py (Redis response-cache key namespace + pipelineVersion stamped on persisted Mongo summary docs). Bump on every meaningful pipeline-output change: stale Redis entries TTL out, new dedup keys miss old rows, and version-stamped Mongo docs regen on next submission. Docs WITHOUT a pipelineVersion field predate stamping and are served as-is (current-legacy) — a bump never mass-invalidates them. Never override via env; see docs/IDEMPOTENCY.md.",
-  "version": "v10"
+  "version": "v11"
 }

@@ -93,7 +93,7 @@ class TestValidateGroup:
             "ingredients"
         ]
 
-        assert (eggs["amount"], eggs["displayAmount"], eggs["unit"]) == (0.0, "", None)
+        assert (eggs["amount"], eggs["displayAmount"], eggs["unit"]) == (None, "", None)
 
     def test_should_drop_an_invalid_item_and_report_it(self) -> None:
         raw = {"ingredients": [{"name": "eggs"}, {"amount": 2}]}
@@ -126,10 +126,8 @@ class TestValidateGroup:
 
         validated, _ = validate_group(raw, group, ["learning", "tech"], [])
 
-        assert (validated["learning"]["concepts"][0]["name"], validated["tech"]["topics"]) == (
-            "agent",
-            ["svelte"],
-        )
+        topics = [topic["name"] for topic in validated["tech"]["topics"]]
+        assert (validated["learning"]["concepts"][0]["name"], topics) == ("agent", ["svelte"])
 
     def test_should_keep_a_dotted_path_with_its_parents_only(self) -> None:
         raw = {"tech": {"setup": {"commands": ["npm i"], "dependencies": [{"name": "x"}]}}}

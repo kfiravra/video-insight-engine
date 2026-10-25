@@ -4,7 +4,6 @@ from src.services.pipeline.assembly import (
     assemble_response,
 )
 
-
 # ─── resolve_data_source ───
 
 
@@ -142,12 +141,14 @@ class TestNewsAssembly:
                         "source": "Mayor",
                         "status": "disputed",
                         "sourceCitation": "Analysts say 700",
+                        "quote": "This creates twelve hundred jobs.",
                         "timestamp": 210,
                     },
                     {
                         "claim": "Fares rise 15%",
                         "source": "Authority",
                         "status": "verified",
+                        "quote": "Fares will go up fifteen percent.",
                         "timestamp": 540,
                     },
                     {"claim": "Structural deficit", "source": "Reporter", "status": "context"},
@@ -166,8 +167,10 @@ class TestNewsAssembly:
         assert out["meta"]["primaryTag"] == "news"
         claims_tab = next(t for t in out["tabs"] if t["component"] == "claims_tracker")
         assert len(claims_tab["props"]["claims"]) == 3
-        statuses = {c["status"] for c in claims_tab["props"]["claims"]}
-        assert statuses == {"disputed", "verified", "context"}
+        statuses = {c.get("status") for c in claims_tab["props"]["claims"]}
+        # The stored pre-1.4 words read in D11's vocabulary (verified → supported, …);
+        # the unanchored "context" claim shows no status (phase-1 review R9).
+        assert statuses == {"contested", "supported", None}
 
 
 class TestGamingAssembly:
@@ -215,10 +218,23 @@ class TestGamingAssembly:
                     {"item": "Light shields", "category": "economy", "note": "Eco"},
                     {"item": "0.4 sens", "category": "settings", "note": "Mouse"},
                 ],
+                # 0b.13 / 2.0 c: a tier is a stated rank only on an anchored, quoted row.
                 "rankings": [
-                    {"item": "Jett", "tier": "S", "reason": "Entry"},
-                    {"item": "Sage", "tier": "A", "reason": "Heal"},
-                    {"item": "Yoru", "tier": "C", "reason": "Niche"},
+                    {
+                        "item": "Jett",
+                        "tier": "S",
+                        "reason": "Entry",
+                        "quote": "S.",
+                        "timestamp": 30,
+                    },
+                    {"item": "Sage", "tier": "A", "reason": "Heal", "quote": "A.", "timestamp": 60},
+                    {
+                        "item": "Yoru",
+                        "tier": "C",
+                        "reason": "Niche",
+                        "quote": "C.",
+                        "timestamp": 90,
+                    },
                 ],
             },
         }

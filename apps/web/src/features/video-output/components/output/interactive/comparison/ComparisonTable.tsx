@@ -1,7 +1,9 @@
 import { Check } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useLabels } from '@/lib/i18n';
 import { GlassCard, Badge } from '@/components/vie';
 
+import { groupByCompetitor, hasMultipleCompetitors } from './competitor-groups';
 import type { ComparisonRow } from './types';
 
 interface ComparisonTableProps {
@@ -12,14 +14,15 @@ interface ComparisonTableProps {
   onSelectRow: (index: number) => void;
 }
 
-/** Feature comparison — table mode. */
-export function ComparisonTable({
-  comparisons,
-  colLeft,
-  colRight,
-  activeRow,
-  onSelectRow,
-}: ComparisonTableProps) {
+interface RowsTableProps {
+  rows: { row: ComparisonRow; index: number }[];
+  colLeft: string;
+  colRight: string;
+  activeRow: number;
+  onSelectRow: (index: number) => void;
+}
+
+function RowsTable({ rows, colLeft, colRight, activeRow, onSelectRow }: RowsTableProps) {
   return (
     <GlassCard variant="default" className="p-0 overflow-hidden">
       <div className="overflow-x-auto">
@@ -32,7 +35,7 @@ export function ComparisonTable({
             </tr>
           </thead>
           <tbody>
-            {comparisons.map((item, index) => {
+            {rows.map(({ row: item, index }) => {
               const isLeftWinner = item.winner === 'left';
               const isRightWinner = item.winner === 'right';
               return (
@@ -71,5 +74,42 @@ export function ComparisonTable({
         </table>
       </div>
     </GlassCard>
+  );
+}
+
+/**
+ * Feature comparison — table mode. One competitor → one table. Two or more →
+ * one table per competitor under a "vs {name}" eyebrow, so no cell is empty
+ * and the page stays readable at phone width.
+ */
+export function ComparisonTable({
+  comparisons,
+  colLeft,
+  colRight,
+  activeRow,
+  onSelectRow,
+}: ComparisonTableProps) {
+  const t = useLabels();
+  if (!hasMultipleCompetitors(comparisons)) {
+    const rows = comparisons.map((row, index) => ({ row, index }));
+    return <RowsTable rows={rows} colLeft={colLeft} colRight={colRight} activeRow={activeRow} onSelectRow={onSelectRow} />;
+  }
+  return (
+    <div className="space-y-4">
+      {groupByCompetitor(comparisons).map((group) => (
+        <section key={group.name} className="space-y-2">
+          {group.name && (
+            <h4 className="type-eyebrow">{t.versusName.replace('{name}', group.name)}</h4>
+          )}
+          <RowsTable
+            rows={group.rows}
+            colLeft={colLeft}
+            colRight={group.name || colRight}
+            activeRow={activeRow}
+            onSelectRow={onSelectRow}
+          />
+        </section>
+      ))}
+    </div>
   );
 }

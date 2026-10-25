@@ -32,8 +32,8 @@ class TestPostProcessing:
         )
         assert result["cards"][1]["front"] == "Real Concept"
 
-    def test_comparison_synthesizes_pros_cons(self):
-        """Sprint 0.6: empty pros/cons get synthesized from winner fields."""
+    def test_comparison_never_synthesizes_pros_cons(self):
+        """0b.9 (R10): empty pros/cons stay empty — never derived from winner fields."""
         data = {
             "pros": [],
             "cons": [],
@@ -54,10 +54,8 @@ class TestPostProcessing:
         }
         result = assemble_comparison({}, data, {}, None)
         assert result is not None
-        assert len(result["pros"]) >= 1
-        assert "Camera" in result["pros"]
-        assert len(result["cons"]) >= 1
-        assert "Price" in result["cons"]
+        assert result["pros"] == []
+        assert result["cons"] == []
 
     def test_flash_deck_max_one_guardrail(self):
         """Sprint 0: assembly keeps only the first flash_deck tab."""
@@ -211,23 +209,13 @@ class TestPostProcessing:
                 "props": {"items": list(items)},
             }
         ]
-        _post_process_tabs(tabs, video_duration=16789)  # ~280 min → cap ~40
+        _post_process_tabs(tabs, video_duration=16789)  # ~280 min → 1 / 6 min = 46
         kept = tabs[0]["props"]["items"]
-        assert 35 <= len(kept) <= 45
-        # First and last moments are preserved → timeline spans the whole video.
-        assert kept[0]["seconds"] == items[0]["seconds"]
-        assert kept[-1]["seconds"] == items[-1]["seconds"]
-
-    def test_evenly_sample_preserves_first_and_last(self):
-        from src.services.pipeline.assembly.core import _evenly_sample
-
-        items = list(range(100))
-        sampled = _evenly_sample(items, 10)
-        assert sampled[0] == 0
-        assert sampled[-1] == 99
-        assert len(sampled) <= 10
-        # Returns input unchanged when already within cap.
-        assert _evenly_sample([1, 2, 3], 10) == [1, 2, 3]
+        assert len(kept) == 46
+        # One moment per stride → the timeline spans the whole video.
+        stride = 16789 / 46
+        assert kept[0]["seconds"] < stride
+        assert kept[-1]["seconds"] >= 16789 - stride
 
     def test_caps_oversized_info_grid_to_20(self):
         from src.services.pipeline.assembly.core import _post_process_tabs
@@ -736,17 +724,19 @@ class TestSpotCapSectionsRemap:
         assert all(len(s["spotIndices"]) >= 1 for s in sections)
         assert len(tabs[0]["props"]["spots"]) <= 25
 
-    def test_more_sections_than_cap_keeps_one_each_for_first_cap(self):
+    def test_more_sections_than_cap_keeps_one_each_for_an_even_pick_with_the_last_day(self):
         from src.services.pipeline.assembly.core import _post_process_tabs
 
-        # 30 days x 2 spots = 60 spots -> first 25 days keep one spot each.
+        # 30 days x 2 spots = 60 spots -> 25 days evenly picked keep one spot each;
+        # the tail survives (output-quality 3.3: no head-slice of the sections).
         tab = self._build_tab(n_spots=60, spots_per_day=2)
         tabs = [tab]
         _post_process_tabs(tabs)
 
         sections = tabs[0]["props"]["sections"]
+        labels = [s["label"] for s in sections]
         assert len(sections) == 25
-        assert [s["label"] for s in sections] == [f"Day {d}" for d in range(1, 26)]
+        assert labels[0] == "Day 1" and labels[-1] == "Day 30"
         assert all(len(s["spotIndices"]) == 1 for s in sections)
         assert len(tabs[0]["props"]["spots"]) == 25
 

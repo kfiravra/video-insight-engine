@@ -18,7 +18,7 @@ import { SIDEBAR_LAYOUT } from "@/features/sidebar/lib/layout-constants";
 import { useMoveVideo, useDeleteVideo, useRetryVideo } from "@/hooks/use-videos";
 import { useSidebarTextClasses } from "@/features/sidebar/hooks/use-sidebar-text-size";
 import { useLongPress } from "@/features/sidebar/hooks/use-long-press";
-import { useIsTruncated } from "@/features/sidebar/hooks/use-is-truncated";
+import { useIsTruncated } from "@/hooks/use-is-truncated";
 import { useUIStore, useSelectionMode, useIsFavorite } from "@/stores/ui-store";
 
 import type { Video, Folder as FolderData } from "@/types";

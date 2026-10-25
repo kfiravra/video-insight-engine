@@ -156,7 +156,7 @@ done
 sed -i 's|your-domain.example|DOMAIN|g' .env
 ```
 
-Then edit `.env` and set both required provider keys, `ANTHROPIC_API_KEY` and `OPENAI_API_KEY`, plus any optional one (`GEMINI_API_KEY`). The OpenAI key is required since the pipeline-1min 4.0d model picks: description analysis and the output / title / RAG-text translation default to `openai/gpt-6-luna`, the quiz to `openai/gpt-4o-mini`, and the template sets `LLM_FAST_PROVIDER=openai` (synthesis, chapter detection and the faithfulness judge on gpt-4o-mini); it also enables the Whisper audio fallback. Compose passes the key through as optional, so `dc config -q` does not catch a missing one: without it those calls fail (fast-tier calls never fall back to another provider): pipeline runs lose the description analysis, the quiz, translation, synthesis's master summary, AI chapter detection and the faithfulness judge, and vie-assistant loses its chat (the template sets `LLM_CHAT_MODEL=openai/gpt-4o-mini`) and its quiz tool (the fast tier). The OpenAI project behind the key must have access to `gpt-6-luna` and `gpt-4o-mini`. Check that `S3_BUCKET` names the bucket and `AWS_REGION` is the region the check in section a printed. Leave `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` unset, because the instance role supplies credentials.
+Then edit `.env` and set both required provider keys, `ANTHROPIC_API_KEY` and `OPENAI_API_KEY`, plus any optional one (`GEMINI_API_KEY`). The OpenAI key is required since the pipeline-1min 4.0d model picks: description analysis and the output / title / RAG-text translation default to `openai/gpt-6-luna`, the quiz (only with `QUIZ_V2_ENABLED=false`) to `openai/gpt-4o-mini`, and the template sets `LLM_FAST_PROVIDER=openai` (the synthesis fallback, chapter detection and the faithfulness judge on gpt-4o-mini); it also enables the Whisper audio fallback. Compose passes the key through as optional, so `dc config -q` does not catch a missing one: without it those calls fail (fast-tier calls never fall back to another provider): pipeline runs lose the description analysis, translation, the synthesis fallback, AI chapter detection and the faithfulness judge (hero / quiz calls included), and vie-assistant loses its chat (the template sets `LLM_CHAT_MODEL=openai/gpt-4o-mini`) and its quiz tool (the fast tier). The OpenAI project behind the key must have access to `gpt-6-luna` and `gpt-4o-mini`. Check that `S3_BUCKET` names the bucket and `AWS_REGION` is the region the check in section a printed. Leave `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` unset, because the instance role supplies credentials.
 
 Validate and start:
 
@@ -290,6 +290,29 @@ aws ec2 start-instances --region eu-north-1 --instance-ids i-XXXX
 
 Docker is enabled at boot and every long-running service has `restart: unless-stopped`, so the stack comes back on its own. After a boot the services start in parallel, and any that need a dependency restart until it is ready. A container you stopped by hand stays stopped across reboots; bring it back with `dc up -d`.
 
+## h. Rollback levers
+
+Five flags switch off a pipeline stage without a redeploy. Each defaults to `true` in `services/summarizer/src/config.py` and in both compose anchors, and the server template sets them to `true`. **Removal target: 2026-12-01** — after that date the flags and the paths they fall back to are deleted.
+
+| Flag | `true` (default) | `false` |
+|---|---|---|
+| `HERO_REWRITE_ENABLED` | one `hero_rewrite` call on `LLM_EXTRACTION_MODEL` (reading the extraction's prompt cache) writes the hero: brief, takeaways, worth-it / skip-if | the memory hero plus the synthesis call (`masterSummary`), as before v11 |
+| `QUIZ_V2_ENABLED` | quiz v2 on `LLM_EXTRACTION_MODEL`, reading the extraction's cached blocks: every question carries its answer's timestamp and a verified evidence quote | the `enrich_quiz` call on `LLM_ENRICHMENT_MODEL` (`openai/gpt-4o-mini`, needs `OPENAI_API_KEY`). Either way the quiz ships only on lectures and tutorials (`quizPolicy.formats`) |
+| `MERGE_RANK_ENABLED` | chunked runs (> 40 min) get one `merge_rank` call on `LLM_MEMORY_MODEL`: it dedupes the lists across chunks, cuts over-cap lists by rank and sets key-idea sections | the code-only merge |
+| `FRAMES_SKIP_WHEN_NO_VISUAL_DEMO` | a video over 30 min whose probe finds no visual demo, and whose tier is not HIGH, skips scene detection and vision (LOW tier, or a talk / interview / podcast) | every video gets frames again: slower and costlier on long talking-head videos |
+| `EXTRACTION_PARALLEL` | field groups: the text groups start at plan-done, the visual group at frames-done | one extraction call after frames (long videos: chunked batches one at a time), with the same request bytes for the same plan |
+
+To flip one, set it in `.env` and recreate both pipeline containers. `dc restart` does not re-read `.env`.
+
+```bash
+cd ~/video-insight-engine
+sed -i 's|^QUIZ_V2_ENABLED=.*|QUIZ_V2_ENABLED=false|' .env   # the flag to flip
+dc up -d --force-recreate --no-deps vie-summarizer vie-summarizer-worker
+dc exec vie-summarizer-worker printenv QUIZ_V2_ENABLED        # prints false
+```
+
+A flip affects new runs only. Stored summaries keep the output they were made with, because a flag is not a `PIPELINE_VERSION` change. To see a stored video under the flipped flag, re-submit it with `"bypassCache": true` (`POST /videos`, [API-REFERENCE.md](./API-REFERENCE.md#post-videos)). A full rollback of the release is a redeploy of the previous `main`.
+
 ## Preload demo videos
 
 Use this when YouTube blocks the instance (section b), or to have finished videos ready before an interview. `scripts/demo-export.sh` runs on your machine against the local stack and needs `jq`. It exports the completed videos at the current pipeline version, plus the vector index that video chat uses. `scripts/demo-import.sh` loads that export on the server. Frames and transcripts are not in the export: they live in S3, and the server has its own bucket, so each exported video's `videos/<id>/` prefix is copied from the dev bucket to `BUCKET` as well. Without that copy the imported videos have no frames.
@@ -385,4 +408,4 @@ Then log in as the demo user and submit each URL from `demo-data/<timestamp>/url
 
    Without `EC2_KNOWN_HOSTS`, the workflow trusts the host key it sees on first contact.
 
-On the instance, the workflow runs `git pull --ff-only` in `~/video-insight-engine`, then rebuilds with both compose files, prunes dangling images and waits for `https://DOMAIN/health`. Keep the checkout on `main` with no local edits; `.env` is untracked and never touched. Until the variables and secrets exist, every green CI run on `main` fails this workflow, so disable it under Actions if you don't use it.
+On the instance, the workflow runs `git pull --ff-only` in `~/video-insight-engine`, then rebuilds with both compose files, prunes dangling images and waits for `https://DOMAIN/health`. A `pipeline-version.json` or `domains.json` change reaches a container only when it is recreated; the deploy recreates a service when its image changed, so after a version-only change run the recreate of [IDEMPOTENCY.md](./IDEMPOTENCY.md#when-to-bump-pipeline_version) step 3 by hand. Keep the checkout on `main` with no local edits; `.env` is untracked and never touched. Until the variables and secrets exist, every green CI run on `main` fails this workflow, so disable it under Actions if you don't use it.

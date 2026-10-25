@@ -9,8 +9,10 @@ from src.services.pipeline.assembly import (
 
 
 def _comparison_rows(n: int) -> list[dict]:
+    # Numeric on both sides — the radar scores only numeric axes (0b.9).
     return [
-        {"feature": f"Spec {i}", "thisProduct": f"A{i}", "competitor": f"B{i}"} for i in range(n)
+        {"feature": f"Spec {i}", "thisProduct": f"{i + 1} GB", "competitor": f"{i + 2} GB"}
+        for i in range(n)
     ]
 
 
@@ -52,14 +54,15 @@ class TestPromoteComparison:
 
 
 class TestPromoteStepPlayer:
+    # Domain is "tech": food/project steps never become a canvas (0b.9, D8).
     def test_promotes_at_threshold(self):
         props = {"steps": _steps(STEP_FLOW_THRESHOLD)}
-        component, _ = promote_component("step_player", props, None, {}, "food")
+        component, _ = promote_component("step_player", props, None, {}, "tech")
         assert component == "step_flow_canvas"
 
     def test_no_promotion_for_short_procedure(self):
         props = {"steps": _steps(STEP_FLOW_THRESHOLD - 1)}
-        component, _ = promote_component("step_player", props, None, {}, "food")
+        component, _ = promote_component("step_player", props, None, {}, "tech")
         assert component == "step_player"
 
 
@@ -158,10 +161,11 @@ class TestDemoteLadder:
         assert component == "display_section"
         assert props is not None
 
-    def test_tier_list_demotes_to_info_grid(self):
+    def test_tier_list_demotes_to_spot_explorer(self):
         from src.services.pipeline.assembly.promotion import demote_component
 
-        # Two items — below tier_list's min of 3, but info_grid renders pairs.
+        # Two items — below tier_list's min of 3; the picks ship as cards (info_grid
+        # never stands alone, p2 review A3).
         data = [
             {"item": "Card A", "reason": "chase pull"},
             {"item": "Card B", "reason": "playable"},
@@ -170,8 +174,8 @@ class TestDemoteLadder:
 
         assert result is not None
         component, props = result
-        assert component == "info_grid"
-        assert len(props["items"]) == 2
+        assert component == "spot_explorer"
+        assert len(props["spots"]) == 2
 
     def test_quiz_arena_never_demotes(self):
         from src.services.pipeline.assembly.promotion import demote_component

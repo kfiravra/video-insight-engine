@@ -12,16 +12,20 @@ from __future__ import annotations
 
 from typing import Any
 
-from .text_utils import truncate_words
-from .normalizers import (
-    _coerce_float,
-    _coerce_int,
-)
+from src.models.idea_types import CLAIM_STATUSES
+
 from .assemblers_overhaul import (
     _connection_target,
     assemble_quiz_arena,
     assemble_video_filmstrip,
 )
+from .derived_guard import anchor_seconds, has_quote, stated_scalars
+from .moment_normalizers import quote_fields
+from .normalizers import (
+    _coerce_float,
+    _coerce_int,
+)
+from .text_utils import truncate_words
 
 # ─────────────────────────────────────────────────────
 # Secondary-tier assemblers (interactive-overhaul-v2 P2)
@@ -221,36 +225,62 @@ def assemble_quick_quiz(
     return assemble_quiz_arena(tab, data, extraction, enrichment)
 
 
-_CLAIM_STATUSES = frozenset({"verified", "disputed", "context"})
+# The pre-1.4 vocabulary stored extractions still carry, read in D11's words:
+# a "verified" claim is one the video supports, a "disputed" one it contests,
+# "context" one it only states.
+_LEGACY_CLAIM_STATUSES: dict[str, str] = {
+    "verified": "supported",
+    "disputed": "contested",
+    "context": "stated",
+}
+# What the video does with an anchored, quoted claim it gives no status for: it
+# states it (the non-asserting word, D11 / D13). A claim without its timestamp and
+# its words shows no status at all.
+_STATED = "stated"
 _CLAIMS_MIN = 2
 
 
-def _normalize_claim(item: Any) -> dict | None:
-    """Coerce a claim item to {claim, source, status, sourceCitation?, timestamp?}.
+def _claim_status(item: dict) -> str:
+    """The claim's status in D11's three words — only as the anchored, quoted item
+    states it (D13), the legacy words read as theirs, anything else ``stated``."""
+    raw = str(stated_scalars(item, ("status",)).get("status") or "").strip().lower()
+    status = _LEGACY_CLAIM_STATUSES.get(raw, raw)
+    return status if status in CLAIM_STATUSES else _STATED
 
-    Drops the row when there is no claim text. status defaults to "context"
-    (the safe, non-asserting default) when the LLM omits or supplies an
-    unknown value — we never silently upgrade an unverified claim to verified.
+
+def _normalize_claim(item: Any) -> dict | None:
+    """Coerce a claim item to {claim, source?, quote?, status?, sourceCitation?, timestamp?}.
+
+    Drops the row when there is no claim text. ``source`` is who the video says
+    made the claim, absent when it attributes it to no one (never an invented
+    "Reporter"). The claim's verbatim words ship whenever the quote pass kept them
+    (``quote_fields`` — S14 shipped 0 of its 20). An anchored claim ships its seek
+    point (R2). Only a claim anchored at a timestamp the reader can check AND
+    carrying the words that make it (``quote``, verified by 2.0 d) carries a
+    ``status`` — stated / supported / contested only (D11), never "verified"; an
+    unknown or missing one is ``stated`` — and its ``sourceCitation`` (the
+    counter-evidence of a "contested"). Any other claim ships as the claim, its
+    source and its stamp: no status shown, no citation under a status it lost (D13).
     """
     if not isinstance(item, dict):
         return None
     claim = str(item.get("claim") or item.get("text") or "").strip()
     if not claim:
         return None
-    status = str(item.get("status") or "").strip().lower()
-    if status not in _CLAIM_STATUSES:
-        status = "context"
-    result: dict[str, Any] = {
-        "claim": claim,
-        "source": str(item.get("source") or item.get("speaker") or "Reporter").strip(),
-        "status": status,
-    }
-    citation = item.get("sourceCitation") or item.get("citation")
-    if citation:
-        result["sourceCitation"] = str(citation).strip()
-    ts = _coerce_int(item.get("timestamp"))
-    if ts is not None:
-        result["timestamp"] = ts
+    result: dict[str, Any] = {"claim": claim}
+    source = str(item.get("source") or item.get("speaker") or "").strip()
+    if source:
+        result["source"] = source
+    result.update(quote_fields(item))
+    timestamp = anchor_seconds(item)
+    if timestamp is None:
+        return result
+    if has_quote(item):
+        result["status"] = _claim_status(item)
+        citation = item.get("sourceCitation") or item.get("citation")
+        if citation:
+            result["sourceCitation"] = str(citation).strip()
+    result["timestamp"] = timestamp
     return result
 
 
@@ -260,11 +290,13 @@ def assemble_claims_tracker(
     extraction: dict,
     enrichment: dict | None,
 ) -> dict | None:
-    """Build ClaimsTracker props from news.claims — the news signature surface.
+    """Build ClaimsTracker props from a claims list — news's signature surface, and a
+    talk's, podcast's or tech talk's on ``has_claims`` (D11).
 
-    Each claim carries the assertion, who made it, a verified/disputed/context
-    status, and an optional source citation. Needs ≥2 real claims to justify the
-    tab; otherwise the data folds into info_grid / overview via the fallback layer.
+    Each claim carries the assertion and who made it; an anchored one also its
+    stated / supported / contested status and an optional source citation. Needs
+    ≥2 real claims to justify the tab; otherwise the data folds into info_grid /
+    overview via the fallback layer.
     """
     if isinstance(data, dict):
         data = data.get("claims") or data.get("items") or []
@@ -285,11 +317,13 @@ _TIER_LIST_MIN = 3
 
 
 def _normalize_tier_item(item: Any) -> dict | None:
-    """Coerce a ranking row to {item, tier?, reason?, emoji?}.
+    """Coerce a ranking row to {item, tier?, reason?, emoji?, timestamp?}.
 
     Drops the row when there is no item label. `tier` is the creator's
-    SUGGESTED placement (S/A/B/C/D); it is omitted when absent or invalid so
-    the viewer places the item themselves rather than us guessing a tier.
+    STATED placement (S/A/B/C/D): it ships only when the row is anchored in
+    the video and carries the creator's words that state it (``quote``, D13 /
+    2.0 c) and is valid, so the viewer places an unranked item themselves
+    rather than us guessing a tier.
     """
     if not isinstance(item, dict):
         return None
@@ -297,9 +331,12 @@ def _normalize_tier_item(item: Any) -> dict | None:
     if not label:
         return None
     result: dict[str, Any] = {"item": truncate_words(label, 60)}
-    tier = str(item.get("tier") or "").strip().upper()
+    tier = str(stated_scalars(item, ("tier",)).get("tier") or "").strip().upper()
     if tier in _TIER_VALUES:
         result["tier"] = tier
+    timestamp = anchor_seconds(item)
+    if timestamp is not None:
+        result["timestamp"] = timestamp
     reason = item.get("reason") or item.get("note") or item.get("description")
     if reason:
         result["reason"] = truncate_words(str(reason), 120)
@@ -316,16 +353,19 @@ def assemble_tier_list(
 ) -> dict | None:
     """Build TierList props from gaming.rankings — the gaming signature surface.
 
-    Each item carries a label, an optional suggested S/A/B/C/D tier (the answer
+    Each item carries a label, an optional stated S/A/B/C/D tier (the answer
     key the user can override), and an optional reason. Needs ≥3 real items to
-    justify the tab; otherwise it folds into info_grid / overview.
+    justify the tab, and at least one stated tier — no stated rank → a list,
+    not tiers (D13): the tab walks the demote ladder to a spot list of the same
+    items (name, reason, seek point; info_grid only as the last resort, R6), so
+    it never vanishes.
     """
     if isinstance(data, dict):
         data = data.get("rankings") or data.get("items") or []
     if not isinstance(data, list):
         return None
     items = [i for i in (_normalize_tier_item(it) for it in data) if i is not None]
-    if len(items) < _TIER_LIST_MIN:
+    if len(items) < _TIER_LIST_MIN or not any("tier" in i for i in items):
         return None
     return {"items": items}
 

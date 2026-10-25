@@ -91,6 +91,7 @@ _COVERED_TEMPLATES: set[str] = {
     "tier_probe.txt",
     "enrich_quiz.txt",
     "extraction_group_job.txt",
+    "hero_rewrite.txt",
     *(f"schemas/{p.name}" for p in (PROMPTS_DIR / "schemas").glob("*.txt")),
     *(f"examples/{p.name}" for p in (PROMPTS_DIR / "examples").glob("*.txt")),
 }
@@ -414,6 +415,25 @@ async def test_memory_prompt_renders_without_placeholders():
     rendered = _captured_prompt_text(mock_call)
     assert rendered, "memory never reached the LLM call"
     _assert_no_unreplaced(rendered, "memory.txt")
+
+
+# ─── Hero rewrite (hero_rewrite.txt, output-quality 2.1) ────────────────
+@pytest.mark.asyncio
+async def test_hero_rewrite_prompt_renders_without_placeholders():
+    from src.services.pipeline import hero_rewrite as hero_mod
+
+    llm, mock_call = _capture_llm()
+    request = hero_mod.HeroRequest(
+        title="Test Video",
+        duration=600,
+        extraction={"learning": {"keyIdeas": [{"claim": "A claim", "timestamp": 60}]}},
+        tab_labels=["💡 Key Ideas"],
+    )
+    with patch.object(hero_mod, "call_llm_with_retry", mock_call):
+        await hero_mod.run_hero_rewrite(llm, request)
+    rendered = _captured_prompt_text(mock_call)
+    assert rendered, "the hero rewrite never reached the LLM call"
+    _assert_no_unreplaced(rendered, "hero_rewrite.txt")
 
 
 # ─── Tier probe (tier_probe.txt) ────────────────────────────────────────

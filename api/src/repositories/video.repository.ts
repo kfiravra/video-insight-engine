@@ -623,9 +623,10 @@ export class VideoRepository {
   async mergeSynthesis(id: string, synthesis: SynthesisFields): Promise<void> {
     const merge = buildSynthesisMerge(synthesis);
     if (!merge) return;
+    const unset = Object.keys(merge.unset).length > 0 ? { $unset: merge.unset } : {};
     await this.cacheCollection.updateOne(
       { _id: new ObjectId(id), ...merge.guard },
-      { $set: { ...merge.set, updatedAt: new Date() } },
+      { $set: { ...merge.set, updatedAt: new Date() }, ...unset },
     );
   }
 

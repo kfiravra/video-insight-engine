@@ -275,6 +275,43 @@ describe('stream-event-processor — tab_ready contract', () => {
     });
   });
 
+  describe('a moment fill that waits for the 720p download (output-quality 3.7)', () => {
+    const glyphPlate = { label: 'Deep dive', seconds: 480 };
+    const framed = { ...glyphPlate, thumbnailUrl: 'https://s3/frame-480.jpg' };
+    const moments = (items: Event[], extra: Event = {}): Event =>
+      tab('segments', 2, { component: 'moment_track', props: { items }, ...extra });
+    const beforeComplete: Event[] = [
+      tab('overview', 0, { final: true }),
+      tab('topics', 1, { final: true }),
+      moments([glyphPlate]),
+      { event: 'complete', tabCount: 3, tabIds: ['overview', 'topics', 'segments'], processingTimeMs: 72000 },
+    ];
+
+    it('should keep the non-final moment tab when complete lists it', () => {
+      const state = run(beforeComplete);
+
+      expect(ids(state)).toEqual(['overview', 'topics', 'segments']);
+    });
+
+    it('should not be settled after complete while the moment tab is still non-final', () => {
+      const state = run(beforeComplete);
+
+      expect(isStreamSettled(state)).toBe(false);
+    });
+
+    it('should be settled once the moment tab arrives final after complete', () => {
+      const state = run([...beforeComplete, moments([framed], { final: true })]);
+
+      expect(isStreamSettled(state)).toBe(true);
+    });
+
+    it('should show the framed moments when the final follows complete', () => {
+      const state = run([...beforeComplete, moments([framed], { final: true })]);
+
+      expect(state.tabs[2].props).toEqual({ items: [framed] });
+    });
+  });
+
   describe('a split run (EXTRACTION_PARALLEL, jMq8lEu-of0 shape)', () => {
     const progress = (batch: number): Event => ({ event: 'extraction_progress', section: 'groups', percent: 5 + 30 * batch, batch, of: 3 });
     const closing = ['ingredients', 'cook_steps', 'chef_tips', 'overview'];

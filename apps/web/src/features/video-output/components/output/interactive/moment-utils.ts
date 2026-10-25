@@ -8,6 +8,20 @@ export interface MomentItem {
   endSeconds?: number;
   label: string;
   description?: string;
+  /** The speaker's line that carries the moment, verbatim (output-quality R7/R10). */
+  quote?: string;
+  /** The quote is the English rendering of non-English speech (2.0 d, D12): prose. */
+  quoteTranslated?: boolean;
+  /** English rendering of a verbatim non-English quote (D12), shown beneath it. */
+  quoteEn?: string;
+  /** An interview exchange's whole question — sent only when it differs from the
+   *  label (the label is then its first sentence). */
+  question?: string;
+  /** English rendering of a non-English `question` (D12): heads the row, the verbatim question sits beneath. */
+  questionEn?: string;
+  /** Assembly's check of `question` against the transcript: `translated` = the
+   *  model's rendering, not the host's words — prose, never set as a quotation. */
+  questionStatus?: 'verified' | 'translated';
   mood?: string;
   emoji?: string;
   speaker?: string;

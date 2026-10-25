@@ -22,6 +22,21 @@ describe('ChecklistInteractive', () => {
     expect(screen.getByText('Salt')).toBeInTheDocument();
   });
 
+  it("should show an ask's English beneath its verbatim note when the row carries quoteEn", () => {
+    const asks = [
+      { label: 'Fund open research', note: '“תממנו מחקר פתוח”', quoteEn: 'Fund open research.' },
+      { label: 'Publish the data', note: '“Publish the data.”' },
+      { label: 'Share the code', note: '“Share the code.”' },
+    ];
+    render(<ChecklistInteractive items={asks} tabLabel="Asks" />);
+    expect(screen.getByText('Fund open research.')).toHaveAttribute('lang', 'en');
+  });
+
+  it('should let a verbatim note read in its own direction when it is a Hebrew line', () => {
+    render(<ChecklistInteractive items={[{ label: 'Fund open research', note: '“תממנו מחקר פתוח”' }]} tabLabel="Asks" />);
+    expect(screen.getByText('“תממנו מחקר פתוח”')).toHaveAttribute('dir', 'auto');
+  });
+
   it('renders an empty state for empty items', () => {
     const { container } = render(<ChecklistInteractive items={[]} tabLabel="Empty" />);
     expect(container.textContent).toContain('No checklist items were extracted');

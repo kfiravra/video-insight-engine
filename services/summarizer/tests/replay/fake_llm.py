@@ -15,6 +15,13 @@ Split extraction (3.4): a call under ``summarize:extraction:<group>`` is not
 recorded; ``group_synth`` answers it from the recorded single extraction, and
 a streamed request (``stream=True``, the warm-up call) gets an async iterator:
 the role chunk after TTFT, the content chunk at the end, then the usage chunk.
+
+Quiz v2 (output-quality 2.1b): the ``quiz_v2`` call is not recorded either;
+``quiz_synth`` answers it from the recorded flag-off quiz, which counts as used.
+
+Hero rewrite (output-quality 2.2): neither is the ``hero_rewrite`` call;
+``hero_synth`` answers it from the recorded memory + synthesis, and the synthesis
+recording counts as used.
 """
 
 from __future__ import annotations
@@ -42,6 +49,8 @@ from tests.replay.group_synth import (
     is_group_feature,
     synthesize,
 )
+from tests.replay.hero_synth import SYNTHESIS_KEY, is_hero_call, synthesize_hero
+from tests.replay.quiz_synth import MEMORY_KEY, QUIZ_KEY, is_quiz_v2_call, synthesize_quiz_v2
 
 _span_var: ContextVar[str | None] = ContextVar("replay_llm_span", default=None)
 
@@ -158,6 +167,24 @@ class ReplayLLM:
         self.group_calls.append(key)
         return _synth_entry(recorded, key, synth), synth.ttft_s
 
+    def _quiz_v2_entry(self, key: LLMKey, kwargs: dict[str, Any]) -> LLMEntry | None:
+        """A quiz v2 call answered from the recorded flag-off quiz (now used)."""
+        recorded = self._entries.get(QUIZ_KEY)
+        if recorded is None or not is_quiz_v2_call(key):
+            return None
+        self.used.append(QUIZ_KEY)
+        memory = self._entries.get(MEMORY_KEY)
+        return synthesize_quiz_v2(recorded, memory, key, kwargs.get("messages") or [])
+
+    def _hero_entry(self, key: LLMKey, kwargs: dict[str, Any]) -> LLMEntry | None:
+        """A hero rewrite call answered from the recorded memory + synthesis (now used)."""
+        if not is_hero_call(key):
+            return None
+        if SYNTHESIS_KEY in self._entries:
+            self.used.append(SYNTHESIS_KEY)
+        messages = kwargs.get("messages") or []
+        return synthesize_hero(self._entries, MEMORY_KEY, EXTRACTION_KEY, key, messages)
+
     def _answer(self, key: LLMKey, kwargs: dict[str, Any]) -> tuple[LLMEntry, float]:
         entry = self._entries.get(key)
         if entry is not None:
@@ -166,6 +193,9 @@ class ReplayLLM:
         group = self._group_entry(key, kwargs)
         if group is not None:
             return group
+        synthesized = self._quiz_v2_entry(key, kwargs) or self._hero_entry(key, kwargs)
+        if synthesized is not None:
+            return synthesized, 0.0
         message = self._miss_message(key)
         self.misses.append(message)
         raise CassetteMissError(message)

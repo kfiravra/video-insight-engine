@@ -1,8 +1,9 @@
 """Requested extraction fields — what the split extraction asks for (phase 3.3).
 
 ``requested_fields`` is the union over the reconciled tabs of: each tab's
-planned dataSource, the registry ``siblings`` assembly swaps in when it is
-empty ("fallbacks", active domains only), the side reads of the component that
+planned dataSource (and those of the info_grid tabs folded into it, R6), the
+registry ``siblings`` assembly swaps in when it is empty ("fallbacks", active
+domains only), the side reads of the component that
 renders the tab ("upgrades"), the overview hero's reads of the primary domain
 (tips + level — the overview is in every response, planned or not), and the
 scalar keys of every requested domain.
@@ -37,7 +38,9 @@ from ...shared_config.domain_config import (
     data_sources,
     valid_modifiers,
 )
+from .assembly.info_grid_fold import FOLDS_KEY
 from .assembly.normalizers import _TIP_FIELDS
+from .assembly.talk_asks import KEY_IDEAS_SOURCE, TALK_FORMAT, is_asks_view
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +61,7 @@ UNREGISTERED_FIELD_WEIGHT = SCALAR_DOMAIN_WEIGHT
 # meta and ignores its dataSource; ``enrichment.*`` comes from the quiz call;
 # ``frames`` (NON_EXTRACTION_DATASOURCES) from the frames phase.
 _SKIPPED_COMPONENTS = frozenset({"overview"})
+_MOMENT_COMPONENT = "moment_track"
 _SKIPPED_DOMAINS = frozenset({"enrichment"})
 
 # A field requested for several reasons keeps the strongest (earliest listed) one.
@@ -101,6 +105,9 @@ _SIDE_READS: dict[str, _SideRead] = {
     "comparison": _REVIEW_COMPARISON,
     # assemblers_overhaul.py `assemble_comparison_radar` hands off to assemble_comparison.
     "comparison_radar": _REVIEW_COMPARISON,
+    # assemblers_primary.py `assemble_spot_explorer`: a podcast's guests open Positions
+    # as its first section (4.1), so any spot tab of a podcast run asks for them.
+    "spot_explorer": _SideRead(("podcast",), ("guests",)),
     # assembly/core.py `assemble_response`: an empty moment_track tab reads
     # extraction["learning"]["timestamps"].
     "moment_track": _SideRead(("learning",), ("timestamps",)),
@@ -257,10 +264,16 @@ def reads_active_extraction(
 
 
 def _planned(
-    tab: Mapping[str, object], registry: Mapping[str, DataSourceSpec], scalars_of: ScalarsOf
+    tab: Mapping[str, object],
+    registry: Mapping[str, DataSourceSpec],
+    scalars_of: ScalarsOf,
+    content_format: str | None = None,
 ) -> list[_Draft]:
-    """The fields a tab's own dataSource names."""
+    """The fields a tab's own dataSource names — a talk's asks checklist reads the key
+    ideas of kind ask (``talk_asks.asks_data``), so it waits for them, never takeaways."""
     source = str(tab.get("dataSource") or "")
+    if content_format == TALK_FORMAT and is_asks_view(tab.get("component"), source):
+        source = KEY_IDEAS_SOURCE
     domain, _, rest = source.partition(".")
     if not reads_extraction(tab):
         return []
@@ -279,23 +292,70 @@ def _planned(
     return []
 
 
+def _folded(
+    tab: Mapping[str, object], registry: Mapping[str, DataSourceSpec], scalars_of: ScalarsOf
+) -> list[_Draft]:
+    """The fields of the info_grid tabs reconcile folded into ``tab`` (R6): requested for
+    ``tab``, which waits for them and ships them inside it."""
+    folds = tab.get(FOLDS_KEY)
+    if not isinstance(folds, list):
+        return []
+    return [
+        draft
+        for fold in folds
+        if isinstance(fold, Mapping)
+        for draft in _planned({**fold, "id": _tab_id(tab)}, registry, scalars_of)
+    ]
+
+
+@dataclass(frozen=True)
+class _FallbackDomains:
+    """The run's active domains and those some extraction tab plans on."""
+
+    active: frozenset[str]
+    planned: frozenset[str]
+
+
 def _fallbacks(
     planned: Sequence[_Draft],
     registry: Mapping[str, DataSourceSpec],
-    active: Sequence[str],
+    domains: _FallbackDomains,
     tab_id: str,
 ) -> list[_Draft]:
-    """Registry siblings of the planned fields whose domain is active."""
+    """Registry siblings of the planned fields inside a domain some tab plans on: an
+    active modifier or tag no tab reads is no reason to extract a stand-in (L17 —
+    S01 paid for narrative.keyMoments / takeaways, S03 for science.concepts, and
+    assembly used none of them). A field of an inactive domain is extracted by no
+    one, so its siblings in any active domain stand in for it."""
     drafts: list[_Draft] = []
     for draft in planned:
         spec = registry.get(f"{draft.domain}.{draft.field}")
+        allowed = domains.active if draft.domain not in domains.active else domains.planned
         siblings = (registry.get(path) for path in (spec["siblings"] if spec else []))
         drafts.extend(
             _from_spec(sibling, "fallback", tab_id)
             for sibling in siblings
-            if sibling is not None and sibling["domain"] in active
+            if sibling is not None and sibling["domain"] in allowed
         )
     return drafts
+
+
+def _planned_domains(tabs: Sequence[Mapping[str, object]], active: Sequence[str]) -> frozenset[str]:
+    """The active domains some extraction tab's own dataSource (or a fold's) names."""
+    named = {
+        str(source).partition(".")[0]
+        for tab in tabs
+        if reads_extraction(tab)
+        for source in [tab.get("dataSource"), *_fold_sources(tab)]
+    }
+    return frozenset(d for d in active if d in named)
+
+
+def _fold_sources(tab: Mapping[str, object]) -> list[object]:
+    folds = tab.get(FOLDS_KEY)
+    if not isinstance(folds, list):
+        return []
+    return [fold.get("dataSource") for fold in folds if isinstance(fold, Mapping)]
 
 
 def _side_reads(
@@ -303,10 +363,17 @@ def _side_reads(
     registry: Mapping[str, DataSourceSpec],
     active: Sequence[str],
     primary_tag: str | None,
+    planned: Sequence[_Draft] = (),
 ) -> list[_Draft]:
-    """The rendering component's side reads in the domains it reads them from."""
-    rule = _SIDE_READS.get(str(tab.get("component") or ""))
-    if rule is None:
+    """The rendering component's side reads in the domains it reads them from.
+
+    A Moments tab that plans a registered field of its own reads no
+    ``learning.timestamps`` stand-in: assembly's moment fallback chain covers an
+    empty one (S13 paid a chunked call per chunk for timestamps no tab showed).
+    """
+    component = str(tab.get("component") or "")
+    rule = _SIDE_READS.get(component)
+    if rule is None or (component == _MOMENT_COMPONENT and planned):
         return []
     primary = [primary_tag] if primary_tag else []
     drafts: list[_Draft] = []
@@ -399,23 +466,28 @@ def requested_fields(
     scalars_of: ScalarsOf,
     *,
     primary_tag: str | None = None,
+    content_format: str | None = None,
 ) -> list[FieldRequest]:
     """Every field the reconciled tabs read, in plan order (scalars last).
 
-    Per tab: its planned field(s), then the planned fields' active siblings,
-    then its component's side reads (``primary_tag`` scopes the primary-only
-    ones); then the overview's reads of the primary domain (``primary_tag``);
+    Per tab: its planned field(s) (with the grids folded into it; on a talk —
+    ``content_format``, the probe's — the asks checklist's is ``learning.keyIdeas``), then
+    the planned fields' siblings inside a planned domain, then its component's side reads
+    (``primary_tag`` scopes the primary-only ones); then the overview's reads of the
+    primary domain (``primary_tag``);
     finally the scalar keys of every domain that has a requested field.
     A field several tabs read is requested once, with all their tab ids and its
     strongest reason. Only active domains' fields (``active_domain_model``).
     """
     registry = data_sources()
     active = _active_domains(content_tags, modifiers)
+    domains = _FallbackDomains(frozenset(active), _planned_domains(tabs, active))
     drafts: dict[tuple[str, str], _Draft] = {}
     for tab in (t for t in tabs if _reads_extraction(t)):
-        planned = _planned(tab, registry, scalars_of)
-        fallbacks = _fallbacks(planned, registry, active, _tab_id(tab))
-        upgrades = _side_reads(tab, registry, active, primary_tag)
+        own = _planned(tab, registry, scalars_of, content_format)
+        planned = [*own, *_folded(tab, registry, scalars_of)]
+        fallbacks = _fallbacks(planned, registry, domains, _tab_id(tab))
+        upgrades = _side_reads(tab, registry, active, primary_tag, planned)
         for draft in [*planned, *fallbacks, *upgrades]:
             _put(drafts, draft, active)
     for draft in _overview_reads(primary_tag, content_tags, registry, scalars_of):

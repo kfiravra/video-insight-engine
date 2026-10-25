@@ -139,8 +139,9 @@ incl. the above-100K tier; the assistant process does not register it).
 
 ## Where cache_control is set
 
-Three call types carry breakpoints — the plan, the extraction field groups and
-the `EXTRACTION_PARALLEL=false` single extraction call — always on user content
+Five call types carry breakpoints — the plan, the extraction field groups, the
+`EXTRACTION_PARALLEL=false` single extraction call, (output-quality 2.1) the hero
+rewrite and (4.6e) quiz v2, which re-send the field groups' blocks to read them — always on user content
 blocks (Anthropic models only; `services/summarizer/src/services/llm_messages.py`
 strips every marker for other providers). `text_block(text, cache=True)` is the 5-minute default (no
 `ttl` key on the wire); `text_block(text, cache=True, ttl="1h")` asks for one
@@ -152,9 +153,9 @@ hour. In one request every 1h breakpoint must come before any 5m one.
 - **user block 1** = the English output directive + everything above
   `<video>` (rules, component toolkit, registry caps and requirements,
   examples) — rendered from config alone, so byte-identical for every video;
-  ≈ 16.3k tokens on Sonnet 4.6 (16,290 written on prod, `dev/completed/pipeline-1min/gates/g3.md`
+  ≈ 16.3k tokens on Sonnet 4.6 (16,290 written on prod, pipeline-1min gate g3
   §Prod), ≈ 22.1k on Sonnet 5.5 (its tokenizer; 22,070 written in the 4.0d A/B,
-  `dev/completed/pipeline-1min/gates/g4-model-ab.md`).
+  pipeline-1min gate g4-model-ab).
   `cache_control {type: ephemeral, ttl: 1h}`
   (`plan.PLAN_CACHE_TTL`, `plan.plan_user_content`);
 - **user block 2** = `<video>` (title, channel, duration, probe hint,
@@ -206,7 +207,7 @@ tokens — jMq8 r1 on prod wrote the prefix three times, +$0.065) releases them
 without that chunk; `pipeline.timing` `counts.cacheRewrites` / `cacheRewriteTokens`
 count such writes (`pipeline/cache_rewrites.py`). A
 text1 that fails before its first chunk releases them at once. Measured
-(`dev/completed/pipeline-1min/gates/g3.md` §Cache hit rate, dev end runs and prod):
+(pipeline-1min gate g3 §Cache hit rate, dev end runs and prod):
 block 1 measures ≈ 2.6–3.4k cl100k tokens on the benchmark domain sets (offline,
 `pipeline-1min-tasks.md` 3.4 / 4.0); g3: 1h write 0 (< Haiku 4.5's 4,096-token minimum),
 so no 1h entry is written (`cacheWrite1hTokens` 0) and the 5m entry text1 writes holds blocks 1 + 2;
@@ -216,7 +217,7 @@ Since the 4.0 picks extraction runs on Sonnet 5.5, whose minimum is 512 tokens
 (pipeline-1min context.md, "4.0c docs facts"): block 1 (≈ 5.3k tokens on the new
 tokenizer) now gets its own 1h entry, written by the first text1 of a domain set in
 the hour. Dev v10 T1dQhQAm8Tc: text1 read 5,349 (block 1) and wrote 6,713 for 5m
-(block 2); text2 read 12,062 (blocks 1 + 2) (`dev/completed/pipeline-1min/gates/g4.md` §3.7, L5).
+(block 2); text2 read 12,062 (blocks 1 + 2) (pipeline-1min gate g4 §3.7, L5).
 
 **Extraction, `EXTRACTION_PARALLEL=false` — 5m (1c.3).** The single call (one
 per chapter batch on a long video) the groups replaced — byte-identical to the
@@ -241,17 +242,64 @@ The old `cache_static` path (static template half as a cached system message)
 is gone. The plan reads the **full** `[m:ss]`-marked transcript (1b.2), so its
 uncached block — and cost — grows with the video; memory reads the same string.
 
+**Hero rewrite — reads the field groups' blocks (output-quality 2.1,
+`HERO_REWRITE_ENABLED`).** `hero_job.cached_blocks` sends the call as
+`[block 1, block 2?, block 3]` on `LLM_EXTRACTION_MODEL` (caches are per model, so
+it runs on the groups' model, with their JSON mode and effort and no system prompt):
+
+- **block 1** = `extraction_group_prompt.prefix_block` of the run's ruled prompt —
+  the same bytes the group calls sent (1h entry), read at 0.1x;
+- **block 2** = `head_block` (`<video>` + the transcript + `<video_memory>`, the 5m
+  entry) — only when the run is ONE chunk (`HeroRequest.reads_transcript`). A chunked
+  run has one head per chunk and a request can read one prefix, so it reads block 1
+  alone and block 3 carries `<video>` + `<video_memory>`;
+- **block 3** = the hero job (`prompts/hero_rewrite.txt` + the compacted merged
+  extraction, at most `HERO_EXTRACTION_MAX_TOKENS` = 5 000 tokens —
+  `HERO_EXTRACTION_PARTED_MAX_TOKENS` = 5 500 when a chunked run's scalars show part by
+  part — + the tab labels),
+  uncached. A retry (one, with the failed checks appended; made only when the hero would
+  be None or a D18 line would drop) changes block 3 only, so it reads the cache too.
+
+Without group blocks (`EXTRACTION_PARALLEL=false`) the request is block 3 alone: no
+group call wrote blocks 1 / 2, so sending them would write them (block 1 at 2x for an
+hour it never serves). Output cap `HERO_MAX_TOKENS` = 2 000, timeout `HERO_TIMEOUT_S`
+= 25 s. Started at text-groups-done, after the groups' own writes, so the entries are
+already readable.
+
+**Quiz v2 — reads the field groups' blocks (output-quality 4.6e, `QUIZ_V2_ENABLED`).**
+The quiz runs on `LLM_EXTRACTION_MODEL` with the groups' JSON mode and effort and no
+system prompt; `quiz_v2_blocks.cached_prefix` sends each call as `[block 1, block 2, job]`:
+block 1 = `prefix_block` (the 1h entry), block 2 = `head_block` of the call's chunk — part
+k's own chunk on a chunked run, the one head on a one-chunk run (each third reads it) —
+both byte-identical to the group calls' and read at 0.1x; the job (`<task>`, `<hero>`,
+`<key_ideas>`, the rules — no transcript) is uncached. The re-ask after a reply with no
+question sends the same blocks, so it reads the cache too. Without group blocks
+(`EXTRACTION_PARALLEL=false`, the late group's own call, a whole-video call on a chunked
+run) the call is one uncached message with the transcript inline. The task starts when its
+owning groups landed — after their writes, so the entries are readable. Offline (the stored
+runs' cache reads, their quiz jobs rendered, the Haiku runs' answer lengths; Sonnet 5.5
+$2 in / $0.20 read / $10 out per MTok): S03 (57 min, two chunk calls) 33.5 K read + 4.0 K
+job + 2.7 K out ≈ $0.041; S05 (13 min, one call) 12.7 K read + 3.3 K job + 1.0 K out
+≈ $0.019 — the answer is about two thirds of it (Haiku 5.5 inline: $0.0037 / $0.0013).
+A one-chunk run's thirds read the one head three times (≈ $0.003 a call).
+
 **OpenAI calls (automatic caching).** OpenAI caches a prompt prefix by itself
 once it is identical to an earlier request's and at least 1,024 tokens long; it
 reports reads (`prompt_tokens_details.cached_tokens`) but no writes, and there
 is nothing to mark. Synthesis (the fast tier — `openai/gpt-4o-mini` with
-`LLM_FAST_PROVIDER=openai`, as both templates and prod set), the quiz
-(`enrich_quiz.txt`, `openai/gpt-4o-mini`) and `description_analysis.txt`
+`LLM_FAST_PROVIDER=openai`, as both templates and prod set; with
+`HERO_REWRITE_ENABLED` it runs only when the hero call gives no hero), the
+`enrich_quiz.txt` quiz (`openai/gpt-4o-mini`; with `QUIZ_V2_ENABLED` it does not run)
+and `description_analysis.txt`
 (`openai/gpt-6-luna` since 4.0d) are laid out static-first — instructions, schema, example, then the per-video content —
 so two videos share their prefix up to the first per-video byte. Today those
 static prefixes are 355 / 471 / 311 tokens, below the 1,024 minimum, so they do
 not cache across videos yet (a quiz prefix is per quiz domain: its flavor line
 sits in `<role>`).
+
+## Output-quality calls (2026-10)
+
+The hero rewrite, quiz v2 (Sonnet 5.5 on the extraction's cache since 4.6e), the judge's hero / quiz calls, `merge_rank` and the source→English pass for verbatim lines each have a ledger row and a flag: [llm-cost-output-quality.md](./llm-cost-output-quality.md).
 
 ## How 1h writes are priced
 

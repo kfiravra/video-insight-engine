@@ -21,8 +21,9 @@ from pydantic import BaseModel
 
 from src.models.domain_types import DOMAIN_MODELS, MODIFIER_MODELS
 from src.models.pipeline_types import EnrichmentData
-from src.services.pipeline.assembly.core import _MOMENT_CAP_MAX
+from src.services.pipeline.assembly.sampling import MOMENT_CAP_MAX
 from src.services.pipeline.schema_fields import load_domain_schema
+from src.shared_config.assembly_policy import assembly_policy
 from src.shared_config.domain_config import (
     EVIDENCE_KEYS,
     NON_EXTRACTION_DATASOURCES,
@@ -37,6 +38,7 @@ from src.shared_config.domain_config import (
     quiz_policy,
     render_valid_datasources,
     requirement_evidence,
+    secondary_components,
     sibling_datasources,
     valid_components,
 )
@@ -99,6 +101,12 @@ def _rendered_toolkit_block() -> str:
     return rendered.split("<valid_datasources>\n")[1].split("\n\nUse only")[0]
 
 
+def _key_ideas_ceiling() -> int:
+    """The largest key-ideas cap assembly applies (any video length)."""
+    policy = assembly_policy()
+    return max(b["count"] for b in policy["keyIdeasByDuration"]) * policy["keyIdeasCapFactor"]
+
+
 def _all_default_tabs() -> list[dict]:
     return [tab for d in get_config()["domains"].values() for tab in d["defaultTabs"]]
 
@@ -124,7 +132,10 @@ class TestDataSourceEntries:
     def test_should_list_only_known_components_when_registered(self, path):
         components = data_sources()[path]["components"]
 
-        assert components and set(components) <= valid_components()
+        # The first renders the tab; an attachment may render it too (learning.keyIdeas'
+        # stat_banner, output-quality 1.1) but is never planned.
+        assert components and components[0] in valid_components()
+        assert set(components) <= valid_components() | secondary_components()
 
     @pytest.mark.parametrize("path", _ALL_PATHS)
     def test_should_name_vocabulary_evidence_when_gated(self, path):
@@ -157,9 +168,12 @@ class TestDataSourceEntries:
     @pytest.mark.parametrize("path", _ALL_PATHS)
     def test_should_not_ask_for_more_items_than_the_primary_renderer_keeps(self, path):
         spec = data_sources()[path]
-        # moment_track's hard cap scales with duration up to _MOMENT_CAP_MAX.
-        limits = {**assembler_item_caps(), "moment_track": _MOMENT_CAP_MAX}
+        # moment_track's hard cap scales with duration up to MOMENT_CAP_MAX; a key-ideas
+        # tab's scales with it up to the 2× §9 ceiling (sampling.key_idea_cap).
+        limits = {**assembler_item_caps(), "moment_track": MOMENT_CAP_MAX}
         limit = limits.get(spec["components"][0])
+        if path == "learning.keyIdeas":
+            limit = _key_ideas_ceiling()
 
         assert limit is None or spec["cap"] <= limit
 
@@ -414,12 +428,14 @@ class TestValidDatasourcesRender:
     def test_should_render_the_pre_registry_list_plus_fitness_tips(self):
         # The hardcoded toolkit block this placeholder replaced (8d52e23^),
         # with fitness.tips — the one path the registry added — appended,
+        # learning.keyIdeas after keyPoints (output-quality 1.1, D10), podcast.qa
+        # after segments (1.3, C10), a claims path on learning / tech / podcast (1.4, D11),
         # enrichment.flashcards/scenarios gone with quiz-only enrichment (1d.1)
         # and has_code on every tech code path (3.2, Kfir's decision 7).
         expected = "\n".join(
             [
-                "tech: tech.snippets [has_code], tech.patterns [has_code], tech.cheatSheet [has_code], tech.setup.commands [has_code], tech.topics",
-                "learning: learning.keyPoints, learning.concepts, learning.takeaways, learning.timestamps",
+                "tech: tech.snippets [has_code], tech.patterns [has_code], tech.cheatSheet [has_code], tech.setup.commands [has_code], tech.topics, tech.claims [has_claims]",
+                "learning: learning.keyPoints, learning.keyIdeas, learning.concepts, learning.takeaways, learning.timestamps, learning.claims [has_claims]",
                 "project: project.steps [has_steps], project.materials [has_materials], project.tools, project.safetyWarnings",
                 "food: food.ingredients [has_ingredients], food.steps [has_steps], food.tips, food.equipment, food.substitutions",
                 "travel: travel.itinerary [has_itinerary], travel.budget, travel.packingList [has_packing]",
@@ -428,7 +444,7 @@ class TestValidDatasourcesRender:
                 "music: music.analysis, music.structure, music.lyrics [has_lyrics], music.credits",
                 "language: language.phrases, language.rules, language.drills [has_drills], language.vocabulary",
                 "science: science.concepts, science.keyFacts, science.experiments",
-                "podcast: podcast.segments, podcast.guests, podcast.quotes, podcast.topics",
+                "podcast: podcast.segments, podcast.qa, podcast.guests, podcast.quotes, podcast.topics, podcast.claims [has_claims]",
                 "news: news.storyTimeline, news.entities, news.claims [has_claims], news.context",
                 "gaming: gaming.highlights, gaming.loadout, gaming.walkthrough, gaming.rankings [has_ranking]",
                 "sport: sport.matchEvents, sport.formation [has_lineup], sport.statComparison",

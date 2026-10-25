@@ -226,3 +226,14 @@ class TestReleaseBackgroundWork:
         await asyncio.gather(quiz, return_exceptions=True)
 
         assert quiz.cancelled()
+
+    async def test_should_cancel_the_split_paths_started_hero_call(self):
+        hero = asyncio.create_task(asyncio.sleep(60))
+        ctx = SimpleNamespace(
+            caption_task=None, description_task=None, quiz_task=None, hero_task=hero
+        )
+
+        metadata.release_background_work(ctx)  # type: ignore[arg-type]
+        await asyncio.gather(hero, return_exceptions=True)
+
+        assert hero.cancelled()

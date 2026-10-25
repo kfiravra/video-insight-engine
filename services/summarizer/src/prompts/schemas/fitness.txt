@@ -7,7 +7,7 @@ Extract a complete, followable workout plan.
   "meta": {
     "type": "HIIT | strength | yoga | cardio | mobility | general",
     "difficulty": "beginner | intermediate | advanced",
-    "duration": 0,
+    "duration": null,
     "muscleGroups": ["chest", "back", "legs", "etc."],
     "equipment": ["dumbbells", "pull-up bar", "etc."],
     "caloriesBurned": null
@@ -17,8 +17,8 @@ Extract a complete, followable workout plan.
       "name": "Exact exercise name",
       "emoji": "matching emoji",
       "sets": null,
-      "reps": "10 or 30 seconds",
-      "duration": "time if applicable",
+      "reps": null,
+      "duration": null,
       "rest": null,
       "difficulty": null,
       "formCues": ["Keep elbows at 45 degrees", "Squeeze at the top"],
@@ -34,10 +34,10 @@ Extract a complete, followable workout plan.
     {
       "name": "Exact exercise name as the instructor says it",
       "emoji": "matching emoji",
-      "sets": 3,
-      "reps": "8-12",
+      "sets": null,
+      "reps": null,
       "duration": null,
-      "rest": "60 seconds",
+      "rest": null,
       "difficulty": "beginner | intermediate | advanced",
       "formCues": ["Exact form cue from the instructor"],
       "modifications": [],
@@ -45,6 +45,7 @@ Extract a complete, followable workout plan.
     }
   ],
 > UI: Each exercise → ExerciseInteractive card with set tracker. Fill formCues for expandable detail, modifications for alternatives, rest for timer.
+> NUMBERS: sets, reps, duration, rest, the workout's duration and calories only as the instructor states them for THAT exercise or workout (reps and rest as said: "8-12", "60 seconds") — never a typical value, never one carried over from another exercise; only if stated, else null.
   "cooldown": [],
   "timer": {
     "intervals": [
@@ -74,7 +75,7 @@ Extract a complete, followable workout plan.
 }
 
 RULES:
-- Include all exercises with sets, reps, and rest periods
+- Include all exercises, with the sets, reps and rest periods the instructor states (null where not stated)
 - Exercise names must be exact: "Bulgarian Split Squats" not "single-leg squats"
 - Form cues preserved: "keep elbows at 45 degrees" not "keep arms bent"
 - Include all modifications mentioned (beginner/advanced alternatives)

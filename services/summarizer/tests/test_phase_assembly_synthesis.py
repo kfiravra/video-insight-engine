@@ -16,6 +16,9 @@ import json
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
+from src.config import settings
 from src.models.memory_types import MemoryResult
 from src.models.pipeline_types import SynthesisResult
 from src.services.pipeline.phases import assembly as phase
@@ -24,6 +27,13 @@ from tests.test_phase_assembly_cache import _build_ctx
 
 _MEMORY = MemoryResult(tldr="Memory tldr.", takeaways=["m1", "m2", "m3"])
 _SYNTHESIS = SynthesisResult(master_summary="The full summary.", seo_description="SEO.")
+
+
+@pytest.fixture(autouse=True)
+def _flag_off_hero(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests pin today's synthesis call; the hero rewrite rides the same phase
+    and is covered by ``test_p2_2_hero_wiring`` (output-quality 2.2)."""
+    monkeypatch.setattr(settings, "HERO_REWRITE_ENABLED", False)
 
 
 def _tabs() -> list[dict]:
@@ -118,7 +128,7 @@ async def test_should_save_the_synthesis_patched_meta() -> None:
 async def test_should_run_synthesis_while_the_moment_fill_runs() -> None:
     order: list[str] = []
 
-    async def slow_fill(_tabs: list, _yt: str, _hires: Any) -> int:
+    async def slow_fill(_tabs: list, _yt: str, _hires: Any, _max_frames: int) -> int:
         await asyncio.sleep(0.05)
         order.append("fill-end")
         return 0

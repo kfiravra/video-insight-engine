@@ -174,7 +174,9 @@ class TestLearningData:
                 "keyPoints": [{"emoji": "💡", "title": "Point 1", "detail": "Detail"}],
                 "concepts": [{"name": "Concept 1", "emoji": "📚", "definition": "A concept"}],
                 "takeaways": ["Do this"],
-                "timestamps": [{"time": "0:00", "seconds": 0, "label": "Start"}],
+                "timestamps": [
+                    {"time": "0:00", "seconds": 0, "label": "Start", "description": "Opens."}
+                ],
                 "keyQuestion": "What is this about?",
                 "summary": "A summary",
             }
@@ -188,7 +190,7 @@ class TestLearningData:
         assert data.key_question == ""
 
     def test_timestamp_seconds_coercion(self):
-        ts = LearningTimestamp(time="0:00", seconds=None, label="Start")
+        ts = LearningTimestamp(time="0:00", seconds=None, label="Start", description="Opens.")
         assert ts.seconds == 0
 
     def test_concept_with_connections(self):
@@ -287,7 +289,7 @@ class TestReviewData:
 
     def test_verdict_badge_coercion(self):
         verdict = ReviewVerdict(badge="unknown_badge", bottomLine="Test")
-        assert verdict.badge == "recommended"
+        assert verdict.badge is None
 
     def test_comparison_alias(self):
         comp = ReviewComparison.model_validate(
@@ -346,7 +348,7 @@ class TestTechData:
                 "concepts": ["REST API", "GraphQL"],
             }
         )
-        assert data.topics == ["REST API", "GraphQL"]
+        assert [t.name for t in data.topics] == ["REST API", "GraphQL"]
 
     def test_concepts_not_migrated_when_topics_present(self):
         """If both 'concepts' and 'topics' exist, 'topics' takes precedence."""
@@ -356,7 +358,7 @@ class TestTechData:
                 "concepts": ["Old Concept"],
             }
         )
-        assert data.topics == ["New Topic"]
+        assert [t.name for t in data.topics] == ["New Topic"]
 
     def test_pattern_alias(self):
         pattern = TechPattern.model_validate(
@@ -386,8 +388,9 @@ class TestFitnessData:
     def test_meta_coercion(self):
         meta = FitnessMeta(type=None, difficulty="expert", duration=None)
         assert meta.type == "general"
-        assert meta.difficulty == "intermediate"
-        assert meta.duration == 0
+        assert meta.difficulty is None
+        # No stated length is no length (D13, output-quality 1.8) — never a default 0.
+        assert meta.duration is None
 
     def test_exercise_difficulty_coercion(self):
         exercise = FitnessExercise(name="Push-ups", difficulty="extreme")
@@ -464,8 +467,8 @@ class TestProjectData:
                 "estimatedTime": None,
             }
         )
-        assert data.project_name == "Untitled Project"
-        assert data.difficulty == "intermediate"
+        assert data.project_name is None
+        assert data.difficulty is None
         assert data.estimated_time == "unknown"
 
 
@@ -698,17 +701,17 @@ class TestSingleTagWrappedOutput:
     def test_should_unwrap_tag_keyed_response(self):
         result = validate_domain_output(["tech"], [], {"tech": {"topics": self._TOPICS}})
 
-        assert result["tech"]["topics"][0] == "DHH on Rails"
+        assert result["tech"]["topics"][0]["name"] == "DHH on Rails"
 
     def test_should_unwrap_tag_data_keyed_response(self):
         result = validate_domain_output(["tech"], [], {"techData": {"topics": self._TOPICS}})
 
-        assert result["tech"]["topics"][0] == "DHH on Rails"
+        assert result["tech"]["topics"][0]["name"] == "DHH on Rails"
 
     def test_should_validate_flat_response_unchanged(self):
         result = validate_domain_output(["tech"], [], {"topics": self._TOPICS})
 
-        assert result["tech"]["topics"][0] == "DHH on Rails"
+        assert result["tech"]["topics"][0]["name"] == "DHH on Rails"
 
     def test_should_keep_modifier_block_next_to_wrapped_domain(self):
         data = {
@@ -784,7 +787,7 @@ class TestMixedWrappedAndFlatShape:
 
         result = validate_domain_output(["tech"], [], data)
 
-        assert result["tech"]["topics"] == ["Wrapped", "Flat"]
+        assert [t["name"] for t in result["tech"]["topics"]] == ["Wrapped", "Flat"]
 
     def test_should_keep_wrapper_only_fields_when_single_tag_is_also_flat(self):
         data = {"techData": {"languages": ["Ruby"]}, "topics": ["Flat"]}
@@ -798,7 +801,7 @@ class TestMixedWrappedAndFlatShape:
 
         result = validate_domain_output(["tech"], [], data)
 
-        assert result["tech"]["topics"] == ["Same", "New"]
+        assert [t["name"] for t in result["tech"]["topics"]] == ["Same", "New"]
 
     def test_should_merge_flat_fields_into_wrapped_block_when_multi_tag(self):
         data = {

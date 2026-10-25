@@ -167,12 +167,12 @@ def after_captions(phase: PhaseFn) -> PhaseFn:
 
 
 def release_background_work(ctx: PipelineContext) -> None:
-    """Cancel the t=0 tasks — and the split path's early quiz call — a failed or
-    cancelled run never joined.
+    """Cancel the t=0 tasks — and the split path's early quiz and hero calls — a
+    failed or cancelled run never joined.
 
     A finished task's exception is retrieved so asyncio never logs it as lost.
     """
-    for name in ("caption_task", "description_task", "quiz_task"):
+    for name in ("caption_task", "description_task", "quiz_task", "hero_task", "merge_rank_task"):
         task: asyncio.Task[Any] | None = getattr(ctx, name, None)
         if task is None:
             continue

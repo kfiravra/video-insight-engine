@@ -40,6 +40,9 @@ from tests.replay.driver import ReplayResult, run_replay
 
 _VIDEOS = available_cassettes()
 _REFERENCE_VIDEO = "T1dQhQAm8Tc"
+# Plans whose steps are the timeline (D6, output-quality 0b.2): assembly ships no
+# Moments tab, and plan-done streams no provisional one (0b follow-ups).
+_STEPS_ARE_THE_TIMELINE = frozenset({"jMq8lEu-of0"})
 _PLAN_SPAN = "plan"
 _MEMORY_SPAN = "memory"
 _FENCE = "```"
@@ -68,7 +71,12 @@ def _ends_of_plan_done_window(result: ReplayResult) -> tuple[int, int]:
 @pytest.mark.parametrize("video_id", _VIDEOS)
 class TestTabEmissionContract:
     def test_should_open_with_the_provisional_moments_tab(self, replays: dict, video_id: str):
-        assert replays[video_id].tab_events()[0].get("provisional") is True
+        tabs = replays[video_id].tab_events()
+
+        if video_id in _STEPS_ARE_THE_TIMELINE:
+            assert [t["id"] for t in tabs if t.get("provisional")] == []
+            return
+        assert tabs[0].get("provisional") is True
 
     def test_should_stream_it_at_plan_done_before_extraction(self, replays: dict, video_id: str):
         meta_at, extraction_at = _ends_of_plan_done_window(replays[video_id])
@@ -80,8 +88,10 @@ class TestTabEmissionContract:
     ) -> None:
         tabs = replays[video_id].tab_events()
 
+        if video_id in _STEPS_ARE_THE_TIMELINE:
+            assert not any(t.get("provisional") for t in tabs)
+            return
         provisional_id = tabs[0]["id"]
-
         assert [t["final"] for t in tabs if t["id"] == provisional_id][-1] is True
 
     def test_should_send_every_saved_tab_final_exactly_once(self, replays: dict, video_id: str):
@@ -352,6 +362,9 @@ class TestSplitPathEmission:
         result = split_runs[video_id].result
         last_group = result.event_names().index("extraction_complete")
 
+        if video_id in _STEPS_ARE_THE_TIMELINE:
+            assert _tab_event_indexes(result, "moment_track") == []
+            return
         assert min(_tab_event_indexes(result, "moment_track")) > last_group
 
     def test_should_synthesize_after_the_last_group(self, split_runs: dict, video_id: str):
@@ -370,29 +383,34 @@ class TestSplitPathEmission:
 
 # ─── EXTRACTION_PARALLEL=false: today's tab_ready sequence ───
 
-# (id, position, final, provisional, replaces) per tab_ready, captured on b7a2077.
+# (id, position, final, provisional, replaces) per tab_ready, captured on b7a2077;
+# jMq8lEu-of0 lost its provisional key_moments preview to D6 (output-quality 0b).
 _TODAYS_SEQUENCE: dict[str, list[tuple[str, int, bool, bool, str | None]]] = {
+    # output-quality 1.2: the cassette's label-only learning.timestamps no longer
+    # validate (a moment states what it established), so key_moments comes from the
+    # fallback chain with fewer frames and the filmstrip joins at 5.
     "T1dQhQAm8Tc": [
         ("key_moments", 3, False, True, None),
         ("overview", 0, False, False, None),
         ("stack_explorer", 1, False, False, None),
         ("code_snippets", 2, False, False, None),
         ("concepts", 4, False, False, None),
+        ("frames-gallery", 5, False, False, None),
         ("key_moments", 3, False, False, None),
         ("overview", 0, True, False, None),
         ("stack_explorer", 1, True, False, None),
         ("code_snippets", 2, True, False, None),
         ("key_moments", 3, True, False, None),
         ("concepts", 4, True, False, None),
-        ("quiz", 5, True, False, None),
+        ("frames-gallery", 5, True, False, None),
+        ("quiz", 6, True, False, None),
     ],
+    # output-quality 1.6 (R6): the planned chef_tips grid rides inside cook_steps.
     "jMq8lEu-of0": [
-        ("key_moments", 4, False, True, None),
         ("overview", 0, False, False, None),
         ("ingredients", 1, True, False, None),
         ("cook_steps", 2, True, False, None),
-        ("chef_tips", 3, True, False, None),
-        ("key_moments", 4, True, False, None),
+        ("frames-gallery", 3, True, False, None),
         ("overview", 0, True, False, None),
     ],
     "uC45_4nnEAI": [

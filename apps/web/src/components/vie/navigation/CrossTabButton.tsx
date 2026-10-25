@@ -5,6 +5,9 @@ import { Button } from '@/components/ui/button';
 
 interface CrossTabButtonProps {
   label: string;
+  /** Why go there — the target tab's goal. When present it is the link text
+   *  and the label drops to a "Next: …" subline. */
+  reason?: string;
   description?: string;
   onClick: () => void;
   className?: string;
@@ -12,6 +15,7 @@ interface CrossTabButtonProps {
 
 export const CrossTabButton = memo(function CrossTabButton({
   label,
+  reason,
   description,
   onClick,
   className,
@@ -50,10 +54,21 @@ export const CrossTabButton = memo(function CrossTabButton({
           'shadow-[0_4px_16px_-8px_oklch(from_var(--primary)_l_c_h_/_0.25)]',
         )}
       >
-        <div className="flex flex-col items-start gap-0.5">
-          <span className="font-semibold tracking-tight">Next: {label}</span>
-          {description && (
-            <span className="text-xs font-normal leading-relaxed text-muted-foreground">{description}</span>
+        <div className="flex flex-col items-start gap-0.5 text-start">
+          {reason ? (
+            <>
+              <span className="font-semibold tracking-tight text-pretty">{reason}</span>
+              {/* The accessible name joins the two lines — keep them apart. */}
+              <span className="sr-only">. </span>
+              <span className="text-xs font-normal leading-relaxed text-muted-foreground">Next: {label}</span>
+            </>
+          ) : (
+            <>
+              <span className="font-semibold tracking-tight">Next: {label}</span>
+              {description && (
+                <span className="text-xs font-normal leading-relaxed text-muted-foreground">{description}</span>
+              )}
+            </>
           )}
         </div>
         <ChevronRight

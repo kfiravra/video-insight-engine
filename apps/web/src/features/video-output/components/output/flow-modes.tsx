@@ -6,14 +6,16 @@ import {
   findStepTab,
   stripCountPrefix,
   makeStepRenderer,
+  makeStudyStepRenderer,
+  makeListenStepRenderer,
+  momentsToListenSegments,
   exercisesToSteps,
-  questionsToSteps,
   spotsToSteps,
   checklistContext,
   type FlowContextItem,
   type FlowStepRenderer,
 } from './flow-mode-helpers';
-import type { TabEntry, StepItem, FitnessExercise, SpotItem, ConceptItem, TechSnippet, FlashcardItem, QuizArenaQuestion } from '@vie/types';
+import type { TabEntry, StepItem, FitnessExercise, SpotItem, ConceptItem, TechSnippet, FlashcardItem, QuizArenaQuestion, MomentItem } from '@vie/types';
 
 // Re-exported so FlowContextPanel / ModesShowcase keep their import path
 // after the helper extraction (4.4 follow-up, 500-line rule).
@@ -196,8 +198,8 @@ const BUILD: FlowModeDef = {
 };
 
 /**
- * Study — context = concept list (or flash_deck cards); sequence = a quiz_arena
- * run, falling back to walking the concepts when no quiz is present.
+ * Study — context = concept list (or flash_deck cards); sequence = the
+ * quiz_arena questions, one at a time with the answer hidden until "Reveal".
  */
 const STUDY: FlowModeDef = {
   id: 'study',
@@ -226,7 +228,6 @@ const STUDY: FlowModeDef = {
       ? concepts.map((c) => ({ label: c.name, emoji: c.emoji, note: c.definition }))
       : cards.map((c) => ({ label: c.front, note: c.back }));
     const contextLabel = concepts.length > 0 ? 'Concepts' : 'Flashcards';
-    const steps = questionsToSteps(questions);
     return {
       id: STUDY.id,
       label: STUDY.label,
@@ -235,9 +236,9 @@ const STUDY: FlowModeDef = {
       stepNoun: STUDY.stepNoun,
       completionMessage: STUDY.completionMessage,
       contextCount: context.length,
-      sequenceLength: steps.length,
+      sequenceLength: questions.length,
       renderContext: () => <FlowContextPanel items={context} label={contextLabel} />,
-      renderStep: makeStepRenderer(steps),
+      renderStep: makeStudyStepRenderer(questions),
     };
   },
 };
@@ -338,7 +339,8 @@ const PRACTICE: FlowModeDef = {
 
 /**
  * Listen — podcast domain. Context = guests + topics (who's talking, what about);
- * sequence = the moment_track segments walked one at a time so the listener can
+ * sequence = the moment_track segments walked one at a time — each with its
+ * description (when the source has one) and play range — so the listener can
  * move through the conversation with progress tracking.
  */
 const LISTEN: FlowModeDef = {
@@ -355,15 +357,9 @@ const LISTEN: FlowModeDef = {
   },
   resolve: (tabs) => {
     const segmentTab = findComponent(tabs, 'moment_track');
-    const items =
-      (segmentTab?.props?.items as Array<{ label?: string; description?: string; seconds?: number; timestamp?: number }> | undefined) ?? [];
+    const items = (segmentTab?.props?.items as MomentItem[] | undefined) ?? [];
     if (items.length === 0) return null;
-    const steps: StepItem[] = items.map((seg, i) => ({
-      number: i + 1,
-      title: seg.label || `Segment ${i + 1}`,
-      instruction: seg.description || seg.label || `Segment ${i + 1}`,
-      timestamp: seg.seconds ?? seg.timestamp,
-    }));
+    const segments = momentsToListenSegments(items);
     const guestTab = findComponent(tabs, 'spot_explorer');
     const topicTab = findComponent(tabs, 'info_grid');
     const guests = (guestTab?.props?.spots as SpotItem[] | undefined) ?? [];
@@ -380,13 +376,13 @@ const LISTEN: FlowModeDef = {
       contextLabel,
       stepNoun: LISTEN.stepNoun,
       completionMessage: LISTEN.completionMessage,
-      contextCount: context.length || items.length,
-      sequenceLength: steps.length,
+      contextCount: context.length || segments.length,
+      sequenceLength: segments.length,
       renderContext: () =>
         context.length > 0
           ? <FlowContextPanel items={context} label={contextLabel} />
-          : <FlowContextPanel items={items.map((s, i) => ({ label: s.label || `Segment ${i + 1}` }))} label="Segments" />,
-      renderStep: makeStepRenderer(steps),
+          : <FlowContextPanel items={segments.map((s) => ({ label: s.label }))} label="Segments" />,
+      renderStep: makeListenStepRenderer(segments),
     };
   },
 };

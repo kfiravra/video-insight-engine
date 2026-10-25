@@ -121,6 +121,42 @@ class TestQuizDedupeSize:
             "reason": "reconcile_duplicate",
         }
 
+    def test_should_dedupe_a_component_and_its_promotion_target_on_one_source(self):
+        """L26 (output-quality 0b.5): a flash_deck promotes to concept_canvas, so two
+        tabs on one ``concepts`` list would ship the same canvas twice (S03)."""
+        tabs = [*_learning_tabs_with_quiz(), _tab("thinkers", "flash_deck", "learning.concepts")]
+
+        outcome = reconcile_at_plan_done(_plan("learning", tabs), MemoryResult(), None)
+
+        assert _action(outcome, "thinkers") == "dropped"
+
+    def test_should_keep_the_required_tab_over_an_earlier_twin_that_could_promote(self):
+        """Phase-0 review W-A6: an info_grid promotes to spot_explorer, so it shares the
+        pair of travel's required spot_explorer — the required tab stays."""
+        tabs = [
+            _tab("tips", "info_grid", "travel.itinerary"),
+            _tab("spots", "spot_explorer", "travel.itinerary"),
+            _tab("budget", "budget", "travel.budget"),
+        ]
+
+        outcome = reconcile_at_plan_done(_plan("travel", tabs), MemoryResult(), None)
+
+        assert ("spots" in _ids(outcome.tabs), [d["id"] for d in outcome.dropped]) == (
+            True,
+            ["tips"],
+        )
+
+    def test_should_keep_the_first_twin_when_neither_is_required(self):
+        tabs = [
+            _tab("deck", "flash_deck", "learning.concepts"),
+            _tab("canvas", "concept_canvas", "learning.concepts"),
+            _tab("takeaways", "checklist", "learning.takeaways"),
+        ]
+
+        outcome = reconcile_at_plan_done(_plan("learning", tabs), MemoryResult(), None)
+
+        assert [d["id"] for d in outcome.dropped] == ["canvas"]
+
     def test_should_keep_two_views_of_one_source(self):
         outcome = reconcile_at_plan_done(
             _plan("food", _food_tabs_without_checklist()), MemoryResult(), None
@@ -142,12 +178,14 @@ class TestQuizDedupeSize:
 
         assert all(tab["component"] != "overview" for tab in outcome.tabs)
 
+    # No info_grid among the fixtures: a planned grid with a host folds into it
+    # (R6, output-quality 1.6) before the size step counts the tabs.
     def test_should_trim_the_last_other_tab_never_a_required_or_moment_tab(self):
         tabs = [
-            _tab("a", "info_grid", "tech.topics"),
-            _tab("b", "spot_explorer", "tech.topics"),
+            _tab("a", "spot_explorer", "tech.topics"),
+            _tab("b", "spot_explorer", "tech.cheatSheet"),
             _tab("c", "concept_canvas", "learning.concepts"),
-            _tab("d", "flash_deck", "learning.concepts"),
+            _tab("d", "flash_deck", "learning.keyPoints"),
             _tab("e", "checklist", "learning.takeaways"),
             _tab("f", "moment_track", "learning.timestamps"),
             _tab("g", "code_playground", "tech.snippets"),
@@ -159,8 +197,8 @@ class TestQuizDedupeSize:
 
     def test_should_keep_the_quiz_when_a_backfill_overfills_a_full_plan(self):
         tabs = [
-            _tab("a", "info_grid", "tech.topics"),
-            _tab("b", "spot_explorer", "tech.topics"),
+            _tab("a", "spot_explorer", "tech.topics"),
+            _tab("b", "spot_explorer", "tech.cheatSheet"),
             _tab("c", "concept_canvas", "learning.concepts"),
             _tab("d", "checklist", "learning.takeaways"),
             _tab("e", "moment_track", "learning.timestamps"),
@@ -174,11 +212,11 @@ class TestQuizDedupeSize:
 
     def test_should_keep_a_planned_moment_tab_when_two_backfills_overfill_a_full_plan(self):
         tabs = [
-            _tab("tips", "info_grid", "food.tips"),
-            _tab("x", "spot_explorer", "food.tips"),
+            _tab("tips", "spot_explorer", "food.tips"),
+            _tab("x", "spot_explorer", "food.ingredients"),
             _tab("moments", "moment_track", "food.steps"),
-            _tab("y", "info_grid", "food.equipment"),
-            _tab("z", "info_grid", "food.substitutions"),
+            _tab("y", "spot_explorer", "food.equipment"),
+            _tab("z", "spot_explorer", "food.substitutions"),
             _tab("v", "overview", "food.tips"),
         ]
 

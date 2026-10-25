@@ -48,6 +48,8 @@ _DESCRIPTION_WAIT_SECONDS = 5.0
 _INTERNAL_KEYS = frozenset({"event", "validation"})
 # The split path's group calls (3.5); absent on today's path.
 GROUPS_KEY = "_groups"
+# A chunked split run's merge_rank outcome (output-quality 3.1); absent without the call.
+MERGE_RANK_KEY = "_mergeRank"
 
 
 def record_validation(ctx: PipelineContext, report: ValidationReport) -> None:
@@ -68,7 +70,8 @@ def record_validation(ctx: PipelineContext, report: ValidationReport) -> None:
 
 def extraction_record(ctx: PipelineContext) -> dict[str, Any] | None:
     """``pipeline.extraction``: the data plus this run's validation record (and, on the
-    split path, one ``_groups`` row per group call — alone when no group landed)."""
+    split path, one ``_groups`` row per group call — alone when no group landed — and a
+    chunked run's ``_mergeRank`` outcome)."""
     record = extraction_with_drops(
         ctx.extraction_data,
         ctx.extraction_dropped,
@@ -80,6 +83,10 @@ def extraction_record(ctx: PipelineContext) -> dict[str, Any] | None:
     if groups:
         record = record if isinstance(record, dict) else {}
         record[GROUPS_KEY] = [dict(row) for row in groups]
+    merge_rank = getattr(ctx, "merge_rank_record", None)
+    if merge_rank:
+        record = record if isinstance(record, dict) else {}
+        record[MERGE_RANK_KEY] = dict(merge_rank)
     return record
 
 
@@ -308,6 +315,7 @@ async def run_phase_extraction(ctx: PipelineContext) -> AsyncGenerator[str, None
             video_context=ctx.video_memory,
             frame_context=frame_context,
             visual_annotations=ctx.visual_annotations,
+            source_language=ctx.source_language_code,
         ):
             event_name = evt["event"]
             yield sse_event(event_name, {k: v for k, v in evt.items() if k not in _INTERNAL_KEYS})

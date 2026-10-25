@@ -3,7 +3,8 @@
 The planner reads the FULL marked transcript (no 3,000-char preview), gets an
 explicit output-language block (D16), registry-rendered caps (one per
 dataSource) and domain requirements conditional on its own evidence (D15),
-and six examples in the new output schema.
+and nine examples in the new output schema (four of them spoken word,
+output-quality 1.10; the compact fitness one restored by the phase-1 review).
 """
 
 from __future__ import annotations
@@ -281,8 +282,13 @@ _EXAMPLES = _examples()
 _IDS = [ex["tabs"][0]["id"] + "-" + ex["primaryTag"] for ex in _EXAMPLES]
 
 
-def test_should_ship_six_examples_when_prompt_is_read() -> None:
-    assert len(_EXAMPLES) == 6
+def _cap(path: str) -> int:
+    spec = data_source(path)
+    return spec["cap"] if spec else 0
+
+
+def test_should_ship_nine_examples_when_prompt_is_read() -> None:
+    assert len(_EXAMPLES) == 9
 
 
 def test_should_send_the_output_schema_as_valid_json_when_rendering() -> None:
@@ -314,7 +320,7 @@ class TestExamples:
             if not tab["brief"]["what"]
             or not tab["brief"]["where"]
             or tab["dataSource"] not in NON_EXTRACTION_DATASOURCES
-            and tab["brief"]["expect"] > (data_source(tab["dataSource"]) or {"cap": 0})["cap"]
+            and tab["brief"]["expect"] > _cap(tab["dataSource"])
         ]
         assert over == []
 

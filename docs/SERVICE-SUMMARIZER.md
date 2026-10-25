@@ -59,10 +59,10 @@ services/summarizer/
     │   │   ├── tier_probe.py         # Tier probe: domain+format+has_visual_demo+transcript_usable at transcript-ready (Haiku, temp 0)
     │   │   ├── plan.py / plan_prompt.py # Plan (Sonnet 5.5, effort medium): full marked transcript → tabs + briefs,
     │   │   │                         #   evidence, terms (+ _render_playbook, _enforce_domain_policy)
-    │   │   ├── memory.py             # Memory (LLM_MEMORY_MODEL) ∥ plan: outline, evidence, tldr, takeaways
-    │   │   ├── plan_reconcile.py     # Plan-parse guard: unregistered path, inactive domain
+    │   │   ├── memory.py             # Memory (LLM_MEMORY_MODEL) ∥ plan: outline + establishes lines, evidence, tldr (the thesis), 3/5/7 stamped takeaways
+    │   │   ├── plan_reconcile.py     # Plan-parse guard: unregistered path, inactive domain; a learning.keyIdeas tab switches learning on, a podcast.qa / podcast.guests tab podcast
     │   │   ├── reconcile.py          # Plan-done reconcile: doubly-false view, step 1, screen-code check
-    │   │   ├── reconcile_pass.py     # Reconcile steps 2–5 (backfill, quiz, dedupe, 3–6) + row writer
+    │   │   ├── reconcile_pass.py     # Reconcile steps 1b–5 (primary moment source, backfill, quiz, dedupe, info_grid fold, 3–6) + row writer
     │   │   ├── video_memory.py       # <video_memory> block (plan + memory) for every {video_context} slot
     │   │   ├── visual_annotations.py # Frame captions + OCR → <visual_annotations> block (never clean_text)
     │   │   ├── triage.py             # Triage validation/fallback (TriageResult model + tab validation)
@@ -72,6 +72,8 @@ services/summarizer/
     │   │   ├── field_requests.py     # Split extraction: the fields the reconciled tabs read (+ siblings, side reads, scalars)
     │   │   ├── field_groups.py       # ... cut into ≤ maxTextGroups text groups (text1 first) + one visual group
     │   │   ├── extraction_chunks.py  # ... over the run's chunks (one, or chapter batches for long videos)
+    │   │   ├── where_hints.py        # chunked runs: an argument list's plan windows are hints, never a limit (4.0)
+    │   │   ├── stamp_anchor.py       # chunk stamps tied to the item's verified quote and its list's order (4.0 a, G3-3)
     │   │   ├── extraction_group_prompt.py # ... each call's three blocks: 1h rules+schemas+example / 5m video+chunk+memory / job
     │   │   ├── extraction_groups.py  # ... fired warm-first under the run's semaphore; one more call for a lost answer
     │   │   ├── group_merge.py        # ... per-group validation + key filter, the deterministic merge
@@ -81,20 +83,42 @@ services/summarizer/
     │   │   ├── extractor.py          # Today's single call (EXTRACTION_PARALLEL=false): single/overflow/chunked
     │   │   ├── extraction_quality.py # Populated-dataSource score — a logged metric, no retry
     │   │   ├── extraction_merger.py  # Per-domain merge + dedup for chunked extraction (EXTRACTION_PARALLEL=false)
-    │   │   ├── enrichment.py         # The quiz only (quizEnrichment domains, demand-gated by the plan)
-    │   │   ├── synthesis.py          # masterSummary + seoDescription (hero from memory; fast tier)
+    │   │   ├── enrichment.py         # The quiz only (quizEnrichment domains on an instructional format, demand-gated by the plan; 3/5/8 questions by length, each stamped)
+    │   │   ├── synthesis.py          # masterSummary + seoDescription (hero from memory; fast tier) — now only when the hero rewrite is off or gave none
+    │   │   ├── hero_rewrite.py       # The hero rewrite (HERO_REWRITE_ENABLED): one cache-reading LLM_EXTRACTION_MODEL call replaces synthesis; hero_job.py builds its request (cached blocks, job text, the evidence), hero_validate.py checks its answer (hero_text.py holds the prose readers), hero_compact.py renders the extraction it reads
+    │   │   ├── quiz_v2.py            # Quiz v2 (QUIZ_V2_ENABLED): LLM_EXTRACTION_MODEL (Sonnet 5.5, 4.6e) reading the extraction's cached blocks, from the transcript + target key ideas, one call per part in parallel (each extraction chunk, else each third past 15 min); every question names the idea it tests (quiz_v2_targets) and its quote is checked
+    │   │   ├── quiz_v2_blocks.py     # Quiz v2's cached prefix (4.6e): block 1 + the head of the call's chunk, byte-identical to the group calls'; () → the transcript inline
+    │   │   ├── quiz_format.py        # The quiz's format gate (4.6e, D9 revised): quizPolicy.formats (lecture, tutorial); an unknown format rules nothing out
+    │   │   ├── quiz_v2_prompt.py     # Quiz v2's prompts: one per part holding a target (chunk, else third past 15 min): its quota, range, targets + the unstamped ones, its chunk's cached head (else its lines ± 30 s), the hero without other parts' takeaways (part_hero); else one over the whole video
+    │   │   ├── quiz_v2_ideas.py      # Quiz v2's targets: the thesis / argument / number / disagreement items (ids K1…) of the first non-empty KEY_IDEA_SOURCES list (quiz_targets), and their prompt lines
+    │   │   ├── quiz_v2_parse.py      # Quiz v2's reply read question by question when its JSON envelope is broken (G2-1)
+    │   │   ├── quiz_v2_targets.py    # Quiz v2's targets: the idea each question names (else the one within 90 s), one question per idea before any second, a translated question's stamp (4.0 b)
+    │   │   ├── quiz_v2_select.py     # What ships: one question per part, then per untested outline section (a repeat on an idea takes neither slot), a key that tells by its length last; keys dealt evenly over the positions; the late refill's spare
+    │   │   ├── merge_rank.py         # merge_rank (MERGE_RANK_ENABLED, chunked runs): one LLM_MEMORY_MODEL (Haiku 5.5) call at text-groups-done beside the hero; reads the ids-only answer, applies it to the final merge
+    │   │   ├── merge_rank_render.py  # merge_rank's input: the outline + every planned list, one id'd line per item, ≤ 10 K tokens (texts shorten, no item dropped)
+    │   │   ├── merge_rank_apply.py   # merge_rank's edit: twins out under five guards (one: the keep must be sure to ship; one: a Q&A question never drops for a position; the group's other Q&A drops leave as its twins), ranked lists cut to their cap by rank, key-idea sections (merge_rank_sections.py) even when the call failed
+    │   │   ├── merge_rank_sections.py # key-idea sections: the stamp's outline section, the neighbour only on a clear word match and never out of video order, whole-phrase titles no two sections share, video order
+    │   │   ├── quote_verify.py       # Is a quote in the transcript? The extraction pre-pass + the run's index (verified / unverified / translated); re-exports quote_index
+    │   │   ├── quote_index.py        # The quote matcher: QuoteIndex (normalized exact-first, else fuzzy; a "…"-cut quote is fragments in order within 40 words and 60 s)
     │   │   ├── pipeline_timing.py    # pipeline.timing recorder v4 (phases, LLM calls, failures incl. refusals, downloads, counts)
     │   │   ├── translation.py        # Source-language translation (flat-list batched)
+    │   │   ├── translation_quotes.py # The English beneath verbatim lines (4.6c): quoteEn / questionEn on the English tabs, one source→English pass beside translate_to_source
     │   │   ├── translation_flat.py   # Flat-list translate call, batch sizing, mirror check (shared with RAG English)
-    │   │   ├── faithfulness.py       # Faithfulness sampling
+    │   │   ├── faithfulness.py       # Faithfulness sampling (the extraction sample)
+    │   │   ├── faithfulness_context.py    # Claim-localized transcript windows for the judge
+    │   │   ├── faithfulness_hero_quiz.py  # The judge's hero + quiz sample (faithfulness_hero / faithfulness_quiz)
     │   │   ├── assembly/             # Assembly package (extraction → component props)
     │   │   │   ├── core.py               # assemble_response + per-tab drop accounting
     │   │   │   ├── registry.py           # ASSEMBLER_REGISTRY (29 assemblers) + component inference
     │   │   │   ├── assemblers_*.py       # primary/learning/overhaul/secondary assembler groups
-    │   │   │   ├── promotion.py          # Degrade-never-drop demote ladder (degradedFrom)
+    │   │   │   ├── promotion.py          # Degrade-never-drop demote ladder (degradedFrom; tier_list → spot_explorer → info_grid → display_section) + info_grid → spot_explorer promotion (a row's evidence is a card quote only when it is the item's checked quote)
     │   │   │   ├── moment_frame_fill.py  # Exact-timestamp frame fill for frameless moments
     │   │   │   ├── attachments.py        # Secondary attachments (excluded_kinds dedup)
     │   │   │   ├── normalizers.py, density.py, cross_tab.py, text_utils.py
+    │   │   │   ├── quiz_stamps.py, tab_references.py # Quiz times in seconds; no hero / goal sentence names a tab that does not ship (summarizer-workflow.md §Assembly notes)
+    │   │   │   ├── moment_sources.py, steps_timeline.py, info_grid_fold.py, quote_spots.py, ingredients.py # R7 / D6 / R6 / quote cards / ingredient rows (summarizer-workflow.md §Assembly notes)
+    │   │   │   ├── key_ideas.py          # learning.keyIdeas → spot cards + sections, guests first, Disagreements last (re-exported by assemblers_learning)
+    │   │   │   ├── qa_questions.py, talk_asks.py # podcast.qa questions checked against the transcript; a talk's asks tab from its quoted kind-ask key ideas (4.0 c / d)
     │   │   ├── phases/               # Phase runners (metadata, text, transcript, transcript_fallback,
     │   │   │                         #   probe, triage=plan, memory, moments, frames, frames_done,
     │   │   │                         #   split_extraction, group_emission, extraction, enrichment,
@@ -118,7 +142,7 @@ services/summarizer/
     │   │   ├── frame_manifest.py     # Manifest-v2 frame cache (S3 sidecar: timestamps, hiresCount, vision descriptions)
     │   │   ├── frame_scorer.py       # Frame scoring (visual, face, skin, center-detail, text, uniqueness)
     │   │   ├── frame_analyzer.py     # Vision (LLM_VISION_MODEL, Sonnet 5.5) in ≤5 parallel batches of ≤8 frames (vision.txt)
-    │   │   ├── visual_tier.py        # Adaptive visual tier (high/standard/low from metadata)
+    │   │   ├── visual_tier.py        # Adaptive visual tier (high/standard/low from probe or metadata) + the talking-head frames skip (skips_frames, 3.5)
     │   │   ├── scene_detect.py       # Scene detection + zero-candidate ladder (0.3 → 0.15 → uniform seeks)
     │   │   ├── hires_refiner.py      # Pass-2 720p re-extraction of selected frames (local file seeks)
     │   │   ├── hires_prefetch.py     # The run's one 720p file (ctx.hires_video): frames + moment fill
@@ -142,18 +166,21 @@ services/summarizer/
     │
     ├── prompts/
     │   ├── plan.txt              # Plan prompt (tabs + briefs, evidence, terms, playbook, probe hint)
-    │   ├── memory.txt            # Memory prompt (outline, evidence, tldr, takeaways)
+    │   ├── memory.txt            # Memory prompt (outline + establishes, evidence, thesis tldr, {takeaway_count} stamped takeaways)
     │   ├── component_toolkit.txt # Component descriptions + datasource paths (injected into plan/triage). Density table is generated from domains.json `densityGates` via `{density_gates}` placeholder
     │   ├── base_extraction.txt   # Extraction template: <rules> / <video> (cached) / <your_job>
     │   ├── extraction_group_job.txt # Split extraction (EXTRACTION_PARALLEL): one field group's <your_job> (emit-only keys + shape, tabs it serves; visual group: annotations + key frames)
-    │   ├── extraction_group_rules.txt # Split extraction: the completeness rule, appended to <quality_rules> in block 1 (4.0 picks)
-    │   ├── tier_probe.txt        # Tier-probe prompt (14 domains + 18 formats incl. unboxing, has_visual_demo, transcript_usable — domains.json is the source)
+    │   ├── extraction_group_rules.txt # Split extraction: completeness / argument / no-invented-number rules, appended to <quality_rules> in block 1; <argument_example>s for the key-ideas group's block 3
+    │   ├── tier_probe.txt        # Tier-probe prompt (14 domains + 19 formats incl. unboxing and talk, has_visual_demo, transcript_usable — domains.json is the source)
     │   ├── chapter_detect.txt    # AI chapter detection prompt (fast model)
     │   ├── quality_rules.txt     # JSON extraction quality rules
-    │   ├── enrich_quiz.txt       # The quiz prompt (flavor per quizEnrichment domain)
+    │   ├── enrich_quiz.txt       # The quiz prompt when QUIZ_V2_ENABLED=false (flavor per quizEnrichment domain; {question_count}, {video_length}, <hero>)
+    │   ├── quiz_v2.txt           # Quiz v2 rules (evidence quote + timestamp as written, m:ss, per question; the task / hero / key ideas / transcript are bound around it, no placeholders)
+    │   ├── hero_rewrite.txt      # Hero rewrite job ({takeaway_count}, {duration}, {tab_labels}, {stamp_rule}, {video}, {extracted})
+    │   ├── merge_rank.txt        # merge_rank rules (duplicates / rank, ids only; the video, outline and lists are bound before it, no placeholder)
     │   ├── vision.txt            # Frame-vision prompt (registry summarizer:vision)
     │   ├── description_analysis.txt, translate_flat.txt
-    │   ├── synthesis.txt         # Synthesis prompt (masterSummary + seo; hero fields only as fallback)
+    │   ├── synthesis.txt         # Synthesis prompt (masterSummary + seo; hero fields only as fallback) — used when the hero rewrite is off or gave none
     │   ├── examples/             # One per domain that has one (no learning fallback)
     │   └── schemas/              # Domain schemas (injected into base_extraction)
     │       ├── learning.txt, tech.txt, fitness.txt, food.txt, music.txt, travel.txt
@@ -173,13 +200,15 @@ services/summarizer/
     │
     ├── shared_config/
     │   ├── __init__.py
-    │   └── domain_config.py      # Reads domains.json (Docker mount or local fallback). Also renders the planner's `{valid_components}` list + `{density_gates}` table from config
+    │   ├── domain_config.py      # Reads domains.json (Docker mount or local fallback; cached per process). Also renders the planner's `{valid_components}` list + `{density_gates}` table from config
+    │   └── assembly_policy.py    # Assembly's registry policy: momentCapsByDuration, assemblyPolicy, measureUnits, injectedTabs
     │
     └── models/
         ├── schemas.py            # Pydantic models
         ├── domain_types.py       # Domain data models (Food, Travel, Music, etc.)
         ├── pipeline_types.py     # Pipeline models (PlanResult, TabBrief, SynthesisResult, EnrichmentData, etc.)
         ├── probe_types.py, memory_types.py # Tier-probe answer; memory input/result (outline, evidence, hero)
+        ├── idea_types.py         # Argued items: LearningKeyIdea, PodcastQA, TechTopic, the shared Claim
         ├── domain_validation.py  # Validation report (_dropped/_defaulted/_misTargeted) helpers
         ├── sse_events.py         # Pydantic contract for every SSE event (validated on emission)
         └── vie_response_v2.py    # VIEResponse v2 models (TabEntry, CrossTabLink, etc.)
@@ -208,15 +237,15 @@ LLM_MEMORY_MODEL=anthropic/claude-haiku-5-5                # Memory; blank = LLM
 LLM_JUDGE_MODEL=openai/gpt-6-luna                          # Faithfulness judge (reasoning off); blank = the fast tier (config only)
 LLM_DESCRIPTION_MODEL=openai/gpt-6-luna                    # Description analysis (reasoning off)
 LLM_TRANSLATION_MODEL=openai/gpt-6-luna                    # Output, title and RAG transcript translation (reasoning off)
-LLM_ENRICHMENT_MODEL=openai/gpt-4o-mini                    # The quiz
-LLM_SYNTHESIS_MODEL=                                       # Blank = the fast tier
+LLM_ENRICHMENT_MODEL=openai/gpt-4o-mini                    # The quiz when QUIZ_V2_ENABLED=false (quiz v2 runs on LLM_EXTRACTION_MODEL, no key of its own)
+LLM_SYNTHESIS_MODEL=                                       # Blank = the fast tier; the synthesis call runs only when the hero rewrite is off or gave none
 # LLM_CHAPTER_DETECT_MODEL exists in config.py (blank = fast tier) but no compose anchor passes it
 # A refused answer is asked once of config.PREVIOUS_MODEL (Sonnet 5.5 → Sonnet 4.6,
 # Haiku 5.5 → Haiku 4.5, gpt-6-luna → gpt-4o-mini) — not an env setting.
 
 # Provider API Keys (set for providers you use)
 ANTHROPIC_API_KEY=sk-ant-...
-OPENAI_API_KEY=sk-...           # Required: the openai/* stage defaults (description, quiz, translation) + an openai fast tier; also Whisper
+OPENAI_API_KEY=sk-...           # Required: the openai/* stage defaults (description, translation; the quiz only with QUIZ_V2_ENABLED=false) + an openai fast tier; also Whisper
 GEMINI_API_KEY=                 # Enables Gemini audio transcription (faster than Whisper)
 GOOGLE_API_KEY=                 # Required if using Gemini as LLM provider
 
@@ -253,6 +282,12 @@ FRAME_TIER_ENABLED=true                # Adaptive visual tiers (HIGH: overselect
 FRAME_VISION_ENABLED=true              # Frame descriptions by the vision model; false = OCR only
 FRAME_VISION_PARALLEL=true             # Vision in parallel batches; false = one call with every frame
 LLM_VISION_MODEL=anthropic/claude-sonnet-5-5  # 4.0d pick (both composes default to it); empty outside compose = the primary model
+
+# Output-quality rollback levers (config.py + both compose anchors carry the same literal)
+HERO_REWRITE_ENABLED=true              # true: one hero_rewrite call on LLM_EXTRACTION_MODEL (reads the extraction's prompt cache) replaces the synthesis call; false: memory hero + synthesis
+QUIZ_V2_ENABLED=true                   # true: quiz v2 on LLM_EXTRACTION_MODEL, reading the extraction's cache (timestamp + checked evidence quote per question); false: the enrich_quiz call on LLM_ENRICHMENT_MODEL
+MERGE_RANK_ENABLED=true                # true: a chunked run (> 40 min) makes one merge_rank call on LLM_MEMORY_MODEL (dedupe across chunks and tabs, key-idea sections, rank cut); false: the code merge alone
+FRAMES_SKIP_WHEN_NO_VISUAL_DEMO=true   # true: a video > 30 min with no visual demo (probe), tier not HIGH, and tier LOW or a visualCriticality.skipFormats format skips scene detection + vision; the moment fill frames every moment; false: the skip only (the 3.5 highTitleKeywords fix — "pack opening" / "box opening", no bare "opening" — applies either way)
 
 # Extraction concurrency + chunking
 EXTRACTION_PARALLEL=true               # Field groups (text at plan-done, visual at frames-done); false = today's single call / chunked batches one at a time (extraction only: reconcile, evidence ranges, toolkit markers, PIPELINE_VERSION stay)
@@ -323,7 +358,7 @@ will be retrievable.
 
 ## Processing Pipeline (Plan-Driven)
 
-A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, tier probe, plan ∥ memory, the extraction field groups (1–5 text groups + at most one visual group, per chunk — a long video has several chunks), synthesis, the quiz when demanded, plus 1-5 vision batches and the sampled faithfulness judge; non-English videos add batched translation calls. With `EXTRACTION_PARALLEL=false` extraction is one call (or one per chapter batch). Phase order lives in `routes/pipeline_orchestration.py`; the call-order walkthrough with file anchors is [summarizer-workflow.md](./summarizer-workflow.md):
+A plan-first pipeline (since v9; `PIPELINE_VERSION` v11): description analysis, tier probe, plan ∥ memory, the extraction field groups (1–5 text groups + at most one visual group, per chunk — a long video has several chunks), the hero rewrite (it replaces the synthesis call, which stays as its fallback), the quiz when demanded (quiz v2), plus 1-5 vision batches and the sampled faithfulness judge (its extraction sample, plus a hero and a quiz call after assembly); non-English videos add batched translation calls. With `EXTRACTION_PARALLEL=false` extraction is one call (or one per chapter batch). Output-quality phase 1 (registry, prompts, extraction schemas, assembly) adds no call and no setting and was built under v10; phase 2 swaps two calls behind two settings (`HERO_REWRITE_ENABLED`, `QUIZ_V2_ENABLED`) and adds the judge's two — the task's one bump, v10 → v11, shipped them all (C.1; [IDEMPOTENCY.md](./IDEMPOTENCY.md#when-to-bump-pipeline_version)); what each prompt asks for: [summarizer-workflow.md §6](./summarizer-workflow.md#what-each-prompt-asks-for-output-quality). Phase order lives in `routes/pipeline_orchestration.py`; the call-order walkthrough with file anchors is [summarizer-workflow.md](./summarizer-workflow.md):
 
 ```
  1. CONNECT via SSE
@@ -363,6 +398,15 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     │       while frames still run
     │
     └─▶ FRAMES (smart frame selection, two-pass, non-critical)
+        └─▶ Talking-head skip (output-quality 3.5, FRAMES_SKIP_WHEN_NO_VISUAL_DEMO, default on):
+        │   a video > 30 min with its 360p download running (a cached manifest never skips)
+        │   waits for the tier probe while that file is on its way (≥ 5 s); a usable probe
+        │   (confidence > 0.6) with no visual demo, a tier not HIGH, and tier LOW or a probe
+        │   format in domains.json visualCriticality.skipFormats ([talk, interview, podcast];
+        │   [] = LOW only) → none of the steps below: the 720p download starts if nothing
+        │   started it, the 360p one closes, ctx.frames_skipped, no frames event / gallery /
+        │   filmstrip / vision / hi-res pass (timing frames.skip_check + frames.skipped); the
+        │   moment fill frames every moment from the 720p file. ≤ 30 min / flag off: no wait.
         └─▶ S3 cache check (media/frame_manifest.py) — MANIFEST-only: `videos/{id}/{SCENE_S3_PREFIX}/manifest.json`
         │   (v2) carries per-frame timestamps, galleryIndices, hiresCount and the
         │   persisted visionDescriptions. A hit skips extraction AND restores the
@@ -455,8 +499,10 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     └─▶ Tier probe (pipeline/tier_probe.py, prompt tier_probe.txt; replaces the classifier):
     │   LLM_CLASSIFIER_MODEL (Haiku 4.5, D21), temperature 0, 80 tokens, 4 s, no retry;
     │   reads metadata + three short NATIVE transcript windows (nothing translates before the
-    │   plan) → domain, format (18 incl. unboxing), has_visual_demo, transcript_usable (missing
-    │   key = true). Started at transcript-ready; frames read it at Step 6b (tier), the
+    │   plan) → domain, format (19 incl. unboxing; talk / lecture / interview / podcast told apart
+    │   by what the speaker does — makes a case, teaches, a host questions a guest, the regular
+    │   hosts among themselves), has_visual_demo, transcript_usable (missing key = true).
+    │   Started at transcript-ready; frames read it at Step 6b (tier), the
     │   plan for its playbook ("<domain>:<format>") and a hint line. Failure → None: metadata
     │   tier, no hint. Skipped when an admin override is active.
     └─▶ Garbage captions → audio (phases/transcript_fallback.py, 2.5): transcript_usable false
@@ -479,17 +525,29 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     │   │   with cache_control `{type: ephemeral, ttl: 1h}` (`PLAN_CACHE_TTL` in plan.py); the
     │   │   video half is uncached. Emits contentTags, modifiers, tabs with briefs ({what,
     │   │   where, expect}), evidence (has_* booleans that gate domain requirements) and
-    │   │   terms; truncation is counted (counts.truncated)
-    │   └─▶ Memory: LLM_MEMORY_MODEL (Haiku 5.5), 25 s, ONE attempt, temperature 0 (dropped for Haiku 5.5) → outline (4-12
-    │   │   contiguous sections; dropped when it stops short of the duration), evidence, tldr,
-    │   │   takeaways. No timed transcript → no call. Its tldr + takeaways go out at once as the
-    │   │   first synthesis_complete (the hero). Failure → None; every reader has a fallback
+    │   │   terms; truncation is counted (counts.truncated). A talk, lecture, podcast or
+    │   │   interview opens on spot_explorer over learning.keyIdeas (`<spoken_word>`, four
+    │   │   spoken-word examples); `expect` is sized to the video's length (`<sizing>`,
+    │   │   content-model §9); a tab goal names the viewer's outcome (`<goal_rule>`) — one
+    │   │   that does not is logged at validation (`plan_prompt.goal_rule_violation`), the tab
+    │   │   ships. A tab on learning.keyIdeas switches the learning domain on
+    │   │   (a podcast.qa / podcast.guests tab, the podcast domain; `plan_reconcile.activate_argument_domains`, ≤ 3 content tags)
+    │   └─▶ Memory: LLM_MEMORY_MODEL (Haiku 5.5), 25 s, ONE attempt, temperature 0 (dropped for Haiku 5.5),
+    │   │   1,600 max tokens → outline (4-12 contiguous sections, each with an `establishes`
+    │   │   line; dropped when it stops short of the duration), evidence, tldr (the thesis),
+    │   │   takeaways (3 / 5 / 7 for ≤ 15 / ≤ 45 / longer minutes, each closing with its [m:ss]).
+    │   │   No timed transcript → no call. Its tldr + takeaways go out at once as the
+    │   │   first synthesis_complete (the hero — the preview: with HERO_REWRITE_ENABLED the hero
+    │   │   rewrite replaces it in the late group). Failure → None; every reader has a fallback
     │   └─▶ Selectable component list + density guidance are config-generated from domains.json
     │   │   (`{valid_components}` via `render_valid_component_names`, `{density_gates}` via
     │   │   `render_density_gate_table` in `shared_config/domain_config.py`) — edit `components`
     │   │   in domains.json to change what the planner can pick. `densityGates` is **advisory**.
-    │   └─▶ Domain playbooks (domains.json `playbooks`, keyed "<domain>:<format>"):
-    │   │   `_render_playbook()` injects required/preferred/forbidden components + planGuidance;
+    │   └─▶ Domain playbooks (domains.json `playbooks`, keyed "<domain>:<format>": gaming:unboxing,
+    │   │   review:unboxing, learning:talk, learning:lecture, podcast:podcast, podcast:interview,
+    │   │   review:review, news:explainer; `playbookAliases` route other probe formats to one, e.g.
+    │   │   review:commentary → review:review): `_render_playbook()` injects
+    │   │   required/preferred/forbidden components + planGuidance;
     │   │   effective_requirements(): forbidden = UNION, required = playbook overrides domain
     │   │   (conditional on the plan's own evidence), max always from domain
     │   └─▶ Post-validation `_enforce_domain_policy()` strips forbidden components before
@@ -502,11 +560,17 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     │   pipeline.triage; each reader's own answers as `planEvidence` / `memoryEvidence`).
     │   Steps: (1) a tab whose dataSource `requiresEvidence` is doubly false → re-pointed, kept
     │   (moment_track), demoted onto a free eligible source, else dropped — a `has_code` tab is
-    │   deferred to frames-done instead (`deferred_to_frames`); (2) the primary's required
+    │   deferred to frames-done instead (`deferred_to_frames`); (1b) a Moments tab on
+    │   learning.timestamps reads the primary's own moment source (podcast.segments, …;
+    │   `repointed` / `primary_moment_source`); (2) the primary's required
     │   components backfilled from its defaultTabs unless doubly false (`not_backfilled`, under
     │   the defaultTab id it would have added) — tech's has_code-gated code_playground with no
-    │   tab planned for it is deferred too; (3) quiz dropped outside quizDomains or when
-    │   is_learnable is doubly false, else moved last; (4) dedupe (dataSource, component);
+    │   tab planned for it is deferred too; (3) quiz dropped outside quizDomains, on a format
+    │   quizPolicy.formats does not name (4.6e: lecture / tutorial only) or when
+    │   is_learnable is doubly false, else moved last; (4) dedupe (dataSource, component) — the
+    │   tab the primary requires (equivalents included) stays, else the first; (4b) a planned
+    │   info_grid joins the planned tab that answers its question as one of its `folds`
+    │   (R6, `folded` / `info_grid_alone`; host by `infoGridHosts`; never below 3 tabs);
     │   (5) 3–6 tabs. Every decision → `pipeline.reconcile` (row shape: DATA-MODELS.md); drops →
     │   droppedTabs `reconcile_<reason>`. The plan-parse guard (plan_reconcile.py) keeps only
     │   registry validity + `inactive_domain`.
@@ -523,10 +587,13 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     └─▶ Plan-done (plan and memory both in): the provisional Moments tab (phases/moments.py,
     │   pipeline-1min 2.1) — tab_ready `provisional: true, final: false` built from the
     │   moment fallback chain (memory outline → YouTube chapters → description timestamps,
-    │   the latter only if the analysis already landed), with the id/label/goal of the tab
+    │   the latter only if the analysis already landed; an outline moment's description is its
+    │   section's `establishes` line), with the id/label/goal of the tab
     │   that replaces it: the plan's first moment_track tab, else the always-Moments tab
-    │   (`key_moments`, see 6). `position` is an estimate (overview + the planned tabs before
-    │   it, quiz excluded). No source with an entry → no tab
+    │   (`key_moments`, see 6); the web strip labels it "Preview" until then. `position` is an estimate (overview + the planned tabs before
+    │   it, quiz excluded). No source with an entry → no tab; a food / fitness / project plan
+    │   whose steps are the timeline (step_player / step_flow_canvas / workout_room, moment_track
+    │   not required; D6, output-quality 0b) → no tab (moment_fallback.steps_are_the_timeline)
 
  4b. FRAMES-DONE (both paths; code — phases/frames_done.py)
     └─▶ Frame captions + OCR → `ctx.visual_annotations` (`<visual_annotations>`, chronological
@@ -554,11 +621,14 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     │   key-frame window; a sentence force-split when the chain gives ≤ 1 batch.
     │   CHUNKED_EXTRACTION_THRESHOLD is not read on this path
     └─▶ Requested fields (pipeline/field_requests.py): the union over the reconciled tabs of the
-    │   planned dataSource, its registry siblings (active domains only), the rendering component's
-    │   side reads, the overview's tip/level reads, and every requested domain's scalars — never an
-    │   inactive domain's fields, no unplanned modifier output
+    │   planned dataSource (+ the fields of the info_grids folded into it; on a talk the asks checklist plans learning.keyIdeas, never learning.takeaways), its registry siblings
+    │   (only inside a domain some tab plans on), the rendering component's side reads (no
+    │   learning.timestamps stand-in for a Moments tab with a field of its own), the overview's
+    │   tip/level reads, and every requested domain's scalars — never an inactive domain's fields,
+    │   no unplanned modifier output
     └─▶ Groups (pipeline/field_groups.py, domains.json `grouping`): text fields bucketed by domain,
-    │   split by field when Σ outputWeight × expect exceeds `groupOutputBudget` (1,500), at most
+    │   split by field when Σ outputWeight × expect exceeds `groupOutputBudget` (1,500), a slice
+    │   estimated under `minGroupOutput` (400) riding with the domain's previous one, at most
     │   `maxTextGroups` (5) text groups, ordered by the first tab they serve — text1 holds the first
     │   planned tab. Every `waitsForVisual` field (tech.snippets / patterns / cheatSheet /
     │   setup.commands, gaming.highlights) forms ONE visual group, re-cut at frames-done from what no
@@ -568,7 +638,9 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     │   requested domain's full schema + the primary's example; block 2 (5 min) = `<video>` + the
     │   chunk's transcript + `<video_memory>`; block 3 (uncached) = the group's job
     │   (`extraction_group_job.txt`: "emit ONLY these keys" + their shape, the tabs it serves; the
-    │   visual group adds the annotation guide, the chunk's annotations and key frames).
+    │   visual group adds the annotation guide, the chunk's annotations and key frames; the group
+    │   requesting learning.keyIdeas, in a learning- or podcast-primary run, ends with that
+    │   primary's worked example from `extraction_group_rules.txt`).
     │   LLM_EXTRACTION_MODEL, json_mode, 16,384 max tokens, 1 retry; each call's timeout follows
     │   its estimate (Σ outputWeight × expect ÷ 60 tok/s + 30 s, 120–300 s); the group-job template
     │   is read once per run. Cache layout and hit rates: llm-cost-model.md
@@ -586,18 +658,29 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     │   crossTabLinks/attachments, at its plan-order position, re-sent only when its content
     │   changed; never the overview, a moment_track tab or the quiz). The quiz call starts here
     │   (`ctx.quiz_task`) once the text groups holding a quizDomains field landed (the visual group
-    │   when none does; a strip-only quiz also waits until frames-done can no longer drop its host)
+    │   when none does; a strip-only quiz also waits until frames-done can no longer drop its host),
+    │   with the split run: its chunks are the quiz's parts, its cached blocks what each call reads.
+    │   The hero rewrite starts here too (`ctx.hero_task`, HERO_REWRITE_ENABLED): once every text
+    │   group has landed on every chunk (text-groups-done) `GroupLanding` hands the extraction merged
+    │   so far to `phases/synthesis.start_hero_task`; the late group awaits it (timing step
+    │   `hero_call`). On a run of more than one chunk merge_rank starts beside it over the same
+    │   merge (`ctx.merge_rank_task`, MERGE_RANK_ENABLED, timing step `merge_rank_call`). A failed
+    │   or cancelled run stops the quiz, the hero and the merge_rank call
     └─▶ Merge, once every call landed: ONE merge — chunk-major, text1..N, visual; lists concatenate
     │   (later duplicates by name/label/term/title/ingredient/tool/location dropped), first
     │   non-empty scalar wins, number/step/order/index renumbered only when 1..n in every list.
-    │   Quality = requested fields filled; `pipeline.extraction._groups` (one row per call). ONE
+    │   Quality = requested fields filled; `pipeline.extraction._groups` (one row per call). A
+    │   chunked run's merge_rank answer is applied to the merge first (twins out under four guards,
+    │   ranked lists cut to their cap, key-idea sections — those also without an answer;
+    │   `pipeline.extraction._mergeRank`). ONE
     │   `extraction_complete`
     └─▶ `pipeline.timing` on this path: `transcript_frames` spans the extraction too;
     │   `split_extraction` = the member (from the group's start), `extraction` = plan-done → last
     │   group landed (the DONE log's `extraction=`); `frames` includes its wait for plan-done and the
     │   `visual_inject` step; group calls are `llmCalls` spans `extraction_<group>` (`_c<k>` per
     │   later chunk; ledger feature `summarize:extraction:<group>`), the streamed warm-up call with
-    │   `ttftMs`; a started quiz call is the `quiz_call` step
+    │   `ttftMs`; a started quiz call is the `quiz_call` step, a started hero call the `hero_call` step,
+    │   a started merge_rank call the `merge_rank_call` step
     └─▶ Failure paths (3.8, `group_failures.py`): `{}` or the group's keys answered `null`/`{}`
     │   = an empty group that landed (a later chunk's window, a video without that content).
     │   A lost answer — not a JSON object, no key of the group, content validation dropped or
@@ -640,31 +723,53 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     │   synthesis-fed retry, RETRY_SCORE_THRESHOLD and validate_extraction_counts are gone (1c.5)
     └─▶ Faithfulness judge (LLM_JUDGE_MODEL = gpt-6-luna) fires in the background once extraction
         has data — on the split path when the whole phase-2 group is done (transcript +
-        annotations; informational)
+        annotations; informational). A second launch follows assembly (output-quality 2.4,
+        `_launch_hero_quiz_check`): up to two more calls score the hero's stamped takeaways
+        (`faithfulness_hero`, only when the hero rewrite wrote the hero) and 2 quiz questions
+        (`faithfulness_quiz`, only when `QUIZ_V2_ENABLED`) against the transcript around their
+        stamps — flag-off runs make no extra judge call (pipeline/faithfulness_hero_quiz.py;
+        OBSERVABILITY.md)
 
  6. ASSEMBLY → LATE GROUP → SAVE (phases/assembly.py)
     └─▶ Description analysis (≤ 5 s wait; past it meta goes without it) → SSE description_analysis
     └─▶ Synthesis FIRST only when memory left the tldr or takeaways empty (the overview and the
-    │   min-3-tab Key Info fallback need them); otherwise memory's hero seeds meta + overview
-    └─▶ Assembly: code, 0 LLM calls — transforms extraction → component-addressed TabEntry[]
+    │   min-3-tab Key Info fallback need them; "synthesis" = the synthesis slot — the hero rewrite
+    │   when enabled, else the synthesis call); otherwise memory's hero seeds meta + overview
+    └─▶ Assembly: code, 0 LLM calls — transforms extraction → component-addressed TabEntry[]. First a
+    │   quote pre-pass on a copy of the extraction and the quiz (pipeline/quote_verify.py: a quote
+    │   not found in the transcript is cleared, or kept as prose when the source is not English),
+    │   then an interview's questions (assembly/qa_questions.py: a `podcast.qa` question the transcript does not say leaves the list on an English source, a found one stamps its row at the question, fewer than 3 left → no Q&A tab, never refilled from the outline), and the quiz's stamps are read in seconds (assembly/quiz_stamps.py)
     └─▶ 29 assemblers in ASSEMBLER_REGISTRY (assembly/registry.py — spot_explorer, moment_track,
     │   code_playground, quiz_arena, tier_list, claims_tracker, … + secondary/attachment assemblers)
+    └─▶ Output-quality shapes and caps (module map: summarizer-workflow.md §Assembly notes; sets and
+    │   bands from domains.json `assemblyPolicy` / `momentCapsByDuration` / `injectedTabs`):
+    │   learning.keyIdeas → spot cards (claim, why, quote, timestamp, kind badge — an ask without its quote reads Argument —, speaker, sections); a talk's "What they asked" checklist on learning.takeaways ships the quoted kind-ask key ideas (≥ 3, else the tab drops; then Key Ideas sheds those cards — each ask shows once; a run without key ideas keeps its takeaways — assembly/talk_asks.py, dedupe.py),
+    │   capped at keyIdeasCapFactor × the §9 count (10 / 16 / 24 / 32 by length) plus the guest cards; a Moments track
+    │   capped strictly by the §9 bands, and a label-only one yields to a described sibling or the
+    │   described fallback chain (R7); the answer tab's stat_banner only from `kind: number`
+    │   key ideas with their stated `figure`, no text mined (≥ 5 tiles or none, ≤ 8);
+    │   folded info_grids join their host (R6) and every info_grid row ships with a value (R5);
+    │   quiz questions carry their timestamp; the tabs assembly adds take their goals from
+    │   `injectedTabs`
     └─▶ Domain policy: components in effective_requirements(domain, format).forbidden are dropped
     │   (reason `domain_forbidden`); per-domain max caps enforced (reason `domain_max_cap`)
     └─▶ Degrade-never-drop ladder (assembly/promotion.py): a tab failing its primary component's
     │   validation demotes down _DEMOTE_LADDER (e.g. step_player → checklist → display_section,
-    │   tier_list → info_grid → display_section) instead of dropping; demoted tabs are stamped
+    │   tier_list → spot_explorer → info_grid → display_section) instead of dropping; demoted tabs are stamped
     │   `degradedFrom` and re-pass enforce_density. Non-demotable by design: quiz_arena,
     │   video_filmstrip, lyrics_karaoke, frame_strip.
     └─▶ Per-tab drop accounting: assemble_response returns {"meta", "tabs", "dropped"} — drop
     │   reasons: assembler_raised, validation_empty_list, assembler_returned_none,
-    │   domain_forbidden, domain_max_cap, all_timestamps_impossible, and on the split path
+    │   domain_forbidden, domain_max_cap, all_timestamps_impossible, steps_are_the_timeline
+    │   (D6, below), duplicate_tab (the post-promotion dedupe), and on the split path
     │   extraction_group_failed (one of the first three for a tab that waited for a failed
-    │   group's field — assembly's own reason kept in `detail`) (feeds tabsDropped/droppedTabs
+    │   group's field — assembly's own reason kept in `detail`); an info_grid tab R5 leaves
+    │   without a valued row is `validation_empty_list` too (feeds tabsDropped/droppedTabs
     │   telemetry instead of the old designed−assembled subtraction); the backstop's
     │   `requirement_evidence_false` entry (a required component the evidence rules out, `id` =
-    │   the defaultTab it would have added, `""` when a live tab holds it) is listed, never
-    │   counted. The plan stage's drops are prepended (reconcile's as `reconcile_<reason>`, see
+    │   the defaultTab it would have added, `""` when a live tab holds it) and the dedupe's
+    │   `duplicate_items` entry (a twin that shed its shared items and still ships) are listed,
+    │   never counted. The plan stage's drops are prepended (reconcile's as `reconcile_<reason>`, see
     │   4): reason `invalid_datasource` = an unregistered dataSource with no same-domain
     │   registry path for the tab's component (plan.py `_validate_data_sources`); when that
     │   leaves no tab, the domain defaults stand in, `planFallback: true` is persisted and
@@ -680,7 +785,14 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     │   YouTube chapters → description timestamps; assembly/moment_fallback.py) and framed
     │   like any moment tab. A real tab: saved, Redis-cached, RAG-indexed, translated. No
     │   source with an entry → no tab and no drop record (never invented); never added
-    │   where the domain policy forbids moment_track
+    │   where the domain policy forbids moment_track. Exception (D6, output-quality 0b):
+    │   when the steps are the timeline (a food, fitness or project response whose domain
+    │   does not require moment_track ships a step player, step flow canvas or workout
+    │   room), every moment_track tab is dropped (reason `steps_are_the_timeline`) and
+    │   no always-Moments tab is added — recipes, workouts and step tutorials are
+    │   navigated by their steps (undone when the dedupe then drops the step tab: the
+    │   Moments come back); any other primary (a podcast or lecture with a stray step
+    │   tab) keeps its Moments
     └─▶ Gallery tab: ~12 curated frames from gallery_frames (not all uploaded frames)
     └─▶ Cross-tab links resolved from static LINK_RULES
     └─▶ SSE: every `tab_ready` goes through the run's TabLedger (pipeline/tab_ledger.py, the
@@ -695,11 +807,32 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     │   └─▶ Moment fill (assembly/moment_frame_fill.py): a frame AT each still-frameless
     │   │   moment's timestamp by seeking the run's one local ≤720p file (downloaded by the
     │   │   frames phase; a manifest cache hit starts it here for ≥ 3 moments only, inside the
-    │   │   budget with 30 s kept for seeks; cap 12 frames, 150 s) → the moment tabs stream
+    │   │   budget with 30 s kept for seeks; cap 12 frames — none on a run that skipped
+    │   │   its frames (3.5, fill_cap: every moment of every moment tab) — 150 s) → the moment tabs stream
     │   │   WITH their images (replacing the provisional Moments tab by id, or under another
     │   │   id with `replaces: "<provisional id>"`); the file is
-    │   │   deleted after it (its last reader)
-    │   └─▶ Synthesis (unless it ran first; pipeline/synthesis.py): fast tier, 1,200 tokens,
+    │   │   deleted after it (its last reader). The 720p file not on disk yet when the late
+    │   │   group starts (output-quality 3.7: `pending_fill` > 0 and the download unfinished)
+    │   │   → the fill leaves the late group: it starts beside it as a task (phases/late_moment_fill.py;
+    │   │   its seeks overlap the quiz and the hero once the file lands) and is joined after
+    │   │   `complete` (below); the moment tabs stream with the first tabs, with the frames they
+    │   │   have, `final: false`
+    │   └─▶ The synthesis slot (unless it ran first; phases/synthesis.py). With HERO_REWRITE_ENABLED
+    │   │   the hero rewrite (pipeline/hero_rewrite.py, hero_rewrite.txt): ONE call on
+    │   │   LLM_EXTRACTION_MODEL (Sonnet 5.5), JSON mode, 2,000 max tokens, 25 s, one retry that
+    │   │   carries the failed checks — only when the hero would be None or a D18 line would drop;
+    │   │   what finalize repairs itself costs no second call. It reads the field groups' cached blocks 1 (+ 2 on a one-chunk
+    │   │   run) and the extraction compacted to ≤ 5,000 tokens with ids (hero_compact.py; a chunked
+    │   │   run's summary / keyQuestion part by part, group_merge.chunk_scalars — 3.2 — in ≤ 5,500), so
+    │   │   code copies each takeaway's timestamp from the item it cites; hero_validate.py checks
+    │   │   numbers, sizes, stamps (no transcript read → a typed stamp only within 30 s of a clock the
+    │   │   call read), quoted spans of 3+ words (quote_verify), tab names and D18 (worthItFor /
+    │   │   skipIf ≤ 20 words, nothing about the creator). Started at text-groups-done and awaited here (EXTRACTION_PARALLEL=false:
+    │   │   called here over the whole extraction). Its meta — tldr, brief (= masterSummary),
+    │   │   keyTakeaways as "<claim> [m:ss]" strings, worthItFor, skipIf, seoDescription — replaces
+    │   │   memory's hero; patches meta + overview in place → SSE synthesis_complete (superset, with
+    │   │   brief / worthItFor / skipIf). No valid hero, or the flag off → today's synthesis
+    │   │   (pipeline/synthesis.py): fast tier, 1,200 tokens,
     │   │   20 s, 1 retry. Input: <video_memory> + compact FINAL extraction (≤ 6,000 chars,
     │   │   every list cut to the first cap of 8/5/3/1 that fits) + the viewer's tab labels.
     │   │   Writes masterSummary + seoDescription (≤ 160 chars); tldr/takeaways only as the
@@ -708,21 +841,56 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     │   │   only, masterSummary/seo empty
     │   └─▶ The quiz (phases/enrichment.py, only when needs_quiz: a planned quiz tab, or a
     │       sparse quick_quiz host with evidence that doesn't rule learning out, in a
-    │       quizEnrichment domain): one enrich_quiz call on LLM_ENRICHMENT_MODEL (gpt-4o-mini),
-    │       30 s total (14 s per attempt, 1 retry), ≥ 2 valid questions — on the field-group path the call already
-    │       started when its groups landed (5) and this step awaits it (cancelled when the plan
-    │       no longer uses a quiz). When it lands the response is assembled
-    │       again (phases/late_quiz.py): enrichment_complete, the quiz tab last; the quick_quiz
-    │       host, links and overview count follow
+    │       quizEnrichment domain, on a quizPolicy.formats format: lecture / tutorial, another
+    │       format plans no quiz — reconcile_quiz_format). QUIZ_V2_ENABLED (default): quiz v2 (pipeline/quiz_v2.py,
+    │       quiz_v2.txt) on LLM_EXTRACTION_MODEL (Sonnet 5.5, 4.6e), 30 s per attempt, 1 retry, 40 s total,
+    │       on the field groups' cached blocks (quiz_v2_blocks.cached_prefix) — reads the marked transcript and the target key ideas
+    │       (quiz_v2_ideas.quiz_targets: the thesis / argument / number items of the first non-empty
+    │       KEY_IDEA_SOURCES list, ids K1…) — one call per part in parallel, each extraction chunk
+    │       of a chunked run, else each third past 15 min — and writes the video's count (3 / 5 / 8,
+    │       `quizPolicy.questionsByDuration`) + 4 spare questions, each with a ≤ 25-word evidence
+    │       quote and the answer's timestamp and naming the id it tests (no valid id → the target
+    │       stamped within 90 s, else dropped, quiz_v2_targets); every quote is checked against the transcript (quote_verify): found → the stamp is set from where it
+    │       is said; an English-source quote not found → the question is dropped; a translated one
+    │       is kept as prose with an in-video stamp; fewer than 3 survivors → no quiz tab. The
+    │       checked questions past the count stay as up to 4 spares (never dumped): once the hero
+    │       landed too, settle_late_quiz (phases/enrichment.py) drops a question whose keyed option
+    │       restates a shipped takeaway and refills from them, each spare keyed at the dropped
+    │       question's position; fewer than 3 left → no quiz tab. False:
+    │       one enrich_quiz call on LLM_ENRICHMENT_MODEL (gpt-4o-mini), 30 s total (14 s per
+    │       attempt, 1 retry), ≥ 2 valid questions; it asks for 3 / 5 / 8 by length, reads the video
+    │       length and the memory hero (no question the hero alone answers), and every question
+    │       carries the timestamp of its answer (one past the end + 10 s is dropped). Both bill
+    │       `summarize:enrichment`. On the field-group path the call already started when its
+    │       groups landed (5) and this step awaits it (cancelled when the plan no longer uses a
+    │       quiz). When it lands the response is assembled again (phases/late_quiz.py):
+    │       enrichment_complete, the quiz tab last; the quick_quiz host, links and overview
+    │       count follow
+    └─▶ Settle (phases/synthesis.settle_tab_references, after the late group): the filmstrip the
+    │   framed Moments shadow is dropped (a deferred fill's frames, `ctx.pending_moment_frames`,
+    │   counted as framed), every hero / goal sentence naming a tab that does not ship
+    │   is removed (assembly/tab_references.py), and a hero page gets meta.readingMinutes (code, 238
+    │   words a minute over the final hero + tabs) → SSE synthesis_complete again (a corrected
+    │   superset marked `final: true`, which replaces the consumers' copy) when the hero changed —
+    │   always with the hero rewrite
     └─▶ SSE: the final re-emit — every tab not yet sent final goes out `final: true` at its
     │   final position, in order (all tabs when a quiz was pending or the tabs streamed per
     │   group — then the overview goes last; else the overview after a late synthesis); each tab
-    │   of the response gets exactly one final emission
+    │   of the response gets exactly one final emission (a deferred fill's moment tabs stay
+    │   non-final here, re-sent only when changed)
     └─▶ SSE: complete (tabCount, tabIds = the final tab order, processingTimeMs, degraded) →
     │   save. A tab streamed earlier but missing from tabIds was withdrawn (logged)
+    └─▶ Deferred moment fill (output-quality 3.7; only when the 720p file was still
+    │   downloading): the fill started with the late group is joined now (heartbeats while it
+    │   waits), then the moment tabs go out `final: true`, framed (TabLedger.frames_landed + the
+    │   closing re-emit), then the 720p file is deleted. The settle step counted the frames it
+    │   had still to add for the filmstrip decision; a filmstrip dropped on them stays gone if
+    │   the fill falls short — `pipeline.assembly.momentFill` {pending, filled,
+    │   filmstripDroppedOnPending} records it (a warning logs the shortfall). The save and
+    │   `done` follow; complete.processingTimeMs = text done, the doc's and done's = after the fill
     └─▶ Store result to MongoDB + Redis cache (if enabled). Redis response-cache keys are
     │   namespaced by PIPELINE_VERSION (packages/shared/src/config/pipeline-version.json,
-    │   currently v10 — bumped v9→v10 by the pipeline-1min 4.0 model refresh).
+    │   currently v11 — bumped v10→v11 by the output-quality close-out, C.1).
     │   bypassCache=true submissions arrive with force_refresh (worker payload) OR the
     │   `forceRefresh` flag stamped on the videoSummaryCache version row by the api —
     │   either skips the Redis response cache; the flag is $unset on completion.
@@ -736,8 +904,14 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     │   transcript; ctx.language is always "en" — the English-primary output)
     └─▶ translate_to_source() — batched, salvage-tolerant translation
     │   └─▶ Walks the assembled tree, collects every translatable prose
-    │   │   string into one flat list (`_collect_strings` + `_SKIP_KEYS`
-    │   │   leaf-only deny-list for structural/asset/enum keys)
+    │   │   string into one flat list (`_collect_strings`: the `_SKIP_KEYS` leaf-only
+    │   │   deny-list for structural/asset/enum keys, plus D12's verbatim lines
+    │   │   (`translation_verbatim`) — a `quote` without `quoteTranslated`, or a flagged one
+    │   │   not in Latin script (a source-language line the check missed), and any leaf of
+    │   │   its dict restating it, a verified `question` (or a `translated` one not in Latin
+    │   │   script) and the `label` cut from it — and `quoteEn` / `questionEn`,
+    │   │   `_kept_as_is`; the source-language copy drops `quoteEn` / `questionEn`,
+    │   │   `drop_english_only`, 4.2)
     │   └─▶ Fast-model calls (`translation_full`) on LLM_TRANSLATION_MODEL
     │   │   (default openai/gpt-6-luna, reasoning off) via
     │   │   src/prompts/translate_flat.txt (flat-list
@@ -760,7 +934,9 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     │   │   `is_mirror` per call) is retried once split in
     │   │   half; any half that still fails is salvaged as English
     │   │   (left untranslated) rather than discarding the whole
-    │   │   translation. Returns `(strings, salvaged_mask)` — a
+    │   │   translation. A batch whose call raises is kept as English the same
+    │   │   way, and every batch is awaited — one failure never leaves its
+    │   │   siblings running (`_all_batches`, pC review). Returns `(strings, salvaged_mask)` — a
     │   │   same-length boolean mask marking salvaged positions.
     │   └─▶ Mirror detection samples only genuinely-translated strings
     │       (salvaged positions excluded via `salvaged_mask`, so kept
@@ -768,12 +944,28 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v10): description analysis, 
     │       all 3 longest are byte-identical AND >50% of all strings are
     │       byte-identical (small-payload threshold: 33% under 10 strings).
     │       Protects against the "small model echoes input" failure mode.
-    │   └─▶ `_SKIP_KEYS` denies: id, component, language, url, s3Key, code,
+    │   └─▶ `_SKIP_KEYS` denies: id, component, degradedFrom, language, targetTab,
+    │       type, layout, platform, primaryTag, url, thumbnailUrl, s3Key, code,
     │       timestamp, time, seconds, startSeconds, endSeconds, emoji,
-    │       correctIndex, difficulty, mood, sets, frameCaption,
-    │       frameSceneType, frameEvidence. Notably does NOT deny
+    │       correctIndex, difficulty, mood, questionStatus, status, badge, winner,
+    │       slot, size, style, mode, videoTitle, sets, frameCaption,
+    │       frameSceneType, sceneType, frameEvidence — the enums the web matches in
+    │       English (a translated claim `status` failed the claims schema and the source
+    │       view showed the tab as display_section, pC review). Notably does NOT deny
     │       reps/rest/duration — the fitness schema emits prose at
     │       those keys ("30 שניות", "AMRAP", "until failure").
+    └─▶ In parallel with it (asyncio.gather, `_translate_both_ways`): translation_quotes —
+    │   every distinct verbatim line the English page shows (a quote without
+    │   `quoteTranslated` or a flagged one not in Latin script, a verified question or a
+    │   translated one not in Latin script; a quiz question's evidence quote too) is sent once source→en
+    │   through translate_in_batches (stage `translation_full`); `quoteEn` / `questionEn`
+    │   are written on the English tabs after both calls return (the sourceLanguage copy
+    │   never carries them); a row titled by its question is re-titled from `questionEn`.
+    │   With no sourceLanguage but English written, the English tabs are saved
+    │   `completed` (`_finalize_english_only`, 4.6c).
+    │   The pass is optional: a raise in it is logged (warning) and writes no English;
+    │   the copy still lands. A raise in translate_to_source still fails the phase, raised
+    │   once the English pass has returned (gather return_exceptions=True).
     └─▶ Promote English to primary on ctx.assembled_tabs / ctx.assembled_meta
     │   and stash the original-language artifact under sourceLanguage
     │   = {code, name, isRTL, tabs, meta} (tabs/meta deep-copied so a
@@ -917,7 +1109,7 @@ PREVIOUS_MODEL = {
 
 The primary (`default`) model only reaches the plan and `/health`: every other stage
 is pinned per stage (Environment Variables above). Picks and evidence per call type:
-`dev/completed/pipeline-1min/gates/g4-model-ab.md` §Picks.
+pipeline-1min gate g4-model-ab §Picks.
 
 ---
 
@@ -942,8 +1134,8 @@ Category fallback = the metadata categories `domains.json` `categoryMap` maps to
 | project | diy, craft | `schemas/project.txt` | - |
 | language | languages, pronunciation, grammar, vocabulary | `schemas/language.txt` | quiz (when the plan demands one) |
 | science | physics, chemistry, biology, math | `schemas/science.txt` | quiz (when the plan demands one) |
-| podcast | podcast, interview, talk_show | `schemas/podcast.txt` | - |
-| news | news, journalism, current_events, politics | `schemas/news.txt` | - |
+| podcast | podcast, interview, talk_show | `schemas/podcast.txt` | quiz (when the plan demands one) |
+| news | news, journalism, current_events, politics | `schemas/news.txt` | quiz (when the plan demands one) |
 | gaming | gaming, gameplay, esports, lets_play, speedrun | `schemas/gaming.txt` | - |
 | sport | sport(s), match_analysis, highlights | `schemas/sport.txt` | - |
 | narrative | — | `schemas/narrative.txt` | Modifier only |
@@ -969,10 +1161,10 @@ list against the model registry.
 | `extraction_progress` | `{section, percent, batch?, of?}` — the field groups (default) emit `section="groups"` with `batch`/`of` per landed group call (`of` follows the visual group's fate); with `EXTRACTION_PARALLEL=false` one call emits `section="all"`, chunked batches `section="chunked"` with `batch`/`of`, rate-limited fallback batches `section="chunked-sequential"` |
 | `extraction_complete` | `{data}` — the domain-keyed extraction (+ `batches_total` / `batches_succeeded` from chunked batches); ONE per run — the field groups send it once every group landed, after the merge |
 | `enrichment_complete` | `{quiz}` — only when the plan demands a quiz; arrives after the first tabs, before the quiz tab |
-| `synthesis_complete` | Up to twice: `{tldr, keyTakeaways}` at memory-done, then the superset `{tldr, keyTakeaways, masterSummary, seoDescription}` after the first tabs; consumers merge (API-REFERENCE.md#synthesis_complete) |
+| `synthesis_complete` | Up to three times: `{tldr, keyTakeaways}` at memory-done, then the superset `{tldr, keyTakeaways, masterSummary, seoDescription}` after the first tabs (the hero rewrite adds `brief`, `worthItFor`, `skipIf`), then a corrected superset after the late group when the hero changed (the hero rewrite's adds `readingMinutes`; marked `final: true`); consumers merge the earlier emissions and replace with the final one (API-REFERENCE.md#synthesis_complete) |
 | `frames` | `{videoId, frames: [{index, timestamp, url, s3Key?, ocrText?}]}` (scene frames) |
 | `meta` | `{title, contentTags, modifiers, primaryTag, tabCount, tabLabels, contentFormat?, language?, isRTL?, degraded?}` — at plan-done after reconcile (the plan's tabs, before any `tab_ready`), again at frames-done when the deferred code tabs changed the tab list; a cached serve sends the stored tabs and `degraded` |
-| `tab_ready` | `{id, label, emoji, component, props, goal?, crossTabLinks?, attachments?, degradedFrom?, position, final, provisional?, replaces?}` (progressive tab; contract in `pipeline/tab_ledger.py`, API-REFERENCE.md#tab_ready). `position` = index in the response's tab order, exact when `final` (an estimate before); `final: true` = the tab's last emission this run, exactly one per tab of the response; `provisional: true` = the plan-done Moments placeholder, never final, replaced by id (or by the tab whose `replaces` names it). A corrected `final` can follow for the same id — the last final wins. A tab id can arrive several times — clients replace by id and sort by `position`. With the field groups (default) a tab first arrives as a **preview** once its group(s) landed (`final: false`, without `crossTabLinks` / `attachments`, at its plan-order position) and goes final in the closing re-emit, the overview last. Cached serves send every tab once, `final: true` |
+| `tab_ready` | `{id, label, emoji, component, props, goal?, crossTabLinks?, attachments?, degradedFrom?, position, final, provisional?, replaces?}` (progressive tab; contract in `pipeline/tab_ledger.py`, API-REFERENCE.md#tab_ready). `position` = index in the response's tab order, exact when `final` (an estimate before); `final: true` = the tab's last emission this run, exactly one per tab of the response; `provisional: true` = the plan-done Moments placeholder, never final, replaced by id (or by the tab whose `replaces` names it). A corrected `final` can follow for the same id — the last final wins. A tab id can arrive several times — clients replace by id and sort by `position`. With the field groups (default) a tab first arrives as a **preview** once its group(s) landed (`final: false`, without `crossTabLinks` / `attachments`, at its plan-order position) and goes final in the closing re-emit, the overview last. A moment fill waiting for the 720p download (output-quality 3.7) sends the moment tabs' final after `complete`, before `done`. Cached serves send every tab once, `final: true` |
 | `complete` | `{tabCount, tabIds, processingTimeMs, degraded}` (v2 completion; `tabIds` = the final tab order — a tab streamed but missing here was withdrawn) |
 | `error` | `{message, code?}` — `code` is an `ErrorCode` value (see docs/ERROR-HANDLING.md) |
 | `token` | `{phase, token}` — legacy token streaming; protocol slot kept, no current emitter |
@@ -1009,13 +1201,13 @@ no lock) are swept by `scripts/expire_leaked_pipeline_streams.py` (dry run by de
 | Finance modifier costs-only | `costs[]` + `savingTips[]`, no budget | Primary domain owns budget structure |
 | Field-group extraction (v9) | The fields the reconciled tabs read, cut into ≤ 5 text groups + 1 visual group per chunk; text groups fire at plan-done, the visual group at frames-done; tabs stream per group | Extraction no longer waits for frames, the first tabs arrive per group, and no output tokens go to fields no tab reads. `EXTRACTION_PARALLEL=false` keeps the single call (by word count: single / overflow / chunked) as the rollback lever |
 | Category fallback | Map video category to content tag | Safety net when triage confidence < 0.6 |
-| Shared domain config | `@vie/shared` `domains.json` via Docker mount | Single source of truth for domains, tabs, gradients, categories, **planner-selectable `components`**, and the **`densityGates`** table across TS + Python. `plan.txt` `{valid_components}` + `component_toolkit.txt` `{density_gates}` are generated from it (no hardcoded prompt lists); `test_contract_parity.py` asserts the generated prompt matches config. NOTE: `densityGates` is advisory LLM-steering text — assembler enforcement (`_TAB_ITEM_CAPS`, per-assembler min/max, `density.py`) is independent. |
+| Shared domain config | `@vie/shared` `domains.json` via Docker mount | Single source of truth for domains, tabs, gradients, categories, **planner-selectable `components`**, and the **`densityGates`** table across TS + Python. `plan.txt` `{valid_components}` + `component_toolkit.txt` `{density_gates}` are generated from it (no hardcoded prompt lists); `test_contract_parity.py` asserts the generated prompt matches config. NOTE: `densityGates` is advisory LLM-steering text — assembler enforcement (`_TAB_ITEM_CAPS`, per-assembler min/max, `density.py`) is independent. The enforced blocks — `domainRequirements`, `playbooks` + `playbookAliases`, `quizPolicy`, `momentCapsByDuration`, `assemblyPolicy`, `measureUnits`, `injectedTabs`, `infoGridHosts`, `grouping` — are listed in DATA-MODELS.md. The summarizer and the worker read the file once per process (`domain_config._load_config` is cached; several modules bind its sets at import), so restart both after editing it — `PROMPT_SOURCE=disk` re-reads prompts, never the registry. |
 
 ---
 
 ## Output Schema
 
-The save (`phases/assembly.py:_result_document` → `repository.save_structured_result`,
+The save (`phases/assembly_save.py:result_document` → `repository.save_structured_result`,
 allowlisted keys) writes the current shape; older rows can still hold the v1 / v2 fields
 (`triage`, `output`, `assembledMeta`, `assembledTabs`), which the cached serve and the API
 read as fallbacks (Frontend Meta Resolution below). Field-level detail:
@@ -1038,7 +1230,7 @@ read as fallbacks (Frontend Meta Resolution below). Field-level detail:
         }
     ],
     "language": "en", "isRTL": False,
-    "pipelineVersion": "v10",                # packages/shared/src/config/pipeline-version.json
+    "pipelineVersion": "v11",                # packages/shared/src/config/pipeline-version.json
     "pipeline": {                           # the summarizer's own record of the run
         "triage": {...},                    # the triage_complete payload (reconciled tabs + evidence)
         "reconcile": [...],                 # every plan-parse / plan-done / frames-done tab decision
@@ -1353,7 +1545,7 @@ transcript) plus the compact final extraction (≤ 6,000 chars), whatever the le
 
 Model routing by stage (defaults from the pipeline-1min 4.0d A/B — rule: quality within
 noise first, then latency, then cost; evidence per call type in
-`dev/completed/pipeline-1min/gates/g4-model-ab.md` §Picks). The tier probe, description,
+pipeline-1min gate g4-model-ab §Picks). The tier probe, description,
 quiz and translation calls pass `use_fast_model=True` + `model_override` (fast-model
 calls: no cross-provider fallback); memory and extraction pass `model_override` alone —
 primary-model calls with an override, so the cross-provider fallback applies wherever
@@ -1369,7 +1561,7 @@ A setting left out of the environment keeps the compose / `config.py` default; t
 - Translation (output, title, RAG transcript): `LLM_TRANSLATION_MODEL` = gpt-6-luna
 - Frame vision (`frame_analyzer.analyze_frames_with_vision`, ≤ 5 parallel batches; its own provider and retry): `LLM_VISION_MODEL` = Sonnet 5.5 (empty → the primary model). History: routed to fast in Phase 1B / P3, reverted 2026-05-14 after a 5-frame spot-check (`scripts/spotcheck_frame_vision.py`) found `openai/gpt-4o-mini` was only ~20% cheaper *and* hallucinated OCR on dense-text frames; in 4.0d Haiku 5.5 labelled cooking frames `talking_head` (dropped as presenter filler), Sonnet 5.5 read the card text Sonnet 4.6 reads at half the wall time
 - AI chapter detection (`transcript_chunker._detect_chapters_with_ai`): the fast tier (`LLM_CHAPTER_DETECT_MODEL` is not passed by compose), scoped under its own `llm_feature_var.set("summarize:chapter_detect")` context so cost is attributed correctly in `llm_usage` (was previously absorbed by the outer `summarize:extraction` tag)
-- Faithfulness judge: `LLM_JUDGE_MODEL` = gpt-6-luna, reasoning off (20s, 1 retry; a fast-tier call with an override — blank = the fast tier in config.py only, under compose a blank line keeps gpt-6-luna). Rollback: `openai/gpt-4o-mini`. Informational (D22); the golden baseline's faithfulness was re-scored under it (`gates/g4.md` §10)
+- Faithfulness judge: `LLM_JUDGE_MODEL` = gpt-6-luna, reasoning off (20s, 1 retry; a fast-tier call with an override — blank = the fast tier in config.py only, under compose a blank line keeps gpt-6-luna). Rollback: `openai/gpt-4o-mini`. Informational (D22); the golden baseline's faithfulness was re-scored under it (`gates/g4.md` §10). The hero + quiz sample (2.4) uses the same model through the same stage (`faithfulness`): 20 s, one attempt per call
 - Extraction runs on `LLM_EXTRACTION_MODEL` = Sonnet 5.5 at effort low (empty → primary; a primary-model call with an override, like memory: the cross-provider fallback applies, P P F). The split path's group calls end their rules with the completeness rule (`extraction_group_rules.txt`, added once per run by `extraction_group_prompt.with_group_rules`; the `EXTRACTION_PARALLEL=false` call keeps today's bytes). A/B round 2: Sonnet 5.5 missed the fewest transcript-supported items and invented no details; Haiku 4.5 (the model before) invented steps, quantities and code snippets. The fast-first path and the synthesis-fed retry were removed in pipeline-1min 1c.3/1c.5.
 
 ### Prompt Safety Net (`llm_retry.py`)

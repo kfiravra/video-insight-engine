@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.config import settings
 from src.models.pipeline_types import EnrichmentData, PlanResult, QuizQuestion
 from src.services.pipeline import pipeline_timing
 from src.services.pipeline.phases import enrichment as enrichment_phase
@@ -36,6 +37,13 @@ _QUESTION = QuizQuestion.model_validate(
 )
 
 
+@pytest.fixture(autouse=True)
+def _flag_off_quiz(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests pin the flag-off quiz call (``enrich_quiz``); quiz v2 rides the same
+    phase and is covered by ``test_p2_1b_quiz_v2`` (output-quality 2.1b)."""
+    monkeypatch.setattr(settings, "QUIZ_V2_ENABLED", False)
+
+
 def _ctx(primary: str = "tech", extraction: dict | None = None) -> SimpleNamespace:
     plan = PlanResult.model_validate(
         {"primaryTag": primary, "contentTags": [primary], "tabs": [_QUIZ_TAB]}
@@ -51,6 +59,8 @@ def _ctx(primary: str = "tech", extraction: dict | None = None) -> SimpleNamespa
         enrichment_data=None,
         llm_service=MagicMock(),
         quiz_task=None,
+        video_data=SimpleNamespace(duration=600, title="t"),
+        memory=None,
     )
 
 
@@ -184,3 +194,19 @@ async def test_should_time_the_started_call_as_quiz_call(
     await _started(_ctx(), None)
 
     assert [phase["name"] for phase in recorder.phases] == [enrichment_phase.QUIZ_CALL_STEP]
+
+
+async def test_should_size_the_quiz_by_the_video_length_when_the_video_is_known() -> None:
+    ctx = _ctx()
+
+    _, enrich_quiz = await _run(ctx, None)
+
+    assert enrich_quiz.await_args.kwargs["duration_s"] == 600
+
+
+async def test_should_hand_the_hero_text_to_the_quiz_call_when_the_title_is_known() -> None:
+    ctx = _ctx()
+
+    _, enrich_quiz = await _run(ctx, None)
+
+    assert "t" in enrich_quiz.await_args.kwargs["hero"]

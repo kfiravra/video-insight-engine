@@ -1,4 +1,4 @@
-import { memo, useState, useMemo } from 'react';
+import { memo, useCallback, useState, useMemo } from 'react';
 import type { VIEResponse, TabEntry, TabAttachment } from '@vie/types';
 import { DisplaySection } from './DisplaySection';
 import { CrossTabLink } from './CrossTabLink';
@@ -10,15 +10,19 @@ import { useVideoPlayer } from '@/features/video-output/contexts/VideoPlayerCont
 import { FlowPlayer } from './FlowPlayer';
 import { detectFlowMode } from './flow-modes';
 import { ErrorBoundary } from '@/components/ui/error-boundary';
-import { EmojiMarker } from '@/components/vie';
-import { stripLeadingEmoji } from '@/lib/string-utils';
+import { CrossTabButton, EmojiMarker } from '@/components/vie';
 import { validateTabEntries } from '@/features/video-output/lib/tab-prop-schemas';
 import {
   COMPONENT_REGISTRY,
   resolveRenderer,
   type NavProps,
 } from './component-registry';
-import type { OverviewCrossTabLink } from './interactive/OverviewInteractive';
+import {
+  buildOverviewCrossTabLinks,
+  displayLabel,
+  resolveCrossLinks,
+  type ResolvedCrossLink,
+} from './cross-links';
 
 // Re-exported so the contract-parity test (and any external consumer) keeps
 // its import path after the registry moved to component-registry.tsx (6.2).
@@ -37,77 +41,40 @@ interface ComposableOutputProps {
   videoSummaryId?: string;
 }
 
-/** Component name → the props key holding its primary item list. Used by the
- *  Overview nav grid to surface "how many things are inside this tab". Kept as
- *  a single source of truth next to the renderers so new components only need
- *  to register their count-prop here. */
-const COUNT_PROP_BY_COMPONENT: Record<string, string> = {
-  // Current (post video-to-action overhaul) component set. Retired keys
-  // (quiz, timeline, clip_player, code_explorer, exercise_tracker, scenario,
-  // gallery, lyrics_player) were dropped in interactive-overhaul-v2 1D.
-  flash_deck: 'cards',
-  step_player: 'steps',
-  step_flow_canvas: 'steps',
-  checklist: 'items',
-  info_grid: 'items',
-  spot_explorer: 'spots',
-  moment_track: 'items',
-  budget: 'breakdown',
-  // Overhaul components
-  code_playground: 'snippets',
-  quiz_arena: 'questions',
-  packing_mission: 'items',
-  workout_room: 'exercises',
-  video_filmstrip: 'frames',
-  concept_canvas: 'concepts',
-  connect_canvas: 'pairs',
-  comparison_radar: 'comparisons',
-  lyrics_karaoke: 'sections',
-  claims_tracker: 'claims',
-  tier_list: 'items',
-  formation_diagram: 'positions',
-};
-
-/** Pull the most-meaningful item count out of an assembled tab's props.
- *  Returns undefined when the count is ambiguous — the nav card still renders
- *  without a number rather than guessing. */
-function inferItemCount(tab: TabEntry): number | undefined {
-  const props = tab.props ?? {};
-  // Comparison has no single "items" list — it's pros + cons + rows together.
-  if (tab.component === 'comparison') {
-    const pros = Array.isArray(props.pros) ? props.pros.length : 0;
-    const cons = Array.isArray(props.cons) ? props.cons.length : 0;
-    const rows = Array.isArray(props.comparisons) ? props.comparisons.length : 0;
-    const total = rows + pros + cons;
-    return total > 0 ? total : undefined;
-  }
-  const key = COUNT_PROP_BY_COMPONENT[tab.component];
-  if (!key) return undefined;
-  const value = props[key];
-  // moment_track historically also used `entries` — fall through when `items`
-  // is missing so assembler outputs that used the older shape still show a count.
-  if (!Array.isArray(value) && tab.component === 'moment_track') {
-    const entries = props.entries;
-    return Array.isArray(entries) ? entries.length : undefined;
-  }
-  return Array.isArray(value) ? value.length : undefined;
+interface CrossTabLinkRowProps {
+  link: ResolvedCrossLink;
+  onNavigateTab: (tabId: string) => void;
 }
 
-/** Build the cross-tab nav grid shown inside the Overview tab. Sources sibling
- *  tabs from the assembled response, drops the overview itself, and annotates
- *  each entry with an emoji + best-effort item count. */
-function buildOverviewCrossTabLinks(
-  allTabs: TabEntry[] | undefined,
-  activeTabId: string,
-): OverviewCrossTabLink[] {
-  if (!allTabs || allTabs.length === 0) return [];
-  const siblings = allTabs.filter((t) => t.id !== activeTabId && t.component !== 'overview');
-  return siblings.map((t) => ({
-    targetTab: t.id,
-    label: stripLeadingEmoji(t.label),
-    emoji: t.emoji || undefined,
-    count: inferItemCount(t),
-  }));
+/** One onward link with a stable click handler, so the memo()'d button
+ *  survives the 1 Hz `currentTime` re-renders of the output. */
+const CrossTabLinkRow = memo(function CrossTabLinkRow({ link, onNavigateTab }: CrossTabLinkRowProps) {
+  const handleClick = useCallback(() => onNavigateTab(link.targetTab), [onNavigateTab, link.targetTab]);
+  return <CrossTabButton label={link.label} reason={link.reason} onClick={handleClick} />;
+});
+
+/** A line as the summarizer's "never the goal" guard compares it (python
+ *  `_same_line`): inner whitespace collapsed, trailing `.!?` dropped, case-folded. */
+function lineKey(text: string): string {
+  return text.trim().replace(/\s+/g, ' ').replace(/[.!?]+$/, '').trimEnd().toLowerCase();
+}
+
+/** The tab's attachments without a summary_header that only repeats the goal.
+ *  Stored rows assembled before 0b.6 carry the goal as the header text; TabIntro
+ *  already prints it, so the goal shows once (R4). A header with content of its
+ *  own stays. */
+function withoutGoalEcho(
+  attachments: TabAttachment[] | undefined,
+  goal: string | undefined,
+): TabAttachment[] | undefined {
+  if (!attachments || !goal?.trim()) return attachments;
+  const goalKey = lineKey(goal);
+  const kept = attachments.filter((a) => {
+    const summary = a.props?.summary;
+    const echoesGoal = typeof summary === 'string' && lineKey(summary) === goalKey;
+    return !(a.component === 'summary_header' && echoesGoal);
+  });
+  return kept.length === attachments.length ? attachments : kept;
 }
 
 interface TabAttachmentsProps {
@@ -175,18 +142,14 @@ export const ComposableOutput = memo(function ComposableOutput({
     [tabs],
   );
 
-  // Memoize derived structures on `validatedTabs` so per-tab filtering and the
-  // Overview cross-tab nav don't allocate fresh arrays on every `currentTime`
-  // tick. This is what makes `memo()` on individual tab renderers actually hold.
-  const filteredCrossLinks = useMemo(() => {
-    const map = new Map<string, NonNullable<TabEntry['crossTabLinks']>>();
-    if (validatedTabs) {
-      for (const t of validatedTabs) {
-        map.set(t.id, (t.crossTabLinks ?? []).filter((l) => l.targetTab !== 'overview'));
-      }
-    }
-    return map;
-  }, [validatedTabs]);
+  // Memoize derived structures on `validatedTabs` so per-tab link resolution
+  // and the Overview cross-tab nav don't allocate fresh arrays on every
+  // `currentTime` tick. This is what makes `memo()` on individual tab
+  // renderers actually hold.
+  const resolvedCrossLinks = useMemo(
+    () => (validatedTabs ? resolveCrossLinks(validatedTabs) : new Map<string, ResolvedCrossLink[]>()),
+    [validatedTabs],
+  );
 
   const derivedOverviewLinks = useMemo(
     () => buildOverviewCrossTabLinks(validatedTabs ?? undefined, activeTab),
@@ -209,17 +172,18 @@ export const ComposableOutput = memo(function ComposableOutput({
     if (!tab) return null;
 
     const renderer = resolveRenderer(tab.component);
-    // Pull pre-filtered crossLinks from the memoized map. The Overview tab is
-    // filtered from the strip at the OutputRouter layer; legacy backend rules
-    // can still target "overview" and the parent-level filter drops those.
-    const crossLinks = filteredCrossLinks.get(tab.id) ?? [];
-    // Don't pass nextTab — ComposableOutput renders CrossTabLink after each tab.
-    // Passing nextTab causes duplicate "Next" buttons inside Celebration components.
+    const crossLinks = resolvedCrossLinks.get(tab.id) ?? [];
+    // One goal line per tab (R4): TabIntro prints it; a stored header that only
+    // repeats it is dropped.
+    const attachments = withoutGoalEcho(tab.attachments, tab.goal);
+    // Don't pass nextTab — ComposableOutput renders the onward links (the
+    // CrossTabLinkRow list) after each tab. Passing nextTab would duplicate
+    // the "Next" buttons inside Celebration components.
     const nav: NavProps = {
       onNavigateTab,
       onSeek: seekTo,
       tabId: tab.id,
-      tabLabel: tab.label,
+      tabLabel: displayLabel(tab),
       currentTime: playbackTime,
       allTabs: validatedTabs,
       videoId: videoSummaryId,
@@ -256,28 +220,19 @@ export const ComposableOutput = memo(function ComposableOutput({
         ) : (
           <>
             {tab.goal && <TabIntro goal={tab.goal} />}
-            <TabAttachments attachments={tab.attachments} slot="top" nav={nav} />
+            <TabAttachments attachments={attachments} slot="top" nav={nav} />
             <ErrorBoundary fallback={<div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">Failed to render this tab. Try refreshing the page.</div>}>
               {renderer
                 ? renderer(tab.props, nav)
                 : <DisplaySection data={tab.props} />}
             </ErrorBoundary>
-            <TabAttachments attachments={tab.attachments} slot="bottom" nav={nav} />
+            <TabAttachments attachments={attachments} slot="bottom" nav={nav} />
 
             {crossLinks.length > 0 && (
               <div className="flex flex-col gap-2 mt-2">
-                {crossLinks.map((link) => {
-                  const targetTabDef = validatedTabs.find((t: TabEntry) => t.id === link.targetTab);
-                  return (
-                    <CrossTabLink
-                      key={link.targetTab}
-                      tabId={link.targetTab}
-                      label={link.label}
-                      description={targetTabDef?.goal}
-                      onNavigate={onNavigateTab}
-                    />
-                  );
-                })}
+                {crossLinks.map((link) => (
+                  <CrossTabLinkRow key={link.targetTab} link={link} onNavigateTab={onNavigateTab} />
+                ))}
               </div>
             )}
           </>

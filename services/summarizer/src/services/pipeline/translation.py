@@ -13,6 +13,12 @@ takes about one small call's time and a large video is fully translated rather
 than capped), and applies the translations back into a deep copy that becomes
 the ``sourceLanguage`` artifact ({code, name, isRTL, tabs, meta}).
 
+A speaker's verbatim line (``translation_verbatim``: a found ``quote`` and any leaf of
+its card restating it, a verified interview ``question``) is already in the source
+language: it is never sent, and the English rendering beside it (``quoteEn`` /
+``questionEn``) is left out of the source-language copy (D12, output-quality 4.2). That
+English is written by the source→English pass over the same lines (``translation_quotes``, 4.6c).
+
 On any failure (LLM error, length mismatch, mirror detection): returns the
 input unchanged (no ``sourceLanguage`` key) so the FE simply renders no toggle.
 
@@ -41,29 +47,29 @@ from .translation_flat import (
     is_mirror,
     translate_flat_list,
 )
+from .translation_verbatim import ENGLISH_ONLY_KEYS, drop_english_only, is_verbatim_line
 
 if TYPE_CHECKING:
     from ...services.llm import LLMService
 
 logger = logging.getLogger(__name__)
 
-# Keys whose PRIMITIVE STRING values must NOT be translated.
-#
-# LEAF-ONLY semantics: the deny rule only applies when the value at the key
-# is a primitive string. Lists and dicts are always recursed, so container
-# keys with deny-listed names (e.g. a hypothetical ``warmup: [{...}]``) still
-# descend into their contents. The rule only blocks translation when the
-# named key directly identifies a leaf string.
+# Keys whose PRIMITIVE STRING values must NOT be translated. LEAF-ONLY: the rule
+# applies only when the value at the key is a string — lists and dicts are always
+# recursed, so a container under a deny-listed name (``warmup: [{...}]``) still is.
 _SKIP_KEYS: frozenset[str] = frozenset(
     {
-        # Structural identifiers / routing
+        # Structural identifiers / routing. ``degradedFrom`` names a component;
+        # ``primaryTag`` picks the page's domain (translated, the web reads learning).
         "id",
         "component",
+        "degradedFrom",
         "language",
         "targetTab",
         "type",
         "layout",
         "platform",
+        "primaryTag",
         # Asset references — URLs, S3 keys, raw code
         "url",
         "thumbnailUrl",
@@ -80,40 +86,41 @@ _SKIP_KEYS: frozenset[str] = frozenset(
         "correctIndex",
         "difficulty",
         "mood",
-        # ``videoTitle`` is the raw YouTube metadata title — source-language even in
-        # the English-canonical meta. The translation phase handles it explicitly in
-        # both directions via ``_translate_title``, so the batch walker skips it;
-        # otherwise a source-language string gets mislabeled as English, round-
-        # tripped for nothing, and pollutes mirror detection.
+        # An exchange row's question check ("verified" / "translated", 4.0 c / 4.1).
+        "questionStatus",
+        # Enums the web matches in English (pC review): a translated claim ``status``
+        # fails the claims schema and the source view's tab fell to display_section
+        # (S15); so would a verdict ``badge``, a row's ``winner``, an attachment's
+        # ``slot`` / ``size``, a tip's ``style`` and a grid's / deck's ``mode``.
+        "status",
+        "badge",
+        "winner",
+        "slot",
+        "size",
+        "style",
+        "mode",
+        # The raw YouTube title, source-language even in the English meta: the phase
+        # translates it both ways (``_translate_title``), so it never pollutes mirror detection.
         "videoTitle",
-        # ``sets`` is always a number in the fitness schema. ``reps``/``rest``/
-        # ``duration`` are deliberately ABSENT — the fitness schema emits prose
-        # at these keys (e.g. ``"30 שניות"``, ``"AMRAP"``, ``"until failure"``),
-        # so they must flow through translation or English exercise cards
-        # render mixed-language strings.
+        # Always a number in the fitness schema. ``reps`` / ``rest`` / ``duration``
+        # are deliberately ABSENT: the schema writes prose there ("30 שניות", "AMRAP").
         "sets",
-        # Vision-LLM output kept verbatim — vision is prompted in English so its
-        # caption/evidence strings are already English regardless of source
-        # language. ``frameOcr`` is deliberately ABSENT: Tesseract output is the
-        # original on-screen language (e.g. Hebrew screen text in a Hebrew video),
-        # so it must flow through the translator like any other prose. ``sceneType``
-        # is an enum-shape token ("talking_head", "screen_capture", …).
+        # Vision output, prompted in English (a scene type is an enum token). ``frameOcr``
+        # is deliberately ABSENT: OCR is the on-screen language, translated as prose.
         "frameCaption",
         "frameSceneType",
+        "sceneType",
         "frameEvidence",
     }
 )
 
-# Min collected-string length (after strip). Skips numerics, single tokens,
-# 1-3 char strings that are usually labels in another vocabulary (status,
-# enum-ish remnants, etc.).
+# Min collected-string length (after strip): skips numerics, single tokens and
+# 1-3 char strings, usually labels in another vocabulary (enum-ish remnants).
 _MIN_TRANSLATABLE_LEN = 3
 
-# Runaway guard so a pathological payload (deeply nested or accidentally-large
-# blob in props) can't blow the recursion stack. Set well above any real
-# assembled-tab shape (a rich long video carries a few hundred strings); the
-# LLM call is kept small by batching, not by capping collection, so nothing is
-# silently dropped. 32 levels is far beyond any real shape (~6 levels typical).
+# Runaway guard so a pathological payload (deeply nested or an oversized blob in
+# props) can't blow the recursion stack: far above any real shape (a few hundred
+# strings, ~6 levels). Batching keeps the call small, so nothing is dropped.
 _MAX_COLLECTED_STRINGS = 5000
 _MAX_RECURSION_DEPTH = 32
 
@@ -138,6 +145,13 @@ JsonPath = tuple[str | int, ...]
 # ─── Walker ──────────────────────────────────────────────────────────────────
 
 
+def _kept_as_is(parent: dict[str, Any], key: str, value: str) -> bool:
+    """A string leaf the walker never sends to translation."""
+    if key in _SKIP_KEYS or key in ENGLISH_ONLY_KEYS:
+        return True
+    return is_verbatim_line(parent, key, value)
+
+
 def _collect_strings(
     obj: Any,
     path: JsonPath,
@@ -147,7 +161,8 @@ def _collect_strings(
     """Recursively append ``(path, value)`` for every translatable string.
 
     Container nodes (list/dict) are ALWAYS recursed. The deny-list applies
-    ONLY when the value at a key is a primitive string — see ``_SKIP_KEYS``.
+    ONLY when the value at a key is a primitive string — see ``_SKIP_KEYS``; so
+    do D12's verbatim lines and their English renderings (``_kept_as_is``).
     Bounded by ``_MAX_RECURSION_DEPTH`` and ``_MAX_COLLECTED_STRINGS`` so a
     runaway payload can't waste a 90s LLM call or stack-overflow. Truncation
     is observed by ``translate_to_source`` after the walk completes, since
@@ -167,7 +182,7 @@ def _collect_strings(
     if isinstance(obj, dict):
         for key, value in obj.items():
             # Leaf-only: skip only when the deny-listed key holds a string.
-            if key in _SKIP_KEYS and isinstance(value, str):
+            if isinstance(value, str) and _kept_as_is(obj, key, value):
                 continue
             _collect_strings(value, path + (key,), pairs, depth + 1)
 
@@ -210,6 +225,26 @@ async def _call(
     return result
 
 
+def _kept_or_salvaged(
+    batch: list[str], result: tuple[list[str], list[bool]] | list[str] | BaseException | None
+) -> tuple[list[str], list[bool]]:
+    """``batch``'s ``(strings, salvaged_mask)`` from its call's ``result`` — a batch's
+    pair or a half's translated list. A failed call (None) or one that raised keeps the
+    batch's English, salvaged."""
+    if isinstance(result, tuple):
+        return result
+    if isinstance(result, list):
+        return result, [False] * len(result)
+    if isinstance(result, BaseException):
+        logger.warning(
+            "Translation batch of %d strings raised %s: %s — kept as English",
+            len(batch),
+            type(result).__name__,
+            result,
+        )
+    return batch, [True] * len(batch)
+
+
 async def _translate_or_salvage(
     llm_service: LLMService,
     batch: list[str],
@@ -239,19 +274,16 @@ async def _translate_or_salvage(
     mid = len(batch) // 2
     halves_src = (batch[:mid], batch[mid:])
     halves_res = await asyncio.gather(
-        *(_call(llm_service, half, source_language, target_language, slots) for half in halves_src)
+        *(_call(llm_service, half, source_language, target_language, slots) for half in halves_src),
+        return_exceptions=True,
     )
     out: list[str] = []
     salvaged_mask: list[bool] = []
-    salvaged = 0
     for half_src, half_res in zip(halves_src, halves_res):
-        if half_res is not None:
-            out.extend(half_res)
-            salvaged_mask.extend([False] * len(half_res))
-        else:
-            out.extend(half_src)
-            salvaged_mask.extend([True] * len(half_src))
-            salvaged += len(half_src)
+        chunk, chunk_mask = _kept_or_salvaged(half_src, half_res)
+        out.extend(chunk)
+        salvaged_mask.extend(chunk_mask)
+    salvaged = sum(salvaged_mask)
     if salvaged:
         logger.warning(
             "Translation salvaged %d/%d strings as English after batch retry",
@@ -261,19 +293,50 @@ async def _translate_or_salvage(
     return out, salvaged_mask
 
 
-async def _translate_in_batches(
+async def _all_batches(
+    llm_service: LLMService,
+    batches: list[list[str]],
+    source_language: str,
+    target_language: str,
+) -> tuple[list[str], list[bool]]:
+    """Every batch through ``_translate_or_salvage``, concatenated in order. Every batch
+    is awaited: one that raises costs its own strings, kept as English, never its
+    siblings' (left running, unawaited and billed, when gather re-raised — pC review)."""
+    # Each call takes a slot, not each batch: a batch retrying as two halves
+    # holds none while it waits, so retries never push past the cap.
+    slots = asyncio.Semaphore(_MAX_CONCURRENT_TRANSLATION_BATCHES)
+    results = await asyncio.gather(
+        *(
+            _translate_or_salvage(llm_service, batch, source_language, target_language, slots)
+            for batch in batches
+        ),
+        return_exceptions=True,
+    )
+    out: list[str] = []
+    salvaged_mask: list[bool] = []
+    for batch, result in zip(batches, results):
+        chunk, chunk_mask = _kept_or_salvaged(batch, result)
+        out.extend(chunk)
+        salvaged_mask.extend(chunk_mask)
+    return out, salvaged_mask
+
+
+async def translate_in_batches(
     llm_service: LLMService,
     strings: list[str],
     source_language: str,
     target_language: str,
 ) -> tuple[list[str], list[bool]] | None:
-    """Translate ``strings`` in concurrent size-bounded batches, concatenated in order.
+    """Translate ``strings`` in concurrent size-bounded batches, concatenated in order
+    (the output into the source language here; the verbatim lines into English,
+    ``translation_quotes``).
 
     Resilient to a single bad batch: a batch that fails (LLM error or a count
     mismatch) is retried once split in half, and any half that still fails falls
-    back to its English source strings — a mostly-translated source-language
-    surface is far better than none (the previous all-or-nothing behaviour
-    discarded the entire ``sourceLanguage`` block on one truncated batch).
+    back to its English source strings, as does a batch whose call raises
+    (``_all_batches``) — a mostly-translated source-language surface is far
+    better than none (the previous all-or-nothing behaviour discarded the
+    entire ``sourceLanguage`` block on one truncated batch).
 
     Returns ``(strings, salvaged_mask)`` — the translated strings (English in
     salvaged positions) and a per-string mask where ``True`` marks a salvaged
@@ -285,20 +348,7 @@ async def _translate_in_batches(
     if not strings:
         return [], []
     batches = char_batches(strings, TRANSLATION_BATCH_CHARS, _MAX_TRANSLATION_BATCH)
-    # Each call takes a slot, not each batch: a batch retrying as two halves
-    # holds none while it waits, so retries never push past the cap.
-    slots = asyncio.Semaphore(_MAX_CONCURRENT_TRANSLATION_BATCHES)
-    results = await asyncio.gather(
-        *(
-            _translate_or_salvage(llm_service, batch, source_language, target_language, slots)
-            for batch in batches
-        )
-    )
-    out: list[str] = []
-    salvaged_mask: list[bool] = []
-    for chunk, chunk_mask in results:
-        out.extend(chunk)
-        salvaged_mask.extend(chunk_mask)
+    out, salvaged_mask = await _all_batches(llm_service, batches, source_language, target_language)
     if all(salvaged_mask):
         return None  # nothing actually translated — let the caller skip the toggle
     if len(out) != len(strings):
@@ -354,7 +404,7 @@ async def translate_to_source(
         target_lang,
     )
 
-    batched = await _translate_in_batches(llm_service, originals, "en", target_lang)
+    batched = await translate_in_batches(llm_service, originals, "en", target_lang)
     if batched is None:
         logger.warning(
             "Translation failed — returning input unchanged (no sourceLanguage)",
@@ -366,7 +416,7 @@ async def translate_to_source(
     # strings are their English originals by construction, so including them would
     # inflate the mirror ratio and could discard a genuinely-translated surface
     # just because part of it was salvaged. At least one non-salvaged string
-    # exists here (else _translate_in_batches returned None).
+    # exists here (else translate_in_batches returned None).
     mirror_originals = [o for o, sal in zip(originals, salvaged_mask) if not sal]
     mirror_translations = [t for t, sal in zip(translations, salvaged_mask) if not sal]
     if is_mirror(mirror_originals, mirror_translations):
@@ -381,6 +431,7 @@ async def translate_to_source(
     translated = copy.deepcopy(output)
     for (path, _), value in zip(pairs, translations):
         _set_at_path(translated, path, value)
+    drop_english_only(translated)
     if isinstance(translated.get("meta"), dict):
         translated["meta"]["language"] = target_lang
         translated["meta"]["isRTL"] = is_rtl(target_lang)

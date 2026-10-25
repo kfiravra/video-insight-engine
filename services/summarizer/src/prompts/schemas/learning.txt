@@ -12,6 +12,20 @@ Extract structured educational content.
       "timestamp": null
     }
   ],
+  "keyIdeas": [
+    {
+      "claim": "The idea as the speaker argues it — one full sentence a reader could disagree with",
+      "why": "The reason or mechanism the speaker gives for it, 1-2 sentences with the names and numbers used — never the claim reworded; \"Stated without a reason\" when they give none",
+      "quote": "The speaker's own words that carry the claim, verbatim, at most 25 words — or null",
+      "timestamp": null,
+      "section": "Short name of the part of the video the idea belongs to",
+      "kind": "thesis | argument | announcement | number | story | ask | disagreement",
+      "speaker": "Who holds the idea — only when more than one person speaks (a podcast, a panel), else null",
+      "figure": {"value": "The figure as the speaker says it (\"99 %\", \"150,000 lines\")", "label": "What it measures, 2-5 words (\"less backend CPU\")"}
+    }
+  ],
+> UI: Key ideas → spot cards (claim, why, quote, seek chip) grouped by section; the kind is the card's badge, and stamped figures also feed the answer tab's numbers strip.
+> KEY IDEAS: for a talk, lecture or podcast — what the speaker wants you to believe or do. One distinct claim per item, never two merged; `timestamp` = the second the claim is said; `quote` = the exact words, never a paraphrase; `kind`: thesis (the video's central claim), argument, announcement, number (a figure used as evidence), story (an anecdote that carries a point), ask (an explicit request or imperative the speaker puts to the audience — "try this tonight" — its `quote` the words that ask; a practice the speaker describes or recommends by example is argument or story), disagreement (an interview: where host and guest differ or one pushes back — speaker = who pushes back, why = both sides, quote = the pushback). `figure` only for kind number — the one figure the claim turns on, as said — else null; it becomes a tile of the numbers strip. keyPoints stays for an explainer that teaches facts.
   "concepts": [
     {
       "name": "Term as the speaker uses it",
@@ -20,6 +34,7 @@ Extract structured educational content.
       "example": "Example from the video or null",
       "analogy": "Analogy from the video or null",
       "group": "Short thematic group this concept belongs to (e.g. Foundations / Mechanics / Applications)",
+      "timestamp": null,
       "connections": [
         {"to": "EXACT name of another concept", "type": "causes | requires | contrasts | partOf | relatesTo"}
       ]
@@ -28,6 +43,7 @@ Extract structured educational content.
 > UI: Concepts → ConceptCanvas tiered graph explorer (grouped lanes + typed edges) when connections are populated; otherwise falls back to FlashDeck flip cards.
 > CONNECTIONS: list the 0-3 `connections` the speaker draws from each concept to other concepts in this same `concepts` array. Each connection is an object: `to` is the EXACT NAME of the other concept, `type` is the relationship the speaker draws — `causes`/`requires` (X drives or depends on Y), `contrasts` (X is opposed to / a trade-off against Y), `partOf` (X is a component of Y), or `relatesTo` (loose association). Never invent a link to fill the canvas: when the speaker draws none for a concept, leave its array empty.
 > GROUPING: assign every concept a short `group` label — aim for 2-5 thematic groups across the whole list (e.g. Foundations / Mechanics / Applications). When the video is richer, group tightly rather than listing more disconnected terms.
+> TIMESTAMP: every concept carries `timestamp` = the second the speaker first explains it (an integer), so the reader can jump to the explanation.
   "takeaways": [
     "Actionable conclusion starting with a verb: Use..., Implement..., Avoid..."
   ],
@@ -35,10 +51,24 @@ Extract structured educational content.
     {
       "time": "M:SS or H:MM:SS",
       "seconds": 0,
-      "label": "Descriptive label for this moment"
+      "label": "Short title of the moment — what happens, never the chapter name",
+      "description": "What was established here, 1-2 sentences: the claim, decision or result, with its names and numbers",
+      "quote": "The speaker's own line that carries it, verbatim, at most 25 words — or null"
     }
   ],
-> UI: Timestamps → MomentTrack items (navigation points — no endSeconds). Fill seconds for playback jump links.
+> UI: Timestamps → MomentTrack items (no endSeconds): each row shows the label, what was established and the quote; seconds drives the jump link.
+> MOMENTS: what was established at each beat of the video, never a list of chapter jumps. `description` is required — a moment you cannot describe is not a moment; `quote` only where the moment is a claim in the speaker's words.
+  "claims": [
+    {
+      "claim": "A checkable claim the speaker makes — a fact, figure or prediction, stated plainly",
+      "source": "Who makes it, as the video attributes it — or null",
+      "status": "stated | supported | contested",
+      "sourceCitation": "The evidence the video gives for or against it (a study, a figure, a demo), or null",
+      "quote": "The words that make the claim, verbatim, at most 25 words — no words, status null",
+      "timestamp": null
+    }
+  ],
+> CLAIMS: status says what the VIDEO does with the claim — stated (asserted, no evidence given), supported (the video gives evidence: name it in sourceCitation), contested (someone in the video disputes it or counter-evidence is given). Never judge truth yourself; never "verified" or "disputed". timestamp = the second the claim is made, quote = the words that make it — a status without both is not shown. source = null when the video names no one.
   "keyQuestion": "Central question this video answers",
   "summary": "2-3 sentence summary of the core teaching"
 }
@@ -48,8 +78,14 @@ Extract structured educational content.
   "keyPoints": [
     {"emoji": "🧠", "title": "Compound interest works both ways", "detail": "Not just savings — debt compounds too. A $5,000 credit card balance at 24% APR becomes $6,200 in one year without payments.", "timestamp": 145}
   ],
+  "keyIdeas": [
+    {"claim": "Paying off high-interest debt beats investing the same dollar", "why": "A 24% APR balance costs more each year than the 7% a typical index fund returns, so the payoff is a guaranteed 24% return.", "quote": "Every dollar on that card is losing you twenty-four cents a year.", "timestamp": 312, "section": "Debt first", "kind": "argument"}
+  ],
   "concepts": [
-    {"name": "Time value of money", "emoji": "💵", "definition": "A dollar today is worth more than a dollar tomorrow because you can invest it. The speaker uses the example: '$100 invested at 7% doubles in ~10 years.'", "example": "$100 invested at 7% doubles in ~10 years", "analogy": null, "group": "Foundations", "connections": [{"to": "Compound interest", "type": "causes"}]}
+    {"name": "Time value of money", "emoji": "💵", "definition": "A dollar today is worth more than a dollar tomorrow because you can invest it. The speaker uses the example: '$100 invested at 7% doubles in ~10 years.'", "example": "$100 invested at 7% doubles in ~10 years", "analogy": null, "group": "Foundations", "timestamp": 95, "connections": [{"to": "Compound interest", "type": "causes"}]}
+  ],
+  "timestamps": [
+    {"time": "5:12", "seconds": 312, "label": "Debt before investing", "description": "Paying off a 24% card beats a 7% index fund: the payoff is a guaranteed 24% return.", "quote": "Every dollar on that card is losing you twenty-four cents a year."}
   ]
 }
 
@@ -58,8 +94,9 @@ COMPLETENESS:
 
 RULES:
 - keyPoints teach one specific thing each — no filler
+- keyIdeas carry the speaker's argument: claim + why + quote + timestamp on every item; cover the whole video, the last minutes included
 - Concepts: only include what's actually explained in the video
 - Takeaways: be specific ("Use Redis for session storage to handle 10x more concurrent users")
-- Timestamps: cover introduction, topic changes, demos, conclusions
+- Timestamps: the beats that carry the video — the thesis, each turn of the argument, demos, the conclusion — each with what it established
 - Preserve speaker's terminology and examples exactly
 </domain_schema>

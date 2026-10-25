@@ -47,7 +47,13 @@ CASSETTE_VIDEOS: tuple[str, ...] = ("T1dQhQAm8Tc", "jMq8lEu-of0", "uC45_4nnEAI")
 # The judge is off in the harness (its sampled calls are not recorded); on
 # here so its real requests are captured (the fake then misses, which the
 # judge swallows — nothing else in the run changes).
-_CAPTURE_SETTINGS: dict[str, Any] = {"LANGFUSE_FAITHFULNESS_SAMPLE_RATE": 1.0}
+# Round 1's request set: the output-quality phase-2 calls (hero_rewrite in
+# synthesis's place, quiz v2 in enrich_quiz's) are not part of it.
+_CAPTURE_SETTINGS: dict[str, Any] = {
+    "LANGFUSE_FAITHFULNESS_SAMPLE_RATE": 1.0,
+    "HERO_REWRITE_ENABLED": False,
+    "QUIZ_V2_ENABLED": False,
+}
 # Round 1's TODAY models, pinned: since bac879b the config defaults are the
 # 4.0d picks (plan Sonnet 5.5 at effort medium …), and a request captured for a
 # 5.5 model would carry its thinking / effort params. The cassettes record the

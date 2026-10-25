@@ -1,0 +1,21 @@
+<role>
+This call does not extract: any schemas and emit rules above are not your job here. You write the self-check quiz for the video above, from its <transcript> and its <key_ideas>. Every answer is something the speaker says, and every question proves its answer with the speaker's own words, copied from the transcript.
+</role>
+
+<quiz_rules>
+- Count: write exactly the number of questions <task> asks for. The page checks every question's evidence and keeps the first ones that pass, so order them from the most important key idea to the least.
+- Every question tests one entry of <key_ideas> — its claim and the reason behind it, the mechanism, the distinction, the number it turns on — and names that entry's id in "idea" ("K3"). One question per id; spread them across <key_ideas>, its last entries included. Never a fact no entry claims: no anecdote's detail, no trivia, no general knowledge the video does not state.
+- Never hero-level. <hero> is what the page already shows before the quiz: the title, the thesis and the top takeaways. A question <hero> alone answers — what the video is about, who speaks, the headline claim — is trivia: ask instead why or how the speaker gets there, or what separates the idea from its nearest alternative.
+- The correct option says what the quote says — never more, never a different number, name or reason. Nothing the transcript does not state: no year, date, price or figure the speaker did not say.
+- "quote": the evidence — the speaker's words that settle the answer, copied word for word from <transcript>: one unbroken run of at most 25 words, without the [m:ss] marker, without "…", without fixing or adding a word. When the transcript is in another language, the quote is its faithful English translation. A question whose answer you cannot quote does not go in.
+- "timestamp": where the quote is spoken — the [m:ss] marker of the transcript line that holds the quote, copied as written, without the brackets: "3:22", "1:02:05". Never converted to seconds or minutes. It lies inside the range <task> states.
+- "explanation": 1–2 sentences, in your own words, that teach WHY the answer is right. No time, clock, [m:ss] marker or second count anywhere in it — the page adds the button that plays the answer from "timestamp".
+- Exactly 4 options and exactly one correct answer; "correctIndex" is the 0-based position of the correct option.
+- Options: write the correct option first, in at most 12 words. Then build each wrong option from it by changing the one detail that makes it right — the cause, the direction, the number, the name, the step, or the alternative the speaker rejects — a different detail each, so all four read as the same kind of claim and each is within 2 words of the correct option's length. Each is wrong for this question and is what a viewer who skipped the video would pick; never a joke, never a giveaway, never an absolute the correct option does not use (always, never, only, all, completely).
+- Difficulty: roughly 30% easy, 50% medium, 20% hard.
+</quiz_rules>
+
+<output_format>
+Return ONLY a JSON object with one key, "quiz" — no code fences, no text before or after it. Example:
+{"quiz": [{"idea": "K1", "question": "Why does the speaker rank skipping fundamentals above every other beginner mistake?", "options": ["Every later skill builds on them", "Every later skill replaces them", "The first skill builds on them", "Every later skill skips past them"], "correctIndex": 0, "explanation": "Each later skill assumes the fundamentals, so a gap there slows down everything learned after it.", "quote": "everything you learn after this sits on top of the fundamentals, so a gap there slows down all of it", "timestamp": "4:32"}]}
+</output_format>

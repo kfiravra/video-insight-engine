@@ -160,10 +160,22 @@ class TestOneGroupFailsTwice:
 # ─── Fallbacks and side reads ───
 
 
+# A tab plans on project, so project.steps is requested as food.steps' stand-in —
+# since output-quality 1.7 a sibling is asked for only inside a planned domain.
+_FOOD_AND_PROJECT_TABS = [
+    *_FOOD_TABS,
+    {"id": "tools", "label": "Tools", "component": "checklist", "dataSource": "project.tools"},
+]
+
+
 @pytest.fixture
 async def sibling_landed() -> SimpleNamespace:
     """food.steps fails; its registry sibling project.steps lands in the project group."""
-    return await _food_run(Model(garbled=frozenset({"food.steps"})), tags=("food", "project"))
+    return await _food_run(
+        Model(garbled=frozenset({"food.steps"})),
+        tags=("food", "project"),
+        tabs=_FOOD_AND_PROJECT_TABS,
+    )
 
 
 class TestSiblingLanded:
@@ -172,8 +184,12 @@ class TestSiblingLanded:
     ) -> None:
         assert "steps" in _saved_ids(sibling_landed)
 
-    async def test_should_drop_no_tab(self, sibling_landed: SimpleNamespace) -> None:
-        assert _dropped(sibling_landed) == []
+    async def test_should_drop_only_the_contentless_tab(
+        self, sibling_landed: SimpleNamespace
+    ) -> None:
+        # The fake answers project.tools with label-less items: since output-quality
+        # 2.0 b a tab without content never ships (it shipped two blank rows before).
+        assert [tab_id for tab_id, _ in _dropped(sibling_landed)] == ["tools"]
 
     async def test_should_still_mark_the_run_degraded(
         self, sibling_landed: SimpleNamespace
@@ -242,13 +258,15 @@ class TestKeptMomentTabOnAnInactiveDomain:
 
         assert (complete["degraded"], bool(kept_moments.saved.get("degraded"))) == (False, False)
 
-    async def test_should_ship_the_tab_from_the_moment_fallback_when_the_video_has_chapters(
+    async def test_should_drop_the_tab_even_with_chapters_when_the_steps_are_the_timeline(
         self, kept_moments_with_chapters: SimpleNamespace
     ) -> None:
+        """D6 (output-quality 0b.2): a recipe navigates by its steps, so no Moments tab —
+        the chapter fallback never ships one either."""
         run = kept_moments_with_chapters
         dropped_ids = [tab_id for tab_id, _ in _dropped(run)]
 
-        assert ("moments" in _saved_ids(run), "moments" in dropped_ids) == (True, False)
+        assert ("moments" in _saved_ids(run), "moments" in dropped_ids) == (False, True)
 
 
 # ─── Every group fails ───
@@ -346,4 +364,7 @@ class TestPlanFailure:
     async def test_should_take_no_reconcile_action_on_the_fallback_plan(self, tag: str) -> None:
         ctx, _ = await _after_failed_plan(tag)
 
-        assert ctx.plan_result is not None and ctx.plan_result.reconcile == []
+        # Only the R6 fold (output-quality 1.6) may touch it: a default info_grid joins
+        # the default tab whose question it answers.
+        assert ctx.plan_result is not None
+        assert [r for r in ctx.plan_result.reconcile if r["action"] != "folded"] == []

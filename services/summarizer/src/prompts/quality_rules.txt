@@ -3,6 +3,7 @@ Data accuracy:
 - If the speaker lists 8 items, include all 8. Count them.
 - Preserve analogies, examples, and teaching tools — they are content, not decoration.
 - Extract only what the transcript says. Do not invent, estimate, or assume.
+- Never invent a number: a duration, rest time, quantity, count or score the speaker did not state stays null; a text field keeps the words as said ("give it a sec" stays "give it a sec", never "rest 10 minutes").
 - If the speaker is vague ("it costs a bit"), note the vagueness: "cost: ~unknown, described as 'a bit'"
 - Approximations: "about 20 minutes" → "~20 minutes", not "20 minutes"
 

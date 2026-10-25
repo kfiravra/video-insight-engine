@@ -20,9 +20,19 @@ export function isValidOutputType(value: string): value is OutputType {
 
 export interface SynthesisResult {
   tldr: string;
+  /** Each a claim closing with the `[m:ss]` (`[h:mm:ss]`) where it is said, when known. */
   keyTakeaways: string[];
   masterSummary: string;
   seoDescription: string;
+  /** The hero rewrite's own fields (output-quality 2.2) — absent on the synthesis
+   *  path and on older rows. `brief` is also sent as `masterSummary`. */
+  brief?: string;
+  /** Who gets what from watching (≤ 20 words). */
+  worthItFor?: string;
+  /** What someone might come for that the video does not contain (≤ 20 words). */
+  skipIf?: string;
+  /** Minutes to read the shipped page, counted by code once the tabs are final. */
+  readingMinutes?: number;
 }
 
 /**
@@ -37,7 +47,41 @@ export function filledSynthesisFields(synthesis: Partial<SynthesisResult>): Part
   if (synthesis.keyTakeaways?.length) filled.keyTakeaways = synthesis.keyTakeaways;
   if (synthesis.masterSummary) filled.masterSummary = synthesis.masterSummary;
   if (synthesis.seoDescription) filled.seoDescription = synthesis.seoDescription;
+  if (synthesis.brief) filled.brief = synthesis.brief;
+  if (synthesis.worthItFor) filled.worthItFor = synthesis.worthItFor;
+  if (synthesis.skipIf) filled.skipIf = synthesis.skipIf;
+  if (synthesis.readingMinutes) filled.readingMinutes = synthesis.readingMinutes;
   return filled;
+}
+
+/** The hero rewrite's own synthesis fields — a final emission without one clears it. */
+export const SYNTHESIS_HERO_KEYS = ['brief', 'worthItFor', 'skipIf', 'readingMinutes'] as const;
+
+const SYNTHESIS_FIELD_KEYS = [
+  'tldr',
+  'keyTakeaways',
+  'masterSummary',
+  'seoDescription',
+  ...SYNTHESIS_HERO_KEYS,
+] as const satisfies readonly (keyof SynthesisResult)[];
+
+function copyCarried<K extends keyof SynthesisResult>(
+  from: Partial<SynthesisResult>,
+  to: Partial<SynthesisResult>,
+  key: K,
+): void {
+  if (from[key] !== undefined) to[key] = from[key];
+}
+
+/**
+ * Every synthesis field an emission carries, empties included — what the
+ * `final` (corrected) superset replaces the consumer's copy with, so a field
+ * the late-group scrub emptied clears instead of keeping the earlier text.
+ */
+export function carriedSynthesisFields(synthesis: Partial<SynthesisResult>): Partial<SynthesisResult> {
+  const carried: Partial<SynthesisResult> = {};
+  for (const key of SYNTHESIS_FIELD_KEYS) copyCarried(synthesis, carried, key);
+  return carried;
 }
 
 // ─────────────────────────────────────────────────────

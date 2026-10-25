@@ -22,10 +22,12 @@ from .assemblers_primary import (
     assemble_comparison,
     assemble_step_player,
 )
+from .derived_guard import anchor_seconds
 from .normalizers import (
     _normalize_quiz_question,
     _normalize_scenario_item,
 )
+from .sampling import concept_richness, rank_sample
 
 logger = logging.getLogger(__name__)
 
@@ -169,8 +171,10 @@ def assemble_concept_canvas(
         return None
 
     if len(concepts) > _CONCEPT_CANVAS_MAX:
+        # Rank-sampled by richness in the original order (R9): the closing
+        # concepts of a long video survive, not just the first 30.
         logger.info("concept_canvas: capping %d concepts to %d", len(concepts), _CONCEPT_CANVAS_MAX)
-        concepts = concepts[:_CONCEPT_CANVAS_MAX]
+        concepts = rank_sample(concepts, _CONCEPT_CANVAS_MAX, concept_richness)
 
     # Validate connections against the surviving concept names (case-insensitive),
     # canonicalize the `to` casing, and drop hallucinated / self references.
@@ -301,38 +305,39 @@ def assemble_quiz_arena(
     questions: list[dict] = []
     for item in data:
         normalized = _normalize_quiz_question(item)
-        if normalized is None:
-            # Try scenario shape: a scenario item with options[].correct
-            scenario = _normalize_scenario_item(item) if isinstance(item, dict) else None
-            if scenario is None:
-                continue
-            opts = scenario.get("options") or []
-            if not isinstance(opts, list) or not opts:
-                continue
-            correct_idx = next(
-                (i for i, opt in enumerate(opts) if isinstance(opt, dict) and opt.get("correct")), 0
-            )
-            explanation = ""
-            for opt in opts:
-                if isinstance(opt, dict) and opt.get("correct") and opt.get("explanation"):
-                    explanation = str(opt["explanation"])
-                    break
-            questions.append(
-                {
-                    "question": scenario.get("question", ""),
-                    "options": [
-                        str(opt.get("text") or "") for opt in opts if isinstance(opt, dict)
-                    ],
-                    "correctIndex": correct_idx,
-                    "explanation": explanation,
-                    "kind": "scenario",
-                }
-            )
-        else:
-            questions.append(normalized)
+        question = normalized if normalized is not None else _scenario_question(item)
+        if question is not None:
+            questions.append(question)
     if not questions:
         return None
     return {"questions": questions}
+
+
+def _scenario_question(item: Any) -> dict | None:
+    """A scenario item (options[].correct) as an arena question; it keeps the item's
+    seek point like a standard question does (``anchor_seconds``)."""
+    scenario = _normalize_scenario_item(item) if isinstance(item, dict) else None
+    if scenario is None:
+        return None
+    opts = [opt for opt in scenario.get("options") or [] if isinstance(opt, dict)]
+    if not opts:
+        return None
+    correct_idx = next((i for i, opt in enumerate(opts) if opt.get("correct")), 0)
+    explanation = next(
+        (str(opt["explanation"]) for opt in opts if opt.get("correct") and opt.get("explanation")),
+        "",
+    )
+    question: dict[str, Any] = {
+        "question": scenario.get("question", ""),
+        "options": [str(opt.get("text") or "") for opt in opts],
+        "correctIndex": correct_idx,
+        "explanation": explanation,
+        "kind": "scenario",
+    }
+    timestamp = anchor_seconds(item)
+    if timestamp is not None:
+        question["timestamp"] = timestamp
+    return question
 
 
 def _normalize_packing_item(item: Any) -> dict | None:

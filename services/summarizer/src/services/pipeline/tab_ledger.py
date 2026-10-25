@@ -5,14 +5,17 @@ stamps ``position`` and ``final`` and remembers what was sent:
 
 - ``final: true`` — the tab's last emission this run: nothing later changes
   its content or its position. Every tab of the final response gets exactly
-  one, before ``complete``. Should a tab still change after it (a contract
-  slip, logged as an error), a corrected final follows for the same id — the
-  last final wins.
+  one, before ``complete`` — but a moment tab whose frames still wait for the
+  720p file (``frames_pending``, output-quality 3.7): its final follows
+  ``complete``, framed. Should a tab still change after it (a contract slip,
+  logged as an error), a corrected final follows for the same id — the last
+  final wins.
 - ``final: false`` — a later phase may still change the tab, so it comes
   again (same id): the quiz re-assembly can touch every tab (cross-tab links,
-  a quick_quiz attachment, the overview's tab count) and a late synthesis
-  patches the overview. ``provisional: true`` marks a placeholder built before
-  extraction (the plan-done Moments tab) — never final.
+  a quick_quiz attachment, the overview's tab count), a late synthesis
+  patches the overview, the deferred moment fill frames the moment tabs.
+  ``provisional: true`` marks a placeholder built before extraction (the
+  plan-done Moments tab) — never final.
 - ``replaces`` — on the first ``tab_ready`` of the tab that takes the
   provisional tab's place under ANOTHER id (a required backfill or a demoted
   tab instead of the one the plan-done copy named): the provisional id. The
@@ -23,7 +26,8 @@ stamps ``position`` and ``final`` and remembers what was sent:
 
 :meth:`TabLedger.closing_events` is the final re-emit: after the last late
 patch, every tab of the final response not yet received final goes out final
-at its final position, in order. A tab streamed earlier that the final
+at its final position, in order (a tab still unsettled goes out non-final,
+and only when it changed). A tab streamed earlier that the final
 response no longer holds was withdrawn; ``complete.tabIds`` lists the final
 order, so a client drops whatever it holds beyond it.
 
@@ -46,6 +50,7 @@ from src.services.pipeline.pipeline_helpers import sse_event
 logger = logging.getLogger(__name__)
 
 _OVERVIEW = "overview"
+_MOMENTS = "moment_track"
 
 
 def _fingerprint(tab: dict) -> str:
@@ -82,6 +87,9 @@ class TabLedger:
     # Late phases still to land that change already-assembled tabs.
     quiz_pending: bool = False
     synthesis_pending: bool = False
+    # A moment fill waiting for the 720p file is joined after ``complete`` (output-quality
+    # 3.7, ``phases/late_moment_fill``): moment tabs stay non-final.
+    frames_pending: bool = False
     # Split extraction (3.6): extraction groups still landing — nothing final.
     groups_pending: bool = False
     # Split extraction: the closing re-emit sends the overview last.
@@ -91,10 +99,19 @@ class TabLedger:
     provisional: OpenProvisional | None = None
     superseding_id: str | None = None
 
-    def expect_late_changes(self, *, quiz: bool, synthesis: bool) -> None:
-        """Declare what the late group will change before the first tab goes out."""
+    def expect_late_changes(self, *, quiz: bool, synthesis: bool, frames: bool = False) -> None:
+        """Declare what the late group will change before the first tab goes out.
+
+        ``frames``: the moment fill waits for the 720p file after ``complete`` —
+        the moment tabs stay non-final until ``frames_landed``.
+        """
         self.quiz_pending = quiz
         self.synthesis_pending = synthesis
+        self.frames_pending = frames
+
+    def frames_landed(self) -> None:
+        """The deferred moment fill ran: the moment tabs go final at the next closing re-emit."""
+        self.frames_pending = False
 
     def expect_groups(self) -> None:
         """Tabs will stream per landed extraction group; the overview closes the run."""
@@ -122,6 +139,8 @@ class TabLedger:
 
     def _settled(self, tab: dict) -> bool:
         if self.quiz_pending or self.groups_pending:
+            return False
+        if self.frames_pending and tab.get("component") == _MOMENTS:
             return False
         return not (self.synthesis_pending and tab.get("component") == _OVERVIEW)
 
@@ -170,15 +189,23 @@ class TabLedger:
         logger.error("tab_ready contract: tab %r changed after its final emission", tab_id(tab))
         return False
 
+    def _sent_unsettled(self, tab: dict, position: int) -> bool:
+        """A tab that cannot go final yet whose last emission already carried it, here."""
+        if self._settled(tab):
+            return False
+        return self.sent.get(tab_id(tab)) == SentTab(position, _fingerprint(tab), False)
+
     def closing_events(self, tabs: list[dict]) -> list[str]:
         """The final re-emit: every tab of ``tabs`` not yet received final, in order, final.
 
         After per-group streaming the overview goes out last: it is the one tab
-        built from all the others and synthesis.
+        built from all the others and synthesis. While the moment frames are
+        pending the moment tabs go out non-final, and only when they changed;
+        once they landed the next call sends them final.
         """
         overview_last, self.overview_last = self.overview_last, False
         self.groups_landed()
-        self.expect_late_changes(quiz=False, synthesis=False)
+        self.expect_late_changes(quiz=False, synthesis=False, frames=self.frames_pending)
         self.track_response(tabs)
         order = list(enumerate(tabs))
         if overview_last:
@@ -186,7 +213,7 @@ class TabLedger:
         return [
             self.event(tab, position)
             for position, tab in order
-            if not self._received_final(tab, position)
+            if not self._received_final(tab, position) and not self._sent_unsettled(tab, position)
         ]
 
     def withdrawn(self, tabs: list[dict]) -> list[str]:

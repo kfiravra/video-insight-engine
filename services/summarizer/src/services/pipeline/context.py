@@ -13,17 +13,20 @@ from typing import TYPE_CHECKING, Any
 from src.services.pipeline.tab_ledger import TabLedger
 
 if TYPE_CHECKING:
+    from src.models.hero_types import HeroRewriteResult
     from src.models.memory_types import MemoryResult
     from src.models.pipeline_types import EnrichmentData, PlanResult
     from src.models.probe_types import TierProbe
     from src.repositories.mongodb_repository import MongoDBVideoRepository
     from src.services.llm import LLMService
     from src.services.media.hires_prefetch import LocalHiresSource, LocalLowresSource
+    from src.services.pipeline.merge_rank_apply import MergeRankAnswer
     from src.services.pipeline.pipeline_helpers import (
         PipelineTimer,
         TranscriptData,
         TranscriptTrail,
     )
+    from src.services.pipeline.quote_verify import QuoteIndex
     from src.services.pipeline.triage import TriageResult
     from src.services.pipeline.youtube_retry import RetryNotice
     from src.services.video.description_analyzer import DescriptionAnalysis
@@ -100,6 +103,9 @@ class PipelineContext:
     # True when the run gave up on that pass (its 720p file never landed in
     # time): the frames stay 360p, so the run is degraded (run_timing).
     hires_upgrade_abandoned: bool = False
+    # A long talking head skipped scene detection + vision (output-quality 3.5,
+    # FRAMES_SKIP_WHEN_NO_VISUAL_DEMO): the moment fill then frames every moment.
+    frames_skipped: bool = False
     scene_frames_for_assembly: list[dict] = field(default_factory=list)
     scene_frames_all: list[dict] = field(
         default_factory=list
@@ -162,6 +168,15 @@ class PipelineContext:
     # groups holding its domains' fields landed; assembly's late group awaits
     # it. None on today's path (the late group makes the call).
     quiz_task: asyncio.Task[EnrichmentData | None] | None = None
+    # Split path (output-quality 2.2): the hero rewrite, started once every text
+    # group landed on every chunk; assembly's synthesis slot awaits it. None on
+    # today's path (that slot makes the call) and with HERO_REWRITE_ENABLED off.
+    hero_task: asyncio.Task[HeroRewriteResult | None] | None = None
+    # Split path, chunked runs (output-quality 3.1): the merge_rank call, started
+    # beside the hero; the split extraction applies its answer to the final merge
+    # and keeps the outcome — pipeline.extraction._mergeRank.
+    merge_rank_task: asyncio.Task[MergeRankAnswer] | None = None
+    merge_rank_record: dict[str, Any] | None = None
     # Coverage metric: how far into the video the timestamped extraction
     # reaches vs. duration, plus dropped-batch counts. Surfaced into meta.
     extraction_coverage: dict[str, Any] | None = None
@@ -172,6 +187,10 @@ class PipelineContext:
     # Every tab_ready of the run (the provisional Moments tab at plan-done,
     # assembly's emissions, the final re-emit) — the tab emission contract.
     tab_ledger: TabLedger = field(default_factory=TabLedger)
+    # Moment tab id → frames a moment fill deferred past ``complete`` will add
+    # (output-quality 3.7); the filmstrip decision counts them. Empty when the
+    # fill runs in the late group.
+    pending_moment_frames: dict[str, int] = field(default_factory=dict)
 
     # Language support. The pipeline is English-canonical: ALL generation runs
     # in English, so ``language``/``is_rtl`` always describe the English-primary
@@ -195,6 +214,10 @@ class PipelineContext:
     # Shape: {"code", "name", "isRTL", "tabs", "meta", "synthesis"}.
     # None for English-source videos and for sound-only music-override videos.
     source_language: dict[str, Any] | None = None
+
+    # The transcript's quote index (output-quality 2.0 d), built once at the first
+    # assembly by ``quote_verify.run_quote_index``; every re-assembly reads it.
+    quote_index: QuoteIndex | None = None
 
     # Per-phase timing (phase_name → seconds)
     phase_times: dict[str, float] = field(default_factory=dict)

@@ -8,11 +8,16 @@ transcript with ``[m:ss]`` markers (pipeline-1min Appendix B.2).
 The template is cut at its ``<video>`` line and the part before it is rendered
 without any video input, so that static half is byte-identical for every video
 and can be served from the prompt cache across runs (``PlanPrompt``).
+
+``goal_rule_violation`` is the mechanical side of the prompt's ``<goal_rule>``
+(output-quality 1.10): a tab goal names what the viewer gets, never the
+component or the topic.
 """
 
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -26,6 +31,7 @@ from ...shared_config.domain_config import (
     render_requirement,
     render_valid_component_names,
     render_valid_datasources,
+    valid_components,
 )
 from ...utils.language_utils import ENGLISH_OUTPUT_DIRECTIVE
 from .assembly import STEP_FLOW_THRESHOLD
@@ -41,6 +47,59 @@ _MAX_HINT_CHARS = 300
 _NO_TRANSCRIPT = "(no transcript — plan from the title and description)"
 # The first per-video line of plan.txt; everything above it is static.
 _VIDEO_LINE = "\n<video>\n"
+
+# ─── Goal rule ──────────────────────────────────────────────────────────
+
+# Words a goal uses when it describes the surface instead of the viewer's
+# outcome ("A timeline of…", "Browsable cards…", "Drag concepts around…").
+_COMPONENT_WORDS = re.compile(
+    r"\b(?:timeline|canvas|checklist|grid|table|cards?|deck|flashcards|playground|"
+    r"tracker|list|map|diagram|radar|filmstrip|quiz|scrubber|browsable|searchable|"
+    r"browse|drag|scrub)\b",
+    re.IGNORECASE,
+)
+# Openers that announce a topic rather than an outcome ("Key points about…").
+_TOPIC_OPENER = re.compile(
+    r"^(?:key points|key ideas|highlights|everything|all|notes|an? (?:overview|summary))"
+    r" (?:about|on|of|from)\b",
+    re.IGNORECASE,
+)
+_ARTICLE_OPENER = re.compile(r"^(?:a|an|the)\b", re.IGNORECASE)
+# An article goal describes the surface only when a component word sits in its
+# opening words ("A timeline of…", "An interactive map…"); further in, the
+# word is usually a verb aimed at the viewer ("The tricks you can map to…").
+_ARTICLE_SPAN_TOKENS = 3
+_VIEWER = re.compile(r"\byou(?:'ll|'re|'ve|r|rself)?\b", re.IGNORECASE)
+
+
+def _opens_on_component(text: str) -> bool:
+    """True when the goal opens on the component rather than the viewer's outcome."""
+    if _COMPONENT_WORDS.match(text):
+        return True
+    opening = " ".join(text.split()[:_ARTICLE_SPAN_TOKENS])
+    return bool(_ARTICLE_OPENER.match(text) and _COMPONENT_WORDS.search(opening))
+
+
+def goal_rule_violation(goal: str) -> str | None:
+    """Why ``goal`` breaks the viewer-outcome rule, or None when it follows it.
+
+    The rule (plan Q12, task 1.10): a goal is one line naming what the viewer
+    gets from the tab — "after this you know / can …" — never the component
+    ("A timeline of…") or the topic ("Key points about…"). These are surface
+    reads: a goal that passes may still be weak, one that fails is wrong.
+    """
+    text = goal.strip()
+    if not text:
+        return "empty"
+    if any(name in text.lower() for name in valid_components() if "_" in name):
+        return "names a component"
+    if _opens_on_component(text):
+        return "describes the component, not what the viewer gets"
+    if _TOPIC_OPENER.match(text):
+        return "names the topic, not what the viewer gets"
+    if not _VIEWER.search(text):
+        return "does not address the viewer (no 'you')"
+    return None
 
 
 @dataclass(frozen=True)

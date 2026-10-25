@@ -4,7 +4,9 @@ The template has three sections: the rules (no per-video text), the video —
 title, length, ``{transcript}``, ``<video_memory>`` — and the job (what to emit,
 the planned tabs' briefs and caps, schemas, example, visual annotations, key
 frames). Counts come from the plan's briefs and the registry caps, never from
-the video's duration.
+the video's duration; a long video's chunk expects its share of each count
+(``render_tabs_to_serve(..., share)``, output-quality 3.3), and an argument list's
+``where`` windows are hints inside the chunk's part, never a limit (``where_hints``, 4.0).
 
 Cache layout (A26): the rules go out as the system prompt — byte-identical for
 every video — and the user message is two blocks: ``[video + transcript +
@@ -24,12 +26,14 @@ from dataclasses import dataclass
 
 from ...models.pipeline_types import TabBrief
 from ...shared_config.domain_config import NON_EXTRACTION_DATASOURCES, DataSourceSpec, data_source
-from ...utils.language_utils import ENGLISH_OUTPUT_DIRECTIVE
+from ...utils.language_utils import output_language_directive
 from ..llm_messages import TextBlock, text_block
 from ..transcript.render import format_marker
+from .assembly.talk_asks import ASK_KIND, KEY_IDEAS_SOURCE, TALK_FORMAT, is_asks_view
 from .pipeline_helpers import sanitize_for_prompt
 from .prompt_builder import PROMPTS_DIR, load_prompt_text
 from .visual_annotations import CLOSE_TAG, OPEN_TAG, annotation_entries
+from .where_hints import PartWindow, where_part
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +78,8 @@ class ExtractionPromptInput:
     example and the priority line. ``tabs`` are the plan's tab dicts (``label``, ``component``, ``dataSource``,
     ``goal``, ``brief``); ``video_memory`` and ``visual_annotations`` are the
     rendered ``<video_memory>`` / ``<visual_annotations>`` blocks ("" = absent).
+    ``source_language`` (the run's ``source_language_code``; None = English) adds the
+    verbatim-quote exception to the output-language line (4.2, D12).
     """
 
     content_tags: Sequence[str]
@@ -86,6 +92,7 @@ class ExtractionPromptInput:
     video_memory: str = ""
     frame_context: str = ""
     visual_annotations: str = ""
+    source_language: str | None = None
 
 
 # ─── Files ───
@@ -182,38 +189,98 @@ def _serves_extraction(tab: Mapping[str, object], emitted: Collection[str]) -> b
     )
 
 
-def _amount(expect: int, spec: DataSourceSpec | None) -> str:
+def _scaled(expect: int, share: float) -> int:
+    """A part's share of the whole video's count (at least one); the count itself at 1.0."""
+    return expect if share >= 1.0 else max(1, round(expect * share))
+
+
+def _amount(expect: int, spec: DataSourceSpec | None, share: float = 1.0) -> str:
     """``expect ~14, cap 30`` — the plan's count (never above the cap) and the
-    registry's cap; an object field is ``one object``, with no count."""
+    registry's cap; an object field is ``one object``, with no count. A long
+    video's chunk (``share`` < 1, output-quality 3.3) expects its share of the
+    count; the cap holds per call."""
     if spec is not None and spec["kind"] == "object":
         return "one object"
     if spec is None:
-        return f"expect ~{expect}" if expect else ""
-    expected = f"expect ~{min(expect, spec['cap'])}, " if expect else ""
+        return f"expect ~{_scaled(expect, share)}" if expect else ""
+    expected = f"expect ~{_scaled(min(expect, spec['cap']), share)}, " if expect else ""
     return f"{expected}cap {spec['cap']}"
 
 
-def _tab_line(tab: Mapping[str, object]) -> str:
+def _tab_line(
+    tab: Mapping[str, object],
+    share: float = 1.0,
+    part: PartWindow | None = None,
+    content_format: str | None = None,
+) -> str:
     brief = TabBrief.from_raw(tab.get("brief"))
     source = _data_source(tab)
+    # A talk's asks checklist is a view of the key ideas of kind ask (``talk_asks``): its
+    # line names the field the group extracts for it (``field_requests._planned``).
+    asks = content_format == TALK_FORMAT and is_asks_view(tab.get("component"), source)
+    source = KEY_IDEAS_SOURCE if asks else source
+    shown = f"{source} (kind {ASK_KIND})" if asks else source
     label = _clean(str(tab.get("label") or tab.get("id") or "Tab"), _LABEL_MAX_CHARS)
-    parts = [f"- {label} — {tab.get('component', '')} ← {source}"]
+    parts = [f"- {label} — {tab.get('component', '')} ← {shown}"]
     if brief.what:
         parts.append(f"what: {_clean(brief.what, _BRIEF_MAX_CHARS)}")
     elif isinstance(goal := tab.get("goal"), str) and goal:
         parts.append(f"goal: {_clean(goal, _BRIEF_MAX_CHARS)}")
-    if brief.where:
-        parts.append("where " + ", ".join(r.replace("-", "–") for r in brief.where))
-    if amount := _amount(brief.expect, data_source(source)):
+    if where := where_part(source, brief.where, part):
+        parts.append(where)
+    if amount := _amount(brief.expect, data_source(source), share):
         parts.append(amount)
     return " — ".join(parts)
 
 
-def render_tabs_to_serve(tabs: Sequence[Mapping[str, object]], emitted: Collection[str]) -> str:
+def render_tabs_to_serve(
+    tabs: Sequence[Mapping[str, object]],
+    emitted: Collection[str],
+    share: float = 1.0,
+    part: PartWindow | None = None,
+    content_format: str | None = None,
+) -> str:
     """One line per planned tab that reads a field of an ``emitted`` domain or
-    modifier: brief + count + cap."""
-    lines = [_tab_line(tab) for tab in tabs if _serves_extraction(tab, emitted)]
+    modifier: brief + count + cap — the count scaled by a chunk's ``share``, an
+    argument list's windows read as hints inside a chunk's ``part`` (``where_hints``);
+    on a talk (``content_format``, the probe's) the asks checklist reads the key ideas."""
+    lines = [
+        _tab_line(tab, share, part, content_format)
+        for tab in tabs
+        if _serves_extraction(tab, emitted)
+    ]
     return "\n".join(lines) or _NO_TABS
+
+
+# A chunk's ``<batch_partial_context>`` (``extractor._build_batch_context``): whether the
+# counts in its job are the whole video's or the part's share (output-quality 3.3).
+_WHOLE_VIDEO_COUNTS = (
+    "- The briefs, expected counts and caps below describe the whole video: "
+    "take the items inside this part, never pad toward a count.\n"
+)
+_PART_COUNTS = (
+    "- The briefs below describe the whole video; each expected count is this part's share "
+    "and each cap holds per part: take the items inside this part, never pad toward a count.\n"
+)
+
+
+def batch_counts_line(counts_scaled: bool) -> str:
+    """The batch context's counts line: whole-video counts, or (the split path's chunks,
+    whose jobs expect ``share`` × each count) the part's share with the caps per part."""
+    return _PART_COUNTS if counts_scaled else _WHOLE_VIDEO_COUNTS
+
+
+def batch_clock_line(first_marker_s: float) -> str:
+    """The batch context's clock line (output-quality 3.4, L21): a part past one hour
+    reads ``[h:mm:ss]`` markers, and one read without its hour stamps the item an hour
+    early (S02's last chunk wrote 1:13:41 as 821 s) — so the line names the part's first
+    marker in seconds. It rides in the job (block 3); the cached blocks never carry it."""
+    first = max(0, int(first_marker_s))
+    return (
+        "Clock: markers read [m:ss] before 1:00:00 and [h:mm:ss] after; every timestamp is "
+        f"seconds on the whole video's clock — this part's first marker {format_marker(first)} "
+        f"is {first}.\n"
+    )
 
 
 # ─── Template ───
@@ -265,7 +332,7 @@ def build_extraction_template(inp: ExtractionPromptInput) -> str:
         "primary_tag": primary_tag,
         "domain_example": example,
     }
-    return f"{ENGLISH_OUTPUT_DIRECTIVE}\n\n{_fill(template, values)}"
+    return f"{output_language_directive(inp.source_language)}\n\n{_fill(template, values)}"
 
 
 # ─── Sections + per-call binding ───

@@ -8,13 +8,18 @@ the unchanged English dict with the translated artifact nested under
 ``sourceLanguage``. On any failure
 (LLM error, mirror, length mismatch) the returned dict has no ``sourceLanguage``
 key and the phase no-ops — the FE then simply renders no language toggle.
+
+Alongside it, one source→English pass writes the English beneath every verbatim
+source-language line the English page shows (``quoteEn`` / ``questionEn``,
+``translation_quotes``, output-quality 4.6c); the English tabs are saved with it,
+so the page's refetch at ``done`` shows it.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, AsyncGenerator
+from typing import TYPE_CHECKING, Any, AsyncGenerator
 
 from llm_common.context import llm_feature_var
 
@@ -23,6 +28,11 @@ from src.models.schemas import ProcessingStatus
 from src.services.cache.response_cache import response_cache
 from src.services.pipeline.pipeline_helpers import sse_event
 from src.services.pipeline.translation import translate_text, translate_to_source
+from src.services.pipeline.translation_quotes import (
+    apply_english,
+    english_of_lines,
+    verbatim_lines,
+)
 from src.services.status_callback import send_video_status_background
 
 if TYPE_CHECKING:
@@ -52,6 +62,66 @@ async def _translate_title(ctx: PipelineContext) -> None:
         sl_meta["videoTitle"] = title
 
 
+async def _translate_both_ways(
+    ctx: PipelineContext, output: dict[str, Any], source_language: str
+) -> tuple[dict[str, Any], int]:
+    """The source-language copy and, in parallel, the English of every verbatim line
+    (4.6c); returns the copy and how many lines got English. The English is written
+    into ``output`` (the English tabs / meta) only once both returned: the copy is
+    cut from ``output`` after its own calls and must not carry it. The English is
+    optional: its pass failing costs only the English lines, never the copy; a failed
+    copy is raised once the English pass is done, so neither is left running."""
+    lines = verbatim_lines(output)
+    result, english = await asyncio.gather(
+        translate_to_source(ctx.llm_service, output, source_language),
+        english_of_lines(ctx.llm_service, lines, source_language),
+        return_exceptions=True,
+    )
+    if isinstance(result, BaseException):
+        raise result
+    if isinstance(english, BaseException):
+        logger.warning(
+            "Verbatim lines: the English pass failed (%s); no English beneath %d lines",
+            source_language, len(lines), exc_info=english,
+        )  # fmt: skip
+        english = {}
+    return result, apply_english(lines, english)
+
+
+async def _finalize_english_only(
+    ctx: PipelineContext,
+    repository: MongoDBVideoRepository,
+    video_summary_id: str,
+    english_written: int,
+) -> None:
+    """No source-language copy: English stays the only view, no toggle. This is a
+    deliberate terminal outcome (mirror detected / LLM returned None after retries),
+    so the doc is finalized: assembly left it "processing" for the non-English path.
+    Tabs that gained English beneath a verbatim line are saved with it."""
+    logger.warning(
+        "[pipeline] Translation produced no sourceLanguage (target=%s); finalizing English-only",
+        ctx.source_language_code,
+    )
+    if not english_written:
+        await asyncio.to_thread(
+            repository.update_status, video_summary_id, ProcessingStatus.COMPLETED
+        )
+    else:
+        english_only = {
+            "tabs": ctx.assembled_tabs,
+            "meta": ctx.assembled_meta,
+            "status": "completed",
+        }
+        saved = await asyncio.to_thread(
+            repository.save_structured_result, video_summary_id, english_only
+        )
+        if not saved:
+            ctx.row_deleted = True
+            logger.warning("pipeline_row_deleted_mid_run video_summary_id=%s", video_summary_id)
+            return
+    send_video_status_background(video_summary_id, None, "completed")
+
+
 async def run_phase_translation(
     ctx: PipelineContext,
     repository: MongoDBVideoRepository,
@@ -69,31 +139,17 @@ async def run_phase_translation(
 
     # Generation is English-canonical, so ``assembled_tabs``/``assembled_meta``
     # are already the English primary. Translate a deep copy into the source
-    # language and attach it under ``sourceLanguage``; the English top-level is
-    # unchanged. (`meta` is a superset of synthesis — the FE reconstructs
-    # synthesis from meta via buildSynthesisFromMeta.)
+    # language and attach it under ``sourceLanguage``; the English top-level only
+    # gains the English beneath its verbatim lines. (`meta` is a superset of
+    # synthesis — the FE reconstructs synthesis from meta via buildSynthesisFromMeta.)
     output = {
         "tabs": ctx.assembled_tabs or [],
         "meta": ctx.assembled_meta or {},
     }
-    result = await translate_to_source(ctx.llm_service, output, ctx.source_language_code)
+    result, english_written = await _translate_both_ways(ctx, output, ctx.source_language_code)
 
     if "sourceLanguage" not in result:
-        # Failure / no-op — English stays the only view, no toggle. This is a
-        # deliberate terminal outcome (mirror detected / LLM returned None after
-        # retries), so finalize the doc: assembly left it "processing" for the
-        # non-English path, and English-only is the accepted final surface.
-        logger.warning(
-            "[pipeline] Translation produced no sourceLanguage (target=%s); "
-            "finalizing English-only",
-            ctx.source_language_code,
-        )
-        await asyncio.to_thread(
-            repository.update_status,
-            video_summary_id,
-            ProcessingStatus.COMPLETED,
-        )
-        send_video_status_background(video_summary_id, None, "completed")
+        await _finalize_english_only(ctx, repository, video_summary_id, english_written)
         return
 
     ctx.source_language = result["sourceLanguage"]

@@ -4,7 +4,8 @@ A moment_track tab is never dropped for lack of data. When its planned
 dataSource cannot feed it (no data, an inactive domain, or every moment past
 the video's end), the moments come from the first source that has entries:
 
-1. the memory outline (``video_meta["outline"]``: start/end/title sections),
+1. the memory outline (``video_meta["outline"]``: start/end/title sections; a
+   section's ``establishes`` line rides as the moment's description — D5 / R7),
 2. the YouTube chapters (``video_meta["chapters"]``),
 3. the description's timestamps (``description_analysis["timestamps"]``).
 
@@ -15,7 +16,10 @@ A Moments tab always exists (Kfir 2026-10-12, pipeline-1min 2.1): a response
 whose plan designed none gets the always-Moments tab from the same chain
 (``always_moments_tab``), and the plan-done provisional copy
 (``provisional_moments_tab``) carries the id of whichever tab will replace it.
-No source with an entry → no Moments tab: one is never invented.
+No source with an entry → no Moments tab: one is never invented. When the
+steps are the timeline (D6: a food, fitness or project response with a step
+player, flow canvas or workout room, unless its domain requires moment_track),
+assembly ships no Moments tab, so none is previewed either.
 """
 
 from __future__ import annotations
@@ -23,6 +27,8 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable, Collection, Iterable, Mapping
 from typing import Any
+
+from src.shared_config.assembly_policy import assembly_policy, injected_tab
 
 from .assemblers_primary import assemble_moment_track
 from .normalizers import _chapters_to_moments, _coerce_int
@@ -36,14 +42,23 @@ _OVERVIEW = "overview"
 
 # The Moments tab of a response whose plan designed none.
 _ALWAYS_MOMENTS_ID = "key_moments"
-_ALWAYS_MOMENTS_LABEL = "Key Moments"
-_ALWAYS_MOMENTS_EMOJI = "🎬"
-_ALWAYS_MOMENTS_GOAL = "Jump to any part of the video."
+# Label, emoji and goal from the registry (``injectedTabs.moments``): the goal names
+# what the viewer gets, never an assembly template (task 1.10's rule).
+_ALWAYS_MOMENTS_LABEL = injected_tab("moments")["label"]
+_ALWAYS_MOMENTS_EMOJI = injected_tab("moments")["emoji"]
+_ALWAYS_MOMENTS_GOAL = injected_tab("moments")["goal"]
 
 
 def _outline_entries(video_meta: Mapping[str, Any]) -> list[dict]:
+    # What the section establishes is the moment's description (1.9); an
+    # outline from before the line (or one that only repeats the title) ships
+    # the title alone, as the chapter shape always did.
     return [
-        {"start_time": s.get("start"), "title": s.get("title", "")}
+        {
+            "start_time": s.get("start"),
+            "title": s.get("title", ""),
+            "description": s.get("establishes"),
+        }
         for s in video_meta.get("outline") or []
         if isinstance(s, dict)
     ]
@@ -121,6 +136,31 @@ def tab_component(tab: Mapping[str, Any]) -> str:
     return str(tab.get("component") or infer_component(str(tab.get("id", ""))))
 
 
+# D6 (output-quality 0b.2): recipes, workouts and step tutorials are navigated by
+# their steps (a step player, a step flow canvas or a workout room) and get no
+# Moments tab — the overview is the hero. The response's PRIMARY domain decides:
+# one step tab under a podcast or a lecture leaves the domain's timeline alone,
+# and a domain that requires moment_track always keeps it (phase-0 review C-A1).
+# domains.json ``assemblyPolicy``: the procedures and the primaries they navigate.
+_TIMELINE_STEP_COMPONENTS = frozenset(assembly_policy()["sequentialComponents"])
+_STEP_TIMELINE_PRIMARIES = frozenset(assembly_policy()["stepTimelinePrimaries"])
+
+
+def steps_are_the_timeline(
+    tabs: Iterable[Mapping[str, Any]], primary_tag: str, required: Collection[str]
+) -> bool:
+    """D6: a food / fitness / project response navigates by its steps.
+
+    True when ``primary_tag`` is one of those domains, its ``required`` components
+    (``effective_requirements``) do not include moment_track, and a step player,
+    flow canvas or workout room ships. Plan tabs and assembled tabs alike: an
+    unnamed plan tab counts by its id.
+    """
+    if primary_tag not in _STEP_TIMELINE_PRIMARIES or _MOMENT_COMPONENT in required:
+        return False
+    return any(tab_component(t) in _TIMELINE_STEP_COMPONENTS for t in tabs)
+
+
 def _always_moments_id(taken: Iterable[str]) -> str:
     """``key_moments`` unless a tab holds it; plan-done and assembly reach the same id."""
     used = set(taken)
@@ -178,21 +218,29 @@ def provisional_moments_tab(
     plan_tabs: list[Any],
     video_meta: Mapping[str, Any] | None,
     description_analysis: Mapping[str, Any] | None,
-    forbidden: Collection[str],
+    primary_tag: str,
+    requirements: Mapping[str, Any],
 ) -> tuple[dict, int] | None:
-    """The plan-done Moments tab and its estimated position, or None (no source).
+    """The plan-done Moments tab and its estimated position, or None.
+
+    ``requirements`` is the primary's ``effective_requirements`` — assembly
+    decides with the same. None when it forbids moment_track, when the steps
+    are the timeline (D6 — assembly would only withdraw the preview at
+    ``complete``) or when no fallback source has an entry.
 
     Its id, label, emoji and goal are those of the tab that will replace it:
     the plan's first moment_track tab, else the always-Moments tab, which
     assembly adds after the planned tabs. The estimate counts the overview
     assembly puts first and the planned tabs before it, quiz excluded.
     """
-    if _MOMENT_COMPONENT in forbidden:
+    tabs = [t for t in plan_tabs if isinstance(t, dict)]
+    if _MOMENT_COMPONENT in requirements["forbidden"] or steps_are_the_timeline(
+        tabs, primary_tag, requirements["required"]
+    ):
         return None
     props = fallback_moment_props(video_meta, description_analysis)
     if props is None:
         return None
-    tabs = [t for t in plan_tabs if isinstance(t, dict)]
     index = next((i for i, t in enumerate(tabs) if tab_component(t) == _MOMENT_COMPONENT), None)
     if index is None:
         index, stub = len(tabs), _always_moments_stub(_tab_ids(tabs))

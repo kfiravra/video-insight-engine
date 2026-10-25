@@ -80,35 +80,35 @@
       {
         "claim": "12 of 96 suspender cables show stage-3 corrosion",
         "source": "Castellan Engineering inspection report",
-        "status": "verified",
+        "status": "supported",
         "sourceCitation": "Inspection report p.14, obtained by the channel",
         "timestamp": 150
       },
       {
         "claim": "The mayor's office received the report three weeks before the closure",
         "source": "Castellan Engineering",
-        "status": "disputed",
+        "status": "contested",
         "sourceCitation": "Delivery log cited on camera; mayor's office denies receipt",
         "timestamp": 330
       },
       {
         "claim": "The office learned of the corrosion two days before closing the bridge",
         "source": "Mayor Dana Reyes",
-        "status": "disputed",
+        "status": "contested",
         "sourceCitation": "Press conference statement",
         "timestamp": 360
       },
       {
         "claim": "Repairs will take 18 months and cost $210 million",
         "source": "Harborlink Transit Authority",
-        "status": "context",
+        "status": "stated",
         "sourceCitation": "Official repair plan announcement",
         "timestamp": 540
       },
       {
         "claim": "The bridge carried about 84,000 vehicles a day before closure",
         "source": "Transit authority traffic data",
-        "status": "verified",
+        "status": "supported",
         "sourceCitation": "2025 annual traffic count",
         "timestamp": 60
       }

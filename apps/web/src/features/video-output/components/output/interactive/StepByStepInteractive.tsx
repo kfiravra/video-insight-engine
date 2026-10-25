@@ -169,29 +169,31 @@ export const StepByStepInteractive = memo(function StepByStepInteractive({
                   />
                 )}
 
-                <div
-                  className="flex gap-3"
-                  onClick={() => setCurrentStep(index)}
-                  role="button"
-                  tabIndex={0}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
-                      setCurrentStep(index);
-                    }
-                  }}
-                >
-                  {/* Number circle / check — single accent, fill vs outline vs neutral */}
-                  <div
-                    className={cn(
-                      'shrink-0 w-7 h-7 rounded-full border-2 flex items-center justify-center text-xs font-bold transition-colors',
-                      isDone
-                        ? 'border-[var(--vie-accent)] bg-[var(--vie-accent)]/15 text-[var(--vie-accent)]'
-                        : stepBadgeClass(isActive),
-                    )}
+                {/* A click anywhere on the row is a pointer shortcut; the number
+                    circle is the step's keyboard / screen-reader control. A row
+                    with role="button" would nest the Timestamp and Complete
+                    buttons inside a button (axe nested-interactive). */}
+                <div className="flex gap-3" onClick={() => setCurrentStep(index)}>
+                  <Button
+                    variant="ghost"
+                    size="bare"
+                    onClick={() => setCurrentStep(index)}
+                    aria-label={`Go to step ${step.number}`}
+                    aria-current={isActive ? 'step' : undefined}
+                    className="shrink-0 self-start rounded-full hover:bg-transparent dark:hover:bg-transparent"
                   >
-                    {isDone ? <Check className="h-4 w-4" /> : step.number}
-                  </div>
+                    {/* Number circle / check — single accent, fill vs outline vs neutral */}
+                    <span
+                      className={cn(
+                        'w-7 h-7 rounded-full border-2 flex items-center justify-center text-xs font-bold transition-colors',
+                        isDone
+                          ? 'border-[var(--vie-accent)] bg-[var(--vie-accent)]/15 text-[var(--vie-accent)]'
+                          : stepBadgeClass(isActive),
+                      )}
+                    >
+                      {isDone ? <Check className="h-4 w-4" aria-hidden="true" /> : step.number}
+                    </span>
+                  </Button>
 
                   <div className="flex-1 min-w-0 space-y-1.5">
                     {step.title && (

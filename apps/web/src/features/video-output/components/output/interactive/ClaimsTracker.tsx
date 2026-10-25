@@ -1,9 +1,11 @@
 import { memo, useMemo, useState } from 'react';
-import { CheckCircle2, AlertTriangle, Info, Clock, BadgeCheck, BookOpen } from 'lucide-react';
+import { CheckCircle2, AlertTriangle, Info, BadgeCheck, BookOpen } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { ClaimItem, ClaimStatus } from '@vie/types';
-import { GlassCard, FadeIn, Badge } from '@/components/vie';
+import { GlassCard, FadeIn, Badge, SeekChip } from '@/components/vie';
 import { EmptyTabState } from './EmptyTabState';
+import { claimStatus } from './claim-status';
+import { QuoteLine } from './QuoteLine';
 
 interface ClaimsTrackerProps {
   claims: ClaimItem[];
@@ -12,41 +14,41 @@ interface ClaimsTrackerProps {
 
 type StatusFilter = ClaimStatus | 'all';
 
+/** What the video does with a claim (output-quality D11) — never a verdict of ours. */
 const STATUS_META: Record<
   ClaimStatus,
   { label: string; variant: 'success' | 'warning' | 'muted'; Icon: typeof CheckCircle2 }
 > = {
-  verified: { label: 'Verified', variant: 'success', Icon: CheckCircle2 },
-  disputed: { label: 'Disputed', variant: 'warning', Icon: AlertTriangle },
-  context: { label: 'Context', variant: 'muted', Icon: Info },
+  stated: { label: 'Stated', variant: 'muted', Icon: Info },
+  supported: { label: 'Supported', variant: 'success', Icon: CheckCircle2 },
+  contested: { label: 'Contested', variant: 'warning', Icon: AlertTriangle },
 };
 
-const FILTER_ORDER: StatusFilter[] = ['all', 'verified', 'disputed', 'context'];
-
-function formatTimestamp(seconds: number): string {
-  const m = Math.floor(seconds / 60);
-  const s = Math.floor(seconds % 60);
-  return `${m}:${s.toString().padStart(2, '0')}`;
-}
+const FILTER_ORDER: StatusFilter[] = ['all', 'stated', 'supported', 'contested'];
 
 /**
- * ClaimsTracker — the news signature surface. Renders each factual claim with
- * who made it and a status badge (verified / disputed / context), plus an
- * optional source citation and a seek-to-timestamp button. A status filter bar
- * lets the reader isolate disputed claims — the accountability lens that
+ * ClaimsTracker — the news signature surface, and a talk's or podcast's on
+ * has_claims (D11). Renders each claim with who made it and a status badge
+ * saying what the video does with it (stated / supported / contested) — none on a
+ * claim without a timestamp, whose status nobody can check (listed under All only) — plus an
+ * optional evidence line and a seek-to-timestamp button. A status filter bar
+ * lets the reader isolate contested claims — the accountability lens that
  * separates a news artifact from a plain summary.
  */
 export const ClaimsTracker = memo(function ClaimsTracker({ claims, onSeek }: ClaimsTrackerProps) {
   const [filter, setFilter] = useState<StatusFilter>('all');
 
   const counts = useMemo(() => {
-    const acc: Record<ClaimStatus, number> = { verified: 0, disputed: 0, context: 0 };
-    for (const c of claims) acc[c.status] = (acc[c.status] ?? 0) + 1;
+    const acc: Record<ClaimStatus, number> = { stated: 0, supported: 0, contested: 0 };
+    for (const c of claims) {
+      const status = claimStatus(c);
+      if (status) acc[status] += 1;
+    }
     return acc;
   }, [claims]);
 
   const visible = useMemo(
-    () => (filter === 'all' ? claims : claims.filter((c) => c.status === filter)),
+    () => (filter === 'all' ? claims : claims.filter((c) => claimStatus(c) === filter)),
     [claims, filter],
   );
 
@@ -84,19 +86,29 @@ export const ClaimsTracker = memo(function ClaimsTracker({ claims, onSeek }: Cla
 
       <ul className="flex flex-col gap-3" aria-label="Tracked claims">
         {visible.map((claim, i) => {
-          const meta = STATUS_META[claim.status];
-          const { Icon } = meta;
+          const status = claimStatus(claim);
+          const meta = status ? STATUS_META[status] : null;
+          // The <li> stays the list's direct child (FadeIn renders a <div>).
           return (
-            <FadeIn key={`${claim.claim}-${i}`} index={i}>
-              <li>
+            <li key={`${claim.claim}-${i}`}>
+              <FadeIn index={i}>
                 <GlassCard className="flex flex-col gap-2.5 p-4">
                   <div className="flex items-start justify-between gap-3">
                     <p className="text-base font-medium leading-snug text-foreground">{claim.claim}</p>
-                    <Badge variant={meta.variant} className="shrink-0">
-                      <Icon className="size-3 shrink-0" aria-hidden="true" />
-                      {meta.label}
-                    </Badge>
+                    {meta && (
+                      <Badge variant={meta.variant} className="shrink-0">
+                        <meta.Icon className="size-3 shrink-0" aria-hidden="true" />
+                        {meta.label}
+                      </Badge>
+                    )}
                   </div>
+
+                  {/* The words that make the claim, verbatim (D13). */}
+                  <QuoteLine
+                    quote={claim.quote}
+                    quoteEn={claim.quoteEn}
+                    translated={claim.quoteTranslated}
+                  />
 
                   {/* The verification evidence carries the accountability value
                       of this surface — promoted above the attribution line. */}
@@ -118,20 +130,12 @@ export const ClaimsTracker = memo(function ClaimsTracker({ claims, onSeek }: Cla
                       </span>
                     ) : null}
                     {claim.timestamp != null && onSeek ? (
-                      <button
-                        type="button"
-                        onClick={() => onSeek(claim.timestamp as number)}
-                        className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 font-medium text-[var(--vie-accent)] hover:bg-[var(--vie-accent)]/10"
-                        aria-label={`Jump to ${formatTimestamp(claim.timestamp)}`}
-                      >
-                        <Clock className="size-3 shrink-0" aria-hidden="true" />
-                        <span dir="ltr">{formatTimestamp(claim.timestamp)}</span>
-                      </button>
+                      <SeekChip seconds={claim.timestamp} onSeek={onSeek} />
                     ) : null}
                   </div>
                 </GlassCard>
-              </li>
-            </FadeIn>
+              </FadeIn>
+            </li>
           );
         })}
       </ul>

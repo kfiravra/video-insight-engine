@@ -5,7 +5,7 @@ bad item put unvalidated data in front of every reader. Each validation error
 is now repaired or narrowed to the item it belongs to:
 
 - a missing ``title``/``name`` is taken from its counterpart on the same item
-  (the LLM writes one for the other);
+  (the LLM writes one for the other), a missing ``claim`` from either;
 - a number in a string field becomes its text (Pydantic does not coerce
   int → str; prod fitness exercises lost 12/12 items to ``duration: 30``);
 - any other bad value — an explicit ``null`` included — on a field that has a
@@ -41,7 +41,13 @@ MAX_PRUNE_ROUNDS = 6
 DROPPED_KEY = "_dropped"
 MIS_TARGETED_KEY = "_misTargeted"
 DEFAULTED_KEY = "_defaulted"
-_TITLE_ALIASES = {"title": "name", "name": "title"}
+# A required heading the model wrote under another heading key on the same item:
+# the first filled alternative stands in (a key idea's ``claim`` written as ``title``).
+_TITLE_ALIASES: dict[str, tuple[str, ...]] = {
+    "title": ("name",),
+    "name": ("title",),
+    "claim": ("title", "name"),
+}
 
 PathSegment = str | int
 Path = tuple[PathSegment, ...]
@@ -154,12 +160,12 @@ def _field_at(model_cls: type[BaseModel], loc: tuple[PathSegment, ...]) -> Field
 
 
 def _alias_repair(holder: dict, key: str) -> bool:
-    """A missing ``title``/``name`` taken from its counterpart on the same item."""
-    other = _TITLE_ALIASES.get(key)
-    value = holder.get(other) if other else None
-    if isinstance(value, str) and value.strip():
-        holder[key] = value
-        return True
+    """A missing ``title``/``name``/``claim`` taken from its counterpart on the same item."""
+    for other in _TITLE_ALIASES.get(key, ()):
+        value = holder.get(other)
+        if isinstance(value, str) and value.strip():
+            holder[key] = value
+            return True
     return False
 
 
@@ -310,12 +316,14 @@ def validate_block_items(
 def merge_report(
     into: ValidationReport, dropped: Mapping[str, Mapping[str, int]], defaulted: int
 ) -> None:
-    """Add one block's drops and defaulted count to the extraction's report."""
+    """Add one block's counts (drops, re-stamps, clears) and defaulted count to the report."""
     totals = into.setdefault("dropped", {})
     for label, counts in dropped.items():
         current = totals.setdefault(label, {"dropped": 0, "total": 0})
-        current["dropped"] += counts["dropped"]
-        current["total"] += counts["total"]
+        # Every count key adds up — the 0b.10 window check's restamped/cleared
+        # counts reach the stored report beside dropped/total (D17 drift read).
+        for key, count in counts.items():
+            current[key] = current.get(key, 0) + count
     into["defaulted"] = into.get("defaulted", 0) + defaulted
 
 

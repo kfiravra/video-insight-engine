@@ -46,6 +46,25 @@ describe('FlashDeckInteractive', () => {
     expect(screen.getByLabelText('Shuffle cards')).toBeInTheDocument();
   });
 
+  it('should let a quote card read in its own direction when its front is a Hebrew line', () => {
+    const quoteCard = { front: 'אנחנו לא יודעים.', back: 'We do not know. — רן לוי · 43:16' };
+    render(<FlashDeckInteractive cards={[quoteCard]} />);
+    expect(screen.getByText(quoteCard.front)).toHaveAttribute('dir', 'auto');
+  });
+
+  it("should let a card's back read in its own direction when it is flipped", () => {
+    render(<FlashDeckInteractive cards={cards} />);
+    fireEvent.click(screen.getByLabelText('What is React?'));
+    expect(screen.getByText('A UI library')).toHaveAttribute('dir', 'auto');
+  });
+
+  it('should show the English of a quote card on its back when the card carries quoteEn', () => {
+    const quoteCard = { front: 'אנחנו לא יודעים.', back: '— רן לוי · 43:16', quoteEn: 'We do not know.' };
+    render(<FlashDeckInteractive cards={[quoteCard]} />);
+    fireEvent.click(screen.getByLabelText(quoteCard.front));
+    expect(screen.getByText('We do not know.')).toHaveAttribute('lang', 'en');
+  });
+
   it('should show navigation for multiple cards', () => {
     render(<FlashDeckInteractive cards={cards} />);
     // BackForward component renders buttons

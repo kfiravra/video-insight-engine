@@ -141,8 +141,20 @@ class TestFallbacksAndSideReads:
 
         assert "science.concepts" not in paths
 
-    def test_should_request_a_sibling_when_a_modifier_activates_its_domain(self) -> None:
+    # output-quality 1.7 (L17): an active modifier no tab plans on is no reason to
+    # extract a stand-in — S01 paid for narrative.keyMoments that nothing showed.
+    def test_should_not_request_a_sibling_when_no_tab_plans_on_the_modifier(self) -> None:
         tabs = [_tab("moments", "moment_track", "learning.timestamps")]
+
+        fields = _by_path(_request(tabs, ["learning"], ["narrative"]))
+
+        assert "narrative.keyMoments" not in fields
+
+    def test_should_request_a_sibling_when_a_tab_plans_on_its_domain(self) -> None:
+        tabs = [
+            _tab("moments", "moment_track", "learning.timestamps"),
+            _tab("quotes", "flash_deck", "narrative.quotes"),
+        ]
 
         fields = _by_path(_request(tabs, ["learning"], ["narrative"]))
 
@@ -167,7 +179,8 @@ class TestFallbacksAndSideReads:
                 ["review"],
                 "review.pros review.cons review.verdict review.product review.rating",
             ),
-            ("moment_track", "gaming.highlights", ["gaming", "learning"], "learning.timestamps"),
+            # A Moments tab on a registered field of its own reads no stand-in (1.7).
+            ("moment_track", "gaming.highlights", ["gaming", "learning"], ""),
             ("moment_track", "food.steps", ["food"], ""),
         ],
     )

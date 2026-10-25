@@ -22,7 +22,13 @@ from ...models.pipeline_types import SynthesisResult
 from ...utils.json_parsing import parse_json_response
 from ...utils.language_utils import ENGLISH_OUTPUT_DIRECTIVE
 from ...utils.llm_retry import call_llm_with_retry
-from .memory import repair_takeaways, repair_tldr, truncate_words
+from .memory import (
+    MAX_TAKEAWAYS,
+    TAKEAWAYS_BY_DURATION,
+    repair_takeaways,
+    repair_tldr,
+    truncate_words,
+)
 from .pipeline_helpers import sanitize_for_prompt, truncate_json_safely
 from .prompt_builder import load_prompt_text
 
@@ -46,11 +52,26 @@ _STRING_MAX_CHARS = 200
 _NO_VIDEO_MEMORY = "<video_memory>\nNot available\n</video_memory>"
 _NO_TABS = "(none)"
 
+
+def _takeaway_bands() -> str:
+    """Memory's 3 / 5 / 7 by length as one clause: "3 up to 15 minutes, 5 up to 45 …"."""
+    bands = [f"{count} up to {limit // 60} minutes" for limit, count in TAKEAWAYS_BY_DURATION]
+    return f"{', '.join(bands)}, {MAX_TAKEAWAYS} when longer"
+
+
+# The hero memory would have written (memory.txt <summary_rules>, 1.9), for when
+# memory left it empty. The count stays a table, not this video's number, so the
+# rules stay in the static prefix every run shares; ``repair_takeaways`` holds
+# the answer to the video's count.
 _HERO_FIELDS = (
-    "- tldr: one sentence of at most 150 characters with the video's angle — what makes "
-    "THIS video different — not its topic.\n"
-    "- keyTakeaways: 3-5 items, each carrying a specific number, name or measurement "
-    "from the video. No generic advice."
+    "- tldr: one sentence of at most 150 characters stating what the video claims — its "
+    "thesis, a position a reader could disagree with — not its topic, not what it covers, "
+    "not a list of its numbers.\n"
+    f"- keyTakeaways: the claims that matter most in the video ({_takeaway_bands()}), "
+    "most important first, in its own terms, each ending with the [m:ss] of the extracted "
+    "item it comes from (no stamp when that item has no timestamp). A number belongs in a "
+    "takeaway only when the number IS the claim. No generic advice, no topic labels.\n"
+    "- Never state a duration, quantity or number the speaker did not say."
 )
 _KEYS = '"masterSummary" and "seoDescription"'
 _KEYS_WITH_HERO = '"masterSummary", "seoDescription", "tldr" and "keyTakeaways"'
@@ -58,6 +79,9 @@ _KEYS_WITH_HERO = '"masterSummary", "seoDescription", "tldr" and "keyTakeaways"'
 # The meta keys assembly writes from the synthesis dict (assembly/core.py), in
 # the order today's dict has them.
 SYNTHESIS_KEYS = ("tldr", "keyTakeaways", "masterSummary", "seoDescription")
+# The meta keys only the hero rewrite writes (output-quality 2.2, ``hero_rewrite.hero_meta``):
+# optional for every reader — the synthesis path and older rows carry none of them.
+HERO_KEYS = ("brief", "worthItFor", "skipIf", "readingMinutes")
 
 
 class SynthesisInput(BaseModel):
@@ -166,8 +190,12 @@ def _text(raw: object) -> str:
     return " ".join(raw.split()) if isinstance(raw, str) else ""
 
 
-def parse_synthesis_output(data: object) -> SynthesisResult:
-    """Validate + repair the model's JSON; ``ValueError`` when there is no masterSummary."""
+def parse_synthesis_output(data: object, duration: int | None = None) -> SynthesisResult:
+    """Validate + repair the model's JSON; ``ValueError`` when there is no masterSummary.
+
+    ``duration`` sizes the fallback hero's takeaways and bounds their stamps,
+    as memory's own answer is (:func:`repair_takeaways`).
+    """
     if not isinstance(data, dict) or not data:
         raise ValueError("Failed to parse synthesis response from LLM")
     master_summary = data.get("masterSummary")
@@ -178,7 +206,7 @@ def parse_synthesis_output(data: object) -> SynthesisResult:
             "masterSummary": master_summary.strip(),
             "seoDescription": truncate_words(_text(data.get("seoDescription")), SEO_MAX_CHARS),
             "tldr": repair_tldr(data.get("tldr")),
-            "keyTakeaways": repair_takeaways(data.get("keyTakeaways")),
+            "keyTakeaways": repair_takeaways(data.get("keyTakeaways"), duration),
         }
     )
 
@@ -225,7 +253,7 @@ async def synthesize(
     if not raw:
         raise ValueError("Synthesis LLM call failed after retries")
     logger.debug("Synthesis raw response: %.500s", raw)
-    return parse_synthesis_output(parse_json_response(raw))
+    return parse_synthesis_output(parse_json_response(raw), duration)
 
 
 # ─── Merge with memory ───

@@ -39,6 +39,59 @@ INACTIVE_DOMAIN = "inactive_domain"
 # fallback chain (memory outline → YouTube chapters → description timestamps).
 NEVER_DROPPED = frozenset({"moment_track"})
 
+# D10: learning.keyIdeas is the argument tab of a talk, a lecture, a podcast or an
+# interview, whatever the primary domain. A plan that names it has asked for that
+# extraction, so its domain is switched on rather than the tab re-pointed (S13,
+# 2026-10-21: tagged podcast + tech, its Positions tab became the guest list).
+ARGUMENT_PATHS = frozenset({"learning.keyIdeas"})
+# 4.1: an interview's Q&A and guest card are podcast extraction whatever domain the
+# probe gave (S14 arrives as learning + interview through ``playbookAliases``): a plan
+# that names them has asked for podcast, never for learning.timestamps in their place.
+INTERVIEW_PATHS = frozenset({"podcast.qa", "podcast.guests"})
+# Only on a run the probe calls an interview or a podcast (phase-4 review A-W4): a talk
+# or lecture plan that names podcast.qa for its audience questions is re-pointed to
+# learning.timestamps as before, never podcast-tagged (podcast.txt in block 1, a "Guest"
+# section in Key Ideas). With no probe format (an override, a failed probe) nothing says
+# otherwise, so the plan's tab stands.
+INTERVIEW_FORMATS = frozenset({"interview", "podcast"})
+MAX_CONTENT_TAGS = 3
+
+
+def _activating(path: str, content_format: str | None) -> bool:
+    if path in ARGUMENT_PATHS:
+        return True
+    return path in INTERVIEW_PATHS and (
+        content_format is None or content_format in INTERVIEW_FORMATS
+    )
+
+
+def activate_argument_domains(
+    tabs: Sequence[Mapping], content_tags: Sequence[str], content_format: str | None = None
+) -> list[str]:
+    """``content_tags`` plus the domain of every argument path a tab reads, and of every
+    interview path on an interview or podcast run (``content_format``, the probe's).
+
+    When that pushes the list past :data:`MAX_CONTENT_TAGS`, tags no tab reads
+    (never the primary, the first) give way from the end.
+    """
+    tags = list(content_tags)
+    for tab in tabs:
+        path = str(tab.get("dataSource") or "")
+        spec = data_source(path)
+        if spec is not None and _activating(path, content_format) and spec["domain"] not in tags:
+            tags.append(spec["domain"])
+    return _trim_unused_tags(tags, tabs)
+
+
+def _trim_unused_tags(tags: list[str], tabs: Sequence[Mapping]) -> list[str]:
+    read = {str(t.get("dataSource") or "").split(".", 1)[0] for t in tabs}
+    for tag in reversed(tags[1:]):
+        if len(tags) <= MAX_CONTENT_TAGS:
+            break
+        if tag not in read:
+            tags.remove(tag)
+    return tags
+
 
 def _inactive(spec: DataSourceSpec | None, active: set[str]) -> bool:
     """True for a content/modifier path whose domain the plan did not tag.

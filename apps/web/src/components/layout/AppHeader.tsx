@@ -32,7 +32,12 @@ import { cn } from "@/lib/utils";
 // and keep the SSR-safe navigator guard out of render entirely.
 const CMD_GLYPH = getCmdGlyph();
 
-export function AppHeader() {
+interface AppHeaderProps {
+  /** Receives the slot a page portals its own control into (header-slot.ts). */
+  slotRef?: (element: HTMLDivElement | null) => void;
+}
+
+export function AppHeader({ slotRef }: AppHeaderProps) {
   const sidebarOpen = useUIStore((s) => s.sidebarOpen);
   const { toggle: toggleSidebar } = useSidebarToggle();
   const user = useAuthStore((s) => s.user);
@@ -91,6 +96,9 @@ export function AppHeader() {
         </div>
 
         <div className="flex-1" />
+
+        {/* A page's own control (the video page's language toggle), portalled in. */}
+        <div ref={slotRef} className="flex items-center empty:hidden" />
 
         {/* Right: command-palette hint + theme + user.
             The chip is a discoverable surface for power users — clicking it

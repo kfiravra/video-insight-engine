@@ -6,7 +6,14 @@ Extract structured programming/tech content.
 {
   "languages": ["Exact language names used"],
   "frameworks": ["Exact framework/library names with versions if mentioned"],
-  "topics": ["Programming topics covered"],
+  "topics": [
+    {
+      "name": "Topic or concept as the video names it (a hook, an API, a pattern)",
+      "description": "What the video explains about it, 2-4 sentences with its own example",
+      "timestamp": null
+    }
+  ],
+> UI: Topics → SpotExplorer cards (name, explanation, seek chip). timestamp = the second the topic is explained.
   "setup": {
     "commands": ["Exact CLI commands shown"],
     "dependencies": [
@@ -48,7 +55,18 @@ Extract structured programming/tech content.
       "code": "Code snippet",
       "description": "When to use this"
     }
+  ],
+  "claims": [
+    {
+      "claim": "A checkable claim the speaker makes — a fact, figure or prediction, stated plainly",
+      "source": "Who makes it, as the video attributes it — or null",
+      "status": "stated | supported | contested",
+      "sourceCitation": "The evidence the video gives for or against it (a study, a figure, a demo), or null",
+      "quote": "The words that make the claim, verbatim, at most 25 words — no words, status null",
+      "timestamp": null
+    }
   ]
+> CLAIMS: status says what the VIDEO does with the claim — stated (asserted, no evidence given), supported (the video gives evidence: name it in sourceCitation), contested (someone in the video disputes it or counter-evidence is given). Never judge truth yourself; never "verified" or "disputed". timestamp = the second the claim is made, quote = the words that make it — a status without both is not shown. source = null when the video names no one.
 }
 
 // Example for a coding tutorial:

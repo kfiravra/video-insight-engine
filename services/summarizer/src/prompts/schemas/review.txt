@@ -9,8 +9,11 @@ Extract a structured product review or comparison.
   "rating": {
     "score": 0.0,
     "maxScore": 10.0,
-    "label": "Score label (e.g., 'Great', 'Average')"
+    "label": "Score label (e.g., 'Great', 'Average')",
+    "quote": "The reviewer's words that give the score, verbatim, at most 25 words — no words, no rating",
+    "timestamp": null
   },
+> RATING: only a score the reviewer actually gives, with timestamp = the second they give it and quote = the words that give it; no stated score = leave the whole rating out. A score is never derived.
   "pros": [
     "Specific pro with real details: '5000mAh battery lasts 2 full days'"
   ],
@@ -35,24 +38,27 @@ Extract a structured product review or comparison.
 > UI: Comparisons → ComparisonInteractive table. Fill feature + thisProduct + competitor + competitorName for each row.
   "verdict": {
     "badge": "recommended | not_recommended | conditional | best_in_class",
-    "bestFor": ["Specific use cases this product excels at"],
-    "notFor": ["Specific use cases to avoid this product"],
+    "bestFor": ["Who or what the reviewer says it is for, as stated"],
+    "notFor": ["Who the reviewer says should skip it, as stated"],
     "bottomLine": "One-sentence verdict",
     "subScores": [
-      {"category": "Camera", "score": 9.0},
-      {"category": "Battery", "score": 7.5}
-    ]
+      {"category": "Camera", "score": null, "quote": null, "timestamp": null},
+      {"category": "Battery", "score": null, "quote": null, "timestamp": null}
+    ],
+    "quote": "The reviewer's words that state the verdict, verbatim, at most 25 words — or null",
+    "timestamp": null
   }
+> VERDICT: timestamp = the second the reviewer states the verdict, quote = the words that state it — the badge is shown only with both; a badge the reviewer never states stays null. subScores only as the reviewer scores them, each with its timestamp and quote. bestFor / notFor only when the reviewer states them — none stated, [].
 }
 
 // Example for a phone review:
 {
   "product": "Google Pixel 8 Pro", "price": "$999",
-  "rating": {"score": 8.5, "maxScore": 10.0, "label": "Great"},
+  "rating": {"score": 8.5, "maxScore": 10.0, "label": "Great", "quote": "Overall I'm giving the Pixel 8 Pro an eight and a half out of ten.", "timestamp": 612},
   "pros": ["Best camera in this price range — night mode is class-leading", "7 years of OS updates", "Tensor G3 chip enables on-device AI features"],
   "cons": ["Battery life is average — heavy users need a mid-day charge", "No headphone jack", "Runs warm during extended camera use"],
   "specs": [{"key": "Display", "value": "6.7-inch LTPO OLED, 120Hz"}, {"key": "Battery", "value": "5050mAh"}],
-  "verdict": {"badge": "recommended", "bestFor": ["Photography enthusiasts", "Long-term Android users"], "notFor": ["Power users who need all-day battery", "Gamers"], "bottomLine": "The best camera phone under $1000, if you can live with average battery life.", "subScores": [{"category": "Camera", "score": 9.5}, {"category": "Battery", "score": 7.0}]}
+  "verdict": {"badge": "recommended", "bestFor": ["Photography enthusiasts", "Long-term Android users"], "notFor": ["Power users who need all-day battery", "Gamers"], "bottomLine": "The best camera phone under $1000, if you can live with average battery life.", "subScores": [{"category": "Camera", "score": 9.5, "quote": "The camera is a nine and a half, easily the best I've tested.", "timestamp": 301}, {"category": "Battery", "score": 7.0, "quote": "Battery gets a seven from me — fine, not great.", "timestamp": 455}], "quote": "If you care about photos, this is the one to buy.", "timestamp": 598}
 }
 
 RULES:

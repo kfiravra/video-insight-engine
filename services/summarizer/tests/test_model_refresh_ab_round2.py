@@ -44,6 +44,7 @@ from _model_ab_types import HAIKU_45, HAIKU_55, SONNET_46, SONNET_55, AbRequest,
 from _model_ab_variants import (  # noqa: E402
     COMPLETENESS,
     COMPLETENESS_INSERT,
+    COMPLETENESS_RULE,
     add_completeness_rule,
     apply_variant,
     insertion_point,
@@ -121,12 +122,20 @@ class TestCompletenessVariant:
 
     def test_should_match_the_pipelines_group_rules_byte_for_byte(self) -> None:
         """The 4.0 picks ship the measured configuration: the split path's block 1
-        (``with_group_rules``) is the variant applied to round 1's block 1."""
-        from src.services.pipeline.extraction_group_prompt import prefix_block, with_group_rules
+        (``with_group_rules``) is the variant applied to round 1's block 1 — since
+        p1.11 with the argument rule appended to the measured paragraph, nothing
+        else moved."""
+        from src.services.pipeline.extraction_group_prompt import (
+            GROUP_RULES_PATH,
+            completeness_rule,
+            prefix_block,
+            with_group_rules,
+        )
         from src.services.pipeline.extraction_prompt import (
             ExtractionPromptInput,
             build_extraction_prompt,
         )
+        from src.services.pipeline.prompt_builder import load_prompt_text
 
         prompt = build_extraction_prompt(
             ExtractionPromptInput(["food"], [], "- one\n- two", title="T", tabs=[])
@@ -134,9 +143,14 @@ class TestCompletenessVariant:
         measured = add_completeness_rule(
             {"model": HAIKU_45, "messages": [{"role": "user", "content": [prefix_block(prompt)]}]}
         )
+        appended = completeness_rule(load_prompt_text(GROUP_RULES_PATH)).removeprefix(
+            COMPLETENESS_RULE
+        )
         shipped = prefix_block(with_group_rules(prompt))
 
-        assert shipped["text"] == measured["messages"][0]["content"][0]["text"]
+        assert shipped["text"] == measured["messages"][0]["content"][0]["text"].replace(
+            COMPLETENESS_INSERT, COMPLETENESS_INSERT + appended, 1
+        )
 
     def test_should_return_the_same_request_when_the_arm_has_no_variant(self) -> None:
         request = _static_request("x")

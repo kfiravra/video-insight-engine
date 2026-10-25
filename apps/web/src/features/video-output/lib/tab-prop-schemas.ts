@@ -34,9 +34,27 @@ function addBoundsIssue(ctx: z.RefinementCtx, path: (string | number)[], message
 
 // ─── Primary components ───
 
+// `timestamp` (seconds) drives the seek chip; a non-numeric or negative value
+// would render as a garbage chip (or seek before 0), so it is bounded here.
+// `quote` is the speaker's verbatim line (output-quality R2/R10); `speaker` the
+// holder of a podcast position and `category` a key idea's kind badge (1.1 / 1.3).
+// `quoteTranslated` marks a quote that is the English rendering of non-English
+// speech (2.0 d, D12): the card shows it as prose.
+const spotItemSchema = z
+  .object({
+    name: z.string(),
+    timestamp: z.number().min(0).nullish(),
+    quote: optionalString,
+    quoteEn: optionalString,
+    quoteTranslated: z.boolean().nullish(),
+    speaker: optionalString,
+    category: optionalString,
+  })
+  .passthrough();
+
 const spotExplorerSchema = z
   .object({
-    spots: z.array(z.object({ name: z.string() }).passthrough()),
+    spots: z.array(spotItemSchema),
     sections: z
       .array(z.object({ label: z.string(), spotIndices: z.array(nonNegativeInt) }).passthrough())
       .nullish(),
@@ -52,8 +70,23 @@ const spotExplorerSchema = z
 
 const momentTrackSchema = z
   .object({
-    // `seconds` drives seeking — an item without it can't render as a moment.
-    items: z.array(z.object({ label: z.string(), seconds: z.number() }).passthrough()),
+    // `seconds` drives seeking — an item without it can't render as a moment. The
+    // row renders `quote` (the speaker's line; prose when `quoteTranslated`, 2.0 d)
+    // and `question` (an interview's whole question) as text, so a non-string there
+    // would render garbage.
+    items: z.array(
+      z
+        .object({
+          label: z.string(),
+          seconds: z.number(),
+          quote: optionalString,
+          quoteEn: optionalString,
+          quoteTranslated: z.boolean().nullish(),
+          question: optionalString,
+          questionEn: optionalString,
+        })
+        .passthrough(),
+    ),
   })
   .passthrough();
 
@@ -150,11 +183,20 @@ const codePlaygroundSchema = z
   .object({ snippets: z.array(z.object({ code: z.string() }).passthrough()) })
   .passthrough();
 
+// `explanation` is parsed for `(m:ss)` seek chips and `timestamp` (seconds)
+// feeds the evidence slot, so both are bounded (output-quality R12). `quote` is the
+// evidence line rendered under the explanation (quiz v2, 2.1b; prose when
+// `quoteTranslated`, 2.0 d), so a non-string there would render garbage.
 const quizQuestionSchema = z
   .object({
     question: z.string(),
     options: z.array(z.string()).min(2),
     correctIndex: nonNegativeInt,
+    explanation: optionalString,
+    timestamp: optionalNumber,
+    quote: optionalString,
+    quoteEn: optionalString,
+    quoteTranslated: z.boolean().nullish(),
   })
   .passthrough()
   .superRefine((q, ctx) => {
@@ -200,10 +242,17 @@ const claimsTrackerSchema = z
       z
         .object({
           claim: z.string(),
-          source: z.string(),
-          // Mirrors ClaimStatus in @vie/types — an unknown status would render
-          // an unstyled badge.
-          status: z.enum(['verified', 'disputed', 'context']),
+          // Absent when the video attributes the claim to no one (output-quality 1.4).
+          source: optionalString,
+          // The claim's verbatim words (D13) and their English rendering (D12).
+          quote: optionalString,
+          quoteEn: optionalString,
+          // Mirrors ClaimStatus | LegacyClaimStatus in @vie/types — D11's three
+          // words, plus the pre-1.4 words stored rows carry (the tracker maps them).
+          // Absent on a claim without a timestamp: nobody could check it (p1 review R9).
+          status: z
+            .enum(['stated', 'supported', 'contested', 'verified', 'disputed', 'context'])
+            .nullish(),
         })
         .passthrough(),
     ),

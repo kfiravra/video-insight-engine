@@ -10,10 +10,12 @@ import {
 } from 'recharts';
 import { GlassCard, Badge } from '@/components/vie';
 import { Slider } from '@/components/ui/slider';
+import { useLabels } from '@/lib/i18n';
 
 import { DEFAULT_WEIGHT, MAX_SCORE, scoreComparisonAxes } from './radar-scoring';
 
 import type { ReviewComparison } from '@vie/types';
+import type { RadarSet } from './competitor-groups';
 import type { AxisScore } from './radar-scoring';
 
 function computeLeftPercent(scores: AxisScore[], weights: number[]): number {
@@ -31,18 +33,26 @@ interface ComparisonRadarHeroProps {
 }
 
 /**
- * Radar hero — one axis per comparison row, two series, per-axis weight
- * sliders to re-balance the weighted winner. Rendered above the table when a
- * comparison has ≥3 scoreable axes. Merged in from the retired standalone
- * ComparisonRadar; the unified component now chooses radar-vs-table by data.
+ * Radar hero — one axis per numeric comparison row (`scoreComparisonAxes`),
+ * two series, per-axis weight sliders to re-balance the weighted winner.
+ * Rendered above the table when a comparison has ≥3 scoreable axes. Merged in
+ * from the retired standalone ComparisonRadar; the unified component now
+ * chooses radar-vs-table by data.
  */
 export const ComparisonRadarHero = memo(function ComparisonRadarHero({
   comparisons,
   colLeft,
   colRight,
 }: ComparisonRadarHeroProps) {
+  const t = useLabels();
   const scored = useMemo(() => scoreComparisonAxes(comparisons), [comparisons]);
-  const [weights, setWeights] = useState<number[]>(() => comparisons.map(() => DEFAULT_WEIGHT));
+  const [weights, setWeights] = useState<number[]>(() => scored.map(() => DEFAULT_WEIGHT));
+  // One weight per scored axis, not per row: a prose row has no spoke, so it
+  // never resets the tuning, while a new axis count starts it fresh. Adjusted
+  // while rendering (React's pattern for state that follows a prop), no effect.
+  if (weights.length !== scored.length) {
+    setWeights(scored.map(() => DEFAULT_WEIGHT));
+  }
   const [tunerOpen, setTunerOpen] = useState(false);
 
   // Self-measure the chart box rather than leaning on Recharts'
@@ -86,20 +96,15 @@ export const ComparisonRadarHero = memo(function ComparisonRadarHero({
     };
   }, []);
 
-  // Re-sync weight array length whenever the comparison count changes.
-  useMemo(() => {
-    if (weights.length !== comparisons.length) {
-      setWeights(comparisons.map(() => DEFAULT_WEIGHT));
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [comparisons.length]);
-
   const leftPercent = useMemo(() => computeLeftPercent(scored, weights), [scored, weights]);
   const rightPercent = 100 - leftPercent;
   const winnerLabel = leftPercent === rightPercent ? null : leftPercent > rightPercent ? colLeft : colRight;
   const winnerMargin = Math.abs(leftPercent - rightPercent);
 
   const chartData = scored.map((s) => ({ feature: s.feature, [colLeft]: s.left, [colRight]: s.right }));
+  // A lower-is-better spoke is scored inverted (the cheaper side reaches the
+  // rim) — say so, or "Price" at the rim reads as "pricier".
+  const lowerIsBetter = scored.filter((s) => s.lowerIsBetter).map((s) => s.feature);
 
   return (
     <div className="space-y-3">
@@ -151,6 +156,11 @@ export const ComparisonRadarHero = memo(function ComparisonRadarHero({
             </RadarChart>
           )}
         </div>
+        {lowerIsBetter.length > 0 && (
+          <p className="mt-2 text-xs text-muted-foreground">
+            {t.radarLowerWins.replace('{features}', lowerIsBetter.join(', '))}
+          </p>
+        )}
       </GlassCard>
 
       {/* Weight sliders collapse by default — the winner split stays visible so
@@ -208,3 +218,28 @@ export const ComparisonRadarHero = memo(function ComparisonRadarHero({
     </div>
   );
 });
+
+interface ComparisonRadarsProps {
+  radars: RadarSet[];
+  colLeft: string;
+  colRight: string;
+}
+
+/** The radar view: one radar for a single opponent; one per competitor under
+ *  its "vs {name}" eyebrow, as the tables and cards split (`radarSets`). */
+export function ComparisonRadars({ radars, colLeft, colRight }: ComparisonRadarsProps) {
+  const t = useLabels();
+  if (radars.length === 1 && !radars[0].name) {
+    return <ComparisonRadarHero comparisons={radars[0].rows} colLeft={colLeft} colRight={colRight} />;
+  }
+  return (
+    <div className="space-y-4">
+      {radars.map((radar) => (
+        <section key={radar.name} className="space-y-2">
+          <h4 className="type-eyebrow">{t.versusName.replace('{name}', radar.name)}</h4>
+          <ComparisonRadarHero comparisons={radar.rows} colLeft={colLeft} colRight={radar.name} />
+        </section>
+      ))}
+    </div>
+  );
+}

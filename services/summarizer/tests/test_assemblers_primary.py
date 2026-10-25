@@ -1,4 +1,9 @@
-"""Assembler unit tests — primary family (spots, moments, comparison, info_grid, checklist, steps, code)."""
+"""Assembler unit tests — primary family.
+
+Spots, moments, comparison, info_grid, checklist, steps, code.
+"""
+
+import pytest
 
 from src.services.pipeline.assembly import (
     _normalize_code_snippet,
@@ -104,7 +109,8 @@ class TestAssembleChecklist:
         # section heading from the (translated) tab.label. Only the items
         # contract matters here.
         assert result["items"][0]["label"] == "2 cups flour"
-        assert result["items"][1]["label"] == "to taste salt"
+        # An amount that is no quantity leads the note, never the label (S06 iteration).
+        assert (result["items"][1]["label"], result["items"][1]["note"]) == ("salt", "to taste")
 
     def test_packing_items(self):
         data = [{"item": "Passport", "category": "Documents", "essential": True}]
@@ -121,6 +127,18 @@ class TestAssembleChecklist:
 
     def test_empty(self):
         assert assemble_checklist({}, [], {}, None) is None
+
+    @pytest.mark.parametrize(
+        "placeholder", ["amount not stated", "Not specified", "unknown", "N/A", "not given."]
+    )
+    def test_should_ship_the_name_alone_when_the_amount_is_not_stated(
+        self, placeholder: str
+    ) -> None:
+        data = [{"name": "beef", "amount": 0, "displayAmount": placeholder, "unit": ""}]
+
+        result = assemble_checklist({"id": "ingredients"}, data, {}, None)
+
+        assert result is not None and result["items"][0]["label"] == "beef"
 
 
 class TestAssembleComparison:
@@ -321,9 +339,16 @@ class TestFlexSpotExplorer:
         assert assemble_spot_explorer({}, [], {}, None) is None
 
     def test_passthrough_fields(self):
+        # `cost` is a stated fact (D13): it rides along on an anchored spot.
         data = [
-            {"name": "Place", "description": "Nice", "cost": "$50", "mapQuery": "place+near+me"},
-            {"name": "Spot B", "description": "Also nice", "cost": "$30"},
+            {
+                "name": "Place",
+                "description": "Nice",
+                "cost": "$50",
+                "mapQuery": "place+near+me",
+                "timestamp": 120,
+            },
+            {"name": "Spot B", "description": "Also nice", "cost": "$30", "timestamp": 300},
         ]
         result = assemble_spot_explorer({}, data, {}, None)
         assert result is not None
@@ -492,7 +517,7 @@ class TestFlexInfoGrid:
         assert result["items"][0]["value"] == "6.7-inch AMOLED"
 
     def test_title_code_description_shape(self):
-        """Items with {title, code, description} should normalize to {key=title, value=description}."""
+        """{title, code, description} items normalize to {key=title, value=description}."""
         data = [
             {
                 "title": "Enable extra usage",
@@ -597,6 +622,29 @@ class TestFlexInfoGrid:
         assert result["items"][0]["value"] == "What a shame"
         assert result["items"][0]["evidence"].startswith("Said when")
 
+    def test_food_substitution_shape(self):
+        # food.substitutions shape — original→key, substitute→value, notes→evidence.
+        data = [
+            {
+                "original": "Buttermilk",
+                "substitute": "Milk + 1 tbsp lemon juice",
+                "notes": "Let it rest 5 minutes",
+            }
+        ]
+        result = assemble_info_grid({}, data, {}, None)
+        assert result["items"] == [
+            {
+                "key": "Buttermilk",
+                "value": "Milk + 1 tbsp lemon juice",
+                "evidence": "Let it rest 5 minutes",
+            }
+        ]
+
+    def test_food_substitution_without_notes_keeps_the_pair(self):
+        data = [{"original": "Butter", "substitute": "Coconut oil", "notes": None}]
+        result = assemble_info_grid({}, data, {}, None)
+        assert result["items"] == [{"key": "Butter", "value": "Coconut oil"}]
+
     def test_term_definition_shape(self):
         data = [{"term": "ReLU", "definition": "Rectified Linear Unit — max(0, x)"}]
         result = assemble_info_grid({}, data, {}, None)
@@ -647,6 +695,17 @@ class TestFlexInfoGrid:
         assert [i["value"] for i in result["items"]] == ["Has body", "", ""]
         assert result["items"][0]["key"] == "Real"
 
+    def test_falls_back_to_another_key_field_when_the_explicit_key_is_empty(self):
+        # Degrade, never drop: an empty `key` is not the only headline candidate.
+        data = [{"key": "", "value": "Two batches", "title": "Brown the meat"}]
+        result = assemble_info_grid({}, data, {}, None)
+        assert result["items"][0] == {"key": "Brown the meat", "value": "Two batches"}
+
+    def test_credits_row_keeps_its_timestamp(self):
+        data = [{"role": "Director", "name": "Christopher Nolan", "timestamp": 75}]
+        result = assemble_info_grid({}, data, {}, None)
+        assert result["items"][0]["timestamp"] == 75
+
     def test_drops_comparison_single_sided_rows_per_row(self):
         # Regression: previously a comparison with any one real-pair row kept
         # ALL rows including single-sided ones, which rendered as half-empty
@@ -695,7 +754,7 @@ class TestSpotExplorerEmptyFiltering:
         assert result is None
 
     def test_spot_with_only_name_is_dropped(self):
-        """A spot with just a name (no description or passthrough) renders as an empty card — drop it."""
+        """A name-only spot (no description or passthrough) renders as an empty card — drop it."""
         data = [
             {"name": "Has name only", "description": ""},
             {"name": "Also name only", "description": ""},
@@ -764,7 +823,7 @@ class TestSpotExplorerEmptyFiltering:
         assert result is None
 
     def test_travel_day_section_indices_stay_aligned_after_filter(self):
-        """When some day-spots are filtered, sections' spotIndices must re-align to the kept list."""
+        """When day-spots are filtered, sections' spotIndices must re-align to the kept list."""
         data = [
             {
                 "day": 1,
@@ -947,9 +1006,9 @@ class TestMomentItemNormalization:
     def test_non_dict_non_str_returns_none(self):
         assert _normalize_moment_item(42, 0) is None
 
-    def test_missing_label_gets_default(self):
-        result = _normalize_moment_item({"seconds": 60}, 2)
-        assert result["label"] == "Moment 3"
+    def test_missing_label_is_refused(self):
+        """0b.1: a moment is never named by its position ("Moment 3")."""
+        assert _normalize_moment_item({"seconds": 60}, 2) is None
 
     def test_label_from_description_when_no_title(self):
         """When label/title/name are absent, derive from description prefix."""
@@ -1082,13 +1141,11 @@ class TestMomentTrackClipDefaults:
     """assemble_moment_track with clip-style input — default value behavior."""
 
     def test_label_fallback_chain(self):
-        result = assemble_moment_track({}, [{"timestamp": 10}], {}, None)
-        assert result is not None
-        # No label/title/description ⇒ default "Moment 1"
-        assert result["items"][0]["label"] == "Moment 1"
+        # No label/title/description ⇒ the item is refused (0b.1), never "Moment 1"
+        assert assemble_moment_track({}, [{"timestamp": 10}], {}, None) is None
 
     def test_label_from_title(self):
-        result = assemble_moment_track({}, [{"title": "Great moment"}], {}, None)
+        result = assemble_moment_track({}, [{"title": "Great moment", "seconds": 30}], {}, None)
         assert result["items"][0]["label"] == "Great moment"
 
     def test_seconds_from_timestamp(self):
@@ -1100,7 +1157,7 @@ class TestMomentTrackClipDefaults:
 
     def test_optional_fields_omitted_when_absent(self):
         """Optional fields (description, mood, ...) are dropped — not defaulted."""
-        result = assemble_moment_track({}, [{"label": "X"}], {}, None)
+        result = assemble_moment_track({}, [{"label": "X", "seconds": 30}], {}, None)
         item = result["items"][0]
         assert "description" not in item
         assert "mood" not in item
@@ -1116,14 +1173,15 @@ class TestComparisonNullHandling:
             "cons": None,
             "comparisons": [
                 {"feature": "Speed", "thisProduct": "Fast", "competitor": "Slow", "winner": "left"},
+                {"feature": "Price", "thisProduct": "$9", "competitor": "$12", "winner": "left"},
             ],
         }
         result = assemble_comparison({}, data, {}, None)
         assert result is not None
         assert isinstance(result["pros"], list)
         assert isinstance(result["cons"], list)
-        # Winner synthesis still works
-        assert "Speed" in result["pros"]
+        # 0b.9: pros/cons are never derived from `winner`.
+        assert result["pros"] == []
 
     def test_null_comparisons_handled(self):
         data = {"pros": ["Good"], "cons": ["Bad"], "comparisons": None}

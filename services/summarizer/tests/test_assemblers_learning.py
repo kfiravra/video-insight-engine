@@ -1,5 +1,11 @@
-"""Assembler unit tests — learning/media family (exercise, quiz, flash_deck, scenario, verdict, overview, gallery, lyrics)."""
+"""Assembler unit tests — learning/media family.
 
+exercise, quiz, flash_deck, scenario, verdict, overview, gallery, lyrics.
+"""
+
+import pytest
+
+from src.models.domain_types import validate_domain_output
 from src.services.pipeline.assembly import (
     _normalize_exercise,
     _normalize_quiz_question,
@@ -63,11 +69,15 @@ class TestAssembleVerdict:
     folded under `verdict`. ReviewSummary in ComparisonInteractive renders it."""
 
     def test_valid_verdict_returns_comparison_shape(self):
+        # The badge renders only with the second the verdict is said and its words
+        # (R2, p1.4; D13 extended, output-quality 2.0 c).
         data = {
             "badge": "recommended",
             "bottomLine": "Great product",
             "bestFor": ["students"],
             "notFor": ["pros"],
+            "timestamp": 598,
+            "quote": "I recommend it to students.",
         }
         result = assemble_verdict({}, data, {}, None)
         assert result is not None
@@ -80,11 +90,24 @@ class TestAssembleVerdict:
         assert result["verdict"]["notFor"] == ["pros"]
 
     def test_includes_score_when_provided(self):
-        data = {"badge": "best_in_class", "bottomLine": "Top pick", "score": 8.5, "maxScore": 10}
+        # 0b.13 / 2.0 c: a score is a fact only when anchored in the video (timestamp)
+        # and given in the reviewer's words (quote).
+        data = {
+            "badge": "best_in_class",
+            "bottomLine": "Top pick",
+            "score": 8.5,
+            "maxScore": 10,
+            "timestamp": 600,
+            "quote": "Eight and a half out of ten.",
+        }
         result = assemble_verdict({}, data, {}, None)
         assert result is not None
         assert result["verdict"]["score"] == 8.5
         assert result["verdict"]["maxScore"] == 10
+
+    def test_should_omit_a_badge_the_reviewer_did_not_state(self):
+        result = assemble_verdict({}, {"badge": None, "bottomLine": "Great product"}, {}, None)
+        assert "badge" not in result["verdict"]
 
     def test_empty(self):
         assert assemble_verdict({}, None, {}, None) is None
@@ -105,8 +128,37 @@ class TestAssembleOverview:
         assert result["data"]["difficulty"] == "easy"
         assert result["data"]["servings"] == 4
 
+    @pytest.mark.parametrize(
+        ("tag", "data"),
+        [
+            ("fitness", {"exercises": [{"name": "Squat"}]}),
+            ("project", {"steps": [{"number": 1, "instruction": "Cut"}]}),
+            ("language", {"targetLanguage": "French"}),
+            ("science", {"field": "Physics"}),
+        ],
+    )
+    def test_should_show_no_level_name_or_difficulty_the_video_does_not_state(
+        self, tag: str, data: dict
+    ):
+        extraction = validate_domain_output([tag], [], data)
+        tab = {"_primary_tag": tag, "_video_meta": {"title": "T"}}
+
+        result = assemble_overview(tab, None, extraction, None)
+
+        assert {"level", "difficulty", "projectName"} & result["data"].keys() == set()
+
+    def test_should_show_the_level_the_video_states(self):
+        extraction = validate_domain_output(["fitness"], [], {"meta": {"difficulty": "beginner"}})
+        result = assemble_overview({"_primary_tag": "fitness"}, None, extraction, None)
+        assert result["data"]["level"] == "Beginner"
+
     def test_no_domain_data(self):
         assert assemble_overview({"_primary_tag": "travel"}, None, {}, None) is None
+
+    def test_should_not_spread_a_blank_domain_string(self):
+        extraction = {"learning": {"summary": "  ", "keyQuestion": "What is ML?"}}
+        result = assemble_overview({"_primary_tag": "learning"}, None, extraction, None)
+        assert "summary" not in result["data"]
 
 
 # ─── Registry Coverage ───
@@ -348,6 +400,7 @@ class TestFlashCardNoEnglishPrefixes:
                 "formCues": ["Keep your hips level", "Engage your core"],
                 "duration": "30 seconds",
                 "difficulty": "intermediate",
+                "timestamp": 95,  # 0b.13: the duration ships only on an anchored item
             }
         )
         assert card["front"] == "Plank"

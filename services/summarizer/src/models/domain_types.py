@@ -16,6 +16,15 @@ from pydantic import (
 
 from ..shared_config.domain_config import valid_content_tags, valid_modifiers
 from .domain_validation import ValidationReport, merge_report, validate_block_items
+from .idea_types import (
+    Claim,
+    LearningKeyIdea,
+    PodcastQA,
+    TechTopic,
+    absent,
+    seconds_or_none,
+    text_or_none,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -43,8 +52,25 @@ class TravelSpot(BaseModel):
     pronunciation: str | None = None
     rating: float | None = None
     thumbnail_url: str | None = Field(None, alias="thumbnailUrl")
+    # Where the spot is discussed (seconds) — the seek chip (output-quality R2).
+    timestamp: int | None = None
+    # The speaker's verbatim line about the spot (output-quality R10).
+    quote: str | None = None
+    # The quote's English when the speaker is not speaking English (D12, 4.2).
+    quote_en: str | None = Field(None, alias="quoteEn", exclude_if=absent)
 
     model_config = {"populate_by_name": True}
+
+    @field_validator("timestamp", mode="before")
+    @classmethod
+    def coerce_timestamp(cls, v: Any) -> int | None:
+        """Seconds into the video: a non-negative integer, else None."""
+        return seconds_or_none(v)
+
+    @field_validator("quote_en", mode="before")
+    @classmethod
+    def coerce_quote_en(cls, v: Any) -> str | None:
+        return text_or_none(v)
 
     @field_validator("rating", mode="before")
     @classmethod
@@ -207,7 +233,8 @@ class FoodIngredient(BaseModel):
     model_config = {"populate_by_name": True}
 
     name: str
-    amount: float = 0.0
+    # Only as the speaker states it (D13): no stated number → None, never 0.
+    amount: float | None = None
     display_amount: str = Field("", alias="displayAmount")
     unit: str | None = None
     group: str | None = None
@@ -215,15 +242,13 @@ class FoodIngredient(BaseModel):
 
     @field_validator("amount", mode="before")
     @classmethod
-    def coerce_amount(cls, v: Any) -> float:
-        if v is None:
-            return 0.0
-        if isinstance(v, str):
-            try:
-                return float(v)
-            except ValueError:
-                return 0.0
-        return float(v)
+    def coerce_amount(cls, v: Any) -> float | None:
+        if v is None or isinstance(v, bool):
+            return None
+        try:
+            return float(v)
+        except (ValueError, TypeError):
+            return None
 
 
 class FoodStep(BaseModel):
@@ -334,14 +359,33 @@ class LearningConcept(BaseModel):
     # Thematic cluster label the planner asks the LLM to assign; powers the
     # ConceptCanvas Groups view. Dropped silently if not declared here.
     group: str | None = None
+    # Where the speaker explains it (seconds) — the seek chip and the frame (L13).
     timestamp: int | None = None
     connections: list[str | ConceptConnection] = []
 
+    @field_validator("timestamp", mode="before")
+    @classmethod
+    def coerce_timestamp(cls, v: Any) -> int | None:
+        return seconds_or_none(v)
+
 
 class LearningTimestamp(BaseModel):
+    """One moment of a learning video (R7): what was established at this beat.
+
+    ``description`` is required — a moment without one is a chapter jump, and
+    validation drops it (counted in ``_dropped``); a model writing ``summary``
+    or ``detail`` instead keeps it. ``quote`` is the speaker's line where the
+    moment is a claim.
+    """
+
+    model_config = {"populate_by_name": True}
+
     time: str = ""
     seconds: int = 0
     label: str = ""
+    description: str = Field(validation_alias=AliasChoices("description", "summary", "detail"))
+    quote: str | None = None
+    quote_en: str | None = Field(None, alias="quoteEn", exclude_if=absent)
 
     @field_validator("seconds", mode="before")
     @classmethod
@@ -350,14 +394,30 @@ class LearningTimestamp(BaseModel):
             return 0
         return int(v)
 
+    @field_validator("description")
+    @classmethod
+    def require_description(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("a moment states what was established")
+        return v.strip()
+
+    @field_validator("quote", "quote_en", mode="before")
+    @classmethod
+    def coerce_quote(cls, v: Any) -> str | None:
+        return text_or_none(v)
+
 
 class LearningData(BaseModel):
     model_config = {"populate_by_name": True}
 
     key_points: list[LearningKeyPoint] = Field([], alias="keyPoints")
+    # The argument tab of a talk, lecture or podcast (D10); keyPoints stays for explainers.
+    key_ideas: list[LearningKeyIdea] = Field([], alias="keyIdeas")
     concepts: list[LearningConcept] = []
     takeaways: list[str] = []
     timestamps: list[LearningTimestamp] = []
+    # Checkable claims of a talk or lecture (D11) — claims_tracker on has_claims.
+    claims: list[Claim] = []
     key_question: str = Field("", alias="keyQuestion")
     summary: str = ""
 
@@ -373,6 +433,20 @@ class ReviewRating(BaseModel):
     score: float = 0.0
     max_score: float = Field(10.0, alias="maxScore")
     label: str = ""
+    # Where the reviewer gives the score and the words that give it — without both
+    # the score never renders (D13, output-quality 2.0 c).
+    timestamp: int | None = None
+    quote: str | None = None
+
+    @field_validator("timestamp", mode="before")
+    @classmethod
+    def coerce_timestamp(cls, v: Any) -> int | None:
+        return seconds_or_none(v)
+
+    @field_validator("quote", mode="before")
+    @classmethod
+    def coerce_quote(cls, v: Any) -> str | None:
+        return text_or_none(v)
 
     @field_validator("score", mode="before")
     @classmethod
@@ -410,20 +484,42 @@ class ReviewComparison(BaseModel):
         return v if v in valid else None
 
 
+# The four verdicts ReviewSummary renders (``ReviewVerdict.badge`` in
+# vie-response.ts); anything else is no verdict, in the validator and in assembly
+# (``normalizers._normalize_verdict``) alike.
+VERDICT_BADGES: tuple[str, ...] = ("recommended", "not_recommended", "conditional", "best_in_class")
+
+
 class ReviewVerdict(BaseModel):
     model_config = {"populate_by_name": True}
 
-    badge: str = "recommended"
+    # None when the reviewer states no verdict (D13): a defaulted "recommended"
+    # shipped as the reviewer's call.
+    badge: str | None = None
     best_for: list[str] = Field([], alias="bestFor")
     not_for: list[str] = Field([], alias="notFor")
     bottom_line: str = Field("", alias="bottomLine")
     sub_scores: list[dict] | None = Field(None, alias="subScores")
+    # Where the reviewer states the verdict and the words that state it — the badge
+    # renders only with both (R2, D13, output-quality 2.0 c).
+    timestamp: int | None = None
+    quote: str | None = None
+    quote_en: str | None = Field(None, alias="quoteEn", exclude_if=absent)
 
     @field_validator("badge", mode="before")
     @classmethod
-    def coerce_badge(cls, v: Any) -> str:
-        valid = ("recommended", "not_recommended", "conditional", "best_in_class")
-        return v if v in valid else "recommended"
+    def coerce_badge(cls, v: Any) -> str | None:
+        return v if v in VERDICT_BADGES else None
+
+    @field_validator("timestamp", mode="before")
+    @classmethod
+    def coerce_timestamp(cls, v: Any) -> int | None:
+        return seconds_or_none(v)
+
+    @field_validator("quote", "quote_en", mode="before")
+    @classmethod
+    def coerce_quote(cls, v: Any) -> str | None:
+        return text_or_none(v)
 
 
 class ReviewData(BaseModel):
@@ -489,11 +585,14 @@ class TechData(BaseModel):
 
     languages: list[str] = []
     frameworks: list[str] = []
-    topics: list[str] = []
+    # Objects since output-quality 1.3 (L25): a bare string is a topic's name.
+    topics: list[TechTopic] = []
     setup: TechSetup = Field(default_factory=TechSetup)
     snippets: list[TechSnippet] = []
     patterns: list[TechPattern] = []
     cheat_sheet: list[TechCheatSheetItem] = Field([], alias="cheatSheet")
+    # Checkable claims a tech talk makes (benchmarks, adoption figures — D11).
+    claims: list[Claim] = []
 
     @model_validator(mode="before")
     @classmethod
@@ -506,7 +605,15 @@ class TechData(BaseModel):
                 data["topics"] = data.pop("concepts")
         return data
 
-    @field_validator("languages", "frameworks", "topics", mode="before")
+    @field_validator("topics", mode="before")
+    @classmethod
+    def _coerce_topics(cls, v: Any) -> Any:
+        """A bare string topic (the pre-1.3 shape, still in cached rows) is its name."""
+        if not isinstance(v, list):
+            return v
+        return [{"name": item} if isinstance(item, str) else item for item in v]
+
+    @field_validator("languages", "frameworks", mode="before")
     @classmethod
     def _coerce_string_lists(cls, v: Any) -> list[str]:
         """Coerce list items to strings — LLM sometimes returns objects like {name: '...'}."""
@@ -592,8 +699,10 @@ class FitnessMeta(BaseModel):
     model_config = {"populate_by_name": True}
 
     type: str = "general"
-    difficulty: str = "intermediate"
-    duration: int = 0
+    # None when the video states no level (D13): a default read as the video's.
+    difficulty: str | None = None
+    # None when the instructor states no length (D13): a default 0 read as one.
+    duration: int | None = None
     muscle_groups: list[str] = Field([], alias="muscleGroups")
     equipment: list[str] = []
     calories_burned: int | None = Field(None, alias="caloriesBurned")
@@ -605,14 +714,14 @@ class FitnessMeta(BaseModel):
 
     @field_validator("difficulty", mode="before")
     @classmethod
-    def coerce_difficulty(cls, v: Any) -> str:
+    def coerce_difficulty(cls, v: Any) -> str | None:
         valid = ("beginner", "intermediate", "advanced")
-        return v if v in valid else "intermediate"
+        return v if v in valid else None
 
     @field_validator("duration", mode="before")
     @classmethod
-    def coerce_duration(cls, v: Any) -> int:
-        return v if v is not None else 0
+    def coerce_duration(cls, v: Any) -> int | None:
+        return seconds_or_none(v)
 
 
 class FitnessData(BaseModel):
@@ -727,8 +836,9 @@ class ProjectStep(BaseModel):
 class ProjectData(BaseModel):
     model_config = {"populate_by_name": True}
 
-    project_name: str = Field("Untitled Project", alias="projectName")
-    difficulty: str = "intermediate"
+    # None when unstated (D13): "Untitled Project" / "intermediate" read as facts.
+    project_name: str | None = Field(None, alias="projectName")
+    difficulty: str | None = None
     estimated_time: str = Field("unknown", alias="estimatedTime")
     estimated_cost: str | None = Field(None, alias="estimatedCost")
     materials: list[ProjectMaterial] = []
@@ -738,14 +848,14 @@ class ProjectData(BaseModel):
 
     @field_validator("project_name", mode="before")
     @classmethod
-    def coerce_name(cls, v: Any) -> str:
-        return v if v else "Untitled Project"
+    def coerce_name(cls, v: Any) -> str | None:
+        return v if v else None
 
     @field_validator("difficulty", mode="before")
     @classmethod
-    def coerce_difficulty(cls, v: Any) -> str:
+    def coerce_difficulty(cls, v: Any) -> str | None:
         valid = ("beginner", "intermediate", "advanced")
-        return v if v in valid else "intermediate"
+        return v if v in valid else None
 
     @field_validator("estimated_time", mode="before")
     @classmethod
@@ -858,7 +968,8 @@ class LanguageData(BaseModel):
 
     target_language: str = Field("", alias="targetLanguage")
     native_language: str | None = Field(None, alias="nativeLanguage")
-    level: str = "beginner"
+    # None when the video states no level (D13): a default read as the video's.
+    level: str | None = None
     phrases: list[LanguagePhrase] = []
     rules: list[LanguageRule] = []
     drills: list[LanguageDrill] = []
@@ -866,9 +977,9 @@ class LanguageData(BaseModel):
 
     @field_validator("level", mode="before")
     @classmethod
-    def coerce_level(cls, v: Any) -> str:
+    def coerce_level(cls, v: Any) -> str | None:
         valid = ("beginner", "intermediate", "advanced")
-        return v if v in valid else "beginner"
+        return v if v in valid else None
 
 
 # ─────────────────────────────────────────────────────
@@ -919,16 +1030,17 @@ class ScienceData(BaseModel):
     model_config = {"populate_by_name": True}
 
     field: str = ""
-    level: str = "intermediate"
+    # None when the video states no level (D13): a default read as the video's.
+    level: str | None = None
     concepts: list[ScienceConcept] = []
     key_facts: list[ScienceKeyFact] = Field([], alias="keyFacts")
     experiments: list[ScienceExperiment] = []
 
     @field_validator("level", mode="before")
     @classmethod
-    def coerce_level(cls, v: Any) -> str:
+    def coerce_level(cls, v: Any) -> str | None:
         valid = ("beginner", "intermediate", "advanced")
-        return v if v in valid else "intermediate"
+        return v if v in valid else None
 
 
 # ─────────────────────────────────────────────────────
@@ -940,10 +1052,32 @@ class PodcastSegment(BaseModel):
     model_config = {"populate_by_name": True}
 
     title: str = ""
-    summary: str = ""
+    # The prompt asks for `summary`; a model that writes `description` instead must not
+    # lose the segment's only prose (the moment normalizer carries it as `description`).
+    summary: str = Field(default="", validation_alias=AliasChoices("summary", "description"))
     timestamp: int | None = None
     end_seconds: int | None = Field(None, alias="endSeconds")
     speaker: str | None = None
+    # The line that carries the segment's conclusion, verbatim (R7, R10).
+    quote: str | None = None
+    quote_en: str | None = Field(None, alias="quoteEn", exclude_if=absent)
+
+    @field_validator("quote", "quote_en", mode="before")
+    @classmethod
+    def coerce_quote(cls, v: Any) -> str | None:
+        return text_or_none(v)
+
+    @model_validator(mode="before")
+    @classmethod
+    def prefer_filled_prose(cls, data: Any) -> Any:
+        """``AliasChoices`` takes the first key present, so an empty or null
+        ``summary`` would hide a filled ``description``: the prose wins."""
+        if not isinstance(data, dict) or str(data.get("summary") or "").strip():
+            return data
+        description = data.get("description")
+        if isinstance(description, str) and description.strip():
+            return {**data, "summary": description}
+        return data
 
 
 class PodcastGuest(BaseModel):
@@ -951,12 +1085,25 @@ class PodcastGuest(BaseModel):
     role: str | None = None
     description: str = ""
     emoji: str = ""
+    # The second the guest is introduced — the guest card's seek chip (4.1).
+    timestamp: int | None = None
+
+    @field_validator("timestamp", mode="before")
+    @classmethod
+    def coerce_timestamp(cls, v: Any) -> int | None:
+        return seconds_or_none(v)
 
 
 class PodcastQuote(BaseModel):
     quote: str
+    quote_en: str | None = Field(None, alias="quoteEn", exclude_if=absent)
     speaker: str | None = None
     timestamp: int | None = None
+
+    @field_validator("quote_en", mode="before")
+    @classmethod
+    def coerce_quote_en(cls, v: Any) -> str | None:
+        return text_or_none(v)
 
 
 class PodcastTopic(BaseModel):
@@ -968,9 +1115,13 @@ class PodcastData(BaseModel):
     show: str | None = None
     host: str | None = None
     segments: list[PodcastSegment] = []
+    # An interview's questions and answers (C10) — moment_track with speaker + question.
+    qa: list[PodcastQA] = []
     guests: list[PodcastGuest] = []
     quotes: list[PodcastQuote] = []
     topics: list[PodcastTopic] = []
+    # Checkable claims made on the show (D11).
+    claims: list[Claim] = []
 
 
 # ─────────────────────────────────────────────────────
@@ -991,20 +1142,8 @@ class NewsEntity(BaseModel):
     emoji: str = ""
 
 
-class NewsClaim(BaseModel):
-    model_config = {"populate_by_name": True}
-
-    claim: str
-    source: str = "Reporter"
-    status: str = "context"
-    source_citation: str | None = Field(None, alias="sourceCitation")
-    timestamp: int | None = None
-
-    @field_validator("status", mode="before")
-    @classmethod
-    def coerce_status(cls, v: Any) -> str:
-        valid = ("verified", "disputed", "context")
-        return v if v in valid else "context"
+# The news claim is the generic claim (D11): one shape on every has_claims domain.
+NewsClaim = Claim
 
 
 class NewsContextItem(BaseModel):
@@ -1037,6 +1176,13 @@ class GamingLoadoutItem(BaseModel):
     item: str
     category: str | None = None
     note: str = ""
+    # Its own slot, so a stamp never lands in the note as "[timestamp ~Ns]" (review-C).
+    timestamp: int | None = None
+
+    @field_validator("timestamp", mode="before")
+    @classmethod
+    def coerce_timestamp(cls, v: Any) -> int | None:
+        return seconds_or_none(v)
 
 
 class GamingWalkthroughStep(BaseModel):
@@ -1049,6 +1195,20 @@ class GamingRanking(BaseModel):
     tier: str | None = None
     reason: str = ""
     emoji: str = ""
+    # Where the creator places it and the words that place it — a tier renders
+    # only with both (D13, output-quality 2.0 c).
+    timestamp: int | None = None
+    quote: str | None = None
+
+    @field_validator("timestamp", mode="before")
+    @classmethod
+    def coerce_timestamp(cls, v: Any) -> int | None:
+        return seconds_or_none(v)
+
+    @field_validator("quote", mode="before")
+    @classmethod
+    def coerce_quote(cls, v: Any) -> str | None:
+        return text_or_none(v)
 
     @field_validator("tier", mode="before")
     @classmethod
@@ -1152,6 +1312,11 @@ class VIEResponseMeta(BaseModel):
     key_takeaways: list[str] | None = Field(None, alias="keyTakeaways")
     master_summary: str | None = Field(None, alias="masterSummary")
     seo_description: str | None = Field(None, alias="seoDescription")
+    # The hero rewrite's own fields (output-quality 2.2); absent on older rows.
+    brief: str | None = None
+    worth_it_for: str | None = Field(None, alias="worthItFor")
+    skip_if: str | None = Field(None, alias="skipIf")
+    reading_minutes: int | None = Field(None, alias="readingMinutes")
     language: str | None = None
     is_rtl: bool | None = Field(None, alias="isRTL")
     # Partial-result flag (dropped extraction batches / critical coverage) —
@@ -1236,8 +1401,8 @@ def _carries_own_fields(model_cls: type[BaseModel], data: dict) -> bool:
     """True when ``data`` holds at least one non-empty field of ``model_cls``.
 
     Checked on the RAW data: the validated dump always looks populated for
-    models with truthy defaults (``project_name="Untitled Project"``,
-    ``badge="recommended"``), which used to smuggle default-only domains in.
+    models with truthy defaults (``estimated_time="unknown"``,
+    ``FitnessMeta.type="general"``), which used to smuggle default-only domains in.
     """
     return any(not _is_empty(data.get(key)) for key in _model_keys(model_cls))
 

@@ -1,7 +1,8 @@
 """Assemblers — primary family.
 
 spot_explorer, moment_track, code_explorer, comparison, info_grid,
-checklist, step_player.
+checklist, step_player. The info_grid item normalizers live in
+``info_grid_items`` and are re-exported here.
 
 Signature: (tab, data, extraction, enrichment) -> props dict | None
 Returning None means the tab should be dropped (no data).
@@ -11,14 +12,32 @@ from __future__ import annotations
 
 from typing import Any
 
+from src.services.pipeline.quote_verify import mark_translated_quote
+
+from .derived_guard import anchor_seconds
+from .info_grid_items import _INFO_EVIDENCE_FIELDS as _INFO_EVIDENCE_FIELDS
+from .info_grid_items import _INFO_KEY_FIELDS as _INFO_KEY_FIELDS
+from .info_grid_items import _INFO_STRING_MAX as _INFO_STRING_MAX
+from .info_grid_items import _INFO_VALUE_FIELDS as _INFO_VALUE_FIELDS
+from .info_grid_items import _category_badge as _category_badge
+from .info_grid_items import _normalize_info_grid_dict as _normalize_info_grid_dict
+from .info_grid_items import _normalize_info_grid_item as _normalize_info_grid_item
+from .info_grid_items import _split_long_sentence as _split_long_sentence
+from .info_grid_items import _split_string_info_item as _split_string_info_item
+from .info_grid_items import _text_only_info_item as _text_only_info_item
+from .info_grid_items import _with_category as _with_category
+from .ingredients import ingredient_row
+from .key_ideas import is_key_idea_list, key_idea_props, podcast_guests
+from .moment_normalizers import quote_fields
 from .normalizers import (
-    _first_competitor_name,
     _normalize_code_snippet,
     _normalize_comparison,
-    _normalize_moment_item,
     _normalize_step,
-    _normalize_to_spot,
+    _normalize_verdict,
+    normalize_moment_items,
 )
+from .quote_spots import is_quote_list, quote_spots
+from .tip_spots import spot_card
 
 # ─────────────────────────────────────────────────────
 # Assembler Functions
@@ -33,6 +52,13 @@ from .normalizers import (
 _MIN_SPOTS = 2
 
 
+def _spot_card(item: dict) -> dict | None:
+    """One item as a spot card (a tip or pick read as its grid row, ``tip_spots``, R6),
+    its translated-quote flag carried (2.0 d, D12)."""
+    spot = spot_card(item)
+    return mark_translated_quote(spot, item) if spot is not None else None
+
+
 def assemble_spot_explorer(
     tab: dict,
     data: Any,
@@ -41,16 +67,26 @@ def assemble_spot_explorer(
 ) -> dict | None:
     """Flatten TravelDay[] to SpotItem[] with section groupings.
 
-    Every spot passes through `_normalize_to_spot`, which drops entries lacking
+    Every spot passes through `spot_card` (`_normalize_to_spot`, else the item's
+    info_grid row — a tip or a pick, R6), which drops entries lacking
     a non-empty name or any descriptive/passthrough content. Bare-string input
     is rejected — extraction should produce structured `{name, description}`
     dicts; string arrays are almost always a symptom of keyword-list pollution
     via cross-domain fallback. Requires `_MIN_SPOTS` valid spots to ship; below
     that, the tab is dropped and the fallback layer (overview/info_grid) takes
-    over so the content still surfaces.
+    over so the content still surfaces. A ``learning.keyIdeas`` list ships as
+    key-idea cards (`key_idea_props`: claim, why, quote, timestamp, sections, badge),
+    a quote list as quote cards (`quote_spots`: speaker, the line, its seek point).
     """
     if not isinstance(data, list) or len(data) == 0:
         return None
+
+    if is_key_idea_list(data):
+        props = key_idea_props(data, podcast_guests(extraction))
+        return props if len(props["spots"]) >= _MIN_SPOTS else None
+    if is_quote_list(data):
+        spots = quote_spots(data)
+        return {"spots": spots} if len(spots) >= _MIN_SPOTS else None
 
     first = data[0] if isinstance(data[0], dict) else {}
     if ("day" in first or "city" in first) and "spots" in first:
@@ -67,7 +103,7 @@ def assemble_spot_explorer(
                 continue
             day_spots_clean = [
                 spot
-                for spot in (_normalize_to_spot(s) for s in day_spots_raw if isinstance(s, dict))
+                for spot in (_spot_card(s) for s in day_spots_raw if isinstance(s, dict))
                 if spot is not None
             ]
             if not day_spots_clean:
@@ -86,7 +122,7 @@ def assemble_spot_explorer(
 
     normalized = [
         spot
-        for spot in (_normalize_to_spot(item) for item in data if isinstance(item, dict))
+        for spot in (_spot_card(item) for item in data if isinstance(item, dict))
         if spot is not None
     ]
     if len(normalized) < _MIN_SPOTS:
@@ -104,13 +140,12 @@ def assemble_moment_track(
 
     Replaces legacy assemble_timeline (points) and assemble_clip_player (spans).
     Items keep endSeconds only when the LLM marked the moment as a replayable
-    highlight worth re-watching.
+    highlight worth re-watching. Textless items and a second item at the same
+    second are refused by `normalize_moment_items` (0b.1).
     """
     if not isinstance(data, list) or len(data) < 1:
         return None
-    items = [
-        m for m in (_normalize_moment_item(item, i) for i, item in enumerate(data)) if m is not None
-    ]
+    items = normalize_moment_items(data)
     return {"items": items} if items else None
 
 
@@ -167,6 +202,119 @@ def _is_real_comparison_pair(row: dict) -> bool:
 # audited "comparison with one row" failure mode — fall through to None so
 # the caller can route the data into info_grid / flash_deck instead.
 _MIN_COMPARISON_ROWS = 2
+# The review block a comparison tab reads its pros / cons from when planned on any
+# of its paths (``review.comparisons``, ``review.pros`` …) — a side read
+# (``field_requests._REVIEW_COMPARISON``).
+_REVIEW_DOMAIN = "review"
+# A review plan with a rows tab and a Pros & cons tab ships each half once (4.3): the
+# rows on the rows tab, the pros and cons on the other — whatever the tab order, so the
+# dedupe never drops one as the other's twin. Assembly hands every planned tab the
+# plan's comparison tabs, ``(id, dataSource)`` in plan order, under this key
+# (``planned_comparison_sources``).
+PLANNED_COMPARISONS_KEY = "_plannedComparisons"
+_ROWS_SOURCE = "review.comparisons"
+_PROS_CONS_SOURCES = frozenset({_REVIEW_DOMAIN, "review.pros", "review.cons"})
+_COMPARISON_COMPONENTS = frozenset({"comparison", "comparison_radar"})
+
+# One planned comparison tab: (tab id, dataSource).
+_Planned = tuple[tuple[str, str], ...]
+
+
+def planned_comparison_sources(tabs: Any) -> _Planned:
+    """The plan's comparison tabs as ``(id, dataSource)``, in plan order."""
+    planned = tabs if isinstance(tabs, list) else []
+    return tuple(
+        (str(t.get("id") or ""), str(t.get("dataSource") or ""))
+        for t in planned
+        if isinstance(t, dict) and t.get("component") in _COMPARISON_COMPONENTS
+    )
+
+
+def _planned(tab: dict) -> _Planned:
+    return tab.get(PLANNED_COMPARISONS_KEY) or ()
+
+
+def _halves_elsewhere(tab: dict) -> tuple[bool, bool]:
+    """(the rows ride another planned tab, the pros / cons ride another planned tab)."""
+    sources = {source for _, source in _planned(tab)}
+    source = str(tab.get("dataSource") or "")
+    rows_elsewhere = source in _PROS_CONS_SOURCES and _ROWS_SOURCE in sources
+    return rows_elsewhere, source == _ROWS_SOURCE and bool(sources & _PROS_CONS_SOURCES)
+
+
+def _competitor_names(rows: list[dict]) -> list[str]:
+    """Distinct non-empty `competitorName`s in row order; "Sony" and "sony" are one."""
+    names: list[str] = []
+    seen: set[str] = set()
+    for row in rows:
+        name = str(row.get("competitorName") or "").strip()
+        if name and name.casefold() not in seen:
+            seen.add(name.casefold())
+            names.append(name)
+    return names
+
+
+def _comparison_rows(data: Any) -> list[dict]:
+    """The real pairs a comparison ships: a review dict's ``comparisons`` or a row
+    list's feature rows, each with a feature and both sides."""
+    if isinstance(data, dict):
+        raw = data.get("comparisons") or []
+        rows = [_normalize_comparison(c) for c in raw if isinstance(c, dict)]
+    elif isinstance(data, list):
+        rows = [
+            _normalize_comparison(item)
+            for item in data
+            if isinstance(item, dict)
+            and "feature" in item
+            and ("thisProduct" in item or "competitor" in item)
+        ]
+    else:
+        rows = []
+    return [r for r in rows if str(r.get("feature") or "").strip() and _is_real_comparison_pair(r)]
+
+
+def _stated_lines(value: Any) -> list[str]:
+    """The non-blank strings of a pros / cons list, in order."""
+    if not isinstance(value, list):
+        return []
+    return [line for line in value if isinstance(line, str) and line.strip()]
+
+
+def _pros_cons(tab: dict, data: Any, review_data: Any) -> tuple[list[str], list[str]]:
+    """The reviewer's own pros and cons — never derived from a row's `winner` (0b.9).
+
+    A tab planned on the review block itself reads its lists; a tab planned on any
+    other review path (``review.comparisons``, ``review.pros``) reads the review
+    block's (4.3: S07 planned ``review.comparisons`` and shipped none of its 14 pros
+    and 7 cons; a tab on ``review.pros`` shipped nothing at all).
+    """
+    source = data if isinstance(data, dict) else None
+    if source is None and str(tab.get("dataSource") or "").split(".")[0] == _REVIEW_DOMAIN:
+        source = review_data if isinstance(review_data, dict) else None
+    if source is None:
+        return [], []
+    return _stated_lines(source.get("pros")), _stated_lines(source.get("cons"))
+
+
+def _verdict_tab(planned: _Planned, states_pros_or_cons: bool) -> str:
+    """The id of the one planned tab that carries a review's verdict: the Pros & cons tab
+    when one is planned and the review states pros or cons (it ships them), else the
+    first comparison tab — a rows tab before a Pros & cons tab that ships nothing."""
+    pros_cons = [tab_id for tab_id, source in planned if source in _PROS_CONS_SOURCES]
+    if pros_cons and states_pros_or_cons:
+        return pros_cons[0]
+    rows = [tab_id for tab_id, source in planned if source not in _PROS_CONS_SOURCES]
+    return (rows or [tab_id for tab_id, _ in planned])[0]
+
+
+def _carries_verdict(tab: dict, review_data: dict) -> bool:
+    """Whether this tab carries the review's verdict (C-C1): one tab only, so the hero
+    that lifts it is its only place. A tab assembled outside a plan keeps it."""
+    planned = _planned(tab)
+    if not planned:
+        return True
+    states = bool(_stated_lines(review_data.get("pros")) or _stated_lines(review_data.get("cons")))
+    return str(tab.get("id") or "") == _verdict_tab(planned, states)
 
 
 def assemble_comparison(
@@ -177,255 +325,53 @@ def assemble_comparison(
 ) -> dict | None:
     """Build comparison props with strict pair requirements.
 
-    Requires at least 2 rows where BOTH sides have content — otherwise the
-    output is the audited "video title as column header / empty third column"
-    failure mode. When the LLM produced single-sided items (concepts with no
-    competitor), this routes through to None so the data can flow into
-    info_grid or flash_deck via the fallback layer instead.
+    Requires at least 2 rows where BOTH sides have content, or the reviewer's own
+    pros / cons — otherwise the output is the audited "video title as column header
+    / empty third column" failure mode, and the data flows into info_grid or
+    flash_deck via the fallback layer instead.
 
-    The leftLabel/rightLabel are only set when the data is actually a product
-    review with an explicit competitor — never from the video title.
+    The leftLabel is only set from the review's product — never from the video
+    title. Each row keeps its `competitorName`, which heads that competitor's own
+    table (4.3, Q5); `rightLabel` names the competitor only when the rows name one.
+    Pros/cons come only from the review's own `pros` / `cons` (``_pros_cons``); a plan
+    with both a rows tab and a Pros & cons tab ships each half once (``_halves_elsewhere``)
+    and the review's verdict once (``_carries_verdict``).
     """
-    review_data = extraction.get("review") if isinstance(extraction, dict) else None
+    review_data = extraction.get(_REVIEW_DOMAIN) if isinstance(extraction, dict) else None
     product_name: str | None = None
     if isinstance(review_data, dict):
         candidate = review_data.get("product")
         if isinstance(candidate, str) and candidate.strip():
             product_name = candidate.strip()
 
-    pros: list[str] = []
-    cons: list[str] = []
-    rows: list[dict] = []
-
-    if isinstance(data, dict):
-        pros = list(data.get("pros") or [])
-        cons = list(data.get("cons") or [])
-        raw_rows = data.get("comparisons") or []
-        rows = [_normalize_comparison(c) for c in raw_rows if isinstance(c, dict)]
-    elif isinstance(data, list):
-        for item in data:
-            if not isinstance(item, dict):
-                continue
-            if "feature" in item and ("thisProduct" in item or "competitor" in item):
-                rows.append(_normalize_comparison(item))
-
-    rows = [r for r in rows if str(r.get("feature") or "").strip() and _is_real_comparison_pair(r)]
-
-    # When the LLM tagged winners on real-pair rows but didn't emit pros/cons
-    # explicitly, derive them from the winner field. Keeps the "Go for it /
-    # Skip it" recommendation section populated on review tabs that focus on
-    # the table rather than separately listing pros and cons.
-    if rows and not pros and not cons:
-        for row in rows:
-            feature = str(row.get("feature") or "").strip()
-            if not feature:
-                continue
-            winner = str(row.get("winner") or "").strip().lower()
-            if winner == "left":
-                pros.append(feature)
-            elif winner == "right":
-                cons.append(feature)
-
+    rows_elsewhere, pros_cons_elsewhere = _halves_elsewhere(tab)
+    rows = [] if rows_elsewhere else _comparison_rows(data)
+    pros, cons = ([], []) if pros_cons_elsewhere else _pros_cons(tab, data, review_data)
     # Enforce the documented contract: a comparison tab needs either ≥2 real
     # pairs OR a populated pros/cons set. A lone row with no pros/cons is the
     # "info_grid in disguise" failure mode the refactor was supposed to close.
     if len(rows) < _MIN_COMPARISON_ROWS and not pros and not cons:
         return None
 
-    competitor_name = _first_competitor_name(rows) if rows else ""
-
+    names = _competitor_names(rows)
     props: dict[str, Any] = {
         "pros": pros,
         "cons": cons,
         "comparisons": rows,
         "leftLabel": product_name or "",
-        "rightLabel": competitor_name,
+        "rightLabel": names[0] if len(names) == 1 else "",
     }
 
     # Verdict header data is folded into ComparisonInteractive — when the
-    # review extraction includes a verdict block, attach it so ReviewSummary
-    # renders above the table. Standalone VerdictInteractive was retired in
-    # the video-to-action overhaul; the comparison renderer absorbs its role.
-    if isinstance(review_data, dict):
+    # review extraction includes a verdict block, attach it to one planned tab (the
+    # web lifts it into the hero on a review, 4.3). Standalone VerdictInteractive was
+    # retired in the video-to-action overhaul; the comparison renderer absorbs its role.
+    if isinstance(review_data, dict) and _carries_verdict(tab, review_data):
         verdict = review_data.get("verdict")
         if isinstance(verdict, dict) and verdict.get("bottomLine"):
-            verdict_props: dict[str, Any] = {
-                "badge": verdict.get("badge", "neutral"),
-                "bottomLine": verdict.get("bottomLine", ""),
-                "bestFor": verdict.get("bestFor") or [],
-                "notFor": verdict.get("notFor") or [],
-            }
-            sub_scores = verdict.get("subScores")
-            if isinstance(sub_scores, list) and sub_scores:
-                verdict_props["subScores"] = sub_scores
-            rating = (
-                review_data.get("rating") if isinstance(review_data.get("rating"), dict) else None
-            )
-            if isinstance(rating, dict):
-                score = rating.get("score")
-                if isinstance(score, (int, float)):
-                    verdict_props["score"] = score
-                    max_score = rating.get("maxScore")
-                    if isinstance(max_score, (int, float)) and max_score > 0:
-                        verdict_props["maxScore"] = max_score
-            props["verdict"] = verdict_props
+            props["verdict"] = _normalize_verdict(verdict, review_data.get("rating"))
 
     return props
-
-
-_INFO_KEY_FIELDS: tuple[str, ...] = (
-    "key",
-    "name",
-    "title",
-    "label",
-    "term",
-    "word",
-    "phrase",
-    "aspect",
-    "role",
-    "type",
-    "fact",
-    "concept",
-    "topic",
-    "item",
-    "place",
-    "spot",
-    "feature",
-    "claim",
-    "step",
-    "question",
-)
-_INFO_VALUE_FIELDS: tuple[str, ...] = (
-    "value",
-    "definition",
-    "description",
-    "detail",
-    "explanation",
-    "text",
-    "translation",
-    "answer",
-    "meaning",
-    "summary",
-    "reason",
-    "why",
-    "note",
-    "tip",
-    "instruction",
-)
-_INFO_EVIDENCE_FIELDS: tuple[str, ...] = (
-    "example",
-    "source",
-    "context",
-    "pronunciation",
-    "note",
-    "analogy",
-    "quote",
-)
-
-# A bare string longer than this with no key/value delimiter is a paragraph,
-# not a reference pair — it was the wall-of-empty-grid bug (a 150-char sentence
-# dumped into `key` with an empty `value`). Drop it so the orchestrator routes
-# the data elsewhere (spot_explorer via promotion, or the fallback layer).
-_INFO_STRING_MAX = 120
-
-
-def _split_string_info_item(text: str) -> dict | None:
-    """Turn a bare string into an info_grid pair, or drop it.
-
-    A natural ` — ` / ` – ` / `: ` delimiter splits cleanly into key/value.
-    A short standalone label survives as a key-only chip; a long delimiterless
-    paragraph is not a reference pair and is dropped.
-    """
-    text = text.strip()
-    if not text:
-        return None
-    for sep in (" — ", " – ", ": "):
-        if sep in text:
-            key, _, value = text.partition(sep)
-            key, value = key.strip(), value.strip()
-            if key and value:
-                return {"key": key, "value": value}
-            break
-    if len(text) > _INFO_STRING_MAX:
-        return None
-    return {"key": text, "value": ""}
-
-
-def _normalize_info_grid_item(item: Any) -> dict | None:
-    """Coerce diverse LLM-emit shapes into {key, value, evidence?, emoji?}.
-
-    Returns None when the item lacks either key OR value — those would render
-    as empty cards and are the root cause of the wall-of-empty-grid bug.
-    """
-    if isinstance(item, str):
-        return _split_string_info_item(item)
-    if not isinstance(item, dict):
-        return None
-
-    # Credits-style: {role, name} — role labels the position (key), name
-    # identifies who fills it (value). Handle explicitly because both fields
-    # fall in the priority key-field list and would otherwise collide.
-    role = str(item.get("role") or "").strip()
-    name = str(item.get("name") or "").strip()
-    if role and name and not any(item.get(f) for f in _INFO_VALUE_FIELDS):
-        result: dict[str, Any] = {"key": role, "value": name}
-        if item.get("emoji"):
-            result["emoji"] = item["emoji"]
-        return result
-
-    if "key" in item and "value" in item:
-        key_clean = str(item["key"]).strip()
-        value_clean = str(item.get("value") or "").strip()
-        if not key_clean:
-            return None
-        # Key-only items survive as headline chips (terms-only glossaries) —
-        # the frontend renders them; only a paragraph-length key is dropped.
-        if not value_clean and len(key_clean) > _INFO_STRING_MAX:
-            return None
-        result: dict[str, Any] = {"key": key_clean, "value": value_clean}
-        if item.get("emoji"):
-            result["emoji"] = item["emoji"]
-        for ev_field in _INFO_EVIDENCE_FIELDS:
-            ev = item.get(ev_field)
-            if isinstance(ev, str) and ev.strip():
-                result["evidence"] = ev.strip()
-                break
-        return result
-
-    key_raw = ""
-    for field in _INFO_KEY_FIELDS:
-        candidate = item.get(field)
-        if isinstance(candidate, str) and candidate.strip():
-            key_raw = candidate.strip()
-            break
-    if not key_raw:
-        return None
-
-    value_raw = ""
-    for field in _INFO_VALUE_FIELDS:
-        candidate = item.get(field)
-        if isinstance(candidate, str) and candidate.strip() and candidate.strip() != key_raw:
-            value_raw = candidate.strip()
-            break
-    # No value field → key-only headline chip (frontend renders these);
-    # paragraph-length keys are still dropped as not-a-reference-pair.
-    if not value_raw and len(key_raw) > _INFO_STRING_MAX:
-        return None
-
-    result = {"key": key_raw, "value": value_raw}
-    if item.get("emoji"):
-        result["emoji"] = item["emoji"]
-
-    for ev_field in _INFO_EVIDENCE_FIELDS:
-        ev = item.get(ev_field)
-        if isinstance(ev, str) and ev.strip() and ev.strip() != value_raw:
-            result["evidence"] = ev.strip()
-            break
-
-    if item.get("timestamp") is not None:
-        result["timestamp"] = item["timestamp"]
-
-    return result
 
 
 def assemble_info_grid(
@@ -434,12 +380,15 @@ def assemble_info_grid(
     extraction: dict,
     enrichment: dict | None,
 ) -> dict | None:
-    """Normalize diverse list/dict shapes into InfoGridItem[].
+    """Normalize diverse list/dict shapes into InfoGridItem[] (`info_grid_items`).
 
-    Drops items that can't produce both a key and a value — they'd render as
-    empty cards. If every item is dropped, returns None so the orchestrator
-    can route the data through a fallback layer instead of shipping an empty
-    grid (the audited "8 empty cards" failure mode).
+    Every row needs a key — the card's headline. A key-only row ships as a
+    headline chip, a long bare string splits at its first sentence, and a
+    keyless tip is headlined by its own text with its `type` as a category
+    badge; each row keeps its emoji, evidence and timestamp. Only a row with
+    nothing to headline drops; when every row does, returns None so the
+    orchestrator can route the data through a fallback layer instead of
+    shipping an empty grid (the audited "8 empty cards" failure mode).
     """
     if isinstance(data, list) and len(data) >= 1:
         pairs = [p for p in (_normalize_info_grid_item(item) for item in data) if p is not None]
@@ -454,6 +403,46 @@ def assemble_info_grid(
     return None
 
 
+def _checklist_dict_row(item: dict) -> dict | None:
+    """One dict item as a checklist row, by the field that carries its text.
+
+    A dict with no text field (e.g. an itinerary day a fallback routed here) has no
+    checklist label; str() of it leaked a Python repr into the UI, so it is dropped.
+    """
+    if "name" in item and ("amount" in item or "unit" in item or "displayAmount" in item):
+        return ingredient_row(item)
+    if "item" in item:
+        return {
+            "label": str(item["item"]),
+            "note": item.get("category"),
+            "emoji": "⚠️" if item.get("essential") else None,
+        }
+    if "text" in item:
+        return {"label": str(item["text"]), "note": item.get("notes")}
+    if "title" in item:
+        return {"label": str(item["title"]), "note": item.get("detail") or item.get("notes")}
+    if "label" in item:
+        return {"label": str(item["label"]), "note": item.get("note") or item.get("notes")}
+    if "name" in item:
+        return {"label": str(item["name"]), "note": item.get("notes")}
+    return None
+
+
+def _checklist_row(item: Any) -> dict | None:
+    """One checklist row; a dict item's row keeps the item's seek point (4.1 — a talk's
+    asks rows, ``talk_asks.ask_rows``, lost theirs here) and its kept quote with the
+    quote's flag and English (``quote_fields``: an ask's ``quoteEn`` stays, and the
+    translation walk knows its “note” for the speaker's own line — D12)."""
+    if not isinstance(item, dict):
+        return {"label": str(item)}
+    row = _checklist_dict_row(item)
+    if row is None:
+        return None
+    timestamp = anchor_seconds(item)
+    stamp = {} if timestamp is None or "timestamp" in row else {"timestamp": timestamp}
+    return {**row, **stamp, **quote_fields(item)}
+
+
 def assemble_checklist(
     tab: dict,
     data: Any,
@@ -462,49 +451,7 @@ def assemble_checklist(
 ) -> dict | None:
     if not isinstance(data, list) or len(data) < 1:
         return None
-
-    items: list[dict] = []
-    for item in data:
-        if isinstance(item, str):
-            items.append({"label": item})
-        elif isinstance(item, dict):
-            if "name" in item and ("amount" in item or "unit" in item or "displayAmount" in item):
-                da = str(item.get("displayAmount", "")).strip()
-                if da:
-                    items.append({"label": f"{da} {item['name']}", "note": item.get("notes")})
-                else:
-                    parts: list[str] = []
-                    if item.get("amount") and item["amount"] != 0:
-                        parts.append(str(item["amount"]))
-                    if item.get("unit"):
-                        parts.append(str(item["unit"]))
-                    parts.append(str(item["name"]))
-                    items.append({"label": " ".join(parts), "note": item.get("notes")})
-            elif "item" in item:
-                items.append(
-                    {
-                        "label": str(item["item"]),
-                        "note": item.get("category"),
-                        "emoji": "⚠️" if item.get("essential") else None,
-                    }
-                )
-            elif "text" in item:
-                items.append({"label": str(item["text"]), "note": item.get("notes")})
-            elif "title" in item:
-                items.append(
-                    {"label": str(item["title"]), "note": item.get("detail") or item.get("notes")}
-                )
-            elif "label" in item:
-                items.append(
-                    {"label": str(item["label"]), "note": item.get("note") or item.get("notes")}
-                )
-            elif "name" in item:
-                items.append({"label": str(item["name"]), "note": item.get("notes")})
-            # A dict with no text field (e.g. an itinerary day a fallback routed here) has no
-            # checklist label; str() of it leaked a Python repr into the UI, so it is dropped.
-        else:
-            items.append({"label": str(item)})
-
+    items = [row for row in map(_checklist_row, data) if row is not None]
     return {"items": items} if items else None
 
 

@@ -1,9 +1,24 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ConceptItem } from '@vie/types';
+import type { VieCanvasProps } from '@/components/vie/canvas/CanvasShell';
 
-import { ConceptCanvas, buildConceptGraph } from '../ConceptCanvas';
+import { ConceptCanvas } from '../ConceptCanvas';
+import { buildConceptGraph } from '../concept-graph';
+
+// Every render of the Map view's canvas, recorded — the real canvas still renders.
+const canvasRenders = vi.hoisted(() => [] as VieCanvasProps[]);
+vi.mock('@/components/vie/canvas/CanvasShell', async () => {
+  const actual = await vi.importActual<typeof import('@/components/vie/canvas/CanvasShell')>(
+    '@/components/vie/canvas/CanvasShell',
+  );
+  function RecordingCanvas(props: VieCanvasProps) {
+    canvasRenders.push(props);
+    return <actual.VieCanvas {...props} />;
+  }
+  return { ...actual, VieCanvas: RecordingCanvas };
+});
 
 const concepts: ConceptItem[] = [
   {
@@ -11,6 +26,7 @@ const concepts: ConceptItem[] = [
     emoji: '🌍',
     definition: 'Force that attracts objects with mass toward each other.',
     example: 'An apple falling from a tree.',
+    timestamp: 90,
     group: 'Foundations',
     connections: [{ to: 'Acceleration', type: 'causes' }],
   },
@@ -68,6 +84,10 @@ describe('buildConceptGraph', () => {
 });
 
 describe('ConceptCanvas', () => {
+  beforeEach(() => {
+    canvasRenders.length = 0;
+  });
+
   it('renders the empty fallback when there are no concepts', () => {
     render(<ConceptCanvas concepts={[]} />);
     expect(screen.getByText(/No concepts were extracted/i)).toBeInTheDocument();
@@ -93,17 +113,66 @@ describe('ConceptCanvas', () => {
     );
   });
 
-  it('defaults to the Groups list view on mobile (matchMedia → not desktop)', () => {
+  it('opens in the list view by default', () => {
     render(<ConceptCanvas concepts={concepts} groups={['Foundations', 'Mechanics']} />);
     // Group headings are present; the canvas node layer is not.
     expect(screen.getByRole('heading', { name: 'Foundations' })).toBeInTheDocument();
     expect(document.querySelector('[data-slot="vie-concept-node"]')).toBeNull();
   });
 
+  it('opens in the list view on desktop too — the map is a toggle (D8 / R8)', () => {
+    const original = window.matchMedia;
+    window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+      ...original(query),
+      matches: /min-width: 1024px/.test(query),
+    }));
+    try {
+      render(<ConceptCanvas concepts={concepts} groups={['Foundations', 'Mechanics']} />);
+      expect(screen.getByRole('button', { name: /^list$/i })).toHaveAttribute('aria-pressed', 'true');
+      expect(document.querySelector('.react-flow')).toBeNull();
+    } finally {
+      window.matchMedia = original;
+    }
+  });
+
+  it('shows definition, example and timestamp inline per concept without a click (R8)', () => {
+    render(<ConceptCanvas concepts={concepts} groups={['Foundations', 'Mechanics']} />);
+    expect(
+      screen.getByText('Force that attracts objects with mass toward each other.'),
+    ).toBeInTheDocument();
+    expect(screen.getByText('An apple falling from a tree.')).toBeInTheDocument();
+    expect(screen.getByText('1:30')).toBeInTheDocument();
+  });
+
+  it('seeks the video from the inline timestamp chip', async () => {
+    const user = userEvent.setup();
+    const onSeek = vi.fn();
+    render(<ConceptCanvas concepts={concepts} groups={['Foundations', 'Mechanics']} onSeek={onSeek} />);
+    await user.click(screen.getByRole('button', { name: /jump to 1:30/i }));
+    expect(onSeek).toHaveBeenCalledWith(90);
+  });
+
+  it('keeps the relation legend to the map view', async () => {
+    const user = userEvent.setup();
+    render(<ConceptCanvas concepts={concepts} groups={['Foundations', 'Mechanics']} />);
+    expect(screen.queryByText('contrasts')).toBeNull();
+    await user.click(screen.getByRole('button', { name: /^map$/i }));
+    expect(screen.getByText('contrasts')).toBeInTheDocument();
+  });
+
+  it('returns from the map to the list view', async () => {
+    const user = userEvent.setup();
+    render(<ConceptCanvas concepts={concepts} groups={['Foundations', 'Mechanics']} />);
+    await user.click(screen.getByRole('button', { name: /^map$/i }));
+    await user.click(screen.getByRole('button', { name: /^list$/i }));
+    expect(document.querySelector('.react-flow')).toBeNull();
+    expect(screen.getByRole('heading', { name: 'Mechanics' })).toBeInTheDocument();
+  });
+
   it('switches to the Map view and renders one node per concept', async () => {
     const user = userEvent.setup();
     render(<ConceptCanvas concepts={concepts} groups={['Foundations', 'Mechanics']} />);
-    await user.click(screen.getByRole('tab', { name: /map/i }));
+    await user.click(screen.getByRole('button', { name: /^map$/i }));
     expect(document.querySelectorAll('[data-slot="vie-concept-node"]')).toHaveLength(concepts.length);
   });
 
@@ -115,7 +184,7 @@ describe('ConceptCanvas', () => {
     // (jsdom can't render RF's measured edge layer, so we assert the anchors.)
     const user = userEvent.setup();
     render(<ConceptCanvas concepts={concepts} groups={['Foundations', 'Mechanics']} />);
-    await user.click(screen.getByRole('tab', { name: /map/i }));
+    await user.click(screen.getByRole('button', { name: /^map$/i }));
     const nodes = document.querySelectorAll('[data-slot="vie-concept-node"]');
     nodes.forEach((node) => {
       expect(node.querySelectorAll('.react-flow__handle.source').length).toBe(1);
@@ -128,7 +197,7 @@ describe('ConceptCanvas', () => {
     render(<ConceptCanvas concepts={concepts} groups={['Foundations', 'Mechanics']} />);
     // No inspector before selection.
     expect(document.querySelector('[data-slot="canvas-inspector"]')).toBeNull();
-    // Select Gravity from the (default) Groups list.
+    // Select Gravity from the (default) list view.
     await user.click(screen.getByRole('button', { name: /Gravity/ }));
     const inspector = document.querySelector('[data-slot="canvas-inspector"]');
     expect(inspector).not.toBeNull();
@@ -139,12 +208,114 @@ describe('ConceptCanvas', () => {
     ).toBeInTheDocument();
   });
 
+  it('renders the inspector inline under the selected concept in the list view', async () => {
+    const user = userEvent.setup();
+    render(<ConceptCanvas concepts={concepts} groups={['Foundations', 'Mechanics']} />);
+    const nameButton = screen.getByRole('button', { name: /Gravity/ });
+    await user.click(nameButton);
+    const inspector = document.querySelector('[data-slot="canvas-inspector"]') as HTMLElement;
+    expect(inspector.getAttribute('data-placement')).toBe('inline');
+    // Same list item as the concept it describes.
+    expect(nameButton.closest('li')).toBe(inspector.closest('li'));
+  });
+
+  it('floats the inspector over the canvas in the Map view', async () => {
+    const user = userEvent.setup();
+    render(<ConceptCanvas concepts={concepts} groups={['Foundations', 'Mechanics']} />);
+    await user.click(screen.getByRole('button', { name: /^map$/i }));
+    // xyflow keeps nodes hidden until measured (no jsdom layout) — click the raw node button.
+    fireEvent.click(document.querySelector('[data-slot="vie-concept-node"] button') as HTMLElement);
+    const inspector = document.querySelector('[data-slot="canvas-inspector"]') as HTMLElement;
+    expect(inspector.getAttribute('data-placement')).toBe('overlay');
+  });
+
+  it('should open the Map on its first lane, not the middle of every lane', async () => {
+    const user = userEvent.setup();
+    render(<ConceptCanvas concepts={concepts} groups={['Foundations', 'Mechanics']} />);
+    await user.click(screen.getByRole('button', { name: /^map$/i }));
+    // Foundations is the first lane: Gravity (concept-0) and Mass (concept-2).
+    expect(canvasRenders.at(-1)?.startNodeIds).toEqual(['concept-0', 'concept-2']);
+  });
+
   it('locks node dragging in the Map view (no infinite drag)', async () => {
     const user = userEvent.setup();
     render(<ConceptCanvas concepts={concepts} groups={['Foundations', 'Mechanics']} />);
-    await user.click(screen.getByRole('tab', { name: /map/i }));
+    await user.click(screen.getByRole('button', { name: /^map$/i }));
     // ReactFlow tags draggable nodes with a `draggable` class; locked nodes have none.
     expect(document.querySelectorAll('.react-flow__node.draggable')).toHaveLength(0);
+  });
+
+  it('should label a concept past the first hour with an hour-aware seek chip', async () => {
+    const user = userEvent.setup();
+    const onSeek = vi.fn();
+    render(<ConceptCanvas concepts={[{ ...concepts[2], timestamp: 5000 }]} onSeek={onSeek} />);
+    await user.click(screen.getByRole('button', { name: 'Jump to 1:23:20' }));
+    expect(onSeek).toHaveBeenCalledWith(5000);
+  });
+
+  describe('inline details (list view)', () => {
+    function renderList() {
+      render(<ConceptCanvas concepts={concepts} groups={['Foundations', 'Mechanics']} />);
+    }
+
+    it('should mark a concept name collapsed before its details open', () => {
+      renderList();
+      expect(screen.getByRole('button', { name: 'Gravity' })).toHaveAttribute('aria-expanded', 'false');
+    });
+
+    it('should mark a concept name expanded while its details are open', async () => {
+      const user = userEvent.setup();
+      renderList();
+      await user.click(screen.getByRole('button', { name: 'Gravity' }));
+      expect(screen.getByRole('button', { name: 'Gravity' })).toHaveAttribute('aria-expanded', 'true');
+    });
+
+    it('should close the details when the open concept name is activated again', async () => {
+      const user = userEvent.setup();
+      renderList();
+      await user.click(screen.getByRole('button', { name: 'Gravity' }));
+      await user.click(screen.getByRole('button', { name: 'Gravity' }));
+      expect(document.querySelector('[data-slot="canvas-inspector"]')).toBeNull();
+    });
+
+    it('should move focus to the concept chosen from the connected list', async () => {
+      const user = userEvent.setup();
+      renderList();
+      await user.click(screen.getByRole('button', { name: 'Gravity' }));
+      const inspector = document.querySelector('[data-slot="canvas-inspector"]') as HTMLElement;
+      await user.click(within(inspector).getByRole('button', { name: /Acceleration/ }));
+      expect(screen.getByRole('button', { name: 'Acceleration' })).toHaveFocus();
+    });
+
+    it('should scroll the concept chosen from the connected list into view', async () => {
+      const user = userEvent.setup();
+      renderList();
+      const row = screen.getByRole('button', { name: 'Acceleration' }).closest('li') as HTMLElement;
+      const scrollSpy = vi.spyOn(row, 'scrollIntoView');
+      await user.click(screen.getByRole('button', { name: 'Gravity' }));
+      const inspector = document.querySelector('[data-slot="canvas-inspector"]') as HTMLElement;
+      await user.click(within(inspector).getByRole('button', { name: /Acceleration/ }));
+      expect(scrollSpy).toHaveBeenCalled();
+      scrollSpy.mockRestore();
+    });
+
+    it('should return focus to the concept name when its details close', async () => {
+      const user = userEvent.setup();
+      renderList();
+      await user.click(screen.getByRole('button', { name: 'Gravity' }));
+      await user.click(screen.getByRole('button', { name: /close details/i }));
+      expect(screen.getByRole('button', { name: 'Gravity' })).toHaveFocus();
+    });
+
+    it('should leave focus where it is when Escape closes the details from elsewhere', async () => {
+      const user = userEvent.setup();
+      renderList();
+      await user.click(screen.getByRole('button', { name: 'Gravity' }));
+      const listToggle = screen.getByRole('button', { name: /^list$/i });
+      listToggle.focus();
+      await user.keyboard('{Escape}');
+      expect(listToggle).toHaveFocus();
+    });
   });
 
   it('does not persist any layout to localStorage (feature dropped)', () => {

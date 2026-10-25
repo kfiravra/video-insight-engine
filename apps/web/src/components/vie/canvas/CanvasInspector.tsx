@@ -22,8 +22,12 @@ export interface CanvasInspectorProps {
   onSelectNeighbor: (id: string) => void;
   onClose: () => void;
   onSeek?: (seconds: number) => void;
-  /** Right dock on desktop, bottom sheet on mobile. */
+  /** Overlay placement: right dock on desktop, bottom sheet on mobile. */
   isDesktop: boolean;
+  /** `overlay` floats over a bounded canvas (map view); `inline` sits in the
+   *  flow of the page (list view), where an absolute panel would anchor to
+   *  the bottom of an unbounded list. */
+  placement?: 'overlay' | 'inline';
 }
 
 const RELATION_LABEL: Record<ConceptRelation, string> = {
@@ -37,10 +41,11 @@ const RELATION_LABEL: Record<ConceptRelation, string> = {
 // ─── Component ───
 
 /**
- * Detail panel for the selected concept. Rendered **outside** the React Flow
- * node tree (a docked sibling over the canvas) so it is never trapped behind
- * node stacking — the original z-index bug. Opaque `GlassCard` (glass is rare:
- * only floating chrome blurs), high z-index, frame evidence @16:9 when present.
+ * Detail panel for the selected concept. In the map view it is rendered
+ * **outside** the React Flow node tree (a docked sibling over the canvas) so
+ * it is never trapped behind node stacking — the original z-index bug. In the
+ * list view it renders inline under the selected concept. Opaque `GlassCard`
+ * (glass is rare: only floating chrome blurs), frame evidence @16:9 when present.
  */
 export const CanvasInspector = memo(function CanvasInspector({
   concept,
@@ -49,6 +54,7 @@ export const CanvasInspector = memo(function CanvasInspector({
   onClose,
   onSeek,
   isDesktop,
+  placement = 'overlay',
 }: CanvasInspectorProps) {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -64,11 +70,12 @@ export const CanvasInspector = memo(function CanvasInspector({
     <aside
       data-slot="canvas-inspector"
       aria-label={`Details for ${concept.name}`}
+      data-placement={placement}
       className={cn(
-        'absolute z-50 flex flex-col',
-        isDesktop
-          ? 'inset-y-3 end-3 w-[340px]'
-          : 'inset-x-2 bottom-2 max-h-[72%]',
+        'flex flex-col',
+        placement === 'inline' && 'relative mt-2',
+        placement === 'overlay' && 'absolute z-50',
+        placement === 'overlay' && (isDesktop ? 'inset-y-3 end-3 w-[340px]' : 'inset-x-2 bottom-2 max-h-[72%]'),
       )}
     >
       <GlassCard
@@ -80,7 +87,10 @@ export const CanvasInspector = memo(function CanvasInspector({
             {concept.emoji || '💡'}
           </span>
           <div className="min-w-0 flex-1">
-            <h3 className="truncate text-base font-semibold text-foreground">{concept.name}</h3>
+            {/* Two lines before clamping — one line cut most long names short; the title keeps all of it. */}
+            <h3 className="line-clamp-2 break-words text-base font-semibold text-foreground" title={concept.name}>
+              {concept.name}
+            </h3>
             {concept.group && (
               <Badge variant="muted" className="mt-1 text-[10px] font-medium">
                 {concept.group}

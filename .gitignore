@@ -3,6 +3,7 @@
 # ================================================
 dev/research/*
 dev/completed/*
+dev/completed/
 # golden-dataset: eval CI reads baseline.json + videos.yaml — keep those in git
 dev/golden-dataset/*
 !dev/golden-dataset/baseline.json
@@ -95,3 +96,13 @@ dev/completed/pipeline-1min/evidence/ans-*.md
 # Hook-written session snapshots (.claude/hooks/auto-save-context.sh) — local state, never committed
 dev/active/.last-session-snapshot.json
 dev/active/*/*-session-snapshot.json
+
+# output-quality research captures (69 MB of PNGs) and the blind-review packets (regenerable from data/ + screenshots/)
+dev/active/output-quality/screenshots/
+dev/active/output-quality/screenshots-*/
+dev/active/output-quality/grades/
+dev/active/output-quality/gates/
+dev/active/output-quality/drafts/
+dev/active/output-quality/tools/
+dev/active/output-quality/wireframe/
+dev/active/output-quality/data/

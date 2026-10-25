@@ -1,19 +1,19 @@
 import { useRef } from 'react';
-import type { ContentTag, SynthesisResult, TabDefinition, TabEntry } from '@vie/types';
+import type { ContentTag, SynthesisResult, TabEntry } from '@vie/types';
 import { ErrorBoundary } from '@/components/ui/error-boundary';
 import { VideoHero } from '@/components/vie';
+import type { VideoHeroTab } from '@/components/vie/cards/VideoHeroStrip';
 import type { StreamPhase } from '@/features/video-output/hooks/use-summary-stream';
+import type { HeroVerdictData } from '@/features/video-output/lib/hero-verdict';
 import { ComposableOutput } from './ComposableOutput';
 import { GlassCard } from './GlassCard';
 import { ProvisionalTabNotice } from './ProvisionalTabNotice';
 import { TabLayout, type TabLayoutHandle } from './TabLayout';
 import { useTabCoordination } from './TabCoordinationContext';
 
-/** A tab-strip entry as the shell renders it. */
-export interface ShellTabDef extends TabDefinition {
-  preview?: string;
-  provisional?: boolean;
-}
+/** A tab-strip entry as the shell renders it — the hero strip's own tab shape
+ *  (preview, provisional flag, shipped `itemCount`). */
+export type ShellTabDef = VideoHeroTab;
 
 export interface PendingTabLabel {
   id: string;
@@ -26,6 +26,12 @@ interface CommandDeckProps {
   creator?: string;
   duration?: number | null;
   synthesis: SynthesisResult | null;
+  /** The question the video answers — lives on the overview tab's props
+   *  (`data.keyQuestion`), which the router filters from the strip, so the
+   *  router hands it over separately. */
+  keyQuestion?: string;
+  /** A review's verdict, lifted out of its comparison tab by the router (4.3). */
+  verdict?: HeroVerdictData;
   youtubeId?: string;
   tabDefs: ShellTabDef[];
   pendingTabs: PendingTabLabel[];
@@ -43,6 +49,8 @@ export function CommandDeck({
   creator,
   duration,
   synthesis,
+  keyQuestion,
+  verdict,
   youtubeId,
   tabDefs,
   pendingTabs,
@@ -65,7 +73,13 @@ export function CommandDeck({
       duration={duration}
       tldr={synthesis?.tldr}
       keyTakeaways={synthesis?.keyTakeaways}
+      brief={synthesis?.brief}
       masterSummary={synthesis?.masterSummary}
+      worthItFor={synthesis?.worthItFor}
+      skipIf={synthesis?.skipIf}
+      verdict={verdict}
+      readingMinutes={synthesis?.readingMinutes}
+      keyQuestion={keyQuestion}
       youtubeId={youtubeId}
       tabs={tabDefs}
       activeTabId={activeTabId}

@@ -1,4 +1,7 @@
-"""Assembly orchestration tests — data resolution, cross-tab links, assemble_response, frame utilities."""
+"""Assembly orchestration tests.
+
+Data resolution, cross-tab links, assemble_response, frame utilities.
+"""
 
 from src.services.pipeline.assembly import (
     assemble_response,
@@ -72,7 +75,7 @@ class TestCrossTabLinks:
             primary_tag="food",
         )
         assert len(links) >= 1
-        targets = {l["targetTab"] for l in links}
+        targets = {link["targetTab"] for link in links}
         assert "ingredients" in targets
 
     def test_drops_missing_targets(self):
@@ -109,13 +112,13 @@ class TestCrossTabLinks:
 class TestMaterialsStepsCrossLinks:
     def test_steps_to_materials(self):
         links = resolve_cross_tab_links("steps", {"steps", "materials"})
-        assert any(l["targetTab"] == "materials" for l in links)
+        assert any(link["targetTab"] == "materials" for link in links)
 
     def test_materials_to_steps(self):
         # Legacy ID rule fires structurally; without all_tabs the label is
         # the target tab id.
         links = resolve_cross_tab_links("materials", {"materials", "steps"})
-        assert any(l["targetTab"] == "steps" for l in links)
+        assert any(link["targetTab"] == "steps" for link in links)
 
 
 class TestNewCrossTabLinks:
@@ -124,12 +127,12 @@ class TestNewCrossTabLinks:
     def test_code_setup_bidirectional(self):
         links_code = resolve_cross_tab_links("code", {"code", "setup"})
         links_setup = resolve_cross_tab_links("setup", {"code", "setup"})
-        assert any(l["targetTab"] == "setup" for l in links_code)
-        assert any(l["targetTab"] == "code" for l in links_setup)
+        assert any(link["targetTab"] == "setup" for link in links_code)
+        assert any(link["targetTab"] == "code" for link in links_setup)
 
     def test_link_only_if_target_exists(self):
         links = resolve_cross_tab_links("key_points", {"key_points"})
-        assert not any(l["targetTab"] == "flashcards" for l in links)
+        assert not any(link["targetTab"] == "flashcards" for link in links)
 
     def test_food_domain_flow(self):
         """Food domain: overview → checklist → step_player."""
@@ -141,7 +144,8 @@ class TestNewCrossTabLinks:
         ids = {"overview", "ingredients", "steps"}
         links = resolve_cross_tab_links("overview", ids, "overview", all_tabs, "food")
         assert any(
-            l["targetTab"] == "ingredients" and "ingredient" in l["label"].lower() for l in links
+            link["targetTab"] == "ingredients" and "ingredient" in link["label"].lower()
+            for link in links
         )
 
     def test_learning_domain_flow(self):
@@ -153,7 +157,7 @@ class TestNewCrossTabLinks:
         ]
         ids = {"overview", "concepts", "quiz"}
         links = resolve_cross_tab_links("overview", ids, "overview", all_tabs, "learning")
-        assert any(l["targetTab"] == "concepts" for l in links)
+        assert any(link["targetTab"] == "concepts" for link in links)
 
     def test_generic_fallback_rules(self):
         """Generic rules fire when no domain-specific rule matches."""
@@ -163,7 +167,7 @@ class TestNewCrossTabLinks:
         ]
         ids = {"overview", "exercises"}
         links = resolve_cross_tab_links("overview", ids, "overview", all_tabs, "narrative")
-        assert any(l["targetTab"] == "exercises" for l in links)
+        assert any(link["targetTab"] == "exercises" for link in links)
 
 
 # ─── Full Assembly ───
@@ -315,7 +319,7 @@ class TestAssembleResponse:
         result = assemble_response(triage, extraction, enrichment, None)
 
         concepts_tab = next(t for t in result["tabs"] if t["id"] == "concepts")
-        assert any(l["targetTab"] == "quizzes" for l in concepts_tab["crossTabLinks"])
+        assert any(link["targetTab"] == "quizzes" for link in concepts_tab["crossTabLinks"])
 
     def test_explicit_component_field(self):
         triage = {
@@ -333,7 +337,8 @@ class TestAssembleResponse:
                 },
             ],
         }
-        extraction = {"learning": {"keyPoints": [{"title": "P1"}]}}
+        # A moment needs a stated time (0b.1: a timeless item is refused).
+        extraction = {"learning": {"keyPoints": [{"title": "P1", "timestamp": 30}]}}
         result = assemble_response(triage, extraction, None, None)
 
         assert result["tabs"][0]["component"] == "moment_track"
@@ -826,7 +831,7 @@ class TestDegradeNeverDrop:
                 },
             ],
         }
-        # Only 2 items — below tier_list min 3 → demote to info_grid.
+        # Only 2 items — below tier_list min 3 → demote to a spot list (p2 review A3).
         extraction = {
             "gaming": {
                 "rankings": [
@@ -840,7 +845,7 @@ class TestDegradeNeverDrop:
         tab = next((t for t in result["tabs"] if t["id"] == "rankings"), None)
         assert tab is not None
         assert tab["degradedFrom"] == "tier_list"
-        assert tab["component"] == "info_grid"
+        assert tab["component"] == "spot_explorer"
 
     def test_truly_empty_data_still_drops(self):
         triage = {

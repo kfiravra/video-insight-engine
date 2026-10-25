@@ -1,9 +1,12 @@
 """``EXTRACTION_PARALLEL=False`` sends TODAY's single extraction prompt, byte for byte (3.4, §4).
 
-Kfir's phase-3 rule: the false path is the rollback lever, so its one
-extraction call must stay what 41501dd sent. Each cassette replays with the
-flag off and the prompt the fake receives — its messages, every content block
-and ``cache_control`` breakpoint, the system prompt included, and its
+Kfir's phase-3 rule: the false path is the rollback lever for the SPLIT
+extraction, so its one extraction call is today's single prompt. It is not a
+lever for the prompts (Kfir 2026-10-21, gate 1: "the rollback lever rolls back
+the split, not the prompts"): the fixtures hold the single prompt as of the
+phase-1 close — refresh them whenever the prompts change on purpose. Each
+cassette replays with the flag off and the prompt the fake receives — its
+messages, every content block and ``cache_control`` breakpoint, the system prompt included, and its
 ``response_format`` (``canonical_prompt``) — is compared with the committed fixture's
 (``baselines/<video>.extraction.json`` = the baseline capture's extraction
 line). Since 4.0b the comparison keys on those prompt bytes only: a model
@@ -12,9 +15,10 @@ max_tokens) must not break it. The fixture itself is still checked against
 its full-request hash (``canonical_request``, copied verbatim from
 ``<scratch>/baseline/capture.py``).
 
-The premise is asserted first: reconcile at plan-done is a no-op on these
-recordings (no plan-done record, the plan-parse tabs unchanged), so a future
-cassette that triggers it fails loudly here instead of confounding the hash.
+The premise is asserted first: reconcile at plan-done does only what
+``_EXPECTED_PLAN_DONE`` lists for the cassette (nothing, by default) and leaves
+the plan-parse tabs otherwise unchanged, so a future cassette that triggers
+anything else fails loudly here instead of confounding the hash.
 
 Every request of both paths also ends with a user turn: no assistant prefill
 (the 5.x models reject it). The last role is read at the guard itself
@@ -49,6 +53,10 @@ from tests.replay.driver import ReplayResult, run_replay
 _BASELINES = Path(__file__).parent / "baselines"
 _EXTRACTION = ("summarize:extraction", "extraction")
 _PLAN_DONE = "plan_done"
+# R6 (output-quality p1.6, Kfir 2026-10-21): the recipe's standalone info_grid
+# (chef tips) folds into its host tab at plan-done. Any other plan-done action
+# on any cassette is still a surprise.
+_EXPECTED_PLAN_DONE: dict[str, list[str]] = {"jMq8lEu-of0": ["folded"]}
 
 
 def canonical_request(kwargs: dict[str, Any]) -> str:
@@ -178,14 +186,20 @@ class TestFalsePathExtractionIdentity:
     ) -> None:
         records = _pipeline(false_path[video_id]).get("reconcile", [])
 
-        assert [r for r in records if r.get("stage") == _PLAN_DONE] == []
+        actions = [r["action"] for r in records if r.get("stage") == _PLAN_DONE]
+        assert actions == _EXPECTED_PLAN_DONE.get(video_id, [])
 
     def test_should_keep_the_plan_parse_tabs_after_reconcile(
         self, false_path: dict[str, _RecordedRun], cassettes: dict[str, Cassette], video_id: str
     ) -> None:
-        triage = _pipeline(false_path[video_id])["triage"]
+        pipeline = _pipeline(false_path[video_id])
+        triage = pipeline["triage"]
+        folded = {r["tabId"] for r in pipeline.get("reconcile", []) if r["action"] == "folded"}
+        planned = _plan_parse_tabs(cassettes[video_id], triage["contentFormat"])
 
-        assert triage["tabs"] == _plan_parse_tabs(cassettes[video_id], triage["contentFormat"])
+        assert [t["id"] for t in triage["tabs"]] == [
+            t["id"] for t in planned if t["id"] not in folded
+        ]
 
     def test_should_send_exactly_one_extraction_call(
         self, false_path: dict[str, _RecordedRun], video_id: str

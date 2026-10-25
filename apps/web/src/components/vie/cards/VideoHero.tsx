@@ -1,24 +1,24 @@
-import { memo, useCallback, useState } from 'react';
+import { memo } from 'react';
 import { motion } from 'motion/react';
-import { Check } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { springs } from '@/lib/motion';
-import { stripLeadingEmoji } from '@/lib/string-utils';
-import { useLabels } from '@/lib/i18n';
+import { useLabels, type Labels } from '@/lib/i18n';
+import { useMediaQuery } from '@/hooks/use-media-query';
 import { useVideoPlayer } from '@/features/video-output/contexts/VideoPlayerContext';
 import { YouTubePlayer } from '@/components/videos/YouTubePlayer';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { FadeIn } from '@/components/vie';
-import { CollapsibleSection } from './CollapsibleSection';
 import { PendingTabPill } from './PendingTabPill';
 import { PlayCloseGlyph } from './PlayCloseGlyph';
 import { DOMAIN_META } from './domain-meta';
-import type { TabDefinition, ContentTag } from '@vie/types';
+import { HeroBrief } from './HeroBrief';
+import { HeroDigest } from './HeroDigest';
+import { VideoHeroStrip, type VideoHeroTab } from './VideoHeroStrip';
+import type { ContentTag } from '@vie/types';
+import type { HeroVerdictData } from '@/features/video-output/lib/hero-verdict';
 
-interface VideoHeroTab extends TabDefinition {
-  preview?: string;
-  /** An early placeholder the stream will replace — marked in the strip. */
-  provisional?: boolean;
+interface PendingTab {
+  id: string;
+  label: string;
+  emoji: string;
 }
 
 interface VideoHeroProps {
@@ -26,8 +26,28 @@ interface VideoHeroProps {
   creator?: string;
   duration?: number | null;
   tldr?: string;
+  /** Each a claim closing with the `[m:ss]` (`[h:mm:ss]`) where it is said —
+   *  the marker renders as a ▶ seek chip, never as text. */
   keyTakeaways?: string[];
+  /** The hero rewrite's 3–5 sentence brief (output-quality 2.2). Wins over
+   *  `masterSummary`, which older rows carry instead. */
+  brief?: string;
+  /** The long-form brief (synthesis.masterSummary). Rendered under the tldr
+   *  (R11): two lines + "more" on desktop, a collapsed "Brief" row on phones. */
   masterSummary?: string;
+  /** "Worth it for / Skip if" — two short lines under the takeaways (C2);
+   *  on phones behind a collapsed "Worth it?" row. */
+  worthItFor?: string;
+  skipIf?: string;
+  /** A review's verdict, lifted out of its comparison tab (output-quality 4.3):
+   *  a "Verdict" row in the worth-it lines' place. */
+  verdict?: HeroVerdictData;
+  /** Minutes to read the page: the identity strip then shows
+   *  "Read: N min · Watch: M min" in place of the bare duration. */
+  readingMinutes?: number;
+  /** The question the video answers (extraction keyQuestion). First line of
+   *  the brief when present. */
+  keyQuestion?: string;
   youtubeId?: string;
   tabs?: VideoHeroTab[];
   activeTabId?: string;
@@ -48,7 +68,7 @@ interface VideoHeroProps {
   /** Planned tabs announced by the stream that haven't landed yet. Rendered
    *  as inert pills while streaming: before any tab exists, in the exact
    *  geometry of the final strip; once tabs exist, after the live ones. */
-  pendingTabs?: { id: string; label: string; emoji: string }[];
+  pendingTabs?: PendingTab[];
   className?: string;
 }
 
@@ -61,63 +81,42 @@ function formatDuration(seconds: number | null | undefined): string {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
-export const VideoHero = memo(function VideoHero({
-  title,
-  creator,
-  duration,
-  tldr,
-  keyTakeaways,
-  youtubeId,
-  tabs,
-  activeTabId,
-  onTabSelect,
-  completedTabs,
-  domainGradient,
-  primaryTag,
-  level,
-  isStreaming: isStreamingProp,
-  pendingTabs,
-  className,
-}: VideoHeroProps) {
-  const t = useLabels();
-  const { togglePlayer, isPlayerOpen, playerRef, hasEngaged, registerPlayerAnchor } = useVideoPlayer();
-  const durationStr = formatDuration(duration);
-  const safeTabs: VideoHeroTab[] = tabs ?? [];
-  const hasTabs = safeTabs.length > 0;
+const PHONE_QUERY = '(max-width: 767px)';
+// Stable empty list so memo(VideoHeroStrip) bails out when nothing is pending.
+const NO_PENDING: PendingTab[] = [];
+const NO_TABS: VideoHeroTab[] = [];
+const NO_TAKEAWAYS: string[] = [];
+
+interface ReadWatch {
+  read: string;
+  watch?: string;
+}
+
+/** "Read: 5 min" + "Watch: 63 min" — the page's compression promise. Null
+ *  when the page carries no reading time (older rows keep the bare duration). */
+function readWatchLabels(t: Labels, readingMinutes?: number, duration?: number | null): ReadWatch | null {
+  if (readingMinutes == null || !Number.isFinite(readingMinutes) || readingMinutes <= 0) return null;
+  const read = t.readMinutes.replace('{minutes}', String(Math.max(1, Math.round(readingMinutes))));
+  if (!duration || duration <= 0) return { read };
+  return { read, watch: t.watchMinutes.replace('{minutes}', String(Math.max(1, Math.round(duration / 60)))) };
+}
+
+interface IdentityStripProps {
+  primaryTag?: ContentTag;
+  level?: string;
+  durationStr: string;
+  readWatch: ReadWatch | null;
+  creator?: string;
+}
+
+/** Identity strip — domain, level, duration (or read / watch time) and
+ *  creator as a single row, separated by dots so the metadata reads as one
+ *  cohesive line. */
+function IdentityStrip({ primaryTag, level, durationStr, readWatch, creator }: IdentityStripProps) {
   const domainMeta = primaryTag ? DOMAIN_META[primaryTag] : undefined;
-  const isStreaming = isStreamingProp ?? !tldr;
-  // Pending strip renders only while streaming and before real tabs exist —
-  // same geometry as the live strip so the arrival is a fill-in, not a jump.
-  // Requires the explicit prop: legacy callers that omit it get the skeleton
-  // treatment from `isStreaming`'s tldr heuristic but never the strip.
-  const showPendingStrip = !hasTabs && isStreaming && isStreamingProp !== undefined;
-  // Once tabs exist, the planned ones still to come trail the live strip.
-  const trailingPending = hasTabs && isStreaming && isStreamingProp !== undefined ? pendingTabs ?? [] : [];
-
-  // Key takeaways open on load — they ARE the landing summary. They step aside
-  // (auto-collapse, once) the first time the user engages the player, because
-  // watching displaces reading as the primary activity. No persistence: every
-  // load is a fresh read-first arrival.
-  // `userOpen` null = untouched; a manual toggle takes permanent ownership.
-  const [userOpen, setUserOpen] = useState<boolean | null>(null);
-  const [autoCollapsed, setAutoCollapsed] = useState(false);
-  // One-shot auto-collapse on first engagement (seek or player open), adjusted
-  // during render. While streaming it waits until the stream settles so
-  // content isn't yanked mid-arrival.
-  if (!autoCollapsed && userOpen === null && hasEngaged && !isStreaming) {
-    setAutoCollapsed(true);
-  }
-  const takeawaysOpen = userOpen ?? !autoCollapsed;
-
-  const toggleTakeaways = useCallback(() => {
-    setUserOpen(!takeawaysOpen);
-  }, [takeawaysOpen]);
-
-  // Identity strip pieces — laid out as a single row, separated by dots so the
-  // metadata reads as one cohesive line instead of a stack of chips.
-  const identityChips: Array<{ key: string; node: React.ReactNode }> = [];
+  const chips: Array<{ key: string; node: React.ReactNode }> = [];
   if (domainMeta) {
-    identityChips.push({
+    chips.push({
       key: 'domain',
       node: (
         <span className="inline-flex items-center gap-1.5 font-medium text-foreground/85">
@@ -127,269 +126,267 @@ export const VideoHero = memo(function VideoHero({
       ),
     });
   }
-  if (level) identityChips.push({ key: 'level', node: <span>{level}</span> });
-  if (durationStr) identityChips.push({ key: 'duration', node: <span className="tabular-nums">{durationStr}</span> });
-  if (creator) identityChips.push({ key: 'creator', node: <span className="truncate max-w-[24ch]">{creator}</span> });
+  if (level) chips.push({ key: 'level', node: <span>{level}</span> });
+  if (readWatch) {
+    chips.push({ key: 'read', node: <span className="font-medium text-foreground/85 tabular-nums">{readWatch.read}</span> });
+    if (readWatch.watch) chips.push({ key: 'watch', node: <span className="tabular-nums">{readWatch.watch}</span> });
+  } else if (durationStr) {
+    chips.push({ key: 'duration', node: <span className="tabular-nums">{durationStr}</span> });
+  }
+  if (creator) chips.push({ key: 'creator', node: <span className="truncate max-w-[24ch]">{creator}</span> });
+  if (chips.length === 0) return null;
+  // Every chip leads with its separator, and the row is pulled one separator
+  // wide past the start edge and clipped there: a line that wraps (the creator
+  // on a phone) starts with its text, not a stray "·".
+  return (
+    <div className="overflow-x-clip">
+      <div className="-ms-6 flex flex-wrap items-center gap-y-1 text-xs text-muted-foreground">
+        {chips.map((chip) => (
+          <span key={chip.key} className="inline-flex items-center">
+            <span aria-hidden="true" className="w-6 shrink-0 text-center text-muted-foreground/40">·</span>
+            {chip.node}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
 
-  const visibleTakeaways = keyTakeaways?.slice(0, 6);
-  const showTakeaways = (visibleTakeaways && visibleTakeaways.length > 0) || isStreaming;
-  // When nothing renders below the header (no takeaways, no tab strip, player
-  // closed), the header must carry its own bottom padding so the card doesn't
-  // look clipped. Every other block supplies its own trailing space.
-  const headerNeedsBottomPad = !showTakeaways && !hasTabs && !showPendingStrip && !isPlayerOpen;
+/** Whether the identity strip has anything to show (the title then sits below it). */
+function hasIdentity({ primaryTag, level, durationStr, readWatch, creator }: IdentityStripProps): boolean {
+  return Boolean(primaryTag || level || durationStr || readWatch || creator);
+}
+
+/** Streaming strip: the tab plan (or skeleton pills before it's known)
+ *  rendered in the exact geometry of the live strip, so real tabs arriving
+ *  reads as a fill-in rather than a layout swap. Inert and hidden from AT —
+ *  the StreamingPlaceholder timeline carries progress semantics. */
+function PendingStrip({ pendingTabs }: { pendingTabs: PendingTab[] }) {
+  return (
+    <div
+      aria-hidden="true"
+      className={cn(
+        'flex items-center gap-1.5 overflow-x-hidden',
+        'border-t border-border/60 rounded-b-2xl px-3 py-2.5 md:px-4 md:py-2',
+        '[mask-image:linear-gradient(to_right,transparent,black_16px,black_calc(100%-16px),transparent)]',
+      )}
+    >
+      {pendingTabs.length > 0
+        ? pendingTabs.map((tab, i) => <PendingTabPill key={tab.id} label={tab.label} emoji={tab.emoji} index={i} />)
+        : [88, 104, 72, 96].map((width, i) => (
+            <div key={i} className="h-9 shrink-0 rounded-xl bg-muted/25 skeleton-breathe" style={{ width }} />
+          ))}
+    </div>
+  );
+}
+
+interface HeroHeaderProps {
+  title: string;
+  identity: IdentityStripProps;
+  youtubeId?: string;
+}
+
+/** Top row: identity strip + title stack on the left; the watch control pins
+ *  to the right corner as bare line-art whose edges morph into a close mark
+ *  when the player opens (PlayCloseGlyph). The oversized invisible button
+ *  keeps a comfortable touch target around the glyph. */
+function HeroHeader({ title, identity, youtubeId }: HeroHeaderProps) {
+  const t = useLabels();
+  const { togglePlayer, isPlayerOpen } = useVideoPlayer();
+  return (
+    <div className="flex items-start justify-between gap-4">
+      <div className="min-w-0">
+        <IdentityStrip {...identity} />
+        {/* The leading follows the size classes: cn()'s merge drops a
+            leading-* that precedes a text-* size. */}
+        <h2
+          id="vie-hero-title"
+          className={cn(
+            'font-semibold tracking-tight text-balance break-words line-clamp-2 text-xl md:text-2xl md:leading-[1.15]',
+            hasIdentity(identity) && 'mt-2.5 md:mt-1.5',
+          )}
+        >
+          {title || t.processing}
+        </h2>
+      </div>
+      {youtubeId && (
+        <button
+          type="button"
+          onClick={togglePlayer}
+          className="play-control -mr-1 -mt-1 cursor-pointer flex size-12 shrink-0 items-center justify-center md:size-14"
+          aria-label={isPlayerOpen ? t.hide : t.watch}
+          aria-expanded={isPlayerOpen}
+        >
+          <PlayCloseGlyph open={isPlayerOpen} className="size-8 shrink-0 md:size-9" />
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** The inline player, morphing open under the header. */
+function HeroPlayer({ youtubeId }: { youtubeId: string }) {
+  const { isPlayerOpen, playerRef, registerPlayerAnchor } = useVideoPlayer();
+  return (
+    <div
+      // Registered as the seek scroll anchor: a timestamp click far down
+      // the page scrolls this wrapper back into view before the seek runs.
+      ref={registerPlayerAnchor}
+      className={cn(
+        'grid transition-[grid-template-rows,opacity] duration-300 ease-[var(--ease-out-expo)]',
+        isPlayerOpen ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0',
+      )}
+    >
+      <div className="overflow-hidden">
+        <div className="px-6 pb-4 md:px-7 pt-4">
+          <YouTubePlayer ref={playerRef} youtubeId={youtubeId} className="rounded-lg" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** The tldr under the title, or its skeleton while the stream is still writing it. */
+function Tldr({ tldr, isStreaming }: { tldr?: string; isStreaming: boolean }) {
+  if (tldr) {
+    return <p className="mt-3 max-w-[68ch] text-[0.95rem] leading-relaxed text-foreground/85 text-pretty md:mt-1.5 md:leading-normal">{tldr}</p>;
+  }
+  if (!isStreaming) return null;
+  return (
+    <div className="mt-3 space-y-1.5" aria-hidden="true">
+      <div className="h-3.5 w-full rounded bg-muted/30 animate-pulse" />
+      <div className="h-3.5 w-4/5 rounded bg-muted/30 animate-pulse" />
+      <div className="h-3.5 w-3/5 rounded bg-muted/30 animate-pulse" />
+    </div>
+  );
+}
+
+interface HeroTopProps {
+  hero: VideoHeroProps;
+  isStreaming: boolean;
+  isPhone: boolean;
+  /** Nothing renders below the header: it carries its own bottom padding. */
+  padBottom: boolean;
+}
+
+/** The header block: identity strip + title + watch control, the tldr, the brief. */
+function HeroTop({ hero, isStreaming, isPhone, padBottom }: HeroTopProps) {
+  const t = useLabels();
+  const { title, creator, duration, tldr, brief, masterSummary, keyQuestion, readingMinutes } = hero;
+  const { primaryTag, level, youtubeId } = hero;
+  const readWatch = readWatchLabels(t, readingMinutes, duration);
+  const identity = { primaryTag, level, durationStr: formatDuration(duration), readWatch, creator };
+  // Older rows carry only `masterSummary`; the hero rewrite's brief wins.
+  const briefText = brief?.trim() ? brief : masterSummary;
+  return (
+    <div className={cn('px-6 pt-5 md:px-7 md:pt-4', padBottom && 'pb-5 md:pb-6')}>
+      <HeroHeader title={title} identity={identity} youtubeId={youtubeId} />
+      <Tldr tldr={tldr} isStreaming={isStreaming} />
+      {briefText?.trim() && <HeroBrief masterSummary={briefText} keyQuestion={keyQuestion} isPhone={isPhone} />}
+    </div>
+  );
+}
+
+interface HeroFlagsInput {
+  tldr?: string;
+  keyTakeaways: string[];
+  worthItFor?: string;
+  skipIf?: string;
+  hasVerdict: boolean;
+  hasTabs: boolean;
+  /** The caller's explicit streaming flag, when it passed one. */
+  isStreamingProp?: boolean;
+  isPlayerOpen: boolean;
+}
+
+interface HeroFlags {
+  isStreaming: boolean;
+  showPendingStrip: boolean;
+  /** Once tabs exist, the planned ones still to come trail the live strip. */
+  showTrailingPending: boolean;
+  showTakeaways: boolean;
+  showWorth: boolean;
+  headerNeedsBottomPad: boolean;
+}
+
+/** What the hero shows, derived from its props and the player state. */
+function heroFlags({
+  tldr,
+  keyTakeaways,
+  worthItFor,
+  skipIf,
+  hasVerdict,
+  hasTabs,
+  isStreamingProp,
+  isPlayerOpen,
+}: HeroFlagsInput): HeroFlags {
+  const isStreaming = isStreamingProp ?? !tldr;
+  // The pending pills render only while streaming, in the same geometry as the
+  // live strip so the arrival is a fill-in, not a jump. Requires the explicit
+  // prop: legacy callers that omit it get the skeleton treatment from
+  // `isStreaming`'s tldr heuristic but never the strip.
+  const pendingKnown = isStreaming && isStreamingProp !== undefined;
+  const showPendingStrip = !hasTabs && pendingKnown;
+  const showTakeaways = keyTakeaways.length > 0 || isStreaming;
+  const showWorth = hasVerdict || Boolean(worthItFor?.trim() || skipIf?.trim());
+  return {
+    isStreaming,
+    showPendingStrip,
+    showTrailingPending: hasTabs && pendingKnown,
+    showTakeaways,
+    showWorth,
+    // When nothing renders below the header (no takeaways, no worth-it lines, no
+    // tab strip, player closed), the header must carry its own bottom padding so
+    // the card doesn't look clipped. Every other block supplies its own trailing space.
+    headerNeedsBottomPad: !showTakeaways && !showWorth && !hasTabs && !showPendingStrip && !isPlayerOpen,
+  };
+}
+
+export const VideoHero = memo(function VideoHero(props: VideoHeroProps) {
+  const { tldr, keyTakeaways = NO_TAKEAWAYS, worthItFor, skipIf, verdict, youtubeId, className } = props;
+  const { tabs = NO_TABS, activeTabId, onTabSelect, completedTabs, domainGradient } = props;
+  const { isStreaming: isStreamingProp, pendingTabs = NO_PENDING } = props;
+  const isPhone = useMediaQuery(PHONE_QUERY);
+  const { isPlayerOpen } = useVideoPlayer();
+  const hasTabs = tabs.length > 0;
+  const hasVerdict = verdict !== undefined;
+  const flags = heroFlags({ tldr, keyTakeaways, worthItFor, skipIf, hasVerdict, hasTabs, isStreamingProp, isPlayerOpen });
 
   return (
     <motion.section
-      className={cn(
-        'relative w-full rounded-2xl border border-border bg-card',
-        className,
-      )}
+      className={cn('relative w-full rounded-2xl border border-border bg-card', className)}
       // While streaming, the hero is the landing element of the
       // "stream-input-spine" view transition — the URL input morphs into
       // this card on navigate. Scoped to streaming so the name can't
       // collide with a sidebar intake form on an already-finished page.
-      style={isStreaming ? ({ viewTransitionName: 'vie-input-spine' } as React.CSSProperties) : undefined}
+      style={flags.isStreaming ? ({ viewTransitionName: 'vie-input-spine' } as React.CSSProperties) : undefined}
       initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ ...springs.soft, delay: 0.04 }}
       aria-labelledby="vie-hero-title"
     >
-      <div className={cn('px-6 pt-5 md:px-7 md:pt-6', headerNeedsBottomPad && 'pb-5 md:pb-6')}>
-        {/* Top row: identity strip + title stack on the left; the watch control
-            pins to the right corner as bare line-art — no tile, no ring, just a
-            large stroked play arrow whose edges morph into a close mark when the
-            player opens (PlayCloseGlyph). It sits in foreground ink at rest and
-            lifts into the domain accent on hover and while open. The oversized
-            invisible button keeps a comfortable touch target around the glyph. */}
-        <div className="flex items-start justify-between gap-4">
-          <div className="min-w-0">
-            {identityChips.length > 0 && (
-              <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs text-muted-foreground">
-                {identityChips.map((chip, i) => (
-                  <span key={chip.key} className="inline-flex items-center gap-2.5">
-                    {i > 0 && <span aria-hidden="true" className="text-muted-foreground/40">·</span>}
-                    {chip.node}
-                  </span>
-                ))}
-              </div>
-            )}
-            <h2
-              id="vie-hero-title"
-              className={cn(
-                'font-semibold tracking-tight leading-[1.15] text-balance break-words line-clamp-2 text-xl md:text-2xl',
-                identityChips.length > 0 && 'mt-2.5',
-              )}
-            >
-              {title || t.processing}
-            </h2>
-          </div>
-          {youtubeId && (
-            <button
-              type="button"
-              onClick={togglePlayer}
-              className="play-control -mr-1 -mt-1 cursor-pointer flex size-12 shrink-0 items-center justify-center md:size-14"
-              aria-label={isPlayerOpen ? t.hide : t.watch}
-              aria-expanded={isPlayerOpen}
-            >
-              <PlayCloseGlyph open={isPlayerOpen} className="size-8 shrink-0 md:size-9" />
-            </button>
-          )}
-        </div>
-
-        {isStreaming && !tldr ? (
-          <div className="mt-3 space-y-1.5" aria-hidden="true">
-            <div className="h-3.5 w-full rounded bg-muted/30 animate-pulse" />
-            <div className="h-3.5 w-4/5 rounded bg-muted/30 animate-pulse" />
-            <div className="h-3.5 w-3/5 rounded bg-muted/30 animate-pulse" />
-          </div>
-        ) : tldr ? (
-          <p className="mt-3 max-w-[68ch] text-[0.95rem] leading-relaxed text-foreground/85 text-pretty">
-            {tldr}
-          </p>
-        ) : null}
-      </div>
-
-      {youtubeId && (
-        <div
-          // Registered as the seek scroll anchor: a timestamp click far down
-          // the page scrolls this wrapper back into view before the seek runs.
-          ref={registerPlayerAnchor}
-          className={cn(
-            'grid transition-[grid-template-rows,opacity] duration-300 ease-[var(--ease-out-expo)]',
-            isPlayerOpen ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0',
-          )}
-        >
-          <div className="overflow-hidden">
-            <div className="px-6 pb-4 md:px-7 pt-4">
-              <YouTubePlayer
-                ref={playerRef}
-                youtubeId={youtubeId}
-                className="rounded-lg"
-              />
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Key takeaways — open on load as a dense two-column grid; after the
-          user engages the player they auto-collapse (once) into the slim
-          "Key takeaways · N" disclosure, which stays as the reopen affordance.
-          While streaming the count is unknown, so the eyebrow shows a static
-          skeleton grid instead of a toggle. */}
-      {showTakeaways ? (
-        <div className="px-6 pb-5 md:px-7 md:pb-6 pt-4">
-          {!visibleTakeaways || visibleTakeaways.length === 0 ? (
-            <div className="space-y-3" aria-hidden="true">
-              <div className="flex items-center gap-2.5">
-                <span className="h-px w-5 bg-border" />
-                <span className="type-eyebrow text-muted-foreground">{t.keyTakeaways}</span>
-                <span className="h-px flex-1 bg-border/60" />
-              </div>
-              <ul className="grid grid-cols-1 gap-x-7 gap-y-2 sm:grid-cols-2">
-                {Array.from({ length: 4 }, (_, i) => (
-                  <li key={i} className="flex items-start gap-2.5">
-                    <span className="mt-[0.4rem] h-1 w-1 rounded-full bg-muted/40 shrink-0" />
-                    <span
-                      className="h-3 rounded bg-muted/30 animate-pulse"
-                      style={{ width: `${88 - (i % 2) * 16}%` }}
-                    />
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : (
-            <FadeIn>
-              <CollapsibleSection
-                baseId="vie-hero-takeaways"
-                label={`${t.keyTakeaways} · ${visibleTakeaways!.length}`}
-                open={takeawaysOpen}
-                onToggle={toggleTakeaways}
-              >
-                {/* Uniform fine dot marker (not per-item emoji) keeps both
-                    columns left-aligned and reads as a crisp, ordered list.
-                    Tight 13px type sits clearly below the brief in hierarchy. */}
-                <ul className="grid grid-cols-1 gap-x-7 gap-y-2 sm:grid-cols-2">
-                  {visibleTakeaways!.map((takeaway, i) => (
-                    <FadeIn key={i} index={i}>
-                      <li className="flex items-start gap-2.5 text-[0.8125rem] leading-snug text-foreground/75">
-                        <span
-                          aria-hidden="true"
-                          className="mt-[0.4rem] h-1 w-1 rounded-full bg-foreground/30 shrink-0"
-                        />
-                        <span>{takeaway}</span>
-                      </li>
-                    </FadeIn>
-                  ))}
-                </ul>
-              </CollapsibleSection>
-            </FadeIn>
-          )}
-        </div>
-      ) : null}
-
-      {/* Streaming strip: the tab plan (or skeleton pills before it's known)
-          rendered in the exact geometry of the live strip below, so real tabs
-          arriving reads as a fill-in rather than a layout swap. Inert and
-          hidden from AT — the StreamingPlaceholder timeline carries progress
-          semantics. */}
-      {showPendingStrip && (
-        <div
-          aria-hidden="true"
-          className={cn(
-            'flex items-center gap-1.5 overflow-x-hidden',
-            'border-t border-border/60 rounded-b-2xl px-3 py-2.5 md:px-4',
-            '[mask-image:linear-gradient(to_right,transparent,black_16px,black_calc(100%-16px),transparent)]',
-          )}
-        >
-          {pendingTabs && pendingTabs.length > 0
-            ? pendingTabs.map((tab, i) => (
-                <PendingTabPill key={tab.id} label={tab.label} emoji={tab.emoji} index={i} />
-              ))
-            : [88, 104, 72, 96].map((width, i) => (
-                <div
-                  key={i}
-                  className="h-9 shrink-0 rounded-xl bg-muted/25 skeleton-breathe"
-                  style={{ width }}
-                />
-              ))}
-        </div>
-      )}
-
+      <HeroTop hero={props} isStreaming={flags.isStreaming} isPhone={isPhone} padBottom={flags.headerNeedsBottomPad} />
+      {youtubeId && <HeroPlayer youtubeId={youtubeId} />}
+      <HeroDigest
+        keyTakeaways={keyTakeaways}
+        worthItFor={worthItFor}
+        skipIf={skipIf}
+        verdict={verdict}
+        showTakeaways={flags.showTakeaways}
+        showWorth={flags.showWorth}
+        isStreaming={flags.isStreaming}
+        isPhone={isPhone}
+      />
+      {flags.showPendingStrip && <PendingStrip pendingTabs={pendingTabs} />}
       {hasTabs && (
-        <TooltipProvider delayDuration={300}>
-          <div
-            role="tablist"
-            aria-label="Video insight sections"
-            className={cn(
-              'sticky top-0 z-20 flex items-center gap-1.5 overflow-x-auto scroll-smooth',
-              'border-t border-border/60 bg-card/85 backdrop-blur-md',
-              'rounded-b-2xl px-3 py-2.5 md:px-4',
-              '[mask-image:linear-gradient(to_right,transparent,black_16px,black_calc(100%-16px),transparent)]',
-              '[&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]',
-            )}
-          >
-            {safeTabs.map((tab) => {
-              const isActive = tab.id === activeTabId;
-              const isCompleted = completedTabs?.has(tab.id) ?? false;
-              const label = stripLeadingEmoji(tab.label);
-              const button = (
-                <button
-                  key={tab.id}
-                  type="button"
-                  id={`tab-${tab.id}`}
-                  role="tab"
-                  aria-selected={isActive}
-                  aria-controls={`panel-${tab.id}`}
-                  onClick={() => onTabSelect?.(tab.id)}
-                  className={cn(
-                    'group relative inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap',
-                    'rounded-xl px-3.5 py-2 text-sm transition-all duration-200',
-                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                    isActive
-                      ? 'font-semibold text-primary-foreground shadow-md shadow-primary/15'
-                      : 'font-medium border border-border/60 bg-muted/30 text-foreground/80 hover:bg-muted/60 hover:text-foreground',
-                  )}
-                  style={
-                    isActive && domainGradient
-                      ? { background: domainGradient }
-                      : undefined
-                  }
-                >
-                  {tab.emoji && (
-                    <span aria-hidden="true" className="text-[0.95rem] leading-none">
-                      {tab.emoji}
-                    </span>
-                  )}
-                  <span>{label}</span>
-                  {tab.provisional && (
-                    <>
-                      <span
-                        aria-hidden="true"
-                        className="size-1.5 shrink-0 rounded-full bg-current opacity-60 animate-pulse motion-reduce:animate-none"
-                      />
-                      <span className="sr-only">(early preview)</span>
-                    </>
-                  )}
-                  {isCompleted && !isActive && (
-                    <Check className="h-3.5 w-3.5 shrink-0 text-success" aria-label="Completed" />
-                  )}
-                </button>
-              );
-              if (!tab.preview) return button;
-              return (
-                <Tooltip key={tab.id}>
-                  <TooltipTrigger asChild>{button}</TooltipTrigger>
-                  <TooltipContent side="bottom" className="text-xs max-w-[220px]">
-                    {tab.preview}
-                  </TooltipContent>
-                </Tooltip>
-              );
-            })}
-            {trailingPending.map((tab, i) => (
-              <PendingTabPill key={tab.id} label={tab.label} emoji={tab.emoji} index={i} upcoming />
-            ))}
-          </div>
-        </TooltipProvider>
+        <VideoHeroStrip
+          tabs={tabs}
+          activeTabId={activeTabId}
+          onTabSelect={onTabSelect}
+          completedTabs={completedTabs}
+          domainGradient={domainGradient}
+          trailingPending={flags.showTrailingPending ? pendingTabs : NO_PENDING}
+        />
       )}
     </motion.section>
   );

@@ -1,12 +1,15 @@
-"""Assembler unit tests — secondary-tier + signature components (diagram_card, claims_tracker, tier_list, formation_diagram)."""
+"""Assembler unit tests — secondary-tier + signature components.
 
+diagram_card, claims_tracker, tier_list, formation_diagram.
+"""
+
+from src.models.domain_types import validate_domain_output
 from src.services.pipeline.assembly import (
-    assemble_diagram_card,
     assemble_claims_tracker,
-    assemble_tier_list,
+    assemble_diagram_card,
     assemble_formation_diagram,
+    assemble_tier_list,
 )
-
 
 # ─── resolve_data_source ───
 
@@ -68,6 +71,7 @@ class TestAssembleClaimsTracker:
                 "source": "Mayor",
                 "status": "disputed",
                 "sourceCitation": "Analysts say 700",
+                "quote": "This plan creates twelve hundred jobs.",
                 "timestamp": 210,
             },
             {"claim": "Fares rise 15%", "source": "Authority", "status": "verified"},
@@ -76,27 +80,37 @@ class TestAssembleClaimsTracker:
         assert result is not None
         claims = result["claims"]
         assert len(claims) == 2
-        assert claims[0]["status"] == "disputed"
+        assert claims[0]["status"] == "contested"
         assert claims[0]["source"] == "Mayor"
         assert claims[0]["sourceCitation"] == "Analysts say 700"
         assert claims[0]["timestamp"] == 210
 
-    def test_unknown_status_defaults_to_context(self):
+    def test_unknown_status_defaults_to_stated(self):
+        # An anchored, quoted claim; one without its stamp or its words shows no
+        # status (phase-1 review R9, 2.0 c).
         data = [
-            {"claim": "A bold assertion", "source": "Pundit", "status": "true"},
-            {"claim": "Another assertion", "source": "Pundit"},
+            {"claim": "A bold assertion", "status": "true", "quote": "q1", "timestamp": 10},
+            {"claim": "Another assertion", "source": "Pundit", "quote": "q2", "timestamp": 20},
         ]
         result = assemble_claims_tracker({}, data, {}, None)
-        assert result["claims"][0]["status"] == "context"
-        assert result["claims"][1]["status"] == "context"
+        assert result["claims"][0]["status"] == "stated"
+        assert result["claims"][1]["status"] == "stated"
 
-    def test_missing_source_defaults_to_reporter(self):
+    def test_should_leave_an_unattributed_claim_blank_never_reporter(self):
         data = [
             {"claim": "Claim one", "status": "context"},
             {"claim": "Claim two", "status": "verified"},
         ]
         result = assemble_claims_tracker({}, data, {}, None)
-        assert result["claims"][0]["source"] == "Reporter"
+        assert "source" not in result["claims"][0]
+
+    def test_should_leave_a_validated_unattributed_claim_blank(self):
+        claims = [{"claim": "Claim one"}, {"claim": "Claim two", "source": "Mayor"}]
+        news = validate_domain_output(["news"], [], {"claims": claims})["news"]
+
+        result = assemble_claims_tracker({}, news["claims"], {}, None)
+
+        assert [c.get("source") for c in result["claims"]] == [None, "Mayor"]
 
     def test_dict_wrapper_with_claims_key(self):
         data = {
@@ -131,12 +145,21 @@ class TestAssembleClaimsTracker:
 # ─── Phase 5c: tier_list (gaming signature component) ───
 
 
+def _placed(seconds: int) -> dict:
+    """Where the creator places the item and the words that place it."""
+    return {"timestamp": seconds, "quote": f"I put this one here at {seconds}."}
+
+
 class TestAssembleTierList:
+    # Rows carry a timestamp and the creator's words: a tier is a stated rank only
+    # when the row is anchored in the video and quoted (0b.13, 2.0 c, D13) —
+    # test_assembly_0b13_derived_guard.py covers the unanchored case,
+    # test_p2_0_quotes.py the unquoted one.
     def test_normalizes_full_rankings(self):
         data = [
-            {"item": "Jett", "tier": "S", "reason": "Top duelist", "emoji": "🌪️"},
-            {"item": "Sage", "tier": "a", "reason": "Carry"},
-            {"item": "Yoru", "tier": "C"},
+            {"item": "Jett", "tier": "S", "reason": "Top duelist", "emoji": "🌪️", **_placed(10)},
+            {"item": "Sage", "tier": "a", "reason": "Carry", **_placed(20)},
+            {"item": "Yoru", "tier": "C", **_placed(30)},
         ]
         result = assemble_tier_list({}, data, {}, None)
         assert result is not None
@@ -151,9 +174,9 @@ class TestAssembleTierList:
 
     def test_invalid_tier_omitted(self):
         data = [
-            {"item": "A", "tier": "Z"},
-            {"item": "B", "tier": "S"},
-            {"item": "C"},
+            {"item": "A", "tier": "Z", **_placed(10)},
+            {"item": "B", "tier": "S", **_placed(20)},
+            {"item": "C", **_placed(30)},
         ]
         result = assemble_tier_list({}, data, {}, None)
         assert "tier" not in result["items"][0]
@@ -163,9 +186,9 @@ class TestAssembleTierList:
     def test_dict_wrapper_with_rankings_key(self):
         data = {
             "rankings": [
-                {"item": "A", "tier": "S"},
-                {"item": "B", "tier": "A"},
-                {"item": "C", "tier": "B"},
+                {"item": "A", "tier": "S", **_placed(10)},
+                {"item": "B", "tier": "A", **_placed(20)},
+                {"item": "C", "tier": "B", **_placed(30)},
             ]
         }
         result = assemble_tier_list({}, data, {}, None)
@@ -173,11 +196,11 @@ class TestAssembleTierList:
 
     def test_drops_items_with_no_label(self):
         data = [
-            {"item": "", "tier": "S"},
-            {"tier": "A"},
-            {"item": "Real one", "tier": "B"},
-            {"item": "Real two", "tier": "C"},
-            {"item": "Real three"},
+            {"item": "", "tier": "S", **_placed(10)},
+            {"tier": "A", **_placed(20)},
+            {"item": "Real one", "tier": "B", **_placed(30)},
+            {"item": "Real two", "tier": "C", **_placed(40)},
+            {"item": "Real three", **_placed(50)},
         ]
         result = assemble_tier_list({}, data, {}, None)
         assert len(result["items"]) == 3

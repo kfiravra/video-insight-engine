@@ -31,20 +31,18 @@ import pytest
 from pydantic import BaseModel
 
 from src.models import domain_types as dt
+from src.models import pipeline_types as pt
 from src.models import vie_response_v2 as v2
+from src.models.idea_types import KeyIdeaFigure
 
 # ─────────────────────────────────────────────────────
 # TS interface parsing
 # ─────────────────────────────────────────────────────
 
-_TS_CANDIDATES = (
-    # Local dev / CI checkout: repo root relative to this test file.
-    Path(__file__).resolve().parent.parent.parent.parent
-    / "packages"
-    / "types"
-    / "src"
-    / "vie-response.ts",
-)
+# Local dev / CI checkout: repo root relative to this test file.
+_TS_DIR = Path(__file__).resolve().parent.parent.parent.parent / "packages" / "types" / "src"
+# vie-response.ts re-exports its item and domain types from two modules (p2 review C7).
+_TS_FILES = ("vie-response.ts", "vie-response-items.ts", "vie-response-domains.ts")
 
 # Frame-evidence fields are attached by `inject_frame_thumbnails` /
 # `_attach_frame_metadata` AFTER domain validation (assembly/core.py), so they
@@ -70,10 +68,11 @@ _FIELD_RE = re.compile(r"^\s*(?:readonly\s+)?([A-Za-z_]\w*)\??\s*:", re.MULTILIN
 
 
 def _ts_source() -> str:
-    for path in _TS_CANDIDATES:
-        if path.exists():
-            return path.read_text(encoding="utf-8")
-    pytest.fail(f"vie-response.ts not found at {_TS_CANDIDATES}")
+    paths = [_TS_DIR / name for name in _TS_FILES]
+    missing = [str(path) for path in paths if not path.exists()]
+    if missing:
+        pytest.fail(f"TS contract files not found: {missing}")
+    return "\n".join(path.read_text(encoding="utf-8") for path in paths)
 
 
 def _strip_comments(block: str) -> str:
@@ -82,10 +81,11 @@ def _strip_comments(block: str) -> str:
 
 
 @lru_cache(maxsize=1)
-def _parse_interfaces() -> dict[str, list[str]]:
-    """Parse every `export interface` into {name: [own+inherited field names]}."""
+def flat_interface_bodies() -> dict[str, tuple[list[str], str]]:
+    """Every `export interface` → (its bases, its body with comments and nested
+    object-literal / generic / tuple bodies dropped — the top-level members only)."""
     src = _ts_source()
-    raw: dict[str, tuple[list[str], list[str]]] = {}
+    bodies: dict[str, tuple[list[str], str]] = {}
 
     for match in _INTERFACE_RE.finditer(src):
         name = match.group(1)
@@ -108,8 +108,17 @@ def _parse_interfaces() -> dict[str, list[str]]:
                 depth2 -= 1
             elif depth2 == 0:
                 flat.append(ch)
-        fields = _FIELD_RE.findall("".join(flat))
-        raw[name] = (bases, fields)
+        bodies[name] = (bases, "".join(flat))
+    return bodies
+
+
+@lru_cache(maxsize=1)
+def _parse_interfaces() -> dict[str, list[str]]:
+    """Parse every `export interface` into {name: [own+inherited field names]}."""
+    raw: dict[str, tuple[list[str], list[str]]] = {
+        name: (bases, _FIELD_RE.findall(flat))
+        for name, (bases, flat) in flat_interface_bodies().items()
+    }
 
     def resolve(name: str, seen: frozenset[str] = frozenset()) -> list[str]:
         if name not in raw or name in seen:
@@ -145,6 +154,7 @@ _SAMPLE_OVERRIDES: dict[str, object] = {
     "keyTakeaways": ["takeaway"],
     "isRTL": True,
     "degraded": True,
+    "readingMinutes": 3,
     "timestamp": 42,
     "endTimestamp": 90,
     "seconds": 42,
@@ -159,7 +169,7 @@ _SAMPLE_OVERRIDES: dict[str, object] = {
     "attachments": [{"slot": "top", "component": "tip_callout", "props": {}}],
     "slot": "top",
     "size": "banner",
-    "status": "verified",
+    "status": "supported",
     "tier": "S",
     "x": 50,
     "y": 50,
@@ -195,6 +205,9 @@ class Mapping:
 
 
 _ASSEMBLER_INJECTED = "attached by the assembler AFTER Pydantic validation"
+# output-quality 2.0 d: the quote check (pipeline/quote_verify) flags a translated
+# quote on the copy assembly reads, after validation.
+_QUOTE_CHECK_INJECTED = "set by the quote check AFTER Pydantic validation"
 
 ITEM_MAPPINGS = [
     Mapping("TabEntry", v2.TabEntry),
@@ -203,7 +216,14 @@ ITEM_MAPPINGS = [
     Mapping(
         "SpotItem",
         dt.TravelSpot,
-        exceptions={f: _ASSEMBLER_INJECTED for f in _FRAME_EVIDENCE_FIELDS},
+        exceptions={
+            **{f: _ASSEMBLER_INJECTED for f in _FRAME_EVIDENCE_FIELDS},
+            # A key idea's kind as the card's badge (output-quality 1.1) and its
+            # holder's name (1.3).
+            "category": _ASSEMBLER_INJECTED,
+            "speaker": _ASSEMBLER_INJECTED,
+            "quoteTranslated": _QUOTE_CHECK_INJECTED,
+        },
     ),
     Mapping(
         "StepItem",
@@ -224,10 +244,15 @@ ITEM_MAPPINGS = [
         },
     ),
     Mapping("KeyPointItem", dt.LearningKeyPoint),
+    Mapping("KeyIdeaItem", dt.LearningKeyIdea),
+    Mapping("KeyIdeaFigure", KeyIdeaFigure),
     Mapping(
         "ClaimItem",
         dt.NewsClaim,
-        exceptions={f: _ASSEMBLER_INJECTED for f in _FRAME_EVIDENCE_FIELDS},
+        exceptions={
+            **{f: _ASSEMBLER_INJECTED for f in _FRAME_EVIDENCE_FIELDS},
+            "quoteTranslated": _QUOTE_CHECK_INJECTED,
+        },
     ),
     Mapping("TierListItem", dt.GamingRanking),
     Mapping("FormationPosition", dt.SportPosition),
@@ -251,6 +276,8 @@ ITEM_MAPPINGS = [
     Mapping("PodcastSegment", dt.PodcastSegment),
     Mapping("PodcastGuest", dt.PodcastGuest),
     Mapping("PodcastQuote", dt.PodcastQuote),
+    Mapping("PodcastQAItem", dt.PodcastQA),
+    Mapping("TechTopic", dt.TechTopic),
     Mapping("PodcastTopic", dt.PodcastTopic),
     Mapping("NewsTimelineEvent", dt.NewsTimelineEvent),
     Mapping("NewsEntity", dt.NewsEntity),
@@ -263,7 +290,13 @@ ITEM_MAPPINGS = [
     Mapping("SportStatRow", dt.SportStatRow),
     Mapping("SportStatComparison", dt.SportStatComparison),
     Mapping("NarrativeKeyMoment", dt.NarrativeKeyMoment),
-    Mapping("NarrativeQuote", dt.NarrativeQuote),
+    Mapping(
+        "NarrativeQuote",
+        dt.NarrativeQuote,
+        exceptions={"quoteTranslated": _QUOTE_CHECK_INJECTED},
+    ),
+    # The quiz enrichment's item — its answer timestamp (output-quality 1.13).
+    Mapping("QuizQuestion", pt.QuizQuestion),
 ]
 
 # Domain envelopes: assert top-level field coverage (children covered above).
@@ -278,6 +311,7 @@ DOMAIN_MAPPINGS = [
     Mapping("TechData", dt.TechData),
     Mapping("TechSetup", dt.TechSetup),
     Mapping("FitnessData", dt.FitnessData),
+    Mapping("FitnessMeta", dt.FitnessMeta),
     Mapping("MusicData", dt.MusicData),
     Mapping(
         "LearningData",
@@ -337,6 +371,7 @@ _LIST_FIELD_SAMPLES: dict[str, object] = {
     "themes": ["love"],
     "genre": ["pop"],
     "keyPoints": [{"title": "K", "detail": "d"}],
+    "keyIdeas": [{"claim": "C", "why": "w", "kind": "thesis"}],
     "concepts": [{"name": "C", "definition": "d"}],
     "takeaways": ["t"],
     "pros": ["fast"],
@@ -348,11 +383,12 @@ _LIST_FIELD_SAMPLES: dict[str, object] = {
     "tools": [{"name": "Saw", "required": True}],
     "safetyWarnings": ["Careful"],
     "segments": [{"title": "Intro"}],
+    "qa": [{"question": "Why?", "answer": "Because."}],
     "guests": [{"name": "Guest"}],
     "quotes": [{"quote": "q"}, {"text": "q", "speaker": "s"}],
     "storyTimeline": [{"label": "Event"}],
     "entities": [{"name": "Entity"}],
-    "claims": [{"claim": "c", "source": "s", "status": "verified"}],
+    "claims": [{"claim": "c", "source": "s", "status": "supported"}],
     "context": [{"key": "k", "value": "v"}],
     "highlights": [{"label": "h"}],
     "loadout": [{"item": "Sword"}],

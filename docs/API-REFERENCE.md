@@ -1352,13 +1352,13 @@ The summarization pipeline uses SSE to stream results progressively, allowing th
 | `cached` | 0 | Cache hit — a fast replay follows (`metadata`, `triage_complete`, `meta`, `tab_ready[]` — every tab once, `final: true`, `position` = its index — `synthesis_complete`, `done`) |
 | `metadata` | 1 | Video metadata (title, channel, thumbnailUrl, duration) |
 | `transcript_ready` | 2 | Transcript extraction complete (authoritative `duration`) |
-| `synthesis_complete` | 2 + 3 | Up to twice: `{tldr, keyTakeaways}` at memory-done (the hero), then the four-field superset in assembly's late group — see [synthesis_complete](#synthesis_complete) |
+| `synthesis_complete` | 2 + 3 | Up to three times: `{tldr, keyTakeaways}` at memory-done (the hero), then the superset in assembly's late group (the four synthesis fields; the hero rewrite adds `brief`, `worthItFor`, `skipIf`), then a corrected superset after it when the hero changed (the hero rewrite's adds `readingMinutes`; marked `final: true`, so consumers replace instead of merge) — see [synthesis_complete](#synthesis_complete) |
 | `triage_complete` | 2 | Content tags, tab layout, confidence, `contentFormat`, `evidence` (the reconciled view), `planEvidence` / `memoryEvidence`, `terms` — at plan-done (plan ∥ memory both in, after reconcile) |
 | `meta` | 2 | VIEResponseMeta with videoId, contentTags, tab labels — emitted with `triage_complete`; again at frames-done when the screen-code check changed the tab list |
 | `frames` | 2 | Extracted frame set (presigned URLs), from the frames branch of phase 2 |
 | `extraction_progress` | 2 | Per landed extraction group call (`section: "groups"`, `batch` / `of`); with `EXTRACTION_PARALLEL=false` after phase 2: per chunked batch (`"chunked"` / `"chunked-sequential"`) or `"all"` for one call |
 | `extraction_complete` | 2 | The merged extraction, once every group landed (with `EXTRACTION_PARALLEL=false`: after phase 2) |
-| `tab_ready` | 2 + 3 | One tab, with `position` (sort key) and `final`. The provisional Moments tab (`provisional: true`) streams at plan-done; with `EXTRACTION_PARALLEL` (default) non-final previews stream as each extraction group lands, the rest from assembly; a tab id can arrive more than once and the later emission replaces the earlier by id (a tab taking the provisional's place under another id names it in `replaces`). Each tab of the final response gets a `final: true` emission before `complete` — the last final wins — see [tab_ready](#tab_ready) |
+| `tab_ready` | 2 + 3 | One tab, with `position` (sort key) and `final`. The provisional Moments tab (`provisional: true`) streams at plan-done; with `EXTRACTION_PARALLEL` (default) non-final previews stream as each extraction group lands, the rest from assembly; a tab id can arrive more than once and the later emission replaces the earlier by id (a tab taking the provisional's place under another id names it in `replaces`). Each tab of the final response gets a `final: true` emission before `complete` — but a `moment_track` tab whose frames still wait for the run's 720p download: its final follows `complete`, before `done` — the last final wins — see [tab_ready](#tab_ready) |
 | `description_analysis` | 3 | Links, resources extracted from description — emitted at assembly (assembly waits ≤ 5 s for the analysis started at metadata-end; past that, nothing) |
 | `enrichment_complete` | 3 | The quiz landed (only for a plan with a quiz host; in assembly's late group) |
 | `heartbeat` | Any | Keep-alive during long-running steps (e.g. moment frame fill) — carries `ts`, safe to ignore |
@@ -1416,16 +1416,20 @@ events `detection_result`, `chapter_ready`, `concepts_complete` are no longer em
 │  ┌──────────────────────────────────────────────────────────────────────┐   │
 │  │  Output events: description_analysis, tab_ready previews of the      │   │
 │  │    tabs the client lacks (the overview, tabs assembly added or       │   │
-│  │    the last groups changed), then moment fill ∥ synthesis ∥          │   │
-│  │    quiz: moment tabs (framed, heartbeats meanwhile),                 │   │
-│  │    synthesis_complete (superset), enrichment_complete; then the      │   │
-│  │    final re-emit: every tab not yet final, `final: true`, at its     │   │
-│  │    final position (the overview last)                                │   │
+│  │    the last groups changed), then moment fill ∥ hero rewrite (else   │   │
+│  │    synthesis) ∥ quiz: moment tabs (framed, heartbeats meanwhile),    │   │
+│  │    synthesis_complete (superset), enrichment_complete, a corrected   │   │
+│  │    synthesis_complete when the hero changed; then the final          │   │
+│  │    re-emit: every tab not yet final, `final: true`, at its final     │   │
+│  │    position (the overview last)                                      │   │
 │  └──────────────────────────────────────────────────────────────────────┘   │
 │                                                                             │
 │  PHASE 4: SAVE & DONE                                                       │
 │  ┌──────────────────────────────────────────────────────────────────────┐   │
 │  │  - Emit "complete" (tabCount, tabIds, processingTimeMs, degraded)    │   │
+│  │  - A moment fill still waiting for the 720p file is joined here      │   │
+│  │    (it started with the late group): the moment tabs' final          │   │
+│  │    tab_ready (framed), heartbeats meanwhile                          │   │
 │  │  - Save the result to MongoDB; Redis response cache (English,        │   │
 │  │    awaited, best-effort); Qdrant + S3 raw transcript in the          │   │
 │  │    background                                                        │   │
@@ -1547,9 +1551,15 @@ VIEResponseMeta with video identity and synthesis results.
   "tldr": "Comprehensive guide to React Hooks covering useState, useEffect, and custom hooks...",
   "keyTakeaways": ["useState manages component state", "useEffect handles side effects"],
   "masterSummary": "This tutorial walks through...",
-  "seoDescription": "Learn React Hooks..."
+  "seoDescription": "Learn React Hooks...",
+  "brief": "This tutorial walks through...",
+  "worthItFor": "Developers who know React classes and want hooks without the guesswork.",
+  "skipIf": "You want a deep dive into concurrent rendering: it is not covered.",
+  "readingMinutes": 6
 }
 ```
+
+The sample is the shape of the stored `meta` (`VIEResponseMeta`: the document a finished run saves and a cache hit replays). The live `meta` event is lighter — `title`, `contentTags`, `modifiers`, `primaryTag`, `tabCount`, `tabLabels`, `contentFormat`, `language`, `isRTL` (`phases/triage._meta_payload`) — and the synthesis fields reach a streaming client through [synthesis_complete](#synthesis_complete). The last four fields are the hero rewrite's (output-quality 2.2), all optional and absent from rows stored before it or from a run whose hero call gave none: `brief` is the 3–5 sentence overview (`masterSummary` carries the same text for older readers), `worthItFor` / `skipIf` are one line each (≤ 20 words), `readingMinutes` is the whole minutes to read the shipped page, counted by code once the tabs are final. With the hero rewrite `keyTakeaways` stay strings, each closing with the `[m:ss]` (`[h:mm:ss]`) of the moment it rests on.
 
 ### tab_ready
 
@@ -1581,7 +1591,9 @@ attachments?, degradedFrom?`) plus four stream fields. Typed as `SSETabReadyEven
   value — a final emission wins over a non-final one at the same value.
 - **`final`**: `true` = this is the tab's **last** emission of the run: its
   content and position will not change. Every tab of the final response gets a
-  final emission before `complete`, normally exactly one. Should a tab still
+  final emission, normally exactly one, before `complete` — but a `moment_track`
+  tab whose frames still wait for the run's 720p download (see **Moment frames
+  still downloading** below): its final follows `complete`. Should a tab still
   change after it (a contract slip the summarizer logs as an error), a
   **corrected final follows for the same id: the last final wins** — never
   freeze a tab on its first final. `false` = a later `tab_ready` with the same
@@ -1641,8 +1653,14 @@ arrive without a label there — `complete.tabIds` is authoritative.
    groups or the frames changed.
 5. Late group, in parallel: the `moment_track` tabs once framed (replacing the
    provisional by id, or under another id with `replaces`; final when no quiz
-   is pending), `synthesis_complete` (superset), `enrichment_complete` (the
-   quiz call started when the groups holding its domains' fields landed).
+   is pending; a fill waiting for the 720p download is not here — below),
+   `synthesis_complete` (superset — the hero rewrite's, started
+   when the text groups landed, or the synthesis call's), `enrichment_complete`
+   (the quiz call started when the groups holding its domains' fields landed).
+   5½. Settle, after the late group: a corrected `synthesis_complete` when the
+   hero no longer reads as the last one sent — always on a hero-rewrite page
+   (it adds `readingMinutes`), otherwise only when the dropped-tab scrub changed
+   the hero; it carries `final: true`.
 6. The **final re-emit**: every tab not yet received final, `final: true` at
    its final position, links and attachments included — the overview last.
 7. `complete {tabCount, tabIds}`, then `done` (non-English: after translation).
@@ -1660,12 +1678,32 @@ With `EXTRACTION_PARALLEL=false` (one extraction call after frames-done):
    is pending.
 4. Late group, in parallel: the `moment_track` tabs once framed (replacing the
    provisional by id, or under another id with `replaces`; final when no quiz
-   is pending), `synthesis_complete` (superset), `enrichment_complete`.
+   is pending), `synthesis_complete` (superset; the hero rewrite's call is made
+   here, over the whole extraction), `enrichment_complete`; then the same
+   settle step (a corrected `synthesis_complete`).
 5. The **final re-emit**: every tab not yet received final, in order, `final:
    true` at its final position — with a quiz, every tab of the response
    including the new quiz tab (last); without one, typically just the
    synthesis-patched overview.
 6. `complete {tabCount, tabIds}`, then `done` (non-English: after translation).
+
+**Moment frames still downloading** (output-quality 3.7, both modes): when the
+moment fill would seek frames and the run's 720p file has not landed when the
+late group starts, `complete` does not wait for the fill: it starts beside the
+late group (its seeks overlap the quiz and the hero once the file lands) and is
+joined after `complete`. The `moment_track`
+tabs then stream right after the final assembly (step 4 above; step 3 without
+the field groups) with the frames they already have, `final: false`; the final
+re-emit leaves only them non-final (re-sent only when changed); `complete`
+follows — `tabIds` include them, `processingTimeMs` is the text-done time; then,
+with heartbeats while the fill waits, each moment tab's `final: true` emission,
+framed (replace by id); then the save and `done`, whose `processingTimeMs` (and
+the stored doc's) count the fill. A filmstrip the framed Moments would shadow is
+dropped before `complete`, counting the frames still to come — and stays gone
+when the fill then falls short (a failed or late 720p: the moments keep their
+glyph plates), since `tabIds` were final; the stored doc records the case
+(`pipeline.assembly.momentFill`: `pending`, `filled`,
+`filmstripDroppedOnPending`). A 720p file already on disk keeps the order above.
 
 A **cache hit** (completed row, or the Redis response cache) sends `cached`,
 `metadata`, `triage_complete`, `meta`, then every stored tab once with
@@ -1688,6 +1726,10 @@ empties the stream).
 
 - **`tabIds`**: the final response's tab ids in order (`tabCount` of them).
   Any tab streamed earlier but absent here was withdrawn.
+- **`processingTimeMs`**: the run's time when the text output was done. When the
+  moment fill waits for the 720p download (**Moment frames still downloading**
+  above), the moment tabs' final emissions follow, and `done.processingTimeMs`
+  includes the fill.
 
 ### Frame URLs (presigned, re-signed on serve)
 
@@ -1740,7 +1782,7 @@ Clients should not cache frame URLs beyond a session.
 
 ### synthesis_complete
 
-Emitted **up to twice per run**, every field optional:
+Emitted **up to three times per run**, every field optional:
 
 1. **Memory-done** (phase 2, only when memory produced a tldr or takeaways) — the hero:
 
@@ -1749,29 +1791,60 @@ Emitted **up to twice per run**, every field optional:
   "event": "synthesis_complete",
   "tldr": "This video explains how to use React Hooks...",
   "keyTakeaways": [
-    "useState is the most fundamental hook",
-    "useEffect handles side effects",
-    "Custom hooks enable code reuse"
+    "useState is the most fundamental hook [0:45]",
+    "useEffect handles side effects [3:10]",
+    "Custom hooks enable code reuse [6:30]"
   ]
 }
 ```
 
-2. **Synthesis-done** (phase 5, after the first tabs) — the four-field superset:
-   `{tldr, keyTakeaways, masterSummary, seoDescription}`. `tldr`/`keyTakeaways` are
-   memory's; synthesis writes them only when memory left one empty. A failed
-   synthesis still emits it: memory's hero, empty `masterSummary`/`seoDescription`.
-   A cached replay sends one superset event.
+2. **Synthesis-done** (phase 5, after the first tabs) — the superset
+   `{tldr, keyTakeaways, masterSummary, seoDescription}`. With
+   `HERO_REWRITE_ENABLED` (default) the late group's slot is the **hero rewrite**
+   (`hero_rewrite.hero_meta`): its `tldr` and `keyTakeaways` replace memory's,
+   `masterSummary` is the `brief`, and the event adds the hero's own keys
+   (`phases/synthesis.synthesis_event`, `HERO_KEYS`): `brief` (3–5 sentences),
+   `worthItFor` and `skipIf` (≤ 20 words each; `""` when the call dropped the
+   line). `keyTakeaways` are still strings, each closing with the `[m:ss]` of the
+   moment it rests on. The keys are never `null` — absent until set, and absent
+   altogether on the synthesis path. On the synthesis path (flag off, or the
+   hero call gave none) `tldr`/`keyTakeaways` are memory's; synthesis writes
+   them only when memory left one empty, and a failed synthesis still emits the
+   event: memory's hero, empty `masterSummary`/`seoDescription`.
+3. **Corrected** (after the late group, `phases/synthesis.settle_tab_references`) —
+   the same superset again, sent only when the hero no longer reads as the last
+   one sent: the dropped-tab scrub removed a sentence naming a tab that does not
+   ship, or — on every hero-rewrite page — `readingMinutes` joined (a whole number
+   ≥ 1, counted by code over the final hero + tabs). It is marked **`final: true`**
+   (`phases/synthesis.settle_tab_references`) and replaces the client's and the
+   relay's copy: a field its scrub emptied arrives as `""` / `[]` and clears, and a
+   hero key it does not carry (`brief`, `worthItFor`, `skipIf`, `readingMinutes`) is
+   removed. `final` is on this emission only.
+
+A cached replay sends one superset event: the stored `meta`'s four synthesis
+fields plus the hero keys the row carries (`cached_response.resolve_synthesis`;
+older rows send the four fields only).
 
 **Merge rules** (one rule, two consumers — `filledSynthesisFields` in `@vie/types`):
 
 - An empty string or array never counts as set, so a later emission never blanks a
-  field an earlier one filled; filled fields merge field by field.
+  field an earlier one filled; filled fields merge field by field — `brief`,
+  `worthItFor`, `skipIf` and `readingMinutes` included. The one exception is the
+  `final` emission (`carriedSynthesisFields` in `@vie/types`): it replaces — every
+  field it carries is applied, empties included, and each hero key it lacks is
+  dropped.
 - The superset wins: once a `masterSummary` is held, an emission without one (a
   reconnect replaying the partial) is ignored.
-- Web: `handleSynthesisComplete` in `stream-event-processor.ts`. API relay
+- Web: `handleSynthesisComplete` in `stream-event-processor.ts`; the hero (`VideoHero`) renders `brief` (else `masterSummary`), `worthItFor` / `skipIf`, the takeaways' `[m:ss]` markers as ▶ seek chips and `readingMinutes` as "Read: N min · Watch: M min" ([FRONTEND.md](./FRONTEND.md)). API relay
   (`stream.routes.ts` → `VideoRepository.mergeSynthesis` → `buildSynthesisMerge`):
   dotted `$set` of the filled `synthesis.*` fields; a partial is guarded by
-  `synthesis.masterSummary ∈ {null, ""}`. Re-applying either emission is idempotent.
+  `synthesis.masterSummary ∈ {null, ""}`. A `final` emission is unguarded: it `$set`s
+  every field it carries, empties included (even a `masterSummary` scrubbed to
+  `""`), and `$unset`s each hero key it lacks (`buildFinalMerge`, `SYNTHESIS_HERO_KEYS`).
+  Re-applying any emission is idempotent.
+- Validation (web `validateSynthesisComplete`, API `synthesisCompleteEventSchema`): the
+  four optional hero fields and `final` are dropped individually when invalid
+  (`.catch(undefined)`) — the event and the tldr / takeaways beside them are kept.
 - Every (re-)dispatch of a row (new version, retry, stale-version regen, stall)
   first `$unset`s its `synthesis`, so a previous run's `masterSummary` can't block
   this run's partial.
@@ -1868,7 +1941,7 @@ export function useSummaryStream(videoSummaryId: string | null) {
 
 ## LLM Calls Summary
 
-Per run (v10 pipeline; the default `EXTRACTION_PARALLEL=true`; models = the `config.py` / compose defaults, 4.0 picks — under compose a blank `.env` line keeps them; "Fast" = the fast tier: Haiku 4.5 by default, gpt-4o-mini with `LLM_FAST_PROVIDER=openai` as both `.env` templates and prod set):
+Per run (v11 pipeline; the default `EXTRACTION_PARALLEL=true`; models = the `config.py` / compose defaults, 4.0 picks — under compose a blank `.env` line keeps them; "Fast" = the fast tier: Haiku 4.5 by default, gpt-4o-mini with `LLM_FAST_PROVIDER=openai` as both `.env` templates and prod set):
 
 | Stage | Model | Calls | Parallel? |
 |-------|-------|-------|-----------|
@@ -1880,10 +1953,12 @@ Per run (v10 pipeline; the default `EXTRACTION_PARALLEL=true`; models = the `con
 | Chapter detect | Fast | 0-1 (videos past one extraction batch — over `MAX_MINUTES_PER_BATCH` or `MAX_TOKENS_PER_BATCH` — with no listed chapters, no description timestamps and no usable memory outline) | No — before the field groups fire |
 | Extraction field groups | Sonnet 5.5 at effort low (`LLM_EXTRACTION_MODEL`) | 1-5 text groups + 0-1 visual group, per chunk (`grouping` in domains.json: `maxTextGroups` 5, `groupOutputBudget` 1,500 tokens; a long video has one chunk per chapter batch). A lost answer gets one more call | Text groups at plan-done (text1 first, the rest on its first streamed chunk), the visual group at frames-done; ≤ `EXTRACTION_PARALLEL_BATCHES` in flight |
 | Extraction (`EXTRACTION_PARALLEL=false`) | Sonnet 5.5 at effort low (`LLM_EXTRACTION_MODEL`) | 1, or one per chapter batch | After frames-done; batches one at a time |
-| Synthesis | Fast | 1 | ∥ moment fill ∥ quiz, after the first tabs (before them when memory left the hero empty) |
-| Quiz (enrichment) | gpt-4o-mini (`LLM_ENRICHMENT_MODEL`) | 0-1 (plan with a quiz host) | ∥ moment fill ∥ synthesis; split path: started once the groups holding its domains' fields landed |
-| Faithfulness judge | gpt-6-luna (`LLM_JUDGE_MODEL`; blank = the fast tier) | 0-6 (`LANGFUSE_FAITHFULNESS_SAMPLE_RATE` of the extracted claims, ≤ 6) | Background, after extraction; never blocks |
+| Hero rewrite | Sonnet 5.5 (`LLM_EXTRACTION_MODEL`, on the extraction's cache) | 1 (+1 retry when the hero would be None or a D18 line would drop); 25s | Fired at text-groups-done, ∥ moment fill ∥ quiz |
+| Merge rank | Haiku 5.5 (`LLM_MEMORY_MODEL`) | 0-1 (chunked split runs, > 40 min); 12s per attempt, 1 retry, 25s total | At text-groups-done, beside the hero |
+| Synthesis (fallback) | Fast | 0-1 (only when `HERO_REWRITE_ENABLED=false` or the hero call gave none) | After the first tabs (before them when memory left the hero empty) |
+| Quiz v2 | Sonnet 5.5 (`LLM_EXTRACTION_MODEL`, on the extraction's cache) | 0-N, one per part (a lecture / tutorial plan with a quiz host); 30s per attempt, 40s total. `QUIZ_V2_ENABLED=false`: gpt-4o-mini (`LLM_ENRICHMENT_MODEL`), 0-1 | ∥ moment fill ∥ hero; split path: started once the groups holding its domains' fields landed |
+| Faithfulness judge | gpt-6-luna (`LLM_JUDGE_MODEL`; blank = the fast tier) | 0-6 (`LANGFUSE_FAITHFULNESS_SAMPLE_RATE` of the extracted claims, ≤ 6) + ≤ 2 after assembly (hero, quiz) | Background, after extraction; never blocks |
 | Translation | gpt-6-luna (`LLM_TRANSLATION_MODEL`) | Non-English only: output batches (≤ 2,500 chars, ≤ 100 strings) + the title; RAG transcript batches (`rag_translation`) | ≤ 8 output batches in flight; RAG in the background |
 | Assembly | None (code; moment frame fill does frame I/O with heartbeats) | 0 | — |
 
-**Total** for a video one extraction batch covers: description analysis, tier probe, plan, memory, 1-6 extraction group calls, synthesis and the quiz when planned — plus 0-5 vision batches and ≤ 6 sampled judge calls. A long video multiplies the group calls by its chunks; a non-English video adds the translation batches. A refused answer adds one call on the refused model's previous model ([ERROR-HANDLING.md](./ERROR-HANDLING.md#refusals)).
+**Total** for a video one extraction batch covers: description analysis, tier probe, plan, memory, 1-6 extraction group calls, the hero rewrite (synthesis only as its fallback), merge_rank on a chunked run and the quiz on a lecture / tutorial when planned — plus 0-5 vision batches and ≤ 6 + 2 sampled judge calls. A long video multiplies the group calls by its chunks; a non-English video adds the translation batches. A refused answer adds one call on the refused model's previous model ([ERROR-HANDLING.md](./ERROR-HANDLING.md#refusals)).
