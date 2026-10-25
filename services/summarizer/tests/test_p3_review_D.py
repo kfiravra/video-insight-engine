@@ -22,11 +22,11 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from src.services.pipeline.phases.late_moment_fill import LateMomentFill
 
 from src.services.pipeline.assembly import moment_frame_fill as mff
 from src.services.pipeline.phases import assembly as phase
 from src.services.pipeline.phases import synthesis as synthesis_phase
+from src.services.pipeline.phases.late_moment_fill import LateMomentFill
 from tests.test_p3_7_late_moment_frames import (
     _MOMENTS,
     _SYNTHESIS,
@@ -116,6 +116,16 @@ def _record(ctx: Any) -> dict | None:
     return _saved(ctx)["pipeline"]["assembly"].get("momentFill")
 
 
+async def _fills_left_running() -> list[asyncio.Task[Any]]:
+    """The deferred fills still running once a cancelled one has had time to unwind
+    (Python 3.11 needs a loop tick more than 3.12 to finish a cancelled task)."""
+    fills = [t for t in asyncio.all_tasks() if t.get_name().startswith("moment_fill_")]
+    if not fills:
+        return []
+    _, pending = await asyncio.wait(fills, timeout=1.0)
+    return list(pending)
+
+
 # ─── D3: the deferred fill's seeks overlap the late group ───
 
 
@@ -158,10 +168,8 @@ class TestFillOverlapsTheLateGroup:
 
         with pytest.raises(RuntimeError, match="quiz call failed"):
             await _run(ctx, quiz=_failing_quiz, land_after=None)
-        await asyncio.sleep(0)
 
-        running = [t for t in asyncio.all_tasks() if t.get_name().startswith("moment_fill_")]
-        assert running == []
+        assert await _fills_left_running() == []
 
 
 class TestFramesStillToCome:
