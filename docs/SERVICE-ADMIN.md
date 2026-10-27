@@ -8,7 +8,7 @@ LLM usage monitoring, system health dashboard, and cost alerting service.
 |----------|-------|
 | Port | 8002 |
 | Framework | FastAPI + React (multi-stage Docker) |
-| Auth | API key (Bearer token) |
+| Auth | Bearer: `ADMIN_API_KEY` (machine key) or a login session token signed with `ADMIN_SESSION_SECRET` |
 | Database | MongoDB (shared with other services) |
 
 ## Architecture
@@ -173,9 +173,19 @@ React SPA served as static files from the same container.
 
 ## Security
 
-- API key auth via `Authorization: Bearer <key>` header
+- **Two bearer credentials** (`Authorization: Bearer <…>`, checked by `ApiKeyMiddleware` in `src/auth.py`):
+  - `ADMIN_API_KEY` — the machine key (curl, tooling; also what vie-admin sends vie-api as `X-Admin-Key`).
+  - A session token from `POST /auth/login` (email + bcrypt password, user must have `role: "admin"`):
+    `base64url(email|expiry).hmac_sha256`, 12 h TTL, HMAC-keyed on **`ADMIN_SESSION_SECRET`** — never on
+    `ADMIN_API_KEY`, so holding the machine key does not let anyone mint a session for an arbitrary email.
+    Rotating `ADMIN_SESSION_SECRET` logs every admin out; rotating `ADMIN_API_KEY` leaves sessions alone
+    (it must be rotated on vie-api at the same time).
+- **Startup refusal** — the lifespan calls `validate_secrets()` (`src/config.py`) first. Outside a dev
+  `ENVIRONMENT` (`""`, `development`, `dev`, `test`, `local`; any other name counts as production) the
+  service refuses to start when `ADMIN_API_KEY` or `ADMIN_SESSION_SECRET` is empty or its dev default, or
+  when the two are equal; the error names the variable, never its value. Dev environments only log a warning.
 - Timing-safe comparison (`hmac.compare_digest`)
-- OpenAPI docs disabled in production
+- OpenAPI docs disabled (`docs_url`/`openapi_url` are `None`)
 - CORS restricted to known origins
 - Input validation on all parameters (ObjectId, path params, date formats)
 - TTLCache (30s) prevents aggregation query abuse
@@ -191,7 +201,14 @@ React SPA served as static files from the same container.
 ## Environment Variables
 
 ```
+# "" / development / dev / test / local = dev (dev-default secrets only warn);
+# anything else = production (validate_secrets() refuses to start). Prod compose: production.
+ENVIRONMENT=
+# Machine key: raw Bearer on vie-admin + X-Admin-Key to vie-api. Required.
 ADMIN_API_KEY=<required>
+# Signs login session tokens. openssl rand -hex 32; must differ from ADMIN_API_KEY;
+# rotating it logs every admin out. Default dev-admin-session-secret-change-me (dev only).
+ADMIN_SESSION_SECRET=<required in production>
 MONGODB_URI=mongodb://vie-mongodb:27017/video-insight-engine
 VIE_API_URL=http://vie-api:3000
 VIE_SUMMARIZER_URL=http://vie-summarizer:8000

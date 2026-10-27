@@ -150,11 +150,21 @@ cp .env.production.example .env && chmod 600 .env
 
 # Random hex secrets (hex is safe inside connection URIs)
 for key in MONGO_ROOT_PASS REDIS_PASSWORD RABBITMQ_PASS JWT_SECRET JWT_REFRESH_SECRET \
-           INTERNAL_SECRET ADMIN_API_KEY PADDLE_WEBHOOK_SECRET; do
+           INTERNAL_SECRET ADMIN_API_KEY ADMIN_SESSION_SECRET PADDLE_WEBHOOK_SECRET; do
   sed -i "s|^${key}=.*|${key}=$(openssl rand -hex 32)|" .env
 done
 sed -i 's|your-domain.example|DOMAIN|g' .env
 ```
+
+**Existing host: add the vie-admin session secret before merging the admin-roles change.** The deploy workflow pulls `main` and rebuilds after every green CI run, so the row has to be in the server `.env` before the merge. While `ADMIN_SESSION_SECRET` is missing, compose stops at variable substitution and starts no service at all. vie-admin also refuses to start on the dev default or on a value equal to `ADMIN_API_KEY`.
+
+```bash
+cd ~/video-insight-engine
+grep -q '^ADMIN_SESSION_SECRET=' .env || echo "ADMIN_SESSION_SECRET=$(openssl rand -hex 32)" >> .env
+dc config -q   # prints nothing when .env is complete
+```
+
+The first deploy after the change logs every admin out once, because older sessions were signed with `ADMIN_API_KEY`. To rotate `ADMIN_SESSION_SECRET` later, set a fresh value with `sed -i` and run `dc up -d vie-admin`. That logs everyone out again; `dc restart` does not re-read `.env`.
 
 Then edit `.env` and set both required provider keys, `ANTHROPIC_API_KEY` and `OPENAI_API_KEY`, plus any optional one (`GEMINI_API_KEY`). The OpenAI key is required since the pipeline-1min 4.0d model picks: description analysis and the output / title / RAG-text translation default to `openai/gpt-6-luna`, the quiz (only with `QUIZ_V2_ENABLED=false`) to `openai/gpt-4o-mini`, and the template sets `LLM_FAST_PROVIDER=openai` (the synthesis fallback, chapter detection and the faithfulness judge on gpt-4o-mini); it also enables the Whisper audio fallback. Compose passes the key through as optional, so `dc config -q` does not catch a missing one: without it those calls fail (fast-tier calls never fall back to another provider): pipeline runs lose the description analysis, translation, the synthesis fallback, AI chapter detection and the faithfulness judge (hero / quiz calls included), and vie-assistant loses its chat (the template sets `LLM_CHAT_MODEL=openai/gpt-4o-mini`) and its quiz tool (the fast tier). The OpenAI project behind the key must have access to `gpt-6-luna` and `gpt-4o-mini`. Check that `S3_BUCKET` names the bucket and `AWS_REGION` is the region the check in section a printed. Leave `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` unset, because the instance role supplies credentials.
 

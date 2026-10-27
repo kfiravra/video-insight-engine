@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from src.auth import ApiKeyMiddleware
-from src.config import settings
+from src.config import settings, validate_secrets
 from src.dependencies import close_mongo_client, get_database, init_mongo_client
 from src.routes.alerts import router as alerts_router
 from src.routes.auth import router as auth_router
@@ -83,6 +83,9 @@ async def _drop_legacy_ttl_index(db: AsyncIOMotorDatabase) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     global _health_task, _alert_task
+    # Before anything else: in production, refuse to serve on dev-default or
+    # shared admin secrets rather than boot a forgeable admin panel.
+    validate_secrets()
     logger.info("sentry_init", enabled=_init_sentry())
     init_mongo_client()
 

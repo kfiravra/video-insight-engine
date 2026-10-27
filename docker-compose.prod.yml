@@ -492,8 +492,12 @@ services:
       - ./backups:/backups:ro
     environment:
       PYTHONUNBUFFERED: 1
+      # Arms validate_secrets(): dev-default or shared admin secrets refuse startup.
+      ENVIRONMENT: ${ENVIRONMENT:-production}
       MONGODB_URI: *mongodb-uri
       ADMIN_API_KEY: ${ADMIN_API_KEY:?ADMIN_API_KEY is required (openssl rand -base64 32)}
+      # Signs admin login sessions; must differ from ADMIN_API_KEY. Rotating it logs admins out.
+      ADMIN_SESSION_SECRET: ${ADMIN_SESSION_SECRET:?ADMIN_SESSION_SECRET is required (openssl rand -hex 32)}
       VIE_API_URL: http://vie-api:3000
       VIE_SUMMARIZER_URL: http://vie-summarizer:8000
       VIE_ASSISTANT_URL: http://vie-assistant:8001
