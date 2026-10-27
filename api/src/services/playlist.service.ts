@@ -211,8 +211,16 @@ export class PlaylistService {
         );
 
         // Cached videos run no pipeline, so no llm_usage will land — refund.
-        if (result.cached && this.costMonitorService) {
-          await this.costMonitorService.refundReservation(reservation);
+        // Attached videos (cross-user single-flight) are the same: this caller
+        // didn't trigger work. A failed refund must not fail the import — the
+        // video exists, and the catch below would refund a second time.
+        if ((result.cached || result.attached) && this.costMonitorService) {
+          await this.costMonitorService.refundReservation(reservation).catch((refundErr) => {
+            this.logger.warn(
+              { err: refundErr, userId, youtubeId: video.video_id },
+              'cached/attached-video refund failed during playlist import',
+            );
+          });
         }
 
         results.push({

@@ -5,7 +5,9 @@ import { PlaylistService } from '../playlist.service.js';
 import type { VideoService } from '../video.service.js';
 import type { FolderService, FolderResponse } from '../folder.service.js';
 import type { SummarizerClient } from '../summarizer-client.js';
+import type { CostMonitorService } from '../cost-monitor.service.js';
 import {
+  DailyLimitReachedError,
   InvalidPlaylistUrlError,
   PlaylistNotFoundError,
   PlaylistExtractionError,
@@ -505,6 +507,147 @@ describe('PlaylistService', () => {
           'https://www.youtube.com/watch?v=abc123'
         )
       ).rejects.toThrow(InvalidPlaylistUrlError);
+    });
+  });
+
+  describe('import with a cost monitor', () => {
+    const PLAYLIST_URL = 'https://www.youtube.com/playlist?list=PLtest123';
+    let mockCostMonitor: {
+      reserveUserCost: ReturnType<typeof vi.fn>;
+      refundReservation: ReturnType<typeof vi.fn>;
+    };
+    let userId: string;
+
+    function createReservation(userIdForReservation: string, amountUsd = 0.15) {
+      return { userId: userIdForReservation, dateKey: '2026-10-27', amountUsd };
+    }
+
+    function useVideos(count: number) {
+      const videos = Array.from({ length: count }, (_, index) => ({
+        video_id: `video${index + 1}`,
+        title: `Video ${index + 1}`,
+        position: index + 1,
+        duration: 120,
+        thumbnail_url: `thumb${index + 1}.jpg`,
+      }));
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(createPlaylistResponse({ total_videos: count, videos })),
+      });
+      mockFolderService.create.mockResolvedValue(createFolderResponse());
+    }
+
+    beforeEach(() => {
+      userId = new ObjectId().toHexString();
+      mockCostMonitor = {
+        reserveUserCost: vi.fn(),
+        refundReservation: vi.fn().mockResolvedValue(undefined),
+      };
+      playlistService = new PlaylistService(
+        mockVideoService as unknown as VideoService,
+        mockFolderService as unknown as FolderService,
+        mockSummarizerClient as unknown as SummarizerClient,
+        mockLogger,
+        mockCostMonitor as unknown as CostMonitorService,
+      );
+    });
+
+    it('should refund the reservation when the video was served from cache', async () => {
+      useVideos(1);
+      const reservation = createReservation(userId);
+      mockCostMonitor.reserveUserCost.mockResolvedValue(reservation);
+      mockVideoService.createVideo.mockResolvedValue({ ...createVideoCreateResult(), cached: true });
+
+      await playlistService.import(userId, PLAYLIST_URL);
+
+      expect(mockCostMonitor.refundReservation.mock.calls).toEqual([[reservation]]);
+    });
+
+    it('should refund the reservation when the video attached to an in-flight run', async () => {
+      useVideos(1);
+      const reservation = createReservation(userId);
+      mockCostMonitor.reserveUserCost.mockResolvedValue(reservation);
+      mockVideoService.createVideo.mockResolvedValue({ ...createVideoCreateResult(), attached: true });
+
+      await playlistService.import(userId, PLAYLIST_URL);
+
+      expect(mockCostMonitor.refundReservation.mock.calls).toEqual([[reservation]]);
+    });
+
+    it('should keep the reservation when a new pipeline run was created', async () => {
+      useVideos(1);
+      mockCostMonitor.reserveUserCost.mockResolvedValue(createReservation(userId));
+      mockVideoService.createVideo.mockResolvedValue(createVideoCreateResult());
+
+      const result = await playlistService.import(userId, PLAYLIST_URL);
+
+      expect(mockCostMonitor.refundReservation).not.toHaveBeenCalled();
+      expect(result.processingCount).toBe(1);
+    });
+
+    it('should still report the video as imported when the refund itself fails', async () => {
+      useVideos(1);
+      mockCostMonitor.reserveUserCost.mockResolvedValue(createReservation(userId));
+      mockCostMonitor.refundReservation.mockRejectedValue(new Error('mongo down'));
+      mockVideoService.createVideo.mockResolvedValue({ ...createVideoCreateResult(), attached: true });
+
+      const result = await playlistService.import(userId, PLAYLIST_URL);
+
+      expect(result.videos).toHaveLength(1);
+      expect(result.failedVideos).toEqual([]);
+      expect(mockCostMonitor.refundReservation).toHaveBeenCalledTimes(1);
+    });
+
+    it('should refund the reservation when createVideo throws', async () => {
+      useVideos(1);
+      const reservation = createReservation(userId);
+      mockCostMonitor.reserveUserCost.mockResolvedValue(reservation);
+      mockVideoService.createVideo.mockRejectedValue(new Error('Failed to process video'));
+
+      const result = await playlistService.import(userId, PLAYLIST_URL);
+
+      expect(mockCostMonitor.refundReservation.mock.calls).toEqual([[reservation]]);
+      expect(result.failedVideos[0]).toMatchObject({ youtubeId: 'video1', error: 'Failed to process video' });
+    });
+
+    it('should mark the failing item and every later item DAILY_LIMIT_REACHED when the cap trips mid-import', async () => {
+      useVideos(4);
+      mockCostMonitor.reserveUserCost
+        .mockResolvedValueOnce(createReservation(userId))
+        .mockRejectedValueOnce(new DailyLimitReachedError(1, '2026-10-28T00:00:00.000Z'));
+      mockVideoService.createVideo.mockResolvedValue(createVideoCreateResult());
+
+      const result = await playlistService.import(userId, PLAYLIST_URL);
+
+      expect(result.videos).toHaveLength(1);
+      expect(result.failedVideos.map(failed => [failed.youtubeId, failed.error])).toEqual([
+        ['video2', 'DAILY_LIMIT_REACHED'],
+        ['video3', 'DAILY_LIMIT_REACHED'],
+        ['video4', 'DAILY_LIMIT_REACHED'],
+      ]);
+    });
+
+    it('should not reserve or create anything for items after the cap trips', async () => {
+      useVideos(4);
+      mockCostMonitor.reserveUserCost
+        .mockResolvedValueOnce(createReservation(userId))
+        .mockRejectedValueOnce(new DailyLimitReachedError(1, '2026-10-28T00:00:00.000Z'));
+      mockVideoService.createVideo.mockResolvedValue(createVideoCreateResult());
+
+      await playlistService.import(userId, PLAYLIST_URL);
+
+      expect(mockCostMonitor.reserveUserCost).toHaveBeenCalledTimes(2);
+      expect(mockVideoService.createVideo).toHaveBeenCalledTimes(1);
+    });
+
+    it('should refund nothing for the item that hit the cap since no reservation was taken', async () => {
+      useVideos(2);
+      mockCostMonitor.reserveUserCost.mockRejectedValue(new DailyLimitReachedError(1, '2026-10-28T00:00:00.000Z'));
+
+      const result = await playlistService.import(userId, PLAYLIST_URL);
+
+      expect(mockCostMonitor.refundReservation).not.toHaveBeenCalled();
+      expect(result.failedCount).toBe(2);
     });
   });
 
