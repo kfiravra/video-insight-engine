@@ -334,17 +334,31 @@ describe('UserDeletionService (integration with in-memory MongoDB)', () => {
           userId: user._id.toString(),
           requestId: 'req-mine-1',
         });
-        const clear = (id: string): Promise<number> =>
-          (
-            service as unknown as {
-              clearVideoCacheDispatchContext: (userId: string) => Promise<number>;
-            }
-          ).clearVideoCacheDispatchContext(id);
+        await service.executeHardDelete(user._id.toString(), { initiatedBy: 'self' });
+        await insertUser({ _id: user._id });
 
-        const first = await clear(user._id.toString());
-        const second = await clear(user._id.toString());
+        const rerun = await service.executeHardDelete(user._id.toString(), { initiatedBy: 'self' });
 
-        expect([first, second]).toEqual([1, 0]);
+        const row = await db.collection('videoSummaryCache').findOne({ youtubeId: 'mine' });
+        expect(row).toMatchObject({ youtubeId: 'mine' });
+        expect(row).not.toHaveProperty('userId');
+        expect(rerun.warnings ?? []).toEqual([]);
+      });
+
+      it('should unset the stamp when the delete is requested with an uppercase id', async () => {
+        const user = await insertUser();
+        const lowerId = user._id.toString();
+        await db.collection('videoSummaryCache').insertOne({
+          youtubeId: 'mine',
+          userId: lowerId,
+          requestId: 'req-mine-1',
+        });
+
+        await service.executeHardDelete(lowerId.toUpperCase(), { initiatedBy: 'admin' });
+
+        const row = await db.collection('videoSummaryCache').findOne({ youtubeId: 'mine' });
+        expect(row).not.toHaveProperty('userId');
+        expect(row).not.toHaveProperty('requestId');
       });
 
       it('should add no warning when no cache row carries the user', async () => {

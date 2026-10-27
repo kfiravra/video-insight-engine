@@ -6,8 +6,6 @@ import { DemoRestrictedError, UnauthorizedError } from '../utils/errors.js';
 
 declare module 'fastify' {
   interface FastifyInstance {
-    /** True when `userId` is the shared demo account (`DEMO_USER_EMAIL`). */
-    isDemoUser: (userId: string) => Promise<boolean>;
     /**
      * preHandler (run after `authenticate` / `authenticateInternal`) that
      * refuses the shared demo account with 403 `DEMO_RESTRICTED`. Also callable
@@ -80,8 +78,6 @@ async function demoGuardSetup(fastify: FastifyInstance) {
     fastify.container.userRepository,
     () => config.DEMO_USER_EMAIL,
   );
-
-  fastify.decorate('isDemoUser', (userId: string) => resolver.isDemoUser(userId));
 
   fastify.decorate('requireNotDemo', async (req: FastifyRequest) => {
     // Fail closed if a route lists this guard without authenticating first.

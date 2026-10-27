@@ -610,6 +610,25 @@ describe('PlaylistService', () => {
       expect(result.failedVideos[0]).toMatchObject({ youtubeId: 'video1', error: 'Failed to process video' });
     });
 
+    it('should report the item failed and still process the rest when createVideo and its refund both throw', async () => {
+      useVideos(3);
+      mockCostMonitor.reserveUserCost.mockResolvedValue(createReservation(userId));
+      mockCostMonitor.refundReservation.mockRejectedValueOnce(new Error('mongo down'));
+      mockVideoService.createVideo
+        .mockRejectedValueOnce(new Error('Failed to process video'))
+        .mockResolvedValue(createVideoCreateResult());
+
+      const result = await playlistService.import(userId, PLAYLIST_URL);
+
+      expect({
+        failed: result.failedVideos.map(failed => [failed.youtubeId, failed.error]),
+        imported: result.videos.map(video => video.youtubeId),
+      }).toEqual({
+        failed: [['video1', 'Failed to process video']],
+        imported: ['video2', 'video3'],
+      });
+    });
+
     it('should mark the failing item and every later item DAILY_LIMIT_REACHED when the cap trips mid-import', async () => {
       useVideos(4);
       mockCostMonitor.reserveUserCost

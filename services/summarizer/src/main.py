@@ -246,8 +246,10 @@ async def summarize(
     logger.info("Received summarize request: providers=%s", request.providers)
 
     # The SSE producer carries no user, so the dispatcher's ids ride on the cache
-    # row for it to attribute llm_usage. The api sends its request id as
-    # X-Request-ID; the request-context middleware validates and binds it.
+    # row for it to attribute llm_usage. vie-api already stamped the same values
+    # before dispatching (it owns every dispatch, queue path included), so this
+    # write is a backup. The api sends its request id as X-Request-ID; the
+    # request-context middleware validates and binds it.
     request_id = structlog.contextvars.get_contextvars().get("request_id")
     try:
         await asyncio.to_thread(
@@ -258,7 +260,8 @@ async def summarize(
 
     # Store provider config in database for streaming route to use
     if request.providers:
-        repository.set_provider_config(
+        await asyncio.to_thread(
+            repository.set_provider_config,
             request.videoSummaryId,
             {
                 "default": request.providers.default,

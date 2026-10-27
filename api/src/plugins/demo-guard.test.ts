@@ -144,16 +144,8 @@ describe('demo guard plugin', () => {
     config.DEMO_USER_EMAIL = originalEmail;
   });
 
-  describe('isDemoUser', () => {
-    it('should identify the demo account by id through the container user repository', async () => {
-      const result = await app.isDemoUser(DEMO_ID);
-
-      expect(result).toBe(true);
-    });
-  });
-
   describe('requireNotDemo', () => {
-    it('should throw DemoRestrictedError for the demo account', async () => {
+    it('should throw DemoRestrictedError for the account the container user repository resolves as demo', async () => {
       const req = { user: { userId: DEMO_ID } } as unknown as FastifyRequest;
 
       await expect(app.requireNotDemo(req)).rejects.toBeInstanceOf(DemoRestrictedError);

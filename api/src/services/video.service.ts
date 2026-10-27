@@ -148,7 +148,20 @@ export class VideoService {
     try {
       // A re-dispatched row (stale regen, failed retry, stall) still carries
       // the previous run's synthesis, which would block this run's partial.
-      await this.videoRepository.clearSynthesis(payload.videoSummaryId);
+      // The dispatcher's ids ride on the row too: the browser's SSE request
+      // can win the summarizer's per-video lock before the worker (or is the
+      // only producer on the HTTP fallback), and that run's llm_usage is
+      // attributed from the row alone. Stamped here, before either branch,
+      // for the same reason as `forceRefresh` (see createVideo's bypassCache
+      // branch); the summarizer's `POST /summarize` re-stamps the same values.
+      await Promise.all([
+        this.videoRepository.clearSynthesis(payload.videoSummaryId),
+        this.videoRepository.stampDispatchContext(
+          payload.videoSummaryId,
+          payload.userId,
+          payload.requestId,
+        ),
+      ]);
       if (config.USE_QUEUE_PIPELINE) {
         try {
           // `bypassCache` IS consumed downstream: the worker maps it to

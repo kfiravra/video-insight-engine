@@ -1,4 +1,4 @@
-import { Db, ObjectId, Collection, type Filter } from 'mongodb';
+import { Db, ObjectId, Collection, type Filter, type UpdateFilter } from 'mongodb';
 import { DatabaseError } from '../utils/errors.js';
 import { buildSynthesisMerge } from '../utils/synthesis-merge.js';
 import type { SynthesisFields } from '../schemas/synthesis-event.schema.js';
@@ -79,6 +79,13 @@ export interface VideoSummaryCacheDocument {
    *  media (fresh results are still written). Cleared with `forceRefresh` in
    *  the summarizer's final save, so a later re-run of the row is warm. */
   coldMedia?: boolean;
+  /** Who dispatched the row's latest run: the user's id as a string (the
+   *  summarizer's `POST /summarize` stamp and `pipeline_runner` read strings)
+   *  and the originating request id. Written by `stampDispatchContext` on every
+   *  dispatch; read by the summarizer to attribute `llm_usage` when an SSE
+   *  request runs the pipeline; `$unset` by the GDPR cascade. */
+  userId?: string;
+  requestId?: string;
   retryCount: number;
   errorCode?: string;
   errorMessage?: string;
@@ -617,6 +624,27 @@ export class VideoRepository {
    */
   async clearSynthesis(id: string): Promise<void> {
     await this.cacheCollection.updateOne({ _id: new ObjectId(id) }, { $unset: { synthesis: '' } });
+  }
+
+  /**
+   * Record who dispatched the row's next run so the summarizer can attribute
+   * its `llm_usage` (B2). The queue payload carries the user to the worker,
+   * but an SSE request can win the summarizer's per-video lock first and run
+   * the pipeline in the HTTP process, where only the row knows the owner —
+   * the same reason `forceRefresh` rides on the row.
+   *
+   * Always overwrites: the row is shared and re-dispatched, so an absent
+   * `requestId` is `$unset` — an earlier dispatcher's id must never bill this
+   * run. No `updatedAt` bump: the summarizer's stall sweeper and `createVideo`'s
+   * stall check read it as liveness, and `tryClaimDispatchRelease` compares it
+   * with the release marker — bumping it here would let a late duplicate
+   * FAILED event release the guard this dispatch just acquired.
+   */
+  async stampDispatchContext(id: string, userId: string, requestId?: string): Promise<void> {
+    const update: UpdateFilter<VideoSummaryCacheDocument> = requestId
+      ? { $set: { userId, requestId } }
+      : { $set: { userId }, $unset: { requestId: '' } };
+    await this.cacheCollection.updateOne({ _id: new ObjectId(id) }, update);
   }
 
   /** Merge one `synthesis_complete` emission — rules in buildSynthesisMerge. */

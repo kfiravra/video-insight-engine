@@ -251,7 +251,7 @@ Node.js 20 + Fastify + TypeScript + Zod. Base URL `/api`. Patterns: DI `Containe
 - Share: `POST /share/:videoSummaryId` (auth, 20/hr) → `{shareSlug, shareUrl:/s/<slug>}`; `GET /share/:slug` (public, 100/min); `POST /share/:slug/like` (10/min/IP); SSR `GET /s/:slug` (HTML + OG, 60/min) + `GET /s/:slug/og-image.png`.
 - Assistant proxy: `POST /api/assistant/chat`, `POST /api/videos/:id/action`, `POST /library/search`.
 - `GET /api/users/me/usage` — today's spend/headroom/next-reset.
-- Internal: `POST /internal/status` (summarizer → API → rebroadcast over WS), `POST /internal/reconcile-costs` (manual/ops rebuild — no scheduler; reconcile otherwise runs on every terminal video status, for today's UTC day), `POST /internal/run-deletions` (GDPR cron).
+- Internal: `POST /internal/status` (summarizer → API → rebroadcast over WS), `POST /internal/reconcile-costs` (manual/ops rebuild — no scheduler; reconcile otherwise runs on every terminal video status, for today's UTC day), `POST /internal/run-deletions` (GDPR hard-delete sweep: runs only when this route is called; the repo configures no scheduler for it).
 
 ### SSE event sequence (since v9, `EXTRACTION_PARALLEL=true`)
 ```
@@ -276,7 +276,7 @@ Clients replace tabs by id and sort by `position`; `heartbeat` events keep the s
 `ws://localhost:3000/ws?token=<jwt>` (auth via query param; invalid → close 4001). Events: `video.status`, `expansion.status`, `chat.message`. Fed by the summarizer's `POST /internal/status` callback.
 
 ### Tiers
-`free` (3 videos/day, 5 chats/output), `pro`/`team` (unlimited). Summaries never expire on any tier (the 30-day free-tier TTL was removed 2026-09-17). Cost gate: `429 DAILY_LIMIT_REACHED` (per-user daily cap). There is no global request-blocking cap — global spend only trips the vie-admin `daily_global_cost` operator alarm (`ALERT_DAILY_COST_THRESHOLD_USD`).
+`free` / `pro` / `team` (resolved per user by `paymentService.getUserTier`) only pick the per-user daily USD cap. The `TIER_LIMITS` table in `@vie/types` (free: 3 videos/day, 5 chats/output; pro/team unlimited) is **enforced nowhere** — `api/src/plugins/tier.ts` only attaches it to the request. The real gates are the per-user daily USD cap (`USER_COST_LIMIT_FREE|PRO|TEAM`, default $2 / $20 / unlimited) and the `VIDEO_DAILY_LIMIT` route limiter on `POST /videos` (per user, 24 h window, default 100, `0` disables); a later billing phase replaces both with a minutes ledger. Summaries never expire on any tier (the 30-day free-tier TTL was removed 2026-09-17). Cost gate: `429 DAILY_LIMIT_REACHED` (per-user daily cap). There is no global request-blocking cap — global spend only trips the vie-admin `daily_global_cost` operator alarm (`ALERT_DAILY_COST_THRESHOLD_USD`).
 
 ---
 
@@ -459,9 +459,9 @@ Measured on prod v9 on 2026-10-13, before the 4.0 model refresh (pipeline-1min g
 
 - **Soft delete:** `DELETE /api/users/me` sets `deletedAt=now`, `hardDeleteAt=now+30d`, returns `202 + scheduledHardDeleteAt`, clears the refresh cookie. User immediately frozen (`403 ACCOUNT_DELETION_PENDING`).
 - **30-day grace:** `POST /api/users/me/restore` — the **only** authenticated endpoint exempt from the soft-delete check.
-- **Scheduled hard delete:** daily cron (~03:00 UTC) → `POST /internal/run-deletions` → `executeHardDelete()` saga deletes in fixed order: `agentNotes → userVideos → folders → userCosts → userCostAdjustments → idempotencyKeys → Qdrant user content (placeholder) → S3 user objects (placeholder) → users (FK anchor, last)` → writes a `userDeletions` audit row. Every step is idempotent (`deleteMany({userId})`) and wrapped in `runStep` that records failures as **warnings without aborting** (smallest PII footprint > rollback).
+- **Scheduled hard delete:** runs when `POST /internal/run-deletions` is called (`runScheduledDeletions()` sweeps `hardDeleteAt <= now`; nothing else calls it, and the repo configures no scheduler — `scripts/backup-cron/crontab` only runs backups and `docs/DEPLOY.md` sets up none, so a deployment must drive the route from its own cron) → `executeHardDelete()` saga deletes in fixed order: `agentNotes → userVideos → folders → userCosts → userCostAdjustments → idempotencyKeys → videoSummaryCache dispatch stamp (videoCacheDispatchContext: unsets userId/requestId) → Qdrant user content (placeholder) → S3 user objects (placeholder) → users (FK anchor, last)` → writes a `userDeletions` audit row. Every step is idempotent (`deleteMany({userId})`) and wrapped in `runStep` that records failures as **warnings without aborting** (smallest PII footprint > rollback).
 - **Audit:** `userDeletions` retained **indefinitely**, stores `emailHash` (SHA-256, never plaintext), `initiatedBy` (`self|admin|scheduler`), counts, timing, warnings. Proof of erasure = re-hash an email and match a completed row.
-- **NOT deleted** (video-scoped / shared / anonymized): `videoSummaryCache`, Qdrant `transcript_chunks` (`user_id` reserved but always null today), S3 `videos/{youtubeId}`, `llm_usage` (kept indefinitely, no TTL; rows keep the orphaned `user_id`), IP-hashed share signals, external Paddle records.
+- **NOT deleted** (video-scoped / shared / anonymized): `videoSummaryCache` (the shared row stays; only the deleted user's dispatch stamp, `userId` / `requestId`, is unset), Qdrant `transcript_chunks` (`user_id` reserved but always null today), S3 `videos/{youtubeId}`, `llm_usage` (kept indefinitely, no TTL; rows keep the orphaned `user_id`), IP-hashed share signals, external Paddle records.
 - **Compliance gate:** `gdpr-cascade.integration.test.ts` — seeds every inventoried collection, runs the cascade, asserts zero rows + audit row. If it fails, deletion no longer satisfies Article 17 → **do not merge**.
 - Article 20 (data export) is **not yet implemented** (manual via support, JSON archive within 30 days). Admin escape hatch: `DELETE /api/admin/users/:id?immediate=true`.
 

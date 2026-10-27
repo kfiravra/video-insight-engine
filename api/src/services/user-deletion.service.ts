@@ -163,13 +163,19 @@ export class UserDeletionService {
   // ─── Phase 3: hard delete saga ──────────────────────────────────────────
 
   async executeHardDelete(
-    userId: string,
+    requestedUserId: string,
     ctx: ExecuteHardDeleteContext,
   ): Promise<UserDeletionDocument> {
-    const user = await this.userRepository.findById(userId);
+    const user = await this.userRepository.findById(requestedUserId);
     if (!user) {
       throw new UserNotFoundError();
     }
+    // `findById` matches an ObjectId case-insensitively (the admin route accepts
+    // uppercase hex), but the string-keyed steps below — `agentNotes`, the
+    // `videoSummaryCache` stamp, the soft-delete cache — compare exact strings
+    // against the lowercase hex the other services wrote. Use the canonical form
+    // so an uppercase request can't silently miss them.
+    const userId = user._id.toString();
 
     const startedAt = this.clock();
     const traceId = randomUUID();

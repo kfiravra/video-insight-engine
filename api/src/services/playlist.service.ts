@@ -239,7 +239,14 @@ export class PlaylistService {
         }
       } catch (err) {
         if (this.costMonitorService && reservation) {
-          await this.costMonitorService.refundReservation(reservation);
+          // A failed refund must not abort the loop — the remaining videos
+          // would never be processed and the whole import would 500.
+          await this.costMonitorService.refundReservation(reservation).catch((refundErr) => {
+            this.logger.warn(
+              { err: refundErr, userId, youtubeId: video.video_id },
+              'failed-video refund failed during playlist import',
+            );
+          });
         }
         const errorMessage = err instanceof Error ? err.message : String(err);
 

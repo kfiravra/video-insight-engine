@@ -156,13 +156,21 @@ done
 sed -i 's|your-domain.example|DOMAIN|g' .env
 ```
 
-**Existing host: add the vie-admin session secret before merging the admin-roles change.** The deploy workflow pulls `main` and rebuilds after every green CI run, so the row has to be in the server `.env` before the merge. While `ADMIN_SESSION_SECRET` is missing, compose stops at variable substitution and starts no service at all. vie-admin also refuses to start on the dev default or on a value equal to `ADMIN_API_KEY`.
+**Existing host: add the vie-admin session secret before merging the admin-roles change.** The deploy workflow pulls `main` and rebuilds after every green CI run, so the row has to be in the server `.env` before the merge. While `ADMIN_SESSION_SECRET` is missing, compose stops at variable substitution and starts no service at all. vie-admin also refuses to start on the dev default, on a value shorter than 32 characters, or on a value equal to `ADMIN_API_KEY`. A row copied from `.env.production.example` carries the dev default, so the snippet replaces an empty, short or dev-default value as well as adding a missing row.
 
 ```bash
 cd ~/video-insight-engine
-grep -q '^ADMIN_SESSION_SECRET=' .env || echo "ADMIN_SESSION_SECRET=$(openssl rand -hex 32)" >> .env
+secret="$(grep -E '^ADMIN_SESSION_SECRET=' .env | tail -n1 | cut -d= -f2- | tr -d "\"'")"
+if ! grep -q '^ADMIN_SESSION_SECRET=' .env; then
+  # printf adds the leading newline an .env without a final one would otherwise lack
+  printf '\nADMIN_SESSION_SECRET=%s\n' "$(openssl rand -hex 32)" >> .env
+elif [ "${#secret}" -lt 32 ] || [ "$secret" = 'dev-admin-session-secret-change-me' ]; then
+  sed -i "s|^ADMIN_SESSION_SECRET=.*|ADMIN_SESSION_SECRET=$(openssl rand -hex 32)|" .env
+fi
 dc config -q   # prints nothing when .env is complete
 ```
+
+The deploy workflow also waits up to two minutes for `vie-admin` to report healthy and fails the run with its last log lines if it does not, so a refused start shows up as a red deploy instead of a silently missing panel.
 
 The first deploy after the change logs every admin out once, because older sessions were signed with `ADMIN_API_KEY`. To rotate `ADMIN_SESSION_SECRET` later, set a fresh value with `sed -i` and run `dc up -d vie-admin`. That logs everyone out again; `dc restart` does not re-read `.env`.
 
@@ -199,9 +207,11 @@ docker build --target builder -f api/Dockerfile -t vie-api-tools .
 # 2. Load the Mongo credentials from the server .env
 set -a; . ./.env; set +a
 
-# 3. Create the user (prompts keep the password out of shell history)
+# 3. Create the user (prompts keep the password out of shell history).
+#    The export is required: `docker run -e NAME` forwards only exported variables.
 read -r -p "Email: " VIE_USER_EMAIL
 read -r -s -p "Password (8+ chars, upper, lower, digit): " VIE_USER_PASSWORD; echo
+export VIE_USER_EMAIL VIE_USER_PASSWORD
 
 docker run --rm --network vie-network \
   -v "$PWD/scripts/create-user.ts:/app/api/create-user.ts:ro" \
@@ -211,9 +221,21 @@ docker run --rm --network vie-network \
   sh -c 'npx tsx create-user.ts "$VIE_USER_EMAIL" "$VIE_USER_PASSWORD"'
 ```
 
-The script creates an ordinary user and never sets a role, so account creation does not grant access to the vie-admin panel. The admin role comes from the `ADMIN_EMAILS` list in a later phase; for the admin you already have, see the one-off demote step below. The email is trimmed and lowercased, and an optional third argument sets the display name (default: the part of the email before the `@`).
+The script creates an ordinary user and never sets a role, so account creation does not grant access to the vie-admin panel. The admin role comes from the `ADMIN_EMAILS` list in a later phase. Until then, on a fresh host see "First admin on a fresh host" below; for admins you already have, see the one-off demote step after it. The email is trimmed and lowercased, and an optional third argument sets the display name (default: the part of the email before the `@`).
 
 Running it again with the same email changes nothing and prints `exists, unchanged`. To set a new password for an existing user, add `--reset-password` after the password inside the `sh -c` string; only `passwordHash` and `updatedAt` change. For an existing admin the script exits 1 without that flag, so a re-run can never change an admin's password by accident.
+
+### First admin on a fresh host (temporary, until `ADMIN_EMAILS` seeding)
+
+A host provisioned only with `create-user.ts` has no admin, so nobody can log into the vie-admin panel. Until the `ADMIN_EMAILS` seeding lands, grant the role to one existing account by hand. Create that user first (above); the email is matched after trimming and lowercasing, like `create-user.ts` stores it:
+
+```bash
+read -r -p "Email to make admin: " VIE_ADMIN_EMAIL
+export VIE_ADMIN_EMAIL   # `docker exec -e NAME` forwards only exported variables
+docker exec -e VIE_ADMIN_EMAIL vie-mongodb sh -c 'mongosh --quiet -u "$MONGO_INITDB_ROOT_USERNAME" -p "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin video-insight-engine --eval "printjson(db.users.updateOne({ email: process.env.VIE_ADMIN_EMAIL.trim().toLowerCase() }, { \$set: { role: \"admin\" } }))"'
+```
+
+`matchedCount: 1` means the role is set. `matchedCount: 0` means no user has that email, so check the spelling or create the user first. The root credentials come from the container's own environment, so nothing secret is typed or left in shell history. Log into the panel afterwards; the role is read from the database at login.
 
 ### One-off: demote hand-provisioned admins
 
@@ -228,6 +250,7 @@ set -a; . ./.env; set +a
 
 # The login email(s) that stay admin; several are comma-separated. Matched ignoring case.
 read -r -p "Admin email(s) to keep: " VIE_KEEP_EMAIL
+export VIE_KEEP_EMAIL   # `docker run -e NAME` forwards only exported variables
 
 demote_admins() {
   docker run --rm --network vie-network \

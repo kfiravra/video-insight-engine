@@ -14,6 +14,11 @@ logger = logging.getLogger(__name__)
 _DEFAULT_ADMIN_API_KEY = "dev-admin-key-change-me"
 _DEFAULT_ADMIN_SESSION_SECRET = "dev-admin-session-secret-change-me"
 
+# `openssl rand -hex 32` yields 64 characters; 32 is the floor below which an
+# HMAC key is guessable. Deliberately not applied to ADMIN_API_KEY: the key
+# already in production has an unknown length, and tightening it could brick a deploy.
+_MIN_SESSION_SECRET_LENGTH = 32
+
 # Environments where dev defaults are tolerated (warn only). Any other value —
 # production, staging, or an unrecognized name — fails startup. Same set as
 # the assistant's validate_internal_secret.
@@ -87,6 +92,10 @@ def _secret_problems() -> list[str]:
         problems.append("ADMIN_API_KEY is empty or the well-known dev default")
     if settings.ADMIN_SESSION_SECRET in ("", _DEFAULT_ADMIN_SESSION_SECRET):
         problems.append("ADMIN_SESSION_SECRET is empty or the well-known dev default")
+    elif len(settings.ADMIN_SESSION_SECRET) < _MIN_SESSION_SECRET_LENGTH:
+        problems.append(
+            f"ADMIN_SESSION_SECRET is shorter than {_MIN_SESSION_SECRET_LENGTH} characters"
+        )
     if settings.ADMIN_SESSION_SECRET == settings.ADMIN_API_KEY:
         problems.append(
             "ADMIN_SESSION_SECRET equals ADMIN_API_KEY — the machine key could mint admin sessions"

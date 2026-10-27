@@ -222,6 +222,51 @@ describe('VideoRepository', () => {
     });
   });
 
+  describe('stampDispatchContext', () => {
+    async function seedRow(dedupKey: string): Promise<string> {
+      const { doc } = await repo.upsertCacheByDedupKey({ ...makeCacheData(), dedupKey });
+      return doc._id.toString();
+    }
+
+    const rowOf = (id: string) => db.collection('videoSummaryCache').findOne({ _id: new ObjectId(id) });
+
+    it('should set the userId and requestId when both are given', async () => {
+      const id = await seedRow('stamp-both');
+
+      await repo.stampDispatchContext(id, 'user-a', 'req-a');
+
+      expect(await rowOf(id)).toMatchObject({ userId: 'user-a', requestId: 'req-a' });
+    });
+
+    it('should overwrite an earlier dispatcher when the row is re-dispatched', async () => {
+      const id = await seedRow('stamp-overwrite');
+      await repo.stampDispatchContext(id, 'user-a', 'req-a');
+
+      await repo.stampDispatchContext(id, 'user-b', 'req-b');
+
+      expect(await rowOf(id)).toMatchObject({ userId: 'user-b', requestId: 'req-b' });
+    });
+
+    it('should unset the earlier requestId when the new dispatch carries none', async () => {
+      const id = await seedRow('stamp-unset');
+      await repo.stampDispatchContext(id, 'user-a', 'req-a');
+
+      await repo.stampDispatchContext(id, 'user-b');
+
+      expect(await rowOf(id)).not.toHaveProperty('requestId');
+    });
+
+    it('should not change updatedAt (the stall sweeper reads it as liveness)', async () => {
+      const id = await seedRow('stamp-updated-at');
+      const before = (await rowOf(id))?.updatedAt as Date;
+      await new Promise((r) => setTimeout(r, 5));
+
+      await repo.stampDispatchContext(id, 'user-a', 'req-a');
+
+      expect(((await rowOf(id))?.updatedAt as Date).getTime()).toBe(before.getTime());
+    });
+  });
+
   describe('mergeSynthesis', () => {
     // memory-done emission (hero fields only) and the synthesis-done superset.
     const early = { tldr: 'Memory tldr', keyTakeaways: ['Memory point'] };

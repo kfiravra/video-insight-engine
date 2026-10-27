@@ -13,6 +13,9 @@ from src.main import lifespan
 
 REAL_API_KEY = "a1" * 32
 REAL_SESSION_SECRET = "b2" * 32
+# One character under / exactly at the production floor for ADMIN_SESSION_SECRET.
+SESSION_SECRET_31_CHARS = "c3" * 15 + "c"
+SESSION_SECRET_32_CHARS = "d4" * 16
 
 
 @pytest.fixture
@@ -50,6 +53,34 @@ def test_should_raise_when_session_secret_is_empty_in_production(monkeypatch):
 
     with pytest.raises(ValueError, match="ADMIN_SESSION_SECRET"):
         validate_secrets()
+
+
+def test_should_raise_when_session_secret_is_31_chars_in_production(monkeypatch):
+    monkeypatch.setattr(settings, "ADMIN_SESSION_SECRET", SESSION_SECRET_31_CHARS)
+
+    with pytest.raises(ValueError, match="ADMIN_SESSION_SECRET is shorter than 32 characters"):
+        validate_secrets()
+
+
+def test_should_accept_session_secret_of_exactly_32_chars_in_production(monkeypatch):
+    monkeypatch.setattr(settings, "ADMIN_SESSION_SECRET", SESSION_SECRET_32_CHARS)
+
+    validate_secrets()
+
+
+def test_should_not_echo_short_session_secret_value_in_error(monkeypatch):
+    monkeypatch.setattr(settings, "ADMIN_SESSION_SECRET", SESSION_SECRET_31_CHARS)
+
+    with pytest.raises(ValueError) as exc_info:
+        validate_secrets()
+
+    assert SESSION_SECRET_31_CHARS not in str(exc_info.value)
+
+
+def test_should_not_apply_a_length_floor_to_api_key_in_production(monkeypatch):
+    monkeypatch.setattr(settings, "ADMIN_API_KEY", "short-existing-key")
+
+    validate_secrets()
 
 
 def test_should_raise_when_session_secret_equals_api_key_in_production(monkeypatch):
@@ -108,6 +139,16 @@ def test_should_warn_on_dev_defaults_in_development(monkeypatch, caplog):
         validate_secrets()
 
     assert any("ADMIN_SESSION_SECRET" in r.getMessage() for r in caplog.records)
+
+
+def test_should_warn_on_short_session_secret_in_development(monkeypatch, caplog):
+    monkeypatch.setattr(settings, "ENVIRONMENT", "development")
+    monkeypatch.setattr(settings, "ADMIN_SESSION_SECRET", SESSION_SECRET_31_CHARS)
+
+    with caplog.at_level(logging.WARNING, logger="src.config"):
+        validate_secrets()
+
+    assert any("shorter than 32" in r.getMessage() for r in caplog.records)
 
 
 # ─── Wiring: the app lifespan runs the check first ───

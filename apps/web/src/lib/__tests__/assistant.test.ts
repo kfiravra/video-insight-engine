@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-import { ApiError } from "@/api/client";
+import { ApiError, getAccessToken, refreshToken } from "@/api/client";
 import { runAssistantAction, sendAssistantMessage, sendLibraryMessage } from "../assistant";
 
 // Mock the API client + auth store so runAssistantAction stays a pure unit test.
@@ -115,5 +115,42 @@ describe.each([
 
     expect(failure).toEqual(new Error("Assistant chat failed: 502"));
     expect(failure).not.toBeInstanceOf(ApiError);
+  });
+});
+
+describe.each([
+  ["sendAssistantMessage", () => sendAssistantMessage("vid-1", "hi", [], vi.fn())],
+  ["sendLibraryMessage", () => sendLibraryMessage("hi", [], vi.fn())],
+])("%s — 401, token refresh, then rate limited", (_name, send) => {
+  const fetchMock = vi.fn();
+
+  beforeEach(() => {
+    vi.stubGlobal("fetch", fetchMock);
+    fetchMock.mockReset();
+    vi.mocked(getAccessToken).mockReturnValueOnce("token-expired").mockReturnValueOnce("token-fresh");
+    vi.mocked(refreshToken).mockResolvedValueOnce(true);
+    fetchMock
+      .mockResolvedValueOnce({ ok: false, status: 401 })
+      .mockResolvedValueOnce({ ok: false, status: 429 });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.mocked(getAccessToken).mockReset().mockReturnValue("token-abc");
+    vi.mocked(refreshToken).mockReset().mockResolvedValue(false);
+  });
+
+  it("should surface the retry's 429 as a RATE_LIMITED ApiError", async () => {
+    const failure = await send().catch((err: unknown) => err);
+
+    expect(failure).toBeInstanceOf(ApiError);
+    expect(failure).toMatchObject({ status: 429, code: "RATE_LIMITED" });
+  });
+
+  it("should retry once with the refreshed token", async () => {
+    await send().catch(() => undefined);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[1][1].headers.Authorization).toBe("Bearer token-fresh");
   });
 });

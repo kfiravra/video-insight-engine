@@ -193,7 +193,8 @@ React SPA served as static files from the same container.
     (it must be rotated on vie-api at the same time).
 - **Startup refusal** — the lifespan calls `validate_secrets()` (`src/config.py`) first. Outside a dev
   `ENVIRONMENT` (`""`, `development`, `dev`, `test`, `local`; any other name counts as production) the
-  service refuses to start when `ADMIN_API_KEY` or `ADMIN_SESSION_SECRET` is empty or its dev default, or
+  service refuses to start when `ADMIN_API_KEY` or `ADMIN_SESSION_SECRET` is empty or its dev default,
+  when `ADMIN_SESSION_SECRET` is shorter than 32 characters (no length rule on `ADMIN_API_KEY`), or
   when the two are equal; the error names the variable, never its value. Dev environments only log a warning.
 - Timing-safe comparison (`hmac.compare_digest`)
 - OpenAPI docs disabled (`docs_url`/`openapi_url` are `None`)

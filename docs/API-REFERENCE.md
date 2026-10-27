@@ -898,7 +898,7 @@ Common error codes:
 
 - `400` - Bad Request (validation), `INVALID_CATEGORY`, `INVALID_WEBHOOK`
 - `401` - Unauthorized
-- `403` - Forbidden: `TIER_LIMIT_EXCEEDED`, `SHARE_NOT_ALLOWED`, `DEMO_RESTRICTED` (the shared demo account may not mutate the library or force paid runs; see SECURITY.md)
+- `403` - Forbidden: `REGISTRATION_CLOSED`, `DEMO_DISABLED`, `DEMO_RESTRICTED` (the shared demo account may not mutate the library or force paid runs; see SECURITY.md), `COLD_RUN_FORBIDDEN`, `ACCOUNT_DELETION_PENDING`
 - `404` - Not Found: `SHARE_NOT_FOUND`
 - `409` - Conflict: `ALREADY_SHARED`
 - `429` - Rate Limited: `RATE_LIMITED`, `DAILY_LIMIT_REACHED` (per-user daily cost cap; also returns `resetAt` + `limitUsd`)

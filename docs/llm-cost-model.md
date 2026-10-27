@@ -90,9 +90,14 @@ in `pipeline_runner.py` **before** the cache lookup, so every row a run writes i
 attributable. `user_id` and `request_id` come from the **structlog contextvars
 the worker binds from the queue payload** first, and from the cache row second.
 The row (the cross-user `videoSummaryCache` doc) carries the *last dispatcher's*
-`userId` / `requestId`, stamped by `POST /summarize` — so HTTP/SSE runs, whose
-stream binds no user, attribute through the row, and queue runs through worker
-contextvars (which win: the row may belong to an earlier dispatch). On an
+`userId` / `requestId`, which vie-api stamps on **every** dispatch
+(`VideoService.dispatchPipeline` → `VideoRepository.stampDispatchContext`,
+before it publishes the job or calls `POST /summarize`; `/summarize` re-stamps
+the same values as a backup). Queue runs the worker executes attribute through
+its contextvars (which win: the row may belong to an earlier dispatch). Any
+SSE-driven run attributes through the row: the HTTP fallback, and a queued video
+whose SSE request won the summarizer's per-video lock before the worker (the
+worker then skips the job). On an
 HTTP-bound context the row's `requestId` also wins, because the middleware's own
 id for the browser's SSE request is a fresh UUID. See
 [GDPR.md](./GDPR.md) for how the stamp is cleared on user deletion. The assistant sets

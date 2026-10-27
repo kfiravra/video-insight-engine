@@ -562,6 +562,13 @@ One row per video **version** (`version`, `isLatest` below); the served row is s
   forceRefresh: true | absent,      // bypassCache: summarizer skips its Redis response cache; $unset on save
   coldMedia: true | absent,         // POST /videos `cold` (admin/eval only): the run also skips the
                                     // S3 transcript + scene-frame caches
+  userId: string | absent,          // who dispatched the latest run — the user id as a STRING (not
+  requestId: string | absent,       // ObjectId) + the originating request id. Written by vie-api on
+                                    // every dispatch (stampDispatchContext, before the queue publish or
+                                    // the HTTP call) and again by the summarizer's POST /summarize; a
+                                    // field the new dispatch lacks is $unset; no updatedAt bump. Read by
+                                    // pipeline_runner to attribute llm_usage on SSE-driven runs
+                                    // (llm-cost-model.md). $unset by the GDPR cascade (GDPR.md).
   degraded: true | absent,          // admin run badge: meta.degraded (a failed extraction group, a
                                     // dropped chunked batch, or critical coverage), OR a failed frame
                                     // download (set at the run's end; no user-facing banner)

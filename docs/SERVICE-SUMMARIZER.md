@@ -1737,6 +1737,20 @@ Trigger video summarization (async).
 }
 ```
 
+Registers the run only; the SSE stream (`GET /summarize/stream/{id}`) drives the
+pipeline. Before returning, the route stamps the dispatcher on the
+`videoSummaryCache` row: `userId` from the body and `requestId` from the
+`X-Request-ID` header the api forwards (`set_dispatch_context`; a missing field
+is `$unset`, `updatedAt` is not bumped). The SSE producer binds no user, so
+`pipeline_runner` attributes the run's `llm_usage` from this stamp. vie-api has
+already written the same values when it dispatched (it stamps on every dispatch,
+the queue path included), so this write is a backup — see
+[llm-cost-model.md](./llm-cost-model.md). An optional `providers` body is stored
+as `providerConfig` for the dev-tools override.
+
+**Response (400):** `{"detail": "Invalid video summary ID format"}` when
+`videoSummaryId` is not a valid ObjectId; nothing is written.
+
 ### POST /playlist/extract
 
 Extract playlist metadata using yt-dlp (fast, no video download).

@@ -448,8 +448,9 @@ vie-admin does the same from its lifespan (`validate_secrets()` in
 as production) it refuses to start when `ADMIN_API_KEY` or
 `ADMIN_SESSION_SECRET` is empty or its dev default (`dev-admin-key-change-me` /
 `dev-admin-session-secret-change-me` — the compose fallbacks and template
-values), or when the two are equal. The error names the variable, never its
-value. Dev environments log a warning instead. `docker-compose.prod.yml` sets
+values), when `ADMIN_SESSION_SECRET` is shorter than 32 characters (no length
+rule on `ADMIN_API_KEY`), or when the two are equal. The error names the
+variable, never its value. Dev environments log a warning instead. `docker-compose.prod.yml` sets
 `ENVIRONMENT=production` for vie-admin and requires both variables (`:?`).
 
 ### Service-to-Service Auth

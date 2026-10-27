@@ -23,7 +23,7 @@ DELETE /api/users/me ──┐                              │
                         │  or admin can override)     │
                         │                             │
                         ▼                             │
-            internal/run-deletions cron (daily)       │  ← Phase 4: scheduler
+            POST /internal/run-deletions (on call)    │  ← Phase 4: sweep (no scheduler in repo)
                         │                             │
                         ▼                             │
               userDeletionService.runScheduledDeletions()
@@ -56,7 +56,7 @@ DELETE /api/admin/users/:id?immediate=true ──────────┘  �
 | `POST /api/users/me/restore` | JWT (bypasses soft-delete check) | Cancel a pending deletion within 30 days. |
 | `DELETE /api/admin/users/:id?immediate=true` | `x-admin-key` header | Run the cascade now (compliance escape hatch). |
 | `DELETE /api/admin/users/:id` (no `immediate`) | `x-admin-key` header | Schedule the same soft delete as the user-initiated flow. |
-| `POST /internal/run-deletions` | `x-internal-secret` header | Cron entrypoint — sweeps `hardDeleteAt <= now` and runs the cascade for each. |
+| `POST /internal/run-deletions` | `x-internal-secret` header | Sweep entrypoint — sweeps `hardDeleteAt <= now` and runs the cascade for each. It runs only when called; this repo configures no scheduler for it (see "Running the sweep"). |
 | `DELETE /api/admin/videos/:youtubeId` | `x-admin-key` header | Not GDPR: the **video** cascade (`VideoCascadeService`), which removes one video from every store for every user. Listed here because it is the only path that deletes the shared rows the user cascade keeps. |
 
 ## Key files
@@ -111,18 +111,18 @@ A previously-issued JWT remains cryptographically valid for its 15-minute TTL ev
 
 `/api/users/me/restore` is the only authenticated endpoint that **does not** apply this check — by design, otherwise the user can never cancel.
 
-## Running the scheduler
+## Running the sweep
 
-The scheduler is just an internal HTTP endpoint:
+The sweep is just an internal HTTP endpoint, and **nothing in this repo calls it**: `scripts/backup-cron/crontab` only runs backups, and [`DEPLOY.md`](./DEPLOY.md) sets up no scheduler. Until a deployment drives the route from its own cron, a self-service deletion stays at the soft-delete stage past its 30-day `hardDeleteAt`; only the admin immediate delete (`?immediate=true`) runs the cascade without it.
 
 ```bash
 curl -X POST -H "x-internal-secret: $INTERNAL_SECRET" \
   http://vie-api:3000/internal/run-deletions
 ```
 
-Drive it from any cron source — Kubernetes CronJob, GitHub Actions on a schedule, host crontab, BullMQ if/when we adopt it. Daily at 03:00 UTC is the recommended cadence; running more often is harmless because every step is idempotent and a no-op past the first run.
+To schedule it, drive it from any cron source — Kubernetes CronJob, GitHub Actions on a schedule, host crontab, BullMQ if/when we adopt it. Daily at 03:00 UTC is the recommended cadence; running more often is harmless because every step is idempotent and a no-op past the first run.
 
-Example k8s CronJob skeleton:
+Example k8s CronJob skeleton (illustrative only; nothing in this repo deploys it):
 
 ```yaml
 apiVersion: batch/v1
