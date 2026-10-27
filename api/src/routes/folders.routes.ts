@@ -60,7 +60,7 @@ export async function foldersRoutes(fastify: FastifyInstance) {
     Params: z.infer<typeof idParamSchema>;
     Body: z.infer<typeof updateFolderSchema>;
   }>('/:id', {
-    preHandler: [fastify.authenticate],
+    preHandler: [fastify.authenticate, fastify.requireNotDemo],
   }, async (req) => {
     const { id } = idParamSchema.parse(req.params);
     const input = updateFolderSchema.parse(req.body);
@@ -73,7 +73,7 @@ export async function foldersRoutes(fastify: FastifyInstance) {
     Params: z.infer<typeof idParamSchema>;
     Querystring: z.infer<typeof deleteFolderQuerySchema>;
   }>('/:id', {
-    preHandler: [fastify.authenticate],
+    preHandler: [fastify.authenticate, fastify.requireNotDemo],
   }, async (req, reply) => {
     const { id } = idParamSchema.parse(req.params);
     const { deleteContent } = deleteFolderQuerySchema.parse(req.query);

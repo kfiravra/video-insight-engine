@@ -95,7 +95,7 @@ export async function internalAssistantRoutes(fastify: FastifyInstance): Promise
     Params: z.infer<typeof idParamSchema>;
     Body: z.infer<typeof updateFolderSchema>;
   }>('/folders/:id', {
-    preHandler: [fastify.authenticateInternal],
+    preHandler: [fastify.authenticateInternal, fastify.requireNotDemo],
   }, async (req) => {
     const { id } = idParamSchema.parse(req.params);
     const input = updateFolderSchema.parse(req.body);
@@ -108,7 +108,7 @@ export async function internalAssistantRoutes(fastify: FastifyInstance): Promise
     Params: z.infer<typeof idParamSchema>;
     Querystring: z.infer<typeof deleteFolderQuerySchema>;
   }>('/folders/:id', {
-    preHandler: [fastify.authenticateInternal],
+    preHandler: [fastify.authenticateInternal, fastify.requireNotDemo],
   }, async (req) => {
     const { id } = idParamSchema.parse(req.params);
     const { deleteContent } = deleteFolderQuerySchema.parse(req.query);
@@ -144,7 +144,7 @@ export async function internalAssistantRoutes(fastify: FastifyInstance): Promise
     Params: z.infer<typeof idParamSchema>;
     Body: z.infer<typeof moveVideoSchema>;
   }>('/videos/:id/move', {
-    preHandler: [fastify.authenticateInternal],
+    preHandler: [fastify.authenticateInternal, fastify.requireNotDemo],
   }, async (req) => {
     const { id } = idParamSchema.parse(req.params);
     const { folderId } = moveVideoSchema.parse(req.body);

@@ -19,7 +19,7 @@ export async function overrideRoutes(fastify: FastifyInstance) {
     Params: { id: string };
     Body: { category: string };
   }>('/:id/override-category', {
-    preHandler: [fastify.authenticate],
+    preHandler: [fastify.authenticate, fastify.requireNotDemo],
   }, async (req) => {
     const { id } = overrideParamsSchema.parse(req.params);
     const { category } = overrideBodySchema.parse(req.body);

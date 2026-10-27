@@ -101,6 +101,12 @@ export async function videosRoutes(fastify: FastifyInstance) {
   }, async (req, reply) => {
     const input = createVideoSchema.parse(req.body);
 
+    // Every demo visitor shares one account and one cost budget, so none of
+    // them may force a paid re-run or pick providers; a plain submit is fine.
+    if (input.bypassCache || input.cold || input.providers) {
+      await fastify.requireNotDemo(req);
+    }
+
     // Validate the optional client-supplied header before doing any work.
     // We bound the size + alphabet so a misbehaving client can't pollute
     // the index. Header parsing/validation is HTTP-boundary work, so it
@@ -146,7 +152,7 @@ export async function videosRoutes(fastify: FastifyInstance) {
   fastify.delete<{
     Params: z.infer<typeof idParamSchema>;
   }>('/:id', {
-    preHandler: [fastify.authenticate],
+    preHandler: [fastify.authenticate, fastify.requireNotDemo],
   }, async (req, reply) => {
     const { id } = idParamSchema.parse(req.params);
     // User scope: only this user's row, idempotency key and notes go; the
@@ -160,7 +166,7 @@ export async function videosRoutes(fastify: FastifyInstance) {
     Params: z.infer<typeof idParamSchema>;
     Body: z.infer<typeof moveVideoSchema>;
   }>('/:id/move', {
-    preHandler: [fastify.authenticate],
+    preHandler: [fastify.authenticate, fastify.requireNotDemo],
   }, async (req) => {
     const { id } = idParamSchema.parse(req.params);
     const { folderId } = moveVideoSchema.parse(req.body);

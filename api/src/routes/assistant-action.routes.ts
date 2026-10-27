@@ -20,6 +20,22 @@ const actionBodySchema = z.object({
 const VIDEO_SUMMARY_ID = /^[a-f0-9]{24}$/i;
 
 /**
+ * Actions whose tool plans rewrite the user's library through
+ * `/internal/assistant/*`. Every demo visitor shares one library, so the demo
+ * account is refused up front — the internal routes enforce the same rule as
+ * the backstop, and this spares the planning LLM call for an action that
+ * cannot succeed. Read-only and additive actions (create_folder,
+ * generate_video, save_note, quiz_me, find_moment, explain) stay allowed.
+ */
+const LIBRARY_MUTATING_ACTIONS: ReadonlySet<AssistantAction> = new Set<AssistantAction>([
+  'organize_library',
+  'rename_folder',
+  'move_folder',
+  'delete_folder',
+  'move_video',
+]);
+
+/**
  * The assistant loads `video_id` as given (a videoSummaryId from the web, or a
  * youtubeId), so the user must hold it in their library — otherwise any
  * version row, eval runs included (D25), could be read as action context.
@@ -45,6 +61,10 @@ export async function assistantActionRoutes(fastify: FastifyInstance): Promise<v
         error: 'VALIDATION_ERROR',
         message: parsed.error.errors[0]?.message || 'Invalid action body',
       });
+    }
+
+    if (LIBRARY_MUTATING_ACTIONS.has(parsed.data.action)) {
+      await fastify.requireNotDemo(req);
     }
 
     const videoId = parsed.data.video_id;
