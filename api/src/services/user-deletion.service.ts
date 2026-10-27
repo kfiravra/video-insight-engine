@@ -53,7 +53,9 @@ type UserScopedCollection =
  * a single line per run.
  *
  * **What is NOT deleted** (documented in `reports/user-data-inventory.md`):
- *   - `videoSummaryCache` (shared cache across users)
+ *   - `videoSummaryCache` rows (shared cache across users) — only the
+ *     dispatcher's `userId` / `requestId` the summarizer stamps on them is
+ *     unset, see `clearVideoCacheDispatchContext`
  *   - Qdrant `transcript_chunks` (shared, video-scoped)
  *   - S3 objects (shared, video-scoped — no user prefix today)
  *   - `llm_usage` (90-day TTL, anonymized cost reporting)
@@ -182,6 +184,8 @@ export class UserDeletionService {
       s3Objects: 0,
     };
     const warnings: string[] = [];
+    // Not part of the audit `counts` (that shape is fixed); logged on completion.
+    let videoCacheRowsUnstamped = 0;
 
     this.logger.info(
       { traceId, userId, initiatedBy: ctx.initiatedBy, adminId: ctx.adminId ?? null },
@@ -218,6 +222,11 @@ export class UserDeletionService {
         'idempotencyKeys',
         userId,
       );
+    }, warnings);
+
+    // The shared cache row survives; only this user's dispatch stamp goes.
+    await this.runStep('videoCacheDispatchContext', traceId, async () => {
+      videoCacheRowsUnstamped = await this.clearVideoCacheDispatchContext(userId);
     }, warnings);
 
     // Qdrant + S3 placeholders — no-ops today, see inventory report. Wired so
@@ -259,6 +268,7 @@ export class UserDeletionService {
       userId,
       durationMs: audit.durationMs,
       counts,
+      videoCacheRowsUnstamped,
       warnings: warnings.length,
     };
     if (warnings.length > 0) {
@@ -364,6 +374,21 @@ export class UserDeletionService {
     }
     const result = await this.db.collection('agentNotes').deleteMany({ $or: filters });
     return result.deletedCount ?? 0;
+  }
+
+  /**
+   * `POST /summarize` stamps the dispatching user's id and request id on the
+   * shared `videoSummaryCache` row so the SSE producer can attribute
+   * `llm_usage`. The summarizer receives the id as JSON, so it is stored as a
+   * string (unlike the ObjectId convention elsewhere). The row stays — other
+   * users share it — and only the dispatcher's identity is unset. Idempotent:
+   * a re-run matches nothing.
+   */
+  private async clearVideoCacheDispatchContext(userId: string): Promise<number> {
+    const result = await this.db
+      .collection('videoSummaryCache')
+      .updateMany({ userId }, { $unset: { userId: '', requestId: '' } });
+    return result.modifiedCount;
   }
 
   /**

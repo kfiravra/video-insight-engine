@@ -7,8 +7,14 @@ How VIE accounts for LLM token spend, including Anthropic prompt-caching credit.
 Every LiteLLM call writes one row to MongoDB `llm_usage` via
 `MongoDBUsageCallback._build_record` (`packages/llm-common/src/llm_common/callback.py`).
 The callback is registered as `litellm.callbacks = [callback]` on service startup
-and is the single source of truth for cost — there is no manual tracking path
-in the hot loop.
+(the HTTP summarizer and the queue worker each register one), so there is no manual
+tracking path in the hot loop for LiteLLM calls. It is **not** the only writer of
+cost: transcription bypasses LiteLLM and emits its own rows through
+`record_manual_usage` into the same buffer (see
+[Transcription cost tracking](#transcription-cost-tracking)), and the Node
+`CostMonitorService.recordUsage` writes a different schema that per-user
+reconciliation never reads (see [Per-user daily cap](#per-user-daily-cap)). Per-user
+accounting reads the Python-schema `llm_usage` rows only.
 
 ## Schema
 
@@ -76,15 +82,20 @@ as `compute_cache_savings_usd`.
 — it is real spend. Because the rows carry `cost_usd` + `user_id`, they flow into
 `reconcileUserDay` automatically with no extra wiring; no exclusion filter is
 applied. (NB: only processes that register a `MongoDBUsageCallback` emit these
-rows — the FastAPI summarizer does; the standalone RabbitMQ worker does not
-register a callback, so transcription run through the queue-only path is
-untracked, same as all other `llm_usage` on that path.)
+rows — both the FastAPI summarizer and the RabbitMQ worker do, in `main.py` and
+`worker/__main__.py`.)
 
 The summarizer sets `user_id`, `video_summary_id`, `video_id`, and `request_id`
 in `pipeline_runner.py` **before** the cache lookup, so every row a run writes is
 attributable. `user_id` and `request_id` come from the **structlog contextvars
-the worker binds from the queue payload** — *not* from the cache row, which is the
-cross-user `videoSummaryCache` doc and carries no per-run owner. The assistant sets
+the worker binds from the queue payload** first, and from the cache row second.
+The row (the cross-user `videoSummaryCache` doc) carries the *last dispatcher's*
+`userId` / `requestId`, stamped by `POST /summarize` — so HTTP/SSE runs, whose
+stream binds no user, attribute through the row, and queue runs through worker
+contextvars (which win: the row may belong to an earlier dispatch). On an
+HTTP-bound context the row's `requestId` also wins, because the middleware's own
+id for the browser's SSE request is a fresh UUID. See
+[GDPR.md](./GDPR.md) for how the stamp is cleared on user deletion. The assistant sets
 `feature` (`assistant:rag_chat` / `assistant:library_chat` /
 `assistant:action:<action>` / `assistant:tool:<name>`), `video_id`, `user_id`, and
 `request_id` at each endpoint (from `X-User-Id` / `X-Request-ID` headers the API
@@ -423,7 +434,11 @@ answer's row and its previous-model re-send included. The aggregate feeds two ga
    and the next UTC midnight reset for the in-app usage tile.
 
 Reconciliation runs on every terminal video status (`completed` / `failed`)
-via the internal status callback, and nightly via `POST /internal/reconcile-costs`.
+via the internal status callback, for **today's UTC day only** — a run reserved
+before midnight UTC and finished after leaves its reservation on the earlier day.
+`POST /internal/reconcile-costs` can rebuild any day (`?date=`, `?userId=`) but has
+**no scheduler or caller** today: nothing triggers it, so it is a manual/operator
+endpoint, not a nightly job.
 The terminal-status path is the canonical refund-on-failure — do not also
 call `refundReservation` on failure, or the day will be double-credited.
 

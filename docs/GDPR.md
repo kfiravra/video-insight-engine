@@ -80,14 +80,15 @@ Steps run in `executeHardDelete()` in this exact order:
 4. **`userCosts`**
 5. **`userCostAdjustments`**
 6. **`idempotencyKeys`**
-7. **Qdrant user content** (placeholder — see below)
-8. **S3 user objects** (placeholder — see below)
-9. **`users`** (the FK anchor, dropped last)
-10. **`userDeletions`** audit insert
+7. **`videoSummaryCache` dispatch stamp** — `updateMany({ userId: "<id>" }, { $unset: { userId, requestId } })`. The row itself stays (shared); only the dispatching user's id and request id are unset. The id is a **string** here, not an ObjectId — `POST /summarize` receives it as JSON. Matched row count is logged as `videoCacheRowsUnstamped` (not part of the audit `counts`).
+8. **Qdrant user content** (placeholder — see below)
+9. **S3 user objects** (placeholder — see below)
+10. **`users`** (the FK anchor, dropped last)
+11. **`userDeletions`** audit insert
 
 ### Idempotency
 
-Every step is naturally idempotent: `deleteMany({ userId: oid })` produces the same result whether it runs once or fifty times. If the cascade fails partway, re-invoking it is safe — the first delete-many is a no-op (nothing matches), the second processes the remainder.
+Every step is naturally idempotent: `deleteMany({ userId: oid })` (or, for the `videoSummaryCache` stamp, an `$unset` keyed on the user's id) produces the same result whether it runs once or fifty times. If the cascade fails partway, re-invoking it is safe — the first delete-many is a no-op (nothing matches), the second processes the remainder.
 
 ### Error handling
 
@@ -97,7 +98,7 @@ Each step is wrapped in `runStep`, which catches and records the error as a `war
 
 | Store | Why we don't delete |
 |---|---|
-| `videoSummaryCache` | Shared cache, keyed by YouTube ID, not user. Deletion would break other users with the same video. Removed only by the video cascade (`DELETE /api/admin/videos/:youtubeId`). |
+| `videoSummaryCache` | Shared cache, keyed by YouTube ID, not user. Deletion would break other users with the same video. Removed only by the video cascade (`DELETE /api/admin/videos/:youtubeId`). **Exception — the dispatch stamp:** `POST /summarize` writes the dispatching user's `userId` and `requestId` onto the row (so the SSE producer can attribute `llm_usage`), overwritten on every dispatch and left in place after the run; cascade step 7 unsets both for the deleted user. |
 | Qdrant `transcript_chunks` | Same — video-scoped, not user-scoped. `user_id` payload is reserved but always `null` today (see `services/summarizer/src/services/vector/qdrant_service.py:153`). When that payload starts being populated for user-generated content, the cascade step is ready to flip from no-op to real delete. The video cascade deletes them by `video_id` through the summarizer's `POST /internal/videos/{id}/purge`. |
 | S3 `videos/{youtubeId}/...` | Same — video-scoped. No user-keyed S3 prefixes today; placeholder hook is wired for the future. The video cascade deletes the whole prefix. |
 | `llm_usage` | Anonymized cost telemetry with 90-day TTL. Eagerly deleting would distort daily cost reports. If legal needs shorter retention, hash the `user_id` field instead. |
