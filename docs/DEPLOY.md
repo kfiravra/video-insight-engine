@@ -217,7 +217,36 @@ Running it again with the same email changes nothing and prints `exists, unchang
 
 ### One-off: demote hand-provisioned admins
 
-Added with P0.2.
+Do this once on a host whose accounts were created with the old `create-admin.ts`. That script gave every account `role: 'admin'`, so each invited user can log into the vie-admin panel: every user's email and costs, global video purge, DLQ replay and credit grants. `scripts/demote-admins.ts` unsets `role` on every admin whose email is not on the list you give it. It changes nothing else and touches only admin accounts. The demoted users keep their accounts and videos.
+
+It reuses the `vie-api-tools` image and the loaded `.env` from "Create the first user" above. The script is mounted, so there is nothing to rebuild.
+
+```bash
+# Skip these two lines if the previous step's shell is still open
+docker build --target builder -f api/Dockerfile -t vie-api-tools .
+set -a; . ./.env; set +a
+
+# The login email(s) that stay admin; several are comma-separated. Matched ignoring case.
+read -r -p "Admin email(s) to keep: " VIE_KEEP_EMAIL
+
+demote_admins() {
+  docker run --rm --network vie-network \
+    -v "$PWD/scripts/demote-admins.ts:/app/api/demote-admins.ts:ro" \
+    -e MONGODB_URI="mongodb://${MONGO_ROOT_USER}:${MONGO_ROOT_PASS}@vie-mongodb:27017/video-insight-engine?authSource=admin" \
+    -e VIE_KEEP_EMAIL \
+    -w /app/api vie-api-tools \
+    sh -c 'npx tsx demote-admins.ts --keep "$VIE_KEEP_EMAIL" "$@"' demote "$@"
+}
+
+demote_admins --dry-run    # 1. preview: lists who would be demoted and who is kept; writes nothing
+demote_admins              # 2. when the preview is exactly right, run it for real
+```
+
+Read the preview before the second command: the accounts under "Would demote" lose panel access, and the account(s) under "Kept as admin" must include you. A kept email that is not a current admin is reported as a warning. If none of the kept emails is a current admin, the script exits 1 and writes nothing, with or without `--dry-run`, because demoting everyone would leave the panel with no admin. Fix the email and run it again.
+
+Demotion stops new panel logins at once. A demoted user who is already logged in keeps working until their session expires (up to 12 hours); to end every open session now, set a new `ADMIN_SESSION_SECRET` in `.env` and run `dc up -d vie-admin`, which logs all admins out, you included.
+
+This step goes away in a later phase, when the admin role is seeded from the `ADMIN_EMAILS` list.
 
 ### Demo mode
 
