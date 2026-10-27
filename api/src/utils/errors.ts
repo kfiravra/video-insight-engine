@@ -274,14 +274,6 @@ export class TierLimitExceededError extends AppError {
   }
 }
 
-// Cost-specific errors
-export class CostLimitExceededError extends AppError {
-  constructor() {
-    super('COST_LIMIT_EXCEEDED', 503, 'Daily LLM cost limit exceeded. Service temporarily unavailable.');
-    this.name = 'CostLimitExceededError';
-  }
-}
-
 export class DailyLimitReachedError extends AppError {
   /** ISO timestamp of next UTC midnight reset. */
   public readonly resetAt: string;

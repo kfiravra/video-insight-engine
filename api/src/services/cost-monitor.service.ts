@@ -9,19 +9,6 @@ import {
   getNextUtcMidnightIso,
 } from '../repositories/user-cost.repository.js';
 
-// `llm_usage` is shared with the Python summarizer, which writes its own
-// schema (`{ user_id, cost_usd, timestamp, ... }`). The Node app writes the
-// shape below via `recordUsage` and reads both shapes from the same collection.
-interface NodeLlmUsageDocument {
-  model: string;
-  inputTokens: number;
-  outputTokens: number;
-  cost: number;
-  createdAt: Date;
-}
-
-type RecommendedModel = 'sonnet' | 'haiku' | 'flash';
-
 /**
  * `null` for `remainingUsd` indicates an unlimited tier. We avoid `Infinity`
  * because JSON serialization turns it into `null` anyway — surfacing `null`
@@ -71,8 +58,11 @@ function isUnlimited(limit: number): boolean {
 const VIDEO_RESERVATION_ESTIMATE_USD = 0.15;
 
 export class CostMonitorService {
-  private readonly usageCollection: Collection<NodeLlmUsageDocument>;
-  private readonly dailyLimit: number;
+  // `llm_usage` holds the Python summarizer's schema (`user_id`, `cost_usd`,
+  // `timestamp`). Node only reads it, to rebuild the per-user day aggregates;
+  // there is no global spend aggregate here (the vie-admin evaluator owns the
+  // `daily_global_cost` operator alarm).
+  private readonly usageCollection: Collection;
 
   constructor(
     db: Db,
@@ -80,55 +70,6 @@ export class CostMonitorService {
     private readonly userCostRepository: UserCostRepository = new UserCostRepository(db),
   ) {
     this.usageCollection = db.collection('llm_usage');
-    this.dailyLimit = config.COST_DAILY_LIMIT;
-  }
-
-  // ─── Global aggregate (existing API, unchanged) ───
-
-  async isDailyLimitExceeded(): Promise<boolean> {
-    const spend = await this.getDailySpend();
-    return spend.percentage >= 100;
-  }
-
-  async getDailySpend(): Promise<{ total: number; limit: number; percentage: number }> {
-    const startOfDay = new Date();
-    startOfDay.setUTCHours(0, 0, 0, 0);
-
-    const result = await this.usageCollection.aggregate([
-      { $match: { createdAt: { $gte: startOfDay } } },
-      { $group: { _id: null, total: { $sum: '$cost' } } },
-    ]).toArray();
-
-    const total = result[0]?.total ?? 0;
-    const percentage = this.dailyLimit > 0 ? (total / this.dailyLimit) * 100 : 0;
-
-    return { total, limit: this.dailyLimit, percentage };
-  }
-
-  async getRecommendedModel(): Promise<RecommendedModel> {
-    const { percentage } = await this.getDailySpend();
-
-    if (percentage < 70) return 'sonnet';
-    if (percentage < 90) return 'flash';
-    return 'haiku';
-  }
-
-  /**
-   * NOTE: this writes the Node-only schema (`model`, `cost`, `createdAt`) with
-   * NO `user_id`. `reconcileUserDay`/`reconcileAllUsersForDay` aggregate the
-   * Python schema (`user_id`, `cost_usd`, `timestamp`) — rows written here are
-   * invisible to per-user reconciliation. Use only for global cost telemetry
-   * (`getDailySpend`); attribute per-user LLM spend via the Python summarizer's
-   * `usage_tracker` which writes the reconcilable shape.
-   */
-  async recordUsage(model: string, tokens: { input: number; output: number }, cost: number): Promise<void> {
-    await this.usageCollection.insertOne({
-      model,
-      inputTokens: tokens.input,
-      outputTokens: tokens.output,
-      cost,
-      createdAt: new Date(),
-    });
   }
 
   // ─── Per-user (new) ───
@@ -262,7 +203,7 @@ export class CostMonitorService {
     return totalCostUsd;
   }
 
-  /** Reconcile ALL users for a given UTC day from `llm_usage`. Used by the nightly cron. */
+  /** Reconcile ALL users for a given UTC day from `llm_usage`. Served by `POST /internal/reconcile-costs`; nothing schedules it. */
   async reconcileAllUsersForDay(dateKey: string = getUtcDateKey()): Promise<{ usersReconciled: number; totalUsd: number }> {
     const dayStart = new Date(`${dateKey}T00:00:00.000Z`);
     const dayEnd = new Date(dayStart);

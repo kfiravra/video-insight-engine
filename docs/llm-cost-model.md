@@ -11,10 +11,10 @@ The callback is registered as `litellm.callbacks = [callback]` on service startu
 tracking path in the hot loop for LiteLLM calls. It is **not** the only writer of
 cost: transcription bypasses LiteLLM and emits its own rows through
 `record_manual_usage` into the same buffer (see
-[Transcription cost tracking](#transcription-cost-tracking)), and the Node
-`CostMonitorService.recordUsage` writes a different schema that per-user
-reconciliation never reads (see [Per-user daily cap](#per-user-daily-cap)). Per-user
-accounting reads the Python-schema `llm_usage` rows only.
+[Transcription cost tracking](#transcription-cost-tracking)). Node writes no
+`llm_usage` rows at all — the old Node-side writer (a different, unreconcilable
+schema) was deleted. Per-user accounting reads the Python-schema
+`llm_usage` rows only.
 
 ## Schema
 
@@ -442,9 +442,12 @@ endpoint, not a nightly job.
 The terminal-status path is the canonical refund-on-failure — do not also
 call `refundReservation` on failure, or the day will be double-credited.
 
-The Node `CostMonitorService.recordUsage` writes a **different** schema
-(`model`, `cost`, `createdAt`) that reconciliation does **not** read; use it
-only for global cost telemetry, not for per-user attribution.
+There is no global request-blocking cap. Global spend is an operator signal
+only: the vie-admin evaluator raises a `daily_global_cost` alert (critical, once
+per UTC day) when Σ `cost_usd` since UTC midnight reaches
+`ALERT_DAILY_COST_THRESHOLD_USD` (default `20`, `<= 0` disables). The former
+Node-side global cap (a daily-limit env var plus a 503 path) was dead code and is
+gone.
 
 Admin grants and manual charges go through `userCostAdjustments` (signed
 storage: negative = credit) — see [DATA-MODELS.md](./DATA-MODELS.md#usercostadjustments)
@@ -467,18 +470,20 @@ The vie-admin lifespan **also** drops any legacy 90-day TTL on `llm_usage`
 
 ## Alerting (implemented 2026-07-12)
 
-Three thresholds, all real:
+Four alert types, all real:
 
 | Alert type | Evaluated by | Trigger |
 |---|---|---|
 | `high_cost_call` | `llm_common.callback.MongoDBUsageCallback` (inline, per LLM call) | single call cost > `cost_threshold` (constructor default $0.50) |
 | `daily_spend_spike` | vie-admin `alert_evaluator` loop (every 5 min) | today's spend > `daily_spike_multiplier` × trailing 7-day daily average (baseline must be ≥ $0.50/day) |
+| `daily_global_cost` | vie-admin `alert_evaluator` loop (every 5 min) | Σ `cost_usd` across all users since UTC midnight ≥ `ALERT_DAILY_COST_THRESHOLD_USD` (default $20; `<= 0` disables). Critical, once per UTC day. Alarm only — it blocks nothing |
 | `high_failure_rate` | vie-admin `alert_evaluator` loop (every 5 min) | failure rate over the trailing 60 min > `failure_rate_threshold`, with ≥ 10 calls in the window |
 
 The spike/failure thresholds are read live from `llm_alert_config` (managed by
 `POST /alerts/config` in vie-admin), which was previously decorative. Per-type
 cooldowns (6 h spike, 1 h failure) stop a sustained condition from re-alerting
-every cycle.
+every cycle; `daily_global_cost` is limited to one alert per UTC day instead of a
+rolling window, so the first breach after midnight still alerts.
 
 **Delivery:** every alert is written to `llm_alerts` (rendered by the admin UI)
 and POSTed as JSON to `ALERT_WEBHOOK_URL` when set (Slack-compatible generic

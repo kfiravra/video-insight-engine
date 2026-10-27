@@ -9,6 +9,7 @@ describe('getSeverity', () => {
   it.each([
     ['high_cost_call', 'warning'],
     ['daily_spend_spike', 'warning'],
+    ['daily_global_cost', 'critical'],
     ['high_failure_rate', 'critical'],
     ['backup_stale', 'critical'],
     ['pipeline_stalled', 'critical'],
@@ -27,6 +28,7 @@ describe('alertCost', () => {
   it('should expose cost only for spend alerts', () => {
     expect(alertCost({ type: 'high_cost_call', cost_usd: 0.91 })).toBe(0.91);
     expect(alertCost({ type: 'daily_spend_spike', cost_usd: 12.5 })).toBe(12.5);
+    expect(alertCost({ type: 'daily_global_cost', today_usd: 21.5 })).toBe(21.5);
     expect(alertCost({ type: 'high_failure_rate', cost_usd: 0 })).toBeNull();
     expect(alertCost({ type: 'backup_stale' })).toBeNull();
   });
@@ -42,6 +44,12 @@ describe('describeAlert', () => {
   it('should describe a spend spike from its baseline', () => {
     expect(describeAlert({ type: 'daily_spend_spike', baseline_daily_usd: 2, threshold: 2, day_fraction: 0.5 })).toBe(
       'baseline $2.00/day · 2× limit · 12h into day',
+    );
+  });
+
+  it('should describe the global cost alarm with its threshold', () => {
+    expect(describeAlert({ type: 'daily_global_cost', today_usd: 21.5, threshold_usd: 20 })).toBe(
+      'global spend today · alarm at $20.00',
     );
   });
 

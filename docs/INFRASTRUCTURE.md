@@ -393,6 +393,7 @@ The per-stage defaults are the pipeline-1min 4.0d model A/B picks, rounds 1 + 2 
 | `SENTRY_TRACES_SAMPLE_RATE` | `0.1` | Share of transactions Sentry traces; `0` disables tracing (errors still report) |
 | `ALERT_WEBHOOK_URL` | empty | Every `llm_alerts` row is also POSTed here as JSON (Slack/Discord/ntfy). Empty = Mongo-only, nothing pushes |
 | `ALERT_COST_THRESHOLD_USD` | `0.50` | Per-call `high_cost_call` alert threshold (`llm_common/callback.py`) |
+| `ALERT_DAILY_COST_THRESHOLD_USD` | `20` | vie-admin `daily_global_cost` alarm: global spend since UTC midnight (≤ 0 disables) |
 
 **Runtime**
 

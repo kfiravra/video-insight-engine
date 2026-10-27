@@ -829,8 +829,10 @@ Per-user daily LLM cost aggregate. Powers the per-user reservation gate
 
 **Reconciliation:** `totalCostUsd` is rewritten from `llm_usage` (Python
 schema: `user_id` + `cost_usd` + `timestamp`) on every terminal video status
-and by the nightly `POST /internal/reconcile-costs` cron. `videoCount` is
-preserved across reconciles because it tracks reservations, not real spend.
+for today's UTC day only. `POST /internal/reconcile-costs` can rebuild any day
+(`?date=`, `?userId=`) but nothing schedules or calls it — it is a manual/operator
+endpoint. `videoCount` is preserved across reconciles because it tracks
+reservations, not real spend.
 
 ---
 

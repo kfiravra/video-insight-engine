@@ -234,7 +234,8 @@ export async function internalRoutes(fastify: FastifyInstance) {
     return { received: true };
   });
 
-  // POST /internal/reconcile-costs — nightly cron rebuilds the userCosts cache from llm_usage.
+  // POST /internal/reconcile-costs — manual/ops rebuild of the userCosts cache from llm_usage
+  // (no scheduler calls it; terminal status reconciles today's UTC day on its own).
   // Supply ?date=YYYY-MM-DD to reconcile a specific UTC day, or ?userId=... for a single user.
   fastify.post<{
     Querystring: z.infer<typeof reconcileQuerySchema>;

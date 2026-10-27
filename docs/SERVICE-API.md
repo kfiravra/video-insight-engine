@@ -385,9 +385,6 @@ INTERNAL_SECRET=dev-internal-secret-change-me   # Shared secret for /internal/as
 PADDLE_WEBHOOK_SECRET=
 PADDLE_PRO_PRICE_ID=
 PADDLE_TEAM_PRICE_ID=
-
-# Cost monitoring — v1.4
-COST_DAILY_LIMIT=50
 ```
 
 ---

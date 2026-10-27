@@ -766,7 +766,7 @@ Paddle webhook handler. Verifies signature in production.
 ```
 
 **Handled events:**
-- `subscription.created` — set tier to 'pro' or 'team'
+- `subscription.created` — set tier to `pro` (the webhook only ever sets `pro`; `team` is not granted by any payment path)
 - `subscription.updated` — update tier
 - `subscription.cancelled` — schedule downgrade
 - `subscription.past_due` — grace period
@@ -891,7 +891,7 @@ Common error codes:
 - `409` - Conflict: `ALREADY_SHARED`
 - `429` - Rate Limited: `RATE_LIMITED`, `DAILY_LIMIT_REACHED` (per-user daily cost cap; also returns `resetAt` + `limitUsd`)
 - `500` - Internal Server Error, `PAYMENT_ERROR`
-- `503` - Service Unavailable: `COST_LIMIT_EXCEEDED` (global aggregate cap)
+- `503` - Service Unavailable: `SERVICE_UNAVAILABLE`, `QUEUE_PUBLISH_FAILED`
 
 ---
 

@@ -52,7 +52,7 @@ import {
   ValidationError,
   AccountDeletionPendingError,
   AccountAlreadyDeletedError,
-  CostLimitExceededError,
+  ServiceUnavailableError,
 } from '../utils/errors.js';
 
 describe('scrubBeforeSend (PII filter)', () => {
@@ -253,9 +253,9 @@ describe('sentryFastifyPlugin', () => {
       const schema = z.object({ id: z.string().uuid() });
       schema.parse({ id: 'not-a-uuid' });
     });
-    fastify.get('/throw-cost-limit', async () => {
+    fastify.get('/throw-service-unavailable', async () => {
       // 503 — must be captured as a server-side failure.
-      throw new CostLimitExceededError();
+      throw new ServiceUnavailableError('assistant');
     });
     return fastify;
   }
@@ -322,9 +322,9 @@ describe('sentryFastifyPlugin', () => {
   });
 
   // 5xx AppError MUST still be captured — these are genuine server failures.
-  it('should capture 5xx AppError throws (CostLimitExceededError → 503)', async () => {
+  it('should capture 5xx AppError throws (ServiceUnavailableError → 503)', async () => {
     app = await buildAppWithSentry();
-    const res = await app.inject({ method: 'GET', url: '/throw-cost-limit' });
+    const res = await app.inject({ method: 'GET', url: '/throw-service-unavailable' });
     expect(res.statusCode).toBe(503);
     expect(captureExceptionMock).toHaveBeenCalledTimes(1);
   });
@@ -335,7 +335,7 @@ describe('effectiveStatusCode', () => {
     expect(effectiveStatusCode(new NotFoundError('x'))).toBe(404);
     expect(effectiveStatusCode(new ValidationError('y'))).toBe(400);
     expect(effectiveStatusCode(new AccountAlreadyDeletedError())).toBe(409);
-    expect(effectiveStatusCode(new CostLimitExceededError())).toBe(503);
+    expect(effectiveStatusCode(new ServiceUnavailableError('assistant'))).toBe(503);
   });
 
   it('returns 400 for ZodError', () => {

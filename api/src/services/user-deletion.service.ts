@@ -58,7 +58,7 @@ type UserScopedCollection =
  *     unset, see `clearVideoCacheDispatchContext`
  *   - Qdrant `transcript_chunks` (shared, video-scoped)
  *   - S3 objects (shared, video-scoped — no user prefix today)
- *   - `llm_usage` (90-day TTL, anonymized cost reporting)
+ *   - `llm_usage` (no TTL; kept for cost reporting)
  */
 
 const DEFAULT_GRACE_DAYS = 30;

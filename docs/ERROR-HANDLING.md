@@ -716,6 +716,7 @@ to `ALERT_WEBHOOK_URL` when set. Unset webhook = nobody is told.
 | `daily_spend_spike` | admin `alert_evaluator` (5 min) | today's spend > `daily_spike_multiplier` × prorated 7-day baseline (baseline ≥ $0.50/day) | 6 h |
 | `high_failure_rate` | admin `alert_evaluator` (5 min) | failures / calls over the last hour > `failure_rate_threshold`, sample ≥ 10 | 1 h |
 | `backup_stale` | admin `alert_evaluator` (5 min) | newest `backups/*/manifest.json` older than `BACKUP_MAX_AGE_HOURS` (26) | 6 h |
+| `daily_global_cost` | admin `alert_evaluator` (5 min) | Σ `llm_usage.cost_usd` since UTC midnight ≥ `ALERT_DAILY_COST_THRESHOLD_USD` (default 20; ≤ 0 disables). Alarm only, no request is blocked | once per UTC day |
 | `pipeline_stalled` | summarizer stall sweeper (5 min) | `processing` row idle > `STALL_THRESHOLD_MINUTES` with no producer lock | none (row is flipped to `failed`) |
 
 `daily_spike_multiplier` / `failure_rate_threshold` are edited via admin

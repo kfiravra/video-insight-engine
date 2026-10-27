@@ -307,8 +307,6 @@ services:
       VIDEO_DAILY_LIMIT: ${VIDEO_DAILY_LIMIT:-100}
       # Requests per minute per IP on the public api
       RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-120}
-      # Daily LLM spend ceiling in USD, read by the cost monitor
-      COST_DAILY_LIMIT: ${COST_DAILY_LIMIT:-20}
       USER_COST_LIMIT_FREE: ${USER_COST_LIMIT_FREE:-2}
       ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-true}
       # Demo mode — both set = POST /api/auth/login accepts { demo: true }; blank = off
@@ -503,6 +501,8 @@ services:
       VIE_ASSISTANT_URL: http://vie-assistant:8001
       QDRANT_URL: http://vie-qdrant:6333
       ALERT_COST_THRESHOLD_USD: ${ALERT_COST_THRESHOLD_USD:-0.50}
+      # Global spend alarm: daily_global_cost fires once per UTC day at this total (USD); <= 0 disables
+      ALERT_DAILY_COST_THRESHOLD_USD: ${ALERT_DAILY_COST_THRESHOLD_USD:-20}
       ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
       # Backup dead-man's switch — newest manifest under BACKUP_DIR older than
       # BACKUP_MAX_AGE_HOURS trips a backup_stale alert (alert_evaluator.py).

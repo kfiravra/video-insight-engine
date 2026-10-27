@@ -44,6 +44,10 @@ class Settings(BaseSettings):
 
     # Alert thresholds
     ALERT_COST_THRESHOLD_USD: float = 0.50
+    # Global spend alarm: daily_global_cost fires once per UTC day when the
+    # total across all users reaches this many USD. Alarm only — nothing is
+    # blocked. <= 0 disables it.
+    ALERT_DAILY_COST_THRESHOLD_USD: float = 20.0
 
     # Webhook receiving llm_alerts JSON POSTs (empty → delivery disabled).
     # Same env var the summarizer/assistant/worker read via llm-common.

@@ -134,6 +134,17 @@ so the detail page still shows the cost breakdown afterwards with `video: null`.
 | GET | `/alerts/config` | Current alert thresholds |
 | POST | `/alerts/config` | Update alert thresholds |
 
+**Evaluator alerts** (`src/services/alert_evaluator.py`, polls `llm_usage` every 5 min and writes `llm_alerts` plus the `ALERT_WEBHOOK_URL` POST):
+
+| Type | Severity | Fires when | Suppression |
+|------|----------|------------|-------------|
+| `daily_spend_spike` | warning | today's spend > `daily_spike_multiplier` × prorated 7-day baseline | 6 h cooldown |
+| `daily_global_cost` | critical | Σ `cost_usd` (all users, since UTC midnight) ≥ `ALERT_DAILY_COST_THRESHOLD_USD` (default `20`; `<= 0` disables) | once per UTC day |
+| `high_failure_rate` | critical | failure rate over the last hour > `failure_rate_threshold` (≥ 10 calls) | 1 h cooldown |
+| `backup_stale` | critical | newest backup manifest older than `BACKUP_MAX_AGE_HOURS` | 6 h cooldown |
+
+`daily_global_cost` is the operator's global spend alarm and nothing more: no request is blocked by global spend (the per-user daily cap in vie-api is the only spend gate). It sums the Python ledger schema (`cost_usd`, `timestamp`). It is suppressed per UTC day, not by a rolling window, so the first breach after midnight still alerts.
+
 ### Per-User Costs (`/users/`)
 
 Backs the **Users** page in the admin dashboard. Reads `userCosts` (per-user
@@ -214,6 +225,8 @@ VIE_API_URL=http://vie-api:3000
 VIE_SUMMARIZER_URL=http://vie-summarizer:8000
 VIE_ASSISTANT_URL=http://vie-assistant:8001
 ALERT_COST_THRESHOLD_USD=0.50
+# Global spend alarm: daily_global_cost alert once per UTC day at this total (USD). <= 0 disables.
+ALERT_DAILY_COST_THRESHOLD_USD=20
 # Langfuse — read-only, only to build "Open in Langfuse" run deep-links.
 # Project id auto-resolved from the keys when LANGFUSE_PROJECT_ID is blank.
 # All optional: unset → /usage/by-run simply returns langfuse_url=null.

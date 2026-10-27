@@ -95,7 +95,6 @@ const envSchema = z.object({
   PADDLE_PRO_PRICE_ID: z.string().default(''),
   PADDLE_TEAM_PRICE_ID: z.string().default(''),
   // Cost monitoring
-  COST_DAILY_LIMIT: z.string().default('50').transform(Number),
   // Per-user daily cost limits in USD (0 disables the limit; -1 means unlimited)
   USER_COST_LIMIT_FREE: z.string().default('2').transform(Number),
   USER_COST_LIMIT_PRO: z.string().default('20').transform(Number),

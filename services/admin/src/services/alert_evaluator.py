@@ -1,10 +1,15 @@
-"""Periodic evaluation of aggregate alert thresholds (spike, failures, backups).
+"""Periodic evaluation of aggregate alert thresholds (spike, global cost, failures, backups).
 
 The per-call cost threshold fires inline in llm-common's MongoDBUsageCallback.
 The other two thresholds configured via POST /alerts/config — daily spend
 spike and failure rate — are aggregate properties of the ledger and can only
 be judged over a window, so this evaluator polls ``llm_usage`` on an interval
 (started from the app lifespan, mirroring ``health_poller_loop``).
+
+``daily_global_cost`` is the operator's spend alarm: total spend across all
+users since UTC midnight against ``ALERT_DAILY_COST_THRESHOLD_USD``. It only
+alerts — no request is ever blocked by global spend; the per-user cap in vie-api
+is the only spend gate.
 
 The same loop doubles as a dead-man's switch for ``scripts/backup.sh``: when
 the newest manifest under ``BACKUP_DIR`` is older than ``BACKUP_MAX_AGE_HOURS``
@@ -13,7 +18,8 @@ unmounted ``BACKUP_DIR`` disables the check (dev boxes without the mount).
 
 Alerts are written to ``llm_alerts`` (rendered by the admin UI) and also
 POSTed to ``ALERT_WEBHOOK_URL`` when configured. A per-type cooldown stops a
-sustained condition from re-alerting on every cycle.
+sustained condition from re-alerting on every cycle; ``daily_global_cost`` is
+instead limited to once per UTC day.
 """
 
 from __future__ import annotations
@@ -60,6 +66,10 @@ COOLDOWNS = {
     "backup_stale": timedelta(hours=6),
 }
 
+# Types limited to one alert per UTC day instead of a rolling cooldown: a
+# rolling 24 h window would swallow the first alert of the next day.
+ONCE_PER_UTC_DAY = frozenset({"daily_global_cost"})
+
 # ``severity`` is set explicitly on every alert (warning|critical) so the admin
 # Alerts page files it correctly instead of regex-guessing from ``type``.
 # Mirrors the defaults served by GET /alerts/config when no doc exists.
@@ -102,6 +112,27 @@ def build_spike_alert(
         "baseline_daily_usd": round(baseline_daily_usd, 4),
         "day_fraction": round(fraction, 3),
         "threshold": multiplier,
+        "service": "admin-evaluator",
+        "timestamp": now,
+    }
+
+
+def build_daily_cost_alert(today_usd: float, threshold: float, now: datetime) -> dict | None:
+    """Alert when total spend since UTC midnight reaches the global threshold.
+
+    Operator signal only — nothing is blocked. ``threshold <= 0`` disables it.
+    """
+    if threshold <= 0 or today_usd < threshold:
+        return None
+    return {
+        "type": "daily_global_cost",
+        "severity": "critical",
+        "today_usd": round(today_usd, 4),
+        "threshold_usd": threshold,
+        "message": (
+            f"Global LLM spend today (UTC) is ${today_usd:.2f}, "
+            f"at or above the ${threshold:.2f} daily alarm"
+        ),
         "service": "admin-evaluator",
         "timestamp": now,
     }
@@ -225,10 +256,20 @@ async def _failure_counts(db: AsyncIOMotorDatabase, since: datetime) -> tuple[in
     return int(rows[0]["failures"]), int(rows[0]["total"])
 
 
+def _utc_day_start(now: datetime) -> datetime:
+    return now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def _suppressed_since(alert_type: str, now: datetime) -> datetime:
+    """Start of the window in which an existing alert of this type blocks a new one."""
+    if alert_type in ONCE_PER_UTC_DAY:
+        return _utc_day_start(now)
+    return now - COOLDOWNS.get(alert_type, timedelta(hours=1))
+
+
 async def _in_cooldown(db: AsyncIOMotorDatabase, alert_type: str, now: datetime) -> bool:
-    cooldown = COOLDOWNS.get(alert_type, timedelta(hours=1))
     recent = await db.llm_alerts.find_one(
-        {"type": alert_type, "timestamp": {"$gte": now - cooldown}}
+        {"type": alert_type, "timestamp": {"$gte": _suppressed_since(alert_type, now)}}
     )
     return recent is not None
 
@@ -293,7 +334,7 @@ async def evaluate_once(db: AsyncIOMotorDatabase, now: datetime | None = None) -
     now = now or datetime.now(UTC)
     config = await _load_config(db)
 
-    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    today_start = _utc_day_start(now)
     baseline_start = today_start - timedelta(days=SPIKE_BASELINE_DAYS)
     baseline_total, today_usd, (failures, total) = await asyncio.gather(
         _sum_cost(db, baseline_start, today_start),
@@ -312,6 +353,7 @@ async def evaluate_once(db: AsyncIOMotorDatabase, now: datetime | None = None) -
             now,
             day_fraction=day_fraction,
         ),
+        build_daily_cost_alert(today_usd, settings.ALERT_DAILY_COST_THRESHOLD_USD, now),
         build_failure_alert(failures, total, float(config["failure_rate_threshold"]), now),
         _backup_stale_candidate(now),
     ]

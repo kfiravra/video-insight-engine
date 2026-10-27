@@ -536,6 +536,8 @@ services:
       VIE_ASSISTANT_URL: http://vie-assistant:8001
       QDRANT_URL: http://vie-qdrant:6333
       ALERT_COST_THRESHOLD_USD: ${ALERT_COST_THRESHOLD_USD:-0.50}
+      # Global spend alarm: daily_global_cost fires once per UTC day at this total (USD); <= 0 disables
+      ALERT_DAILY_COST_THRESHOLD_USD: ${ALERT_DAILY_COST_THRESHOLD_USD:-20}
       # LLM alert webhook — the admin evaluator (daily spike / failure rate)
       # POSTs tripped alerts here; empty URL = alerts stay Mongo-only
       ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
