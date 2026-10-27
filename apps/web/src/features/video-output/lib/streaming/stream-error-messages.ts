@@ -3,10 +3,12 @@
  * Maps error codes and raw messages to text users can understand.
  */
 
+// Duration limits are env-configured on the summarizer, so the duration copy
+// states no number — a hard-coded one goes stale the moment the config changes.
 const CODE_MESSAGES: Record<string, string> = {
   NO_TRANSCRIPT: "This video doesn't have captions available. Videos need captions or subtitles to be summarized.",
-  VIDEO_TOO_LONG: "This video is too long to summarize. Maximum duration is 4 hours.",
-  VIDEO_TOO_SHORT: "This video is too short to summarize. Minimum duration is 30 seconds.",
+  VIDEO_TOO_LONG: "This video is longer than the maximum length we can summarize.",
+  VIDEO_TOO_SHORT: "This video is shorter than the minimum length we can summarize.",
   VIDEO_UNAVAILABLE: "This video is unavailable. It may be private, deleted, or region-restricted.",
   VIDEO_RESTRICTED: "This video has restrictions that prevent it from being processed.",
   LIVE_STREAM: "Live streams cannot be summarized. Please wait until the stream ends.",
