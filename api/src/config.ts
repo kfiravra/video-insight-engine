@@ -83,7 +83,7 @@ const envSchema = z.object({
   VIDEO_DAILY_LIMIT: z.string().default('100').transform(Number),
   // Self-service signup. 'false' closes POST /api/auth/register (403) and the
   // web app hides its signup links; accounts are then created out-of-band
-  // (scripts/create-admin.ts). Any other value keeps registration open.
+  // (scripts/create-user.ts). Any other value keeps registration open.
   ALLOW_REGISTRATION: z.string().default('true').transform(v => v.trim().toLowerCase() !== 'false'),
   // Demo mode. With both set, POST /api/auth/login accepts { demo: true } and
   // signs in this account server-side; either one blank keeps demo off. The

@@ -178,7 +178,7 @@ When something fails, start with `dc logs --tail 100 vie-caddy vie-api vie-summa
 
 ### Create the first user
 
-With `ALLOW_REGISTRATION=false`, nobody can sign up through the web app. Create accounts on the server with `scripts/create-admin.ts`, run in a one-off container built from the API image's builder stage (it already has `tsx`, `bcrypt` and `mongodb`).
+With `ALLOW_REGISTRATION=false`, nobody can sign up through the web app. Create accounts on the server with `scripts/create-user.ts`, run in a one-off container built from the API image's builder stage (it already has `tsx`, `bcrypt` and `mongodb`).
 
 Run from the repo checkout on the server, after the stack is up:
 
@@ -194,14 +194,20 @@ read -r -p "Email: " VIE_USER_EMAIL
 read -r -s -p "Password (8+ chars, upper, lower, digit): " VIE_USER_PASSWORD; echo
 
 docker run --rm --network vie-network \
-  -v "$PWD/scripts/create-admin.ts:/app/api/create-admin.ts:ro" \
+  -v "$PWD/scripts/create-user.ts:/app/api/create-user.ts:ro" \
   -e MONGODB_URI="mongodb://${MONGO_ROOT_USER}:${MONGO_ROOT_PASS}@vie-mongodb:27017/video-insight-engine?authSource=admin" \
   -e VIE_USER_EMAIL -e VIE_USER_PASSWORD \
   -w /app/api vie-api-tools \
-  sh -c 'npx tsx create-admin.ts "$VIE_USER_EMAIL" "$VIE_USER_PASSWORD" "Demo"'
+  sh -c 'npx tsx create-user.ts "$VIE_USER_EMAIL" "$VIE_USER_PASSWORD"'
 ```
 
-The script creates the user with role `admin`, so the same login also works for the vie-admin panel. Running it again with the same email resets that user's password.
+The script creates an ordinary user and never sets a role, so account creation does not grant access to the vie-admin panel. The admin role comes from the `ADMIN_EMAILS` list in a later phase; for the admin you already have, see the one-off demote step below. The email is trimmed and lowercased, and an optional third argument sets the display name (default: the part of the email before the `@`).
+
+Running it again with the same email changes nothing and prints `exists, unchanged`. To set a new password for an existing user, add `--reset-password` after the password inside the `sh -c` string; only `passwordHash` and `updatedAt` change. For an existing admin the script exits 1 without that flag, so a re-run can never change an admin's password by accident.
+
+### One-off: demote hand-provisioned admins
+
+Added with P0.2.
 
 ### Demo mode
 

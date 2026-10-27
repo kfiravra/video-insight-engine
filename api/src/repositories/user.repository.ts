@@ -16,8 +16,9 @@ export interface UserDocument {
   lastLoginAt?: Date;
   createdAt: Date;
   updatedAt: Date;
-  // Grants access to the vie-admin panel's email/password login. Only ever
-  // set by scripts/create-admin.ts — the public register flow never writes it.
+  // Grants access to the vie-admin panel's email/password login. Set directly
+  // in the DB — neither scripts/create-user.ts nor the public register flow
+  // ever writes it.
   role?: 'admin';
   // Marks the golden-eval account (D25). Set ONLY by an admin in the DB
   // (mongosh) — no API route writes it and no request input can set it. Every
