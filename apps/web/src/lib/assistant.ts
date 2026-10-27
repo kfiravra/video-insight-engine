@@ -1,4 +1,4 @@
-import { getAccessToken, refreshToken } from "@/api/client";
+import { ApiError, getAccessToken, refreshToken } from "@/api/client";
 import { useAuthStore } from "@/stores/auth-store";
 
 export interface AssistantChatMessage {
@@ -93,7 +93,7 @@ async function streamAssistantChat(
     if (refreshed) {
       const retryResponse = await buildRequest(getAccessToken());
       if (!retryResponse.ok) {
-        throw new Error(`Assistant chat failed: ${retryResponse.status}`);
+        throw chatRequestFailure(retryResponse.status);
       }
       await readAssistantSSEStream(retryResponse, onEvent);
       return;
@@ -103,10 +103,22 @@ async function streamAssistantChat(
   }
 
   if (!response.ok) {
-    throw new Error(`Assistant chat failed: ${response.status}`);
+    throw chatRequestFailure(response.status);
   }
 
   await readAssistantSSEStream(response, onEvent);
+}
+
+/**
+ * The gateway answers 429 RATE_LIMITED when the user is sending too fast. It
+ * gets a typed `ApiError` so the chat can say "slow down" rather than the
+ * generic connection-failure copy; other statuses stay a plain transport error.
+ */
+function chatRequestFailure(status: number): Error {
+  if (status === 429) {
+    return new ApiError(429, "Too many messages", "RATE_LIMITED");
+  }
+  return new Error(`Assistant chat failed: ${status}`);
 }
 
 /** Build and send the fetch request to the single-video assistant chat endpoint. */

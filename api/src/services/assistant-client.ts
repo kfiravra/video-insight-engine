@@ -1,6 +1,6 @@
 import type { FastifyBaseLogger } from 'fastify';
 import { config } from '../config.js';
-import { ServiceTimeoutError, ServiceUnavailableError } from '../utils/errors.js';
+import { RateLimitedError, ServiceTimeoutError, ServiceUnavailableError } from '../utils/errors.js';
 
 const ASSISTANT_TIMEOUT_MS = 60000;
 const ACTION_TIMEOUT_MS = 60000;
@@ -124,6 +124,25 @@ export class AssistantClient {
   }
 
   /**
+   * Map a non-OK upstream chat response. The assistant's own 30/min limit is
+   * something the user can act on ("slow down"), so it keeps its 429; every
+   * other status collapses to the generic unavailable error — upstream bodies
+   * can carry internal detail and are logged, never relayed.
+   */
+  private chatFailure(
+    status: number,
+    errorText: string,
+    label: string,
+  ): RateLimitedError | ServiceUnavailableError {
+    if (status === 429) {
+      this.logger.warn({ status }, `${label}: assistant rate limit reached`);
+      return new RateLimitedError();
+    }
+    this.logger.error({ status, error: errorText }, label);
+    return new ServiceUnavailableError('Assistant');
+  }
+
+  /**
    * Send a chat message to the assistant service and get SSE stream back.
    * Returns a ReadableStream that can be piped directly to the client.
    */
@@ -161,8 +180,7 @@ export class AssistantClient {
 
       if (!response.ok) {
         const errorText = await response.text().catch(() => 'Unknown error');
-        this.logger.error({ status: response.status, error: errorText }, 'Assistant chat request failed');
-        throw new ServiceUnavailableError('Assistant');
+        throw this.chatFailure(response.status, errorText, 'Assistant chat request failed');
       }
 
       if (!response.body) {
@@ -173,7 +191,7 @@ export class AssistantClient {
       return response.body;
     } catch (err) {
       clearTimeout(timeout);
-      if (err instanceof ServiceUnavailableError || err instanceof ServiceTimeoutError) {
+      if (err instanceof RateLimitedError || err instanceof ServiceUnavailableError || err instanceof ServiceTimeoutError) {
         throw err;
       }
       if ((err as Error).name === 'AbortError') {
@@ -291,8 +309,7 @@ export class AssistantClient {
 
       if (!response.ok) {
         const errorText = await response.text().catch(() => 'Unknown error');
-        this.logger.error({ status: response.status, error: errorText }, 'Assistant library chat request failed');
-        throw new ServiceUnavailableError('Assistant');
+        throw this.chatFailure(response.status, errorText, 'Assistant library chat request failed');
       }
 
       if (!response.body) {
@@ -303,7 +320,7 @@ export class AssistantClient {
       return response.body;
     } catch (err) {
       clearTimeout(timeout);
-      if (err instanceof ServiceUnavailableError || err instanceof ServiceTimeoutError) {
+      if (err instanceof RateLimitedError || err instanceof ServiceUnavailableError || err instanceof ServiceTimeoutError) {
         throw err;
       }
       if ((err as Error).name === 'AbortError') {

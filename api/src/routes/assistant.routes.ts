@@ -1,6 +1,6 @@
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { VideoNotFoundError } from '../utils/errors.js';
+import { RateLimitedError, VideoNotFoundError } from '../utils/errors.js';
 import { disableSocketInactivityTimeout } from '../utils/sse.js';
 import { actionParamsSchema } from '../schemas/assistant.schema.js';
 import type { AssistantAction } from '../services/assistant-client.js';
@@ -113,6 +113,9 @@ export async function assistantRoutes(fastify: FastifyInstance) {
         reply.raw.end();
         return;
       }
+      // The assistant's own rate limit is the user's to act on: let the global
+      // handler answer 429 RATE_LIMITED instead of masking it as a 502.
+      if (error instanceof RateLimitedError) throw error;
       fastify.log.error(error, 'assistant chat failed');
       return reply.status(502).send({
         error: 'SERVICE_UNAVAILABLE',

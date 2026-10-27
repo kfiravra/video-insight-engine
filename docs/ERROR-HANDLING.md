@@ -59,8 +59,10 @@ See [docs/SECURITY.md](./SECURITY.md#rate-limiting) for implementation.
 
 | Code                  | Status | Message                                       | When                                                                            |
 | --------------------- | ------ | --------------------------------------------- | ------------------------------------------------------------------------------- |
-| `RATE_LIMITED`        | 429    | Too many requests                             | Rate limit exceeded (global plugin or per-route quota)                          |
+| `RATE_LIMITED`        | 429    | Too many requests                             | Rate limit exceeded (global plugin, per-route quota, or the assistant's chat window — see below) |
 | `DAILY_LIMIT_REACHED` | 429    | You've reached your daily cost limit ($X.XX)  | Per-user LLM cost cap reached. Response includes `resetAt` + `limitUsd` fields. |
+
+**Assistant chat.** The assistant service enforces its own 30 chat requests/min per user. When it answers 429 to `POST /api/videos/:id/chat` or `POST /api/assistant/library/chat`, the gateway returns `429 RATE_LIMITED` ("Too many messages. Please wait a moment and try again.") in the same `{ error, message, statusCode }` envelope as the rate-limit plugin — not a 502. Any other non-OK assistant status stays `502 SERVICE_UNAVAILABLE`. The assistant sends no `Retry-After`, so the gateway sets none. The web chat shows the slow-down message for a 429.
 
 ### Validation Errors (400)
 

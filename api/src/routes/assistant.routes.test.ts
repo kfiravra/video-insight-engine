@@ -138,6 +138,27 @@ describe('assistant routes', () => {
       expect(response.json().error).toBe('SERVICE_UNAVAILABLE');
     });
 
+    it('should return 429 RATE_LIMITED when the assistant rate-limits the user', async () => {
+      mockContainer.videoRepository.userHasAccessToSummary.mockResolvedValue(true);
+
+      const { RateLimitedError } = await import('../utils/errors.js');
+      mockContainer.assistantClient.chat.mockRejectedValue(new RateLimitedError());
+
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/videos/${validVideoSummaryId}/chat`,
+        headers: { authorization: authHeader },
+        payload: { message: 'Explain this video' },
+      });
+
+      expect(response.statusCode).toBe(429);
+      expect(response.json()).toEqual({
+        error: 'RATE_LIMITED',
+        message: 'Too many messages. Please wait a moment and try again.',
+        statusCode: 429,
+      });
+    });
+
     it('should pass message without conversationHistory when not provided', async () => {
       mockContainer.videoRepository.userHasAccessToSummary.mockResolvedValue(true);
 

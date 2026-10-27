@@ -245,6 +245,27 @@ describe('assistant library routes', () => {
       expect(response.json().error).toBe('SERVICE_UNAVAILABLE');
     });
 
+    it('should return 429 RATE_LIMITED when the assistant rate-limits the user', async () => {
+      mockContainer.videoRepository.getUserVideos.mockResolvedValue([{ youtubeId: 'vidA' }]);
+
+      const { RateLimitedError } = await import('../utils/errors.js');
+      mockContainer.assistantClient.libraryChat.mockRejectedValue(new RateLimitedError());
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/assistant/library/chat',
+        headers: { authorization: authHeader },
+        payload: { message: 'Explain my library' },
+      });
+
+      expect(response.statusCode).toBe(429);
+      expect(response.json()).toEqual({
+        error: 'RATE_LIMITED',
+        message: 'Too many messages. Please wait a moment and try again.',
+        statusCode: 429,
+      });
+    });
+
     it('should pass an abort signal tied to the request to the assistant client', async () => {
       mockContainer.videoRepository.getUserVideos.mockResolvedValue([{ youtubeId: 'vidA' }]);
 
