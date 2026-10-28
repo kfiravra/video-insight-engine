@@ -1,3 +1,5 @@
+import type { BillingAccountDetail, BillingAccountQuery } from './billing';
+
 const API_BASE = '';
 
 export class ApiError extends Error {
@@ -375,6 +377,16 @@ export interface VideoPurgeResponse {
   warnings: string[];
 }
 
+// --- Billing account (GET /billing/accounts/{user_id}) --- types live in ./billing
+
+export type * from './billing';
+
+export function getBillingAccount(userId: string, query: BillingAccountQuery = {}) {
+  return apiFetch<BillingAccountDetail>(
+    `/billing/accounts/${encodeURIComponent(userId)}${qs({ limit: query.limit, before: query.before })}`,
+  );
+}
+
 export const api = {
   usage: {
     stats: (days = 30) => apiFetch<Record<string, number>>(`/usage/stats${qs({ days })}`),
@@ -427,6 +439,9 @@ export const api = {
       }),
     activity: (userId: string) =>
       apiFetch<UserActivityResponse>(`/users/${encodeURIComponent(userId)}/activity`),
+  },
+  billing: {
+    account: getBillingAccount,
   },
   queue: {
     stats: () => apiFetch<QueueStatsResponse>('/queue/stats'),

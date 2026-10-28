@@ -1,5 +1,6 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
+import { mergeLedgerPages } from '../lib/billing';
 
 export function useUsageStats(days = 30) {
   return useQuery({ queryKey: ['usage-stats', days], queryFn: () => api.usage.stats(days), refetchInterval: 30_000 });
@@ -179,5 +180,25 @@ export function useUserActivity(userId: string | null | undefined) {
     queryFn: () => api.users.activity(userId!),
     enabled: !!userId,
     staleTime: 30_000,
+  });
+}
+
+export const BILLING_LEDGER_PAGE_SIZE = 50;
+
+/**
+ * A user's minutes account, read-only. The ledger is paged (`fetchNextPage` /
+ * `hasNextPage` load older entries); `data` is the merged `BillingAccountDetail`.
+ * Invalidate `['billing-account', userId]` after a billing change.
+ */
+export function useBillingAccount(userId: string | null | undefined) {
+  return useInfiniteQuery({
+    queryKey: ['billing-account', userId],
+    queryFn: ({ pageParam }) =>
+      api.billing.account(userId!, { limit: BILLING_LEDGER_PAGE_SIZE, before: pageParam }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (lastPage) => lastPage.ledgerNextBefore ?? undefined,
+    select: mergeLedgerPages,
+    enabled: !!userId,
+    staleTime: 15_000,
   });
 }

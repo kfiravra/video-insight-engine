@@ -168,6 +168,33 @@ self-attested; the session now names the real admin (`request.state.actor`), but
 endpoint does not use it yet. The route is replaced by a proxy to vie-api's billing
 endpoints (billing-roles P2.7), which take the actor from the signed header.
 
+### Billing Account (`/billing/`)
+
+Read-only view of a user's minutes account, behind the **Account** tab in the Users
+drawer. Reads the minutes-ledger collections that vie-api's `BillingService` writes
+(see [Data Models — Billing Collections](./DATA-MODELS.md#billing-collections-minutes-ledger));
+this router only calls `find` / `find_one` and never writes to them. The machine key and
+named admin sessions can both call it.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/billing/accounts/{user_id}?limit=50&before=<iso>` | The account (plan, free-video window, plan minutes, spendable credit, caps, open holds), up to 100 credit lots (newest first), open holds, live recurring grants, and one page of the ledger (newest first) |
+
+- **Errors:** `400` for an id that is not 24 hex characters or a `before` that is not an ISO 8601
+  timestamp; `404` for an unknown user; `422` for `limit` outside 1–200.
+- **Ledger paging:** pass the previous response's `ledgerNextBefore` as `before`; it is `null` on the
+  last page. A page never ends inside a run of entries sharing one `createdAt`, so none are skipped.
+- **No account yet:** vie-api creates `billingAccounts` rows lazily and vie-admin never writes, so a
+  user who has not submitted a video gets `200` with `account: null` and empty lists.
+- **Shape:** `AccountDetail` from `packages/types/src/billing.ts` plus `ledgerNextBefore` (ids hex, dates
+  ISO 8601 with milliseconds). Fields vie-api omits when absent are `null` here. The UI can switch to
+  vie-api's `GET /api/admin/billing/accounts/:userId` without changing.
+- **Stored state, not rolled:** vie-api rolls an ended Pro cycle forward in memory before it answers;
+  this view shows what is stored. A Pro cycle that ended with no request since reports `0` plan minutes
+  remaining (its last totals stay visible) until the user's next request rolls it.
+- **Constants:** the free-video window (1 video, 24 h, 30 min) mirrors `FREE_VIDEO` in
+  `packages/types/src/billing.ts`; a test fails if they drift.
+
 ## Frontend
 
 React SPA served as static files from the same container.
@@ -186,6 +213,7 @@ React SPA served as static files from the same container.
 - **Usage** — CostChart, ModelBreakdown, FeatureBreakdown, RecentCalls
 - **Health** — ServiceHealth, 7-day uptime grid
 - **Alerts** — Alert thresholds, recent alerts table
+- **Users** — cost table; the user drawer has Overview, **Account** (read-only billing: plan and term, free-video status — ready or next at, plan minutes used and left, spendable credits with a lot table, open holds, recurring grants, paged ledger with actor, reason and cost), Videos, Assistant and Adjustments tabs. `AccountTab` takes an `actions` slot for the billing action dialogs
 
 ## Security
 
@@ -230,6 +258,7 @@ React SPA served as static files from the same container.
 | `llm_usage` | none — financial ledger, retained indefinitely (a legacy 90-day TTL index is dropped at boot) | Callbacks (summarizer, assistant, worker) | Admin |
 | `llm_alerts` | None | llm-common callback, admin evaluator, summarizer stall sweeper | Admin |
 | `health_history` | 30 days | Admin health poller | Admin |
+| `billingAccounts`, `ledgerEntries`, `creditLots`, `recurringGrants` | none | vie-api `BillingService` only | Admin (read-only, `/billing/`) |
 
 ## Environment Variables
 

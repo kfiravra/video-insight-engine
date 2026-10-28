@@ -6,6 +6,7 @@ import { formatCost, formatNumber, formatDateTime, formatDuration, timeAgo, form
 import { Panel } from '../components/Panel';
 import { SkeletonPanel } from '../components/SkeletonPanel';
 import { ErrorState } from '../components/ErrorState';
+import { AccountTab } from '../components/users/AccountTab';
 
 interface UsersPageProps {
   days?: number;
@@ -191,7 +192,7 @@ function SortableTh({ label, active, dir, onClick }: SortableThProps) {
   );
 }
 
-type DrawerTab = 'overview' | 'videos' | 'assistant' | 'adjustments';
+type DrawerTab = 'overview' | 'account' | 'videos' | 'assistant' | 'adjustments';
 
 interface TabButtonProps {
   label: string;
@@ -520,6 +521,7 @@ function UserDetailDrawer({ user, onClose }: UserDetailDrawerProps) {
           aria-label="User detail tabs"
         >
           <TabButton label="Overview" active={activeTab === 'overview'} onClick={() => setActiveTab('overview')} />
+          <TabButton label="Account" active={activeTab === 'account'} onClick={() => setActiveTab('account')} />
           <TabButton label="Videos" active={activeTab === 'videos'} onClick={() => setActiveTab('videos')} />
           <TabButton label="Assistant" active={activeTab === 'assistant'} onClick={() => setActiveTab('assistant')} />
           <TabButton label="Adjustments" active={activeTab === 'adjustments'} onClick={() => setActiveTab('adjustments')} />
@@ -527,6 +529,7 @@ function UserDetailDrawer({ user, onClose }: UserDetailDrawerProps) {
 
         <div className="p-4">
           {activeTab === 'overview' && <OverviewTab userId={user.userId} />}
+          {activeTab === 'account' && <AccountTab userId={user.userId} />}
           {activeTab === 'videos' && <VideosTab userId={user.userId} />}
           {activeTab === 'assistant' && <AssistantTab userId={user.userId} />}
           {activeTab === 'adjustments' && <AdjustmentsTab userId={user.userId} />}
