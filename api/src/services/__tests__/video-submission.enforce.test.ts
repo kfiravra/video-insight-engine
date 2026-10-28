@@ -1,8 +1,8 @@
 /**
- * P3.1 — BILLING_LEDGER_ENFORCE on: the minutes ledger quotes and holds before
- * createVideo, refuses with 402/422/403/429 (METADATA_UNAVAILABLE fails
- * closed), gives a cached / attached / failed submit's hold back before
- * returning, and keys the run on a server id. The old dollar gate is skipped.
+ * P3.1 — the minutes ledger quotes and holds before createVideo, refuses with
+ * 402/422/403/429 (METADATA_UNAVAILABLE fails closed), gives a cached /
+ * attached / failed submit's hold back before returning, and keys the run on
+ * a server id. It is the only gate (P3.2): no dollar cap, no switch.
  */
 import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
 import { ObjectId } from 'mongodb';
@@ -21,9 +21,8 @@ import {
 } from '../../utils/errors.js';
 import { IdempotencyService } from '../idempotency.service.js';
 import { VideoSubmissionService, type SubmitVideoInput } from '../video-submission.service.js';
-import { insertUser, makeEnforcement, makeShadowHarness } from '../billing/__tests__/billing-fixtures.js';
-import type { ShadowHarness } from '../billing/__tests__/billing-fixtures.js';
-import type { CostMonitorService } from '../cost-monitor.service.js';
+import { insertUser, makeBillingHarness, makeEnforcement } from '../billing/__tests__/billing-fixtures.js';
+import type { BillingHarness } from '../billing/__tests__/billing-fixtures.js';
 import type { VideoService } from '../video.service.js';
 
 const logger = mockLogger as unknown as FastifyBaseLogger;
@@ -31,12 +30,11 @@ const ctx = () => ({ actorId: 'system:test', reason: 'test', auditId: new Object
 let videoCounter = 0;
 const freshVideo = () => `https://www.youtube.com/watch?v=en${String(++videoCounter).padStart(9, '0')}`;
 
-describe('VideoSubmissionService with BILLING_LEDGER_ENFORCE on', () => {
-  let h: ShadowHarness;
+describe('VideoSubmissionService on the minutes ledger', () => {
+  let h: BillingHarness;
   let service: VideoSubmissionService;
   let userId: string;
   let createVideo: ReturnType<typeof vi.fn>;
-  let costMonitor: { reserveUserCost: ReturnType<typeof vi.fn>; refundReservation: ReturnType<typeof vi.fn> };
 
   const input = (overrides: Partial<SubmitVideoInput> = {}): SubmitVideoInput => ({
     userId, url: freshVideo(), tier: 'free', requestId: 'client-req-1', ...overrides,
@@ -72,35 +70,37 @@ describe('VideoSubmissionService with BILLING_LEDGER_ENFORCE on', () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
-    h = makeShadowHarness(getTestDb());
+    h = makeBillingHarness(getTestDb());
     userId = await insertUser(getTestDb());
     // Like the real createVideo for a video nobody has: serve-only finds nothing to serve.
     createVideo = vi.fn().mockImplementation(async (owner: string, _url: string, options: { serveOnly?: boolean }) => {
       if (options.serveOnly) throw new RunNotAllowedError();
       return createdWithLibraryRow(owner);
     });
-    costMonitor = { reserveUserCost: vi.fn(), refundReservation: vi.fn().mockResolvedValue(undefined) };
     service = new VideoSubmissionService(
       { createVideo } as unknown as VideoService,
-      costMonitor as unknown as CostMonitorService,
       new IdempotencyService(new IdempotencyRepository(getTestDb()), logger),
       new VideoRepository(getTestDb()),
       logger,
-      h.shadow,
       makeEnforcement(getTestDb(), h),
     );
   });
 
   describe('admission', () => {
-    it('should hold before createVideo, keyed on a server id, and skip the old dollar gate', async () => {
+    it('should hold before createVideo, keyed on a server id', async () => {
       await submitMinutes(10);
 
       const [hold] = await holds();
       expect(hold.source.ref).toBe(runIdOf());
       expect(runIdOf()).not.toBe('client-req-1');
       expect(createVideo.mock.calls[0][2].requestId).toBe('client-req-1');
-      expect(costMonitor.reserveUserCost).not.toHaveBeenCalled();
-      expect(await getTestDb().collection('billingShadow').countDocuments()).toBe(0);
+    });
+
+    it('should write no dollar counter and no shadow row (P3.2)', async () => {
+      await submitMinutes(10);
+
+      const counts = await Promise.all(['userCosts', 'billingShadow'].map((name) => getTestDb().collection(name).countDocuments()));
+      expect(counts).toEqual([0, 0]);
     });
 
     it('should refuse with 402 INSUFFICIENT_MINUTES before createVideo and release the idempotency key', async () => {
@@ -234,34 +234,5 @@ describe('VideoSubmissionService with BILLING_LEDGER_ENFORCE on', () => {
 
       expect(new Set((await holds()).map((hold) => hold.source.ref)).size).toBe(2);
     });
-  });
-});
-
-describe('VideoSubmissionService with BILLING_LEDGER_ENFORCE off', () => {
-  it('should never block on minutes and still write the shadow ledger', async () => {
-    await createBillingIndexes(getTestDb());
-    const h = makeShadowHarness(getTestDb());
-    const userId = await insertUser(getTestDb());
-    const createVideo = vi.fn().mockImplementation(async () => ({
-      video: { id: new ObjectId().toHexString(), videoSummaryId: new ObjectId().toHexString(), youtubeId: 'x', status: 'pending' },
-      cached: false,
-    }));
-    const service = new VideoSubmissionService(
-      { createVideo } as unknown as VideoService,
-      { reserveUserCost: vi.fn().mockResolvedValue(null), refundReservation: vi.fn() } as unknown as CostMonitorService,
-      { computeKey: vi.fn().mockReturnValue(null) } as unknown as IdempotencyService,
-      new VideoRepository(getTestDb()),
-      mockLogger as unknown as FastifyBaseLogger,
-      h.shadow,
-    );
-
-    for (const id of ['offaaaaaaaa', 'offbbbbbbbb']) {
-      const result = await service.submit({ userId, url: `https://www.youtube.com/watch?v=${id}`, tier: 'free', bypassCache: true });
-      expect(result.outcome).toBe('created');
-    }
-    await h.shadow.drain();
-
-    const rows = await getTestDb().collection('billingShadow').find({}).toArray();
-    expect(rows.map((row) => row.newDecision.admitted).sort()).toEqual([false, true]);
   });
 });

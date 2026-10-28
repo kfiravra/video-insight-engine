@@ -2,19 +2,15 @@ import { vi } from 'vitest';
 import { ObjectId } from 'mongodb';
 import { mockLogger } from '../../../test/setup.js';
 import { BillingRepository } from '../../../repositories/billing.repository.js';
-import { BillingShadowRepository } from '../../../repositories/billing-shadow.repository.js';
 import { LlmUsageRepository } from '../../../repositories/llm-usage.repository.js';
 import { UserRepository } from '../../../repositories/user.repository.js';
 import { BillingGate } from '../billing-gate.js';
-import { BillingShadowService } from '../billing-shadow.service.js';
 import { BillingService } from '../billing.service.js';
 import { LedgerEnforcement } from '../ledger-enforcement.js';
-import { ShadowRunner } from '../shadow-runner.js';
 import type { Db } from 'mongodb';
 import type { FastifyBaseLogger } from 'fastify';
 import type { BillingAccountDocument, CreditLotDocument } from '../../../repositories/billing.repository.js';
-import type { BillingShadowDocument } from '../../../repositories/billing-shadow.repository.js';
-import type { DispatchStampReader } from '../billing-shadow.service.js';
+import type { DispatchStampReader } from '../run-stamp.js';
 
 /** A free account with empty buckets; override any part. */
 export function makeAccountDoc(overrides: Partial<BillingAccountDocument> = {}): BillingAccountDocument {
@@ -87,51 +83,24 @@ export async function insertUser(db: Db): Promise<string> {
 export const HOUR_MS = 60 * 60 * 1000;
 export const DAY_MS = 24 * HOUR_MS;
 
-/** A real, enabled shadow ledger on `db` with stubbed metadata and dispatch stamps. */
-export interface ShadowHarness {
-  shadow: BillingShadowService;
+/** A real minutes ledger on `db` with stubbed metadata and dispatch stamps. */
+export interface BillingHarness {
   billing: BillingService;
   gate: BillingGate;
-  runner: ShadowRunner;
   metadata: { getVideoMetadata: ReturnType<typeof vi.fn> };
   /** videoSummaryId → the requestId its dispatch stamped on the cache row. */
   stamps: Map<string, string>;
-  rowOf: (requestId: string) => Promise<BillingShadowDocument | null>;
 }
 
-export interface ShadowHarnessOptions {
-  enabled?: boolean;
-  clock?: () => Date;
-  /** Read stamps from here (e.g. a real VideoRepository) instead of the `stamps` map. */
-  dispatchStamps?: DispatchStampReader;
-}
-
-export function makeShadowHarness(db: Db, options: ShadowHarnessOptions = {}): ShadowHarness {
-  const { enabled = true, clock = () => new Date() } = options;
+export function makeBillingHarness(db: Db, clock: () => Date = () => new Date()): BillingHarness {
   const logger = mockLogger as unknown as FastifyBaseLogger;
   const billing = new BillingService(new BillingRepository(db), new UserRepository(db), logger, clock);
   const metadata = { getVideoMetadata: vi.fn().mockResolvedValue({ duration: 600 }) };
-  const stamps = new Map<string, string>();
-  const runner = new ShadowRunner(logger);
-  const rows = new BillingShadowRepository(db);
-  const gate = new BillingGate(billing, metadata);
-  const shadow = new BillingShadowService({
-    enabled,
-    gate,
-    billing,
-    rows,
-    llmUsage: new LlmUsageRepository(db),
-    dispatchStamps: options.dispatchStamps ?? {
-      findCacheById: async (id: string) => (stamps.has(id) ? { requestId: stamps.get(id) } : null),
-    },
-    runner,
-    logger,
-  });
-  return { shadow, billing, gate, runner, metadata, stamps, rowOf: (requestId) => rows.findByRequestId(requestId) };
+  return { billing, gate: new BillingGate(billing, metadata), metadata, stamps: new Map<string, string>() };
 }
 
-/** BILLING_LEDGER_ENFORCE on, over the harness's billing service and gate; stamps from `dispatchStamps` or the map. */
-export function makeEnforcement(db: Db, h: ShadowHarness, dispatchStamps?: DispatchStampReader): LedgerEnforcement {
+/** The ledger as the app wires it, over the harness's billing service and gate; stamps from `dispatchStamps` or the map. */
+export function makeEnforcement(db: Db, h: BillingHarness, dispatchStamps?: DispatchStampReader): LedgerEnforcement {
   return new LedgerEnforcement({
     billing: h.billing,
     gate: h.gate,

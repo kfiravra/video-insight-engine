@@ -202,7 +202,7 @@ export async function buildApp(options?: BuildAppOptions): Promise<FastifyInstan
   await fastify.register(adminAuthPlugin);
   // ADMIN_EMAILS role reconcile (runs on ready, after the mongodb index hook)
   await fastify.register(adminSeedPlugin);
-  // Billing repair job (on ready) + shadow-ledger drain (on close)
+  // Billing repair job (started on ready, stopped on close)
   await fastify.register(billingRepairPlugin);
 
   // Global error handler. The status/envelope mapping lives in

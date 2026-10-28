@@ -1,4 +1,3 @@
-import { FastifyBaseLogger } from 'fastify';
 import { ObjectId } from 'mongodb';
 import { config } from '../config.js';
 import { extractPlaylistId } from '../utils/youtube.js';
@@ -11,12 +10,10 @@ import {
 import { VideoService } from './video.service.js';
 import { FolderService } from './folder.service.js';
 import { SummarizerClient, type ProviderConfig } from './summarizer-client.js';
-import { CostMonitorService } from './cost-monitor.service.js';
-import { DollarGateItemImporter, LedgerItemImporter } from './playlist-items.js';
+import { LedgerItemImporter } from './playlist-items.js';
 import type { UserTier } from '@vie/types';
-import type { BillingShadowService } from './billing/billing-shadow.service.js';
-import type { LedgerEnforcement, PlaylistPlan } from './billing/ledger-enforcement.js';
-import type { FailedVideoImport, ImportedVideo, ItemImportContext, ItemImporter, ItemOutcome } from './playlist-items.js';
+import type { LedgerEnforcement } from './billing/ledger-enforcement.js';
+import type { FailedVideoImport, ImportedVideo, ItemImporter, ItemOutcome } from './playlist-items.js';
 
 export type { FailedVideoImport } from './playlist-items.js';
 
@@ -73,8 +70,8 @@ export interface PlaylistImportResult {
   processingCount: number;
   failedCount: number;
   failedVideos: FailedVideoImport[];
-  /** BILLING_LEDGER_ENFORCE on: the up-front quote ("needs 340 min, you have 120"). */
-  billing?: { neededMinutes: number; availableMinutes: number; freeVideoAvailable: boolean };
+  /** The up-front quote ("needs 340 min, you have 120"). */
+  billing: { neededMinutes: number; availableMinutes: number; freeVideoAvailable: boolean };
 }
 
 const EXTRACT_TIMEOUT_MS = 30000; // 30 seconds for extraction
@@ -84,13 +81,8 @@ export class PlaylistService {
     private readonly videoService: VideoService,
     private readonly folderService: FolderService,
     private readonly summarizerClient: SummarizerClient,
-    private readonly logger: FastifyBaseLogger,
-    private readonly costMonitorService?: CostMonitorService,
-    // Shadow minutes ledger (P1.7): never decides. With it, every item gets its
-    // own requestId so the terminal status can settle that item's hold.
-    private readonly billingShadow?: BillingShadowService,
-    // P3.1: present when BILLING_LEDGER_ENFORCE is on — the ledger decides.
-    private readonly billingEnforcement?: LedgerEnforcement,
+    // The minutes ledger decides every item (P3.1; the only gate since P3.2).
+    private readonly billingEnforcement: LedgerEnforcement,
   ) {}
 
   /**
@@ -151,27 +143,25 @@ export class PlaylistService {
 
     // Extract playlist data
     const playlistData = await this.extractFromSummarizer(playlistId, maxVideos);
-    // Enforcing: quote the whole playlist before anything is created; nothing affordable → refused here.
-    const plan = this.billingEnforcement
-      ? await this.billingEnforcement.planPlaylist(
-        userId,
-        playlistData.videos.map((v) => ({ youtubeId: v.video_id, durationSec: v.duration })),
-      )
-      : null;
+    // Quote the whole playlist before anything is created; nothing affordable → refused here.
+    const plan = await this.billingEnforcement.planPlaylist(
+      userId,
+      playlistData.videos.map((v) => ({ youtubeId: v.video_id, durationSec: v.duration })),
+    );
     const folder = await this.resolveFolder(userId, folderId, playlistData.title);
-    const importer = this.itemImporter({ userId, folderId: folder.id, providers, tier }, plan);
+    const importer = new LedgerItemImporter(
+      this.videoService, this.billingEnforcement, { userId, folderId: folder.id, providers, tier }, plan.durationsSec,
+    );
     const result = await this.importItems(importer, playlistData.videos);
     return {
       folder,
       ...result,
       totalVideos: playlistData.total_videos,
-      ...(plan && {
-        billing: {
-          neededMinutes: plan.quote.neededMinutes,
-          availableMinutes: plan.quote.availableMinutes,
-          freeVideoAvailable: plan.quote.freeVideoAvailable,
-        },
-      }),
+      billing: {
+        neededMinutes: plan.quote.neededMinutes,
+        availableMinutes: plan.quote.availableMinutes,
+        freeVideoAvailable: plan.quote.freeVideoAvailable,
+      },
     };
   }
 
@@ -190,19 +180,12 @@ export class PlaylistService {
     return { id: newFolder.id, name: newFolder.name };
   }
 
-  private itemImporter(ctx: ItemImportContext, plan: PlaylistPlan | null): ItemImporter {
-    if (this.billingEnforcement && plan) {
-      return new LedgerItemImporter(this.videoService, this.billingEnforcement, ctx, plan.durationsSec);
-    }
-    return new DollarGateItemImporter(this.videoService, this.logger, ctx, this.costMonitorService, this.billingShadow);
-  }
-
   /**
    * Items in playlist order. A refusal that later items cannot do better on
-   * (the old daily cap; enforcing: out of minutes, too many runs, blocked)
-   * stops the import there and records every later item with the same error,
-   * so the UI can say "stopped at video N" — the import admits a prefix.
-   * Enforcing, a later item already cached or running is still served (Q6).
+   * (out of minutes, too many runs, blocked) stops the import there and
+   * records every later item with the same error, so the UI can say "stopped
+   * at video N" — the import admits a prefix. A later item already cached or
+   * running is still served (Q6).
    */
   private async importItems(
     importer: ItemImporter,

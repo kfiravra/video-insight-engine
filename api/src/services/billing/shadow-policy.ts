@@ -9,18 +9,19 @@ import {
   VideoTooLongForPlanError,
 } from '../../utils/errors.js';
 import type { BillingShadowDecision, BillingShadowPath } from '@vie/types';
-import type { AllocationRejection } from './allocation.js';
 
 // Contract 4: the old dollar gate and the minutes ledger disagree on purpose
 // in some places. Every intended difference is one row of POLICY_DELTAS with
 // the decision behind it; a difference no row explains is `disagree`, which
-// the P1.11 replay harness fails on. Two differences are never "explained":
-// a refusal on a cached / attached path that was not served free (a Q6
-// break, C1) is `disagree`, and a ledger that could not get the video's
+// the P1.11 replay harness fails on. Since P3.2 the old gate is gone: the
+// harness compares the ledger against recorded old decisions (its scenarios
+// and the dev `billingShadow` rows, kept readable). Two differences are never
+// "explained": a refusal on a cached / attached path that was not served free
+// (a Q6 break, C1) is `disagree`, and a ledger that could not get the video's
 // length is its own class `metadata_unavailable` (W1) — counted and reported
 // by the gate, because during a YouTube block it would refuse every submit.
 
-/** Why the ledger refused (or could not decide) — stored as `newDecision.reason`. */
+/** Why the ledger refused (or could not decide) — `newDecision.reason`; the last two occur only in recorded shadow rows. */
 export type ShadowReason =
   | 'free_window_used'
   | 'needs_paid_minutes'
@@ -38,7 +39,7 @@ export type ShadowReason =
  * Refusals that still let a video be served when serving it costs nothing —
  * already in the library, a completed row, or a live run to attach to (Q6).
  * Only a run needs minutes; a blocked account is refused outright. Read by
- * the enforcement path (serve-only createVideo) and the shadow alike.
+ * the enforcement path (serve-only createVideo).
  */
 export const SERVES_WITHOUT_RUN: ReadonlySet<string> = new Set<ShadowReason>([
   'free_window_used',
@@ -138,23 +139,7 @@ export function classifyShadow(facts: ShadowFacts): ShadowClassification {
   return delta ? { classification: 'policy_delta', policyRef: delta.policyRef } : { classification: 'disagree' };
 }
 
-/** Name the ledger's refusal in the vocabulary the policy table matches on. */
-export function rejectionReason(rejection: AllocationRejection, minutes: number): ShadowReason {
-  switch (rejection.reason) {
-    case 'blocked':
-      return 'blocked';
-    case 'too_many_runs':
-      return 'too_many_runs';
-    case 'too_long':
-      return 'too_long';
-    case 'insufficient':
-      if (rejection.nextFreeAt) return 'free_window_used';
-      // A video that fits the free limit and still found no slot: the free video is switched off.
-      return minutes > FREE_VIDEO.maxVideoMinutes ? 'needs_paid_minutes' : 'free_disabled';
-  }
-}
-
-/** The ledger's refusal named from a thrown error; null when the error is not a decision. */
+/** The ledger's refusal named from a thrown error (in the policy table's vocabulary); null when it is not a decision. */
 export function errorReason(err: unknown): ShadowReason | null {
   if (err instanceof MetadataUnavailableError) return 'metadata_unavailable';
   if (err instanceof HoldFinalizedError) return 'hold_finalized';
@@ -164,6 +149,7 @@ export function errorReason(err: unknown): ShadowReason | null {
   if (err instanceof VideoTooLongForPlanError) return 'too_long';
   if (err instanceof InsufficientMinutesError) {
     if (err.nextFreeAt) return 'free_window_used';
+    // A video that fits the free limit and still found no slot: the free video is switched off.
     return err.needed > FREE_VIDEO.maxVideoMinutes ? 'needs_paid_minutes' : 'free_disabled';
   }
   return null;

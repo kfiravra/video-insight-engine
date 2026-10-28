@@ -1,7 +1,6 @@
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { idParamSchema, objectIdSchema, youtubeIdSchema } from '../utils/validation.js';
-import { config } from '../config.js';
 import { VideoSubmissionService } from '../services/video-submission.service.js';
 
 // Stripe's spec is "1–255 chars, opaque to us". Reject longer to keep junk out
@@ -50,7 +49,6 @@ export async function videosRoutes(fastify: FastifyInstance) {
   const {
     videoService,
     videoCascadeService,
-    costMonitorService,
     idempotencyService,
     videoRepository,
     submitBurstLimiter,
@@ -59,12 +57,10 @@ export async function videosRoutes(fastify: FastifyInstance) {
   // container services via `buildTestApp` keep full control over its deps.
   const videoSubmissionService = new VideoSubmissionService(
     videoService,
-    costMonitorService,
     idempotencyService,
     videoRepository,
     fastify.log,
-    fastify.container.billingShadowService,
-    fastify.container.billingEnforcement ?? undefined,
+    fastify.container.billingEnforcement,
   );
 
   // GET /api/videos
@@ -89,24 +85,12 @@ export async function videosRoutes(fastify: FastifyInstance) {
     return videoService.getVideo(req.user.userId, id);
   });
 
-  // POST /api/videos
-  // Video daily limit is configurable via VIDEO_DAILY_LIMIT env var (0 = unlimited)
-  const videoDailyLimit = config.RATE_LIMITS.VIDEO_DAILY;
+  // POST /api/videos — no per-route daily limit: the minutes ledger decides
+  // what a run costs and the hourly burst guard below stops abuse (P3.2/P3.3).
   fastify.post<{
     Body: z.infer<typeof createVideoSchema>;
   }>('/', {
     preHandler: [fastify.authenticate, fastify.resolveTier],
-    config: {
-      rateLimit: videoDailyLimit > 0 ? {
-        max: videoDailyLimit,
-        timeWindow: '24 hours',
-        errorResponseBuilder: () => ({
-          error: 'RATE_LIMITED',
-          message: `Daily video limit reached (${videoDailyLimit} videos per 24 hours). Try again tomorrow.`,
-          statusCode: 429,
-        }),
-      } : false, // Disable rate limiting when limit is 0
-    },
   }, async (req, reply) => {
     const input = createVideoSchema.parse(req.body);
 
@@ -133,10 +117,10 @@ export async function videosRoutes(fastify: FastifyInstance) {
     // import: an abuse guard, checked before any work (RATE_LIMITED, 429).
     await submitBurstLimiter.consume(req.user.userId);
 
-    // Full submission flow (idempotency gate → cost reservation → createVideo
-    // → unwind on failure) lives in the service so the assistant's internal
-    // generate route enforces the exact same gates. DailyLimitReachedError and
-    // createVideo errors propagate to the app-level error handler.
+    // Full submission flow (idempotency gate → ledger quote + hold →
+    // createVideo → unwind on failure) lives in the service so the assistant's
+    // internal generate route enforces the exact same gates. Ledger refusals
+    // and createVideo errors propagate to the app-level error handler.
     const submission = await videoSubmissionService.submit({
       userId: req.user.userId,
       url: input.url,

@@ -169,9 +169,6 @@ export async function createBillingIndexes(db: Db): Promise<void> {
     { key: { accountId: 1 } },
     { key: { nextRunAt: 1 } },
   ]);
-  await db.collection('billingShadow').createIndexes([
-    { key: { requestId: 1 }, unique: true },
-  ]);
   // A settle sums the run's LLM $ by request_id. Same spec as vie-admin's
   // index (services/admin/src/main.py), so whichever service boots first
   // builds it and the other's call is a no-op.

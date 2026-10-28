@@ -1,19 +1,15 @@
 import { randomUUID } from 'node:crypto';
-import { AppError, DailyLimitReachedError, RunNotAllowedError } from '../utils/errors.js';
-import { submitOutcome } from './billing/billing-shadow.service.js';
+import { AppError, RunNotAllowedError } from '../utils/errors.js';
+import { submitOutcome } from './billing/run-stamp.js';
 import { refusalServesWithoutRun } from './billing/shadow-policy.js';
-import type { FastifyBaseLogger } from 'fastify';
 import type { UserTier } from '@vie/types';
-import type { BillingShadowService } from './billing/billing-shadow.service.js';
-import type { GateSubmission } from './billing/billing-gate.js';
 import type { LedgerEnforcement } from './billing/ledger-enforcement.js';
-import type { CostMonitorService } from './cost-monitor.service.js';
 import type { ProviderConfig } from './summarizer-client.js';
 import type { VideoService } from './video.service.js';
 
-// One playlist item through the gate that decides it — the old dollar gate
-// (with the shadow ledger beside it) or, with BILLING_LEDGER_ENFORCE, the
-// minutes ledger. P3.2 deletes DollarGateItemImporter.
+// One playlist item through the minutes ledger: quote + hold on its own
+// server run id, served free when the ledger will not pay but serving costs
+// nothing (Q6), given back on cached / attached / error.
 
 export interface PlaylistItem {
   video_id: string;
@@ -56,7 +52,7 @@ export interface ItemImportContext {
 
 export interface ItemImporter {
   import(item: PlaylistItem, index: number): Promise<ItemOutcome>;
-  /** An item after the import stopped: failed with the stopping error (enforcing: unless it can be served free). */
+  /** An item after the import stopped: failed with the stopping error, unless it can be served free. */
   skip(item: PlaylistItem, error: string): Promise<ItemOutcome>;
 }
 
@@ -87,7 +83,7 @@ function imported(item: PlaylistItem, result: CreateVideoResult): ItemOutcome {
   return { kind: 'imported', video, cached: result.cached === true };
 }
 
-/** BILLING_LEDGER_ENFORCE on: quote + hold per item (its own server run id), give back on cached / attached / error. */
+/** Quote + hold per item (its own server run id); give back on cached / attached / error. */
 export class LedgerItemImporter implements ItemImporter {
   constructor(
     private readonly videoService: VideoService,
@@ -142,83 +138,5 @@ export class LedgerItemImporter implements ItemImporter {
   ): Promise<CreateVideoResult> {
     const { userId, folderId, providers, tier } = this.ctx;
     return this.videoService.createVideo(userId, videoUrl(item), { folderId, bypassCache: false, providers, tier, ...extra });
-  }
-}
-
-/** BILLING_LEDGER_ENFORCE off: the old per-item dollar reservation, with the shadow ledger told about each item. */
-export class DollarGateItemImporter implements ItemImporter {
-  constructor(
-    private readonly videoService: VideoService,
-    private readonly logger: FastifyBaseLogger,
-    private readonly ctx: ItemImportContext,
-    private readonly costMonitorService?: CostMonitorService,
-    private readonly billingShadow?: BillingShadowService,
-  ) {}
-
-  async import(item: PlaylistItem): Promise<ItemOutcome> {
-    const shadow = this.shadowSubmission(item);
-    let reservation = null;
-    let admitted = false;
-    try {
-      if (this.costMonitorService) reservation = await this.costMonitorService.reserveUserCost(this.ctx.userId, this.ctx.tier);
-      admitted = true;
-      if (shadow) this.billingShadow?.submitAdmitted(shadow);
-      const { folderId, providers, tier } = this.ctx;
-      const result = await this.videoService.createVideo(this.ctx.userId, videoUrl(item), {
-        folderId, bypassCache: false, providers, tier,
-        ...(shadow && { requestId: shadow.requestId, billingRunId: shadow.requestId }),
-      });
-      if (shadow) this.billingShadow?.submitResolved(shadow.requestId, submitOutcome(result));
-      // Cached / attached runs no pipeline for this caller — refund. A failed
-      // refund must not fail the import: the video exists, and the catch below
-      // would refund a second time.
-      if (result.cached || result.attached) await this.refund(reservation, item, 'cached/attached-video refund failed during playlist import');
-      return imported(item, result);
-    } catch (err) {
-      return this.failure(err, item, shadow, admitted, reservation);
-    }
-  }
-
-  async skip(item: PlaylistItem, error: string): Promise<ItemOutcome> {
-    const shadow = this.shadowSubmission(item);
-    if (shadow) this.billingShadow?.submitRefused(shadow);
-    return failed(item, error);
-  }
-
-  private async failure(
-    err: unknown,
-    item: PlaylistItem,
-    shadow: GateSubmission | null,
-    admitted: boolean,
-    reservation: Awaited<ReturnType<CostMonitorService['reserveUserCost']>> | null,
-  ): Promise<ItemOutcome> {
-    if (shadow && admitted) this.billingShadow?.submitFailed(shadow.requestId);
-    if (shadow && err instanceof DailyLimitReachedError) this.billingShadow?.submitRefused(shadow);
-    // A failed refund must not abort the loop — the remaining videos would never be processed.
-    if (reservation) await this.refund(reservation, item, 'failed-video refund failed during playlist import');
-    if (err instanceof DailyLimitReachedError) {
-      this.logger.info({ userId: this.ctx.userId }, 'Playlist import stopped at per-user cost cap');
-      return failed(item, 'DAILY_LIMIT_REACHED', true);
-    }
-    const errorMessage = err instanceof Error ? err.message : String(err);
-    this.logger.warn({ youtubeId: item.video_id, error: errorMessage }, 'Failed to import video');
-    return failed(item, errorMessage);
-  }
-
-  private async refund(
-    reservation: Awaited<ReturnType<CostMonitorService['reserveUserCost']>> | null,
-    item: PlaylistItem,
-    message: string,
-  ): Promise<void> {
-    if (!this.costMonitorService) return;
-    await this.costMonitorService.refundReservation(reservation).catch((refundErr) => {
-      this.logger.warn({ err: refundErr, userId: this.ctx.userId, youtubeId: item.video_id }, message);
-    });
-  }
-
-  /** With the shadow, every item gets its own run id, stamped by its dispatch, so its terminal status settles it. */
-  private shadowSubmission(item: PlaylistItem): GateSubmission | null {
-    if (!this.billingShadow) return null;
-    return { requestId: randomUUID(), userId: this.ctx.userId, youtubeId: item.video_id, durationSec: item.duration };
   }
 }

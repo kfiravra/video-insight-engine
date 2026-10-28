@@ -4,7 +4,6 @@ import { config } from '../config.js';
 import {
   AppError,
   ChatLimitReachedError,
-  DailyLimitReachedError,
   InsufficientMinutesError,
   TooManyRunsError,
   VideoTooLongForPlanError,
@@ -13,16 +12,13 @@ import {
 /**
  * The documented error body (docs/ERROR-HANDLING.md): `{ error, message,
  * statusCode }`, plus `details` when structured context exists (Zod issue
- * list), the `resetAt`/`limitUsd` extras for the daily cost cap and `nextAt`
- * for the free chat limit.
+ * list), `nextAt` for the free chat limit and the minutes gate's numbers.
  */
 export interface ErrorEnvelope {
   error: string;
   message: string;
   statusCode: number;
   details?: { issues: Array<{ path: string; message: string }> };
-  resetAt?: string;
-  limitUsd?: number;
   nextAt?: string;
   /** INSUFFICIENT_MINUTES: the video's minutes, the paid minutes there are, when the free video reopens. */
   needed?: number;
@@ -74,20 +70,6 @@ export function resolveErrorEnvelope(error: HandledError): ResolvedError {
             message: issue.message,
           })),
         },
-      },
-    };
-  }
-
-  // Daily cost limit reached — surface resetAt for the UI countdown
-  if (error instanceof DailyLimitReachedError) {
-    return {
-      statusCode: error.status,
-      body: {
-        error: error.code,
-        message: error.message,
-        statusCode: error.status,
-        resetAt: error.resetAt,
-        limitUsd: error.limitUsd,
       },
     };
   }

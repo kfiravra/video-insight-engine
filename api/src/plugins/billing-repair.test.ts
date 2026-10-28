@@ -3,16 +3,12 @@ import Fastify from 'fastify';
 import { billingRepairPlugin } from './billing-repair.js';
 import type { BillingRepairPluginOptions } from './billing-repair.js';
 
-function appWith(options: BillingRepairPluginOptions, drain: () => Promise<void> = async () => undefined) {
+function appWith(options: BillingRepairPluginOptions) {
   const app = Fastify({ logger: false });
   const runOnce = vi.fn().mockResolvedValue('locked');
-  const drainSpy = vi.fn(drain);
-  app.decorate('container', {
-    billingRepairService: { runOnce },
-    billingShadowService: { drain: drainSpy },
-  } as never);
+  app.decorate('container', { billingRepairService: { runOnce } } as never);
   void app.register(billingRepairPlugin, options);
-  return { app, runOnce, drain: drainSpy };
+  return { app, runOnce };
 }
 
 const waitFor = async (check: () => boolean): Promise<void> => {
@@ -40,31 +36,15 @@ describe('billingRepairPlugin', () => {
     await app.close();
   });
 
-  it('should drain the shadow ledger on close', async () => {
-    const { app, drain } = appWith({ enabled: false });
+  it('should stop the repair job on close, so no run starts after shutdown', async () => {
+    const { app, runOnce } = appWith({ enabled: true, intervalMs: 10, firstRunDelayMs: 0 });
     await app.ready();
+    await waitFor(() => runOnce.mock.calls.length > 0);
 
     await app.close();
+    const runsAtClose = runOnce.mock.calls.length;
+    await new Promise((resolve) => setTimeout(resolve, 50));
 
-    expect(drain).toHaveBeenCalledTimes(1);
-  });
-
-  it('should finish closing when the drain itself fails', async () => {
-    const { app } = appWith({ enabled: false }, async () => {
-      throw new Error('mongo down');
-    });
-    await app.ready();
-
-    await expect(app.close()).resolves.toBeUndefined();
-  });
-
-  it('should give up on a drain that outlasts its timeout, so shutdown is bounded', async () => {
-    const { app } = appWith({ enabled: false, shadowDrainTimeoutMs: 20 }, () => new Promise(() => undefined));
-    await app.ready();
-    const started = Date.now();
-
-    await app.close();
-
-    expect(Date.now() - started).toBeLessThan(1000);
+    expect(runOnce).toHaveBeenCalledTimes(runsAtClose);
   });
 });

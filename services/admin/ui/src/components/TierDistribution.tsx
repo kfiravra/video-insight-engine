@@ -8,7 +8,7 @@ export function TierDistribution() {
   const { data, isLoading, isError, error, refetch } = useTierDistribution();
 
   if (isError) {
-    return <ErrorState error={error} onRetry={() => refetch()} title="Failed to load tier distribution" />;
+    return <ErrorState error={error} onRetry={() => refetch()} title="Failed to load plan distribution" />;
   }
 
   if (isLoading || !data) {
@@ -17,9 +17,9 @@ export function TierDistribution() {
 
   if (data.length === 0) {
     return (
-      <Panel title="User Tiers" tone="raised" padding="md">
+      <Panel title="User Plans" tone="raised" padding="md">
         <div className="h-40 flex items-center justify-center">
-          <p className="text-sm text-[var(--color-text-faint)]">No tier data available</p>
+          <p className="text-sm text-[var(--color-text-faint)]">No plan data available</p>
         </div>
       </Panel>
     );
@@ -31,7 +31,7 @@ export function TierDistribution() {
   }));
 
   return (
-    <Panel title="User Tiers" tone="raised" padding="md" className="tier-distribution">
+    <Panel title="User Plans" tone="raised" padding="md" className="tier-distribution">
       <div data-testid="tier-distribution">
         <ResponsiveContainer width="100%" height={180}>
           <BarChart data={chartData} layout="vertical" margin={{ left: 10, right: 40 }}>

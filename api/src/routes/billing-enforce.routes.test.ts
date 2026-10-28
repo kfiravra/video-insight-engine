@@ -1,6 +1,5 @@
 /**
- * P3.1 on the wire, with BILLING_LEDGER_ENFORCE on (a real LedgerEnforcement
- * on the test replica set): the refusals reach the client as 402 / 422 / 403 /
+ * P3.1 on the wire, over a real LedgerEnforcement on the test replica set: the refusals reach the client as 402 / 422 / 403 /
  * 429 with their numbers as body fields; the assistant's generate route runs
  * the same gate; the terminal status settles the run exactly once.
  */
@@ -11,17 +10,17 @@ import { buildTestApp, createMockContainer, type MockContainer } from '../test/h
 import { getTestDb } from '../test/setup.js';
 import { createBillingIndexes } from '../plugins/mongodb.js';
 import { RunNotAllowedError } from '../utils/errors.js';
-import { insertUser, makeEnforcement, makeShadowHarness } from '../services/billing/__tests__/billing-fixtures.js';
-import type { ShadowHarness } from '../services/billing/__tests__/billing-fixtures.js';
+import { insertUser, makeBillingHarness, makeEnforcement } from '../services/billing/__tests__/billing-fixtures.js';
+import type { BillingHarness } from '../services/billing/__tests__/billing-fixtures.js';
 import type { LedgerEnforcement } from '../services/billing/ledger-enforcement.js';
 
 const INTERNAL_SECRET = 'dev-internal-secret-change-me';
 const ctx = () => ({ actorId: 'system:test', reason: 'test', auditId: new ObjectId().toHexString() });
 
-describe('BILLING_LEDGER_ENFORCE on — HTTP', () => {
+describe('minutes ledger — HTTP', () => {
   let app: FastifyInstance;
   let mockContainer: MockContainer;
-  let h: ShadowHarness;
+  let h: BillingHarness;
   let userId: string;
   let token: string;
   /** The app keeps one object; each test swaps the harness behind it. */
@@ -44,11 +43,9 @@ describe('BILLING_LEDGER_ENFORCE on — HTTP', () => {
   beforeAll(async () => {
     await createBillingIndexes(getTestDb());
     mockContainer = createMockContainer();
-    const overrides: Partial<MockContainer> & { billingEnforcement: LedgerEnforcement } = {
-      ...mockContainer,
-      billingEnforcement: enforcementProxy,
-    };
-    app = await buildTestApp(overrides);
+    // A real ledger in place of the mock one createMockContainer brings.
+    const overrides = { ...mockContainer, billingEnforcement: enforcementProxy };
+    app = await buildTestApp(overrides as unknown as Partial<MockContainer>);
     await app.ready();
   });
 
@@ -60,7 +57,7 @@ describe('BILLING_LEDGER_ENFORCE on — HTTP', () => {
     vi.clearAllMocks();
     app.mongo.db.collection = vi.fn().mockReturnValue({ updateMany: vi.fn().mockResolvedValue({ modifiedCount: 1 }) });
     app.broadcast = vi.fn();
-    h = makeShadowHarness(getTestDb());
+    h = makeBillingHarness(getTestDb());
     userId = await insertUser(getTestDb());
     token = app.jwt.sign({ userId, email: 'user@example.com', type: 'access' });
     mockContainer.videoService.createVideo.mockResolvedValue({
@@ -70,11 +67,11 @@ describe('BILLING_LEDGER_ENFORCE on — HTTP', () => {
   });
 
   describe('POST /api/videos', () => {
-    it('should admit a free video and skip the old dollar gate', async () => {
+    it('should admit a free video with a hold on the ledger', async () => {
       const response = await submit(10);
 
       expect(response.statusCode).toBe(201);
-      expect(mockContainer.costMonitorService.reserveUserCost).not.toHaveBeenCalled();
+      expect(await getTestDb().collection('ledgerEntries').countDocuments({ userId: new ObjectId(userId), type: 'hold' })).toBe(1);
     });
 
     it('should answer 402 INSUFFICIENT_MINUTES with needed, available and nextFreeAt', async () => {

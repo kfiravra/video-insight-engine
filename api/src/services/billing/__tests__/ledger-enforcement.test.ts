@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
 import { getTestDb, mockLogger } from '../../../test/setup.js';
 import { createBillingIndexes } from '../../../plugins/mongodb.js';
-import { stampedRun } from '../billing-shadow.service.js';
-import { insertUser, makeEnforcement, makeShadowHarness } from './billing-fixtures.js';
-import type { ShadowHarness } from './billing-fixtures.js';
+import { stampedRun } from '../run-stamp.js';
+import { insertUser, makeBillingHarness, makeEnforcement } from './billing-fixtures.js';
+import type { BillingHarness } from './billing-fixtures.js';
 
 describe('stampedRun', () => {
   it('should key the hold on billingRunId and the cost on the dispatch request id', () => {
@@ -21,7 +21,7 @@ describe('stampedRun', () => {
 });
 
 describe('LedgerEnforcement.runFinished', () => {
-  let h: ShadowHarness;
+  let h: BillingHarness;
   let userId: string;
   const stamp = { requestId: 'client-req-1', billingRunId: 'run-1' };
 
@@ -31,7 +31,7 @@ describe('LedgerEnforcement.runFinished', () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
-    h = makeShadowHarness(getTestDb());
+    h = makeBillingHarness(getTestDb());
     userId = await insertUser(getTestDb());
     await h.gate.admit({ requestId: 'run-1', userId, youtubeId: 'dQw4w9WgXcQ', durationSec: 600 });
     await getTestDb().collection('llm_usage').insertMany([
@@ -71,7 +71,7 @@ describe('BillingGate.admit — hold scope (W3)', () => {
   });
 
   it('should not let another user ride on an open hold by reusing its run id', async () => {
-    const h = makeShadowHarness(getTestDb());
+    const h = makeBillingHarness(getTestDb());
     const owner = await insertUser(getTestDb());
     const intruder = await insertUser(getTestDb());
     await h.gate.admit({ requestId: 'run-shared', userId: owner, youtubeId: 'dQw4w9WgXcQ', durationSec: 600 });

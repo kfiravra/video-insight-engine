@@ -65,27 +65,15 @@ export interface MockContainer {
   ogImageService: {
     getOgImage: ReturnType<typeof vi.fn>;
   };
-  costMonitorService: {
-    checkUserCanProcess: ReturnType<typeof vi.fn>;
-    reserveUserCost: ReturnType<typeof vi.fn>;
-    refundReservation: ReturnType<typeof vi.fn>;
-    getUserDailyCost: ReturnType<typeof vi.fn>;
-    incrementUserCost: ReturnType<typeof vi.fn>;
-    getTierLimit: ReturnType<typeof vi.fn>;
-    getUserUsageSummary: ReturnType<typeof vi.fn>;
-    reconcileUserDay: ReturnType<typeof vi.fn>;
-    reconcileAllUsersForDay: ReturnType<typeof vi.fn>;
+  billingService: {
+    summary: ReturnType<typeof vi.fn>;
   };
-  userCostRepository: {
-    findByUserAndDate: ReturnType<typeof vi.fn>;
-    getEffectiveCost: ReturnType<typeof vi.fn>;
-    incrementDailyCost: ReturnType<typeof vi.fn>;
-    setDailyCost: ReturnType<typeof vi.fn>;
-    refundReservation: ReturnType<typeof vi.fn>;
-    addAdjustment: ReturnType<typeof vi.fn>;
-    findRange: ReturnType<typeof vi.fn>;
-    findAdjustments: ReturnType<typeof vi.fn>;
-    aggregateUsersOverRange: ReturnType<typeof vi.fn>;
+  billingEnforcement: {
+    admit: ReturnType<typeof vi.fn>;
+    submitResolved: ReturnType<typeof vi.fn>;
+    submitFailed: ReturnType<typeof vi.fn>;
+    runFinished: ReturnType<typeof vi.fn>;
+    planPlaylist: ReturnType<typeof vi.fn>;
   };
   shareRepository: {
     findBySlug: ReturnType<typeof vi.fn>;
@@ -130,7 +118,6 @@ export interface MockContainer {
     create: ReturnType<typeof vi.fn>;
     update: ReturnType<typeof vi.fn>;
     updateLastLogin: ReturnType<typeof vi.fn>;
-    getTier: ReturnType<typeof vi.fn>;
     markSoftDeleted: ReturnType<typeof vi.fn>;
     clearSoftDelete: ReturnType<typeof vi.fn>;
     findExpiredSoftDeletes: ReturnType<typeof vi.fn>;
@@ -230,50 +217,21 @@ export function createMockContainer(): MockContainer {
     ogImageService: {
       getOgImage: vi.fn(),
     },
-    paymentService: {
-      verifyWebhook: vi.fn().mockReturnValue(true),
-      handleWebhookEvent: vi.fn(),
-      generateCheckoutUrl: vi.fn(),
-      getUserTier: vi.fn().mockResolvedValue({ tier: 'free', limits: { videosPerDay: 3, chatPerOutput: 5, shareEnabled: true, exportEnabled: false } }),
+    // Route tests never touch the real ledger: every account is on free and
+    // every submit is admitted with a free-video hold. Ledger behaviour on the
+    // wire is billing-enforce.routes.test.ts, over a real LedgerEnforcement.
+    billingService: {
+      summary: vi.fn().mockResolvedValue({ plan: { id: 'free', periodEnd: null } }),
     },
-    costMonitorService: {
-      checkUserCanProcess: vi.fn().mockResolvedValue({
-        allowed: true,
-        usedUsd: 0,
-        limitUsd: 2,
-        remainingUsd: 2,
-        resetAt: '2026-05-15T00:00:00.000Z',
-        tier: 'free',
-      }),
-      reserveUserCost: vi.fn().mockResolvedValue({
-        userId: 'test-user-id',
-        dateKey: '2026-05-14',
-        amountUsd: 0.15,
-      }),
-      refundReservation: vi.fn().mockResolvedValue(undefined),
-      getUserDailyCost: vi.fn().mockResolvedValue(0),
-      incrementUserCost: vi.fn().mockResolvedValue(undefined),
-      getTierLimit: vi.fn().mockReturnValue(2),
-      getUserUsageSummary: vi.fn().mockResolvedValue({
-        tier: 'free',
-        today: { date: '2026-05-14', rawUsd: 0, creditAdjustmentUsd: 0, effectiveUsd: 0, videoCount: 0 },
-        limitUsd: 2,
-        remainingUsd: 2,
-        resetAt: '2026-05-15T00:00:00.000Z',
-      }),
-      reconcileUserDay: vi.fn().mockResolvedValue(0),
-      reconcileAllUsersForDay: vi.fn().mockResolvedValue({ usersReconciled: 0, totalUsd: 0 }),
-    },
-    userCostRepository: {
-      findByUserAndDate: vi.fn().mockResolvedValue(null),
-      getEffectiveCost: vi.fn().mockResolvedValue(0),
-      incrementDailyCost: vi.fn().mockResolvedValue(undefined),
-      setDailyCost: vi.fn().mockResolvedValue(undefined),
-      refundReservation: vi.fn().mockResolvedValue(undefined),
-      addAdjustment: vi.fn().mockResolvedValue(undefined),
-      findRange: vi.fn().mockResolvedValue([]),
-      findAdjustments: vi.fn().mockResolvedValue([]),
-      aggregateUsersOverRange: vi.fn().mockResolvedValue([]),
+    billingEnforcement: {
+      admit: vi.fn().mockResolvedValue({ requestId: 'test-run', minutes: 1, split: { free: 1, plan: 0, credit: 0, lots: [] } }),
+      submitResolved: vi.fn().mockResolvedValue(undefined),
+      submitFailed: vi.fn().mockResolvedValue(undefined),
+      runFinished: vi.fn().mockResolvedValue(undefined),
+      planPlaylist: vi.fn().mockImplementation(async (_userId: string, items: Array<{ durationSec: number | null }>) => ({
+        quote: { neededMinutes: 0, availableMinutes: 0, freeVideoAvailable: true, nextFreeAt: null, decisions: [] },
+        durationsSec: items.map((item) => item.durationSec),
+      })),
     },
     shareRepository: {
       findBySlug: vi.fn(),
@@ -337,7 +295,6 @@ export function createMockContainer(): MockContainer {
       create: vi.fn(),
       update: vi.fn().mockResolvedValue(undefined),
       updateLastLogin: vi.fn().mockResolvedValue(undefined),
-      getTier: vi.fn().mockResolvedValue('free'),
       markSoftDeleted: vi.fn(),
       clearSoftDelete: vi.fn(),
       findExpiredSoftDeletes: vi.fn().mockResolvedValue([]),

@@ -2,7 +2,6 @@ import { FastifyInstance, type FastifyBaseLogger } from 'fastify';
 import { z } from 'zod';
 import { ObjectId } from 'mongodb';
 import { isValidInternalSecret } from '../utils/internal-auth.js';
-import { getUtcDateKey } from '../repositories/user-cost.repository.js';
 import type { VideoRepository } from '../repositories/video.repository.js';
 
 const videoStatusSchema = z.object({
@@ -29,11 +28,6 @@ const expansionStatusSchema = z.object({
 });
 
 const statusEventSchema = z.union([videoStatusSchema, expansionStatusSchema]);
-
-const reconcileQuerySchema = z.object({
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-  userId: z.string().regex(/^[a-f0-9]{24}$/i, 'userId must be a 24-char hex ObjectId').optional(),
-});
 
 const runDeletionsBodySchema = z
   .object({
@@ -67,12 +61,10 @@ async function settleServedVersion(
 
 export async function internalRoutes(fastify: FastifyInstance) {
   const {
-    costMonitorService,
     idempotencyService,
     dispatchGuardService,
     userDeletionService,
     videoRepository,
-    billingShadowService,
     billingEnforcement,
   } = fastify.container;
 
@@ -184,45 +176,10 @@ export async function internalRoutes(fastify: FastifyInstance) {
         }
       }
 
-      // On terminal status (completed OR failed), reconcile the user's day
-      // from llm_usage so the cost gate reflects actual spend and the upfront
-      // reservation gets corrected. Without reconciling failures, a failed
-      // video's reservation would linger until the next reconcile
-      // (`POST /internal/reconcile-costs`; nothing schedules it).
-      // This IS the canonical refund-on-failure for the per-user gate; do not
-      // add a separate `refundReservation` path on failure or it will double-refund.
       if (status === 'completed' || status === 'failed') {
-        // Minutes ledger: settle (completed) / release (failed) the run's hold.
-        // Enforcing (P3.1): awaited, never throws. Shadow (P1.7): queued off
-        // the request path, returns at once.
-        if (billingEnforcement) await billingEnforcement.runFinished(videoSummaryId, status);
-        else billingShadowService.runFinished(videoSummaryId, status);
-
-        const targetUsers = new Set<string>();
-        if (userId) targetUsers.add(userId);
-        if (targetUsers.size === 0) {
-          const userVideos = await fastify.mongo.db
-            .collection('userVideos')
-            .find({ videoSummaryId: new ObjectId(videoSummaryId) })
-            .toArray();
-          for (const uv of userVideos) {
-            if (uv.userId) {
-              targetUsers.add(uv.userId.toHexString());
-            }
-          }
-        }
-
-        const todayKey = getUtcDateKey();
-        await Promise.all(
-          Array.from(targetUsers).map(async (uid) => {
-            try {
-              await costMonitorService.reconcileUserDay(uid, todayKey);
-            } catch (err) {
-              req.log.warn({ err, userId: uid }, 'reconcileUserDay failed on completion');
-            }
-          }),
-        );
-        // Last: the reconcile lookup above still needs the failed row's library entries.
+        // Minutes ledger: settle (completed) / release (failed) the run's
+        // hold. Awaited, never throws; a hold it misses is the repair job's.
+        await billingEnforcement.runFinished(videoSummaryId, status);
         await settleServedVersion(videoRepository, videoSummaryId, status, req.log);
       }
     } else if (event.type === 'expansion.status') {
@@ -241,34 +198,6 @@ export async function internalRoutes(fastify: FastifyInstance) {
     }
 
     return { received: true };
-  });
-
-  // POST /internal/reconcile-costs — manual/ops rebuild of the userCosts cache from llm_usage
-  // (no scheduler calls it; terminal status reconciles today's UTC day on its own).
-  // Supply ?date=YYYY-MM-DD to reconcile a specific UTC day, or ?userId=... for a single user.
-  fastify.post<{
-    Querystring: z.infer<typeof reconcileQuerySchema>;
-  }>('/reconcile-costs', async (req, reply) => {
-    if (!isValidInternalSecret(req.headers['x-internal-secret'])) {
-      return reply.status(401).send({ error: 'Unauthorized' });
-    }
-
-    const parsed = reconcileQuerySchema.safeParse(req.query);
-    if (!parsed.success) {
-      return reply.status(400).send({
-        error: 'Bad Request',
-        message: parsed.error.errors[0]?.message || 'Invalid query',
-      });
-    }
-
-    const dateKey = parsed.data.date ?? getUtcDateKey();
-    if (parsed.data.userId) {
-      const total = await costMonitorService.reconcileUserDay(parsed.data.userId, dateKey);
-      return { dateKey, userId: parsed.data.userId, totalCostUsd: total };
-    }
-
-    const result = await costMonitorService.reconcileAllUsersForDay(dateKey);
-    return { dateKey, ...result };
   });
 
   // POST /internal/run-deletions — sweep `users.hardDeleteAt <= now()` and

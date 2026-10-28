@@ -289,13 +289,6 @@ SUBMIT_BURST_LIMIT_PER_HOUR=20
 # unlimited. 0 = off. Fails open if Redis is down.
 CHAT_FREE_MESSAGES_PER_DAY=50
 
-# Minutes-ledger shadow (billing-roles P1.7): every submit, playlist item and
-# terminal status also writes the ledger + a billingShadow row, off the request
-# path, never deciding. Needs the replica set (transactions). Unset = on (off
-# under NODE_ENV=test); the prod compose defaults to false until the box runs
-# the replica set.
-BILLING_SHADOW_ENABLED=true
-
 # Billing repair job (billing-roles P1.6), in vie-api, every interval behind the
 # Redis lock vie:api:billing-repair (SET NX EX, TTL = the interval):
 #   settle/release holds older than BILLING_HOLD_MAX_AGE_HOURS whose run is
@@ -304,7 +297,9 @@ BILLING_SHADOW_ENABLED=true
 #   changed accounts against the ledger (drift → warn + llm_alerts row
 #   `billing_drift`, once per account per 24 h); unset llm_usage.user_id older
 #   than 90 days; run the GDPR hard-delete sweep. Unset = on (off under
-#   NODE_ENV=test); prod compose defaults to false until the replica set.
+#   NODE_ENV=test); both composes default to true. The minutes ledger decides
+#   every submit (no switch, no dollar cap — P3.2), so Mongo must run as a
+#   replica set before this code is deployed.
 BILLING_REPAIR_ENABLED=true
 BILLING_REPAIR_INTERVAL_SECONDS=300
 # must exceed the job queue's message TTL (1 h, queue-topology.ts) — boot refuses otherwise

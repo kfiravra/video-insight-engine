@@ -78,10 +78,11 @@ Rates live in `_TRANSCRIPTION_RATES_USD` (`models.py`); an unmapped model logs
 `transcription.rate_missing` once and costs `$0` — same drift-visibility pattern
 as `compute_cache_savings_usd`.
 
-**Billing policy:** transcription cost is **counted against the user daily cap**
-— it is real spend. Because the rows carry `cost_usd` + `user_id`, they flow into
-`reconcileUserDay` automatically with no extra wiring; no exclusion filter is
-applied. (NB: only processes that register a `MongoDBUsageCallback` emit these
+**Billing policy:** transcription cost is **counted in the run's margin** — it
+is real spend. Because the rows carry `cost_usd` + `request_id`, they flow into
+the ledger's per-run `costUsd` (see [Per-user spend](#per-user-spend-minutes-not-dollars))
+with no extra wiring; no exclusion filter is applied. Users are never charged
+dollars: they pay the video's minutes. (NB: only processes that register a `MongoDBUsageCallback` emit these
 rows — both the FastAPI summarizer and the RabbitMQ worker do, in `main.py` and
 `worker/__main__.py`.)
 
@@ -422,41 +423,32 @@ of plan calls minutes apart that would lift the prod hit rate) unless
       1h breakpoint stays — what replaces it below 50 % is Kfir's gate-2 decision
       (see the plan above).
 
-## Per-user daily cap
+## Per-user spend: minutes, not dollars
 
-`llm_usage` rows (Python schema) are aggregated per-user into the `userCosts`
-collection by `CostMonitorService.reconcileUserDay` /
-`reconcileAllUsersForDay` — every row's `cost_usd` for the day, a refused
-answer's row and its previous-model re-send included. The aggregate feeds two gates:
+There is **no per-user dollar cap** anywhere (billing-roles brief §4.1; the
+daily `userCosts` reservation gate, its `DAILY_LIMIT_REACHED` refusal and the
+terminal-status reconcile were removed in P3.2). A user pays in video-minutes:
+every submit is quoted against the account's free video, plan minutes and
+credit lots and held before the run starts (`LedgerEnforcement`,
+[ERROR-HANDLING.md](./ERROR-HANDLING.md#minutes-gate)); a completed run debits
+the hold, a failed one releases it. Chat is never metered in minutes (free
+accounts have a message allowance instead).
 
-1. **POST /api/videos** — `reserveUserCost(userId, tier)` atomically increments
-   the day's `totalCostUsd` by an over-estimate, then refunds-and-throws
-   `DailyLimitReachedError` (HTTP 429) if the user is already past
-   `COST_LIMITS_PER_TIER[tier]`. The increment-then-check pattern serializes
-   concurrent submissions on the per-user/day doc — see the regression test
-   `should serialize concurrent reservations on the same user/day`.
-2. **GET /api/users/me/usage** — returns today's effective spend, headroom,
-   and the next UTC midnight reset for the in-app usage tile.
+LLM dollars stay an **internal margin signal**: each run's
+`costUsd = Σ llm_usage.cost_usd` (every row of the run — refusals, re-sends and
+transcription included) is written on its ledger `debit` (or `release`) entries
+when it settles, see "Margin per run" below. Revenue per minute comes from the
+lot or plan that paid (credit lots: $5 = 150 minutes, Q4), so margin is a join
+of the two, never something shown to a user. The `userCosts` /
+`userCostAdjustments` collections are read-only history
+([DATA-MODELS.md](./DATA-MODELS.md#usercosts)).
 
-Reconciliation runs on every terminal video status (`completed` / `failed`)
-via the internal status callback, for **today's UTC day only** — a run reserved
-before midnight UTC and finished after leaves its reservation on the earlier day.
-`POST /internal/reconcile-costs` can rebuild any day (`?date=`, `?userId=`) but has
-**no scheduler or caller** today: nothing triggers it, so it is a manual/operator
-endpoint, not a nightly job.
-The terminal-status path is the canonical refund-on-failure — do not also
-call `refundReservation` on failure, or the day will be double-credited.
-
-There is no global request-blocking cap. Global spend is an operator signal
-only: the vie-admin evaluator raises a `daily_global_cost` alert (critical, once
-per UTC day) when Σ `cost_usd` since UTC midnight reaches
-`ALERT_DAILY_COST_THRESHOLD_USD` (default `20`, `<= 0` disables). The former
-Node-side global cap (a daily-limit env var plus a 503 path) was dead code and is
-gone.
-
-Admin grants and manual charges go through `userCostAdjustments` (signed
-storage: negative = credit) — see [DATA-MODELS.md](./DATA-MODELS.md#usercostadjustments)
-and [SERVICE-ADMIN.md](./SERVICE-ADMIN.md#per-user-costs-users).
+There is no global request-blocking cap either. Global spend is an operator
+signal only: the vie-admin evaluator raises a `daily_global_cost` alert
+(critical, once per UTC day) when Σ `cost_usd` since UTC midnight reaches
+`ALERT_DAILY_COST_THRESHOLD_USD` (default `20`, `<= 0` disables). An account
+that misbehaves is stopped per account (`caps.blocked`, `caps.maxConcurrent`)
+from vie-admin, and every submit path shares the hourly burst limit.
 
 ## Ledger Retention (decided 2026-07-06)
 

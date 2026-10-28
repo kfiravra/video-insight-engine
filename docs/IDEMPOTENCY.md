@@ -23,7 +23,7 @@ POST /api/videos
   ↓ reserveHash (atomic insert of a `pending` placeholder on unique-hash index)
   ↓
   ├─ created=true (we won the race):
-  │    reserveUserCost → videoService.createVideo → completeHash
+  │    minutes-ledger quote + hold → videoService.createVideo → completeHash
   │    Return result with { cached: bool } (HTTP 201)
   │
   └─ created=false (someone got there first):
@@ -200,9 +200,9 @@ acked as `skip_locked`.
 
 ## Cost protection
 
-The gate runs **before** billing (`costMonitorService.reserveUserCost()`, or the minutes ledger's quote + hold when `BILLING_LEDGER_ENFORCE` is on). A duplicate hit:
+The gate runs **before** billing (the minutes ledger's quote + hold). A duplicate hit:
 
-- Does NOT reserve cost or hold minutes.
+- Does NOT hold minutes.
 - Does NOT enqueue a job (`queuePublisher.publishVideoJob` not called).
 - Does NOT trigger HTTP summarization (`summarizerClient.triggerSummarization` not called).
 - Returns instantly from a single Mongo read.
@@ -238,11 +238,11 @@ keys, so a submission takes at most one hold however it is retried:
 
 An authenticated client can produce unique hashes by varying the `Idempotency-Key` header while keeping the YouTube URL constant. Each unique hash inserts one row in `idempotencyKeys` that lives until TTL (24h default). The blast radius is bounded by:
 
-- The `VIDEO_DAILY_LIMIT` daily quota counted by `@fastify/rate-limit` — the per-user POST budget.
+- The submit burst limit (`SUBMIT_BURST_LIMIT_PER_HOUR`, default 20 per user per hour, counted before the gate) — the per-user POST budget.
 - The TTL index — old rows are reaped lazily (~60s precision) after `expiresAt`.
 - Per-user authentication — every insert is tied to a real account.
 
-If you need a tighter cap, add a `count({ userId, status: 'pending' })` guard in the route before `reserveHash`. The current design treats the per-user daily limit as the gating control.
+If you need a tighter cap, add a `count({ userId, status: 'pending' })` guard in the route before `reserveHash`. The current design treats the hourly burst limit as the gating control.
 
 ## Frontend behaviour
 

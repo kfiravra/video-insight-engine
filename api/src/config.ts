@@ -103,8 +103,6 @@ const envSchema = z.object({
   // Playlist-specific rate limits (higher in test mode to avoid test interference)
   PLAYLIST_PREVIEW_RATE_LIMIT: z.string().default('30').transform(Number),
   PLAYLIST_IMPORT_RATE_LIMIT: z.string().default('5').transform(Number),
-  // Video creation daily limit (0 = unlimited for admins/dev)
-  VIDEO_DAILY_LIMIT: z.string().default('100').transform(Number),
   // Submit burst guard: submissions per user per fixed hour, one bucket shared by
   // POST /api/videos, the assistant's generate route and playlist import
   // (0 = off). An abuse limit, not a billing one.
@@ -121,11 +119,6 @@ const envSchema = z.object({
   // email is normalized like a login email because the lookup is exact-match.
   DEMO_USER_EMAIL: z.string().default('').transform(v => v.trim().toLowerCase()),
   DEMO_USER_PASSWORD: z.string().default(''),
-  // Cost monitoring
-  // Per-user daily cost limits in USD (0 disables the limit; -1 means unlimited)
-  USER_COST_LIMIT_FREE: z.string().default('2').transform(Number),
-  USER_COST_LIMIT_PRO: z.string().default('20').transform(Number),
-  USER_COST_LIMIT_TEAM: z.string().default('-1').transform(Number),
   // ─── RabbitMQ job queue ─────────────────────────────────────────────
   // amqplib connection URL. The credentials are supplied via docker-compose env
   // (RABBITMQ_DEFAULT_USER / PASS) so this default works in the dev compose.
@@ -150,23 +143,15 @@ const envSchema = z.object({
   // existing accounts are promoted, `env` admins that leave the list are
   // demoted. Empty = nothing changes (never locks anyone out).
   ADMIN_EMAILS: z.string().default(''),
-  // ─── Billing ledger (shadow) ────────────────────────────────────────
-  // Shadow mode (billing-roles P1.7): every submit and terminal status also
-  // writes the minutes ledger and a billingShadow row, off the request path
-  // and never deciding. Needs Mongo transactions (a replica set). Unset =
-  // on, except under NODE_ENV=test, where route tests must not write billing
-  // rows; tests that exercise the shadow inject an enabled service.
-  BILLING_SHADOW_ENABLED: z.enum(['true', 'false']).optional(),
-  // P3.1: the minutes ledger decides. On: every submit (web, assistant
-  // generate, playlist items) is quoted and held BEFORE createVideo and refused
-  // with 402/422/403/429; the old dollar gate and the shadow are skipped.
-  // Off: the old gate decides and the ledger only shadows (P1). Flip in P6.5.
-  BILLING_LEDGER_ENFORCE: z.string().default('false').transform((v) => v === 'true'),
+  // ─── Billing ledger ─────────────────────────────────────────────────
+  // The minutes ledger decides every submit (web, assistant generate, playlist
+  // items): quoted and held BEFORE createVideo, refused with 402/422/403/429.
+  // There is no switch and no per-user dollar cap (P3.2). Needs Mongo
+  // transactions (a replica set).
   // Billing repair job (P1.6), an in-process interval behind a Redis lock:
   // settle/release stale holds, expire lots, apply recurring grants, check
   // projections against the ledger, drop llm_usage.user_id after 90 days,
-  // run the GDPR hard-delete sweep. Same default as the shadow: unset = on,
-  // except under NODE_ENV=test. Needs the replica set (transactions).
+  // run the GDPR hard-delete sweep. Unset = on, except under NODE_ENV=test.
   BILLING_REPAIR_ENABLED: z.enum(['true', 'false']).optional(),
   BILLING_REPAIR_INTERVAL_SECONDS: z.string().default('300').transform(Number).pipe(z.number().int().min(30)),
   // A hold older than this whose run is terminal, missing or unstamped is
@@ -343,9 +328,6 @@ export const config = {
   ALLOWED_ORIGINS: buildAllowedOrigins(),
   // Computed property: Fastify-shaped trustProxy value
   TRUST_PROXY_VALUE: parseTrustProxy(parsedConfig.TRUST_PROXY),
-  BILLING_SHADOW_ENABLED: parsedConfig.BILLING_SHADOW_ENABLED === undefined
-    ? parsedConfig.NODE_ENV !== 'test'
-    : parsedConfig.BILLING_SHADOW_ENABLED === 'true',
   BILLING_REPAIR_ENABLED: parsedConfig.BILLING_REPAIR_ENABLED === undefined
     ? parsedConfig.NODE_ENV !== 'test'
     : parsedConfig.BILLING_REPAIR_ENABLED === 'true',
@@ -357,18 +339,5 @@ export const config = {
     PLAYLIST_IMPORT: parsedConfig.NODE_ENV === 'test'
       ? parsedConfig.PLAYLIST_IMPORT_RATE_LIMIT * TEST_RATE_LIMIT_MULTIPLIER
       : parsedConfig.PLAYLIST_IMPORT_RATE_LIMIT,
-    // Video daily limit (0 = unlimited, useful for dev/admin)
-    VIDEO_DAILY: parsedConfig.NODE_ENV === 'test'
-      ? parsedConfig.VIDEO_DAILY_LIMIT * TEST_RATE_LIMIT_MULTIPLIER
-      : parsedConfig.VIDEO_DAILY_LIMIT,
   },
-  // Per-user daily LLM cost limits in USD by tier.
-  //   -1 → unlimited (admin/team)
-  //    0 → disabled (treated as unlimited)
-  //   > 0 → enforced hard ceiling at UTC midnight reset
-  COST_LIMITS_PER_TIER: {
-    free: parsedConfig.USER_COST_LIMIT_FREE,
-    pro: parsedConfig.USER_COST_LIMIT_PRO,
-    team: parsedConfig.USER_COST_LIMIT_TEAM,
-  } as Record<'free' | 'pro' | 'team', number>,
 };

@@ -75,8 +75,7 @@ describe('tier plugin', () => {
   });
 
   describe('resolveTier', () => {
-    async function submitAs(storedTier: string | undefined): Promise<void> {
-      mockContainer.userRepository.getTier.mockResolvedValue(storedTier);
+    async function submit(): Promise<void> {
       mockContainer.videoService.createVideo.mockResolvedValue({
         video: { id: '1', status: 'pending' },
         cached: false,
@@ -89,18 +88,20 @@ describe('tier plugin', () => {
       });
     }
 
-    it.each(['pro', 'team'])('should read the %s tier from the user repository', async (stored) => {
-      await submitAs(stored);
+    it('should read the plan from the billing account', async () => {
+      mockContainer.billingService.summary.mockResolvedValueOnce({ plan: { id: 'pro', periodEnd: null } });
+      await submit();
 
       expect(mockContainer.videoService.createVideo).toHaveBeenLastCalledWith(
         expect.any(String),
         expect.any(String),
-        expect.objectContaining({ tier: stored })
+        expect.objectContaining({ tier: 'pro' })
       );
     });
 
-    it.each([undefined, 'enterprise'])('should fall back to free when the stored tier is %s', async (stored) => {
-      await submitAs(stored);
+    it('should keep free when the plan lookup fails', async () => {
+      mockContainer.billingService.summary.mockRejectedValueOnce(new Error('mongo down'));
+      await submit();
 
       expect(mockContainer.videoService.createVideo).toHaveBeenLastCalledWith(
         expect.any(String),

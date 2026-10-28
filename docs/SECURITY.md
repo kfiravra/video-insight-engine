@@ -282,9 +282,9 @@ When the bucket is full the route answers `429`, error code `RATE_LIMITED`, with
 left up, minimum 1). The message never says "daily". Like the limiter above it
 fails open: a Redis error logs a `submit_burst_check_failed` warning and lets
 the submission through. The check runs before any work, after the Idempotency-Key
-header check, so an idempotent replay counts like a new submission. The old
-`VIDEO_DAILY_LIMIT` per-route limiter still runs alongside it until the dollar
-gate is removed.
+header check, so an idempotent replay counts like a new submission. It replaced
+the per-route 24 h `VIDEO_DAILY_LIMIT` limiter, removed with the dollar gate
+(billing-roles P3.2).
 
 ### Response on Limit
 

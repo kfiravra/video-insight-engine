@@ -256,14 +256,6 @@ export class UserRepository {
     return result.matchedCount === 1;
   }
 
-  async getTier(userId: string): Promise<string | undefined> {
-    const user = await this.collection.findOne(
-      { _id: new ObjectId(userId) },
-      { projection: { tier: 1 } }
-    );
-    return user?.tier;
-  }
-
   /**
    * Mark a user for deletion. Idempotent: a second call returns null without
    * resetting the timer. `deletedAt` is supplied by the caller so the service

@@ -28,7 +28,7 @@ const USER: UserCostRow = {
   userId: 'a'.repeat(24),
   email: 'test@example.com',
   name: 'Test User',
-  tier: 'free',
+  plan: 'free',
   totalCostUsd: 0.15,
   videoCount: 3,
   creditAdjustmentUsd: 0,

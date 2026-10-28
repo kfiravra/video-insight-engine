@@ -23,8 +23,6 @@ the envelope tests in `api/src/app.test.ts`):
 - `error`, `message`, `statusCode` are always present.
 - `details` is **optional** — currently only `VALIDATION_ERROR` carries it
   (`details.issues: [{ path, message }]` from the Zod issue list).
-- `DAILY_LIMIT_REACHED` additionally carries top-level `resetAt` + `limitUsd`
-  (consumed by the UI countdown).
 - The minutes gate's refusals (below) carry their numbers as top-level fields:
   `INSUFFICIENT_MINUTES` → `needed`, `available`, `nextFreeAt` (only when the
   free video would cover the video once it reopens); `VIDEO_TOO_LONG_FOR_PLAN`
@@ -65,7 +63,6 @@ See [docs/SECURITY.md](./SECURITY.md#rate-limiting) for implementation.
 | Code                  | Status | Message                                       | When                                                                            |
 | --------------------- | ------ | --------------------------------------------- | ------------------------------------------------------------------------------- |
 | `RATE_LIMITED`        | 429    | Too many requests                             | Rate limit exceeded (global plugin, per-route quota, the assistant's chat window, or the submit burst limit — see below) |
-| `DAILY_LIMIT_REACHED` | 429    | You've reached your daily cost limit ($X.XX)  | Per-user LLM cost cap reached. Response includes `resetAt` + `limitUsd` fields. |
 | `CHAT_LIMIT_REACHED`  | 429    | Free accounts can send 50 chat messages in 24 hours. More open up as the last 24 hours pass. | A free account used its chat messages for the rolling 24 hours. Response includes `nextAt` (ISO). See below. |
 
 **Submit burst limit.** `POST /api/videos`, the assistant's `POST /internal/assistant/generate` and `POST /api/playlists/import` share one bucket of `SUBMIT_BURST_LIMIT_PER_HOUR` (default 20) submissions per user per fixed hour. Over it, the gateway answers `429 RATE_LIMITED` with "Too many submissions in the last hour. Try again in N min." in the same envelope (N is the time left, rounded up to whole minutes, at least 1; the message never says "daily"). It sets no `Retry-After`. A Redis error fails open with a `submit_burst_check_failed` warning. Details in [SECURITY.md](./SECURITY.md#submit-burst-limit).
@@ -74,11 +71,13 @@ See [docs/SECURITY.md](./SECURITY.md#rate-limiting) for implementation.
 
 **Assistant chat.** The assistant service enforces its own 30 chat requests/min per user. When it answers 429 to `POST /api/videos/:id/chat` or `POST /api/assistant/library/chat`, the gateway returns `429 RATE_LIMITED` ("Too many messages. Please wait a moment and try again.") in the same `{ error, message, statusCode }` envelope as the rate-limit plugin — not a 502. Any other non-OK assistant status stays `502 SERVICE_UNAVAILABLE`. The assistant sends no `Retry-After`, so the gateway sets none. The web chat shows the slow-down message for a 429.
 
-### Minutes gate (`BILLING_LEDGER_ENFORCE=true`)
+### Minutes gate
 
-With enforcement on, `POST /api/videos`, the assistant's
-`POST /internal/assistant/generate` and every item of `POST /api/playlists/import`
-are quoted and held **before** `createVideo`. A refusal leaves nothing behind
+`POST /api/videos`, the assistant's `POST /internal/assistant/generate` and
+every item of `POST /api/playlists/import` are quoted and held **before**
+`createVideo`. The minutes ledger is the only gate: there is no per-user
+dollar cap and no switch (the daily cost cap and its `DAILY_LIMIT_REACHED`
+code were removed in billing-roles P3.2). A refusal leaves nothing behind
 (no hold, the idempotency key released, no dispatch).
 
 **A refusal still serves what costs nothing (Q6).** When the ledger will not pay
@@ -104,8 +103,7 @@ first one the minutes cannot cover; later items are still served if that costs
 nothing, the rest are listed in `failedVideos` with the code (a too-long item
 or one with no known length is listed and skipped, the rest continue). A run id
 already holding for another user or video answers `409 HOLD_CONFLICT`.
-With enforcement off these codes are never sent — the old dollar gate decides
-and the ledger only shadows. Hold / debit keys: [IDEMPOTENCY.md](./IDEMPOTENCY.md#minutes-ledger-holds).
+Hold / debit keys: [IDEMPOTENCY.md](./IDEMPOTENCY.md#minutes-ledger-holds).
 
 ### Validation Errors (400)
 
@@ -663,7 +661,7 @@ same model). Under the default config no pipeline OpenAI call streams — the on
 streamed call, the split extraction's warm-up, goes to Anthropic; but
 `on_first_chunk` streams every attempt, so with `LLM_FALLBACK_PROVIDER=openai`
 the warm-up's cross-provider fallback attempt streams on `gpt-4o`. Refused attempts are billed and
-priced: they count in `pipeline.timing.costUsd` and in the per-user daily cap
+priced: they count in `pipeline.timing.costUsd` and in the run's ledger `costUsd`
 (their `llm_usage` rows are `success: true`).
 
 ---

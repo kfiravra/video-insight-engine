@@ -276,32 +276,6 @@ export class ProviderNotConfiguredError extends AppError {
   }
 }
 
-// Tier-specific errors
-export class TierLimitExceededError extends AppError {
-  constructor(resource: string, limit: number) {
-    super('TIER_LIMIT_EXCEEDED', 403, `${resource} limit reached (${limit}). Upgrade your plan for more.`);
-    this.name = 'TierLimitExceededError';
-  }
-}
-
-export class DailyLimitReachedError extends AppError {
-  /** ISO timestamp of next UTC midnight reset. */
-  public readonly resetAt: string;
-  /** Daily limit for the user's tier in USD. */
-  public readonly limitUsd: number;
-
-  constructor(limitUsd: number, resetAt: string) {
-    super(
-      'DAILY_LIMIT_REACHED',
-      429,
-      `You've reached your daily cost limit ($${limitUsd.toFixed(2)}). Resets at midnight UTC.`,
-    );
-    this.name = 'DailyLimitReachedError';
-    this.resetAt = resetAt;
-    this.limitUsd = limitUsd;
-  }
-}
-
 /**
  * A throttle answered 429: the assistant's own 30/min chat window, or the
  * shared submit burst limit. Same wire shape as the rate-limit plugin's
@@ -413,8 +387,8 @@ const METADATA_UNAVAILABLE_STATUS: Record<MetadataUnavailableReason, number> = {
 /**
  * The summarizer could not give the duration/title of a video before submit
  * (unknown video, YouTube rate limit, summarizer down, slow, a live stream).
- * A billing quote built on it must fail closed when enforcing and open in
- * shadow mode; the caller decides, `reason` says whether retrying can help.
+ * A billing quote built on it fails closed (no run without a length);
+ * `reason` says whether retrying can help.
  */
 export class MetadataUnavailableError extends AppError {
   public readonly reason: MetadataUnavailableReason;
@@ -427,7 +401,7 @@ export class MetadataUnavailableError extends AppError {
 }
 
 // ─── Minutes gate (billing-roles) ───────────────────────────────────────
-// Thrown by the ledger when BILLING_LEDGER_ENFORCE is on; error-envelope.ts
+// Thrown by the minutes ledger on every submit; error-envelope.ts
 // carries the numbers (`needed`, `available`, `nextFreeAt`, `maxMinutes`,
 // `maxConcurrent`) as top-level body fields.
 

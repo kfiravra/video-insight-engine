@@ -7,14 +7,12 @@ import { VideoRepository } from './repositories/video.repository.js';
 import { FolderRepository } from './repositories/folder.repository.js';
 import { UserRepository } from './repositories/user.repository.js';
 import { ShareRepository } from './repositories/share.repository.js';
-import { UserCostRepository } from './repositories/user-cost.repository.js';
 import { IdempotencyRepository } from './repositories/idempotency.repository.js';
 import { UserDeletionRepository } from './repositories/user-deletion.repository.js';
 import { VideoDeletionRepository } from './repositories/video-deletion.repository.js';
 import { AdminAuditRepository } from './repositories/admin-audit.repository.js';
 import { AlertConfigRepository } from './repositories/alert-config.repository.js';
 import { BillingRepository } from './repositories/billing.repository.js';
-import { BillingShadowRepository } from './repositories/billing-shadow.repository.js';
 import { LlmUsageRepository } from './repositories/llm-usage.repository.js';
 import { LlmAlertsRepository } from './repositories/llm-alerts.repository.js';
 import { BillingMaintenanceRepository } from './repositories/billing-maintenance.repository.js';
@@ -28,7 +26,6 @@ import { SummarizerClient } from './services/summarizer-client.js';
 import { AssistantClient } from './services/assistant-client.js';
 import { ShareService } from './services/share.service.js';
 import { OgImageService } from './services/og-image.service.js';
-import { CostMonitorService } from './services/cost-monitor.service.js';
 import { QueuePublisher, type ChannelSupplier } from './services/queue-publisher.service.js';
 import { IdempotencyService } from './services/idempotency.service.js';
 import { DispatchGuardService, noOpDispatchGuard, type IDispatchGuard } from './services/dispatch-guard.service.js';
@@ -41,8 +38,6 @@ import { AlertConfigService } from './services/alert-config.service.js';
 import { AdminSeedService } from './services/admin-seed.service.js';
 import { BillingService } from './services/billing/billing.service.js';
 import { BillingGate } from './services/billing/billing-gate.js';
-import { BillingShadowService } from './services/billing/billing-shadow.service.js';
-import { ShadowRunner } from './services/billing/shadow-runner.js';
 import { BillingRepairService } from './services/billing/billing-repair.service.js';
 import { LedgerEnforcement } from './services/billing/ledger-enforcement.js';
 import { RedisRepairLock, singleProcessRepairLock } from './services/billing/repair-lock.js';
@@ -59,7 +54,6 @@ export interface Container {
   folderRepository: FolderRepository;
   userRepository: UserRepository;
   shareRepository: ShareRepository;
-  userCostRepository: UserCostRepository;
   idempotencyRepository: IdempotencyRepository;
   userDeletionRepository: UserDeletionRepository;
   videoDeletionRepository: VideoDeletionRepository;
@@ -75,7 +69,6 @@ export interface Container {
   assistantClient: AssistantClient;
   shareService: ShareService;
   ogImageService: OgImageService;
-  costMonitorService: CostMonitorService;
   queuePublisher: QueuePublisher;
   idempotencyService: IdempotencyService;
   dispatchGuardService: IDispatchGuard;
@@ -88,10 +81,9 @@ export interface Container {
   alertConfigService: AlertConfigService;
   adminSeedService: AdminSeedService;
   billingService: BillingService;
-  billingShadowService: BillingShadowService;
   billingRepairService: BillingRepairService;
-  /** Present when BILLING_LEDGER_ENFORCE is on: the minutes ledger decides every submit. */
-  billingEnforcement: LedgerEnforcement | null;
+  /** The minutes ledger: decides every submit (video, playlist item, assistant generate). */
+  billingEnforcement: LedgerEnforcement;
 }
 
 export interface CreateContainerOptions {
@@ -112,7 +104,6 @@ export function createContainer(
   const folderRepository = new FolderRepository(db);
   const userRepository = new UserRepository(db);
   const shareRepository = new ShareRepository(db);
-  const userCostRepository = new UserCostRepository(db);
   const idempotencyRepository = new IdempotencyRepository(db);
   const userDeletionRepository = new UserDeletionRepository(db);
   const videoDeletionRepository = new VideoDeletionRepository(db);
@@ -160,7 +151,6 @@ export function createContainer(
     logger,
   );
   const folderService = new FolderService(folderRepository, logger);
-  const costMonitorService = new CostMonitorService(db, logger, userCostRepository);
   const billingService = new BillingService(billingRepository, userRepository, logger);
   // Chat fair use reads the account plan only; same fail-open stance as the burst limiter.
   const chatFairUse: IChatFairUse = options.redisClient
@@ -168,30 +158,11 @@ export function createContainer(
     : noOpChatFairUse;
   const llmUsageRepository = new LlmUsageRepository(db);
   const billingGate = new BillingGate(billingService, summarizerClient);
-  // P3.1: with enforcement on the ledger decides and there is no old decision to shadow.
-  const billingEnforcement = config.BILLING_LEDGER_ENFORCE
-    ? new LedgerEnforcement({ billing: billingService, gate: billingGate, llmUsage: llmUsageRepository, dispatchStamps: videoRepository, logger })
-    : null;
-  // Shadow ledger (P1.7): writes beside the old gate, never decides.
-  const billingShadowService = new BillingShadowService({
-    enabled: config.BILLING_SHADOW_ENABLED && !billingEnforcement,
-    gate: billingGate,
-    billing: billingService,
-    rows: new BillingShadowRepository(db),
-    llmUsage: llmUsageRepository,
-    dispatchStamps: videoRepository,
-    runner: new ShadowRunner(logger),
-    logger,
+  // The minutes ledger is the only gate (P3.2): no per-user dollar cap anywhere.
+  const billingEnforcement = new LedgerEnforcement({
+    billing: billingService, gate: billingGate, llmUsage: llmUsageRepository, dispatchStamps: videoRepository, logger,
   });
-  const playlistService = new PlaylistService(
-    videoService,
-    folderService,
-    summarizerClient,
-    logger,
-    costMonitorService,
-    billingShadowService,
-    billingEnforcement ?? undefined,
-  );
+  const playlistService = new PlaylistService(videoService, folderService, summarizerClient, billingEnforcement);
   const shareService = new ShareService(shareRepository, videoRepository, logger);
   const ogImageService = new OgImageService(logger);
   const userDeletionService = new UserDeletionService(
@@ -240,7 +211,6 @@ export function createContainer(
     folderRepository,
     userRepository,
     shareRepository,
-    userCostRepository,
     idempotencyRepository,
     userDeletionRepository,
     videoDeletionRepository,
@@ -256,7 +226,6 @@ export function createContainer(
     assistantClient,
     shareService,
     ogImageService,
-    costMonitorService,
     queuePublisher,
     idempotencyService,
     dispatchGuardService,
@@ -269,7 +238,6 @@ export function createContainer(
     alertConfigService,
     adminSeedService,
     billingService,
-    billingShadowService,
     billingRepairService,
     billingEnforcement,
   };

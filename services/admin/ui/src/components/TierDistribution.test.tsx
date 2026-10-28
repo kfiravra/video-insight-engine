@@ -23,7 +23,7 @@ describe('TierDistribution', () => {
   it('should render empty state when data is empty', () => {
     vi.mocked(useTierDistribution).mockReturnValue({ data: [], isLoading: false } as unknown as ReturnType<typeof useTierDistribution>);
     render(<TierDistribution />, { wrapper });
-    expect(screen.getByText('No tier data available')).toBeTruthy();
+    expect(screen.getByText('No plan data available')).toBeTruthy();
   });
 
   it('should render chart heading when data is present', () => {
@@ -32,6 +32,6 @@ describe('TierDistribution', () => {
       isLoading: false,
     } as unknown as ReturnType<typeof useTierDistribution>);
     render(<TierDistribution />, { wrapper });
-    expect(screen.getByText('User Tiers')).toBeTruthy();
+    expect(screen.getByText('User Plans')).toBeTruthy();
   });
 });

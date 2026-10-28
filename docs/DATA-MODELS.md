@@ -29,7 +29,7 @@ MongoDB collections and schemas.
 | `ledgerEntries` | Append-only minutes ledger — the source of truth |
 | `creditLots` | Granted / purchased minutes, spent FIFO |
 | `recurringGrants` | Monthly lot grants (demo / eval accounts) |
-| `billingShadow` | Old gate vs ledger decision per request (shadow mode) |
+| `billingShadow` | Old gate vs ledger decision per request — P1 shadow mode, read-only since P3.2 |
 
 ---
 
@@ -837,8 +837,12 @@ User's video library. References shared cache.
 
 ## userCosts
 
-Per-user daily LLM cost aggregate. Powers the per-user reservation gate
-(`POST /videos`) and the in-app usage tile.
+**Read-only history.** Per-user daily LLM cost aggregate of the retired dollar
+gate. Nothing writes it since billing-roles P3.2: there is no per-user dollar
+cap, the minutes ledger decides every submit and the usage tile reads minutes.
+vie-admin's per-user cost views read it as history only: the credit adjustment
+and days with no attributed `llm_usage` rows (spend now comes from `llm_usage` by
+`user_id`, see SERVICE-ADMIN). The GDPR cascade deletes a user's rows.
 
 ```javascript
 {
@@ -858,12 +862,10 @@ Per-user daily LLM cost aggregate. Powers the per-user reservation gate
 { date: 1 }             // supports admin aggregates over a trailing window
 ```
 
-**Reconciliation:** `totalCostUsd` is rewritten from `llm_usage` (Python
-schema: `user_id` + `cost_usd` + `timestamp`) on every terminal video status
-for today's UTC day only. `POST /internal/reconcile-costs` can rebuild any day
-(`?date=`, `?userId=`) but nothing schedules or calls it — it is a manual/operator
-endpoint. `videoCount` is preserved across reconciles because it tracks
-reservations, not real spend.
+**History:** until P3.2, `totalCostUsd` was rewritten from `llm_usage` on every
+terminal video status for that UTC day and `videoCount` counted reservations.
+The reconcile and `POST /internal/reconcile-costs` are gone; per-run LLM $ now
+lands on the run's ledger `debit` / `release` (`costUsd`, margin only).
 
 ---
 
@@ -967,8 +969,11 @@ the window; `holds` = runs with a `hold` and neither `debit` nor `release`.
 
 ## ledgerEntries
 
-Append-only: never updated, never deleted (GDPR erasure pseudonymises the user
-link, Q12).
+Append-only: never updated, never deleted. The one exception is GDPR erasure
+(Q12): `BillingErasureRepository` moves `userId` (and the account's `ownerId`,
+`holds[].userId`) to a fresh tombstone ObjectId and an erased admin's
+`actorId` to `system:erased-user`; amounts, lots and `accountId` stay
+([GDPR.md](./GDPR.md#the-cascade-saga)).
 
 ```javascript
 {
@@ -1045,19 +1050,14 @@ Applied by the billing repair job on `nextRunAt`; deletion is soft.
 
 ## billingShadow
 
-One row per request while the old dollar gate still decides (shadow mode):
-the old decision next to the ledger's. Written by `BillingShadowService`
-(`BILLING_SHADOW_ENABLED`, off while `BILLING_LEDGER_ENFORCE` is on) off the
-request path, one promise chain per run id (`requestId` here is the ledger's
-server-generated run id, P3.1): `POST /api/videos`, the assistant's generate
-route and every playlist item quote + hold after the old reservation; cached /
-attached / a createVideo error release; the terminal `POST /internal/status`
-maps `videoSummaryId` → the cache row's stamped `billingRunId` (falling back to
-`requestId` on rows stamped before P3.1) and settles (completed, `costUsd` = Σ
-`llm_usage.cost_usd` of the stamped `requestId`) or releases (failed). With
-enforcement on the same transitions happen on the request path through
-`LedgerEnforcement` and no shadow row is written. The row is
-rewritten on every transition. `classification` comes from
+**Read-only since P3.2.** One row per request from the P1 shadow mode, when
+the old dollar gate still decided: the old decision next to the ledger's,
+written off the request path and rewritten on every transition (`requestId`
+is the ledger's run id). The shadow writer and the old gate are gone; the
+same transitions now happen on the request path through `LedgerEnforcement`.
+The rows stay for the P1.11 replay harness, which re-judges every one, and the
+GDPR cascade deletes a user's. No index is created for it any more (the old
+unique `{ requestId: 1 }` stays where it exists). `classification` comes from
 `api/src/services/billing/shadow-policy.ts`: `agree` when admitted/charged
 match, `policy_delta` when a row of its `POLICY_DELTAS` table (each with the
 decision behind it) explains the difference, else `disagree` (logged at warn).

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import type { ReactNode } from 'react';
@@ -44,7 +44,7 @@ const USER_ROW: UserCostRow = {
   userId: 'user-abc123',
   email: 'test@example.com',
   name: 'Test User',
-  tier: 'free',
+  plan: 'free',
   totalCostUsd: 0.15,
   videoCount: 3,
   creditAdjustmentUsd: 0,
@@ -138,6 +138,35 @@ describe('UsersPage', () => {
     const input = screen.getByTestId('users-filter');
     fireEvent.change(input, { target: { value: 'nomatch' } });
     expect(screen.queryByText('test@example.com')).toBeNull();
+  });
+
+  it('should head the account column Plan, not Tier', async () => {
+    mockCosts.mockResolvedValue([USER_ROW]);
+    const { UsersPage } = await import('./UsersPage');
+    render(<UsersPage days={7} />, { wrapper: makeWrapper() });
+    await waitFor(() => screen.getByText('test@example.com'));
+
+    expect(screen.getByRole('columnheader', { name: 'Plan' })).toBeTruthy();
+    expect(screen.queryByRole('columnheader', { name: 'Tier' })).toBeNull();
+  });
+
+  it('should show each user\'s account plan', async () => {
+    mockCosts.mockResolvedValue([{ ...USER_ROW, plan: 'pro' }]);
+    const { UsersPage } = await import('./UsersPage');
+    render(<UsersPage days={7} />, { wrapper: makeWrapper() });
+
+    const row = await screen.findByTestId('user-row-user-abc123');
+
+    expect(within(row).getByText('pro')).toBeTruthy();
+  });
+
+  it('should list a user with no spend yet, so an admin can open them to grant minutes', async () => {
+    const newcomer: UserCostRow = { ...USER_ROW, userId: 'user-new', email: 'new@example.com', totalCostUsd: 0, effectiveUsd: 0, videoCount: 0, days: 0 };
+    mockCosts.mockResolvedValue([USER_ROW, newcomer]);
+    const { UsersPage } = await import('./UsersPage');
+    render(<UsersPage days={7} />, { wrapper: makeWrapper() });
+
+    expect(await screen.findByTestId('user-row-user-new')).toBeTruthy();
   });
 });
 

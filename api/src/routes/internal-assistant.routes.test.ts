@@ -276,8 +276,8 @@ describe('internal assistant routes', () => {
   });
 
   describe('POST /internal/assistant/generate', () => {
-    it('should resolve the tier from the repository and call createVideo', async () => {
-      mockContainer.userRepository.findById.mockResolvedValue({ tier: 'pro' });
+    it('should resolve the plan from the billing account and call createVideo', async () => {
+      mockContainer.billingService.summary.mockResolvedValueOnce({ plan: { id: 'pro', periodEnd: null } });
       mockContainer.videoService.createVideo.mockResolvedValue({
         video: { id: 'v1', youtubeId: 'dQw4w9WgXcQ', status: 'pending' },
         cached: false,
@@ -291,7 +291,7 @@ describe('internal assistant routes', () => {
       });
 
       expect(response.statusCode).toBe(200);
-      expect(mockContainer.userRepository.findById).toHaveBeenCalledWith(USER_A);
+      expect(mockContainer.billingService.summary).toHaveBeenCalledWith(USER_A);
       expect(mockContainer.videoService.createVideo).toHaveBeenCalledWith(
         USER_A,
         'https://youtu.be/dQw4w9WgXcQ',
@@ -299,8 +299,8 @@ describe('internal assistant routes', () => {
       );
     });
 
-    it('should default the tier to free when the user has no tier', async () => {
-      mockContainer.userRepository.findById.mockResolvedValue({});
+    it('should default the plan to free when the account lookup fails', async () => {
+      mockContainer.billingService.summary.mockRejectedValueOnce(new Error('mongo down'));
       mockContainer.videoService.createVideo.mockResolvedValue({ video: {}, cached: false });
 
       const response = await app.inject({
@@ -330,14 +330,12 @@ describe('internal assistant routes', () => {
       expect(mockContainer.videoService.createVideo).not.toHaveBeenCalled();
     });
 
-    it('should return 429 and never call createVideo when the daily cost cap is reached', async () => {
+    it('should refuse a blocked account and never call createVideo', async () => {
       // Regression test for the internal bypass: before the submission-service
       // extraction, this route called createVideo directly and the assistant
-      // could submit unlimited paid pipeline runs past the daily cap.
-      const { DailyLimitReachedError } = await import('../utils/errors.js');
-      mockContainer.costMonitorService.reserveUserCost.mockRejectedValue(
-        new DailyLimitReachedError(2, '2026-07-07T00:00:00.000Z'),
-      );
+      // could submit pipeline runs past the account's gate.
+      const { AccountBlockedError } = await import('../utils/errors.js');
+      mockContainer.billingEnforcement.admit.mockRejectedValueOnce(new AccountBlockedError());
 
       const response = await app.inject({
         method: 'POST',
@@ -346,17 +344,30 @@ describe('internal assistant routes', () => {
         payload: { url: 'https://youtu.be/dQw4w9WgXcQ' },
       });
 
-      expect(response.statusCode).toBe(429);
-      expect(response.json().error).toBe('DAILY_LIMIT_REACHED');
-      expect(mockContainer.costMonitorService.reserveUserCost).toHaveBeenCalledWith(USER_A, 'free');
+      expect([response.statusCode, response.json().error]).toEqual([403, 'ACCOUNT_BLOCKED']);
+      expect(mockContainer.billingEnforcement.admit).toHaveBeenCalledWith(expect.objectContaining({ userId: USER_A, youtubeId: 'dQw4w9WgXcQ' }));
       expect(mockContainer.videoService.createVideo).not.toHaveBeenCalled();
       // The reserved idempotency hash is unwound so a later retry isn't locked out.
       expect(mockContainer.idempotencyService.invalidateByHash).toHaveBeenCalledWith('test-hash');
     });
 
-    it('should refund the reservation and unwind the hash when createVideo throws', async () => {
-      const reservation = { userId: USER_A, dateKey: '2026-07-06', amountUsd: 0.15 };
-      mockContainer.costMonitorService.reserveUserCost.mockResolvedValue(reservation);
+    it('should answer 402 when the minutes cannot pay and nothing is cached to serve', async () => {
+      const { InsufficientMinutesError, RunNotAllowedError } = await import('../utils/errors.js');
+      mockContainer.billingEnforcement.admit.mockRejectedValueOnce(new InsufficientMinutesError(10, 0, null));
+      mockContainer.videoService.createVideo.mockRejectedValueOnce(new RunNotAllowedError());
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/internal/assistant/generate',
+        headers: internalHeaders(USER_A),
+        payload: { url: 'https://youtu.be/dQw4w9WgXcQ' },
+      });
+
+      expect([response.statusCode, response.json().error]).toEqual([402, 'INSUFFICIENT_MINUTES']);
+      expect(mockContainer.videoService.createVideo.mock.calls[0][2]).toMatchObject({ serveOnly: true });
+    });
+
+    it('should give the hold back and unwind the hash when createVideo throws', async () => {
       mockContainer.videoService.createVideo.mockRejectedValue(new Error('downstream-blew-up'));
 
       const response = await app.inject({
@@ -367,13 +378,12 @@ describe('internal assistant routes', () => {
       });
 
       expect(response.statusCode).toBe(500);
-      expect(mockContainer.costMonitorService.refundReservation).toHaveBeenCalledWith(reservation);
+      const runId = mockContainer.videoService.createVideo.mock.calls[0][2].billingRunId;
+      expect(mockContainer.billingEnforcement.submitFailed).toHaveBeenCalledWith(runId);
       expect(mockContainer.idempotencyService.invalidateByHash).toHaveBeenCalledWith('test-hash');
     });
 
-    it('should refund the reservation when the video is served from cache', async () => {
-      const reservation = { userId: USER_A, dateKey: '2026-07-06', amountUsd: 0.15 };
-      mockContainer.costMonitorService.reserveUserCost.mockResolvedValue(reservation);
+    it('should give the hold back when the video is served from cache', async () => {
       mockContainer.videoService.createVideo.mockResolvedValue({
         video: { id: 'v1', videoSummaryId: 'sum1', status: 'completed' },
         cached: true,
@@ -387,7 +397,8 @@ describe('internal assistant routes', () => {
       });
 
       expect(response.statusCode).toBe(200);
-      expect(mockContainer.costMonitorService.refundReservation).toHaveBeenCalledWith(reservation);
+      const runId = mockContainer.videoService.createVideo.mock.calls[0][2].billingRunId;
+      expect(mockContainer.billingEnforcement.submitResolved).toHaveBeenCalledWith(runId, 'cached');
     });
 
     it('should return 409 when the same submission is already in flight', async () => {
@@ -411,7 +422,7 @@ describe('internal assistant routes', () => {
 
       expect(response.statusCode).toBe(409);
       expect(response.json().error).toBe('IDEMPOTENCY_IN_FLIGHT');
-      expect(mockContainer.costMonitorService.reserveUserCost).not.toHaveBeenCalled();
+      expect(mockContainer.billingEnforcement.admit).not.toHaveBeenCalled();
       expect(mockContainer.videoService.createVideo).not.toHaveBeenCalled();
     });
   });

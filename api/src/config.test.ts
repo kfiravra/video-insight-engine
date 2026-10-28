@@ -183,27 +183,6 @@ describe('config env validation', () => {
     });
   });
 
-  describe('BILLING_SHADOW_ENABLED', () => {
-    it('should default to off under NODE_ENV=test so route tests never write billing rows', async () => {
-      const { config } = await loadConfig({});
-      expect(config.BILLING_SHADOW_ENABLED).toBe(false);
-    });
-
-    it('should default to on outside tests', async () => {
-      const { config } = await loadConfig({ NODE_ENV: 'development' });
-      expect(config.BILLING_SHADOW_ENABLED).toBe(true);
-    });
-
-    it('should follow an explicit value', async () => {
-      const { config } = await loadConfig({ NODE_ENV: 'production', BILLING_SHADOW_ENABLED: 'false' });
-      expect(config.BILLING_SHADOW_ENABLED).toBe(false);
-    });
-
-    it('should refuse anything but true or false', async () => {
-      await expect(loadConfig({ BILLING_SHADOW_ENABLED: 'yes' })).rejects.toThrow(/BILLING_SHADOW_ENABLED/);
-    });
-  });
-
   describe('billing repair settings', () => {
     it('should default the repair job off under NODE_ENV=test and on elsewhere', async () => {
       expect((await loadConfig({})).config.BILLING_REPAIR_ENABLED).toBe(false);
@@ -229,15 +208,11 @@ describe('config env validation', () => {
     });
   });
 
-  describe('BILLING_LEDGER_ENFORCE', () => {
-    it('should default to off, in production too', async () => {
-      expect((await loadConfig({})).config.BILLING_LEDGER_ENFORCE).toBe(false);
-      expect((await loadConfig({ NODE_ENV: 'production' })).config.BILLING_LEDGER_ENFORCE).toBe(false);
-    });
-
-    it('should turn on only for exactly true', async () => {
-      expect((await loadConfig({ BILLING_LEDGER_ENFORCE: 'true' })).config.BILLING_LEDGER_ENFORCE).toBe(true);
-      expect((await loadConfig({ BILLING_LEDGER_ENFORCE: 'yes' })).config.BILLING_LEDGER_ENFORCE).toBe(false);
+  describe('removed gates (P3.2)', () => {
+    it('should expose no ledger switch, shadow flag, daily video limit or per-tier dollar caps', async () => {
+      const { config } = await loadConfig({ NODE_ENV: 'production', BILLING_LEDGER_ENFORCE: 'false', BILLING_SHADOW_ENABLED: 'true' });
+      const removed = ['BILLING_LEDGER_ENFORCE', 'BILLING_SHADOW_ENABLED', 'VIDEO_DAILY_LIMIT', 'COST_LIMITS_PER_TIER'];
+      expect(removed.filter((key) => key in config)).toEqual([]);
     });
   });
 });

@@ -157,7 +157,8 @@ export interface UserCostRow {
   userId: string;
   email: string | null;
   name: string | null;
-  tier: string;
+  /** The account plan (`free` | `pro`); `free` for a user with no account row yet. */
+  plan: string;
   totalCostUsd: number;
   videoCount: number;
   creditAdjustmentUsd: number;

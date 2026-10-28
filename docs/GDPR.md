@@ -37,6 +37,8 @@ DELETE /api/users/me ──┐                              │
               ▼         ▼                  ▼          │
         folders    idempotencyKeys   userCostAdjustments
               ▼         ▼                  ▼          │
+      dispatch stamp  billing (pseudonymise, Q12)     │
+              ▼         ▼                  ▼          │
           Qdrant      S3              users (last)    │
               │         │                  │          │
               └─────────┴──────────────────┘          │
@@ -81,14 +83,15 @@ Steps run in `executeHardDelete()` in this exact order:
 5. **`userCostAdjustments`**
 6. **`idempotencyKeys`**
 7. **`videoSummaryCache` dispatch stamp** — `updateMany({ userId: "<id>" }, { $unset: { userId, requestId } })`. The row itself stays (shared); only the dispatching user's id and request id are unset. The id is a **string** here, not an ObjectId — `POST /summarize` receives it as JSON. Matched row count is logged as `videoCacheRowsUnstamped` (not part of the audit `counts`).
-8. **Qdrant user content** (placeholder — see below)
-9. **S3 user objects** (placeholder — see below)
-10. **`users`** (the FK anchor, dropped last)
-11. **`userDeletions`** audit insert
+8. **Billing — pseudonymised, not deleted (brief Q12)** (`api/src/repositories/billing-erasure.repository.ts`). The minutes ledger is append-only and its amounts are accounting records, so erasure drops the link to the user and keeps the amounts: `billingAccounts.ownerId`, `billingAccounts.holds[].userId` and `ledgerEntries.userId` all move to one fresh tombstone ObjectId that names nobody (leaving the real id would not be erasure: `userDeletions.originalUserId` keeps it). Where the user acted as an admin, `ledgerEntries.actorId` / `recurringGrants.actorId` become `system:erased-user`. The account's recurring grants are retired (`active: false`, `deletedAt`), its `creditLots` stay as they are (they carry only `accountId`), and the user's `billingShadow` rows (P1 diagnostics) are deleted. One transaction, so a failed run moves nothing and a re-run is a no-op; a user with no billing rows skips it (no replica set needed). Counts are logged as `billingErased` (not part of the audit `counts`). Free-text `reason` fields written by admins on the account's entries are kept, like the rest of the accounting record.
+9. **Qdrant user content** (placeholder — see below)
+10. **S3 user objects** (placeholder — see below)
+11. **`users`** (the FK anchor, dropped last)
+12. **`userDeletions`** audit insert
 
 ### Idempotency
 
-Every step is naturally idempotent: `deleteMany({ userId: oid })` (or, for the `videoSummaryCache` stamp, an `$unset` keyed on the user's id) produces the same result whether it runs once or fifty times. If the cascade fails partway, re-invoking it is safe — the first delete-many is a no-op (nothing matches), the second processes the remainder.
+Every step is naturally idempotent: `deleteMany({ userId: oid })` (or, for the `videoSummaryCache` stamp, an `$unset` keyed on the user's id; for billing, an update that moves every match off the user's id) produces the same result whether it runs once or fifty times. If the cascade fails partway, re-invoking it is safe — the first delete-many is a no-op (nothing matches), the second processes the remainder.
 
 ### Error handling
 
@@ -102,6 +105,7 @@ Each step is wrapped in `runStep`, which catches and records the error as a `war
 | Qdrant `transcript_chunks` | Same — video-scoped, not user-scoped. `user_id` payload is reserved but always `null` today (see `services/summarizer/src/services/vector/qdrant_service.py:153`). When that payload starts being populated for user-generated content, the cascade step is ready to flip from no-op to real delete. The video cascade deletes them by `video_id` through the summarizer's `POST /internal/videos/{id}/purge`. |
 | S3 `videos/{youtubeId}/...` | Same — video-scoped. No user-keyed S3 prefixes today; placeholder hook is wired for the future. The video cascade deletes the whole prefix. |
 | `llm_usage` | The cost ledger. Rows are kept indefinitely — there is **no TTL** (the legacy 90-day index is dropped at boot, see [`llm-cost-model.md`](./llm-cost-model.md#ledger-retention-decided-2026-07-06)). Rows carry the string `user_id` of whoever triggered the call, and the cascade has no `llm_usage` step, so after erasure the rows keep that now-orphaned id until they are 90 days old. Deleting them would erase billing history and distort cost reports. **After 90 days the billing repair job unsets `user_id` and `request_id`** on every row (`PRIVACY.md`: usage analytics older than 90 days carry no personal data; `request_id` would still join to the ledger's `source.ref`, whose rows name the user); cost, model and timestamp stay. |
+| Minutes ledger (`billingAccounts`, `ledgerEntries`, `creditLots`, `recurringGrants`) | Accounting records: pseudonymised by step 8 (user link → tombstone id), never deleted. |
 | `shareLikes` / `shareViews` | Already anonymous (IP hashed). |
 | Paddle records | Out of our system — directed at Paddle's own GDPR portal in [`PRIVACY.md`](./PRIVACY.md). |
 
@@ -113,7 +117,7 @@ A previously-issued JWT remains cryptographically valid for its 15-minute TTL ev
 
 ## Running the sweep
 
-**Scheduled (billing-roles P1.6).** vie-api's billing repair job runs `userDeletionService.runScheduledDeletions()` every `BILLING_REPAIR_INTERVAL_SECONDS` (default 300) under the Redis lock `vie:api:billing-repair`, so a due account is hard-deleted within one interval of its `hardDeleteAt`. The job is on when `BILLING_REPAIR_ENABLED` is (dev default on; the prod compose defaults it off until Mongo runs as a replica set, P6.4 — until then prod still needs the route below to be driven). A soft delete keeps the origin it was requested under when the job runs it: an admin's stays `initiatedBy: 'admin'`, the user's own is `'self'`; only a soft delete with no recorded origin (requested before origins were stored for self-service) is `'scheduler'`.
+**Scheduled (billing-roles P1.6).** vie-api's billing repair job runs `userDeletionService.runScheduledDeletions()` every `BILLING_REPAIR_INTERVAL_SECONDS` (default 300) under the Redis lock `vie:api:billing-repair`, so a due account is hard-deleted within one interval of its `hardDeleteAt`. The job is on when `BILLING_REPAIR_ENABLED` is (default on in both composes since P3.2: the minutes ledger decides every submit, so Mongo must run as a replica set before this code is deployed, P6.4). A soft delete keeps the origin it was requested under when the job runs it: an admin's stays `initiatedBy: 'admin'`, the user's own is `'self'`; only a soft delete with no recorded origin (requested before origins were stored for self-service) is `'scheduler'`.
 
 The internal route stays for a manual or external run:
 

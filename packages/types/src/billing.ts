@@ -239,7 +239,12 @@ export interface BillingShadowDecision {
   charged: boolean;
 }
 
-/** `billingShadow` — the old gate's decision next to the ledger's, one row per requestId (Contract 4). */
+/**
+ * `billingShadow` — the old gate's decision next to the ledger's, one row per
+ * requestId (Contract 4). Written by the P1 shadow ledger; nothing writes it
+ * since P3.2. The replay harness re-judges the rows, the GDPR cascade erases a
+ * user's.
+ */
 export interface BillingShadow {
   _id: string;
   requestId: string;

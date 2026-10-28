@@ -78,8 +78,8 @@ api/
     │   ├── assistant-client.ts   # HTTP client for assistant (RAG chat)
     │   ├── share.service.ts
     │   ├── og-image.service.ts
-    │   ├── cost-monitor.service.ts
-    │   └── billing/payment-provider.ts, burst-limit.ts  # payment adapter (noop until P4); shared submit burst limit
+    │   ├── video-submission.service.ts  # idempotency gate → minutes ledger → createVideo
+    │   └── billing/              # minutes ledger (BillingService, LedgerEnforcement, repair job), payment-provider.ts (noop until P4), burst-limit.ts
     │
     ├── templates/
     │   └── share-page.ts         # HTML template for /s/:slug (v1.4)
@@ -114,7 +114,8 @@ export interface Container {
   summarizerClient: SummarizerClient;
   shareService: ShareService;            // v1.4
   ogImageService: OgImageService;        // v1.4
-  costMonitorService: CostMonitorService; // v1.4
+  billingService: BillingService;        // minutes ledger (billing-roles)
+  billingEnforcement: LedgerEnforcement; // quote + hold on every submit
 }
 
 export function createContainer(db: Db): Container {
@@ -383,8 +384,6 @@ INTERNAL_SECRET=dev-internal-secret-change-me   # Shared secret for /internal/as
 SUBMIT_BURST_LIMIT_PER_HOUR=20
 # Chat messages a free account may send per rolling 24 h, both chat routes (0 = off)
 CHAT_FREE_MESSAGES_PER_DAY=50
-# Minutes-ledger shadow writes beside the old gate, never deciding (needs the replica set)
-BILLING_SHADOW_ENABLED=true
 # Billing repair job: stale holds, lot expiry, recurring grants, drift check,
 # llm_usage.user_id after 90 days, GDPR hard-delete sweep (needs the replica set)
 BILLING_REPAIR_ENABLED=true

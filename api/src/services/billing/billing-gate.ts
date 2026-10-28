@@ -21,10 +21,8 @@ export type Admission =
   | { admitted: false; quote: Quote; rejection: AllocationRejection };
 
 /**
- * The submit-time half of the ledger: duration → quote → hold. Shared by the
- * shadow hook (P1.7, off the request path, every error recorded) and by
- * enforcement (P3.1, awaited on the request path, errors surfaced) so both
- * decide exactly the same way.
+ * The submit-time half of the ledger: duration → quote → hold, awaited on the
+ * request path by LedgerEnforcement (P3.1), which surfaces every refusal.
  */
 /** Metadata pre-flights (yt-dlp behind the summarizer) the gate runs at once (I9). */
 const METADATA_CONCURRENCY = 3;

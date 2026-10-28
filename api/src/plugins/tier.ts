@@ -1,21 +1,18 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import fp from 'fastify-plugin';
-import type { UserTier, TierLimits } from '@vie/types';
-import { TIER_LIMITS } from '@vie/types';
+import type { PlanId } from '@vie/types';
 
 declare module 'fastify' {
   interface FastifyRequest {
-    tier: { name: UserTier; limits: TierLimits };
+    /** The billing account's plan (`billingAccounts.plan.id`); `free` until resolveTier runs. */
+    tier: { name: PlanId };
   }
   interface FastifyInstance {
     resolveTier: (req: FastifyRequest, reply: FastifyReply) => Promise<void>;
   }
 }
 
-const DEFAULT_TIER: { name: UserTier; limits: TierLimits } = {
-  name: 'free',
-  limits: TIER_LIMITS.free,
-};
+const DEFAULT_TIER: { name: PlanId } = { name: 'free' };
 
 async function tierSetup(fastify: FastifyInstance) {
   // Decorate request with null (avoids FSTDEP006 for reference types)
@@ -26,13 +23,18 @@ async function tierSetup(fastify: FastifyInstance) {
     req.tier = DEFAULT_TIER;
   });
 
-  // Decorator for routes that need actual tier resolution (use after authenticate)
-  // TODO: Add short-lived cache (e.g. 60s) if DB lookups become a bottleneck
+  // Decorator for routes that need the account plan (use after authenticate).
+  // The plan only steers queue priority here, never money, so a lookup
+  // failure keeps `free` (lower priority) instead of failing the request.
   fastify.decorate('resolveTier', async (req: FastifyRequest, _reply: FastifyReply) => {
-    if (!req.user?.userId) return;
-    const stored = await fastify.container.userRepository.getTier(req.user.userId);
-    const name: UserTier = stored === 'pro' || stored === 'team' ? stored : 'free';
-    req.tier = { name, limits: TIER_LIMITS[name] };
+    const userId = req.user?.userId;
+    if (!userId) return;
+    try {
+      const { plan } = await fastify.container.billingService.summary(userId);
+      req.tier = { name: plan.id };
+    } catch (err) {
+      req.log.warn({ err, userId }, 'plan_lookup_failed');
+    }
   });
 }
 

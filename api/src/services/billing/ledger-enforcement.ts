@@ -1,17 +1,17 @@
 import { rejectionToError } from './billing-errors.js';
-import { stampedRun } from './billing-shadow.service.js';
+import { stampedRun } from './run-stamp.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { HoldView } from '@vie/types';
 import type { AllocationRejection } from './allocation.js';
 import type { BillingGate, GateSubmission } from './billing-gate.js';
-import type { DispatchStampReader, SubmitOutcome } from './billing-shadow.service.js';
+import type { DispatchStampReader, SubmitOutcome } from './run-stamp.js';
 import type { BillingService, PlaylistQuote } from './billing.service.js';
 import type { LlmUsageRepository } from '../../repositories/llm-usage.repository.js';
 
-// P3.1 — BILLING_LEDGER_ENFORCE on: the minutes ledger decides, on the
-// request path. Same BillingGate as the shadow, so both decide alike; here a
-// refusal is thrown (402/422/403/429, METADATA_UNAVAILABLE fails closed) and
-// every give-back is awaited. P3.2 makes this the only path.
+// The minutes ledger decides every submit, on the request path (P3.1; the
+// only gate since P3.2): quote → hold before createVideo, a refusal thrown
+// (402/422/403/429, METADATA_UNAVAILABLE fails closed), every give-back
+// awaited, the terminal status settled or released.
 
 export interface LedgerEnforcementDeps {
   billing: BillingService;

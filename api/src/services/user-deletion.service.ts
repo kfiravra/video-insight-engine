@@ -4,6 +4,7 @@ import { ObjectId } from 'mongodb';
 import type { FastifyBaseLogger } from 'fastify';
 
 import type { UserRepository, UserDocument } from '../repositories/user.repository.js';
+import { BillingErasureRepository, type BillingErasureCounts } from '../repositories/billing-erasure.repository.js';
 import type {
   UserDeletionRepository,
   UserDeletionDocument,
@@ -60,6 +61,9 @@ type UserScopedCollection =
  *   - Qdrant `transcript_chunks` (shared, video-scoped)
  *   - S3 objects (shared, video-scoped — no user prefix today)
  *   - `llm_usage` (no TTL; kept for cost reporting)
+ *   - the minutes ledger (`billingAccounts`, `ledgerEntries`, `creditLots`,
+ *     `recurringGrants`): pseudonymised, not deleted — see
+ *     BillingErasureRepository (brief Q12)
  */
 
 const DEFAULT_GRACE_DAYS = 30;
@@ -102,6 +106,7 @@ export class UserDeletionService {
     private readonly userDeletionRepository: UserDeletionRepository,
     private readonly logger: FastifyBaseLogger,
     private readonly clock: () => Date = () => new Date(),
+    private readonly billingErasure: BillingErasureRepository = new BillingErasureRepository(db),
   ) {}
 
   // ─── Phase 2: soft delete ───────────────────────────────────────────────
@@ -203,6 +208,7 @@ export class UserDeletionService {
     const warnings: string[] = [];
     // Not part of the audit `counts` (that shape is fixed); logged on completion.
     let videoCacheRowsUnstamped = 0;
+    let billingErased: BillingErasureCounts | null = null;
 
     this.logger.info(
       { traceId, userId, initiatedBy: ctx.initiatedBy, adminId: ctx.adminId ?? null },
@@ -246,6 +252,11 @@ export class UserDeletionService {
       videoCacheRowsUnstamped = await this.clearVideoCacheDispatchContext(userId);
     }, warnings);
 
+    // The minutes ledger keeps its amounts; only the link to the user goes (Q12).
+    await this.runStep('billing', traceId, async () => {
+      billingErased = await this.billingErasure.eraseUser(userId, this.clock());
+    }, warnings);
+
     // Qdrant + S3 placeholders — no-ops today, see inventory report. Wired so
     // a future user-keyed payload slots in without changing call sites.
     await this.runStep('qdrant', traceId, async () => {
@@ -287,6 +298,7 @@ export class UserDeletionService {
       durationMs: audit.durationMs,
       counts,
       videoCacheRowsUnstamped,
+      billingErased,
       warnings: warnings.length,
     };
     if (warnings.length > 0) {

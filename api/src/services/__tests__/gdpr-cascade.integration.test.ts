@@ -1,11 +1,15 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
-import { MongoMemoryServer } from 'mongodb-memory-server';
+import { MongoMemoryReplSet } from 'mongodb-memory-server';
 import { MongoClient, Db, ObjectId } from 'mongodb';
 import type { FastifyBaseLogger } from 'fastify';
 import bcrypt from 'bcrypt';
 
+import { createBillingIndexes } from '../../plugins/mongodb.js';
+import { BillingRepository } from '../../repositories/billing.repository.js';
+import { BillingErasureRepository, ERASED_ACTOR_ID } from '../../repositories/billing-erasure.repository.js';
 import { UserRepository } from '../../repositories/user.repository.js';
 import { UserDeletionRepository } from '../../repositories/user-deletion.repository.js';
+import { BillingService } from '../billing/billing.service.js';
 import { UserDeletionService, hashEmail } from '../user-deletion.service.js';
 
 /**
@@ -18,6 +22,9 @@ import { UserDeletionService, hashEmail } from '../user-deletion.service.js';
  *  - other users' data is left untouched
  *  - Qdrant + S3 hooks return zero (placeholder steps documented in the
  *    inventory report; verified here to keep the contract honest).
+ *  - the minutes ledger names the user nowhere afterwards, and keeps every
+ *    amount (pseudonymised, brief Q12). A replica set: the billing step
+ *    runs in a transaction.
  *
  * This is the single most important test for compliance — Phase 7 of the
  * task plan calls it out as the regression gate for every future change.
@@ -36,7 +43,7 @@ const silentLogger = {
 } as unknown as FastifyBaseLogger;
 
 describe('GDPR cascade deletion — end-to-end integration', () => {
-  let mongod: MongoMemoryServer;
+  let mongod: MongoMemoryReplSet;
   let client: MongoClient;
   let db: Db;
   let userRepo: UserRepository;
@@ -44,7 +51,7 @@ describe('GDPR cascade deletion — end-to-end integration', () => {
   let service: UserDeletionService;
 
   beforeAll(async () => {
-    mongod = await MongoMemoryServer.create();
+    mongod = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
     client = new MongoClient(mongod.getUri());
     await client.connect();
     db = client.db('gdpr-e2e');
@@ -219,6 +226,67 @@ describe('GDPR cascade deletion — end-to-end integration', () => {
 
     // ─── 4. Shared resources are untouched ────────────────────────────────
     expect(await db.collection('videoSummaryCache').countDocuments({})).toBe(1);
+  });
+
+  it('pseudonymises the minutes ledger: the user is named nowhere, every amount stays (Q12)', async () => {
+    await createBillingIndexes(db);
+    const billing = new BillingService(new BillingRepository(db), userRepo, silentLogger);
+    const [doomed, witness] = await Promise.all(['ledger-doomed', 'ledger-witness'].map((name) => userRepo.create({
+      email: `${name}@example.com`, passwordHash: '$2b$10$fake', name,
+    })));
+    const doomedId = doomed._id.toString();
+    const ctx = (actorId: string) => ({ actorId, reason: 'gdpr test', auditId: new ObjectId().toHexString() });
+    // The doomed user's own billing: a lot, a recurring grant, a settled run and an open hold.
+    await billing.grantLot(doomedId, { minutes: 120 }, ctx('system:test'));
+    await billing.createRecurringGrant(doomedId, { minutes: 300, every: 'month', active: true }, ctx('system:test'));
+    await billing.hold('run-settled', await billing.quote(doomedId, 'dQw4w9WgXcQ', 600));
+    await billing.settle('run-settled');
+    await billing.hold('run-open', await billing.quote(doomedId, 'aaaaaaaaaaa', 300));
+    await db.collection('billingShadow').insertOne({ requestId: 'run-settled', userId: doomed._id, path: 'completed' });
+    // …and what they did as an admin to the witness's account.
+    await billing.grantLot(witness._id.toString(), { minutes: 50 }, ctx(doomedId));
+    const accountOf = (owner: ObjectId) => db.collection('billingAccounts').findOne({ ownerType: 'user', ownerId: owner });
+    const doomedAccount = await accountOf(doomed._id);
+    const minutesOf = async (accountId: ObjectId) => (await db.collection('ledgerEntries').find({ accountId }).toArray())
+      .map((entry) => [entry.idempotencyKey, entry.minutes]).sort();
+    const before = { doomed: await minutesOf(doomedAccount!._id), lots: await db.collection('creditLots').countDocuments() };
+
+    const audit = await service.executeHardDelete(doomedId, { initiatedBy: 'admin', adminId: 'op-1', reason: 'GDPR' });
+
+    expect(audit.warnings ?? []).toEqual([]);
+    // Nothing in the billing collections names the user any more.
+    const naming = await Promise.all(['billingAccounts', 'ledgerEntries', 'recurringGrants', 'billingShadow'].map((name) =>
+      db.collection(name).countDocuments({ $or: [{ ownerId: doomed._id }, { userId: doomed._id }, { 'holds.userId': doomed._id }, { actorId: doomedId }] })));
+    expect(naming).toEqual([0, 0, 0, 0]);
+    // The account and its amounts survive under a tombstone owner; its grant is retired; the shadow row is gone.
+    const erased = await db.collection('billingAccounts').findOne({ _id: doomedAccount!._id });
+    expect(erased?.ownerId.equals(doomed._id)).toBe(false);
+    expect(erased?.holds.map((hold: { userId: ObjectId }) => hold.userId.equals(erased.ownerId))).toEqual([true]);
+    expect(await minutesOf(doomedAccount!._id)).toEqual(before.doomed);
+    expect(await db.collection('creditLots').countDocuments()).toBe(before.lots);
+    expect(await db.collection('recurringGrants').countDocuments({ accountId: doomedAccount!._id, active: true })).toBe(0);
+    expect(await db.collection('billingShadow').countDocuments()).toBe(0);
+    expect((await billing.verifyAccountById(doomedAccount!._id)).ok).toBe(true);
+    // The witness keeps its account and minutes; the erased admin's grant names a stand-in actor.
+    const witnessEntries = await db.collection('ledgerEntries').find({ userId: witness._id }).toArray();
+    expect(witnessEntries.map((entry) => [entry.minutes, entry.actorId])).toEqual([[50, ERASED_ACTOR_ID]]);
+    expect((await accountOf(witness._id))?.buckets.credit.minutesAvailable).toBe(50);
+  });
+
+  it('re-runs the billing erasure as a no-op once the user is pseudonymised', async () => {
+    await createBillingIndexes(db);
+    const billing = new BillingService(new BillingRepository(db), userRepo, silentLogger);
+    const user = await userRepo.create({ email: 'twice@example.com', passwordHash: '$2b$10$fake', name: 'Twice' });
+    await billing.grantLot(user._id.toString(), { minutes: 30 }, { actorId: 'system:test', reason: 'gdpr test', auditId: new ObjectId().toHexString() });
+    const erasure = new BillingErasureRepository(db);
+    const first = await erasure.eraseUser(user._id.toString(), new Date());
+    const owner = (await db.collection('billingAccounts').findOne({}))?.ownerId;
+
+    const second = await erasure.eraseUser(user._id.toString(), new Date());
+
+    expect([first.accounts, first.ledgerEntries]).toEqual([1, 1]);
+    expect(Object.values(second).every((count) => count === 0)).toBe(true);
+    expect((await db.collection('billingAccounts').findOne({}))?.ownerId.equals(owner)).toBe(true);
   });
 
   it('completes the full self-service flow: soft-delete → wait → scheduler hard-deletes', async () => {

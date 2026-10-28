@@ -438,24 +438,30 @@ summarizer skips its S3 transcript + scene-frame caches; it implies
 }
 ```
 
-**Response (429) - Daily Cost Limit Reached:**
+**Response (402) - Not Enough Minutes:**
 
-The handler atomically reserves an estimated cost against the user's daily cap
-(`COST_LIMITS_PER_TIER`) before publishing the job. If the reservation pushes
-the user past the cap, the increment is refunded and the request fails:
+Before publishing the job the handler quotes the video against the account's
+minutes (free video, plan minutes, credit lots) and holds them. If they cannot
+cover it and nothing is cached or in flight to serve for free, the request
+fails with the numbers the UI shows:
 
 ```json
 {
-  "error": "DAILY_LIMIT_REACHED",
-  "message": "You've reached your daily cost limit ($2.00). Resets at midnight UTC.",
-  "resetAt": "2026-05-15T00:00:00.000Z",
-  "limitUsd": 2
+  "error": "INSUFFICIENT_MINUTES",
+  "message": "This video needs 45 minutes; 20 available",
+  "statusCode": 402,
+  "needed": 45,
+  "available": 20
 }
 ```
 
-Cache hits refund the reservation immediately. Real spend is reconciled from
-`llm_usage` when the pipeline reaches a terminal status (see
-[Per-User Cost Model](./llm-cost-model.md)).
+The other refusals are `422 VIDEO_TOO_LONG_FOR_PLAN` (`maxMinutes`),
+`403 ACCOUNT_BLOCKED`, `429 TOO_MANY_RUNS` (`maxConcurrent`) and
+`METADATA_UNAVAILABLE` when the video's length cannot be read; full table in
+[ERROR-HANDLING.md](./ERROR-HANDLING.md#minutes-gate). A cached or attached
+video gives its hold back at once; a completed run is debited from the hold
+when the pipeline reaches a terminal status, a failed one released. There is
+no per-user dollar cap.
 
 ---
 
@@ -812,10 +818,9 @@ created on this first read).
 - Every number is a whole count of minutes or runs, every date an ISO string.
   A test walks the payload and fails on any key matching `usd|cost|price|limit$`.
 
-**Transition (until P3.2):** `GET /users/me/usage?view=usd` still returns the
-old dollar summary (`tier`, `today`, `limitUsd`, `remainingUsd`, `resetAt`),
-because the current web tile reads it. It goes away with the dollar gate, and
-the `view` parameter then does nothing. Any other `view` value is a `400`.
+The legacy dollar summary (`?view=usd`) was removed with the dollar gate
+(billing-roles P3.2): query parameters are ignored and the minutes summary
+above is always returned.
 
 ---
 
@@ -857,10 +862,12 @@ Common error codes:
 
 - `400` - Bad Request (validation), `INVALID_CATEGORY`
 - `401` - Unauthorized
-- `403` - Forbidden: `REGISTRATION_CLOSED`, `DEMO_DISABLED`, `DEMO_RESTRICTED` (the shared demo account may not mutate the library or force paid runs; see SECURITY.md), `COLD_RUN_FORBIDDEN`, `ACCOUNT_DELETION_PENDING`
+- `402` - Payment Required: `INSUFFICIENT_MINUTES` (the minutes cannot cover the video; also returns `needed`, `available`, `nextFreeAt?`)
+- `403` - Forbidden: `REGISTRATION_CLOSED`, `DEMO_DISABLED`, `DEMO_RESTRICTED` (the shared demo account may not mutate the library or force paid runs; see SECURITY.md), `COLD_RUN_FORBIDDEN`, `ACCOUNT_DELETION_PENDING`, `ACCOUNT_BLOCKED` (an admin blocked the account's submits)
 - `404` - Not Found: `SHARE_NOT_FOUND`
 - `409` - Conflict: `ALREADY_SHARED`
-- `429` - Rate Limited: `RATE_LIMITED` (also the shared submit burst limit: 20 submissions per user per hour across `POST /videos`, the assistant's generate route and playlist import), `DAILY_LIMIT_REACHED` (per-user daily cost cap; also returns `resetAt` + `limitUsd`)
+- `422` - Unprocessable: `VIDEO_TOO_LONG_FOR_PLAN` (also returns `maxMinutes`)
+- `429` - Rate Limited: `RATE_LIMITED` (also the shared submit burst limit: 20 submissions per user per hour across `POST /videos`, the assistant's generate route and playlist import), `TOO_MANY_RUNS` (an admin's cap on runs in flight; also returns `maxConcurrent`)
 - `500` - Internal Server Error
 - `501` - Not Implemented: `PROVIDER_NOT_CONFIGURED` (no payment provider; nothing returns it yet)
 - `503` - Service Unavailable: `SERVICE_UNAVAILABLE`, `QUEUE_PUBLISH_FAILED`

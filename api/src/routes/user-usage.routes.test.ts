@@ -193,26 +193,18 @@ describe('GET /api/users/me/usage', () => {
     });
 
     it('should catch a dollar key when one is added (the walker is not vacuous)', () => {
-      const leaks = collectDollarLeaks({ plan: { id: 'free' }, today: { rawUsd: 0.4 }, limitUsd: 2, note: '$2.00' });
+      const leaks = collectDollarLeaks({ plan: { id: 'free' }, today: { rawUsd: 0.4 }, capUsd: 2, dailyLimit: 3, note: '$2.00' });
 
-      expect(leaks).toEqual(['$.today.rawUsd', '$.limitUsd', '$.note']);
+      expect(leaks).toEqual(['$.today.rawUsd', '$.capUsd', '$.dailyLimit', '$.note']);
     });
   });
 
-  describe('legacy dollar view', () => {
-    it('should still answer the dollar summary for ?view=usd until the web app moves to minutes', async () => {
-      mockContainer.costMonitorService.getUserUsageSummary.mockResolvedValue({ tier: 'free', limitUsd: 2 });
-
+  describe('removed dollar view (P3.2)', () => {
+    it('should answer minutes, never dollars, to an old client still asking for ?view=usd', async () => {
       const { statusCode, body } = await getUsage('?view=usd');
 
       expect(statusCode).toBe(200);
-      expect(body).toEqual({ tier: 'free', limitUsd: 2 });
-    });
-
-    it('should reject an unknown view', async () => {
-      const { statusCode } = await getUsage('?view=eur');
-
-      expect(statusCode).toBe(400);
+      expect([collectDollarLeaks(body), body.plan.id]).toEqual([[], 'free']);
     });
   });
 

@@ -46,11 +46,12 @@ ends (stream cap, dropped connection, killed script) leaves the entry on the
 unfinished row, so the summary names those entries to check. Stops at the first
 failure unless ``--keep-going``.
 
-The demo user is a free-tier user: ``USER_COST_LIMIT_FREE`` (USD per UTC day;
-the admin panel can grant a day's credit) and ``VIDEO_DAILY_LIMIT``
-(submissions per 24 h, 5 in ``.env.production.example``; no admin override)
-apply, so a long list may need several days. The refusal's error code
-(``RATE_LIMITED``, ``DAILY_LIMIT_REACHED``) is printed and the run stops.
+Every submit is paid in minutes from the demo account (its recurring grant,
+or lots an admin adds in vie-admin) and counts against the shared hourly
+burst limit (``SUBMIT_BURST_LIMIT_PER_HOUR``), so a long list may need more
+minutes or several hours. The refusal's error code (``RATE_LIMITED``,
+``INSUFFICIENT_MINUTES``, ``VIDEO_TOO_LONG_FOR_PLAN``) is printed and the run
+stops.
 
 Usage::
 
@@ -289,7 +290,9 @@ def _check_targets(args: argparse.Namespace) -> None:
 def _load(args: argparse.Namespace, current: str) -> Selection:
     _check_targets(args)
     if args.urls is None:
-        uri = args.mongo_uri or os.environ.get("MONGODB_URI", "mongodb://localhost:27017/?directConnection=true")
+        uri = args.mongo_uri or os.environ.get(
+            "MONGODB_URI", "mongodb://localhost:27017/?directConnection=true"
+        )
         return load_from_mongo(
             uri, args.mongo_db, current, demo_email=args.demo_email, all_cache=args.all_cache
         )

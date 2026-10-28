@@ -282,7 +282,8 @@ export class BillingService {
   /**
    * A recurring grant only mints for a live owner. An erased user (no row)
    * retires the grant for good; a soft-deleted one pauses it, so a restore
-   * resumes it. The billing collections join the GDPR cascade in P3.2.
+   * resumes it. The GDPR cascade retires an erased account's grants itself
+   * (BillingErasureRepository); this covers an owner gone any other way.
    */
   private async recurringOwnerActive(accountId: ObjectId, grantId: ObjectId): Promise<boolean> {
     const account = await this.repo.findAccountById(accountId);

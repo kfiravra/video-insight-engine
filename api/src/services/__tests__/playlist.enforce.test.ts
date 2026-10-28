@@ -1,5 +1,5 @@
 /**
- * P3.1 for playlist import with BILLING_LEDGER_ENFORCE on: the whole playlist
+ * P3.1 for playlist import on the minutes ledger: the whole playlist
  * is quoted up front ("needs 340 min, you have 120"); nothing affordable →
  * refused before a folder is created; otherwise items are admitted in order
  * and the import stops at the first one the minutes cannot cover (a prefix),
@@ -7,14 +7,12 @@
  */
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest';
 import { ObjectId } from 'mongodb';
-import type { FastifyBaseLogger } from 'fastify';
-import { getTestDb, mockLogger } from '../../test/setup.js';
+import { getTestDb } from '../../test/setup.js';
 import { createBillingIndexes } from '../../plugins/mongodb.js';
 import { AccountBlockedError, RunNotAllowedError } from '../../utils/errors.js';
 import { PlaylistService } from '../playlist.service.js';
-import { insertUser, makeEnforcement, makeShadowHarness } from '../billing/__tests__/billing-fixtures.js';
-import type { ShadowHarness } from '../billing/__tests__/billing-fixtures.js';
-import type { CostMonitorService } from '../cost-monitor.service.js';
+import { insertUser, makeBillingHarness, makeEnforcement } from '../billing/__tests__/billing-fixtures.js';
+import type { BillingHarness } from '../billing/__tests__/billing-fixtures.js';
 import type { FolderService } from '../folder.service.js';
 import type { SummarizerClient } from '../summarizer-client.js';
 import type { VideoService } from '../video.service.js';
@@ -34,13 +32,12 @@ function useExtract(minutes: Array<number | null>): void {
   });
 }
 
-describe('PlaylistService with BILLING_LEDGER_ENFORCE on', () => {
-  let h: ShadowHarness;
+describe('PlaylistService on the minutes ledger', () => {
+  let h: BillingHarness;
   let userId: string;
   let service: PlaylistService;
   let createVideo: ReturnType<typeof vi.fn>;
   let folders: { create: ReturnType<typeof vi.fn>; getById: ReturnType<typeof vi.fn> };
-  let costMonitor: { reserveUserCost: ReturnType<typeof vi.fn> };
 
   const holds = () => getTestDb().collection('ledgerEntries').find({ type: 'hold' }).toArray();
   const created = (overrides: Record<string, unknown> = {}) => ({
@@ -64,7 +61,7 @@ describe('PlaylistService with BILLING_LEDGER_ENFORCE on', () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
-    h = makeShadowHarness(getTestDb());
+    h = makeBillingHarness(getTestDb());
     userId = await insertUser(getTestDb());
     // Like the real createVideo for videos nobody has: serve-only finds nothing to serve.
     createVideo = vi.fn().mockImplementation(async (_user: string, _url: string, options: { serveOnly?: boolean }) => {
@@ -72,14 +69,10 @@ describe('PlaylistService with BILLING_LEDGER_ENFORCE on', () => {
       return created();
     });
     folders = { create: vi.fn().mockResolvedValue({ id: 'folder-1', name: 'P' }), getById: vi.fn() };
-    costMonitor = { reserveUserCost: vi.fn() };
     service = new PlaylistService(
       { createVideo } as unknown as VideoService,
       folders as unknown as FolderService,
       {} as unknown as SummarizerClient,
-      mockLogger as unknown as FastifyBaseLogger,
-      costMonitor as unknown as CostMonitorService,
-      h.shadow,
       makeEnforcement(getTestDb(), h),
     );
   });
@@ -136,7 +129,6 @@ describe('PlaylistService with BILLING_LEDGER_ENFORCE on', () => {
     expect(result.videos.map((v) => v.position)).toEqual([1, 2]);
     expect(result.failedVideos.map((f) => [f.position, f.error])).toEqual([[3, 'INSUFFICIENT_MINUTES'], [4, 'INSUFFICIENT_MINUTES']]);
     expect(result.billing).toEqual({ neededMinutes: 65, availableMinutes: 50, freeVideoAvailable: false });
-    expect(costMonitor.reserveUserCost).not.toHaveBeenCalled();
   });
 
   it('should skip an item that is too long and keep importing the rest', async () => {

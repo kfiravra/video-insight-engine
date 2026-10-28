@@ -13,7 +13,8 @@ When you use Video Insight Engine, we keep:
 | Encrypted password | Sign-in security | Our database (bcrypt-hashed) |
 | Library entries (videos you've added) | So your library appears when you log in | Our database |
 | Folders, playlists | Library organization | Our database |
-| AI cost usage | Daily cost cap enforcement | Our database |
+| Video minutes (your plan, free video, minutes granted and used) | What you can summarise; accounting | Our database |
+| AI cost usage | Our own cost reporting (never charged to you in dollars) | Our database |
 | Saved chat notes | The "Save note" action in the chat assistant | Our database |
 
 We **do not** store:
@@ -32,7 +33,8 @@ We **do not** store:
 
 After the 30-day grace period:
 
-- Your user record and all rows pointing at it (library, folders, notes, daily cost log) are deleted from our database.
+- Your user record and all rows pointing at it (library, folders, notes, the old daily cost log) are deleted from our database.
+- Your **minutes history** (the plan, minutes granted and used) is an accounting record, so it is kept, but **unlinked from you**: every reference to your account is replaced by a random id that points to no one.
 - An **audit row** is written so we can prove the deletion happened. The row contains a one-way hash of your email — not the email itself — plus the deletion timestamp and counts of what was removed. This satisfies our compliance obligations without keeping your personal data.
 
 ## What is NOT deleted

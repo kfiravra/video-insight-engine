@@ -157,17 +157,26 @@ is unchanged, so the evaluator below keeps reading it as before.
 | `high_failure_rate` | critical | failure rate over the last hour > `failure_rate_threshold` (≥ 10 calls) | 1 h cooldown |
 | `backup_stale` | critical | newest backup manifest older than `BACKUP_MAX_AGE_HOURS` | 6 h cooldown |
 
-`daily_global_cost` is the operator's global spend alarm and nothing more: no request is blocked by global spend (the per-user daily cap in vie-api is the only spend gate). It sums the Python ledger schema (`cost_usd`, `timestamp`). It is suppressed per UTC day, not by a rolling window, so the first breach after midnight still alerts.
+`daily_global_cost` is the operator's global spend alarm and nothing more: no request is blocked by global spend (vie-api's minutes ledger is the only gate on what a user can run; there is no per-user dollar cap). It sums the Python ledger schema (`cost_usd`, `timestamp`). It is suppressed per UTC day, not by a rolling window, so the first breach after midnight still alerts.
 
 ### Per-User Costs (`/users/`)
 
-Backs the **Users** page in the admin dashboard. Reads `userCosts` (per-user
-daily aggregates) and `userCostAdjustments` (admin audit log). See
-[Data Models — userCosts](./DATA-MODELS.md#usercosts).
+Backs the **Users** page in the admin dashboard. Spend is read from `llm_usage` (one row per
+LLM call, attributed by `user_id`): nothing writes `userCosts` any more, so the list and the
+cost timelines aggregate the ledger of record by user and UTC day (`src/services/user_costs.py`).
+A run is counted per distinct summarizer `request_id`; assistant chat adds cost, not videos.
+`userCosts` and `userCostAdjustments` are read-only history ([Data Models: userCosts](./DATA-MODELS.md#usercosts)):
+
+- `creditAdjustmentUsd`, the retired dollar credit, exists only there, and the Adjustments tab reads `userCostAdjustments`;
+- a day that has no attributed `llm_usage` rows keeps the history row's cost and video count, which covers the time before a run streamed over HTTP was attributed to its user. A day that has attributed rows takes its cost from them and only the credit from history, so nothing is counted twice.
+
+A user is listed when they have spend in the range, a minutes account (`billingAccounts`), or
+signed up in the range (a new user has neither yet, and the admin must still find them to grant
+minutes). The **Plan** column is `billingAccounts.plan.id`, `free` when the user has no account row.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/users/costs?days=7&limit=50&offset=0` | Top users by effective USD over the trailing window (joins `users` for email/name/tier) |
+| GET | `/users/costs?days=7&limit=50&offset=0` | Users by effective USD over the trailing window, highest first, with email/name (`users`) and `plan` |
 | GET | `/users/{user_id}/costs?days=30` | One user's daily breakdown + last 20 audit rows |
 | GET | `/users/{user_id}/activity?days=30` | User-360: videos generated (`userVideos` join), assistant LLM calls (`llm_usage` where `user_id`), and daily cost timeline — all in one payload |
 | POST | `/users/{user_id}/grant-credit` | Grant minutes: body `{minutes (1–100000), reason (1–500), expiresAt?}`, proxied to vie-api's `POST /api/admin/billing/accounts/{id}/credits` as the session's admin. Answers vie-api's `{before, after, lotId, auditId}`. Named admin session only (the machine key gets `403`) |

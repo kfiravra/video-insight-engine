@@ -243,15 +243,15 @@ Node.js 20 + Fastify + TypeScript + Zod. Base URL `/api`. Patterns: DI `Containe
 - Every protected route verifies **resource ownership at the data layer** (e.g. `userHasAccessToSummary`), not just route auth.
 
 ### Key endpoints
-- `POST /videos` — the core submit. Validates optional `Idempotency-Key`, extracts the 11-char `youtubeId`, runs the idempotency gate, reserves estimated cost against the daily tier cap, publishes the job. Returns `{cached:true}` on cache hit or `status:pending {cached:false}` on miss. Over-cap → refund + `429 DAILY_LIMIT_REACHED`. `?bypassCache=true` skips the idempotency gate.
+- `POST /videos` — the core submit. Validates optional `Idempotency-Key`, extracts the 11-char `youtubeId`, counts the hourly burst limit, runs the idempotency gate, quotes the video against the account's minutes and holds them (the minutes ledger), publishes the job. Returns `{cached:true}` on cache hit (hold given back) or `status:pending {cached:false}` on miss. Refusals: `402 INSUFFICIENT_MINUTES`, `422 VIDEO_TOO_LONG_FOR_PLAN`, `403 ACCOUNT_BLOCKED`, `429 TOO_MANY_RUNS` — a cached or in-flight video is still served free. `?bypassCache=true` skips the idempotency gate.
 - `GET /videos/:videoSummaryId/stream` — **SSE** stream of the pipeline (see events below). Ends with literal `data: [DONE]`.
 - `POST /videos/:id/retry` — manual retry (only when `status==failed`, error is retryable, within 24h).
 - `PATCH /videos/:id/override-category` — re-classify through the Plan stage.
 - `DELETE /videos/:id` — removes only the **userVideo reference**; the shared cache row is untouched.
 - Share: `POST /share/:videoSummaryId` (auth, 20/hr) → `{shareSlug, shareUrl:/s/<slug>}`; `GET /share/:slug` (public, 100/min); `POST /share/:slug/like` (10/min/IP); SSR `GET /s/:slug` (HTML + OG, 60/min) + `GET /s/:slug/og-image.png`.
 - Assistant proxy: `POST /api/assistant/chat`, `POST /api/videos/:id/action`, `POST /library/search`.
-- `GET /api/users/me/usage` — the user's minutes (plan, free video, plan minutes, credit lots, holds; no dollars). `?view=usd` is the legacy dollar summary until P3.2.
-- Internal: `POST /internal/status` (summarizer → API → rebroadcast over WS), `POST /internal/reconcile-costs` (manual/ops rebuild — no scheduler; reconcile otherwise runs on every terminal video status, for today's UTC day), `POST /internal/run-deletions` (GDPR hard-delete sweep: runs only when this route is called; the repo configures no scheduler for it).
+- `GET /api/users/me/usage` — the user's minutes (plan, free video, plan minutes, credit lots, holds; never dollars).
+- Internal: `POST /internal/status` (summarizer → API → rebroadcast over WS; a terminal status settles or releases the run's hold), `POST /internal/run-deletions` (manual GDPR hard-delete sweep; vie-api's billing repair job runs the same sweep every 5 minutes).
 
 ### SSE event sequence (since v9, `EXTRACTION_PARALLEL=true`)
 ```
@@ -275,8 +275,8 @@ Clients replace tabs by id and sort by `position`; `heartbeat` events keep the s
 ### WebSocket
 `ws://localhost:3000/ws?token=<jwt>` (auth via query param; invalid → close 4001). Events: `video.status`, `expansion.status`, `chat.message`. Fed by the summarizer's `POST /internal/status` callback.
 
-### Tiers
-`free` / `pro` / `team` (resolved per user by the `resolveTier` preHandler in `api/src/plugins/tier.ts`) only pick the per-user daily USD cap. The `TIER_LIMITS` table in `@vie/types` (free: 3 videos/day, 5 chats/output; pro/team unlimited) is **enforced nowhere** — `api/src/plugins/tier.ts` only attaches it to the request. The real gates are the per-user daily USD cap (`USER_COST_LIMIT_FREE|PRO|TEAM`, default $2 / $20 / unlimited) and the `VIDEO_DAILY_LIMIT` route limiter on `POST /videos` (per user, 24 h window, default 100, `0` disables); a later billing phase replaces both with a minutes ledger. Summaries never expire on any tier (the 30-day free-tier TTL was removed 2026-09-17). Cost gate: `429 DAILY_LIMIT_REACHED` (per-user daily cap). There is no global request-blocking cap — global spend only trips the vie-admin `daily_global_cost` operator alarm (`ALERT_DAILY_COST_THRESHOLD_USD`).
+### Plans & minutes
+Users pay in **video-minutes, never dollars** (billing-roles). Every account (`billingAccounts`) is on plan `free` or `pro` and spends, in order, one free video per rolling 24 h (≤ 30 min), the Pro plan's 600 minutes per monthly cycle (no rollover), then credit lots (admin-granted or bought later, FIFO by expiry). Every submit path — `POST /videos`, each playlist item, the assistant's generate route — is quoted and held before the run (`LedgerEnforcement`; videos up to 180 min with paid minutes), a completed run is debited, a failed one released, a cached or attached video costs nothing; the append-only `ledgerEntries` are the source of truth and a repair job settles lost holds, expires lots and applies recurring grants. There is **no per-user dollar cap and no daily video limit** (removed in P3.2 with `userCosts`' reservation gate, `TIER_LIMITS` and `users.tier` as a gate); abuse is bounded by the shared hourly burst limit (`SUBMIT_BURST_LIMIT_PER_HOUR`, default 20) and per-account admin caps (`blocked`, `maxConcurrent`). LLM dollars are internal margin only (`costUsd` on the run's ledger entries); global spend only trips the vie-admin `daily_global_cost` operator alarm (`ALERT_DAILY_COST_THRESHOLD_USD`). Summaries never expire on any plan (the 30-day free-tier TTL was removed 2026-09-17).
 
 ---
 
@@ -284,7 +284,8 @@ Clients replace tabs by id and sort by `position`; `heartbeat` events keep the s
 
 **System cache (shared):** `videoSummaryCache`, `systemExpansionCache`.
 **User data:** `users`, `folders`, `userVideos`.
-**Cost & control:** `userCosts`, `userCostAdjustments`, `idempotencyKeys`, `llm_usage` (+ `llm_alerts`, `health_history` for admin), `userDeletions`, `agentNotes`.
+**Billing (minutes ledger):** `billingAccounts`, `ledgerEntries` (append-only, the source of truth), `creditLots`, `recurringGrants`; `billingShadow` (P1 diagnostics, read-only).
+**Cost & control:** `userCosts`, `userCostAdjustments` (read-only history of the retired dollar gate), `idempotencyKeys`, `llm_usage` (+ `llm_alerts`, `health_history` for admin), `userDeletions`, `agentNotes`.
 
 ### `videoSummaryCache` (one row per YouTube video — central, dual-shaped)
 - **Core:** `_id`, `youtubeId` (unique), `url`, `title`, `channel`, `duration`, `thumbnailUrl`, `language` (always `'en'` post-translation), `isRTL`, `context{category, contentTags[], primaryTag, youtubeCategory, tags[], displayTags[]}`, `status` (`pending|processing|completed|failed`), `errorMessage`, `errorCode`, `retryCount`, `transcriptMeta{outcome, source, type, origin, captionTrack, captionLang, captionFetchError, captionApiSkipped, attempted[], segments, chars, fetchWallMs, errorCode}` (per-run transcript provenance, written for ok **and** failed runs, absent on Redis-served rows; `transcript`/`transcriptSegments[]` are legacy and unwritten).
@@ -302,7 +303,7 @@ Clients replace tabs by id and sort by `position`; `heartbeat` events keep the s
 - `users`: `email` (unique), `passwordHash` (bcrypt), `tier`, `usage{...}`, soft-delete fields `deletedAt` / `hardDeleteAt`.
 - `folders`: materialized-path hierarchy (`path`, `parentId`, `level`).
 - `userVideos`: per-user library referencing the cache (denormalized `youtubeId/title/...`, `folderId`, `isFavorite`, optional `playlistInfo`). Index `{userId,videoSummaryId}` unique.
-- `userCosts`: per-user daily aggregate (`date` UTC, `totalCostUsd`, `videoCount`, `creditAdjustmentUsd`). Gates `POST /videos`.
+- `userCosts`: per-user daily aggregate (`date` UTC, `totalCostUsd`, `videoCount`, `creditAdjustmentUsd`). Read-only history since P3.2 — nothing writes it and it gates nothing.
 - `userCostAdjustments`: signed admin audit (`amountUsd<0` = credit).
 - `idempotencyKeys`: `hash` (unique), `status`, `videoSummaryId` (sparse), 24h TTL.
 - `systemExpansionCache`: cached "Explain" expansions, keyed `{videoSummaryId, targetType, targetId}` unique.
@@ -439,7 +440,7 @@ The summarizer's `MODEL_MAP` (`services/summarizer/src/config.py`) — the provi
 
 Measured on prod v9 on 2026-10-13, before the 4.0 model refresh (pipeline-1min gate g3 §Prod, runs with frames; `pipeline.timing` = the ledger): T1dQhQAm8Tc $0.098 (a run that writes the plan's hourly cache entry adds ≈ $0.10), jMq8lEu-of0 $0.180, uC45_4nnEAI $0.148 (median of 2 runs; the others one each), the Hebrew regression video EqaMrzd9nZU $0.157; `complete` at 59–93 s. Prod v8 on the first three: $0.114–0.216 and 169–240 s. The call count includes the sampled faithfulness judge (up to 6 small calls) and, for a non-English video, the translation batches. The Whisper fallback adds roughly $0.14 when captions are unavailable.
 
-**Per-user daily cost cap:** `llm_usage` aggregates into `userCosts`; `POST /videos` calls `reserveUserCost` (increment-then-check) → `429 DailyLimitReachedError` past the tier cap. Refunds happen **only** on the terminal-status callback (don't double-credit).
+**Per-user spend:** no dollar cap — users pay video-minutes through the ledger (§7 Plans & minutes). Each run's LLM $ (Σ `llm_usage.cost_usd` by its request id) is recorded on its ledger debit/release as `costUsd`, for margin only.
 
 ---
 
@@ -459,7 +460,7 @@ Measured on prod v9 on 2026-10-13, before the 4.0 model refresh (pipeline-1min g
 
 - **Soft delete:** `DELETE /api/users/me` sets `deletedAt=now`, `hardDeleteAt=now+30d`, returns `202 + scheduledHardDeleteAt`, clears the refresh cookie. User immediately frozen (`403 ACCOUNT_DELETION_PENDING`).
 - **30-day grace:** `POST /api/users/me/restore` — the **only** authenticated endpoint exempt from the soft-delete check.
-- **Scheduled hard delete:** runs when `POST /internal/run-deletions` is called (`runScheduledDeletions()` sweeps `hardDeleteAt <= now`; nothing else calls it, and the repo configures no scheduler — `scripts/backup-cron/crontab` only runs backups and `docs/DEPLOY.md` sets up none, so a deployment must drive the route from its own cron) → `executeHardDelete()` saga deletes in fixed order: `agentNotes → userVideos → folders → userCosts → userCostAdjustments → idempotencyKeys → videoSummaryCache dispatch stamp (videoCacheDispatchContext: unsets userId/requestId) → Qdrant user content (placeholder) → S3 user objects (placeholder) → users (FK anchor, last)` → writes a `userDeletions` audit row. Every step is idempotent (`deleteMany({userId})`) and wrapped in `runStep` that records failures as **warnings without aborting** (smallest PII footprint > rollback).
+- **Scheduled hard delete:** vie-api's billing repair job runs `runScheduledDeletions()` every 5 minutes (`hardDeleteAt <= now`); `POST /internal/run-deletions` is the manual entrypoint → `executeHardDelete()` saga deletes in fixed order: `agentNotes → userVideos → folders → userCosts → userCostAdjustments → idempotencyKeys → videoSummaryCache dispatch stamp (videoCacheDispatchContext: unsets userId/requestId/billingRunId) → billing (pseudonymised, not deleted — the account, holds and ledger entries move to a tombstone owner id, amounts stay, Q12) → Qdrant user content (placeholder) → S3 user objects (placeholder) → users (FK anchor, last)` → writes a `userDeletions` audit row. Every step is idempotent (`deleteMany({userId})`) and wrapped in `runStep` that records failures as **warnings without aborting** (smallest PII footprint > rollback).
 - **Audit:** `userDeletions` retained **indefinitely**, stores `emailHash` (SHA-256, never plaintext), `initiatedBy` (`self|admin|scheduler`), counts, timing, warnings. Proof of erasure = re-hash an email and match a completed row.
 - **NOT deleted** (video-scoped / shared / anonymized): `videoSummaryCache` (the shared row stays; only the deleted user's dispatch stamp, `userId` / `requestId`, is unset), Qdrant `transcript_chunks` (`user_id` reserved but always null today), S3 `videos/{youtubeId}`, `llm_usage` (kept indefinitely, no TTL; rows keep the orphaned `user_id`), IP-hashed share signals, external Paddle records.
 - **Compliance gate:** `gdpr-cascade.integration.test.ts` — seeds every inventoried collection, runs the cascade, asserts zero rows + audit row. If it fails, deletion no longer satisfies Article 17 → **do not merge**.

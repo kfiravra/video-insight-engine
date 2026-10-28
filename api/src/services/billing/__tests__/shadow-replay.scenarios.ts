@@ -2,10 +2,12 @@ import type { BillingShadowDecision, BillingShadowPath } from '@vie/types';
 
 // P1.11 replay scenarios — pure data, so the P3 gate re-runs them unchanged.
 // Each scenario drives the real submit / playlist / internal-status paths;
-// `expect` lists the runs whose shadow row is judged. `oldDecision` is the
-// old dollar gate's decision recorded as data: today the harness asserts it
-// against the live gate, after P3.2 (old gate deleted) it is the only source.
+// `expect` lists the runs whose decision is judged. `oldDecision` is the old
+// dollar gate's decision recorded as data (asserted against the live gate
+// until P3.2 deleted it); it is now the only source of the old side.
 
+// The `*_limit*` kinds name where the recorded old gate stood; the ledger
+// only sees their plan and lots.
 export type AccountKind =
   | 'free'
   | 'credit' // free plan + a 300-minute admin lot

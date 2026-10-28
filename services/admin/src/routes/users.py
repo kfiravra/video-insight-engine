@@ -1,4 +1,4 @@
-"""Per-user cost views (read-only history) and the credit-grant proxy."""
+"""Per-user cost views (read-only) and the credit-grant proxy."""
 
 from __future__ import annotations
 
@@ -15,6 +15,14 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 from src.auth import AdminActor, current_user_actor
 from src.dependencies import get_database
+from src.services.user_costs import (
+    DayCost,
+    UserCostSummary,
+    cost_days,
+    plan_id,
+    summarize,
+    user_cost_summaries,
+)
 from src.services.vie_api_client import (
     IDEMPOTENCY_KEY_PATTERN,
     MAX_ADMIN_MINUTES,
@@ -32,17 +40,6 @@ _cache: TTLCache[str, Any] = TTLCache(maxsize=64, ttl=30)
 MAX_DAYS = 90
 
 
-def _utc_date_key(date: datetime) -> str:
-    """Format a UTC datetime as ``YYYY-MM-DD``."""
-    return date.strftime("%Y-%m-%d")
-
-
-def _since_date_key(days: int) -> str:
-    """UTC ``YYYY-MM-DD`` for ``days`` ago (inclusive of today)."""
-    since = datetime.now(UTC) - timedelta(days=max(days - 1, 0))
-    return _utc_date_key(since)
-
-
 def _parse_object_id(value: str) -> ObjectId:
     try:
         return ObjectId(value)
@@ -54,7 +51,8 @@ class UserCostRow(BaseModel):
     userId: str
     email: str | None
     name: str | None
-    tier: str
+    # The account plan (``billingAccounts.plan.id``); ``free`` when the user has no account row yet.
+    plan: str
     totalCostUsd: float
     videoCount: int
     creditAdjustmentUsd: float
@@ -124,7 +122,7 @@ class UserAssistantCallRow(BaseModel):
 
 
 class UserCostTimelineRow(BaseModel):
-    """Daily cost total for the user (from userCosts collection)."""
+    """Daily cost total for the user (``llm_usage``, with ``userCosts`` as history)."""
 
     date: str
     totalCostUsd: float
@@ -141,66 +139,51 @@ class UserActivityResponse(BaseModel):
     costTimeline: list[UserCostTimelineRow]
 
 
+def _cost_row(summary: UserCostSummary) -> UserCostRow:
+    return UserCostRow(
+        userId=summary.user_id,
+        email=summary.email,
+        name=summary.name,
+        plan=summary.plan,
+        totalCostUsd=summary.total_cost_usd,
+        videoCount=summary.video_count,
+        creditAdjustmentUsd=summary.credit_adjustment_usd,
+        effectiveUsd=summary.effective_usd,
+        days=summary.days,
+    )
+
+
+def _daily_rows(days: dict[str, DayCost]) -> list[UserDailyRow]:
+    return [
+        UserDailyRow(
+            date=date,
+            totalCostUsd=day.total_cost_usd,
+            videoCount=day.video_count,
+            creditAdjustmentUsd=day.credit_adjustment_usd,
+            effectiveUsd=day.effective_usd,
+        )
+        for date, day in sorted(days.items())
+    ]
+
+
 @router.get("/costs")
 async def list_user_costs(
     days: int = Query(7, ge=1, le=MAX_DAYS),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ) -> list[UserCostRow]:
-    """Top users by effective cost over the trailing window."""
+    """Users by effective cost over the trailing window.
+
+    Cost is the user's attributed ``llm_usage`` spend; a user is listed with
+    spend in the range, a minutes account, or a sign-up in the range (see
+    ``src.services.user_costs``).
+    """
     cache_key = f"user-costs:{days}:{limit}:{offset}"
     if cache_key in _cache:
         return _cache[cache_key]
 
-    db = get_database()
-    since_key = _since_date_key(days)
-
-    pipeline = [
-        {"$match": {"date": {"$gte": since_key}}},
-        {
-            "$group": {
-                "_id": "$userId",
-                "totalCostUsd": {"$sum": "$totalCostUsd"},
-                "videoCount": {"$sum": "$videoCount"},
-                "creditAdjustmentUsd": {"$sum": "$creditAdjustmentUsd"},
-                "days": {"$sum": 1},
-            }
-        },
-        {
-            "$addFields": {
-                "effectiveUsd": {"$add": ["$totalCostUsd", "$creditAdjustmentUsd"]},
-            }
-        },
-        {"$sort": {"effectiveUsd": -1}},
-        {"$skip": offset},
-        {"$limit": limit},
-        {
-            "$lookup": {
-                "from": "users",
-                "localField": "_id",
-                "foreignField": "_id",
-                "as": "_user",
-                "pipeline": [{"$project": {"email": 1, "name": 1, "tier": 1}}],
-            }
-        },
-        {"$unwind": {"path": "$_user", "preserveNullAndEmptyArrays": True}},
-    ]
-
-    raw = await db.userCosts.aggregate(pipeline).to_list(limit)
-    data = [
-        UserCostRow(
-            userId=str(row["_id"]),
-            email=(row.get("_user") or {}).get("email"),
-            name=(row.get("_user") or {}).get("name"),
-            tier=(row.get("_user") or {}).get("tier") or "free",
-            totalCostUsd=row["totalCostUsd"],
-            videoCount=row["videoCount"],
-            creditAdjustmentUsd=row["creditAdjustmentUsd"],
-            effectiveUsd=row["effectiveUsd"],
-            days=row["days"],
-        )
-        for row in raw
-    ]
+    summaries = await user_cost_summaries(get_database(), days)
+    data = [_cost_row(s) for s in summaries[offset : offset + limit]]
     _cache[cache_key] = data
     return data
 
@@ -212,54 +195,31 @@ async def user_cost_detail(
 ) -> UserCostDetail:
     """Per-user daily breakdown + recent adjustments."""
     user_oid = _parse_object_id(user_id)
+    uid = str(user_oid)
     db = get_database()
-    since_key = _since_date_key(days)
 
-    user_doc = await db.users.find_one(
-        {"_id": user_oid},
-        {"email": 1, "name": 1, "tier": 1},
+    user_doc, plan, by_user, adjustments_raw = await asyncio.gather(
+        db.users.find_one({"_id": user_oid}, {"email": 1, "name": 1}),
+        plan_id(db, uid),
+        cost_days(db, days, uid),
+        db.userCostAdjustments.find({"userId": user_oid})
+        .sort("createdAt", -1)
+        .limit(20)
+        .to_list(20),
     )
-
-    daily_cursor = db.userCosts.find(
-        {"userId": user_oid, "date": {"$gte": since_key}},
-    ).sort("date", 1)
-    daily_docs = await daily_cursor.to_list(MAX_DAYS)
-
-    daily_rows: list[UserDailyRow] = []
-    raw_total = 0.0
-    raw_credit = 0.0
-    video_count = 0
-    for doc in daily_docs:
-        total = float(doc.get("totalCostUsd", 0) or 0)
-        credit = float(doc.get("creditAdjustmentUsd", 0) or 0)
-        videos = int(doc.get("videoCount", 0) or 0)
-        raw_total += total
-        raw_credit += credit
-        video_count += videos
-        daily_rows.append(
-            UserDailyRow(
-                date=doc["date"],
-                totalCostUsd=total,
-                videoCount=videos,
-                creditAdjustmentUsd=credit,
-                effectiveUsd=total + credit,
-            )
-        )
-
+    user_days = by_user.get(uid, {})
+    total, video_count, credit, active_days = summarize(user_days)
     summary = UserCostRow(
         userId=user_id,
         email=(user_doc or {}).get("email"),
         name=(user_doc or {}).get("name"),
-        tier=(user_doc or {}).get("tier") or "free",
-        totalCostUsd=raw_total,
+        plan=plan,
+        totalCostUsd=total,
         videoCount=video_count,
-        creditAdjustmentUsd=raw_credit,
-        effectiveUsd=raw_total + raw_credit,
-        days=len(daily_rows),
+        creditAdjustmentUsd=credit,
+        effectiveUsd=total + credit,
+        days=active_days,
     )
-
-    adj_cursor = db.userCostAdjustments.find({"userId": user_oid}).sort("createdAt", -1).limit(20)
-    adjustments_raw = await adj_cursor.to_list(20)
     adjustments = [
         {
             "id": str(a["_id"]),
@@ -271,8 +231,7 @@ async def user_cost_detail(
         }
         for a in adjustments_raw
     ]
-
-    return UserCostDetail(user=summary, daily=daily_rows, adjustments=adjustments)
+    return UserCostDetail(user=summary, daily=_daily_rows(user_days), adjustments=adjustments)
 
 
 @router.post("/{user_id}/grant-credit")
@@ -349,12 +308,12 @@ async def user_activity(
 
     Video ownership is resolved via the ``userVideos`` collection
     (``userId`` + ``videoSummaryId`` join). Assistant activity is sourced
-    from ``llm_usage`` rows where ``user_id`` matches. Cost timeline comes
-    from the ``userCosts`` daily aggregate. All three queries run in
-    parallel.
+    from ``llm_usage`` rows where ``user_id`` matches. The cost timeline is the
+    user's daily spend (``llm_usage``, with ``userCosts`` as history). All
+    three queries run in parallel.
     """
     user_oid = _parse_object_id(user_id)
-    since_key = _since_date_key(days)
+    uid = str(user_oid)
     db = get_database()
 
     user_videos_cursor = (
@@ -385,14 +344,10 @@ async def user_activity(
         .limit(200)
     )
 
-    cost_cursor = db.userCosts.find(
-        {"userId": user_oid, "date": {"$gte": since_key}},
-    ).sort("date", 1)
-
-    video_docs, assistant_docs, cost_docs = await asyncio.gather(
+    video_docs, assistant_docs, cost_by_user = await asyncio.gather(
         user_videos_cursor.to_list(100),
         assistant_cursor.to_list(200),
-        cost_cursor.to_list(MAX_DAYS),
+        cost_days(db, days, uid),
     )
 
     videos = [_format_user_video(d) for d in video_docs]
@@ -401,13 +356,12 @@ async def user_activity(
 
     cost_timeline = [
         UserCostTimelineRow(
-            date=d["date"],
-            totalCostUsd=float(d.get("totalCostUsd") or 0),
-            creditAdjustmentUsd=float(d.get("creditAdjustmentUsd") or 0),
-            effectiveUsd=float(d.get("totalCostUsd") or 0)
-            + float(d.get("creditAdjustmentUsd") or 0),
+            date=date,
+            totalCostUsd=day.total_cost_usd,
+            creditAdjustmentUsd=day.credit_adjustment_usd,
+            effectiveUsd=day.effective_usd,
         )
-        for d in cost_docs
+        for date, day in sorted(cost_by_user.get(uid, {}).items())
     ]
 
     return UserActivityResponse(

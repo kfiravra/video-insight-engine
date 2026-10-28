@@ -4,7 +4,6 @@ import { resolveErrorEnvelope } from './error-envelope.js';
 import {
   AccountBlockedError,
   ChatLimitReachedError,
-  DailyLimitReachedError,
   InsufficientMinutesError,
   MetadataUnavailableError,
   NotFoundError,
@@ -22,20 +21,6 @@ describe('resolveErrorEnvelope', () => {
     expect(statusCode).toBe(400);
     expect(body).toMatchObject({ error: 'VALIDATION_ERROR', statusCode: 400 });
     expect(body.details?.issues[0]).toEqual({ path: 'url', message: expect.any(String) });
-  });
-
-  it('should carry resetAt and limitUsd for the daily cost cap', () => {
-    const { statusCode, body } = resolveErrorEnvelope(
-      new DailyLimitReachedError(1.5, '2026-08-27T00:00:00.000Z'),
-    );
-
-    expect(statusCode).toBe(429);
-    expect(body).toMatchObject({
-      error: 'DAILY_LIMIT_REACHED',
-      statusCode: 429,
-      resetAt: '2026-08-27T00:00:00.000Z',
-      limitUsd: 1.5,
-    });
   });
 
   it('should carry nextAt for the free chat limit', () => {

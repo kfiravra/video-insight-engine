@@ -17,15 +17,10 @@ function compareRows(a: UserCostRow, b: UserCostRow, key: SortKey): number {
   return (a[key] ?? 0) - (b[key] ?? 0);
 }
 
-function tierBadge(tier: string): string {
-  switch (tier) {
-    case 'pro':
-      return 'bg-[var(--color-success-soft)] text-[var(--color-success)]';
-    case 'team':
-      return 'bg-[var(--color-primary-soft)] text-[var(--color-primary)]';
-    default:
-      return 'bg-[var(--color-surface-dim)] text-[var(--color-text-muted)]';
-  }
+function planBadge(plan: string): string {
+  return plan === 'pro'
+    ? 'bg-[var(--color-success-soft)] text-[var(--color-success)]'
+    : 'bg-[var(--color-surface-dim)] text-[var(--color-text-muted)]';
 }
 
 export function UsersPage({ days = 7 }: UsersPageProps = {}) {
@@ -101,7 +96,7 @@ export function UsersPage({ days = 7 }: UsersPageProps = {}) {
             <thead>
               <tr className="border-b border-[var(--color-border)] bg-[var(--color-surface-dim)]">
                 <th className="text-left p-3">User</th>
-                <th className="text-left p-3 hidden sm:table-cell">Tier</th>
+                <th className="text-left p-3 hidden sm:table-cell">Plan</th>
                 <SortableTh label="Effective" active={sortKey === 'effectiveUsd'} dir={sortDir} onClick={() => toggleSort('effectiveUsd')} />
                 <SortableTh label="Raw" active={sortKey === 'totalCostUsd'} dir={sortDir} onClick={() => toggleSort('totalCostUsd')} />
                 <SortableTh label="Credit" active={sortKey === 'creditAdjustmentUsd'} dir={sortDir} onClick={() => toggleSort('creditAdjustmentUsd')} />
@@ -112,7 +107,7 @@ export function UsersPage({ days = 7 }: UsersPageProps = {}) {
               {visible.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="p-6 text-center text-xs text-[var(--color-text-muted)]">
-                    No users with usage in the last {days} days.
+                    No users with usage, a minutes account or a sign-up in the last {days} days.
                   </td>
                 </tr>
               ) : (
@@ -132,8 +127,8 @@ export function UsersPage({ days = 7 }: UsersPageProps = {}) {
                       </div>
                     </td>
                     <td className="p-3 hidden sm:table-cell">
-                      <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-semibold ${tierBadge(u.tier)}`}>
-                        {u.tier}
+                      <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-semibold ${planBadge(u.plan)}`}>
+                        {u.plan}
                       </span>
                     </td>
                     <td className="p-3 text-right font-mono font-bold text-[var(--color-primary)]">
