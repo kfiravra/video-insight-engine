@@ -5,7 +5,7 @@ import { EN } from './en';
 import { HE } from './he';
 import type { Labels } from './labels';
 
-export type { Labels } from './labels';
+export type { BillingLabels, DurationLabels, Labels, PluralForms } from './labels';
 
 const TRANSLATIONS: Record<string, Labels> = {
   en: EN,

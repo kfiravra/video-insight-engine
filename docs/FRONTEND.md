@@ -44,6 +44,7 @@ apps/web/src/
 │   ├── LandingPage.tsx             # Public homepage with URL input
 │   ├── BoardPage.tsx               # Folder explorer + video grid
 │   ├── GeneratePage.tsx            # URL intake + first-run onboarding (value-prop chips, example disclosure, sample URL)
+│   ├── BillingPage.tsx             # /settings/billing: plan, minutes, credit lots, holds (read-only, no checkout)
 │   ├── VideoDetailPage.tsx         # Video detail + output rendering
 │   ├── SharePage.tsx               # Public share view (/s/:slug)
 │   └── dev/                        # DesignSystemPage, StreamingPreviewPage (/dev/streaming-preview, DEV-only)
@@ -64,8 +65,9 @@ apps/web/src/
 │   │   ├── MobileBottomNav.tsx, MobileFAB.tsx
 │   ├── collections/                # Collection picker/panel (4 files)
 │   ├── rag/                        # RAG chat components (4 files)
-│   ├── videos/                     # VideoGrid, VideoCard, YouTubePlayer, etc.
-│   ├── playlists/                  # PlaylistPreview
+│   ├── videos/                     # VideoGrid, VideoCard, YouTubePlayer, BoardInlinePaste, etc.
+│   ├── usage/                      # Minutes UI: UsageTile, UsageRows, MinutesCallout, BillingNoticeAlert
+│   ├── playlists/                  # PlaylistPreview, PlaylistImportSummary (what an import left out, and why)
 │   └── dev/                        # Design system showcases
 │
 ├── features/                       # Complex, multi-concern features
@@ -112,6 +114,8 @@ apps/web/src/
 ├── lib/                            # SHARED utilities (6 files)
 │   ├── utils.ts (cn()), query-client.ts, query-keys.ts
 │   ├── youtube-utils.ts, string-utils.ts
+│   ├── format-minutes.ts           # minute plurals (Intl.PluralRules), Latin-digit numbers, "7h 30m" countdowns, dates
+│   ├── billing-errors.ts           # billing error code -> BillingNotice (402/422/403/429 + their fields)
 │   ├── i18n/                       # UI labels: labels.ts (the Labels interface), en.ts / he.ts / ar.ts, index.ts (getLabels, useLabels)
 │   └── dev/                        # Dev mock data
 ├── stores/                         # GLOBAL stores (auth-store, ui-store)
@@ -131,6 +135,7 @@ apps/web/src/
 | `/register`      | RegisterPage    | Public     | Sign up → redirects to /board       |
 | `/board`         | BoardPage       | Protected  | Folder explorer + video grid (home) |
 | `/generate`      | GeneratePage    | Protected  | URL intake; onboarding affordances collapse for users with ≥1 video |
+| `/settings/billing` | BillingPage  | Protected  | Plan, minutes, credit lots with expiry, runs in progress (read-only; minutes are added by the team for now) |
 | `/video/:id`     | VideoDetailPage | Protected  | Video detail + output rendering     |
 | `/s/:slug`       | SharePage       | Public     | Public read-only shared output      |
 
@@ -217,6 +222,25 @@ OutputRouter
 ### UI Labels
 
 Components use `useLabels()` for translatable strings (Next, Previous, Done, etc.) instead of hardcoded English. Currently supports: English, Hebrew, Arabic.
+
+### Minutes UI (no money anywhere)
+
+Users are billed in video-minutes, so the usage surfaces never print a dollar amount. The shape is `UsageSummary` from `@vie/types`, read from `GET /api/users/me/usage` by `useUserUsage()` (refetched on focus, every 60 s and after any submit or playlist import).
+
+| Piece | What it does |
+|-------|--------------|
+| `UsageTile` (user menu) | Free video "ready" or "next in 7h 30m", Pro minutes left this cycle (with a progress bar), credits, minutes held by runs in progress, a blocked notice, and a link to `/settings/billing`. Built on `UsageRows`, which `BillingPage` reuses |
+| `MinutesCallout` | Replaces the daily-limit callout. Opens only on the server's `402 INSUFFICIENT_MINUTES` (free video spent and plan + credits cannot cover the video) or `422 VIDEO_TOO_LONG_FOR_PLAN`, with `needed` / `available` / `nextFreeAt` / `maxMinutes`. The CTA links to `/settings/billing` |
+| `BillingNoticeAlert` | What `BoardInlinePaste` and `VideoIntakeForm` render for a billing refusal: the callout for 402/422, one plain alert for `ACCOUNT_BLOCKED` (403), `TOO_MANY_RUNS` / `RATE_LIMITED` (429, the server's message) and `CHAT_LIMIT_REACHED` |
+| `PlaylistImportSummary` | After an import with `failedVideos`: "3 of 5 videos added" and the reason each item was left out. Billing codes get a translated reason, other errors show the server's message, an unknown machine code reads "Couldn't be added" |
+
+`lib/billing-errors.ts` maps an `ApiError` (code plus its body, `err.details`) to a `BillingNotice`. Extra fields are read defensively: a missing or mistyped field becomes `null` and the copy falls back to a sentence without it, never "undefined".
+
+**i18n.** Every string is in `Labels.billing` (`lib/i18n/{labels,en,he,ar}.ts`) and read through `useBillingText()`, which also binds the formatters to the current language. Minute and video counts use `PluralForms` (`one` / `two` / `few` / `many` / `other` plus `{count}`), picked by `Intl.PluralRules`: Hebrew has one / two / other ("דקה אחת", "שתי דקות", "5 דקות") and Arabic has all six ("دقيقتان", "3 دقائق", "11 دقيقة"). Numbers use Latin digits in every language (`-u-nu-latn`), like timestamps and scores. Countdowns come from `formatDurationUntil` ("7h 30m") with per-language unit templates. Layout uses logical properties (`ms-`, `text-start`) so the same markup serves RTL.
+
+> **Language source:** the app shell has no UI-language setting; `useLabels()` follows the nearest `DirectionProvider`, which only wraps video output. Until a UI language exists, the user-menu tile and `/settings/billing` render English and localise as soon as they sit under a `DirectionProvider`. The he/ar strings are complete and tested.
+
+**Guard.** `lib/__tests__/no-dollar-ui.test.ts` fails if `limitUsd`, `DAILY_LIMIT_REACHED`, "Upgrade to Pro for", `formatUsd` or template-literal `$` formatting appears anywhere under `apps/web/src`.
 
 ### Source-Language Toggle (`LanguageToggle`)
 

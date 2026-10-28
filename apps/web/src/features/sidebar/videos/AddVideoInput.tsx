@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/dialog";
 import { FolderTreeSelect } from "../folders/FolderTreeSelect";
 import { PlaylistPreview } from "@/components/playlists/PlaylistPreview";
+import { PlaylistImportSummary } from "@/components/playlists/PlaylistImportSummary";
 import { useUIStore } from "@/stores/ui-store";
 import { useAddVideo } from "@/hooks/use-videos";
 import { usePlaylistPreview, usePlaylistImport } from "@/hooks/use-playlists";
@@ -31,7 +32,10 @@ import { getFolderColorStyle } from "@/features/sidebar/lib/style-utils";
 import { cn } from "@/lib/utils";
 import { hasVideoId, hasPlaylistId, isPlaylistPage } from "@/lib/youtube-utils";
 import { showDuplicateToast } from "@/features/video-output/lib/duplicate-toast";
-import type { PlaylistPreview as PlaylistPreviewType } from "@/api/playlists";
+import type {
+  PlaylistImportResult,
+  PlaylistPreview as PlaylistPreviewType,
+} from "@/api/playlists";
 
 type Mode = "video" | "playlist";
 
@@ -46,6 +50,8 @@ export function AddVideoInput() {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [playlistPreview, setPlaylistPreview] = useState<PlaylistPreviewType | null>(null);
   const [showPreviewDialog, setShowPreviewDialog] = useState(false);
+  /** Set when an import left items out; the dialog then shows why instead of the preview. */
+  const [importResult, setImportResult] = useState<PlaylistImportResult | null>(null);
   /** Form is the morph source for the "Crystallization" navigation transition —
    *  the input shape becomes the streaming detail page's spine. */
   const formRef = useRef<HTMLFormElement>(null);
@@ -155,8 +161,9 @@ export function AddVideoInput() {
       // For playlists: only pass folderId if user explicitly selected one (not sidebar default)
       // This ensures playlists create their own folder by default
       const explicitFolderId = userSelection !== USE_SIDEBAR_SELECTION ? userSelection : undefined;
-      await importMutation.mutateAsync({ url: url.trim(), folderId: explicitFolderId ?? undefined });
-      setShowPreviewDialog(false);
+      const result = await importMutation.mutateAsync({ url: url.trim(), folderId: explicitFolderId ?? undefined });
+      setShowPreviewDialog(result.failedCount > 0);
+      setImportResult(result.failedCount > 0 ? result : null);
       setPlaylistPreview(null);
       setUrl("");
       setUserSelection(USE_SIDEBAR_SELECTION);
@@ -291,12 +298,27 @@ export function AddVideoInput() {
       </form>
 
       {/* Playlist Preview Dialog */}
-      <Dialog open={showPreviewDialog} onOpenChange={setShowPreviewDialog}>
+      <Dialog
+        open={showPreviewDialog}
+        onOpenChange={(open) => {
+          setShowPreviewDialog(open);
+          if (!open) setImportResult(null);
+        }}
+      >
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>Import Playlist</DialogTitle>
           </DialogHeader>
-          {playlistPreview && (
+          {importResult && (
+            <PlaylistImportSummary
+              result={importResult}
+              onDismiss={() => {
+                setShowPreviewDialog(false);
+                setImportResult(null);
+              }}
+            />
+          )}
+          {!importResult && playlistPreview && (
             <PlaylistPreview
               playlist={playlistPreview}
               onImport={handleImportPlaylist}

@@ -1,3 +1,94 @@
+/** Noun forms by CLDR plural category. `{count}` is replaced by the formatted
+ *  number; `other` is required and covers any category a language leaves out
+ *  (English has one / other, Hebrew adds two, Arabic all six). */
+export interface PluralForms {
+  other: string;
+  zero?: string;
+  one?: string;
+  two?: string;
+  few?: string;
+  many?: string;
+}
+
+/** Unit templates for a countdown ("7h 30m"); `{count}` is the number. */
+export interface DurationLabels {
+  days: string;
+  hours: string;
+  minutes: string;
+}
+
+/** The minutes UI: usage tile, "not enough minutes" callout, /settings/billing and
+ *  the playlist import result. Placeholders in braces are interpolated by the
+ *  caller; `{when}` is a countdown from `formatDurationUntil`, `{date}` a
+ *  formatted date, and `{minutes}` / `{needed}` / `{available}` / `{max}` /
+ *  `{total}` / `{running}` a noun phrase from the plural forms. */
+export interface BillingLabels {
+  minutes: PluralForms;
+  videos: PluralForms;
+  duration: DurationLabels;
+  // Usage tile
+  tileTitle: string;
+  tileAria: string;
+  tileLoading: string;
+  tileError: string;
+  planFree: string;
+  planPro: string;
+  freeVideo: string;
+  freeVideoReady: string;
+  freeVideoNext: string;
+  freeVideoUnavailable: string;
+  freeVideoUpTo: string;
+  planMinutes: string;
+  /** {left} is a bare number, {total} a minutes phrase: "412 of 600 minutes left". */
+  planMinutesLeft: string;
+  planMinutesResets: string;
+  credits: string;
+  inProgress: string;
+  blocked: string;
+  manageLink: string;
+  // Not-enough-minutes callout (402 / 422)
+  calloutFreeUsed: string;
+  calloutFreeNext: string;
+  calloutNeeds: string;
+  calloutNeedsUnknown: string;
+  calloutTooLong: string;
+  calloutTooLongUnknown: string;
+  calloutCta: string;
+  // Other refusals at submit time
+  errorTooManyRuns: string;
+  errorTooManyRunsUnknown: string;
+  errorRateLimited: string;
+  errorChatLimit: string;
+  errorChatLimitNext: string;
+  // /settings/billing
+  pageTitle: string;
+  pageIntro: string;
+  back: string;
+  planSection: string;
+  planTermEnds: string;
+  planFreeNote: string;
+  cycleEnds: string;
+  minutesSection: string;
+  lotsSection: string;
+  lotsEmpty: string;
+  lotExpires: string;
+  lotNoExpiry: string;
+  holdsSection: string;
+  holdsEmpty: string;
+  holdVideoFallback: string;
+  teamNote: string;
+  // Playlist import result
+  playlistResult: string;
+  playlistFailedHeading: string;
+  playlistDismiss: string;
+  failedInsufficient: string;
+  failedTooLong: string;
+  failedBlocked: string;
+  failedTooManyRuns: string;
+  failedRateLimited: string;
+  failedUnknown: string;
+}
+
 /** The UI labels every supported language fills (en / he / ar) — the
  *  interface makes a missing key a compile error. */
 export interface Labels {
@@ -141,4 +232,6 @@ export interface Labels {
   // ships are listed in EN below; callers fall back gracefully when a key
   // is absent, so translators can stage coverage incrementally.
   tabPreviews: Record<string, string>;
+  // Minutes, plan and billing page
+  billing: BillingLabels;
 }

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "@/api/client";
+import { useBillingText, type BillingText } from "@/hooks/use-billing-text";
 import {
   sendAssistantMessage,
   sendLibraryMessage,
@@ -8,6 +9,8 @@ import {
   type AssistantChatEvent,
   type AssistantSource,
 } from "@/lib/assistant";
+import { classifyBillingError } from "@/lib/billing-errors";
+import { describeBillingNotice } from "@/lib/billing-notice-text";
 import { useLabels } from "@/lib/i18n";
 import { queryKeys } from "@/lib/query-keys";
 import {
@@ -42,14 +45,17 @@ const MUTATING_ACTIONS = new Set([
 ]);
 
 const RATE_LIMITED_MESSAGE = "Too many messages. Please wait a moment and try again.";
-const CHAT_LIMIT_REACHED_MESSAGE =
-  "You've used your free chat messages for now. More open up as the last 24 hours pass.";
 const CONNECT_FAILED_MESSAGE = "Failed to connect to assistant. Please try again.";
 
-/** Copy for a request that failed before any SSE event arrived. */
-function requestFailureMessage(err: unknown): string {
-  if (err instanceof ApiError && err.code === "CHAT_LIMIT_REACHED") {
-    return CHAT_LIMIT_REACHED_MESSAGE;
+/**
+ * Copy for a request that failed before any SSE event arrived. A used-up free
+ * chat allowance (429 CHAT_LIMIT_REACHED) says, in the user's language, when
+ * more messages open up, from the `nextAt` the gateway sends.
+ */
+function requestFailureMessage(err: unknown, billingText: BillingText): string {
+  const notice = classifyBillingError(err);
+  if (notice?.kind === "chat_limit") {
+    return describeBillingNotice(notice, billingText, Date.now());
   }
   const rateLimited =
     err instanceof ApiError && (err.status === 429 || err.code === "RATE_LIMITED");
@@ -99,6 +105,7 @@ export function useSidebarChat(options: UseSidebarChatOptions = {}) {
   const storeClearMessages = useChatStore((s) => s.clearMessages);
 
   const labels = useLabels();
+  const billingText = useBillingText();
 
   const queryClient = useQueryClient();
 
@@ -304,7 +311,7 @@ export function useSidebarChat(options: UseSidebarChatOptions = {}) {
             m.id === assistantId
               ? {
                   ...m,
-                  content: requestFailureMessage(err),
+                  content: requestFailureMessage(err, billingText),
                   isStreaming: false,
                 }
               : m,
@@ -312,7 +319,7 @@ export function useSidebarChat(options: UseSidebarChatOptions = {}) {
         );
       });
     },
-    [videoSummaryId, setMessages, setStatus, setPendingConfirmation, queryClient],
+    [videoSummaryId, setMessages, setStatus, setPendingConfirmation, queryClient, billingText],
   );
 
   // Every message — single-video or library — now goes through the streaming

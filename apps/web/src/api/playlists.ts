@@ -25,7 +25,10 @@ export interface FailedVideoImport {
   youtubeId: string;
   title: string;
   position: number;
+  /** The error message, or a stable code such as INSUFFICIENT_MINUTES. */
   error: string;
+  /** The billing error code when the server sends it apart from `error`. */
+  code?: string;
 }
 
 export interface PlaylistImportResult {

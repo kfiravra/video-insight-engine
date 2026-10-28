@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { playlistsApi, type PlaylistPreview, type PlaylistImportResult } from "@/api/playlists";
 import type { ProviderConfig } from "@/api/videos";
 import { queryKeys } from "@/lib/query-keys";
+import { usageQueryKey } from "@/hooks/use-usage";
 
 /**
  * Hook to preview a playlist before importing.
@@ -47,6 +48,7 @@ export function usePlaylistImport() {
       // Invalidate videos and folders to show new content
       queryClient.invalidateQueries({ queryKey: queryKeys.videos.lists() });
       queryClient.invalidateQueries({ queryKey: queryKeys.folders.lists() });
+      queryClient.invalidateQueries({ queryKey: usageQueryKey });
     },
   });
 }
