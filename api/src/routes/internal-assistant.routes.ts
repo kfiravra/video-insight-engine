@@ -57,6 +57,7 @@ export async function internalAssistantRoutes(fastify: FastifyInstance): Promise
     userRepository,
     costMonitorService,
     idempotencyService,
+    submitBurstLimiter,
   } = fastify.container;
   // Same submission flow as POST /api/videos — the assistant must not be able
   // to bypass the daily cost cap, idempotency gate, or reservation unwind.
@@ -175,6 +176,10 @@ export async function internalAssistantRoutes(fastify: FastifyInstance): Promise
   }, async (req, reply) => {
     const { url, folderId } = generateSchema.parse(req.body);
     const userId = req.user.userId;
+
+    // The same hourly bucket as POST /api/videos: the assistant cannot submit
+    // around the burst limit (RATE_LIMITED, 429).
+    await submitBurstLimiter.consume(userId);
 
     // Resolve the tier so the submission service enforces the right daily cap.
     const user = await userRepository.findById(userId);

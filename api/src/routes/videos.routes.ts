@@ -47,7 +47,14 @@ const versionsQuerySchema = z.object({
 });
 
 export async function videosRoutes(fastify: FastifyInstance) {
-  const { videoService, videoCascadeService, costMonitorService, idempotencyService, videoRepository } = fastify.container;
+  const {
+    videoService,
+    videoCascadeService,
+    costMonitorService,
+    idempotencyService,
+    videoRepository,
+    submitBurstLimiter,
+  } = fastify.container;
   // Constructed here (not in the container) so route tests that override
   // container services via `buildTestApp` keep full control over its deps.
   const videoSubmissionService = new VideoSubmissionService(
@@ -119,6 +126,10 @@ export async function videosRoutes(fastify: FastifyInstance) {
         message: 'Idempotency-Key must be 1-255 printable ASCII characters',
       });
     }
+
+    // One hourly bucket shared with the assistant's generate route and playlist
+    // import: an abuse guard, checked before any work (RATE_LIMITED, 429).
+    await submitBurstLimiter.consume(req.user.userId);
 
     // Full submission flow (idempotency gate → cost reservation → createVideo
     // → unwind on failure) lives in the service so the assistant's internal

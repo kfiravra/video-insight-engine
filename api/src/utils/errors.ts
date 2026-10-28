@@ -287,13 +287,14 @@ export class DailyLimitReachedError extends AppError {
 }
 
 /**
- * The assistant throttled this user (its own 30/min chat window). Same wire
- * shape as the rate-limit plugin's envelope — `RATE_LIMITED`, 429 — so clients
- * keep one code map for both.
+ * A throttle answered 429: the assistant's own 30/min chat window, or the
+ * shared submit burst limit. Same wire shape as the rate-limit plugin's
+ * envelope — `RATE_LIMITED`, 429 — so clients keep one code map for all of
+ * them; the message says which limit was hit.
  */
 export class RateLimitedError extends AppError {
-  constructor() {
-    super('RATE_LIMITED', 429, 'Too many messages. Please wait a moment and try again.');
+  constructor(message = 'Too many messages. Please wait a moment and try again.') {
+    super('RATE_LIMITED', 429, message);
     this.name = 'RateLimitedError';
   }
 }

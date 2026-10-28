@@ -843,8 +843,9 @@ Common error codes:
 - `403` - Forbidden: `REGISTRATION_CLOSED`, `DEMO_DISABLED`, `DEMO_RESTRICTED` (the shared demo account may not mutate the library or force paid runs; see SECURITY.md), `COLD_RUN_FORBIDDEN`, `ACCOUNT_DELETION_PENDING`
 - `404` - Not Found: `SHARE_NOT_FOUND`
 - `409` - Conflict: `ALREADY_SHARED`
-- `429` - Rate Limited: `RATE_LIMITED`, `DAILY_LIMIT_REACHED` (per-user daily cost cap; also returns `resetAt` + `limitUsd`)
-- `500` - Internal Server Error, `PAYMENT_ERROR`
+- `429` - Rate Limited: `RATE_LIMITED` (also the shared submit burst limit: 20 submissions per user per hour across `POST /videos`, the assistant's generate route and playlist import), `DAILY_LIMIT_REACHED` (per-user daily cost cap; also returns `resetAt` + `limitUsd`)
+- `500` - Internal Server Error
+- `501` - Not Implemented: `PROVIDER_NOT_CONFIGURED` (no payment provider; nothing returns it yet)
 - `503` - Service Unavailable: `SERVICE_UNAVAILABLE`, `QUEUE_PUBLISH_FAILED`
 
 ---

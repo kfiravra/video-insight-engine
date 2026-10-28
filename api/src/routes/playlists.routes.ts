@@ -28,7 +28,7 @@ const playlistIdParamSchema = z.object({
 });
 
 export async function playlistsRoutes(fastify: FastifyInstance) {
-  const { playlistService } = fastify.container;
+  const { playlistService, submitBurstLimiter } = fastify.container;
 
   // POST /api/playlists/preview - Preview a playlist before importing
   fastify.post<{
@@ -75,6 +75,9 @@ export async function playlistsRoutes(fastify: FastifyInstance) {
     if (providers) {
       await fastify.requireNotDemo(req);
     }
+    // A playlist import is one submission for the shared hourly burst bucket,
+    // however many videos it holds.
+    await submitBurstLimiter.consume(req.user.userId);
     const result = await playlistService.import(
       req.user.userId,
       url,

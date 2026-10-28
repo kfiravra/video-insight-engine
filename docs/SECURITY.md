@@ -263,6 +263,28 @@ lasts only as long as the outage and self-heals; a strategy that gives up
 permanently ends the ioredis client and would silently disable rate limiting
 for the remainder of the process lifetime.
 
+### Submit burst limit
+
+An abuse guard, not a billing limit: one Redis counter per user,
+`vie:api:submit-burst:<userId>`, a **fixed one-hour window** that opens at the
+user's first submission of the hour and holds `SUBMIT_BURST_LIMIT_PER_HOUR`
+(default 20; `0` turns it off). `api/src/services/billing/burst-limit.ts` does
+`INCR` and `EXPIRE` in one Lua script, so a crash cannot leave a counter without
+a TTL. It is deliberately not `@fastify/rate-limit`, whose keys include the
+route: `POST /api/videos`, the assistant's `POST /internal/assistant/generate`
+and `POST /api/playlists/import` all draw from the same bucket, so a user cannot
+triple the allowance by switching routes. A playlist import costs one, however
+many videos it holds. A rejected attempt counts but never extends the window.
+
+When the bucket is full the route answers `429`, error code `RATE_LIMITED`, with
+`Too many submissions in the last hour. Try again in N min.` (N rounds the time
+left up, minimum 1). The message never says "daily". Like the limiter above it
+fails open: a Redis error logs a `submit_burst_check_failed` warning and lets
+the submission through. The check runs before any work, after the Idempotency-Key
+header check, so an idempotent replay counts like a new submission. The old
+`VIDEO_DAILY_LIMIT` per-route limiter still runs alongside it until the dollar
+gate is removed.
+
 ### Response on Limit
 
 ```json

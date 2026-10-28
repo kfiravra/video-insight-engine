@@ -447,11 +447,11 @@ Measured on prod v9 on 2026-10-13, before the 4.0 model refresh (pipeline-1min g
 
 - **Two-token JWT** (see §7). `JWT_SECRET ≠ JWT_REFRESH_SECRET`. A soft-deleted user's JWT stays valid for its 15-min TTL, so the `authenticate` hook does a **per-request user lookup** → `403 ACCOUNT_DELETION_PENDING` to kill sessions instantly.
 - **Passwords:** bcrypt cost ≥ 10. **Validation:** Zod everywhere (11-char YouTube IDs across watch/youtu.be/embed; 8+ char passwords with upper+lower+digit; lowercased emails ≤255).
-- **Rate limits** keyed by `user.id` (auth) or IP: default 100/min; register 5/h, login 10/15min, refresh 30/15min, `POST /videos` 10/24h, share endpoints as noted. Paddle webhook unlimited but signature-verified. Returns `{error:'RATE_LIMITED', retryAfter}` + `X-RateLimit-*` headers.
+- **Rate limits** keyed by `user.id` (auth) or IP: default 100/min; register 5/h, login 10/15min, refresh 30/15min, `POST /videos` 10/24h, share endpoints as noted. The submit burst limit (`SUBMIT_BURST_LIMIT_PER_HOUR`, default 20/h) is one shared bucket for `POST /videos`, the assistant's generate route and playlist import. Returns `{error:'RATE_LIMITED', retryAfter}` + `X-RateLimit-*` headers.
 - **CORS:** localhost:5173 + `FRONTEND_URL`, `credentials:true`, never `*` in prod. **Helmet CSP:** `defaultSrc 'self'`, image hosts `img.youtube.com`/`i.ytimg.com`, `crossOriginEmbedderPolicy` disabled so YouTube thumbnails load.
 - **SSRF:** OG-image service validates thumbnail hostnames against a YouTube allowlist. **XSS:** share-page escapes all dynamic values + JSON-LD. **NoSQL injection:** `_ALLOWED_RESULT_KEYS` allowlist in the summarizer's Mongo repo.
-- **Payments:** Paddle webhooks verified via HMAC-SHA256 (`PADDLE_WEBHOOK_SECRET`); mandatory in prod, skipped in dev when empty; idempotent.
-- **Required secrets:** `JWT_SECRET`, `JWT_REFRESH_SECRET`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` (the openai/* stage defaults since 4.0d), `PADDLE_WEBHOOK_SECRET`, `INTERNAL_SECRET` (`openssl rand -base64 32`).
+- **Payments:** none live. The Paddle Classic stub is removed; `PaymentProviderAdapter` (noop) is the seam for the P4 provider, and its webhook must be signature-verified, fresh and idempotent.
+- **Required secrets:** `JWT_SECRET`, `JWT_REFRESH_SECRET`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` (the openai/* stage defaults since 4.0d), `INTERNAL_SECRET` (`openssl rand -base64 32`).
 
 ---
 

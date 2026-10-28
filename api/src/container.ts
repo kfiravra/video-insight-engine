@@ -32,6 +32,11 @@ import { VideoCascadeService } from './services/video-cascade.service.js';
 import { AuditService } from './services/audit.service.js';
 import { AdminSeedService } from './services/admin-seed.service.js';
 import { BillingService } from './services/billing/billing.service.js';
+import {
+  SubmitBurstLimiter,
+  noOpSubmitBurstLimiter,
+  type ISubmitBurstLimiter,
+} from './services/billing/burst-limit.js';
 import { config } from './config.js';
 
 export interface Container {
@@ -60,6 +65,7 @@ export interface Container {
   queuePublisher: QueuePublisher;
   idempotencyService: IdempotencyService;
   dispatchGuardService: IDispatchGuard;
+  submitBurstLimiter: ISubmitBurstLimiter;
   userDeletionService: UserDeletionService;
   videoCascadeService: VideoCascadeService;
   auditService: AuditService;
@@ -118,6 +124,10 @@ export function createContainer(
   const dispatchGuardService: IDispatchGuard = options.redisClient
     ? new DispatchGuardService(options.redisClient, config.DISPATCH_GUARD_TTL_SECONDS, logger)
     : noOpDispatchGuard;
+  // Same fail-open stance: no Redis client, no burst limit.
+  const submitBurstLimiter: ISubmitBurstLimiter = options.redisClient
+    ? new SubmitBurstLimiter(options.redisClient, config.SUBMIT_BURST_LIMIT_PER_HOUR, logger)
+    : noOpSubmitBurstLimiter;
   const authService = new AuthService(userRepository, logger);
   const videoService = new VideoService(
     videoRepository,
@@ -184,6 +194,7 @@ export function createContainer(
     queuePublisher,
     idempotencyService,
     dispatchGuardService,
+    submitBurstLimiter,
     userDeletionService,
     videoCascadeService,
     auditService,

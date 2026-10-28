@@ -106,6 +106,9 @@ export interface MockContainer {
     acquire: ReturnType<typeof vi.fn>;
     release: ReturnType<typeof vi.fn>;
   };
+  submitBurstLimiter: {
+    consume: ReturnType<typeof vi.fn>;
+  };
   idempotencyRepository: {
     findByHash: ReturnType<typeof vi.fn>;
     reserveHash: ReturnType<typeof vi.fn>;
@@ -289,6 +292,10 @@ export function createMockContainer(): MockContainer {
       // override this to simulate the "already dispatched" branch.
       acquire: vi.fn().mockResolvedValue({ acquired: true, token: 'test-token' }),
       release: vi.fn().mockResolvedValue(undefined),
+    },
+    // Default: under the limit. Burst-limit route tests make `consume` reject.
+    submitBurstLimiter: {
+      consume: vi.fn().mockResolvedValue(undefined),
     },
     idempotencyRepository: {
       findByHash: vi.fn().mockResolvedValue(null),

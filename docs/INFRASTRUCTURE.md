@@ -277,6 +277,11 @@ REDIS_URL=redis://vie-redis:6379
 # Must exceed the summarizer's PIPELINE_LOCK_TTL_SECONDS (default 600s).
 DISPATCH_GUARD_TTL_SECONDS=900
 
+# Submit burst guard (Redis key vie:api:submit-burst:<userId>, fixed 1 h window):
+# submissions per user per hour, one bucket for POST /api/videos, the assistant's
+# generate route and playlist import. 0 = off. Fails open if Redis is down.
+SUBMIT_BURST_LIMIT_PER_HOUR=20
+
 # ────────────────────────────────────────────────────
 # Qdrant (Vector DB for RAG)
 # ────────────────────────────────────────────────────

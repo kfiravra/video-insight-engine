@@ -321,6 +321,8 @@ services:
       TRUST_PROXY: ${TRUST_PROXY:-1}
       # Spend guards (defaults mirror api/src/config.ts; the demo .env tightens them)
       VIDEO_DAILY_LIMIT: ${VIDEO_DAILY_LIMIT:-100}
+      # Submissions per user per hour, one bucket for /api/videos, the assistant's generate route and playlist import (0 = off)
+      SUBMIT_BURST_LIMIT_PER_HOUR: ${SUBMIT_BURST_LIMIT_PER_HOUR:-20}
       # Requests per minute per IP on the public api
       RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-120}
       USER_COST_LIMIT_FREE: ${USER_COST_LIMIT_FREE:-2}

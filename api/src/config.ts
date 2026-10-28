@@ -81,6 +81,10 @@ const envSchema = z.object({
   PLAYLIST_IMPORT_RATE_LIMIT: z.string().default('5').transform(Number),
   // Video creation daily limit (0 = unlimited for admins/dev)
   VIDEO_DAILY_LIMIT: z.string().default('100').transform(Number),
+  // Submit burst guard: submissions per user per fixed hour, one bucket shared by
+  // POST /api/videos, the assistant's generate route and playlist import
+  // (0 = off). An abuse limit, not a billing one.
+  SUBMIT_BURST_LIMIT_PER_HOUR: z.string().default('20').transform(Number),
   // Self-service signup. 'false' closes POST /api/auth/register (403) and the
   // web app hides its signup links; accounts are then created out-of-band
   // (scripts/create-user.ts). Any other value keeps registration open.

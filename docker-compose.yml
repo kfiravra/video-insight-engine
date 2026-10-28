@@ -318,6 +318,8 @@ services:
       # pipeline lock so the two services share a coherent operational view.
       REDIS_URL: ${REDIS_URL:-redis://vie-redis:6379}
       DISPATCH_GUARD_TTL_SECONDS: ${DISPATCH_GUARD_TTL_SECONDS:-900}
+      # Submissions per user per hour, one bucket for /api/videos, the assistant's generate route and playlist import (0 = off)
+      SUBMIT_BURST_LIMIT_PER_HOUR: ${SUBMIT_BURST_LIMIT_PER_HOUR:-20}
       # Sentry — empty DSN = SDK no-ops
       SENTRY_DSN: ${SENTRY_DSN:-}
       SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-}

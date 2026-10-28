@@ -78,8 +78,8 @@ api/
     │   ├── assistant-client.ts   # HTTP client for assistant (RAG chat)
     │   ├── share.service.ts
     │   ├── og-image.service.ts
-    │   ├── payment.service.ts
-    │   └── cost-monitor.service.ts
+    │   ├── cost-monitor.service.ts
+    │   └── billing/payment-provider.ts, burst-limit.ts  # payment adapter (noop until P4); shared submit burst limit
     │
     ├── templates/
     │   └── share-page.ts         # HTML template for /s/:slug (v1.4)
