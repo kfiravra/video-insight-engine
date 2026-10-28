@@ -28,7 +28,7 @@
 # Shared env (YAML anchors)
 # ----------------------------------------
 # Explicit allow-list per Python service. api-only secrets (JWT_*,
-# MONGO_ROOT_PASS, ADMIN_API_KEY, PADDLE_WEBHOOK_SECRET) intentionally do
+# MONGO_ROOT_PASS, ADMIN_API_KEY) intentionally do
 # not appear here — they must not propagate into a Python container if that
 # service is compromised.
 x-summarizer-env: &summarizer-env
@@ -313,11 +313,6 @@ services:
       ADMIN_API_KEY: ${ADMIN_API_KEY:?ADMIN_API_KEY is required (openssl rand -base64 32)}
       # Login emails that hold the admin role; reconciled at every boot. Blank = no change.
       ADMIN_EMAILS: ${ADMIN_EMAILS:-}
-      # api/src/config.ts refuses to boot production without a webhook secret —
-      # unsigned Paddle events must never be accepted.
-      PADDLE_WEBHOOK_SECRET: ${PADDLE_WEBHOOK_SECRET:?PADDLE_WEBHOOK_SECRET is required in production}
-      PADDLE_PRO_PRICE_ID: ${PADDLE_PRO_PRICE_ID:-}
-      PADDLE_TEAM_PRICE_ID: ${PADDLE_TEAM_PRICE_ID:-}
       RABBITMQ_URL: *rabbitmq-url
       USE_QUEUE_PIPELINE: ${USE_QUEUE_PIPELINE:-true}
       REDIS_URL: *redis-url

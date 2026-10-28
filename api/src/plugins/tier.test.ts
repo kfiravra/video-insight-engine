@@ -73,4 +73,40 @@ describe('tier plugin', () => {
       })
     );
   });
+
+  describe('resolveTier', () => {
+    async function submitAs(storedTier: string | undefined): Promise<void> {
+      mockContainer.userRepository.getTier.mockResolvedValue(storedTier);
+      mockContainer.videoService.createVideo.mockResolvedValue({
+        video: { id: '1', status: 'pending' },
+        cached: false,
+      });
+      await app.inject({
+        method: 'POST',
+        url: '/api/videos',
+        headers: { authorization: authHeader, 'content-type': 'application/json' },
+        payload: { url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' },
+      });
+    }
+
+    it.each(['pro', 'team'])('should read the %s tier from the user repository', async (stored) => {
+      await submitAs(stored);
+
+      expect(mockContainer.videoService.createVideo).toHaveBeenLastCalledWith(
+        expect.any(String),
+        expect.any(String),
+        expect.objectContaining({ tier: stored })
+      );
+    });
+
+    it.each([undefined, 'enterprise'])('should fall back to free when the stored tier is %s', async (stored) => {
+      await submitAs(stored);
+
+      expect(mockContainer.videoService.createVideo).toHaveBeenLastCalledWith(
+        expect.any(String),
+        expect.any(String),
+        expect.objectContaining({ tier: 'free' })
+      );
+    });
+  });
 });

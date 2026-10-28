@@ -24,10 +24,6 @@ export interface User {
   themePreference?: ThemePreference;
   /** Share slug that referred this user during signup */
   referralSlug?: string | null;
-  /** Paddle customer ID for payment integration */
-  paddleCustomerId?: string | null;
-  /** Paddle subscription ID for active subscription tracking */
-  paddleSubscriptionId?: string | null;
   createdAt: string;  // ISO date
   updatedAt: string;  // ISO date
 }

@@ -8,7 +8,6 @@ const STRONG_ENV: Record<string, string> = {
   JWT_REFRESH_SECRET: 'unit-test-strong-refresh-secret-0123456789abcdef',
   INTERNAL_SECRET: 'unit-test-strong-internal-secret',
   ADMIN_API_KEY: 'unit-test-strong-admin-key',
-  PADDLE_WEBHOOK_SECRET: 'unit-test-paddle-webhook-secret',
 };
 
 // config.ts parses process.env at import time, so each scenario needs a fresh
@@ -74,22 +73,15 @@ describe('config env validation', () => {
         NODE_ENV: 'development',
         INTERNAL_SECRET: 'dev-internal-secret-change-me',
         ADMIN_API_KEY: 'dev-admin-key-change-me',
-        PADDLE_WEBHOOK_SECRET: '',
       });
       expect(config.NODE_ENV).toBe('development');
     });
   });
 
-  describe('PADDLE_WEBHOOK_SECRET production requirement', () => {
-    it('should throw in production when PADDLE_WEBHOOK_SECRET is empty', async () => {
-      await expect(
-        loadConfig({ NODE_ENV: 'production', PADDLE_WEBHOOK_SECRET: '' })
-      ).rejects.toThrow(/PADDLE_WEBHOOK_SECRET/);
-    });
-
-    it('should allow an empty PADDLE_WEBHOOK_SECRET outside production', async () => {
-      const { config } = await loadConfig({ NODE_ENV: 'test', PADDLE_WEBHOOK_SECRET: '' });
-      expect(config.PADDLE_WEBHOOK_SECRET).toBe('');
+  describe('payment provider settings', () => {
+    it('should boot in production with strong secrets and no payment variable', async () => {
+      const { config } = await loadConfig({ NODE_ENV: 'production' });
+      expect(config.NODE_ENV).toBe('production');
     });
   });
 

@@ -797,7 +797,7 @@ cp .env.example .env.prod             # then fill EVERY ${VAR:?} secret:
                                       # (a 0400, uid-999 file — DEPLOY.md), REDIS_PASSWORD,
                                       # RABBITMQ_USER/PASS, JWT_SECRET,
                                       # JWT_REFRESH_SECRET, INTERNAL_SECRET,
-                                      # ADMIN_API_KEY, PADDLE_WEBHOOK_SECRET,
+                                      # ADMIN_API_KEY,
                                       # FRONTEND_URL, VITE_API_URL, VITE_WS_URL
 
 # 2. Validate interpolation (fails fast on any missing secret)

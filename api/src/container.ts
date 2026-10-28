@@ -23,7 +23,6 @@ import { SummarizerClient } from './services/summarizer-client.js';
 import { AssistantClient } from './services/assistant-client.js';
 import { ShareService } from './services/share.service.js';
 import { OgImageService } from './services/og-image.service.js';
-import { PaymentService } from './services/payment.service.js';
 import { CostMonitorService } from './services/cost-monitor.service.js';
 import { QueuePublisher, type ChannelSupplier } from './services/queue-publisher.service.js';
 import { IdempotencyService } from './services/idempotency.service.js';
@@ -57,7 +56,6 @@ export interface Container {
   assistantClient: AssistantClient;
   shareService: ShareService;
   ogImageService: OgImageService;
-  paymentService: PaymentService;
   costMonitorService: CostMonitorService;
   queuePublisher: QueuePublisher;
   idempotencyService: IdempotencyService;
@@ -135,7 +133,6 @@ export function createContainer(
   const playlistService = new PlaylistService(videoService, folderService, summarizerClient, logger, costMonitorService);
   const shareService = new ShareService(shareRepository, videoRepository, logger);
   const ogImageService = new OgImageService(logger);
-  const paymentService = new PaymentService(userRepository, logger);
   const userDeletionService = new UserDeletionService(
     db,
     userRepository,
@@ -183,7 +180,6 @@ export function createContainer(
     assistantClient,
     shareService,
     ogImageService,
-    paymentService,
     costMonitorService,
     queuePublisher,
     idempotencyService,

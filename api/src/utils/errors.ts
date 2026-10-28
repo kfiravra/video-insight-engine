@@ -251,18 +251,12 @@ export class InvalidCategoryError extends AppError {
   }
 }
 
-// Payment-specific errors
-export class PaymentError extends AppError {
-  constructor(message = 'Payment processing failed') {
-    super('PAYMENT_ERROR', 500, message);
-    this.name = 'PaymentError';
-  }
-}
-
-export class InvalidWebhookError extends AppError {
-  constructor(message = 'Invalid webhook signature') {
-    super('INVALID_WEBHOOK', 400, message);
-    this.name = 'InvalidWebhookError';
+// Payment errors. 501, not 503: no provider is built or configured, which a
+// retry never fixes, and clients can tell "not offered" from "down right now".
+export class ProviderNotConfiguredError extends AppError {
+  constructor() {
+    super('PROVIDER_NOT_CONFIGURED', 501, 'Payments are not available yet.');
+    this.name = 'ProviderNotConfiguredError';
   }
 }
 

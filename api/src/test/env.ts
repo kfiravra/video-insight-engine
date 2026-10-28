@@ -6,8 +6,6 @@ process.env.JWT_REFRESH_SECRET = 'test-jwt-refresh-secret-key-for-testing-only';
 process.env.NODE_ENV = 'test';
 process.env.SUMMARIZER_URL = 'http://localhost:8000';
 process.env.ASSISTANT_URL = 'http://localhost:8001';
-// Non-empty so webhook signature verification is exercised (never skipped) in tests
-process.env.PADDLE_WEBHOOK_SECRET = 'test-paddle-webhook-secret';
 // Redis plugin connects eagerly (lazyConnect:false). The production default
 // is `redis://vie-redis:6379` — the Docker network hostname, which won't
 // resolve from the host running vitest. Point at localhost so the local

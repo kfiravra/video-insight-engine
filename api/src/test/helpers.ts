@@ -62,12 +62,6 @@ export interface MockContainer {
   ogImageService: {
     getOgImage: ReturnType<typeof vi.fn>;
   };
-  paymentService: {
-    verifyWebhook: ReturnType<typeof vi.fn>;
-    handleWebhookEvent: ReturnType<typeof vi.fn>;
-    generateCheckoutUrl: ReturnType<typeof vi.fn>;
-    getUserTier: ReturnType<typeof vi.fn>;
-  };
   costMonitorService: {
     checkUserCanProcess: ReturnType<typeof vi.fn>;
     reserveUserCost: ReturnType<typeof vi.fn>;
@@ -127,9 +121,7 @@ export interface MockContainer {
     create: ReturnType<typeof vi.fn>;
     update: ReturnType<typeof vi.fn>;
     updateLastLogin: ReturnType<typeof vi.fn>;
-    updateAndReturnPrevious: ReturnType<typeof vi.fn>;
     getTier: ReturnType<typeof vi.fn>;
-    findByPaddleCustomerId: ReturnType<typeof vi.fn>;
     markSoftDeleted: ReturnType<typeof vi.fn>;
     clearSoftDelete: ReturnType<typeof vi.fn>;
     findExpiredSoftDeletes: ReturnType<typeof vi.fn>;
@@ -319,9 +311,7 @@ export function createMockContainer(): MockContainer {
       create: vi.fn(),
       update: vi.fn().mockResolvedValue(undefined),
       updateLastLogin: vi.fn().mockResolvedValue(undefined),
-      updateAndReturnPrevious: vi.fn(),
       getTier: vi.fn().mockResolvedValue('free'),
-      findByPaddleCustomerId: vi.fn().mockResolvedValue(null),
       markSoftDeleted: vi.fn(),
       clearSoftDelete: vi.fn(),
       findExpiredSoftDeletes: vi.fn().mockResolvedValue([]),

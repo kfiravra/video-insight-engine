@@ -30,9 +30,9 @@ async function tierSetup(fastify: FastifyInstance) {
   // TODO: Add short-lived cache (e.g. 60s) if DB lookups become a bottleneck
   fastify.decorate('resolveTier', async (req: FastifyRequest, _reply: FastifyReply) => {
     if (!req.user?.userId) return;
-    const { paymentService } = fastify.container;
-    const { tier, limits } = await paymentService.getUserTier(req.user.userId);
-    req.tier = { name: tier, limits };
+    const stored = await fastify.container.userRepository.getTier(req.user.userId);
+    const name: UserTier = stored === 'pro' || stored === 'team' ? stored : 'free';
+    req.tier = { name, limits: TIER_LIMITS[name] };
   });
 }
 

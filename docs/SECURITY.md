@@ -205,9 +205,7 @@ The account is identified **by user id, not by the JWT `email` claim**. The clai
 | `POST /share/:slug/like` | 10 | 1 min   | IP    |
 | `GET /s/:slug`        | 60    | 1 min    | IP    |
 | `GET /s/:slug/og-image.png` | 30 | 1 min | IP    |
-| `POST /payments/webhook` | none | -     | Signature verified |
-| `GET /payments/checkout` | 10  | 1 hour  | User  |
-| `GET /payments/tier`  | 60    | 1 min    | User  |
+| `POST /videos`, `POST /internal/assistant/generate`, `POST /playlists/import` | 20 (`SUBMIT_BURST_LIMIT_PER_HOUR`) | 1 hour, fixed | User, one shared bucket (see below) |
 | `* (default)`         | 100   | 1 min    | User  |
 
 Demo logins (`POST /auth/login` with `{ "demo": true }`, see [DEPLOY.md](./DEPLOY.md#demo-mode)) are ordinary requests to the login route and share its 10 / 15 min per-IP limit. The demo account's credentials stay in vie-api's environment and are never sent to the browser. Because every visitor holds a token for that one account, it cannot schedule its own deletion: `DELETE /users/me` returns 403 `DEMO_RESTRICTED`. The rest of its read-mostly restrictions are listed under [Demo Account (Read-Mostly)](#demo-account-read-mostly).
@@ -364,27 +362,23 @@ networks:
   vie-internal: # Internal only (workers)
 ```
 
-### Webhook Authentication (v1.4)
+### Webhook Authentication
 
-Paddle webhooks are verified using HMAC signature:
+No webhook endpoint exists today: the Paddle Classic stub and its
+`PADDLE_WEBHOOK_SECRET` were removed (its events never matched a user), so
+there is no payment secret to set in any environment. The payment adapter that
+P4 adds (`PaymentProviderAdapter.verifyWebhook`, see
+`api/src/services/billing/payment-provider.ts`; `NoopPaymentProvider` throws
+`PROVIDER_NOT_CONFIGURED` until then) must meet these rules before a webhook
+route is registered:
 
-```typescript
-// api/src/services/payment.service.ts
-verifyWebhook(rawBody: string, signature: string): boolean {
-  // Paddle-Signature header contains ts= and h1= components
-  // 1. Reject if ts is older than 5 minutes (replay window bound)
-  // 2. Verify HMAC-SHA256 of `${ts}:${rawBody}` with PADDLE_WEBHOOK_SECRET
-  //    using a constant-time comparison
-}
-```
-
-- **Production:** Signature verification is mandatory — config validation
-  refuses to start when `PADDLE_WEBHOOK_SECRET` is empty and
-  `NODE_ENV=production` (`api/src/config.ts`)
-- **Freshness:** Signatures with a `ts` older than 5 minutes are rejected,
-  bounding the replay window of a captured webhook
-- **Development:** Skipped when `PADDLE_WEBHOOK_SECRET` is empty
-- **Idempotent:** Webhook events are processed idempotently (safe to replay)
+- **Mandatory:** the signature is verified over the exact raw body with a
+  constant-time comparison; an unsigned or unverifiable event is never acted on,
+  in any environment
+- **Freshness:** a signature older than 5 minutes is rejected, bounding the
+  replay window of a captured webhook
+- **Idempotent:** the provider event id is the unique key of the `paymentEvents`
+  collection, so a replayed event changes nothing
 
 ### WebSocket Authentication
 
@@ -597,8 +591,6 @@ The summarizer logs a warning at startup if `INTERNAL_SECRET` is using the defau
 | `JWT_REFRESH_SECRET`   | vie-api               | `openssl rand -base64 32` |
 | `ANTHROPIC_API_KEY`    | summarizer, assistant | Anthropic Console         |
 | `OPENAI_API_KEY`       | summarizer, assistant | OpenAI Platform           |
-| `PADDLE_WEBHOOK_SECRET`| vie-api               | Paddle Dashboard          |
-| `PADDLE_API_KEY`       | vie-api (future)      | Paddle Dashboard          |
 | `INTERNAL_SECRET`      | service-to-service    | `openssl rand -base64 32` |
 | `ADMIN_API_KEY`        | vie-api, vie-admin    | `openssl rand -hex 32`    |
 | `ADMIN_SESSION_SECRET` | vie-admin only        | `openssl rand -hex 32` (≠ `ADMIN_API_KEY`) |

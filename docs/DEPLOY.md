@@ -150,7 +150,7 @@ cp .env.production.example .env && chmod 600 .env
 
 # Random hex secrets (hex is safe inside connection URIs)
 for key in MONGO_ROOT_PASS REDIS_PASSWORD RABBITMQ_PASS JWT_SECRET JWT_REFRESH_SECRET \
-           INTERNAL_SECRET ADMIN_API_KEY ADMIN_SESSION_SECRET PADDLE_WEBHOOK_SECRET; do
+           INTERNAL_SECRET ADMIN_API_KEY ADMIN_SESSION_SECRET; do
   sed -i "s|^${key}=.*|${key}=$(openssl rand -hex 32)|" .env
 done
 sed -i 's|your-domain.example|DOMAIN|g' .env

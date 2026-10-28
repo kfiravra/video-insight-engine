@@ -315,3 +315,41 @@ export interface UsageSummary {
   maxVideoMinutes: number;
   blocked: boolean;
 }
+
+// ───────────────────────────────────────────────────
+// Payment-provider events (P3.9) — type reserved, nothing writes it yet
+// ───────────────────────────────────────────────────
+
+/** What a provider webhook means to the ledger; anything else is `unhandled` (stored, never acted on). */
+export type PaymentEventKind =
+  | 'checkout_completed'
+  | 'subscription_active'
+  | 'subscription_past_due'
+  | 'subscription_canceled'
+  | 'refunded'
+  | 'disputed'
+  | 'unhandled';
+
+/**
+ * A webhook normalised by a PaymentProviderAdapter. `id` is the provider's
+ * event id and will be the unique key of the `paymentEvents` collection, which
+ * makes webhook delivery idempotent. P4 creates that collection; until then
+ * nothing stores a PaymentEvent.
+ */
+export interface PaymentEvent {
+  id: string;
+  /** The adapter's `name`. */
+  provider: string;
+  kind: PaymentEventKind;
+  /** The provider's own event name, kept for the audit trail. */
+  providerEventType: string;
+  /** `billingAccounts._id` hex, from the metadata `createCheckout` attached; null when absent. */
+  accountId: string | null;
+  providerCustomerId: string | null;
+  providerSubscriptionId: string | null;
+  /** Money moved in minor units; null for events that carry none. */
+  amountCents: number | null;
+  currency: string | null;
+  /** When the provider says it happened (ISO 8601). */
+  occurredAt: string;
+}

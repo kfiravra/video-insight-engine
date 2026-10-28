@@ -60,7 +60,6 @@ api/
     │   ├── share.routes.ts       # Share creation + public access
     │   ├── ssr.routes.ts         # /s/:slug server-rendered share pages
     │   ├── override.routes.ts    # Category override
-    │   ├── payment.routes.ts     # Paddle webhooks + checkout
     │   ├── internal.routes.ts    # Internal service-to-service calls
     │   ├── internal-assistant.routes.ts # /internal/assistant/* — assistant→api library callbacks (authenticateInternal)
     │   ├── preferences.routes.ts # User preferences
@@ -68,8 +67,7 @@ api/
     │
     ├── schemas/
     │   ├── video.schema.ts
-    │   ├── share.schema.ts
-    │   └── payment.schema.ts
+    │   └── share.schema.ts
     │
     ├── services/
     │   ├── auth.service.ts
@@ -116,7 +114,6 @@ export interface Container {
   summarizerClient: SummarizerClient;
   shareService: ShareService;            // v1.4
   ogImageService: OgImageService;        // v1.4
-  paymentService: PaymentService;        // v1.4
   costMonitorService: CostMonitorService; // v1.4
 }
 
@@ -381,10 +378,9 @@ FRONTEND_URL=http://localhost:5173
 CORS_ADDITIONAL_ORIGINS=
 INTERNAL_SECRET=dev-internal-secret-change-me   # Shared secret for /internal/assistant/* (X-Internal-Secret); must match vie-assistant
 
-# Payment (Paddle) — v1.4
-PADDLE_WEBHOOK_SECRET=
-PADDLE_PRO_PRICE_ID=
-PADDLE_TEAM_PRICE_ID=
+# Submit burst guard: submissions per user per hour, one bucket for POST /api/videos,
+# the assistant's generate route and playlist import (0 = off)
+SUBMIT_BURST_LIMIT_PER_HOUR=20
 ```
 
 ---

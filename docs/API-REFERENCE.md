@@ -763,65 +763,7 @@ Override the detected classification for a video. Triggers re-classification thr
 
 ## Payments
 
-### POST /payments/webhook
-
-Paddle webhook handler. Verifies signature in production.
-
-**Headers:** `Paddle-Signature` or `X-Paddle-Signature`
-
-**Response (200):**
-
-```json
-{
-  "received": true
-}
-```
-
-**Handled events:**
-- `subscription.created` — set tier to `pro` (the webhook only ever sets `pro`; `team` is not granted by any payment path)
-- `subscription.updated` — update tier
-- `subscription.cancelled` — schedule downgrade
-- `subscription.past_due` — grace period
-
----
-
-### GET /payments/checkout
-
-Generate Paddle checkout URL. Auth required.
-
-**Rate Limit:** 10 per hour
-
-**Query:** `?tier=pro|team`
-
-**Response (200):**
-
-```json
-{
-  "checkoutUrl": "https://checkout.paddle.com/..."
-}
-```
-
----
-
-### GET /payments/tier
-
-Get current user tier and limits. Auth required.
-
-**Rate Limit:** 60 per minute
-
-**Response (200):**
-
-```json
-{
-  "tier": "free",
-  "limits": {
-    "videosPerDay": 3,
-    "chatPerOutput": 5,
-    "shareEnabled": true,
-    "exportEnabled": false
-  }
-}
-```
+**Planned: Paddle Billing adapter.** No payment endpoint exists today. The Paddle Classic stub (`POST /api/payments/webhook`, `GET /api/payments/checkout`, `GET /api/payments/tier`) was removed: its webhook could never match a user, so it could not change anyone's plan, and nothing in the web app called it. The code now stops at an adapter interface, `PaymentProviderAdapter` in `api/src/services/billing/payment-provider.ts` (`createCheckout`, `createPortal`, `verifyWebhook`, `parseEvent`), whose only implementation is `NoopPaymentProvider`; every method throws `PROVIDER_NOT_CONFIGURED` (HTTP 501). Nothing calls it yet. The checkout, portal and webhook routes arrive with the provider adapter in P4 of the billing-roles task, and this section is then rewritten.
 
 ---
 
@@ -896,7 +838,7 @@ All errors follow this format:
 
 Common error codes:
 
-- `400` - Bad Request (validation), `INVALID_CATEGORY`, `INVALID_WEBHOOK`
+- `400` - Bad Request (validation), `INVALID_CATEGORY`
 - `401` - Unauthorized
 - `403` - Forbidden: `REGISTRATION_CLOSED`, `DEMO_DISABLED`, `DEMO_RESTRICTED` (the shared demo account may not mutate the library or force paid runs; see SECURITY.md), `COLD_RUN_FORBIDDEN`, `ACCOUNT_DELETION_PENDING`
 - `404` - Not Found: `SHARE_NOT_FOUND`

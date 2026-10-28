@@ -47,7 +47,7 @@ If you specifically need every trace of a particular video removed, contact supp
 
 ## Billing data
 
-Payments go through [Paddle](https://www.paddle.com/). They store payment details under their own GDPR-compliant DPA. Account deletion at Video Insight Engine **also** removes our copy of the Paddle customer ID (so we can no longer issue charges), but the historical receipts at Paddle are governed by their retention policy. To request deletion of those, follow [Paddle's GDPR portal](https://www.paddle.com/legal/privacy).
+Payments go through [Paddle](https://www.paddle.com/). They store payment details under their own GDPR-compliant DPA. We keep no Paddle customer ID or other payment-provider identifier, so there is nothing of that kind to remove on our side when you delete your account; the historical receipts at Paddle are governed by their retention policy. To request deletion of those, follow [Paddle's GDPR portal](https://www.paddle.com/legal/privacy).
 
 ## Data export
 

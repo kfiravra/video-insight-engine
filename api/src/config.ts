@@ -90,10 +90,6 @@ const envSchema = z.object({
   // email is normalized like a login email because the lookup is exact-match.
   DEMO_USER_EMAIL: z.string().default('').transform(v => v.trim().toLowerCase()),
   DEMO_USER_PASSWORD: z.string().default(''),
-  // Payment (Paddle)
-  PADDLE_WEBHOOK_SECRET: z.string().default(''),
-  PADDLE_PRO_PRICE_ID: z.string().default(''),
-  PADDLE_TEAM_PRICE_ID: z.string().default(''),
   // Cost monitoring
   // Per-user daily cost limits in USD (0 disables the limit; -1 means unlimited)
   USER_COST_LIMIT_FREE: z.string().default('2').transform(Number),
@@ -209,16 +205,6 @@ const envSchema = z.object({
         message: `${key} is set to a well-known dev default — generate a real secret (openssl rand -base64 32) before deploying to production`,
       });
     }
-  }
-
-  // Without a secret the webhook route would accept unverified Paddle events,
-  // letting anyone flip user tiers with a curl. Dev/test may skip it; prod may not.
-  if (!env.PADDLE_WEBHOOK_SECRET) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['PADDLE_WEBHOOK_SECRET'],
-      message: 'PADDLE_WEBHOOK_SECRET is required in production — unsigned webhooks must never be accepted',
-    });
   }
 });
 

@@ -33,7 +33,6 @@ import { streamRoutes } from './routes/stream.routes.js';
 import { shareRoutes } from './routes/share.routes.js';
 import { ssrRoutes } from './routes/ssr.routes.js';
 import { overrideRoutes } from './routes/override.routes.js';
-import { paymentRoutes } from './routes/payment.routes.js';
 import { preferencesRoutes, userUsageRoutes } from './routes/preferences.routes.js';
 import { adminQueueRoutes } from './routes/admin/queue.routes.js';
 import { userMeRoutes, adminUsersRoutes } from './routes/users.routes.js';
@@ -226,7 +225,6 @@ export async function buildApp(options?: BuildAppOptions): Promise<FastifyInstan
   await fastify.register(assistantLibraryRoutes, { prefix: '/api/assistant' });
   await fastify.register(assistantActionRoutes, { prefix: '/api/assistant' });
   await fastify.register(shareRoutes, { prefix: '/api/share' });
-  await fastify.register(paymentRoutes, { prefix: '/api/payments' });
   await fastify.register(preferencesRoutes, { prefix: '/api/users/me/preferences' });
   await fastify.register(userUsageRoutes, { prefix: '/api/users/me/usage' });
   await fastify.register(userMeRoutes, { prefix: '/api/users/me' });

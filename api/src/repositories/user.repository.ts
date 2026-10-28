@@ -41,8 +41,6 @@ export interface UserDocument {
   referralSlug?: string;
   // Payment/tier fields (V1.4)
   tier?: string;
-  paddleCustomerId?: string;
-  paddleSubscriptionId?: string;
   tierUpdatedAt?: Date;
   // GDPR soft-delete (Art. 17)
   // `deletedAt` set → user has requested erasure. Auth rejects login.
@@ -258,25 +256,12 @@ export class UserRepository {
     return result.matchedCount === 1;
   }
 
-  async findByPaddleCustomerId(customerId: string): Promise<UserDocument | null> {
-    return this.collection.findOne({ paddleCustomerId: customerId });
-  }
-
   async getTier(userId: string): Promise<string | undefined> {
     const user = await this.collection.findOne(
       { _id: new ObjectId(userId) },
       { projection: { tier: 1 } }
     );
     return user?.tier;
-  }
-
-  /** Atomic update that returns the previous document state (for tier transitions) */
-  async updateAndReturnPrevious(userId: string, updates: Partial<Omit<UserDocument, '_id'>>): Promise<UserDocument | null> {
-    return this.collection.findOneAndUpdate(
-      { _id: new ObjectId(userId) },
-      { $set: { ...updates, updatedAt: new Date() } },
-      { returnDocument: 'before' }
-    );
   }
 
   /**
