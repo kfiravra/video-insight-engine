@@ -1,14 +1,5 @@
 import { ObjectId } from 'mongodb';
-import { FREE_VIDEO } from '@vie/types';
-import { MetadataUnavailableError } from '../../utils/errors.js';
-import {
-  AccountBlockedError,
-  HoldFinalizedError,
-  InsufficientMinutesError,
-  TooManyRunsError,
-  VideoTooLongForPlanError,
-} from './billing-errors.js';
-import { classifyShadow, rejectionReason } from './shadow-policy.js';
+import { classifyShadow, errorReason, rejectionReason } from './shadow-policy.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { BillingShadowDecision, BillingShadowPath } from '@vie/types';
 import type { BillingGate, GateSubmission } from './billing-gate.js';
@@ -55,20 +46,6 @@ export interface BillingShadowDeps {
 }
 
 const RUN_DECIDED_BY_OLD_GATE: BillingShadowDecision = { admitted: true, charged: true };
-
-/** The ledger's refusal named from a thrown error; null when the error is not a decision. */
-function errorReason(err: unknown): ShadowReason | null {
-  if (err instanceof MetadataUnavailableError) return 'metadata_unavailable';
-  if (err instanceof HoldFinalizedError) return 'hold_finalized';
-  if (err instanceof AccountBlockedError) return 'blocked';
-  if (err instanceof TooManyRunsError) return 'too_many_runs';
-  if (err instanceof VideoTooLongForPlanError) return 'too_long';
-  if (err instanceof InsufficientMinutesError) {
-    if (err.nextFreeAt) return 'free_window_used';
-    return err.needed > FREE_VIDEO.maxVideoMinutes ? 'needs_paid_minutes' : 'free_disabled';
-  }
-  return null;
-}
 
 export class BillingShadowService {
   constructor(private readonly deps: BillingShadowDeps) {}

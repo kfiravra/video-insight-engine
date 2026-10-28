@@ -1,4 +1,12 @@
 import { FREE_VIDEO } from '@vie/types';
+import { MetadataUnavailableError } from '../../utils/errors.js';
+import {
+  AccountBlockedError,
+  HoldFinalizedError,
+  InsufficientMinutesError,
+  TooManyRunsError,
+  VideoTooLongForPlanError,
+} from './billing-errors.js';
 import type { BillingShadowDecision, BillingShadowPath } from '@vie/types';
 import type { AllocationRejection } from './allocation.js';
 
@@ -115,4 +123,18 @@ export function rejectionReason(rejection: AllocationRejection, minutes: number)
       // A video that fits the free limit and still found no slot: the free video is switched off.
       return minutes > FREE_VIDEO.maxVideoMinutes ? 'needs_paid_minutes' : 'free_disabled';
   }
+}
+
+/** The ledger's refusal named from a thrown error; null when the error is not a decision. */
+export function errorReason(err: unknown): ShadowReason | null {
+  if (err instanceof MetadataUnavailableError) return 'metadata_unavailable';
+  if (err instanceof HoldFinalizedError) return 'hold_finalized';
+  if (err instanceof AccountBlockedError) return 'blocked';
+  if (err instanceof TooManyRunsError) return 'too_many_runs';
+  if (err instanceof VideoTooLongForPlanError) return 'too_long';
+  if (err instanceof InsufficientMinutesError) {
+    if (err.nextFreeAt) return 'free_window_used';
+    return err.needed > FREE_VIDEO.maxVideoMinutes ? 'needs_paid_minutes' : 'free_disabled';
+  }
+  return null;
 }

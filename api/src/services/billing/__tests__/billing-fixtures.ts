@@ -13,6 +13,7 @@ import type { Db } from 'mongodb';
 import type { FastifyBaseLogger } from 'fastify';
 import type { BillingAccountDocument, CreditLotDocument } from '../../../repositories/billing.repository.js';
 import type { BillingShadowDocument } from '../../../repositories/billing-shadow.repository.js';
+import type { DispatchStampReader } from '../billing-shadow.service.js';
 
 /** A free account with empty buckets; override any part. */
 export function makeAccountDoc(overrides: Partial<BillingAccountDocument> = {}): BillingAccountDocument {
@@ -89,6 +90,7 @@ export const DAY_MS = 24 * HOUR_MS;
 export interface ShadowHarness {
   shadow: BillingShadowService;
   billing: BillingService;
+  gate: BillingGate;
   runner: ShadowRunner;
   metadata: { getVideoMetadata: ReturnType<typeof vi.fn> };
   /** videoSummaryId → the requestId its dispatch stamped on the cache row. */
@@ -96,7 +98,14 @@ export interface ShadowHarness {
   rowOf: (requestId: string) => Promise<BillingShadowDocument | null>;
 }
 
-export function makeShadowHarness(db: Db, options: { enabled?: boolean; clock?: () => Date } = {}): ShadowHarness {
+export interface ShadowHarnessOptions {
+  enabled?: boolean;
+  clock?: () => Date;
+  /** Read stamps from here (e.g. a real VideoRepository) instead of the `stamps` map. */
+  dispatchStamps?: DispatchStampReader;
+}
+
+export function makeShadowHarness(db: Db, options: ShadowHarnessOptions = {}): ShadowHarness {
   const { enabled = true, clock = () => new Date() } = options;
   const logger = mockLogger as unknown as FastifyBaseLogger;
   const billing = new BillingService(new BillingRepository(db), new UserRepository(db), logger, clock);
@@ -104,15 +113,18 @@ export function makeShadowHarness(db: Db, options: { enabled?: boolean; clock?: 
   const stamps = new Map<string, string>();
   const runner = new ShadowRunner(logger);
   const rows = new BillingShadowRepository(db);
+  const gate = new BillingGate(billing, metadata);
   const shadow = new BillingShadowService({
     enabled,
-    gate: new BillingGate(billing, metadata),
+    gate,
     billing,
     rows,
     llmUsage: new LlmUsageRepository(db),
-    dispatchStamps: { findCacheById: async (id: string) => (stamps.has(id) ? { requestId: stamps.get(id) } : null) },
+    dispatchStamps: options.dispatchStamps ?? {
+      findCacheById: async (id: string) => (stamps.has(id) ? { requestId: stamps.get(id) } : null),
+    },
     runner,
     logger,
   });
-  return { shadow, billing, runner, metadata, stamps, rowOf: (requestId) => rows.findByRequestId(requestId) };
+  return { shadow, billing, gate, runner, metadata, stamps, rowOf: (requestId) => rows.findByRequestId(requestId) };
 }
