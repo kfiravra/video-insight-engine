@@ -12,6 +12,8 @@ declare module 'fastify' {
      * from inside a handler when only some request bodies must be refused.
      */
     requireNotDemo: (req: FastifyRequest) => Promise<void>;
+    /** The check `requireNotDemo` refuses on, for a response that only hides something from the demo account. */
+    isDemoUser: (req: FastifyRequest) => Promise<boolean>;
   }
 }
 
@@ -84,6 +86,11 @@ async function demoGuardSetup(fastify: FastifyInstance) {
     const userId = req.user?.userId;
     if (!userId) throw new UnauthorizedError();
     if (await resolver.isDemoUser(userId)) throw new DemoRestrictedError();
+  });
+
+  fastify.decorate('isDemoUser', async (req: FastifyRequest) => {
+    const userId = req.user?.userId;
+    return userId ? resolver.isDemoUser(userId) : false;
   });
 }
 

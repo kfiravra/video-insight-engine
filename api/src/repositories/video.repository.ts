@@ -111,7 +111,7 @@ export interface VideoSummaryCacheDocument {
   // Canonical version stamp written by the summarizer at pipeline write time
   // (packages/shared/src/config/pipeline-version.json). Absent on docs that
   // predate stamping — those are treated as current-legacy and served as-is;
-  // a mismatching stamp triggers regen in video.service.ts.isStaleVersion.
+  // a mismatching stamp offers the user an update (library-update.ts isStaleVersion).
   pipelineVersion?: string;
   // Transcript provenance stamped by the summarizer per run (see TranscriptMeta).
   // Absent on Redis-served rows and on rows predating the field; the API never
@@ -143,6 +143,8 @@ export interface UserVideoDocument {
   thumbnailUrl?: string;
   status: string;
   folderId: ObjectId | null;
+  /** D-LIB: the completed copy an update left, while the row it moved to can still fail (library-update.repository.ts). */
+  previousVideoSummaryId?: ObjectId;
   playlistInfo?: {
     playlistId: string;
     playlistTitle: string;
@@ -531,6 +533,25 @@ export class VideoRepository {
     };
     const result = await this.userVideosCollection.insertOne(doc as UserVideoDocument);
     return { ...doc, _id: result.insertedId } as UserVideoDocument;
+  }
+
+  /**
+   * Point a library entry at another row (an update to the latest version):
+   * it keeps its id and folder and takes the row's denormalised fields where
+   * the data has them, remembering `previousVideoSummaryId` when given. Null
+   * when the entry is gone.
+   */
+  async repointUserVideo(userVideoId: string, data: CreateUserVideoData, previousVideoSummaryId?: string): Promise<UserVideoDocument | null> {
+    const { userId, videoSummaryId, status, title, channel, duration, thumbnailUrl } = data;
+    const previous = previousVideoSummaryId ? { previousVideoSummaryId: new ObjectId(previousVideoSummaryId) } : {};
+    return this.userVideosCollection.findOneAndUpdate(
+      { _id: new ObjectId(userVideoId), userId: new ObjectId(userId) },
+      {
+        $set: { videoSummaryId: new ObjectId(videoSummaryId), status, title, channel, duration, thumbnailUrl, ...previous, updatedAt: new Date() },
+        ...(!previousVideoSummaryId && { $unset: { previousVideoSummaryId: '' as const } }),
+      },
+      { returnDocument: 'after', ignoreUndefined: true },
+    );
   }
 
   async deleteUserVideo(userId: string, videoId: string): Promise<boolean> {

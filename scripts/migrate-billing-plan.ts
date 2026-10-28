@@ -8,6 +8,7 @@ import { createHash } from 'node:crypto';
 import { ObjectId } from 'mongodb';
 import type { Db } from 'mongodb';
 import type { BillingRepository } from '../api/src/repositories/billing.repository.js';
+import type { LlmUsageRepository } from '../api/src/repositories/llm-usage.repository.js';
 import type { UserRepository } from '../api/src/repositories/user.repository.js';
 
 export const ACTOR_ID = 'system:migration';
@@ -17,6 +18,9 @@ const MINUTES_PER_USD = 30; // Q9: the pack rate, $5 = 150 minutes
 const DEMO_MONTHLY_MINUTES = 300; // Q20
 const EVAL_MONTHLY_MINUTES = 3000; // Kfir 2026-10-27, overrides Q20's 1,000
 const MAX_LOT_MINUTES = 100_000; // BillingAdmin's per-amount ceiling
+export const DEMO_PLAN_STEP = 'plan-demo';
+/** The `llm_usage.service` whose chat prompts are never stored (docs/PRIVACY.md). */
+export const ASSISTANT_SERVICE = 'assistant';
 
 export interface MigrateOptions {
   dryRun: boolean;
@@ -58,8 +62,12 @@ export interface MigrationPlan {
   teamLots: LotStep[];
   roles: RoleStep[];
   creditLots: LotStep[];
+  /** The demo account's manual Pro plan, on top of its monthly grant (Kfir 2026-10-28). */
+  demoPlan: UserStep[];
   demoGrants: LotStep[];
   evalGrants: LotStep[];
+  /** `llm_usage` rows of the assistant that still hold chat prompt text (docs/PRIVACY.md). */
+  assistantPromptPreviews: number;
   skipped: Skipped[];
   /** Active admins left once the role steps are applied. */
   adminsAfter: number;
@@ -70,6 +78,7 @@ export interface PlanDeps {
   db: Db;
   repo: BillingRepository;
   users: UserRepository;
+  llmUsage: LlmUsageRepository;
   options: MigrateOptions;
 }
 
@@ -242,6 +251,33 @@ async function planCredits(deps: PlanDeps, users: UserRow[]): Promise<Pick<Migra
   return plan;
 }
 
+/**
+ * The demo account is on manual Pro as well as its monthly grant: Pro is what
+ * lifts the free chat allowance. A step of its own (`plan-demo`) because the
+ * tier step keys on `users.tier`. `tierPlanned` holds the users that step puts
+ * on Pro in this run, so a second `setPlan` never reopens their cycle.
+ */
+async function planDemoPlan(
+  deps: PlanDeps,
+  users: UserRow[],
+  tierPlanned: Set<string>,
+): Promise<{ steps: UserStep[]; skipped: Skipped[] }> {
+  const result: { steps: UserStep[]; skipped: Skipped[] } = { steps: [], skipped: [] };
+  const byEmail = new Map(users.map((user) => [normalizeEmail(user.email), user]));
+  const user = deps.options.demoEmail ? byEmail.get(deps.options.demoEmail) : undefined;
+  // The recurring step already reports a demo email with no active account.
+  if (!user || user.deleted) return result;
+  if ((await ledgerStepDone(deps, user.id, DEMO_PLAN_STEP)) || (await ledgerStepDone(deps, user.id, 'plan'))) return result;
+  if (tierPlanned.has(user.id)) {
+    result.skipped.push({ email: user.email, why: `${DEMO_PLAN_STEP}: the tier step of this run already gives it Pro; not added` });
+  } else if ((await deps.repo.findAccount('user', user.id))?.plan.id === 'pro') {
+    result.skipped.push({ email: user.email, why: `${DEMO_PLAN_STEP}: already on a Pro plan; left as it is` });
+  } else {
+    result.steps.push({ userId: user.id, email: user.email });
+  }
+  return result;
+}
+
 interface RecurringSpec {
   emails: string[];
   minutes: number;
@@ -297,6 +333,7 @@ export async function buildPlan(deps: PlanDeps): Promise<MigrationPlan> {
   const tiers = await planTiers(deps, users);
   const roles = await planRoles(deps, users);
   const credits = await planCredits(deps, users);
+  const demoPlan = await planDemoPlan(deps, users, new Set([...tiers.pro, ...tiers.team].map((step) => step.userId)));
   const granted = new Set<string>();
   const demo = await planRecurring(deps, users, {
     emails: options.demoEmail ? [options.demoEmail] : [],
@@ -316,8 +353,10 @@ export async function buildPlan(deps: PlanDeps): Promise<MigrationPlan> {
     roles: roles.roles,
     adminsAfter: roles.adminsAfter,
     creditLots: credits.creditLots,
+    demoPlan: demoPlan.steps,
     demoGrants: demo.grants,
     evalGrants: evals.grants,
-    skipped: [...tiers.skipped, ...credits.skipped, ...demo.skipped, ...evals.skipped],
+    assistantPromptPreviews: await deps.llmUsage.countPromptPreviews(ASSISTANT_SERVICE),
+    skipped: [...tiers.skipped, ...credits.skipped, ...demoPlan.skipped, ...demo.skipped, ...evals.skipped],
   };
 }

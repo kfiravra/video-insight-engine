@@ -4,6 +4,7 @@ import { Redis } from 'ioredis';
 
 // Repositories
 import { VideoRepository } from './repositories/video.repository.js';
+import { LibraryUpdateRepository } from './repositories/library-update.repository.js';
 import { FolderRepository } from './repositories/folder.repository.js';
 import { UserRepository } from './repositories/user.repository.js';
 import { ShareRepository } from './repositories/share.repository.js';
@@ -51,6 +52,7 @@ import { config } from './config.js';
 export interface Container {
   // Repositories
   videoRepository: VideoRepository;
+  libraryUpdateRepository: LibraryUpdateRepository;
   folderRepository: FolderRepository;
   userRepository: UserRepository;
   shareRepository: ShareRepository;
@@ -101,6 +103,7 @@ export function createContainer(
 ): Container {
   // Create repositories
   const videoRepository = new VideoRepository(db);
+  const libraryUpdateRepository = new LibraryUpdateRepository(db);
   const folderRepository = new FolderRepository(db);
   const userRepository = new UserRepository(db);
   const shareRepository = new ShareRepository(db);
@@ -208,6 +211,7 @@ export function createContainer(
   return {
     // Repositories
     videoRepository,
+    libraryUpdateRepository,
     folderRepository,
     userRepository,
     shareRepository,

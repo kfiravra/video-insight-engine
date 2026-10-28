@@ -14,13 +14,14 @@ When you use Video Insight Engine, we keep:
 | Library entries (videos you've added) | So your library appears when you log in | Our database |
 | Folders, playlists | Library organization | Our database |
 | Video minutes (your plan, free video, minutes granted and used) | What you can summarise; accounting | Our database |
-| AI cost usage | Our own cost reporting (never charged to you in dollars) | Our database |
+| AI cost usage (model, tokens, cost, time, and the account and request it came from) | Our own cost reporting (never charged to you in dollars) | Our database; the link to you is removed after 90 days (see below) |
 | Saved chat notes | The "Save note" action in the chat assistant | Our database |
 
 We **do not** store:
 - Your YouTube history outside what you explicitly added.
 - Your IP address beyond aggregated, hashed counters on shared pages.
-- Card or billing details (handled by [Paddle](https://www.paddle.com/) — see "Billing data" below).
+- Card or billing details. No payments are processed yet; minutes are granted by the team.
+- The text of your chat messages in our AI usage records. The chat assistant's prompts are never stored there.
 
 ## How to delete your account
 
@@ -43,13 +44,13 @@ Three categories of data are not removed because they aren't yours:
 
 1. **Video summaries** themselves (the AI-generated output) live in a shared cache. They're keyed by the YouTube video, not by the user. Removing them would break the same video for every other user who has it.
 2. **Anonymous engagement signals** on public share pages (view counts, like counts) — these are stored as one-way hashes of IP addresses, never linked to your account.
-3. **Aggregated billing/usage analytics** with a 90-day rolling window — these contain no PII and auto-expire.
+3. **AI usage records** (model, tokens, cost, time) are kept as cost analytics. Chat prompts are never stored in them. For other AI calls, such as summarising a video, the first 200 characters of the prompt are kept for 90 days. After 90 days we remove the account link (`user_id`), the request id (`request_id`) and the prompt preview (`prompt_preview`) from every record, so what is left contains no personal data.
 
 If you specifically need every trace of a particular video removed, contact support.
 
 ## Billing data
 
-Payments go through [Paddle](https://www.paddle.com/). They store payment details under their own GDPR-compliant DPA. We keep no Paddle customer ID or other payment-provider identifier, so there is nothing of that kind to remove on our side when you delete your account; the historical receipts at Paddle are governed by their retention policy. To request deletion of those, follow [Paddle's GDPR portal](https://www.paddle.com/legal/privacy).
+No payments are processed yet; minutes are granted by the team. We hold no card details and no payment-provider identifier, so there is nothing of that kind to remove when you delete your account.
 
 ## Data export
 

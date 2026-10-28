@@ -295,8 +295,8 @@ CHAT_FREE_MESSAGES_PER_DAY=50
 #   terminal, missing, unstamped or stalled; expire lots past their expiry;
 #   apply due recurring grants (a lot that expires at the next run); check
 #   changed accounts against the ledger (drift → warn + llm_alerts row
-#   `billing_drift`, once per account per 24 h); unset llm_usage.user_id older
-#   than 90 days; run the GDPR hard-delete sweep. Unset = on (off under
+#   `billing_drift`, once per account per 24 h); unset llm_usage.user_id,
+#   request_id and prompt_preview older than 90 days; run the GDPR hard-delete sweep. Unset = on (off under
 #   NODE_ENV=test); both composes default to true. The minutes ledger decides
 #   every submit (no switch, no dollar cap — P3.2), so Mongo must run as a
 #   replica set before this code is deployed.

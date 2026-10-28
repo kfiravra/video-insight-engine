@@ -75,6 +75,11 @@ export interface MockContainer {
     submitFailed: ReturnType<typeof vi.fn>;
     runFinished: ReturnType<typeof vi.fn>;
     planPlaylist: ReturnType<typeof vi.fn>;
+    refuseIfBlocked: ReturnType<typeof vi.fn>;
+  };
+  libraryUpdateRepository: {
+    restoreFailedUpdates: ReturnType<typeof vi.fn>;
+    clearSettledUpdates: ReturnType<typeof vi.fn>;
   };
   shareRepository: {
     findBySlug: ReturnType<typeof vi.fn>;
@@ -235,6 +240,13 @@ export function createMockContainer(): MockContainer {
         quote: { neededMinutes: 0, availableMinutes: 0, freeVideoAvailable: true, nextFreeAt: null, decisions: [] },
         durationsSec: items.map((item) => item.durationSec),
       })),
+      // Default: not blocked, so an idempotency replay is answered.
+      refuseIfBlocked: vi.fn().mockResolvedValue(undefined),
+    },
+    // Default: no entry an update moved onto the row.
+    libraryUpdateRepository: {
+      restoreFailedUpdates: vi.fn().mockResolvedValue({ restored: 0, stranded: 0 }),
+      clearSettledUpdates: vi.fn().mockResolvedValue(0),
     },
     shareRepository: {
       findBySlug: vi.fn(),

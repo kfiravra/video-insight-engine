@@ -186,7 +186,7 @@ sudo chown 999:999 /opt/vie/secrets/mongo-keyfile   # uid of the mongodb user in
 sudo ls -ln /opt/vie/secrets/mongo-keyfile          # -r-------- 1 999 999 ...
 ```
 
-`.env.production.example` already sets `MONGO_KEYFILE_PATH=/opt/vie/secrets/mongo-keyfile`; change the row if you keep the file elsewhere. mongod rejects a keyfile that is group- or world-readable or that uid 999 cannot read. Nothing but this one member uses the key, so there is nothing to back up: to replace it, write a new file the same way and run `dc up -d --force-recreate vie-mongodb`. Compose stops at variable substitution while the `MONGO_KEYFILE_PATH` row is missing, like `ADMIN_SESSION_SECRET`.
+`.env.production.example` already sets `MONGO_KEYFILE_PATH=/opt/vie/secrets/mongo-keyfile`; change the row if you keep the file elsewhere. mongod rejects a keyfile that is group- or world-readable or that uid 999 cannot read. Nothing but this one member uses the key, so there is nothing to back up: to replace it, write a new file the same way and run `dc up -d --force-recreate vie-mongodb`. Compose stops at variable substitution while the `MONGO_KEYFILE_PATH` row is missing, like `ADMIN_SESSION_SECRET`. A host that already runs Mongo as a standalone is converted with "Convert Mongo to a replica set" below, not by this paragraph alone.
 
 Validate and start:
 
@@ -200,15 +200,24 @@ dc ps               # wait until every long-running service shows (healthy)
 
 ### Convert Mongo to a replica set
 
-The billing ledger needs multi-document transactions, so vie-mongodb becomes a single-node replica set (`rs0`). On an existing host the merge does the conversion: the deploy workflow runs `dc up -d --build`, which recreates vie-mongodb on the same data volume with `--replSet rs0 --keyFile`, and its healthcheck runs `rs.initiate` on the first probe. Expect about 30 seconds without Mongo. The existing root user and every collection stay in the volume. Do step 1 **before** the merge (step 2 is the merge itself): with the new compose file a missing `MONGO_KEYFILE_PATH` row stops every `dc` command, and a missing keyfile stops vie-mongodb from being created.
+vie-mongodb runs as a single-node replica set (`rs0`) so the billing ledger can use multi-document transactions. This change merges and deploys on its own, before the billing PR; the billing PR assumes the set is live, so do not merge it until step 4 has passed. On an existing host the merge does the conversion: the deploy workflow runs `dc up -d --build`, which recreates vie-mongodb on the same data volume with `--replSet rs0 --keyFile`, and its healthcheck runs `rs.initiate` on the first probe. Expect Mongo to be unavailable for under a minute. The existing root user and every collection stay in the volume. Do steps 1 and 2 **before** the merge: with the new compose file a missing `MONGO_KEYFILE_PATH` row stops every `dc` command, and a missing keyfile stops vie-mongodb from being created. A fresh host needs none of this: it creates the keyfile above and the first `dc up` initiates the set on the empty volume.
 
-1. Back up, create the keyfile (the commands above) and add the row. The pre-merge compose file ignores the row.
+**1. Back up the standalone, copy it off the box, record counts (before the merge).** The nightly sidecar from section f is the tool; replace `BUCKET` as there. The counts are what steps 4 and 5 compare against.
 
 ```bash
 cd ~/video-insight-engine
 docker exec vie-backup-cron sh -c 'cd /repo && QDRANT_URL=http://vie-qdrant:6333 ./scripts/backup.sh'
-ls -t backups | head -1   # the timestamp to keep until the check in step 4 passes
-docker exec vie-mongodb sh -c 'mongosh --quiet -u "$MONGO_INITDB_ROOT_USERNAME" -p "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin video-insight-engine --eval "db.videoSummaryCache.countDocuments()"'   # note it for step 3
+B=$(ls -d backups/[0-9]*Z | sort | tail -1); echo "$B"       # keep this folder until step 5 passes
+aws s3 sync --region eu-north-1 --only-show-errors backups s3://BUCKET/backups/
+aws s3 ls --region eu-north-1 "s3://BUCKET/$B/"             # the mongo archive and manifest.json
+docker exec vie-mongodb sh -c 'mongosh --quiet -u "$MONGO_INITDB_ROOT_USERNAME" -p "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin --eval "const d = db.getSiblingDB(\"video-insight-engine\"); printjson({ videoSummaryCache: d.videoSummaryCache.countDocuments(), users: d.users.countDocuments(), userVideos: d.userVideos.countDocuments() })"' | tee ~/mongo-counts-before.txt
+```
+
+`mongodump` reads the collections one after another while the app keeps writing, so a count taken right after can be a few documents higher than the archive; on this box that is usually zero.
+
+**2. Create the keyfile and the `.env` row (before the merge).** The pre-merge compose file ignores the row.
+
+```bash
 sudo install -d -m 0700 /opt/vie/secrets
 openssl rand -base64 756 | sudo tee /opt/vie/secrets/mongo-keyfile > /dev/null
 sudo chmod 0400 /opt/vie/secrets/mongo-keyfile && sudo chown 999:999 /opt/vie/secrets/mongo-keyfile
@@ -218,30 +227,20 @@ sudo stat -c '%F %a %u:%g' "$(grep '^MONGO_KEYFILE_PATH=' .env | cut -d= -f2-)" 
 
 The compose file mounts the keyfile with `create_host_path: false`: if the path is missing, the deploy fails at container creation ("bind source path does not exist") and the running standalone Mongo is left alone, instead of Docker creating a root-owned directory there and mongod crash-looping on it. Compose cannot check the mode or owner, so the `stat` line is the check for those. Anything other than `regular file 400 999:999` (a directory, mode 600, owner root) makes mongod refuse to start.
 
-2. Merge. Watch the deploy: `dc ps vie-mongodb` reads `(health: starting)` until the node is PRIMARY, then `(healthy)`, and the services that wait on it start after that. If the container stays unhealthy, `docker logs vie-mongodb` names the cause (a keyfile with the wrong mode or owner is the usual one). To initiate by hand:
+**3. Merge, and initiate.** Merge the PR and watch the deploy: `dc ps vie-mongodb` reads `(health: starting)` until the node is PRIMARY, then `(healthy)`, and the services that wait on it start after that. The healthcheck runs `rs.initiate` on its first probe, so nothing else is needed. If the container stays unhealthy, `docker logs vie-mongodb` names the cause (a keyfile with the wrong mode or owner is the usual one). To initiate by hand, run this; it is safe to repeat and prints `already initiated` once the set exists. The root credentials come from the container's own environment, so nothing secret is typed or printed:
 
 ```bash
-docker exec vie-mongodb sh -c 'mongosh --quiet -u "$MONGO_INITDB_ROOT_USERNAME" -p "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin --eval "rs.initiate({ _id: \"rs0\", members: [{ _id: 0, host: \"vie-mongodb:27017\" }] })"'
+docker exec vie-mongodb sh -c 'mongosh --quiet -u "$MONGO_INITDB_ROOT_USERNAME" -p "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin --eval "try { rs.status(); print(\"already initiated\") } catch (e) { if (e.codeName !== \"NotYetInitialized\") throw e; printjson(rs.initiate({ _id: \"rs0\", members: [{ _id: 0, host: \"vie-mongodb:27017\" }] })) }"'
 ```
 
-3. Verify the set and the data. Expect `ok: 1`, `PRIMARY`, and the document count you saw before.
+**4. Verify the set and the data, then restart the old clients.** Expect `ok: 1`, one member that is `PRIMARY`, the set named `rs0` with the member host `vie-mongodb:27017`, and the same counts as in step 1 (higher only by what the app wrote since).
 
 ```bash
-docker exec vie-mongodb sh -c 'mongosh --quiet -u "$MONGO_INITDB_ROOT_USERNAME" -p "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin --eval "printjson({ ok: rs.status().ok, state: rs.status().members[0].stateStr, cache: db.getSiblingDB(\"video-insight-engine\").videoSummaryCache.countDocuments() })"'
+docker exec vie-mongodb sh -c 'mongosh --quiet -u "$MONGO_INITDB_ROOT_USERNAME" -p "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin --eval "const s = rs.status(), c = rs.conf(), d = db.getSiblingDB(\"video-insight-engine\"); printjson({ ok: s.ok, members: s.members.map(m => ({ name: m.name, state: m.stateStr })), setName: c._id, memberHost: c.members[0].host, videoSummaryCache: d.videoSummaryCache.countDocuments(), users: d.users.countDocuments(), userVideos: d.userVideos.countDocuments() })"'
+cat ~/mongo-counts-before.txt
 ```
 
-4. Prove that a backup taken from the replica set restores. `mongodump` is not point-in-time across collections: it reads them one after another while the app keeps writing, so a ledger collection can be newer than its account row. A restore from it can make the billing repair job raise a `billingDrift` alert; that is the check doing its job, not corruption. Take a new backup, then restore its Mongo archive into a throwaway container. The archive format does not depend on the topology, so a plain `mongo:7` is enough (`restore.sh` has no Mongo-only switch, so copy just the archive and manifest into a folder with no Qdrant snapshots):
-
-```bash
-docker exec vie-backup-cron sh -c 'cd /repo && QDRANT_URL=http://vie-qdrant:6333 ./scripts/backup.sh'
-B=backups/$(ls -t backups | head -1)
-mkdir -p /tmp/mongo-only && cp "$B"/manifest.json "$B"/mongo-*.archive.gz /tmp/mongo-only/
-docker run -d --name vie-mongo-scratch mongo:7
-sleep 5 && MONGO_CONTAINER=vie-mongo-scratch ./scripts/restore.sh /tmp/mongo-only   # prints per-collection counts
-docker rm -f vie-mongo-scratch && rm -rf /tmp/mongo-only
-```
-
-5. Restart the clients the deploy did not recreate. A container created after vie-mongodb opened its connections to the replica set; one created before it still holds connections to the old standalone server. Their URIs did not change, so a restart is enough, but restart only those: `vie-summarizer-worker` ends the pipeline runs it has in flight. Pick them by creation time (a container list that is empty must not reach `dc restart`, which with no names restarts everything):
+A container created after vie-mongodb opened its connections to the replica set; one created before it still holds connections to the old standalone server. The deploy recreates only what changed, and this change touches only vie-mongodb, so expect every client below to be listed. Their URIs did not change, so a restart is enough, but restart only the ones created before vie-mongodb, and when no video is processing: `vie-summarizer-worker` ends the pipeline runs it has in flight. Pick them by creation time (a container list that is empty must not reach `dc restart`, which with no names restarts everything):
 
 ```bash
 mongo_up=$(docker inspect -f '{{.Created}}' vie-mongodb)
@@ -253,7 +252,24 @@ echo "created before vie-mongodb: ${OLD:-none}"
 dc ps    # every long-running service (healthy)
 ```
 
-`scripts/backup.sh` and `scripts/restore.sh` need no change on a replica set (tested with auth and a keyfile). To roll back, revert the merge on `main` (`git revert -m 1 <merge commit>` on a branch, PR, merge): the deploy workflow redeploys the previous compose file by itself. Do not `git checkout <sha>` on the box, because the next deploy's `git pull --ff-only` would then fail. That compose file has no `--replSet`, so the same volume starts as a standalone with its data and root user.
+**5. Restore check into a scratch container.** Prove that the step 1 archive restores and that its counts match. It needs only that archive, so run it before the merge if you want the backup proven before the risky step. The scratch container is a plain `mongo:7` on the default bridge network (not `vie-network`) with no published port, and `restore.sh` talks to it through `docker exec`. The archive and manifest are copied into a folder of their own because `restore.sh` has no Mongo-only switch: with a `qdrant-*.snapshot` in the folder it would upload it to `QDRANT_URL` and overwrite the live collections.
+
+```bash
+B=backups/<timestamp from step 1>
+rm -rf /tmp/mongo-only && mkdir -p /tmp/mongo-only
+cp "$B"/manifest.json "$B"/mongo-*.archive.gz /tmp/mongo-only/
+docker run -d --name vie-mongo-scratch mongo:7 --wiredTigerCacheSizeGB 0.25
+for i in $(seq 1 30); do docker exec vie-mongo-scratch mongosh --quiet --eval 'db.runCommand({ ping: 1 }).ok' 2>/dev/null | grep -qx 1 && break; sleep 2; done
+MONGO_CONTAINER=vie-mongo-scratch ./scripts/restore.sh /tmp/mongo-only   # prints per-collection counts
+docker rm -fv vie-mongo-scratch && rm -rf /tmp/mongo-only                # -v also removes the image's anonymous data volumes
+docker ps -aq --filter name=vie-mongo-scratch                            # prints nothing
+```
+
+Compare the printed `videoSummaryCache`, `users` and `userVideos` with `~/mongo-counts-before.txt`; they are equal unless the app wrote between the dump and the count. Keep the step 1 folder and the S3 copy until this passes.
+
+`scripts/backup.sh` and `scripts/restore.sh` need no change on a replica set (tested with auth and a keyfile): both run `mongodump` and `mongorestore` inside the vie-mongodb container through `docker exec`, with the root credentials from its own environment, and connect to `localhost:27017` there, which is a direct connection. Nothing on the host connects to Mongo, so the nightly sidecar and the S3 sync keep working as they are.
+
+**Rollback.** Revert the merge on `main` (`git revert -m 1 <merge commit>` on a branch, PR, merge): the deploy workflow redeploys the previous compose file by itself. Do not `git checkout <sha>` on the box, because the next deploy's `git pull --ff-only` would then fail. That compose file has no `--replSet` or `--keyFile`, so the same volume starts as a standalone with its data and root user. The replica-set config stays in the `local` database (`local.system.replset` and the 1 GB `oplog.rs`), unused by a standalone and not part of a `mongodump` of `video-insight-engine`. A later re-merge starts as `PRIMARY` from that stored config without a new `rs.initiate`. Checked on 2026-10-28 with a local `mongod` 7.0.24 on the same data directory, auth on: standalone, replica set with a keyfile, standalone again, replica set again; every document and the root user survived, writes worked in each mode, and writes made while standalone were still there after the second conversion. The keyfile and the `.env` row can stay; the old compose ignores them. Do not roll this back once the billing PR is live: the ledger needs the set.
 
 ## e. First login and first video
 
@@ -356,14 +372,14 @@ Boot seeding from `ADMIN_EMAILS` does not replace this step: accounts that were 
 
 One-off, at the billing release. `scripts/migrate-billing.ts` moves the accounts from the dollar gate onto the minutes ledger, and `scripts/prod-count.js` counts what it will touch first. Do it after the replica-set conversion above (the script refuses a standalone Mongo, dry run included) and with `ADMIN_EMAILS` set in `.env`: the migration keeps `ADMIN_EMAILS` as its keep-list, and the boot seeding keeps a migrated admin only while that admin's email is on the list.
 
-> **Enforcement starts at the billing deploy, not at the migration.** There is no flag: from the moment the deploy finishes, the minutes ledger decides every submit. An account has no plan until the migration has run, so **Pro and team users count as free** (one free video of up to 30 minutes per 24 hours, nothing longer) until it does. Merge in a quiet moment, have the deploy healthy, and run the migration **immediately** after (minutes, not hours). Do everything that can be checked beforehand before the merge: the count, the local rehearsal and Kfir's sign-off on its dry-run table.
+> **Enforcement starts at the billing deploy, not at the migration.** There is no flag: from the moment the deploy finishes, the minutes ledger decides every submit. An account has no plan until the migration has run, so **Pro and team users count as free** (one free video of up to 30 minutes per 24 hours, nothing longer) until it does. Merge in a quiet moment, have the deploy healthy, and run the migration **immediately** after (minutes, not hours). Count before the merge; the dry run reads only, so it runs on the box itself right after the deploy, and Kfir reads its table before `--run`.
 
 Order:
 
-1. Before the merge, on your machine: count (step 1), rehearse on a snapshot of the latest backup (step 2), get the dry-run table approved.
-2. Before the merge, on the box: the steps under "Convert Mongo to a replica set" (backup, keyfile, `.env` rows) and the `ADMIN_EMAILS` row.
-3. Merge. The deploy converts Mongo and starts enforcement.
-4. Immediately, on the box: `migrate_billing` dry run, run, run again, verify (steps 3 and 4).
+1. Before the merge, on the box: count (step 1).
+2. Before the merge, on the box: Mongo is already a replica set. The conversion ships first as its own small PR (`fix/mongo-replset`) and deploys alone, by "Convert Mongo to a replica set" above; do not merge billing until its step 4 has passed. Then the `.env` rows from the billing release and the `ADMIN_EMAILS` row.
+3. Merge. The deploy starts enforcement; it does not touch vie-mongodb, whose compose definition the replica-set PR already shipped.
+4. Immediately, on the box: `migrate_billing` dry run (reads only; Kfir signs off its table), run, run again, verify (steps 2 and 3).
 
 What it does, in this order, through the same code vie-api runs (the ledger invariants hold; nothing writes a billing collection by hand):
 
@@ -371,13 +387,15 @@ What it does, in this order, through the same code vie-api runs (the ledger inva
 2. `tier: 'pro'` becomes a manual Pro plan for 12 months. `tier: 'team'` becomes the same Pro plan plus a 600-minute lot that expires in 12 months (reason `migration: team tier`). An account that is already on Pro is left alone and reported.
 3. Roles: an old `role: 'admin'` user whose email is on the keep-list becomes `roles: ['admin']` with `roleSource: 'env'`; every other old admin is demoted and loses the panel. It replaces the demote step above, so do not run both.
 4. Credit: the `userCostAdjustments` dated the day of the migration (UTC) that the user's spend that day has not used up become one lot at $1 = 30 minutes, expiring in 12 months. The rule is deliberately conservative: net credit granted that day minus everything spent that day, rounded down to whole minutes. Adjustments of any other day had already expired and are dropped.
-5. Recurring grants: `DEMO_USER_EMAIL` gets 300 minutes a month and each `--eval-emails` account 3,000. An account that already has an active recurring grant (a hand-made one counts), or is on both lists, gets no second grant and is reported under "Skipped". The first month is granted by the next repair-job tick, then monthly.
+5. The demo account (`DEMO_USER_EMAIL`) gets the same manual Pro plan for 12 months, as a step of its own (`plan-demo`, reason `migration: demo account`), in addition to the recurring grant below. It is skipped and reported if the account is already on Pro, including when the tier step above puts it there.
+6. Recurring grants: `DEMO_USER_EMAIL` gets 300 minutes a month and each `--eval-emails` account 3,000. An account that already has an active recurring grant (a hand-made one counts), or is on both lists, gets no second grant and is reported under "Skipped". The first month is granted by the next repair-job tick, then monthly.
+7. Chat prompt text: vie-assistant no longer stores `prompt_preview` in `llm_usage`, and this step unsets the field on the `service: 'assistant'` rows written before that. The dry run prints the count of rows still holding text, `--run` clears them, and a second run finds none. It goes through `LlmUsageRepository`, like every other write here, and has no audit row because it changes no account. Deploy the new vie-assistant first (the billing deploy does); an old one would keep writing previews after the clear. After 90 days the repair job also unsets `prompt_preview`, `user_id` and `request_id` on every row (`docs/PRIVACY.md`).
 
-Every plan, lot, recurring-grant and role step also gets an `adminAudit` row (actor `system:migration`, the same action names the admin routes use, `roles.migration.promote` / `.demote` for roles), written before the step and keyed by the id the ledger entries carry.
+Every plan, lot, recurring-grant and role step (steps 2 to 6) also gets an `adminAudit` row (actor `system:migration`, the same action names the admin routes use, `roles.migration.promote` / `.demote` for roles), written before the step and keyed by the id the ledger entries carry.
 
 It refuses to run (exit 1, nothing written, dry run included) if it would leave no active admin or if Mongo is a standalone server, and it refuses `--run` against this server's Mongo unless you pass `--yes-prod`. Every step has an id derived from the user and the step, so running it again, even hours later, changes nothing; if a run stops halfway, run it again and it finishes.
 
-**Set up.** The migration reuses the `vie-api-tools` image from "Create the first user". Rebuild it first, because the script imports the billing code from the current checkout (before the merge that is your local checkout; after it, the box's). Both script files are mounted; `SCRATCH=1` points the helper at the throwaway Mongo of step 2 instead of the real one. The keep-list is `ADMIN_EMAILS` unless you pass `--admin-emails <list>`, and the dry run prints both lists and warns when they differ.
+**Set up.** The migration reuses the `vie-api-tools` image from "Create the first user". Rebuild it after the deploy, because the script imports the billing code from the box's checkout. Both script files are mounted. The keep-list is `ADMIN_EMAILS` unless you pass `--admin-emails <list>`, and the dry run prints both lists and warns when they differ.
 
 ```bash
 docker build --target builder -f api/Dockerfile -t vie-api-tools .
@@ -386,9 +404,8 @@ read -r -p "Eval account email(s), comma-separated, blank for none: " VIE_EVAL_E
 export VIE_EVAL_EMAILS
 
 migrate_billing() {
-  if [ -n "$SCRATCH" ]; then NET=vie-scratch; URI="mongodb://vie-mongodb:27017/video-insight-engine"
-  else NET=vie-network; URI="mongodb://${MONGO_ROOT_USER}:${MONGO_ROOT_PASS}@vie-mongodb:27017/video-insight-engine?authSource=admin"; fi
-  docker run --rm --network "$NET" \
+  URI="mongodb://${MONGO_ROOT_USER}:${MONGO_ROOT_PASS}@vie-mongodb:27017/video-insight-engine?authSource=admin"
+  docker run --rm --network vie-network \
     -v "$PWD/scripts/migrate-billing.ts:/app/api/migrate-billing.ts:ro" \
     -v "$PWD/scripts/migrate-billing-plan.ts:/app/api/migrate-billing-plan.ts:ro" \
     -e MONGODB_URI="$URI" -e ADMIN_EMAILS -e DEMO_USER_EMAIL -e VIE_EVAL_EMAILS \
@@ -405,28 +422,7 @@ scp scripts/prod-count.js ec2-user@HOST:/tmp/prod-count.js
 docker exec -i vie-mongodb sh -c 'mongosh --quiet -u "$MONGO_INITDB_ROOT_USERNAME" -p "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin video-insight-engine --eval "$(cat)"' < /tmp/prod-count.js
 ```
 
-**2. Rehearse on a snapshot, on your machine, before the merge.** The box has no migration scripts until the merge deploys them, so the rehearsal runs from your checkout of the branch you are about to merge, against the latest backup restored into a throwaway replica set. Fetch the backup (section f has the `aws s3 sync` line), copy its Mongo archive into an otherwise empty folder (`restore.sh` has no Mongo-only switch), and restore it. The scratch Mongo does not look like production, so `--run` works there without `--yes-prod`: rehearse the whole run and the second run. Export the production values the helper reads (`ADMIN_EMAILS`, `DEMO_USER_EMAIL`) first, so the keep-list is the real one.
-
-```bash
-B=backups/<timestamp>                  # the backup fetched from S3
-rm -rf /tmp/mongo-only && mkdir -p /tmp/mongo-only
-cp "$B"/manifest.json "$B"/mongo-*.archive.gz /tmp/mongo-only/
-
-docker network create vie-scratch
-docker run -d --name vie-mongo-scratch --network vie-scratch --network-alias vie-mongodb mongo:7 --replSet rs0 --bind_ip_all
-sleep 5 && docker exec vie-mongo-scratch mongosh --quiet --eval 'rs.initiate({ _id: "rs0", members: [{ _id: 0, host: "vie-mongodb:27017" }] })'
-sleep 5 && MONGO_CONTAINER=vie-mongo-scratch ./scripts/restore.sh /tmp/mongo-only
-
-SCRATCH=1 migrate_billing --dry-run
-SCRATCH=1 migrate_billing --run
-SCRATCH=1 migrate_billing --run       # again: every count is 0
-
-docker rm -f vie-mongo-scratch && docker network rm vie-scratch && rm -rf /tmp/mongo-only
-```
-
-Show Kfir the dry-run table from here: the lots, the demotions and the keep-list comparison are what he signs off.
-
-**3. Run on the server, right after the deploy is healthy.**
+**2. Run on the server, right after the deploy is healthy.**
 
 ```bash
 migrate_billing --dry-run             # 1. preview: reads only, prints the summary table
@@ -436,7 +432,7 @@ migrate_billing --run --yes-prod      # 3. again: every count is 0 and it says n
 
 Read the preview before step 2. "Admins kept" must be exactly the account(s) you expect, "Admins demoted" the hand-made ones, "Active admins after" at least 1, and the keep-list line must say the two lists match (a kept admin who is not on `ADMIN_EMAILS` is demoted at the next vie-api boot). "Skipped" lists what it deliberately left alone, for example a credit the day's spend had already used up.
 
-**4. Verify.** The script comes from a quoted heredoc, so the shell leaves the `$` operators alone:
+**3. Verify.** The script comes from a quoted heredoc, so the shell leaves the `$` operators alone:
 
 ```bash
 docker exec -i vie-mongodb sh -c 'mongosh --quiet -u "$MONGO_INITDB_ROOT_USERNAME" -p "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin video-insight-engine --eval "$(cat)"' <<'EOF'
@@ -480,7 +476,9 @@ Only vie-api needs recreating when these variables change (`dc restart` does not
 
 - **Turn it off:** blank both variables and run `dc up -d vie-api`. The button disappears and `{ "demo": true }` returns 403 `DEMO_DISABLED`. Demo sessions that are already open keep working until their refresh cookie expires, up to 7 days; to end them now, also rotate `JWT_REFRESH_SECRET`, which signs every user out. The user and its videos stay in the database.
 - **Change the password, or repair the account:** edit `DEMO_USER_PASSWORD`, run `dc up -d vie-api`, then run the script again. It resets the password and cancels a pending account deletion (the API picks that up within 30 seconds).
-- **Limits:** every visitor shares the demo account, so they share its minutes: the free video, plus the demo account's recurring grant (the billing migration, P3.8, gives it 300 minutes a month) and any lot an admin grants in vie-admin (Users → the user → Account tab). Submissions also count against the hourly burst limit (`SUBMIT_BURST_LIMIT_PER_HOUR`). When the minutes run out, visitors see the normal "not enough minutes" message and can still browse the videos already in the demo library, and a video someone already summarised is still served free. There is no per-user dollar cap.
+- **Limits:** every visitor shares the demo account, so they share its minutes: the free video, the Pro plan's monthly minutes, the recurring grant and any lot an admin grants in vie-admin (Users → the user → Account tab). The billing migration (P3.8) puts the account on manual Pro for 12 months (step `plan-demo`) and gives it 300 recurring minutes a month, both on top of the free video. When the minutes run out, visitors see the normal "not enough minutes" message and can still browse the videos already in the demo library, and a video someone already summarised is still served free. There is no per-user dollar cap.
+- **Chat:** because the account is on Pro, the free chat allowance does not apply to it. Chat fair use (`CHAT_FREE_MESSAGES_PER_DAY`, 50 messages per rolling 24 hours per account) only counts an account whose plan is `free`; any other plan is unlimited. When the 12 months end the plan reverts to free and the allowance applies again, shared by all visitors, until you set the plan again in vie-admin (Users → the user → Account tab).
+- **Submit burst:** `SUBMIT_BURST_LIMIT_PER_HOUR` (20) is counted per account, so all demo visitors share one bucket of 20 submissions an hour. That is accepted for the demo.
 - **Rate limit:** demo sign-ins count against the login limit of 10 per 15 minutes per IP address.
 - **Account deletion:** while `DEMO_USER_EMAIL` is set, `DELETE /api/users/me` returns 403 `DEMO_RESTRICTED` for the demo user, so a visitor cannot lock the demo for everyone. The admin immediate delete still works.
 - **Read-mostly:** the demo user cannot change the shared library or spend the shared budget. While `DEMO_USER_EMAIL` is set, these return 403 `DEMO_RESTRICTED` for it: deleting or moving videos, changing a video's category, renaming, moving or deleting folders, `bypassCache` / `cold` / `providers` on submit, `providers` on playlist import, the assistant's library-rewriting actions (organize, rename, move, delete folder, move video), and changing `displayName` or `username`. Browsing, creating folders and plain submits still work. The account is identified by its user id, looked up from `DEMO_USER_EMAIL`. After you recreate the demo user, the guard follows the new id within 10 minutes (or restart vie-api). If no account matches the email yet, the guard retries every minute. See [SECURITY.md](./SECURITY.md#demo-account-read-mostly).

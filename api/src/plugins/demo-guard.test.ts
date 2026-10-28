@@ -163,4 +163,14 @@ describe('demo guard plugin', () => {
       await expect(app.requireNotDemo(req)).rejects.toBeInstanceOf(UnauthorizedError);
     });
   });
+
+  describe('isDemoUser', () => {
+    it.each([
+      ['the demo account', { user: { userId: DEMO_ID } }, true],
+      ['any other user', { user: { userId: OTHER_ID } }, false],
+      ['a request without a user', {}, false],
+    ])('should answer for %s', async (_label, request, expected) => {
+      await expect(app.isDemoUser(request as unknown as FastifyRequest)).resolves.toBe(expected);
+    });
+  });
 });

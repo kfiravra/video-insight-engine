@@ -11,6 +11,7 @@ import { Loader2, ArrowLeft, RefreshCw, AlertCircle, PauseCircle } from "lucide-
 import { OutputRouter } from "@/features/video-output/components/OutputRouter";
 import { LanguageToggle } from "@/features/video-output/components/LanguageToggle";
 import { DegradedNotice } from "@/features/video-output/components/DegradedNotice";
+import { UpdateAvailableNotice } from "@/features/video-output/components/UpdateAvailableNotice";
 import { VideoPlayerProvider } from "@/features/video-output/contexts/VideoPlayerContext";
 
 import { Confetti } from "@/components/ui/Confetti";
@@ -473,6 +474,11 @@ export function VideoDetailPage() {
               retrying={retryVideo.isPending}
             />
           )}
+          <UpdateAvailableNotice
+            video={video}
+            language={displayLanguage}
+            isRTL={displayIsRTL}
+          />
           <OutputRouter
             title={resolvedMeta?.videoTitle || mergedVideo.title}
             videoSummaryId={videoSummaryId}

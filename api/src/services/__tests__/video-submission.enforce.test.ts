@@ -214,6 +214,25 @@ describe('VideoSubmissionService on the minutes ledger', () => {
       expect(createVideo).not.toHaveBeenCalled();
     });
 
+    it('should refuse a blocked account a replay of a video it already has (D-BLOCK)', async () => {
+      const url = freshVideo();
+      await submitMinutes(10, { url });
+      await h.billing.setCaps(userId, { blocked: true }, ctx());
+
+      await expect(submitMinutes(10, { url })).rejects.toBeInstanceOf(AccountBlockedError);
+      expect(createVideo).toHaveBeenCalledTimes(1);
+    });
+
+    it('should refuse a blocked account while its earlier submit of the video is still in flight (D-BLOCK)', async () => {
+      const url = freshVideo();
+      const youtubeId = url.split('v=')[1];
+      const idempotency = new IdempotencyService(new IdempotencyRepository(getTestDb()), logger);
+      await idempotency.reserveHash({ hash: idempotency.computeKey({ userId, youtubeId }), userId, youtubeId });
+      await h.billing.setCaps(userId, { blocked: true }, ctx());
+
+      await expect(submitMinutes(10, { url })).rejects.toBeInstanceOf(AccountBlockedError);
+    });
+
     it('should serve a cached video when the pre-flight cannot get its length', async () => {
       h.metadata.getVideoMetadata.mockRejectedValue(new MetadataUnavailableError('timeout'));
       createVideo.mockResolvedValueOnce(created({ cached: true }));
@@ -245,6 +264,18 @@ describe('VideoSubmissionService on the minutes ledger', () => {
       expect(await holds()).toHaveLength(1);
     });
 
+    it('should not answer an update to the latest version with a plain submit\'s key (D-LIB)', async () => {
+      await h.billing.grantLot(userId, { minutes: 100 }, ctx());
+      const url = freshVideo();
+      await submitMinutes(10, { url });
+
+      const update = await submitMinutes(10, { url, updateToLatest: true });
+
+      expect(update.outcome).toBe('created');
+      expect(createVideo.mock.calls[1][2]).toMatchObject({ updateToLatest: true });
+      expect(await holds()).toHaveLength(2);
+    });
+
     it('should give a client that reuses X-Request-ID a new run per video, never a conflict', async () => {
       await h.billing.grantLot(userId, { minutes: 100 }, ctx());
       await submitMinutes(10);
@@ -252,6 +283,33 @@ describe('VideoSubmissionService on the minutes ledger', () => {
       await submitMinutes(10);
 
       expect(new Set((await holds()).map((hold) => hold.source.ref)).size).toBe(2);
+    });
+  });
+
+  // Between the billing deploy and the migration run no user has an account
+  // row yet: getOrCreateAccount opens a free, unblocked one on first use.
+  describe('a user with no billing account yet (Q-ACCT)', () => {
+    const accountOf = () => getTestDb().collection('billingAccounts').findOne({ ownerId: new ObjectId(userId) });
+
+    it('should open a free, unblocked account on the first submit and pay with the free video', async () => {
+      const before = await accountOf();
+
+      await submitMinutes(10);
+
+      const [hold] = await holds();
+      const account = await accountOf();
+      expect([before, account?.plan.id, account?.caps.blocked, hold.bucket]).toEqual([null, 'free', undefined, 'free']);
+    });
+
+    it.each(['cached', 'attached'] as const)('should serve a %s video free and leave the free video open', async (outcome) => {
+      const before = await accountOf();
+      createVideo.mockResolvedValue(created(outcome === 'cached' ? { cached: true } : { attached: true }));
+
+      await submitMinutes(10);
+
+      const summary = await h.billing.summary(userId);
+      const debits = await getTestDb().collection('ledgerEntries').countDocuments({ type: 'debit' });
+      expect([before, summary.free.available, summary.blocked, debits]).toEqual([null, true, false, 0]);
     });
   });
 });

@@ -7,132 +7,9 @@ import { createBillingIndexes } from '../../api/src/plugins/mongodb.js';
 import { BillingRepository } from '../../api/src/repositories/billing.repository.js';
 import { UserRepository } from '../../api/src/repositories/user.repository.js';
 import { BillingService } from '../../api/src/services/billing/billing.service.js';
-import {
-  NoAdminsRemainError,
-  StandaloneMongoError,
-  auditIdFor,
-  looksLikeProd,
-  migrateBilling,
-  parseCli,
-  unconsumedMinutes,
-} from '../migrate-billing.js';
-import { compareKeepList } from '../migrate-billing-plan.js';
-import type { MigrateOptions, MigrationPlan } from '../migrate-billing.js';
-
-const NOW = new Date('2026-11-02T10:00:00Z');
-const DAY = '2026-11-02';
-const YESTERDAY = '2026-11-01';
-const IN_A_YEAR = '2027-11-02T10:00:00.000Z';
-const KEEPER = 'kfir@example.com';
-const DEMO = 'demo@example.com';
-const EVAL_A = 'eval-a@example.com';
-const EVAL_B = 'eval-b@example.com';
-
-const options = (overrides: Partial<MigrateOptions> = {}): MigrateOptions => ({
-  dryRun: false,
-  adminEmails: [KEEPER],
-  envAdminEmails: [KEEPER],
-  demoEmail: DEMO,
-  evalEmails: [EVAL_A, EVAL_B],
-  day: DAY,
-  now: NOW,
-  ...overrides,
-});
-
-async function seedUser(email: string, extra: Record<string, unknown> = {}): Promise<string> {
-  const _id = new ObjectId();
-  await getTestDb().collection('users').insertOne({
-    _id,
-    email,
-    passwordHash: 'hash-never-printed',
-    name: email.split('@')[0],
-    createdAt: new Date('2026-01-01T00:00:00Z'),
-    updatedAt: new Date('2026-01-01T00:00:00Z'),
-    ...extra,
-  });
-  return _id.toHexString();
-}
-
-async function seedAdjustment(userId: string, date: string, amountUsd: number): Promise<void> {
-  await getTestDb().collection('userCostAdjustments').insertOne({
-    userId: new ObjectId(userId),
-    date,
-    amountUsd,
-    reason: 'fixture',
-    adminId: new ObjectId(),
-    createdAt: new Date('2026-11-02T08:00:00Z'),
-  });
-}
-
-async function seedSpend(userId: string, date: string, totalCostUsd: number): Promise<void> {
-  await getTestDb().collection('userCosts').insertOne({
-    userId: new ObjectId(userId),
-    date,
-    totalCostUsd,
-    videoCount: 1,
-    creditAdjustmentUsd: 0,
-    updatedAt: new Date(),
-  });
-}
-
-interface Fixture {
-  keeper: string;
-  oldAdmin: string;
-  oldProAdmin: string;
-  pro: string;
-  team: string;
-  free: string;
-  deletedPro: string;
-  demo: string;
-  evalA: string;
-  evalB: string;
-  creditor: string;
-  spender: string;
-  charged: string;
-}
-
-/** A small host as the dollar gate left it: legacy admins, tiers, and migration-day credit. */
-async function seedFixture(): Promise<Fixture> {
-  const fixture: Fixture = {
-    keeper: await seedUser(KEEPER, { role: 'admin' }),
-    oldAdmin: await seedUser('old-admin@example.com', { role: 'admin' }),
-    oldProAdmin: await seedUser('old-pro-admin@example.com', { role: 'admin', tier: 'pro' }),
-    pro: await seedUser('pro@example.com', { tier: 'pro' }),
-    team: await seedUser('team@example.com', { tier: 'team' }),
-    free: await seedUser('free@example.com'),
-    deletedPro: await seedUser('deleted@example.com', { tier: 'pro', deletedAt: new Date('2026-10-30T00:00:00Z') }),
-    demo: await seedUser(DEMO),
-    evalA: await seedUser(EVAL_A),
-    evalB: await seedUser(EVAL_B),
-    creditor: await seedUser('creditor@example.com'),
-    spender: await seedUser('spender@example.com'),
-    charged: await seedUser('charged@example.com'),
-  };
-  await seedAdjustment(fixture.creditor, DAY, -3);
-  await seedAdjustment(fixture.creditor, DAY, -2);
-  await seedAdjustment(fixture.creditor, YESTERDAY, -10);
-  await seedSpend(fixture.creditor, DAY, 1);
-  await seedAdjustment(fixture.spender, DAY, -2);
-  await seedSpend(fixture.spender, DAY, 5);
-  await seedAdjustment(fixture.charged, DAY, 4);
-  return fixture;
-}
-
-/** Every document of every collection, so "writes nothing" and "no-op" mean the whole database. */
-async function snapshot(): Promise<Record<string, unknown[]>> {
-  const db = getTestDb();
-  const names = (await db.listCollections().toArray()).map((collection) => collection.name).sort();
-  const entries = await Promise.all(
-    names.map(async (name) => [name, await db.collection(name).find({}).sort({ _id: 1 }).toArray()] as const),
-  );
-  return Object.fromEntries(entries);
-}
-
-function emptyCounts(plan: MigrationPlan): number[] {
-  return [
-    plan.accounts, plan.pro, plan.team, plan.teamLots, plan.roles, plan.creditLots, plan.demoGrants, plan.evalGrants,
-  ].map((steps) => steps.length);
-}
+import { NoAdminsRemainError, StandaloneMongoError, auditIdFor, migrateBilling } from '../migrate-billing.js';
+import { DAY, DEMO, EVAL_A, EVAL_B, IN_A_YEAR, KEEPER, NOW, emptyCounts, options, seedFixture, snapshot } from './migrate-billing.fixtures.js';
+import type { Fixture } from './migrate-billing.fixtures.js';
 
 describe('migrate-billing', () => {
   let billing: BillingService;
@@ -164,7 +41,7 @@ describe('migrate-billing', () => {
     it('should plan every step', async () => {
       const plan = await migrateBilling(getTestDb(), options({ dryRun: true }));
 
-      expect(emptyCounts(plan)).toEqual([12, 2, 1, 1, 3, 1, 1, 2]);
+      expect(emptyCounts(plan)).toEqual([12, 2, 1, 1, 3, 1, 1, 1, 2, 3]);
     });
 
     it('should say who is skipped and why', async () => {
@@ -301,6 +178,23 @@ describe('migrate-billing', () => {
       expect(grants.map((rows) => rows.map((grant) => grant.minutes))).toEqual([[3000], [3000]]);
     });
 
+    it('should put the demo account on manual Pro for 12 months, beside its monthly grant', async () => {
+      await migrateBilling(getTestDb(), options());
+
+      const detail = await billing.getAccountDetail(ids.demo);
+      expect(detail.account.plan).toMatchObject({ id: 'pro', source: 'manual', periodEnd: IN_A_YEAR });
+      expect(detail.recurringGrants).toHaveLength(1);
+    });
+
+    it('should word the demo plan "migration: demo account" with the migration actor', async () => {
+      await migrateBilling(getTestDb(), options());
+
+      const { ledger } = await billing.getAccountDetail(ids.demo);
+      expect(ledger).toContainEqual(
+        expect.objectContaining({ type: 'grant', bucket: 'plan', minutes: 600, reason: 'migration: demo account', actorId: 'system:migration' }),
+      );
+    });
+
     it('should leave every account consistent with its ledger', async () => {
       await migrateBilling(getTestDb(), options());
 
@@ -319,7 +213,7 @@ describe('migrate-billing', () => {
       const actions = (await billingRows()).map((row) => row.action).sort();
       expect(actions).toEqual([
         ...Array(2).fill('billing.credits.grant'),
-        ...Array(3).fill('billing.plan.set'),
+        ...Array(4).fill('billing.plan.set'),
         ...Array(3).fill('billing.recurring.create'),
       ].sort());
     });
@@ -437,7 +331,7 @@ describe('migrate-billing', () => {
 
       const second = await migrateBilling(getTestDb(), options());
 
-      expect(emptyCounts(second)).toEqual([0, 0, 0, 0, 0, 0, 0, 0]);
+      expect(emptyCounts(second)).toEqual([0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
     });
 
     it('should change nothing in the database', async () => {
@@ -463,7 +357,7 @@ describe('migrate-billing', () => {
 
       const second = await migrateBilling(getTestDb(), options());
 
-      expect(emptyCounts(second)).toEqual([0, 0, 0, 0, 0, 0, 0, 2]);
+      expect(emptyCounts(second)).toEqual([0, 0, 0, 0, 0, 0, 0, 0, 2, 0]);
     });
   });
 
@@ -508,107 +402,5 @@ describe('migrate-billing', () => {
 
       await expect(migrateBilling(getTestDb(), options())).rejects.toBeInstanceOf(NoAdminsRemainError);
     });
-  });
-});
-
-describe('unconsumedMinutes', () => {
-  it.each([
-    [5, 1, 120],
-    [2, 5, 0],
-    [2, 2, 0],
-    [0.1, 0, 3],
-    [1.1, 0, 33],
-    [2.3, 0, 69],
-    [1, -4, 30],
-    [0.03, 0, 0],
-  ])('should turn $%d of credit after $%d of spend into %d minutes', (credit, spend, minutes) => {
-    expect(unconsumedMinutes(credit, spend)).toBe(minutes);
-  });
-});
-
-describe('auditIdFor', () => {
-  it('should be a 24-char hex id that depends only on the user and the step', () => {
-    expect(auditIdFor('6a7b2f6abacdb32871507996', 'plan')).toMatch(/^[0-9a-f]{24}$/);
-    expect(auditIdFor('6a7b2f6abacdb32871507996', 'plan')).toBe(auditIdFor('6a7b2f6abacdb32871507996', 'plan'));
-  });
-
-  it('should differ per step and per user', () => {
-    const ids = new Set([
-      auditIdFor('6a7b2f6abacdb32871507996', 'plan'),
-      auditIdFor('6a7b2f6abacdb32871507996', 'team-lot'),
-      auditIdFor('6a7b2f6abacdb32871507997', 'plan'),
-    ]);
-    expect(ids.size).toBe(3);
-  });
-});
-
-describe('looksLikeProd', () => {
-  it.each([
-    ['mongodb://localhost:27017/video-insight-engine?directConnection=true', false],
-    ['mongodb://127.0.0.1:27017/x', false],
-    ['mongodb://vie-mongodb:27017/video-insight-engine', false],
-    ['mongodb://vieadmin:secret@vie-mongodb:27017/video-insight-engine?authSource=admin', true],
-    ['mongodb://db.example.com:27017/x', true],
-    ['mongodb+srv://cluster0.example.mongodb.net/x', true],
-    ['not a uri', true],
-  ])('should say %s is prod: %s', (uri, prod) => {
-    expect(looksLikeProd(uri)).toBe(prod);
-  });
-});
-
-describe('parseCli', () => {
-  const NOW_CLI = new Date('2026-11-02T10:00:00Z');
-  const parse = (argv: string[], env: NodeJS.ProcessEnv = {}) => parseCli(argv, env, NOW_CLI);
-
-  it('should refuse neither --dry-run nor --run, and both', () => {
-    expect([parse([]), parse(['--dry-run', '--run'])]).toEqual([null, null]);
-  });
-
-  it('should default the day to today in UTC and the admins to ADMIN_EMAILS', () => {
-    const cli = parse(['--dry-run'], { ADMIN_EMAILS: 'A@example.com, b@example.com' });
-
-    expect(cli?.options).toMatchObject({ dryRun: true, day: DAY, adminEmails: ['a@example.com', 'b@example.com'] });
-  });
-
-  it('should take the demo account from DEMO_USER_EMAIL and the eval accounts from the flag', () => {
-    const cli = parse(['--run', '--eval-emails', 'e1@example.com,e2@example.com'], { DEMO_USER_EMAIL: 'Demo@Example.com' });
-
-    expect(cli?.options).toMatchObject({ dryRun: false, demoEmail: 'demo@example.com', evalEmails: ['e1@example.com', 'e2@example.com'] });
-  });
-
-  it('should reject a malformed day and an unknown flag', () => {
-    expect([parse(['--run', '--day', '02/11/2026']), parse(['--run', '--wat'])]).toEqual([null, null]);
-  });
-
-  it('should read an empty --eval-emails, as the runbook passes when there are none, as no accounts', () => {
-    expect(parse(['--run', '--eval-emails', ''])?.options.evalEmails).toEqual([]);
-  });
-
-  it('should carry --yes-prod', () => {
-    expect(parse(['--run', '--yes-prod'])?.yesProd).toBe(true);
-  });
-
-  it('should keep the ADMIN_EMAILS list beside the keep-list even when --admin-emails overrides it', () => {
-    const cli = parse(['--dry-run', '--admin-emails', 'typed@example.com'], { ADMIN_EMAILS: 'Env@Example.com' });
-
-    expect(cli?.options).toMatchObject({ adminEmails: ['typed@example.com'], envAdminEmails: ['env@example.com'] });
-  });
-});
-
-describe('compareKeepList', () => {
-  it('should find no difference between equal lists', () => {
-    expect(compareKeepList(['a@x.com', 'b@x.com'], ['b@x.com', 'a@x.com'])).toEqual({ onlyKept: [], onlyEnv: [], envEmpty: false });
-  });
-
-  it('should name the admin kept here that the next boot would demote', () => {
-    expect(compareKeepList(['a@x.com', 'typo@x.com'], ['a@x.com']).onlyKept).toEqual(['typo@x.com']);
-  });
-
-  it('should name the admin on ADMIN_EMAILS that this script does not keep', () => {
-    expect(compareKeepList(['a@x.com'], ['a@x.com', 'b@x.com']).onlyEnv).toEqual(['b@x.com']);
-  });
-
-  it('should flag an empty ADMIN_EMAILS', () => {
-    expect(compareKeepList(['a@x.com'], []).envEmpty).toBe(true);
   });
 });

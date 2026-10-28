@@ -7,8 +7,12 @@
  * "migration: team tier" (D10); a legacy `role: 'admin'` user on --admin-emails ->
  * `roles: ['admin']`, `roleSource: 'env'`, every other legacy admin demoted (Q15);
  * the adjustments dated the migration day -> one lot per user at $1 = 30 minutes,
- * 12 months (Q9); recurring grants: --demo-email 300/month, each --eval-emails
- * account 3,000/month (Q20, Kfir 2026-10-27).
+ * 12 months (Q9); the --demo-email account -> the same manual Pro plan (step
+ * `plan-demo`, "migration: demo account"; Kfir 2026-10-28); recurring grants:
+ * --demo-email 300/month, each --eval-emails account 3,000/month (Q20, Kfir
+ * 2026-10-27); last, the assistant's stored chat prompt text is cleared from
+ * `llm_usage` (`prompt_preview` unset on `service: 'assistant'` rows, Kfir
+ * 2026-10-28; docs/PRIVACY.md), which a rerun finds already done.
  *
  * "Unconsumed" credit (Q9) is deliberately conservative: the day's net credit (a
  * grant is a negative `amountUsd`, a charge a positive one) minus everything the
@@ -16,11 +20,12 @@
  * rounded down to whole minutes. Adjustments of any other day had expired.
  *
  * Writes only through vie-api's own code: BillingService (accounts, plans, lots,
- * recurring grants), UserRepository.setRoles and AuditService. The admin API fixes
- * a ledger entry's source kind to `admin`, so migration entries are told apart by
- * actor `system:migration` and a "migration: ..." reason. Every step has an auditId
- * derived from user + step, so a step that already ran is skipped. Role changes also
- * get an `adminAudit` row (`roles.migration.promote|demote`). What to do is decided
+ * recurring grants), UserRepository.setRoles, LlmUsageRepository (the prompt
+ * clear) and AuditService. The admin API fixes a ledger entry's source kind to
+ * `admin`, so migration entries are told apart by actor `system:migration` and
+ * a "migration: ..." reason. Every step has an auditId derived from user +
+ * step, so a step that already ran is skipped. Role changes also get an
+ * `adminAudit` row (`roles.migration.promote|demote`). What to do is decided
  * in migrate-billing-plan.ts, which only reads.
  *
  * Refuses (exit 1, nothing written, dry run included) when the result would leave
@@ -46,7 +51,17 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { Role } from '@vie/types';
 import type { AuditService } from '../api/src/services/audit.service.js';
 import type { AdminMutationContext, BillingService } from '../api/src/services/billing/billing.service.js';
-import { ACTOR_ID, TERM_MONTHS, auditIdFor, buildPlan, compareKeepList, normalizeEmail, utcDayKey } from './migrate-billing-plan.js';
+import {
+  ACTOR_ID,
+  ASSISTANT_SERVICE,
+  DEMO_PLAN_STEP,
+  TERM_MONTHS,
+  auditIdFor,
+  buildPlan,
+  compareKeepList,
+  normalizeEmail,
+  utcDayKey,
+} from './migrate-billing-plan.js';
 import type { LotStep, MigrateOptions, MigrationPlan, PlanDeps, RoleStep, Skipped, UserStep } from './migrate-billing-plan.js';
 
 export { auditIdFor, unconsumedMinutes, utcDayKey } from './migrate-billing-plan.js';
@@ -116,15 +131,16 @@ function silentLogger(): FastifyBaseLogger {
  * resolve @vie/types by its `require` conditions and fail. import() keeps them ESM.
  */
 async function loadApi() {
-  const [billingRepo, userRepo, auditRepo, auditService, billingService, minutes] = await Promise.all([
+  const [billingRepo, userRepo, auditRepo, llmUsageRepo, auditService, billingService, minutes] = await Promise.all([
     import('../api/src/repositories/billing.repository.js'),
     import('../api/src/repositories/user.repository.js'),
     import('../api/src/repositories/admin-audit.repository.js'),
+    import('../api/src/repositories/llm-usage.repository.js'),
     import('../api/src/services/audit.service.js'),
     import('../api/src/services/billing/billing.service.js'),
     import('../api/src/services/billing/minutes.js'),
   ]);
-  return { ...billingRepo, ...userRepo, ...auditRepo, ...auditService, ...billingService, addMonthsUtc: minutes.addMonthsUtc };
+  return { ...billingRepo, ...userRepo, ...auditRepo, ...llmUsageRepo, ...auditService, ...billingService, addMonthsUtc: minutes.addMonthsUtc };
 }
 
 type Api = Awaited<ReturnType<typeof loadApi>>;
@@ -139,6 +155,7 @@ async function createDeps(db: Db, options: MigrateOptions): Promise<ApplyDeps> {
     db,
     repo,
     users,
+    llmUsage: new api.LlmUsageRepository(db),
     options,
     addMonthsUtc: api.addMonthsUtc,
     billing: new api.BillingService(repo, users, logger, clock),
@@ -171,10 +188,10 @@ async function auditBillingStep(
   });
 }
 
-async function applyProPlans(deps: ApplyDeps, steps: UserStep[], reason: string): Promise<void> {
+async function applyProPlans(deps: ApplyDeps, steps: UserStep[], step: string, reason: string): Promise<void> {
   for (const { userId } of steps) {
-    await auditBillingStep(deps, { userId, step: 'plan', action: 'billing.plan.set', reason, after: { planId: 'pro' } });
-    await deps.billing.setPlan(userId, { planId: 'pro' }, adminContext(userId, 'plan', reason));
+    await auditBillingStep(deps, { userId, step, action: 'billing.plan.set', reason, after: { planId: 'pro' } });
+    await deps.billing.setPlan(userId, { planId: 'pro' }, adminContext(userId, step, reason));
   }
 }
 
@@ -216,13 +233,16 @@ async function applyRoles(deps: ApplyDeps, steps: RoleStep[]): Promise<void> {
 async function applyPlan(deps: ApplyDeps, plan: MigrationPlan): Promise<void> {
   // summary() reads through getOrCreateAccount, which is how vie-api creates an account.
   for (const { userId } of plan.accounts) await deps.billing.summary(userId);
-  await applyProPlans(deps, plan.pro, 'migration: pro tier');
-  await applyProPlans(deps, plan.team, 'migration: team tier plan');
+  await applyProPlans(deps, plan.pro, 'plan', 'migration: pro tier');
+  await applyProPlans(deps, plan.team, 'plan', 'migration: team tier plan');
   await applyLots(deps, plan.teamLots, 'team-lot', 'migration: team tier');
   await applyRoles(deps, plan.roles);
   await applyLots(deps, plan.creditLots, 'credit-lot', `migration: unconsumed credit from ${deps.options.day}`);
+  await applyProPlans(deps, plan.demoPlan, DEMO_PLAN_STEP, 'migration: demo account');
   await applyRecurring(deps, plan.demoGrants, 'recurring-demo', 'migration: demo account monthly grant');
   await applyRecurring(deps, plan.evalGrants, 'recurring-eval', 'migration: eval account monthly grant');
+  // No audit row or auditId: it changes no account, and a rerun matches nothing it already cleared.
+  if (plan.assistantPromptPreviews > 0) await deps.llmUsage.unsetPromptPreviews(ASSISTANT_SERVICE);
 }
 
 /**
@@ -330,8 +350,10 @@ function printSkipped(skipped: Skipped[]): void {
 }
 
 function isEmptyPlan(plan: MigrationPlan): boolean {
-  const steps = [plan.accounts, plan.pro, plan.team, plan.teamLots, plan.roles, plan.creditLots, plan.demoGrants, plan.evalGrants];
-  return steps.every((list) => list.length === 0);
+  const steps = [
+    plan.accounts, plan.pro, plan.team, plan.teamLots, plan.roles, plan.creditLots, plan.demoPlan, plan.demoGrants, plan.evalGrants,
+  ];
+  return steps.every((list) => list.length === 0) && plan.assistantPromptPreviews === 0;
 }
 
 function printReport(plan: MigrationPlan, options: MigrateOptions): void {
@@ -347,8 +369,10 @@ function printReport(plan: MigrationPlan, options: MigrateOptions): void {
     { step: 'admins kept (roleSource env)', users: kept.length, detail: '' },
     { step: 'admins demoted', users: demoted.length, detail: '' },
     { step: 'credit lots ($1 = 30 minutes)', users: plan.creditLots.length, detail: minutes(plan.creditLots) },
+    { step: 'demo account -> manual Pro, 12 months', users: plan.demoPlan.length, detail: '' },
     { step: 'demo recurring grant', users: plan.demoGrants.length, detail: `${minutes(plan.demoGrants)}/month` },
     { step: 'eval recurring grants', users: plan.evalGrants.length, detail: `${minutes(plan.evalGrants)}/month in all` },
+    { step: 'assistant prompt previews to clear', users: '-', detail: `${plan.assistantPromptPreviews} llm_usage rows` },
   ]);
   printEmails('Admins kept', kept);
   printEmails('Admins demoted', demoted);

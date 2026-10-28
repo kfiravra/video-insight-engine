@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { ObjectId } from 'mongodb';
 import { isValidInternalSecret } from '../utils/internal-auth.js';
 import type { VideoRepository } from '../repositories/video.repository.js';
+import type { LibraryUpdateRepository } from '../repositories/library-update.repository.js';
 
 const videoStatusSchema = z.object({
   type: z.literal('video.status'),
@@ -61,12 +62,38 @@ async function settleServedVersion(
   }
 }
 
+/**
+ * D-LIB: the entries an update to the latest version moved onto this row go
+ * back to the copy they left when its run fails, so the update stays on offer
+ * and can be retried, and forget that copy when it completes. Idempotent and
+ * best-effort, like the served-version settle; it runs first, so a failed
+ * version row's restore cannot carry such an entry elsewhere.
+ */
+async function settleLibraryUpdates(
+  libraryUpdates: LibraryUpdateRepository,
+  videoSummaryId: string,
+  status: 'completed' | 'failed',
+  log: FastifyBaseLogger,
+): Promise<void> {
+  try {
+    if (status === 'completed') {
+      await libraryUpdates.clearSettledUpdates(videoSummaryId);
+      return;
+    }
+    const { stranded } = await libraryUpdates.restoreFailedUpdates(videoSummaryId);
+    if (stranded > 0) log.warn({ videoSummaryId, stranded }, 'update failed and the copy it left is gone; entries keep the failed state');
+  } catch (err) {
+    log.warn({ err, videoSummaryId, status }, 'library-update settle failed');
+  }
+}
+
 export async function internalRoutes(fastify: FastifyInstance) {
   const {
     idempotencyService,
     dispatchGuardService,
     userDeletionService,
     videoRepository,
+    libraryUpdateRepository,
     billingEnforcement,
   } = fastify.container;
 
@@ -183,6 +210,7 @@ export async function internalRoutes(fastify: FastifyInstance) {
         // hit that ran nothing) the run's hold. Awaited, never throws; a hold
         // it misses is the repair job's.
         await billingEnforcement.runFinished(videoSummaryId, status === 'completed' && cacheHit ? 'cached' : status);
+        await settleLibraryUpdates(libraryUpdateRepository, videoSummaryId, status, req.log);
         await settleServedVersion(videoRepository, videoSummaryId, status, req.log);
       }
     } else if (event.type === 'expansion.status') {

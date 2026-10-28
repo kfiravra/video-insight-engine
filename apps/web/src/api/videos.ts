@@ -39,6 +39,21 @@ export interface VideoDetail {
    *  renders a toggle to view the original-language tabs/meta. Always
    *  truly-optional (never serialized as `null`). */
   sourceLanguage?: SourceLanguageBlock;
+  /** True when the user's completed copy was made by an older pipeline version.
+   *  Opening it is always free; "update to latest" is offered, never forced.
+   *  Absent otherwise (never serialized as `false` or `null`). */
+  updateAvailable?: boolean;
+}
+
+/** What `POST /videos` answers. `alreadyExists` marks a video the user already
+ *  has (served free); `updateAvailable` says that copy predates the current
+ *  pipeline version. */
+export interface CreateVideoResponse {
+  video: Video;
+  cached: boolean;
+  duplicate?: boolean;
+  alreadyExists?: boolean;
+  updateAvailable?: boolean;
 }
 
 export const videosApi = {
@@ -61,7 +76,7 @@ export const videosApi = {
     folderId?: string,
     bypassCache?: boolean,
     providers?: ProviderConfig
-  ): Promise<{ video: Video; cached: boolean; duplicate?: boolean }> {
+  ): Promise<CreateVideoResponse> {
     return request("/videos", {
       method: "POST",
       body: JSON.stringify({
@@ -70,6 +85,15 @@ export const videosApi = {
         bypassCache,
         providers,
       }),
+    });
+  },
+
+  /** Regenerates the user's stale copy on the same row. A billed run like a new
+   *  video, so it can be refused with the usual billing errors. */
+  async updateToLatest(url: string, folderId?: string): Promise<CreateVideoResponse> {
+    return request("/videos", {
+      method: "POST",
+      body: JSON.stringify({ url, folderId, updateToLatest: true }),
     });
   },
 

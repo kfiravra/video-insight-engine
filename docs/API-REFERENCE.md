@@ -371,13 +371,17 @@ Get video with summary.
 
 The same `sourceLanguage` block is included on the public share endpoint (`GET /share/:slug`) and is consumed by `apps/web/src/api/share.ts` + `apps/web/src/api/videos.ts`.
 
+`updateAvailable: true` is present when the summary is `completed` and stamped with an older `pipelineVersion` than the current one: the copy is served as it is, and the UI offers "update to latest version" (`POST /videos` with `updateToLatest: true`). Absent otherwise (never `false` or `null`), including for an unstamped (pre-stamping) summary, a summary still running, and always for the shared demo account, which may not pay for an update.
+
 ---
 
 ### POST /videos
 
 Submit YouTube URL for summarization.
 
-**Demo account:** `403 DEMO_RESTRICTED` when the shared demo account sets `bypassCache: true`, `cold: true`, or `providers`. A plain submit is allowed.
+**Demo account:** `403 DEMO_RESTRICTED` when the shared demo account sets `bypassCache: true`, `updateToLatest: true`, `cold: true`, or `providers`. A plain submit is allowed.
+
+**Blocked account:** `403 ACCOUNT_BLOCKED` on every submit, a video already in the library and an idempotency replay included. The library stays readable (`GET /videos`, `GET /videos/:id`, `GET /folders`, a completed video's stream).
 
 **Request:**
 
@@ -386,11 +390,24 @@ Submit YouTube URL for summarization.
   "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
   "folderId": "507f1f77bcf86cd799439013",
   "bypassCache": false,
+  "updateToLatest": false,
   "cold": false
 }
 ```
 
 `bypassCache` (optional) starts a fresh run as a new version row (see below).
+`updateToLatest` (optional, default `false`) moves the user's copy, when an older
+pipeline wrote it, to the current version exactly as a new video would get it: the
+normal flow at the current `dedupKey`, with the user's existing entry re-pointed at the
+resulting row (same `video.id`, no second entry). A completed current version answers
+`cached: true` (free), a running one `attached: true` (free), none starts a run that is
+held and settled like any new video; a refused account gets the ledger's 402 / 422 /
+429 only when a run would happen. The old row is never touched, and if the run fails
+the entry goes back to the copy it left (`updateAvailable: true` again). On a current copy it is
+a plain free serve. It skips the idempotency gate, so a plain submit moments earlier
+does not answer it as a `duplicate`. Without it a copy the user already has is never
+regenerated: it is served free with `updateAvailable: true` (see
+[IDEMPOTENCY.md](./IDEMPOTENCY.md#when-to-bump-pipeline_version)).
 `cold` (optional, benchmark-only) also marks the row `coldMedia: true` so the
 summarizer skips its S3 transcript + scene-frame caches; it implies
 `bypassCache` and is allowed only for admin and eval accounts (others get
@@ -405,9 +422,42 @@ summarizer skips its S3 transcript + scene-frame caches; it implies
    the user's library entry at it, publish the job, return `status: pending` with
    `newVersion: true`. A user row is promoted to `isLatest` only when it completes; an
    eval row never is.
-3. Otherwise check `videoSummaryCache` for the served (`isLatest`) summary
-4. If **HIT**: create `userVideo` reference, return immediately
-5. If **MISS**: create cache entry, publish job, return with `status: pending`
+3. Otherwise, the user already has the video (in this folder, or anywhere when no
+   `folderId` is sent): serve it free with `alreadyExists: true`, adding
+   `updateAvailable: true` when an older pipeline wrote it. With `updateToLatest`
+   such a copy goes through steps 5–7 instead, re-pointing that entry.
+4. A `folderId` where the user does not have the video, but they have a completed
+   copy elsewhere: when the current version's row is not completed or running, the
+   new entry points at that copy's row instead (free, `cached: true`,
+   `updateAvailable` when stale), so filing it never forces a run.
+5. Otherwise check `videoSummaryCache` for the shared summary of this version
+6. If **HIT**: create (or, for an update, re-point) the `userVideo`, return
+   immediately. A shared row an older pipeline wrote under this version's key is
+   regenerated for a user who never had the video or is updating (a new video to
+   them, charged) and served as is, with `updateAvailable: true`, to one who
+   already has it.
+7. If **MISS**: create cache entry, publish job, return with `status: pending`
+
+**Response (201) - Already in the library:**
+
+```json
+{
+  "video": {
+    "id": "507f1f77bcf86cd799439014",
+    "videoSummaryId": "507f1f77bcf86cd799439020",
+    "youtubeId": "dQw4w9WgXcQ",
+    "status": "completed",
+    "title": "React Hooks Tutorial"
+  },
+  "cached": true,
+  "alreadyExists": true,
+  "updateAvailable": true
+}
+```
+
+`updateAvailable` is present only as `true`, only for a copy an older pipeline wrote,
+and never for the shared demo account. An idempotency replay
+(`200`, `{ video, cached: true, duplicate: true }`) carries it on the same terms.
 
 **Response (201) - Cache Hit:**
 
@@ -1890,7 +1940,7 @@ older rows send the four fields only).
 - Validation (web `validateSynthesisComplete`, API `synthesisCompleteEventSchema`): the
   four optional hero fields and `final` are dropped individually when invalid
   (`.catch(undefined)`) — the event and the tldr / takeaways beside them are kept.
-- Every (re-)dispatch of a row (new version, retry, stale-version regen, stall)
+- Every (re-)dispatch of a row (new version, retry, stale-shared-row regen, stall)
   first `$unset`s its `synthesis`, so a previous run's `masterSummary` can't block
   this run's partial.
 

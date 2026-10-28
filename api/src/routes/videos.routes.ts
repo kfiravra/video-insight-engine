@@ -1,7 +1,8 @@
-import { FastifyInstance } from 'fastify';
+import { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { idParamSchema, objectIdSchema, youtubeIdSchema } from '../utils/validation.js';
 import { VideoSubmissionService } from '../services/video-submission.service.js';
+import { withoutUpdateOffer, type UpdateOffer } from '../services/library-update.js';
 
 // Stripe's spec is "1–255 chars, opaque to us". Reject longer to keep junk out
 // of the DB; reject control chars/whitespace because they're never produced by
@@ -20,6 +21,9 @@ const createVideoSchema = z.object({
   url: z.string().url(),
   folderId: objectIdSchema.optional(),
   bypassCache: z.boolean().optional().default(false),
+  // D-LIB: regenerate the user's own copy an older pipeline wrote. A paid
+  // re-run charged like a new video; without it that copy is served free.
+  updateToLatest: z.boolean().optional().default(false),
   // Benchmark-only (admin/eval accounts; anyone else gets 403): skip the
   // summarizer's S3 transcript + scene-frame caches so the run measures cold
   // media. Implies bypassCache.
@@ -63,6 +67,14 @@ export async function videosRoutes(fastify: FastifyInstance) {
     fastify.container.billingEnforcement,
   );
 
+  // The shared demo account may not pay for an update (requireNotDemo refuses
+  // `updateToLatest`), so it is never offered one: the web shows the notice
+  // only when the flag is present.
+  async function offerUnlessDemo<T extends object>(req: FastifyRequest, response: T & UpdateOffer): Promise<object> {
+    if (!response.updateAvailable || !(await fastify.isDemoUser(req))) return response;
+    return withoutUpdateOffer(response);
+  }
+
   // GET /api/videos
   fastify.get<{
     Querystring: z.infer<typeof videosQuerySchema>;
@@ -82,7 +94,7 @@ export async function videosRoutes(fastify: FastifyInstance) {
     preHandler: [fastify.authenticate],
   }, async (req) => {
     const { id } = idParamSchema.parse(req.params);
-    return videoService.getVideo(req.user.userId, id);
+    return offerUnlessDemo(req, await videoService.getVideo(req.user.userId, id));
   });
 
   // POST /api/videos — no per-route daily limit: the minutes ledger decides
@@ -95,8 +107,9 @@ export async function videosRoutes(fastify: FastifyInstance) {
     const input = createVideoSchema.parse(req.body);
 
     // Every demo visitor shares one account and one cost budget, so none of
-    // them may force a paid re-run or pick providers; a plain submit is fine.
-    if (input.bypassCache || input.cold || input.providers) {
+    // them may force a paid re-run (bypassCache, updateToLatest) or pick
+    // providers; a plain submit is fine.
+    if (input.bypassCache || input.updateToLatest || input.cold || input.providers) {
       await fastify.requireNotDemo(req);
     }
 
@@ -126,6 +139,7 @@ export async function videosRoutes(fastify: FastifyInstance) {
       url: input.url,
       folderId: input.folderId,
       bypassCache: input.bypassCache,
+      updateToLatest: input.updateToLatest,
       cold: input.cold,
       providers: input.providers,
       clientKey,
@@ -133,7 +147,8 @@ export async function videosRoutes(fastify: FastifyInstance) {
     });
 
     if (submission.outcome === 'duplicate') {
-      return reply.code(200).send({ video: submission.video, cached: true, duplicate: true });
+      const { video, updateAvailable } = submission;
+      return reply.code(200).send(await offerUnlessDemo(req, { video, cached: true, duplicate: true, ...(updateAvailable && { updateAvailable }) }));
     }
     if (submission.outcome === 'in_flight') {
       return reply.code(409).send({
@@ -141,7 +156,7 @@ export async function videosRoutes(fastify: FastifyInstance) {
         message: 'Another request with the same key is currently processing. Retry shortly.',
       });
     }
-    return reply.code(201).send(submission.result);
+    return reply.code(201).send(await offerUnlessDemo(req, submission.result));
   });
 
   // DELETE /api/videos/:id

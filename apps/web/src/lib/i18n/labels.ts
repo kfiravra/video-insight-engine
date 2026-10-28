@@ -104,6 +104,14 @@ export interface BillingLabels {
   failedUnreadable: string;
   /** The stream-error card for a video whose run already failed; Retry starts a new, billed run. */
   videoFailedRetry: string;
+  /** The notice on a completed video whose copy predates the current pipeline version.
+   *  Opening it is free; the update is offered, never forced, and runs as a new, billed video. */
+  updateAvailable: string;
+  updateAction: string;
+  updateCost: string;
+  /** The server refused the update because this is the shared demo account. */
+  updateDemo: string;
+  updateFailed: string;
   failedUnknown: string;
 }
 

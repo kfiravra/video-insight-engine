@@ -164,7 +164,12 @@ def record_manual_usage(record: UsageRecord) -> None:
 
 
 class MongoDBUsageCallback(CustomLogger):
-    """LiteLLM callback that buffers usage records to MongoDB."""
+    """LiteLLM callback that buffers usage records to MongoDB.
+
+    ``store_prompt_preview=False`` keeps the first 200 characters of the prompt
+    out of the row (``prompt_preview`` is ``""``) for services whose prompts are
+    user chat (docs/PRIVACY.md); ``prompt_hash`` is still recorded.
+    """
 
     def __init__(
         self,
@@ -172,9 +177,11 @@ class MongoDBUsageCallback(CustomLogger):
         service: str = "unknown",
         mode: str = "sync",
         cost_threshold: float | None = None,
+        store_prompt_preview: bool = True,
     ):
         self._service = service
         self._mode = mode
+        self._store_prompt_preview = store_prompt_preview
         self._cost_threshold = (
             cost_threshold if cost_threshold is not None else cost_threshold_from_env()
         )
@@ -281,7 +288,7 @@ class MongoDBUsageCallback(CustomLogger):
                 video_summary_id=llm_video_summary_id_var.get(),
                 is_stream=is_stream,
                 service=self._service,
-                prompt_preview=prompt_text,
+                prompt_preview=prompt_text if self._store_prompt_preview else "",
                 prompt_hash=prompt_hash,
                 cache_hit=cache_hit,
                 cache_creation_tokens=cache_creation_tokens,

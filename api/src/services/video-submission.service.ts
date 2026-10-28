@@ -6,11 +6,13 @@ import { VideoRepository } from '../repositories/video.repository.js';
 import { extractYoutubeId } from '../utils/youtube.js';
 import { RunNotAllowedError } from '../utils/errors.js';
 import { submitOutcome } from './billing/run-stamp.js';
+import { updateOffer } from './library-update.js';
 import { refusalServesWithoutRun } from './billing/billing-errors.js';
 import { queuePlanOf, type QueuePlan } from './queue-topology.js';
 import type { ProviderConfig } from './summarizer-client.js';
 import type { GateSubmission } from './billing/billing-gate.js';
 import type { LedgerEnforcement } from './billing/ledger-enforcement.js';
+import type { UpdateOffer } from './library-update.js';
 
 /** Result of `VideoService.createVideo` — inferred so the two stay in sync. */
 export type CreateVideoResult = Awaited<ReturnType<VideoService['createVideo']>>;
@@ -20,6 +22,8 @@ export interface SubmitVideoInput {
   url: string;
   folderId?: string;
   bypassCache?: boolean;
+  /** D-LIB: regenerate the user's own copy an older pipeline wrote — a paid run, charged like a new video. */
+  updateToLatest?: boolean;
   /** Cold-media benchmark run (admin/eval only — createVideo enforces it). */
   cold?: boolean;
   providers?: ProviderConfig;
@@ -48,14 +52,17 @@ export interface DuplicateVideoView {
  * `created` → 201/200 with the raw createVideo result.
  */
 export type SubmitVideoResult =
-  | { outcome: 'duplicate'; video: DuplicateVideoView }
+  | ({ outcome: 'duplicate'; video: DuplicateVideoView } & UpdateOffer)
   | { outcome: 'in_flight' }
   | { outcome: 'created'; result: CreateVideoResult };
 
 type IdempotencyGateResult =
   | { kind: 'proceed'; hash: string | null }
-  | { kind: 'duplicate'; video: DuplicateVideoView }
+  | { kind: 'duplicate'; video: DuplicateVideoView; offer: UpdateOffer }
   | { kind: 'in_flight' };
+
+/** What an earlier submit's idempotency key answers this one with. */
+type ReplayGate = Exclude<IdempotencyGateResult, { kind: 'proceed' }>;
 
 /**
  * Where a submission stands with the minutes ledger. `run` is the ledger's run
@@ -93,8 +100,7 @@ export class VideoSubmissionService {
 
   async submit(input: SubmitVideoInput): Promise<SubmitVideoResult> {
     const gate = await this.openIdempotencyGate(input);
-    if (gate.kind === 'duplicate') return { outcome: 'duplicate', video: gate.video };
-    if (gate.kind === 'in_flight') return { outcome: 'in_flight' };
+    if (gate.kind !== 'proceed') return this.replay(input.userId, gate);
     const { hash } = gate;
 
     const billing = await this.admit(input, hash);
@@ -102,6 +108,16 @@ export class VideoSubmissionService {
     await this.resolveBilling(billing, result);
     await this.settleHash(hash, result, input.requestId);
     return { outcome: 'created', result };
+  }
+
+  /**
+   * A replay of an earlier submit: the video it made, or in-flight while that
+   * one still runs. It serves nothing new, yet a blocked account is refused
+   * even that (D-BLOCK: no submits of any kind).
+   */
+  private async replay(userId: string, gate: ReplayGate): Promise<SubmitVideoResult> {
+    await this.billing.refuseIfBlocked(userId);
+    return gate.kind === 'duplicate' ? { outcome: 'duplicate', video: gate.video, ...gate.offer } : { outcome: 'in_flight' };
   }
 
   /**
@@ -128,6 +144,7 @@ export class VideoSubmissionService {
       return await this.videoService.createVideo(input.userId, input.url, {
         folderId: input.folderId,
         bypassCache: input.bypassCache,
+        updateToLatest: input.updateToLatest,
         cold: input.cold,
         providers: input.providers,
         queuePlan: billing.queuePlan,
@@ -168,13 +185,14 @@ export class VideoSubmissionService {
    * Reserve-before-work idempotency gate. Atomic insert of a `pending`
    * placeholder on the unique-hash index — concurrent identical submits race
    * here and exactly one proceeds. `bypassCache=true` (or `cold`, which
-   * implies it) is the explicit escape hatch and skips the gate entirely;
-   * malformed URLs also skip (createVideo
+   * implies it) is the explicit escape hatch and skips the gate entirely, as
+   * does `updateToLatest`: a paid re-run that a plain submit's key must not
+   * answer as a duplicate; malformed URLs also skip (createVideo
    * raises InvalidYouTubeUrlError downstream).
    */
   private async openIdempotencyGate(input: SubmitVideoInput): Promise<IdempotencyGateResult> {
     const youtubeId = extractYoutubeId(input.url);
-    if (!youtubeId || input.bypassCache || input.cold) return { kind: 'proceed', hash: null };
+    if (!youtubeId || input.bypassCache || input.updateToLatest || input.cold) return { kind: 'proceed', hash: null };
 
     const hash = this.idempotencyService.computeKey({
       userId: input.userId,
@@ -199,8 +217,8 @@ export class VideoSubmissionService {
     // Original finished — check the referenced user-video still exists. If the
     // user deleted it, drop the stale hash (scoped to the row we saw, so a
     // racing fresh reservation is left alone) and reserve again.
-    const video = await this.buildDuplicateView(input.userId, existing.userVideoId.toString());
-    if (video) return { kind: 'duplicate', video };
+    const replayed = await this.buildDuplicateView(input.userId, existing.userVideoId.toString());
+    if (replayed) return { kind: 'duplicate', ...replayed };
 
     await this.idempotencyService.invalidateStaleCompleted(hash, existing.videoSummaryId.toString());
     reserveResult = await this.idempotencyService.reserveHash({
@@ -213,13 +231,13 @@ export class VideoSubmissionService {
     return { kind: 'proceed', hash };
   }
 
-  /** Resolve a completed hit into a response view; null when the user-video is gone. */
-  private async buildDuplicateView(userId: string, userVideoId: string): Promise<DuplicateVideoView | null> {
+  /** Resolve a completed hit into a response view (and its update offer, D-LIB); null when the user-video is gone. */
+  private async buildDuplicateView(userId: string, userVideoId: string): Promise<{ video: DuplicateVideoView; offer: UpdateOffer } | null> {
     const userVideo = await this.videoRepository.findUserVideo(userId, userVideoId);
     if (!userVideo) return null;
 
     const summary = await this.videoRepository.findCacheById(userVideo.videoSummaryId.toString());
-    return {
+    const video: DuplicateVideoView = {
       id: userVideo._id.toString(),
       videoSummaryId: userVideo.videoSummaryId.toString(),
       youtubeId: userVideo.youtubeId,
@@ -229,6 +247,7 @@ export class VideoSubmissionService {
       thumbnailUrl: summary?.thumbnailUrl || userVideo.thumbnailUrl,
       status: summary?.status || userVideo.status,
     };
+    return { video, offer: updateOffer(summary) };
   }
 
   /**

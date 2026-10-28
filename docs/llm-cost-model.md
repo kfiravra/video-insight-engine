@@ -466,11 +466,12 @@ The vie-admin lifespan **also** drops any legacy 90-day TTL on `llm_usage`
 `timestamp` as a plain index, so either service booting first heals the ledger.
 
 **The user links are dropped at 90 days (billing-roles P1.6).** Rows stay, but
-vie-api's billing repair job unsets `user_id` and `request_id` on every row
-whose `timestamp` is more than 90 days old (batched, at most 1,000 rows per run,
-re-runs match nothing), which is what `docs/PRIVACY.md` promises — `request_id`
-would otherwise still join to the minutes ledger's `source.ref`, whose rows
-name the user. Per-user and per-request cost views therefore cover the last 90
+vie-api's billing repair job unsets `user_id`, `request_id` and
+`prompt_preview` on every row whose `timestamp` is more than 90 days old
+(batched, at most 1,000 rows per run, re-runs match nothing), which is what
+`docs/PRIVACY.md` promises — `request_id` would otherwise still join to the
+minutes ledger's `source.ref`, whose rows name the user. vie-assistant never
+stores `prompt_preview` (chat text) in the first place. Per-user and per-request cost views therefore cover the last 90
 days; totals and per-model numbers are unaffected.
 
 **Margin per run.** The minutes ledger records `costUsd = Σ cost_usd WHERE

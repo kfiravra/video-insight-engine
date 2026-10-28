@@ -10,7 +10,7 @@ import { ObjectId } from 'mongodb';
 import type { FastifyBaseLogger } from 'fastify';
 import { getTestDb, mockLogger } from '../../test/setup.js';
 import { createBillingIndexes } from '../../plugins/mongodb.js';
-import { AccountBlockedError, RunNotAllowedError } from '../../utils/errors.js';
+import { AccountBlockedError, MetadataUnavailableError, RunNotAllowedError } from '../../utils/errors.js';
 import { PlaylistService } from '../playlist.service.js';
 import { insertUser, makeBillingHarness, makeEnforcement } from '../billing/__tests__/billing-fixtures.js';
 import type { BillingHarness } from '../billing/__tests__/billing-fixtures.js';
@@ -139,6 +139,20 @@ describe('PlaylistService on the minutes ledger', () => {
 
     await expect(service.import(userId, PLAYLIST_URL)).rejects.toBeInstanceOf(AccountBlockedError);
     expect(folders.create).not.toHaveBeenCalled();
+  });
+
+  // Nothing to quote: no length from the extract nor the pre-flight, or no item at all (D-BLOCK).
+  it.each([
+    ['no item\'s length is known', [null, null]],
+    ['the playlist is empty', []],
+  ])('should refuse a blocked account even when %s', async (_label, minutes) => {
+    await h.billing.setCaps(userId, { blocked: true }, ctx());
+    h.metadata.getVideoMetadata.mockRejectedValue(new MetadataUnavailableError('timeout'));
+    useExtract(minutes);
+    createVideo.mockResolvedValue(created({ cached: true }));
+
+    await expect(service.import(userId, PLAYLIST_URL)).rejects.toBeInstanceOf(AccountBlockedError);
+    expect([folders.create.mock.calls.length, createVideo.mock.calls.length]).toEqual([0, 0]);
   });
 
   it('should admit the prefix the minutes cover, stop at the first item they cannot, and report the quote', async () => {

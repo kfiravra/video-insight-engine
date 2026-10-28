@@ -14,7 +14,7 @@ import type { UserDeletionService } from '../user-deletion.service.js';
 //   2. expire lots past their expiry (`expire` entries)
 //   3. apply due recurring grants (a lot that expires at the next run)
 //   4. rebuild changed accounts' projections from the ledger; drift → warn + llm_alerts
-//   5. drop llm_usage.user_id on rows older than 90 days (docs/PRIVACY.md)
+//   5. drop llm_usage.user_id, request_id and prompt_preview on rows older than 90 days (docs/PRIVACY.md)
 //   6. the GDPR hard-delete sweep (docs/PRIVACY.md's 30-day promise)
 // Each step is idempotent and isolated: one failing step (or item) is logged
 // and the others still run.
@@ -161,7 +161,7 @@ export class BillingRepairService {
 
   private async pseudonymiseLlmUsage(now: Date, report: RepairReport): Promise<void> {
     const cutoff = new Date(now.getTime() - PRIVACY_WINDOW_MS);
-    report.llmUsagePseudonymised = await this.deps.llmUsage.unsetUserIdBefore(cutoff, LLM_USAGE_BATCH);
+    report.llmUsagePseudonymised = await this.deps.llmUsage.scrubPersonalDataBefore(cutoff, LLM_USAGE_BATCH);
   }
 
   private async runDeletions(now: Date, report: RepairReport): Promise<void> {

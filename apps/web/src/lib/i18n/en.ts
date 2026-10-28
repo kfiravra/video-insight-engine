@@ -207,6 +207,11 @@ export const EN: Labels = {
     failedRateLimited: 'Too many requests',
     failedUnreadable: "Couldn't read this video",
     videoFailedRetry: "This video didn't finish processing. Retry starts it again as a new run.",
+    updateAvailable: 'A newer version of this summary is available.',
+    updateAction: 'Update to latest version',
+    updateCost: 'Updating counts as a new video and uses your free video or minutes.',
+    updateDemo: "Updating isn't available on the demo account.",
+    updateFailed: "Couldn't start the update. Try again in a moment.",
     failedUnknown: "Couldn't be added",
   },
 };

@@ -221,8 +221,9 @@ describe('BillingRepairService (P1.6, real Mongo replica set)', () => {
   });
 
   describe('llm_usage privacy (docs/PRIVACY.md)', () => {
+    const at = (days: number) => new Date(clock.now().getTime() - days * DAY_MS);
+
     it('should drop user_id from rows older than 90 days only, and re-run as a no-op', async () => {
-      const at = (days: number) => new Date(clock.now().getTime() - days * DAY_MS);
       await db().collection('llm_usage').insertMany([
         { user_id: 'u-old', request_id: 'r-old', cost_usd: 0.5, model: 'm', timestamp: at(91) },
         { request_id: 'r-anonymous-old', cost_usd: 0.5, model: 'm', timestamp: at(92) },
@@ -236,6 +237,46 @@ describe('BillingRepairService (P1.6, real Mongo replica set)', () => {
       const rows = await db().collection('llm_usage').find({}).sort({ timestamp: -1 }).toArray();
       expect(rows.map((row) => [row.user_id, row.request_id])).toEqual([['u-recent', 'r-recent'], [undefined, undefined], [undefined, undefined]]);
       expect(rows[1]).toMatchObject({ cost_usd: 0.5, model: 'm' });
+    });
+
+    it('should drop prompt_preview from rows older than 90 days, whatever service wrote them', async () => {
+      await db().collection('llm_usage').insertMany([
+        { service: 'summarizer', prompt_preview: 'Summarize this video', prompt_hash: 'h1', cost_usd: 0.5, timestamp: at(91) },
+        { service: 'assistant', prompt_preview: 'old chat question', prompt_hash: 'h2', cost_usd: 0.5, timestamp: at(120) },
+      ]);
+
+      await run();
+
+      const rows = await db().collection('llm_usage').find({}).toArray();
+      expect(rows.map((row) => row.prompt_preview)).toEqual([undefined, undefined]);
+    });
+
+    it('should clear an old row that has only a prompt_preview, so no user link is needed to match it', async () => {
+      await db().collection('llm_usage').insertOne({ service: 'summarizer', prompt_preview: 'anonymous prompt', cost_usd: 0.5, timestamp: at(100) });
+
+      const report = await run();
+
+      expect(report.llmUsagePseudonymised).toBe(1);
+    });
+
+    it('should keep prompt_preview, cost, model and prompt_hash on rows 90 days old or newer', async () => {
+      await db().collection('llm_usage').insertOne(
+        { service: 'summarizer', prompt_preview: 'recent prompt', prompt_hash: 'h3', cost_usd: 0.5, model: 'm', timestamp: at(89) },
+      );
+
+      await run();
+
+      expect(await db().collection('llm_usage').findOne({})).toMatchObject({ prompt_preview: 'recent prompt', prompt_hash: 'h3', cost_usd: 0.5, model: 'm' });
+    });
+
+    it('should keep prompt_hash, cost and model on the rows it clears', async () => {
+      await db().collection('llm_usage').insertOne(
+        { service: 'summarizer', user_id: 'u', prompt_preview: 'old prompt', prompt_hash: 'h4', cost_usd: 0.5, model: 'm', timestamp: at(91) },
+      );
+
+      await run();
+
+      expect(await db().collection('llm_usage').findOne({})).toMatchObject({ prompt_hash: 'h4', cost_usd: 0.5, model: 'm' });
     });
   });
 

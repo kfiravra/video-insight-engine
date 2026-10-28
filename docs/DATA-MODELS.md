@@ -588,9 +588,12 @@ One row per video **version** (`version`, `isLatest` below); the served row is s
   degradedReasons: string[] | absent, // why, written at the run's end: "partial_extraction",
                                     // "media_download_failed"; [] = clean
   pipelineVersion: string | absent, // PIPELINE_VERSION stamp of the run that saved the row; a stale
-                                    // stamp re-runs on the user's next submission (and the worker
-                                    // skips a queued job only when the row is completed by the
-                                    // CURRENT version)
+                                    // stamp is served as is to users who have the copy, with
+                                    // `updateAvailable: true`; their `updateToLatest` moves them to
+                                    // the current version's row and leaves this one as it is. Only a
+                                    // first-time submitter meeting it at the current dedupKey re-runs
+                                    // it (D-LIB); the worker skips a queued job only when the row is
+                                    // completed by the CURRENT version
 
   // Cache metadata
   processedAt: Date | null,
@@ -796,6 +799,9 @@ User's video library. References shared cache.
   
   // Reference to cache
   videoSummaryId: ObjectId,
+  previousVideoSummaryId: ObjectId | absent, // D-LIB: the completed copy an update to the latest
+                                  // version left, set only while the row it moved to can still
+                                  // fail; FAILED hands the entry back to it, COMPLETED unsets it
   
   // Denormalized for display (copied from cache)
   youtubeId: string,

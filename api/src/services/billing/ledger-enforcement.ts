@@ -1,8 +1,8 @@
+import { AccountBlockedError } from '../../utils/errors.js';
 import { rejectionToError } from './billing-errors.js';
 import { stampedRun } from './run-stamp.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { HoldView } from '@vie/types';
-import type { AllocationRejection } from './allocation.js';
 import type { BillingGate, GateSubmission } from './billing-gate.js';
 import type { DispatchStampReader, SubmitOutcome } from './run-stamp.js';
 import type { BillingService, PlaylistQuote } from './billing.service.js';
@@ -43,6 +43,15 @@ export class LedgerEnforcement {
     return admission.hold;
   }
 
+  /**
+   * A blocked account submits nothing, cached included (D-BLOCK) — also on the
+   * paths that never quote: an idempotency replay, a playlist whose items have
+   * no known length. Its library stays readable; reads never come here.
+   */
+  async refuseIfBlocked(userId: string): Promise<void> {
+    if ((await this.deps.billing.summary(userId)).blocked) throw new AccountBlockedError();
+  }
+
   /** createVideo resolved: a cached or attached video gives its hold back at once (Q6). */
   async submitResolved(runId: string, outcome: SubmitOutcome): Promise<void> {
     if (outcome !== 'created') await this.giveBack(runId, outcome);
@@ -74,16 +83,16 @@ export class LedgerEnforcement {
 
   /**
    * Quote a whole playlist up front, for the import summary ("needs 340 min,
-   * you have 120"). Only a blocked account is refused here: any other
-   * refusal can still serve cached or attachable items at no cost (Q6), so
-   * the import goes item by item (see PlaylistService).
+   * you have 120"). Only a blocked account is refused here, before any
+   * pre-flight and whatever the items: any other refusal can still serve
+   * cached or attachable items at no cost (Q6), so the import goes item by
+   * item (see PlaylistService).
    */
   async planPlaylist(userId: string, items: PlaylistItemToPrice[]): Promise<PlaylistPlan> {
+    await this.refuseIfBlocked(userId);
     const durationsSec = await Promise.all(items.map((item) => this.durationOrNull(item)));
     const known = durationsSec.filter((sec): sec is number => sec !== null);
     const quote = await this.deps.billing.quoteMany(userId, known);
-    const blocked = quote.decisions.find((decision): decision is AllocationRejection => !decision.ok && decision.reason === 'blocked');
-    if (blocked) throw rejectionToError(blocked);
     return { quote, durationsSec };
   }
 

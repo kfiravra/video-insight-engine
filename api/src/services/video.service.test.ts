@@ -44,6 +44,7 @@ describe('VideoService', () => {
     getVersions: ReturnType<typeof vi.fn>;
     pruneVersions: ReturnType<typeof vi.fn>;
     userOwnsVideo: ReturnType<typeof vi.fn>;
+    userHasAccessToSummary: ReturnType<typeof vi.fn>;
     updateCacheEntry: ReturnType<typeof vi.fn>;
   };
   let mockSummarizerClient: {
@@ -86,6 +87,7 @@ describe('VideoService', () => {
       getVersions: vi.fn(),
       pruneVersions: vi.fn().mockResolvedValue(0),
       userOwnsVideo: vi.fn(),
+      userHasAccessToSummary: vi.fn(),
       updateCacheEntry: vi.fn(),
     };
     mockSummarizerClient = {
@@ -844,12 +846,13 @@ describe('VideoService', () => {
       });
     });
 
-    describe('pipelineVersion serve/regen gate (project-score-9 4.3)', () => {
+    describe('pipelineVersion serve/regen gate (project-score-9 4.3, D-LIB)', () => {
       // Docs are stamped with the canonical version at pipeline write time
-      // (packages/shared/src/config/pipeline-version.json). The serve path
-      // regens docs stamped with a DIFFERENT version; docs WITHOUT the field
-      // predate stamping and are served as-is (current-legacy) — a version
-      // bump must never mass-invalidate them.
+      // (packages/shared/src/config/pipeline-version.json). A user's own copy
+      // stamped with a DIFFERENT version is served as is with an update on
+      // offer (regenerated only on `updateToLatest`, video.service.library-
+      // update.test.ts); a shared stale row is regenerated for a user who never
+      // had the video. Docs WITHOUT the field are current-legacy.
       const youtubeId = 'dQw4w9WgXcQ';
       const url = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
       const videoSummaryId = 'summary-versioned';
@@ -861,7 +864,7 @@ describe('VideoService', () => {
         status: 'completed',
       });
 
-      it('re-dispatches (regen) when the user already has a completed doc stamped with a stale version', async () => {
+      it('should serve the user\'s own stale copy as is, offering the update (D-LIB)', async () => {
         mockVideoRepository.findUserVideoByYoutubeId.mockResolvedValue(existingUserVideo());
         mockVideoRepository.findCacheById.mockResolvedValue({
           _id: { toString: () => videoSummaryId },
@@ -874,10 +877,8 @@ describe('VideoService', () => {
 
         const result = await videoService.createVideo('user123', url, { queuePlan: 'free' });
 
-        expect(mockSummarizerClient.triggerSummarization).toHaveBeenCalledTimes(1);
-        expect(result.video.status).toBe('pending');
-        expect(result.cached).toBe(false);
-        expect(result.regenerating).toBe(true);
+        expect(mockSummarizerClient.triggerSummarization).not.toHaveBeenCalled();
+        expect(result).toMatchObject({ cached: true, alreadyExists: true, updateAvailable: true });
       });
 
       it('serves as-is when the existing completed doc has NO pipelineVersion (current-legacy)', async () => {
@@ -916,8 +917,9 @@ describe('VideoService', () => {
         expect(result.alreadyExists).toBe(true);
       });
 
-      it('regens instead of serving when attaching to a completed row stamped with a stale version', async () => {
+      it('regens instead of serving when a user who never had the video attaches to a stale completed row', async () => {
         mockVideoRepository.findUserVideoByYoutubeId.mockResolvedValue(null);
+        mockVideoRepository.userHasAccessToSummary.mockResolvedValue(false);
         mockVideoRepository.upsertCacheByDedupKey.mockResolvedValue({
           wasInsert: false,
           doc: {
