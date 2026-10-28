@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { FastifyBaseLogger } from 'fastify';
 import { ObjectId } from 'mongodb';
 import { config } from '../config.js';
@@ -13,7 +14,10 @@ import { FolderService } from './folder.service.js';
 import { SummarizerClient, type ProviderConfig } from './summarizer-client.js';
 import { CostMonitorService } from './cost-monitor.service.js';
 import { DailyLimitReachedError } from '../utils/errors.js';
+import { submitOutcome } from './billing/billing-shadow.service.js';
 import type { UserTier } from '@vie/types';
+import type { BillingShadowService } from './billing/billing-shadow.service.js';
+import type { GateSubmission } from './billing/billing-gate.js';
 
 // Types for summarizer response
 interface SummarizerPlaylistVideo {
@@ -93,6 +97,9 @@ export class PlaylistService {
     private readonly summarizerClient: SummarizerClient,
     private readonly logger: FastifyBaseLogger,
     private readonly costMonitorService?: CostMonitorService,
+    // Shadow minutes ledger (P1.7): never decides. With it, every item gets its
+    // own requestId so the terminal status can settle that item's hold.
+    private readonly billingShadow?: BillingShadowService,
   ) {}
 
   /**
@@ -186,7 +193,9 @@ export class PlaylistService {
     let limitReached = false;
 
     for (const video of playlistData.videos) {
+      const shadow = this.shadowSubmission(userId, video);
       if (limitReached) {
+        if (shadow) this.billingShadow?.submitRefused(shadow);
         failedVideos.push({
           youtubeId: video.video_id,
           title: video.title,
@@ -197,18 +206,22 @@ export class PlaylistService {
       }
 
       let reservation = null;
+      let admitted = false;
       try {
         const videoUrl = `https://www.youtube.com/watch?v=${video.video_id}`;
 
         if (this.costMonitorService) {
           reservation = await this.costMonitorService.reserveUserCost(userId, tier);
         }
+        admitted = true;
+        if (shadow) this.billingShadow?.submitAdmitted(shadow);
 
         const result = await this.videoService.createVideo(
           userId,
           videoUrl,
-          { folderId: folder.id, bypassCache: false, providers, tier }
+          { folderId: folder.id, bypassCache: false, providers, tier, ...(shadow && { requestId: shadow.requestId }) }
         );
+        if (shadow) this.billingShadow?.submitResolved(shadow.requestId, submitOutcome(result));
 
         // Cached videos run no pipeline, so no llm_usage will land — refund.
         // Attached videos (cross-user single-flight) are the same: this caller
@@ -238,6 +251,8 @@ export class PlaylistService {
           processingCount++;
         }
       } catch (err) {
+        if (shadow && admitted) this.billingShadow?.submitFailed(shadow.requestId);
+        if (shadow && err instanceof DailyLimitReachedError) this.billingShadow?.submitRefused(shadow);
         if (this.costMonitorService && reservation) {
           // A failed refund must not abort the loop — the remaining videos
           // would never be processed and the whole import would 500.
@@ -284,6 +299,12 @@ export class PlaylistService {
       failedCount: failedVideos.length,
       failedVideos,
     };
+  }
+
+  /** The item's shadow-ledger submission, or null without a shadow hook. */
+  private shadowSubmission(userId: string, video: SummarizerPlaylistVideo): GateSubmission | null {
+    if (!this.billingShadow) return null;
+    return { requestId: randomUUID(), userId, youtubeId: video.video_id, durationSec: video.duration };
   }
 
   /**

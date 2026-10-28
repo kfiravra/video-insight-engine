@@ -13,6 +13,8 @@ import { UserDeletionRepository } from './repositories/user-deletion.repository.
 import { VideoDeletionRepository } from './repositories/video-deletion.repository.js';
 import { AdminAuditRepository } from './repositories/admin-audit.repository.js';
 import { BillingRepository } from './repositories/billing.repository.js';
+import { BillingShadowRepository } from './repositories/billing-shadow.repository.js';
+import { LlmUsageRepository } from './repositories/llm-usage.repository.js';
 
 // Services
 import { AuthService } from './services/auth.service.js';
@@ -33,6 +35,9 @@ import { VideoCascadeService } from './services/video-cascade.service.js';
 import { AuditService } from './services/audit.service.js';
 import { AdminSeedService } from './services/admin-seed.service.js';
 import { BillingService } from './services/billing/billing.service.js';
+import { BillingGate } from './services/billing/billing-gate.js';
+import { BillingShadowService } from './services/billing/billing-shadow.service.js';
+import { ShadowRunner } from './services/billing/shadow-runner.js';
 import {
   SubmitBurstLimiter,
   noOpSubmitBurstLimiter,
@@ -73,6 +78,7 @@ export interface Container {
   auditService: AuditService;
   adminSeedService: AdminSeedService;
   billingService: BillingService;
+  billingShadowService: BillingShadowService;
 }
 
 export interface CreateContainerOptions {
@@ -142,12 +148,30 @@ export function createContainer(
   );
   const folderService = new FolderService(folderRepository, logger);
   const costMonitorService = new CostMonitorService(db, logger, userCostRepository);
-  const playlistService = new PlaylistService(videoService, folderService, summarizerClient, logger, costMonitorService);
   const billingService = new BillingService(billingRepository, userRepository, logger);
   // Chat fair use reads the account plan only; same fail-open stance as the burst limiter.
   const chatFairUse: IChatFairUse = options.redisClient
     ? new ChatFairUseService(options.redisClient, billingService, config.CHAT_FREE_MESSAGES_PER_DAY, logger)
     : noOpChatFairUse;
+  // Shadow ledger (P1.7): writes beside the old gate, never decides.
+  const billingShadowService = new BillingShadowService({
+    enabled: config.BILLING_SHADOW_ENABLED,
+    gate: new BillingGate(billingService, summarizerClient),
+    billing: billingService,
+    rows: new BillingShadowRepository(db),
+    llmUsage: new LlmUsageRepository(db),
+    dispatchStamps: videoRepository,
+    runner: new ShadowRunner(logger),
+    logger,
+  });
+  const playlistService = new PlaylistService(
+    videoService,
+    folderService,
+    summarizerClient,
+    logger,
+    costMonitorService,
+    billingShadowService,
+  );
   const shareService = new ShareService(shareRepository, videoRepository, logger);
   const ogImageService = new OgImageService(logger);
   const userDeletionService = new UserDeletionService(
@@ -207,6 +231,7 @@ export function createContainer(
     auditService,
     adminSeedService,
     billingService,
+    billingShadowService,
   };
 }
 

@@ -1035,14 +1035,27 @@ Applied by the billing repair job on `nextRunAt`; deletion is soft.
 ## billingShadow
 
 One row per request while the old dollar gate still decides (shadow mode):
-the old decision next to the ledger's.
+the old decision next to the ledger's. Written by `BillingShadowService`
+(`BILLING_SHADOW_ENABLED`) off the request path, one promise chain per
+requestId: `POST /api/videos`, the assistant's generate route and every
+playlist item (each item gets its own requestId, stamped by its dispatch)
+quote + hold after the old reservation; cached / attached / a createVideo
+error release; the terminal `POST /internal/status` maps `videoSummaryId` →
+the cache row's stamped `requestId` and settles (completed, `costUsd` = Σ
+`llm_usage.cost_usd` of that `request_id`) or releases (failed). The row is
+rewritten on every transition. `classification` comes from
+`api/src/services/billing/shadow-policy.ts`: `agree` when admitted/charged
+match, `policy_delta` when a row of its `POLICY_DELTAS` table (each with the
+decision behind it) explains the difference, else `disagree` (logged at warn).
 
 ```javascript
 {
   _id: ObjectId,
   requestId: string,
   userId: ObjectId, youtubeId: string,
-  path: 'created' | 'cached' | 'attached' | 'failed' | 'retry' | 'completed',
+  path: 'created' | 'cached' | 'attached' | 'failed' | 'completed'
+      | 'retry'      // a repeated submit or terminal event for the same requestId
+      | 'refused',   // the old gate refused; the ledger only quoted
   oldDecision: { admitted: boolean, charged: boolean },
   newDecision: { admitted: boolean, charged: boolean, split?, reason? },
   classification: 'agree' | 'policy_delta' | 'disagree',

@@ -287,6 +287,13 @@ SUBMIT_BURST_LIMIT_PER_HOUR=20
 # unlimited. 0 = off. Fails open if Redis is down.
 CHAT_FREE_MESSAGES_PER_DAY=50
 
+# Minutes-ledger shadow (billing-roles P1.7): every submit, playlist item and
+# terminal status also writes the ledger + a billingShadow row, off the request
+# path, never deciding. Needs the replica set (transactions). Unset = on (off
+# under NODE_ENV=test); the prod compose defaults to false until the box runs
+# the replica set.
+BILLING_SHADOW_ENABLED=true
+
 # ────────────────────────────────────────────────────
 # Qdrant (Vector DB for RAG)
 # ────────────────────────────────────────────────────

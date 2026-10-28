@@ -149,6 +149,13 @@ const envSchema = z.object({
   // existing accounts are promoted, `env` admins that leave the list are
   // demoted. Empty = nothing changes (never locks anyone out).
   ADMIN_EMAILS: z.string().default(''),
+  // ─── Billing ledger (shadow) ────────────────────────────────────────
+  // Shadow mode (billing-roles P1.7): every submit and terminal status also
+  // writes the minutes ledger and a billingShadow row, off the request path
+  // and never deciding. Needs Mongo transactions (a replica set). Unset =
+  // on, except under NODE_ENV=test, where route tests must not write billing
+  // rows; tests that exercise the shadow inject an enabled service.
+  BILLING_SHADOW_ENABLED: z.enum(['true', 'false']).optional(),
   // ─── Idempotency ────────────────────────────────────────────────────
   // NOTE: PIPELINE_VERSION is intentionally absent here — it is single-
   // sourced from pipeline-version.json (see loadPipelineVersion above) and
@@ -311,6 +318,9 @@ export const config = {
   ALLOWED_ORIGINS: buildAllowedOrigins(),
   // Computed property: Fastify-shaped trustProxy value
   TRUST_PROXY_VALUE: parseTrustProxy(parsedConfig.TRUST_PROXY),
+  BILLING_SHADOW_ENABLED: parsedConfig.BILLING_SHADOW_ENABLED === undefined
+    ? parsedConfig.NODE_ENV !== 'test'
+    : parsedConfig.BILLING_SHADOW_ENABLED === 'true',
   // Computed rate limits - higher in test mode to avoid interference
   RATE_LIMITS: {
     PLAYLIST_PREVIEW: parsedConfig.NODE_ENV === 'test'

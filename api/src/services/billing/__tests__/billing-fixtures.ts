@@ -1,6 +1,18 @@
+import { vi } from 'vitest';
 import { ObjectId } from 'mongodb';
+import { mockLogger } from '../../../test/setup.js';
+import { BillingRepository } from '../../../repositories/billing.repository.js';
+import { BillingShadowRepository } from '../../../repositories/billing-shadow.repository.js';
+import { LlmUsageRepository } from '../../../repositories/llm-usage.repository.js';
+import { UserRepository } from '../../../repositories/user.repository.js';
+import { BillingGate } from '../billing-gate.js';
+import { BillingShadowService } from '../billing-shadow.service.js';
+import { BillingService } from '../billing.service.js';
+import { ShadowRunner } from '../shadow-runner.js';
 import type { Db } from 'mongodb';
+import type { FastifyBaseLogger } from 'fastify';
 import type { BillingAccountDocument, CreditLotDocument } from '../../../repositories/billing.repository.js';
+import type { BillingShadowDocument } from '../../../repositories/billing-shadow.repository.js';
 
 /** A free account with empty buckets; override any part. */
 export function makeAccountDoc(overrides: Partial<BillingAccountDocument> = {}): BillingAccountDocument {
@@ -72,3 +84,35 @@ export async function insertUser(db: Db): Promise<string> {
 
 export const HOUR_MS = 60 * 60 * 1000;
 export const DAY_MS = 24 * HOUR_MS;
+
+/** A real, enabled shadow ledger on `db` with stubbed metadata and dispatch stamps. */
+export interface ShadowHarness {
+  shadow: BillingShadowService;
+  billing: BillingService;
+  runner: ShadowRunner;
+  metadata: { getVideoMetadata: ReturnType<typeof vi.fn> };
+  /** videoSummaryId → the requestId its dispatch stamped on the cache row. */
+  stamps: Map<string, string>;
+  rowOf: (requestId: string) => Promise<BillingShadowDocument | null>;
+}
+
+export function makeShadowHarness(db: Db, options: { enabled?: boolean; clock?: () => Date } = {}): ShadowHarness {
+  const { enabled = true, clock = () => new Date() } = options;
+  const logger = mockLogger as unknown as FastifyBaseLogger;
+  const billing = new BillingService(new BillingRepository(db), new UserRepository(db), logger, clock);
+  const metadata = { getVideoMetadata: vi.fn().mockResolvedValue({ duration: 600 }) };
+  const stamps = new Map<string, string>();
+  const runner = new ShadowRunner(logger);
+  const rows = new BillingShadowRepository(db);
+  const shadow = new BillingShadowService({
+    enabled,
+    gate: new BillingGate(billing, metadata),
+    billing,
+    rows,
+    llmUsage: new LlmUsageRepository(db),
+    dispatchStamps: { findCacheById: async (id: string) => (stamps.has(id) ? { requestId: stamps.get(id) } : null) },
+    runner,
+    logger,
+  });
+  return { shadow, billing, runner, metadata, stamps, rowOf: (requestId) => rows.findByRequestId(requestId) };
+}

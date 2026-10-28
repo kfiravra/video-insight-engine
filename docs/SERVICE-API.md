@@ -383,6 +383,8 @@ INTERNAL_SECRET=dev-internal-secret-change-me   # Shared secret for /internal/as
 SUBMIT_BURST_LIMIT_PER_HOUR=20
 # Chat messages a free account may send per rolling 24 h, both chat routes (0 = off)
 CHAT_FREE_MESSAGES_PER_DAY=50
+# Minutes-ledger shadow writes beside the old gate, never deciding (needs the replica set)
+BILLING_SHADOW_ENABLED=true
 ```
 
 ---

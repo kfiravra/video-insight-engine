@@ -72,6 +72,7 @@ export async function internalRoutes(fastify: FastifyInstance) {
     dispatchGuardService,
     userDeletionService,
     videoRepository,
+    billingShadowService,
   } = fastify.container;
 
   // POST /internal/status - Receive status updates from summarizer/agent
@@ -190,6 +191,10 @@ export async function internalRoutes(fastify: FastifyInstance) {
       // This IS the canonical refund-on-failure for the per-user gate; do not
       // add a separate `refundReservation` path on failure or it will double-refund.
       if (status === 'completed' || status === 'failed') {
+        // Shadow minutes ledger (P1.7): settle / release the run's hold off
+        // the request path. Returns at once and never throws.
+        billingShadowService.runFinished(videoSummaryId, status);
+
         const targetUsers = new Set<string>();
         if (userId) targetUsers.add(userId);
         if (targetUsers.size === 0) {

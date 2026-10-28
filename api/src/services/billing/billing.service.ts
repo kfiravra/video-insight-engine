@@ -105,10 +105,8 @@ export class BillingService {
    * HoldFinalizedError when the run was already settled or released.
    */
   async hold(requestId: string, quote: Quote): Promise<HoldView> {
-    validateRequestId(requestId);
-    const held = await this.repo.findAccountByHold(requestId);
-    const existing = held?.holds.find((hold) => hold.requestId === requestId);
-    if (existing) return toHoldView(existing);
+    const existing = await this.openHold(requestId);
+    if (existing) return existing;
 
     const minutes = chargeMinutes(quote.durationSec);
     const outcome = await this.units.write(quote.userId, async ({ draft, session }) => {
@@ -123,6 +121,14 @@ export class BillingService {
       return applyHold(draft, request, decision.split);
     });
     return toHoldView(outcome.value);
+  }
+
+  /** The open hold of run `requestId`, if any. */
+  async openHold(requestId: string): Promise<HoldView | null> {
+    validateRequestId(requestId);
+    const held = await this.repo.findAccountByHold(requestId);
+    const hold = held?.holds.find((candidate) => candidate.requestId === requestId);
+    return hold ? toHoldView(hold) : null;
   }
 
   /** Turn the hold into debits. Idempotent: a second completion is `already_debited`. */

@@ -63,6 +63,7 @@ export async function videosRoutes(fastify: FastifyInstance) {
     idempotencyService,
     videoRepository,
     fastify.log,
+    fastify.container.billingShadowService,
   );
 
   // GET /api/videos

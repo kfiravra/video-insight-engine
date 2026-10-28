@@ -197,6 +197,10 @@ describe('MongoDB plugin', () => {
         const index = await findIndex('billingShadow', { requestId: 1 });
         expect(index?.unique).toBe(true);
       });
+
+      it('should index llm_usage by request_id for the settle cost lookup', async () => {
+        expect(await findIndex('llm_usage', { request_id: 1, timestamp: -1 })).toBeDefined();
+      });
     });
 
     describe('adminAudit indexes', () => {

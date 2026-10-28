@@ -67,6 +67,7 @@ export async function internalAssistantRoutes(fastify: FastifyInstance): Promise
     idempotencyService,
     videoRepository,
     fastify.log,
+    fastify.container.billingShadowService,
   );
 
   // GET /internal/assistant/folders

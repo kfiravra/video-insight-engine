@@ -182,4 +182,25 @@ describe('config env validation', () => {
       expect(config.PIPELINE_VERSION).not.toBe('v999-env-injected');
     });
   });
+
+  describe('BILLING_SHADOW_ENABLED', () => {
+    it('should default to off under NODE_ENV=test so route tests never write billing rows', async () => {
+      const { config } = await loadConfig({});
+      expect(config.BILLING_SHADOW_ENABLED).toBe(false);
+    });
+
+    it('should default to on outside tests', async () => {
+      const { config } = await loadConfig({ NODE_ENV: 'development' });
+      expect(config.BILLING_SHADOW_ENABLED).toBe(true);
+    });
+
+    it('should follow an explicit value', async () => {
+      const { config } = await loadConfig({ NODE_ENV: 'production', BILLING_SHADOW_ENABLED: 'false' });
+      expect(config.BILLING_SHADOW_ENABLED).toBe(false);
+    });
+
+    it('should refuse anything but true or false', async () => {
+      await expect(loadConfig({ BILLING_SHADOW_ENABLED: 'yes' })).rejects.toThrow(/BILLING_SHADOW_ENABLED/);
+    });
+  });
 });

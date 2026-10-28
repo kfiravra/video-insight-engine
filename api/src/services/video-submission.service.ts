@@ -4,8 +4,12 @@ import { CostMonitorService, type CostReservation } from './cost-monitor.service
 import { IdempotencyService } from './idempotency.service.js';
 import { VideoRepository } from '../repositories/video.repository.js';
 import { extractYoutubeId } from '../utils/youtube.js';
+import { DailyLimitReachedError } from '../utils/errors.js';
+import { submitOutcome } from './billing/billing-shadow.service.js';
 import type { ProviderConfig } from './summarizer-client.js';
 import type { UserTier } from '@vie/types';
+import type { BillingShadowService } from './billing/billing-shadow.service.js';
+import type { GateSubmission } from './billing/billing-gate.js';
 
 /** Result of `VideoService.createVideo` — inferred so the two stay in sync. */
 export type CreateVideoResult = Awaited<ReturnType<VideoService['createVideo']>>;
@@ -71,6 +75,8 @@ export class VideoSubmissionService {
     private readonly idempotencyService: IdempotencyService,
     private readonly videoRepository: VideoRepository,
     private readonly logger: FastifyBaseLogger,
+    // Shadow minutes ledger (P1.7): told about every decision, never asked.
+    private readonly billingShadow?: BillingShadowService,
   ) {}
 
   async submit(input: SubmitVideoInput): Promise<SubmitVideoResult> {
@@ -78,17 +84,10 @@ export class VideoSubmissionService {
     if (gate.kind === 'duplicate') return { outcome: 'duplicate', video: gate.video };
     if (gate.kind === 'in_flight') return { outcome: 'in_flight' };
     const { hash } = gate;
+    const shadow = this.shadowSubmission(input);
 
-    // Atomic reservation — increment-then-check serializes concurrent starts
-    // on the per-user/day doc. Throws DailyLimitReachedError past the tier
-    // cap. `reservation` is null for unlimited tiers.
-    let reservation: CostReservation | null;
-    try {
-      reservation = await this.costMonitorService.reserveUserCost(input.userId, input.tier);
-    } catch (err) {
-      await this.unwindHash(hash, input.requestId);
-      throw err;
-    }
+    const reservation = await this.reserve(input, hash, shadow);
+    if (shadow) this.billingShadow?.submitAdmitted(shadow);
 
     let result: CreateVideoResult;
     try {
@@ -101,10 +100,12 @@ export class VideoSubmissionService {
         requestId: input.requestId,
       });
     } catch (err) {
+      if (shadow) this.billingShadow?.submitFailed(shadow.requestId);
       await this.costMonitorService.refundReservation(reservation);
       await this.unwindHash(hash, input.requestId);
       throw err;
     }
+    if (shadow) this.billingShadow?.submitResolved(shadow.requestId, submitOutcome(result));
 
     // Cached videos run no pipeline, so no llm_usage rows will arrive — refund
     // now. Attached videos (cross-user single-flight) behave identically: this
@@ -122,6 +123,32 @@ export class VideoSubmissionService {
 
     await this.settleHash(hash, result, input.requestId);
     return { outcome: 'created', result };
+  }
+
+  /**
+   * Atomic reservation — increment-then-check serializes concurrent starts
+   * on the per-user/day doc. Throws DailyLimitReachedError past the tier
+   * cap. The reservation is null for unlimited tiers.
+   */
+  private async reserve(
+    input: SubmitVideoInput,
+    hash: string | null,
+    shadow: GateSubmission | null,
+  ): Promise<CostReservation | null> {
+    try {
+      return await this.costMonitorService.reserveUserCost(input.userId, input.tier);
+    } catch (err) {
+      if (shadow && err instanceof DailyLimitReachedError) this.billingShadow?.submitRefused(shadow);
+      await this.unwindHash(hash, input.requestId);
+      throw err;
+    }
+  }
+
+  /** The shadow ledger's view of this submit; null without a hook, a requestId or a video id. */
+  private shadowSubmission(input: SubmitVideoInput): GateSubmission | null {
+    const youtubeId = extractYoutubeId(input.url);
+    if (!this.billingShadow || !input.requestId || !youtubeId) return null;
+    return { requestId: input.requestId, userId: input.userId, youtubeId };
   }
 
   /**

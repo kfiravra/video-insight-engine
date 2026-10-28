@@ -329,6 +329,9 @@ services:
       SUBMIT_BURST_LIMIT_PER_HOUR: ${SUBMIT_BURST_LIMIT_PER_HOUR:-20}
       # Chat messages a FREE account may send per rolling 24 h, one allowance for both chat routes (0 = off)
       CHAT_FREE_MESSAGES_PER_DAY: ${CHAT_FREE_MESSAGES_PER_DAY:-50}
+      # Minutes-ledger shadow writes (never decide). Off until the box runs the
+      # replica set (P6.4): the ledger needs transactions.
+      BILLING_SHADOW_ENABLED: ${BILLING_SHADOW_ENABLED:-false}
       # Requests per minute per IP on the public api
       RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-120}
       USER_COST_LIMIT_FREE: ${USER_COST_LIMIT_FREE:-2}

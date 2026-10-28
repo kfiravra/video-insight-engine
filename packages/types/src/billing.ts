@@ -224,7 +224,13 @@ export interface RecurringGrant {
   deletedAt: string | null;
 }
 
-export type BillingShadowPath = 'created' | 'cached' | 'attached' | 'failed' | 'retry' | 'completed';
+/**
+ * Where the run is: `created` (held, dispatched), `cached` / `attached` (served
+ * without a run, released), `failed` (pipeline or submit error, released),
+ * `completed` (debited), `retry` (a repeated submit or terminal event for the
+ * same requestId), `refused` (the old gate refused; the ledger only quoted).
+ */
+export type BillingShadowPath = 'created' | 'cached' | 'attached' | 'failed' | 'retry' | 'completed' | 'refused';
 
 export interface BillingShadowDecision {
   admitted: boolean;
