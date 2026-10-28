@@ -25,6 +25,10 @@ the envelope tests in `api/src/app.test.ts`):
   (`details.issues: [{ path, message }]` from the Zod issue list).
 - `DAILY_LIMIT_REACHED` additionally carries top-level `resetAt` + `limitUsd`
   (consumed by the UI countdown).
+- The minutes gate's refusals (below) carry their numbers as top-level fields:
+  `INSUFFICIENT_MINUTES` → `needed`, `available`, `nextFreeAt` (only when the
+  free video would cover the video once it reopens); `VIDEO_TOO_LONG_FOR_PLAN`
+  → `maxMinutes`; `TOO_MANY_RUNS` → `maxConcurrent`.
 
 ---
 
@@ -70,6 +74,39 @@ See [docs/SECURITY.md](./SECURITY.md#rate-limiting) for implementation.
 
 **Assistant chat.** The assistant service enforces its own 30 chat requests/min per user. When it answers 429 to `POST /api/videos/:id/chat` or `POST /api/assistant/library/chat`, the gateway returns `429 RATE_LIMITED` ("Too many messages. Please wait a moment and try again.") in the same `{ error, message, statusCode }` envelope as the rate-limit plugin — not a 502. Any other non-OK assistant status stays `502 SERVICE_UNAVAILABLE`. The assistant sends no `Retry-After`, so the gateway sets none. The web chat shows the slow-down message for a 429.
 
+### Minutes gate (`BILLING_LEDGER_ENFORCE=true`)
+
+With enforcement on, `POST /api/videos`, the assistant's
+`POST /internal/assistant/generate` and every item of `POST /api/playlists/import`
+are quoted and held **before** `createVideo`. A refusal leaves nothing behind
+(no hold, the idempotency key released, no dispatch).
+
+**A refusal still serves what costs nothing (Q6).** When the ledger will not pay
+for a run (any refusal below except `ACCOUNT_BLOCKED`), `createVideo` runs
+serve-only: the user's own copy, a completed current summary, or attaching to a
+live in-flight run is served as usual (200/201, `cached` / `attached`, no hold);
+anything that would start a run (a new video, a failed or stalled run, a stale
+version, `bypassCache`) is not attempted and the refusal is returned instead:
+
+| Code | HTTP | Body extras | When |
+|------|------|-------------|------|
+| `INSUFFICIENT_MINUTES` | 402 | `needed`, `available`, `nextFreeAt?` | The free video cannot take it (used in the last 24 h, or the video is over 30 min) and plan + credit minutes are short. |
+| `VIDEO_TOO_LONG_FOR_PLAN` | 422 | `maxMinutes` | Longer than any minutes can pay for: 180 min (Q2), or an admin's lower `caps.maxVideoMinutes`. |
+| `ACCOUNT_BLOCKED` | 403 | — | `caps.blocked` set by an admin. Nothing is served, not even from cache; a playlist is refused before its folder is created. |
+| `TOO_MANY_RUNS` | 429 | `maxConcurrent` | `caps.maxConcurrent` runs already in flight. |
+| `METADATA_UNAVAILABLE` | 404 / 503 | — | The pre-flight could not get the video's length; the gate fails closed (404 unknown/private video, 503 timeout or upstream). |
+
+A cached or attached video that did take a hold gives it back before the
+response, and so does a submit whose `createVideo` throws. A playlist is quoted
+as a whole first (the result's `billing: { neededMinutes, availableMinutes,
+freeVideoAvailable }`), then admitted as a prefix: items in order until the
+first one the minutes cannot cover; later items are still served if that costs
+nothing, the rest are listed in `failedVideos` with the code (a too-long item
+or one with no known length is listed and skipped, the rest continue). A run id
+already holding for another user or video answers `409 HOLD_CONFLICT`.
+With enforcement off these codes are never sent — the old dollar gate decides
+and the ledger only shadows. Hold / debit keys: [IDEMPOTENCY.md](./IDEMPOTENCY.md#minutes-ledger-holds).
+
 ### Validation Errors (400)
 
 | Code               | Message              | When                       |
@@ -108,7 +145,7 @@ See [docs/SECURITY.md](./SECURITY.md#rate-limiting) for implementation.
 | `SERVICE_UNAVAILABLE` | Service temporarily unavailable | Dependency down       |
 | `SUMMARIZER_PURGE_FAILED` | Video purge failed | Summarizer could not purge Qdrant/S3/Redis; nothing deleted in Mongo — retry the admin delete |
 | `PROVIDER_NOT_CONFIGURED` | Payments are not available yet. | `501`. `NoopPaymentProvider` (`api/src/services/billing/payment-provider.ts`) answered a checkout, portal or webhook call: no payment provider is built or configured. A retry cannot fix it, hence 501 and not 503. Nothing calls it today |
-| `METADATA_UNAVAILABLE` | Video details are temporarily unavailable | The pre-flight metadata call (`SummarizerClient.getVideoMetadata`) failed: `404` when the video is unknown or private (`reason: not_found`), `503` on a 15 s timeout or any other failure (`reason: timeout` / `upstream`). Never cached. A billing quote built on it fails closed when enforcing and open in shadow mode |
+| `METADATA_UNAVAILABLE` | Video details are temporarily unavailable | The pre-flight metadata call (`SummarizerClient.getVideoMetadata`) failed: `404` when the video is unknown or private (`reason: not_found`), `503` on a 15 s timeout or any other failure (`reason: timeout` / `upstream`). Never cached. A billing quote built on it fails closed when enforcing (the submit gets this error) and open in shadow mode |
 | `LLM_ERROR`           | AI service error                | Claude API failed     |
 | `DATABASE_ERROR`      | Database error                  | MongoDB failed        |
 | `SUMMARIZER_ERROR`    | Summarizer service error        | Summarizer unreachable |

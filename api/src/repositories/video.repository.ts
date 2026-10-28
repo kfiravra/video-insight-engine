@@ -86,6 +86,10 @@ export interface VideoSummaryCacheDocument {
    *  request runs the pipeline; `$unset` by the GDPR cascade. */
   userId?: string;
   requestId?: string;
+  /** The minutes ledger's run id for this dispatch (server-generated per
+   *  submission, P3.1): the terminal status settles / releases the hold keyed
+   *  by it, while `requestId` keeps naming the run's llm_usage rows. */
+  billingRunId?: string;
   retryCount: number;
   errorCode?: string;
   errorMessage?: string;
@@ -239,6 +243,11 @@ export class VideoRepository {
    * `url`, `status`, or any other field — the row's state is owned by the
    * original winner and the in-progress pipeline.
    */
+  /** The shared row for a dedupKey, read-only (the serve-only path must not create one). */
+  async findCacheByDedupKey(dedupKey: string): Promise<VideoSummaryCacheDocument | null> {
+    return this.cacheCollection.findOne({ dedupKey });
+  }
+
   async upsertCacheByDedupKey(
     data: CreateVideoSummaryData & { dedupKey: string },
   ): Promise<{ doc: VideoSummaryCacheDocument; wasInsert: boolean }> {
@@ -640,10 +649,17 @@ export class VideoRepository {
    * with the release marker — bumping it here would let a late duplicate
    * FAILED event release the guard this dispatch just acquired.
    */
-  async stampDispatchContext(id: string, userId: string, requestId?: string): Promise<void> {
-    const update: UpdateFilter<VideoSummaryCacheDocument> = requestId
-      ? { $set: { userId, requestId } }
-      : { $set: { userId }, $unset: { requestId: '' } };
+  async stampDispatchContext(id: string, userId: string, requestId?: string, billingRunId?: string): Promise<void> {
+    const set: Partial<VideoSummaryCacheDocument> = { userId };
+    const unset: Record<string, ''> = {};
+    if (requestId) set.requestId = requestId;
+    else unset.requestId = '';
+    // Same rule for the billing run: an earlier dispatch's run must never be settled by this one.
+    if (billingRunId) set.billingRunId = billingRunId;
+    else unset.billingRunId = '';
+    const update: UpdateFilter<VideoSummaryCacheDocument> = Object.keys(unset).length > 0
+      ? { $set: set, $unset: unset }
+      : { $set: set };
     await this.cacheCollection.updateOne({ _id: new ObjectId(id) }, update);
   }
 

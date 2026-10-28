@@ -6,6 +6,9 @@ import { VideoRepository } from '../../../repositories/video.repository.js';
 import { IdempotencyService } from '../../idempotency.service.js';
 import { PlaylistService } from '../../playlist.service.js';
 import { VideoSubmissionService } from '../../video-submission.service.js';
+import { LedgerEnforcement } from '../ledger-enforcement.js';
+import { LlmUsageRepository } from '../../../repositories/llm-usage.repository.js';
+import { RunNotAllowedError } from '../../../utils/errors.js';
 import { insertUser, makeShadowHarness } from './billing-fixtures.js';
 import { OldGateRecorder } from './shadow-replay.old-gate.js';
 import type { Db } from 'mongodb';
@@ -16,6 +19,7 @@ import type { FolderService } from '../../folder.service.js';
 import type { SummarizerClient } from '../../summarizer-client.js';
 import type { VideoService } from '../../video.service.js';
 import type { ShadowHarness } from './billing-fixtures.js';
+import type { GateSubmission } from '../billing-gate.js';
 import type { AccountKind, ReplayScenario, ReplayStep, SubmitOutcome } from './shadow-replay.scenarios.js';
 import type { BillingShadowDocument } from '../../../repositories/billing-shadow.repository.js';
 
@@ -23,33 +27,49 @@ import type { BillingShadowDocument } from '../../../repositories/billing-shadow
 // PlaylistService and POST /internal/status, the real old dollar gate
 // (OldGateRecorder) and the real shadow ledger, side by side on the test
 // replica set. Only createVideo (dispatch) and the playlist extract are faked:
-// their outcome is the scenario's input.
+// their outcome is the scenario's input. `enforced` (P3.1) hands the same
+// services a LedgerEnforcement, so the ledger decides on the request path.
+
+/** `shadow`: the old gate decides, the ledger shadows. `enforced`: BILLING_LEDGER_ENFORCE on. */
+export type HarnessMode = 'shadow' | 'enforced';
 
 export interface RunResult {
   requestId: string;
   /** The live old gate's decision (P3.2 deletes the old gate, and this with it). */
   liveOld: BillingShadowDecision;
-  /** Admitted / charged as the ledger entries show them. */
+  /** Admitted (a hold, or served free from cache / an in-flight run) / charged, as the ledger and the serve show them. */
   ledger: BillingShadowDecision;
   row: BillingShadowDocument | null;
   /** What the submit threw, if anything (enforced mode reads the refusal reason from it). */
   error: unknown;
+  /** How many runs of this video took a hold (an HTTP retry must not add one). */
+  heldRuns: number;
 }
 
 const logger = mockLogger as unknown as FastifyBaseLogger;
+
+interface DispatchOptions {
+  requestId?: string;
+  billingRunId?: string;
+  serveOnly?: boolean;
+}
 const ACCOUNT_CTX = () => ({ actorId: 'system:replay', reason: 'replay fixture', auditId: new ObjectId().toHexString() });
 
 interface ScenarioState {
   scenario: string;
   userId: string;
   tier: 'free' | 'pro';
-  /** run → its requestId (single submits; playlist items are found after the fact). */
+  /** run → the request id its dispatch carried (the llm_usage key). */
   requestIds: Map<string, string>;
+  /** youtubeId → the ledger run ids (server-generated, P3.1) submitted for it, in order. */
+  runIds: Map<string, string[]>;
   youtubeIds: Map<string, string>;
   /** run → the videoSummaryId its dispatch stamped. */
   dispatched: Map<string, string>;
   errors: Map<string, unknown>;
   outcomes: Array<{ run: string; outcome: SubmitOutcome }>;
+  /** Runs answered from cache or by attaching (no run of their own). */
+  servedFree: Set<string>;
 }
 
 export class ReplayHarness {
@@ -60,15 +80,25 @@ export class ReplayHarness {
   /** The playlist extract is a fetch to the summarizer; stub global fetch with this. */
   readonly fetchStub = vi.fn();
   private readonly createVideo = vi.fn();
+  /** Present in `enforced` mode; the app's container takes it too. */
+  readonly enforcement: LedgerEnforcement | null;
   private state: ScenarioState | null = null;
   private videoCounter = 0;
+  private indexed = false;
 
-  constructor(private readonly db: Db) {
+  constructor(private readonly db: Db, mode: HarnessMode = 'shadow') {
     this.shadow = makeShadowHarness(db, { dispatchStamps: new VideoRepository(db) });
     this.oldGate = new OldGateRecorder(db, logger);
+    this.enforcement = mode === 'enforced'
+      ? new LedgerEnforcement({
+        billing: this.shadow.billing, gate: this.shadow.gate, llmUsage: new LlmUsageRepository(db),
+        dispatchStamps: new VideoRepository(db), logger,
+      })
+      : null;
+    this.recordRunIds();
     const videoService = { createVideo: this.createVideo } as unknown as VideoService;
-    this.createVideo.mockImplementation((userId: string, url: string, options: { requestId?: string }) =>
-      this.dispatch(userId, url, options.requestId));
+    this.createVideo.mockImplementation((userId: string, url: string, options: DispatchOptions) =>
+      this.dispatch(userId, url, options));
     this.submissions = new VideoSubmissionService(
       videoService,
       this.oldGate.service,
@@ -76,6 +106,7 @@ export class ReplayHarness {
       new VideoRepository(db),
       logger,
       this.shadow.shadow,
+      this.enforcement ?? undefined,
     );
     const folders = { create: vi.fn().mockResolvedValue({ id: 'folder-replay', name: 'Replay' }), getById: vi.fn() };
     this.playlists = new PlaylistService(
@@ -85,7 +116,19 @@ export class ReplayHarness {
       logger,
       this.oldGate.service,
       this.shadow.shadow,
+      this.enforcement ?? undefined,
     );
+  }
+
+  /** Every quote names its run (shadow and enforcement both quote first): learn the server run ids per video. */
+  private recordRunIds(): void {
+    const quote = this.shadow.gate.quote.bind(this.shadow.gate);
+    this.shadow.gate.quote = async (submission: GateSubmission) => {
+      const runs = this.state?.runIds.get(submission.youtubeId) ?? [];
+      if (!runs.includes(submission.requestId)) runs.push(submission.requestId);
+      this.state?.runIds.set(submission.youtubeId, runs);
+      return quote(submission);
+    };
   }
 
   /** The app's container takes these, so POST /internal/status reaches the same old gate and shadow. */
@@ -94,6 +137,11 @@ export class ReplayHarness {
   }
 
   async run(app: FastifyInstance, scenario: ReplayScenario): Promise<Map<string, RunResult>> {
+    if (!this.indexed) {
+      // An HTTP retry must meet the idempotency gate's unique key, as in prod.
+      await this.db.collection('idempotencyKeys').createIndex({ hash: 1 }, { unique: true });
+      this.indexed = true;
+    }
     this.oldGate.reset();
     this.state = await this.openScenario(scenario);
     for (const step of scenario.steps) {
@@ -108,7 +156,8 @@ export class ReplayHarness {
     await this.prepareAccount(scenario.account, userId);
     return {
       scenario: scenario.name, userId, tier: scenario.account === 'pro' ? 'pro' : 'free',
-      requestIds: new Map(), youtubeIds: new Map(), dispatched: new Map(), errors: new Map(), outcomes: [],
+      requestIds: new Map(), runIds: new Map(), youtubeIds: new Map(), dispatched: new Map(), errors: new Map(), outcomes: [],
+      servedFree: new Set(),
     };
   }
 
@@ -171,20 +220,34 @@ export class ReplayHarness {
     await this.playlists.import(state.userId, 'https://www.youtube.com/playlist?list=PLreplay', undefined, 100, undefined, state.tier);
   }
 
-  /** The faked dispatch: answers with the scenario's outcome and stamps the cache row like dispatchPipeline. */
-  private async dispatch(userId: string, url: string, requestId: string | undefined): Promise<unknown> {
+  /**
+   * The faked dispatch: answers with the scenario's outcome, stamps the cache
+   * row like dispatchPipeline (request id + billing run id) and files the
+   * library row, so a repeated submit meets the idempotency gate's duplicate.
+   */
+  private async dispatch(userId: string, url: string, options: DispatchOptions): Promise<unknown> {
     const state = this.requireState();
-    const next = state.outcomes.shift();
+    const next = state.outcomes[0];
     if (!next) throw new Error(`${state.scenario}: unexpected createVideo for ${url}`);
+    // Like the real createVideo: serve-only never starts a run (and leaves the outcome for nobody).
+    if (options.serveOnly && (next.outcome === 'created' || next.outcome === 'throws')) {
+      state.outcomes.shift();
+      throw new RunNotAllowedError();
+    }
+    state.outcomes.shift();
+    const { requestId, billingRunId } = options;
     if (requestId) state.requestIds.set(next.run, requestId);
     if (next.outcome === 'throws') throw new Error('dispatch failed');
+    if (next.outcome === 'cached' || next.outcome === 'attached') state.servedFree.add(next.run);
     const videoSummaryId = new ObjectId();
     const youtubeId = this.youtubeIdFor(next.run);
     if (next.outcome === 'created') {
-      await this.db.collection('videoSummaryCache').insertOne({ _id: videoSummaryId, youtubeId, userId, requestId, status: 'pending' });
+      await this.db.collection('videoSummaryCache').insertOne({ _id: videoSummaryId, youtubeId, userId, requestId, billingRunId, status: 'pending' });
       state.dispatched.set(next.run, videoSummaryId.toHexString());
     }
-    const video = { id: new ObjectId().toHexString(), videoSummaryId: videoSummaryId.toHexString(), youtubeId, status: 'pending' };
+    const userVideoId = new ObjectId();
+    await this.db.collection('userVideos').insertOne({ _id: userVideoId, userId: new ObjectId(userId), videoSummaryId, youtubeId, status: 'pending' });
+    const video = { id: userVideoId.toHexString(), videoSummaryId: videoSummaryId.toHexString(), youtubeId, status: 'pending' };
     return { video, cached: next.outcome === 'cached', ...(next.outcome === 'attached' && { attached: true }) };
   }
 
@@ -217,25 +280,32 @@ export class ReplayHarness {
     const state = this.requireState();
     const results = new Map<string, RunResult>();
     for (const { run } of scenario.expect) {
-      const requestId = state.requestIds.get(run) ?? (await this.requestIdByVideo(state.youtubeIds.get(run)));
-      const entries = await this.db.collection('ledgerEntries').find({ 'source.ref': requestId }).toArray();
-      const held = entries.some((e) => e.type === 'hold');
+      const youtubeId = state.youtubeIds.get(run) ?? '';
+      const runIds = state.runIds.get(youtubeId) ?? [];
+      const requestId = runIds[runIds.length - 1];
+      if (!requestId) throw new Error(`${scenario.name}: run ${run} was never quoted`);
+      const ledger = await this.ledgerDecision(requestId);
       results.set(run, {
         requestId,
         liveOld: this.oldGate.decisionFor(run),
-        ledger: { admitted: held, charged: held && !entries.some((e) => e.type === 'release') },
+        ledger: { ...ledger, admitted: ledger.admitted || state.servedFree.has(run) },
         row: await this.shadow.rowOf(requestId),
         error: state.errors.get(run),
+        heldRuns: await this.heldRuns(runIds),
       });
     }
     return results;
   }
 
-  /** Playlist items the old gate refused never reach createVideo; their row is found by video. */
-  private async requestIdByVideo(youtubeId: string | undefined): Promise<string> {
-    const row = await this.db.collection('billingShadow').findOne({ youtubeId });
-    if (!row) throw new Error(`${this.requireState().scenario}: no shadow row for ${youtubeId}`);
-    return String(row.requestId);
+  private async ledgerDecision(runId: string): Promise<BillingShadowDecision> {
+    const entries = await this.db.collection('ledgerEntries').find({ 'source.ref': runId }).toArray();
+    const held = entries.some((e) => e.type === 'hold');
+    return { admitted: held, charged: held && !entries.some((e) => e.type === 'release') };
+  }
+
+  private async heldRuns(runIds: string[]): Promise<number> {
+    const held = await this.db.collection('ledgerEntries').distinct('source.ref', { type: 'hold', 'source.ref': { $in: runIds } });
+    return held.length;
   }
 
   private requireState(): ScenarioState {

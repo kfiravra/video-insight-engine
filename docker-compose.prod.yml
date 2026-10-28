@@ -332,6 +332,8 @@ services:
       # Minutes-ledger shadow writes (never decide). Off until the box runs the
       # replica set (P6.4): the ledger needs transactions.
       BILLING_SHADOW_ENABLED: ${BILLING_SHADOW_ENABLED:-false}
+      # P3.1: the minutes ledger decides (quote/hold before createVideo; old $ gate off)
+      BILLING_LEDGER_ENFORCE: ${BILLING_LEDGER_ENFORCE:-false}
       # Billing repair job: stale holds, lot expiry, recurring grants, drift check,
       # llm_usage.user_id after 90 days, GDPR hard-delete sweep. Off until the
       # replica set (P6.4), like the shadow.

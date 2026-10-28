@@ -256,6 +256,23 @@ describe('VideoRepository', () => {
       expect(await rowOf(id)).not.toHaveProperty('requestId');
     });
 
+    it('should stamp the billing run id beside the request id (P3.1)', async () => {
+      const id = await seedRow('stamp-run');
+
+      await repo.stampDispatchContext(id, 'user-a', 'req-a', 'run-a');
+
+      expect(await rowOf(id)).toMatchObject({ requestId: 'req-a', billingRunId: 'run-a' });
+    });
+
+    it('should unset an earlier billing run id so another dispatch never settles it', async () => {
+      const id = await seedRow('stamp-run-unset');
+      await repo.stampDispatchContext(id, 'user-a', 'req-a', 'run-a');
+
+      await repo.stampDispatchContext(id, 'user-b', 'req-b');
+
+      expect(await rowOf(id)).not.toHaveProperty('billingRunId');
+    });
+
     it('should not change updatedAt (the stall sweeper reads it as liveness)', async () => {
       const id = await seedRow('stamp-updated-at');
       const before = (await rowOf(id))?.updatedAt as Date;

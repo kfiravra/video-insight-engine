@@ -404,3 +404,71 @@ export class MetadataUnavailableError extends AppError {
     this.reason = reason;
   }
 }
+
+// ─── Minutes gate (billing-roles) ───────────────────────────────────────
+// Thrown by the ledger when BILLING_LEDGER_ENFORCE is on; error-envelope.ts
+// carries the numbers (`needed`, `available`, `nextFreeAt`, `maxMinutes`,
+// `maxConcurrent`) as top-level body fields.
+
+/** The account cannot pay for the video: `needed` minutes, `available` paid minutes. */
+export class InsufficientMinutesError extends AppError {
+  constructor(
+    public readonly needed: number,
+    public readonly available: number,
+    public readonly nextFreeAt: string | null,
+  ) {
+    super('INSUFFICIENT_MINUTES', 402, `This video needs ${needed} minutes; ${available} available`);
+    this.name = 'InsufficientMinutesError';
+  }
+}
+
+/** Longer than any minutes on this account can pay for (paid 180, free 30, or an admin cap). */
+export class VideoTooLongForPlanError extends AppError {
+  constructor(public readonly maxMinutes: number) {
+    super('VIDEO_TOO_LONG_FOR_PLAN', 422, `Videos up to ${maxMinutes} minutes are supported on this account`);
+    this.name = 'VideoTooLongForPlanError';
+  }
+}
+
+export class AccountBlockedError extends AppError {
+  constructor() {
+    super('ACCOUNT_BLOCKED', 403, 'This account cannot start new videos');
+    this.name = 'AccountBlockedError';
+  }
+}
+
+/** `caps.maxConcurrent` runs are already in flight. */
+export class TooManyRunsError extends AppError {
+  constructor(public readonly maxConcurrent: number) {
+    super('TOO_MANY_RUNS', 429, `At most ${maxConcurrent} videos can run at once on this account`);
+    this.name = 'TooManyRunsError';
+  }
+}
+
+/** A hold was requested for a requestId whose run was already settled or released. */
+export class HoldFinalizedError extends ConflictError {
+  constructor() {
+    super('HOLD_FINALIZED', 'This run has already been settled or released');
+    this.name = 'HoldFinalizedError';
+  }
+}
+
+/** A hold already exists under this run id for another user or video (W3) — never ride on someone else's hold. */
+export class HoldConflictError extends ConflictError {
+  constructor() {
+    super('HOLD_CONFLICT', 'This run id is already holding minutes for another video');
+    this.name = 'HoldConflictError';
+  }
+}
+
+/**
+ * createVideo with `serveOnly` (the ledger refused to pay) hit a branch that
+ * would start a run. The submission catches it and throws the ledger's own
+ * refusal instead; it should never reach a client.
+ */
+export class RunNotAllowedError extends AppError {
+  constructor() {
+    super('RUN_NOT_ALLOWED', 409, 'This video would need a new run');
+    this.name = 'RunNotAllowedError';
+  }
+}

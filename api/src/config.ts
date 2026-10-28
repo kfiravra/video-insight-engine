@@ -156,6 +156,11 @@ const envSchema = z.object({
   // on, except under NODE_ENV=test, where route tests must not write billing
   // rows; tests that exercise the shadow inject an enabled service.
   BILLING_SHADOW_ENABLED: z.enum(['true', 'false']).optional(),
+  // P3.1: the minutes ledger decides. On: every submit (web, assistant
+  // generate, playlist items) is quoted and held BEFORE createVideo and refused
+  // with 402/422/403/429; the old dollar gate and the shadow are skipped.
+  // Off: the old gate decides and the ledger only shadows (P1). Flip in P6.5.
+  BILLING_LEDGER_ENFORCE: z.string().default('false').transform((v) => v === 'true'),
   // Billing repair job (P1.6), an in-process interval behind a Redis lock:
   // settle/release stale holds, expire lots, apply recurring grants, check
   // projections against the ledger, drop llm_usage.user_id after 90 days,

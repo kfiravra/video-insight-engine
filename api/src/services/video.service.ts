@@ -6,7 +6,7 @@ import { IdempotencyService } from './idempotency.service.js';
 import type { IDispatchGuard } from './dispatch-guard.service.js';
 import { config } from '../config.js';
 import { extractYoutubeId } from '../utils/youtube.js';
-import { ColdRunForbiddenError, InvalidYouTubeUrlError, VideoNotFoundError, VersionCreationError, InvalidCategoryError, QueuePublishError } from '../utils/errors.js';
+import { ColdRunForbiddenError, InvalidYouTubeUrlError, VideoNotFoundError, VersionCreationError, InvalidCategoryError, QueuePublishError, RunNotAllowedError } from '../utils/errors.js';
 import { buildMetaFromDoc, buildTabsFromDoc } from '../utils/meta-builder.js';
 import { refreshFrameUrls } from '../utils/refresh-frame-urls.js';
 import { parseSourceLanguage } from '../utils/source-language.js';
@@ -23,6 +23,15 @@ export interface CreateVideoOptions {
    * so the downstream pipeline binds the same id no matter which path runs.
    */
   requestId?: string;
+  /** The minutes ledger's run id (P3.1), stamped beside `requestId` on the dispatched row. */
+  billingRunId?: string;
+  /**
+   * P3.1: the ledger refused to pay for a run, so only serve what costs
+   * nothing — the user's own copy, a completed row, or attaching to a live
+   * in-flight run (Q6). Anything that would dispatch throws RunNotAllowedError
+   * before any write.
+   */
+  serveOnly?: boolean;
   /** 1a.7 benchmark flag (admin/eval only): skip the summarizer's media caches. */
   cold?: boolean;
 }
@@ -45,6 +54,7 @@ interface NewVersionInput {
   providers?: ProviderConfig;
   tier: UserTier;
   requestId?: string;
+  billingRunId?: string;
   evalRun: boolean;
   /** Skip the summarizer's response cache (the submission's bypassCache). */
   forceRefresh: boolean;
@@ -116,6 +126,7 @@ export class VideoService {
       providers?: ProviderConfig;
       bypassCache?: boolean;
       requestId?: string;
+      billingRunId?: string;
     },
   ): Promise<{ dispatched: boolean }> {
     // Belt-and-suspenders: even though Step 1's content-addressed upsert
@@ -160,6 +171,7 @@ export class VideoService {
           payload.videoSummaryId,
           payload.userId,
           payload.requestId,
+          payload.billingRunId,
         ),
       ]);
       if (config.USE_QUEUE_PIPELINE) {
@@ -334,7 +346,7 @@ export class VideoService {
         this.logger.warn({ youtubeId: input.youtubeId, error: err }, 'Failed to cleanup old versions');
       });
 
-    const { userId, url, youtubeId, tier, providers, requestId, forceRefresh } = input;
+    const { userId, url, youtubeId, tier, providers, requestId, billingRunId, forceRefresh } = input;
     await this.dispatchPipeline({
       videoSummaryId: row.videoSummaryId,
       youtubeId,
@@ -344,6 +356,7 @@ export class VideoService {
       providers,
       bypassCache: forceRefresh,
       requestId,
+      billingRunId,
     });
 
     return { userVideoId, ...row };
@@ -369,7 +382,10 @@ export class VideoService {
   }
 
   async createVideo(userId: string, url: string, options: CreateVideoOptions) {
-    const { folderId, providers, tier, requestId, cold = false } = options;
+    const { folderId, providers, tier, requestId, billingRunId, cold = false, serveOnly = false } = options;
+    const refuseRun = (): void => {
+      if (serveOnly) throw new RunNotAllowedError();
+    };
     // A cold run measures a whole fresh pipeline, so the response cache must
     // not answer it either: cold implies bypassCache.
     const bypassCache = (options.bypassCache ?? false) || cold;
@@ -389,6 +405,7 @@ export class VideoService {
 
     // Cache bypass creates a new version instead of deleting (for A/B testing prompts)
     if (bypassCache || evalRun) {
+      refuseRun();
       const created = await this.createVersion({
         userId,
         url,
@@ -397,6 +414,7 @@ export class VideoService {
         providers,
         tier,
         requestId,
+        billingRunId,
         evalRun,
         forceRefresh: bypassCache,
         coldMedia: cold,
@@ -440,6 +458,7 @@ export class VideoService {
             'Completed doc has stale pipelineVersion — re-dispatching pipeline',
           );
 
+          refuseRun();
           await this.dispatchPipeline({
             videoSummaryId: summary._id.toString(),
             youtubeId,
@@ -448,6 +467,7 @@ export class VideoService {
             tier,
             providers,
             requestId,
+            billingRunId,
           });
 
           return {
@@ -492,7 +512,9 @@ export class VideoService {
       providers,
       version: 1,
     });
-    const { doc: cached, wasInsert } = await this.videoRepository.upsertCacheByDedupKey({
+    const { doc: cached, wasInsert } = serveOnly
+      ? await this.existingCacheRow(dedupKey)
+      : await this.videoRepository.upsertCacheByDedupKey({
       youtubeId,
       url,
       status: 'pending',
@@ -531,6 +553,7 @@ export class VideoService {
         providers,
         bypassCache,
         requestId,
+        billingRunId,
       });
 
       return {
@@ -561,6 +584,7 @@ export class VideoService {
           'Attached to completed doc with stale pipelineVersion — re-dispatching pipeline',
         );
 
+        refuseRun();
         const staleUserVideo = await this.videoRepository.createUserVideo({
           userId,
           videoSummaryId: cached._id.toString(),
@@ -577,6 +601,7 @@ export class VideoService {
           tier,
           providers,
           requestId,
+          billingRunId,
         });
 
         return {
@@ -615,6 +640,7 @@ export class VideoService {
     }
 
     if (cached.status === 'failed') {
+      refuseRun();
       // Existing row failed — retry the pipeline against the SAME row.
       // Order: userVideo first (so a dispatch error doesn't lose the user's
       // row), then dispatch, then increment retryCount ONLY when we actually
@@ -636,6 +662,7 @@ export class VideoService {
         tier,
         providers,
         requestId,
+        billingRunId,
       });
 
       if (dispatched) {
@@ -671,6 +698,7 @@ export class VideoService {
         'Attaching to in-flight row exceeded stall threshold — re-dispatching',
       );
 
+      refuseRun();
       const userVideo = await this.videoRepository.createUserVideo({
         userId,
         videoSummaryId: cached._id.toString(),
@@ -687,6 +715,7 @@ export class VideoService {
         tier,
         providers,
         requestId,
+        billingRunId,
       });
 
       return {
@@ -720,6 +749,13 @@ export class VideoService {
       cached: false,
       attached: true,
     };
+  }
+
+  /** Serve-only: the shared row must already exist — creating one would mean a run. */
+  private async existingCacheRow(dedupKey: string): Promise<{ doc: VideoSummaryCacheDocument; wasInsert: false }> {
+    const doc = await this.videoRepository.findCacheByDedupKey(dedupKey);
+    if (!doc) throw new RunNotAllowedError();
+    return { doc, wasInsert: false };
   }
 
   async getVideos(

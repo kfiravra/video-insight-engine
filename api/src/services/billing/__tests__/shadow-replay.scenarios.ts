@@ -41,6 +41,8 @@ export interface ReplayExpectation {
   oldDecision: BillingShadowDecision;
   classification: 'agree' | 'policy_delta';
   policy?: PolicyId;
+  /** How many runs of this video may hold minutes (default: not checked). */
+  heldRuns?: number;
 }
 
 export interface ReplayScenario {
@@ -108,6 +110,19 @@ export const REPLAY_SCENARIOS: readonly ReplayScenario[] = [
     account: 'free',
     steps: [...FREE_VIDEO_USED, { kind: 'submit', run: 'b', minutes: 10, outcome: 'created' }],
     expect: [{ run: 'b', path: 'created', oldDecision: RAN, classification: 'policy_delta', policy: 'free-window' }],
+  },
+  {
+    // C1 / Q6: the ledger cannot pay for a run, yet a cached video costs nothing.
+    name: 'free: free video used, then an already-cached video',
+    account: 'free',
+    steps: [...FREE_VIDEO_USED, { kind: 'submit', run: 'b', minutes: 10, outcome: 'cached' }],
+    expect: [{ run: 'b', path: 'cached', oldDecision: SERVED, classification: 'agree' }],
+  },
+  {
+    name: 'free: free video used, then a video another user is running',
+    account: 'free',
+    steps: [...FREE_VIDEO_USED, { kind: 'submit', run: 'b', minutes: 10, outcome: 'attached' }],
+    expect: [{ run: 'b', path: 'attached', oldDecision: SERVED, classification: 'agree' }],
   },
   {
     name: 'free: a 45-minute video with no paid minutes',
@@ -178,13 +193,16 @@ export const REPLAY_SCENARIOS: readonly ReplayScenario[] = [
     expect: [{ run: 'a', path: 'refused', oldDecision: REFUSED, classification: 'agree' }],
   },
   {
-    name: 'retry: the same requestId resubmitted while its run is in flight',
+    // Holds are keyed on a server id per submission (P3.1), so a resubmit can
+    // no longer reuse a run: an HTTP retry of the same submit meets the
+    // idempotency gate (duplicate) and must not hold a second time.
+    name: 'retry: the same submit sent twice (an HTTP retry) keeps one hold',
     account: 'free',
     steps: [
       { kind: 'submit', run: 'a', minutes: 10, outcome: 'created' },
-      { kind: 'submit', run: 'a', minutes: 10, outcome: 'created', bypassCache: true },
+      { kind: 'submit', run: 'a', minutes: 10, outcome: 'created' },
     ],
-    expect: [{ run: 'a', path: 'retry', oldDecision: RAN, classification: 'agree' }],
+    expect: [{ run: 'a', path: 'created', oldDecision: RAN, classification: 'agree', heldRuns: 1 }],
   },
   {
     name: 'retry: translation sends "completed" a second time',

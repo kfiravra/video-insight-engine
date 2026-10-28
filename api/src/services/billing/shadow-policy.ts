@@ -1,12 +1,13 @@
 import { FREE_VIDEO } from '@vie/types';
-import { MetadataUnavailableError } from '../../utils/errors.js';
 import {
   AccountBlockedError,
+  HoldConflictError,
   HoldFinalizedError,
   InsufficientMinutesError,
+  MetadataUnavailableError,
   TooManyRunsError,
   VideoTooLongForPlanError,
-} from './billing-errors.js';
+} from '../../utils/errors.js';
 import type { BillingShadowDecision, BillingShadowPath } from '@vie/types';
 import type { AllocationRejection } from './allocation.js';
 
@@ -25,8 +26,24 @@ export type ShadowReason =
   | 'too_many_runs'
   | 'metadata_unavailable'
   | 'hold_finalized'
+  | 'hold_conflict'
   | 'submit_error'
   | 'shadow_error';
+
+/**
+ * Refusals that still let a video be served when serving it costs nothing —
+ * already in the library, a completed row, or a live run to attach to (Q6).
+ * Only a run needs minutes; a blocked account is refused outright. Read by
+ * the enforcement path (serve-only createVideo) and the shadow alike.
+ */
+export const SERVES_WITHOUT_RUN: ReadonlySet<string> = new Set<ShadowReason>([
+  'free_window_used',
+  'needs_paid_minutes',
+  'free_disabled',
+  'too_long',
+  'too_many_runs',
+  'metadata_unavailable',
+]);
 
 export interface ShadowFacts {
   path: BillingShadowPath;
@@ -129,6 +146,7 @@ export function rejectionReason(rejection: AllocationRejection, minutes: number)
 export function errorReason(err: unknown): ShadowReason | null {
   if (err instanceof MetadataUnavailableError) return 'metadata_unavailable';
   if (err instanceof HoldFinalizedError) return 'hold_finalized';
+  if (err instanceof HoldConflictError) return 'hold_conflict';
   if (err instanceof AccountBlockedError) return 'blocked';
   if (err instanceof TooManyRunsError) return 'too_many_runs';
   if (err instanceof VideoTooLongForPlanError) return 'too_long';
@@ -137,4 +155,10 @@ export function errorReason(err: unknown): ShadowReason | null {
     return err.needed > FREE_VIDEO.maxVideoMinutes ? 'needs_paid_minutes' : 'free_disabled';
   }
   return null;
+}
+
+/** True when the ledger's refusal `err` still lets a cached / attachable video be served (Q6). */
+export function refusalServesWithoutRun(err: unknown): boolean {
+  const reason = errorReason(err);
+  return reason !== null && SERVES_WITHOUT_RUN.has(reason);
 }

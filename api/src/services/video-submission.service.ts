@@ -1,15 +1,18 @@
+import { randomUUID } from 'node:crypto';
 import { FastifyBaseLogger } from 'fastify';
 import { VideoService } from './video.service.js';
 import { CostMonitorService, type CostReservation } from './cost-monitor.service.js';
 import { IdempotencyService } from './idempotency.service.js';
 import { VideoRepository } from '../repositories/video.repository.js';
 import { extractYoutubeId } from '../utils/youtube.js';
-import { DailyLimitReachedError } from '../utils/errors.js';
+import { DailyLimitReachedError, RunNotAllowedError } from '../utils/errors.js';
 import { submitOutcome } from './billing/billing-shadow.service.js';
+import { refusalServesWithoutRun } from './billing/shadow-policy.js';
 import type { ProviderConfig } from './summarizer-client.js';
 import type { UserTier } from '@vie/types';
 import type { BillingShadowService } from './billing/billing-shadow.service.js';
 import type { GateSubmission } from './billing/billing-gate.js';
+import type { LedgerEnforcement } from './billing/ledger-enforcement.js';
 
 /** Result of `VideoService.createVideo` — inferred so the two stay in sync. */
 export type CreateVideoResult = Awaited<ReturnType<VideoService['createVideo']>>;
@@ -58,15 +61,33 @@ type IdempotencyGateResult =
   | { kind: 'in_flight' };
 
 /**
- * Full video-submission flow: idempotency gate → cost reservation (daily cap)
- * → createVideo → reservation refund/hash unwind on failure. Extracted from
- * the POST /api/videos handler so EVERY submission path — user-facing and the
- * assistant's internal `/internal/assistant/generate` — runs the same gates.
- * Before this service existed, the internal route called `createVideo`
- * directly and bypassed both the daily cap and the reservation unwind.
+ * Where a submission stands with the gate that decides it. `run` is the
+ * minutes ledger's run (its `requestId` is a server id generated per
+ * submission, P3.1 — never the client's X-Request-ID); `reservation` belongs
+ * to the old dollar gate (P3.2 deletes it).
+ */
+interface SubmitBilling {
+  run: GateSubmission | null;
+  reservation: CostReservation | null;
+  /**
+   * The ledger refused to pay for a run, but the refusal still lets a cached
+   * or attachable video through for free (Q6): createVideo runs serve-only
+   * and this error is thrown only if serving would need a run.
+   */
+  servingOnly?: unknown;
+}
+
+/**
+ * Full video-submission flow: idempotency gate → billing admission → createVideo
+ * → give-back / hash unwind on failure. Extracted from the POST /api/videos
+ * handler so EVERY submission path — user-facing and the assistant's internal
+ * `/internal/assistant/generate` — runs the same gates.
  *
- * Throws `DailyLimitReachedError` (from `reserveUserCost`) and whatever
- * `createVideo` throws; the caller's error handler maps them to HTTP.
+ * Admission: with `billingEnforcement` (BILLING_LEDGER_ENFORCE) the minutes
+ * ledger quotes and holds before createVideo and throws its refusal
+ * (402/422/403/429, METADATA_UNAVAILABLE); cached / attached / failed submits
+ * give the hold back before returning. Without it the old dollar gate decides
+ * (`DailyLimitReachedError`) and the ledger only shadows.
  */
 export class VideoSubmissionService {
   constructor(
@@ -77,6 +98,8 @@ export class VideoSubmissionService {
     private readonly logger: FastifyBaseLogger,
     // Shadow minutes ledger (P1.7): told about every decision, never asked.
     private readonly billingShadow?: BillingShadowService,
+    // P3.1: present when BILLING_LEDGER_ENFORCE is on — the ledger decides.
+    private readonly billingEnforcement?: LedgerEnforcement,
   ) {}
 
   async submit(input: SubmitVideoInput): Promise<SubmitVideoResult> {
@@ -84,71 +107,118 @@ export class VideoSubmissionService {
     if (gate.kind === 'duplicate') return { outcome: 'duplicate', video: gate.video };
     if (gate.kind === 'in_flight') return { outcome: 'in_flight' };
     const { hash } = gate;
-    const shadow = this.shadowSubmission(input);
 
-    const reservation = await this.reserve(input, hash, shadow);
-    if (shadow) this.billingShadow?.submitAdmitted(shadow);
+    const billing = await this.admit(input, hash);
+    const result = await this.create(input, hash, billing);
+    await this.resolveBilling(input, billing, result);
+    await this.settleHash(hash, result, input.requestId);
+    return { outcome: 'created', result };
+  }
 
-    let result: CreateVideoResult;
+  /** Let the deciding gate admit the submit; a refusal unwinds the hash and propagates. */
+  private async admit(input: SubmitVideoInput, hash: string | null): Promise<SubmitBilling> {
+    const run = this.billingRun(input);
     try {
-      result = await this.videoService.createVideo(input.userId, input.url, {
+      if (this.billingEnforcement) return await this.admitOnLedger(run);
+      const reservation = await this.reserveDollars(input, run);
+      if (run) this.billingShadow?.submitAdmitted(run);
+      return { run, reservation };
+    } catch (err) {
+      await this.unwindHash(hash, input.requestId);
+      throw err;
+    }
+  }
+
+  /** Enforcing: hold, or — for a refusal a free serve could still satisfy — go on serve-only. */
+  private async admitOnLedger(run: GateSubmission | null): Promise<SubmitBilling> {
+    if (!run || !this.billingEnforcement) return { run, reservation: null };
+    try {
+      await this.billingEnforcement.admit(run);
+      return { run, reservation: null };
+    } catch (err) {
+      if (!refusalServesWithoutRun(err)) throw err;
+      return { run, reservation: null, servingOnly: err };
+    }
+  }
+
+  private async create(input: SubmitVideoInput, hash: string | null, billing: SubmitBilling): Promise<CreateVideoResult> {
+    const serveOnly = billing.servingOnly !== undefined;
+    try {
+      return await this.videoService.createVideo(input.userId, input.url, {
         folderId: input.folderId,
         bypassCache: input.bypassCache,
         cold: input.cold,
         providers: input.providers,
         tier: input.tier,
         requestId: input.requestId,
+        billingRunId: billing.run?.requestId,
+        ...(serveOnly && { serveOnly }),
       });
     } catch (err) {
-      if (shadow) this.billingShadow?.submitFailed(shadow.requestId);
-      await this.costMonitorService.refundReservation(reservation);
+      if (!serveOnly) await this.giveBack(billing);
       await this.unwindHash(hash, input.requestId);
-      throw err;
+      // Serving would have needed a run the ledger refused: surface that refusal.
+      throw err instanceof RunNotAllowedError ? billing.servingOnly : err;
     }
-    if (shadow) this.billingShadow?.submitResolved(shadow.requestId, submitOutcome(result));
+  }
 
-    // Cached videos run no pipeline, so no llm_usage rows will arrive — refund
-    // now. Attached videos (cross-user single-flight) behave identically: this
-    // caller didn't trigger work. Swallow refund errors — the video is already
-    // created and the next reconcile (terminal status, or
-    // `POST /internal/reconcile-costs`) heals a stuck reservation.
-    if (result.cached || result.attached) {
-      await this.costMonitorService.refundReservation(reservation).catch((err) => {
-        this.logger.warn(
-          { err, userId: input.userId, requestId: input.requestId },
-          'cached/attached-video refund failed; the next reconcile will recover',
-        );
-      });
+  /** createVideo threw: give back what the gate took. */
+  private async giveBack(billing: SubmitBilling): Promise<void> {
+    const { run, reservation } = billing;
+    if (this.billingEnforcement) {
+      if (run) await this.billingEnforcement.submitFailed(run.requestId);
+      return;
     }
+    if (run) this.billingShadow?.submitFailed(run.requestId);
+    await this.costMonitorService.refundReservation(reservation);
+  }
 
-    await this.settleHash(hash, result, input.requestId);
-    return { outcome: 'created', result };
+  /** Cached and attached videos run no pipeline for this caller (Q6): their minutes / reservation go back now. */
+  private async resolveBilling(input: SubmitVideoInput, billing: SubmitBilling, result: CreateVideoResult): Promise<void> {
+    const { run, reservation } = billing;
+    const outcome = submitOutcome(result);
+    if (this.billingEnforcement) {
+      // A serve-only submit took no hold, so there is nothing to give back.
+      if (run && billing.servingOnly === undefined) await this.billingEnforcement.submitResolved(run.requestId, outcome);
+      return;
+    }
+    if (run) this.billingShadow?.submitResolved(run.requestId, outcome);
+    // Swallow refund errors — the video is already created and the next
+    // reconcile (terminal status, or `POST /internal/reconcile-costs`) heals
+    // a stuck reservation.
+    if (outcome === 'created') return;
+    await this.costMonitorService.refundReservation(reservation).catch((err) => {
+      this.logger.warn(
+        { err, userId: input.userId, requestId: input.requestId },
+        'cached/attached-video refund failed; the next reconcile will recover',
+      );
+    });
   }
 
   /**
-   * Atomic reservation — increment-then-check serializes concurrent starts
-   * on the per-user/day doc. Throws DailyLimitReachedError past the tier
-   * cap. The reservation is null for unlimited tiers.
+   * The old dollar gate's atomic reservation — increment-then-check
+   * serializes concurrent starts on the per-user/day doc. Throws
+   * DailyLimitReachedError past the tier cap. Null for unlimited tiers.
    */
-  private async reserve(
-    input: SubmitVideoInput,
-    hash: string | null,
-    shadow: GateSubmission | null,
-  ): Promise<CostReservation | null> {
+  private async reserveDollars(input: SubmitVideoInput, run: GateSubmission | null): Promise<CostReservation | null> {
     try {
       return await this.costMonitorService.reserveUserCost(input.userId, input.tier);
     } catch (err) {
-      if (shadow && err instanceof DailyLimitReachedError) this.billingShadow?.submitRefused(shadow);
-      await this.unwindHash(hash, input.requestId);
+      if (run && err instanceof DailyLimitReachedError) this.billingShadow?.submitRefused(run);
       throw err;
     }
   }
 
-  /** The shadow ledger's view of this submit; null without a hook, a requestId or a video id. */
-  private shadowSubmission(input: SubmitVideoInput): GateSubmission | null {
+  /**
+   * The ledger's run for this submit, keyed by a fresh server id (P3.1): a
+   * client reusing X-Request-ID can never collide with a finished run, and an
+   * Idempotency-Key replay never reaches here. Null without a video id
+   * (createVideo then rejects the URL).
+   */
+  private billingRun(input: SubmitVideoInput): GateSubmission | null {
     const youtubeId = extractYoutubeId(input.url);
-    if (!this.billingShadow || !input.requestId || !youtubeId) return null;
-    return { requestId: input.requestId, userId: input.userId, youtubeId };
+    if (!youtubeId) return null;
+    return { requestId: randomUUID(), userId: input.userId, youtubeId };
   }
 
   /**

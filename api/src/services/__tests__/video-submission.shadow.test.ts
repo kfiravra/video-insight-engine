@@ -47,6 +47,11 @@ describe('VideoSubmissionService + shadow ledger', () => {
       mockLogger as unknown as FastifyBaseLogger,
       shadow,
     );
+  /** The ledger run id the submit generated (it reaches createVideo as `billingRunId`). */
+  const runIdOf = (call = 0): string => videoService.createVideo.mock.calls[call][2].billingRunId;
+  const onlyRow = async () => getTestDb().collection('billingShadow').findOne({});
+  const withoutRunId = (calls: unknown[][]) =>
+    calls.map(([userId, url, options]) => [userId, url, { ...(options as object), billingRunId: undefined }]);
   const spyShadow = () => {
     const spy = { submitAdmitted: vi.fn(), submitRefused: vi.fn(), submitResolved: vi.fn(), submitFailed: vi.fn() };
     return { spy, shadow: spy as unknown as BillingShadowService };
@@ -85,8 +90,9 @@ describe('VideoSubmissionService + shadow ledger', () => {
       await h.shadow.drain();
 
       expect(on).toEqual(off);
-      expect([costMonitor.reserveUserCost.mock.calls, videoService.createVideo.mock.calls]).toEqual(offCalls);
-      expect((await h.rowOf('req-submit-1'))?.path).toBe('created');
+      expect(costMonitor.reserveUserCost.mock.calls).toEqual(offCalls[0]);
+      expect(withoutRunId(videoService.createVideo.mock.calls)).toEqual(withoutRunId(offCalls[1]));
+      expect((await h.rowOf(runIdOf()))?.path).toBe('created');
     });
 
     it('should not await the shadow: a hanging pre-flight never delays the response', async () => {
@@ -108,7 +114,7 @@ describe('VideoSubmissionService + shadow ledger', () => {
 
       expect(result).toEqual({ outcome: 'created', result: createdResult() });
       expect(costMonitor.refundReservation).not.toHaveBeenCalled();
-      expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ key: 'req-submit-1' }), 'billing shadow step failed');
+      expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ key: runIdOf() }), 'billing shadow step failed');
     });
 
     it('should rethrow the old gate\'s refusal unchanged', async () => {
@@ -118,7 +124,7 @@ describe('VideoSubmissionService + shadow ledger', () => {
 
       await expect(serviceWith(h.shadow).submit(input())).rejects.toBe(refusal);
       await h.shadow.drain();
-      expect((await h.rowOf('req-submit-1'))?.path).toBe('refused');
+      expect((await onlyRow())?.path).toBe('refused');
     });
   });
 
@@ -129,8 +135,8 @@ describe('VideoSubmissionService + shadow ledger', () => {
 
       await serviceWith(shadow).submit(input());
 
-      expect(spy.submitAdmitted).toHaveBeenCalledWith({ requestId: 'req-submit-1', userId, youtubeId: 'dQw4w9WgXcQ' });
-      expect(spy.submitResolved).toHaveBeenCalledWith('req-submit-1', 'cached');
+      expect(spy.submitAdmitted).toHaveBeenCalledWith({ requestId: runIdOf(), userId, youtubeId: 'dQw4w9WgXcQ' });
+      expect(spy.submitResolved).toHaveBeenCalledWith(runIdOf(), 'cached');
     });
 
     it('should report an attached outcome', async () => {
@@ -139,7 +145,7 @@ describe('VideoSubmissionService + shadow ledger', () => {
 
       await serviceWith(shadow).submit(input());
 
-      expect(spy.submitResolved).toHaveBeenCalledWith('req-submit-1', 'attached');
+      expect(spy.submitResolved).toHaveBeenCalledWith(runIdOf(), 'attached');
     });
 
     it('should report a refusal by the daily cap and no admission', async () => {
@@ -158,7 +164,7 @@ describe('VideoSubmissionService + shadow ledger', () => {
 
       await expect(serviceWith(shadow).submit(input())).rejects.toThrow('dispatch failed');
 
-      expect(spy.submitFailed).toHaveBeenCalledWith('req-submit-1');
+      expect(spy.submitFailed).toHaveBeenCalledWith(runIdOf());
     });
 
     it('should report nothing for a duplicate submission', async () => {
@@ -170,12 +176,23 @@ describe('VideoSubmissionService + shadow ledger', () => {
       expect(Object.values(spy).every((fn) => fn.mock.calls.length === 0)).toBe(true);
     });
 
-    it('should report nothing without a requestId', async () => {
+    it('should key the run on a fresh server id, never the client X-Request-ID (P3.1)', async () => {
+      const { spy, shadow } = spyShadow();
+
+      await serviceWith(shadow).submit(input());
+      await serviceWith(shadow).submit(input({ url: 'https://www.youtube.com/watch?v=aaaaaaaaaaa' }));
+
+      const [first, second] = spy.submitAdmitted.mock.calls.map(([submission]) => submission.requestId);
+      expect(new Set([first, second, 'req-submit-1']).size).toBe(3);
+      expect(videoService.createVideo.mock.calls.map((call) => call[2].requestId)).toEqual(['req-submit-1', 'req-submit-1']);
+    });
+
+    it('should still shadow a submit that has no client requestId', async () => {
       const { spy, shadow } = spyShadow();
 
       await serviceWith(shadow).submit(input({ requestId: undefined }));
 
-      expect(spy.submitAdmitted).not.toHaveBeenCalled();
+      expect(spy.submitAdmitted).toHaveBeenCalledTimes(1);
     });
   });
 });

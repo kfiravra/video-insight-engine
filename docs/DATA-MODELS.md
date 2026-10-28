@@ -579,6 +579,9 @@ One row per video **version** (`version`, `isLatest` below); the served row is s
                                     // field the new dispatch lacks is $unset; no updatedAt bump. Read by
                                     // pipeline_runner to attribute llm_usage on SSE-driven runs
                                     // (llm-cost-model.md). $unset by the GDPR cascade (GDPR.md).
+  billingRunId: string | absent,    // the minutes ledger's run id for that dispatch (server UUID per
+                                    // submission, P3.1): the terminal status settles / releases the
+                                    // hold keyed by it; same $unset rules as requestId (vie-api only)
   degraded: true | absent,          // admin run badge: meta.degraded (a failed extraction group, a
                                     // dropped chunked batch, or critical coverage), OR a failed frame
                                     // download (set at the run's end; no user-facing banner)
@@ -942,7 +945,9 @@ the window; `holds` = runs with a `hold` and neither `debit` nor `release`.
     credit: { minutesAvailable: number }                  // Σ lots (expired-unswept included)
   },
   holds: [{                            // runs in flight
-    requestId: string, userId: ObjectId, youtubeId: string | null,
+    requestId: string,                 // the run id (server UUID per submission, P3.1 — not the
+                                       // client X-Request-ID; holds from before P3.1 used it)
+    userId: ObjectId, youtubeId: string | null,
     durationSec: number, minutes: number,
     split: { free, plan, credit: number, lots: [{ lotId: ObjectId, minutes }] },
     freeVideoAt: Date | null,          // the timestamp it added to recentFreeVideoAt
@@ -1036,13 +1041,16 @@ Applied by the billing repair job on `nextRunAt`; deletion is soft.
 
 One row per request while the old dollar gate still decides (shadow mode):
 the old decision next to the ledger's. Written by `BillingShadowService`
-(`BILLING_SHADOW_ENABLED`) off the request path, one promise chain per
-requestId: `POST /api/videos`, the assistant's generate route and every
-playlist item (each item gets its own requestId, stamped by its dispatch)
-quote + hold after the old reservation; cached / attached / a createVideo
-error release; the terminal `POST /internal/status` maps `videoSummaryId` →
-the cache row's stamped `requestId` and settles (completed, `costUsd` = Σ
-`llm_usage.cost_usd` of that `request_id`) or releases (failed). The row is
+(`BILLING_SHADOW_ENABLED`, off while `BILLING_LEDGER_ENFORCE` is on) off the
+request path, one promise chain per run id (`requestId` here is the ledger's
+server-generated run id, P3.1): `POST /api/videos`, the assistant's generate
+route and every playlist item quote + hold after the old reservation; cached /
+attached / a createVideo error release; the terminal `POST /internal/status`
+maps `videoSummaryId` → the cache row's stamped `billingRunId` (falling back to
+`requestId` on rows stamped before P3.1) and settles (completed, `costUsd` = Σ
+`llm_usage.cost_usd` of the stamped `requestId`) or releases (failed). With
+enforcement on the same transitions happen on the request path through
+`LedgerEnforcement` and no shadow row is written. The row is
 rewritten on every transition. `classification` comes from
 `api/src/services/billing/shadow-policy.ts`: `agree` when admitted/charged
 match, `policy_delta` when a row of its `POLICY_DELTAS` table (each with the

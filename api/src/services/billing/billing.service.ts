@@ -1,8 +1,8 @@
 import { FastifyBaseLogger } from 'fastify';
-import { ValidationError } from '../../utils/errors.js';
+import { HoldConflictError, HoldFinalizedError, ValidationError } from '../../utils/errors.js';
 import { allocate } from './allocation.js';
 import { BillingAdmin } from './billing-admin.js';
-import { HoldFinalizedError, rejectionToError } from './billing-errors.js';
+import { rejectionToError } from './billing-errors.js';
 import { BillingUnits } from './billing-unit.js';
 import { applyHold, applyRelease, applySettle, findHold } from './hold-ops.js';
 import { chargeMinutes } from './minutes.js';
@@ -32,6 +32,17 @@ export interface Quote {
   minutes: number;
   decision: AllocationResult;
   quotedAt: Date;
+}
+
+/** A playlist priced as a whole, items decided in order as if held one after another. */
+export interface PlaylistQuote {
+  /** Σ minutes of every item. */
+  neededMinutes: number;
+  /** Paid minutes (plan + spendable credits) before the first item. */
+  availableMinutes: number;
+  freeVideoAvailable: boolean;
+  nextFreeAt: string | null;
+  decisions: AllocationResult[];
 }
 
 export interface CostOptions {
@@ -101,6 +112,33 @@ export class BillingService {
   }
 
   /**
+   * Price several videos at once (a playlist): each is decided on the account
+   * as the earlier ones would leave it, in memory only — nothing is held.
+   */
+  async quoteMany(userId: string, durationsSec: number[]): Promise<PlaylistQuote> {
+    const draft = await this.units.read(userId);
+    const before = toUsageSummary(draft.account, draft.lots, draft.now);
+    const ownerId = draft.original.ownerId;
+    let neededMinutes = 0;
+    const decisions = durationsSec.map((durationSec, i) => {
+      const minutes = chargeMinutes(durationSec);
+      neededMinutes += minutes;
+      const decision = this.allocateFor(draft, minutes);
+      if (decision.ok) {
+        applyHold(draft, { requestId: `quote-${i}`, userId: ownerId, youtubeId: null, durationSec, minutes }, decision.split);
+      }
+      return decision;
+    });
+    return {
+      neededMinutes,
+      availableMinutes: before.planMinutes.remaining + before.credits.available,
+      freeVideoAvailable: before.free.available,
+      nextFreeAt: before.free.nextFreeAt,
+      decisions,
+    };
+  }
+
+  /**
    * Take the quoted minutes out of the account for run `requestId`, deciding
    * again on the account's current state. One hold per requestId: a second
    * call returns the open hold. Throws InsufficientMinutesError,
@@ -108,12 +146,13 @@ export class BillingService {
    * HoldFinalizedError when the run was already settled or released.
    */
   async hold(requestId: string, quote: Quote): Promise<HoldView> {
-    const existing = await this.openHold(requestId);
+    const existing = await this.openHoldFor(requestId, quote);
     if (existing) return existing;
 
     const minutes = chargeMinutes(quote.durationSec);
     const outcome = await this.units.write(quote.userId, async ({ draft, session }) => {
       const open = findHold(draft, requestId);
+      if (open && open.youtubeId !== quote.youtubeId) throw new HoldConflictError();
       if (open) return open;
       const prior = await this.repo.findLedgerBySourceRef(requestId, session);
       if (prior.length > 0) throw new HoldFinalizedError();
@@ -132,6 +171,17 @@ export class BillingService {
     const held = await this.repo.findAccountByHold(requestId);
     const hold = held?.holds.find((candidate) => candidate.requestId === requestId);
     return hold ? toHoldView(hold) : null;
+  }
+
+  /**
+   * The open hold of run `requestId` when it is this user's hold for this
+   * video; HoldConflictError when the id is holding for anyone or anything
+   * else (W3) — a repeated id never rides on another run's minutes.
+   */
+  async openHoldFor(requestId: string, run: { userId: string; youtubeId: string }): Promise<HoldView | null> {
+    const hold = await this.openHold(requestId);
+    if (hold && (hold.userId !== run.userId || hold.youtubeId !== run.youtubeId)) throw new HoldConflictError();
+    return hold;
   }
 
   /** Turn the hold into debits. Idempotent: a second completion is `already_debited`. */

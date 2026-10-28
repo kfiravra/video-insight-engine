@@ -68,6 +68,7 @@ export async function internalAssistantRoutes(fastify: FastifyInstance): Promise
     videoRepository,
     fastify.log,
     fastify.container.billingShadowService,
+    fastify.container.billingEnforcement ?? undefined,
   );
 
   // GET /internal/assistant/folders

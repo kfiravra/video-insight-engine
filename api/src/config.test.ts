@@ -223,4 +223,16 @@ describe('config env validation', () => {
       await expect(loadConfig({ BILLING_HOLD_MAX_AGE_HOURS: '0' })).rejects.toThrow(/BILLING_HOLD_MAX_AGE_HOURS/);
     });
   });
+
+  describe('BILLING_LEDGER_ENFORCE', () => {
+    it('should default to off, in production too', async () => {
+      expect((await loadConfig({})).config.BILLING_LEDGER_ENFORCE).toBe(false);
+      expect((await loadConfig({ NODE_ENV: 'production' })).config.BILLING_LEDGER_ENFORCE).toBe(false);
+    });
+
+    it('should turn on only for exactly true', async () => {
+      expect((await loadConfig({ BILLING_LEDGER_ENFORCE: 'true' })).config.BILLING_LEDGER_ENFORCE).toBe(true);
+      expect((await loadConfig({ BILLING_LEDGER_ENFORCE: 'yes' })).config.BILLING_LEDGER_ENFORCE).toBe(false);
+    });
+  });
 });

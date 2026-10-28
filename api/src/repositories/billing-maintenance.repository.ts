@@ -9,6 +9,8 @@ import type {
 export interface RunState {
   status: 'pending' | 'processing' | 'completed' | 'failed';
   updatedAt: Date;
+  /** The dispatch's request id — the key of the run's llm_usage rows. */
+  requestId?: string;
 }
 
 /**
@@ -20,7 +22,7 @@ export class BillingMaintenanceRepository {
   private readonly accounts: Collection<BillingAccountDocument>;
   private readonly lots: Collection<CreditLotDocument>;
   private readonly recurringGrants: Collection<RecurringGrantDocument>;
-  private readonly videoCache: Collection<{ _id: ObjectId; youtubeId: string; requestId?: string } & RunState>;
+  private readonly videoCache: Collection<{ _id: ObjectId; youtubeId: string; billingRunId?: string } & RunState>;
 
   constructor(db: Db) {
     this.accounts = db.collection('billingAccounts');
@@ -36,11 +38,15 @@ export class BillingMaintenanceRepository {
 
   /**
    * The run a hold paid for: the version of `youtubeId` whose dispatch stamp
-   * is `requestId` (read-only). Null when no dispatch stamped it — never
+   * names `runId` — as `billingRunId` (P3.1) or, for holds from before it, as
+   * `requestId` (read-only). Null when no dispatch stamped it — never
    * dispatched, the guard was held, or a later dispatch overwrote the stamp.
    */
-  async findRun(youtubeId: string, requestId: string): Promise<RunState | null> {
-    return this.videoCache.findOne({ youtubeId, requestId }, { projection: { _id: 0, status: 1, updatedAt: 1 } });
+  async findRun(youtubeId: string, runId: string): Promise<RunState | null> {
+    return this.videoCache.findOne(
+      { youtubeId, $or: [{ billingRunId: runId }, { requestId: runId }] },
+      { projection: { _id: 0, status: 1, updatedAt: 1, requestId: 1 } },
+    );
   }
 
   /** Accounts with an open lot whose expiry has passed. */

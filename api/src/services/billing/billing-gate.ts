@@ -51,8 +51,9 @@ export class BillingGate {
    */
   async admit(submission: GateSubmission): Promise<Admission> {
     const quote = await this.quote(submission);
-    // A repeated requestId keeps its open hold; re-deciding would count the hold against itself.
-    const open = await this.billing.openHold(submission.requestId);
+    // A repeated run id keeps its open hold (re-deciding would count the hold
+    // against itself) — but only for the same user and video (W3).
+    const open = await this.billing.openHoldFor(submission.requestId, submission);
     if (open) return { admitted: true, quote, hold: open };
     const { decision } = quote;
     if (!decision.ok) return { admitted: false, quote, rejection: decision };

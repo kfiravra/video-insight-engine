@@ -401,7 +401,7 @@ export class UserDeletionService {
   private async clearVideoCacheDispatchContext(userId: string): Promise<number> {
     const result = await this.db
       .collection('videoSummaryCache')
-      .updateMany({ userId }, { $unset: { userId: '', requestId: '' } });
+      .updateMany({ userId }, { $unset: { userId: '', requestId: '', billingRunId: '' } });
     return result.modifiedCount;
   }
 

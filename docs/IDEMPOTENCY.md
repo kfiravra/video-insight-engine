@@ -200,14 +200,39 @@ acked as `skip_locked`.
 
 ## Cost protection
 
-The gate runs **before** `costMonitorService.reserveUserCost()`. A duplicate hit:
+The gate runs **before** billing (`costMonitorService.reserveUserCost()`, or the minutes ledger's quote + hold when `BILLING_LEDGER_ENFORCE` is on). A duplicate hit:
 
-- Does NOT reserve cost (`reserveUserCost` not called).
+- Does NOT reserve cost or hold minutes.
 - Does NOT enqueue a job (`queuePublisher.publishVideoJob` not called).
 - Does NOT trigger HTTP summarization (`summarizerClient.triggerSummarization` not called).
 - Returns instantly from a single Mongo read.
 
 This is enforced by integration tests in `api/src/routes/videos.routes.test.ts`.
+
+## Minutes-ledger holds
+
+The minutes ledger (`api/src/services/billing/`) is idempotent on its own
+keys, so a submission takes at most one hold however it is retried:
+
+- **The run id is the server's.** `VideoSubmissionService` generates a fresh
+  `billingRunId` (UUID) per submission that passes the request gate above —
+  never the client's `X-Request-ID`, which a client may reuse. The hold, the
+  dispatch stamp (`videoSummaryCache.billingRunId`, beside `requestId`) and the
+  settle all use it; `requestId` stays the client / Fastify id for logs and is
+  what the summarizer writes on `llm_usage.request_id`, so a settle sums the
+  run's `cost_usd` by the stamped `requestId`. Each playlist item gets its own
+  run id (used as its dispatch `requestId` too).
+- **An Idempotency-Key replay or an HTTP retry holds nothing:** it returns
+  `duplicate` / `in_flight` from the request gate before billing runs.
+- **Ledger keys** (unique `ledgerEntries.idempotencyKey`):
+  `hold:<runId>:free|plan|lot:<lotId>`, `debit:<runId>:…` (a second
+  "completed" — translation — is a no-op), `release:<runId>:…`,
+  `release-expire:<runId>:…`. A hold for a run id that already settled or
+  released is refused (`HOLD_FINALIZED`), and an open hold is only ever
+  returned for the same user and video (`HOLD_CONFLICT` otherwise) — both
+  unreachable from a client now that the id is the server's.
+- **Worker retries** re-run the same dispatch, so the same run id; one hold,
+  one debit.
 
 ## DoS bound
 

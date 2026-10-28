@@ -1,5 +1,5 @@
 import { ObjectId } from 'mongodb';
-import { classifyShadow, errorReason, rejectionReason } from './shadow-policy.js';
+import { SERVES_WITHOUT_RUN, classifyShadow, errorReason, rejectionReason } from './shadow-policy.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { BillingShadowDecision, BillingShadowPath } from '@vie/types';
 import type { BillingGate, GateSubmission } from './billing-gate.js';
@@ -28,9 +28,20 @@ export function submitOutcome(result: { cached?: boolean; attached?: boolean }):
   return 'created';
 }
 
-/** The cache row's dispatch stamp names the run (P0 B2): terminal status → requestId. */
+/**
+ * The cache row's dispatch stamp names the run: `billingRunId` keys its hold
+ * (P3.1), `requestId` its llm_usage rows (P0 B2). Rows stamped before P3.1
+ * carry only `requestId`, which then keyed the hold too.
+ */
 export interface DispatchStampReader {
-  findCacheById(videoSummaryId: string): Promise<{ requestId?: string } | null>;
+  findCacheById(videoSummaryId: string): Promise<{ requestId?: string; billingRunId?: string } | null>;
+}
+
+/** The hold key and the llm_usage key of the run a terminal status is about; null when nothing was stamped. */
+export function stampedRun(stamp: { requestId?: string; billingRunId?: string } | null): { runId: string; costRequestId: string } | null {
+  const runId = stamp?.billingRunId ?? stamp?.requestId;
+  if (!runId) return null;
+  return { runId, costRequestId: stamp?.requestId ?? runId };
 }
 
 export interface BillingShadowDeps {
@@ -74,11 +85,10 @@ export class BillingShadowService {
   /** Terminal pipeline status: completed → settle with the run's $, failed → release. */
   runFinished(videoSummaryId: string, status: 'completed' | 'failed'): void {
     this.schedule(`video:${videoSummaryId}`, 'stamp', async () => {
-      const stamp = await this.deps.dispatchStamps.findCacheById(videoSummaryId);
-      const requestId = stamp?.requestId;
-      if (!requestId) return;
+      const run = stampedRun(await this.deps.dispatchStamps.findCacheById(videoSummaryId));
+      if (!run) return;
       // On the run's own chain, so it waits for a hold still in flight.
-      this.schedule(requestId, status, () => this.recordTerminal(requestId, status));
+      this.schedule(run.runId, status, () => this.recordTerminal(run.runId, status, run.costRequestId));
     });
   }
 
@@ -131,6 +141,7 @@ export class BillingShadowService {
     const outcome = row.newDecision.admitted ? await this.deps.billing.release(requestId, why) : null;
     const newDecision: ShadowNewDecision = {
       ...row.newDecision,
+      ...(why !== 'submit_error' && this.servedFree(row.newDecision) && { admitted: true }),
       charged: outcome?.status === 'already_debited',
       ...(why === 'submit_error' && { reason: 'submit_error' }),
     };
@@ -138,14 +149,14 @@ export class BillingShadowService {
     await this.writeRow(this.submissionOf(row), path, { admitted: true, charged: false }, newDecision);
   }
 
-  private async recordTerminal(requestId: string, status: 'completed' | 'failed'): Promise<void> {
+  private async recordTerminal(requestId: string, status: 'completed' | 'failed', costRequestId: string): Promise<void> {
     const row = await this.deps.rows.findByRequestId(requestId);
     if (!row) return;
     if (!row.newDecision.admitted) {
       await this.writeRow(this.submissionOf(row), status, RUN_DECIDED_BY_OLD_GATE, row.newDecision);
       return;
     }
-    const costUsd = await this.deps.llmUsage.sumCostByRequestId(requestId);
+    const costUsd = await this.deps.llmUsage.sumCostByRequestId(costRequestId);
     const outcome = status === 'completed'
       ? await this.deps.billing.settle(requestId, { costUsd })
       : await this.deps.billing.release(requestId, 'failed', { costUsd });
@@ -173,6 +184,11 @@ export class BillingShadowService {
     await this.deps.rows.upsert({
       requestId, userId: new ObjectId(userId), youtubeId, path, oldDecision, newDecision, classification, policyRef,
     });
+  }
+
+  /** Enforcement serves a cached / attached video the ledger refused to run for free (Q6) — mirror it. */
+  private servedFree(decision: ShadowNewDecision): boolean {
+    return !decision.admitted && decision.reason !== undefined && SERVES_WITHOUT_RUN.has(decision.reason);
   }
 
   private submissionOf(row: BillingShadowDocument): GateSubmission {

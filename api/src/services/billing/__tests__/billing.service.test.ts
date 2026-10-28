@@ -9,10 +9,11 @@ import { UserRepository } from '../../../repositories/user.repository.js';
 import { BillingService } from '../billing.service.js';
 import {
   AccountBlockedError,
+  HoldConflictError,
   HoldFinalizedError,
   InsufficientMinutesError,
   VideoTooLongForPlanError,
-} from '../billing-errors.js';
+} from '../../../utils/errors.js';
 import { DAY_MS, HOUR_MS, insertUser, makeClock } from './billing-fixtures.js';
 import type { TestClock } from './billing-fixtures.js';
 
@@ -111,6 +112,23 @@ describe('BillingService (runs, real Mongo replica set)', () => {
       await service.setCaps(userId, { blocked: true }, ctx());
 
       await expect(holdVideo('req-1', 10)).rejects.toBeInstanceOf(AccountBlockedError);
+    });
+
+    it('should refuse a run id already holding for another video (W3)', async () => {
+      await grant(100);
+      await holdVideo('req-1', 10);
+      const other = await service.quote(userId, 'aaaaaaaaaaa', 600);
+
+      await expect(service.hold('req-1', other)).rejects.toBeInstanceOf(HoldConflictError);
+    });
+
+    it('should refuse a run id already holding for another user (W3)', async () => {
+      await holdVideo('req-1', 10);
+      const otherUser = await insertUser(getTestDb());
+      const quote = await service.quote(otherUser, 'dQw4w9WgXcQ', 600);
+
+      await expect(service.hold('req-1', quote)).rejects.toBeInstanceOf(HoldConflictError);
+      expect((await service.summary(otherUser)).holds).toEqual([]);
     });
 
     it('should refuse a new hold for a run that was already released', async () => {

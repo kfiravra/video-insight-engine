@@ -6,13 +6,12 @@
  * the scenario names. Also re-judges every real `billingShadow` row in the
  * dev database when it is reachable (read-only).
  *
- * The one switch is MODE. P1/P3 shadow: the live old gate is asserted against
+ * It runs in both MODES. `shadow` (P1): the live old gate is asserted against
  * each scenario's recorded `oldDecision` and the shadow rows against the
- * ledger. After P3.2 deletes the old gate: set MODE = 'enforced' (the
- * recorded `oldDecision` is the old side, the ledger decides on the request
- * path and refusal reasons come from the submit's error) and rewire
- * shadow-replay.harness.ts to the enforced services; the scenarios and the
- * assertions below stay as they are.
+ * ledger. `enforced` (P3.1, BILLING_LEDGER_ENFORCE on): the recorded
+ * `oldDecision` is the old side, the ledger decides on the request path and
+ * refusal reasons come from the submit's error. P3.2 deletes the old gate and
+ * keeps only `enforced`; the scenarios and the assertions stay as they are.
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { MongoClient } from 'mongodb';
@@ -21,15 +20,16 @@ import { buildTestApp, createMockContainer, type MockContainer } from '../../../
 import { getTestDb } from '../../../test/setup.js';
 import { createBillingIndexes } from '../../../plugins/mongodb.js';
 import { POLICY_DELTAS, classifyShadow, errorReason } from '../shadow-policy.js';
-import { ReplayHarness } from './shadow-replay.harness.js';
+import { ReplayHarness, type HarnessMode } from './shadow-replay.harness.js';
 import { REPLAY_SCENARIOS } from './shadow-replay.scenarios.js';
 import type { BillingShadowService } from '../billing-shadow.service.js';
+import type { LedgerEnforcement } from '../ledger-enforcement.js';
 import type { CostMonitorService } from '../../cost-monitor.service.js';
 import type { RunResult } from './shadow-replay.harness.js';
 import type { AccountKind, PolicyId, ReplayExpectation, ReplayScenario } from './shadow-replay.scenarios.js';
 import type { BillingShadowDocument } from '../../../repositories/billing-shadow.repository.js';
 
-const MODE: 'shadow' | 'enforced' = 'shadow';
+const MODES: readonly HarnessMode[] = ['shadow', 'enforced'];
 
 const DEV_MONGODB_URI =
   process.env.BILLING_REPLAY_DEV_MONGODB_URI ?? 'mongodb://localhost:27017/video-insight-engine?directConnection=true';
@@ -56,8 +56,8 @@ function assertShadowRow(where: string, expectation: ReplayExpectation, result: 
 }
 
 /** The ledger's side: the shadow row (P1, cross-checked above) or, enforced, the entries plus the submit's refusal. */
-function newDecisionOf(result: RunResult): { admitted: boolean; charged: boolean; reason?: string } {
-  if (MODE === 'shadow' && result.row) {
+function newDecisionOf(mode: HarnessMode, result: RunResult): { admitted: boolean; charged: boolean; reason?: string } {
+  if (mode === 'shadow' && result.row) {
     const { admitted, charged, reason } = result.row.newDecision;
     return { admitted, charged, ...(reason && { reason }) };
   }
@@ -65,16 +65,17 @@ function newDecisionOf(result: RunResult): { admitted: boolean; charged: boolean
   return { ...result.ledger, ...(reason && { reason }) };
 }
 
-function assertRun(scenario: ReplayScenario, expectation: ReplayExpectation, result: RunResult): void {
-  const where = `${scenario.name} / ${expectation.run}`;
-  if (MODE === 'shadow') assertShadowRow(where, expectation, result);
-  const newDecision = newDecisionOf(result);
+function assertRun(mode: HarnessMode, scenario: ReplayScenario, expectation: ReplayExpectation, result: RunResult): void {
+  const where = `[${mode}] ${scenario.name} / ${expectation.run}`;
+  if (mode === 'shadow') assertShadowRow(where, expectation, result);
+  if (expectation.heldRuns !== undefined) expect(result.heldRuns, `${where}: runs holding minutes`).toBe(expectation.heldRuns);
+  const newDecision = newDecisionOf(mode, result);
   const verdict = classifyShadow({ path: expectation.path, oldDecision: expectation.oldDecision, newDecision });
   const facts = JSON.stringify({ oldDecision: expectation.oldDecision, newDecision });
   expect(verdict.classification, `${where}: unexplained difference ${facts}`).not.toBe('disagree');
   expect(verdict.classification, `${where}: classification ${facts}`).toBe(expectation.classification);
   expect(verdict.policyRef, `${where}: policy`).toBe(policyRefOf(expectation.policy));
-  if (MODE === 'shadow') {
+  if (mode === 'shadow') {
     expect({ classification: result.row?.classification, policyRef: result.row?.policyRef }, `${where}: stored verdict`).toEqual(verdict);
   }
 }
@@ -93,18 +94,23 @@ async function readDevRows(): Promise<BillingShadowDocument[] | null> {
   }
 }
 
-describe('shadow replay harness (P1.11)', () => {
+describe.each(MODES)('shadow replay harness (P1.11) — %s', (mode) => {
   let app: FastifyInstance;
   let harness: ReplayHarness;
 
   beforeAll(async () => {
     await createBillingIndexes(getTestDb());
-    harness = new ReplayHarness(getTestDb());
+    harness = new ReplayHarness(getTestDb(), mode);
     vi.stubGlobal('fetch', harness.fetchStub);
-    const overrides: Partial<MockContainer> & { billingShadowService: BillingShadowService; costMonitorService: CostMonitorService } = {
+    const overrides: Partial<MockContainer> & {
+      billingShadowService: BillingShadowService;
+      costMonitorService: CostMonitorService;
+      billingEnforcement: LedgerEnforcement | null;
+    } = {
       ...createMockContainer(),
       costMonitorService: harness.costMonitorService,
       billingShadowService: harness.shadow.shadow,
+      billingEnforcement: harness.enforcement,
     };
     app = await buildTestApp(overrides);
     await app.ready();
@@ -129,15 +135,17 @@ describe('shadow replay harness (P1.11)', () => {
       for (const expectation of scenario.expect) {
         const result = results.get(expectation.run);
         expect(result, `${scenario.name} / ${expectation.run}: never ran`).toBeDefined();
-        if (result) assertRun(scenario, expectation, result);
+        if (result) assertRun(mode, scenario, expectation, result);
       }
-      if (MODE === 'shadow') {
+      if (mode === 'shadow') {
         const disagreeing = await getTestDb().collection('billingShadow').find({ classification: 'disagree' }).toArray();
         expect(disagreeing.map((row) => `${row.requestId} (${row.path})`), `${scenario.name}: disagreeing rows`).toEqual([]);
       }
     },
   );
+});
 
+describe('shadow replay harness (P1.11) — coverage and real rows', () => {
   it('should cover every path, a Pro account, a playlist and all three account kinds', () => {
     const paths = new Set(REPLAY_SCENARIOS.flatMap((s) => s.expect.map((e) => e.path)));
     const accounts = new Set(REPLAY_SCENARIOS.map((s) => s.account));

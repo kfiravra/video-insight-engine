@@ -326,6 +326,8 @@ services:
       CHAT_FREE_MESSAGES_PER_DAY: ${CHAT_FREE_MESSAGES_PER_DAY:-50}
       # Minutes-ledger shadow writes (never decide); needs the replica set
       BILLING_SHADOW_ENABLED: ${BILLING_SHADOW_ENABLED:-true}
+      # P3.1: the minutes ledger decides (quote/hold before createVideo; old $ gate off)
+      BILLING_LEDGER_ENFORCE: ${BILLING_LEDGER_ENFORCE:-false}
       # Billing repair job: stale holds, lot expiry, recurring grants, drift check,
       # llm_usage.user_id after 90 days, GDPR hard-delete sweep (needs the replica set)
       BILLING_REPAIR_ENABLED: ${BILLING_REPAIR_ENABLED:-true}

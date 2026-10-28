@@ -41,6 +41,7 @@ import { BillingGate } from './services/billing/billing-gate.js';
 import { BillingShadowService } from './services/billing/billing-shadow.service.js';
 import { ShadowRunner } from './services/billing/shadow-runner.js';
 import { BillingRepairService } from './services/billing/billing-repair.service.js';
+import { LedgerEnforcement } from './services/billing/ledger-enforcement.js';
 import { RedisRepairLock, singleProcessRepairLock } from './services/billing/repair-lock.js';
 import {
   SubmitBurstLimiter,
@@ -84,6 +85,8 @@ export interface Container {
   billingService: BillingService;
   billingShadowService: BillingShadowService;
   billingRepairService: BillingRepairService;
+  /** Present when BILLING_LEDGER_ENFORCE is on: the minutes ledger decides every submit. */
+  billingEnforcement: LedgerEnforcement | null;
 }
 
 export interface CreateContainerOptions {
@@ -159,10 +162,15 @@ export function createContainer(
     ? new ChatFairUseService(options.redisClient, billingService, config.CHAT_FREE_MESSAGES_PER_DAY, logger)
     : noOpChatFairUse;
   const llmUsageRepository = new LlmUsageRepository(db);
+  const billingGate = new BillingGate(billingService, summarizerClient);
+  // P3.1: with enforcement on the ledger decides and there is no old decision to shadow.
+  const billingEnforcement = config.BILLING_LEDGER_ENFORCE
+    ? new LedgerEnforcement({ billing: billingService, gate: billingGate, llmUsage: llmUsageRepository, dispatchStamps: videoRepository, logger })
+    : null;
   // Shadow ledger (P1.7): writes beside the old gate, never decides.
   const billingShadowService = new BillingShadowService({
-    enabled: config.BILLING_SHADOW_ENABLED,
-    gate: new BillingGate(billingService, summarizerClient),
+    enabled: config.BILLING_SHADOW_ENABLED && !billingEnforcement,
+    gate: billingGate,
     billing: billingService,
     rows: new BillingShadowRepository(db),
     llmUsage: llmUsageRepository,
@@ -177,6 +185,7 @@ export function createContainer(
     logger,
     costMonitorService,
     billingShadowService,
+    billingEnforcement ?? undefined,
   );
   const shareService = new ShareService(shareRepository, videoRepository, logger);
   const ogImageService = new OgImageService(logger);
@@ -252,6 +261,7 @@ export function createContainer(
     billingService,
     billingShadowService,
     billingRepairService,
+    billingEnforcement,
   };
 }
 

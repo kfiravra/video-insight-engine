@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import { FastifyBaseLogger } from 'fastify';
 import { ObjectId } from 'mongodb';
 import { config } from '../config.js';
@@ -13,11 +12,13 @@ import { VideoService } from './video.service.js';
 import { FolderService } from './folder.service.js';
 import { SummarizerClient, type ProviderConfig } from './summarizer-client.js';
 import { CostMonitorService } from './cost-monitor.service.js';
-import { DailyLimitReachedError } from '../utils/errors.js';
-import { submitOutcome } from './billing/billing-shadow.service.js';
+import { DollarGateItemImporter, LedgerItemImporter } from './playlist-items.js';
 import type { UserTier } from '@vie/types';
 import type { BillingShadowService } from './billing/billing-shadow.service.js';
-import type { GateSubmission } from './billing/billing-gate.js';
+import type { LedgerEnforcement, PlaylistPlan } from './billing/ledger-enforcement.js';
+import type { FailedVideoImport, ImportedVideo, ItemImportContext, ItemImporter, ItemOutcome } from './playlist-items.js';
+
+export type { FailedVideoImport } from './playlist-items.js';
 
 // Types for summarizer response
 interface SummarizerPlaylistVideo {
@@ -64,28 +65,16 @@ export interface PlaylistInfo {
   totalVideos: number;
 }
 
-export interface FailedVideoImport {
-  youtubeId: string;
-  title: string;
-  position: number;
-  error: string;
-}
-
 export interface PlaylistImportResult {
   folder: { id: string; name: string };
-  videos: Array<{
-    id: string;
-    videoSummaryId: string;
-    youtubeId: string;
-    title: string | null;
-    status: string;
-    position: number;
-  }>;
+  videos: ImportedVideo[];
   totalVideos: number;
   cachedCount: number;
   processingCount: number;
   failedCount: number;
   failedVideos: FailedVideoImport[];
+  /** BILLING_LEDGER_ENFORCE on: the up-front quote ("needs 340 min, you have 120"). */
+  billing?: { neededMinutes: number; availableMinutes: number; freeVideoAvailable: boolean };
 }
 
 const EXTRACT_TIMEOUT_MS = 30000; // 30 seconds for extraction
@@ -100,6 +89,8 @@ export class PlaylistService {
     // Shadow minutes ledger (P1.7): never decides. With it, every item gets its
     // own requestId so the terminal status can settle that item's hold.
     private readonly billingShadow?: BillingShadowService,
+    // P3.1: present when BILLING_LEDGER_ENFORCE is on — the ledger decides.
+    private readonly billingEnforcement?: LedgerEnforcement,
   ) {}
 
   /**
@@ -160,151 +151,79 @@ export class PlaylistService {
 
     // Extract playlist data
     const playlistData = await this.extractFromSummarizer(playlistId, maxVideos);
+    // Enforcing: quote the whole playlist before anything is created; nothing affordable → refused here.
+    const plan = this.billingEnforcement
+      ? await this.billingEnforcement.planPlaylist(
+        userId,
+        playlistData.videos.map((v) => ({ youtubeId: v.video_id, durationSec: v.duration })),
+      )
+      : null;
+    const folder = await this.resolveFolder(userId, folderId, playlistData.title);
+    const importer = this.itemImporter({ userId, folderId: folder.id, providers, tier }, plan);
+    const result = await this.importItems(importer, playlistData.videos);
+    return {
+      folder,
+      ...result,
+      totalVideos: playlistData.total_videos,
+      ...(plan && {
+        billing: {
+          neededMinutes: plan.quote.neededMinutes,
+          availableMinutes: plan.quote.availableMinutes,
+          freeVideoAvailable: plan.quote.freeVideoAvailable,
+        },
+      }),
+    };
+  }
 
-    // Create folder if not provided
-    let folder: { id: string; name: string };
+  private async resolveFolder(userId: string, folderId: string | undefined, playlistTitle: string): Promise<{ id: string; name: string }> {
     if (folderId) {
       // Use existing folder - verify it exists
       try {
         const existingFolder = await this.folderService.getById(userId, folderId);
-        folder = { id: existingFolder.id, name: existingFolder.name };
+        return { id: existingFolder.id, name: existingFolder.name };
       } catch {
         throw new FolderNotFoundError();
       }
-    } else {
-      // Create new folder with playlist name
-      const folderName = this.sanitizeFolderName(playlistData.title);
-      const newFolder = await this.folderService.create({
-        userId,
-        name: folderName,
-      });
-      folder = { id: newFolder.id, name: newFolder.name };
     }
-
-    // Process each video
-    const results: PlaylistImportResult['videos'] = [];
-    const failedVideos: FailedVideoImport[] = [];
-    let cachedCount = 0;
-    let processingCount = 0;
-
-    // Track whether the per-user cost cap stopped the import mid-loop. Subsequent
-    // videos are recorded as failed with a stable error so the UI can show a
-    // "stopped at video N because you hit your daily limit" message.
-    let limitReached = false;
-
-    for (const video of playlistData.videos) {
-      const shadow = this.shadowSubmission(userId, video);
-      if (limitReached) {
-        if (shadow) this.billingShadow?.submitRefused(shadow);
-        failedVideos.push({
-          youtubeId: video.video_id,
-          title: video.title,
-          position: video.position,
-          error: 'DAILY_LIMIT_REACHED',
-        });
-        continue;
-      }
-
-      let reservation = null;
-      let admitted = false;
-      try {
-        const videoUrl = `https://www.youtube.com/watch?v=${video.video_id}`;
-
-        if (this.costMonitorService) {
-          reservation = await this.costMonitorService.reserveUserCost(userId, tier);
-        }
-        admitted = true;
-        if (shadow) this.billingShadow?.submitAdmitted(shadow);
-
-        const result = await this.videoService.createVideo(
-          userId,
-          videoUrl,
-          { folderId: folder.id, bypassCache: false, providers, tier, ...(shadow && { requestId: shadow.requestId }) }
-        );
-        if (shadow) this.billingShadow?.submitResolved(shadow.requestId, submitOutcome(result));
-
-        // Cached videos run no pipeline, so no llm_usage will land — refund.
-        // Attached videos (cross-user single-flight) are the same: this caller
-        // didn't trigger work. A failed refund must not fail the import — the
-        // video exists, and the catch below would refund a second time.
-        if ((result.cached || result.attached) && this.costMonitorService) {
-          await this.costMonitorService.refundReservation(reservation).catch((refundErr) => {
-            this.logger.warn(
-              { err: refundErr, userId, youtubeId: video.video_id },
-              'cached/attached-video refund failed during playlist import',
-            );
-          });
-        }
-
-        results.push({
-          id: result.video.id,
-          videoSummaryId: result.video.videoSummaryId,
-          youtubeId: video.video_id,
-          title: result.video.title ?? video.title,
-          status: result.video.status,
-          position: video.position,
-        });
-
-        if (result.cached) {
-          cachedCount++;
-        } else {
-          processingCount++;
-        }
-      } catch (err) {
-        if (shadow && admitted) this.billingShadow?.submitFailed(shadow.requestId);
-        if (shadow && err instanceof DailyLimitReachedError) this.billingShadow?.submitRefused(shadow);
-        if (this.costMonitorService && reservation) {
-          // A failed refund must not abort the loop — the remaining videos
-          // would never be processed and the whole import would 500.
-          await this.costMonitorService.refundReservation(reservation).catch((refundErr) => {
-            this.logger.warn(
-              { err: refundErr, userId, youtubeId: video.video_id },
-              'failed-video refund failed during playlist import',
-            );
-          });
-        }
-        const errorMessage = err instanceof Error ? err.message : String(err);
-
-        if (err instanceof DailyLimitReachedError) {
-          limitReached = true;
-          this.logger.info(
-            { userId, importedSoFar: results.length },
-            'Playlist import stopped at per-user cost cap',
-          );
-          failedVideos.push({
-            youtubeId: video.video_id,
-            title: video.title,
-            position: video.position,
-            error: 'DAILY_LIMIT_REACHED',
-          });
-          continue;
-        }
-
-        this.logger.warn({ youtubeId: video.video_id, error: errorMessage }, 'Failed to import video');
-        failedVideos.push({
-          youtubeId: video.video_id,
-          title: video.title,
-          position: video.position,
-          error: errorMessage,
-        });
-      }
-    }
-
-    return {
-      folder,
-      videos: results,
-      totalVideos: playlistData.total_videos,
-      cachedCount,
-      processingCount,
-      failedCount: failedVideos.length,
-      failedVideos,
-    };
+    // Create new folder with playlist name
+    const newFolder = await this.folderService.create({ userId, name: this.sanitizeFolderName(playlistTitle) });
+    return { id: newFolder.id, name: newFolder.name };
   }
 
-  /** The item's shadow-ledger submission, or null without a shadow hook. */
-  private shadowSubmission(userId: string, video: SummarizerPlaylistVideo): GateSubmission | null {
-    if (!this.billingShadow) return null;
-    return { requestId: randomUUID(), userId, youtubeId: video.video_id, durationSec: video.duration };
+  private itemImporter(ctx: ItemImportContext, plan: PlaylistPlan | null): ItemImporter {
+    if (this.billingEnforcement && plan) {
+      return new LedgerItemImporter(this.videoService, this.billingEnforcement, ctx, plan.durationsSec);
+    }
+    return new DollarGateItemImporter(this.videoService, this.logger, ctx, this.costMonitorService, this.billingShadow);
+  }
+
+  /**
+   * Items in playlist order. A refusal that later items cannot do better on
+   * (the old daily cap; enforcing: out of minutes, too many runs, blocked)
+   * stops the import there and records every later item with the same error,
+   * so the UI can say "stopped at video N" — the import admits a prefix.
+   * Enforcing, a later item already cached or running is still served (Q6).
+   */
+  private async importItems(
+    importer: ItemImporter,
+    items: SummarizerPlaylistVideo[],
+  ): Promise<Omit<PlaylistImportResult, 'folder' | 'totalVideos' | 'billing'>> {
+    const videos: ImportedVideo[] = [];
+    const failedVideos: FailedVideoImport[] = [];
+    let cachedCount = 0;
+    let stoppedWith: string | null = null;
+    for (const [index, item] of items.entries()) {
+      const outcome: ItemOutcome = stoppedWith ? await importer.skip(item, stoppedWith) : await importer.import(item, index);
+      if (outcome.kind === 'failed') {
+        failedVideos.push(outcome.failure);
+        if (outcome.stopsImport) stoppedWith = outcome.failure.error;
+        continue;
+      }
+      videos.push(outcome.video);
+      if (outcome.cached) cachedCount++;
+      if (outcome.stopsImport) stoppedWith = outcome.stopsImport;
+    }
+    return { videos, cachedCount, processingCount: videos.length - cachedCount, failedCount: failedVideos.length, failedVideos };
   }
 
   /**

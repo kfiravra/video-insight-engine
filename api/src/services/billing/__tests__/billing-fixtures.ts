@@ -8,6 +8,7 @@ import { UserRepository } from '../../../repositories/user.repository.js';
 import { BillingGate } from '../billing-gate.js';
 import { BillingShadowService } from '../billing-shadow.service.js';
 import { BillingService } from '../billing.service.js';
+import { LedgerEnforcement } from '../ledger-enforcement.js';
 import { ShadowRunner } from '../shadow-runner.js';
 import type { Db } from 'mongodb';
 import type { FastifyBaseLogger } from 'fastify';
@@ -127,4 +128,17 @@ export function makeShadowHarness(db: Db, options: ShadowHarnessOptions = {}): S
     logger,
   });
   return { shadow, billing, gate, runner, metadata, stamps, rowOf: (requestId) => rows.findByRequestId(requestId) };
+}
+
+/** BILLING_LEDGER_ENFORCE on, over the harness's billing service and gate; stamps from `dispatchStamps` or the map. */
+export function makeEnforcement(db: Db, h: ShadowHarness, dispatchStamps?: DispatchStampReader): LedgerEnforcement {
+  return new LedgerEnforcement({
+    billing: h.billing,
+    gate: h.gate,
+    llmUsage: new LlmUsageRepository(db),
+    dispatchStamps: dispatchStamps ?? {
+      findCacheById: async (id: string) => (h.stamps.has(id) ? { requestId: h.stamps.get(id) } : null),
+    },
+    logger: mockLogger as unknown as FastifyBaseLogger,
+  });
 }

@@ -1,7 +1,16 @@
 import { describe, it, expect } from 'vitest';
 import { ZodError, z } from 'zod';
 import { resolveErrorEnvelope } from './error-envelope.js';
-import { ChatLimitReachedError, DailyLimitReachedError, NotFoundError } from './errors.js';
+import {
+  AccountBlockedError,
+  ChatLimitReachedError,
+  DailyLimitReachedError,
+  InsufficientMinutesError,
+  MetadataUnavailableError,
+  NotFoundError,
+  TooManyRunsError,
+  VideoTooLongForPlanError,
+} from './errors.js';
 
 describe('resolveErrorEnvelope', () => {
   it('should map Zod errors to 400 VALIDATION_ERROR with issues', () => {
@@ -97,5 +106,48 @@ describe('resolveErrorEnvelope', () => {
 
     expect(statusCode).toBe(500);
     expect(body).toEqual({ error: 'INTERNAL_ERROR', message: 'kaboom', statusCode: 500 });
+  });
+
+  describe('minutes gate', () => {
+    it('should send 402 INSUFFICIENT_MINUTES with needed, available and nextFreeAt', () => {
+      const { statusCode, body } = resolveErrorEnvelope(new InsufficientMinutesError(45, 20, '2026-11-02T10:00:00.000Z'));
+
+      expect(statusCode).toBe(402);
+      expect(body).toMatchObject({ error: 'INSUFFICIENT_MINUTES', needed: 45, available: 20, nextFreeAt: '2026-11-02T10:00:00.000Z' });
+    });
+
+    it('should leave nextFreeAt out when the free video cannot help', () => {
+      const { body } = resolveErrorEnvelope(new InsufficientMinutesError(45, 0, null));
+
+      expect(body).not.toHaveProperty('nextFreeAt');
+    });
+
+    it('should send 422 VIDEO_TOO_LONG_FOR_PLAN with maxMinutes', () => {
+      const { statusCode, body } = resolveErrorEnvelope(new VideoTooLongForPlanError(180));
+
+      expect([statusCode, body.error, body.maxMinutes]).toEqual([422, 'VIDEO_TOO_LONG_FOR_PLAN', 180]);
+    });
+
+    it('should send 403 ACCOUNT_BLOCKED', () => {
+      const { statusCode, body } = resolveErrorEnvelope(new AccountBlockedError());
+
+      expect([statusCode, body.error]).toEqual([403, 'ACCOUNT_BLOCKED']);
+    });
+
+    it('should send 429 TOO_MANY_RUNS with maxConcurrent', () => {
+      const { statusCode, body } = resolveErrorEnvelope(new TooManyRunsError(2));
+
+      expect([statusCode, body.error, body.maxConcurrent]).toEqual([429, 'TOO_MANY_RUNS', 2]);
+    });
+
+    it.each([
+      ['not_found', 404],
+      ['timeout', 503],
+      ['upstream', 503],
+    ] as const)('should send METADATA_UNAVAILABLE (%s) as %i', (reason, status) => {
+      const { statusCode, body } = resolveErrorEnvelope(new MetadataUnavailableError(reason));
+
+      expect([statusCode, body.error]).toEqual([status, 'METADATA_UNAVAILABLE']);
+    });
   });
 });
