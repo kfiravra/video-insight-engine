@@ -1,14 +1,15 @@
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { isValidAdminKey, parseAdminIdHeader } from '../../utils/admin-auth.js';
-import { auditRequestContext } from '../../utils/audit-context.js';
+import { isValidAdminKey } from '../../utils/admin-auth.js';
+import { adminActorUserId, auditRequestContext } from '../../utils/audit-context.js';
 import { youtubeIdSchema } from '../../utils/validation.js';
 
 /**
  * Admin endpoint that removes a video from every store for every user:
  * Mongo summary + references, Qdrant vectors, S3 objects, Redis keys.
- * Guarded by the static admin key; `x-admin-id` is operator metadata for
- * the audit rows (`videoDeletions` and `adminAudit`), not auth.
+ * Needs the `videos:purge` permission: a named admin (signed `x-admin-actor`)
+ * who still holds it. The shared key alone cannot purge. The admin is recorded
+ * on both audit rows (`videoDeletions` and `adminAudit`).
  */
 
 const adminVideoParamsSchema = z.object({ youtubeId: youtubeIdSchema });
@@ -23,6 +24,7 @@ export async function adminVideosRoutes(fastify: FastifyInstance): Promise<void>
   // A valid admin key (the reconcile script purging orphans in bulk) gets a
   // higher ceiling; key guesses share the 30/h of the other admin routes.
   fastify.delete('/:youtubeId', {
+    preHandler: [fastify.requireAdmin('videos:purge')],
     config: {
       rateLimit: {
         timeWindow: '1 hour',
@@ -31,36 +33,22 @@ export async function adminVideosRoutes(fastify: FastifyInstance): Promise<void>
       },
     },
   }, async (req, reply) => {
-    if (!isValidAdminKey(req.headers['x-admin-key'])) {
-      return reply.code(401).send({
-        error: 'UNAUTHORIZED',
-        message: 'Admin key required',
-      });
-    }
-
     const params = adminVideoParamsSchema.parse(req.params);
     const body = adminVideoBodySchema.parse(req.body);
-    const adminIdHeader = parseAdminIdHeader(req.headers['x-admin-id']);
-    if (!adminIdHeader.ok) {
-      return reply.code(400).send({
-        error: 'VALIDATION_ERROR',
-        message: 'Invalid x-admin-id header',
-      });
-    }
 
     const result = await videoCascadeService.deleteVideo({
       scope: 'global',
       youtubeId: params.youtubeId,
       actor: {
         initiatedBy: 'admin',
-        adminId: adminIdHeader.adminId,
+        adminId: adminActorUserId(req),
         reason: body?.reason ?? null,
       },
     });
     // Only a purge that ran is audited; a summarizer failure above aborts
     // before any row is touched and surfaces as a 502.
     await auditService.recordBestEffort({
-      ...auditRequestContext(req, adminIdHeader.adminId),
+      ...auditRequestContext(req),
       action: 'videos.purge',
       targetType: 'video',
       targetId: params.youtubeId,

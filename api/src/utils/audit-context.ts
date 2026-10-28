@@ -2,19 +2,23 @@ import type { FastifyRequest } from 'fastify';
 
 import type { RecordAuditInput } from '../services/audit.service.js';
 
-/** Actor recorded when an admin route is called with the shared key and no operator id. */
+/** Actor recorded for a request made with the shared admin key and no named admin (reads only). */
 export const UNATTRIBUTED_ACTOR_ID = 'system:admin-key';
 
 export type AuditRequestContext = Pick<RecordAuditInput, 'actorId' | 'requestId' | 'ip'>;
 
+/** The `users._id` of the admin behind this request, or null for the shared machine key. */
+export function adminActorUserId(req: FastifyRequest): string | null {
+  return req.adminActor?.kind === 'user' ? req.adminActor.userId : null;
+}
+
 /**
- * The request-derived half of an audit row: who acted, which request, from
- * where. `adminId` is the operator id parsed from `x-admin-id` today; once the
- * signed actor header lands this is the one call to point at `request.adminActor`.
+ * The request-derived half of an audit row: who acted (the signed actor
+ * `requireAdmin` resolved), which request, from where.
  */
-export function auditRequestContext(req: FastifyRequest, adminId: string | null): AuditRequestContext {
+export function auditRequestContext(req: FastifyRequest): AuditRequestContext {
   return {
-    actorId: adminId ?? UNATTRIBUTED_ACTOR_ID,
+    actorId: adminActorUserId(req) ?? UNATTRIBUTED_ACTOR_ID,
     requestId: req.id,
     ip: req.ip,
   };

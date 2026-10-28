@@ -1,7 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
 import { FastifyInstance } from 'fastify';
 import type { ConfirmChannel } from 'amqplib';
-import { buildTestApp, createMockContainer, type MockContainer } from '../../../test/helpers.js';
+import {
+  adminActorRequest,
+  buildTestApp,
+  createMockContainer,
+  TEST_ADMIN_USER_ID,
+  type MockContainer,
+} from '../../../test/helpers.js';
 import { config } from '../../../config.js';
 
 interface FakeDlqMessage {
@@ -57,6 +63,8 @@ describe('admin queue routes', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.restoreAllMocks();
+    // restoreAllMocks empties vi.fn() implementations; the signed actor must still hold its permission.
+    mockContainer.userRepository.hasPermission.mockResolvedValue(true);
   });
 
   describe('auth', () => {
@@ -124,7 +132,7 @@ describe('admin queue routes', () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/admin/queue/replay',
-        headers: adminHeaders,
+        ...adminActorRequest(),
       });
 
       expect(res.statusCode).toBe(503);
@@ -161,7 +169,7 @@ describe('admin queue routes', () => {
       const res = await queueApp.inject({
         method: 'POST',
         url: '/api/admin/queue/replay',
-        headers: adminHeaders,
+        ...adminActorRequest(),
       });
 
       expect(res.statusCode).toBe(200);
@@ -178,7 +186,7 @@ describe('admin queue routes', () => {
       const res = await queueApp.inject({
         method: 'POST',
         url: '/api/admin/queue/replay',
-        headers: adminHeaders,
+        ...adminActorRequest(),
       });
 
       expect(res.statusCode).toBe(503);
@@ -194,7 +202,7 @@ describe('admin queue routes', () => {
       const res = await queueApp.inject({
         method: 'POST',
         url: '/api/admin/queue/replay',
-        headers: adminHeaders,
+        ...adminActorRequest(),
       });
 
       expect(res.statusCode).toBe(200);
@@ -230,7 +238,7 @@ describe('admin queue routes', () => {
       const res = await queueApp.inject({
         method: 'POST',
         url: '/api/admin/queue/replay',
-        headers: adminHeaders,
+        ...adminActorRequest(),
       });
 
       expect(res.statusCode).toBe(502);
@@ -249,7 +257,7 @@ describe('admin queue routes', () => {
       const res = await queueApp.inject({
         method: 'POST',
         url: '/api/admin/queue/replay',
-        headers: adminHeaders,
+        ...adminActorRequest(),
       });
 
       expect(res.statusCode).toBe(200);
@@ -264,8 +272,7 @@ describe('admin queue routes', () => {
       const res = await queueApp.inject({
         method: 'POST',
         url: '/api/admin/queue/replay',
-        headers: adminHeaders,
-        payload: { max: 3 },
+        ...adminActorRequest({ max: 3 }),
       });
 
       expect(res.statusCode).toBe(200);
@@ -273,31 +280,55 @@ describe('admin queue routes', () => {
       expect(channel.ack).toHaveBeenCalledTimes(3);
     });
 
-    it('rejects a malformed x-admin-id before touching the DLQ', async () => {
+    it('refuses the shared key alone: a replay needs a named admin', async () => {
       await buildQueueApp(createFakeChannel([fakeDlqMessage({ videoSummaryId: 'a' })]));
 
-      const res = await queueApp.inject({
-        method: 'POST',
-        url: '/api/admin/queue/replay',
-        headers: { ...adminHeaders, 'x-admin-id': 'not valid!' },
-      });
+      const res = await queueApp.inject({ method: 'POST', url: '/api/admin/queue/replay', headers: adminHeaders });
 
-      expect(res.statusCode).toBe(400);
+      expect(res.statusCode).toBe(403);
+      expect(channel.get).not.toHaveBeenCalled();
+    });
+
+    it('refuses an admin who no longer holds queue:replay, before touching the DLQ', async () => {
+      await buildQueueApp(createFakeChannel([fakeDlqMessage({ videoSummaryId: 'a' })]));
+      mockContainer.userRepository.hasPermission.mockResolvedValue(false);
+
+      const res = await queueApp.inject({ method: 'POST', url: '/api/admin/queue/replay', ...adminActorRequest() });
+
+      expect(res.statusCode).toBe(403);
+      expect(channel.get).not.toHaveBeenCalled();
+    });
+
+    it('checks the signed admin against the queue:replay permission', async () => {
+      await buildQueueApp(createFakeChannel([]));
+
+      await queueApp.inject({ method: 'POST', url: '/api/admin/queue/replay', ...adminActorRequest() });
+
+      expect(mockContainer.userRepository.hasPermission).toHaveBeenCalledWith(TEST_ADMIN_USER_ID, 'queue:replay');
+    });
+
+    it('refuses a stale actor header before touching the DLQ', async () => {
+      await buildQueueApp(createFakeChannel([fakeDlqMessage({ videoSummaryId: 'a' })]));
+      const stale = adminActorRequest(undefined, { nowSeconds: Math.floor(Date.now() / 1000) - 301 });
+
+      const res = await queueApp.inject({ method: 'POST', url: '/api/admin/queue/replay', ...stale });
+
+      expect(res.statusCode).toBe(401);
       expect(channel.get).not.toHaveBeenCalled();
     });
 
     describe('audit', () => {
-      it('records the replay with the operator, the queue and the replayed count', async () => {
+      it('records the replay with the signed admin, the queue and the replayed count', async () => {
         await buildQueueApp(createFakeChannel([fakeDlqMessage({ videoSummaryId: 'a' }), fakeDlqMessage({ videoSummaryId: 'b' })]));
 
         await queueApp.inject({
           method: 'POST',
           url: '/api/admin/queue/replay',
-          headers: { ...adminHeaders, 'x-admin-id': 'kfir' },
+          ...adminActorRequest(),
         });
 
         expect(mockContainer.auditService.recordBestEffort).toHaveBeenCalledWith({
-          actorId: 'kfir',
+          actorId: TEST_ADMIN_USER_ID,
           requestId: expect.any(String),
           ip: expect.any(String),
           action: 'queue.replay',
@@ -307,22 +338,12 @@ describe('admin queue routes', () => {
         });
       });
 
-      it('attributes a replay sent with the bare admin key to system:admin-key', async () => {
-        await buildQueueApp(createFakeChannel([]));
-
-        await queueApp.inject({ method: 'POST', url: '/api/admin/queue/replay', headers: adminHeaders });
-
-        expect(mockContainer.auditService.recordBestEffort).toHaveBeenCalledWith(
-          expect.objectContaining({ actorId: 'system:admin-key' }),
-        );
-      });
-
       it('records a replay that failed part-way, with what was already republished', async () => {
         const fake = createFakeChannel([fakeDlqMessage({ videoSummaryId: 'a' }), fakeDlqMessage({ videoSummaryId: 'b' })]);
         fake.waitForConfirms.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('channel closed'));
         await buildQueueApp(fake);
 
-        await queueApp.inject({ method: 'POST', url: '/api/admin/queue/replay', headers: adminHeaders });
+        await queueApp.inject({ method: 'POST', url: '/api/admin/queue/replay', ...adminActorRequest() });
 
         expect(mockContainer.auditService.recordBestEffort).toHaveBeenCalledWith(
           expect.objectContaining({ action: 'queue.replay', after: { replayed: 1, cap: 100, failed: true } }),
@@ -334,15 +355,15 @@ describe('admin queue routes', () => {
           throw new Error('broker down');
         });
 
-        await queueApp.inject({ method: 'POST', url: '/api/admin/queue/replay', headers: adminHeaders });
+        await queueApp.inject({ method: 'POST', url: '/api/admin/queue/replay', ...adminActorRequest() });
 
         expect(mockContainer.auditService.recordBestEffort).not.toHaveBeenCalled();
       });
 
-      it('does not record a replay the admin key rejects', async () => {
+      it('does not record a replay that was refused', async () => {
         await buildQueueApp(createFakeChannel([]));
 
-        await queueApp.inject({ method: 'POST', url: '/api/admin/queue/replay' });
+        await queueApp.inject({ method: 'POST', url: '/api/admin/queue/replay', headers: adminHeaders });
 
         expect(mockContainer.auditService.recordBestEffort).not.toHaveBeenCalled();
       });

@@ -420,22 +420,45 @@ new WebSocket(`${WS_URL}/ws`, ["vie-auth", accessToken]);
 
 ### Admin API Key
 
-`x-admin-key` guarded routes (`DELETE /api/admin/users/:id[?immediate=true]`, `/api/admin/queue/*`, `DELETE /api/admin/videos/:youtubeId`)
-compare the header against `ADMIN_API_KEY` with `crypto.timingSafeEqual`
-(`api/src/utils/admin-auth.ts`) — same constant-time pattern as
-`isValidInternalSecret`.
+Every `/api/admin/*` route (`DELETE /api/admin/users/:id[?immediate=true]`, `/api/admin/queue/*`,
+`DELETE /api/admin/videos/:youtubeId`) is guarded by `fastify.requireAdmin(permission)`
+(`api/src/plugins/admin-auth.ts`), which needs the shared key **and** resolves who is acting:
+
+1. `x-admin-key` is compared against `ADMIN_API_KEY` with `crypto.timingSafeEqual`
+   (`api/src/utils/admin-auth.ts`), the same constant-time pattern as `isValidInternalSecret`. No key, `401`.
+2. **A signed `x-admin-actor` header** (`<userId>.<unixTs>.<hex hmac>`, sent by vie-admin for every call it
+   makes for a named admin) makes the request that user's. The HMAC-SHA256 is keyed on `ADMIN_SESSION_SECRET`
+   and covers `userId|unixTs|sha256(exact request body)`, so it cannot be replayed against another payload;
+   it is compared in constant time and accepted for five minutes either way of now. Anything malformed,
+   tampered, stale or signed with another secret is `401`. A valid header is still re-checked against the
+   database (`UserRepository.hasPermission`): an admin demoted after vie-admin signed it gets `403`.
+   `request.adminActor` is `{ kind: 'user', userId }`; the audit rows and deletion origins name that user.
+3. **No actor header** is the shared machine key acting alone: it passes only `READ_PERMISSIONS` and gets
+   `403` on every mutation. A client-supplied `x-admin-id` is no longer read anywhere.
+
+Replaying a captured header with the same body inside its five minutes would repeat the action; the
+admin network path is loopback or the SSH tunnel (Caddy `404`s `/api/admin/*` publicly). The format is
+pinned by shared test vectors (`packages/types/test-vectors/admin-auth.json`) that both vie-admin's
+signer (Python) and vie-api's verifier (TypeScript) are tested against.
 
 ### Admin Panel Login (vie-admin :8002)
 
 `POST /auth/login` (`services/admin/src/routes/auth.py`) verifies email +
 bcrypt password against the `users` collection and returns a stateless
-HMAC-signed session token (keyed on `ADMIN_SESSION_SECRET`, 12 h TTL, accepted by
-`ApiKeyMiddleware`). Hardening:
+HMAC-signed session token naming the user (`userId|email|expiry`, keyed on
+`ADMIN_SESSION_SECRET`, 12 h TTL, accepted by `ApiKeyMiddleware`). Hardening:
 
 - **Session secret separate from the machine key** — `ADMIN_API_KEY` stays the
   machine credential (raw bearer on vie-admin, `X-Admin-Key` to vie-api) and is
   never an HMAC key: whoever holds it cannot mint a session for an arbitrary
-  email. A token HMAC-keyed on `ADMIN_API_KEY` is rejected.
+  user. A token HMAC-keyed on `ADMIN_API_KEY` is rejected. The machine key may
+  only `GET`; any other method is `403`.
+- **Sessions are re-validated** — the middleware checks on every request that
+  the token's user is still an active admin (roles rule below, `deletedAt`
+  unset), caching the verdict for 60 s per user. A demoted or soft-deleted
+  admin is `401` within a minute, not at token expiry; if the users collection
+  cannot be read the check fails closed (`503`). Logs name the user id, never
+  the email.
 
 - **Per-IP login throttle** — in-process sliding window, 5 attempts / 60 s,
   counted BEFORE the bcrypt verify (caps CPU-burn DoS as well as brute
@@ -446,10 +469,11 @@ HMAC-signed session token (keyed on `ADMIN_SESSION_SECRET`, 12 h TTL, accepted b
   unauthenticatable; they still burn a bcrypt verify against a dummy hash so
   timing parity is preserved.
 
-Trade-offs, by design for the direct-port deployment: session tokens are
-stateless and non-revocable within their 12 h TTL (only rotating
-`ADMIN_SESSION_SECRET` kills live sessions — it logs every admin out), and the
-throttle keys on the direct client IP (not proxy-header-aware).
+Trade-offs, by design for the direct-port deployment: a demotion takes up to 60 s
+to reach a live session (rotating `ADMIN_SESSION_SECRET` kills every session at
+once and logs every admin out; recreate vie-api too, it verifies the actor
+header with the same value), and the throttle keys on the direct client IP (not
+proxy-header-aware).
 
 ### Roles and Permissions
 
@@ -481,10 +505,11 @@ until the billing migration unsets the legacy field. Demoting writes
 | `cold:run` | `cold` benchmark runs on `POST /api/videos` (`UserRepository.mayRunCold`, with the eval account) | yes | no |
 
 The machine key passes only `READ_PERMISSIONS` (`billing:read`, `audit:read`,
-`queue:read`); every mutation needs a named human actor. Today the admin routes
-still authenticate with `x-admin-key` alone; the signed per-admin actor header and
-`fastify.requireAdmin(permission)` enforce this matrix when the actor work lands
-(billing-roles P2.5). `cold:run` is already enforced through `mayRunCold`.
+`queue:read`); every mutation needs a named human actor. `fastify.requireAdmin(permission)`
+enforces this matrix on every `/api/admin/*` route (see "Admin API Key" above), and
+`cold:run` is enforced through `mayRunCold`. vie-admin applies the same admin rule
+(`src/roles.py`) at login and on every session request; the two implementations are
+tested against shared cases (`packages/types/test-vectors/admin-auth.json`).
 
 **Boot seeding (`ADMIN_EMAILS`).** vie-api reconciles the comma-separated
 `ADMIN_EMAILS` list with the `users` collection on every boot
@@ -501,9 +526,9 @@ full. Every change writes an audit row with actor `system:boot`.
 row (`AuditService.record`): actor, action, target, a before/after snapshot,
 reason, request id and client ip. Today that covers admin user deletion (an audit
 row at request time for the 30-day soft delete too), the global video purge, DLQ
-replay and the boot role changes above. The actor is the `x-admin-id` operator id
-(self-attested until the signed actor header lands), or `system:admin-key` when a
-caller sends the key alone. The mutation has already happened when the row is
+replay and the boot role changes above. The actor is the admin the signed
+`x-admin-actor` header names (`system:boot` for boot seeding); `system:admin-key` is
+the shared key acting alone, which can only read and so writes no audit rows. The mutation has already happened when the row is
 written, so a failed audit insert is logged at `error` and never turns the request
 into a failure. Rows hold no secrets and no target email.
 
@@ -512,7 +537,10 @@ into a failure. Rows hold no secrets and no target email.
 `api/src/config.ts` refuses to start in production when `JWT_SECRET`,
 `JWT_REFRESH_SECRET`, `INTERNAL_SECRET`, or `ADMIN_API_KEY` still equal any
 well-known dev placeholder (config defaults, `.env.example` values, or
-docker-compose fallbacks).
+docker-compose fallbacks). `ADMIN_SESSION_SECRET` (which vie-api uses to verify the
+actor header) also has to be at least 32 characters and differ from
+`ADMIN_API_KEY` in production, the same rules as vie-admin's; the refusal names the
+variable, never its value.
 
 vie-admin does the same from its lifespan (`validate_secrets()` in
 `services/admin/src/config.py`): outside a dev `ENVIRONMENT` (`""`,
@@ -615,7 +643,7 @@ The summarizer logs a warning at startup if `INTERNAL_SECRET` is using the defau
 | `OPENAI_API_KEY`       | summarizer, assistant | OpenAI Platform           |
 | `INTERNAL_SECRET`      | service-to-service    | `openssl rand -base64 32` |
 | `ADMIN_API_KEY`        | vie-api, vie-admin    | `openssl rand -hex 32`    |
-| `ADMIN_SESSION_SECRET` | vie-admin only        | `openssl rand -hex 32` (≠ `ADMIN_API_KEY`) |
+| `ADMIN_SESSION_SECRET` | vie-admin, vie-api (same value) | `openssl rand -hex 32` (≠ `ADMIN_API_KEY`) |
 
 ### Production Setup
 
@@ -640,7 +668,7 @@ Before deploying:
 
 - [ ] All secrets in environment variables (not hardcoded)
 - [ ] JWT_SECRET and JWT_REFRESH_SECRET are different
-- [ ] ADMIN_SESSION_SECRET and ADMIN_API_KEY are different (vie-admin refuses to start otherwise)
+- [ ] ADMIN_SESSION_SECRET and ADMIN_API_KEY are different (vie-admin and vie-api refuse to start otherwise), and vie-api and vie-admin hold the same ADMIN_SESSION_SECRET
 - [ ] Rate limiting enabled on all routes
 - [ ] CORS configured for specific origins (not `*`)
 - [ ] Password hashing uses bcrypt with cost ≥ 10

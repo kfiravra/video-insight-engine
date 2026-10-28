@@ -1093,15 +1093,15 @@ export async function websocketPlugin(fastify: FastifyInstance) {
 
 ---
 
-## Admin (x-admin-key)
+## Admin (x-admin-key + x-admin-actor)
 
-Static-key endpoints for operators; the admin panel proxies to them. `x-admin-id` is optional operator metadata written to the audit rows (not auth). Every mutation (`DELETE /api/admin/videos/:youtubeId`, `DELETE /api/admin/users/:id`, `POST /api/admin/queue/replay`) also writes an `adminAudit` row naming the operator, or `system:admin-key` when the header is absent; see [DATA-MODELS.md](./DATA-MODELS.md#adminaudit). A malformed `x-admin-id` is a `400` on all three.
+Operator endpoints; the admin panel proxies to them. Every call needs the shared `x-admin-key`. Mutations (`DELETE /api/admin/videos/:youtubeId`, `DELETE /api/admin/users/:id`, `POST /api/admin/queue/replay`) additionally need a signed `x-admin-actor` header naming the admin who acts: `<userId>.<unixTs>.<hex hmac-sha256(ADMIN_SESSION_SECRET, userId|unixTs|sha256(body))>`, valid for five minutes, covering the exact request body. vie-api re-checks the admin still holds the route's permission (`users:delete`, `videos:purge`, `queue:replay`). The shared key alone may only read (`GET /api/admin/queue/stats`, `/dlq`); on a mutation it is `403 ADMIN_PERMISSION_DENIED`. A missing/bad/stale/tampered actor header is `401 UNAUTHORIZED`; a demoted admin is `403 ADMIN_PERMISSION_DENIED`. Details: [SECURITY.md](./SECURITY.md#admin-api-key). Each mutation also writes an `adminAudit` row naming that admin; see [DATA-MODELS.md](./DATA-MODELS.md#adminaudit). `x-admin-id` is no longer read.
 
 ### DELETE /api/admin/videos/:youtubeId
 
 Removes a video from every store for every user, in this order: summarizer purge (Qdrant `transcript_chunks` by `video_id`, S3 `videos/<id>/` prefix, Redis response + pipeline keys) → Mongo `userVideos`, `shareLikes`, `shareViews`, `agentNotes`, `idempotencyKeys`, then `videoSummaryCache` (all versions) → dispatch-guard keys → `videoDeletions` and `adminAudit` (`videos.purge`) audit rows. A failed purge aborts before any Mongo row is touched (idempotent; retry).
 
-Headers: `x-admin-key` (required), `x-admin-id` (optional, `[A-Za-z0-9._-]{1,64}`). Body (optional): `{ "reason": "..." }`.
+Headers: `x-admin-key` and `x-admin-actor` (both required; permission `videos:purge`). Body (optional): `{ "reason": "..." }`.
 
 Response `200`:
 
@@ -1115,7 +1115,7 @@ Response `200`:
 }
 ```
 
-Errors: `401 UNAUTHORIZED`, `400 VALIDATION_ERROR` (bad id or `x-admin-id`), `429 RATE_LIMITED` (300/hour with a valid key, 30/hour otherwise, plus the global per-IP limit), `502 SUMMARIZER_PURGE_FAILED`. A `200` with `partial: true` means a Mongo step failed after the purge; `warnings` names it.
+Errors: `401 UNAUTHORIZED`, `403 ADMIN_PERMISSION_DENIED`, `400 VALIDATION_ERROR` (bad id), `429 RATE_LIMITED` (300/hour with a valid key, 30/hour otherwise, plus the global per-IP limit), `502 SUMMARIZER_PURGE_FAILED`. A `200` with `partial: true` means a Mongo step failed after the purge; `warnings` names it.
 
 User-scope deletion (`DELETE /api/videos/:id`, JWT) is different: it removes only the caller's library row, their idempotency key and their own assistant notes for the video; the shared summary stays. User-account deletion is documented in [GDPR.md](./GDPR.md).
 

@@ -2,6 +2,8 @@ import { FastifyInstance } from 'fastify';
 import { vi } from 'vitest';
 import { buildApp } from '../app.js';
 import * as softDeleteCache from '../utils/soft-delete-cache.js';
+import { config } from '../config.js';
+import { sha256Hex, signActorHeader } from '../utils/admin-actor.js';
 
 // Mock container services for route testing
 export interface MockContainer {
@@ -129,6 +131,7 @@ export interface MockContainer {
     clearSoftDelete: ReturnType<typeof vi.fn>;
     findExpiredSoftDeletes: ReturnType<typeof vi.fn>;
     hardDelete: ReturnType<typeof vi.fn>;
+    hasPermission: ReturnType<typeof vi.fn>;
   };
   userDeletionRepository: {
     insert: ReturnType<typeof vi.fn>;
@@ -323,6 +326,9 @@ export function createMockContainer(): MockContainer {
       clearSoftDelete: vi.fn(),
       findExpiredSoftDeletes: vi.fn().mockResolvedValue([]),
       hardDelete: vi.fn().mockResolvedValue(true),
+      // Default: every signed admin actor still holds the permission. Demotion
+      // tests override it with false.
+      hasPermission: vi.fn().mockResolvedValue(true),
     },
     userDeletionRepository: {
       insert: vi.fn(),
@@ -355,6 +361,37 @@ export const testUser = {
   userId: 'test-user-id',
   email: 'test@example.com',
 };
+
+/** A user id (24-char hex) for the admin that signed `/api/admin/*` requests act as. */
+export const TEST_ADMIN_USER_ID = 'a1b2c3d4e5f60718293a4b5c';
+
+export interface AdminActorRequest {
+  headers: Record<string, string>;
+  /** The exact serialized body the signature covers; absent for body-less requests. */
+  payload?: string;
+}
+
+/**
+ * Headers (and body) for an `/api/admin/*` request made the way vie-admin
+ * makes it: the shared key plus a fresh `x-admin-actor` signed over the exact
+ * body bytes. Pass the result straight to `app.inject`.
+ */
+export function adminActorRequest(
+  body?: Record<string, unknown>,
+  options: { userId?: string; nowSeconds?: number } = {},
+): AdminActorRequest {
+  const { userId = TEST_ADMIN_USER_ID, nowSeconds = Math.floor(Date.now() / 1000) } = options;
+  const payload = body === undefined ? undefined : JSON.stringify(body);
+  const actor = signActorHeader(config.ADMIN_SESSION_SECRET, userId, sha256Hex(payload ?? ''), nowSeconds);
+  return {
+    headers: {
+      'x-admin-key': config.ADMIN_API_KEY,
+      'x-admin-actor': actor,
+      ...(payload === undefined ? {} : { 'content-type': 'application/json' }),
+    },
+    ...(payload === undefined ? {} : { payload }),
+  };
+}
 
 // Generate a valid JWT for testing
 export async function getAuthHeader(app: FastifyInstance): Promise<string> {

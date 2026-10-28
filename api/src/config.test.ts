@@ -8,6 +8,7 @@ const STRONG_ENV: Record<string, string> = {
   JWT_REFRESH_SECRET: 'unit-test-strong-refresh-secret-0123456789abcdef',
   INTERNAL_SECRET: 'unit-test-strong-internal-secret',
   ADMIN_API_KEY: 'unit-test-strong-admin-key',
+  ADMIN_SESSION_SECRET: 'unit-test-strong-admin-session-secret-0123456789abcdef',
 };
 
 // config.ts parses process.env at import time, so each scenario needs a fresh
@@ -68,11 +69,48 @@ describe('config env validation', () => {
       ).rejects.toThrow(/ADMIN_API_KEY/);
     });
 
+    it('should throw in production when ADMIN_SESSION_SECRET is the dev default', async () => {
+      await expect(
+        loadConfig({
+          NODE_ENV: 'production',
+          ADMIN_SESSION_SECRET: 'dev-admin-session-secret-change-me',
+        })
+      ).rejects.toThrow(/ADMIN_SESSION_SECRET/);
+    });
+
+    it('should throw in production when ADMIN_SESSION_SECRET is empty', async () => {
+      await expect(
+        loadConfig({ NODE_ENV: 'production', ADMIN_SESSION_SECRET: '' })
+      ).rejects.toThrow(/ADMIN_SESSION_SECRET/);
+    });
+
+    it('should throw in production when ADMIN_SESSION_SECRET is shorter than 32 characters', async () => {
+      await expect(
+        loadConfig({ NODE_ENV: 'production', ADMIN_SESSION_SECRET: 'x'.repeat(31) })
+      ).rejects.toThrow(/at least 32 characters/);
+    });
+
+    it('should throw in production when ADMIN_SESSION_SECRET equals ADMIN_API_KEY', async () => {
+      const shared = 'unit-test-one-value-used-for-both-0123456789abcdef';
+      await expect(
+        loadConfig({ NODE_ENV: 'production', ADMIN_API_KEY: shared, ADMIN_SESSION_SECRET: shared })
+      ).rejects.toThrow(/must differ from ADMIN_API_KEY/);
+    });
+
+    it('should not echo the ADMIN_SESSION_SECRET value in the refusal', async () => {
+      const weak = 'weak-secret-value';
+      const failure = await loadConfig({ NODE_ENV: 'production', ADMIN_SESSION_SECRET: weak }).catch(
+        (error: Error) => error,
+      );
+      expect(String(failure)).not.toContain(weak);
+    });
+
     it('should accept dev-default secrets outside production', async () => {
       const { config } = await loadConfig({
         NODE_ENV: 'development',
         INTERNAL_SECRET: 'dev-internal-secret-change-me',
         ADMIN_API_KEY: 'dev-admin-key-change-me',
+        ADMIN_SESSION_SECRET: 'dev-admin-session-secret-change-me',
       });
       expect(config.NODE_ENV).toBe('development');
     });

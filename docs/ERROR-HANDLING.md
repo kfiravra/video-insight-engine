@@ -47,6 +47,7 @@ Emitted by the `authenticate` decorator (`api/src/plugins/jwt.ts`) and
 | Code                       | Message                                                          | When                                                    |
 | -------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------- |
 | `ACCOUNT_DELETION_PENDING` | This account is scheduled for deletion. Contact support to cancel. | Valid JWT for a soft-deleted account (GDPR grace window) |
+| `ADMIN_PERMISSION_DENIED`  | The shared admin key may only read; a named admin is required / Missing permission: `<permission>` | `/api/admin/*` only: the machine key used for a mutation, or a signed admin who no longer holds the route's permission (see [SECURITY.md](./SECURITY.md#admin-api-key)). A bad, stale or tampered `x-admin-actor` header is `401 UNAUTHORIZED` ("Invalid admin actor"). |
 
 > There is deliberately **no** generic `FORBIDDEN` code: ownership checks
 > return `404 NOT_FOUND` instead of 403 so the API never confirms that a

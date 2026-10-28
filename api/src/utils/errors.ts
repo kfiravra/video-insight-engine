@@ -30,6 +30,14 @@ export class UnauthorizedError extends AppError {
   }
 }
 
+/** An `/api/admin/*` caller without the permission the route needs (the shared key on a mutation, or a demoted admin). */
+export class AdminPermissionError extends AppError {
+  constructor(message = 'Admin permission required') {
+    super('ADMIN_PERMISSION_DENIED', 403, message);
+    this.name = 'AdminPermissionError';
+  }
+}
+
 export class ConflictError extends AppError {
   constructor(code: string, message: string) {
     super(code, 409, message);

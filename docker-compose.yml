@@ -311,6 +311,8 @@ services:
       RABBITMQ_URL: amqp://${RABBITMQ_DEFAULT_USER:-vie}:${RABBITMQ_DEFAULT_PASS:-vie-dev}@vie-rabbitmq:5672/
       USE_QUEUE_PIPELINE: ${USE_QUEUE_PIPELINE:-false}
       ADMIN_API_KEY: ${ADMIN_API_KEY:-dev-admin-key-change-me}
+      # Verifies the signed X-Admin-Actor header vie-admin sends; must equal vie-admin's value
+      ADMIN_SESSION_SECRET: ${ADMIN_SESSION_SECRET:-dev-admin-session-secret-change-me}
       # Login emails that hold the admin role; reconciled at every boot. Blank = no change.
       ADMIN_EMAILS: ${ADMIN_EMAILS:-}
       # Redis — backs the dispatch guard (api/src/services/dispatch-guard.service.ts).
@@ -553,7 +555,8 @@ services:
       PYTHONUNBUFFERED: 1
       MONGODB_URI: mongodb://vie-mongodb:27017/video-insight-engine
       ADMIN_API_KEY: ${ADMIN_API_KEY:-dev-admin-key-change-me}
-      # Signs admin login sessions (separate from ADMIN_API_KEY, the machine key)
+      # Signs admin login sessions and the X-Admin-Actor header sent to vie-api
+      # (separate from ADMIN_API_KEY, the machine key); must equal vie-api's value
       ADMIN_SESSION_SECRET: ${ADMIN_SESSION_SECRET:-dev-admin-session-secret-change-me}
       VIE_API_URL: http://vie-api:3000
       VIE_SUMMARIZER_URL: http://vie-summarizer:8000

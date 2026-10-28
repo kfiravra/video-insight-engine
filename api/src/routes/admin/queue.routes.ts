@@ -1,6 +1,5 @@
-import { FastifyInstance, FastifyRequest, FastifyReply, FastifyBaseLogger } from 'fastify';
+import { FastifyInstance, FastifyBaseLogger } from 'fastify';
 import { config } from '../../config.js';
-import { isValidAdminKey, parseAdminIdHeader } from '../../utils/admin-auth.js';
 import { auditRequestContext } from '../../utils/audit-context.js';
 import { QUEUE_TOPOLOGY } from '../../services/queue-topology.js';
 import type { ConfirmChannel, GetMessage } from 'amqplib';
@@ -32,14 +31,6 @@ interface MgmtMessageEnvelope {
     message_id?: string;
   };
   routing_key?: string;
-}
-
-function requireAdmin(req: FastifyRequest, reply: FastifyReply): boolean {
-  if (!isValidAdminKey(req.headers['x-admin-key'])) {
-    reply.code(401).send({ error: 'UNAUTHORIZED', message: 'Admin key required' });
-    return false;
-  }
-  return true;
 }
 
 function managementBase(): { url: string; auth: string } {
@@ -144,8 +135,7 @@ export async function adminQueueRoutes(fastify: FastifyInstance): Promise<void> 
   const { auditService } = fastify.container;
 
   // GET /stats — combined view of main queue + DLQ depth
-  fastify.get('/stats', async (req, reply) => {
-    if (!requireAdmin(req, reply)) return;
+  fastify.get('/stats', { preHandler: [fastify.requireAdmin('queue:read')] }, async (_req, reply) => {
     try {
       const [main, dlq] = await Promise.all([
         fetchQueueInfo(QUEUE_TOPOLOGY.queue),
@@ -170,8 +160,9 @@ export async function adminQueueRoutes(fastify: FastifyInstance): Promise<void> 
   });
 
   // GET /dlq?limit=N — peek messages without acking
-  fastify.get<{ Querystring: { limit?: string } }>('/dlq', async (req, reply) => {
-    if (!requireAdmin(req, reply)) return;
+  fastify.get<{ Querystring: { limit?: string } }>('/dlq', {
+    preHandler: [fastify.requireAdmin('queue:read')],
+  }, async (req, reply) => {
     const limit = clampedInt(req.query.limit, 20, 1, 100);
     try {
       const { url, auth } = managementBase();
@@ -207,12 +198,9 @@ export async function adminQueueRoutes(fastify: FastifyInstance): Promise<void> 
   });
 
   // POST /replay — drain the DLQ over AMQP, one message at a time
-  fastify.post<{ Body: { max?: number } }>('/replay', async (req, reply) => {
-    if (!requireAdmin(req, reply)) return;
-    const adminIdHeader = parseAdminIdHeader(req.headers['x-admin-id']);
-    if (!adminIdHeader.ok) {
-      return reply.code(400).send({ error: 'VALIDATION_ERROR', message: 'Invalid x-admin-id header' });
-    }
+  fastify.post<{ Body: { max?: number } }>('/replay', {
+    preHandler: [fastify.requireAdmin('queue:replay')],
+  }, async (req, reply) => {
     const cap = clampedInt(req.body?.max, 100, 1, 500);
 
     // Validate the queue integration BEFORE any destructive fetch — the old
@@ -238,7 +226,7 @@ export async function adminQueueRoutes(fastify: FastifyInstance): Promise<void> 
     // Audited even when the drain failed part-way: the messages already
     // republished are a real change to the queue.
     await auditService.recordBestEffort({
-      ...auditRequestContext(req, adminIdHeader.adminId),
+      ...auditRequestContext(req),
       action: 'queue.replay',
       targetType: 'queue',
       targetId: QUEUE_TOPOLOGY.dlq,

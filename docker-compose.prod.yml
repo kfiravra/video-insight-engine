@@ -311,6 +311,10 @@ services:
       FRONTEND_URL: ${FRONTEND_URL:?FRONTEND_URL is required (public https origin of vie-web)}
       INTERNAL_SECRET: ${INTERNAL_SECRET:?INTERNAL_SECRET is required (openssl rand -base64 32)}
       ADMIN_API_KEY: ${ADMIN_API_KEY:?ADMIN_API_KEY is required (openssl rand -base64 32)}
+      # Verifies the signed X-Admin-Actor header vie-admin sends; must equal vie-admin's
+      # value. api/src/config.ts refuses to boot production on the dev default, a value
+      # under 32 characters, or the same value as ADMIN_API_KEY.
+      ADMIN_SESSION_SECRET: ${ADMIN_SESSION_SECRET:?ADMIN_SESSION_SECRET is required (openssl rand -hex 32)}
       # Login emails that hold the admin role; reconciled at every boot. Blank = no change.
       ADMIN_EMAILS: ${ADMIN_EMAILS:-}
       RABBITMQ_URL: *rabbitmq-url
@@ -512,7 +516,8 @@ services:
       ENVIRONMENT: ${ENVIRONMENT:-production}
       MONGODB_URI: *mongodb-uri
       ADMIN_API_KEY: ${ADMIN_API_KEY:?ADMIN_API_KEY is required (openssl rand -base64 32)}
-      # Signs admin login sessions; must differ from ADMIN_API_KEY. Rotating it logs admins out.
+      # Signs admin login sessions and the X-Admin-Actor header sent to vie-api; must differ from
+      # ADMIN_API_KEY and equal vie-api's value. Rotating it logs admins out: recreate both services.
       ADMIN_SESSION_SECRET: ${ADMIN_SESSION_SECRET:?ADMIN_SESSION_SECRET is required (openssl rand -hex 32)}
       VIE_API_URL: http://vie-api:3000
       VIE_SUMMARIZER_URL: http://vie-summarizer:8000

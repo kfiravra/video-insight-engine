@@ -382,7 +382,7 @@ The `output_chunker.py` walks assembled tabs via a **per-component handler regis
 - **Priority by tier:** free=1, pro/team=5.
 - **Worker retry:** republish with `attempt+1` up to `WORKER_MAX_RETRIES=3`, then `nack(requeue=False)` → dead-letters. One Sentry event per dead-lettered job (retries fire none).
 - **SSE preserved without frontend changes:** the worker acquires the **same Redis pipeline lock** the SSE producer uses; a client opening `/stream` sees the lock held and attaches as a consumer of the Redis Streams event log.
-- Admin queue endpoints (require `X-Admin-Key`): `GET /api/admin/queue/stats`, `GET /api/admin/queue/dlq`, `POST /api/admin/queue/replay`.
+- Admin queue endpoints (require `X-Admin-Key`; the replay also needs a signed `X-Admin-Actor` naming an admin): `GET /api/admin/queue/stats`, `GET /api/admin/queue/dlq`, `POST /api/admin/queue/replay`.
 - Default path (flag off) is a **direct HTTP `POST /summarize`** → `202 Accepted` → FastAPI BackgroundTasks.
 
 ### Observability (Langfuse) — strictly best-effort, no-ops when keys unset

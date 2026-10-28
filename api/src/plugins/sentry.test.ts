@@ -85,6 +85,13 @@ describe('scrubBeforeSend (PII filter)', () => {
     expect(event?.request?.headers?.['x-internal-secret']).toBe('[Filtered]');
   });
 
+  it('should strip the signed admin actor header', () => {
+    const event = scrubBeforeSend(
+      eventWith({ request: { headers: { 'x-admin-actor': 'userid.1790000000.abcdef' } } }),
+    );
+    expect(event?.request?.headers?.['x-admin-actor']).toBe('[Filtered]');
+  });
+
   it('should drop email addresses from user metadata', () => {
     const event = scrubBeforeSend(
       eventWith({ user: { id: 'user-1', email: 'alice@example.com', username: 'alice' } }),

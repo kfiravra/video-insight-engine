@@ -47,6 +47,7 @@ const SENSITIVE_HEADERS = new Set([
   'set-cookie',
   'x-internal-secret',
   'x-admin-key',
+  'x-admin-actor',
   'x-csrf-token',
   'x-api-key',
   'proxy-authorization',

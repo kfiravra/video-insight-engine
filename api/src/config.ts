@@ -54,7 +54,30 @@ const DEV_DEFAULT_SECRETS: Record<string, string[]> = {
     'your-internal-secret-generate-with-openssl-rand',
   ],
   ADMIN_API_KEY: ['dev-admin-key-change-me'],
+  ADMIN_SESSION_SECRET: ['dev-admin-session-secret-change-me'],
 };
+
+// `openssl rand -hex 32` yields 64 characters; shorter is a guessable HMAC key.
+// Only applied to ADMIN_SESSION_SECRET (same floor as vie-admin's validate_secrets);
+// the ADMIN_API_KEY already in production has an unknown length.
+const MIN_ADMIN_SESSION_SECRET_LENGTH = 32;
+
+/** Production-only rules for ADMIN_SESSION_SECRET beyond "not the dev default" (messages never echo the value). */
+function addAdminSessionSecretIssues(
+  env: { ADMIN_SESSION_SECRET: string; ADMIN_API_KEY: string },
+  ctx: z.RefinementCtx,
+): void {
+  const problems: string[] = [];
+  if (env.ADMIN_SESSION_SECRET.length < MIN_ADMIN_SESSION_SECRET_LENGTH) {
+    problems.push(`ADMIN_SESSION_SECRET must be at least ${MIN_ADMIN_SESSION_SECRET_LENGTH} characters (openssl rand -hex 32)`);
+  }
+  if (env.ADMIN_SESSION_SECRET === env.ADMIN_API_KEY) {
+    problems.push('ADMIN_SESSION_SECRET must differ from ADMIN_API_KEY — the machine key could otherwise act as any admin');
+  }
+  for (const message of problems) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['ADMIN_SESSION_SECRET'], message });
+  }
+}
 
 const envSchema = z.object({
   PORT: z.string().default('3000').transform(Number),
@@ -112,6 +135,12 @@ const envSchema = z.object({
   // Admin endpoints for /api/admin/queue/* and DLQ replay. Different from
   // INTERNAL_SECRET so a leaked admin key cannot impersonate the summarizer.
   ADMIN_API_KEY: z.string().min(8).default('dev-admin-key-change-me'),
+  // HMAC key for the signed `X-Admin-Actor` header vie-admin sends with every
+  // call it makes for a named admin (utils/admin-actor.ts). The SAME value as
+  // vie-admin's ADMIN_SESSION_SECRET, which also signs its login sessions, so
+  // rotate both services together. Kept apart from ADMIN_API_KEY: holding the
+  // machine key must not let anyone act as an admin.
+  ADMIN_SESSION_SECRET: z.string().default('dev-admin-session-secret-change-me'),
   // Comma-separated login emails that hold the admin role. Reconciled with the
   // users collection at every boot (services/admin-seed.service.ts): listed
   // existing accounts are promoted, `env` admins that leave the list are
@@ -200,6 +229,7 @@ const envSchema = z.object({
     { key: 'JWT_REFRESH_SECRET', value: env.JWT_REFRESH_SECRET },
     { key: 'INTERNAL_SECRET', value: env.INTERNAL_SECRET },
     { key: 'ADMIN_API_KEY', value: env.ADMIN_API_KEY },
+    { key: 'ADMIN_SESSION_SECRET', value: env.ADMIN_SESSION_SECRET },
   ];
   for (const { key, value } of secrets) {
     if (DEV_DEFAULT_SECRETS[key].includes(value)) {
@@ -210,6 +240,7 @@ const envSchema = z.object({
       });
     }
   }
+  addAdminSessionSecretIssues(env, ctx);
 });
 
 const parsedConfig = envSchema.parse(process.env);

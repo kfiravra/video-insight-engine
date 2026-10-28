@@ -14,6 +14,7 @@ import { websocketPlugin } from './plugins/websocket.js';
 import { tierPlugin } from './plugins/tier.js';
 import { demoGuardPlugin } from './plugins/demo-guard.js';
 import { adminSeedPlugin } from './plugins/admin-seed.js';
+import { adminAuthPlugin } from './plugins/admin-auth.js';
 import { rabbitmqPlugin } from './plugins/rabbitmq.js';
 import { redisPlugin } from './plugins/redis.js';
 import { genRequestId, requestIdPlugin } from './plugins/request-id.js';
@@ -50,6 +51,7 @@ const SECRET_HEADER_NAMES = [
   'set-cookie',
   'x-internal-secret',
   'x-admin-key',
+  'x-admin-actor',
   'x-csrf-token',
   'x-api-key',
   'proxy-authorization',
@@ -184,6 +186,8 @@ export async function buildApp(options?: BuildAppOptions): Promise<FastifyInstan
   await fastify.register(tierPlugin);
   // Demo-account guard (after the container: it resolves the demo user through it)
   await fastify.register(demoGuardPlugin);
+  // /api/admin/* auth: signed actor header or the read-only machine key
+  await fastify.register(adminAuthPlugin);
   // ADMIN_EMAILS role reconcile (runs on ready, after the mongodb index hook)
   await fastify.register(adminSeedPlugin);
 

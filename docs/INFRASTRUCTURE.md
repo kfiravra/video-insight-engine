@@ -585,7 +585,7 @@ SSE producer uses (`pipeline_event_stream.acquire_lock`). When a client opens
 `/api/videos/:id/stream`, the existing SSE handler sees the lock held and attaches
 as a consumer of the Redis Streams event log — no frontend changes.
 
-**Admin endpoints** (require `X-Admin-Key` header):
+**Admin endpoints** (require the `X-Admin-Key` header; `POST /replay` also needs a signed `X-Admin-Actor` naming an admin with `queue:replay`, see [SECURITY.md](./SECURITY.md#admin-api-key)):
 
 | Method | Path | Purpose |
 | --- | --- | --- |

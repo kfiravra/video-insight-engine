@@ -274,6 +274,7 @@ describe('buildApp', () => {
             authorization: 'Bearer secret-jwt',
             cookie: 'sid=abc',
             'x-internal-secret': 'internal-1',
+            'x-admin-actor': 'actor-header-1',
             host: 'x',
           },
           body: { password: 'hunter2', refreshToken: 'rt-1' },
@@ -290,6 +291,7 @@ describe('buildApp', () => {
       expect(line.headers.authorization).toBe('[Redacted]');
       expect(line.headers.cookie).toBe('[Redacted]');
       expect(line.headers['x-internal-secret']).toBe('[Redacted]');
+      expect(line.headers['x-admin-actor']).toBe('[Redacted]');
       expect(line.headers.host).toBe('x');
       expect(line.body.password).toBe('[Redacted]');
       expect(line.body.refreshToken).toBe('[Redacted]');

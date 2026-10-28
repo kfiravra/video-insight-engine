@@ -5,8 +5,7 @@ import { ObjectId } from 'mongodb';
 
 import { buildApp } from '../../../app.js';
 import type { Container } from '../../../container.js';
-import { config } from '../../../config.js';
-import { createMockContainer, type MockContainer } from '../../../test/helpers.js';
+import { adminActorRequest, createMockContainer, TEST_ADMIN_USER_ID, type MockContainer } from '../../../test/helpers.js';
 import { getTestDb } from '../../../test/setup.js';
 import { AdminAuditRepository } from '../../../repositories/admin-audit.repository.js';
 import { AuditService } from '../../../services/audit.service.js';
@@ -14,12 +13,11 @@ import { AuditService } from '../../../services/audit.service.js';
 /**
  * Each existing admin mutation, driven through the real route with the real
  * AuditService and repository writing to the in-memory database: the
- * `adminAudit` row exists and names the operator, the action and the target.
+ * `adminAudit` row exists and names the signed admin, the action and the target.
  */
 describe('admin mutations write an adminAudit row', () => {
   const YT = 'dQw4w9WgXcQ';
   const targetUserId = new ObjectId().toString();
-  const adminHeaders = { 'x-admin-key': config.ADMIN_API_KEY, 'x-admin-id': 'op-1' };
   let app: FastifyInstance;
   let mocks: MockContainer;
 
@@ -80,10 +78,10 @@ describe('admin mutations write an adminAudit row', () => {
   });
 
   it('should audit a scheduled user deletion under the operator', async () => {
-    await app.inject({ method: 'DELETE', url: `/api/admin/users/${targetUserId}`, headers: adminHeaders });
+    await app.inject({ method: 'DELETE', url: `/api/admin/users/${targetUserId}`, ...adminActorRequest() });
 
     expect(await auditRows()).toMatchObject([
-      { actorId: 'op-1', action: 'users.delete', targetType: 'user', targetId: targetUserId, after: { mode: 'scheduled' } },
+      { actorId: TEST_ADMIN_USER_ID, action: 'users.delete', targetType: 'user', targetId: targetUserId, after: { mode: 'scheduled' } },
     ]);
   });
 
@@ -91,11 +89,11 @@ describe('admin mutations write an adminAudit row', () => {
     await app.inject({
       method: 'DELETE',
       url: `/api/admin/users/${targetUserId}?immediate=true`,
-      headers: adminHeaders,
+      ...adminActorRequest(),
     });
 
     expect(await auditRows()).toMatchObject([
-      { actorId: 'op-1', action: 'users.delete', targetType: 'user', targetId: targetUserId, after: { mode: 'immediate' } },
+      { actorId: TEST_ADMIN_USER_ID, action: 'users.delete', targetType: 'user', targetId: targetUserId, after: { mode: 'immediate' } },
     ]);
   });
 
@@ -103,29 +101,26 @@ describe('admin mutations write an adminAudit row', () => {
     await app.inject({
       method: 'DELETE',
       url: `/api/admin/videos/${YT}`,
-      headers: { ...adminHeaders, 'content-type': 'application/json' },
-      payload: { reason: 'duplicate upload' },
+      ...adminActorRequest({ reason: 'duplicate upload' }),
     });
 
     expect(await auditRows()).toMatchObject([
-      { actorId: 'op-1', action: 'videos.purge', targetType: 'video', targetId: YT, reason: 'duplicate upload' },
+      { actorId: TEST_ADMIN_USER_ID, action: 'videos.purge', targetType: 'video', targetId: YT, reason: 'duplicate upload' },
     ]);
   });
 
   it('should audit a DLQ replay under the operator', async () => {
-    await app.inject({ method: 'POST', url: '/api/admin/queue/replay', headers: adminHeaders });
+    await app.inject({ method: 'POST', url: '/api/admin/queue/replay', ...adminActorRequest() });
 
     expect(await auditRows()).toMatchObject([
-      { actorId: 'op-1', action: 'queue.replay', targetType: 'queue', targetId: 'vie.pipeline.dlq', after: { replayed: 0 } },
+      { actorId: TEST_ADMIN_USER_ID, action: 'queue.replay', targetType: 'queue', targetId: 'vie.pipeline.dlq', after: { replayed: 0 } },
     ]);
   });
 
   it('should carry the request id and client ip on the row', async () => {
-    await app.inject({
-      method: 'DELETE',
-      url: `/api/admin/videos/${YT}`,
-      headers: { ...adminHeaders, 'x-request-id': 'req-audit-0001' },
-    });
+    const request = adminActorRequest();
+    request.headers['x-request-id'] = 'req-audit-0001';
+    await app.inject({ method: 'DELETE', url: `/api/admin/videos/${YT}`, ...request });
 
     expect(await auditRows()).toMatchObject([{ requestId: 'req-audit-0001', ip: '127.0.0.1' }]);
   });

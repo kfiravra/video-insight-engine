@@ -1,7 +1,6 @@
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { isValidAdminKey, parseAdminIdHeader } from '../utils/admin-auth.js';
-import { auditRequestContext, type AuditRequestContext } from '../utils/audit-context.js';
+import { adminActorUserId, auditRequestContext, type AuditRequestContext } from '../utils/audit-context.js';
 import type { Container } from '../container.js';
 
 /**
@@ -141,35 +140,22 @@ async function scheduleDeletion(container: Container, input: AdminDeleteInput): 
 
 export async function adminUsersRoutes(fastify: FastifyInstance): Promise<void> {
   fastify.delete('/:id', {
+    preHandler: [fastify.requireAdmin('users:delete')],
     config: {
       rateLimit: { max: 30, timeWindow: '1 hour' },
     },
   }, async (req, reply) => {
-    if (!isValidAdminKey(req.headers['x-admin-key'])) {
-      return reply.code(401).send({
-        error: 'UNAUTHORIZED',
-        message: 'Admin key required',
-      });
-    }
-
     const params = adminDeleteParamsSchema.parse(req.params);
     const query = adminDeleteQuerySchema.parse(req.query);
     const body = adminDeleteBodySchema.parse(req.body);
 
     const immediate = query.immediate === 'true' || query.immediate === '1';
 
-    const adminIdHeader = parseAdminIdHeader(req.headers['x-admin-id']);
-    if (!adminIdHeader.ok) {
-      return reply.code(400).send({
-        error: 'VALIDATION_ERROR',
-        message: 'Invalid x-admin-id header',
-      });
-    }
     const input: AdminDeleteInput = {
       userId: params.id,
-      adminId: adminIdHeader.adminId,
+      adminId: adminActorUserId(req),
       reason: body?.reason ?? null,
-      auditContext: auditRequestContext(req, adminIdHeader.adminId),
+      auditContext: auditRequestContext(req),
     };
 
     if (immediate) {
