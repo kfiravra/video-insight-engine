@@ -1,5 +1,6 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
+import { auditApi, type AuditEntry } from '../lib/billing-actions';
 import { mergeLedgerPages } from '../lib/billing';
 
 export function useUsageStats(days = 30) {
@@ -200,5 +201,32 @@ export function useBillingAccount(userId: string | null | undefined) {
     select: mergeLedgerPages,
     enabled: !!userId,
     staleTime: 15_000,
+  });
+}
+
+export const AUDIT_PAGE_SIZE = 50;
+
+export interface AuditFilters {
+  targetId?: string;
+  actorId?: string;
+}
+
+function flattenAuditPages(data: { pages: Array<{ entries: AuditEntry[] }> }): AuditEntry[] {
+  return data.pages.flatMap((page) => page.entries);
+}
+
+/**
+ * The admin action log, newest first. `fetchNextPage` / `hasNextPage` page it
+ * with the `nextBefore` cursor; `data` is every loaded entry. Billing changes
+ * invalidate `['audit']`.
+ */
+export function useAuditLog(filters: AuditFilters) {
+  return useInfiniteQuery({
+    queryKey: ['audit', filters.targetId ?? null, filters.actorId ?? null],
+    queryFn: ({ pageParam }) => auditApi.list({ ...filters, limit: AUDIT_PAGE_SIZE, before: pageParam }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (lastPage) => lastPage.nextBefore ?? undefined,
+    select: flattenAuditPages,
+    staleTime: 10_000,
   });
 }

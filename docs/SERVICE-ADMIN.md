@@ -239,7 +239,15 @@ React SPA served as static files from the same container.
 - **Usage** — CostChart, ModelBreakdown, FeatureBreakdown, RecentCalls
 - **Health** — ServiceHealth, 7-day uptime grid
 - **Alerts** — Alert thresholds, recent alerts table
-- **Users** — cost table; the user drawer has Overview, **Account** (read-only billing: plan and term, free-video status — ready or next at, plan minutes used and left, spendable credits with a lot table, open holds, recurring grants, paged ledger with actor, reason and cost), Videos, Assistant and Adjustments tabs. `AccountTab` takes an `actions` slot for the billing action dialogs
+- **Users** — cost table; the user drawer (`components/users/UserDetailDrawer.tsx`) has Overview, **Account**, Videos, Assistant and Adjustments (read-only USD history) tabs. The Account tab (`AccountPanel`) is:
+  - a **Grant minutes** form (`GrantCreditForm`), always visible;
+  - **action buttons** (`AccountActions`, in `AccountTab`'s `actions` slot): **Set plan** (free or Pro, optional term end, default 12 months), **Caps** (max video minutes, free videos per day, runs at once, block; a field left as it was is not sent, an emptied one clears the cap), **Adjust** (plan or credit bucket, signed minutes, never 0) and **Add recurring grant** (minutes a month, active), plus an **Audit log** link filtered to the user;
+  - the read-only account view: plan and term, free-video status (ready or next at), plan minutes used and left, spendable credits with a lot table, open holds, recurring grants (each row has a **Delete** button), and the paged ledger with actor, reason and cost.
+- **Audit** (`/audit-log`) — the admin action log, newest first: time, action, actor (email when recorded), target, reason, and a **Changes** toggle that shows only the fields that differ between the row's before and after snapshots (`updatedAt` and `version` are left out; they change on every write). Filter by target id or actor id (kept in the URL, so `/audit-log?targetId=<userId>` is linkable); **Load older entries** pages with the `nextBefore` cursor. The page path is not `/audit` because `GET /audit` is the API route.
+
+Every Account action is a dialog (`ActionDialog`) that requires a **reason** (1–500 characters, recorded in the ledger and the audit log) and shows the server's own explanation when it refuses (`describeApiError`). Each submission carries an `Idempotency-Key`; resubmitting the identical request after a failure or timeout reuses it, so a change that did apply is not applied twice. A success refetches the account (`['billing-account', userId]`) and the audit log. The shortcuts for a dialog are Escape or Cancel to close. A session that signed in with the machine key sees the `403` "A named admin session is required" message, since only named admin sessions may change anything.
+
+The action and audit client is `ui/src/lib/billing-actions.ts` (`billingActions`, `auditApi`), with the form-to-request builders and their ranges in `lib/billing-forms.ts` and the before/after comparison in `lib/audit-diff.ts`. Grant minutes keeps `api.users.grantCredit` from `lib/api.ts`.
 
 ## Security
 

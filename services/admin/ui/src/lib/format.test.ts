@@ -124,3 +124,17 @@ describe('formatUsageVolume', () => {
     expect(formatUsageVolume({ tokens_in: 5, tokens_out: null })).toBe('5');
   });
 });
+
+describe('shortId', () => {
+  it('should shorten a long id to its first six and last four characters', async () => {
+    const { shortId } = await import('./format');
+
+    expect(shortId('64f1a2b3c4d5e6f708192a3b')).toBe('64f1a2…2a3b');
+  });
+
+  it('should leave a short id as it is', async () => {
+    const { shortId } = await import('./format');
+
+    expect(shortId('abc123')).toBe('abc123');
+  });
+});

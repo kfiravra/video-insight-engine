@@ -68,7 +68,7 @@ export function logout() {
 }
 
 /** Build a query string from key-value pairs, omitting undefined values. */
-function qs(params: Record<string, string | number | undefined>): string {
+export function qs(params: Record<string, string | number | undefined>): string {
   const sp = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) {
     if (v !== undefined) sp.set(k, String(v));
@@ -77,7 +77,7 @@ function qs(params: Record<string, string | number | undefined>): string {
   return s ? `?${s}` : '';
 }
 
-async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const key = getApiKey();
   const res = await fetch(`${API_BASE}${path}`, {
     ...init,

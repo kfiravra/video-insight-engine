@@ -122,3 +122,8 @@ export function formatUsageVolume(row: UsageVolumeFields): string {
   }
   return formatNumber((row.tokens_in ?? 0) + (row.tokens_out ?? 0));
 }
+
+/** `64f1a2…9c0b`: a long id shortened for tables and headers; short ids are returned as is. */
+export function shortId(id: string): string {
+  return id.length > 10 ? `${id.slice(0, 6)}…${id.slice(-4)}` : id;
+}

@@ -4,11 +4,14 @@ import { ErrorState } from '../ErrorState';
 import { SkeletonPanel } from '../SkeletonPanel';
 import { AccountSummary } from './AccountSummary';
 import { GrantsTable, HoldsTable, LedgerTable, LotsTable } from './AccountTables';
+import type { BillingRecurringGrant } from '../../lib/billing';
 
 interface AccountTabProps {
   userId: string;
   /** Action buttons (set plan, grant minutes, ...); rendered above the summary. */
   actions?: ReactNode;
+  /** A row action for each recurring grant (delete); the table has no actions column without it. */
+  grantActions?: (grant: BillingRecurringGrant) => ReactNode;
 }
 
 function ActionsSlot({ children }: { children: ReactNode }) {
@@ -48,7 +51,7 @@ function LoadOlder({ loading, onClick }: LoadOlderProps) {
 }
 
 /** Read-only view of a user's minutes account: plan, buckets, lots, holds, grants, ledger. */
-export function AccountTab({ userId, actions }: AccountTabProps) {
+export function AccountTab({ userId, actions, grantActions }: AccountTabProps) {
   const { data, isLoading, isError, error, refetch, hasNextPage, fetchNextPage, isFetchingNextPage } =
     useBillingAccount(userId);
 
@@ -73,7 +76,7 @@ export function AccountTab({ userId, actions }: AccountTabProps) {
       <AccountSummary account={data.account} />
       <LotsTable lots={data.lots} />
       <HoldsTable holds={data.holds} />
-      <GrantsTable grants={data.recurringGrants} />
+      <GrantsTable grants={data.recurringGrants} renderActions={grantActions} />
       <LedgerTable entries={data.ledger} />
       {hasNextPage && <LoadOlder loading={isFetchingNextPage} onClick={() => fetchNextPage()} />}
     </div>

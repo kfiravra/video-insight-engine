@@ -101,4 +101,26 @@ describe('UsersPage Account tab', () => {
     await waitFor(() => expect(screen.getByTestId('account-plan')).toBeTruthy());
     expect(mockAccount).toHaveBeenCalledWith(USER.userId, { limit: 50, before: undefined });
   });
+
+  it('should show the account action buttons once the account has loaded', async () => {
+    renderPage();
+
+    fireEvent.click(await openDrawer());
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Set plan' })).toBeTruthy());
+    expect(['Caps', 'Adjust', 'Add recurring grant'].map((name) => screen.queryByRole('button', { name }) !== null)).toEqual([
+      true,
+      true,
+      true,
+    ]);
+  });
+
+  it('should open the plan dialog for the selected user from the Account tab', async () => {
+    renderPage();
+    fireEvent.click(await openDrawer());
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Set plan' }));
+
+    expect(screen.getByRole('dialog', { name: 'Set plan' })).toBeTruthy();
+  });
 });

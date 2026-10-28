@@ -86,6 +86,20 @@ function entry(overrides: Partial<BillingLedgerEntry> = {}): BillingLedgerEntry 
   };
 }
 
+const GRANT = {
+  grantId: 'g'.repeat(24),
+  minutes: 300,
+  every: 'month' as const,
+  active: true,
+  nextRunAt: '2026-11-01T00:00:00.000Z',
+  lastRunAt: null,
+  actorId: 'f'.repeat(24),
+  auditId: 'c'.repeat(24),
+  reason: 'eval account',
+  createdAt: '2026-10-01T00:00:00.000Z',
+  updatedAt: '2026-10-01T00:00:00.000Z',
+};
+
 function detail(overrides: Partial<BillingAccountDetail> = {}): BillingAccountDetail {
   return {
     account: snapshot(),
@@ -308,6 +322,29 @@ describe('AccountTab', () => {
 
       expect(row?.textContent).toContain('300 min');
       expect(row?.textContent).toContain('Paused');
+    });
+
+    it('should show no actions column when no row action is given', async () => {
+      mockAccount.mockResolvedValue(detail({ recurringGrants: [GRANT] }));
+      renderTab();
+
+      await screen.findByText('eval account');
+
+      expect(screen.queryByRole('columnheader', { name: 'Actions' })).toBeNull();
+    });
+
+    it('should render the row action of each recurring grant', async () => {
+      mockAccount.mockResolvedValue(detail({ recurringGrants: [GRANT, { ...GRANT, grantId: 'h'.repeat(24) }] }));
+      const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+      render(
+        <QueryClientProvider client={client}>
+          <AccountTab userId={USER_ID} grantActions={(grant) => <button type="button">Remove {grant.grantId.slice(0, 1)}</button>} />
+        </QueryClientProvider>,
+      );
+
+      await screen.findByRole('columnheader', { name: 'Actions' });
+
+      expect(screen.getAllByRole('button', { name: /^Remove / })).toHaveLength(2);
     });
 
     it('should show an empty message when there are no recurring grants', async () => {

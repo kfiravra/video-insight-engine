@@ -157,7 +157,13 @@ export function HoldsTable({ holds }: { holds: BillingHold[] }) {
 
 // ─── Recurring grants ───
 
-export function GrantsTable({ grants }: { grants: BillingRecurringGrant[] }) {
+interface GrantsTableProps {
+  grants: BillingRecurringGrant[];
+  /** A row action such as Delete; the actions column appears only when this is given. */
+  renderActions?: (grant: BillingRecurringGrant) => ReactNode;
+}
+
+export function GrantsTable({ grants, renderActions }: GrantsTableProps) {
   return (
     <Section title="Recurring grants" count={grants.length} empty="No recurring grants.">
       <Head>
@@ -167,6 +173,7 @@ export function GrantsTable({ grants }: { grants: BillingRecurringGrant[] }) {
         <Th align="right" hide="hidden sm:table-cell">Next run</Th>
         <Th align="right" hide="hidden md:table-cell">Last run</Th>
         <Th hide="hidden sm:table-cell">Reason</Th>
+        {renderActions && <Th align="right">Actions</Th>}
       </Head>
       <tbody>
         {grants.map((grant) => (
@@ -184,6 +191,7 @@ export function GrantsTable({ grants }: { grants: BillingRecurringGrant[] }) {
             <td className="p-2 hidden sm:table-cell truncate max-w-[200px]" title={grant.reason}>
               {grant.reason}
             </td>
+            {renderActions && <td className="p-2 text-right">{renderActions(grant)}</td>}
           </tr>
         ))}
       </tbody>
