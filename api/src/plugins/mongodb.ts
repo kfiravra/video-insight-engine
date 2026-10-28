@@ -136,6 +136,39 @@ export async function runDedupKeyBackfill(db: Db, log: FastifyInstance['log']): 
   }
 }
 
+/**
+ * Indexes for the minutes ledger (billing-roles P1.2). The unique keys are
+ * what make the ledger idempotent and the account upsert race-safe, so the
+ * caller treats a failure here as fatal in production (like dedupKey).
+ * Exported so tests can build them on a bare test database.
+ */
+export async function createBillingIndexes(db: Db): Promise<void> {
+  await db.collection('billingAccounts').createIndexes([
+    { key: { ownerType: 1, ownerId: 1 }, unique: true },
+    // settle/release find the account by the run's requestId
+    { key: { 'holds.requestId': 1 } },
+  ]);
+  await db.collection('ledgerEntries').createIndexes([
+    { key: { idempotencyKey: 1 }, unique: true },
+    { key: { accountId: 1, createdAt: -1 } },
+    { key: { 'source.ref': 1 } },
+  ]);
+  // FIFO spend order; spent lots drop out of the index.
+  await db.collection('creditLots').createIndexes([
+    {
+      key: { accountId: 1, expiresAt: 1, createdAt: 1 },
+      partialFilterExpression: { minutesRemaining: { $gt: 0 } },
+    },
+  ]);
+  await db.collection('recurringGrants').createIndexes([
+    { key: { accountId: 1 } },
+    { key: { nextRunAt: 1 } },
+  ]);
+  await db.collection('billingShadow').createIndexes([
+    { key: { requestId: 1 }, unique: true },
+  ]);
+}
+
 declare module 'fastify' {
   interface FastifyInstance {
     mongo: {
@@ -294,6 +327,16 @@ async function mongodb(fastify: FastifyInstance) {
       } else {
         fastify.log.warn({ err }, 'Some indexes may already exist or failed to create');
       }
+    }
+
+    // Billing ledger indexes in their own block: an unrelated index failure
+    // above must not skip them, and without the unique keys a retried hold
+    // or settle could double-charge.
+    try {
+      await createBillingIndexes(db);
+    } catch (err) {
+      fastify.log.error({ err }, 'billing ledger indexes failed to build — ledger idempotency is not enforced');
+      if (config.NODE_ENV === 'production') throw err;
     }
 
     // Run the one-shot dedupKey backfill OFF the ready path. Kicking it via

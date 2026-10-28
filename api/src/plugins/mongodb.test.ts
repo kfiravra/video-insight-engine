@@ -158,6 +158,47 @@ describe('MongoDB plugin', () => {
       expect(dedupIndex?.partialFilterExpression).toEqual({ dedupKey: { $exists: true } });
     });
 
+    describe('billing ledger indexes', () => {
+      const findIndex = async (collection: string, key: Record<string, number>) => {
+        const indexes = await app.mongo.db.collection(collection).indexes();
+        return indexes.find((idx) => JSON.stringify(idx.key) === JSON.stringify(key));
+      };
+
+      it('should make billingAccounts unique per owner', async () => {
+        const index = await findIndex('billingAccounts', { ownerType: 1, ownerId: 1 });
+        expect(index?.unique).toBe(true);
+      });
+
+      it('should index billingAccounts by hold requestId for settle/release', async () => {
+        expect(await findIndex('billingAccounts', { 'holds.requestId': 1 })).toBeDefined();
+      });
+
+      it('should make ledgerEntries.idempotencyKey unique', async () => {
+        const index = await findIndex('ledgerEntries', { idempotencyKey: 1 });
+        expect(index?.unique).toBe(true);
+      });
+
+      it('should index ledgerEntries by account newest-first and by source ref', async () => {
+        expect(await findIndex('ledgerEntries', { accountId: 1, createdAt: -1 })).toBeDefined();
+        expect(await findIndex('ledgerEntries', { 'source.ref': 1 })).toBeDefined();
+      });
+
+      it('should index open creditLots in FIFO order with a minutesRemaining > 0 partial filter', async () => {
+        const index = await findIndex('creditLots', { accountId: 1, expiresAt: 1, createdAt: 1 });
+        expect(index?.partialFilterExpression).toEqual({ minutesRemaining: { $gt: 0 } });
+      });
+
+      it('should index recurringGrants by account and by nextRunAt', async () => {
+        expect(await findIndex('recurringGrants', { accountId: 1 })).toBeDefined();
+        expect(await findIndex('recurringGrants', { nextRunAt: 1 })).toBeDefined();
+      });
+
+      it('should make billingShadow unique per requestId', async () => {
+        const index = await findIndex('billingShadow', { requestId: 1 });
+        expect(index?.unique).toBe(true);
+      });
+    });
+
     describe('adminAudit indexes', () => {
       const hasIndex = async (key: Record<string, number>) => {
         const indexes = await app.mongo.db.collection('adminAudit').indexes();

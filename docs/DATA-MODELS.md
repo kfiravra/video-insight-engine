@@ -21,6 +21,16 @@ MongoDB collections and schemas.
 | `folders` | Organization hierarchy |
 | `userVideos` | User's video library |
 
+### Billing (minutes ledger)
+
+| Collection | Purpose |
+|------------|---------|
+| `billingAccounts` | One per user: plan, buckets (free / plan / credit), open holds, caps — a projection of the ledger |
+| `ledgerEntries` | Append-only minutes ledger — the source of truth |
+| `creditLots` | Granted / purchased minutes, spent FIFO |
+| `recurringGrants` | Monthly lot grants (demo / eval accounts) |
+| `billingShadow` | Old gate vs ledger decision per request (shadow mode) |
+
 ---
 
 ## Legacy: ContentBlock Types (Removed)
@@ -879,6 +889,169 @@ Audit log for admin grant-credit and manual-charge actions.
 `amountUsd < 0 → credit`. The admin HTTP boundary accepts a user-friendly
 "positive = grant" input and inverts the sign before storage — see
 `services/admin/src/routes/users.py:230-291`.
+
+---
+
+# Billing Collections (minutes ledger)
+
+Users are billed in **video-minutes**, never dollars. vie-api's
+`BillingService` (`api/src/services/billing/`) is the only writer; vie-admin
+reads. Types: `packages/types/src/billing.ts` (wire shapes, ids as hex, dates
+as ISO strings); stored shapes: `api/src/repositories/billing.repository.ts`.
+Every change is one multi-document transaction (single-node replica set) over
+the account, its lots and new ledger entries, conditional on
+`billingAccounts.version`.
+
+**Constants** (`PLANS`, no env overrides): free — one video ≤ 30 min per
+rolling 24 h (`FREE_VIDEO`); Pro — 600 min per monthly cycle, reset each cycle
+with no rollover; any paid minutes pay for videos ≤ 180 min
+(`PAID_MAX_VIDEO_MINUTES`); charge = `max(ceil(sec / 60), 3)`; pack `pack_5` =
+$5 / 150 min, 12-month expiry (`CREDIT_PACKS`, data only).
+
+**Spend order:** the whole video from the free bucket when it fits and a free
+slot is open; otherwise the whole video from plan minutes, then credit lots
+FIFO (soonest `expiresAt` first, never-expiring last, then oldest). Plan and
+credit minutes have no daily cap. Cached / attached videos are released in
+full and give the free video back.
+
+**Invariant:** the ledger is the truth. Per bucket, Σ `minutes` of every entry
+**except `debit`** equals the projection — `buckets.credit.minutesAvailable`
+= Σ `creditLots.minutesRemaining` = Σ credit entries; `minutesGranted −
+minutesUsed` = Σ plan entries; `recentFreeVideoAt` = unreleased free holds in
+the window; `holds` = runs with a `hold` and neither `debit` nor `release`.
+`BillingService.verifyAccount` rebuilds and diffs them.
+
+## billingAccounts
+
+```javascript
+{
+  _id: ObjectId,
+  ownerType: 'user' | 'team',          // team reserved (P5)
+  ownerId: ObjectId,                   // users._id
+  plan: {
+    id: 'free' | 'pro',
+    status: 'active' | 'past_due' | 'canceled',
+    source: 'manual' | 'provider' | null,
+    periodStart: Date | null,          // plan term (manual Pro: 12 months)
+    periodEnd: Date | null
+  },
+  buckets: {
+    free:   { recentFreeVideoAt: Date[] },               // free videos in the rolling window
+    plan:   { cycleStart: Date | null, cycleEnd: Date | null,
+              minutesGranted: number, minutesUsed: number },  // current monthly cycle
+    credit: { minutesAvailable: number }                  // Σ lots (expired-unswept included)
+  },
+  holds: [{                            // runs in flight
+    requestId: string, userId: ObjectId, youtubeId: string | null,
+    durationSec: number, minutes: number,
+    split: { free, plan, credit: number, lots: [{ lotId: ObjectId, minutes }] },
+    freeVideoAt: Date | null,          // the timestamp it added to recentFreeVideoAt
+    planCycleStart: Date | null,       // the cycle its plan slice came from
+    createdAt: Date
+  }],
+  caps: { maxVideoMinutes?, freeVideosPerDay?, maxConcurrent?, blocked? },  // admin overrides; only tighten
+  version: number,                     // bumped by every write (optimistic concurrency)
+  createdAt: Date, updatedAt: Date
+}
+```
+
+**Indexes:** `{ ownerType: 1, ownerId: 1 }` unique (race-safe find-or-create);
+`{ 'holds.requestId': 1 }` (settle / release find the account by run).
+
+## ledgerEntries
+
+Append-only: never updated, never deleted (GDPR erasure pseudonymises the user
+link, Q12).
+
+```javascript
+{
+  _id: ObjectId,
+  accountId: ObjectId,
+  userId: ObjectId,                    // who consumed / was acted on
+  type: 'grant' | 'hold' | 'debit' | 'release' | 'expire' | 'refund' | 'adjust',
+  bucket: 'free' | 'plan' | 'credit',
+  minutes: number,                     // signed: + adds headroom, − consumes it
+  lotId?: ObjectId,                    // credit entries
+  source: { kind: 'run' | 'payment' | 'admin' | 'migration' | 'recurring' | 'system', ref: string },
+  idempotencyKey: string,              // unique — see keys below
+  youtubeId?: string, durationSec?: number,
+  costUsd?: number,                    // internal margin only (debit / release), never shown to users
+  actorId?: string,                    // admin users._id hex or 'system:<name>'
+  auditId?: ObjectId, reason?: string,
+  createdAt: Date
+}
+```
+
+A `debit` posts a hold: it repeats the hold's (negative) minutes for reporting
+but does not move the balance again.
+
+**Idempotency keys:** `hold:<requestId>:free|plan|lot:<lotId>`,
+`debit:<requestId>:…` (same suffixes — a second "completed" is a no-op),
+`release:<requestId>:…`, `release-expire:<requestId>:…` (minutes returned to a
+plan cycle or lot that has since ended expire again at once),
+`admin:<auditId>[:grant|:expire|:lot:<lotId>]`,
+`roll:<accountId>:grant|expire:<cycleStart ISO>` (monthly plan roll).
+`source.ref` is the requestId for runs and the auditId for admin changes.
+
+**Indexes:** `{ idempotencyKey: 1 }` unique; `{ accountId: 1, createdAt: -1 }`;
+`{ 'source.ref': 1 }`.
+
+## creditLots
+
+```javascript
+{
+  _id: ObjectId,
+  accountId: ObjectId,
+  minutesGranted: number,
+  minutesRemaining: number,
+  source: { kind, ref },               // admin auditId, payment ref, recurring grant id, migration
+  priceUsdCents?: number,              // what the customer paid (refund math)
+  expiresAt: Date | null,              // null = never; spendable while expiresAt > now
+  createdAt: Date
+}
+```
+
+**Indexes:** `{ accountId: 1, expiresAt: 1, createdAt: 1 }` partial
+`{ minutesRemaining: { $gt: 0 } }`.
+
+## recurringGrants
+
+A lot of `minutes` granted every month (demo 300, eval 3,000 — data, not code).
+Applied by the billing repair job on `nextRunAt`; deletion is soft.
+
+```javascript
+{
+  _id: ObjectId, accountId: ObjectId,
+  minutes: number, every: 'month', active: boolean,
+  nextRunAt: Date,                     // first run = creation time
+  lastRunAt: Date | null,
+  actorId: string, auditId: ObjectId, reason: string,
+  createdAt: Date, updatedAt: Date, deletedAt: Date | null
+}
+```
+
+**Indexes:** `{ accountId: 1 }`; `{ nextRunAt: 1 }`.
+
+## billingShadow
+
+One row per request while the old dollar gate still decides (shadow mode):
+the old decision next to the ledger's.
+
+```javascript
+{
+  _id: ObjectId,
+  requestId: string,
+  userId: ObjectId, youtubeId: string,
+  path: 'created' | 'cached' | 'attached' | 'failed' | 'retry' | 'completed',
+  oldDecision: { admitted: boolean, charged: boolean },
+  newDecision: { admitted: boolean, charged: boolean, split?, reason? },
+  classification: 'agree' | 'policy_delta' | 'disagree',
+  policyRef?: string,                  // the decision behind a policy_delta
+  createdAt: Date, updatedAt: Date
+}
+```
+
+**Indexes:** `{ requestId: 1 }` unique.
 
 ---
 
