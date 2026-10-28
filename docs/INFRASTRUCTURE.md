@@ -71,8 +71,10 @@ services:
     image: mongo:7
     container_name: vie-mongodb
     restart: unless-stopped
+    # Single-node replica set (see "MongoDB Setup"); the healthcheck runs rs.initiate
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all", "--oplogSize", "1024"]
     ports:
-      - "27017:27017"
+      - "127.0.0.1:27017:27017"
     volumes:
       - vie_mongodb_data:/data/db
     environment:
@@ -412,7 +414,8 @@ The per-stage defaults are the pipeline-1min 4.0d model A/B picks, rounds 1 + 2 
 
 | Var | Default | Purpose |
 |-----|---------|---------|
-| `MONGODB_URI` / `REDIS_URL` | literal compose URLs (prod: built from `MONGO_ROOT_*` / `REDIS_PASSWORD`) | MongoDB and Redis of the compose network |
+| `MONGODB_URI` / `REDIS_URL` | literal compose URLs (prod: built from `MONGO_ROOT_*` / `REDIS_PASSWORD`) | MongoDB and Redis of the compose network. No `replicaSet=` and no `directConnection`: the drivers discover the one-member set from `vie-mongodb:27017` |
+| `MONGO_KEYFILE_PATH` | prod only, required (template: `/opt/vie/secrets/mongo-keyfile`) | Host path of the replica-set keyfile, bind-mounted read-only at `/etc/mongo/keyfile`. Mode `0400`, owner `999:999` ([DEPLOY.md](./DEPLOY.md), section d) |
 | `QDRANT_HOST` / `QDRANT_PORT` | `vie-qdrant` / `6333` (literal) | Qdrant for the RAG chunks |
 | `RABBITMQ_URL` (worker) | built from `RABBITMQ_DEFAULT_USER/PASS` (dev) / `RABBITMQ_USER/PASS` (prod) | Job queue the worker consumes |
 | `WORKER_CONCURRENCY` (worker) | `2` | Pipeline runs one worker process holds at once; every per-run cap multiplies by it (the env templates set `1`) |
@@ -516,8 +519,9 @@ curl http://localhost:3000/health
 # Summarizer
 curl http://localhost:8000/health
 
-# MongoDB
-docker exec vie-mongodb mongosh --eval "db.runCommand('ping')"
+# MongoDB (dev has no auth; in prod add -u "$MONGO_INITDB_ROOT_USERNAME" -p ... --authenticationDatabase admin inside `sh -c`)
+docker exec vie-mongodb mongosh --quiet --eval "db.runCommand('ping')"
+docker exec vie-mongodb mongosh --quiet --eval "printjson({ ok: rs.status().ok, state: rs.status().members[0].stateStr })"   # { ok: 1, state: 'PRIMARY' }
 
 # RabbitMQ (management UI)
 open http://localhost:15672   # default creds vie / vie-dev
@@ -586,11 +590,35 @@ as a consumer of the Redis Streams event log — no frontend changes.
 
 ## MongoDB Setup
 
+### Single-node replica set (`rs0`)
+
+Dev and prod run `mongod --replSet rs0` with exactly one member, `vie-mongodb:27017`. The only reason is multi-document transactions (the upcoming billing ledger writes several documents atomically), which MongoDB allows on replica sets only. There is no second node and no failover.
+
+| | Dev (`docker-compose.yml`) | Prod (`docker-compose.prod.yml`) |
+|---|---|---|
+| Command | `mongod --replSet rs0 --bind_ip_all --oplogSize 1024` | the same plus `--keyFile /etc/mongo/keyfile` (auth + replica set requires a keyfile) |
+| Auth | none | root user from `MONGO_ROOT_USER` / `MONGO_ROOT_PASS`, keyfile from `MONGO_KEYFILE_PATH` |
+| Healthcheck | initiates the set on the first probe, then exits 0 only while the node is PRIMARY | the same, authenticated with the container's own `MONGO_INITDB_ROOT_*` |
+| Host port | `127.0.0.1:27017` | none |
+
+**Initiation is the healthcheck's job.** Each probe calls `rs.status()`; on `NotYetInitialized` it runs `rs.initiate({ _id: 'rs0', members: [{ _id: 0, host: 'vie-mongodb:27017' }] })`, then exits 1 until `db.hello().isWritablePrimary`. Every `depends_on: service_healthy` therefore waits for a node that accepts writes, and `docker compose up --wait` (the e2e job) does too. The probe is idempotent: a restart or recreate of the container with the same volume keeps the config and goes healthy on the first probe. A fresh data directory is healthy after about 15 s.
+
+**Connection strings.**
+
+- **In the compose network** the URIs are unchanged (`mongodb://vie-mongodb:27017/video-insight-engine`, prod adds the root credentials and `?authSource=admin`). With no `replicaSet=` and no `directConnection`, a driver seeded with one host asks the node for its set and follows the member list, which names the same `vie-mongodb:27017`. Verified against Node driver 6.21 (`ReplicaSetWithPrimary`, transactions commit and abort) and pymongo 4.17. `replicaSet=rs0` is deliberately not added: it would add nothing here and would stop the same URI from working against a standalone Mongo (a rollback, a CI service container).
+- **On the host** (`localhost:27017`) the member list names `vie-mongodb`, which the host cannot resolve, so a normal URI fails with `getaddrinfo ENOTFOUND vie-mongodb` (or a server-selection timeout). Every host-side URI needs `directConnection=true`: `mongodb://localhost:27017/video-insight-engine?directConnection=true`. `.env.example`, the `scripts/` defaults and the Playwright smoke seed carry it. A `.env` copied from an older `.env.example` needs the suffix added by hand. `mongosh` with no URI, and `docker exec vie-mongodb mongosh`, already connect directly.
+
+**Oplog.** A replica set keeps an oplog. The default is 5% of free disk (up to 50 GB; 44.5 GiB on the dev box), which would let it grow into the dev disk; with one member nothing replicates from it, so both compose files cap it at `--oplogSize 1024` (MB). The size is applied when the set is initiated; on an existing set, change it with `db.adminCommand({ replSetResizeOplog: 1, size: 1024 })`.
+
+**Converting an existing volume** needs no data migration: restarting the same data directory with `--replSet rs0` and letting the healthcheck initiate it keeps every document. Dev: `docker compose up -d vie-mongodb`, then restart the services that hold Mongo connections. Prod: see [DEPLOY.md](./DEPLOY.md), "Convert Mongo to a replica set". Rolling back is a redeploy of the previous compose file; the volume starts as a standalone again with its data (tested).
+
+### Indexes
+
 Collections are created automatically. To set up indexes:
 
 ```javascript
-// Connect to MongoDB
-mongosh "mongodb://localhost:27017/video-insight-engine"
+// Connect to MongoDB (directConnection: the replica set's member name does not resolve on the host)
+mongosh "mongodb://localhost:27017/video-insight-engine?directConnection=true"
 
 // System cache indexes
 db.videoSummaryCache.createIndex({ youtubeId: 1 }, { unique: true })
@@ -627,7 +655,7 @@ BACKUP_KEEP=30 ./scripts/backup.sh  # keep 30 most recent (default 14)
 
 Produces `mongo-video-insight-engine.archive.gz` (mongodump `--archive --gzip`), one `qdrant-<collection>.snapshot` per collection (Qdrant snapshot API; server-side copy deleted after download), and a `manifest.json`. `backups/` is gitignored. For off-host durability, sync the directory to the existing S3 bucket (e.g. `aws s3 sync backups/ s3://<bucket>/backups/`).
 
-Both scripts work unchanged against the auth-enabled prod stack: mongodump/mongorestore auth args are resolved inside the Mongo container from its own `MONGO_INITDB_ROOT_*` env, so no secrets cross the host boundary and the same commands run on the authless dev stack. Pruning deletes only timestamp-named (`YYYYMMDDTHHMMSSZ`) directories under the backup root (newest `BACKUP_KEEP` kept), so unrelated dirs under a custom root are never touched. An unreachable Qdrant aborts with an explicit error; set `QDRANT_SKIP=1` for a deliberate Mongo-only backup (vectors are re-derivable).
+Both scripts work unchanged against the replica set (verified 2026-10-28 with a scratch auth + keyfile replica set built from `docker-compose.prod.yml`: `backup.sh` of a standalone volume, conversion of the same volume, `backup.sh` of the replica set, `restore.sh` of that archive into a second replica set; counts matched). `mongodump` and `mongorestore` run inside the container and connect to `localhost:27017` directly, so no flag changed, and neither uses `--oplog`. They also work unchanged against the auth-enabled prod stack: mongodump/mongorestore auth args are resolved inside the Mongo container from its own `MONGO_INITDB_ROOT_*` env, so no secrets cross the host boundary and the same commands run on the authless dev stack. Pruning deletes only timestamp-named (`YYYYMMDDTHHMMSSZ`) directories under the backup root (newest `BACKUP_KEEP` kept), so unrelated dirs under a custom root are never touched. An unreachable Qdrant aborts with an explicit error; set `QDRANT_SKIP=1` for a deliberate Mongo-only backup (vectors are re-derivable).
 
 ### Scheduling
 
@@ -739,6 +767,8 @@ Key differences from the dev compose:
   refuses well-known dev-default secrets when `NODE_ENV=production`.
 - **Authenticated datastores** — Mongo root user/pass, Redis `--requirepass`,
   RabbitMQ user/pass. Qdrant is unauthenticated but network-internal only.
+  Mongo is a single-node replica set, which with auth needs a keyfile
+  (`MONGO_KEYFILE_PATH`, created once on the host — [DEPLOY.md](./DEPLOY.md)).
 - **No published datastore ports** — Mongo/Redis/Qdrant/RabbitMQ are reachable
   only on `vie-network`. Published surface: vie-web (`80`), vie-api (`3000`),
   and vie-admin on **loopback only** (`127.0.0.1:8002` — reach via
@@ -759,7 +789,8 @@ Key differences from the dev compose:
 ```bash
 # 1. Create the env file (never commit it)
 cp .env.example .env.prod             # then fill EVERY ${VAR:?} secret:
-                                      # MONGO_ROOT_USER/PASS, REDIS_PASSWORD,
+                                      # MONGO_ROOT_USER/PASS, MONGO_KEYFILE_PATH
+                                      # (a 0400, uid-999 file — DEPLOY.md), REDIS_PASSWORD,
                                       # RABBITMQ_USER/PASS, JWT_SECRET,
                                       # JWT_REFRESH_SECRET, INTERNAL_SECRET,
                                       # ADMIN_API_KEY, PADDLE_WEBHOOK_SECRET,

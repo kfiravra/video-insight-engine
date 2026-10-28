@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pymongo import MongoClient
 from bson import ObjectId
 
-MONGODB_URI = "mongodb://localhost:27017/video-insight-engine"
+MONGODB_URI = "mongodb://localhost:27017/video-insight-engine?directConnection=true"
 SUMMARIZER_URL = "http://localhost:8000"
 
 # Test videos for each output type

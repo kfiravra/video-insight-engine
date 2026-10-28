@@ -5,7 +5,7 @@
 
 import { MongoClient } from 'mongodb';
 
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/video-insight-engine';
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/video-insight-engine?directConnection=true';
 const BATCH_SIZE = 500;
 
 async function main() {

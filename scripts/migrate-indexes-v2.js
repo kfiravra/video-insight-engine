@@ -1,5 +1,5 @@
 // MongoDB Index Migration Script v2
-// Run with: mongosh mongodb://localhost:27017/video-insight-engine scripts/migrate-indexes-v2.js
+// Run with: mongosh "mongodb://localhost:27017/video-insight-engine?directConnection=true" scripts/migrate-indexes-v2.js
 //
 // This script safely migrates from the old index structure to the new versioning structure.
 // It handles:

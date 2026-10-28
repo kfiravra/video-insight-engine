@@ -164,6 +164,13 @@ services:
     # container eating the whole VM. Generous vs. observed usage; bump before
     # removing if a service legitimately outgrows its cap.
     mem_limit: 1g
+    # Single-node replica set: multi-document transactions (billing ledger) need
+    # one, and it is the only way to get them from a one-container Mongo. The
+    # member host is the compose DNS name, so containers resolve it; host-side
+    # tools must connect with directConnection=true (see docs/INFRASTRUCTURE.md).
+    # --oplogSize 1024: nothing replicates from a one-member set, and the default
+    # (5% of free disk, up to 50 GB) would let the oplog grow into the dev disk.
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all", "--oplogSize", "1024"]
     ports:
       - "127.0.0.1:27017:27017"
     volumes:
@@ -173,11 +180,24 @@ services:
     networks:
       - vie-network
     healthcheck:
-      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      # Idempotent init + real readiness: a data dir with no replica set config
+      # gets rs.initiate() on the first probe, and every probe exits 1 until the
+      # node is PRIMARY, so depends_on service_healthy never admits a client
+      # before the set can accept writes.
+      test:
+        - CMD
+        - mongosh
+        - --quiet
+        - --eval
+        - >-
+          try { rs.status() } catch (e) {
+          if (e.codeName !== "NotYetInitialized") throw e;
+          rs.initiate({ _id: "rs0", members: [{ _id: 0, host: "vie-mongodb:27017" }] }) }
+          quit(db.hello().isWritablePrimary ? 0 : 1)
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 10s
+      start_period: 20s
 
   vie-qdrant:
     # Pinned (was :latest) — silent major bumps can change the on-disk storage

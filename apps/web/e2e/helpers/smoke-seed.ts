@@ -51,7 +51,7 @@ export const SMOKE_CHECKLIST_ITEM = "Review the summary before acting";
 
 const API_URL = process.env.E2E_API_URL || "http://localhost:3000/api";
 const MONGODB_URI =
-  process.env.MONGODB_URI || "mongodb://localhost:27017/video-insight-engine";
+  process.env.MONGODB_URI || "mongodb://localhost:27017/video-insight-engine?directConnection=true";
 
 // ── Narrow structural types for the driver loaded via createRequire ──
 // (mongodb is not in apps/web's dependency tree, so its types aren't either)
