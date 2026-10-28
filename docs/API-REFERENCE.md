@@ -771,34 +771,51 @@ Override the detected classification for a video. Triggers re-classification thr
 
 ### GET /users/me/usage
 
-Today's LLM cost spend, remaining headroom, and the next UTC midnight reset.
-Used by the in-app usage tile and `DailyLimitCallout`.
+The signed-in user's **minutes**: plan, the free video, plan minutes, credit
+lots and runs in flight. It never carries a dollar amount. The web usage tile
+and the minutes callout read it. Auth required. Serves `BillingService.summary`,
+so a user who has no billing account yet gets an empty free account (the row is
+created on this first read).
 
-Auth required (resolves the caller's tier).
-
-**Response (200):**
+**Response (200):** the `UsageSummary` type in `packages/types/src/billing.ts`.
 
 ```json
 {
-  "tier": "free",
-  "today": {
-    "date": "2026-05-14",
-    "rawUsd": 0.42,
-    "creditAdjustmentUsd": 0,
-    "effectiveUsd": 0.42,
-    "videoCount": 3
+  "plan": { "id": "pro", "periodEnd": "2027-10-28T10:00:00.000Z" },
+  "free": { "available": true, "nextFreeAt": null, "maxVideoMinutes": 30 },
+  "planMinutes": { "granted": 600, "used": 90, "remaining": 510, "cycleEnd": "2026-11-28T10:00:00.000Z" },
+  "credits": {
+    "available": 150,
+    "lots": [
+      { "minutes": 120, "expiresAt": "2026-12-01T10:00:00.000Z" },
+      { "minutes": 30, "expiresAt": null }
+    ]
   },
-  "limitUsd": 2,
-  "remainingUsd": 1.58,
-  "resetAt": "2026-05-15T00:00:00.000Z"
+  "holds": [{ "youtubeId": "dQw4w9WgXcQ", "minutes": 12 }],
+  "maxVideoMinutes": 180,
+  "blocked": false
 }
 ```
 
-- `effectiveUsd = rawUsd + creditAdjustmentUsd`. Admin credits are stored as
-  negative `creditAdjustmentUsd`, so a grant lowers `effectiveUsd`.
-- `limitUsd: -1` (or `0`) means the tier is unlimited; `remainingUsd` will be
-  `null` in that case so the wire format stays JSON-honest (no `Infinity`).
-- `resetAt` is always the next UTC midnight ISO timestamp.
+- `plan.id` is `free` or `pro`. `periodEnd` (the end of the Pro term) is null for `free`.
+- `free` is the free video (one per rolling 24 hours, at most `maxVideoMinutes`
+  long). While `available` is false, `nextFreeAt` is when the next one opens.
+- `planMinutes` is the current monthly cycle: `remaining = granted - used`. All
+  zeros on `free`.
+- `credits.lots` lists only spendable lots (not expired, minutes left); `available`
+  is their sum. `expiresAt` is null for a lot that never expires.
+- `holds` are the runs in flight: their minutes are already taken out of the
+  buckets above and come back if the run fails or is served from cache.
+- `maxVideoMinutes` is the longest video the account can submit now: 180 with
+  any plan or credit minutes, else the free limit. `blocked` is the admin's
+  per-account kill switch.
+- Every number is a whole count of minutes or runs, every date an ISO string.
+  A test walks the payload and fails on any key matching `usd|cost|price|limit$`.
+
+**Transition (until P3.2):** `GET /users/me/usage?view=usd` still returns the
+old dollar summary (`tier`, `today`, `limitUsd`, `remainingUsd`, `resetAt`),
+because the current web tile reads it. It goes away with the dollar gate, and
+the `view` parameter then does nothing. Any other `view` value is a `400`.
 
 ---
 

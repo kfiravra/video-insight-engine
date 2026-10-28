@@ -250,7 +250,7 @@ Node.js 20 + Fastify + TypeScript + Zod. Base URL `/api`. Patterns: DI `Containe
 - `DELETE /videos/:id` — removes only the **userVideo reference**; the shared cache row is untouched.
 - Share: `POST /share/:videoSummaryId` (auth, 20/hr) → `{shareSlug, shareUrl:/s/<slug>}`; `GET /share/:slug` (public, 100/min); `POST /share/:slug/like` (10/min/IP); SSR `GET /s/:slug` (HTML + OG, 60/min) + `GET /s/:slug/og-image.png`.
 - Assistant proxy: `POST /api/assistant/chat`, `POST /api/videos/:id/action`, `POST /library/search`.
-- `GET /api/users/me/usage` — today's spend/headroom/next-reset.
+- `GET /api/users/me/usage` — the user's minutes (plan, free video, plan minutes, credit lots, holds; no dollars). `?view=usd` is the legacy dollar summary until P3.2.
 - Internal: `POST /internal/status` (summarizer → API → rebroadcast over WS), `POST /internal/reconcile-costs` (manual/ops rebuild — no scheduler; reconcile otherwise runs on every terminal video status, for today's UTC day), `POST /internal/run-deletions` (GDPR hard-delete sweep: runs only when this route is called; the repo configures no scheduler for it).
 
 ### SSE event sequence (since v9, `EXTRACTION_PARALLEL=true`)

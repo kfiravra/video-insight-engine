@@ -1,21 +1,6 @@
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
-export async function userUsageRoutes(fastify: FastifyInstance) {
-  const { costMonitorService } = fastify.container;
-
-  // GET /api/users/me/usage — today's spend + remaining + reset time for the signed-in user
-  fastify.get('/', {
-    preHandler: [fastify.authenticate, fastify.resolveTier],
-  }, async (req) => {
-    const summary = await costMonitorService.getUserUsageSummary(
-      req.user.userId,
-      req.tier.name,
-    );
-    return summary;
-  });
-}
-
 const updatePreferencesSchema = z.object({
   theme: z.enum(['system', 'light', 'dark']).optional(),
   displayName: z.string().min(1).max(50).optional(),

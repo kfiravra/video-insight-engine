@@ -22,7 +22,9 @@ interface RawUsageResponse extends Omit<UserUsageSummary, "remainingUsd"> {
 
 export const usageApi = {
   async me(): Promise<UserUsageSummary> {
-    const raw = await request<RawUsageResponse>("/users/me/usage");
+    // The API's default is now the minutes summary; the tile still reads dollars
+    // until the minutes UI replaces it.
+    const raw = await request<RawUsageResponse>("/users/me/usage?view=usd");
     return {
       ...raw,
       remainingUsd:
