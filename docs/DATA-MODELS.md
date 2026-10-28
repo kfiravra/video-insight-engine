@@ -699,6 +699,12 @@ One entry per chapter/concept expansion. Shared across all users.
   // submit `cold` benchmark runs.
   isEvalUser: true | absent,
 
+  // RBAC. `roles` is authoritative when it is an array (even empty). Written only
+  // by UserRepository.setRoles (ADMIN_EMAILS boot seeding, later an admin route),
+  // never from request input. See docs/SECURITY.md "Roles and Permissions".
+  roles: ["admin"] | [] | absent,
+  roleSource: "env" | "granted" | absent,   // env = reconciled from ADMIN_EMAILS at boot
+  role: "admin" | absent,         // LEGACY: read as roles:["admin"] only while `roles` is absent; unset on demotion
   // Activity tracking
   lastLoginAt: Date | null,
 
