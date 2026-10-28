@@ -6,6 +6,8 @@ import { QueuePublisher } from './services/queue-publisher.service.js';
 import { IdempotencyService } from './services/idempotency.service.js';
 import { IdempotencyRepository } from './repositories/idempotency.repository.js';
 import { VideoService } from './services/video.service.js';
+import { BillingService } from './services/billing/billing.service.js';
+import { BillingRepository } from './repositories/billing.repository.js';
 
 /**
  * `Db.collection()` is called in every repository constructor. We hand back
@@ -88,5 +90,16 @@ describe('createContainer', () => {
     // and proves the constructor injection happened.
     expect((container.videoService as unknown as { idempotencyService: IdempotencyService }).idempotencyService)
       .toBe(container.idempotencyService);
+  });
+
+  it('exposes the BillingService and BillingRepository', () => {
+    const container = createContainer(makeMockDb(), mockLogger, {
+      queueChannelSupplier: async () => {
+        throw new Error('not used in this test');
+      },
+    });
+
+    expect(container.billingService).toBeInstanceOf(BillingService);
+    expect(container.billingRepository).toBeInstanceOf(BillingRepository);
   });
 });

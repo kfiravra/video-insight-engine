@@ -12,6 +12,7 @@ import { IdempotencyRepository } from './repositories/idempotency.repository.js'
 import { UserDeletionRepository } from './repositories/user-deletion.repository.js';
 import { VideoDeletionRepository } from './repositories/video-deletion.repository.js';
 import { AdminAuditRepository } from './repositories/admin-audit.repository.js';
+import { BillingRepository } from './repositories/billing.repository.js';
 
 // Services
 import { AuthService } from './services/auth.service.js';
@@ -31,6 +32,7 @@ import { UserDeletionService } from './services/user-deletion.service.js';
 import { VideoCascadeService } from './services/video-cascade.service.js';
 import { AuditService } from './services/audit.service.js';
 import { AdminSeedService } from './services/admin-seed.service.js';
+import { BillingService } from './services/billing/billing.service.js';
 import { config } from './config.js';
 
 export interface Container {
@@ -44,6 +46,7 @@ export interface Container {
   userDeletionRepository: UserDeletionRepository;
   videoDeletionRepository: VideoDeletionRepository;
   adminAuditRepository: AdminAuditRepository;
+  billingRepository: BillingRepository;
 
   // Services
   authService: AuthService;
@@ -63,6 +66,7 @@ export interface Container {
   videoCascadeService: VideoCascadeService;
   auditService: AuditService;
   adminSeedService: AdminSeedService;
+  billingService: BillingService;
 }
 
 export interface CreateContainerOptions {
@@ -88,6 +92,7 @@ export function createContainer(
   const userDeletionRepository = new UserDeletionRepository(db);
   const videoDeletionRepository = new VideoDeletionRepository(db);
   const adminAuditRepository = new AdminAuditRepository(db);
+  const billingRepository = new BillingRepository(db);
 
   // Create external clients
   const summarizerClient = new SummarizerClient(logger, options.redisClient);
@@ -154,6 +159,7 @@ export function createContainer(
     auditService,
     logger,
   );
+  const billingService = new BillingService(billingRepository, userRepository, logger);
 
   return {
     // Repositories
@@ -166,6 +172,7 @@ export function createContainer(
     userDeletionRepository,
     videoDeletionRepository,
     adminAuditRepository,
+    billingRepository,
 
     // Services
     authService,
@@ -185,6 +192,7 @@ export function createContainer(
     videoCascadeService,
     auditService,
     adminSeedService,
+    billingService,
   };
 }
 
