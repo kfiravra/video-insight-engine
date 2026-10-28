@@ -232,17 +232,38 @@ describe('BillingService (runs, real Mongo replica set)', () => {
     });
   });
 
-  describe('concurrency', () => {
-    it('should serialise parallel holds on one account: minutes for 2 of 3 → exactly one refusal', async () => {
-      await grant(80);
+  describe('concurrency (P1.9)', () => {
+    it('should give 8 parallel holds with minutes for 7 exactly one INSUFFICIENT_MINUTES and keep Σ ledger = projection', async () => {
+      const first = await grant(100);
+      const second = await grant(180);
       await holdVideo('req-free', 5);
       const quote = await service.quote(userId, 'dQw4w9WgXcQ', 40 * 60);
 
-      const results = await Promise.allSettled(['a', 'b', 'c'].map((id) => service.hold(`req-${id}`, quote)));
+      const results = await Promise.allSettled(
+        Array.from({ length: 8 }, (_, n) => service.hold(`req-parallel-${n}`, quote)),
+      );
 
-      const refused = results.filter((r) => r.status === 'rejected');
+      const refused = results.flatMap((r) => (r.status === 'rejected' ? [r.reason] : []));
       expect(refused).toHaveLength(1);
-      expect(refused[0].status === 'rejected' && refused[0].reason).toBeInstanceOf(InsufficientMinutesError);
+      expect(refused[0]).toBeInstanceOf(InsufficientMinutesError);
+      expect(refused[0]).toMatchObject({ code: 'INSUFFICIENT_MINUTES', needed: 40, available: 0 });
+      expect([await lotRemaining(first.lotId), await lotRemaining(second.lotId)]).toEqual([0, 0]);
+      expect((await service.summary(userId)).holds).toHaveLength(8);
+      await expectConsistent();
+    });
+
+    it('should hold the same line across processes (one service each): transaction + version, no in-process queue', async () => {
+      await grant(280);
+      await holdVideo('req-free', 5);
+      const quote = await service.quote(userId, 'dQw4w9WgXcQ', 40 * 60);
+      const processes = Array.from({ length: 8 }, () =>
+        new BillingService(repo, new UserRepository(getTestDb()), mockLogger as unknown as FastifyBaseLogger, clock.now));
+
+      const results = await Promise.allSettled(processes.map((p, n) => p.hold(`req-process-${n}`, quote)));
+
+      const refused = results.flatMap((r) => (r.status === 'rejected' ? [r.reason] : []));
+      expect(refused).toHaveLength(1);
+      expect(refused[0]).toBeInstanceOf(InsufficientMinutesError);
       await expectConsistent();
     });
   });

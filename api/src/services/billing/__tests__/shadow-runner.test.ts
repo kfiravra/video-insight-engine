@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
 import { mockLogger } from '../../../test/setup.js';
 import { ShadowRunner } from '../shadow-runner.js';
+import { KeyedMutex } from '../keyed-mutex.js';
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 5));
 
@@ -75,5 +76,26 @@ describe('ShadowRunner', () => {
 
     expect(nested).toHaveBeenCalledTimes(1);
     expect(runner.pending).toBe(0);
+  });
+});
+
+describe('KeyedMutex', () => {
+  it('should run one key at a time and hand each caller its own result or error', async () => {
+    const mutex = new KeyedMutex();
+    let inside = 0;
+    let maxInside = 0;
+    const work = (fail: boolean) => async () => {
+      inside++;
+      maxInside = Math.max(maxInside, inside);
+      await tick();
+      inside--;
+      if (fail) throw new Error('boom');
+      return 'ok';
+    };
+
+    const results = await Promise.allSettled([mutex.run('a', work(false)), mutex.run('a', work(true)), mutex.run('a', work(false))]);
+
+    expect(maxInside).toBe(1);
+    expect(results.map((r) => r.status)).toEqual(['fulfilled', 'rejected', 'fulfilled']);
   });
 });

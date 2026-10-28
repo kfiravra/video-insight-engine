@@ -2,6 +2,7 @@ import { ObjectId } from 'mongodb';
 import { DatabaseError, ValidationError } from '../../utils/errors.js';
 import { StaleAccountVersionError } from '../../repositories/billing.repository.js';
 import { AccountDraft } from './account-draft.js';
+import { KeyedMutex } from './keyed-mutex.js';
 import { rollPlanCycle } from './plan-cycle.js';
 import type { ClientSession } from 'mongodb';
 import type {
@@ -37,8 +38,12 @@ export function parseObjectId(value: string, label: string): ObjectId {
  * cycle to now, let the operation change an AccountDraft, then write the
  * draft — conditional on the version that was read — in the same
  * transaction. A stale version or a write conflict retries the whole unit.
+ * Units on the same account are queued in-process first (KeyedMutex), so
+ * only writers in other processes ever meet as write conflicts.
  */
 export class BillingUnits {
+  private readonly accountLocks = new KeyedMutex();
+
   constructor(
     private readonly repo: BillingRepository,
     private readonly clock: () => Date,
@@ -57,21 +62,28 @@ export class BillingUnits {
   async write<T>(ownerId: string, op: (unit: BillingUnit) => Promise<T>): Promise<UnitOutcome<T>> {
     parseObjectId(ownerId, 'userId');
     const { _id: accountId } = await this.repo.getOrCreateAccount('user', ownerId);
-    return this.repo.withTransaction(async (session) => {
-      const account = await this.repo.findAccountById(accountId, session);
-      if (!account) throw new DatabaseError(`billing account ${accountId.toHexString()} vanished`);
-      return this.runUnit(account, session, op);
-    });
+    return this.accountLocks.run(accountId.toHexString(), () =>
+      this.repo.withTransaction(async (session) => {
+        const account = await this.repo.findAccountById(accountId, session);
+        if (!account) throw new DatabaseError(`billing account ${accountId.toHexString()} vanished`);
+        return this.runUnit(account, session, op);
+      }),
+    );
   }
 
   /** Like `write`, on the account holding `requestId`; `op` gets null when no account holds it. */
   async writeByHold<T>(requestId: string, op: (unit: BillingUnit | null) => Promise<T>): Promise<T> {
-    return this.repo.withTransaction(async (session) => {
-      const account = await this.repo.findAccountByHold(requestId, session);
-      if (!account) return op(null);
-      const outcome = await this.runUnit(account, session, (unit) => op(unit));
-      return outcome.value;
-    });
+    const holder = await this.repo.findAccountByHold(requestId);
+    if (!holder) return op(null);
+    return this.accountLocks.run(holder._id.toHexString(), () =>
+      this.repo.withTransaction(async (session) => {
+        // Re-read inside the unit: the hold may have been settled meanwhile.
+        const account = await this.repo.findAccountByHold(requestId, session);
+        if (!account) return op(null);
+        const outcome = await this.runUnit(account, session, (unit) => op(unit));
+        return outcome.value;
+      }),
+    );
   }
 
   private async runUnit<T>(

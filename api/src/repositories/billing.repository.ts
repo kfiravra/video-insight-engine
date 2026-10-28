@@ -144,9 +144,10 @@ export class StaleAccountVersionError extends Error {
 }
 
 /** Bounded: a hot account under contention fails loudly rather than spinning. */
-export const MAX_TRANSACTION_ATTEMPTS = 6;
+export const MAX_TRANSACTION_ATTEMPTS = 8;
 const MAX_COMMIT_ATTEMPTS = 3;
 const RETRY_BASE_DELAY_MS = 5;
+const RETRY_MAX_DELAY_MS = 200;
 
 function isDuplicateKey(err: unknown): boolean {
   return (err as { code?: number }).code === 11000;
@@ -161,9 +162,10 @@ function isUnknownCommitResult(err: unknown): boolean {
   return err instanceof MongoError && err.hasErrorLabel('UnknownTransactionCommitResult');
 }
 
-/** Jittered linear backoff so contending writers don't retry in lockstep. */
+/** Exponential backoff with full jitter, so contending writers spread out instead of colliding again. */
 function retryDelay(attempt: number): Promise<void> {
-  return sleep(RETRY_BASE_DELAY_MS * attempt + Math.floor(Math.random() * RETRY_BASE_DELAY_MS));
+  const ceiling = Math.min(RETRY_BASE_DELAY_MS * 2 ** attempt, RETRY_MAX_DELAY_MS);
+  return sleep(Math.floor(Math.random() * ceiling));
 }
 
 /** Initial state of a fresh account (the owner fields come from the upsert filter). */
