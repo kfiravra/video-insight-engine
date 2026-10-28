@@ -30,6 +30,7 @@ import { DispatchGuardService, noOpDispatchGuard, type IDispatchGuard } from './
 import { UserDeletionService } from './services/user-deletion.service.js';
 import { VideoCascadeService } from './services/video-cascade.service.js';
 import { AuditService } from './services/audit.service.js';
+import { AdminSeedService } from './services/admin-seed.service.js';
 import { config } from './config.js';
 
 export interface Container {
@@ -61,6 +62,7 @@ export interface Container {
   userDeletionService: UserDeletionService;
   videoCascadeService: VideoCascadeService;
   auditService: AuditService;
+  adminSeedService: AdminSeedService;
 }
 
 export interface CreateContainerOptions {
@@ -145,6 +147,13 @@ export function createContainer(
     logger,
   );
   const auditService = new AuditService(adminAuditRepository, logger);
+  const adminSeedService = new AdminSeedService(
+    config.ADMIN_EMAILS,
+    config.DEMO_USER_EMAIL,
+    userRepository,
+    auditService,
+    logger,
+  );
 
   return {
     // Repositories
@@ -175,6 +184,7 @@ export function createContainer(
     userDeletionService,
     videoCascadeService,
     auditService,
+    adminSeedService,
   };
 }
 

@@ -282,21 +282,33 @@ docker run --rm --network vie-network \
   sh -c 'npx tsx create-user.ts "$VIE_USER_EMAIL" "$VIE_USER_PASSWORD"'
 ```
 
-The script creates an ordinary user and never sets a role, so account creation does not grant access to the vie-admin panel. The admin role comes from the `ADMIN_EMAILS` list in a later phase. Until then, on a fresh host see "First admin on a fresh host" below; for admins you already have, see the one-off demote step after it. The email is trimmed and lowercased, and an optional third argument sets the display name (default: the part of the email before the `@`).
+The script creates an ordinary user and never sets a role, so account creation does not grant access to the vie-admin panel. The admin role comes from the `ADMIN_EMAILS` list (see "Admin accounts: `ADMIN_EMAILS`" below); for admins you already have, see the one-off demote step after it. The email is trimmed and lowercased, and an optional third argument sets the display name (default: the part of the email before the `@`).
 
 Running it again with the same email changes nothing and prints `exists, unchanged`. To set a new password for an existing user, add `--reset-password` after the password inside the `sh -c` string; only `passwordHash` and `updatedAt` change. For an existing admin the script exits 1 without that flag, so a re-run can never change an admin's password by accident.
 
-### First admin on a fresh host (temporary, until `ADMIN_EMAILS` seeding)
+### Admin accounts: `ADMIN_EMAILS`
 
-A host provisioned only with `create-user.ts` has no admin, so nobody can log into the vie-admin panel. Until the `ADMIN_EMAILS` seeding lands, grant the role to one existing account by hand. Create that user first (above); the email is matched after trimming and lowercasing, like `create-user.ts` stores it:
+The admin role is not created by any script. vie-api reads `ADMIN_EMAILS` (comma-separated login emails) at every boot and reconciles it with the users collection, so the list in `.env` is the source of truth for who is an admin:
+
+1. Create the account first (`create-user.ts`, above). The list only promotes **existing** accounts; an email with no account is logged (masked, `k***@host`) and ignored.
+2. Set the list in `.env`: `ADMIN_EMAILS=you@example.com` (several are comma-separated, matched ignoring case).
+3. Recreate vie-api so it re-reads `.env` (`dc up -d vie-api`; `dc restart` does not), then check the boot log:
 
 ```bash
-read -r -p "Email to make admin: " VIE_ADMIN_EMAIL
-export VIE_ADMIN_EMAIL   # `docker exec -e NAME` forwards only exported variables
-docker exec -e VIE_ADMIN_EMAIL vie-mongodb sh -c 'mongosh --quiet -u "$MONGO_INITDB_ROOT_USERNAME" -p "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin video-insight-engine --eval "printjson(db.users.updateOne({ email: process.env.VIE_ADMIN_EMAIL.trim().toLowerCase() }, { \$set: { role: \"admin\" } }))"'
+dc logs vie-api 2>&1 | grep admin_seed
 ```
 
-`matchedCount: 1` means the role is set. `matchedCount: 0` means no user has that email, so check the spelling or create the user first. The root credentials come from the container's own environment, so nothing secret is typed or left in shell history. Log into the panel afterwards; the role is read from the database at login.
+`admin_seed_reconciled` with `promoted: 1` means it worked. The other lines you can meet:
+
+| Log event | Meaning |
+| --- | --- |
+| `admin_seed_skipped_empty` | `ADMIN_EMAILS` is blank. Nothing changed. Emptying the list never demotes anyone. |
+| `admin_seed_unknown_email` | A listed email has no account. Check the spelling or create the user. |
+| `admin_seed_ineligible_user` | The listed account is soft-deleted or is the demo account (`DEMO_USER_EMAIL`), so it was not promoted. |
+| `admin_seed_refused_zero_admins` | Applying the list would have left no active admin (for example only a typo'd email is listed), so **nothing** was changed. Fix the list. |
+| `admin_seed_no_active_admin` | No active admin exists and the list promotes none. |
+
+Removing an email from the list demotes that account on the next boot, but only if the list promoted it (`roleSource: env`). Admins set any other way, and accounts that were made admin before the roles model existed, are never demoted by the list. Every change writes an `adminAudit` row with actor `system:boot`. Because an empty list is a no-op, to retire the last list-managed admin you add the replacement first.
 
 ### One-off: demote hand-provisioned admins
 
@@ -330,7 +342,7 @@ Read the preview before the second command: the accounts under "Would demote" lo
 
 Demotion stops new panel logins at once. A demoted user who is already logged in keeps working until their session expires (up to 12 hours); to end every open session now, set a new `ADMIN_SESSION_SECRET` in `.env` and run `dc up -d vie-admin`, which logs all admins out, you included.
 
-This step goes away in a later phase, when the admin role is seeded from the `ADMIN_EMAILS` list.
+Boot seeding from `ADMIN_EMAILS` does not replace this step: accounts that were made admin before the roles model existed carry no `roleSource`, so the list treats them as admins set by hand and never demotes them. A later billing migration moves them onto the list.
 
 ### Demo mode
 

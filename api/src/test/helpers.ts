@@ -154,6 +154,9 @@ export interface MockContainer {
     recordBestEffort: ReturnType<typeof vi.fn>;
     list: ReturnType<typeof vi.fn>;
   };
+  adminSeedService: {
+    run: ReturnType<typeof vi.fn>;
+  };
 }
 
 export function createMockContainer(): MockContainer {
@@ -342,6 +345,10 @@ export function createMockContainer(): MockContainer {
       record: vi.fn().mockResolvedValue('audit-id'),
       recordBestEffort: vi.fn().mockResolvedValue('audit-id'),
       list: vi.fn().mockResolvedValue([]),
+    },
+    // Never reconcile roles against a real database from a route test.
+    adminSeedService: {
+      run: vi.fn().mockResolvedValue({ status: 'skipped_empty', promoted: 0, demoted: 0 }),
     },
   };
 }

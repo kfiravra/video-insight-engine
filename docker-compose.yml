@@ -311,6 +311,8 @@ services:
       RABBITMQ_URL: amqp://${RABBITMQ_DEFAULT_USER:-vie}:${RABBITMQ_DEFAULT_PASS:-vie-dev}@vie-rabbitmq:5672/
       USE_QUEUE_PIPELINE: ${USE_QUEUE_PIPELINE:-false}
       ADMIN_API_KEY: ${ADMIN_API_KEY:-dev-admin-key-change-me}
+      # Login emails that hold the admin role; reconciled at every boot. Blank = no change.
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
       # Redis — backs the dispatch guard (api/src/services/dispatch-guard.service.ts).
       # MUST point at the same instance the summarizer uses for the per-video
       # pipeline lock so the two services share a coherent operational view.

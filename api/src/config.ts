@@ -112,6 +112,11 @@ const envSchema = z.object({
   // Admin endpoints for /api/admin/queue/* and DLQ replay. Different from
   // INTERNAL_SECRET so a leaked admin key cannot impersonate the summarizer.
   ADMIN_API_KEY: z.string().min(8).default('dev-admin-key-change-me'),
+  // Comma-separated login emails that hold the admin role. Reconciled with the
+  // users collection at every boot (services/admin-seed.service.ts): listed
+  // existing accounts are promoted, `env` admins that leave the list are
+  // demoted. Empty = nothing changes (never locks anyone out).
+  ADMIN_EMAILS: z.string().default(''),
   // ─── Idempotency ────────────────────────────────────────────────────
   // NOTE: PIPELINE_VERSION is intentionally absent here — it is single-
   // sourced from pipeline-version.json (see loadPipelineVersion above) and

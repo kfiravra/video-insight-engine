@@ -435,6 +435,62 @@ stateless and non-revocable within their 12 h TTL (only rotating
 `ADMIN_SESSION_SECRET` kills live sessions — it logs every admin out), and the
 throttle keys on the direct client IP (not proxy-header-aware).
 
+### Roles and Permissions
+
+`users.roles` is an array of roles (`'admin'` today; the shape leaves room for a
+read-only `'support'` role) and `users.roleSource` says where it came from
+(`env` = reconciled from `ADMIN_EMAILS` at boot, `granted` = set by an admin or a
+migration). Routes name a **permission**, never a role; the role-to-permission map
+is `ROLE_PERMISSIONS` in `packages/types/src/roles.ts`, and
+`UserRepository.hasPermission(userId, permission)` answers it. A malformed id, an
+unknown user and a soft-deleted account all answer `false`. `roles` is
+authoritative whenever it is an array (even empty); only a user with **no**
+`roles` array and a legacy `role: 'admin'` reads as an admin (`effectiveRoles`),
+until the billing migration unsets the legacy field. Demoting writes
+`roles: []` and unsets `role`, so a leftover legacy value never revives access.
+
+| Permission | Allows | `admin` | Machine key (`ADMIN_API_KEY`, no actor) |
+| --- | --- | :---: | :---: |
+| `billing:read` | read an account, its lots, holds and ledger | yes | yes |
+| `audit:read` | read the `adminAudit` log | yes | yes |
+| `queue:read` | `GET /api/admin/queue/stats`, `/dlq` | yes | yes |
+| `billing:grant` | grant credit minutes, adjust balances, recurring grants | yes | no |
+| `plan:set` | set a manual plan | yes | no |
+| `caps:set` | per-account caps and block | yes | no |
+| `users:delete` | `DELETE /api/admin/users/:id` | yes | no |
+| `videos:purge` | `DELETE /api/admin/videos/:youtubeId` | yes | no |
+| `queue:replay` | `POST /api/admin/queue/replay` | yes | no |
+| `alerts:write` | change alert thresholds | yes | no |
+| `roles:manage` | grant or revoke roles | yes | no |
+| `cold:run` | `cold` benchmark runs on `POST /api/videos` (`UserRepository.mayRunCold`, with the eval account) | yes | no |
+
+The machine key passes only `READ_PERMISSIONS` (`billing:read`, `audit:read`,
+`queue:read`); every mutation needs a named human actor. Today the admin routes
+still authenticate with `x-admin-key` alone; the signed per-admin actor header and
+`fastify.requireAdmin(permission)` enforce this matrix when the actor work lands
+(billing-roles P2.5). `cold:run` is already enforced through `mayRunCold`.
+
+**Boot seeding (`ADMIN_EMAILS`).** vie-api reconciles the comma-separated
+`ADMIN_EMAILS` list with the `users` collection on every boot
+(`services/admin-seed.service.ts`): listed **existing** accounts are promoted
+(`roleSource: 'env'`), `env` admins whose email left the list are demoted,
+`granted` admins and legacy `role: 'admin'` users (read as `granted`) are never
+touched, and users are never created from the list. The reconcile refuses, changing
+nothing, if it would leave no active admin, and an empty list is a no-op, so a
+missing env row cannot lock anyone out. The shared demo account and soft-deleted
+accounts are never promoted. Emails are matched ignoring case and never logged in
+full. Every change writes an audit row with actor `system:boot`.
+
+**Admin audit trail.** Every admin mutation writes one append-only `adminAudit`
+row (`AuditService.record`): actor, action, target, a before/after snapshot,
+reason, request id and client ip. Today that covers admin user deletion (an audit
+row at request time for the 30-day soft delete too), the global video purge, DLQ
+replay and the boot role changes above. The actor is the `x-admin-id` operator id
+(self-attested until the signed actor header lands), or `system:admin-key` when a
+caller sends the key alone. The mutation has already happened when the row is
+written, so a failed audit insert is logged at `error` and never turns the request
+into a failure. Rows hold no secrets and no target email.
+
 ### Dev-Default Secret Refusal
 
 `api/src/config.ts` refuses to start in production when `JWT_SECRET`,

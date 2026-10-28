@@ -13,6 +13,7 @@ import { rateLimitPlugin } from './plugins/rate-limit.js';
 import { websocketPlugin } from './plugins/websocket.js';
 import { tierPlugin } from './plugins/tier.js';
 import { demoGuardPlugin } from './plugins/demo-guard.js';
+import { adminSeedPlugin } from './plugins/admin-seed.js';
 import { rabbitmqPlugin } from './plugins/rabbitmq.js';
 import { redisPlugin } from './plugins/redis.js';
 import { genRequestId, requestIdPlugin } from './plugins/request-id.js';
@@ -184,6 +185,8 @@ export async function buildApp(options?: BuildAppOptions): Promise<FastifyInstan
   await fastify.register(tierPlugin);
   // Demo-account guard (after the container: it resolves the demo user through it)
   await fastify.register(demoGuardPlugin);
+  // ADMIN_EMAILS role reconcile (runs on ready, after the mongodb index hook)
+  await fastify.register(adminSeedPlugin);
 
   // Global error handler. The status/envelope mapping lives in
   // utils/error-envelope.ts so this stays a thin log-then-send: 5xx at

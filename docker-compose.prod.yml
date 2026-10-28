@@ -311,6 +311,8 @@ services:
       FRONTEND_URL: ${FRONTEND_URL:?FRONTEND_URL is required (public https origin of vie-web)}
       INTERNAL_SECRET: ${INTERNAL_SECRET:?INTERNAL_SECRET is required (openssl rand -base64 32)}
       ADMIN_API_KEY: ${ADMIN_API_KEY:?ADMIN_API_KEY is required (openssl rand -base64 32)}
+      # Login emails that hold the admin role; reconciled at every boot. Blank = no change.
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
       # api/src/config.ts refuses to boot production without a webhook secret —
       # unsigned Paddle events must never be accepted.
       PADDLE_WEBHOOK_SECRET: ${PADDLE_WEBHOOK_SECRET:?PADDLE_WEBHOOK_SECRET is required in production}
