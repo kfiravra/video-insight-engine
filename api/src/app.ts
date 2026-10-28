@@ -11,7 +11,6 @@ import { jwtPlugin } from './plugins/jwt.js';
 import { corsPlugin } from './plugins/cors.js';
 import { rateLimitPlugin } from './plugins/rate-limit.js';
 import { websocketPlugin } from './plugins/websocket.js';
-import { tierPlugin } from './plugins/tier.js';
 import { demoGuardPlugin } from './plugins/demo-guard.js';
 import { adminSeedPlugin } from './plugins/admin-seed.js';
 import { billingRepairPlugin } from './plugins/billing-repair.js';
@@ -194,8 +193,6 @@ export async function buildApp(options?: BuildAppOptions): Promise<FastifyInstan
   }
   fastify.decorate('container', container);
 
-  // Tier middleware (after JWT, uses container)
-  await fastify.register(tierPlugin);
   // Demo-account guard (after the container: it resolves the demo user through it)
   await fastify.register(demoGuardPlugin);
   // /api/admin/* auth: signed actor header or the read-only machine key

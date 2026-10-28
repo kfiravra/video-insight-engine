@@ -10,13 +10,14 @@ import { ColdRunForbiddenError, InvalidYouTubeUrlError, VideoNotFoundError, Vers
 import { buildMetaFromDoc, buildTabsFromDoc } from '../utils/meta-builder.js';
 import { refreshFrameUrls } from '../utils/refresh-frame-urls.js';
 import { parseSourceLanguage } from '../utils/source-language.js';
-import type { UserTier } from '@vie/types';
+import type { QueuePlan } from './queue-topology.js';
 
 export interface CreateVideoOptions {
   folderId?: string;
   bypassCache?: boolean;
   providers?: ProviderConfig;
-  tier: UserTier;
+  /** What pays for a run this call dispatches (`paid` = plan / credit minutes): the queue priority. */
+  queuePlan: QueuePlan;
   /**
    * Originating Fastify `request.id`. Flows into the queue payload (as the
    * publisher's `requestId`) AND the legacy HTTP fallback (as `X-Request-ID`)
@@ -52,7 +53,7 @@ interface NewVersionInput {
   youtubeId: string;
   folderId?: string;
   providers?: ProviderConfig;
-  tier: UserTier;
+  queuePlan: QueuePlan;
   requestId?: string;
   billingRunId?: string;
   evalRun: boolean;
@@ -122,7 +123,7 @@ export class VideoService {
       youtubeId: string;
       url: string;
       userId: string;
-      tier: UserTier;
+      queuePlan: QueuePlan;
       providers?: ProviderConfig;
       bypassCache?: boolean;
       requestId?: string;
@@ -188,7 +189,7 @@ export class VideoService {
             youtubeId: payload.youtubeId,
             url: payload.url,
             userId: payload.userId,
-            tier: payload.tier,
+            plan: payload.queuePlan,
             providers: payload.providers,
             bypassCache: payload.bypassCache,
             requestId: payload.requestId,
@@ -346,13 +347,13 @@ export class VideoService {
         this.logger.warn({ youtubeId: input.youtubeId, error: err }, 'Failed to cleanup old versions');
       });
 
-    const { userId, url, youtubeId, tier, providers, requestId, billingRunId, forceRefresh } = input;
+    const { userId, url, youtubeId, queuePlan, providers, requestId, billingRunId, forceRefresh } = input;
     await this.dispatchPipeline({
       videoSummaryId: row.videoSummaryId,
       youtubeId,
       url,
       userId,
-      tier,
+      queuePlan,
       providers,
       bypassCache: forceRefresh,
       requestId,
@@ -382,7 +383,7 @@ export class VideoService {
   }
 
   async createVideo(userId: string, url: string, options: CreateVideoOptions) {
-    const { folderId, providers, tier, requestId, billingRunId, cold = false, serveOnly = false } = options;
+    const { folderId, providers, queuePlan, requestId, billingRunId, cold = false, serveOnly = false } = options;
     const refuseRun = (): void => {
       if (serveOnly) throw new RunNotAllowedError();
     };
@@ -412,7 +413,7 @@ export class VideoService {
         youtubeId,
         folderId,
         providers,
-        tier,
+        queuePlan,
         requestId,
         billingRunId,
         evalRun,
@@ -464,7 +465,7 @@ export class VideoService {
             youtubeId,
             url,
             userId,
-            tier,
+            queuePlan,
             providers,
             requestId,
             billingRunId,
@@ -549,7 +550,7 @@ export class VideoService {
         youtubeId,
         url,
         userId,
-        tier,
+        queuePlan,
         providers,
         bypassCache,
         requestId,
@@ -598,7 +599,7 @@ export class VideoService {
           youtubeId,
           url,
           userId,
-          tier,
+          queuePlan,
           providers,
           requestId,
           billingRunId,
@@ -659,7 +660,7 @@ export class VideoService {
         youtubeId,
         url,
         userId,
-        tier,
+        queuePlan,
         providers,
         requestId,
         billingRunId,
@@ -712,7 +713,7 @@ export class VideoService {
         youtubeId,
         url,
         userId,
-        tier,
+        queuePlan,
         providers,
         requestId,
         billingRunId,

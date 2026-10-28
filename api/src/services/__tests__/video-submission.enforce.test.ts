@@ -37,7 +37,7 @@ describe('VideoSubmissionService on the minutes ledger', () => {
   let createVideo: ReturnType<typeof vi.fn>;
 
   const input = (overrides: Partial<SubmitVideoInput> = {}): SubmitVideoInput => ({
-    userId, url: freshVideo(), tier: 'free', requestId: 'client-req-1', ...overrides,
+    userId, url: freshVideo(), requestId: 'client-req-1', ...overrides,
   });
   const submitMinutes = async (minutes: number, overrides: Partial<SubmitVideoInput> = {}) => {
     h.metadata.getVideoMetadata.mockResolvedValue({ duration: minutes * 60 });
@@ -94,6 +94,14 @@ describe('VideoSubmissionService on the minutes ledger', () => {
       expect(hold.source.ref).toBe(runIdOf());
       expect(runIdOf()).not.toBe('client-req-1');
       expect(createVideo.mock.calls[0][2].requestId).toBe('client-req-1');
+    });
+
+    it('should queue the free video as free and a run on credit minutes as paid (P3.4)', async () => {
+      await submitMinutes(10);
+      await h.billing.grantLot(userId, { minutes: 100 }, ctx());
+      await submitMinutes(10);
+
+      expect(createVideo.mock.calls.map((call) => call[2].queuePlan)).toEqual(['free', 'paid']);
     });
 
     it('should write no dollar counter and no shadow row (P3.2)', async () => {

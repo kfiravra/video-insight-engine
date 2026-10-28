@@ -276,8 +276,7 @@ describe('internal assistant routes', () => {
   });
 
   describe('POST /internal/assistant/generate', () => {
-    it('should resolve the plan from the billing account and call createVideo', async () => {
-      mockContainer.billingService.summary.mockResolvedValueOnce({ plan: { id: 'pro', periodEnd: null } });
+    it('should call createVideo for the header user with a free-video run queued as free', async () => {
       mockContainer.videoService.createVideo.mockResolvedValue({
         video: { id: 'v1', youtubeId: 'dQw4w9WgXcQ', status: 'pending' },
         cached: false,
@@ -291,31 +290,25 @@ describe('internal assistant routes', () => {
       });
 
       expect(response.statusCode).toBe(200);
-      expect(mockContainer.billingService.summary).toHaveBeenCalledWith(USER_A);
       expect(mockContainer.videoService.createVideo).toHaveBeenCalledWith(
         USER_A,
         'https://youtu.be/dQw4w9WgXcQ',
-        expect.objectContaining({ tier: 'pro', folderId: FOLDER_ID }),
+        expect.objectContaining({ queuePlan: 'free', folderId: FOLDER_ID }),
       );
     });
 
-    it('should default the plan to free when the account lookup fails', async () => {
-      mockContainer.billingService.summary.mockRejectedValueOnce(new Error('mongo down'));
+    it('should queue a run paid with plan minutes as paid', async () => {
+      mockContainer.billingEnforcement.admit.mockResolvedValueOnce({ requestId: 'r', minutes: 10, split: { free: 0, plan: 10, credit: 0, lots: [] } });
       mockContainer.videoService.createVideo.mockResolvedValue({ video: {}, cached: false });
 
-      const response = await app.inject({
+      await app.inject({
         method: 'POST',
         url: '/internal/assistant/generate',
         headers: internalHeaders(USER_A),
         payload: { url: 'https://youtu.be/dQw4w9WgXcQ' },
       });
 
-      expect(response.statusCode).toBe(200);
-      expect(mockContainer.videoService.createVideo).toHaveBeenCalledWith(
-        USER_A,
-        'https://youtu.be/dQw4w9WgXcQ',
-        expect.objectContaining({ tier: 'free' }),
-      );
+      expect(mockContainer.videoService.createVideo.mock.calls[0][2]).toMatchObject({ queuePlan: 'paid' });
     });
 
     it('should return 400 when url is missing', async () => {

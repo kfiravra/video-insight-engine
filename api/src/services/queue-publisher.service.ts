@@ -7,10 +7,10 @@ import {
   QUEUE_TOPOLOGY,
   type VideoJobPayload,
   videoJobPayloadSchema,
-  priorityForTier,
+  priorityForPlan,
+  type QueuePlan,
 } from './queue-topology.js';
 import type { ProviderConfig } from './summarizer-client.js';
-import type { UserTier } from '@vie/types';
 
 /** Lazy supplier so the publisher works during onReady before any channel exists. */
 export type ChannelSupplier = () => Promise<ConfirmChannel>;
@@ -20,7 +20,8 @@ export interface PublishVideoJobInput {
   youtubeId: string;
   url: string;
   userId: string | null;
-  tier: UserTier;
+  /** What pays for the run (queue-topology.ts `queuePlanOf`); sets the message priority. */
+  plan: QueuePlan;
   providers?: ProviderConfig;
   bypassCache?: boolean;
   requestId?: string;
@@ -48,8 +49,8 @@ export class QueuePublisher {
       youtubeId: input.youtubeId,
       url: input.url,
       userId: input.userId ?? null,
-      tier: input.tier,
-      priority: priorityForTier(input.tier),
+      plan: input.plan,
+      priority: priorityForPlan(input.plan),
       providers: input.providers ?? null,
       bypassCache: input.bypassCache ?? false,
       requestId: input.requestId ?? randomUUID(),
@@ -89,7 +90,7 @@ export class QueuePublisher {
             timestamp: Date.now(),
             headers: {
               'x-attempt': payload.attempt,
-              'x-tier': payload.tier,
+              'x-plan': payload.plan,
             },
           },
           (err) => {
@@ -112,7 +113,7 @@ export class QueuePublisher {
       {
         videoSummaryId: payload.videoSummaryId,
         youtubeId: payload.youtubeId,
-        tier: payload.tier,
+        plan: payload.plan,
         priority: payload.priority,
         attempt: payload.attempt,
         requestId: payload.requestId,

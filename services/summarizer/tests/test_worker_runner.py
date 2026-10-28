@@ -20,7 +20,7 @@ VALID_PAYLOAD_DICT = {
     "youtubeId": "dQw4w9WgXcQ",
     "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
     "userId": "user-1",
-    "tier": "free",
+    "plan": "free",
     "priority": 1,
     "providers": None,
     "bypassCache": False,
@@ -59,6 +59,18 @@ def fake_republish():
 
 class TestProcessMessage:
     """`WorkerRunner.process_message` is the heart of the consumer loop."""
+
+    async def test_tags_the_sentry_transaction_with_the_plan(
+        self, fake_pipeline, fake_republish, monkeypatch
+    ):
+        transaction = MagicMock()
+        monkeypatch.setattr("src.worker.runner.pipeline_stage_transaction", transaction)
+        runner = WorkerRunner(run_pipeline=fake_pipeline, republish=fake_republish, max_retries=3)
+        paid = {**VALID_PAYLOAD_DICT, "plan": "paid", "priority": 5}
+
+        await runner.process_message(_make_message(json.dumps(paid).encode("utf-8")))
+
+        assert transaction.call_args.kwargs["plan"] == "paid"
 
     async def test_acks_on_success(self, fake_pipeline, fake_republish):
         runner = WorkerRunner(
@@ -141,21 +153,21 @@ class TestProcessMessage:
         message.reject.assert_awaited_once_with(requeue=False)
 
     async def test_retry_preserves_priority_and_request_id(self, fake_pipeline, fake_republish):
-        # Hardening check: republished payload must keep tier/priority/requestId
-        # so a paid-tier retry doesn't drop to free-tier priority.
+        # Hardening check: republished payload must keep plan/priority/requestId
+        # so a paid run's retry doesn't drop to free priority.
         fake_pipeline.side_effect = RuntimeError("transient")
         runner = WorkerRunner(
             run_pipeline=fake_pipeline,
             republish=fake_republish,
             max_retries=3,
         )
-        paid = {**VALID_PAYLOAD_DICT, "tier": "pro", "priority": 5, "requestId": "req-keep"}
+        paid = {**VALID_PAYLOAD_DICT, "plan": "paid", "priority": 5, "requestId": "req-keep"}
         message = _make_message(json.dumps(paid).encode("utf-8"))
 
         outcome = await runner.process_message(message)
         assert outcome == JobOutcome.RETRIED
         forwarded: VideoJobPayload = fake_republish.await_args.args[0]
-        assert forwarded.tier == "pro"
+        assert forwarded.plan == "paid"
         assert forwarded.priority == 5
         assert forwarded.request_id == "req-keep"
         assert forwarded.attempt == 2

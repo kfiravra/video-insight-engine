@@ -42,7 +42,7 @@ describe('VideoService cold runs (integration)', () => {
   const originalUseQueue = config.USE_QUEUE_PIPELINE;
 
   const cache = () => db.collection('videoSummaryCache');
-  const submitCold = (userId: string) => service.createVideo(userId, URL, { tier: 'free', cold: true });
+  const submitCold = (userId: string) => service.createVideo(userId, URL, { queuePlan: 'free', cold: true });
 
   async function rowOf(videoSummaryId: string) {
     return cache().findOne({ _id: new ObjectId(videoSummaryId) });
@@ -50,7 +50,7 @@ describe('VideoService cold runs (integration)', () => {
 
   /** Alice's first submission — creates and completes the shared row. */
   async function seedSharedRow(): Promise<void> {
-    const { video } = await service.createVideo(alice, URL, { tier: 'free' });
+    const { video } = await service.createVideo(alice, URL, { queuePlan: 'free' });
     await cache().updateOne({ _id: new ObjectId(video.videoSummaryId) }, { $set: { status: 'completed' } });
   }
 
@@ -146,7 +146,7 @@ describe('VideoService cold runs (integration)', () => {
     it('should not stamp coldMedia when the eval user submits without cold', async () => {
       await seedSharedRow();
 
-      const { video } = await service.createVideo(evalUser, URL, { tier: 'free', bypassCache: true });
+      const { video } = await service.createVideo(evalUser, URL, { queuePlan: 'free', bypassCache: true });
 
       expect((await rowOf(video.videoSummaryId))?.coldMedia).toBeUndefined();
     });

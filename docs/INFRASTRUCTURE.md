@@ -586,8 +586,8 @@ The summarizer pipeline runs from a durable RabbitMQ queue (when `USE_QUEUE_PIPE
   "youtubeId": "11-char string",
   "url": "https://...",
   "userId": "ObjectId hex | null",
-  "tier": "free | pro | team",
-  "priority": 1 | 5,                  // free=1, pro/team=5
+  "plan": "free | paid",              // what the run's minutes hold paid with (billing-roles P3.4)
+  "priority": 1 | 5,                  // free=1 (the free video), paid=5 (any plan or credit minutes)
   "providers": { "default": "...", "fast": "...", "fallback": "..." } | null,
   "bypassCache": false,
   "requestId": "uuid",
@@ -595,6 +595,13 @@ The summarizer pipeline runs from a durable RabbitMQ queue (when `USE_QUEUE_PIPE
   "createdAt": "ISO-8601"
 }
 ```
+
+`plan` replaced `tier` in P3.4: the priority follows what pays for the run,
+not the account's plan (a Pro account's free video queues at 1, a free
+account's credit minutes at 5). The `x-plan` header carries it too, and the
+worker tags the job's Sentry transaction with `plan`. A message published
+before the deploy still carries `tier`; the worker ignores it (`plan` then
+reads `free` for the tag only — the message keeps its priority).
 
 **Retry policy** — on consumer error the worker waits
 `WORKER_RETRY_BACKOFF_SECONDS × 2^(attempt-1)` (default 5 → 10 → 20 s, capped at

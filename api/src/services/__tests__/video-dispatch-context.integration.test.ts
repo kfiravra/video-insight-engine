@@ -48,7 +48,7 @@ describe('VideoService dispatch context (integration)', () => {
   const cache = () => db.collection('videoSummaryCache');
   const rowOf = (videoSummaryId: string) => cache().findOne({ _id: new ObjectId(videoSummaryId) });
   const submit = (userId: string, requestId?: string) =>
-    service.createVideo(userId, URL, { tier: 'free', requestId });
+    service.createVideo(userId, URL, { queuePlan: 'free', requestId });
 
   /** Alice's dispatch, then the run fails — the next submitter retries the same row. */
   async function seedFailedRowDispatchedByAlice(): Promise<string> {

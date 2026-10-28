@@ -56,7 +56,7 @@ class _Republisher:
                     delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
                     priority=payload.priority,
                     message_id=payload.request_id,
-                    headers={"x-attempt": payload.attempt, "x-tier": payload.tier},
+                    headers={"x-attempt": payload.attempt, "x-plan": payload.plan},
                 ),
                 routing_key=QueueTopology.routing_key,
             )

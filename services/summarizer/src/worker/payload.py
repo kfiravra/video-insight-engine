@@ -14,6 +14,11 @@ from pydantic import BaseModel, ConfigDict, Field
 
 _Provider = Literal["anthropic", "openai", "gemini"]
 
+# What pays for the run (billing-roles P3.4): ``paid`` = plan or credit
+# minutes, ``free`` = the free video. Sets nothing here (the publisher already
+# chose the message priority); it tags the job's Sentry transaction.
+QueuePlan = Literal["free", "paid"]
+
 
 class ProviderConfig(BaseModel):
     """Per-request LLM provider overrides (dev-tools flow)."""
@@ -30,6 +35,8 @@ class VideoJobPayload(BaseModel):
 
     JSON aliases match the API publisher's camelCase wire format. Use
     ``model_dump(by_alias=True, mode="json")`` when serializing for republish.
+    A message published before P3.4 carries ``tier`` instead of ``plan``:
+    ``extra="ignore"`` drops it and ``plan`` defaults to ``free``.
     """
 
     model_config = ConfigDict(populate_by_name=True, extra="ignore")
@@ -38,7 +45,7 @@ class VideoJobPayload(BaseModel):
     youtube_id: str = Field(alias="youtubeId", pattern=r"^[a-zA-Z0-9_-]{11}$")
     url: str
     user_id: str | None = Field(default=None, alias="userId")
-    tier: Literal["free", "pro", "team"] = "free"
+    plan: QueuePlan = "free"
     priority: int = Field(ge=1, le=10)
     providers: ProviderConfig | None = None
     bypass_cache: bool = Field(default=False, alias="bypassCache")

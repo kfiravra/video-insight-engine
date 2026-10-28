@@ -114,7 +114,7 @@ describe('PlaylistService', () => {
     mockSummarizerClient = {};
 
     mockEnforcement = {
-      admit: vi.fn().mockResolvedValue({}),
+      admit: vi.fn().mockResolvedValue({ split: { free: 1, plan: 0, credit: 0, lots: [] } }),
       submitResolved: vi.fn().mockResolvedValue(undefined),
       submitFailed: vi.fn().mockResolvedValue(undefined),
       planPlaylist: vi.fn().mockImplementation(async (_userId: string, items: Array<{ durationSec: number | null }>) => ({
@@ -497,7 +497,7 @@ describe('PlaylistService', () => {
           folderId: folder.id,
           bypassCache: false,
           providers,
-          tier: 'free',
+          queuePlan: 'free',
         })
       );
     });
@@ -572,7 +572,9 @@ describe('PlaylistService', () => {
 
     it('should stop at the first item the minutes cannot cover and mark every later one the same', async () => {
       useVideos(4);
-      mockEnforcement.admit.mockResolvedValueOnce({}).mockRejectedValueOnce(new InsufficientMinutesError(2, 0, null));
+      mockEnforcement.admit
+        .mockResolvedValueOnce({ split: { free: 2, plan: 0, credit: 0, lots: [] } })
+        .mockRejectedValueOnce(new InsufficientMinutesError(2, 0, null));
       mockVideoService.createVideo.mockImplementation(async (_user: string, _url: string, options: { serveOnly?: boolean }) => {
         if (options.serveOnly) throw new RunNotAllowedError();
         return createVideoCreateResult();
@@ -587,6 +589,18 @@ describe('PlaylistService', () => {
         ['video4', 'INSUFFICIENT_MINUTES'],
       ]);
       expect(mockEnforcement.admit).toHaveBeenCalledTimes(2);
+    });
+
+    it('should queue an item paid with plan or credit minutes as paid and a free-video item as free', async () => {
+      useVideos(2);
+      mockEnforcement.admit
+        .mockResolvedValueOnce({ split: { free: 2, plan: 0, credit: 0, lots: [] } })
+        .mockResolvedValueOnce({ split: { free: 0, plan: 2, credit: 0, lots: [] } });
+      mockVideoService.createVideo.mockResolvedValue(createVideoCreateResult());
+
+      await playlistService.import(userId, PLAYLIST_URL);
+
+      expect(mockVideoService.createVideo.mock.calls.map((call) => call[2].queuePlan)).toEqual(['free', 'paid']);
     });
 
     it('should report the up-front quote with the result', async () => {

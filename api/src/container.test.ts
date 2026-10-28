@@ -60,7 +60,7 @@ describe('createContainer', () => {
       youtubeId: 'dQw4w9WgXcQ',
       url: 'https://youtu.be/dQw4w9WgXcQ',
       userId: 'u1',
-      tier: 'free',
+      plan: 'free',
     })).rejects.toThrow('marker');
     expect(called).toBe(1);
   });

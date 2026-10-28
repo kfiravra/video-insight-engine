@@ -148,7 +148,7 @@ export async function internalAssistantRoutes(fastify: FastifyInstance): Promise
   fastify.post<{
     Body: z.infer<typeof generateSchema>;
   }>('/generate', {
-    preHandler: [fastify.authenticateInternal, fastify.resolveTier],
+    preHandler: [fastify.authenticateInternal],
   }, async (req, reply) => {
     const { url, folderId } = generateSchema.parse(req.body);
     const userId = req.user.userId;
@@ -160,7 +160,6 @@ export async function internalAssistantRoutes(fastify: FastifyInstance): Promise
     const submission = await videoSubmissionService.submit({
       userId,
       url,
-      tier: req.tier.name,
       folderId,
       requestId: req.id,
     });

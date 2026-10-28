@@ -40,7 +40,7 @@ function mockReplay(value: Partial<ReturnType<typeof useReplayDlq>> = {}) {
 }
 
 const MESSAGE = {
-  payload: { youtubeId: 'dQw4w9WgXcQ', videoSummaryId: '6a8ebbbfe517dd6fad90fb1d', requestId: 'req-1', tier: 'free', attempt: 3 },
+  payload: { youtubeId: 'dQw4w9WgXcQ', videoSummaryId: '6a8ebbbfe517dd6fad90fb1d', requestId: 'req-1', plan: 'paid', attempt: 3 },
   routingKey: 'video.summarize',
   messageId: 'req-1',
   priority: 1,
@@ -68,6 +68,14 @@ describe('DlqPanel', () => {
     expect(screen.getByText('dQw4w9WgXcQ')).toBeTruthy();
     expect(screen.getByText('req-1')).toBeTruthy();
     expect(screen.getAllByTestId('dlq-row')).toHaveLength(1);
+  });
+
+  it('should show what paid for each job, and the tier of a message from before P3.4', () => {
+    const legacy = { ...MESSAGE, payload: { ...MESSAGE.payload, plan: undefined, tier: 'pro' } };
+    mockDlq({ data: { messages: [MESSAGE, legacy] }, isLoading: false, isError: false });
+    mockReplay();
+    render(<DlqPanel />, { wrapper });
+    expect([screen.getByText('paid'), screen.getByText('pro')].every(Boolean)).toBe(true);
   });
 
   it('should require a confirmation click before replaying', () => {

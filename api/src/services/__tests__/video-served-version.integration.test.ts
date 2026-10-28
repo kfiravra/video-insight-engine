@@ -47,7 +47,7 @@ describe('VideoService served version (integration)', () => {
 
   const cache = () => db.collection('videoSummaryCache');
   const submit = (userId: string, bypassCache = false) =>
-    service.createVideo(userId, URL, { tier: 'free', bypassCache });
+    service.createVideo(userId, URL, { queuePlan: 'free', bypassCache });
 
   async function setStatus(videoSummaryId: string, status: 'completed' | 'failed'): Promise<void> {
     await cache().updateOne({ _id: new ObjectId(videoSummaryId) }, { $set: { status } });

@@ -90,7 +90,7 @@ export async function videosRoutes(fastify: FastifyInstance) {
   fastify.post<{
     Body: z.infer<typeof createVideoSchema>;
   }>('/', {
-    preHandler: [fastify.authenticate, fastify.resolveTier],
+    preHandler: [fastify.authenticate],
   }, async (req, reply) => {
     const input = createVideoSchema.parse(req.body);
 
@@ -124,7 +124,6 @@ export async function videosRoutes(fastify: FastifyInstance) {
     const submission = await videoSubmissionService.submit({
       userId: req.user.userId,
       url: input.url,
-      tier: req.tier.name,
       folderId: input.folderId,
       bypassCache: input.bypassCache,
       cold: input.cold,

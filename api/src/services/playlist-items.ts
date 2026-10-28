@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { AppError, RunNotAllowedError } from '../utils/errors.js';
 import { submitOutcome } from './billing/run-stamp.js';
 import { refusalServesWithoutRun } from './billing/shadow-policy.js';
-import type { UserTier } from '@vie/types';
+import { queuePlanOf, type QueuePlan } from './queue-topology.js';
 import type { LedgerEnforcement } from './billing/ledger-enforcement.js';
 import type { ProviderConfig } from './summarizer-client.js';
 import type { VideoService } from './video.service.js';
@@ -47,7 +47,6 @@ export interface ItemImportContext {
   userId: string;
   folderId: string;
   providers?: ProviderConfig;
-  tier: UserTier;
 }
 
 export interface ItemImporter {
@@ -97,8 +96,10 @@ export class LedgerItemImporter implements ItemImporter {
     const durationSec = this.durationsSec[index];
     if (durationSec === null || durationSec === undefined) return this.serveFree(item, 'METADATA_UNAVAILABLE', false);
     const runId = randomUUID();
+    let queuePlan: QueuePlan;
     try {
-      await this.enforcement.admit({ requestId: runId, userId: this.ctx.userId, youtubeId: item.video_id, durationSec });
+      const hold = await this.enforcement.admit({ requestId: runId, userId: this.ctx.userId, youtubeId: item.video_id, durationSec });
+      queuePlan = queuePlanOf(hold.split);
     } catch (err) {
       if (!(err instanceof AppError)) throw err;
       const stops = STOPPING_CODES.has(err.code);
@@ -106,7 +107,7 @@ export class LedgerItemImporter implements ItemImporter {
     }
     let result: CreateVideoResult;
     try {
-      result = await this.createVideo(item, { requestId: runId, billingRunId: runId });
+      result = await this.createVideo(item, { requestId: runId, billingRunId: runId, queuePlan });
     } catch (err) {
       await this.enforcement.submitFailed(runId);
       return failed(item, err instanceof Error ? err.message : String(err));
@@ -123,7 +124,8 @@ export class LedgerItemImporter implements ItemImporter {
   /** The ledger will not pay for a run: serve the item only if that costs nothing, else record `error`. */
   private async serveFree(item: PlaylistItem, error: string, stopsImport: boolean): Promise<ItemOutcome> {
     try {
-      const result = await this.createVideo(item, { serveOnly: true });
+      // Serve-only never dispatches, so its queue plan is never read.
+      const result = await this.createVideo(item, { serveOnly: true, queuePlan: 'free' });
       const served = imported(item, result);
       return stopsImport && served.kind === 'imported' ? { ...served, stopsImport: error } : served;
     } catch (err) {
@@ -134,9 +136,9 @@ export class LedgerItemImporter implements ItemImporter {
 
   private async createVideo(
     item: PlaylistItem,
-    extra: { requestId?: string; billingRunId?: string; serveOnly?: boolean },
+    extra: { requestId?: string; billingRunId?: string; serveOnly?: boolean; queuePlan: QueuePlan },
   ): Promise<CreateVideoResult> {
-    const { userId, folderId, providers, tier } = this.ctx;
-    return this.videoService.createVideo(userId, videoUrl(item), { folderId, bypassCache: false, providers, tier, ...extra });
+    const { userId, folderId, providers } = this.ctx;
+    return this.videoService.createVideo(userId, videoUrl(item), { folderId, bypassCache: false, providers, ...extra });
   }
 }

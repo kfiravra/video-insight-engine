@@ -35,7 +35,7 @@ describe('VideoService.createVideo — serveOnly', () => {
       createdAt: new Date(), updatedAt: new Date(), ...fields,
     });
   const serveOnly = (extra: Record<string, unknown> = {}) =>
-    service.createVideo(userId, URL, { tier: 'free', serveOnly: true, ...extra });
+    service.createVideo(userId, URL, { queuePlan: 'free', serveOnly: true, ...extra });
   const userVideos = () => getTestDb().collection('userVideos').countDocuments();
 
   beforeEach(() => {

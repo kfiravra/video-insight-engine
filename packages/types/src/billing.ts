@@ -21,7 +21,11 @@ export interface PlanConfig {
   periodMinutes: number;
   /** Longest video the plan allows: free 30 (the free video), pro 180 (Q2). */
   maxVideoMinutes: number;
-  /** RabbitMQ message priority for runs on this plan. */
+  /**
+   * RabbitMQ message priority. Set per run by what its hold paid with (P3.4,
+   * api `queue-topology.ts`): any plan or credit minutes queue at `pro`'s, the
+   * free video alone at `free`'s — whichever plan the account is on.
+   */
   queuePriority: number;
 }
 

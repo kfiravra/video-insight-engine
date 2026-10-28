@@ -7,8 +7,8 @@ import { extractYoutubeId } from '../utils/youtube.js';
 import { RunNotAllowedError } from '../utils/errors.js';
 import { submitOutcome } from './billing/run-stamp.js';
 import { refusalServesWithoutRun } from './billing/shadow-policy.js';
+import { queuePlanOf, type QueuePlan } from './queue-topology.js';
 import type { ProviderConfig } from './summarizer-client.js';
-import type { UserTier } from '@vie/types';
 import type { GateSubmission } from './billing/billing-gate.js';
 import type { LedgerEnforcement } from './billing/ledger-enforcement.js';
 
@@ -18,7 +18,6 @@ export type CreateVideoResult = Awaited<ReturnType<VideoService['createVideo']>>
 export interface SubmitVideoInput {
   userId: string;
   url: string;
-  tier: UserTier;
   folderId?: string;
   bypassCache?: boolean;
   /** Cold-media benchmark run (admin/eval only — createVideo enforces it). */
@@ -65,6 +64,8 @@ type IdempotencyGateResult =
  */
 interface SubmitBilling {
   run: GateSubmission | null;
+  /** What the hold paid with, for the queue priority (P3.4); `free` without a hold. */
+  queuePlan: QueuePlan;
   /**
    * The ledger refused to pay for a run, but the refusal still lets a cached
    * or attachable video through for free (Q6): createVideo runs serve-only
@@ -109,12 +110,13 @@ export class VideoSubmissionService {
    */
   private async admit(input: SubmitVideoInput, hash: string | null): Promise<SubmitBilling> {
     const run = this.billingRun(input);
-    if (!run) return { run };
+    if (!run) return { run, queuePlan: 'free' };
     try {
-      await this.billing.admit(run);
-      return { run };
+      const hold = await this.billing.admit(run);
+      return { run, queuePlan: queuePlanOf(hold.split) };
     } catch (err) {
-      if (refusalServesWithoutRun(err)) return { run, servingOnly: err };
+      // Serve-only never dispatches, so its plan is never read.
+      if (refusalServesWithoutRun(err)) return { run, queuePlan: 'free', servingOnly: err };
       await this.unwindHash(hash, input.requestId);
       throw err;
     }
@@ -128,7 +130,7 @@ export class VideoSubmissionService {
         bypassCache: input.bypassCache,
         cold: input.cold,
         providers: input.providers,
-        tier: input.tier,
+        queuePlan: billing.queuePlan,
         requestId: input.requestId,
         billingRunId: billing.run?.requestId,
         ...(serveOnly && { serveOnly }),

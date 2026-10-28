@@ -48,7 +48,6 @@ const ACCOUNT_CTX = () => ({ actorId: 'system:replay', reason: 'replay fixture',
 interface ScenarioState {
   scenario: string;
   userId: string;
-  tier: 'free' | 'pro';
   /** run → the request id its dispatch carried (the llm_usage key). */
   requestIds: Map<string, string>;
   /** youtubeId → the ledger run ids (server-generated, P3.1) submitted for it, in order. */
@@ -124,7 +123,7 @@ export class ReplayHarness {
     const userId = await insertUser(this.db);
     await this.prepareAccount(scenario.account, userId);
     return {
-      scenario: scenario.name, userId, tier: scenario.account === 'pro' ? 'pro' : 'free',
+      scenario: scenario.name, userId,
       requestIds: new Map(), runIds: new Map(), youtubeIds: new Map(), dispatched: new Map(), errors: new Map(), outcomes: [],
       servedFree: new Set(),
     };
@@ -170,7 +169,7 @@ export class ReplayHarness {
     else this.ledger.metadata.getVideoMetadata.mockResolvedValue({ duration: minutes * 60 });
     state.outcomes = [{ run, outcome }];
     await this.submissions
-      .submit({ userId: state.userId, url: `https://www.youtube.com/watch?v=${youtubeId}`, tier: state.tier, requestId, bypassCache })
+      .submit({ userId: state.userId, url: `https://www.youtube.com/watch?v=${youtubeId}`, requestId, bypassCache })
       .catch((err: unknown) => state.errors.set(run, err));
   }
 
@@ -184,7 +183,7 @@ export class ReplayHarness {
       json: () => Promise.resolve({ playlist_id: 'PLreplay', title: 'Replay', channel: null, thumbnail_url: null, total_videos: videos.length, videos }),
     });
     state.outcomes = items.map(({ run, outcome }) => ({ run, outcome }));
-    await this.playlists.import(state.userId, 'https://www.youtube.com/playlist?list=PLreplay', undefined, 100, undefined, state.tier);
+    await this.playlists.import(state.userId, 'https://www.youtube.com/playlist?list=PLreplay', undefined, 100);
   }
 
   /**

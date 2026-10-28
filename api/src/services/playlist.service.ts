@@ -11,7 +11,6 @@ import { VideoService } from './video.service.js';
 import { FolderService } from './folder.service.js';
 import { SummarizerClient, type ProviderConfig } from './summarizer-client.js';
 import { LedgerItemImporter } from './playlist-items.js';
-import type { UserTier } from '@vie/types';
 import type { LedgerEnforcement } from './billing/ledger-enforcement.js';
 import type { FailedVideoImport, ImportedVideo, ItemImporter, ItemOutcome } from './playlist-items.js';
 
@@ -134,7 +133,6 @@ export class PlaylistService {
     folderId?: string,
     maxVideos = 100,
     providers?: ProviderConfig,
-    tier: UserTier = 'free'
   ): Promise<PlaylistImportResult> {
     const playlistId = extractPlaylistId(url);
     if (!playlistId) {
@@ -150,7 +148,7 @@ export class PlaylistService {
     );
     const folder = await this.resolveFolder(userId, folderId, playlistData.title);
     const importer = new LedgerItemImporter(
-      this.videoService, this.billingEnforcement, { userId, folderId: folder.id, providers, tier }, plan.durationsSec,
+      this.videoService, this.billingEnforcement, { userId, folderId: folder.id, providers }, plan.durationsSec,
     );
     const result = await this.importItems(importer, playlistData.videos);
     return {

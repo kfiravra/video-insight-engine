@@ -14,7 +14,7 @@ VALID_PAYLOAD = {
     "youtubeId": "dQw4w9WgXcQ",
     "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
     "userId": "user-1",
-    "tier": "free",
+    "plan": "free",
     "priority": 1,
     "providers": None,
     "bypassCache": False,
@@ -31,9 +31,23 @@ class TestVideoJobPayload:
         payload = VideoJobPayload.model_validate(VALID_PAYLOAD)
         assert payload.video_summary_id == "abc123def456789012345678"
         assert payload.youtube_id == "dQw4w9WgXcQ"
-        assert payload.tier == "free"
+        assert payload.plan == "free"
         assert payload.priority == 1
         assert payload.attempt == 1
+
+    def test_reads_a_paid_plan(self) -> None:
+        payload = VideoJobPayload.model_validate({**VALID_PAYLOAD, "plan": "paid"})
+        assert payload.plan == "paid"
+
+    def test_rejects_an_unknown_plan(self) -> None:
+        with pytest.raises(ValidationError):
+            VideoJobPayload.model_validate({**VALID_PAYLOAD, "plan": "pro"})
+
+    def test_accepts_a_message_published_before_the_plan_field(self) -> None:
+        # P3.4 rollout: a message still in the queue carries `tier`, not `plan`.
+        legacy = {key: value for key, value in VALID_PAYLOAD.items() if key != "plan"}
+        payload = VideoJobPayload.model_validate({**legacy, "tier": "pro"})
+        assert payload.plan == "free"
 
     def test_rejects_short_youtube_id(self) -> None:
         bad = {**VALID_PAYLOAD, "youtubeId": "short"}

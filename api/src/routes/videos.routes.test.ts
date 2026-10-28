@@ -201,7 +201,7 @@ describe('videos routes', () => {
           folderId: undefined,
           bypassCache: false,
           providers: undefined,
-          tier: 'free',
+          queuePlan: 'free',
           requestId: expect.any(String),
         })
       );
@@ -261,7 +261,7 @@ describe('videos routes', () => {
           folderId: '507f1f77bcf86cd799439011',
           bypassCache: false,
           providers: undefined,
-          tier: 'free',
+          queuePlan: 'free',
         })
       );
     });
@@ -328,6 +328,20 @@ describe('videos routes', () => {
       expect(mockContainer.videoService.createVideo.mock.calls[0][2]).toMatchObject({ billingRunId: runId });
       // A new run keeps its hold: the terminal status settles it.
       expect(mockContainer.billingEnforcement.submitResolved).toHaveBeenCalledWith(runId, 'created');
+    });
+
+    it('should queue a run paid with plan or credit minutes as paid (P3.4)', async () => {
+      mockContainer.billingEnforcement.admit.mockResolvedValueOnce({ requestId: 'r', minutes: 20, split: { free: 0, plan: 0, credit: 20, lots: [] } });
+      mockContainer.videoService.createVideo.mockResolvedValue({ video: { id: 'v1', status: 'pending' }, cached: false });
+
+      await app.inject({
+        method: 'POST',
+        url: '/api/videos',
+        headers: { authorization: authHeader, 'content-type': 'application/json' },
+        payload: { url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' },
+      });
+
+      expect(mockContainer.videoService.createVideo.mock.calls[0][2]).toMatchObject({ queuePlan: 'paid' });
     });
 
     it('should give the hold back when createVideo throws', async () => {
