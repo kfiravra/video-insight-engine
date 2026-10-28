@@ -289,7 +289,7 @@ def _check_targets(args: argparse.Namespace) -> None:
 def _load(args: argparse.Namespace, current: str) -> Selection:
     _check_targets(args)
     if args.urls is None:
-        uri = args.mongo_uri or os.environ.get("MONGODB_URI", "mongodb://localhost:27017")
+        uri = args.mongo_uri or os.environ.get("MONGODB_URI", "mongodb://localhost:27017/?directConnection=true")
         return load_from_mongo(
             uri, args.mongo_db, current, demo_email=args.demo_email, all_cache=args.all_cache
         )

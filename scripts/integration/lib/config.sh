@@ -10,7 +10,7 @@ API_BASE="http://localhost:3000/api"
 SUMMARIZER_URL="http://localhost:8000"
 ASSISTANT_PORT="8001"
 WEB_URL="http://localhost:5173"
-MONGODB_URI="mongodb://localhost:27017/video-insight-engine"
+MONGODB_URI="mongodb://localhost:27017/video-insight-engine?directConnection=true"
 
 # ============================================
 # Timeouts (seconds)

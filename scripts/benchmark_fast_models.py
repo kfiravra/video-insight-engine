@@ -856,7 +856,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
-        "--mongo-uri", type=str, default=os.environ.get("MONGODB_URI", "mongodb://localhost:27017")
+        "--mongo-uri", type=str, default=os.environ.get("MONGODB_URI", "mongodb://localhost:27017/?directConnection=true")
     )
     parser.add_argument(
         "--mongo-db", type=str, default=os.environ.get("MONGODB_DB", "video-insight-engine")

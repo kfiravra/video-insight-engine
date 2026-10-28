@@ -44,7 +44,7 @@ async def migrate(args: argparse.Namespace) -> None:
     from motor.motor_asyncio import AsyncIOMotorClient
 
     mongodb_uri = args.mongodb_uri or os.environ.get(
-        "MONGODB_URI", "mongodb://localhost:27017/video-insight-engine"
+        "MONGODB_URI", "mongodb://localhost:27017/video-insight-engine?directConnection=true"
     )
     bucket = args.s3_bucket or os.environ.get("S3_BUCKET", "vie-transcripts")
 

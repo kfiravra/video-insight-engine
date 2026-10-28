@@ -1,14 +1,15 @@
-import { MongoMemoryServer } from 'mongodb-memory-server';
+import { MongoMemoryReplSet } from 'mongodb-memory-server';
 import { MongoClient, Db } from 'mongodb';
 import { beforeAll, afterAll, beforeEach, vi } from 'vitest';
 
-let mongod: MongoMemoryServer;
+let mongod: MongoMemoryReplSet;
 let client: MongoClient;
 let db: Db;
 
-// Start in-memory MongoDB before all tests
+// Start in-memory MongoDB before all tests. A single-node replica set, like dev
+// and prod (docker-compose), so multi-document transactions work in tests.
 beforeAll(async () => {
-  mongod = await MongoMemoryServer.create();
+  mongod = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
   const uri = mongod.getUri();
   client = new MongoClient(uri);
   await client.connect();

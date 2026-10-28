@@ -38,7 +38,7 @@ if (existsSync(envPath)) {
   }
 }
 
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017';
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/?directConnection=true';
 const DATABASE_NAME = process.env.MONGODB_DATABASE || databaseFromUri(MONGODB_URI) || 'video-insight-engine';
 const QDRANT_URL = (process.env.QDRANT_URL || 'http://localhost:6333').replace(/\/$/, '');
 const API_URL = (process.env.API_URL || 'http://localhost:3000').replace(/\/$/, '');

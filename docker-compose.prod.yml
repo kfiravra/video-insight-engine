@@ -183,8 +183,15 @@ services:
     restart: always
     logging: *default-logging
     mem_limit: 1g
+    # Single-node replica set (multi-document transactions for the billing
+    # ledger). A replica set with auth needs a keyfile; mongod refuses one that
+    # is group/world-readable or not readable by uid 999, so on the host:
+    # chmod 0400 + chown 999:999 (docs/DEPLOY.md, "Convert Mongo to a replica set").
+    # --oplogSize 1024: same cap as docker-compose.yml (default is 5% of free disk).
+    command: ["mongod", "--replSet", "rs0", "--keyFile", "/etc/mongo/keyfile", "--bind_ip_all", "--oplogSize", "1024"]
     volumes:
       - vie_mongodb_data:/data/db
+      - ${MONGO_KEYFILE_PATH:?MONGO_KEYFILE_PATH is required (host path of the Mongo keyfile, see docs/DEPLOY.md)}:/etc/mongo/keyfile:ro
     environment:
       MONGO_INITDB_DATABASE: video-insight-engine
       MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER:?MONGO_ROOT_USER is required}
@@ -192,11 +199,23 @@ services:
     networks:
       - vie-network
     healthcheck:
-      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      # Idempotent init + real readiness (same contract as docker-compose.yml):
+      # rs.initiate() on the first probe against an empty replica set config,
+      # exit 1 until the node is PRIMARY. Root creds come from the container's
+      # own env, so nothing secret lands in this file.
+      test:
+        - CMD-SHELL
+        - >-
+          mongosh --quiet -u "$$MONGO_INITDB_ROOT_USERNAME" -p "$$MONGO_INITDB_ROOT_PASSWORD"
+          --authenticationDatabase admin --eval '
+          try { rs.status() } catch (e) {
+          if (e.codeName !== "NotYetInitialized") throw e;
+          rs.initiate({ _id: "rs0", members: [{ _id: 0, host: "vie-mongodb:27017" }] }) }
+          quit(db.hello().isWritablePrimary ? 0 : 1)'
       interval: 30s
       timeout: 10s
       retries: 5
-      start_period: 15s
+      start_period: 30s
 
   vie-qdrant:
     # Pin matches docker-compose.yml — bump both together (storage format).

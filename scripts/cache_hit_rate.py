@@ -183,7 +183,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument(
-        "--mongo-uri", default=os.environ.get("MONGODB_URI", "mongodb://localhost:27017")
+        "--mongo-uri", default=os.environ.get("MONGODB_URI", "mongodb://localhost:27017/?directConnection=true")
     )
     parser.add_argument("--mongo-db", default=os.environ.get("MONGODB_DB", "video-insight-engine"))
     parser.add_argument("--days", type=float, default=14.0, help="Window in days (default 14)")

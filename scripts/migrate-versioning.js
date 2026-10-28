@@ -1,7 +1,7 @@
 /**
  * Migration Script: Add versioning support to videoSummaryCache
  *
- * Run with: mongosh mongodb://localhost:27017/video-insight-engine scripts/migrate-versioning.js
+ * Run with: mongosh "mongodb://localhost:27017/video-insight-engine?directConnection=true" scripts/migrate-versioning.js
  *
  * This migration:
  * 1. Adds `version: 1` and `isLatest: true` to existing documents
