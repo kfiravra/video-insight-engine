@@ -90,6 +90,29 @@ describe('AuditService (integration with in-memory MongoDB)', () => {
       expect(returned).toBe(auditId);
     });
 
+    it('should write nothing and return the id when the audit id already has a row (a retry)', async () => {
+      const auditId = new ObjectId().toString();
+      await service.record({ ...baseInput, auditId });
+
+      const again = await service.record({ ...baseInput, auditId });
+
+      expect(again).toBe(auditId);
+      expect(await db.collection('adminAudit').countDocuments()).toBe(1);
+    });
+
+    it('should return the lowercase id for an uppercase audit id that already has a row', async () => {
+      const auditId = new ObjectId().toString();
+      await service.record({ ...baseInput, auditId });
+
+      expect(await service.record({ ...baseInput, auditId: auditId.toUpperCase() })).toBe(auditId);
+    });
+
+    it('should still raise an insert error other than a duplicate id', async () => {
+      vi.spyOn(repository, 'insert').mockRejectedValue(Object.assign(new Error('boom'), { code: 91 }));
+
+      await expect(service.record({ ...baseInput, auditId: new ObjectId().toString() })).rejects.toThrow('boom');
+    });
+
     it('should reject an audit id that is not an ObjectId', async () => {
       await expect(service.record({ ...baseInput, auditId: 'not-hex' })).rejects.toBeInstanceOf(ValidationError);
     });

@@ -53,19 +53,31 @@ export class AuditService {
     private readonly clock: () => Date = () => new Date(),
   ) {}
 
-  /** Insert one audit row and return its id (the `auditId` when one was supplied). */
+  /**
+   * Insert one audit row and return its id (the `auditId` when one was
+   * supplied). A supplied `auditId` that already has a row is a retried action
+   * the ledger has already deduplicated by the same id: nothing is written and
+   * the id is returned.
+   */
   async record(input: RecordAuditInput): Promise<string> {
     if (input.auditId !== undefined && !OBJECT_ID_HEX.test(input.auditId)) {
       throw new ValidationError('auditId must be a 24-char hex ObjectId');
     }
     const { auditId, before, after, ...rest } = input;
-    const doc = await this.auditRepository.insert({
-      ...rest,
-      auditId,
-      before: toPlainJson(before),
-      after: toPlainJson(after),
-      createdAt: this.clock(),
-    });
+    let doc: AdminAuditDocument;
+    try {
+      doc = await this.auditRepository.insert({
+        ...rest,
+        auditId,
+        before: toPlainJson(before),
+        after: toPlainJson(after),
+        createdAt: this.clock(),
+      });
+    } catch (err) {
+      if (auditId === undefined || !isDuplicateKey(err)) throw err;
+      this.logger.info({ auditId, action: input.action }, 'admin_audit_already_recorded');
+      return auditId.toLowerCase();
+    }
     const id = doc._id.toString();
     this.logger.info(
       { auditId: id, action: input.action, targetType: input.targetType, targetId: input.targetId, actorId: input.actorId },
@@ -109,6 +121,10 @@ export class AuditService {
     });
     return rows.map(toView);
   }
+}
+
+function isDuplicateKey(err: unknown): boolean {
+  return (err as { code?: number }).code === 11000;
 }
 
 /** Round-trips through JSON so ObjectIds and Dates are stored as the strings the view returns. */

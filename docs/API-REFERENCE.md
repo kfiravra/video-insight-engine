@@ -1136,6 +1136,32 @@ Errors: `401 UNAUTHORIZED`, `403 ADMIN_PERMISSION_DENIED`, `400 VALIDATION_ERROR
 
 User-scope deletion (`DELETE /api/videos/:id`, JWT) is different: it removes only the caller's library row, their idempotency key and their own assistant notes for the video; the shared summary stays. User-account deletion is documented in [GDPR.md](./GDPR.md).
 
+### Minutes accounts: `/api/admin/billing/accounts/:userId`
+
+Admin view and controls over a user's minutes ledger (`BillingService`). Mutations take JSON bodies that are **strict** (an unknown field such as `adminId` is `400`) and need a `reason` of 1–500 characters (trimmed, required). Who acted is the admin in the signed `x-admin-actor`; ledger entries and the `adminAudit` row both carry that admin, the `reason`, and the same `auditId`, which every mutation returns. The ranges (minutes `1…100000`, caps, expiry in the future, `periodEnd` in the future) are enforced by the service and answer `400`.
+
+| Method | Path | Permission | Body / query |
+| --- | --- | --- | --- |
+| GET | `/accounts/:userId` | `billing:read` | query `ledgerLimit` (1–200, default 50), `ledgerBefore` (ISO) |
+| POST | `/accounts/:userId/plan` | `plan:set` | `{ planId: 'free' \| 'pro', periodEnd?, reason }` |
+| POST | `/accounts/:userId/credits` | `billing:grant` | `{ minutes, expiresAt?: ISO \| null, reason }` |
+| POST | `/accounts/:userId/caps` | `caps:set` | `{ maxVideoMinutes?, freeVideosPerDay?, maxConcurrent?, blocked?, reason }`, `null` clears a cap, at least one cap |
+| POST | `/accounts/:userId/adjust` | `billing:grant` | `{ bucket: 'plan' \| 'credit', minutes (signed, not 0), reason }` |
+| POST | `/accounts/:userId/recurring-grants` | `billing:grant` | `{ minutes, every: 'month', active, reason }` |
+| DELETE | `/accounts/:userId/recurring-grants/:grantId` | `billing:grant` | `{ reason }` |
+
+- `GET` returns `AccountDetail`: `{ account, lots, holds, ledger (newest first), recurringGrants }`. The shared machine key may read it; a user with no account yet gets a fresh free one.
+- A manual **Pro** plan grants the 600-minute allowance for the first monthly cycle of a 12-month term (or until `periodEnd`); **free** stops plan minutes now. Credit lots never expire unless `expiresAt` is given. A negative `adjust` is refused when it would take a bucket below zero.
+- Every mutation answers `{ before, after, auditId, … }` with `before`/`after` the account snapshot (`credits` adds `lotId`, `recurring-grants` adds `grantId`). A recurring grant is a row with a `nextRunAt` in the past; the repair job (P1.6) turns it into lots each month.
+- **Retrying safely:** send an `Idempotency-Key` header (8–128 characters of `A-Za-z0-9_-`, one per user action, e.g. per open dialog). The `auditId` is then derived from the key, the admin, the action and the target, so a repeated request replays the same ledger keys and changes nothing, answering the current state. Without the header every request is new.
+- Errors: `401 UNAUTHORIZED` (no key, or a bad/stale actor header), `403 ADMIN_PERMISSION_DENIED` (the shared key on a mutation, or an admin without the permission), `400 VALIDATION_ERROR` (shape, reason, ranges, malformed ids), `404 NOT_FOUND` (unknown user or grant), `409 ACCOUNT_BUSY` (the account stayed contended through every transaction retry; retry with the same key).
+- The admin panel does not call these directly: vie-admin proxies them with the session admin's signed `x-admin-actor` (`POST /users/:id/grant-credit` → `…/credits`, `POST /billing/accounts/:id/{plan,caps,adjust,recurring-grants}`, `GET /audit`); see [SERVICE-ADMIN.md](./SERVICE-ADMIN.md#billing-actions-and-audit-billing-audit).
+- If the audit insert fails after the ledger committed, the request still succeeds and vie-api logs `admin_audit_write_failed` at error with the `auditId`; the ledger entries keep the actor and reason.
+
+### GET /api/admin/audit
+
+The admin action log, newest first. Needs `audit:read` (the shared key may read it). Query: `targetId` (a user's history is `?targetId=<userId>`), `actorId`, `limit` (1–200, default 50), `before` (ISO cursor). Response `{ entries: AdminAuditView[], nextBefore: string | null }`; pass `nextBefore` as `before` for the next page, `null` means the last page. Each entry is `{ id, actorId, actorEmail?, action, targetType, targetId, before?, after?, reason?, requestId?, ip?, createdAt }`. Actions so far: `users.delete`, `videos.purge`, `queue.replay`, `roles.seed.promote`, `roles.seed.demote`, `billing.plan.set`, `billing.credits.grant`, `billing.caps.set`, `billing.adjust`, `billing.recurring.create`, `billing.recurring.delete`.
+
 ## HTTP Callback Integration
 
 Status updates flow from summarizer via HTTP callback:
