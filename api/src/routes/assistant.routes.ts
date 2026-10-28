@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { RateLimitedError, VideoNotFoundError } from '../utils/errors.js';
 import { disableSocketInactivityTimeout } from '../utils/sse.js';
 import { actionParamsSchema } from '../schemas/assistant.schema.js';
+import { chatFairUseHook } from '../services/chat-fair-use.service.js';
 import type { AssistantAction } from '../services/assistant-client.js';
 
 const chatBodySchema = z.object({
@@ -23,14 +24,16 @@ const actionBodySchema = z.object({
 });
 
 export async function assistantRoutes(fastify: FastifyInstance) {
-  const { assistantClient, videoRepository } = fastify.container;
+  const { assistantClient, videoRepository, chatFairUse } = fastify.container;
 
   // POST /api/videos/:videoSummaryId/chat
+  // Free accounts: one shared 24 h message allowance with the library chat
+  // (CHAT_LIMIT_REACHED, 429). Pro is unlimited; chat never touches the ledger.
   fastify.post<{
     Params: { videoSummaryId: string };
     Body: z.infer<typeof chatBodySchema>;
   }>('/:videoSummaryId/chat', {
-    preHandler: [fastify.authenticate],
+    preHandler: [fastify.authenticate, chatFairUseHook(chatFairUse)],
   }, async (req, reply) => {
     const { videoSummaryId } = req.params;
 

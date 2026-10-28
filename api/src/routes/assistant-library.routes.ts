@@ -2,6 +2,7 @@ import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { RateLimitedError } from '../utils/errors.js';
 import { disableSocketInactivityTimeout } from '../utils/sse.js';
+import { chatFairUseHook } from '../services/chat-fair-use.service.js';
 
 // How many owned videos to fold into a single library-mode query. Bounded so a
 // power user's library can't balloon the assistant request body unboundedly.
@@ -26,13 +27,14 @@ const librarySearchBodySchema = z.object({
 });
 
 export async function assistantLibraryRoutes(fastify: FastifyInstance) {
-  const { assistantClient, videoRepository } = fastify.container;
+  const { assistantClient, videoRepository, chatFairUse } = fastify.container;
 
   // POST /api/assistant/library/chat
+  // Same 24 h free-account message allowance as the single-video chat.
   fastify.post<{
     Body: z.infer<typeof libraryChatBodySchema>;
   }>('/library/chat', {
-    preHandler: [fastify.authenticate],
+    preHandler: [fastify.authenticate, chatFairUseHook(chatFairUse)],
   }, async (req, reply) => {
     const parsed = libraryChatBodySchema.safeParse(req.body);
     if (!parsed.success) {

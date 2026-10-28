@@ -574,6 +574,21 @@ describe("useSidebarChat", () => {
       expect(reply).toBe("Too many messages. Please wait a moment and try again.");
     });
 
+    it.each([
+      ["single-video", { videoSummaryId: "vid-123" }],
+      ["library", {}],
+    ])("should say the free chat messages are used up when the %s chat hits the chat limit", async (_name, options) => {
+      const limitReached = new ApiError(429, "Chat limit reached", "CHAT_LIMIT_REACHED", {
+        nextAt: "2026-11-02T09:15:00.000Z",
+      });
+      mockedSendAssistantMessage.mockRejectedValueOnce(limitReached);
+      mockedSendLibraryMessage.mockRejectedValueOnce(limitReached);
+
+      const reply = await sendAndGetAssistantReply(options);
+
+      expect(reply).toBe("You've used your free chat messages for now. More open up as the last 24 hours pass.");
+    });
+
     it("should keep the connection-failure copy for any other failure", async () => {
       mockedSendAssistantMessage.mockRejectedValueOnce(
         new Error("Assistant chat failed: 503"),

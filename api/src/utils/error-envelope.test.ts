@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { ZodError, z } from 'zod';
 import { resolveErrorEnvelope } from './error-envelope.js';
-import { DailyLimitReachedError, NotFoundError } from './errors.js';
+import { ChatLimitReachedError, DailyLimitReachedError, NotFoundError } from './errors.js';
 
 describe('resolveErrorEnvelope', () => {
   it('should map Zod errors to 400 VALIDATION_ERROR with issues', () => {
@@ -26,6 +26,19 @@ describe('resolveErrorEnvelope', () => {
       statusCode: 429,
       resetAt: '2026-08-27T00:00:00.000Z',
       limitUsd: 1.5,
+    });
+  });
+
+  it('should carry nextAt for the free chat limit', () => {
+    const { statusCode, body } = resolveErrorEnvelope(
+      new ChatLimitReachedError(50, new Date('2026-11-02T10:00:00Z')),
+    );
+
+    expect(statusCode).toBe(429);
+    expect(body).toMatchObject({
+      error: 'CHAT_LIMIT_REACHED',
+      statusCode: 429,
+      nextAt: '2026-11-02T10:00:00.000Z',
     });
   });
 

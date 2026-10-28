@@ -42,10 +42,15 @@ const MUTATING_ACTIONS = new Set([
 ]);
 
 const RATE_LIMITED_MESSAGE = "Too many messages. Please wait a moment and try again.";
+const CHAT_LIMIT_REACHED_MESSAGE =
+  "You've used your free chat messages for now. More open up as the last 24 hours pass.";
 const CONNECT_FAILED_MESSAGE = "Failed to connect to assistant. Please try again.";
 
 /** Copy for a request that failed before any SSE event arrived. */
 function requestFailureMessage(err: unknown): string {
+  if (err instanceof ApiError && err.code === "CHAT_LIMIT_REACHED") {
+    return CHAT_LIMIT_REACHED_MESSAGE;
+  }
   const rateLimited =
     err instanceof ApiError && (err.status === 429 || err.code === "RATE_LIMITED");
   return rateLimited ? RATE_LIMITED_MESSAGE : CONNECT_FAILED_MESSAGE;

@@ -206,6 +206,7 @@ The account is identified **by user id, not by the JWT `email` claim**. The clai
 | `GET /s/:slug`        | 60    | 1 min    | IP    |
 | `GET /s/:slug/og-image.png` | 30 | 1 min | IP    |
 | `POST /videos`, `POST /internal/assistant/generate`, `POST /playlists/import` | 20 (`SUBMIT_BURST_LIMIT_PER_HOUR`) | 1 hour, fixed | User, one shared bucket (see below) |
+| `POST /videos/:id/chat`, `POST /assistant/library/chat` | 50 (`CHAT_FREE_MESSAGES_PER_DAY`), free accounts only | rolling 24 hours | User, one shared allowance (see [SERVICE-ASSISTANT.md](./SERVICE-ASSISTANT.md#free-account-chat-fair-use)) |
 | `* (default)`         | 100   | 1 min    | User  |
 
 Demo logins (`POST /auth/login` with `{ "demo": true }`, see [DEPLOY.md](./DEPLOY.md#demo-mode)) are ordinary requests to the login route and share its 10 / 15 min per-IP limit. The demo account's credentials stay in vie-api's environment and are never sent to the browser. Because every visitor holds a token for that one account, it cannot schedule its own deletion: `DELETE /users/me` returns 403 `DEMO_RESTRICTED`. The rest of its read-mostly restrictions are listed under [Demo Account (Read-Mostly)](#demo-account-read-mostly).

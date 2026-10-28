@@ -282,6 +282,11 @@ DISPATCH_GUARD_TTL_SECONDS=900
 # generate route and playlist import. 0 = off. Fails open if Redis is down.
 SUBMIT_BURST_LIMIT_PER_HOUR=20
 
+# Chat fair use (Redis key vie:api:chat-fair-use:<userId>, rolling 24 h sorted set):
+# messages a FREE account may send, one allowance for both chat routes. Pro is
+# unlimited. 0 = off. Fails open if Redis is down.
+CHAT_FREE_MESSAGES_PER_DAY=50
+
 # ────────────────────────────────────────────────────
 # Qdrant (Vector DB for RAG)
 # ────────────────────────────────────────────────────

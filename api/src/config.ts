@@ -108,6 +108,9 @@ const envSchema = z.object({
   // POST /api/videos, the assistant's generate route and playlist import
   // (0 = off). An abuse limit, not a billing one.
   SUBMIT_BURST_LIMIT_PER_HOUR: z.string().default('20').transform(Number),
+  // Chat fair use: messages a FREE account may send in any rolling 24 hours,
+  // across the single-video and library chat routes (0 = off). Pro is unlimited.
+  CHAT_FREE_MESSAGES_PER_DAY: z.string().default('50').transform(Number),
   // Self-service signup. 'false' closes POST /api/auth/register (403) and the
   // web app hides its signup links; accounts are then created out-of-band
   // (scripts/create-user.ts). Any other value keeps registration open.

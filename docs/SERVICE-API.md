@@ -381,6 +381,8 @@ INTERNAL_SECRET=dev-internal-secret-change-me   # Shared secret for /internal/as
 # Submit burst guard: submissions per user per hour, one bucket for POST /api/videos,
 # the assistant's generate route and playlist import (0 = off)
 SUBMIT_BURST_LIMIT_PER_HOUR=20
+# Chat messages a free account may send per rolling 24 h, both chat routes (0 = off)
+CHAT_FREE_MESSAGES_PER_DAY=50
 ```
 
 ---

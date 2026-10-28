@@ -108,6 +108,34 @@ describe.each([
     expect(failure).toMatchObject({ status: 429, code: "RATE_LIMITED" });
   });
 
+  it("should reject with a CHAT_LIMIT_REACHED ApiError carrying nextAt when a free account is out of messages", async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 429,
+      json: async () => ({ error: "CHAT_LIMIT_REACHED", nextAt: "2026-11-02T09:15:00.000Z" }),
+    });
+
+    const failure = await send().catch((err: unknown) => err);
+
+    expect(failure).toMatchObject({
+      status: 429,
+      code: "CHAT_LIMIT_REACHED",
+      details: { nextAt: "2026-11-02T09:15:00.000Z" },
+    });
+  });
+
+  it("should stay RATE_LIMITED for a 429 whose body is not a chat-limit error", async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 429,
+      json: async () => ({ error: "RATE_LIMITED", message: "Too many requests" }),
+    });
+
+    const failure = await send().catch((err: unknown) => err);
+
+    expect(failure).toMatchObject({ status: 429, code: "RATE_LIMITED" });
+  });
+
   it("should keep the plain transport error for a 502 response", async () => {
     fetchMock.mockResolvedValue({ ok: false, status: 502 });
 

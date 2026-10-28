@@ -330,6 +330,34 @@ Rate limits (`rate_limit.py`, in-memory sliding window, keyed on `X-User-Id`
 with per-endpoint fallbacks): `/chat` + `/library/chat` 30/min, `/action`
 30/min, `/library/search` 60/min.
 
+### Free-account chat fair use
+
+The assistant knows nothing about plans. The gateway (vie-api) caps chat for
+**free** accounts before it forwards a message: `POST /api/videos/:videoSummaryId/chat`
+and `POST /api/assistant/library/chat` carry the `chatFairUseHook` preHandler
+(`api/src/services/chat-fair-use.service.ts`), one shared allowance of
+`CHAT_FREE_MESSAGES_PER_DAY` (default 50, `0` = off) messages in any rolling
+24 hours (Q7, D6).
+
+- The plan comes from `BillingService.summary(userId).plan.id`. Only `free` is
+  counted; Pro is unlimited and never touches Redis. Chat cost is not charged
+  to the minutes ledger.
+- The window is a Redis sorted set, `vie:api:chat-fair-use:<userId>`: one member
+  per admitted message, scored by its time in ms. One Lua script drops entries
+  older than 24 hours, then admits the message only while fewer than the limit
+  remain. A fixed-window counter would let a user send 50 just before it resets
+  and 50 just after, and could not say when the next message is allowed. The
+  set holds at most 50 short members per free user and expires after 24 hours
+  idle.
+- Over the limit the gateway answers `429 CHAT_LIMIT_REACHED` with `nextAt` =
+  oldest counted message + 24 hours (see [ERROR-HANDLING.md](./ERROR-HANDLING.md)).
+  Refused messages are not recorded, so retrying never extends the wait. The
+  assistant's own 30/min window still applies on top.
+- Fail-open: a Redis or plan-lookup error logs a warning and forwards the
+  message. The `/action` routes are not chat messages and are not counted.
+- The shared demo account is an ordinary free account, so every demo visitor
+  draws on one allowance.
+
 ---
 
 ## RAG Pipeline

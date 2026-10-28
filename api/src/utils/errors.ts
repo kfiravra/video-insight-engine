@@ -307,6 +307,25 @@ export class RateLimitedError extends AppError {
   }
 }
 
+/**
+ * A free account used its chat messages for the rolling 24 hours (Q7). Not
+ * RATE_LIMITED: clients tell "slow down" from "you are out until `nextAt`".
+ */
+export class ChatLimitReachedError extends AppError {
+  /** ISO timestamp of the moment the oldest counted message leaves the window. */
+  public readonly nextAt: string;
+
+  constructor(messagesPerWindow: number, nextAt: Date) {
+    super(
+      'CHAT_LIMIT_REACHED',
+      429,
+      `Free accounts can send ${messagesPerWindow} chat messages in 24 hours. More open up as the last 24 hours pass.`,
+    );
+    this.name = 'ChatLimitReachedError';
+    this.nextAt = nextAt.toISOString();
+  }
+}
+
 // External service errors
 export class ServiceTimeoutError extends AppError {
   constructor(service: string) {

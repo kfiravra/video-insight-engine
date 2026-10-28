@@ -327,6 +327,8 @@ services:
       VIDEO_DAILY_LIMIT: ${VIDEO_DAILY_LIMIT:-100}
       # Submissions per user per hour, one bucket for /api/videos, the assistant's generate route and playlist import (0 = off)
       SUBMIT_BURST_LIMIT_PER_HOUR: ${SUBMIT_BURST_LIMIT_PER_HOUR:-20}
+      # Chat messages a FREE account may send per rolling 24 h, one allowance for both chat routes (0 = off)
+      CHAT_FREE_MESSAGES_PER_DAY: ${CHAT_FREE_MESSAGES_PER_DAY:-50}
       # Requests per minute per IP on the public api
       RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-120}
       USER_COST_LIMIT_FREE: ${USER_COST_LIMIT_FREE:-2}

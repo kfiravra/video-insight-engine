@@ -27,6 +27,7 @@ import { CostMonitorService } from './services/cost-monitor.service.js';
 import { QueuePublisher, type ChannelSupplier } from './services/queue-publisher.service.js';
 import { IdempotencyService } from './services/idempotency.service.js';
 import { DispatchGuardService, noOpDispatchGuard, type IDispatchGuard } from './services/dispatch-guard.service.js';
+import { ChatFairUseService, noOpChatFairUse, type IChatFairUse } from './services/chat-fair-use.service.js';
 import { UserDeletionService } from './services/user-deletion.service.js';
 import { VideoCascadeService } from './services/video-cascade.service.js';
 import { AuditService } from './services/audit.service.js';
@@ -66,6 +67,7 @@ export interface Container {
   idempotencyService: IdempotencyService;
   dispatchGuardService: IDispatchGuard;
   submitBurstLimiter: ISubmitBurstLimiter;
+  chatFairUse: IChatFairUse;
   userDeletionService: UserDeletionService;
   videoCascadeService: VideoCascadeService;
   auditService: AuditService;
@@ -141,6 +143,11 @@ export function createContainer(
   const folderService = new FolderService(folderRepository, logger);
   const costMonitorService = new CostMonitorService(db, logger, userCostRepository);
   const playlistService = new PlaylistService(videoService, folderService, summarizerClient, logger, costMonitorService);
+  const billingService = new BillingService(billingRepository, userRepository, logger);
+  // Chat fair use reads the account plan only; same fail-open stance as the burst limiter.
+  const chatFairUse: IChatFairUse = options.redisClient
+    ? new ChatFairUseService(options.redisClient, billingService, config.CHAT_FREE_MESSAGES_PER_DAY, logger)
+    : noOpChatFairUse;
   const shareService = new ShareService(shareRepository, videoRepository, logger);
   const ogImageService = new OgImageService(logger);
   const userDeletionService = new UserDeletionService(
@@ -166,7 +173,6 @@ export function createContainer(
     auditService,
     logger,
   );
-  const billingService = new BillingService(billingRepository, userRepository, logger);
 
   return {
     // Repositories
@@ -195,6 +201,7 @@ export function createContainer(
     idempotencyService,
     dispatchGuardService,
     submitBurstLimiter,
+    chatFairUse,
     userDeletionService,
     videoCascadeService,
     auditService,

@@ -1,12 +1,13 @@
 import { ZodError } from 'zod';
 import type { FastifyError } from 'fastify';
 import { config } from '../config.js';
-import { AppError, DailyLimitReachedError } from './errors.js';
+import { AppError, ChatLimitReachedError, DailyLimitReachedError } from './errors.js';
 
 /**
  * The documented error body (docs/ERROR-HANDLING.md): `{ error, message,
  * statusCode }`, plus `details` when structured context exists (Zod issue
- * list) and the `resetAt`/`limitUsd` extras for the daily cost cap.
+ * list), the `resetAt`/`limitUsd` extras for the daily cost cap and `nextAt`
+ * for the free chat limit.
  */
 export interface ErrorEnvelope {
   error: string;
@@ -15,6 +16,7 @@ export interface ErrorEnvelope {
   details?: { issues: Array<{ path: string; message: string }> };
   resetAt?: string;
   limitUsd?: number;
+  nextAt?: string;
 }
 
 export interface ResolvedError {
@@ -58,6 +60,19 @@ export function resolveErrorEnvelope(error: HandledError): ResolvedError {
         statusCode: error.status,
         resetAt: error.resetAt,
         limitUsd: error.limitUsd,
+      },
+    };
+  }
+
+  // Free chat limit reached — surface nextAt so the UI can say when chat reopens
+  if (error instanceof ChatLimitReachedError) {
+    return {
+      statusCode: error.status,
+      body: {
+        error: error.code,
+        message: error.message,
+        statusCode: error.status,
+        nextAt: error.nextAt,
       },
     };
   }
