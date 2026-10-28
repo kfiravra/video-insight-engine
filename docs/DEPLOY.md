@@ -344,6 +344,94 @@ Demotion stops new panel logins at once. A demoted user who is already logged in
 
 Boot seeding from `ADMIN_EMAILS` does not replace this step: accounts that were made admin before the roles model existed carry no `roleSource`, so the list treats them as admins set by hand and never demotes them. A later billing migration moves them onto the list.
 
+### Migrate to the minutes ledger
+
+One-off, at the billing release. `scripts/migrate-billing.ts` moves the accounts from the dollar gate onto the minutes ledger, and `scripts/prod-count.js` counts what it will touch first. Do it after the replica-set conversion above, after the billing release is deployed (vie-api creates the billing indexes at boot), and with `ADMIN_EMAILS` set in `.env`: the boot seeding keeps a migrated admin only while that admin's email is on the list.
+
+What it does, in this order, through the same code vie-api runs (the ledger invariants hold; nothing writes a billing collection by hand):
+
+1. An account for every user that is not soft-deleted.
+2. `tier: 'pro'` becomes a manual Pro plan for 12 months. `tier: 'team'` becomes the same Pro plan plus a 600-minute lot that expires in 12 months (reason `migration: team tier`). An account that is already on Pro is left alone and reported.
+3. Roles: an old `role: 'admin'` user whose email is in `--admin-emails` becomes `roles: ['admin']` with `roleSource: 'env'`; every other old admin is demoted and loses the panel. Each change gets an `adminAudit` row (`roles.migration.promote` / `.demote`). It replaces the demote step above, so do not run both.
+4. Credit: the `userCostAdjustments` dated the day of the migration (UTC) that the user's spend that day has not used up become one lot at $1 = 30 minutes, expiring in 12 months. The rule is deliberately conservative: net credit granted that day minus everything spent that day, rounded down to whole minutes. Adjustments of any other day had already expired and are dropped.
+5. Recurring grants: `DEMO_USER_EMAIL` gets 300 minutes a month and each `--eval-emails` account 3,000. The first month is granted by the next repair-job tick, then monthly.
+
+It refuses to run (exit 1, nothing written, dry run included) if it would leave no active admin, and it refuses `--run` against this server's Mongo unless you pass `--yes-prod`. Every step has an id derived from the user and the step, so running it again, even hours later, changes nothing; if a run stops halfway, run it again and it finishes.
+
+**Set up.** The migration reuses the `vie-api-tools` image from "Create the first user". Rebuild it first, because the script imports the billing code from the current checkout. Both script files are mounted; `SCRATCH=1` points the helper at the throwaway Mongo of step 2 instead of this server's.
+
+```bash
+docker build --target builder -f api/Dockerfile -t vie-api-tools .
+set -a; . ./.env; set +a    # exports MONGO_ROOT_*, DEMO_USER_EMAIL
+read -r -p "Admin email(s) to keep: " VIE_KEEP_EMAIL
+read -r -p "Eval account email(s), comma-separated, blank for none: " VIE_EVAL_EMAILS
+export VIE_KEEP_EMAIL VIE_EVAL_EMAILS
+
+migrate_billing() {
+  if [ -n "$SCRATCH" ]; then NET=vie-scratch; URI="mongodb://vie-mongodb:27017/video-insight-engine"
+  else NET=vie-network; URI="mongodb://${MONGO_ROOT_USER}:${MONGO_ROOT_PASS}@vie-mongodb:27017/video-insight-engine?authSource=admin"; fi
+  docker run --rm --network "$NET" \
+    -v "$PWD/scripts/migrate-billing.ts:/app/api/migrate-billing.ts:ro" \
+    -v "$PWD/scripts/migrate-billing-plan.ts:/app/api/migrate-billing-plan.ts:ro" \
+    -e MONGODB_URI="$URI" -e VIE_KEEP_EMAIL -e VIE_EVAL_EMAILS -e DEMO_USER_EMAIL \
+    -w /app/api vie-api-tools \
+    sh -c 'npx tsx migrate-billing.ts --admin-emails "$VIE_KEEP_EMAIL" --eval-emails "$VIE_EVAL_EMAILS" "$@"' migrate "$@"
+}
+```
+
+**1. Count (read-only).** Prints users by tier, the admins (masked emails, how each holds the role), today's adjustments with the minutes the migration would make of them, and how many `llm_usage` rows of the last 7 days carry a `user_id`:
+
+```bash
+docker exec -i vie-mongodb sh -c 'mongosh --quiet -u "$MONGO_INITDB_ROOT_USERNAME" -p "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin video-insight-engine --eval "$(cat)"' < scripts/prod-count.js
+```
+
+**2. Rehearse on a snapshot.** Restore the latest backup into a throwaway replica set (section f describes `restore.sh`; for a Mongo-only drill copy just the archive and manifest, as in "Convert Mongo to a replica set"). The scratch Mongo does not look like production, so `--run` works there without `--yes-prod`: rehearse the whole run and the second run.
+
+```bash
+docker network create vie-scratch
+docker run -d --name vie-mongo-scratch --network vie-scratch --network-alias vie-mongodb mongo:7 --replSet rs0 --bind_ip_all
+sleep 5 && docker exec vie-mongo-scratch mongosh --quiet --eval 'rs.initiate({ _id: "rs0", members: [{ _id: 0, host: "vie-mongodb:27017" }] })'
+sleep 5 && MONGO_CONTAINER=vie-mongo-scratch ./scripts/restore.sh /tmp/mongo-only
+
+SCRATCH=1 migrate_billing --dry-run
+SCRATCH=1 migrate_billing --run
+SCRATCH=1 migrate_billing --run       # again: every count is 0
+
+docker rm -f vie-mongo-scratch && docker network rm vie-scratch
+```
+
+Show Kfir the dry-run table from here: the lots and the demotions are what he signs off.
+
+**3. Run on the server.**
+
+```bash
+migrate_billing --dry-run             # 1. preview: reads only, prints the summary table
+migrate_billing --run --yes-prod      # 2. when the preview is exactly right
+migrate_billing --run --yes-prod      # 3. again: every count is 0 and it says nothing to do
+```
+
+Read the preview before step 2. "Admins kept" must be exactly the account(s) you expect, "Admins demoted" the hand-made ones, and "Active admins after" at least 1. "Skipped" lists what it deliberately left alone, for example a credit the day's spend had already used up.
+
+**4. Verify.** The script comes from a quoted heredoc, so the shell leaves the `$` operators alone:
+
+```bash
+docker exec -i vie-mongodb sh -c 'mongosh --quiet -u "$MONGO_INITDB_ROOT_USERNAME" -p "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin video-insight-engine --eval "$(cat)"' <<'EOF'
+printjson({
+  accounts: db.billingAccounts.countDocuments(),
+  activeUsers: db.users.countDocuments({ deletedAt: null }),
+  migrationEntries: db.ledgerEntries.aggregate([
+    { $match: { actorId: 'system:migration' } },
+    { $group: { _id: '$type', entries: { $sum: 1 }, minutes: { $sum: '$minutes' } } },
+  ]).toArray(),
+  admins: db.users.countDocuments({ $or: [{ roles: 'admin' }, { roles: { $exists: false }, role: 'admin' }] }),
+});
+EOF
+```
+
+`accounts` equals `activeUsers`, the grant entries add up to what the preview printed, and `admins` is the number under "Admins kept" plus any admin the roles model already held. Then open vie-admin: a Pro account shows its plan, a team account its lot. Boot seeding keeps working afterwards because `ADMIN_EMAILS` names the same admins.
+
+There is no automatic undo. A plan or lot is a ledger entry: set the plan back to free, or adjust the lot, from vie-admin. A demoted admin gets the role back by adding the email to `ADMIN_EMAILS` and restarting vie-api (`dc up -d vie-api`), or from backup.
+
 ### Demo mode
 
 Demo mode lets a visitor use the app without an account. The login page gets a "Try the demo" button, and the landing page's Summarize signs the visitor in as one shared demo user before submitting the URL. vie-api holds that user's credentials; the browser only ever sends `{ "demo": true }`.
