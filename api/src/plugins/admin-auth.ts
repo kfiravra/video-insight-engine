@@ -12,6 +12,9 @@ import { AdminPermissionError, UnauthorizedError } from '../utils/errors.js';
 /** Who an admin request acts as. `machine` is the shared key with no named admin: reads only. */
 export type AdminActor = { kind: 'user'; userId: string } | { kind: 'machine' };
 
+/** The preHandler `requireAdmin` returns; it records the permission it demands so tests can audit every route. */
+export type AdminGuard = ((req: FastifyRequest) => Promise<void>) & { requiredPermission: Permission };
+
 declare module 'fastify' {
   interface FastifyInstance {
     /**
@@ -21,7 +24,7 @@ declare module 'fastify' {
      * `permission`; no actor header makes it the machine key's, allowed only
      * for the read permissions. Sets `request.adminActor`.
      */
-    requireAdmin: (permission: Permission) => (req: FastifyRequest) => Promise<void>;
+    requireAdmin: (permission: Permission) => AdminGuard;
   }
   interface FastifyRequest {
     adminActor: AdminActor | null;
@@ -99,13 +102,16 @@ async function adminAuthSetup(fastify: FastifyInstance): Promise<void> {
   fastify.decorateRequest('actorBodySha256', null);
   fastify.addHook('preParsing', hashAdminRequestBody);
 
-  fastify.decorate('requireAdmin', (permission: Permission) => async (req: FastifyRequest): Promise<void> => {
-    if (!isValidAdminKey(req.headers['x-admin-key'])) {
-      throw new UnauthorizedError('Admin key required');
-    }
-    const header = req.headers[ACTOR_HEADER];
-    req.adminActor =
-      header === undefined ? machineActor(permission) : await userActor(fastify, req, header, permission);
+  fastify.decorate('requireAdmin', (permission: Permission): AdminGuard => {
+    const guard = async (req: FastifyRequest): Promise<void> => {
+      if (!isValidAdminKey(req.headers['x-admin-key'])) {
+        throw new UnauthorizedError('Admin key required');
+      }
+      const header = req.headers[ACTOR_HEADER];
+      req.adminActor =
+        header === undefined ? machineActor(permission) : await userActor(fastify, req, header, permission);
+    };
+    return Object.assign(guard, { requiredPermission: permission });
   });
 }
 

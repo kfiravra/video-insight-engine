@@ -1,5 +1,5 @@
 import Fastify from 'fastify';
-import type { FastifyBaseLogger, FastifyInstance, FastifyServerOptions } from 'fastify';
+import type { FastifyBaseLogger, FastifyInstance, FastifyServerOptions, RouteOptions } from 'fastify';
 import { config } from './config.js';
 import { resolveErrorEnvelope } from './utils/error-envelope.js';
 import { createContainer, Container } from './container.js';
@@ -104,6 +104,11 @@ export interface BuildAppOptions {
   logger?: FastifyServerOptions['logger'];
   /** Optional partial container override for testing */
   container?: Partial<Container>;
+  /**
+   * Called for every route as it is registered (Fastify's `onRoute`), so a test
+   * can enumerate the real routes instead of listing them by hand.
+   */
+  onRoute?: (route: RouteOptions) => void;
 }
 
 export async function buildApp(options?: BuildAppOptions): Promise<FastifyInstance> {
@@ -130,6 +135,8 @@ export async function buildApp(options?: BuildAppOptions): Promise<FastifyInstan
     logger: options?.logger ?? defaultLoggerOptions(isDev),
     disableRequestLogging: isDev,
   });
+
+  if (options?.onRoute) fastify.addHook('onRoute', options.onRoute);
 
   // Dev: single-line request logging (replaces Fastify's verbose two-line default)
   // Skips health check endpoints to reduce noise from Docker/admin polling

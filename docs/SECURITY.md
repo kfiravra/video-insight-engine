@@ -512,6 +512,18 @@ enforces this matrix on every `/api/admin/*` route (see "Admin API Key" above), 
 (`src/roles.py`) at login and on every session request; the two implementations are
 tested against shared cases (`packages/types/test-vectors/admin-auth.json`).
 
+**Authorization matrices.** Both services test every admin route, enumerated from the
+running app rather than listed by hand, so a route added without a guard fails the day it
+lands. vie-api (`api/src/routes/admin/__tests__/authz.matrix.test.ts`) collects routes as
+Fastify registers them and checks that each declares `requireAdmin(<permission>)`, that GET
+routes use read permissions and mutations never do, and then: no credentials, a wrong key
+or an actor header without the key is `401`; the shared key on a mutation is `403`; a signed
+admin passes; a demoted admin is `403`; a stale header is `401`. vie-admin
+(`services/admin/tests/test_authz_matrix.py`) enumerates the app's OpenAPI paths: no token,
+a wrong key, a non-admin session and a soft-deleted admin's session are `401` everywhere,
+the machine key is `403` on every non-GET, and the open paths are pinned to `/health`,
+`/auth/login` and the SPA shell.
+
 **Boot seeding (`ADMIN_EMAILS`).** vie-api reconciles the comma-separated
 `ADMIN_EMAILS` list with the `users` collection on every boot
 (`services/admin-seed.service.ts`): listed **existing** accounts are promoted
