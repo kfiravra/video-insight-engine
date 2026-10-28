@@ -85,6 +85,7 @@ describe('BillingRepairService (P1.6, real Mongo replica set)', () => {
       ['missing (never stamped)', async () => undefined],
       ['unstamped (a later dispatch took the stamp)', () => stampRun('req-other', 'processing')],
       ['stalled for 3 h (B13)', () => stampRun('req-1', 'pending')],
+      ['"completed" by an older run, before the hold (W2)', () => stampRun('req-1', 'completed', new Date(clock.now().getTime() - HOUR_MS))],
     ])('should release a hold whose run is %s and give the free video back', async (_label, arrange) => {
       await holdVideo('req-1', 10);
       await arrange();
@@ -155,6 +156,35 @@ describe('BillingRepairService (P1.6, real Mongo replica set)', () => {
       await expectConsistent();
     });
 
+    it('should leave no gap at the turn of the month: the old lot lasts until the new one is in (I3)', async () => {
+      const graced = { recurringLotGraceMs: 10 * 60 * 1000 };
+      await billing.createRecurringGrant(userId, { minutes: 300, every: 'month', active: true }, ctx());
+      await run(graced);
+      clock.set('2026-12-01T10:01:00Z');
+
+      const beforeTick = (await billing.summary(userId)).credits.available;
+      await run(graced);
+      clock.set('2026-12-01T10:11:00Z');
+      const afterGrace = await run(graced);
+
+      expect(beforeTick).toBe(300);
+      expect(afterGrace.lotMinutesExpired).toBe(300);
+      expect((await billing.summary(userId)).credits.available).toBe(300);
+      await expectConsistent();
+    });
+
+    it('should retire the grant of an erased user and pause it while the user is soft-deleted (I7)', async () => {
+      const { grantId } = await billing.createRecurringGrant(userId, { minutes: 300, every: 'month', active: true }, ctx());
+      await db().collection('users').updateOne({ _id: new ObjectId(userId) }, { $set: { deletedAt: clock.now() } });
+
+      expect((await run()).recurringLots).toBe(0);
+      expect((await billing.getAccountDetail(userId)).recurringGrants).toHaveLength(1);
+
+      await db().collection('users').deleteOne({ _id: new ObjectId(userId) });
+      expect((await run()).recurringLots).toBe(0);
+      expect(await db().collection('recurringGrants').findOne({ _id: new ObjectId(grantId) })).toMatchObject({ active: false, deletedAt: expect.any(Date) });
+    });
+
     it('should skip inactive and deleted grants', async () => {
       await billing.createRecurringGrant(userId, { minutes: 300, every: 'month', active: false }, ctx());
       const { grantId } = await billing.createRecurringGrant(userId, { minutes: 300, every: 'month', active: true }, ctx());
@@ -190,17 +220,18 @@ describe('BillingRepairService (P1.6, real Mongo replica set)', () => {
     it('should drop user_id from rows older than 90 days only, and re-run as a no-op', async () => {
       const at = (days: number) => new Date(clock.now().getTime() - days * DAY_MS);
       await db().collection('llm_usage').insertMany([
-        { user_id: 'u-old', cost_usd: 0.5, model: 'm', timestamp: at(91) },
-        { user_id: 'u-recent', cost_usd: 0.5, model: 'm', timestamp: at(89) },
+        { user_id: 'u-old', request_id: 'r-old', cost_usd: 0.5, model: 'm', timestamp: at(91) },
+        { request_id: 'r-anonymous-old', cost_usd: 0.5, model: 'm', timestamp: at(92) },
+        { user_id: 'u-recent', request_id: 'r-recent', cost_usd: 0.5, model: 'm', timestamp: at(89) },
       ]);
 
       const first = await run();
       const second = await run();
 
-      expect([first.llmUsagePseudonymised, second.llmUsagePseudonymised]).toEqual([1, 0]);
-      const rows = await db().collection('llm_usage').find({}).sort({ timestamp: 1 }).toArray();
-      expect(rows.map((row) => row.user_id)).toEqual([undefined, 'u-recent']);
-      expect(rows[0]).toMatchObject({ cost_usd: 0.5, model: 'm' });
+      expect([first.llmUsagePseudonymised, second.llmUsagePseudonymised]).toEqual([2, 0]);
+      const rows = await db().collection('llm_usage').find({}).sort({ timestamp: -1 }).toArray();
+      expect(rows.map((row) => [row.user_id, row.request_id])).toEqual([['u-recent', 'r-recent'], [undefined, undefined], [undefined, undefined]]);
+      expect(rows[1]).toMatchObject({ cost_usd: 0.5, model: 'm' });
     });
   });
 

@@ -143,7 +143,8 @@ export class BillingShadowService {
       ...row.newDecision,
       ...(why !== 'submit_error' && this.servedFree(row.newDecision) && { admitted: true }),
       charged: outcome?.status === 'already_debited',
-      ...(why === 'submit_error' && { reason: 'submit_error' }),
+      // Only an admitted run fails as a submit error; a refused one keeps its refusal reason (I2).
+      ...(why === 'submit_error' && row.newDecision.admitted && { reason: 'submit_error' }),
     };
     const path: BillingShadowPath = why === 'submit_error' ? 'failed' : why;
     await this.writeRow(this.submissionOf(row), path, { admitted: true, charged: false }, newDecision);

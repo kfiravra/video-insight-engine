@@ -191,7 +191,16 @@ services:
     command: ["mongod", "--replSet", "rs0", "--keyFile", "/etc/mongo/keyfile", "--bind_ip_all", "--oplogSize", "1024"]
     volumes:
       - vie_mongodb_data:/data/db
-      - ${MONGO_KEYFILE_PATH:?MONGO_KEYFILE_PATH is required (host path of the Mongo keyfile, see docs/DEPLOY.md)}:/etc/mongo/keyfile:ro
+      # Long form on purpose: the short `host:target` form makes Docker create a
+      # root-owned DIRECTORY at a missing source path, and the recreated mongod
+      # would crash-loop on it with the old standalone already gone. With
+      # create_host_path: false a missing keyfile fails container creation instead.
+      - type: bind
+        source: ${MONGO_KEYFILE_PATH:?MONGO_KEYFILE_PATH is required (host path of the Mongo keyfile, see docs/DEPLOY.md)}
+        target: /etc/mongo/keyfile
+        read_only: true
+        bind:
+          create_host_path: false
     environment:
       MONGO_INITDB_DATABASE: video-insight-engine
       MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER:?MONGO_ROOT_USER is required}

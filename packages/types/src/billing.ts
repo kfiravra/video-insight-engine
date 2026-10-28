@@ -161,6 +161,8 @@ export interface BillingAccount {
   };
   holds: BillingHold[];
   caps: AccountCaps;
+  /** The last auditIds `setCaps` applied (bounded), so a retried call is a no-op. */
+  capsAuditIds?: string[];
   /** Optimistic-concurrency counter, bumped by every write. */
   version: number;
   createdAt: string;
@@ -246,7 +248,8 @@ export interface BillingShadow {
   path: BillingShadowPath;
   oldDecision: BillingShadowDecision;
   newDecision: BillingShadowDecision & { split?: BucketSplit; reason?: string };
-  classification: 'agree' | 'policy_delta' | 'disagree';
+  /** `metadata_unavailable`: the ledger could not get the video's length — never "explained", counted by the gate (W1). */
+  classification: 'agree' | 'policy_delta' | 'disagree' | 'metadata_unavailable';
   /** The decision that explains a `policy_delta`, e.g. `Q3 one free video per 24 h vs old $1/day`. */
   policyRef?: string;
   createdAt: string;

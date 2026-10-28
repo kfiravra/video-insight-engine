@@ -34,6 +34,8 @@ export interface BillingRepairDeps {
   lock: RepairLock;
   logger: FastifyBaseLogger;
   holdMaxAgeHours: number;
+  /** How long a recurring lot outlives its month, so the next tick grants the new one first (I3). */
+  recurringLotGraceMs?: number;
   clock?: () => Date;
 }
 
@@ -107,7 +109,7 @@ export class BillingRepairService {
 
   private async repairHold(hold: BillingHoldDocument, now: Date, maxAgeMs: number, report: RepairReport): Promise<void> {
     const run = hold.youtubeId ? await this.deps.maintenance.findRun(hold.youtubeId, hold.requestId) : null;
-    const action = staleHoldAction(run, now, maxAgeMs);
+    const action = staleHoldAction(run, now, maxAgeMs, hold.createdAt);
     if (action === 'keep') return;
     const costUsd = await this.deps.llmUsage.sumCostByRequestId(run?.requestId ?? hold.requestId);
     if (action === 'settle') {
@@ -129,7 +131,8 @@ export class BillingRepairService {
   private async applyRecurringGrants(now: Date, report: RepairReport): Promise<void> {
     const grants = await this.deps.maintenance.listDueRecurringGrants(now, BATCH);
     await this.eachItem(grants, 'recurring_grants', async (grant) => {
-      if (await this.deps.billing.applyRecurringGrant(grant.accountId, grant._id)) report.recurringLots++;
+      const lot = await this.deps.billing.applyRecurringGrant(grant.accountId, grant._id, this.deps.recurringLotGraceMs ?? 0);
+      if (lot) report.recurringLots++;
     });
   }
 

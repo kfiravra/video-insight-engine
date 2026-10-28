@@ -64,13 +64,15 @@ export interface BillingAccountDocument {
   };
   holds: BillingHoldDocument[];
   caps: AccountCaps;
+  /** The last auditIds `setCaps` applied (bounded), so a retried call is a no-op (I1). */
+  capsAuditIds?: string[];
   version: number;
   createdAt: Date;
   updatedAt: Date;
 }
 
 /** The fields a conditional account update replaces. */
-export type AccountMutableFields = Pick<BillingAccountDocument, 'plan' | 'buckets' | 'holds' | 'caps'>;
+export type AccountMutableFields = Pick<BillingAccountDocument, 'plan' | 'buckets' | 'holds' | 'caps' | 'capsAuditIds'>;
 
 export interface LedgerEntryDocument {
   _id: ObjectId;

@@ -121,13 +121,26 @@ describe('BillingShadowService (P1.7, real Mongo replica set)', () => {
       await expectConsistent();
     });
 
-    it('should record an unavailable duration as a policy delta (P1.5)', async () => {
+    it('should class an unavailable duration on its own, never as a policy delta (W1)', async () => {
       h.metadata.getVideoMetadata.mockRejectedValue(new MetadataUnavailableError('not_found'));
 
       h.shadow.submitAdmitted(submission('req-1'));
       await h.shadow.drain();
 
-      expect(await h.rowOf('req-1')).toMatchObject({ newDecision: { reason: 'metadata_unavailable' }, classification: 'policy_delta' });
+      const row = await h.rowOf('req-1');
+      expect(row).toMatchObject({ newDecision: { reason: 'metadata_unavailable' }, classification: 'metadata_unavailable' });
+      expect(row?.policyRef).toBeUndefined();
+    });
+
+    it('should keep the refusal reason when a refused submit then fails in createVideo (I2)', async () => {
+      await spendFreeVideo();
+      h.shadow.submitAdmitted(submission('req-2'));
+      h.shadow.submitFailed('req-2');
+      await h.shadow.drain();
+
+      expect(await h.rowOf('req-2')).toMatchObject({
+        path: 'failed', newDecision: { admitted: false, reason: 'free_window_used' }, classification: 'policy_delta',
+      });
     });
 
     it('should log a ledger failure and record it as a disagreement', async () => {

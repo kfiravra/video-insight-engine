@@ -1,3 +1,4 @@
+import { ConcurrencyLimit } from './concurrency-limit.js';
 import type { HoldView } from '@vie/types';
 import type { AllocationRejection } from './allocation.js';
 import type { BillingService, Quote } from './billing.service.js';
@@ -25,16 +26,24 @@ export type Admission =
  * enforcement (P3.1, awaited on the request path, errors surfaced) so both
  * decide exactly the same way.
  */
+/** Metadata pre-flights (yt-dlp behind the summarizer) the gate runs at once (I9). */
+const METADATA_CONCURRENCY = 3;
+
 export class BillingGate {
+  private readonly metadataSlots: ConcurrencyLimit;
+
   constructor(
     private readonly billing: BillingService,
     private readonly metadata: VideoMetadataSource,
-  ) {}
+    metadataConcurrency: number = METADATA_CONCURRENCY,
+  ) {
+    this.metadataSlots = new ConcurrencyLimit(metadataConcurrency);
+  }
 
   /** Seconds; throws MetadataUnavailableError when the pre-flight cannot tell. */
   async durationOf(youtubeId: string, known?: number | null): Promise<number> {
     if (known !== undefined && known !== null && known > 0) return known;
-    const { duration } = await this.metadata.getVideoMetadata(youtubeId);
+    const { duration } = await this.metadataSlots.run(() => this.metadata.getVideoMetadata(youtubeId));
     return duration;
   }
 

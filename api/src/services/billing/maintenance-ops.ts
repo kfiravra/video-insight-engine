@@ -33,18 +33,27 @@ export function applyLotExpiry(draft: AccountDraft, alreadyExpired: ReadonlySet<
 export interface RecurringRun {
   /** The monthly slot this run grants for (anchored on the grant's creation, so it never drifts). */
   runAt: Date;
-  /** The lot expires at the grant's next run: one month, no rollover. */
+  /** When the next month's lot is due. */
+  nextRunAt: Date;
+  /** The lot expires at the next run plus `graceMs`: one month, no rollover beyond the grace. */
   expiresAt: Date;
   idempotencyKey: string;
 }
 
-/** The slot due at `now`; idle months in between grant nothing (like a Pro cycle). */
-export function recurringRunAt(grant: RecurringGrantDocument, now: Date): RecurringRun {
+/**
+ * The slot due at `now`; idle months in between grant nothing (like a Pro
+ * cycle). `graceMs` keeps the outgoing lot spendable until the repair job's
+ * next tick has granted the new one, so there is no gap with no minutes at
+ * the turn of the month (I3); the old lot is spent first (it expires first).
+ */
+export function recurringRunAt(grant: RecurringGrantDocument, now: Date, graceMs = 0): RecurringRun {
   const index = monthsElapsed(grant.createdAt, now);
   const runAt = addMonthsUtc(grant.createdAt, index);
+  const nextRunAt = addMonthsUtc(grant.createdAt, index + 1);
   return {
     runAt,
-    expiresAt: addMonthsUtc(grant.createdAt, index + 1),
+    nextRunAt,
+    expiresAt: new Date(nextRunAt.getTime() + graceMs),
     idempotencyKey: `recurring:${grant._id.toHexString()}:${runAt.toISOString()}`,
   };
 }
@@ -68,14 +77,17 @@ export type StaleHoldAction = 'settle' | 'release' | 'keep';
 
 /**
  * What to do with a hold older than the max age, given the run it paid for:
- * completed → settle (the user got the video; the completion relay was lost),
- * failed / missing / unstamped (no row carries its requestId) / stalled
- * (pending or processing with no write for the max age — B13's queue-TTL
- * stuck row) → release; still moving → keep.
+ * completed by this run → settle (the user got the video; the completion
+ * relay was lost); failed / missing / unstamped (no row carries its run id) /
+ * stalled (pending or processing with no write for the max age — B13's
+ * queue-TTL stuck row) → release; still moving → keep. A row that says
+ * `completed` but was last written before the hold was taken is an older
+ * run's output — e.g. a PIPELINE_VERSION regen re-stamped it and its job was
+ * lost — so it is released, never charged (W2).
  */
-export function staleHoldAction(run: RunState | null, now: Date, maxAgeMs: number): StaleHoldAction {
+export function staleHoldAction(run: RunState | null, now: Date, maxAgeMs: number, holdCreatedAt: Date): StaleHoldAction {
   if (!run) return 'release';
-  if (run.status === 'completed') return 'settle';
+  if (run.status === 'completed') return run.updatedAt.getTime() >= holdCreatedAt.getTime() ? 'settle' : 'release';
   if (run.status === 'failed') return 'release';
   return now.getTime() - run.updatedAt.getTime() >= maxAgeMs ? 'release' : 'keep';
 }

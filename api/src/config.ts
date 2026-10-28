@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { z } from 'zod';
+import { MESSAGE_TTL_MS as QUEUE_MESSAGE_TTL_MS } from './services/queue-topology.js';
 
 // ─── Canonical pipeline version ───────────────────────────────────────
 // Single-sourced from packages/shared/src/config/pipeline-version.json,
@@ -247,6 +248,15 @@ const envSchema = z.object({
   // ("10.0.0.0/8,172.16.0.0/12") for a stricter allowlist.
   TRUST_PROXY: z.string().default('false'),
 }).superRefine((env, ctx) => {
+  // A `pending` hold is released as stalled after BILLING_HOLD_MAX_AGE_HOURS,
+  // which is only safe once its queue message is surely gone (I4).
+  if (env.BILLING_HOLD_MAX_AGE_HOURS * 60 * 60 * 1000 <= QUEUE_MESSAGE_TTL_MS) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['BILLING_HOLD_MAX_AGE_HOURS'],
+      message: `BILLING_HOLD_MAX_AGE_HOURS must exceed the job queue's message TTL (${QUEUE_MESSAGE_TTL_MS / 3_600_000} h)`,
+    });
+  }
   if (env.NODE_ENV !== 'production') return;
 
   const secrets: Array<{ key: string; value: string }> = [

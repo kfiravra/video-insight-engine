@@ -1795,7 +1795,7 @@ only (the same `extract_video_data` call the pipeline starts with), **no
 captions fetched, no LLM**. Internal: it sends `X-Internal-Secret` like the purge
 route, and the summarizer publishes no port in prod. It goes through the proxy
 exit rotation (`YOUTUBE_PROXY_URL`) every other YouTube call uses and has no
-route-level timeout, like `/playlist/extract`; the API client gives up after 15 s.
+route-level timeout, like `/playlist/extract`; the API client gives up after 25 s (the rotation budget is 15 s, checked only before starting an exit beyond the third, so a rotation that is still working can answer after ~15 s plus the attempt in flight).
 
 **Request:** `GET /video/metadata?youtubeId=dQw4w9WgXcQ` with header `X-Internal-Secret`.
 
@@ -1819,8 +1819,10 @@ route-level timeout, like `/playlist/extract`; the API client gives up after 15 
 - `503`: YouTube could not be asked: bot check or 429 on every exit, or a transport failure
 
 The `detail` text is fixed per status; yt-dlp's own message is never returned.
-vie-api caches a 200 for 24 h at `vie:api:video-meta:<youtubeId>` and turns every
-non-200 into `METADATA_UNAVAILABLE`.
+vie-api caches a 200 for 24 h at `vie:api:video-meta:<youtubeId>`, remembers a 404 for 10
+minutes at `vie:api:video-meta-miss:<youtubeId>`, and turns every non-200 into
+`METADATA_UNAVAILABLE`: 404 is `not_found`, 422 is `unsupported` (status 422), anything
+else `upstream`; an abort after 25 s is `timeout`.
 
 ### POST /regenerate/{video_summary_id}
 

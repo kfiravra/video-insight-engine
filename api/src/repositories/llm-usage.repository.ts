@@ -35,20 +35,23 @@ export class LlmUsageRepository {
   }
 
   /**
-   * Drop the user link from rows written before `cutoff` (docs/PRIVACY.md:
-   * usage analytics older than 90 days carry no personal data). Cost, model,
-   * timestamp and request_id stay. At most `limit` rows per call; a re-run
-   * matches nothing it already cleared. Returns the rows changed.
+   * Drop the user links from rows written before `cutoff` (docs/PRIVACY.md:
+   * usage analytics older than 90 days carry no personal data). `request_id`
+   * goes too: it joins to the ledger's `source.ref`, whose rows name the user
+   * (I6) — a settle reads it at completion, never after 90 days. Cost, model
+   * and timestamp stay. At most `limit` rows per call; a re-run matches
+   * nothing it already cleared. Returns the rows changed.
    */
   async unsetUserIdBefore(cutoff: Date, limit: number): Promise<number> {
+    const linked = { $or: [{ user_id: { $exists: true } }, { request_id: { $exists: true } }] };
     const rows = await this.collection
-      .find({ timestamp: { $lt: cutoff }, user_id: { $exists: true } }, { projection: { _id: 1 } })
+      .find({ timestamp: { $lt: cutoff }, ...linked }, { projection: { _id: 1 } })
       .limit(limit)
       .toArray();
     if (rows.length === 0) return 0;
     const result = await this.collection.updateMany(
       { _id: { $in: rows.map((row) => row._id) } },
-      { $unset: { user_id: '' } },
+      { $unset: { user_id: '', request_id: '' } },
     );
     return result.modifiedCount;
   }

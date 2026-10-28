@@ -224,10 +224,10 @@ export class BillingRepository {
     fields: AccountMutableFields,
     session?: ClientSession,
   ): Promise<BillingAccountDocument | null> {
-    const { plan, buckets, holds, caps } = fields;
+    const { plan, buckets, holds, caps, capsAuditIds } = fields;
     return this.accounts.findOneAndUpdate(
       { _id: accountId, version: expectedVersion },
-      { $set: { plan, buckets, holds, caps, updatedAt: new Date() }, $inc: { version: 1 } },
+      { $set: { plan, buckets, holds, caps, capsAuditIds, updatedAt: new Date() }, $inc: { version: 1 } },
       { returnDocument: 'after', session, ignoreUndefined: true },
     );
   }

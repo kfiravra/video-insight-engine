@@ -14,7 +14,11 @@ import type { AllocationRejection } from './allocation.js';
 // Contract 4: the old dollar gate and the minutes ledger disagree on purpose
 // in some places. Every intended difference is one row of POLICY_DELTAS with
 // the decision behind it; a difference no row explains is `disagree`, which
-// the P1.11 replay harness fails on.
+// the P1.11 replay harness fails on. Two differences are never "explained":
+// a refusal on a cached / attached path that was not served free (a Q6
+// break, C1) is `disagree`, and a ledger that could not get the video's
+// length is its own class `metadata_unavailable` (W1) — counted and reported
+// by the gate, because during a YouTube block it would refuse every submit.
 
 /** Why the ledger refused (or could not decide) — stored as `newDecision.reason`. */
 export type ShadowReason =
@@ -51,8 +55,10 @@ export interface ShadowFacts {
   newDecision: BillingShadowDecision & { reason?: string };
 }
 
+export type ShadowClassificationKind = 'agree' | 'policy_delta' | 'disagree' | 'metadata_unavailable';
+
 export interface ShadowClassification {
-  classification: 'agree' | 'policy_delta' | 'disagree';
+  classification: ShadowClassificationKind;
   policyRef?: string;
 }
 
@@ -100,11 +106,6 @@ export const POLICY_DELTAS: readonly PolicyDelta[] = [
     applies: refusedFor('too_many_runs'),
   },
   {
-    id: 'metadata',
-    policyRef: 'P1.5: the quote needs the video duration and fails closed without it when enforcing',
-    applies: refusedFor('metadata_unavailable'),
-  },
-  {
     id: 'no-daily-cap',
     policyRef: 'brief §4.1 + Q3: no per-user $ cap — the free video rolls per 24 h and plan/credit minutes are never daily-capped',
     applies: ({ oldDecision, newDecision }) => !oldDecision.admitted && newDecision.admitted,
@@ -117,11 +118,22 @@ export const POLICY_DELTAS: readonly PolicyDelta[] = [
   },
 ];
 
+/**
+ * A cached or attached video costs nothing, so the ledger must serve it (Q6):
+ * one it refused anyway is a defect, not policy. A blocked account is the one
+ * deliberate exception — `caps.blocked` serves nothing (P3.1).
+ */
+function refusedFreeServe({ path, newDecision }: ShadowFacts): boolean {
+  return (path === 'cached' || path === 'attached') && !newDecision.admitted && newDecision.reason !== 'blocked';
+}
+
 export function classifyShadow(facts: ShadowFacts): ShadowClassification {
   const { oldDecision, newDecision } = facts;
   if (oldDecision.admitted === newDecision.admitted && oldDecision.charged === newDecision.charged) {
     return { classification: 'agree' };
   }
+  if (refusedFreeServe(facts)) return { classification: 'disagree' };
+  if (newDecision.reason === 'metadata_unavailable') return { classification: 'metadata_unavailable' };
   const delta = POLICY_DELTAS.find((candidate) => candidate.applies(facts));
   return delta ? { classification: 'policy_delta', policyRef: delta.policyRef } : { classification: 'disagree' };
 }

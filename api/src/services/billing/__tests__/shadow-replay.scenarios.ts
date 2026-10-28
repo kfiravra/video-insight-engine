@@ -17,7 +17,8 @@ export type AccountKind =
 export type SubmitOutcome = 'created' | 'cached' | 'attached' | 'throws';
 
 export type ReplayStep =
-  | { kind: 'submit'; run: string; minutes: number; outcome: SubmitOutcome; bypassCache?: boolean }
+  /** `lengthUnknown`: the metadata pre-flight fails for this submit (a YouTube block). */
+  | { kind: 'submit'; run: string; minutes: number; outcome: SubmitOutcome; bypassCache?: boolean; lengthUnknown?: boolean }
   | { kind: 'finish'; run: string; status: 'completed' | 'failed'; costUsd: number }
   | { kind: 'playlist'; items: Array<{ run: string; minutes: number; outcome: Exclude<SubmitOutcome, 'throws'> }> }
   /** Spend the free video in the ledger directly (the old gate refuses this account's submits). */
@@ -31,7 +32,6 @@ export type PolicyId =
   | 'too-long'
   | 'blocked'
   | 'too-many-runs'
-  | 'metadata'
   | 'no-daily-cap'
   | 'failed-released';
 
@@ -39,7 +39,8 @@ export interface ReplayExpectation {
   run: string;
   path: BillingShadowPath;
   oldDecision: BillingShadowDecision;
-  classification: 'agree' | 'policy_delta';
+  /** `metadata_unavailable` is its own class (W1), never a policy delta. */
+  classification: 'agree' | 'policy_delta' | 'metadata_unavailable';
   policy?: PolicyId;
   /** How many runs of this video may hold minutes (default: not checked). */
   heldRuns?: number;
@@ -123,6 +124,13 @@ export const REPLAY_SCENARIOS: readonly ReplayScenario[] = [
     account: 'free',
     steps: [...FREE_VIDEO_USED, { kind: 'submit', run: 'b', minutes: 10, outcome: 'attached' }],
     expect: [{ run: 'b', path: 'attached', oldDecision: SERVED, classification: 'agree' }],
+  },
+  {
+    // W1: no length, no quote — never an explained difference.
+    name: 'free: the pre-flight cannot get the video\'s length',
+    account: 'free',
+    steps: [{ kind: 'submit', run: 'a', minutes: 10, outcome: 'created', lengthUnknown: true }],
+    expect: [{ run: 'a', path: 'created', oldDecision: RAN, classification: 'metadata_unavailable' }],
   },
   {
     name: 'free: a 45-minute video with no paid minutes',

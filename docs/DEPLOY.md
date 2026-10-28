@@ -176,7 +176,7 @@ The first deploy after the change logs every admin out once, because older sessi
 
 Then edit `.env` and set both required provider keys, `ANTHROPIC_API_KEY` and `OPENAI_API_KEY`, plus any optional one (`GEMINI_API_KEY`). The OpenAI key is required since the pipeline-1min 4.0d model picks: description analysis and the output / title / RAG-text translation default to `openai/gpt-6-luna`, the quiz (only with `QUIZ_V2_ENABLED=false`) to `openai/gpt-4o-mini`, and the template sets `LLM_FAST_PROVIDER=openai` (the synthesis fallback, chapter detection and the faithfulness judge on gpt-4o-mini); it also enables the Whisper audio fallback. Compose passes the key through as optional, so `dc config -q` does not catch a missing one: without it those calls fail (fast-tier calls never fall back to another provider): pipeline runs lose the description analysis, translation, the synthesis fallback, AI chapter detection and the faithfulness judge (hero / quiz calls included), and vie-assistant loses its chat (the template sets `LLM_CHAT_MODEL=openai/gpt-4o-mini`) and its quiz tool (the fast tier). The OpenAI project behind the key must have access to `gpt-6-luna` and `gpt-4o-mini`. Check that `S3_BUCKET` names the bucket and `AWS_REGION` is the region the check in section a printed. Leave `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` unset, because the instance role supplies credentials.
 
-**Mongo keyfile.** vie-mongodb runs as a single-node replica set, and a replica set with authentication needs a keyfile. Create it once, before the first `dc up`. If the file does not exist, Docker creates a directory at that path and mongod refuses to start.
+**Mongo keyfile.** vie-mongodb runs as a single-node replica set, and a replica set with authentication needs a keyfile. Create it once, before the first `dc up`. If the file does not exist, `dc up` fails creating vie-mongodb (`bind source path does not exist`); the compose file never lets Docker create a directory there.
 
 ```bash
 sudo install -d -m 0700 /opt/vie/secrets
@@ -200,7 +200,7 @@ dc ps               # wait until every long-running service shows (healthy)
 
 ### Convert Mongo to a replica set
 
-The billing ledger needs multi-document transactions, so vie-mongodb becomes a single-node replica set (`rs0`). On an existing host the merge does the conversion: the deploy workflow runs `dc up -d --build`, which recreates vie-mongodb on the same data volume with `--replSet rs0 --keyFile`, and its healthcheck runs `rs.initiate` on the first probe. Expect about 30 seconds without Mongo. The existing root user and every collection stay in the volume. Do steps 1 and 2 **before** the merge, because with the new compose file a missing `MONGO_KEYFILE_PATH` stops every `dc` command.
+The billing ledger needs multi-document transactions, so vie-mongodb becomes a single-node replica set (`rs0`). On an existing host the merge does the conversion: the deploy workflow runs `dc up -d --build`, which recreates vie-mongodb on the same data volume with `--replSet rs0 --keyFile`, and its healthcheck runs `rs.initiate` on the first probe. Expect about 30 seconds without Mongo. The existing root user and every collection stay in the volume. Do step 1 **before** the merge (step 2 is the merge itself): with the new compose file a missing `MONGO_KEYFILE_PATH` row stops every `dc` command, and a missing keyfile stops vie-mongodb from being created.
 
 1. Back up, create the keyfile (the commands above) and add the row. The pre-merge compose file ignores the row.
 
@@ -213,7 +213,10 @@ sudo install -d -m 0700 /opt/vie/secrets
 openssl rand -base64 756 | sudo tee /opt/vie/secrets/mongo-keyfile > /dev/null
 sudo chmod 0400 /opt/vie/secrets/mongo-keyfile && sudo chown 999:999 /opt/vie/secrets/mongo-keyfile
 grep -q '^MONGO_KEYFILE_PATH=' .env || printf '\nMONGO_KEYFILE_PATH=/opt/vie/secrets/mongo-keyfile\n' >> .env
+sudo stat -c '%F %a %u:%g' "$(grep '^MONGO_KEYFILE_PATH=' .env | cut -d= -f2-)"   # must print exactly: regular file 400 999:999
 ```
+
+The compose file mounts the keyfile with `create_host_path: false`: if the path is missing, the deploy fails at container creation ("bind source path does not exist") and the running standalone Mongo is left alone, instead of Docker creating a root-owned directory there and mongod crash-looping on it. Compose cannot check the mode or owner, so the `stat` line is the check for those. Anything other than `regular file 400 999:999` (a directory, mode 600, owner root) makes mongod refuse to start.
 
 2. Merge. Watch the deploy: `dc ps vie-mongodb` reads `(health: starting)` until the node is PRIMARY, then `(healthy)`, and the services that wait on it start after that. If the container stays unhealthy, `docker logs vie-mongodb` names the cause (a keyfile with the wrong mode or owner is the usual one). To initiate by hand:
 
@@ -227,7 +230,7 @@ docker exec vie-mongodb sh -c 'mongosh --quiet -u "$MONGO_INITDB_ROOT_USERNAME" 
 docker exec vie-mongodb sh -c 'mongosh --quiet -u "$MONGO_INITDB_ROOT_USERNAME" -p "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin --eval "printjson({ ok: rs.status().ok, state: rs.status().members[0].stateStr, cache: db.getSiblingDB(\"video-insight-engine\").videoSummaryCache.countDocuments() })"'
 ```
 
-4. Prove that a backup taken from the replica set restores. Take a new backup, then restore its Mongo archive into a throwaway container. The archive format does not depend on the topology, so a plain `mongo:7` is enough (`restore.sh` has no Mongo-only switch, so copy just the archive and manifest into a folder with no Qdrant snapshots):
+4. Prove that a backup taken from the replica set restores. `mongodump` is not point-in-time across collections: it reads them one after another while the app keeps writing, so a ledger collection can be newer than its account row. A restore from it can make the billing repair job raise a `billingDrift` alert; that is the check doing its job, not corruption. Take a new backup, then restore its Mongo archive into a throwaway container. The archive format does not depend on the topology, so a plain `mongo:7` is enough (`restore.sh` has no Mongo-only switch, so copy just the archive and manifest into a folder with no Qdrant snapshots):
 
 ```bash
 docker exec vie-backup-cron sh -c 'cd /repo && QDRANT_URL=http://vie-qdrant:6333 ./scripts/backup.sh'
@@ -238,14 +241,19 @@ sleep 5 && MONGO_CONTAINER=vie-mongo-scratch ./scripts/restore.sh /tmp/mongo-onl
 docker rm -f vie-mongo-scratch && rm -rf /tmp/mongo-only
 ```
 
-5. Recreate the clients. Services the deploy did not recreate still hold connections opened to the standalone server. Their URIs did not change, so a restart is enough:
+5. Restart the clients the deploy did not recreate. A container created after vie-mongodb opened its connections to the replica set; one created before it still holds connections to the old standalone server. Their URIs did not change, so a restart is enough, but restart only those: `vie-summarizer-worker` ends the pipeline runs it has in flight. Pick them by creation time (a container list that is empty must not reach `dc restart`, which with no names restarts everything):
 
 ```bash
-dc restart vie-api vie-summarizer vie-summarizer-worker vie-assistant vie-admin
+mongo_up=$(docker inspect -f '{{.Created}}' vie-mongodb)
+OLD=$(for c in vie-api vie-summarizer vie-summarizer-worker vie-assistant vie-admin; do
+  [[ "$(docker inspect -f '{{.Created}}' "$c")" < "$mongo_up" ]] && echo "$c"
+done)
+echo "created before vie-mongodb: ${OLD:-none}"
+[ -n "$OLD" ] && dc restart $OLD
 dc ps    # every long-running service (healthy)
 ```
 
-`scripts/backup.sh` and `scripts/restore.sh` need no change on a replica set (tested with auth and a keyfile). To roll back, redeploy the previous `main`: its compose file has no `--replSet`, so the same volume starts as a standalone with its data and root user.
+`scripts/backup.sh` and `scripts/restore.sh` need no change on a replica set (tested with auth and a keyfile). To roll back, revert the merge on `main` (`git revert -m 1 <merge commit>` on a branch, PR, merge): the deploy workflow redeploys the previous compose file by itself. Do not `git checkout <sha>` on the box, because the next deploy's `git pull --ff-only` would then fail. That compose file has no `--replSet`, so the same volume starts as a standalone with its data and root user.
 
 ## e. First login and first video
 

@@ -94,7 +94,7 @@ export class BillingService {
 
   constructor(
     private readonly repo: BillingRepository,
-    userRepository: UserRepository,
+    private readonly userRepository: UserRepository,
     private readonly logger: FastifyBaseLogger,
     private readonly clock: () => Date = () => new Date(),
   ) {
@@ -257,23 +257,43 @@ export class BillingService {
 
   /**
    * Grant this month's lot of a due recurring grant (expiring at its next
-   * run) and move the grant on, in one unit. Re-reads the grant inside it, so
-   * a run another process already applied is a no-op. Returns the lot id.
+   * run plus `lotGraceMs`) and move the grant on, in one unit. Re-reads the
+   * grant inside it, so a run another process already applied is a no-op.
+   * Mints nothing for an account whose user is gone or being deleted (I7).
+   * Returns the lot id.
    */
-  async applyRecurringGrant(accountId: ObjectId, grantId: ObjectId): Promise<string | null> {
+  async applyRecurringGrant(accountId: ObjectId, grantId: ObjectId, lotGraceMs = 0): Promise<string | null> {
+    if (!(await this.recurringOwnerActive(accountId, grantId))) return null;
     const outcome = await this.units.writeAccount(accountId, async ({ draft, session }) => {
       const grant = await this.repo.findRecurringGrant(accountId, grantId, session);
       if (!grant || !grant.active || grant.deletedAt || grant.nextRunAt > draft.now) return null;
-      const run = recurringRunAt(grant, draft.now);
+      const run = recurringRunAt(grant, draft.now, lotGraceMs);
       const [done] = await this.repo.findLedgerByKeys([run.idempotencyKey], session);
       const lotId = done ? null : applyRecurringRun(draft, grant, run);
-      const next = { lastRunAt: run.runAt, nextRunAt: run.expiresAt };
+      const next = { lastRunAt: run.runAt, nextRunAt: run.nextRunAt };
       if (!(await this.repo.advanceRecurringGrant(grantId, grant.nextRunAt, next, session))) {
         throw new StaleAccountVersionError('recurring grant changed concurrently');
       }
       return lotId ? lotId.toHexString() : null;
     });
     return outcome.value;
+  }
+
+  /**
+   * A recurring grant only mints for a live owner. An erased user (no row)
+   * retires the grant for good; a soft-deleted one pauses it, so a restore
+   * resumes it. The billing collections join the GDPR cascade in P3.2.
+   */
+  private async recurringOwnerActive(accountId: ObjectId, grantId: ObjectId): Promise<boolean> {
+    const account = await this.repo.findAccountById(accountId);
+    if (!account) return false;
+    const owner = await this.userRepository.findById(account.ownerId.toHexString());
+    if (owner && !owner.deletedAt) return true;
+    if (!owner) {
+      await this.repo.softDeleteRecurringGrant(grantId, this.clock());
+      this.logger.warn({ accountId: accountId.toHexString(), grantId: grantId.toHexString() }, 'recurring_grant_retired_owner_gone');
+    }
+    return false;
   }
 
   // ─── Admin (Contract 1) ───

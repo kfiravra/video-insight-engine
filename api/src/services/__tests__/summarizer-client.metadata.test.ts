@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Redis } from 'ioredis';
-import { SummarizerClient, videoMetaCacheKey, type VideoMetadata } from '../summarizer-client.js';
+import { SummarizerClient, videoMetaCacheKey, videoMetaMissKey, type VideoMetadata } from '../summarizer-client.js';
 import { MetadataUnavailableError } from '../../utils/errors.js';
 import { config } from '../../config.js';
 
@@ -107,7 +107,7 @@ describe('SummarizerClient.getVideoMetadata', () => {
       ['not JSON', '{oops'],
       ['the wrong shape', JSON.stringify({ title: 'only a title' })],
     ])('should fetch when the cached entry is %s', async (_label, raw) => {
-      redis.get.mockResolvedValue(raw);
+      redis.get.mockImplementation(async (key: string) => (key === videoMetaCacheKey(YOUTUBE_ID) ? raw : null));
       fetchMock.mockResolvedValue(fakeResponse(200, METADATA));
 
       const result = await client.getVideoMetadata(YOUTUBE_ID);
@@ -122,6 +122,71 @@ describe('SummarizerClient.getVideoMetadata', () => {
       await new SummarizerClient(logger).getVideoMetadata(YOUTUBE_ID);
 
       expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('negative cache for an unknown video', () => {
+    it('should remember a 404 for 10 minutes under its own key', async () => {
+      fetchMock.mockResolvedValue(fakeResponse(404, { detail: 'gone' }));
+
+      await client.getVideoMetadata(YOUTUBE_ID).catch(() => undefined);
+
+      expect(redis.set).toHaveBeenCalledWith(`vie:api:video-meta-miss:${YOUTUBE_ID}`, '1', 'EX', 600);
+      expect(videoMetaMissKey(YOUTUBE_ID)).toBe(`vie:api:video-meta-miss:${YOUTUBE_ID}`);
+    });
+
+    it('should not write the metadata key for a 404', async () => {
+      fetchMock.mockResolvedValue(fakeResponse(404, { detail: 'gone' }));
+
+      await client.getVideoMetadata(YOUTUBE_ID).catch(() => undefined);
+
+      expect(redis.set).not.toHaveBeenCalledWith(videoMetaCacheKey(YOUTUBE_ID), expect.anything(), 'EX', expect.anything());
+    });
+
+    it('should answer not_found without asking the summarizer while the marker is there', async () => {
+      redis.get.mockImplementation(async (key: string) => (key === videoMetaMissKey(YOUTUBE_ID) ? '1' : null));
+
+      await expect(client.getVideoMetadata(YOUTUBE_ID)).rejects.toMatchObject({ code: 'METADATA_UNAVAILABLE', status: 404, reason: 'not_found' });
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('should ask the summarizer again once the marker has expired', async () => {
+      fetchMock.mockResolvedValue(fakeResponse(200, METADATA));
+
+      const result = await client.getVideoMetadata(YOUTUBE_ID);
+
+      expect(result).toEqual(METADATA);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('should prefer cached metadata over a marker', async () => {
+      redis.get.mockImplementation(async (key: string) => (key === videoMetaCacheKey(YOUTUBE_ID) ? JSON.stringify(METADATA) : '1'));
+
+      await expect(client.getVideoMetadata(YOUTUBE_ID)).resolves.toEqual(METADATA);
+    });
+
+    it('should ask the summarizer when Redis fails reading the marker', async () => {
+      redis.get.mockImplementation(async (key: string) => {
+        if (key === videoMetaMissKey(YOUTUBE_ID)) throw new Error('Connection is closed.');
+        return null;
+      });
+      fetchMock.mockResolvedValue(fakeResponse(200, METADATA));
+
+      await expect(client.getVideoMetadata(YOUTUBE_ID)).resolves.toEqual(METADATA);
+    });
+
+    it('should still answer not_found when Redis fails writing the marker', async () => {
+      fetchMock.mockResolvedValue(fakeResponse(404, { detail: 'gone' }));
+      redis.set.mockRejectedValue(new Error('Connection is closed.'));
+
+      await expect(client.getVideoMetadata(YOUTUBE_ID)).rejects.toMatchObject({ reason: 'not_found' });
+    });
+
+    it('should not read or write a marker when no Redis client is configured', async () => {
+      fetchMock.mockResolvedValue(fakeResponse(404, { detail: 'gone' }));
+
+      await expect(new SummarizerClient(logger).getVideoMetadata(YOUTUBE_ID)).rejects.toMatchObject({ reason: 'not_found' });
+      expect(redis.get).not.toHaveBeenCalled();
     });
   });
 
@@ -157,6 +222,22 @@ describe('SummarizerClient.getVideoMetadata', () => {
       });
     });
 
+    it('should throw METADATA_UNAVAILABLE with reason unsupported and status 422 for a live stream or premiere', async () => {
+      fetchMock.mockResolvedValue(fakeResponse(422, { detail: 'Live streams are not supported' }));
+
+      await expect(client.getVideoMetadata(YOUTUBE_ID)).rejects.toMatchObject({
+        code: 'METADATA_UNAVAILABLE',
+        status: 422,
+        reason: 'unsupported',
+      });
+    });
+
+    it('should say live streams and premieres in the unsupported message', async () => {
+      fetchMock.mockResolvedValue(fakeResponse(422, { detail: 'Video has no duration yet' }));
+
+      await expect(client.getVideoMetadata(YOUTUBE_ID)).rejects.toThrow(/live streams and premieres/i);
+    });
+
     it.each([500, 502, 503])('should throw METADATA_UNAVAILABLE with reason upstream on a %i', async (status) => {
       fetchMock.mockResolvedValue(fakeResponse(status, { detail: 'down' }));
 
@@ -187,15 +268,19 @@ describe('SummarizerClient.getVideoMetadata', () => {
       await expect(client.getVideoMetadata(YOUTUBE_ID)).rejects.toBeInstanceOf(MetadataUnavailableError);
     });
 
-    it('should not cache a failure', async () => {
-      fetchMock.mockResolvedValue(fakeResponse(404, { detail: 'gone' }));
+    it.each([
+      ['an upstream error', () => fetchMock.mockResolvedValue(fakeResponse(503, { detail: 'down' }))],
+      ['an unsupported video', () => fetchMock.mockResolvedValue(fakeResponse(422, { detail: 'live' }))],
+      ['an unreachable summarizer', () => fetchMock.mockRejectedValue(new Error('ECONNREFUSED'))],
+    ])('should remember nothing after %s', async (_label, arrange) => {
+      arrange();
 
       await client.getVideoMetadata(YOUTUBE_ID).catch(() => undefined);
 
       expect(redis.set).not.toHaveBeenCalled();
     });
 
-    it('should give up with reason timeout after 15 seconds', async () => {
+    it('should give up with reason timeout after 25 seconds, so a slow rotation that still answers is not thrown away', async () => {
       vi.useFakeTimers();
       fetchMock.mockImplementation(
         (_url: string, init: RequestInit) =>
@@ -212,7 +297,7 @@ describe('SummarizerClient.getVideoMetadata', () => {
         },
       );
 
-      await vi.advanceTimersByTimeAsync(14999);
+      await vi.advanceTimersByTimeAsync(24999);
       const settledBeforeDeadline = settled;
       await vi.advanceTimersByTimeAsync(1);
 

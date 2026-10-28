@@ -144,6 +144,7 @@ describe('resolveErrorEnvelope', () => {
       ['not_found', 404],
       ['timeout', 503],
       ['upstream', 503],
+      ['unsupported', 422],
     ] as const)('should send METADATA_UNAVAILABLE (%s) as %i', (reason, status) => {
       const { statusCode, body } = resolveErrorEnvelope(new MetadataUnavailableError(reason));
 

@@ -94,7 +94,7 @@ version, `bypassCache`) is not attempted and the refusal is returned instead:
 | `VIDEO_TOO_LONG_FOR_PLAN` | 422 | `maxMinutes` | Longer than any minutes can pay for: 180 min (Q2), or an admin's lower `caps.maxVideoMinutes`. |
 | `ACCOUNT_BLOCKED` | 403 | — | `caps.blocked` set by an admin. Nothing is served, not even from cache; a playlist is refused before its folder is created. |
 | `TOO_MANY_RUNS` | 429 | `maxConcurrent` | `caps.maxConcurrent` runs already in flight. |
-| `METADATA_UNAVAILABLE` | 404 / 503 | — | The pre-flight could not get the video's length; the gate fails closed (404 unknown/private video, 503 timeout or upstream). |
+| `METADATA_UNAVAILABLE` | 404 / 422 / 503 | — | The pre-flight could not get the video's length; the gate fails closed (404 unknown/private video, 422 live stream or premiere, 503 timeout or upstream). |
 
 A cached or attached video that did take a hold gives it back before the
 response, and so does a submit whose `createVideo` throws. A playlist is quoted
@@ -145,7 +145,7 @@ and the ledger only shadows. Hold / debit keys: [IDEMPOTENCY.md](./IDEMPOTENCY.m
 | `SERVICE_UNAVAILABLE` | Service temporarily unavailable | Dependency down       |
 | `SUMMARIZER_PURGE_FAILED` | Video purge failed | Summarizer could not purge Qdrant/S3/Redis; nothing deleted in Mongo — retry the admin delete |
 | `PROVIDER_NOT_CONFIGURED` | Payments are not available yet. | `501`. `NoopPaymentProvider` (`api/src/services/billing/payment-provider.ts`) answered a checkout, portal or webhook call: no payment provider is built or configured. A retry cannot fix it, hence 501 and not 503. Nothing calls it today |
-| `METADATA_UNAVAILABLE` | Video details are temporarily unavailable | The pre-flight metadata call (`SummarizerClient.getVideoMetadata`) failed: `404` when the video is unknown or private (`reason: not_found`), `503` on a 15 s timeout or any other failure (`reason: timeout` / `upstream`). Never cached. A billing quote built on it fails closed when enforcing (the submit gets this error) and open in shadow mode |
+| `METADATA_UNAVAILABLE` | Video details are temporarily unavailable | The pre-flight metadata call (`SummarizerClient.getVideoMetadata`) failed: `404` when the video is unknown or private (`reason: not_found`), `422` for a live stream or a premiere with no duration yet (`reason: unsupported`: "Live streams and premieres can't be processed yet…"), `503` on a 25 s timeout or any other failure (`reason: timeout` / `upstream`). Only `not_found` is remembered, for 10 minutes (a retry loop on a dead id does not reach YouTube each time); the other failures are never cached. A billing quote built on it fails closed when enforcing (the submit gets this error) and open in shadow mode |
 | `LLM_ERROR`           | AI service error                | Claude API failed     |
 | `DATABASE_ERROR`      | Database error                  | MongoDB failed        |
 | `SUMMARIZER_ERROR`    | Summarizer service error        | Summarizer unreachable |

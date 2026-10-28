@@ -168,6 +168,9 @@ describe('shadow replay harness (P1.11) — coverage and real rows', () => {
       return JSON.stringify(stored) === JSON.stringify(verdict) ? [] : [`${row.requestId}: stored ${JSON.stringify(stored)}, now ${JSON.stringify(verdict)}`];
     });
     const disagreeing = rows.filter((row) => row.classification === 'disagree').map((row) => `${row.requestId} (${row.path})`);
+    // W1: never explained, but not a defect either — the gate reports how many there were.
+    const lengthUnknown = rows.filter((row) => row.classification === 'metadata_unavailable').length;
+    if (lengthUnknown > 0) console.warn(`[shadow-replay] ${lengthUnknown} of ${rows.length} dev rows are metadata_unavailable`);
 
     expect(misjudged, 'dev rows whose stored verdict no longer matches the policy table').toEqual([]);
     expect(disagreeing, 'dev rows the policy table cannot explain — turn each into a scenario first').toEqual([]);

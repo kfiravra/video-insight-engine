@@ -46,6 +46,7 @@ function cloneAccount(doc: BillingAccountDocument): BillingAccountDocument {
     },
     holds: doc.holds.map(cloneHold),
     caps: { ...doc.caps },
+    ...(doc.capsAuditIds && { capsAuditIds: [...doc.capsAuditIds] }),
   };
 }
 

@@ -13,14 +13,17 @@ describe('staleHoldAction', () => {
     status, updatedAt: new Date(NOW.getTime() - ageMs),
   });
 
+  const HELD_AT = new Date(NOW.getTime() - 4 * HOUR_MS);
+
   it.each([
     ['a missing or unstamped run', null, 'release'],
-    ['a completed run', run('completed'), 'settle'],
+    ['a run completed after the hold', run('completed', HOUR_MS), 'settle'],
+    ['a row completed before the hold — an older run (W2)', run('completed', 5 * HOUR_MS), 'release'],
     ['a failed run', run('failed'), 'release'],
     ['a run still processing', run('processing', HOUR_MS), 'keep'],
     ['a run pending with no write for 3 h (B13)', run('pending', MAX_AGE), 'release'],
   ] as const)('should %s → %s', (_label, state, action) => {
-    expect(staleHoldAction(state, NOW, MAX_AGE)).toBe(action);
+    expect(staleHoldAction(state, NOW, MAX_AGE, HELD_AT)).toBe(action);
   });
 });
 
@@ -41,6 +44,12 @@ describe('recurringRunAt', () => {
     const run = recurringRunAt(grant('2026-01-31T00:00:00Z'), new Date('2026-03-31T00:00:00Z'));
 
     expect(run.runAt.toISOString()).toBe('2026-03-31T00:00:00.000Z');
+  });
+
+  it('should keep the next run on the month boundary and let the lot outlive it by the grace (I3)', () => {
+    const run = recurringRunAt(grant('2026-01-15T00:00:00Z'), new Date('2026-01-15T00:00:00Z'), 600_000);
+
+    expect([run.nextRunAt.toISOString(), run.expiresAt.toISOString()]).toEqual(['2026-02-15T00:00:00.000Z', '2026-02-15T00:10:00.000Z']);
   });
 
   it('should skip idle months: one lot for the month containing now', () => {

@@ -175,6 +175,17 @@ describe('BillingService admin API (Contract 1)', () => {
       expect(after.caps).toEqual({ maxVideoMinutes: 60 });
     });
 
+    it('should make a retried call a no-op, even after a newer change (I1)', async () => {
+      const block = ctx();
+      await service.setCaps(userId, { blocked: true }, block);
+      await service.setCaps(userId, { blocked: null }, ctx());
+
+      const { before, after } = await service.setCaps(userId, { blocked: true }, block);
+
+      expect(after).toEqual(before);
+      expect(after.caps.blocked).toBeUndefined();
+    });
+
     it('should reflect freeVideosPerDay in the free window', async () => {
       const { after } = await service.setCaps(userId, { freeVideosPerDay: 2 }, ctx());
 

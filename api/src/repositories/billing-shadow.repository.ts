@@ -15,7 +15,7 @@ export interface BillingShadowDocument {
   path: BillingShadowPath;
   oldDecision: BillingShadowDecision;
   newDecision: ShadowNewDecision;
-  classification: 'agree' | 'policy_delta' | 'disagree';
+  classification: 'agree' | 'policy_delta' | 'disagree' | 'metadata_unavailable';
   policyRef?: string;
   createdAt: Date;
   updatedAt: Date;

@@ -955,6 +955,7 @@ the window; `holds` = runs with a `hold` and neither `debit` nor `release`.
     createdAt: Date
   }],
   caps: { maxVideoMinutes?, freeVideosPerDay?, maxConcurrent?, blocked? },  // admin overrides; only tighten
+  capsAuditIds: string[] | absent,     // the last 20 auditIds setCaps applied — a retried call is a no-op
   version: number,                     // bumped by every write (optimistic concurrency)
   createdAt: Date, updatedAt: Date
 }
@@ -1022,6 +1023,10 @@ plan cycle or lot that has since ended expire again at once),
 ## recurringGrants
 
 A lot of `minutes` granted every month (demo 300, eval 3,000 — data, not code).
+Each lot expires at the grant's next run plus 2 × `BILLING_REPAIR_INTERVAL_SECONDS`,
+so the outgoing lot is still spendable until the next tick has granted the new
+one (no rollover beyond that grace). A grant of an erased user is retired; one
+of a soft-deleted user is paused.
 Applied by the billing repair job on `nextRunAt`; deletion is soft.
 
 ```javascript
@@ -1055,6 +1060,11 @@ rewritten on every transition. `classification` comes from
 `api/src/services/billing/shadow-policy.ts`: `agree` when admitted/charged
 match, `policy_delta` when a row of its `POLICY_DELTAS` table (each with the
 decision behind it) explains the difference, else `disagree` (logged at warn).
+Never explained: a cached / attached video the ledger refused instead of
+serving free is `disagree` (a Q6 break; a blocked account getting nothing is
+the one policy exception), and a ledger that could not get the video's length
+is its own class `metadata_unavailable`, which the replay gate counts and
+reports.
 
 ```javascript
 {
@@ -1066,7 +1076,7 @@ decision behind it) explains the difference, else `disagree` (logged at warn).
       | 'refused',   // the old gate refused; the ledger only quoted
   oldDecision: { admitted: boolean, charged: boolean },
   newDecision: { admitted: boolean, charged: boolean, split?, reason? },
-  classification: 'agree' | 'policy_delta' | 'disagree',
+  classification: 'agree' | 'policy_delta' | 'disagree' | 'metadata_unavailable',
   policyRef?: string,                  // the decision behind a policy_delta
   createdAt: Date, updatedAt: Date
 }

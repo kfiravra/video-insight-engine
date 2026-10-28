@@ -2,7 +2,7 @@ import { ObjectId } from 'mongodb';
 import { z } from 'zod';
 import { MIN_MINUTES_PER_VIDEO, PAID_MAX_VIDEO_MINUTES, PLAN_IDS } from '@vie/types';
 import { NotFoundError, ValidationError } from '../../utils/errors.js';
-import { applyAdjust, applyGrantLot, applySetCaps, applySetPlan } from './admin-ops.js';
+import { applyAdjust, applyGrantLot, applySetCaps, applySetPlan, capsAlreadyApplied } from './admin-ops.js';
 import { parseObjectId } from './billing-unit.js';
 import { MAX_ADMIN_MINUTES } from './minutes.js';
 import { toHoldView, toLedgerView, toLotView, toRecurringGrantView, toSnapshot } from './views.js';
@@ -142,7 +142,10 @@ export class BillingAdmin {
 
   async setCaps(userId: string, caps: Partial<AccountCaps>, ctx: AdminMutationContext): Promise<MutationResult<AccountSnapshot>> {
     const patch = parse(capsSchema, caps);
-    return this.mutate(userId, ctx, async ({ draft }) => applySetCaps(draft, patch));
+    return this.mutate(userId, ctx, async ({ draft, audit }) => {
+      // A retry of an applied change must not undo a newer one (I1).
+      if (!capsAlreadyApplied(draft, audit)) applySetCaps(draft, patch, audit);
+    });
   }
 
   async adjust(

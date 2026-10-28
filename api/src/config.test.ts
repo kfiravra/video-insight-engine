@@ -219,6 +219,11 @@ describe('config env validation', () => {
       await expect(loadConfig({ BILLING_REPAIR_INTERVAL_SECONDS: '5' })).rejects.toThrow(/BILLING_REPAIR_INTERVAL_SECONDS/);
     });
 
+    it('should refuse a hold age that does not outlast the queue message TTL (I4)', async () => {
+      await expect(loadConfig({ BILLING_HOLD_MAX_AGE_HOURS: '1' })).rejects.toThrow(/BILLING_HOLD_MAX_AGE_HOURS/);
+      expect((await loadConfig({ BILLING_HOLD_MAX_AGE_HOURS: '1.5' })).config.BILLING_HOLD_MAX_AGE_HOURS).toBe(1.5);
+    });
+
     it('should refuse a non-positive hold age', async () => {
       await expect(loadConfig({ BILLING_HOLD_MAX_AGE_HOURS: '0' })).rejects.toThrow(/BILLING_HOLD_MAX_AGE_HOURS/);
     });

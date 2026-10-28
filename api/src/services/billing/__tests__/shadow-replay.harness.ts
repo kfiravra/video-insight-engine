@@ -8,7 +8,7 @@ import { PlaylistService } from '../../playlist.service.js';
 import { VideoSubmissionService } from '../../video-submission.service.js';
 import { LedgerEnforcement } from '../ledger-enforcement.js';
 import { LlmUsageRepository } from '../../../repositories/llm-usage.repository.js';
-import { RunNotAllowedError } from '../../../utils/errors.js';
+import { MetadataUnavailableError, RunNotAllowedError } from '../../../utils/errors.js';
 import { insertUser, makeShadowHarness } from './billing-fixtures.js';
 import { OldGateRecorder } from './shadow-replay.old-gate.js';
 import type { Db } from 'mongodb';
@@ -174,7 +174,7 @@ export class ReplayHarness {
   private async runStep(app: FastifyInstance, step: ReplayStep): Promise<void> {
     switch (step.kind) {
       case 'submit':
-        return this.submit(step.run, step.minutes, step.outcome, step.bypassCache ?? false);
+        return this.submit(step.run, step.minutes, step.outcome, step.bypassCache ?? false, step.lengthUnknown ?? false);
       case 'playlist':
         return this.importPlaylist(step.items);
       case 'finish':
@@ -193,12 +193,13 @@ export class ReplayHarness {
     return id;
   }
 
-  private async submit(run: string, minutes: number, outcome: SubmitOutcome, bypassCache: boolean): Promise<void> {
+  private async submit(run: string, minutes: number, outcome: SubmitOutcome, bypassCache: boolean, lengthUnknown: boolean): Promise<void> {
     const state = this.requireState();
     const requestId = state.requestIds.get(run) ?? `replay-${new ObjectId().toHexString()}-${run}`;
     state.requestIds.set(run, requestId);
     const youtubeId = this.youtubeIdFor(run);
-    this.shadow.metadata.getVideoMetadata.mockResolvedValue({ duration: minutes * 60 });
+    if (lengthUnknown) this.shadow.metadata.getVideoMetadata.mockRejectedValue(new MetadataUnavailableError('timeout'));
+    else this.shadow.metadata.getVideoMetadata.mockResolvedValue({ duration: minutes * 60 });
     this.oldGate.expectRuns([run]);
     state.outcomes = [{ run, outcome }];
     await this.submissions

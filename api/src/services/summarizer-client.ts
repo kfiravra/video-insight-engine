@@ -71,9 +71,14 @@ const purgeResultSchema = z.object({
 const SUMMARIZER_TIMEOUT_MS = 10000; // 10 seconds
 // S3 listing + batched deletes for a long video can take a while.
 const PURGE_TIMEOUT_MS = 60000;
-// yt-dlp through the proxy exits can spend its 15 s rotation budget on a blocked exit.
-const METADATA_TIMEOUT_MS = 15000;
+// The summarizer's proxy-exit rotation (EXIT_ROTATION_BUDGET_S = 15 s) only checks
+// its budget before starting an exit beyond the third, so a rotation that is still
+// working can answer 200 at ~15 s plus the attempt in flight. 25 s lets that answer
+// through; a shorter abort would throw it away as `timeout` exactly when rotation works.
+const METADATA_TIMEOUT_MS = 25000;
 const METADATA_CACHE_TTL_SECONDS = 24 * 60 * 60;
+// A dead id is remembered briefly so a retry loop does not ask YouTube each time.
+const METADATA_MISS_TTL_SECONDS = 10 * 60;
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 1000;
 
@@ -96,6 +101,13 @@ async function fetchWithTimeout(
   }
 }
 
+/** The summarizer's /video/metadata statuses: 404 unknown video, 422 live or not yet playable, the rest are its trouble. */
+function reasonForStatus(status: number): MetadataUnavailableReason {
+  if (status === 404) return 'not_found';
+  if (status === 422) return 'unsupported';
+  return 'upstream';
+}
+
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
@@ -107,6 +119,11 @@ async function sleep(ms: number): Promise<void> {
 /** Redis key of a video's cached metadata. */
 export function videoMetaCacheKey(youtubeId: string): string {
   return `vie:api:video-meta:${youtubeId}`;
+}
+
+/** Redis marker that the summarizer answered "no such video" for this id in the last 10 minutes. */
+export function videoMetaMissKey(youtubeId: string): string {
+  return `vie:api:video-meta-miss:${youtubeId}`;
 }
 
 export class SummarizerClient {
@@ -213,16 +230,48 @@ export class SummarizerClient {
   /**
    * Duration, title, channel and thumbnail of a video before any submit — no
    * captions, no LLM. Cached 24 h in Redis (a Redis failure only costs the
-   * cache). Throws MetadataUnavailableError on a 404, a timeout (15 s) or any
-   * other failure; failures are never cached.
+   * cache). Throws MetadataUnavailableError: `not_found` on a 404, `unsupported`
+   * on a 422 (live stream, no duration yet), `timeout` after 25 s, `upstream`
+   * on anything else. Only a `not_found` is remembered (10 min, so a dead id
+   * does not reach YouTube on every submit); other failures are never cached.
    */
   async getVideoMetadata(youtubeId: string): Promise<VideoMetadata> {
     const cached = await this.readMetadataCache(youtubeId);
     if (cached) return cached;
+    if (await this.isKnownMissing(youtubeId)) {
+      this.logger.debug({ youtubeId }, 'video_metadata_known_missing');
+      throw new MetadataUnavailableError('not_found');
+    }
 
-    const metadata = await this.fetchVideoMetadata(youtubeId);
-    await this.writeMetadataCache(metadata);
-    return metadata;
+    try {
+      const metadata = await this.fetchVideoMetadata(youtubeId);
+      await this.writeMetadataCache(metadata);
+      return metadata;
+    } catch (err) {
+      if (err instanceof MetadataUnavailableError && err.reason === 'not_found') {
+        await this.markMissing(youtubeId);
+      }
+      throw err;
+    }
+  }
+
+  private async isKnownMissing(youtubeId: string): Promise<boolean> {
+    if (!this.redis) return false;
+    try {
+      return (await this.redis.get(videoMetaMissKey(youtubeId))) !== null;
+    } catch (err) {
+      this.logger.warn({ youtubeId, error: errorMessage(err) }, 'video_meta_miss_read_failed');
+      return false;
+    }
+  }
+
+  private async markMissing(youtubeId: string): Promise<void> {
+    if (!this.redis) return;
+    try {
+      await this.redis.set(videoMetaMissKey(youtubeId), '1', 'EX', METADATA_MISS_TTL_SECONDS);
+    } catch (err) {
+      this.logger.warn({ youtubeId, error: errorMessage(err) }, 'video_meta_miss_write_failed');
+    }
   }
 
   private async readMetadataCache(youtubeId: string): Promise<VideoMetadata | null> {
@@ -270,8 +319,7 @@ export class SummarizerClient {
       throw this.metadataFailure(youtubeId, reason, errorMessage(err));
     }
     if (!response.ok) {
-      const reason = response.status === 404 ? 'not_found' : 'upstream';
-      throw this.metadataFailure(youtubeId, reason, `summarizer returned ${response.status}`);
+      throw this.metadataFailure(youtubeId, reasonForStatus(response.status), `summarizer returned ${response.status}`);
     }
     return this.parseMetadata(youtubeId, response);
   }

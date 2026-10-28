@@ -216,6 +216,7 @@ export function createContainer(
       : singleProcessRepairLock,
     logger,
     holdMaxAgeHours: config.BILLING_HOLD_MAX_AGE_HOURS,
+    recurringLotGraceMs: 2 * config.BILLING_REPAIR_INTERVAL_SECONDS * 1000,
   });
   const auditService = new AuditService(adminAuditRepository, logger);
   const adminSeedService = new AdminSeedService(

@@ -96,11 +96,21 @@ function mergeCap<K extends keyof AccountCaps>(caps: AccountCaps, patch: Partial
   else caps[field] = value;
 }
 
+/** setCaps writes no ledger entry, so the account remembers this many of its auditIds to spot a retry (I1). */
+const CAPS_AUDIT_MEMORY = 20;
+
+/** True when this auditId's caps change was already applied (a retried call). */
+export function capsAlreadyApplied(draft: AccountDraft, audit: AdminAudit): boolean {
+  return (draft.account.capsAuditIds ?? []).includes(audit.auditId.toHexString());
+}
+
 /** Merge a caps patch: a value sets the field, null clears it, an absent key leaves it. */
-export function applySetCaps(draft: AccountDraft, patch: Partial<AccountCaps>): void {
+export function applySetCaps(draft: AccountDraft, patch: Partial<AccountCaps>, audit: AdminAudit): void {
   const caps: AccountCaps = { ...draft.account.caps };
   for (const field of CAP_FIELDS) mergeCap(caps, patch, field);
   draft.account.caps = caps;
+  const applied = [...(draft.account.capsAuditIds ?? []), audit.auditId.toHexString()];
+  draft.account.capsAuditIds = applied.slice(-CAPS_AUDIT_MEMORY);
   draft.markChanged();
 }
 

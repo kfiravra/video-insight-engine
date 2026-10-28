@@ -28,12 +28,29 @@ describe('classifyShadow', () => {
     ['too_long', 'Q2'],
     ['blocked', 'caps.blocked'],
     ['too_many_runs', 'caps.maxConcurrent'],
-    ['metadata_unavailable', 'P1.5'],
   ])('should explain a ledger refusal for %s by %s', (reason, ref) => {
     const result = classifyShadow(facts({ newDecision: { ...REFUSE, reason } }));
 
     expect(result.classification).toBe('policy_delta');
     expect(result.policyRef).toContain(ref);
+  });
+
+  it('should class a missing duration on its own, never explained (W1)', () => {
+    expect(classifyShadow(facts({ newDecision: { ...REFUSE, reason: 'metadata_unavailable' } }))).toEqual({
+      classification: 'metadata_unavailable',
+    });
+  });
+
+  it.each(['cached', 'attached'] as const)('should disagree on a %s video the ledger refused instead of serving free (C1)', (path) => {
+    const verdict = classifyShadow(facts({ path, oldDecision: SERVED_FREE, newDecision: { ...REFUSE, reason: 'free_window_used' } }));
+
+    expect(verdict.classification).toBe('disagree');
+  });
+
+  it('should still explain a blocked account getting nothing, even from cache', () => {
+    const verdict = classifyShadow(facts({ path: 'cached', oldDecision: SERVED_FREE, newDecision: { ...REFUSE, reason: 'blocked' } }));
+
+    expect(verdict).toMatchObject({ classification: 'policy_delta', policyRef: expect.stringContaining('caps.blocked') });
   });
 
   it('should explain the ledger admitting what the old $ cap refused (brief §4.1)', () => {

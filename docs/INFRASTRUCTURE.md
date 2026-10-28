@@ -32,7 +32,9 @@ Process once, reuse forever. Three layers absorb identical work across users so 
 | L2    | MongoDB | `youtubeId` field     | Persistent video summary + assembled tabs |
 | L3    | S3      | `youtube_id` prefix   | Extracted scene frames (skip re-extraction) |
 
-The api also keeps `vie:api:video-meta:<youtubeId>` (24 h TTL): the title, channel, duration and thumbnail that `GET /video/metadata` on the summarizer returned, so a pre-flight quote does not re-ask YouTube. Only successes are cached, and a Redis error just skips the cache.
+The api also records each admin mutation's signed actor header once in Redis (`vie:api:admin-actor-sig:<signature>`, `SET NX EX`, kept as long as the header could still pass its 300 s age check) so a captured header cannot be replayed. Unlike the dispatch guard this one fails closed: with Redis down an admin mutation is refused `503` ([SECURITY.md](./SECURITY.md#admin-api-key)).
+
+The api also keeps `vie:api:video-meta:<youtubeId>` (24 h TTL): the title, channel, duration and thumbnail that `GET /video/metadata` on the summarizer returned, so a pre-flight quote does not re-ask YouTube. A summarizer 404 (unknown or private video) is remembered for 10 minutes under `vie:api:video-meta-miss:<youtubeId>` so a dead id is not looked up again on every submit; no other failure is cached, and a Redis error just skips both caches.
 
 ### Shared vs per-user
 
@@ -305,6 +307,7 @@ BILLING_SHADOW_ENABLED=true
 #   NODE_ENV=test); prod compose defaults to false until the replica set.
 BILLING_REPAIR_ENABLED=true
 BILLING_REPAIR_INTERVAL_SECONDS=300
+# must exceed the job queue's message TTL (1 h, queue-topology.ts) — boot refuses otherwise
 BILLING_HOLD_MAX_AGE_HOURS=3
 
 # ────────────────────────────────────────────────────
