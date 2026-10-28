@@ -86,14 +86,34 @@ jobs:
 
           # .env is not sourced: values are not guaranteed to be shell-safe.
           domain="$(grep -E '^DOMAIN=' .env | cut -d= -f2-)"
+          api_healthy=false
           for attempt in $(seq 1 30); do
             if curl -fsS -o /dev/null "https://${domain}/health"; then
               echo "https://${domain}/health is healthy (attempt ${attempt})"
-              exit 0
+              api_healthy=true
+              break
             fi
             sleep 10
           done
-          echo "https://${domain}/health did not become healthy in 5 minutes" >&2
+          if [[ "$api_healthy" != true ]]; then
+            echo "https://${domain}/health did not become healthy in 5 minutes" >&2
+            docker compose -f docker-compose.prod.yml -f docker-compose.aws.yml ps >&2
+            exit 1
+          fi
+
+          # vie-admin refuses to start on an unsafe ADMIN_SESSION_SECRET or
+          # ADMIN_API_KEY while vie-api stays up, so the probe above cannot see it.
+          admin_status=missing
+          for attempt in $(seq 1 24); do
+            admin_status="$(docker inspect -f '{{.State.Health.Status}}' vie-admin 2>/dev/null || echo missing)"
+            if [[ "$admin_status" == healthy ]]; then
+              echo "vie-admin is healthy (attempt ${attempt})"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "vie-admin did not become healthy in 2 minutes (last status: ${admin_status})" >&2
+          docker logs --tail 50 vie-admin >&2 || true
           docker compose -f docker-compose.prod.yml -f docker-compose.aws.yml ps >&2
           exit 1
           REMOTE

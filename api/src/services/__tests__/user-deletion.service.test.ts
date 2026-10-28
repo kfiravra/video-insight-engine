@@ -283,6 +283,93 @@ describe('UserDeletionService (integration with in-memory MongoDB)', () => {
       expect(await userRepo.findById(other._id.toString())).not.toBeNull();
     });
 
+    describe('videoSummaryCache dispatch context', () => {
+      // The summarizer stores the dispatcher's id as a JSON string, not an ObjectId.
+      async function seedStampedRows(userId: string, otherUserId: string): Promise<void> {
+        await db.collection('videoSummaryCache').insertMany([
+          { youtubeId: 'mine', status: 'completed', userId, requestId: 'req-mine-1' },
+          { youtubeId: 'theirs', status: 'completed', userId: otherUserId, requestId: 'req-theirs' },
+          { youtubeId: 'unstamped', status: 'completed' },
+        ]);
+      }
+
+      it('should unset the deleted user\'s userId and requestId on cache rows', async () => {
+        const user = await insertUser();
+        const other = await insertUser();
+        await seedStampedRows(user._id.toString(), other._id.toString());
+
+        await service.executeHardDelete(user._id.toString(), { initiatedBy: 'self' });
+
+        const row = await db.collection('videoSummaryCache').findOne({ youtubeId: 'mine' });
+        expect(row).not.toHaveProperty('userId');
+        expect(row).not.toHaveProperty('requestId');
+      });
+
+      it('should keep the shared cache row itself', async () => {
+        const user = await insertUser();
+        const other = await insertUser();
+        await seedStampedRows(user._id.toString(), other._id.toString());
+
+        await service.executeHardDelete(user._id.toString(), { initiatedBy: 'self' });
+
+        const row = await db.collection('videoSummaryCache').findOne({ youtubeId: 'mine' });
+        expect(row).toMatchObject({ youtubeId: 'mine', status: 'completed' });
+      });
+
+      it('should leave another user\'s stamp untouched', async () => {
+        const user = await insertUser();
+        const other = await insertUser();
+        await seedStampedRows(user._id.toString(), other._id.toString());
+
+        await service.executeHardDelete(user._id.toString(), { initiatedBy: 'self' });
+
+        const row = await db.collection('videoSummaryCache').findOne({ youtubeId: 'theirs' });
+        expect(row).toMatchObject({ userId: other._id.toString(), requestId: 'req-theirs' });
+      });
+
+      it('should be a clean no-op on a re-run once the stamp is gone', async () => {
+        const user = await insertUser();
+        await db.collection('videoSummaryCache').insertOne({
+          youtubeId: 'mine',
+          userId: user._id.toString(),
+          requestId: 'req-mine-1',
+        });
+        await service.executeHardDelete(user._id.toString(), { initiatedBy: 'self' });
+        await insertUser({ _id: user._id });
+
+        const rerun = await service.executeHardDelete(user._id.toString(), { initiatedBy: 'self' });
+
+        const row = await db.collection('videoSummaryCache').findOne({ youtubeId: 'mine' });
+        expect(row).toMatchObject({ youtubeId: 'mine' });
+        expect(row).not.toHaveProperty('userId');
+        expect(rerun.warnings ?? []).toEqual([]);
+      });
+
+      it('should unset the stamp when the delete is requested with an uppercase id', async () => {
+        const user = await insertUser();
+        const lowerId = user._id.toString();
+        await db.collection('videoSummaryCache').insertOne({
+          youtubeId: 'mine',
+          userId: lowerId,
+          requestId: 'req-mine-1',
+        });
+
+        await service.executeHardDelete(lowerId.toUpperCase(), { initiatedBy: 'admin' });
+
+        const row = await db.collection('videoSummaryCache').findOne({ youtubeId: 'mine' });
+        expect(row).not.toHaveProperty('userId');
+        expect(row).not.toHaveProperty('requestId');
+      });
+
+      it('should add no warning when no cache row carries the user', async () => {
+        const user = await insertUser();
+
+        const audit = await service.executeHardDelete(user._id.toString(), { initiatedBy: 'self' });
+
+        expect(audit.warnings ?? []).toEqual([]);
+      });
+    });
+
     it('should hash the email deterministically (case-insensitive, trimmed)', async () => {
       const user = await insertUser({ email: '  Mixed.Case@Example.COM  ' });
 

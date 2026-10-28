@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
+import time
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -15,6 +19,7 @@ from src.auth import (
     create_session_token,
     verify_session_token,
 )
+from src.config import settings
 from src.main import app
 
 PASSWORD = "Admin123"
@@ -78,6 +83,51 @@ def test_session_token_tampered_signature():
 def test_session_token_garbage_inputs():
     for bad in ("", "no-dot", "a.b", "!!!.???", create_session_token("x")[:-5]):
         assert not verify_session_token(bad)
+
+
+# ─── Signing secret separation ───
+# The machine key (ADMIN_API_KEY) must not be able to mint admin sessions.
+
+API_KEY = "machine-key-" + "a" * 32
+SESSION_SECRET = "session-secret-" + "b" * 32
+
+
+@pytest.fixture
+def distinct_secrets(monkeypatch):
+    monkeypatch.setattr(settings, "ADMIN_API_KEY", API_KEY)
+    monkeypatch.setattr(settings, "ADMIN_SESSION_SECRET", SESSION_SECRET)
+
+
+def _token_signed_with(secret: str, email: str = "admin@admin.com") -> str:
+    """Build a session token by hand, HMAC-keyed on an arbitrary secret."""
+    payload = f"{email}|{int(time.time()) + 3600}"
+    encoded = base64.urlsafe_b64encode(payload.encode()).decode()
+    signature = hmac.new(secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
+    return f"{encoded}.{signature}"
+
+
+def test_token_signed_with_session_secret_accepted(distinct_secrets):
+    assert verify_session_token(_token_signed_with(SESSION_SECRET))
+
+
+def test_token_signed_with_api_key_rejected(distinct_secrets):
+    """Regression: tokens used to be HMAC-keyed on ADMIN_API_KEY, so the
+    machine key could forge a session for any email."""
+    assert not verify_session_token(_token_signed_with(API_KEY))
+
+
+def test_rotating_session_secret_invalidates_outstanding_tokens(distinct_secrets, monkeypatch):
+    token = create_session_token("admin@admin.com")
+    monkeypatch.setattr(settings, "ADMIN_SESSION_SECRET", "rotated-" + "c" * 32)
+
+    assert not verify_session_token(token)
+
+
+def test_rotating_api_key_keeps_sessions_valid(distinct_secrets, monkeypatch):
+    token = create_session_token("admin@admin.com")
+    monkeypatch.setattr(settings, "ADMIN_API_KEY", "rotated-" + "d" * 32)
+
+    assert verify_session_token(token)
 
 
 # ─── Login route tests ───
@@ -166,6 +216,25 @@ async def test_session_token_accepted_by_middleware():
         try:
             resp = await client.get("/usage/stats", headers={"Authorization": f"Bearer {token}"})
             # Auth passed — may be 500 (no DB in tests) but never 401
+            assert resp.status_code != 401
+        except RuntimeError as e:
+            assert "MongoDB" in str(e)
+
+
+@pytest.mark.anyio
+async def test_api_key_signed_token_rejected_by_middleware(distinct_secrets):
+    token = _token_signed_with(API_KEY)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get("/usage/stats", headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == 401
+
+
+@pytest.mark.anyio
+async def test_raw_api_key_still_accepted_by_middleware(distinct_secrets):
+    """The machine key keeps working as a bearer credential (only sessions moved)."""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        try:
+            resp = await client.get("/usage/stats", headers={"Authorization": f"Bearer {API_KEY}"})
             assert resp.status_code != 401
         except RuntimeError as e:
             assert "MongoDB" in str(e)

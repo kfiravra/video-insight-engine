@@ -1,4 +1,4 @@
-"""Tests for the aggregate alert evaluator (spike, failures, backup staleness).
+"""Tests for the aggregate alert evaluator (spike, global cost, failures, backup staleness).
 
 The two thresholds configured via POST /alerts/config used to be decorative —
 nothing evaluated them. These tests pin the decision logic (pure functions)
@@ -29,6 +29,14 @@ def _no_backup_dir(monkeypatch, tmp_path: Path) -> None:
     # Hermetic default: BACKUP_DIR points at a path that does not exist, so the
     # backup-stale dead-man's switch is skipped unless a test opts in.
     monkeypatch.setattr(ev.settings, "BACKUP_DIR", str(tmp_path / "no-backups-here"))
+
+
+@pytest.fixture(autouse=True)
+def _global_cost_alarm_off(monkeypatch) -> None:
+    # Hermetic default: the spend alarm is disabled so tests that mock a $25
+    # "today" for the spike check don't also trip daily_global_cost. The
+    # global-cost tests opt in with their own threshold.
+    monkeypatch.setattr(ev.settings, "ALERT_DAILY_COST_THRESHOLD_USD", 0.0)
 
 
 def _write_manifest(backup_root: Path, stamp: str) -> Path:
@@ -149,6 +157,32 @@ class TestLatestBackupTime:
         assert abs((datetime.now(UTC) - taken).total_seconds()) < 60
 
 
+class TestBuildDailyCostAlert:
+    def test_no_alert_below_threshold(self) -> None:
+        assert ev.build_daily_cost_alert(today_usd=19.99, threshold=20.0, now=NOW) is None
+
+    def test_alert_at_exactly_the_threshold(self) -> None:
+        alert = ev.build_daily_cost_alert(today_usd=20.0, threshold=20.0, now=NOW)
+        assert alert is not None
+        assert alert["type"] == "daily_global_cost"
+
+    def test_alert_carries_spend_threshold_and_message_above_threshold(self) -> None:
+        alert = ev.build_daily_cost_alert(today_usd=31.4159, threshold=20.0, now=NOW)
+        assert alert is not None
+        assert alert["today_usd"] == 31.4159
+        assert alert["threshold_usd"] == 20.0
+        assert "$31.42" in alert["message"]
+        assert alert["timestamp"] == NOW
+
+    @pytest.mark.parametrize("threshold", [0.0, -1.0])
+    def test_disabled_when_threshold_is_not_positive(self, threshold: float) -> None:
+        assert ev.build_daily_cost_alert(today_usd=500.0, threshold=threshold, now=NOW) is None
+
+    def test_default_threshold_is_twenty_dollars(self) -> None:
+        field = type(ev.settings).model_fields["ALERT_DAILY_COST_THRESHOLD_USD"]
+        assert field.default == 20.0
+
+
 class TestBuildFailureAlert:
     def test_no_alert_below_min_sample(self) -> None:
         assert ev.build_failure_alert(failures=3, total=4, threshold=0.20, now=NOW) is None
@@ -263,6 +297,211 @@ class TestEvaluateOnce:
         webhook.assert_awaited_once()
 
 
+# ─── Global cost alarm against the real ledger schema ───
+
+
+class _Cursor:
+    def __init__(self, rows: list[dict]) -> None:
+        self._rows = rows
+
+    async def to_list(self, length: int) -> list[dict]:
+        return self._rows[:length]
+
+
+def _matches(doc: dict, query: dict) -> bool:
+    for field, cond in query.items():
+        value = doc.get(field)
+        if not isinstance(cond, dict):
+            if value != cond:
+                return False
+            continue
+        if value is None:
+            return False
+        if "$gte" in cond and value < cond["$gte"]:
+            return False
+        if "$lt" in cond and value >= cond["$lt"]:
+            return False
+    return True
+
+
+class _Collection:
+    """In-memory stand-in for the three Mongo calls the evaluator makes.
+
+    It interprets only what the evaluator's pipelines use ($match, then a
+    $group that sums one field). Field names come from the pipeline itself, so
+    a query reading the wrong schema (``cost`` / ``createdAt``) sums to zero
+    here exactly as it would in Mongo.
+    """
+
+    def __init__(self, docs: list[dict] | None = None) -> None:
+        self.docs: list[dict] = list(docs or [])
+
+    async def insert_one(self, doc: dict) -> None:
+        self.docs.append(doc)
+
+    async def find_one(self, query: dict) -> dict | None:
+        return next((d for d in self.docs if _matches(d, query)), None)
+
+    def aggregate(self, pipeline: list[dict]) -> _Cursor:
+        matched = [d for d in self.docs if _matches(d, pipeline[0]["$match"])]
+        summed_field = pipeline[1]["$group"]["total"]["$sum"].removeprefix("$")
+        if not matched:
+            return _Cursor([])
+        return _Cursor([{"_id": None, "total": sum(d.get(summed_field, 0) for d in matched)}])
+
+
+def _ledger_db(usage: list[dict] | None = None) -> MagicMock:
+    db = MagicMock()
+    db.llm_usage = _Collection(usage)
+    db.llm_alerts = _Collection()
+    return db
+
+
+def _usage_row(cost_usd: float, at: datetime) -> dict:
+    """A row in the Python summarizer's schema — the one the ledger really holds."""
+    return {"user_id": "u1", "cost_usd": cost_usd, "timestamp": at}
+
+
+async def _evaluate(db: MagicMock, now: datetime) -> list[dict]:
+    with (
+        patch.object(ev, "_load_config", AsyncMock(return_value=dict(ev.DEFAULT_CONFIG))),
+        patch.object(ev, "_failure_counts", AsyncMock(return_value=(0, 50))),
+        patch.object(ev, "_deliver_webhook", AsyncMock(return_value=True)),
+    ):
+        return await ev.evaluate_once(db, now=now)
+
+
+def _global_cost_alerts(alerts: list[dict]) -> list[dict]:
+    return [a for a in alerts if a["type"] == "daily_global_cost"]
+
+
+class TestDailyGlobalCostEvaluation:
+    @pytest.fixture(autouse=True)
+    def _alarm_at_twenty(self, monkeypatch) -> None:
+        monkeypatch.setattr(ev.settings, "ALERT_DAILY_COST_THRESHOLD_USD", 20.0)
+
+    @pytest.mark.anyio
+    async def test_fires_when_python_schema_rows_sum_to_the_threshold(self) -> None:
+        midnight = NOW.replace(hour=0)
+        db = _ledger_db(
+            [
+                _usage_row(12.0, midnight + timedelta(hours=2)),
+                _usage_row(8.0, NOW - timedelta(minutes=5)),
+            ]
+        )
+
+        alerts = _global_cost_alerts(await _evaluate(db, NOW))
+
+        assert len(alerts) == 1
+        assert alerts[0]["today_usd"] == 20.0
+        assert alerts[0]["severity"] == "critical"
+        assert db.llm_alerts.docs == alerts
+
+    @pytest.mark.anyio
+    async def test_quiet_below_the_threshold(self) -> None:
+        db = _ledger_db([_usage_row(19.0, NOW - timedelta(hours=1))])
+
+        assert _global_cost_alerts(await _evaluate(db, NOW)) == []
+
+    @pytest.mark.anyio
+    async def test_ignores_node_schema_rows(self) -> None:
+        # The deleted Node-side writer used {cost, createdAt}; the alarm must read
+        # the Python schema only, so a huge Node-shaped row changes nothing.
+        db = _ledger_db(
+            [
+                _usage_row(5.0, NOW - timedelta(hours=1)),
+                {"model": "sonnet", "cost": 500.0, "createdAt": NOW - timedelta(hours=1)},
+            ]
+        )
+
+        assert _global_cost_alerts(await _evaluate(db, NOW)) == []
+
+    @pytest.mark.anyio
+    async def test_counts_only_spend_since_utc_midnight(self) -> None:
+        yesterday_late = NOW.replace(hour=0) - timedelta(minutes=1)
+        db = _ledger_db(
+            [_usage_row(100.0, yesterday_late), _usage_row(5.0, NOW - timedelta(hours=1))]
+        )
+
+        assert _global_cost_alerts(await _evaluate(db, NOW)) == []
+
+    @pytest.mark.anyio
+    async def test_disabled_when_threshold_is_zero(self, monkeypatch) -> None:
+        monkeypatch.setattr(ev.settings, "ALERT_DAILY_COST_THRESHOLD_USD", 0.0)
+        db = _ledger_db([_usage_row(500.0, NOW - timedelta(hours=1))])
+
+        assert _global_cost_alerts(await _evaluate(db, NOW)) == []
+
+    @pytest.mark.anyio
+    async def test_fires_once_per_utc_day(self) -> None:
+        db = _ledger_db([_usage_row(25.0, NOW - timedelta(hours=1))])
+
+        first = _global_cost_alerts(await _evaluate(db, NOW))
+        second = _global_cost_alerts(await _evaluate(db, NOW + timedelta(hours=1)))
+
+        assert len(first) == 1
+        assert second == []
+        assert len(_global_cost_alerts(db.llm_alerts.docs)) == 1
+
+    @pytest.mark.anyio
+    async def test_fires_again_after_midnight_even_within_24h_of_the_last_alert(self) -> None:
+        # Day 1 alert at 15:00; the next day's first evaluation is at 01:00,
+        # only 10 h later — a rolling 24 h cooldown would swallow it.
+        next_day = NOW + timedelta(hours=10)
+        db = _ledger_db(
+            [
+                _usage_row(25.0, NOW - timedelta(hours=1)),
+                _usage_row(21.0, next_day - timedelta(minutes=30)),
+            ]
+        )
+
+        await _evaluate(db, NOW)
+        after_midnight = _global_cost_alerts(await _evaluate(db, next_day))
+
+        assert len(after_midnight) == 1
+        assert after_midnight[0]["today_usd"] == 21.0
+
+    @pytest.mark.anyio
+    async def test_other_alert_types_still_fire_alongside(self) -> None:
+        # Baseline $1/day ($7 over the 7-day window) vs $25 today is a clear spike.
+        baseline_day = NOW.replace(hour=0) - timedelta(days=1)
+        db = _ledger_db([_usage_row(7.0, baseline_day), _usage_row(25.0, NOW - timedelta(hours=1))])
+
+        alerts = await _evaluate(db, NOW)
+
+        assert {a["type"] for a in alerts} == {"daily_spend_spike", "daily_global_cost"}
+
+
+class TestInCooldown:
+    @staticmethod
+    def _db_with_alert(alert_type: str, at: datetime) -> MagicMock:
+        db = MagicMock()
+        db.llm_alerts = _Collection([{"type": alert_type, "timestamp": at}])
+        return db
+
+    @pytest.mark.anyio
+    async def test_rolling_types_are_suppressed_inside_their_cooldown(self) -> None:
+        db = self._db_with_alert("daily_spend_spike", NOW - timedelta(hours=5))
+        assert await ev._in_cooldown(db, "daily_spend_spike", NOW) is True
+
+    @pytest.mark.anyio
+    async def test_rolling_types_are_free_again_after_their_cooldown(self) -> None:
+        db = self._db_with_alert("daily_spend_spike", NOW - timedelta(hours=7))
+        assert await ev._in_cooldown(db, "daily_spend_spike", NOW) is False
+
+    @pytest.mark.anyio
+    async def test_once_per_day_type_is_suppressed_by_any_alert_today(self) -> None:
+        # 14 h ago is far outside any rolling cooldown but still the same UTC day.
+        db = self._db_with_alert("daily_global_cost", NOW - timedelta(hours=14))
+        assert await ev._in_cooldown(db, "daily_global_cost", NOW) is True
+
+    @pytest.mark.anyio
+    async def test_once_per_day_type_is_not_suppressed_by_yesterdays_alert(self) -> None:
+        just_after_midnight = NOW.replace(hour=0, minute=30)
+        db = self._db_with_alert("daily_global_cost", just_after_midnight - timedelta(hours=1))
+        assert await ev._in_cooldown(db, "daily_global_cost", just_after_midnight) is False
+
+
 class TestDeliverWebhook:
     @pytest.mark.anyio
     async def test_no_op_when_url_unset(self, monkeypatch) -> None:
@@ -319,6 +558,10 @@ class TestAlertSeverity:
     def test_spike_should_be_warning(self):
         alert = ev.build_spike_alert(today_usd=5.0, baseline_daily_usd=2.0, multiplier=2.0, now=NOW)
         assert alert["severity"] == "warning"
+
+    def test_global_cost_should_be_critical(self):
+        alert = ev.build_daily_cost_alert(today_usd=25.0, threshold=20.0, now=NOW)
+        assert alert["severity"] == "critical"
 
     def test_failure_rate_should_be_critical(self):
         alert = ev.build_failure_alert(failures=5, total=10, threshold=0.2, now=NOW)

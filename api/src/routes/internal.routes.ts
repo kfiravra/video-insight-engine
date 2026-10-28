@@ -185,7 +185,8 @@ export async function internalRoutes(fastify: FastifyInstance) {
       // On terminal status (completed OR failed), reconcile the user's day
       // from llm_usage so the cost gate reflects actual spend and the upfront
       // reservation gets corrected. Without reconciling failures, a failed
-      // video's reservation would linger until the nightly cron.
+      // video's reservation would linger until the next reconcile
+      // (`POST /internal/reconcile-costs`; nothing schedules it).
       // This IS the canonical refund-on-failure for the per-user gate; do not
       // add a separate `refundReservation` path on failure or it will double-refund.
       if (status === 'completed' || status === 'failed') {
@@ -234,7 +235,8 @@ export async function internalRoutes(fastify: FastifyInstance) {
     return { received: true };
   });
 
-  // POST /internal/reconcile-costs — nightly cron rebuilds the userCosts cache from llm_usage.
+  // POST /internal/reconcile-costs — manual/ops rebuild of the userCosts cache from llm_usage
+  // (no scheduler calls it; terminal status reconciles today's UTC day on its own).
   // Supply ?date=YYYY-MM-DD to reconcile a specific UTC day, or ?userId=... for a single user.
   fastify.post<{
     Querystring: z.infer<typeof reconcileQuerySchema>;

@@ -83,7 +83,7 @@ const envSchema = z.object({
   VIDEO_DAILY_LIMIT: z.string().default('100').transform(Number),
   // Self-service signup. 'false' closes POST /api/auth/register (403) and the
   // web app hides its signup links; accounts are then created out-of-band
-  // (scripts/create-admin.ts). Any other value keeps registration open.
+  // (scripts/create-user.ts). Any other value keeps registration open.
   ALLOW_REGISTRATION: z.string().default('true').transform(v => v.trim().toLowerCase() !== 'false'),
   // Demo mode. With both set, POST /api/auth/login accepts { demo: true } and
   // signs in this account server-side; either one blank keeps demo off. The
@@ -95,7 +95,6 @@ const envSchema = z.object({
   PADDLE_PRO_PRICE_ID: z.string().default(''),
   PADDLE_TEAM_PRICE_ID: z.string().default(''),
   // Cost monitoring
-  COST_DAILY_LIMIT: z.string().default('50').transform(Number),
   // Per-user daily cost limits in USD (0 disables the limit; -1 means unlimited)
   USER_COST_LIMIT_FREE: z.string().default('2').transform(Number),
   USER_COST_LIMIT_PRO: z.string().default('20').transform(Number),

@@ -8,7 +8,7 @@ LLM usage monitoring, system health dashboard, and cost alerting service.
 |----------|-------|
 | Port | 8002 |
 | Framework | FastAPI + React (multi-stage Docker) |
-| Auth | API key (Bearer token) |
+| Auth | Bearer: `ADMIN_API_KEY` (machine key) or a login session token signed with `ADMIN_SESSION_SECRET` |
 | Database | MongoDB (shared with other services) |
 
 ## Architecture
@@ -134,6 +134,17 @@ so the detail page still shows the cost breakdown afterwards with `video: null`.
 | GET | `/alerts/config` | Current alert thresholds |
 | POST | `/alerts/config` | Update alert thresholds |
 
+**Evaluator alerts** (`src/services/alert_evaluator.py`, polls `llm_usage` every 5 min and writes `llm_alerts` plus the `ALERT_WEBHOOK_URL` POST):
+
+| Type | Severity | Fires when | Suppression |
+|------|----------|------------|-------------|
+| `daily_spend_spike` | warning | today's spend > `daily_spike_multiplier` × prorated 7-day baseline | 6 h cooldown |
+| `daily_global_cost` | critical | Σ `cost_usd` (all users, since UTC midnight) ≥ `ALERT_DAILY_COST_THRESHOLD_USD` (default `20`; `<= 0` disables) | once per UTC day |
+| `high_failure_rate` | critical | failure rate over the last hour > `failure_rate_threshold` (≥ 10 calls) | 1 h cooldown |
+| `backup_stale` | critical | newest backup manifest older than `BACKUP_MAX_AGE_HOURS` | 6 h cooldown |
+
+`daily_global_cost` is the operator's global spend alarm and nothing more: no request is blocked by global spend (the per-user daily cap in vie-api is the only spend gate). It sums the Python ledger schema (`cost_usd`, `timestamp`). It is suppressed per UTC day, not by a rolling window, so the first breach after midnight still alerts.
+
 ### Per-User Costs (`/users/`)
 
 Backs the **Users** page in the admin dashboard. Reads `userCosts` (per-user
@@ -173,9 +184,20 @@ React SPA served as static files from the same container.
 
 ## Security
 
-- API key auth via `Authorization: Bearer <key>` header
+- **Two bearer credentials** (`Authorization: Bearer <…>`, checked by `ApiKeyMiddleware` in `src/auth.py`):
+  - `ADMIN_API_KEY` — the machine key (curl, tooling; also what vie-admin sends vie-api as `X-Admin-Key`).
+  - A session token from `POST /auth/login` (email + bcrypt password, user must have `role: "admin"`):
+    `base64url(email|expiry).hmac_sha256`, 12 h TTL, HMAC-keyed on **`ADMIN_SESSION_SECRET`** — never on
+    `ADMIN_API_KEY`, so holding the machine key does not let anyone mint a session for an arbitrary email.
+    Rotating `ADMIN_SESSION_SECRET` logs every admin out; rotating `ADMIN_API_KEY` leaves sessions alone
+    (it must be rotated on vie-api at the same time).
+- **Startup refusal** — the lifespan calls `validate_secrets()` (`src/config.py`) first. Outside a dev
+  `ENVIRONMENT` (`""`, `development`, `dev`, `test`, `local`; any other name counts as production) the
+  service refuses to start when `ADMIN_API_KEY` or `ADMIN_SESSION_SECRET` is empty or its dev default,
+  when `ADMIN_SESSION_SECRET` is shorter than 32 characters (no length rule on `ADMIN_API_KEY`), or
+  when the two are equal; the error names the variable, never its value. Dev environments only log a warning.
 - Timing-safe comparison (`hmac.compare_digest`)
-- OpenAPI docs disabled in production
+- OpenAPI docs disabled (`docs_url`/`openapi_url` are `None`)
 - CORS restricted to known origins
 - Input validation on all parameters (ObjectId, path params, date formats)
 - TTLCache (30s) prevents aggregation query abuse
@@ -191,12 +213,21 @@ React SPA served as static files from the same container.
 ## Environment Variables
 
 ```
+# "" / development / dev / test / local = dev (dev-default secrets only warn);
+# anything else = production (validate_secrets() refuses to start). Prod compose: production.
+ENVIRONMENT=
+# Machine key: raw Bearer on vie-admin + X-Admin-Key to vie-api. Required.
 ADMIN_API_KEY=<required>
+# Signs login session tokens. openssl rand -hex 32; must differ from ADMIN_API_KEY;
+# rotating it logs every admin out. Default dev-admin-session-secret-change-me (dev only).
+ADMIN_SESSION_SECRET=<required in production>
 MONGODB_URI=mongodb://vie-mongodb:27017/video-insight-engine
 VIE_API_URL=http://vie-api:3000
 VIE_SUMMARIZER_URL=http://vie-summarizer:8000
 VIE_ASSISTANT_URL=http://vie-assistant:8001
 ALERT_COST_THRESHOLD_USD=0.50
+# Global spend alarm: daily_global_cost alert once per UTC day at this total (USD). <= 0 disables.
+ALERT_DAILY_COST_THRESHOLD_USD=20
 # Langfuse — read-only, only to build "Open in Langfuse" run deep-links.
 # Project id auto-resolved from the keys when LANGFUSE_PROJECT_ID is blank.
 # All optional: unset → /usage/by-run simply returns langfuse_url=null.

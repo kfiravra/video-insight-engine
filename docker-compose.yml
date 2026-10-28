@@ -529,11 +529,15 @@ services:
       PYTHONUNBUFFERED: 1
       MONGODB_URI: mongodb://vie-mongodb:27017/video-insight-engine
       ADMIN_API_KEY: ${ADMIN_API_KEY:-dev-admin-key-change-me}
+      # Signs admin login sessions (separate from ADMIN_API_KEY, the machine key)
+      ADMIN_SESSION_SECRET: ${ADMIN_SESSION_SECRET:-dev-admin-session-secret-change-me}
       VIE_API_URL: http://vie-api:3000
       VIE_SUMMARIZER_URL: http://vie-summarizer:8000
       VIE_ASSISTANT_URL: http://vie-assistant:8001
       QDRANT_URL: http://vie-qdrant:6333
       ALERT_COST_THRESHOLD_USD: ${ALERT_COST_THRESHOLD_USD:-0.50}
+      # Global spend alarm: daily_global_cost fires once per UTC day at this total (USD); <= 0 disables
+      ALERT_DAILY_COST_THRESHOLD_USD: ${ALERT_DAILY_COST_THRESHOLD_USD:-20}
       # LLM alert webhook — the admin evaluator (daily spike / failure rate)
       # POSTs tripped alerts here; empty URL = alerts stay Mongo-only
       ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}

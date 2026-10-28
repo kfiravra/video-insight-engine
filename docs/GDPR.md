@@ -23,7 +23,7 @@ DELETE /api/users/me ──┐                              │
                         │  or admin can override)     │
                         │                             │
                         ▼                             │
-            internal/run-deletions cron (daily)       │  ← Phase 4: scheduler
+            POST /internal/run-deletions (on call)    │  ← Phase 4: sweep (no scheduler in repo)
                         │                             │
                         ▼                             │
               userDeletionService.runScheduledDeletions()
@@ -56,7 +56,7 @@ DELETE /api/admin/users/:id?immediate=true ──────────┘  �
 | `POST /api/users/me/restore` | JWT (bypasses soft-delete check) | Cancel a pending deletion within 30 days. |
 | `DELETE /api/admin/users/:id?immediate=true` | `x-admin-key` header | Run the cascade now (compliance escape hatch). |
 | `DELETE /api/admin/users/:id` (no `immediate`) | `x-admin-key` header | Schedule the same soft delete as the user-initiated flow. |
-| `POST /internal/run-deletions` | `x-internal-secret` header | Cron entrypoint — sweeps `hardDeleteAt <= now` and runs the cascade for each. |
+| `POST /internal/run-deletions` | `x-internal-secret` header | Sweep entrypoint — sweeps `hardDeleteAt <= now` and runs the cascade for each. It runs only when called; this repo configures no scheduler for it (see "Running the sweep"). |
 | `DELETE /api/admin/videos/:youtubeId` | `x-admin-key` header | Not GDPR: the **video** cascade (`VideoCascadeService`), which removes one video from every store for every user. Listed here because it is the only path that deletes the shared rows the user cascade keeps. |
 
 ## Key files
@@ -80,14 +80,15 @@ Steps run in `executeHardDelete()` in this exact order:
 4. **`userCosts`**
 5. **`userCostAdjustments`**
 6. **`idempotencyKeys`**
-7. **Qdrant user content** (placeholder — see below)
-8. **S3 user objects** (placeholder — see below)
-9. **`users`** (the FK anchor, dropped last)
-10. **`userDeletions`** audit insert
+7. **`videoSummaryCache` dispatch stamp** — `updateMany({ userId: "<id>" }, { $unset: { userId, requestId } })`. The row itself stays (shared); only the dispatching user's id and request id are unset. The id is a **string** here, not an ObjectId — `POST /summarize` receives it as JSON. Matched row count is logged as `videoCacheRowsUnstamped` (not part of the audit `counts`).
+8. **Qdrant user content** (placeholder — see below)
+9. **S3 user objects** (placeholder — see below)
+10. **`users`** (the FK anchor, dropped last)
+11. **`userDeletions`** audit insert
 
 ### Idempotency
 
-Every step is naturally idempotent: `deleteMany({ userId: oid })` produces the same result whether it runs once or fifty times. If the cascade fails partway, re-invoking it is safe — the first delete-many is a no-op (nothing matches), the second processes the remainder.
+Every step is naturally idempotent: `deleteMany({ userId: oid })` (or, for the `videoSummaryCache` stamp, an `$unset` keyed on the user's id) produces the same result whether it runs once or fifty times. If the cascade fails partway, re-invoking it is safe — the first delete-many is a no-op (nothing matches), the second processes the remainder.
 
 ### Error handling
 
@@ -97,10 +98,10 @@ Each step is wrapped in `runStep`, which catches and records the error as a `war
 
 | Store | Why we don't delete |
 |---|---|
-| `videoSummaryCache` | Shared cache, keyed by YouTube ID, not user. Deletion would break other users with the same video. Removed only by the video cascade (`DELETE /api/admin/videos/:youtubeId`). |
+| `videoSummaryCache` | Shared cache, keyed by YouTube ID, not user. Deletion would break other users with the same video. Removed only by the video cascade (`DELETE /api/admin/videos/:youtubeId`). **Exception — the dispatch stamp:** `POST /summarize` writes the dispatching user's `userId` and `requestId` onto the row (so the SSE producer can attribute `llm_usage`), overwritten on every dispatch and left in place after the run; cascade step 7 unsets both for the deleted user. |
 | Qdrant `transcript_chunks` | Same — video-scoped, not user-scoped. `user_id` payload is reserved but always `null` today (see `services/summarizer/src/services/vector/qdrant_service.py:153`). When that payload starts being populated for user-generated content, the cascade step is ready to flip from no-op to real delete. The video cascade deletes them by `video_id` through the summarizer's `POST /internal/videos/{id}/purge`. |
 | S3 `videos/{youtubeId}/...` | Same — video-scoped. No user-keyed S3 prefixes today; placeholder hook is wired for the future. The video cascade deletes the whole prefix. |
-| `llm_usage` | Anonymized cost telemetry with 90-day TTL. Eagerly deleting would distort daily cost reports. If legal needs shorter retention, hash the `user_id` field instead. |
+| `llm_usage` | The cost ledger. Rows are kept indefinitely — there is **no TTL** (the legacy 90-day index is dropped at boot, see [`llm-cost-model.md`](./llm-cost-model.md#ledger-retention-decided-2026-07-06)). Rows carry the string `user_id` of whoever triggered the call, and the cascade has no `llm_usage` step, so after erasure the rows stay and keep that now-orphaned id (it is not hashed or unset). Deleting them would erase billing history and distort cost reports. If legal needs it gone, unset or hash `user_id` on the user's rows — not done today. |
 | `shareLikes` / `shareViews` | Already anonymous (IP hashed). |
 | Paddle records | Out of our system — directed at Paddle's own GDPR portal in [`PRIVACY.md`](./PRIVACY.md). |
 
@@ -110,18 +111,18 @@ A previously-issued JWT remains cryptographically valid for its 15-minute TTL ev
 
 `/api/users/me/restore` is the only authenticated endpoint that **does not** apply this check — by design, otherwise the user can never cancel.
 
-## Running the scheduler
+## Running the sweep
 
-The scheduler is just an internal HTTP endpoint:
+The sweep is just an internal HTTP endpoint, and **nothing in this repo calls it**: `scripts/backup-cron/crontab` only runs backups, and [`DEPLOY.md`](./DEPLOY.md) sets up no scheduler. Until a deployment drives the route from its own cron, a self-service deletion stays at the soft-delete stage past its 30-day `hardDeleteAt`; only the admin immediate delete (`?immediate=true`) runs the cascade without it.
 
 ```bash
 curl -X POST -H "x-internal-secret: $INTERNAL_SECRET" \
   http://vie-api:3000/internal/run-deletions
 ```
 
-Drive it from any cron source — Kubernetes CronJob, GitHub Actions on a schedule, host crontab, BullMQ if/when we adopt it. Daily at 03:00 UTC is the recommended cadence; running more often is harmless because every step is idempotent and a no-op past the first run.
+To schedule it, drive it from any cron source — Kubernetes CronJob, GitHub Actions on a schedule, host crontab, BullMQ if/when we adopt it. Daily at 03:00 UTC is the recommended cadence; running more often is harmless because every step is idempotent and a no-op past the first run.
 
-Example k8s CronJob skeleton:
+Example k8s CronJob skeleton (illustrative only; nothing in this repo deploys it):
 
 ```yaml
 apiVersion: batch/v1

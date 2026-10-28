@@ -1,12 +1,17 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-import { runAssistantAction } from "../assistant";
+import { ApiError, getAccessToken, refreshToken } from "@/api/client";
+import { runAssistantAction, sendAssistantMessage, sendLibraryMessage } from "../assistant";
 
 // Mock the API client + auth store so runAssistantAction stays a pure unit test.
-vi.mock("@/api/client", () => ({
-  getAccessToken: vi.fn(() => "token-abc"),
-  refreshToken: vi.fn(() => Promise.resolve(false)),
-}));
+vi.mock("@/api/client", async () => {
+  const actual = await vi.importActual<typeof import("@/api/client")>("@/api/client");
+  return {
+    ...actual,
+    getAccessToken: vi.fn(() => "token-abc"),
+    refreshToken: vi.fn(() => Promise.resolve(false)),
+  };
+});
 
 vi.mock("@/stores/auth-store", () => ({
   useAuthStore: { getState: vi.fn(() => ({ forceLogout: vi.fn() })) },
@@ -76,5 +81,76 @@ describe("runAssistantAction", () => {
     await expect(runAssistantAction("organize_library", {})).rejects.toThrow(
       "Assistant action failed: 500",
     );
+  });
+});
+
+describe.each([
+  ["sendAssistantMessage", () => sendAssistantMessage("vid-1", "hi", [], vi.fn())],
+  ["sendLibraryMessage", () => sendLibraryMessage("hi", [], vi.fn())],
+])("%s — failed request", (_name, send) => {
+  const fetchMock = vi.fn();
+
+  beforeEach(() => {
+    vi.stubGlobal("fetch", fetchMock);
+    fetchMock.mockReset();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("should reject with a RATE_LIMITED ApiError on a 429 response", async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 429 });
+
+    const failure = await send().catch((err: unknown) => err);
+
+    expect(failure).toBeInstanceOf(ApiError);
+    expect(failure).toMatchObject({ status: 429, code: "RATE_LIMITED" });
+  });
+
+  it("should keep the plain transport error for a 502 response", async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 502 });
+
+    const failure = await send().catch((err: unknown) => err);
+
+    expect(failure).toEqual(new Error("Assistant chat failed: 502"));
+    expect(failure).not.toBeInstanceOf(ApiError);
+  });
+});
+
+describe.each([
+  ["sendAssistantMessage", () => sendAssistantMessage("vid-1", "hi", [], vi.fn())],
+  ["sendLibraryMessage", () => sendLibraryMessage("hi", [], vi.fn())],
+])("%s — 401, token refresh, then rate limited", (_name, send) => {
+  const fetchMock = vi.fn();
+
+  beforeEach(() => {
+    vi.stubGlobal("fetch", fetchMock);
+    fetchMock.mockReset();
+    vi.mocked(getAccessToken).mockReturnValueOnce("token-expired").mockReturnValueOnce("token-fresh");
+    vi.mocked(refreshToken).mockResolvedValueOnce(true);
+    fetchMock
+      .mockResolvedValueOnce({ ok: false, status: 401 })
+      .mockResolvedValueOnce({ ok: false, status: 429 });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.mocked(getAccessToken).mockReset().mockReturnValue("token-abc");
+    vi.mocked(refreshToken).mockReset().mockResolvedValue(false);
+  });
+
+  it("should surface the retry's 429 as a RATE_LIMITED ApiError", async () => {
+    const failure = await send().catch((err: unknown) => err);
+
+    expect(failure).toBeInstanceOf(ApiError);
+    expect(failure).toMatchObject({ status: 429, code: "RATE_LIMITED" });
+  });
+
+  it("should retry once with the refreshed token", async () => {
+    await send().catch(() => undefined);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[1][1].headers.Authorization).toBe("Bearer token-fresh");
   });
 });

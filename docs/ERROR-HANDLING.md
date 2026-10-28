@@ -59,8 +59,10 @@ See [docs/SECURITY.md](./SECURITY.md#rate-limiting) for implementation.
 
 | Code                  | Status | Message                                       | When                                                                            |
 | --------------------- | ------ | --------------------------------------------- | ------------------------------------------------------------------------------- |
-| `RATE_LIMITED`        | 429    | Too many requests                             | Rate limit exceeded (global plugin or per-route quota)                          |
+| `RATE_LIMITED`        | 429    | Too many requests                             | Rate limit exceeded (global plugin, per-route quota, or the assistant's chat window — see below) |
 | `DAILY_LIMIT_REACHED` | 429    | You've reached your daily cost limit ($X.XX)  | Per-user LLM cost cap reached. Response includes `resetAt` + `limitUsd` fields. |
+
+**Assistant chat.** The assistant service enforces its own 30 chat requests/min per user. When it answers 429 to `POST /api/videos/:id/chat` or `POST /api/assistant/library/chat`, the gateway returns `429 RATE_LIMITED` ("Too many messages. Please wait a moment and try again.") in the same `{ error, message, statusCode }` envelope as the rate-limit plugin — not a 502. Any other non-OK assistant status stays `502 SERVICE_UNAVAILABLE`. The assistant sends no `Retry-After`, so the gateway sets none. The web chat shows the slow-down message for a 429.
 
 ### Validation Errors (400)
 
@@ -714,6 +716,7 @@ to `ALERT_WEBHOOK_URL` when set. Unset webhook = nobody is told.
 | `daily_spend_spike` | admin `alert_evaluator` (5 min) | today's spend > `daily_spike_multiplier` × prorated 7-day baseline (baseline ≥ $0.50/day) | 6 h |
 | `high_failure_rate` | admin `alert_evaluator` (5 min) | failures / calls over the last hour > `failure_rate_threshold`, sample ≥ 10 | 1 h |
 | `backup_stale` | admin `alert_evaluator` (5 min) | newest `backups/*/manifest.json` older than `BACKUP_MAX_AGE_HOURS` (26) | 6 h |
+| `daily_global_cost` | admin `alert_evaluator` (5 min) | Σ `llm_usage.cost_usd` since UTC midnight ≥ `ALERT_DAILY_COST_THRESHOLD_USD` (default 20; ≤ 0 disables). Alarm only, no request is blocked | once per UTC day |
 | `pipeline_stalled` | summarizer stall sweeper (5 min) | `processing` row idle > `STALL_THRESHOLD_MINUTES` with no producer lock | none (row is flipped to `failed`) |
 
 `daily_spike_multiplier` / `failure_rate_threshold` are edited via admin

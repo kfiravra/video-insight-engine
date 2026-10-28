@@ -1,12 +1,16 @@
 """Authentication for the admin service.
 
 Two credentials are accepted on protected routes:
-- the raw ``ADMIN_API_KEY`` (programmatic access, curl, health tooling), or
+- the raw ``ADMIN_API_KEY`` (the machine key: programmatic access, curl,
+  health tooling — also what vie-admin sends vie-api as ``X-Admin-Key``), or
 - an HMAC-signed session token issued by ``POST /auth/login`` after an
   email/password check against the ``users`` collection (``role: "admin"``).
 
-Session tokens are signed with ``ADMIN_API_KEY`` as the secret, so rotating
-the key invalidates every outstanding session.
+Session tokens are signed with ``ADMIN_SESSION_SECRET``, never with
+``ADMIN_API_KEY``: holding the machine key must not let anyone mint a session
+for an arbitrary email. Rotating ``ADMIN_SESSION_SECRET`` invalidates every
+outstanding session (logs every admin out); rotating ``ADMIN_API_KEY`` does
+not touch sessions.
 """
 
 from __future__ import annotations
@@ -34,7 +38,8 @@ SESSION_TOKEN_TTL_SECONDS = 12 * 60 * 60
 
 
 def _sign(payload: str) -> str:
-    return hmac.new(settings.ADMIN_API_KEY.encode(), payload.encode(), hashlib.sha256).hexdigest()
+    secret = settings.ADMIN_SESSION_SECRET.encode()
+    return hmac.new(secret, payload.encode(), hashlib.sha256).hexdigest()
 
 
 def create_session_token(email: str, *, now: float | None = None) -> str:

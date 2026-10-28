@@ -109,12 +109,13 @@ export class VideoSubmissionService {
     // Cached videos run no pipeline, so no llm_usage rows will arrive — refund
     // now. Attached videos (cross-user single-flight) behave identically: this
     // caller didn't trigger work. Swallow refund errors — the video is already
-    // created and the nightly reconcile heals a stuck reservation.
+    // created and the next reconcile (terminal status, or
+    // `POST /internal/reconcile-costs`) heals a stuck reservation.
     if (result.cached || result.attached) {
       await this.costMonitorService.refundReservation(reservation).catch((err) => {
         this.logger.warn(
           { err, userId: input.userId, requestId: input.requestId },
-          'cached/attached-video refund failed; nightly reconcile will recover',
+          'cached/attached-video refund failed; the next reconcile will recover',
         );
       });
     }

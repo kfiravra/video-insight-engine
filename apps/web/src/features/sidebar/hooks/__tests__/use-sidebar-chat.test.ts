@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { useSidebarChat } from "../use-sidebar-chat";
 import { useChatStore } from "@/stores/chat-store";
+import { ApiError } from "@/api/client";
 import {
   sendAssistantMessage,
   sendLibraryMessage,
@@ -536,6 +537,61 @@ describe("useSidebarChat", () => {
       expect(mockedSendLibraryMessage).not.toHaveBeenCalled();
       expect(mockedSendAssistantMessage).not.toHaveBeenCalled();
       expect(result.current.messages).toEqual([]);
+    });
+  });
+
+  describe("request failures", () => {
+    async function sendAndGetAssistantReply(
+      options: Parameters<typeof useSidebarChat>[0],
+    ): Promise<string | undefined> {
+      const { wrapper } = makeWrapper();
+      const { result } = renderHook(() => useSidebarChat(options), { wrapper });
+
+      await act(async () => {
+        result.current.sendMessage("hello");
+      });
+
+      return result.current.messages.find((m) => m.role === "assistant")?.content;
+    }
+
+    it("should tell the user to slow down when the single-video chat is rate limited", async () => {
+      mockedSendAssistantMessage.mockRejectedValueOnce(
+        new ApiError(429, "Too many messages", "RATE_LIMITED"),
+      );
+
+      const reply = await sendAndGetAssistantReply({ videoSummaryId: "vid-123" });
+
+      expect(reply).toBe("Too many messages. Please wait a moment and try again.");
+    });
+
+    it("should tell the user to slow down when the library chat is rate limited", async () => {
+      mockedSendLibraryMessage.mockRejectedValueOnce(
+        new ApiError(429, "Too many messages", "RATE_LIMITED"),
+      );
+
+      const reply = await sendAndGetAssistantReply({});
+
+      expect(reply).toBe("Too many messages. Please wait a moment and try again.");
+    });
+
+    it("should keep the connection-failure copy for any other failure", async () => {
+      mockedSendAssistantMessage.mockRejectedValueOnce(
+        new Error("Assistant chat failed: 503"),
+      );
+
+      const reply = await sendAndGetAssistantReply({ videoSummaryId: "vid-123" });
+
+      expect(reply).toBe("Failed to connect to assistant. Please try again.");
+    });
+
+    it("should put the chat into the error state on a rate-limited request", async () => {
+      mockedSendAssistantMessage.mockRejectedValueOnce(
+        new ApiError(429, "Too many messages", "RATE_LIMITED"),
+      );
+
+      await sendAndGetAssistantReply({ videoSummaryId: "vid-123" });
+
+      expect(useChatStore.getState().status).toBe("error");
     });
   });
 

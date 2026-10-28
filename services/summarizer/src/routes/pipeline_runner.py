@@ -61,6 +61,32 @@ def _persist_cache_hit(
     repository.save_structured_result(video_summary_id, cached)
 
 
+def _resolve_run_attribution(
+    entry: dict[str, Any], ctxvars: dict[str, Any]
+) -> tuple[str | None, str | None]:
+    """Pick the ``(user_id, request_id)`` this run's ``llm_usage`` rows carry.
+
+    Contextvars win, the cache row is the fallback. The queue worker binds the
+    true owner and request of THIS run in contextvars (worker/runner.py); the
+    ``entry`` row is the shared ``videoSummaryCache`` doc, whose ``userId`` /
+    ``requestId`` are whatever the last ``POST /summarize`` stamped and may
+    belong to an earlier HTTP dispatch. The SSE producer binds no user, so
+    there the row is the only owner.
+
+    The request id has one exception: the request-context middleware always
+    binds one on an HTTP request (``path`` is set only by it), and the browser's
+    SSE GET carries no ``X-Request-ID`` — so that is a fresh UUID that would
+    shadow the dispatching request's id the row holds. On an HTTP-bound
+    context the row's id therefore comes first.
+    """
+    user_id = ctxvars.get("user_id") or entry.get("userId")
+    ctx_request_id = ctxvars.get("request_id")
+    row_request_id = entry.get("requestId")
+    if "path" in ctxvars:
+        return user_id, row_request_id or ctx_request_id
+    return user_id, ctx_request_id or row_request_id
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Main Streaming Generator
 # ─────────────────────────────────────────────────────────────────────────────
@@ -102,20 +128,14 @@ async def stream_summarization(
         # produced zero spans and dashboards under-counted the actual
         # request volume. ``cacheHit`` is set via ``update_trace_metadata``
         # once the cache lookup resolves.
-        # ``requestId`` is pulled from structlog contextvars (the worker binds
-        # it from the queue payload) so Sentry events, log lines, and Langfuse
-        # traces share the same correlation id. Only added when present —
-        # the SSE-direct path (e.g. dev override) doesn't bind one and we don't
-        # want ``null`` polluting Langfuse dashboards.
-        # ``request_id`` and ``user_id`` come from structlog contextvars, which
-        # the worker binds from the queue payload (see worker/runner.py). The
-        # ``entry`` row is the cross-user ``videoSummaryCache`` doc — it is
-        # content-addressed and shared across users, so it carries no per-run
-        # owner; ``entry.get("userId")`` is a best-effort fallback for any
-        # SSE-direct path that sets it on the doc.
-        ctxvars = structlog.contextvars.get_contextvars()
-        request_id = ctxvars.get("request_id")
-        user_id = entry.get("userId") or ctxvars.get("user_id")
+        # ``requestId`` comes from the worker's contextvars on the queue path and
+        # from the dispatching ``POST /summarize`` (stamped on the row) on the
+        # SSE path, so Sentry events, log lines, and Langfuse traces share the
+        # api's correlation id. Only added when present — we don't want
+        # ``null`` polluting Langfuse dashboards.
+        user_id, request_id = _resolve_run_attribution(
+            entry, structlog.contextvars.get_contextvars()
+        )
 
         # Set LLM cost-tracking context vars BEFORE the cache lookup so every
         # ``llm_usage`` row this run writes — including the rare cache-hit-path

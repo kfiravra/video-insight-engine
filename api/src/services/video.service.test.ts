@@ -37,6 +37,7 @@ describe('VideoService', () => {
     deleteUserVideoByYoutubeId: ReturnType<typeof vi.fn>;
     updateUserVideoFolder: ReturnType<typeof vi.fn>;
     clearSynthesis: ReturnType<typeof vi.fn>;
+    stampDispatchContext: ReturnType<typeof vi.fn>;
     findHighestVersion: ReturnType<typeof vi.fn>;
     incrementRetryCount: ReturnType<typeof vi.fn>;
     getVersions: ReturnType<typeof vi.fn>;
@@ -77,6 +78,7 @@ describe('VideoService', () => {
       deleteUserVideoByYoutubeId: vi.fn(),
       updateUserVideoFolder: vi.fn(),
       clearSynthesis: vi.fn().mockResolvedValue(undefined),
+      stampDispatchContext: vi.fn().mockResolvedValue(undefined),
       findHighestVersion: vi.fn(),
       incrementRetryCount: vi.fn(),
       getVersions: vi.fn(),

@@ -3,7 +3,9 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Annotated
 
-from fastapi import Depends, FastAPI
+import structlog
+from bson.errors import InvalidId
+from fastapi import Depends, FastAPI, HTTPException
 from llm_common.sentry_init import init_sentry_from_settings
 
 from src.config import settings
@@ -233,18 +235,33 @@ async def summarize(
     """
     Accept video summarization request.
 
-    This endpoint registers the request and stores provider config.
-    Actual processing happens via the streaming endpoint (GET /summarize/stream/{id})
-    which the frontend connects to for real-time progress updates.
+    This endpoint registers the request, stores the dispatching user/request ids
+    and the provider config. Actual processing happens via the streaming endpoint
+    (GET /summarize/stream/{id}) which the frontend connects to for real-time
+    progress updates.
 
     NOTE: No background processing is started here - the streaming route handles
     all the actual summarization work. This prevents duplicate processing.
     """
     logger.info("Received summarize request: providers=%s", request.providers)
 
+    # The SSE producer carries no user, so the dispatcher's ids ride on the cache
+    # row for it to attribute llm_usage. vie-api already stamped the same values
+    # before dispatching (it owns every dispatch, queue path included), so this
+    # write is a backup. The api sends its request id as X-Request-ID; the
+    # request-context middleware validates and binds it.
+    request_id = structlog.contextvars.get_contextvars().get("request_id")
+    try:
+        await asyncio.to_thread(
+            repository.set_dispatch_context, request.videoSummaryId, request.userId, request_id
+        )
+    except (InvalidId, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid video summary ID format")
+
     # Store provider config in database for streaming route to use
     if request.providers:
-        repository.set_provider_config(
+        await asyncio.to_thread(
+            repository.set_provider_config,
             request.videoSummaryId,
             {
                 "default": request.providers.default,

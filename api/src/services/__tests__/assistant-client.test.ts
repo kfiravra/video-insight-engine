@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
 import { AssistantClient } from '../assistant-client.js';
+import { RateLimitedError, ServiceUnavailableError } from '../../utils/errors.js';
 
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
@@ -168,6 +169,48 @@ describe('AssistantClient', () => {
 
       const [, options] = mockFetch.mock.calls[0];
       expect(options.headers).not.toHaveProperty('X-Request-ID');
+    });
+  });
+
+  describe.each(Object.entries({
+    chat: (client: AssistantClient) => client.chat({ videoId: 'vid-1', userId: 'user-1', message: 'hi' }),
+    libraryChat: (client: AssistantClient) =>
+      client.libraryChat({ youtubeIds: [], userId: 'user-1', message: 'hi' }),
+  }))('%s — non-OK upstream response', (_name, call) => {
+    it('should throw RateLimitedError when the assistant answers 429', async () => {
+      mockFetch.mockResolvedValueOnce(
+        jsonResponse(429, { error: 'Rate limit exceeded — try again shortly', code: 'RATE_LIMIT_EXCEEDED' }),
+      );
+
+      await expect(call(client)).rejects.toBeInstanceOf(RateLimitedError);
+    });
+
+    it('should carry the RATE_LIMITED code and 429 status on that error', async () => {
+      mockFetch.mockResolvedValueOnce(jsonResponse(429, { code: 'RATE_LIMIT_EXCEEDED' }));
+
+      await expect(call(client)).rejects.toMatchObject({
+        code: 'RATE_LIMITED',
+        status: 429,
+        message: 'Too many messages. Please wait a moment and try again.',
+      });
+    });
+
+    it('should keep ServiceUnavailableError for a 500 answer', async () => {
+      mockFetch.mockResolvedValueOnce(jsonResponse(500, { detail: 'boom' }));
+
+      await expect(call(client)).rejects.toBeInstanceOf(ServiceUnavailableError);
+    });
+
+    it('should keep ServiceUnavailableError for a 4xx other than 429', async () => {
+      mockFetch.mockResolvedValueOnce(jsonResponse(422, { detail: 'bad history' }));
+
+      await expect(call(client)).rejects.toBeInstanceOf(ServiceUnavailableError);
+    });
+
+    it('should not leak the upstream body into the thrown message', async () => {
+      mockFetch.mockResolvedValueOnce(jsonResponse(500, { detail: 'Traceback /srv/assistant/app.py' }));
+
+      await expect(call(client)).rejects.not.toThrow(/Traceback|\/srv/);
     });
   });
 });

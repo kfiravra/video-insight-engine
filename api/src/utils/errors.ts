@@ -274,14 +274,6 @@ export class TierLimitExceededError extends AppError {
   }
 }
 
-// Cost-specific errors
-export class CostLimitExceededError extends AppError {
-  constructor() {
-    super('COST_LIMIT_EXCEEDED', 503, 'Daily LLM cost limit exceeded. Service temporarily unavailable.');
-    this.name = 'CostLimitExceededError';
-  }
-}
-
 export class DailyLimitReachedError extends AppError {
   /** ISO timestamp of next UTC midnight reset. */
   public readonly resetAt: string;
@@ -297,6 +289,18 @@ export class DailyLimitReachedError extends AppError {
     this.name = 'DailyLimitReachedError';
     this.resetAt = resetAt;
     this.limitUsd = limitUsd;
+  }
+}
+
+/**
+ * The assistant throttled this user (its own 30/min chat window). Same wire
+ * shape as the rate-limit plugin's envelope — `RATE_LIMITED`, 429 — so clients
+ * keep one code map for both.
+ */
+export class RateLimitedError extends AppError {
+  constructor() {
+    super('RATE_LIMITED', 429, 'Too many messages. Please wait a moment and try again.');
+    this.name = 'RateLimitedError';
   }
 }
 

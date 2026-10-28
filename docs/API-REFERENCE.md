@@ -248,6 +248,8 @@ Create folder.
 
 Update folder.
 
+**Demo account:** `403 DEMO_RESTRICTED` for the shared demo account (see [SECURITY.md](./SECURITY.md#demo-account-read-mostly)).
+
 **Request:**
 
 ```json
@@ -264,6 +266,8 @@ Update folder.
 ### DELETE /folders/:id
 
 Delete folder. Contents moved to parent (or unfiled).
+
+**Demo account:** `403 DEMO_RESTRICTED` for the shared demo account.
 
 **Response:** `204 No Content`
 
@@ -373,6 +377,8 @@ The same `sourceLanguage` block is included on the public share endpoint (`GET /
 
 Submit YouTube URL for summarization.
 
+**Demo account:** `403 DEMO_RESTRICTED` when the shared demo account sets `bypassCache: true`, `cold: true`, or `providers`. A plain submit is allowed.
+
 **Request:**
 
 ```json
@@ -475,6 +481,8 @@ eval user; everyone else sees the user-version pool only.
 
 Remove video from user's library.
 
+**Demo account:** `403 DEMO_RESTRICTED` for the shared demo account, here and on `PATCH /videos/:id/move`.
+
 **Note:** Removes the caller's `userVideos` row, the idempotency keys that completed against it and, unless the caller still holds the video in another folder, their own assistant notes for it. The shared summary, vectors and frames stay (see `DELETE /api/admin/videos/:youtubeId`). `404 VIDEO_NOT_FOUND` when the row is not the caller's.
 
 **Response:** `204 No Content`
@@ -528,6 +536,8 @@ Preview a playlist before importing.
 ### POST /playlists/import
 
 Import a playlist, creating a folder and adding all videos.
+
+**Demo account:** `403 DEMO_RESTRICTED` when the shared demo account sets `providers`. A plain import is allowed.
 
 **Rate Limit:** 5 requests per 24 hours
 
@@ -724,6 +734,8 @@ Like a shared summary. No auth, IP rate limited.
 
 Override the detected classification for a video. Triggers re-classification through the plan stage. Auth required.
 
+**Demo account:** `403 DEMO_RESTRICTED` for the shared demo account.
+
 **Request:**
 
 ```json
@@ -766,7 +778,7 @@ Paddle webhook handler. Verifies signature in production.
 ```
 
 **Handled events:**
-- `subscription.created` — set tier to 'pro' or 'team'
+- `subscription.created` — set tier to `pro` (the webhook only ever sets `pro`; `team` is not granted by any payment path)
 - `subscription.updated` — update tier
 - `subscription.cancelled` — schedule downgrade
 - `subscription.past_due` — grace period
@@ -886,12 +898,12 @@ Common error codes:
 
 - `400` - Bad Request (validation), `INVALID_CATEGORY`, `INVALID_WEBHOOK`
 - `401` - Unauthorized
-- `403` - Forbidden: `TIER_LIMIT_EXCEEDED`, `SHARE_NOT_ALLOWED`
+- `403` - Forbidden: `REGISTRATION_CLOSED`, `DEMO_DISABLED`, `DEMO_RESTRICTED` (the shared demo account may not mutate the library or force paid runs; see SECURITY.md), `COLD_RUN_FORBIDDEN`, `ACCOUNT_DELETION_PENDING`
 - `404` - Not Found: `SHARE_NOT_FOUND`
 - `409` - Conflict: `ALREADY_SHARED`
 - `429` - Rate Limited: `RATE_LIMITED`, `DAILY_LIMIT_REACHED` (per-user daily cost cap; also returns `resetAt` + `limitUsd`)
 - `500` - Internal Server Error, `PAYMENT_ERROR`
-- `503` - Service Unavailable: `COST_LIMIT_EXCEEDED` (global aggregate cap)
+- `503` - Service Unavailable: `SERVICE_UNAVAILABLE`, `QUEUE_PUBLISH_FAILED`
 
 ---
 
@@ -1286,6 +1298,8 @@ library-scoped actions). When `video_id` is given (a `videoSummaryId`, or a
 (eval runs included) can be loaded as action context. A `youtubeId` resolves to the
 served version, never an eval row.
 
+**Demo account:** `403 DEMO_RESTRICTED` for the shared demo account on `organize_library`, `rename_folder`, `move_folder`, `delete_folder` and `move_video`, before the assistant is called.
+
 ---
 
 ## POST /api/assistant/library/chat
@@ -1313,6 +1327,8 @@ Callback routes the vie-assistant uses to mutate the caller's library. **Not
 user-JWT** — authenticated by the `authenticateInternal` preHandler
 (`X-Internal-Secret` + `X-User-Id`, constant-time secret comparison). All work is
 scoped to `X-User-Id`; a body-supplied userId is never trusted.
+
+**Demo account:** `PATCH`/`DELETE /internal/assistant/folders/:id` and `PATCH /internal/assistant/videos/:id/move` return `403 DEMO_RESTRICTED` when `X-User-Id` is the shared demo account.
 
 | Method & path | Purpose |
 |---|---|

@@ -53,10 +53,12 @@ type UserScopedCollection =
  * a single line per run.
  *
  * **What is NOT deleted** (documented in `reports/user-data-inventory.md`):
- *   - `videoSummaryCache` (shared cache across users)
+ *   - `videoSummaryCache` rows (shared cache across users) — only the
+ *     dispatcher's `userId` / `requestId` the summarizer stamps on them is
+ *     unset, see `clearVideoCacheDispatchContext`
  *   - Qdrant `transcript_chunks` (shared, video-scoped)
  *   - S3 objects (shared, video-scoped — no user prefix today)
- *   - `llm_usage` (90-day TTL, anonymized cost reporting)
+ *   - `llm_usage` (no TTL; kept for cost reporting)
  */
 
 const DEFAULT_GRACE_DAYS = 30;
@@ -161,13 +163,19 @@ export class UserDeletionService {
   // ─── Phase 3: hard delete saga ──────────────────────────────────────────
 
   async executeHardDelete(
-    userId: string,
+    requestedUserId: string,
     ctx: ExecuteHardDeleteContext,
   ): Promise<UserDeletionDocument> {
-    const user = await this.userRepository.findById(userId);
+    const user = await this.userRepository.findById(requestedUserId);
     if (!user) {
       throw new UserNotFoundError();
     }
+    // `findById` matches an ObjectId case-insensitively (the admin route accepts
+    // uppercase hex), but the string-keyed steps below — `agentNotes`, the
+    // `videoSummaryCache` stamp, the soft-delete cache — compare exact strings
+    // against the lowercase hex the other services wrote. Use the canonical form
+    // so an uppercase request can't silently miss them.
+    const userId = user._id.toString();
 
     const startedAt = this.clock();
     const traceId = randomUUID();
@@ -182,6 +190,8 @@ export class UserDeletionService {
       s3Objects: 0,
     };
     const warnings: string[] = [];
+    // Not part of the audit `counts` (that shape is fixed); logged on completion.
+    let videoCacheRowsUnstamped = 0;
 
     this.logger.info(
       { traceId, userId, initiatedBy: ctx.initiatedBy, adminId: ctx.adminId ?? null },
@@ -218,6 +228,11 @@ export class UserDeletionService {
         'idempotencyKeys',
         userId,
       );
+    }, warnings);
+
+    // The shared cache row survives; only this user's dispatch stamp goes.
+    await this.runStep('videoCacheDispatchContext', traceId, async () => {
+      videoCacheRowsUnstamped = await this.clearVideoCacheDispatchContext(userId);
     }, warnings);
 
     // Qdrant + S3 placeholders — no-ops today, see inventory report. Wired so
@@ -259,6 +274,7 @@ export class UserDeletionService {
       userId,
       durationMs: audit.durationMs,
       counts,
+      videoCacheRowsUnstamped,
       warnings: warnings.length,
     };
     if (warnings.length > 0) {
@@ -364,6 +380,21 @@ export class UserDeletionService {
     }
     const result = await this.db.collection('agentNotes').deleteMany({ $or: filters });
     return result.deletedCount ?? 0;
+  }
+
+  /**
+   * `POST /summarize` stamps the dispatching user's id and request id on the
+   * shared `videoSummaryCache` row so the SSE producer can attribute
+   * `llm_usage`. The summarizer receives the id as JSON, so it is stored as a
+   * string (unlike the ObjectId convention elsewhere). The row stays — other
+   * users share it — and only the dispatcher's identity is unset. Idempotent:
+   * a re-run matches nothing.
+   */
+  private async clearVideoCacheDispatchContext(userId: string): Promise<number> {
+    const result = await this.db
+      .collection('videoSummaryCache')
+      .updateMany({ userId }, { $unset: { userId: '', requestId: '' } });
+    return result.modifiedCount;
   }
 
   /**

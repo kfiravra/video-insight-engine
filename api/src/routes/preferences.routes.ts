@@ -26,6 +26,15 @@ const updatePreferencesSchema = z.object({
     .optional(),
 });
 
+/**
+ * Name fields are shown to every visitor of the shared demo account and
+ * `username` is a unique claim, so the demo account may not change them.
+ * Theme is a harmless convenience and stays allowed.
+ */
+function editsNameFields(body: z.infer<typeof updatePreferencesSchema>): boolean {
+  return body.displayName !== undefined || body.username !== undefined;
+}
+
 export async function preferencesRoutes(fastify: FastifyInstance) {
   const { userRepository } = fastify.container;
 
@@ -47,6 +56,8 @@ export async function preferencesRoutes(fastify: FastifyInstance) {
         message: 'At least one field must be provided',
       });
     }
+
+    if (editsNameFields(body)) await fastify.requireNotDemo(req);
 
     // Build update object
     const updates: Record<string, unknown> = {};

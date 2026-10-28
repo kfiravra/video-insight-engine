@@ -69,10 +69,6 @@ export interface MockContainer {
     getUserTier: ReturnType<typeof vi.fn>;
   };
   costMonitorService: {
-    isDailyLimitExceeded: ReturnType<typeof vi.fn>;
-    getDailySpend: ReturnType<typeof vi.fn>;
-    getRecommendedModel: ReturnType<typeof vi.fn>;
-    recordUsage: ReturnType<typeof vi.fn>;
     checkUserCanProcess: ReturnType<typeof vi.fn>;
     reserveUserCost: ReturnType<typeof vi.fn>;
     refundReservation: ReturnType<typeof vi.fn>;
@@ -223,10 +219,6 @@ export function createMockContainer(): MockContainer {
       getUserTier: vi.fn().mockResolvedValue({ tier: 'free', limits: { videosPerDay: 3, chatPerOutput: 5, shareEnabled: true, exportEnabled: false } }),
     },
     costMonitorService: {
-      isDailyLimitExceeded: vi.fn().mockResolvedValue(false),
-      getDailySpend: vi.fn().mockResolvedValue({ total: 0, limit: 50, percentage: 0 }),
-      getRecommendedModel: vi.fn().mockResolvedValue('sonnet'),
-      recordUsage: vi.fn(),
       checkUserCanProcess: vi.fn().mockResolvedValue({
         allowed: true,
         usedUsd: 0,

@@ -14,6 +14,7 @@ export type AlertDoc = Record<string, unknown>;
 const SEVERITY_BY_TYPE: Record<string, AlertSeverity> = {
   high_cost_call: 'warning',
   daily_spend_spike: 'warning',
+  daily_global_cost: 'critical',
   high_failure_rate: 'critical',
   backup_stale: 'critical',
   pipeline_stalled: 'critical',
@@ -55,6 +56,7 @@ function str(value: unknown): string | null {
 export function alertCost(alert: AlertDoc): number | null {
   const type = String(alert.type ?? '');
   if (type === 'high_cost_call' || type === 'daily_spend_spike') return num(alert.cost_usd);
+  if (type === 'daily_global_cost') return num(alert.today_usd);
   return null;
 }
 
@@ -78,6 +80,10 @@ export function describeAlert(alert: AlertDoc): string {
       if (mult != null) bits.push(`${mult}× limit`);
       if (fraction != null) bits.push(`${Math.round(fraction * 24)}h into day`);
       return bits.join(' · ') || 'today\'s spend above baseline';
+    }
+    case 'daily_global_cost': {
+      const threshold = num(alert.threshold_usd);
+      return threshold != null ? `global spend today · alarm at $${threshold.toFixed(2)}` : 'global spend today above the daily alarm';
     }
     case 'high_failure_rate': {
       const rate = num(alert.failure_rate);

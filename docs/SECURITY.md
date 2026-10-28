@@ -169,6 +169,23 @@ fastify.post("/logout", async (req, reply) => {
 });
 ```
 
+### Demo Account (Read-Mostly)
+
+Every demo visitor ([DEPLOY.md](./DEPLOY.md#demo-mode)) holds a token for one shared account, so anything that mutates its library or spends its budget would hit every other visitor. The shared account is therefore read-mostly: the actions below return 403 `DEMO_RESTRICTED` and the underlying service is never called.
+
+| Refused for the demo account | Routes |
+|------------------------------|--------|
+| Delete or move a video, change its category | `DELETE /videos/:id`, `PATCH /videos/:id/move`, `PATCH /videos/:id/override-category` |
+| Rename, move or delete a folder | `PATCH /folders/:id`, `DELETE /folders/:id` |
+| Force a paid re-run or choose providers | `POST /videos` and `POST /playlists/import` with `providers`; `POST /videos` with `bypassCache: true` or `cold: true` |
+| Library-rewriting assistant actions | `POST /assistant/action` with `organize_library`, `rename_folder`, `move_folder`, `delete_folder`, `move_video`; and the matching `/internal/assistant/*` callbacks (`PATCH`/`DELETE` folders, `PATCH` video move) |
+| Change the account's `displayName` or `username` | `PATCH /users/me/preferences` |
+| Schedule the account's deletion | `DELETE /users/me` |
+
+Still allowed: reading the library, creating folders, a plain `POST /videos` or playlist import, share links (additive and idempotent), notes, chat, and the theme preference.
+
+The account is identified **by user id, not by the JWT `email` claim**. The claim is optional, and the assistant's `/internal/assistant/*` callbacks carry only an `X-User-Id`. `plugins/demo-guard.ts` resolves the id once from `DEMO_USER_EMAIL` and caches it (10 min when found, 60 s when missing, so an account created after boot is picked up); a blank `DEMO_USER_EMAIL` disables the guard with no database call. Routes opt in with `preHandler: [fastify.authenticate, fastify.requireNotDemo]` (or `authenticateInternal`); handlers that refuse only some bodies call `await fastify.requireNotDemo(req)` after parsing. A lookup failure fails the request rather than letting the demo account through. Non-demo users are unaffected on every route.
+
 ---
 
 ## Rate Limiting
@@ -193,7 +210,7 @@ fastify.post("/logout", async (req, reply) => {
 | `GET /payments/tier`  | 60    | 1 min    | User  |
 | `* (default)`         | 100   | 1 min    | User  |
 
-Demo logins (`POST /auth/login` with `{ "demo": true }`, see [DEPLOY.md](./DEPLOY.md#demo-mode)) are ordinary requests to the login route and share its 10 / 15 min per-IP limit. The demo account's credentials stay in vie-api's environment and are never sent to the browser. Because every visitor holds a token for that one account, it cannot schedule its own deletion: `DELETE /users/me` returns 403 `DEMO_RESTRICTED`.
+Demo logins (`POST /auth/login` with `{ "demo": true }`, see [DEPLOY.md](./DEPLOY.md#demo-mode)) are ordinary requests to the login route and share its 10 / 15 min per-IP limit. The demo account's credentials stay in vie-api's environment and are never sent to the browser. Because every visitor holds a token for that one account, it cannot schedule its own deletion: `DELETE /users/me` returns 403 `DEMO_RESTRICTED`. The rest of its read-mostly restrictions are listed under [Demo Account (Read-Mostly)](#demo-account-read-mostly).
 
 ### Implementation
 
@@ -387,7 +404,7 @@ new WebSocket(`${WS_URL}/ws`, ["vie-auth", accessToken]);
 
 ### Admin API Key
 
-`x-admin-key` guarded routes (`DELETE /api/users/:id`, `/api/admin/queue/*`, `DELETE /api/admin/videos/:youtubeId`)
+`x-admin-key` guarded routes (`DELETE /api/admin/users/:id[?immediate=true]`, `/api/admin/queue/*`, `DELETE /api/admin/videos/:youtubeId`)
 compare the header against `ADMIN_API_KEY` with `crypto.timingSafeEqual`
 (`api/src/utils/admin-auth.ts`) — same constant-time pattern as
 `isValidInternalSecret`.
@@ -396,8 +413,13 @@ compare the header against `ADMIN_API_KEY` with `crypto.timingSafeEqual`
 
 `POST /auth/login` (`services/admin/src/routes/auth.py`) verifies email +
 bcrypt password against the `users` collection and returns a stateless
-HMAC-signed session token (keyed on `ADMIN_API_KEY`, 12 h TTL, accepted by
+HMAC-signed session token (keyed on `ADMIN_SESSION_SECRET`, 12 h TTL, accepted by
 `ApiKeyMiddleware`). Hardening:
+
+- **Session secret separate from the machine key** — `ADMIN_API_KEY` stays the
+  machine credential (raw bearer on vie-admin, `X-Admin-Key` to vie-api) and is
+  never an HMAC key: whoever holds it cannot mint a session for an arbitrary
+  email. A token HMAC-keyed on `ADMIN_API_KEY` is rejected.
 
 - **Per-IP login throttle** — in-process sliding window, 5 attempts / 60 s,
   counted BEFORE the bcrypt verify (caps CPU-burn DoS as well as brute
@@ -410,8 +432,8 @@ HMAC-signed session token (keyed on `ADMIN_API_KEY`, 12 h TTL, accepted by
 
 Trade-offs, by design for the direct-port deployment: session tokens are
 stateless and non-revocable within their 12 h TTL (only rotating
-`ADMIN_API_KEY` kills live sessions), and the throttle keys on the direct
-client IP (not proxy-header-aware).
+`ADMIN_SESSION_SECRET` kills live sessions — it logs every admin out), and the
+throttle keys on the direct client IP (not proxy-header-aware).
 
 ### Dev-Default Secret Refusal
 
@@ -419,6 +441,17 @@ client IP (not proxy-header-aware).
 `JWT_REFRESH_SECRET`, `INTERNAL_SECRET`, or `ADMIN_API_KEY` still equal any
 well-known dev placeholder (config defaults, `.env.example` values, or
 docker-compose fallbacks).
+
+vie-admin does the same from its lifespan (`validate_secrets()` in
+`services/admin/src/config.py`): outside a dev `ENVIRONMENT` (`""`,
+`development`, `dev`, `test`, `local`; any other name, including a typo, counts
+as production) it refuses to start when `ADMIN_API_KEY` or
+`ADMIN_SESSION_SECRET` is empty or its dev default (`dev-admin-key-change-me` /
+`dev-admin-session-secret-change-me` — the compose fallbacks and template
+values), when `ADMIN_SESSION_SECRET` is shorter than 32 characters (no length
+rule on `ADMIN_API_KEY`), or when the two are equal. The error names the
+variable, never its value. Dev environments log a warning instead. `docker-compose.prod.yml` sets
+`ENVIRONMENT=production` for vie-admin and requires both variables (`:?`).
 
 ### Service-to-Service Auth
 
@@ -511,6 +544,8 @@ The summarizer logs a warning at startup if `INTERNAL_SECRET` is using the defau
 | `PADDLE_WEBHOOK_SECRET`| vie-api               | Paddle Dashboard          |
 | `PADDLE_API_KEY`       | vie-api (future)      | Paddle Dashboard          |
 | `INTERNAL_SECRET`      | service-to-service    | `openssl rand -base64 32` |
+| `ADMIN_API_KEY`        | vie-api, vie-admin    | `openssl rand -hex 32`    |
+| `ADMIN_SESSION_SECRET` | vie-admin only        | `openssl rand -hex 32` (≠ `ADMIN_API_KEY`) |
 
 ### Production Setup
 
@@ -535,6 +570,7 @@ Before deploying:
 
 - [ ] All secrets in environment variables (not hardcoded)
 - [ ] JWT_SECRET and JWT_REFRESH_SECRET are different
+- [ ] ADMIN_SESSION_SECRET and ADMIN_API_KEY are different (vie-admin refuses to start otherwise)
 - [ ] Rate limiting enabled on all routes
 - [ ] CORS configured for specific origins (not `*`)
 - [ ] Password hashing uses bcrypt with cost ≥ 10

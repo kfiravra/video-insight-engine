@@ -247,3 +247,28 @@ class MongoDBVideoRepository:
                 {"_id": ObjectId(video_summary_id)},
                 {"$set": {"providerConfig": providers, "updatedAt": _utc_now()}},
             )
+
+    def set_dispatch_context(
+        self,
+        video_summary_id: str,
+        user_id: str | None,
+        request_id: str | None,
+    ) -> None:
+        """Record who dispatched this run so the SSE producer can attribute ``llm_usage``.
+
+        The SSE stream drives the pipeline on the HTTP path and carries no user,
+        so the owner has to ride on the cache row. Always overwrites: the row is
+        shared across users and re-dispatched, so a field the new dispatch does
+        not carry is ``$unset`` — an earlier dispatcher's id must never linger
+        and bill the wrong account. No ``updatedAt`` bump: that field is the
+        stall sweeper's liveness signal and a dispatch is not progress.
+        """
+        fields = {"userId": user_id, "requestId": request_id}
+        update: dict[str, Any] = {}
+        present = {name: value for name, value in fields.items() if value}
+        absent = {name: "" for name, value in fields.items() if not value}
+        if present:
+            update["$set"] = present
+        if absent:
+            update["$unset"] = absent
+        self._collection.update_one({"_id": ObjectId(video_summary_id)}, update)

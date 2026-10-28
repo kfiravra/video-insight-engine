@@ -150,11 +150,29 @@ cp .env.production.example .env && chmod 600 .env
 
 # Random hex secrets (hex is safe inside connection URIs)
 for key in MONGO_ROOT_PASS REDIS_PASSWORD RABBITMQ_PASS JWT_SECRET JWT_REFRESH_SECRET \
-           INTERNAL_SECRET ADMIN_API_KEY PADDLE_WEBHOOK_SECRET; do
+           INTERNAL_SECRET ADMIN_API_KEY ADMIN_SESSION_SECRET PADDLE_WEBHOOK_SECRET; do
   sed -i "s|^${key}=.*|${key}=$(openssl rand -hex 32)|" .env
 done
 sed -i 's|your-domain.example|DOMAIN|g' .env
 ```
+
+**Existing host: add the vie-admin session secret before merging the admin-roles change.** The deploy workflow pulls `main` and rebuilds after every green CI run, so the row has to be in the server `.env` before the merge. While `ADMIN_SESSION_SECRET` is missing, compose stops at variable substitution and starts no service at all. vie-admin also refuses to start on the dev default, on a value shorter than 32 characters, or on a value equal to `ADMIN_API_KEY`. A row copied from `.env.production.example` carries the dev default, so the snippet replaces an empty, short or dev-default value as well as adding a missing row.
+
+```bash
+cd ~/video-insight-engine
+secret="$(grep -E '^ADMIN_SESSION_SECRET=' .env | tail -n1 | cut -d= -f2- | tr -d "\"'")"
+if ! grep -q '^ADMIN_SESSION_SECRET=' .env; then
+  # printf adds the leading newline an .env without a final one would otherwise lack
+  printf '\nADMIN_SESSION_SECRET=%s\n' "$(openssl rand -hex 32)" >> .env
+elif [ "${#secret}" -lt 32 ] || [ "$secret" = 'dev-admin-session-secret-change-me' ]; then
+  sed -i "s|^ADMIN_SESSION_SECRET=.*|ADMIN_SESSION_SECRET=$(openssl rand -hex 32)|" .env
+fi
+dc config -q   # prints nothing when .env is complete
+```
+
+The deploy workflow also waits up to two minutes for `vie-admin` to report healthy and fails the run with its last log lines if it does not, so a refused start shows up as a red deploy instead of a silently missing panel.
+
+The first deploy after the change logs every admin out once, because older sessions were signed with `ADMIN_API_KEY`. To rotate `ADMIN_SESSION_SECRET` later, set a fresh value with `sed -i` and run `dc up -d vie-admin`. That logs everyone out again; `dc restart` does not re-read `.env`.
 
 Then edit `.env` and set both required provider keys, `ANTHROPIC_API_KEY` and `OPENAI_API_KEY`, plus any optional one (`GEMINI_API_KEY`). The OpenAI key is required since the pipeline-1min 4.0d model picks: description analysis and the output / title / RAG-text translation default to `openai/gpt-6-luna`, the quiz (only with `QUIZ_V2_ENABLED=false`) to `openai/gpt-4o-mini`, and the template sets `LLM_FAST_PROVIDER=openai` (the synthesis fallback, chapter detection and the faithfulness judge on gpt-4o-mini); it also enables the Whisper audio fallback. Compose passes the key through as optional, so `dc config -q` does not catch a missing one: without it those calls fail (fast-tier calls never fall back to another provider): pipeline runs lose the description analysis, translation, the synthesis fallback, AI chapter detection and the faithfulness judge (hero / quiz calls included), and vie-assistant loses its chat (the template sets `LLM_CHAT_MODEL=openai/gpt-4o-mini`) and its quiz tool (the fast tier). The OpenAI project behind the key must have access to `gpt-6-luna` and `gpt-4o-mini`. Check that `S3_BUCKET` names the bucket and `AWS_REGION` is the region the check in section a printed. Leave `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` unset, because the instance role supplies credentials.
 
@@ -178,7 +196,7 @@ When something fails, start with `dc logs --tail 100 vie-caddy vie-api vie-summa
 
 ### Create the first user
 
-With `ALLOW_REGISTRATION=false`, nobody can sign up through the web app. Create accounts on the server with `scripts/create-admin.ts`, run in a one-off container built from the API image's builder stage (it already has `tsx`, `bcrypt` and `mongodb`).
+With `ALLOW_REGISTRATION=false`, nobody can sign up through the web app. Create accounts on the server with `scripts/create-user.ts`, run in a one-off container built from the API image's builder stage (it already has `tsx`, `bcrypt` and `mongodb`).
 
 Run from the repo checkout on the server, after the stack is up:
 
@@ -189,19 +207,69 @@ docker build --target builder -f api/Dockerfile -t vie-api-tools .
 # 2. Load the Mongo credentials from the server .env
 set -a; . ./.env; set +a
 
-# 3. Create the user (prompts keep the password out of shell history)
+# 3. Create the user (prompts keep the password out of shell history).
+#    The export is required: `docker run -e NAME` forwards only exported variables.
 read -r -p "Email: " VIE_USER_EMAIL
 read -r -s -p "Password (8+ chars, upper, lower, digit): " VIE_USER_PASSWORD; echo
+export VIE_USER_EMAIL VIE_USER_PASSWORD
 
 docker run --rm --network vie-network \
-  -v "$PWD/scripts/create-admin.ts:/app/api/create-admin.ts:ro" \
+  -v "$PWD/scripts/create-user.ts:/app/api/create-user.ts:ro" \
   -e MONGODB_URI="mongodb://${MONGO_ROOT_USER}:${MONGO_ROOT_PASS}@vie-mongodb:27017/video-insight-engine?authSource=admin" \
   -e VIE_USER_EMAIL -e VIE_USER_PASSWORD \
   -w /app/api vie-api-tools \
-  sh -c 'npx tsx create-admin.ts "$VIE_USER_EMAIL" "$VIE_USER_PASSWORD" "Demo"'
+  sh -c 'npx tsx create-user.ts "$VIE_USER_EMAIL" "$VIE_USER_PASSWORD"'
 ```
 
-The script creates the user with role `admin`, so the same login also works for the vie-admin panel. Running it again with the same email resets that user's password.
+The script creates an ordinary user and never sets a role, so account creation does not grant access to the vie-admin panel. The admin role comes from the `ADMIN_EMAILS` list in a later phase. Until then, on a fresh host see "First admin on a fresh host" below; for admins you already have, see the one-off demote step after it. The email is trimmed and lowercased, and an optional third argument sets the display name (default: the part of the email before the `@`).
+
+Running it again with the same email changes nothing and prints `exists, unchanged`. To set a new password for an existing user, add `--reset-password` after the password inside the `sh -c` string; only `passwordHash` and `updatedAt` change. For an existing admin the script exits 1 without that flag, so a re-run can never change an admin's password by accident.
+
+### First admin on a fresh host (temporary, until `ADMIN_EMAILS` seeding)
+
+A host provisioned only with `create-user.ts` has no admin, so nobody can log into the vie-admin panel. Until the `ADMIN_EMAILS` seeding lands, grant the role to one existing account by hand. Create that user first (above); the email is matched after trimming and lowercasing, like `create-user.ts` stores it:
+
+```bash
+read -r -p "Email to make admin: " VIE_ADMIN_EMAIL
+export VIE_ADMIN_EMAIL   # `docker exec -e NAME` forwards only exported variables
+docker exec -e VIE_ADMIN_EMAIL vie-mongodb sh -c 'mongosh --quiet -u "$MONGO_INITDB_ROOT_USERNAME" -p "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin video-insight-engine --eval "printjson(db.users.updateOne({ email: process.env.VIE_ADMIN_EMAIL.trim().toLowerCase() }, { \$set: { role: \"admin\" } }))"'
+```
+
+`matchedCount: 1` means the role is set. `matchedCount: 0` means no user has that email, so check the spelling or create the user first. The root credentials come from the container's own environment, so nothing secret is typed or left in shell history. Log into the panel afterwards; the role is read from the database at login.
+
+### One-off: demote hand-provisioned admins
+
+Do this once on a host whose accounts were created with the old `create-admin.ts`. That script gave every account `role: 'admin'`, so each invited user can log into the vie-admin panel: every user's email and costs, global video purge, DLQ replay and credit grants. `scripts/demote-admins.ts` unsets `role` on every admin whose email is not on the list you give it. It changes nothing else and touches only admin accounts. The demoted users keep their accounts and videos.
+
+It reuses the `vie-api-tools` image and the loaded `.env` from "Create the first user" above. The script is mounted, so there is nothing to rebuild.
+
+```bash
+# Skip these two lines if the previous step's shell is still open
+docker build --target builder -f api/Dockerfile -t vie-api-tools .
+set -a; . ./.env; set +a
+
+# The login email(s) that stay admin; several are comma-separated. Matched ignoring case.
+read -r -p "Admin email(s) to keep: " VIE_KEEP_EMAIL
+export VIE_KEEP_EMAIL   # `docker run -e NAME` forwards only exported variables
+
+demote_admins() {
+  docker run --rm --network vie-network \
+    -v "$PWD/scripts/demote-admins.ts:/app/api/demote-admins.ts:ro" \
+    -e MONGODB_URI="mongodb://${MONGO_ROOT_USER}:${MONGO_ROOT_PASS}@vie-mongodb:27017/video-insight-engine?authSource=admin" \
+    -e VIE_KEEP_EMAIL \
+    -w /app/api vie-api-tools \
+    sh -c 'npx tsx demote-admins.ts --keep "$VIE_KEEP_EMAIL" "$@"' demote "$@"
+}
+
+demote_admins --dry-run    # 1. preview: lists who would be demoted and who is kept; writes nothing
+demote_admins              # 2. when the preview is exactly right, run it for real
+```
+
+Read the preview before the second command: the accounts under "Would demote" lose panel access, and the account(s) under "Kept as admin" must include you. A kept email that is not a current admin is reported as a warning. If none of the kept emails is a current admin, the script exits 1 and writes nothing, with or without `--dry-run`, because demoting everyone would leave the panel with no admin. Fix the email and run it again.
+
+Demotion stops new panel logins at once. A demoted user who is already logged in keeps working until their session expires (up to 12 hours); to end every open session now, set a new `ADMIN_SESSION_SECRET` in `.env` and run `dc up -d vie-admin`, which logs all admins out, you included.
+
+This step goes away in a later phase, when the admin role is seeded from the `ADMIN_EMAILS` list.
 
 ### Demo mode
 
@@ -230,6 +298,7 @@ Only vie-api needs recreating when these variables change (`dc restart` does not
 - **Limits:** the demo user is an ordinary free-tier user, and every visitor shares it. Its allowance is whatever `.env` gives free users: `USER_COST_LIMIT_FREE` (USD per UTC day) and `VIDEO_DAILY_LIMIT` (submissions per 24 hours). When either runs out, visitors see the normal limit message and can still browse the videos already in the demo library. The admin panel can top up one day's budget (Users → the user → Adjustments → Grant credit); it cannot change the tier or the limits.
 - **Rate limit:** demo sign-ins count against the login limit of 10 per 15 minutes per IP address.
 - **Account deletion:** while `DEMO_USER_EMAIL` is set, `DELETE /api/users/me` returns 403 `DEMO_RESTRICTED` for the demo user, so a visitor cannot lock the demo for everyone. The admin immediate delete still works.
+- **Read-mostly:** the demo user cannot change the shared library or spend the shared budget. While `DEMO_USER_EMAIL` is set, these return 403 `DEMO_RESTRICTED` for it: deleting or moving videos, changing a video's category, renaming, moving or deleting folders, `bypassCache` / `cold` / `providers` on submit, `providers` on playlist import, the assistant's library-rewriting actions (organize, rename, move, delete folder, move video), and changing `displayName` or `username`. Browsing, creating folders and plain submits still work. The account is identified by its user id, looked up from `DEMO_USER_EMAIL`. After you recreate the demo user, the guard follows the new id within 10 minutes (or restart vie-api). If no account matches the email yet, the guard retries every minute. See [SECURITY.md](./SECURITY.md#demo-account-read-mostly).
 
 ## f. Nightly backup and disk space
 

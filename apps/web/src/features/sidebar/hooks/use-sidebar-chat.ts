@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { ApiError } from "@/api/client";
 import {
   sendAssistantMessage,
   sendLibraryMessage,
@@ -39,6 +40,16 @@ const MUTATING_ACTIONS = new Set([
   "generate_video",
   "organize_library",
 ]);
+
+const RATE_LIMITED_MESSAGE = "Too many messages. Please wait a moment and try again.";
+const CONNECT_FAILED_MESSAGE = "Failed to connect to assistant. Please try again.";
+
+/** Copy for a request that failed before any SSE event arrived. */
+function requestFailureMessage(err: unknown): string {
+  const rateLimited =
+    err instanceof ApiError && (err.status === 429 || err.code === "RATE_LIMITED");
+  return rateLimited ? RATE_LIMITED_MESSAGE : CONNECT_FAILED_MESSAGE;
+}
 
 /** Map the wire field `timestamp_seconds` (snake_case per the Python
  * RAGSource model; null on v1-legacy chunks) to ChatSource.timestampSeconds —
@@ -288,7 +299,7 @@ export function useSidebarChat(options: UseSidebarChatOptions = {}) {
             m.id === assistantId
               ? {
                   ...m,
-                  content: "Failed to connect to assistant. Please try again.",
+                  content: requestFailureMessage(err),
                   isStreaming: false,
                 }
               : m,

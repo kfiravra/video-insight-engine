@@ -70,6 +70,11 @@ export async function playlistsRoutes(fastify: FastifyInstance) {
     },
   }, async (req, reply) => {
     const { url, folderId, maxVideos, providers } = importSchema.parse(req.body);
+    // Same rule as POST /api/videos: the shared demo account may import, but
+    // not pick providers on the shared budget.
+    if (providers) {
+      await fastify.requireNotDemo(req);
+    }
     const result = await playlistService.import(
       req.user.userId,
       url,

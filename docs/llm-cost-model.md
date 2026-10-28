@@ -7,8 +7,14 @@ How VIE accounts for LLM token spend, including Anthropic prompt-caching credit.
 Every LiteLLM call writes one row to MongoDB `llm_usage` via
 `MongoDBUsageCallback._build_record` (`packages/llm-common/src/llm_common/callback.py`).
 The callback is registered as `litellm.callbacks = [callback]` on service startup
-and is the single source of truth for cost — there is no manual tracking path
-in the hot loop.
+(the HTTP summarizer and the queue worker each register one), so there is no manual
+tracking path in the hot loop for LiteLLM calls. It is **not** the only writer of
+cost: transcription bypasses LiteLLM and emits its own rows through
+`record_manual_usage` into the same buffer (see
+[Transcription cost tracking](#transcription-cost-tracking)). Node writes no
+`llm_usage` rows at all — the old Node-side writer (a different, unreconcilable
+schema) was deleted. Per-user accounting reads the Python-schema
+`llm_usage` rows only.
 
 ## Schema
 
@@ -76,15 +82,25 @@ as `compute_cache_savings_usd`.
 — it is real spend. Because the rows carry `cost_usd` + `user_id`, they flow into
 `reconcileUserDay` automatically with no extra wiring; no exclusion filter is
 applied. (NB: only processes that register a `MongoDBUsageCallback` emit these
-rows — the FastAPI summarizer does; the standalone RabbitMQ worker does not
-register a callback, so transcription run through the queue-only path is
-untracked, same as all other `llm_usage` on that path.)
+rows — both the FastAPI summarizer and the RabbitMQ worker do, in `main.py` and
+`worker/__main__.py`.)
 
 The summarizer sets `user_id`, `video_summary_id`, `video_id`, and `request_id`
 in `pipeline_runner.py` **before** the cache lookup, so every row a run writes is
 attributable. `user_id` and `request_id` come from the **structlog contextvars
-the worker binds from the queue payload** — *not* from the cache row, which is the
-cross-user `videoSummaryCache` doc and carries no per-run owner. The assistant sets
+the worker binds from the queue payload** first, and from the cache row second.
+The row (the cross-user `videoSummaryCache` doc) carries the *last dispatcher's*
+`userId` / `requestId`, which vie-api stamps on **every** dispatch
+(`VideoService.dispatchPipeline` → `VideoRepository.stampDispatchContext`,
+before it publishes the job or calls `POST /summarize`; `/summarize` re-stamps
+the same values as a backup). Queue runs the worker executes attribute through
+its contextvars (which win: the row may belong to an earlier dispatch). Any
+SSE-driven run attributes through the row: the HTTP fallback, and a queued video
+whose SSE request won the summarizer's per-video lock before the worker (the
+worker then skips the job). On an
+HTTP-bound context the row's `requestId` also wins, because the middleware's own
+id for the browser's SSE request is a fresh UUID. See
+[GDPR.md](./GDPR.md) for how the stamp is cleared on user deletion. The assistant sets
 `feature` (`assistant:rag_chat` / `assistant:library_chat` /
 `assistant:action:<action>` / `assistant:tool:<name>`), `video_id`, `user_id`, and
 `request_id` at each endpoint (from `X-User-Id` / `X-Request-ID` headers the API
@@ -423,13 +439,20 @@ answer's row and its previous-model re-send included. The aggregate feeds two ga
    and the next UTC midnight reset for the in-app usage tile.
 
 Reconciliation runs on every terminal video status (`completed` / `failed`)
-via the internal status callback, and nightly via `POST /internal/reconcile-costs`.
+via the internal status callback, for **today's UTC day only** — a run reserved
+before midnight UTC and finished after leaves its reservation on the earlier day.
+`POST /internal/reconcile-costs` can rebuild any day (`?date=`, `?userId=`) but has
+**no scheduler or caller** today: nothing triggers it, so it is a manual/operator
+endpoint, not a nightly job.
 The terminal-status path is the canonical refund-on-failure — do not also
 call `refundReservation` on failure, or the day will be double-credited.
 
-The Node `CostMonitorService.recordUsage` writes a **different** schema
-(`model`, `cost`, `createdAt`) that reconciliation does **not** read; use it
-only for global cost telemetry, not for per-user attribution.
+There is no global request-blocking cap. Global spend is an operator signal
+only: the vie-admin evaluator raises a `daily_global_cost` alert (critical, once
+per UTC day) when Σ `cost_usd` since UTC midnight reaches
+`ALERT_DAILY_COST_THRESHOLD_USD` (default `20`, `<= 0` disables). The former
+Node-side global cap (a daily-limit env var plus a 503 path) was dead code and is
+gone.
 
 Admin grants and manual charges go through `userCostAdjustments` (signed
 storage: negative = credit) — see [DATA-MODELS.md](./DATA-MODELS.md#usercostadjustments)
@@ -452,18 +475,20 @@ The vie-admin lifespan **also** drops any legacy 90-day TTL on `llm_usage`
 
 ## Alerting (implemented 2026-07-12)
 
-Three thresholds, all real:
+Four alert types, all real:
 
 | Alert type | Evaluated by | Trigger |
 |---|---|---|
 | `high_cost_call` | `llm_common.callback.MongoDBUsageCallback` (inline, per LLM call) | single call cost > `cost_threshold` (constructor default $0.50) |
 | `daily_spend_spike` | vie-admin `alert_evaluator` loop (every 5 min) | today's spend > `daily_spike_multiplier` × trailing 7-day daily average (baseline must be ≥ $0.50/day) |
+| `daily_global_cost` | vie-admin `alert_evaluator` loop (every 5 min) | Σ `cost_usd` across all users since UTC midnight ≥ `ALERT_DAILY_COST_THRESHOLD_USD` (default $20; `<= 0` disables). Critical, once per UTC day. Alarm only — it blocks nothing |
 | `high_failure_rate` | vie-admin `alert_evaluator` loop (every 5 min) | failure rate over the trailing 60 min > `failure_rate_threshold`, with ≥ 10 calls in the window |
 
 The spike/failure thresholds are read live from `llm_alert_config` (managed by
 `POST /alerts/config` in vie-admin), which was previously decorative. Per-type
 cooldowns (6 h spike, 1 h failure) stop a sustained condition from re-alerting
-every cycle.
+every cycle; `daily_global_cost` is limited to one alert per UTC day instead of a
+rolling window, so the first breach after midnight still alerts.
 
 **Delivery:** every alert is written to `llm_alerts` (rendered by the admin UI)
 and POSTed as JSON to `ALERT_WEBHOOK_URL` when set (Slack-compatible generic
