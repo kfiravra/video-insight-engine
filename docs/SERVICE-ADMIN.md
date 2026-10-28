@@ -161,12 +161,14 @@ daily aggregates) and `userCostAdjustments` (admin audit log). See
 | GET | `/users/costs?days=7&limit=50&offset=0` | Top users by effective USD over the trailing window (joins `users` for email/name/tier) |
 | GET | `/users/{user_id}/costs?days=30` | One user's daily breakdown + last 20 audit rows |
 | GET | `/users/{user_id}/activity?days=30` | User-360: videos generated (`userVideos` join), assistant LLM calls (`llm_usage` where `user_id`), and daily cost timeline — all in one payload |
-| POST | `/users/{user_id}/grant-credit` | Apply a signed adjustment; `amountUsd > 0` grants credit (stored as negative), `< 0` is a manual charge. Validated: `|amountUsd| ≤ 1000`, `reason` 1–500 chars, optional `date` (`YYYY-MM-DD`) |
+| POST | `/users/{user_id}/grant-credit` | Grant minutes: body `{minutes (1–100000), reason (1–500), expiresAt?}`, proxied to vie-api's `POST /api/admin/billing/accounts/{id}/credits` as the session's admin. Answers vie-api's `{before, after, lotId, auditId}`. Named admin session only (the machine key gets `403`) |
 
-**Audit caveat:** `adminId` in the grant-credit request body is still
-self-attested; the session now names the real admin (`request.state.actor`), but this
-endpoint does not use it yet. The route is replaced by a proxy to vie-api's billing
-endpoints (billing-roles P2.7), which take the actor from the signed header.
+`grant-credit` no longer writes anything here. It used to add USD to `userCosts` /
+`userCostAdjustments` with a self-attested `adminId` in the body; vie-api's ledger is the only
+writer of credit now, and the ledger entries and the `adminAudit` row carry the admin from the
+signed session. The body is strict: the retired `amountUsd`, `adminId` and `date` fields are `422`.
+`userCosts` and `userCostAdjustments` stay as read-only history (the cost views above); a test
+scans the service source and fails if any write to them comes back.
 
 ### Billing Account (`/billing/`)
 
@@ -194,6 +196,30 @@ named admin sessions can both call it.
   remaining (its last totals stay visible) until the user's next request rolls it.
 - **Constants:** the free-video window (1 video, 24 h, 30 min) mirrors `FREE_VIDEO` in
   `packages/types/src/billing.ts`; a test fails if they drift.
+
+### Billing Actions and Audit (`/billing/…`, `/audit`)
+
+Proxies to vie-api's admin billing routes (`routes/billing_actions.py`, shared plumbing in
+`services/vie_api_client.py`). vie-api's `BillingService` is the only writer of the ledger and of
+`adminAudit`; these routes check the request shape and forward it with the session admin's signed
+`X-Admin-Actor`, so ledger entries and the audit row name the real admin and the reason. Every
+mutation is a named admin session only (`403` for the machine key) and takes a `reason` of 1–500
+characters; unknown fields such as `adminId` are `422`. Send one `Idempotency-Key` header per form
+submission (8–128 of `A-Za-z0-9_-`) and it is forwarded: a retry after a timeout then applies once.
+
+| Method | Path | Body | vie-api permission |
+|--------|------|------|--------------------|
+| POST | `/billing/accounts/{user_id}/plan` | `{planId: free\|pro, periodEnd?, reason}` | `plan:set` |
+| POST | `/billing/accounts/{user_id}/caps` | `{maxVideoMinutes?, freeVideosPerDay?, maxConcurrent?, blocked?, reason}`; `null` clears a cap | `caps:set` |
+| POST | `/billing/accounts/{user_id}/adjust` | `{bucket: plan\|credit, minutes (signed, not 0), reason}` | `billing:grant` |
+| POST | `/billing/accounts/{user_id}/recurring-grants` | `{minutes, every: month, active, reason}` | `billing:grant` |
+| DELETE | `/billing/accounts/{user_id}/recurring-grants/{grant_id}` | `{reason}` | `billing:grant` |
+| GET | `/audit?targetId=&actorId=&limit=&before=` | | `audit:read` (the machine key may read) |
+
+Granting minutes is `POST /users/{user_id}/grant-credit` (above). vie-api answers are passed through
+(`400` validation with its `{error, message}` envelope, `404`, `403` for a demoted admin, `409`
+`ACCOUNT_BUSY`); a `504` means vie-api timed out and the change may have been applied, so reload the
+account before retrying (or retry with the same `Idempotency-Key`).
 
 ## Frontend
 

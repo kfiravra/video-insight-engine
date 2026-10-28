@@ -10,6 +10,7 @@ const mockCosts = vi.fn();
 const mockCostDetail = vi.fn();
 const mockActivity = vi.fn();
 const mockGrantCredit = vi.fn();
+const mockBillingAccount = vi.fn();
 
 vi.mock('../lib/api', async () => {
   const actual = await vi.importActual<typeof import('../lib/api')>('../lib/api');
@@ -23,6 +24,7 @@ vi.mock('../lib/api', async () => {
         activity: mockActivity,
         grantCredit: mockGrantCredit,
       },
+      billing: { account: mockBillingAccount },
     },
   };
 });
@@ -101,6 +103,9 @@ beforeEach(() => {
   mockCostDetail.mockReset();
   mockActivity.mockReset();
   mockGrantCredit.mockReset();
+  mockBillingAccount.mockReset();
+  // The Account tab loads the ledger view; these tests are about the grant form beside it.
+  mockBillingAccount.mockReturnValue(new Promise(() => undefined));
 });
 
 afterEach(() => {
@@ -206,52 +211,64 @@ describe('User-360 drawer tabs', () => {
     });
   });
 
-  it('should show Adjustments tab with grant-credit form', async () => {
+  async function openUserTab(tabName: RegExp) {
     mockCosts.mockResolvedValue([USER_ROW]);
     mockCostDetail.mockResolvedValue(COST_DETAIL);
     mockActivity.mockResolvedValue(ACTIVITY);
     const { UsersPage } = await import('./UsersPage');
-    const wrapper = makeWrapper();
-    render(<UsersPage days={7} />, { wrapper });
+    render(<UsersPage days={7} />, { wrapper: makeWrapper() });
     await waitFor(() => screen.getByTestId(`user-row-${USER_ROW.userId}`));
     fireEvent.click(screen.getByTestId(`user-row-${USER_ROW.userId}`));
+    await waitFor(() => screen.getByRole('tab', { name: tabName }));
+    fireEvent.click(screen.getByRole('tab', { name: tabName }));
+  }
 
-    await waitFor(() => screen.getByRole('tab', { name: /adjustments/i }));
-    fireEvent.click(screen.getByRole('tab', { name: /adjustments/i }));
+  it('should show the grant-minutes form on the Account tab', async () => {
+    await openUserTab(/account/i);
 
-    // The grant credit form should be visible
     await waitFor(() => {
-      expect(screen.getByTestId('grant-credit-amount')).toBeTruthy();
+      expect(screen.getByTestId('grant-credit-minutes')).toBeTruthy();
     });
   });
 
-  it('should surface a range error and not call grantCredit when amount is out of range', async () => {
-    mockCosts.mockResolvedValue([USER_ROW]);
-    mockCostDetail.mockResolvedValue(COST_DETAIL);
-    mockActivity.mockResolvedValue(ACTIVITY);
-    const { UsersPage } = await import('./UsersPage');
-    const wrapper = makeWrapper();
-    render(<UsersPage days={7} />, { wrapper });
-    await waitFor(() => screen.getByTestId(`user-row-${USER_ROW.userId}`));
-    fireEvent.click(screen.getByTestId(`user-row-${USER_ROW.userId}`));
+  it('should grant minutes for the selected user with no admin id to type', async () => {
+    mockGrantCredit.mockResolvedValue({ lotId: 'l', auditId: 'a' });
+    await openUserTab(/account/i);
+    await waitFor(() => screen.getByTestId('grant-credit-minutes'));
 
-    await waitFor(() => screen.getByRole('tab', { name: /adjustments/i }));
-    fireEvent.click(screen.getByRole('tab', { name: /adjustments/i }));
+    fireEvent.change(screen.getByTestId('grant-credit-minutes'), { target: { value: '150' } });
+    fireEvent.change(screen.getByTestId('grant-credit-reason'), { target: { value: 'goodwill' } });
+    const form = screen.getByTestId('grant-credit-minutes').closest('form');
+    if (!form) throw new Error('grant form not found');
+    fireEvent.submit(form);
 
-    await waitFor(() => screen.getByTestId('grant-credit-amount'));
+    await waitFor(() => expect(mockGrantCredit).toHaveBeenCalledOnce());
+    expect(mockGrantCredit).toHaveBeenCalledWith(USER_ROW.userId, { minutes: 150, reason: 'goodwill' }, expect.any(String));
+    expect(screen.queryByTestId('grant-credit-admin-id')).toBeNull();
+  });
 
-    fireEvent.change(screen.getByTestId('grant-credit-amount'), { target: { value: '5000' } });
+  it('should surface a range error and not call grantCredit when minutes are out of range', async () => {
+    await openUserTab(/account/i);
+    await waitFor(() => screen.getByTestId('grant-credit-minutes'));
+
+    fireEvent.change(screen.getByTestId('grant-credit-minutes'), { target: { value: '5000000' } });
     fireEvent.change(screen.getByTestId('grant-credit-reason'), { target: { value: 'over the cap' } });
-    fireEvent.change(screen.getByTestId('grant-credit-admin-id'), {
-      target: { value: '0123456789abcdef01234567' },
-    });
-    const form = screen.getByTestId('grant-credit-amount').closest('form');
-    if (!form) throw new Error('grant credit form not found');
+    const form = screen.getByTestId('grant-credit-minutes').closest('form');
+    if (!form) throw new Error('grant form not found');
     fireEvent.submit(form);
 
     await waitFor(() => {
-      expect(screen.getByText('Amount must be between -1000 and 1000')).toBeTruthy();
+      expect(screen.getByText('Minutes must be between 1 and 100000')).toBeTruthy();
     });
     expect(mockGrantCredit).not.toHaveBeenCalled();
+  });
+
+  it('should keep the Adjustments tab as read-only USD history, with no grant form', async () => {
+    await openUserTab(/adjustments/i);
+
+    await waitFor(() => {
+      expect(screen.getByText('Past USD adjustments')).toBeTruthy();
+    });
+    expect(screen.queryByTestId('grant-credit-minutes')).toBeNull();
   });
 });

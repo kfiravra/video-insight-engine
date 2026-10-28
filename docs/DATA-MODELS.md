@@ -865,7 +865,7 @@ reservations, not real spend.
 
 ## userCostAdjustments
 
-Audit log for admin grant-credit and manual-charge actions.
+**Read-only history.** Audit log of the retired dollar grant-credit and manual-charge actions. Nothing writes it any more: credit is granted in minutes through vie-api's ledger (see [Billing Collections](#billing-collections-minutes-ledger) and `adminAudit`).
 
 ```javascript
 {
@@ -874,7 +874,7 @@ Audit log for admin grant-credit and manual-charge actions.
   date: string,                   // UTC `YYYY-MM-DD` — adjustments are day-scoped
   amountUsd: number,              // Signed. Negative = credit (lowers spend), positive = manual charge
   reason: string,                 // 1–500 chars
-  adminId: ObjectId,              // Self-attested from request body (admin service is shared-key auth)
+  adminId: ObjectId,              // Self-attested from the request body (historical rows only)
   createdAt: Date
 }
 ```

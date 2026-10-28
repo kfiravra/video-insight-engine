@@ -1,19 +1,21 @@
-"""Per-user cost & credit endpoints."""
+"""Per-user cost views (read-only history) and the credit-grant proxy."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Annotated, Any
 
 from bson import ObjectId
 from bson.errors import InvalidId
 from cachetools import TTLCache
-from fastapi import APIRouter, HTTPException, Path, Query
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, Header, HTTPException, Path, Query
+from pydantic import BaseModel, ConfigDict, Field
 
+from src.auth import AdminActor, current_user_actor
 from src.dependencies import get_database
+from src.services.vie_api_client import IDEMPOTENCY_KEY_PATTERN, OBJECT_ID_PATTERN, call_vie_api
 
 logger = logging.getLogger(__name__)
 
@@ -70,28 +72,15 @@ class UserCostDetail(BaseModel):
 
 
 class GrantCreditRequest(BaseModel):
-    amountUsd: float = Field(
-        ...,
-        description=(
-            "USD signed. Positive value grants credit (reduces effective usage). "
-            "Use 0 to log a no-op audit row."
-        ),
-    )
+    """Minutes to add to a user's account as a credit lot."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    minutes: int = Field(..., ge=1, le=100_000, description="Whole minutes of credit")
     reason: str = Field(..., min_length=1, max_length=500)
-    adminId: str = Field(..., description="ObjectId of the admin issuing the grant")
-    date: str | None = Field(
-        None,
-        pattern=r"^\d{4}-\d{2}-\d{2}$",
-        description="UTC YYYY-MM-DD; defaults to today",
+    expiresAt: datetime | None = Field(
+        None, description="ISO 8601 with an offset; absent or null = the lot never expires"
     )
-
-
-class GrantCreditResponse(BaseModel):
-    userId: str
-    date: str
-    amountUsd: float
-    creditAdjustmentUsd: float
-    effectiveUsd: float
 
 
 # ─── User-360 activity models ───
@@ -283,80 +272,32 @@ async def user_cost_detail(
 
 @router.post("/{user_id}/grant-credit")
 async def grant_credit(
+    user_id: Annotated[str, Path(pattern=OBJECT_ID_PATTERN)],
     body: GrantCreditRequest,
-    user_id: str = Path(..., min_length=24, max_length=24),
-) -> GrantCreditResponse:
-    """Apply a signed adjustment to a user's day and audit it.
+    actor: Annotated[AdminActor, Depends(current_user_actor)],
+    idempotency_key: Annotated[
+        str | None, Header(alias="Idempotency-Key", pattern=IDEMPOTENCY_KEY_PATTERN)
+    ] = None,
+) -> dict:
+    """Grant minutes: a proxy to vie-api's ``POST /api/admin/billing/accounts/{id}/credits``.
 
-    `amountUsd` semantics (HTTP boundary):
-        - Positive  → grant credit (subtracts from effective usage).
-        - Negative  → admin manually charges the user extra.
-        - 0         → no-op audit row.
-
-    Storage convention (DB, canonical): `userCostAdjustments.amountUsd` is
-    stored signed where negative = credit, positive = charge. This route
-    negates the user-facing input on the way in so the storage convention
-    matches the Node `UserCostRepository.addAdjustment` contract.
-
-    Audit-trail caveat: this service authenticates with a shared `ADMIN_API_KEY`
-    (see `src/auth.py`), so `adminId` in the request body is self-attested. For
-    a single-admin team this is acceptable; for multi-admin orgs, swap the
-    shared key for per-admin credentials and derive `adminId` from the session
-    rather than trusting the request body.
+    vie-api is the only writer of the minutes ledger. It creates the credit lot,
+    stamps the ledger entry and the ``adminAudit`` row with the admin named by
+    the signed session (never a body field) and the reason, and returns
+    ``{before, after, lotId, auditId}``. Send a stable ``Idempotency-Key`` per
+    form submission so a retry after a timeout cannot grant twice. The old
+    dollar credit (``userCosts`` / ``userCostAdjustments``) is read-only
+    history now; nothing here writes it.
     """
-    if body.amountUsd > 1000 or body.amountUsd < -1000:
-        raise HTTPException(status_code=422, detail="amountUsd out of range [-1000, 1000]")
-
-    user_oid = _parse_object_id(user_id)
-    admin_oid = _parse_object_id(body.adminId)
-
-    db = get_database()
-
-    # Verify the user exists before recording the adjustment.
-    user_doc = await db.users.find_one({"_id": user_oid}, {"email": 1})
-    if not user_doc:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    date_key = body.date or _utc_date_key(datetime.now(UTC))
-
-    # Adjustment stored as a signed value where credits LOWER effective usage.
-    # `amountUsd` > 0 from the API means "grant N USD of credit" → stored as -N.
-    signed_amount = -body.amountUsd
-
-    await db.userCosts.update_one(
-        {"userId": user_oid, "date": date_key},
-        {
-            "$inc": {"creditAdjustmentUsd": signed_amount},
-            "$setOnInsert": {"totalCostUsd": 0.0, "videoCount": 0},
-            "$set": {"updatedAt": datetime.now(UTC)},
-        },
-        upsert=True,
+    logger.info(
+        "credit_grant_requested user=%s admin=%s minutes=%d", user_id, actor.user_id, body.minutes
     )
-
-    await db.userCostAdjustments.insert_one(
-        {
-            "userId": user_oid,
-            "date": date_key,
-            "amountUsd": signed_amount,
-            "reason": body.reason.strip(),
-            "adminId": admin_oid,
-            "createdAt": datetime.now(UTC),
-        }
-    )
-
-    refreshed = await db.userCosts.find_one({"userId": user_oid, "date": date_key})
-    raw_total = float((refreshed or {}).get("totalCostUsd", 0) or 0)
-    raw_credit = float((refreshed or {}).get("creditAdjustmentUsd", 0) or 0)
-
-    # Best-effort cache invalidation so the dashboard reflects the change quickly.
-    _cache.clear()
-
-    return GrantCreditResponse(
-        userId=user_id,
-        date=date_key,
-        amountUsd=body.amountUsd,
-        creditAdjustmentUsd=raw_credit,
-        effectiveUsd=raw_total + raw_credit,
+    return await call_vie_api(
+        "POST",
+        f"billing/accounts/{user_id}/credits",
+        actor,
+        body=body.model_dump(mode="json", exclude_none=True),
+        idempotency_key=idempotency_key,
     )
 
 

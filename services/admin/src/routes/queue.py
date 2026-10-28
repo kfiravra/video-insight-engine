@@ -9,7 +9,6 @@ a named admin session may trigger it.
 
 from __future__ import annotations
 
-import json
 from typing import Annotated
 
 import httpx
@@ -19,7 +18,7 @@ from pydantic import BaseModel, Field
 
 from src.auth import AdminActor, current_actor, current_user_actor
 from src.config import settings
-from src.services.vie_api_client import admin_headers, encode_json_body
+from src.services.vie_api_client import admin_headers, encode_json_body, translate_upstream
 
 logger = structlog.get_logger(__name__)
 
@@ -32,45 +31,6 @@ def _upstream_url(path: str) -> str:
     return f"{settings.VIE_API_URL.rstrip('/')}/api/admin/queue/{path.lstrip('/')}"
 
 
-def _upstream_detail(resp: httpx.Response) -> dict | str:
-    """vie-api's error envelope (``{error, message[, replayed]}``) when the body
-    is a JSON object, else a generic status line.
-
-    Kept structured so a mid-drain ``REPLAY_FAILED`` keeps its partial
-    ``replayed`` count — the operator needs to know how many DLQ messages were
-    already re-published before the failure. Raw non-JSON bodies are not
-    forwarded (they could be proxy/HTML error pages).
-    """
-    try:
-        parsed = json.loads(resp.text)
-    except ValueError:
-        parsed = None
-    if isinstance(parsed, dict):
-        return parsed
-    return f"vie-api error: {resp.status_code}"
-
-
-def _translate_upstream(resp: httpx.Response) -> dict:
-    if resp.status_code == 401:
-        # vie-api rejected our key or the signed actor (ADMIN_API_KEY or
-        # ADMIN_SESSION_SECRET differs between the services) — surfaces as 500
-        # here because the user already proved admin to us; the misconfig is
-        # server-side.
-        raise HTTPException(status_code=500, detail="vie-api rejected the admin credentials")
-    if resp.status_code == 503:
-        # vie-api's own "queue disabled / no channel" answer — a real state,
-        # not a transport failure. Pass the reason through.
-        raise HTTPException(status_code=503, detail=_upstream_detail(resp))
-    if resp.status_code >= 500:
-        raise HTTPException(status_code=502, detail=_upstream_detail(resp))
-    if resp.status_code >= 400:
-        raise HTTPException(status_code=resp.status_code, detail=_upstream_detail(resp))
-    try:
-        return resp.json()
-    except ValueError as exc:
-        raise HTTPException(status_code=502, detail="vie-api returned a non-JSON body") from exc
-
-
 async def _proxy_get(path: str, actor: AdminActor, params: dict | None = None) -> dict:
     try:
         async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT) as client:
@@ -80,7 +40,7 @@ async def _proxy_get(path: str, actor: AdminActor, params: dict | None = None) -
     except httpx.RequestError as exc:
         logger.warning("queue_proxy_unreachable", path=path, error=str(exc))
         raise HTTPException(status_code=502, detail="vie-api unreachable") from exc
-    return _translate_upstream(resp)
+    return translate_upstream(resp)
 
 
 async def _proxy_post(path: str, body: dict, actor: AdminActor, timeout: httpx.Timeout) -> dict:
@@ -93,7 +53,7 @@ async def _proxy_post(path: str, body: dict, actor: AdminActor, timeout: httpx.T
     except httpx.RequestError as exc:
         logger.warning("queue_proxy_unreachable", path=path, error=str(exc))
         raise HTTPException(status_code=502, detail="vie-api unreachable") from exc
-    return _translate_upstream(resp)
+    return translate_upstream(resp)
 
 
 @router.get("/stats")

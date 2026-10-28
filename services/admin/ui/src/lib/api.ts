@@ -4,11 +4,46 @@ const API_BASE = '';
 
 export class ApiError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  /** The server's own explanation (vie-api's validation message, FastAPI's 422 text), when it sent one. */
+  detail?: string;
+  constructor(status: number, message: string, detail?: string) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
+    this.detail = detail;
   }
+}
+
+/** What to show an operator for a failed call: the server's explanation, else the generic message. */
+export function describeApiError(error: unknown): string {
+  if (error instanceof ApiError) return error.detail ?? error.message;
+  return error instanceof Error ? error.message : 'Something went wrong';
+}
+
+interface FastApiValidationIssue {
+  msg?: unknown;
+}
+
+/**
+ * The human-readable part of an error body: a string `detail`, vie-api's
+ * `{error, message}` envelope passed through as `detail`, or FastAPI's list of
+ * 422 issues. undefined when the body is not JSON or carries nothing usable.
+ */
+async function errorDetail(res: Response): Promise<string | undefined> {
+  let body: unknown;
+  try {
+    body = await res.json();
+  } catch {
+    return undefined; // an empty or non-JSON error body has nothing to show
+  }
+  const detail = (body as { detail?: unknown } | null)?.detail;
+  if (typeof detail === 'string') return detail;
+  if (Array.isArray(detail)) {
+    const messages = detail.map((issue: FastApiValidationIssue) => issue.msg).filter((m) => typeof m === 'string');
+    return messages.length > 0 ? messages.join('; ') : undefined;
+  }
+  const message = (detail as { message?: unknown } | null)?.message;
+  return typeof message === 'string' ? message : undefined;
 }
 
 function getApiKey(): string | null {
@@ -57,7 +92,7 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
     throw new ApiError(401, 'Unauthorized');
   }
   if (!res.ok) {
-    throw new ApiError(res.status, `API error: ${res.status} ${res.statusText}`);
+    throw new ApiError(res.status, `API error: ${res.status} ${res.statusText}`, await errorDetail(res));
   }
   return res.json();
 }
@@ -193,12 +228,19 @@ export interface UserCostDetail {
   adjustments: UserCostAdjustment[];
 }
 
+/** What vie-api answers a minutes grant with (the account snapshots are not needed by the form). */
 export interface GrantCreditResponse {
-  userId: string;
-  date: string;
-  amountUsd: number;
-  creditAdjustmentUsd: number;
-  effectiveUsd: number;
+  lotId: string;
+  /** Pairs the ledger lot with its `adminAudit` row. */
+  auditId: string;
+}
+
+export interface GrantCreditRequest {
+  /** Whole minutes, 1–100000. */
+  minutes: number;
+  reason: string;
+  /** ISO 8601 with an offset; omitted = the lot never expires. */
+  expiresAt?: string;
 }
 
 // --- Run-grouped usage types (GET /usage/by-run) ---
@@ -431,10 +473,18 @@ export const api = {
       apiFetch<UserCostRow[]>(`/users/costs${qs({ days, limit, offset })}`),
     costDetail: (userId: string, days = 30) =>
       apiFetch<UserCostDetail>(`/users/${encodeURIComponent(userId)}/costs${qs({ days })}`),
-    grantCredit: (userId: string, body: { amountUsd: number; reason: string; adminId: string; date?: string }) =>
+    /**
+     * Grant minutes (a credit lot) as the signed-in admin. The server takes who
+     * acted from the session, never from the body. `idempotencyKey` (one per
+     * submission) lets a retry after a timeout apply once.
+     */
+    grantCredit: (userId: string, body: GrantCreditRequest, idempotencyKey?: string) =>
       apiFetch<GrantCreditResponse>(`/users/${encodeURIComponent(userId)}/grant-credit`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}),
+        },
         body: JSON.stringify(body),
       }),
     activity: (userId: string) =>

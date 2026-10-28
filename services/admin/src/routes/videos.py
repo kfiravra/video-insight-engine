@@ -10,7 +10,6 @@ the ones in queue.py — extract on the third.
 
 from __future__ import annotations
 
-import json
 from typing import Annotated
 
 import httpx
@@ -21,7 +20,7 @@ from pydantic import BaseModel, Field
 from src.auth import AdminActor, current_user_actor
 from src.config import settings
 from src.routes.usage import invalidate_video_cache
-from src.services.vie_api_client import admin_headers, encode_json_body
+from src.services.vie_api_client import admin_headers, encode_json_body, translate_upstream
 
 logger = structlog.get_logger(__name__)
 
@@ -40,36 +39,6 @@ class PurgeVideoRequest(BaseModel):
 
 def _upstream_url(youtube_id: str) -> str:
     return f"{settings.VIE_API_URL.rstrip('/')}/api/admin/videos/{youtube_id}"
-
-
-def _upstream_detail(resp: httpx.Response) -> dict | str:
-    """vie-api's error envelope when the body is a JSON object, else a status line."""
-    try:
-        parsed = json.loads(resp.text)
-    except ValueError:
-        parsed = None
-    if isinstance(parsed, dict):
-        return parsed
-    return f"vie-api error: {resp.status_code}"
-
-
-def _translate_upstream(resp: httpx.Response) -> dict:
-    if resp.status_code == 401:
-        # vie-api rejected our key or the signed actor (ADMIN_API_KEY or
-        # ADMIN_SESSION_SECRET differs between the services) — the user already
-        # proved admin to us, so the misconfig is server-side.
-        raise HTTPException(status_code=500, detail="vie-api rejected the admin credentials")
-    if resp.status_code == 503:
-        # vie-api's own "dependency down" answer — a real state, passed through.
-        raise HTTPException(status_code=503, detail=_upstream_detail(resp))
-    if resp.status_code >= 500:
-        raise HTTPException(status_code=502, detail=_upstream_detail(resp))
-    if resp.status_code >= 400:
-        raise HTTPException(status_code=resp.status_code, detail=_upstream_detail(resp))
-    try:
-        return resp.json()
-    except ValueError as exc:
-        raise HTTPException(status_code=502, detail="vie-api returned a non-JSON body") from exc
 
 
 @router.delete("/{youtube_id}")
@@ -100,6 +69,6 @@ async def purge_video(
     except httpx.RequestError as exc:
         logger.warning("video_purge_unreachable", youtube_id=youtube_id, error=str(exc))
         raise HTTPException(status_code=502, detail="vie-api unreachable") from exc
-    result = _translate_upstream(resp)
+    result = translate_upstream(resp)
     invalidate_video_cache(youtube_id)
     return result

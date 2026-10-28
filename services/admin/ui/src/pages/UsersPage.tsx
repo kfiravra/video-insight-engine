@@ -1,12 +1,12 @@
 import { useMemo, useState } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useUserCosts, useUserCostDetail, useUserActivity } from '../hooks/use-admin-api';
-import { api, type UserCostRow } from '../lib/api';
+import type { UserCostRow } from '../lib/api';
 import { formatCost, formatNumber, formatDateTime, formatDuration, timeAgo, formatUsageVolume } from '../lib/format';
 import { Panel } from '../components/Panel';
 import { SkeletonPanel } from '../components/SkeletonPanel';
 import { ErrorState } from '../components/ErrorState';
 import { AccountTab } from '../components/users/AccountTab';
+import { GrantCreditForm } from '../components/users/GrantCreditForm';
 
 interface UsersPageProps {
   days?: number;
@@ -437,14 +437,15 @@ function AdjustmentsTab({ userId }: AdjustmentsTabProps) {
 
   return (
     <div className="space-y-4">
-      <GrantCreditForm userId={userId} />
-
       <section className="space-y-2">
         <h4 className="text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
-          Recent adjustments
+          Past USD adjustments
         </h4>
+        <p className="text-[10px] text-[var(--color-text-faint)]">
+          History from before the minutes ledger. New grants are in minutes, on the Account tab.
+        </p>
         {data.adjustments.length === 0 ? (
-          <p className="text-xs text-[var(--color-text-muted)]">No grants or manual adjustments yet.</p>
+          <p className="text-xs text-[var(--color-text-muted)]">No USD grants or adjustments recorded.</p>
         ) : (
           <ul className="space-y-1">
             {data.adjustments.map((adj) => {
@@ -529,7 +530,12 @@ function UserDetailDrawer({ user, onClose }: UserDetailDrawerProps) {
 
         <div className="p-4">
           {activeTab === 'overview' && <OverviewTab userId={user.userId} />}
-          {activeTab === 'account' && <AccountTab userId={user.userId} />}
+          {activeTab === 'account' && (
+            <div className="space-y-4">
+              <GrantCreditForm userId={user.userId} />
+              <AccountTab userId={user.userId} />
+            </div>
+          )}
           {activeTab === 'videos' && <VideosTab userId={user.userId} />}
           {activeTab === 'assistant' && <AssistantTab userId={user.userId} />}
           {activeTab === 'adjustments' && <AdjustmentsTab userId={user.userId} />}
@@ -549,109 +555,5 @@ function StatTile({ label, value, highlight = false }: { label: string; value: s
         {value}
       </div>
     </div>
-  );
-}
-
-interface GrantCreditFormProps {
-  userId: string;
-}
-
-function GrantCreditForm({ userId }: GrantCreditFormProps) {
-  const queryClient = useQueryClient();
-  const [amount, setAmount] = useState('');
-  const [reason, setReason] = useState('');
-  const [adminId, setAdminId] = useState(() => localStorage.getItem('admin_user_id') ?? '');
-  const [message, setMessage] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
-
-  const mutation = useMutation({
-    mutationFn: async () => {
-      const parsed = Number.parseFloat(amount);
-      if (!Number.isFinite(parsed)) throw new Error('Enter a numeric USD amount');
-      if (Math.abs(parsed) > 1000) throw new Error('Amount must be between -1000 and 1000');
-      if (!reason.trim()) throw new Error('Reason is required');
-      if (adminId.trim().length !== 24) throw new Error('Admin id must be a 24-char ObjectId');
-      return api.users.grantCredit(userId, {
-        amountUsd: parsed,
-        reason: reason.trim(),
-        adminId: adminId.trim(),
-      });
-    },
-    onSuccess: () => {
-      localStorage.setItem('admin_user_id', adminId.trim());
-      setMessage({ kind: 'ok', text: 'Adjustment recorded.' });
-      setAmount('');
-      setReason('');
-      queryClient.invalidateQueries({ queryKey: ['user-cost-detail', userId] });
-      queryClient.invalidateQueries({ queryKey: ['user-costs'] });
-    },
-    onError: (e: Error) => setMessage({ kind: 'err', text: e.message }),
-  });
-
-  return (
-    <form
-      className="space-y-2 rounded-lg border border-[var(--color-border)] p-3 bg-[var(--color-surface-dim)]"
-      onSubmit={(e) => {
-        e.preventDefault();
-        setMessage(null);
-        mutation.mutate();
-      }}
-    >
-      <h4 className="text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
-        Grant credit / adjust
-      </h4>
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-        <input
-          type="number"
-          step="0.01"
-          min="-1000"
-          max="1000"
-          value={amount}
-          onChange={(e) => setAmount(e.target.value)}
-          placeholder="USD (positive = credit)"
-          aria-label="USD amount"
-          data-testid="grant-credit-amount"
-          className="px-2 py-1.5 rounded border border-[var(--color-border)] bg-[var(--color-surface)] text-xs"
-        />
-        <input
-          value={reason}
-          onChange={(e) => setReason(e.target.value)}
-          placeholder="Reason (audited)"
-          aria-label="Reason"
-          data-testid="grant-credit-reason"
-          maxLength={500}
-          className="px-2 py-1.5 rounded border border-[var(--color-border)] bg-[var(--color-surface)] text-xs"
-        />
-        <input
-          value={adminId}
-          onChange={(e) => setAdminId(e.target.value)}
-          placeholder="Admin user id"
-          aria-label="Admin user id"
-          data-testid="grant-credit-admin-id"
-          maxLength={24}
-          className="px-2 py-1.5 rounded border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-mono"
-        />
-      </div>
-      <p className="text-[10px] text-[var(--color-text-faint)]">
-        Enter a positive amount to grant credit; charges are negative. Stored signed (negative = credit).
-      </p>
-      <div className="flex items-center gap-2">
-        <button
-          type="submit"
-          disabled={mutation.isPending}
-          className="px-3 py-1.5 rounded-md bg-[var(--color-primary)] text-white text-xs font-medium disabled:opacity-60"
-        >
-          {mutation.isPending ? 'Saving…' : 'Apply adjustment'}
-        </button>
-        {message && (
-          <span
-            className="text-xs"
-            style={{ color: message.kind === 'ok' ? 'var(--color-success)' : 'var(--color-danger)' }}
-            role="status"
-          >
-            {message.text}
-          </span>
-        )}
-      </div>
-    </form>
   );
 }
