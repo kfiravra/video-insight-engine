@@ -24,7 +24,8 @@ router = APIRouter(prefix="/billing", tags=["billing"])
 DEFAULT_LEDGER_LIMIT = 50
 MAX_LEDGER_LIMIT = 200
 
-_OBJECT_ID_PATTERN = re.compile(r"^[0-9a-fA-F]{24}$")
+# fullmatch, not match + "$": Python's "$" also matches before a trailing newline.
+_OBJECT_ID_PATTERN = re.compile(r"[0-9a-fA-F]{24}")
 
 
 def get_billing_service(
@@ -34,7 +35,7 @@ def get_billing_service(
 
 
 def _parse_user_id(value: str) -> ObjectId:
-    if not _OBJECT_ID_PATTERN.match(value):
+    if not _OBJECT_ID_PATTERN.fullmatch(value):
         raise HTTPException(status_code=400, detail="Invalid id format")
     return ObjectId(value)
 

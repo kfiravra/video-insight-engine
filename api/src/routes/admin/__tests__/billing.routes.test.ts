@@ -73,6 +73,7 @@ describe('admin billing routes', () => {
 
   beforeEach(async () => {
     mocks.userRepository.hasPermission.mockResolvedValue(true);
+    mocks.adminReplayGuard.claim.mockResolvedValue(true);
     userId = await insertUser(getTestDb());
   });
 
@@ -84,14 +85,15 @@ describe('admin billing routes', () => {
     await app?.close();
   });
 
-  async function send(method: Method, path: string, request: ReturnType<typeof adminActorRequest>) {
-    return app.inject({ method, url: `${BASE}${path}`, headers: request.headers, payload: request.payload });
+  /** Send `method path` the way vie-admin does: the shared key plus an actor header signed for exactly this request. */
+  async function send(method: Method, path: string, body?: Record<string, unknown>, extraHeaders: Record<string, string> = {}) {
+    const url = `${BASE}${path}`;
+    const request = adminActorRequest(method, url, body);
+    return app.inject({ method, url, headers: { ...request.headers, ...extraHeaders }, payload: request.payload });
   }
 
-  const post = (path: string, body: Record<string, unknown>, headers: Record<string, string> = {}) => {
-    const request = adminActorRequest(body);
-    return send('POST', path, { ...request, headers: { ...request.headers, ...headers } });
-  };
+  const post = (path: string, body: Record<string, unknown>, headers: Record<string, string> = {}) =>
+    send('POST', path, body, headers);
   const auditRows = () => getTestDb().collection('adminAudit').find({}).toArray();
   const ledgerFor = (auditId: string) => getTestDb().collection('ledgerEntries').find({ 'source.ref': auditId }).toArray();
 
@@ -116,13 +118,13 @@ describe('admin billing routes', () => {
     it('should answer 403 to an admin who no longer holds the permission', async () => {
       mocks.userRepository.hasPermission.mockResolvedValue(false);
 
-      const res = await send(route.method, route.path(userId), adminActorRequest(route.body));
+      const res = await send(route.method, route.path(userId), route.body);
 
       expect(res.statusCode).toBe(403);
     });
 
     it('should check the actor against its own permission', async () => {
-      await send(route.method, route.path(userId), adminActorRequest(route.body));
+      await send(route.method, route.path(userId), route.body);
 
       expect(mocks.userRepository.hasPermission).toHaveBeenCalledWith(TEST_ADMIN_USER_ID, route.permission);
     });
@@ -130,37 +132,37 @@ describe('admin billing routes', () => {
     it('should require a reason', async () => {
       const { reason: _omitted, ...withoutReason } = route.body;
 
-      const res = await send(route.method, route.path(userId), adminActorRequest(withoutReason));
+      const res = await send(route.method, route.path(userId), withoutReason);
 
       expect(res.statusCode).toBe(400);
     });
 
     it('should reject a blank reason', async () => {
-      const res = await send(route.method, route.path(userId), adminActorRequest({ ...route.body, reason: '   ' }));
+      const res = await send(route.method, route.path(userId), { ...route.body, reason: '   ' });
 
       expect(res.statusCode).toBe(400);
     });
 
     it('should reject a reason over 500 characters', async () => {
-      const res = await send(route.method, route.path(userId), adminActorRequest({ ...route.body, reason: 'x'.repeat(501) }));
+      const res = await send(route.method, route.path(userId), { ...route.body, reason: 'x'.repeat(501) });
 
       expect(res.statusCode).toBe(400);
     });
 
     it('should reject a self-attested adminId in the body', async () => {
-      const res = await send(route.method, route.path(userId), adminActorRequest({ ...route.body, adminId: TEST_ADMIN_USER_ID }));
+      const res = await send(route.method, route.path(userId), { ...route.body, adminId: TEST_ADMIN_USER_ID });
 
       expect(res.statusCode).toBe(400);
     });
 
     it('should reject a malformed user id', async () => {
-      const res = await send(route.method, route.path('not-an-id'), adminActorRequest(route.body));
+      const res = await send(route.method, route.path('not-an-id'), route.body);
 
       expect(res.statusCode).toBe(400);
     });
 
     it('should answer 404 for a user that does not exist', async () => {
-      const res = await send(route.method, route.path(new ObjectId().toHexString()), adminActorRequest(route.body));
+      const res = await send(route.method, route.path(new ObjectId().toHexString()), route.body);
 
       expect(res.statusCode).toBe(404);
     });
@@ -176,7 +178,7 @@ describe('admin billing routes', () => {
     it('should answer 403 to an admin without billing:read', async () => {
       mocks.userRepository.hasPermission.mockResolvedValue(false);
 
-      const res = await send('GET', `/accounts/${userId}`, adminActorRequest());
+      const res = await send('GET', `/accounts/${userId}`);
 
       expect(res.statusCode).toBe(403);
     });
@@ -184,7 +186,7 @@ describe('admin billing routes', () => {
     it('should return the account, lots, holds, ledger and recurring grants', async () => {
       await post(`/accounts/${userId}/credits`, { minutes: 40, reason: 'comp' });
 
-      const res = await send('GET', `/accounts/${userId}`, adminActorRequest());
+      const res = await send('GET', `/accounts/${userId}`);
 
       expect(res.statusCode).toBe(200);
       const detail = res.json();
@@ -208,19 +210,19 @@ describe('admin billing routes', () => {
       await post(`/accounts/${userId}/credits`, { minutes: 10, reason: 'one' });
       await post(`/accounts/${userId}/credits`, { minutes: 20, reason: 'two' });
 
-      const res = await send('GET', `/accounts/${userId}?ledgerLimit=1`, adminActorRequest());
+      const res = await send('GET', `/accounts/${userId}?ledgerLimit=1`);
 
       expect(res.json().ledger).toHaveLength(1);
     });
 
     it('should reject an out-of-range ledgerLimit', async () => {
-      const res = await send('GET', `/accounts/${userId}?ledgerLimit=0`, adminActorRequest());
+      const res = await send('GET', `/accounts/${userId}?ledgerLimit=0`);
 
       expect(res.statusCode).toBe(400);
     });
 
     it('should answer 404 for an unknown user', async () => {
-      const res = await send('GET', `/accounts/${new ObjectId().toHexString()}`, adminActorRequest());
+      const res = await send('GET', `/accounts/${new ObjectId().toHexString()}`);
 
       expect(res.statusCode).toBe(404);
     });
@@ -419,7 +421,7 @@ describe('admin billing routes', () => {
     it('should list the grant on the account', async () => {
       const { grantId } = (await create()).json();
 
-      const res = await send('GET', `/accounts/${userId}`, adminActorRequest());
+      const res = await send('GET', `/accounts/${userId}`);
 
       expect(res.json().recurringGrants).toEqual([expect.objectContaining({ grantId, minutes: 300 })]);
     });
@@ -442,18 +444,16 @@ describe('admin billing routes', () => {
 
     it('should delete a grant so it no longer lists, and audit it', async () => {
       const { grantId } = (await create()).json();
-      const request = adminActorRequest({ reason: 'demo over' });
-
-      const res = await send('DELETE', `/accounts/${userId}/recurring-grants/${grantId}`, request);
+      const res = await send('DELETE', `/accounts/${userId}/recurring-grants/${grantId}`, { reason: 'demo over' });
 
       expect(res.statusCode).toBe(200);
-      const detail = (await send('GET', `/accounts/${userId}`, adminActorRequest())).json();
+      const detail = (await send('GET', `/accounts/${userId}`)).json();
       expect(detail.recurringGrants).toEqual([]);
       expect((await auditRows()).map((row) => row.action).sort()).toEqual(['billing.recurring.create', 'billing.recurring.delete']);
     });
 
     it('should answer 404 for an unknown grant', async () => {
-      const res = await send('DELETE', `/accounts/${userId}/recurring-grants/${new ObjectId().toHexString()}`, adminActorRequest({ reason: 'x' }));
+      const res = await send('DELETE', `/accounts/${userId}/recurring-grants/${new ObjectId().toHexString()}`, { reason: 'x' });
 
       expect(res.statusCode).toBe(404);
     });
@@ -511,6 +511,80 @@ describe('admin billing routes', () => {
       const second = await post(`/accounts/${userId}/credits`, { minutes: 5, reason: 'b' });
 
       expect(second.json().auditId).not.toBe(first.json().auditId);
+    });
+
+    describe('a key reused for a different request', () => {
+      const withKey = (path: string, body: Record<string, unknown>) => post(path, body, { 'idempotency-key': KEY });
+
+      it('should refuse different credit minutes with 422 IDEMPOTENCY_KEY_REUSED and grant nothing more', async () => {
+        await withKey(`/accounts/${userId}/credits`, { minutes: 30, reason: 'comp' });
+
+        const second = await withKey(`/accounts/${userId}/credits`, { minutes: 5000, reason: 'comp' });
+
+        expect([second.statusCode, second.json().error]).toEqual([422, 'IDEMPOTENCY_KEY_REUSED']);
+        expect(await getTestDb().collection('creditLots').countDocuments()).toBe(1);
+      });
+
+      it('should refuse a different reason too: the request is not the same', async () => {
+        await withKey(`/accounts/${userId}/credits`, { minutes: 30, reason: 'comp' });
+
+        const second = await withKey(`/accounts/${userId}/credits`, { minutes: 30, reason: 'another story' });
+
+        expect(second.statusCode).toBe(422);
+      });
+
+      it('should refuse a changed cap and leave the first cap in force (setCaps writes no ledger rows)', async () => {
+        await withKey(`/accounts/${userId}/caps`, { blocked: true, reason: 'abuse' });
+
+        const second = await withKey(`/accounts/${userId}/caps`, { blocked: false, reason: 'abuse' });
+
+        const detail = (await send('GET', `/accounts/${userId}`)).json();
+        expect([second.statusCode, detail.account.caps.blocked]).toEqual([422, true]);
+      });
+
+      it('should refuse a different plan and leave the first plan in force', async () => {
+        await withKey(`/accounts/${userId}/plan`, { planId: 'pro', reason: 'comp' });
+
+        const second = await withKey(`/accounts/${userId}/plan`, { planId: 'free', reason: 'comp' });
+
+        const detail = (await send('GET', `/accounts/${userId}`)).json();
+        expect([second.statusCode, detail.account.plan.id]).toEqual([422, 'pro']);
+      });
+
+      it('should write no second audit row for the refused request', async () => {
+        await withKey(`/accounts/${userId}/caps`, { blocked: true, reason: 'abuse' });
+        await withKey(`/accounts/${userId}/caps`, { blocked: false, reason: 'abuse' });
+
+        expect(await auditRows()).toHaveLength(1);
+      });
+
+      it('should still answer an identical retry with the first result', async () => {
+        const first = await withKey(`/accounts/${userId}/caps`, { blocked: true, reason: 'abuse' });
+
+        const retry = await withKey(`/accounts/${userId}/caps`, { blocked: true, reason: 'abuse' });
+
+        expect([retry.statusCode, retry.json().auditId]).toEqual([200, first.json().auditId]);
+      });
+
+      it('should apply a retry whose audit row was never written, once the first attempt\'s ledger entries exist', async () => {
+        vi.spyOn(AdminAuditRepository.prototype, 'insert').mockRejectedValueOnce(new Error('audit down'));
+        await withKey(`/accounts/${userId}/credits`, { minutes: 30, reason: 'comp' });
+
+        const retry = await withKey(`/accounts/${userId}/credits`, { minutes: 30, reason: 'comp' });
+
+        expect(retry.statusCode).toBe(200);
+        expect(await getTestDb().collection('creditLots').countDocuments()).toBe(1);
+        expect(await auditRows()).toHaveLength(1);
+      });
+
+      it('should record a hash of the request on the audit row without exposing it in the audit view', async () => {
+        await withKey(`/accounts/${userId}/credits`, { minutes: 30, reason: 'comp' });
+
+        const [row] = await auditRows();
+        const view = (await app.inject({ method: 'GET', url: '/api/admin/audit', headers: adminActorRequest('GET', '/api/admin/audit').headers })).json();
+        expect(row.requestHash).toMatch(/^[0-9a-f]{64}$/);
+        expect(view.entries[0]).not.toHaveProperty('requestHash');
+      });
     });
 
     it('should reject a malformed Idempotency-Key', async () => {

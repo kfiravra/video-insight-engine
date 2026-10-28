@@ -14,11 +14,12 @@ import { youtubeIdSchema } from '../../utils/validation.js';
 
 const adminVideoParamsSchema = z.object({ youtubeId: youtubeIdSchema });
 const adminVideoBodySchema = z
-  .object({ reason: z.string().min(1).max(500).optional() })
+  .object({ reason: z.string().trim().min(1).max(500).optional() })
+  .strict()
   .optional();
 
 export async function adminVideosRoutes(fastify: FastifyInstance): Promise<void> {
-  const { videoCascadeService, auditService } = fastify.container;
+  const { videoCascadeService, videoRepository, auditService } = fastify.container;
 
   // DELETE /api/admin/videos/:youtubeId
   // A valid admin key (the reconcile script purging orphans in bulk) gets a
@@ -35,6 +36,8 @@ export async function adminVideosRoutes(fastify: FastifyInstance): Promise<void>
   }, async (req, reply) => {
     const params = adminVideoParamsSchema.parse(req.params);
     const body = adminVideoBodySchema.parse(req.body);
+    // What exists now, for the audit row: the purge deletes the evidence.
+    const existing = await videoRepository.findCacheKeysByYoutubeId(params.youtubeId);
 
     const result = await videoCascadeService.deleteVideo({
       scope: 'global',
@@ -52,6 +55,7 @@ export async function adminVideosRoutes(fastify: FastifyInstance): Promise<void>
       action: 'videos.purge',
       targetType: 'video',
       targetId: params.youtubeId,
+      before: { summaryIds: existing.map((row) => row._id.toString()), shared: existing.some((row) => Boolean(row.shareSlug)) },
       after: { summaryIds: result.summaryIds, counts: result.counts, partial: result.partial },
       reason: body?.reason,
     });

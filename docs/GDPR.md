@@ -53,7 +53,7 @@ DELETE /api/admin/users/:id?immediate=true ──────────┘  �
 | Endpoint | Auth | Purpose |
 |---|---|---|
 | `DELETE /api/users/me` | JWT | Self-service soft delete. Returns 202 + `scheduledHardDeleteAt`. |
-| `POST /api/users/me/restore` | JWT (bypasses soft-delete check) | Cancel a pending deletion within 30 days. |
+| `POST /api/users/me/restore` | JWT (bypasses soft-delete check) | Cancel a pending deletion within 30 days. When an admin had scheduled it, the cancellation is written to `adminAudit` (`users.delete.cancel`, actor the user, `before` naming the scheduling admin); undoing one's own deletion writes no row. |
 | `DELETE /api/admin/users/:id?immediate=true` | `x-admin-key` + signed `x-admin-actor` (`users:delete`) | Run the cascade now (compliance escape hatch). Writes an `adminAudit` row. |
 | `DELETE /api/admin/users/:id` (no `immediate`) | `x-admin-key` + signed `x-admin-actor` (`users:delete`) | Schedule the same soft delete as the user-initiated flow, with the admin stored as its origin. Writes an `adminAudit` row at request time. |
 | `POST /internal/run-deletions` | `x-internal-secret` header | Manual sweep entrypoint — sweeps `hardDeleteAt <= now` and runs the cascade for each. The same sweep runs on a schedule inside vie-api (see "Running the sweep"). |
@@ -113,7 +113,7 @@ A previously-issued JWT remains cryptographically valid for its 15-minute TTL ev
 
 ## Running the sweep
 
-**Scheduled (billing-roles P1.6).** vie-api's billing repair job runs `userDeletionService.runScheduledDeletions()` every `BILLING_REPAIR_INTERVAL_SECONDS` (default 300) under the Redis lock `vie:api:billing-repair`, so a due account is hard-deleted within one interval of its `hardDeleteAt`. The job is on when `BILLING_REPAIR_ENABLED` is (dev default on; the prod compose defaults it off until Mongo runs as a replica set, P6.4 — until then prod still needs the route below to be driven). An admin's soft delete keeps `initiatedBy: 'admin'` when the job runs it; a self-service one is recorded as `'scheduler'`.
+**Scheduled (billing-roles P1.6).** vie-api's billing repair job runs `userDeletionService.runScheduledDeletions()` every `BILLING_REPAIR_INTERVAL_SECONDS` (default 300) under the Redis lock `vie:api:billing-repair`, so a due account is hard-deleted within one interval of its `hardDeleteAt`. The job is on when `BILLING_REPAIR_ENABLED` is (dev default on; the prod compose defaults it off until Mongo runs as a replica set, P6.4 — until then prod still needs the route below to be driven). A soft delete keeps the origin it was requested under when the job runs it: an admin's stays `initiatedBy: 'admin'`, the user's own is `'self'`; only a soft delete with no recorded origin (requested before origins were stored for self-service) is `'scheduler'`.
 
 The internal route stays for a manual or external run:
 
@@ -155,7 +155,7 @@ spec:
 
 - `originalUserId` (string form of the deleted ObjectId)
 - `emailHash` — SHA-256 of the lowercased, trimmed email. Never the plaintext.
-- `initiatedBy`: `'self' | 'admin' | 'scheduler'`. An admin-requested soft delete keeps `'admin'` when the sweep later runs it: the request stores `users.deletionOrigin` (`initiatedBy`, `adminId`, `reason`; an operator id, no PII), the sweep reads it, and a restore (`cancelDeletion`) clears it. A soft delete the user requested themselves has no origin and is recorded as `'scheduler'`.
+- `initiatedBy`: `'self' | 'admin' | 'scheduler'`. Every soft delete keeps its origin when the sweep later runs it: the request stores `users.deletionOrigin` (`initiatedBy`, `adminId`, `reason`; an operator id, no PII), the sweep reads it, and a restore (`cancelDeletion`) clears it. `DELETE /api/users/me` stores `'self'`, an admin's request stores `'admin'`; a soft delete with no stored origin (older rows) is recorded as `'scheduler'`.
 - `adminId`, `reason` — populated when `initiatedBy === 'admin'`
 - `counts` — rows deleted per inventory bucket
 - `startedAt`, `completedAt`, `durationMs`

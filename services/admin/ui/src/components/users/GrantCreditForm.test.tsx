@@ -132,7 +132,40 @@ describe('GrantCreditForm', () => {
     await waitFor(() => expect(screen.getByText('Granted 150 minutes.')).toBeTruthy());
     expect((screen.getByTestId('grant-credit-minutes') as HTMLInputElement).value).toBe('');
     expect((screen.getByTestId('grant-credit-reason') as HTMLInputElement).value).toBe('');
+    await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ['billing-account', USER_ID] }));
+  });
+
+  it('should refresh the audit log after a grant, where the new row appears', async () => {
+    mockGrantCredit.mockResolvedValue({ lotId: 'l', auditId: 'a' });
+    const { invalidate } = renderForm();
+
+    fill('150', 'goodwill');
+    submit();
+
+    await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ['audit'] }));
+  });
+
+  it('should refresh the account and the audit log after a failure too, since a timeout can follow an applied grant', async () => {
+    mockGrantCredit.mockRejectedValue(new ApiError(504, 'timeout', 'the change may have been applied'));
+    const { invalidate } = renderForm();
+
+    fill('150', 'goodwill');
+    submit();
+
+    await screen.findByText('the change may have been applied');
+    await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ['audit'] }));
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['billing-account', USER_ID] });
+  });
+
+  it('should not refresh after a refusal, which changed nothing', async () => {
+    mockGrantCredit.mockRejectedValue(new ApiError(400, 'API error: 400', 'expiresAt must be in the future'));
+    const { invalidate } = renderForm();
+
+    fill('150', 'goodwill');
+    submit();
+
+    await screen.findByText('expiresAt must be in the future');
+    expect(invalidate).not.toHaveBeenCalled();
   });
 
   it('should show the server\'s explanation when the grant is refused', async () => {

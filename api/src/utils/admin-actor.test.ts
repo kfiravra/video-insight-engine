@@ -7,9 +7,12 @@ import {
   signActorHeader,
   verifyActorSignature,
 } from './admin-actor.js';
+import type { ActorRequest } from './admin-actor.js';
 
 interface ActorVector {
   name: string;
+  method: string;
+  target: string;
   userId: string;
   ts: number;
   body: string;
@@ -26,14 +29,30 @@ const { secret, maxAgeSeconds, vectors: actorVectors } = vectors.actorHeader;
 
 const USER_ID = 'a1b2c3d4e5f60718293a4b5c';
 const NOW = 1_790_000_000;
+const TARGET = '/api/admin/billing/accounts/aaaaaaaaaaaaaaaaaaaaaaaa/credits';
 
-function headerFor(body: string, ts = NOW, userId = USER_ID): string {
-  return signActorHeader(secret, userId, sha256Hex(body), ts);
+const requestOf = (vector: ActorVector): ActorRequest => ({
+  method: vector.method,
+  target: vector.target,
+  bodySha256: vector.bodySha256,
+});
+
+function post(body: string, target = TARGET): ActorRequest {
+  return { method: 'POST', target, bodySha256: sha256Hex(body) };
+}
+
+function headerFor(request: ActorRequest, ts = NOW, userId = USER_ID): string {
+  return signActorHeader(secret, userId, request, ts);
 }
 
 describe('actor header golden vectors', () => {
   it('should use the same freshness window as the shared vectors', () => {
     expect(ACTOR_HEADER_MAX_AGE_SECONDS).toBe(maxAgeSeconds);
+  });
+
+  it('should cover a GET, a query string, a body, a path parameter and non-ASCII text', () => {
+    expect(actorVectors.map((vector) => vector.method)).toEqual(['GET', 'GET', 'POST', 'DELETE', 'POST']);
+    expect(actorVectors.some((vector) => vector.target.includes('?'))).toBe(true);
   });
 
   it.each(actorVectors.map((vector) => [vector.name, vector] as const))(
@@ -46,16 +65,36 @@ describe('actor header golden vectors', () => {
   it.each(actorVectors.map((vector) => [vector.name, vector] as const))(
     'should sign to the golden header: %s',
     (_name, vector) => {
-      expect(signActorHeader(secret, vector.userId, vector.bodySha256, vector.ts)).toBe(vector.header);
+      expect(signActorHeader(secret, vector.userId, requestOf(vector), vector.ts)).toBe(vector.header);
     },
   );
 
   it.each(actorVectors.map((vector) => [vector.name, vector] as const))(
-    'should accept the golden header at its own timestamp: %s',
+    'should accept the golden header on its own request at its own timestamp: %s',
     (_name, vector) => {
-      const result = verifyActorSignature(secret, vector.header, vector.bodySha256, vector.ts);
+      const result = verifyActorSignature(secret, vector.header, requestOf(vector), vector.ts);
 
-      expect(result).toEqual({ ok: true, userId: vector.userId });
+      expect(result).toMatchObject({ ok: true, userId: vector.userId, unixTs: vector.ts });
+    },
+  );
+
+  it.each(actorVectors.map((vector) => [vector.name, vector] as const))(
+    'should refuse the golden header on another method: %s',
+    (_name, vector) => {
+      const otherMethod = vector.method === 'GET' ? 'DELETE' : 'GET';
+
+      const result = verifyActorSignature(secret, vector.header, { ...requestOf(vector), method: otherMethod }, vector.ts);
+
+      expect(result).toEqual({ ok: false, reason: 'bad_signature' });
+    },
+  );
+
+  it.each(actorVectors.map((vector) => [vector.name, vector] as const))(
+    'should refuse the golden header on another target: %s',
+    (_name, vector) => {
+      const result = verifyActorSignature(secret, vector.header, { ...requestOf(vector), target: `${vector.target}x` }, vector.ts);
+
+      expect(result).toEqual({ ok: false, reason: 'bad_signature' });
     },
   );
 
@@ -67,103 +106,143 @@ describe('actor header golden vectors', () => {
 describe('verifyActorSignature', () => {
   const body = '{"reason":"duplicate upload"}';
 
-  it('should accept a fresh header signed over the same body', () => {
-    const result = verifyActorSignature(secret, headerFor(body), sha256Hex(body), NOW);
+  it('should accept a fresh header signed for the same request', () => {
+    const request = post(body);
 
-    expect(result).toEqual({ ok: true, userId: USER_ID });
+    expect(verifyActorSignature(secret, headerFor(request), request, NOW)).toMatchObject({ ok: true, userId: USER_ID });
+  });
+
+  it('should hand back the timestamp and signature for the single-use record', () => {
+    const request = post(body);
+    const header = headerFor(request);
+
+    const result = verifyActorSignature(secret, header, request, NOW);
+
+    expect(result).toEqual({ ok: true, userId: USER_ID, unixTs: NOW, signature: header.split('.')[2] });
+  });
+
+  it('should treat the method as case-insensitive', () => {
+    const request = post(body);
+
+    expect(verifyActorSignature(secret, headerFor(request), { ...request, method: 'post' }, NOW).ok).toBe(true);
   });
 
   it('should accept a header exactly five minutes old', () => {
-    const result = verifyActorSignature(secret, headerFor(body), sha256Hex(body), NOW + 300);
+    const request = post(body);
 
-    expect(result.ok).toBe(true);
+    expect(verifyActorSignature(secret, headerFor(request), request, NOW + 300).ok).toBe(true);
   });
 
   it('should reject a header more than five minutes old as stale', () => {
-    const result = verifyActorSignature(secret, headerFor(body), sha256Hex(body), NOW + 301);
+    const request = post(body);
 
-    expect(result).toEqual({ ok: false, reason: 'stale' });
+    expect(verifyActorSignature(secret, headerFor(request), request, NOW + 301)).toEqual({ ok: false, reason: 'stale' });
   });
 
   it('should reject a header timestamped more than five minutes in the future as stale', () => {
-    const result = verifyActorSignature(secret, headerFor(body, NOW + 301), sha256Hex(body), NOW);
+    const request = post(body);
 
-    expect(result).toEqual({ ok: false, reason: 'stale' });
+    expect(verifyActorSignature(secret, headerFor(request, NOW + 301), request, NOW)).toEqual({ ok: false, reason: 'stale' });
   });
 
   it('should reject a header replayed against a different body', () => {
-    const result = verifyActorSignature(secret, headerFor(body), sha256Hex('{"reason":"other"}'), NOW);
+    const signed = post(body);
 
-    expect(result).toEqual({ ok: false, reason: 'bad_signature' });
+    expect(verifyActorSignature(secret, headerFor(signed), post('{"reason":"other"}'), NOW)).toEqual({
+      ok: false,
+      reason: 'bad_signature',
+    });
+  });
+
+  it('should reject a header replayed against a different method', () => {
+    const signed = post(body);
+
+    expect(verifyActorSignature(secret, headerFor(signed), { ...signed, method: 'DELETE' }, NOW)).toEqual({
+      ok: false,
+      reason: 'bad_signature',
+    });
+  });
+
+  it('should reject a header replayed against a different path', () => {
+    const signed = post(body);
+    const elsewhere = post(body, '/api/admin/billing/accounts/bbbbbbbbbbbbbbbbbbbbbbbb/credits');
+
+    expect(verifyActorSignature(secret, headerFor(signed), elsewhere, NOW)).toEqual({ ok: false, reason: 'bad_signature' });
+  });
+
+  it('should reject a header replayed with a query string added', () => {
+    const signed = post(body, '/api/admin/users/aaaaaaaaaaaaaaaaaaaaaaaa');
+
+    const withQuery = post(body, '/api/admin/users/aaaaaaaaaaaaaaaaaaaaaaaa?immediate=true');
+
+    expect(verifyActorSignature(secret, headerFor(signed), withQuery, NOW)).toEqual({ ok: false, reason: 'bad_signature' });
+  });
+
+  it('should bind the raw target: a percent-encoded form of the same route is a different request', () => {
+    const signed = post(body, '/api/admin/queue/replay');
+
+    const encoded = post(body, '/api/%61dmin/queue/replay');
+
+    expect(verifyActorSignature(secret, headerFor(signed), encoded, NOW)).toEqual({ ok: false, reason: 'bad_signature' });
   });
 
   it('should reject a header whose user id was swapped', () => {
-    const [, ts, signature] = headerFor(body).split('.');
-    const swapped = `${'0'.repeat(24)}.${ts}.${signature}`;
+    const request = post(body);
+    const [, ts, signature] = headerFor(request).split('.');
 
-    expect(verifyActorSignature(secret, swapped, sha256Hex(body), NOW)).toEqual({
+    expect(verifyActorSignature(secret, `${'0'.repeat(24)}.${ts}.${signature}`, request, NOW)).toEqual({
       ok: false,
       reason: 'bad_signature',
     });
   });
 
   it('should reject a header whose timestamp was moved forward to look fresh', () => {
-    const [userId, , signature] = headerFor(body, NOW - 3600).split('.');
-    const refreshed = `${userId}.${NOW}.${signature}`;
+    const request = post(body);
+    const [userId, , signature] = headerFor(request, NOW - 3600).split('.');
 
-    expect(verifyActorSignature(secret, refreshed, sha256Hex(body), NOW)).toEqual({
+    expect(verifyActorSignature(secret, `${userId}.${NOW}.${signature}`, request, NOW)).toEqual({
       ok: false,
       reason: 'bad_signature',
     });
   });
 
   it('should reject a header signed with a different secret', () => {
-    const forged = signActorHeader('some-other-secret', USER_ID, sha256Hex(body), NOW);
+    const request = post(body);
 
-    expect(verifyActorSignature(secret, forged, sha256Hex(body), NOW)).toEqual({
+    expect(verifyActorSignature(secret, signActorHeader('some-other-secret', USER_ID, request, NOW), request, NOW)).toEqual({
       ok: false,
       reason: 'bad_signature',
     });
   });
 
   it('should reject a flipped signature digit', () => {
-    const header = headerFor(body);
+    const request = post(body);
+    const header = headerFor(request);
     const flipped = `${header.slice(0, -1)}${header.endsWith('0') ? '1' : '0'}`;
 
-    expect(verifyActorSignature(secret, flipped, sha256Hex(body), NOW)).toEqual({
-      ok: false,
-      reason: 'bad_signature',
-    });
+    expect(verifyActorSignature(secret, flipped, request, NOW)).toEqual({ ok: false, reason: 'bad_signature' });
   });
 
   it('should report a missing header', () => {
-    expect(verifyActorSignature(secret, undefined, sha256Hex(body), NOW)).toEqual({
-      ok: false,
-      reason: 'missing',
-    });
+    expect(verifyActorSignature(secret, undefined, post(body), NOW)).toEqual({ ok: false, reason: 'missing' });
   });
 
   it.each([
     ['not three parts', 'abc.def'],
-    ['four parts', `${headerFor(body)}.extra`],
+    ['four parts', `${headerFor(post(body))}.extra`],
     ['a user id that is not an ObjectId', `nope.${NOW}.${'a'.repeat(64)}`],
     ['a non-numeric timestamp', `${USER_ID}.soon.${'a'.repeat(64)}`],
     ['a signature that is not 64 hex digits', `${USER_ID}.${NOW}.abc`],
     ['an uppercase signature', `${USER_ID}.${NOW}.${'A'.repeat(64)}`],
     ['empty', ''],
   ])('should reject a malformed header: %s', (_name, header) => {
-    expect(verifyActorSignature(secret, header, sha256Hex(body), NOW)).toEqual({
-      ok: false,
-      reason: 'malformed',
-    });
+    expect(verifyActorSignature(secret, header, post(body), NOW)).toEqual({ ok: false, reason: 'malformed' });
   });
 
   it('should reject a repeated header rather than pick one', () => {
-    const header = headerFor(body);
+    const request = post(body);
+    const header = headerFor(request);
 
-    expect(verifyActorSignature(secret, [header, header], sha256Hex(body), NOW)).toEqual({
-      ok: false,
-      reason: 'malformed',
-    });
+    expect(verifyActorSignature(secret, [header, header], request, NOW)).toEqual({ ok: false, reason: 'malformed' });
   });
 });

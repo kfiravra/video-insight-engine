@@ -117,6 +117,15 @@ describe('AuditService (integration with in-memory MongoDB)', () => {
       await expect(service.record({ ...baseInput, auditId: 'not-hex' })).rejects.toBeInstanceOf(ValidationError);
     });
 
+    it('should store the request hash a caller supplies, to tell a retry from a reused key', async () => {
+      const requestHash = 'f'.repeat(64);
+
+      const id = await service.record({ ...baseInput, requestHash });
+
+      const row = await db.collection('adminAudit').findOne({ _id: new ObjectId(id) });
+      expect(row?.requestHash).toBe(requestHash);
+    });
+
     it('should store before and after as plain JSON, ObjectIds and Dates as strings', async () => {
       const userId = new ObjectId();
       const id = await service.record({
@@ -167,6 +176,33 @@ describe('AuditService (integration with in-memory MongoDB)', () => {
     });
   });
 
+  describe('findRequestHash', () => {
+    it('should return the hash stored with the row for an audit id', async () => {
+      const auditId = new ObjectId().toString();
+      await service.record({ ...baseInput, auditId, requestHash: 'a'.repeat(64) });
+
+      expect(await service.findRequestHash(auditId)).toBe('a'.repeat(64));
+    });
+
+    it('should return null for a row recorded without a hash', async () => {
+      const auditId = new ObjectId().toString();
+      await service.record({ ...baseInput, auditId });
+
+      expect(await service.findRequestHash(auditId)).toBeNull();
+    });
+
+    it('should return null when no row has the audit id', async () => {
+      expect(await service.findRequestHash(new ObjectId().toString())).toBeNull();
+    });
+
+    it('should find the row by an uppercase spelling of its id', async () => {
+      const auditId = new ObjectId().toString();
+      await service.record({ ...baseInput, auditId, requestHash: 'b'.repeat(64) });
+
+      expect(await service.findRequestHash(auditId.toUpperCase())).toBe('b'.repeat(64));
+    });
+  });
+
   describe('list', () => {
     async function seed(targetId: string, actorId: string, offsetMinutes: number): Promise<void> {
       now = new Date(Date.UTC(2026, 9, 28, 10, offsetMinutes));
@@ -210,6 +246,31 @@ describe('AuditService (integration with in-memory MongoDB)', () => {
       const rows = await service.list({ before: new Date('2026-10-28T10:10:00Z') });
 
       expect(rows.map((row) => row.targetId)).toEqual(['b', 'a']);
+    });
+
+    it('should not expose the request hash on a listed view', async () => {
+      await service.record({ ...baseInput, requestHash: 'c'.repeat(64) });
+
+      const [row] = await service.list();
+
+      expect(row).not.toHaveProperty('requestHash');
+    });
+
+    it('should page through rows that share a millisecond without skipping or repeating any', async () => {
+      now = new Date('2026-10-28T10:00:00Z');
+      for (const targetId of ['a', 'b', 'c', 'd', 'e']) await service.record({ ...baseInput, targetId });
+
+      const seen: string[] = [];
+      let before: Date | { createdAt: Date; id: string } | undefined;
+      for (let page = 0; page < 5; page++) {
+        const rows = await service.list({ limit: 2, before });
+        if (rows.length === 0) break;
+        seen.push(...rows.map((row) => row.targetId));
+        const last = rows[rows.length - 1];
+        before = { createdAt: new Date(last.createdAt), id: last.id };
+      }
+
+      expect([...seen].sort()).toEqual(['a', 'b', 'c', 'd', 'e']);
     });
 
     it('should honor the limit and cap it at 200', async () => {

@@ -140,7 +140,10 @@ app = FastAPI(
     openapi_url=None,
 )
 
-# CORS — restrict to known origins
+# CORS — restrict to known origins. Middleware added later wraps earlier ones, so
+# the auth middleware below runs first: a cross-origin preflight (no Authorization
+# header) is answered 401 before CORS sees it. The panel is served from this
+# service, so it never sends one; this only affects a UI dev server on another origin.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -148,7 +151,7 @@ app.add_middleware(
         "http://localhost:8002",
     ],
     allow_methods=["GET", "POST", "DELETE"],
-    allow_headers=["Authorization", "Content-Type"],
+    allow_headers=["Authorization", "Content-Type", "Idempotency-Key"],
 )
 
 # Auth middleware

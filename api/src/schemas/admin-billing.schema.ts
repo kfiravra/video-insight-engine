@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { PLAN_IDS } from '@vie/types';
+import type { AdminAuditCursor } from '../repositories/admin-audit.repository.js';
 
 // Request shapes for /api/admin/billing/* and /api/admin/audit. These check
 // types, required fields and dates only; the ranges (minutes, caps, expiry in
@@ -58,11 +59,29 @@ export const deleteRecurringGrantBodySchema = z.object({ reason }).strict();
 
 const actorFilter = z.string().trim().min(1).max(200);
 
+/**
+ * The audit paging cursor: `<ISO instant>_<row id>` (what `nextBefore` hands
+ * out), or a bare ISO instant for rows strictly older than it. The id splits
+ * rows that share a millisecond.
+ */
+const auditCursor = z.string().max(80).transform((value, ctx): AdminAuditCursor => {
+  const [instant = '', id, ...extra] = value.split('_');
+  const valid =
+    z.string().datetime({ offset: true }).safeParse(instant).success &&
+    extra.length === 0 &&
+    (id === undefined || /^[0-9a-f]{24}$/i.test(id));
+  if (!valid) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'must be an ISO 8601 timestamp, optionally followed by _<id>' });
+    return z.NEVER;
+  }
+  return id === undefined ? { createdAt: new Date(instant) } : { createdAt: new Date(instant), id: id.toLowerCase() };
+});
+
 export const auditListQuerySchema = z.object({
   targetId: actorFilter.optional(),
   actorId: actorFilter.optional(),
   limit: z.coerce.number().int().min(1).max(200).optional(),
-  before: isoDate.optional(),
+  before: auditCursor.optional(),
 });
 
 /** Optional client-chosen key that makes a retried mutation apply once. */

@@ -19,7 +19,8 @@ import {
 } from '../../schemas/admin-billing.schema.js';
 import type { AdminMutationContext, MutationResult } from '../../services/billing/billing.service.js';
 import { adminActorUserId, auditRequestContext } from '../../utils/audit-context.js';
-import { AdminPermissionError, ConflictError } from '../../utils/errors.js';
+import { AdminPermissionError, ConflictError, IdempotencyKeyReusedError } from '../../utils/errors.js';
+import { hashRequest } from '../../utils/request-hash.js';
 
 /**
  * Admin endpoints over the minutes ledger (`BillingService`, Contract 1):
@@ -41,7 +42,11 @@ import { AdminPermissionError, ConflictError } from '../../utils/errors.js';
  *
  * An optional `Idempotency-Key` header makes a retry safe: the audit id is
  * derived from the key, the admin, the action and the target, so a repeated
- * request replays the same ledger keys and changes nothing.
+ * request replays the same ledger keys and changes nothing. The audit row also
+ * stores a hash of the whole request, and the same key arriving with a
+ * different request is refused with 422 `IDEMPOTENCY_KEY_REUSED` before
+ * anything runs: otherwise the second request would be dropped as a replay
+ * (or, for caps, applied with no audit row).
  */
 
 const IDEMPOTENCY_HEADER = 'idempotency-key';
@@ -50,6 +55,8 @@ interface AuditedMutation<T extends MutationResult<AccountSnapshot>> {
   action: string;
   userId: string;
   reason: string;
+  /** The validated request body; hashed to recognise the same request, and a different one under the same key. */
+  input: unknown;
   /** What distinguishes two targets of the same action under one key (e.g. the grant id). */
   scope?: string;
   run: (ctx: AdminMutationContext) => Promise<T>;
@@ -82,6 +89,13 @@ async function guardContention<T>(work: () => Promise<T>): Promise<T> {
   }
 }
 
+/** A key already recorded for another request is a client bug; do not run the new one as if it were a retry. */
+async function refuseReusedKey(container: Container, req: FastifyRequest, auditId: string, requestHash: string): Promise<void> {
+  if (req.headers[IDEMPOTENCY_HEADER] === undefined) return;
+  const recorded = await container.auditService.findRequestHash(auditId);
+  if (recorded !== null && recorded !== requestHash) throw new IdempotencyKeyReusedError();
+}
+
 async function auditedMutation<T extends MutationResult<AccountSnapshot>>(
   container: Container,
   req: FastifyRequest,
@@ -89,8 +103,10 @@ async function auditedMutation<T extends MutationResult<AccountSnapshot>>(
 ): Promise<T & { auditId: string }> {
   const actorId = adminActorUserId(req);
   if (actorId === null) throw new AdminPermissionError('A named admin is required');
-  const { action, userId, reason, scope, details, run } = spec;
+  const { action, userId, reason, scope, input, details, run } = spec;
   const auditId = resolveAuditId(req, actorId, action, userId, scope);
+  const requestHash = hashRequest({ action, userId: userId.toLowerCase(), scope: scope ?? null, input });
+  await refuseReusedKey(container, req, auditId, requestHash);
 
   const result = await guardContention(() => run({ actorId, reason, auditId }));
 
@@ -103,6 +119,7 @@ async function auditedMutation<T extends MutationResult<AccountSnapshot>>(
     before: result.before,
     after: { ...result.after, ...details?.(result) },
     reason,
+    requestHash,
   });
   return { ...result, auditId };
 }
@@ -129,11 +146,13 @@ function registerPlanAndCredits(fastify: FastifyInstance): void {
     preHandler: [fastify.requireAdmin('plan:set')],
   }, async (req) => {
     const { userId } = accountParamsSchema.parse(req.params);
-    const { reason, ...plan } = setPlanBodySchema.parse(req.body);
+    const body = setPlanBodySchema.parse(req.body);
+    const { reason, ...plan } = body;
     return auditedMutation(fastify.container, req, {
       action: 'billing.plan.set',
       userId,
       reason,
+      input: body,
       run: (ctx) => fastify.container.billingService.setPlan(userId, plan, ctx),
     });
   });
@@ -142,11 +161,13 @@ function registerPlanAndCredits(fastify: FastifyInstance): void {
     preHandler: [fastify.requireAdmin('billing:grant')],
   }, async (req) => {
     const { userId } = accountParamsSchema.parse(req.params);
-    const { reason, ...grant } = grantCreditsBodySchema.parse(req.body);
+    const body = grantCreditsBodySchema.parse(req.body);
+    const { reason, ...grant } = body;
     return auditedMutation(fastify.container, req, {
       action: 'billing.credits.grant',
       userId,
       reason,
+      input: body,
       run: (ctx) => fastify.container.billingService.grantLot(userId, grant, ctx),
       details: (result) => ({ lotId: result.lotId, minutes: grant.minutes, expiresAt: grant.expiresAt ?? null }),
     });
@@ -158,11 +179,13 @@ function registerCapsAndAdjust(fastify: FastifyInstance): void {
     preHandler: [fastify.requireAdmin('caps:set')],
   }, async (req) => {
     const { userId } = accountParamsSchema.parse(req.params);
-    const { reason, ...caps } = setCapsBodySchema.parse(req.body);
+    const body = setCapsBodySchema.parse(req.body);
+    const { reason, ...caps } = body;
     return auditedMutation(fastify.container, req, {
       action: 'billing.caps.set',
       userId,
       reason,
+      input: body,
       run: (ctx) => fastify.container.billingService.setCaps(userId, caps, ctx),
     });
   });
@@ -171,11 +194,13 @@ function registerCapsAndAdjust(fastify: FastifyInstance): void {
     preHandler: [fastify.requireAdmin('billing:grant')],
   }, async (req) => {
     const { userId } = accountParamsSchema.parse(req.params);
-    const { reason, ...adjustment } = adjustBodySchema.parse(req.body);
+    const body = adjustBodySchema.parse(req.body);
+    const { reason, ...adjustment } = body;
     return auditedMutation(fastify.container, req, {
       action: 'billing.adjust',
       userId,
       reason,
+      input: body,
       run: (ctx) => fastify.container.billingService.adjust(userId, adjustment, ctx),
       details: () => ({ bucket: adjustment.bucket, minutes: adjustment.minutes }),
     });
@@ -187,11 +212,13 @@ function registerRecurringGrants(fastify: FastifyInstance): void {
     preHandler: [fastify.requireAdmin('billing:grant')],
   }, async (req) => {
     const { userId } = accountParamsSchema.parse(req.params);
-    const { reason, ...grant } = createRecurringGrantBodySchema.parse(req.body);
+    const body = createRecurringGrantBodySchema.parse(req.body);
+    const { reason, ...grant } = body;
     return auditedMutation(fastify.container, req, {
       action: 'billing.recurring.create',
       userId,
       reason,
+      input: body,
       run: (ctx) => fastify.container.billingService.createRecurringGrant(userId, grant, ctx),
       details: (result) => ({ grantId: result.grantId, grant }),
     });
@@ -201,11 +228,13 @@ function registerRecurringGrants(fastify: FastifyInstance): void {
     preHandler: [fastify.requireAdmin('billing:grant')],
   }, async (req) => {
     const { userId, grantId } = recurringGrantParamsSchema.parse(req.params);
-    const { reason } = deleteRecurringGrantBodySchema.parse(req.body);
+    const body = deleteRecurringGrantBodySchema.parse(req.body);
+    const { reason } = body;
     return auditedMutation(fastify.container, req, {
       action: 'billing.recurring.delete',
       userId,
       reason,
+      input: body,
       scope: grantId,
       run: (ctx) => fastify.container.billingService.deleteRecurringGrant(userId, grantId, ctx),
       details: () => ({ grantId }),

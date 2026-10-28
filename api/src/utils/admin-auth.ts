@@ -1,6 +1,6 @@
 import { timingSafeEqual } from 'node:crypto';
 import { config } from '../config.js';
-import { verifyActorSignature, type ActorHeaderResult } from './admin-actor.js';
+import { verifyActorSignature, type ActorHeaderResult, type ActorRequest } from './admin-actor.js';
 
 /**
  * Constant-time comparison of a request's `x-admin-key` header against the
@@ -21,13 +21,14 @@ export function isValidAdminKey(headerValue: string | string[] | undefined): boo
 
 /**
  * Verify the `X-Admin-Actor` header vie-admin signs for a named admin, against
- * the hash of the exact request body and `ADMIN_SESSION_SECRET`. Freshness is
- * five minutes either way. See `admin-actor.ts` for the format.
+ * the request it arrived on (method, raw target, body hash) and
+ * `ADMIN_SESSION_SECRET`. Freshness is five minutes either way. See
+ * `admin-actor.ts` for the format.
  */
 export function verifyActorHeader(
   headerValue: string | string[] | undefined,
-  bodySha256: string,
+  request: ActorRequest,
   nowSeconds: number = Math.floor(Date.now() / 1000),
 ): ActorHeaderResult {
-  return verifyActorSignature(config.ADMIN_SESSION_SECRET, headerValue, bodySha256, nowSeconds);
+  return verifyActorSignature(config.ADMIN_SESSION_SECRET, headerValue, request, nowSeconds);
 }

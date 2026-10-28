@@ -12,6 +12,7 @@ import { IdempotencyRepository } from './repositories/idempotency.repository.js'
 import { UserDeletionRepository } from './repositories/user-deletion.repository.js';
 import { VideoDeletionRepository } from './repositories/video-deletion.repository.js';
 import { AdminAuditRepository } from './repositories/admin-audit.repository.js';
+import { AlertConfigRepository } from './repositories/alert-config.repository.js';
 import { BillingRepository } from './repositories/billing.repository.js';
 import { BillingShadowRepository } from './repositories/billing-shadow.repository.js';
 import { LlmUsageRepository } from './repositories/llm-usage.repository.js';
@@ -35,6 +36,8 @@ import { ChatFairUseService, noOpChatFairUse, type IChatFairUse } from './servic
 import { UserDeletionService } from './services/user-deletion.service.js';
 import { VideoCascadeService } from './services/video-cascade.service.js';
 import { AuditService } from './services/audit.service.js';
+import { AdminReplayGuard } from './services/admin-replay-guard.service.js';
+import { AlertConfigService } from './services/alert-config.service.js';
 import { AdminSeedService } from './services/admin-seed.service.js';
 import { BillingService } from './services/billing/billing.service.js';
 import { BillingGate } from './services/billing/billing-gate.js';
@@ -81,6 +84,8 @@ export interface Container {
   userDeletionService: UserDeletionService;
   videoCascadeService: VideoCascadeService;
   auditService: AuditService;
+  adminReplayGuard: AdminReplayGuard;
+  alertConfigService: AlertConfigService;
   adminSeedService: AdminSeedService;
   billingService: BillingService;
   billingShadowService: BillingShadowService;
@@ -219,6 +224,8 @@ export function createContainer(
     recurringLotGraceMs: 2 * config.BILLING_REPAIR_INTERVAL_SECONDS * 1000,
   });
   const auditService = new AuditService(adminAuditRepository, logger);
+  const adminReplayGuard = new AdminReplayGuard(options.redisClient, logger);
+  const alertConfigService = new AlertConfigService(new AlertConfigRepository(db));
   const adminSeedService = new AdminSeedService(
     config.ADMIN_EMAILS,
     config.DEMO_USER_EMAIL,
@@ -258,6 +265,8 @@ export function createContainer(
     userDeletionService,
     videoCascadeService,
     auditService,
+    adminReplayGuard,
+    alertConfigService,
     adminSeedService,
     billingService,
     billingShadowService,

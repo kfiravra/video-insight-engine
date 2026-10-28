@@ -93,11 +93,17 @@ export interface AdminAudit {
   reason?: string;
   requestId?: string;
   ip?: string;
+  /**
+   * sha256 of the request that produced the row (action, target, parameters,
+   * reason). A repeated `Idempotency-Key` with a different request is refused
+   * by comparing against it. Internal: not part of the view.
+   */
+  requestHash?: string;
   /** ISO date. */
   createdAt: string;
 }
 
-/** `AdminAudit` as the admin API returns it: `_id` is exposed as `id`. */
-export interface AdminAuditView extends Omit<AdminAudit, '_id'> {
+/** `AdminAudit` as the admin API returns it: `_id` is exposed as `id`, `requestHash` is withheld. */
+export interface AdminAuditView extends Omit<AdminAudit, '_id' | 'requestHash'> {
   id: string;
 }

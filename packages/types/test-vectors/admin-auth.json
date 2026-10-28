@@ -1,32 +1,58 @@
 {
-  "_comment": "Shared by api (vitest) and services/admin (pytest) so the TypeScript and Python implementations cannot drift. Edit both suites' expectations together.",
+  "_comment": "Shared by api (vitest) and services/admin (pytest) so the TypeScript and Python implementations cannot drift. The actor header signs actor|METHOD|target|userId|ts|sha256(body). Edit both suites' expectations together.",
   "actorHeader": {
     "secret": "golden-session-secret-0123456789abcdef",
     "maxAgeSeconds": 300,
     "vectors": [
       {
-        "name": "mutation with a JSON body",
-        "userId": "64f1c0a2b3d4e5f607182930",
-        "ts": 1790000000,
-        "body": "{\"reason\":\"duplicate upload\"}",
-        "bodySha256": "664c7ee1b256561f3ab80713be618236de693eb867d52a95ad75175371eef5c1",
-        "header": "64f1c0a2b3d4e5f607182930.1790000000.77f49eeac66fec6a641ffef9d35726c088a7ff26797510f43b2ae738630e88c5"
-      },
-      {
-        "name": "GET with no body",
+        "name": "GET with no body or query",
+        "method": "GET",
+        "target": "/api/admin/queue/stats",
         "userId": "64f1c0a2b3d4e5f607182930",
         "ts": 1790000123,
         "body": "",
         "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-        "header": "64f1c0a2b3d4e5f607182930.1790000123.705de5905dffc685e0da39556432dd547c5d8588b1a1ad2414988a278345b832"
+        "header": "64f1c0a2b3d4e5f607182930.1790000123.c525ae5d9db59cefaa2d708b4c3f9a16f746e9054a6e13a826fb47488a3dd3d4"
       },
       {
-        "name": "body with non-ASCII characters",
+        "name": "GET with an encoded query string",
+        "method": "GET",
+        "target": "/api/admin/audit?targetId=0a1b2c3d4e5f60718293a4b5&limit=25&before=2026-11-01T10%3A00%3A00Z",
+        "userId": "64f1c0a2b3d4e5f607182930",
+        "ts": 1790000200,
+        "body": "",
+        "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "header": "64f1c0a2b3d4e5f607182930.1790000200.3a93db5f6fb1a54dfaf01bf74e68b38d6367226b89a3ab310ab264960b6a131f"
+      },
+      {
+        "name": "POST with a JSON body",
+        "method": "POST",
+        "target": "/api/admin/billing/accounts/0a1b2c3d4e5f60718293a4b5/credits",
+        "userId": "64f1c0a2b3d4e5f607182930",
+        "ts": 1790000000,
+        "body": "{\"reason\":\"duplicate upload\",\"minutes\":150}",
+        "bodySha256": "cb55aade547b19bb16dfaf894801f450ef60be2c0e4068244a3d8225ca4cd573",
+        "header": "64f1c0a2b3d4e5f607182930.1790000000.a53cb97c7b1cd0e1e4d3b6763669129207e877925f26ca08db68c2ef3d0b789a"
+      },
+      {
+        "name": "DELETE with a body and a path parameter",
+        "method": "DELETE",
+        "target": "/api/admin/videos/dQw4w9WgXcQ",
+        "userId": "64f1c0a2b3d4e5f607182930",
+        "ts": 1790000050,
+        "body": "{\"reason\":\"copyright\"}",
+        "bodySha256": "ee2d87ca14ddddfcc985abd4b0ab12bb74b0e8ccfe8758089f70e8891dc7a93c",
+        "header": "64f1c0a2b3d4e5f607182930.1790000050.dde9f0090bfbaa4e043b10feb45edda4f1497c9db2623de350168a8b8e444d9a"
+      },
+      {
+        "name": "POST with non-ASCII characters in the body",
+        "method": "POST",
+        "target": "/api/admin/billing/accounts/0a1b2c3d4e5f60718293a4b5/adjust",
         "userId": "0a1b2c3d4e5f60718293a4b5",
         "ts": 1790000999,
-        "body": "{\"reason\":\"dupliqué ✓\"}",
-        "bodySha256": "64318b3b57c695ef1249fec49de608d0f56783e20a7d8ad21fa320cb120dab33",
-        "header": "0a1b2c3d4e5f60718293a4b5.1790000999.f84f36a2dc4b31ee340184f280eb329c790b9e3ab649688443923edc14c3e272"
+        "body": "{\"reason\":\"dupliqué ✓\",\"bucket\":\"credit\",\"minutes\":-5}",
+        "bodySha256": "5ce620078485b6a502b53b43cfcec4a6bf9330a6bb6938da3dcaea6147153dc8",
+        "header": "0a1b2c3d4e5f60718293a4b5.1790000999.feefb0122248779a97f947679b1f16ada1d916a5b3967613d199bd4c6a1d48a1"
       }
     ]
   },

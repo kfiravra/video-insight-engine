@@ -60,6 +60,8 @@ export interface CreateDeletionAuditData {
   counts: DeletionCounts;
   startedAt: Date;
   completedAt: Date;
+  /** Measured on a monotonic clock; falls back to the wall-clock difference, floored at 0. */
+  durationMs?: number;
   warnings?: string[];
 }
 
@@ -80,7 +82,7 @@ export class UserDeletionRepository {
       counts: data.counts,
       startedAt: data.startedAt,
       completedAt: data.completedAt,
-      durationMs: data.completedAt.getTime() - data.startedAt.getTime(),
+      durationMs: data.durationMs ?? Math.max(0, data.completedAt.getTime() - data.startedAt.getTime()),
       warnings: data.warnings && data.warnings.length > 0 ? data.warnings : undefined,
     };
     const result = await this.collection.insertOne(doc as UserDeletionDocument);

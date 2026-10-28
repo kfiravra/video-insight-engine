@@ -17,22 +17,20 @@ from it, so a retry after a timeout applies once.
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Header, Path, Query
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator
 
 from src.auth import AdminActor, current_actor, current_user_actor
 from src.services.vie_api_client import (
     IDEMPOTENCY_KEY_PATTERN,
+    MAX_ADMIN_MINUTES,
     OBJECT_ID_PATTERN,
     call_vie_api,
 )
 
 router = APIRouter(tags=["billing-actions"])
-
-MAX_MINUTES = 100_000
 
 UserId = Annotated[str, Path(pattern=OBJECT_ID_PATTERN, description="users._id (24-character hex)")]
 GrantId = Annotated[str, Path(pattern=OBJECT_ID_PATTERN)]
@@ -45,14 +43,14 @@ IdempotencyKey = Annotated[
 class _Mutation(BaseModel):
     """Every mutation says why; unknown fields (such as an ``adminId``) are rejected."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     reason: str = Field(..., min_length=1, max_length=500)
 
 
 class SetPlanRequest(_Mutation):
     planId: Literal["free", "pro"]
-    periodEnd: datetime | None = Field(
+    periodEnd: AwareDatetime | None = Field(
         None, description="End of a manual Pro term (ISO 8601 with offset); default 12 months"
     )
 
@@ -68,7 +66,9 @@ class SetCapsRequest(_Mutation):
 
 class AdjustRequest(_Mutation):
     bucket: Literal["plan", "credit"]
-    minutes: int = Field(..., ge=-MAX_MINUTES, le=MAX_MINUTES, description="Signed, not 0")
+    minutes: int = Field(
+        ..., ge=-MAX_ADMIN_MINUTES, le=MAX_ADMIN_MINUTES, description="Signed, not 0"
+    )
 
     @field_validator("minutes")
     @classmethod
@@ -79,7 +79,7 @@ class AdjustRequest(_Mutation):
 
 
 class CreateRecurringGrantRequest(_Mutation):
-    minutes: int = Field(..., ge=1, le=MAX_MINUTES)
+    minutes: int = Field(..., ge=1, le=MAX_ADMIN_MINUTES)
     every: Literal["month"]
     active: bool
 
@@ -171,7 +171,9 @@ async def list_audit(
     target_id: Annotated[str | None, Query(alias="targetId", min_length=1, max_length=200)] = None,
     actor_id: Annotated[str | None, Query(alias="actorId", min_length=1, max_length=200)] = None,
     limit: Annotated[int | None, Query(ge=1, le=200)] = None,
-    before: Annotated[str | None, Query(max_length=40, description="ISO 8601 cursor")] = None,
+    before: Annotated[
+        str | None, Query(max_length=64, description="Opaque cursor: a previous nextBefore")
+    ] = None,
 ) -> dict:
     """The admin action log, newest first; a user's history is ``?targetId=<userId>``.
 

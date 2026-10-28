@@ -11,9 +11,12 @@ routers; the HTTP docs endpoints stay disabled), so a route declared with
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator
 from unittest.mock import AsyncMock
 
 import pytest
+from fastapi.dependencies.models import Dependant
+from fastapi.routing import APIRoute
 from httpx import ASGITransport, AsyncClient
 
 import src.auth as auth_module
@@ -23,13 +26,15 @@ from src.auth import (
     SPA_PREFIX_PATHS,
     AdminVerdictCache,
     create_session_token,
+    current_user_actor,
 )
 from src.config import settings
 from src.main import app
 
 PLACEHOLDER = "a" * 24
 NON_ADMIN_ID = "64f1c0a2b3d4e5f607182931"
-# HEAD/OPTIONS are never registered by the routers; CORS handles preflight.
+# HEAD/OPTIONS are never registered by the routers (and a preflight is answered
+# 401 by the auth middleware, which wraps CORS).
 _IGNORED_METHODS = frozenset({"HEAD", "OPTIONS"})
 
 
@@ -52,6 +57,22 @@ def _protected_routes() -> list[tuple[str, str, str]]:
             continue
         found.append((method, path, re.sub(r"\{[^}]+\}", PLACEHOLDER, path)))
     return sorted(found)
+
+
+def _walk_routes(routes: list, prefix: str = "") -> Iterator[tuple[str, APIRoute]]:
+    """Every APIRoute with its full path. FastAPI 0.14x keeps an included router as a
+    lazy wrapper, so unwrap those; if that private shape changes, the equality test
+    below fails instead of this test silently checking nothing."""
+    for route in routes:
+        original = getattr(route, "original_router", None)
+        if original is not None:
+            yield from _walk_routes(original.routes, prefix + route.include_context.prefix)
+        elif isinstance(route, APIRoute):
+            yield prefix + route.path, route
+
+
+def _depends_on(dependant: Dependant, target: object) -> bool:
+    return any(dep.call is target or _depends_on(dep, target) for dep in dependant.dependencies)
 
 
 ROUTES = _protected_routes()
@@ -158,3 +179,33 @@ async def test_refuses_the_machine_key_on_every_mutation(method: str, _path: str
     resp = await _request(method, url, token=settings.ADMIN_API_KEY)
 
     assert resp.status_code == 403
+
+
+def _mutating_routes() -> list[tuple[str, str, APIRoute]]:
+    return sorted(
+        (method, path, route)
+        for path, route in _walk_routes(app.routes)
+        if path not in EXEMPT_PATHS
+        for method in route.methods - _IGNORED_METHODS - {"GET"}
+    )
+
+
+MUTATING = _mutating_routes()
+
+
+def test_the_route_walk_sees_every_documented_route() -> None:
+    """The dependency check below only counts if it looked at the same routes as the rest."""
+    walked = {
+        (m, p) for path, route in _walk_routes(app.routes) for p in [path] for m in route.methods
+    }
+    documented = {(method, path) for method, path in _documented_routes()}
+
+    assert documented <= walked
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "route"), MUTATING, ids=[f"{m} {p}" for m, p, _ in MUTATING]
+)
+def test_every_mutation_acts_as_a_named_admin(method: str, path: str, route: APIRoute) -> None:
+    """The machine key is refused by the middleware; this makes the route itself ask for a user."""
+    assert _depends_on(route.dependant, current_user_actor)

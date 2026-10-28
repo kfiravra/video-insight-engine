@@ -30,6 +30,7 @@ describe('GET /api/admin/audit', () => {
 
   beforeEach(() => {
     mocks.userRepository.hasPermission.mockResolvedValue(true);
+    mocks.adminReplayGuard.claim.mockResolvedValue(true);
   });
 
   afterAll(async () => {
@@ -41,8 +42,10 @@ describe('GET /api/admin/audit', () => {
     await audit.record({ actorId, action: 'billing.credits.grant', targetType: 'user', targetId, reason: `at ${minute}` });
   }
 
-  const get = (query = '', request = adminActorRequest()) =>
-    app.inject({ method: 'GET', url: `${URL}${query}`, headers: request.headers });
+  const get = (query = '') => {
+    const url = `${URL}${query}`;
+    return app.inject({ method: 'GET', url, headers: adminActorRequest('GET', url).headers });
+  };
 
   it('should answer 401 without credentials', async () => {
     const res = await app.inject({ method: 'GET', url: URL });
@@ -106,7 +109,7 @@ describe('GET /api/admin/audit', () => {
     const page = (await get('?limit=2')).json();
 
     expect(page.entries).toHaveLength(2);
-    expect(page.nextBefore).toBe('2026-11-01T10:01:00.000Z');
+    expect(page.nextBefore).toBe(`2026-11-01T10:01:00.000Z_${page.entries[1].id}`);
   });
 
   it('should page older rows with the cursor and end with a null cursor', async () => {
@@ -121,7 +124,52 @@ describe('GET /api/admin/audit', () => {
     expect(second.nextBefore).toBeNull();
   });
 
-  it.each([['limit=0'], ['limit=201'], ['limit=abc'], ['before=yesterday']])('should reject %s with 400', async (query) => {
+  it('should accept a bare timestamp as a cursor: rows strictly older than it', async () => {
+    await seed(TEST_ADMIN_USER_ID, USER_A, 0);
+    await seed(TEST_ADMIN_USER_ID, USER_A, 5);
+
+    const { entries } = (await get('?before=2026-11-01T10%3A05%3A00.000Z')).json();
+
+    expect(entries.map((entry: { reason: string }) => entry.reason)).toEqual(['at 0']);
+  });
+
+  it('should neither skip nor repeat rows that share a millisecond across a page boundary', async () => {
+    // Five rows in the very same millisecond, paged two at a time.
+    for (let n = 0; n < 5; n++) await seed(TEST_ADMIN_USER_ID, USER_A, 7);
+    const seen: string[] = [];
+    let before: string | null = null;
+
+    do {
+      const page: { entries: Array<{ id: string }>; nextBefore: string | null } = (
+        await get(`?limit=2${before ? `&before=${encodeURIComponent(before)}` : ''}`)
+      ).json();
+      seen.push(...page.entries.map((entry) => entry.id));
+      before = page.nextBefore;
+    } while (before);
+
+    expect(seen).toHaveLength(5);
+    expect(new Set(seen).size).toBe(5);
+  });
+
+  it('should still page rows of different milliseconds in order with the id cursor', async () => {
+    await seed(TEST_ADMIN_USER_ID, USER_A, 1);
+    await seed(TEST_ADMIN_USER_ID, USER_A, 2);
+    await seed(TEST_ADMIN_USER_ID, USER_A, 3);
+    const first = (await get('?limit=2')).json();
+
+    const second = (await get(`?limit=2&before=${encodeURIComponent(first.nextBefore)}`)).json();
+
+    expect(second.entries.map((entry: { reason: string }) => entry.reason)).toEqual(['at 1']);
+  });
+
+  it.each([
+    ['limit=0'],
+    ['limit=201'],
+    ['limit=abc'],
+    ['before=yesterday'],
+    ['before=2026-11-01T10%3A00%3A00Z_nothex'],
+    ['before=2026-11-01T10%3A00%3A00Z_aaaaaaaaaaaaaaaaaaaaaaaa_extra'],
+  ])('should reject %s with 400', async (query) => {
     const res = await get(`?${query}`);
 
     expect(res.statusCode).toBe(400);

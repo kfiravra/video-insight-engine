@@ -4,8 +4,7 @@ vie-api owns the cascade (Mongo references, the summarizer purge of Qdrant,
 S3 and Redis, and the audit rows). The admin service forwards the call so the
 UI keeps a single base URL and auth model, naming the admin who made it in a
 signed ``X-Admin-Actor`` header (see ``vie_api_client``); there is no
-self-attested admin id in the request. The proxy helpers are a second copy of
-the ones in queue.py — extract on the third.
+self-attested admin id in the request.
 """
 
 from __future__ import annotations
@@ -14,13 +13,12 @@ from typing import Annotated
 
 import httpx
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Path
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, Path
+from pydantic import BaseModel, ConfigDict, Field
 
 from src.auth import AdminActor, current_user_actor
-from src.config import settings
 from src.routes.usage import invalidate_video_cache
-from src.services.vie_api_client import admin_headers, encode_json_body, translate_upstream
+from src.services.vie_api_client import call_vie_api
 
 logger = structlog.get_logger(__name__)
 
@@ -34,11 +32,9 @@ YOUTUBE_ID_PATTERN = r"^[A-Za-z0-9_-]{11}$"
 class PurgeVideoRequest(BaseModel):
     """What the operator tells the audit row: why. Who is the session's admin."""
 
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
     reason: str | None = Field(default=None, min_length=1, max_length=500)
-
-
-def _upstream_url(youtube_id: str) -> str:
-    return f"{settings.VIE_API_URL.rstrip('/')}/api/admin/videos/{youtube_id}"
 
 
 @router.delete("/{youtube_id}")
@@ -47,28 +43,19 @@ async def purge_video(
     request: PurgeVideoRequest | None = None,
     youtube_id: str = Path(..., pattern=YOUTUBE_ID_PATTERN),
 ) -> dict:
-    """Delete a video from every store for every user (vie-api runs the cascade)."""
+    """Delete a video from every store for every user (vie-api runs the cascade).
+
+    A timeout is a 504 saying the purge may still be running: reload before
+    retrying instead of firing a second cascade blindly.
+    """
     body = request or PurgeVideoRequest()
     logger.info("video_purge_requested", youtube_id=youtube_id, user_id=actor.user_id)
-    # The signature covers these exact bytes, so they are what goes on the wire.
-    content = encode_json_body({"reason": body.reason} if body.reason else {})
-    headers = {**admin_headers(actor, content), "Content-Type": "application/json"}
-    try:
-        async with httpx.AsyncClient(timeout=_PURGE_TIMEOUT) as client:
-            resp = await client.request(
-                "DELETE", _upstream_url(youtube_id), headers=headers, content=content
-            )
-    except httpx.TimeoutException as exc:
-        # The purge may still be running on vie-api: tell the operator to
-        # reload before retrying instead of firing a second cascade blindly.
-        logger.warning("video_purge_timeout", youtube_id=youtube_id)
-        raise HTTPException(
-            status_code=504,
-            detail="vie-api timed out; the purge may still be running — reload before retrying",
-        ) from exc
-    except httpx.RequestError as exc:
-        logger.warning("video_purge_unreachable", youtube_id=youtube_id, error=str(exc))
-        raise HTTPException(status_code=502, detail="vie-api unreachable") from exc
-    result = translate_upstream(resp)
+    result = await call_vie_api(
+        "DELETE",
+        f"videos/{youtube_id}",
+        actor,
+        body={"reason": body.reason} if body.reason else {},
+        timeout=_PURGE_TIMEOUT,
+    )
     invalidate_video_cache(youtube_id)
     return result

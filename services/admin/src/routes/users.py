@@ -3,21 +3,26 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 
+import structlog
 from bson import ObjectId
 from bson.errors import InvalidId
 from cachetools import TTLCache
 from fastapi import APIRouter, Depends, Header, HTTPException, Path, Query
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 from src.auth import AdminActor, current_user_actor
 from src.dependencies import get_database
-from src.services.vie_api_client import IDEMPOTENCY_KEY_PATTERN, OBJECT_ID_PATTERN, call_vie_api
+from src.services.vie_api_client import (
+    IDEMPOTENCY_KEY_PATTERN,
+    MAX_ADMIN_MINUTES,
+    OBJECT_ID_PATTERN,
+    call_vie_api,
+)
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -74,11 +79,11 @@ class UserCostDetail(BaseModel):
 class GrantCreditRequest(BaseModel):
     """Minutes to add to a user's account as a credit lot."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    minutes: int = Field(..., ge=1, le=100_000, description="Whole minutes of credit")
+    minutes: int = Field(..., ge=1, le=MAX_ADMIN_MINUTES, description="Whole minutes of credit")
     reason: str = Field(..., min_length=1, max_length=500)
-    expiresAt: datetime | None = Field(
+    expiresAt: AwareDatetime | None = Field(
         None, description="ISO 8601 with an offset; absent or null = the lot never expires"
     )
 
@@ -290,7 +295,7 @@ async def grant_credit(
     history now; nothing here writes it.
     """
     logger.info(
-        "credit_grant_requested user=%s admin=%s minutes=%d", user_id, actor.user_id, body.minutes
+        "credit_grant_requested", user_id=user_id, admin_id=actor.user_id, minutes=body.minutes
     )
     return await call_vie_api(
         "POST",

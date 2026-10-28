@@ -1,50 +1,10 @@
+import { ApiError, errorDetail } from './api-error';
 import type { BillingAccountDetail, BillingAccountQuery } from './billing';
 
+// The error helpers live in ./api-error; callers keep importing them from here.
+export { ApiError, describeApiError } from './api-error';
+
 const API_BASE = '';
-
-export class ApiError extends Error {
-  status: number;
-  /** The server's own explanation (vie-api's validation message, FastAPI's 422 text), when it sent one. */
-  detail?: string;
-  constructor(status: number, message: string, detail?: string) {
-    super(message);
-    this.name = 'ApiError';
-    this.status = status;
-    this.detail = detail;
-  }
-}
-
-/** What to show an operator for a failed call: the server's explanation, else the generic message. */
-export function describeApiError(error: unknown): string {
-  if (error instanceof ApiError) return error.detail ?? error.message;
-  return error instanceof Error ? error.message : 'Something went wrong';
-}
-
-interface FastApiValidationIssue {
-  msg?: unknown;
-}
-
-/**
- * The human-readable part of an error body: a string `detail`, vie-api's
- * `{error, message}` envelope passed through as `detail`, or FastAPI's list of
- * 422 issues. undefined when the body is not JSON or carries nothing usable.
- */
-async function errorDetail(res: Response): Promise<string | undefined> {
-  let body: unknown;
-  try {
-    body = await res.json();
-  } catch {
-    return undefined; // an empty or non-JSON error body has nothing to show
-  }
-  const detail = (body as { detail?: unknown } | null)?.detail;
-  if (typeof detail === 'string') return detail;
-  if (Array.isArray(detail)) {
-    const messages = detail.map((issue: FastApiValidationIssue) => issue.msg).filter((m) => typeof m === 'string');
-    return messages.length > 0 ? messages.join('; ') : undefined;
-  }
-  const message = (detail as { message?: unknown } | null)?.message;
-  return typeof message === 'string' ? message : undefined;
-}
 
 function getApiKey(): string | null {
   return localStorage.getItem('admin_api_key');
@@ -241,6 +201,20 @@ export interface GrantCreditRequest {
   reason: string;
   /** ISO 8601 with an offset; omitted = the lot never expires. */
   expiresAt?: string;
+}
+
+/** The three operator alert thresholds (`llm_alert_config`). */
+export interface AlertThresholds {
+  cost_threshold_usd: number;
+  daily_spike_multiplier: number;
+  failure_rate_threshold: number;
+}
+
+/** What vie-api answers a threshold change with: the thresholds as they were and are, and the audit row's id. */
+export interface AlertConfigChange {
+  before: AlertThresholds;
+  after: AlertThresholds;
+  auditId: string | null;
 }
 
 // --- Run-grouped usage types (GET /usage/by-run) ---
@@ -461,11 +435,12 @@ export const api = {
   alerts: {
     recent: (limit = 20) => apiFetch<Array<Record<string, unknown>>>(`/alerts/recent${qs({ limit })}`),
     config: () => apiFetch<Record<string, number>>('/alerts/config'),
-    updateConfig: (config: Record<string, number>) =>
-      apiFetch<Record<string, unknown>>('/alerts/config', {
+    /** Replace the thresholds as the signed-in admin; vie-api requires a `reason` and audits the change. */
+    updateConfig: (config: AlertThresholds, reason: string) =>
+      apiFetch<AlertConfigChange>('/alerts/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(config),
+        body: JSON.stringify({ ...config, reason }),
       }),
   },
   users: {

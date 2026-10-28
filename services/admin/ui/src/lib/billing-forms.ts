@@ -9,10 +9,13 @@ import type { BillingCaps } from './billing';
 
 // Form values -> request bodies for the Account actions. Each builder returns
 // the request or throws an Error whose message says what to fix; vie-api checks
-// every range again, so these only spare the operator a round trip.
+// every range again, so these only spare the operator a round trip. The numbers
+// are copies of the server's: `lib/limits-drift.test.ts` fails when one changes.
 
 export const MAX_REASON_LENGTH = 500;
 export const MAX_ADMIN_MINUTES = 100_000;
+/** Minutes a Pro plan grants each month (`PLANS.pro.periodMinutes`). */
+export const PRO_PERIOD_MINUTES = 600;
 
 /** Cap ranges, as BillingService accepts them. */
 export const CAP_LIMITS = {

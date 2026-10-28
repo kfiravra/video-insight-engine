@@ -107,7 +107,10 @@ no channel) passes through as `503`; other `≥500` → `502`; other `4xx` forwa
 as-is. The `detail` carries vie-api's JSON envelope `{error, message[, replayed]}`
 unchanged when the body is JSON — a mid-drain `REPLAY_FAILED` keeps its partial
 `replayed` count — and a generic `"vie-api error: <status>"` otherwise (raw
-non-JSON bodies are never forwarded). A non-JSON 2xx body is a `502`.
+non-JSON bodies are never forwarded). A non-JSON 2xx body is a `502`. The call goes through the
+shared `call_vie_api` client (below), so a vie-api timeout on `POST /queue/replay` is a `504`
+saying the replay may have been applied, not a "vie-api unreachable" `502`: the drain can have run
+before the response was lost, so look at the DLQ depth before replaying again.
 
 The UI's "Replay all" uses the real DLQ depth from `/queue/stats` (not the 20-row
 peek), capped at 500 per click, and refreshes stats + peek on **settle** (success
@@ -124,9 +127,11 @@ Only a named admin session may call it.
 |--------|------|-------------|
 | DELETE | `/videos/{youtubeId}` | Body `{reason?}`; who purged is the session's admin, taken from the signed session, not from the body (a body `adminId` is ignored). Runs vie-api's global cascade: summarizer purge (Qdrant points, S3 `videos/<id>/`, Redis keys) then Mongo (`userVideos`, `shareLikes`, `shareViews`, `agentNotes`, `idempotencyKeys`, `videoSummaryCache`) and the `videoDeletions` and `adminAudit` audit rows. Returns vie-api's `{youtubeId, summaryIds, counts, warnings}`. |
 
-Same upstream translation as the queue proxy (vie-api `401` → `500`, `≥500` →
-`502` with the JSON envelope as `detail`, other `4xx` forwarded; a `403` means vie-api
-found the admin no longer holds `videos:purge`). A failed
+Same client and upstream translation as the queue proxy (vie-api `401` → `500`, `≥500` →
+`502` with the JSON envelope as `detail`, other `4xx` forwarded, a timeout → `504` "may have
+been applied" with a 90 s read timeout for the cascade; a `403` means vie-api
+found the admin no longer holds `videos:purge`). The body is strict (an unknown field is
+`422`) and the reason is trimmed. A failed
 summarizer purge surfaces as `502 SUMMARIZER_PURGE_FAILED` with nothing deleted
 in Mongo, so the operator simply retries. `llm_usage` rows are kept by design,
 so the detail page still shows the cost breakdown afterwards with `video: null`.
@@ -136,8 +141,12 @@ so the detail page still shows the cost breakdown afterwards with `video: null`.
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/alerts/recent` | Recent cost/anomaly alerts |
-| GET | `/alerts/config` | Current alert thresholds |
-| POST | `/alerts/config` | Update alert thresholds |
+| GET | `/alerts/config` | Current alert thresholds (read straight from `llm_alert_config`) |
+| POST | `/alerts/config` | Body `{cost_threshold_usd, daily_spike_multiplier, failure_rate_threshold, reason}` (strict, `reason` 1–500 characters required). Named admin session only. Proxied to vie-api's `POST /api/admin/alerts/config` (`alerts:write`), which writes the document and the `alerts.config.set` audit row; returns `{before, after, auditId}` |
+
+vie-admin no longer writes thresholds itself: the write goes through vie-api so it is audited and
+permissioned like every other admin mutation. The document shape (`_id: "default"`, snake_case fields)
+is unchanged, so the evaluator below keeps reading it as before.
 
 **Evaluator alerts** (`src/services/alert_evaluator.py`, polls `llm_usage` every 5 min and writes `llm_alerts` plus the `ALERT_WEBHOOK_URL` POST):
 
@@ -214,12 +223,18 @@ submission (8–128 of `A-Za-z0-9_-`) and it is forwarded: a retry after a timeo
 | POST | `/billing/accounts/{user_id}/adjust` | `{bucket: plan\|credit, minutes (signed, not 0), reason}` | `billing:grant` |
 | POST | `/billing/accounts/{user_id}/recurring-grants` | `{minutes, every: month, active, reason}` | `billing:grant` |
 | DELETE | `/billing/accounts/{user_id}/recurring-grants/{grant_id}` | `{reason}` | `billing:grant` |
-| GET | `/audit?targetId=&actorId=&limit=&before=` | | `audit:read` (the machine key may read) |
+| GET | `/audit?targetId=&actorId=&limit=&before=` | | `audit:read` (the machine key may read). `before` is vie-api's opaque `nextBefore` cursor (`<ISO>_<id>`, up to 64 characters) |
 
 Granting minutes is `POST /users/{user_id}/grant-credit` (above). vie-api answers are passed through
 (`400` validation with its `{error, message}` envelope, `404`, `403` for a demoted admin, `409`
 `ACCOUNT_BUSY`); a `504` means vie-api timed out and the change may have been applied, so reload the
-account before retrying (or retry with the same `Idempotency-Key`).
+account before retrying (or retry with the same `Idempotency-Key`). The same key with a different
+request is `422 IDEMPOTENCY_KEY_REUSED`; vie-api's replay protection being down is `503`.
+
+Every call vie-api receives from these proxies carries an `X-Request-ID` (fresh per call), which
+vie-api stores on the audit row and which appears in both services' logs for the call. The CORS
+allow-list names `Idempotency-Key`. (CORS sits behind the auth middleware, so a cross-origin
+preflight would be `401`; the panel is served from the same origin, which is why that is harmless.)
 
 ## Frontend
 
@@ -245,7 +260,7 @@ React SPA served as static files from the same container.
   - the read-only account view: plan and term, free-video status (ready or next at), plan minutes used and left, spendable credits with a lot table, open holds, recurring grants (each row has a **Delete** button), and the paged ledger with actor, reason and cost.
 - **Audit** (`/audit-log`) — the admin action log, newest first: time, action, actor (email when recorded), target, reason, and a **Changes** toggle that shows only the fields that differ between the row's before and after snapshots (`updatedAt` and `version` are left out; they change on every write). Filter by target id or actor id (kept in the URL, so `/audit-log?targetId=<userId>` is linkable); **Load older entries** pages with the `nextBefore` cursor. The page path is not `/audit` because `GET /audit` is the API route.
 
-Every Account action is a dialog (`ActionDialog`) that requires a **reason** (1–500 characters, recorded in the ledger and the audit log) and shows the server's own explanation when it refuses (`describeApiError`). Each submission carries an `Idempotency-Key`; resubmitting the identical request after a failure or timeout reuses it, so a change that did apply is not applied twice. A success refetches the account (`['billing-account', userId]`) and the audit log. The shortcuts for a dialog are Escape or Cancel to close. A session that signed in with the machine key sees the `403` "A named admin session is required" message, since only named admin sessions may change anything.
+Every Account action is a dialog (`ActionDialog`) that requires a **reason** (1–500 characters, recorded in the ledger and the audit log) and shows the server's own explanation when it refuses (`describeApiError`). Each submission carries an `Idempotency-Key`; resubmitting the identical request after a failure or timeout reuses it, so a change that did apply is not applied twice. The account (`['billing-account', userId]`) and the audit log are refetched after a success and after any failure that may have followed an applied change (a timeout, a 5xx, a dropped connection), so an uncertain outcome shows the real state; a 4xx refusal changed nothing and refetches nothing. While the request is in flight the dialog cannot be closed (Escape, the backdrop and Cancel are inert), so the operator sees the outcome before they can open a fresh dialog and a fresh key. Escape, Cancel or a click that starts and ends on the backdrop close it otherwise; focus moves into the dialog once when it opens, Tab stays inside, and focus returns to the button that opened it. A plan term end and a lot's expiry are shown in UTC, the zone they are entered in. The ranges the forms check (`CAP_LIMITS`, the 100000-minute and 500-character limits, the 600 Pro minutes) are copies of the server's; `lib/limits-drift.test.ts` reads the server sources and fails when one moves. A session that signed in with the machine key sees the `403` "A named admin session is required" message, since only named admin sessions may change anything.
 
 The action and audit client is `ui/src/lib/billing-actions.ts` (`billingActions`, `auditApi`), with the form-to-request builders and their ranges in `lib/billing-forms.ts` and the before/after comparison in `lib/audit-diff.ts`. Grant minutes keeps `api.users.grantCredit` from `lib/api.ts`.
 
@@ -257,7 +272,7 @@ The action and audit client is `ui/src/lib/billing-actions.ts` (`billingActions`
   - `ADMIN_API_KEY` — the machine key (curl, tooling; also what vie-admin sends vie-api as `X-Admin-Key`).
     It acts as `AdminActor(kind="machine")` and **may only read**: any method other than `GET` is `403`.
   - A session token from `POST /auth/login` (email + bcrypt password, user must be an active admin):
-    `base64url(userId|email|expiry).hmac_sha256`, 12 h TTL, HMAC-keyed on **`ADMIN_SESSION_SECRET`** — never on
+    `base64url(userId|email|expiry).hmac_sha256("session|" + payload)`, 12 h TTL, HMAC-keyed on **`ADMIN_SESSION_SECRET`** — never on
     `ADMIN_API_KEY`, so holding the machine key does not let anyone mint a session for an arbitrary user.
     Rotating `ADMIN_SESSION_SECRET` logs every admin out; rotating `ADMIN_API_KEY` leaves sessions alone
     (it must be rotated on vie-api at the same time). `ADMIN_SESSION_SECRET` also signs the `X-Admin-Actor`
@@ -270,9 +285,13 @@ The action and audit client is `ui/src/lib/billing-actions.ts` (`billingActions`
   `roles` array falls back to the legacy `role: "admin"`; `deletedAt` set means not an admin. Both sides are
   tested against the same cases in `packages/types/test-vectors/admin-auth.json`. Login applies the same rule.
 - **Actor propagation** — calls to vie-api for a named admin add `X-Admin-Actor: <userId>.<unixTs>.<hmac>`
-  (`src/services/vie_api_client.py`): `hmac = HMAC-SHA256(ADMIN_SESSION_SECRET, userId|unixTs|sha256(body))`
-  over the exact body bytes sent. vie-api accepts it for five minutes and re-checks that the user still holds
-  the permission; the same vectors file pins both implementations.
+  (`src/services/vie_api_client.py`): `hmac = HMAC-SHA256(ADMIN_SESSION_SECRET,
+  "actor|METHOD|request-target|userId|unixTs|sha256(body)")` over the method, the exact request-target
+  (path plus query, as put on the wire) and the exact body bytes sent. A header is therefore valid for that one
+  request only; vie-api accepts it for five minutes, records the signature of every non-GET so it cannot be used
+  twice, and re-checks that the user still holds the permission. The `actor|` and `session|` prefixes keep the two
+  uses of the secret from standing in for each other. The same vectors file pins both implementations.
+  Every non-GET route must depend on `current_user_actor`; `tests/test_authz_matrix.py` fails if one does not.
 - **Logs** carry the user id, never the email (login success/rejection, rejected sessions).
 - **Startup refusal** — the lifespan calls `validate_secrets()` (`src/config.py`) first. Outside a dev
   `ENVIRONMENT` (`""`, `development`, `dev`, `test`, `local`; any other name counts as production) the

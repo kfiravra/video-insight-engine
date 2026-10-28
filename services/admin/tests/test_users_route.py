@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import hmac
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -12,8 +10,8 @@ from httpx import ASGITransport, AsyncClient
 
 from src.config import settings
 from src.main import app
-from src.services.vie_api_client import ACTOR_HEADER, IDEMPOTENCY_HEADER
-from tests.conftest import ADMIN_USER_ID
+from src.services.vie_api_client import IDEMPOTENCY_HEADER
+from tests._actor import assert_signed_for
 
 
 @pytest.fixture
@@ -140,12 +138,14 @@ async def test_grant_credit_names_the_session_admin_in_a_signed_actor_header(adm
     with patch("src.services.vie_api_client.httpx.AsyncClient", factory):
         await _grant(admin_session)
 
-    kwargs = instance.request.call_args.kwargs
-    assert kwargs["headers"]["X-Admin-Key"] == settings.ADMIN_API_KEY
-    user_id, issued_at, signature = kwargs["headers"][ACTOR_HEADER].split(".")
-    message = f"{user_id}|{issued_at}|{hashlib.sha256(kwargs['content']).hexdigest()}".encode()
-    expected = hmac.new(settings.ADMIN_SESSION_SECRET.encode(), message, hashlib.sha256).hexdigest()
-    assert (user_id, signature) == (ADMIN_USER_ID, expected)
+    call = instance.request.call_args
+    assert call.kwargs["headers"]["X-Admin-Key"] == settings.ADMIN_API_KEY
+    assert_signed_for(
+        call,
+        method="POST",
+        target=f"/api/admin/billing/accounts/{USER_ID}/credits",
+        body=call.kwargs["content"],
+    )
 
 
 @pytest.mark.anyio
@@ -167,6 +167,28 @@ async def test_grant_credit_sends_no_idempotency_key_when_none_was_given(admin_s
         await _grant(admin_session)
 
     assert IDEMPOTENCY_HEADER not in instance.request.call_args.kwargs["headers"]
+
+
+@pytest.mark.anyio
+async def test_grant_credit_rejects_an_expiry_without_a_timezone(admin_session):
+    """A naive timestamp is ambiguous; vie-api would read it as the server's local time."""
+    resp = await _grant(admin_session, {**GRANT, "expiresAt": "2027-01-31T00:00:00"})
+
+    assert resp.status_code == 422
+
+
+@pytest.mark.anyio
+async def test_grant_credit_logs_the_grant_by_ids_never_the_reason(admin_session):
+    from structlog.testing import capture_logs
+
+    factory, _ = _mock_client(_upstream(200, {}))
+
+    with capture_logs() as logs, patch("src.services.vie_api_client.httpx.AsyncClient", factory):
+        await _grant(admin_session)
+
+    event = next(entry for entry in logs if entry["event"] == "credit_grant_requested")
+    assert (event["user_id"], event["minutes"]) == (USER_ID, 150)
+    assert "support ticket 42" not in repr(logs)
 
 
 @pytest.mark.anyio

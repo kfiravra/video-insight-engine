@@ -13,6 +13,13 @@ import {
 import { config } from '../config.js';
 import { UserNotFoundError } from '../utils/errors.js';
 
+/** What the default mocked user looks like in an audit row's `before`: nothing personal. */
+const ACTIVE_USER_SNAPSHOT = { roles: [], roleSource: null, tier: 'free', deletedAt: null };
+
+function userDoc(id: string, fields: Record<string, unknown> = {}) {
+  return { _id: { toString: () => id }, email: `${id}@example.com`, deletedAt: null, ...fields };
+}
+
 describe('user deletion routes', () => {
   let app: FastifyInstance;
   let mockContainer: MockContainer;
@@ -63,7 +70,9 @@ describe('user deletion routes', () => {
       expect(body.userId).toBe(testUser.userId);
       expect(body.scheduledHardDeleteAt).toBe(scheduled.toISOString());
       expect(body.graceDays).toBe(30);
-      expect(mockContainer.userDeletionService.requestDeletion).toHaveBeenCalledWith(testUser.userId);
+      expect(mockContainer.userDeletionService.requestDeletion).toHaveBeenCalledWith(testUser.userId, {
+        origin: { initiatedBy: 'self', adminId: null, reason: null },
+      });
     });
 
     it('should clear the refresh cookie so the browser session ends', async () => {
@@ -168,11 +177,13 @@ describe('user deletion routes', () => {
 
     beforeEach(() => {
       mockContainer.userRepository.hasPermission.mockResolvedValue(true);
+      mockContainer.adminReplayGuard.claim.mockResolvedValue(true);
       mockContainer.userDeletionService.requestDeletion.mockResolvedValue(softDeleteResult);
       mockContainer.userDeletionService.executeHardDelete.mockResolvedValue(hardDeleteResult());
     });
 
-    async function deleteUser(url: string, request: { headers: Record<string, string>; payload?: string }) {
+    async function deleteUser(url: string, body?: Record<string, unknown>) {
+      const request = adminActorRequest('DELETE', url, body);
       return app.inject({ method: 'DELETE', url, headers: request.headers, payload: request.payload });
     }
 
@@ -209,14 +220,14 @@ describe('user deletion routes', () => {
     it('should refuse an admin who no longer holds users:delete (403)', async () => {
       mockContainer.userRepository.hasPermission.mockResolvedValue(false);
 
-      const res = await deleteUser(`/api/admin/users/${targetId}?immediate=true`, adminActorRequest());
+      const res = await deleteUser(`/api/admin/users/${targetId}?immediate=true`);
 
       expect(res.statusCode).toBe(403);
       expect(mockContainer.userDeletionService.executeHardDelete).not.toHaveBeenCalled();
     });
 
     it('should check the actor against the users:delete permission', async () => {
-      await deleteUser(`/api/admin/users/${targetId}`, adminActorRequest());
+      await deleteUser(`/api/admin/users/${targetId}`);
 
       expect(mockContainer.userRepository.hasPermission).toHaveBeenCalledWith(TEST_ADMIN_USER_ID, 'users:delete');
     });
@@ -224,7 +235,7 @@ describe('user deletion routes', () => {
     it('should run immediate cascade when immediate=true', async () => {
       const res = await deleteUser(
         `/api/admin/users/${targetId}?immediate=true`,
-        adminActorRequest({ reason: 'GDPR request 4567' }),
+        { reason: 'GDPR request 4567' },
       );
 
       expect(res.statusCode).toBe(200);
@@ -242,7 +253,7 @@ describe('user deletion routes', () => {
     it('should audit an immediate deletion with the signed admin, target and reason', async () => {
       await deleteUser(
         `/api/admin/users/${targetId}?immediate=true`,
-        adminActorRequest({ reason: 'GDPR request 4567' }),
+        { reason: 'GDPR request 4567' },
       );
 
       expect(mockContainer.auditService.recordBestEffort).toHaveBeenCalledWith({
@@ -252,13 +263,14 @@ describe('user deletion routes', () => {
         action: 'users.delete',
         targetType: 'user',
         targetId,
+        before: ACTIVE_USER_SNAPSHOT,
         after: { mode: 'immediate', userDeletionId: expect.any(String) },
         reason: 'GDPR request 4567',
       });
     });
 
     it('should audit under the canonical lowercase id when the request id is uppercase', async () => {
-      await deleteUser(`/api/admin/users/${targetId.toUpperCase()}?immediate=true`, adminActorRequest());
+      await deleteUser(`/api/admin/users/${targetId.toUpperCase()}?immediate=true`);
 
       expect(mockContainer.auditService.recordBestEffort).toHaveBeenCalledWith(
         expect.objectContaining({ targetId }),
@@ -276,7 +288,7 @@ describe('user deletion routes', () => {
     });
 
     it('should fall back to soft delete + 30d when immediate is not set', async () => {
-      const res = await deleteUser(`/api/admin/users/${targetId}`, adminActorRequest({}));
+      const res = await deleteUser(`/api/admin/users/${targetId}`, {});
 
       expect(res.statusCode).toBe(202);
       expect(mockContainer.userDeletionService.executeHardDelete).not.toHaveBeenCalled();
@@ -286,7 +298,7 @@ describe('user deletion routes', () => {
     });
 
     it('should hand the signed admin and reason to the soft delete as its origin', async () => {
-      await deleteUser(`/api/admin/users/${targetId}`, adminActorRequest({ reason: 'duplicate account' }));
+      await deleteUser(`/api/admin/users/${targetId}`, { reason: 'duplicate account' });
 
       expect(mockContainer.userDeletionService.requestDeletion).toHaveBeenCalledWith(targetId, {
         origin: { initiatedBy: 'admin', adminId: TEST_ADMIN_USER_ID, reason: 'duplicate account' },
@@ -294,7 +306,7 @@ describe('user deletion routes', () => {
     });
 
     it('should audit the soft delete at request time with the signed admin', async () => {
-      await deleteUser(`/api/admin/users/${targetId}`, adminActorRequest({ reason: 'duplicate account' }));
+      await deleteUser(`/api/admin/users/${targetId}`, { reason: 'duplicate account' });
 
       expect(mockContainer.auditService.recordBestEffort).toHaveBeenCalledWith({
         actorId: TEST_ADMIN_USER_ID,
@@ -303,6 +315,7 @@ describe('user deletion routes', () => {
         action: 'users.delete',
         targetType: 'user',
         targetId,
+        before: ACTIVE_USER_SNAPSHOT,
         after: { mode: 'scheduled', scheduledHardDeleteAt: '2026-06-19T12:00:00.000Z' },
         reason: 'duplicate account',
       });
@@ -311,10 +324,104 @@ describe('user deletion routes', () => {
     it('should not audit a soft delete the service refuses', async () => {
       mockContainer.userDeletionService.requestDeletion.mockRejectedValue(new UserNotFoundError());
 
-      const res = await deleteUser(`/api/admin/users/${targetId}`, adminActorRequest());
+      const res = await deleteUser(`/api/admin/users/${targetId}`);
 
       expect(res.statusCode).toBe(404);
       expect(mockContainer.auditService.recordBestEffort).not.toHaveBeenCalled();
+    });
+  });
+
+  // ─── POST /api/users/me/restore audit ────────────────────────────────────
+
+  describe('POST /api/users/me/restore audit', () => {
+    // Its own app: the route allows 5 restores an hour per user, which the
+    // tests above already use up on the shared app.
+    let restoreApp: FastifyInstance;
+    let restoreContainer: MockContainer;
+    let restoreAuth: string;
+
+    const restoreOnce = () =>
+      restoreApp.inject({
+        method: 'POST',
+        url: '/api/users/me/restore',
+        headers: { authorization: restoreAuth, 'content-type': 'application/json' },
+        payload: {},
+      });
+
+    beforeAll(async () => {
+      restoreContainer = createMockContainer();
+      restoreApp = await buildTestApp(restoreContainer);
+      await restoreApp.ready();
+      restoreAuth = await getAuthHeader(restoreApp);
+    });
+
+    afterAll(async () => {
+      await restoreApp.close();
+    });
+
+    beforeEach(() => {
+      restoreContainer.userDeletionService.cancelDeletion.mockResolvedValue({
+        _id: { toString: () => testUser.userId },
+        email: testUser.email,
+        name: 'Test User',
+        deletedAt: null,
+      });
+    });
+
+    it('should audit a user undoing a deletion an admin scheduled', async () => {
+      const deletedAt = new Date('2026-05-20T12:00:00Z');
+      restoreContainer.userRepository.findById.mockResolvedValue(
+        userDoc(testUser.userId, {
+          deletedAt,
+          hardDeleteAt: new Date('2026-06-19T12:00:00Z'),
+          deletionOrigin: { initiatedBy: 'admin', adminId: TEST_ADMIN_USER_ID, reason: 'duplicate account' },
+        }),
+      );
+
+      await restoreOnce();
+
+      expect(restoreContainer.auditService.recordBestEffort).toHaveBeenCalledWith({
+        actorId: testUser.userId,
+        requestId: expect.any(String),
+        ip: expect.any(String),
+        action: 'users.delete.cancel',
+        targetType: 'user',
+        targetId: testUser.userId,
+        before: { deletedAt, hardDeleteAt: new Date('2026-06-19T12:00:00Z'), scheduledBy: TEST_ADMIN_USER_ID },
+        after: { deletedAt: null, hardDeleteAt: null },
+      });
+    });
+
+    it('should not audit a user undoing their own deletion', async () => {
+      restoreContainer.userRepository.findById.mockResolvedValue(
+        userDoc(testUser.userId, {
+          deletedAt: new Date(),
+          deletionOrigin: { initiatedBy: 'self', adminId: null, reason: null },
+        }),
+      );
+
+      await restoreOnce();
+
+      expect(restoreContainer.auditService.recordBestEffort).not.toHaveBeenCalled();
+    });
+
+    it('should not audit when the deletion had no recorded origin', async () => {
+      restoreContainer.userRepository.findById.mockResolvedValue(userDoc(testUser.userId, { deletedAt: new Date() }));
+
+      await restoreOnce();
+
+      expect(restoreContainer.auditService.recordBestEffort).not.toHaveBeenCalled();
+    });
+
+    it('should still restore the account when the audit write fails', async () => {
+      restoreContainer.userRepository.findById.mockResolvedValue(
+        userDoc(testUser.userId, { deletedAt: new Date(), deletionOrigin: { initiatedBy: 'admin', adminId: 'a', reason: null } }),
+      );
+      restoreContainer.auditService.recordBestEffort.mockResolvedValue(null);
+
+      const res = await restoreOnce();
+
+      expect(res.statusCode).toBe(200);
     });
   });
 });

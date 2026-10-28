@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import hmac
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -13,6 +11,7 @@ from httpx import ASGITransport, AsyncClient
 from src.config import settings
 from src.main import app
 from src.services.vie_api_client import ACTOR_HEADER
+from tests._actor import assert_signed_for
 from tests.conftest import ADMIN_USER_ID
 
 
@@ -26,9 +25,9 @@ def _auth_headers() -> dict[str, str]:
 
 
 def _mock_async_client(response: MagicMock) -> MagicMock:
-    """Build a context-manager mock that yields an AsyncClient with `.get` returning `response`."""
+    """A context-manager mock yielding an AsyncClient whose `.request` returns `response`."""
     instance = MagicMock()
-    instance.get = AsyncMock(return_value=response)
+    instance.request = AsyncMock(return_value=response)
     cm = MagicMock()
     cm.__aenter__ = AsyncMock(return_value=instance)
     cm.__aexit__ = AsyncMock(return_value=False)
@@ -79,7 +78,7 @@ async def test_queue_stats_returns_502_when_vie_api_unreachable():
         raise httpx.ConnectError("connection refused")
 
     instance = MagicMock()
-    instance.get = AsyncMock(side_effect=_raise)
+    instance.request = AsyncMock(side_effect=_raise)
     cm = MagicMock()
     cm.__aenter__ = AsyncMock(return_value=instance)
     cm.__aexit__ = AsyncMock(return_value=False)
@@ -128,7 +127,7 @@ async def test_queue_dlq_forwards_limit_param():
     upstream.json = MagicMock(return_value={"messages": []})
 
     instance = MagicMock()
-    instance.get = AsyncMock(return_value=upstream)
+    instance.request = AsyncMock(return_value=upstream)
     cm = MagicMock()
     cm.__aenter__ = AsyncMock(return_value=instance)
     cm.__aexit__ = AsyncMock(return_value=False)
@@ -138,15 +137,15 @@ async def test_queue_dlq_forwards_limit_param():
             resp = await client.get("/queue/dlq?limit=42", headers=_auth_headers())
 
     assert resp.status_code == 200
-    assert instance.get.await_count == 1
-    call_kwargs = instance.get.await_args.kwargs
-    assert call_kwargs["params"] == {"limit": 42}
-    assert call_kwargs["headers"]["X-Admin-Key"] == settings.ADMIN_API_KEY
+    assert instance.request.await_count == 1
+    call = instance.request.await_args
+    assert str(call.args[1]).endswith("/api/admin/queue/dlq?limit=42")
+    assert call.kwargs["headers"]["X-Admin-Key"] == settings.ADMIN_API_KEY
 
 
 def _mock_async_client_post(response: MagicMock) -> MagicMock:
     instance = MagicMock()
-    instance.post = AsyncMock(return_value=response)
+    instance.request = AsyncMock(return_value=response)
     cm = MagicMock()
     cm.__aenter__ = AsyncMock(return_value=instance)
     cm.__aexit__ = AsyncMock(return_value=False)
@@ -173,8 +172,8 @@ async def test_queue_replay_forwards_max_and_returns_count(admin_session):
 
     assert resp.status_code == 200
     assert resp.json() == {"replayed": 3}
-    post = client_factory.return_value.__aenter__.return_value.post
-    assert post.await_args.args[0].endswith("/api/admin/queue/replay")
+    post = client_factory.return_value.__aenter__.return_value.request
+    assert str(post.await_args.args[1]).endswith("/api/admin/queue/replay")
     assert post.await_args.kwargs["content"] == b'{"max":3}'
     assert post.await_args.kwargs["headers"]["X-Admin-Key"] == settings.ADMIN_API_KEY
 
@@ -191,7 +190,7 @@ async def test_queue_replay_defaults_max_to_100(admin_session):
             resp = await client.post("/queue/replay", json={}, headers=admin_session)
 
     assert resp.status_code == 200
-    post = client_factory.return_value.__aenter__.return_value.post
+    post = client_factory.return_value.__aenter__.return_value.request
     assert post.await_args.kwargs["content"] == b'{"max":100}'
 
 
@@ -284,13 +283,8 @@ async def test_queue_replay_names_the_admin_to_vie_api(admin_session):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             await client.post("/queue/replay", json={"max": 7}, headers=admin_session)
 
-    post = client_factory.return_value.__aenter__.return_value.post
-    header = post.await_args.kwargs["headers"][ACTOR_HEADER]
-    sent_body = post.await_args.kwargs["content"]
-    user_id, issued_at, signature = header.split(".")
-    message = f"{user_id}|{issued_at}|{hashlib.sha256(sent_body).hexdigest()}".encode()
-    expected = hmac.new(settings.ADMIN_SESSION_SECRET.encode(), message, hashlib.sha256).hexdigest()
-    assert (user_id, signature) == (ADMIN_USER_ID, expected)
+    call = client_factory.return_value.__aenter__.return_value.request.await_args
+    assert_signed_for(call, method="POST", target="/api/admin/queue/replay", body=b'{"max":7}')
 
 
 @pytest.mark.anyio
@@ -303,7 +297,7 @@ async def test_queue_stats_for_a_session_names_the_admin_to_vie_api(admin_sessio
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             await client.get("/queue/stats", headers=admin_session)
 
-    headers = factory.return_value.__aenter__.return_value.get.await_args.kwargs["headers"]
+    headers = factory.return_value.__aenter__.return_value.request.await_args.kwargs["headers"]
     assert headers[ACTOR_HEADER].startswith(f"{ADMIN_USER_ID}.")
 
 
@@ -317,5 +311,5 @@ async def test_queue_stats_for_the_machine_key_sends_no_actor():
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             await client.get("/queue/stats", headers=_auth_headers())
 
-    headers = factory.return_value.__aenter__.return_value.get.await_args.kwargs["headers"]
+    headers = factory.return_value.__aenter__.return_value.request.await_args.kwargs["headers"]
     assert ACTOR_HEADER not in headers

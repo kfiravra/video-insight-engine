@@ -41,7 +41,7 @@ def _signed(payload: str) -> str:
     """A token over an arbitrary payload, correctly signed with the session secret."""
     encoded = base64.urlsafe_b64encode(payload.encode()).decode()
     signature = hmac.new(
-        settings.ADMIN_SESSION_SECRET.encode(), payload.encode(), hashlib.sha256
+        settings.ADMIN_SESSION_SECRET.encode(), f"session|{payload}".encode(), hashlib.sha256
     ).hexdigest()
     return f"{encoded}.{signature}"
 
@@ -103,6 +103,27 @@ def test_token_with_a_non_numeric_expiry_is_rejected() -> None:
     forged = _signed(f"{USER_ID}|{EMAIL}|soon")
 
     assert verify_session_token(forged) is None
+
+
+def test_a_token_signed_without_the_session_prefix_is_rejected() -> None:
+    """Sessions are domain-separated from the actor| messages signed with the same secret."""
+    payload = f"{USER_ID}|{EMAIL}|9999999999"
+    encoded = base64.urlsafe_b64encode(payload.encode()).decode()
+    bare = hmac.new(
+        settings.ADMIN_SESSION_SECRET.encode(), payload.encode(), hashlib.sha256
+    ).hexdigest()
+
+    assert verify_session_token(f"{encoded}.{bare}") is None
+
+
+def test_an_actor_signature_cannot_be_presented_as_a_session_token() -> None:
+    payload = f"{USER_ID}|{EMAIL}|9999999999"
+    encoded = base64.urlsafe_b64encode(payload.encode()).decode()
+    actor_style = hmac.new(
+        settings.ADMIN_SESSION_SECRET.encode(), f"actor|{payload}".encode(), hashlib.sha256
+    ).hexdigest()
+
+    assert verify_session_token(f"{encoded}.{actor_style}") is None
 
 
 def test_token_with_a_changed_user_id_fails_the_signature() -> None:

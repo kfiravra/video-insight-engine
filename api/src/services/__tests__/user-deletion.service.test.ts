@@ -392,6 +392,18 @@ describe('UserDeletionService (integration with in-memory MongoDB)', () => {
       });
     });
 
+    it('should time the run on a monotonic clock, not the wall clock a host can step', async () => {
+      const user = await insertUser({ email: 'clock@x' });
+      // A wall clock that jumps an hour mid-run (NTP, a WSL host waking); run time is milliseconds.
+      const clock = vi.fn().mockReturnValueOnce(new Date('2026-05-20T12:00:00Z')).mockReturnValue(new Date('2026-05-20T13:00:00Z'));
+      const jumped = new UserDeletionService(db, userRepo, deletionRepo, silentLogger, clock);
+
+      await jumped.executeHardDelete(user._id.toString(), { initiatedBy: 'admin', adminId: 'op-1' });
+
+      const audit = await deletionRepo.findByOriginalUserId(user._id.toString());
+      expect(audit?.durationMs).toBeLessThan(60_000);
+    });
+
     it('should hash the email deterministically (case-insensitive, trimmed)', async () => {
       const user = await insertUser({ email: '  Mixed.Case@Example.COM  ' });
 
@@ -561,8 +573,22 @@ describe('UserDeletionService (integration with in-memory MongoDB)', () => {
       expect(audit).toMatchObject({ initiatedBy: 'admin', adminId: 'op-1', reason: 'GDPR request 4567' });
     });
 
-    it('should record a self-requested soft delete as scheduler', async () => {
+    it('should record a self-requested soft delete as self', async () => {
       const user = await insertUser({ email: 'self@x' });
+      await service.requestDeletion(user._id.toString(), {
+        graceDays: 1,
+        origin: { initiatedBy: 'self', adminId: null, reason: null },
+      });
+      frozenNow = new Date(frozenNow.getTime() + 2 * 24 * 60 * 60 * 1000);
+
+      await service.runScheduledDeletions(frozenNow);
+
+      const audit = await deletionRepo.findByOriginalUserId(user._id.toString());
+      expect(audit).toMatchObject({ initiatedBy: 'self', adminId: null });
+    });
+
+    it('should record a soft delete with no recorded origin as scheduler', async () => {
+      const user = await insertUser({ email: 'legacy@x' });
       await service.requestDeletion(user._id.toString(), { graceDays: 1 });
       frozenNow = new Date(frozenNow.getTime() + 2 * 24 * 60 * 60 * 1000);
 

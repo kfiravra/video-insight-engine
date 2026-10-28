@@ -11,11 +11,7 @@ import {
   formatMinutes,
   formatSignedMinutes,
 } from '../../lib/billing';
-import { formatCost, formatDateTime, timeAgo } from '../../lib/format';
-
-function shortId(id: string): string {
-  return id.length > 10 ? `${id.slice(0, 6)}…${id.slice(-4)}` : id;
-}
+import { formatCost, formatDateTime, formatDateTimeUtc, shortId, timeAgo } from '../../lib/format';
 
 interface SectionProps {
   title: string;
@@ -70,9 +66,14 @@ const ROW = 'border-t border-[var(--color-border)]';
 
 type LotStatus = 'Open' | 'Expired' | 'Used up';
 
+/**
+ * Expired is checked first: the repair job zeroes the minutes of an expired lot
+ * (recurring monthly grants included), so "nothing left" alone would make every
+ * expired lot read "Used up".
+ */
 function lotStatus(lot: BillingCreditLot): LotStatus {
-  if (lot.minutesRemaining === 0) return 'Used up';
-  return lot.expired ? 'Expired' : 'Open';
+  if (lot.expired) return 'Expired';
+  return lot.minutesRemaining === 0 ? 'Used up' : 'Open';
 }
 
 const LOT_STATUS_COLOR: Record<LotStatus, string> = {
@@ -107,7 +108,7 @@ export function LotsTable({ lots }: { lots: BillingCreditLot[] }) {
                 {formatMinutes(lot.minutesGranted)}
               </td>
               <td className="p-2 text-right text-[10px]">
-                {lot.expiresAt === null ? 'Never' : formatDateTime(lot.expiresAt)}
+                {lot.expiresAt === null ? 'Never' : formatDateTimeUtc(lot.expiresAt)}
               </td>
               <td className="p-2" style={{ color: LOT_STATUS_COLOR[status] }}>{status}</td>
               <td className="p-2 text-right hidden md:table-cell font-mono text-[var(--color-text-muted)]">

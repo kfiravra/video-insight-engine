@@ -25,6 +25,17 @@ describe('admin mutations write an adminAudit row', () => {
     return getTestDb().collection('adminAudit').find({}).toArray();
   }
 
+  /** Sends the request vie-admin would: signed over the method, the exact target and the body. */
+  async function sendSigned(
+    method: 'DELETE' | 'POST',
+    url: string,
+    body?: Record<string, unknown>,
+    extraHeaders: Record<string, string> = {},
+  ) {
+    const signed = adminActorRequest(method, url, body);
+    return app.inject({ method, url, headers: { ...signed.headers, ...extraHeaders }, payload: signed.payload });
+  }
+
   beforeAll(async () => {
     mocks = createMockContainer();
     const auditService = new AuditService(
@@ -78,7 +89,7 @@ describe('admin mutations write an adminAudit row', () => {
   });
 
   it('should audit a scheduled user deletion under the operator', async () => {
-    await app.inject({ method: 'DELETE', url: `/api/admin/users/${targetUserId}`, ...adminActorRequest() });
+    await sendSigned('DELETE', `/api/admin/users/${targetUserId}`);
 
     expect(await auditRows()).toMatchObject([
       { actorId: TEST_ADMIN_USER_ID, action: 'users.delete', targetType: 'user', targetId: targetUserId, after: { mode: 'scheduled' } },
@@ -86,11 +97,7 @@ describe('admin mutations write an adminAudit row', () => {
   });
 
   it('should audit an immediate user deletion under the operator', async () => {
-    await app.inject({
-      method: 'DELETE',
-      url: `/api/admin/users/${targetUserId}?immediate=true`,
-      ...adminActorRequest(),
-    });
+    await sendSigned('DELETE', `/api/admin/users/${targetUserId}?immediate=true`);
 
     expect(await auditRows()).toMatchObject([
       { actorId: TEST_ADMIN_USER_ID, action: 'users.delete', targetType: 'user', targetId: targetUserId, after: { mode: 'immediate' } },
@@ -98,11 +105,7 @@ describe('admin mutations write an adminAudit row', () => {
   });
 
   it('should audit a global video purge under the operator', async () => {
-    await app.inject({
-      method: 'DELETE',
-      url: `/api/admin/videos/${YT}`,
-      ...adminActorRequest({ reason: 'duplicate upload' }),
-    });
+    await sendSigned('DELETE', `/api/admin/videos/${YT}`, { reason: 'duplicate upload' });
 
     expect(await auditRows()).toMatchObject([
       { actorId: TEST_ADMIN_USER_ID, action: 'videos.purge', targetType: 'video', targetId: YT, reason: 'duplicate upload' },
@@ -110,7 +113,7 @@ describe('admin mutations write an adminAudit row', () => {
   });
 
   it('should audit a DLQ replay under the operator', async () => {
-    await app.inject({ method: 'POST', url: '/api/admin/queue/replay', ...adminActorRequest() });
+    await sendSigned('POST', '/api/admin/queue/replay');
 
     expect(await auditRows()).toMatchObject([
       { actorId: TEST_ADMIN_USER_ID, action: 'queue.replay', targetType: 'queue', targetId: 'vie.pipeline.dlq', after: { replayed: 0 } },
@@ -118,9 +121,7 @@ describe('admin mutations write an adminAudit row', () => {
   });
 
   it('should carry the request id and client ip on the row', async () => {
-    const request = adminActorRequest();
-    request.headers['x-request-id'] = 'req-audit-0001';
-    await app.inject({ method: 'DELETE', url: `/api/admin/videos/${YT}`, ...request });
+    await sendSigned('DELETE', `/api/admin/videos/${YT}`, undefined, { 'x-request-id': 'req-audit-0001' });
 
     expect(await auditRows()).toMatchObject([{ requestId: 'req-audit-0001', ip: '127.0.0.1' }]);
   });

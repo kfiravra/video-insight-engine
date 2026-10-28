@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import type { BillingAccountSnapshot, BillingCaps } from '../../lib/billing';
 import { formatMinutes } from '../../lib/billing';
-import { formatDateTime } from '../../lib/format';
+import { formatDateTime, formatDateTimeUtc } from '../../lib/format';
 
 interface SummaryTileProps {
   label: string;
@@ -41,7 +41,7 @@ function freeVideoTile(free: FreeVideo): Pick<SummaryTileProps, 'value' | 'tone'
 
 function planTerm(plan: BillingAccountSnapshot['plan']): string {
   if (plan.id === 'free') return 'No plan term';
-  return `${formatDateTime(plan.periodStart)} to ${formatDateTime(plan.periodEnd)}`;
+  return `${formatDateTimeUtc(plan.periodStart)} to ${formatDateTimeUtc(plan.periodEnd)}`;
 }
 
 function planMinutesDetail(minutes: BillingAccountSnapshot['planMinutes']): string {

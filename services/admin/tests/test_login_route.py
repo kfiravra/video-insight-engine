@@ -106,7 +106,7 @@ def _token_signed_with(secret: str, email: str = "admin@admin.com") -> str:
     """Build a session token by hand, HMAC-keyed on an arbitrary secret."""
     payload = f"{USER_ID}|{email}|{int(time.time()) + 3600}"
     encoded = base64.urlsafe_b64encode(payload.encode()).decode()
-    signature = hmac.new(secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
+    signature = hmac.new(secret.encode(), f"session|{payload}".encode(), hashlib.sha256).hexdigest()
     return f"{encoded}.{signature}"
 
 

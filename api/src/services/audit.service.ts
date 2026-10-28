@@ -2,6 +2,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { AdminAuditTargetType, AdminAuditView } from '@vie/types';
 
 import type {
+  AdminAuditCursor,
   AdminAuditRepository,
   AdminAuditDocument,
 } from '../repositories/admin-audit.repository.js';
@@ -24,14 +25,18 @@ export interface RecordAuditInput {
   reason?: string;
   requestId?: string;
   ip?: string;
+  /** sha256 of the request, so a repeated Idempotency-Key with a different request can be told apart. */
+  requestHash?: string;
 }
+
+export type { AdminAuditCursor };
 
 export interface ListAuditFilter {
   targetId?: string;
   actorId?: string;
   limit?: number;
-  /** Cursor: only rows created before this instant. */
-  before?: Date;
+  /** Cursor: a bare instant lists rows created strictly before it; `{ createdAt, id }` continues exactly after that row. */
+  before?: Date | AdminAuditCursor;
 }
 
 const DEFAULT_LIST_LIMIT = 50;
@@ -108,6 +113,11 @@ export class AuditService {
     }
   }
 
+  /** The request hash recorded under `auditId`, or null when no row exists or it predates the field. */
+  findRequestHash(auditId: string): Promise<string | null> {
+    return this.auditRepository.findRequestHash(auditId);
+  }
+
   /** Newest first. Filters combine with AND; `limit` defaults to 50 and is capped at 200. */
   async list(filter: ListAuditFilter = {}): Promise<AdminAuditView[]> {
     const requested =
@@ -116,7 +126,7 @@ export class AuditService {
     const rows = await this.auditRepository.find({
       targetId: filter.targetId,
       actorId: filter.actorId,
-      before: filter.before,
+      before: filter.before instanceof Date ? { createdAt: filter.before } : filter.before,
       limit,
     });
     return rows.map(toView);
@@ -133,6 +143,6 @@ function toPlainJson(value: unknown): unknown {
 }
 
 function toView(doc: AdminAuditDocument): AdminAuditView {
-  const { _id, createdAt, ...rest } = doc;
+  const { _id, createdAt, requestHash: _requestHash, ...rest } = doc;
   return { ...rest, id: _id.toString(), createdAt: createdAt.toISOString() };
 }

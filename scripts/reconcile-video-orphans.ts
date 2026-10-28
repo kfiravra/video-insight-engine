@@ -175,9 +175,16 @@ function sleep(ms: number): Promise<void> {
 
 async function purgeOnce(youtubeId: string): Promise<Response> {
   const body = JSON.stringify({ reason: 'reconcile-video-orphans' });
-  // Signed per attempt: the header is only good for five minutes, and a 429 wait can be long.
-  const actor = signActorHeader(ADMIN_SESSION_SECRET, ACTOR_USER_ID, sha256Hex(body), Math.floor(Date.now() / 1000));
-  return fetch(`${API_URL}/api/admin/videos/${encodeURIComponent(youtubeId)}`, {
+  const url = new URL(`${API_URL}/api/admin/videos/${encodeURIComponent(youtubeId)}`);
+  // The signature binds the exact request-target fetch puts on the wire (path plus query)
+  // and is single-use, so it is made fresh for every attempt, including a retry after a 429.
+  const actor = signActorHeader(
+    ADMIN_SESSION_SECRET,
+    ACTOR_USER_ID,
+    { method: 'DELETE', target: `${url.pathname}${url.search}`, bodySha256: sha256Hex(body) },
+    Math.floor(Date.now() / 1000),
+  );
+  return fetch(url, {
     method: 'DELETE',
     headers: {
       'x-admin-key': ADMIN_API_KEY,

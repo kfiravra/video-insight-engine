@@ -108,8 +108,11 @@ class SessionClaims:
 
 
 def _sign(payload: str) -> str:
+    """HMAC of a session payload. The ``session|`` prefix keeps these signatures
+    apart from the ``actor|`` messages signed with the same secret for vie-api,
+    so neither kind of token can be presented as the other."""
     secret = settings.ADMIN_SESSION_SECRET.encode()
-    return hmac.new(secret, payload.encode(), hashlib.sha256).hexdigest()
+    return hmac.new(secret, f"session|{payload}".encode(), hashlib.sha256).hexdigest()
 
 
 def create_session_token(user_id: str, email: str, *, now: float | None = None) -> str:

@@ -38,6 +38,14 @@ export class AdminPermissionError extends AppError {
   }
 }
 
+/** A mutation's Idempotency-Key was already used for a different request. */
+export class IdempotencyKeyReusedError extends AppError {
+  constructor() {
+    super('IDEMPOTENCY_KEY_REUSED', 422, 'This Idempotency-Key was already used for a different request');
+    this.name = 'IdempotencyKeyReusedError';
+  }
+}
+
 export class ConflictError extends AppError {
   constructor(code: string, message: string) {
     super(code, 409, message);

@@ -47,6 +47,28 @@ function _formatters(): NonNullable<typeof _formatterCache> {
  *
  * Returns "—" for null/undefined/invalid inputs.
  */
+const UTC_DATE_TIME = new Intl.DateTimeFormat('en-US', {
+  month: 'short',
+  day: 'numeric',
+  year: 'numeric',
+  hour: 'numeric',
+  minute: '2-digit',
+  timeZone: 'UTC',
+});
+
+/**
+ * Format an ISO timestamp in UTC, e.g. "Jun 3, 2026, 11:59 PM UTC". For the
+ * dates an admin types as "through the end of that day (UTC)", a plan's term
+ * end and a lot's expiry, so the table shows the instant they entered and not
+ * that instant shifted into the viewer's timezone. "—" for null/invalid.
+ */
+export function formatDateTimeUtc(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  return `${UTC_DATE_TIME.format(d)} UTC`;
+}
+
 export function formatDateTime(iso: string | null | undefined): string {
   if (!iso) return '—';
   const d = new Date(iso);

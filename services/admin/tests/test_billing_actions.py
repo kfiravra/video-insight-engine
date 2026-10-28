@@ -12,6 +12,7 @@ from httpx import ASGITransport, AsyncClient
 from src.config import settings
 from src.main import app
 from src.services.vie_api_client import ACTOR_HEADER, IDEMPOTENCY_HEADER
+from tests._actor import assert_signed_for
 from tests.conftest import ADMIN_USER_ID
 
 USER_ID = "a" * 24
@@ -126,6 +127,9 @@ async def test_forwards_to_the_matching_vie_api_route(
 
     assert resp.status_code == 200
     assert instance.request.call_args.args == (method, f"{API}/{api_path}")
+    assert_signed_for(
+        instance.request.call_args, method=method, target=f"/api/admin/{api_path}", body=sent
+    )
     assert kwargs["content"] == sent
     assert kwargs["headers"]["Content-Type"] == "application/json"
 
@@ -218,6 +222,15 @@ async def test_plan_forwards_a_term_end(admin_session):
 
 
 @pytest.mark.anyio
+async def test_plan_rejects_a_term_end_without_a_timezone(admin_session):
+    body = {"planId": "pro", "periodEnd": "2027-01-31T00:00:00", "reason": "trial"}
+
+    assert (
+        await _call("POST", f"/billing/accounts/{USER_ID}/plan", admin_session, body)
+    ).status_code == 422
+
+
+@pytest.mark.anyio
 async def test_plan_rejects_an_unknown_plan(admin_session):
     body = {"planId": "team", "reason": "x"}
 
@@ -304,16 +317,37 @@ async def test_audit_forwards_the_filters_and_drops_the_ones_not_given(admin_ses
 
     resp, instance, kwargs = await _forwarded("GET", path, admin_session)
 
-    assert instance.request.call_args.args == ("GET", f"{API}/audit")
-    assert kwargs["params"] == {"targetId": USER_ID, "limit": 25, "before": "2026-11-01T10:00:00Z"}
+    target = f"/api/admin/audit?targetId={USER_ID}&limit=25&before=2026-11-01T10%3A00%3A00Z"
+    assert_signed_for(instance.request.call_args, method="GET", target=target)
     assert resp.json() == {"before": {}, "after": {}, "auditId": "u" * 24}
 
 
 @pytest.mark.anyio
-async def test_audit_filters_by_actor(admin_session):
-    _, _, kwargs = await _forwarded("GET", f"/audit?actorId={ADMIN_USER_ID}", admin_session)
+async def test_audit_forwards_vie_apis_next_before_cursor_unchanged(admin_session):
+    # "<createdAt ISO>_<row id>": longer than a bare timestamp, and opaque to this service.
+    cursor = f"2026-11-01T10:00:00.000Z_{'a' * 24}"
 
-    assert kwargs["params"] == {"actorId": ADMIN_USER_ID}
+    _, instance, _ = await _forwarded("GET", f"/audit?before={cursor}", admin_session)
+
+    assert_signed_for(
+        instance.request.call_args,
+        method="GET",
+        target=f"/api/admin/audit?before={cursor.replace(':', '%3A')}",
+    )
+
+
+@pytest.mark.anyio
+async def test_audit_rejects_a_cursor_longer_than_any_vie_api_issues(admin_session):
+    assert (await _call("GET", f"/audit?before={'x' * 65}", admin_session)).status_code == 422
+
+
+@pytest.mark.anyio
+async def test_audit_filters_by_actor(admin_session):
+    _, instance, _ = await _forwarded("GET", f"/audit?actorId={ADMIN_USER_ID}", admin_session)
+
+    assert_signed_for(
+        instance.request.call_args, method="GET", target=f"/api/admin/audit?actorId={ADMIN_USER_ID}"
+    )
 
 
 @pytest.mark.anyio

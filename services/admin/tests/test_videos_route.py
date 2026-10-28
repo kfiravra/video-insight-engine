@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import hmac
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -12,8 +10,7 @@ from httpx import ASGITransport, AsyncClient
 
 from src.config import settings
 from src.main import app
-from src.services.vie_api_client import ACTOR_HEADER
-from tests.conftest import ADMIN_USER_ID
+from tests._actor import assert_signed_for
 
 YT = "dQw4w9WgXcQ"
 URL = f"/videos/{YT}"
@@ -98,17 +95,18 @@ async def test_should_forward_admin_key_and_reason_to_vie_api(admin_session):
 
 @pytest.mark.anyio
 async def test_should_carry_the_session_admin_as_a_signed_actor(admin_session):
-    """vie-api learns who purged from the signature over the exact body bytes sent."""
+    """vie-api learns who purged from a signature over the method, target and exact body sent."""
     client_factory, instance = _mock_async_client(_upstream(200, {"warnings": []}))
 
     with patch("src.routes.videos.httpx.AsyncClient", client_factory):
         await _delete(admin_session, json={"reason": "dup"})
 
-    kwargs = instance.request.call_args.kwargs
-    user_id, issued_at, signature = kwargs["headers"][ACTOR_HEADER].split(".")
-    message = f"{user_id}|{issued_at}|{hashlib.sha256(kwargs['content']).hexdigest()}".encode()
-    expected = hmac.new(settings.ADMIN_SESSION_SECRET.encode(), message, hashlib.sha256).hexdigest()
-    assert (user_id, signature) == (ADMIN_USER_ID, expected)
+    assert_signed_for(
+        instance.request.call_args,
+        method="DELETE",
+        target=f"/api/admin/videos/{YT}",
+        body=b'{"reason":"dup"}',
+    )
 
 
 @pytest.mark.anyio
@@ -122,17 +120,22 @@ async def test_should_sign_the_empty_json_object_when_no_reason_is_given(admin_s
 
 
 @pytest.mark.anyio
-async def test_should_ignore_an_admin_id_in_the_body(admin_session):
+async def test_should_reject_an_admin_id_in_the_body(admin_session):
     """Who purged is the session's admin; a body field can no longer say otherwise."""
     client_factory, instance = _mock_async_client(_upstream(200, {"warnings": []}))
 
     with patch("src.routes.videos.httpx.AsyncClient", client_factory):
-        await _delete(admin_session, json={"reason": "dup", "adminId": "someone-else"})
+        resp = await _delete(admin_session, json={"reason": "dup", "adminId": "someone-else"})
 
-    kwargs = instance.request.call_args.kwargs
-    assert kwargs["content"] == b'{"reason":"dup"}'
-    assert "X-Admin-Id" not in kwargs["headers"]
-    assert kwargs["headers"][ACTOR_HEADER].startswith(f"{ADMIN_USER_ID}.")
+    assert resp.status_code == 422
+    instance.request.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_should_reject_a_blank_reason(admin_session):
+    resp = await _delete(admin_session, json={"reason": "   "})
+
+    assert resp.status_code == 422
 
 
 @pytest.mark.anyio

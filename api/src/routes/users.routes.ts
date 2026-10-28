@@ -1,6 +1,8 @@
-import { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
+import { effectiveRoles, type UserDocument } from '../repositories/user.repository.js';
 import { adminActorUserId, auditRequestContext, type AuditRequestContext } from '../utils/audit-context.js';
+import { ConflictError } from '../utils/errors.js';
 import type { Container } from '../container.js';
 
 /**
@@ -25,7 +27,11 @@ export async function userMeRoutes(fastify: FastifyInstance): Promise<void> {
       skipSoftDeleteCheck: true,
     },
   }, async (req, reply) => {
-    const result = await userDeletionService.requestDeletion(req.user.userId);
+    // The origin is kept so the scheduled cascade is recorded as the user's own
+    // request ('self') instead of the scheduler's.
+    const result = await userDeletionService.requestDeletion(req.user.userId, {
+      origin: { initiatedBy: 'self', adminId: null, reason: null },
+    });
 
     // Clear the refresh cookie so the browser drops the session immediately.
     // The access token remains cryptographically valid for its TTL, but the
@@ -58,7 +64,10 @@ export async function userMeRoutes(fastify: FastifyInstance): Promise<void> {
       });
     }
 
-    const restored = await userDeletionService.cancelDeletion(req.user.userId);
+    const { userId } = req.user;
+    const pending = await fastify.container.userRepository.findById(userId);
+    const restored = await userDeletionService.cancelDeletion(userId);
+    await auditAdminDeletionCancelled(fastify.container, req, userId, pending);
     return reply.send({
       id: restored._id.toString(),
       email: restored.email,
@@ -68,13 +77,45 @@ export async function userMeRoutes(fastify: FastifyInstance): Promise<void> {
 }
 
 /**
- * Admin-only immediate deletion endpoint. Bypasses the 30-day grace window
- * and runs the cascade synchronously, returning the audit row.
+ * A user restoring an account an admin had scheduled for deletion undoes an
+ * admin action, so it leaves an `adminAudit` row (actor: the user themselves).
+ * A restore of the user's own request needs none. Best effort, like every audit
+ * write: the restore has already happened.
+ */
+async function auditAdminDeletionCancelled(
+  container: Container,
+  req: FastifyRequest,
+  userId: string,
+  pending: UserDocument | null,
+): Promise<void> {
+  if (pending?.deletionOrigin?.initiatedBy !== 'admin') return;
+  await container.auditService.recordBestEffort({
+    actorId: userId,
+    requestId: req.id,
+    ip: req.ip,
+    action: 'users.delete.cancel',
+    targetType: 'user',
+    targetId: userId,
+    before: {
+      deletedAt: pending.deletedAt ?? null,
+      hardDeleteAt: pending.hardDeleteAt ?? null,
+      scheduledBy: pending.deletionOrigin.adminId,
+    },
+    after: { deletedAt: null, hardDeleteAt: null },
+  });
+}
+
+/**
+ * `DELETE /api/admin/users/:id`: delete an account, either now
+ * (`?immediate=true`, the whole GDPR cascade, synchronously) or scheduled
+ * (the same 30-day soft delete a user gets, with the admin stored as its
+ * origin so the later cascade is recorded as theirs, not the scheduler's).
  *
- * Auth: `x-admin-key` header matching `ADMIN_API_KEY` env (same pattern as
- * `/api/admin/queue/*`). Both modes write an `adminAudit` row at request time;
- * a scheduled delete also stores its origin on the user so the later cascade
- * is recorded as an admin deletion, not a scheduler one.
+ * Needs the `users:delete` permission: a named admin with a signed
+ * `x-admin-actor`; the shared key alone cannot delete. Either mode writes an
+ * `adminAudit` row at request time with the account's state before it. The
+ * last active admin cannot be deleted (409 `LAST_ADMIN`); an admin may delete
+ * themselves only while another active admin remains.
  */
 const adminDeleteParamsSchema = z.object({
   id: z.string().regex(/^[a-f0-9]{24}$/i, 'id must be a 24-char hex ObjectId'),
@@ -83,7 +124,8 @@ const adminDeleteQuerySchema = z.object({
   immediate: z.enum(['true', 'false', '1', '0']).optional(),
 });
 const adminDeleteBodySchema = z
-  .object({ reason: z.string().min(1).max(500).optional() })
+  .object({ reason: z.string().trim().min(1).max(500).optional() })
+  .strict()
   .optional();
 
 interface AdminDeleteInput {
@@ -93,8 +135,40 @@ interface AdminDeleteInput {
   auditContext: AuditRequestContext;
 }
 
+/** The account as it stood before the delete, without anything personal (no email, no name). */
+function accountSnapshot(user: UserDocument): Record<string, unknown> {
+  return {
+    roles: effectiveRoles(user),
+    roleSource: user.roleSource ?? null,
+    tier: user.tier ?? 'free',
+    deletedAt: user.deletedAt ?? null,
+    createdAt: user.createdAt,
+  };
+}
+
+/**
+ * Load the account and refuse to delete the last active admin: nobody would be
+ * left to sign in to the panel, and boot seeding never creates users to repair
+ * it. An unknown id is left to the deletion service, which answers 404.
+ */
+async function loadDeletionTarget(container: Container, userId: string): Promise<Record<string, unknown> | undefined> {
+  const user = await container.userRepository.findById(userId);
+  if (!user) return undefined;
+  const isActiveAdmin = !user.deletedAt && effectiveRoles(user).includes('admin');
+  if (isActiveAdmin) {
+    const others = (await container.userRepository.listAdmins()).filter(
+      (admin) => !admin.deletedAt && admin.id !== user._id.toString(),
+    );
+    if (others.length === 0) {
+      throw new ConflictError('LAST_ADMIN', 'This is the last active admin account; make another admin first');
+    }
+  }
+  return accountSnapshot(user);
+}
+
 async function deleteImmediately(container: Container, input: AdminDeleteInput): Promise<object> {
   const { userDeletionService, auditService } = container;
+  const before = await loadDeletionTarget(container, input.userId);
   const audit = await userDeletionService.executeHardDelete(input.userId, {
     initiatedBy: 'admin',
     adminId: input.adminId,
@@ -105,6 +179,7 @@ async function deleteImmediately(container: Container, input: AdminDeleteInput):
     action: 'users.delete',
     targetType: 'user',
     targetId: audit.originalUserId,
+    before,
     after: { mode: 'immediate', userDeletionId: audit._id.toString() },
     reason: input.reason ?? undefined,
   });
@@ -123,6 +198,7 @@ async function deleteImmediately(container: Container, input: AdminDeleteInput):
  */
 async function scheduleDeletion(container: Container, input: AdminDeleteInput): Promise<object> {
   const { userDeletionService, auditService } = container;
+  const before = await loadDeletionTarget(container, input.userId);
   const result = await userDeletionService.requestDeletion(input.userId, {
     origin: { initiatedBy: 'admin', adminId: input.adminId, reason: input.reason },
   });
@@ -132,6 +208,7 @@ async function scheduleDeletion(container: Container, input: AdminDeleteInput): 
     action: 'users.delete',
     targetType: 'user',
     targetId: input.userId.toLowerCase(),
+    before,
     after: { mode: 'scheduled', scheduledHardDeleteAt },
     reason: input.reason ?? undefined,
   });

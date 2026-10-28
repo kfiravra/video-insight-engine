@@ -332,7 +332,6 @@ describe('UserRepository', () => {
       expect(row.passwordHash).toBeUndefined();
       expect(row.preferences).toBeUndefined();
       expect(row.usage).toBeUndefined();
-      expect(row.paddleCustomerId).toBeUndefined();
     });
 
     it('markSoftDeleted should store the deletion origin when one is given', async () => {

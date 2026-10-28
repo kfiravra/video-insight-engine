@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { billingActions } from '../../lib/billing-actions';
-import { buildPlanRequest } from '../../lib/billing-forms';
+import { buildPlanRequest, PRO_PERIOD_MINUTES } from '../../lib/billing-forms';
 import { ActionDialog, DialogField } from './ActionDialog';
 import { INPUT_CLASS } from './dialog-styles';
 
@@ -19,7 +19,7 @@ export function SetPlanDialog({ userId, currentPlan, onClose, onDone }: SetPlanD
   return (
     <ActionDialog
       title="Set plan"
-      description="A manual plan, no payment. Pro grants 600 minutes now and renews monthly for the term; free stops plan minutes."
+      description={`A manual plan, no payment. Pro grants ${PRO_PERIOD_MINUTES} minutes now and renews monthly for the term; free stops plan minutes.`}
       submitLabel="Set plan"
       userId={userId}
       buildRequest={(reason) => buildPlanRequest({ planId, periodEnd, reason })}

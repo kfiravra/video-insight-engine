@@ -1,9 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
+import { useId, useState } from 'react';
 import type { ReactNode } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation } from '@tanstack/react-query';
 import { describeApiError } from '../../lib/api';
 import { MAX_REASON_LENGTH } from '../../lib/billing-forms';
 import { useAttemptKey } from '../../hooks/use-attempt-key';
+import { useModalDialog } from '../../hooks/use-modal-dialog';
+import { useRefreshAfterSend } from '../../hooks/use-refresh-after-send';
 import { INPUT_CLASS, PRIMARY_BUTTON_CLASS, SECONDARY_BUTTON_CLASS } from './dialog-styles';
 
 interface DialogFieldProps {
@@ -40,69 +42,108 @@ interface ActionDialogProps<TRequest> {
 }
 
 /**
- * The shell of every Account action: a modal with the action's fields, a required
- * reason, and the error from the server shown as the server words it. Each
- * submission carries an Idempotency-Key; resubmitting the identical request after
- * a failure or timeout reuses the key, so a change that did apply is not applied
- * twice. A success refetches the account and the audit log.
+ * Sends the action with one Idempotency-Key per distinct request, and re-reads the
+ * account and the audit log afterwards unless vie-api refused it (see
+ * `useRefreshAfterSend`): a timeout can arrive after the change was applied, and
+ * the operator must see that before deciding to try again.
  */
-export function ActionDialog<TRequest>({
-  title,
-  description,
-  submitLabel,
-  userId,
-  buildRequest,
-  send,
-  successMessage,
-  onClose,
-  onDone,
-  children,
-}: ActionDialogProps<TRequest>) {
-  const queryClient = useQueryClient();
-  const [reason, setReason] = useState('');
+function useActionMutation<TRequest>(props: ActionDialogProps<TRequest>, reason: string) {
+  const { userId, buildRequest, send, successMessage, onDone } = props;
   const { keyFor, reset } = useAttemptKey();
-  const panelRef = useRef<HTMLDivElement>(null);
+  const refreshAfter = useRefreshAfterSend(userId);
 
-  useEffect(() => {
-    panelRef.current?.focus();
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
-    };
-    document.addEventListener('keydown', onKeyDown);
-    return () => document.removeEventListener('keydown', onKeyDown);
-  }, [onClose]);
-
-  const mutation = useMutation({
+  return useMutation({
     mutationFn: async () => {
       const request = buildRequest(reason);
-      await send(request, keyFor(request));
+      await refreshAfter(() => send(request, keyFor(request)));
       return request;
     },
     onSuccess: (request) => {
       reset();
-      queryClient.invalidateQueries({ queryKey: ['billing-account', userId] });
-      queryClient.invalidateQueries({ queryKey: ['audit'] });
       onDone(successMessage(request));
     },
   });
+}
+
+interface ReasonFieldProps {
+  value: string;
+  onChange: (value: string) => void;
+}
+
+function ReasonField({ value, onChange }: ReasonFieldProps) {
+  return (
+    <DialogField label="Reason" hint="Required. Recorded in the ledger and the audit log.">
+      <textarea
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        rows={2}
+        maxLength={MAX_REASON_LENGTH}
+        aria-label="Reason"
+        aria-required="true"
+        data-testid="action-reason"
+        className={INPUT_CLASS}
+      />
+    </DialogField>
+  );
+}
+
+interface DialogButtonsProps {
+  pending: boolean;
+  submitLabel: string;
+  onCancel: () => void;
+}
+
+function DialogButtons({ pending, submitLabel, onCancel }: DialogButtonsProps) {
+  return (
+    <div className="flex items-center justify-end gap-2">
+      <button type="button" onClick={onCancel} disabled={pending} className={SECONDARY_BUTTON_CLASS}>
+        Cancel
+      </button>
+      <button type="submit" disabled={pending} className={PRIMARY_BUTTON_CLASS}>
+        {pending ? 'Saving…' : submitLabel}
+      </button>
+    </div>
+  );
+}
+
+/**
+ * The shell of every Account action: a modal with the action's fields, a required
+ * reason, and the error from the server shown as the server words it. Each
+ * submission carries an Idempotency-Key; resubmitting the identical request after
+ * a failure or timeout reuses the key, so a change that did apply is not applied
+ * twice. The dialog cannot be closed while the request is in flight, so an
+ * uncertain outcome is always seen before the operator can open a fresh dialog
+ * (and a fresh key).
+ */
+export function ActionDialog<TRequest>(props: ActionDialogProps<TRequest>) {
+  const { title, description, submitLabel, onClose, children } = props;
+  const [reason, setReason] = useState('');
+  const mutation = useActionMutation(props, reason);
+  const { panelRef, backdropProps, requestClose } = useModalDialog({ onClose, locked: mutation.isPending });
+  const descriptionId = useId();
 
   return (
     <div
       className="fixed inset-0 z-[60] bg-black/40 flex items-end sm:items-center justify-center p-4"
-      role="dialog"
-      aria-modal="true"
-      aria-label={title}
-      onClick={onClose}
+      data-testid="dialog-backdrop"
+      {...backdropProps}
     >
       <div
         ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        aria-describedby={description ? descriptionId : undefined}
         tabIndex={-1}
         className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] w-full max-w-md max-h-[90vh] overflow-y-auto p-4 space-y-3 outline-none"
-        onClick={(e) => e.stopPropagation()}
       >
         <header>
           <h3 className="font-semibold text-sm">{title}</h3>
-          {description && <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">{description}</p>}
+          {description && (
+            <p id={descriptionId} className="mt-1 text-[11px] text-[var(--color-text-muted)]">
+              {description}
+            </p>
+          )}
         </header>
 
         <form
@@ -113,33 +154,13 @@ export function ActionDialog<TRequest>({
           }}
         >
           {children}
-          <DialogField label="Reason" hint="Required. Recorded in the ledger and the audit log.">
-            <textarea
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              rows={2}
-              maxLength={MAX_REASON_LENGTH}
-              aria-label="Reason"
-              aria-required="true"
-              data-testid="action-reason"
-              className={INPUT_CLASS}
-            />
-          </DialogField>
-
+          <ReasonField value={reason} onChange={setReason} />
           {mutation.error && (
             <p role="alert" className="text-xs text-[var(--color-danger)]" data-testid="action-error">
               {describeApiError(mutation.error)}
             </p>
           )}
-
-          <div className="flex items-center justify-end gap-2">
-            <button type="button" onClick={onClose} className={SECONDARY_BUTTON_CLASS}>
-              Cancel
-            </button>
-            <button type="submit" disabled={mutation.isPending} className={PRIMARY_BUTTON_CLASS}>
-              {mutation.isPending ? 'Saving…' : submitLabel}
-            </button>
-          </div>
+          <DialogButtons pending={mutation.isPending} submitLabel={submitLabel} onCancel={requestClose} />
         </form>
       </div>
     </div>

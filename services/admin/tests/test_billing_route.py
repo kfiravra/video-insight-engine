@@ -55,7 +55,8 @@ async def test_should_reject_wrong_key() -> None:
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("bad_id", ["abc", "z" * 24, "a" * 25, "a" * 23 + "-"])
+# "%0A" is a trailing newline: Python's "$" would have let it through to ObjectId and a 500.
+@pytest.mark.parametrize("bad_id", ["abc", "z" * 24, "a" * 25, "a" * 23 + "-", "a" * 24 + "%0A"])
 async def test_should_return_400_for_an_invalid_user_id(bad_id: str, use_db: UseDb) -> None:
     use_db(make_db())
 

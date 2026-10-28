@@ -8,6 +8,7 @@ import { sha256Hex, signActorHeader } from '../utils/admin-actor.js';
 // Mock container services for route testing
 export interface MockContainer {
   videoRepository: {
+    findCacheKeysByYoutubeId: ReturnType<typeof vi.fn>;
     userHasAccessToSummary: ReturnType<typeof vi.fn>;
     userOwnsVideo: ReturnType<typeof vi.fn>;
     findUserVideo: ReturnType<typeof vi.fn>;
@@ -135,6 +136,7 @@ export interface MockContainer {
     findExpiredSoftDeletes: ReturnType<typeof vi.fn>;
     hardDelete: ReturnType<typeof vi.fn>;
     hasPermission: ReturnType<typeof vi.fn>;
+    listAdmins: ReturnType<typeof vi.fn>;
   };
   userDeletionRepository: {
     insert: ReturnType<typeof vi.fn>;
@@ -158,11 +160,18 @@ export interface MockContainer {
   adminSeedService: {
     run: ReturnType<typeof vi.fn>;
   };
+  adminReplayGuard: {
+    claim: ReturnType<typeof vi.fn>;
+  };
+  alertConfigService: {
+    replace: ReturnType<typeof vi.fn>;
+  };
 }
 
 export function createMockContainer(): MockContainer {
   return {
     videoRepository: {
+      findCacheKeysByYoutubeId: vi.fn().mockResolvedValue([]),
       userHasAccessToSummary: vi.fn().mockResolvedValue(true),
       userOwnsVideo: vi.fn().mockResolvedValue(true),
       findUserVideo: vi.fn(),
@@ -336,6 +345,7 @@ export function createMockContainer(): MockContainer {
       // Default: every signed admin actor still holds the permission. Demotion
       // tests override it with false.
       hasPermission: vi.fn().mockResolvedValue(true),
+      listAdmins: vi.fn().mockResolvedValue([]),
     },
     userDeletionRepository: {
       insert: vi.fn(),
@@ -360,6 +370,13 @@ export function createMockContainer(): MockContainer {
     adminSeedService: {
       run: vi.fn().mockResolvedValue({ status: 'skipped_empty', promoted: 0, demoted: 0 }),
     },
+    // Never touch the dev Redis from a route test: every signature is a first use.
+    adminReplayGuard: {
+      claim: vi.fn().mockResolvedValue(true),
+    },
+    alertConfigService: {
+      replace: vi.fn().mockResolvedValue({ before: {}, after: {} }),
+    },
   };
 }
 
@@ -380,16 +397,25 @@ export interface AdminActorRequest {
 
 /**
  * Headers (and body) for an `/api/admin/*` request made the way vie-admin
- * makes it: the shared key plus a fresh `x-admin-actor` signed over the exact
- * body bytes. Pass the result straight to `app.inject`.
+ * makes it: the shared key plus a fresh `x-admin-actor` signed over the method,
+ * the exact request target (`url`, path plus query, as it will be injected) and
+ * the exact body bytes. Pass the result to `app.inject` together with the same
+ * `method` and `url`.
  */
 export function adminActorRequest(
+  method: string,
+  url: string,
   body?: Record<string, unknown>,
   options: { userId?: string; nowSeconds?: number } = {},
 ): AdminActorRequest {
   const { userId = TEST_ADMIN_USER_ID, nowSeconds = Math.floor(Date.now() / 1000) } = options;
   const payload = body === undefined ? undefined : JSON.stringify(body);
-  const actor = signActorHeader(config.ADMIN_SESSION_SECRET, userId, sha256Hex(payload ?? ''), nowSeconds);
+  const actor = signActorHeader(
+    config.ADMIN_SESSION_SECRET,
+    userId,
+    { method, target: url, bodySha256: sha256Hex(payload ?? '') },
+    nowSeconds,
+  );
   return {
     headers: {
       'x-admin-key': config.ADMIN_API_KEY,

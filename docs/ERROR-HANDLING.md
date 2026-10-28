@@ -51,7 +51,7 @@ Emitted by the `authenticate` decorator (`api/src/plugins/jwt.ts`) and
 | Code                       | Message                                                          | When                                                    |
 | -------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------- |
 | `ACCOUNT_DELETION_PENDING` | This account is scheduled for deletion. Contact support to cancel. | Valid JWT for a soft-deleted account (GDPR grace window) |
-| `ADMIN_PERMISSION_DENIED`  | The shared admin key may only read; a named admin is required / Missing permission: `<permission>` | `/api/admin/*` only: the machine key used for a mutation, or a signed admin who no longer holds the route's permission (see [SECURITY.md](./SECURITY.md#admin-api-key)). A bad, stale or tampered `x-admin-actor` header is `401 UNAUTHORIZED` ("Invalid admin actor"). |
+| `ADMIN_PERMISSION_DENIED`  | The shared admin key may only read; a named admin is required / Missing permission: `<permission>` | `/api/admin/*` only: the machine key used for a mutation, or a signed admin who no longer holds the route's permission (see [SECURITY.md](./SECURITY.md#admin-api-key)). A bad, stale, tampered or already-used `x-admin-actor` header is `401 UNAUTHORIZED` ("Invalid admin actor"); the signature covers the method, the exact request target and the body, so a header made for one request is `401` on any other. |
 
 > There is deliberately **no** generic `FORBIDDEN` code: ownership checks
 > return `404 NOT_FOUND` instead of 403 so the API never confirms that a
@@ -115,6 +115,19 @@ and the ledger only shadows. Hold / debit keys: [IDEMPOTENCY.md](./IDEMPOTENCY.m
 | `INVALID_EMAIL`    | Invalid email format | Email validation failed    |
 | `WEAK_PASSWORD`    | Password too weak    | Doesn't meet requirements  |
 | `VALIDATION_ERROR` | Validation failed    | Generic Zod error          |
+
+### Admin Mutation Errors (409/422/503)
+
+Emitted by `/api/admin/*` and `DELETE /api/users/me`; request shapes in [API-REFERENCE.md](./API-REFERENCE.md#admin-x-admin-key--x-admin-actor).
+
+| Code                       | Status | When |
+| -------------------------- | ------ | ---- |
+| `LAST_ADMIN`               | 409    | `DELETE /api/admin/users/:id` on the only active admin account (soft-deleted admins do not count). Make another admin first |
+| `ACCOUNT_BUSY`             | 409    | A minutes-account mutation stayed contended through every transaction retry; retry with the same `Idempotency-Key` |
+| `IDEMPOTENCY_KEY_REUSED`   | 422    | The `Idempotency-Key` of an admin billing mutation was already used for a different request (body, plan, scope or user). Send a new key |
+| `SERVICE_UNAVAILABLE`      | 503    | Replay protection (Redis) is down: an admin mutation is refused rather than let through unprotected. Nothing was applied; retry |
+
+vie-admin turns a vie-api timeout on a mutation into `504` with "the change may have been applied", never a plain failure: reload before retrying a non-idempotent action.
 
 ### Video Processing Errors (400/422)
 

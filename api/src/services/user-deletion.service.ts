@@ -68,9 +68,10 @@ const SCHEDULER_BATCH_LIMIT = 50;
 export interface RequestDeletionOptions {
   graceDays?: number;
   /**
-   * Who asked, for requests that are not the user's own. Persisted on the
-   * user so the scheduled cascade is recorded under this origin (an admin's
-   * request stays `initiatedBy: 'admin'`) instead of `'scheduler'`.
+   * Who asked. Persisted on the user so the scheduled cascade is recorded under
+   * this origin (an admin's request stays `initiatedBy: 'admin'`, the user's
+   * own `'self'`) instead of `'scheduler'`. A request with no origin is
+   * recorded as the scheduler's.
    */
   origin?: DeletionOrigin;
 }
@@ -185,6 +186,9 @@ export class UserDeletionService {
     const userId = user._id.toString();
 
     const startedAt = this.clock();
+    // Duration comes from a monotonic clock: the wall clock can step back
+    // (NTP, a WSL host sleep) and would record a negative run time.
+    const monotonicStart = performance.now();
     const traceId = randomUUID();
     const counts: DeletionCounts = {
       userVideos: 0,
@@ -271,6 +275,7 @@ export class UserDeletionService {
       counts,
       startedAt,
       completedAt,
+      durationMs: Math.max(0, Math.round(performance.now() - monotonicStart)),
       warnings,
     });
 
@@ -310,7 +315,7 @@ export class UserDeletionService {
     for (const candidate of candidates) {
       const userId = candidate._id.toString();
       try {
-        // An admin's soft delete keeps its origin; everything else is the scheduler's.
+        // A soft delete keeps the origin it was requested under; one with none recorded is the scheduler's.
         await this.executeHardDelete(userId, candidate.deletionOrigin ?? { initiatedBy: 'scheduler' });
         succeeded++;
       } catch (err) {

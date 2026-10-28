@@ -429,25 +429,44 @@ Every `/api/admin/*` route (`DELETE /api/admin/users/:id[?immediate=true]`, `/ap
    (`api/src/utils/admin-auth.ts`), the same constant-time pattern as `isValidInternalSecret`. No key, `401`.
 2. **A signed `x-admin-actor` header** (`<userId>.<unixTs>.<hex hmac>`, sent by vie-admin for every call it
    makes for a named admin) makes the request that user's. The HMAC-SHA256 is keyed on `ADMIN_SESSION_SECRET`
-   and covers `userId|unixTs|sha256(exact request body)`, so it cannot be replayed against another payload;
-   it is compared in constant time and accepted for five minutes either way of now. Anything malformed,
-   tampered, stale or signed with another secret is `401`. A valid header is still re-checked against the
-   database (`UserRepository.hasPermission`): an admin demoted after vie-admin signed it gets `403`.
+   and covers `actor|METHOD|request-target|userId|unixTs|sha256(exact request body)`, where the request-target
+   is the raw path plus query string exactly as it is sent (vie-admin signs the bytes it puts on the wire;
+   vie-api checks `req.method` and `req.raw.url`). The header is therefore good for one request only: not
+   for another method, route, query string or body, and not for the same request spelled differently
+   (`/api/%61dmin/...`, an absolute-form target, a doubled slash all change the target and fail). The body is
+   hashed whenever a valid key and an actor header arrive, whatever the URL looks like, and a request that
+   carries a body that was not hashed is refused. It is compared in constant time and accepted for five
+   minutes either way of now. Anything malformed, tampered, stale or signed with another secret is `401`
+   (the signature is checked before the age). A valid header is still re-checked against the database
+   (`UserRepository.hasPermission`): an admin demoted after vie-admin signed it gets `403`.
    `request.adminActor` is `{ kind: 'user', userId }`; the audit rows and deletion origins name that user.
 3. **No actor header** is the shared machine key acting alone: it passes only `READ_PERMISSIONS` and gets
    `403` on every mutation. A client-supplied `x-admin-id` is no longer read anywhere.
 
-Replaying a captured header with the same body inside its five minutes would repeat the action; the
-admin network path is loopback or the SSH tunnel (Caddy `404`s `/api/admin/*` publicly). The format is
-pinned by shared test vectors (`packages/types/test-vectors/admin-auth.json`) that both vie-admin's
-signer (Python) and vie-api's verifier (TypeScript) are tested against.
+**Single use for mutations.** The signature of every non-GET request is recorded in Redis with
+`SET vie:api:admin-actor-sig:<signature> 1 NX EX <ttl>` (`AdminReplayGuard`); a second request carrying it is
+`401`. The key lives as long as the header could still pass the age check (`unixTs + 300 - now`, at most about
+ten minutes for a header stamped in the future), not a flat 300 s, so no window is left in which a recorded
+signature is forgotten but still accepted. When Redis is down the guard fails closed: the mutation is
+refused with `503` rather than let through, since admin mutations are rare and a replayed credit grant is
+money. Reads are not recorded; repeating a read changes nothing. Before this, a header signed over an empty
+body (a read) could be replayed onto `DELETE /api/admin/users/:id?immediate=true`; that is what the
+method and target binding closes.
+
+The admin network path is loopback or the SSH tunnel (Caddy `404`s `/api/admin/*` publicly). The format is
+pinned by shared test vectors (`packages/types/test-vectors/admin-auth.json`: a GET, a GET with an encoded
+query string, POSTs and a DELETE with bodies) that both vie-admin's signer (Python) and vie-api's verifier
+(TypeScript) are tested against. Session tokens and actor headers share a secret, so both are
+domain-separated: the session HMAC covers `session|<payload>`, the actor HMAC `actor|...`, and neither can
+stand in for the other.
 
 ### Admin Panel Login (vie-admin :8002)
 
 `POST /auth/login` (`services/admin/src/routes/auth.py`) verifies email +
 bcrypt password against the `users` collection and returns a stateless
-HMAC-signed session token naming the user (`userId|email|expiry`, keyed on
-`ADMIN_SESSION_SECRET`, 12 h TTL, accepted by `ApiKeyMiddleware`). Hardening:
+HMAC-signed session token naming the user (`userId|email|expiry`, HMAC over
+`session|<payload>` keyed on `ADMIN_SESSION_SECRET`, 12 h TTL, accepted by
+`ApiKeyMiddleware`). Hardening:
 
 - **Session secret separate from the machine key** — `ADMIN_API_KEY` stays the
   machine credential (raw bearer on vie-admin, `X-Admin-Key` to vie-api) and is
@@ -518,11 +537,17 @@ lands. vie-api (`api/src/routes/admin/__tests__/authz.matrix.test.ts`) collects 
 Fastify registers them and checks that each declares `requireAdmin(<permission>)`, that GET
 routes use read permissions and mutations never do, and then: no credentials, a wrong key
 or an actor header without the key is `401`; the shared key on a mutation is `403`; a signed
-admin passes; a demoted admin is `403`; a stale header is `401`. vie-admin
+admin passes; a demoted admin is `403`; a stale header is `401`. It also pins the request
+binding on every route: a header signed for a GET, for another route, with a query string
+added or with a different body is `401`; a used signature is `401`; an unavailable replay
+guard is `503` on every mutation; and `/api/%61dmin/...`, `/api//admin/...` and a raw
+absolute-form request target (sent over a real socket, since `inject` would normalise it)
+never get past the guard with a signature that covers an empty body. vie-admin
 (`services/admin/tests/test_authz_matrix.py`) enumerates the app's OpenAPI paths: no token,
 a wrong key, a non-admin session and a soft-deleted admin's session are `401` everywhere,
-the machine key is `403` on every non-GET, and the open paths are pinned to `/health`,
-`/auth/login` and the SPA shell.
+the machine key is `403` on every non-GET, every non-GET route depends on
+`current_user_actor` (so none can forget to name the admin), and the open paths are pinned to
+`/health`, `/auth/login` and the SPA shell.
 
 **Boot seeding (`ADMIN_EMAILS`).** vie-api reconciles the comma-separated
 `ADMIN_EMAILS` list with the `users` collection on every boot
@@ -533,17 +558,43 @@ touched, and users are never created from the list. The reconcile refuses, chang
 nothing, if it would leave no active admin, and an empty list is a no-op, so a
 missing env row cannot lock anyone out. The shared demo account and soft-deleted
 accounts are never promoted. Emails are matched ignoring case and never logged in
-full. Every change writes an audit row with actor `system:boot`.
+full. Every change writes an audit row with actor `system:boot`. Known limits, accepted
+while the stack is one host: with two vie-api replicas booting together each writes its own
+audit rows for the same change, and an `env` admin who leaves the list is demoted with
+`roles: []`, which would also drop any other role (a future `support`) they hold; revisit
+both before running a second replica or adding a second role.
 
 **Admin audit trail.** Every admin mutation writes one append-only `adminAudit`
 row (`AuditService.record`): actor, action, target, a before/after snapshot,
 reason, request id and client ip. Today that covers admin user deletion (an audit
 row at request time for the 30-day soft delete too), the global video purge, DLQ
-replay and the boot role changes above. The actor is the admin the signed
+replay, the billing mutations, alert threshold changes (`alerts.config.set`), a user
+undoing a deletion an admin scheduled (`users.delete.cancel`, actor the user) and the
+boot role changes above. `users.delete` and `videos.purge` rows carry a `before`
+snapshot (the account's roles, tier and deletion state without its email; the video's
+summary ids and whether it was shared). The actor is the admin the signed
 `x-admin-actor` header names (`system:boot` for boot seeding); `system:admin-key` is
 the shared key acting alone, which can only read and so writes no audit rows. The mutation has already happened when the row is
 written, so a failed audit insert is logged at `error` and never turns the request
 into a failure. Rows hold no secrets and no target email.
+
+The row's `requestId` is the id vie-admin generated for the call and forwards as
+`X-Request-ID`, so one id follows a click from vie-admin's log to vie-api's and the
+audit row. The row's `ip` is the address vie-api sees, which is vie-admin's container
+or the tunnel, not the operator's browser: the operator is the `actorId`, and no
+client-ip header is trusted because it would be unsigned.
+
+**Guard rails on the admin account itself.** Deleting an account that holds the admin
+role is refused with `409 LAST_ADMIN` when it is the last active admin (soft-deleted
+accounts do not count); an admin may delete their own account only while another
+active admin remains. This does not cover a user deleting their own account through
+`DELETE /api/users/me`, which is not an admin route.
+
+**Reusing an `Idempotency-Key`.** The key makes a retry of the same request a no-op,
+and the same key with a different request (another body, plan or user) is refused
+with `422 IDEMPOTENCY_KEY_REUSED` instead of silently returning the first outcome.
+The request is compared by a hash stored on the audit row (never exposed in the
+audit view).
 
 ### Dev-Default Secret Refusal
 

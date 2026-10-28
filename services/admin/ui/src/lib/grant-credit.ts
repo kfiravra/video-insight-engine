@@ -1,7 +1,5 @@
 import type { GrantCreditRequest } from './api';
-
-export const MAX_GRANT_MINUTES = 100_000;
-export const MAX_REASON_LENGTH = 500;
+import { MAX_ADMIN_MINUTES, MAX_REASON_LENGTH } from './billing-forms';
 
 export interface GrantFormValues {
   minutes: string;
@@ -14,8 +12,8 @@ export interface GrantFormValues {
 export function buildGrantRequest(values: GrantFormValues, now: Date = new Date()): GrantCreditRequest {
   const minutes = Number(values.minutes);
   if (!Number.isInteger(minutes) || values.minutes.trim() === '') throw new Error('Enter a whole number of minutes');
-  if (minutes < 1 || minutes > MAX_GRANT_MINUTES) {
-    throw new Error(`Minutes must be between 1 and ${MAX_GRANT_MINUTES}`);
+  if (minutes < 1 || minutes > MAX_ADMIN_MINUTES) {
+    throw new Error(`Minutes must be between 1 and ${MAX_ADMIN_MINUTES}`);
   }
   const reason = values.reason.trim();
   if (!reason) throw new Error('Reason is required');
