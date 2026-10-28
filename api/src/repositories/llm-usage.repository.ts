@@ -1,9 +1,12 @@
-import { Db, Collection } from 'mongodb';
+import { Db, ObjectId, Collection } from 'mongodb';
 
 /** The fields of the summarizer's `llm_usage` rows (Python schema) that vie-api reads. */
 interface LlmUsageDocument {
+  _id: ObjectId;
   request_id?: string | null;
   cost_usd?: number | null;
+  user_id?: string | null;
+  timestamp?: Date;
 }
 
 /**
@@ -29,5 +32,24 @@ export class LlmUsageRepository {
       ])
       .toArray();
     return row?.total ?? 0;
+  }
+
+  /**
+   * Drop the user link from rows written before `cutoff` (docs/PRIVACY.md:
+   * usage analytics older than 90 days carry no personal data). Cost, model,
+   * timestamp and request_id stay. At most `limit` rows per call; a re-run
+   * matches nothing it already cleared. Returns the rows changed.
+   */
+  async unsetUserIdBefore(cutoff: Date, limit: number): Promise<number> {
+    const rows = await this.collection
+      .find({ timestamp: { $lt: cutoff }, user_id: { $exists: true } }, { projection: { _id: 1 } })
+      .limit(limit)
+      .toArray();
+    if (rows.length === 0) return 0;
+    const result = await this.collection.updateMany(
+      { _id: { $in: rows.map((row) => row._id) } },
+      { $unset: { user_id: '' } },
+    );
+    return result.modifiedCount;
   }
 }

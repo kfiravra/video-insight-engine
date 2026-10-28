@@ -1,125 +1,30 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import { Db, ObjectId, Collection, MongoError } from 'mongodb';
 import type { ClientSession } from 'mongodb';
+import type { BillingOwnerType } from '@vie/types';
 import type {
-  AccountCaps,
-  BillingBucket,
-  BillingOwnerType,
-  BillingSource,
-  LedgerEntryType,
-  PlanId,
-  PlanSource,
-  PlanStatus,
-} from '@vie/types';
+  BillingAccountDocument,
+  AccountMutableFields,
+  CreditLotDocument,
+  LedgerEntryDocument,
+  NewLedgerEntry,
+  RecurringGrantDocument,
+} from './billing.documents.js';
 
-// ─── Stored shapes (ObjectId / Date; the wire shapes live in @vie/types billing.ts) ───
-
-export interface LotSliceDocument {
-  lotId: ObjectId;
-  minutes: number;
-}
-
-export interface BucketSplitDocument {
-  free: number;
-  plan: number;
-  credit: number;
-  lots: LotSliceDocument[];
-}
-
-export interface BillingHoldDocument {
-  requestId: string;
-  userId: ObjectId;
-  youtubeId: string | null;
-  durationSec: number;
-  minutes: number;
-  split: BucketSplitDocument;
-  freeVideoAt: Date | null;
-  planCycleStart: Date | null;
-  createdAt: Date;
-}
-
-export interface BillingPlanDocument {
-  id: PlanId;
-  status: PlanStatus;
-  source: PlanSource | null;
-  periodStart: Date | null;
-  periodEnd: Date | null;
-}
-
-export interface PlanBucketDocument {
-  cycleStart: Date | null;
-  cycleEnd: Date | null;
-  minutesGranted: number;
-  minutesUsed: number;
-}
-
-export interface BillingAccountDocument {
-  _id: ObjectId;
-  ownerType: BillingOwnerType;
-  ownerId: ObjectId;
-  plan: BillingPlanDocument;
-  buckets: {
-    free: { recentFreeVideoAt: Date[] };
-    plan: PlanBucketDocument;
-    credit: { minutesAvailable: number };
-  };
-  holds: BillingHoldDocument[];
-  caps: AccountCaps;
-  version: number;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-/** The fields a conditional account update replaces. */
-export type AccountMutableFields = Pick<BillingAccountDocument, 'plan' | 'buckets' | 'holds' | 'caps'>;
-
-export interface LedgerEntryDocument {
-  _id: ObjectId;
-  accountId: ObjectId;
-  userId: ObjectId;
-  type: LedgerEntryType;
-  bucket: BillingBucket;
-  minutes: number;
-  lotId?: ObjectId;
-  source: BillingSource;
-  idempotencyKey: string;
-  youtubeId?: string;
-  durationSec?: number;
-  costUsd?: number;
-  actorId?: string;
-  auditId?: ObjectId;
-  reason?: string;
-  createdAt: Date;
-}
-
-export type NewLedgerEntry = Omit<LedgerEntryDocument, '_id'>;
-
-export interface CreditLotDocument {
-  _id: ObjectId;
-  accountId: ObjectId;
-  minutesGranted: number;
-  minutesRemaining: number;
-  source: BillingSource;
-  priceUsdCents?: number;
-  expiresAt: Date | null;
-  createdAt: Date;
-}
-
-export interface RecurringGrantDocument {
-  _id: ObjectId;
-  accountId: ObjectId;
-  minutes: number;
-  every: 'month';
-  active: boolean;
-  nextRunAt: Date;
-  lastRunAt: Date | null;
-  actorId: string;
-  auditId: ObjectId;
-  reason: string;
-  createdAt: Date;
-  updatedAt: Date;
-  deletedAt: Date | null;
-}
+// The stored shapes live in billing.documents.ts; re-exported so callers keep one import path.
+export type {
+  LotSliceDocument,
+  BucketSplitDocument,
+  BillingHoldDocument,
+  BillingPlanDocument,
+  PlanBucketDocument,
+  BillingAccountDocument,
+  AccountMutableFields,
+  LedgerEntryDocument,
+  NewLedgerEntry,
+  CreditLotDocument,
+  RecurringGrantDocument,
+} from './billing.documents.js';
 
 export interface InsertLedgerResult {
   entry: LedgerEntryDocument;
@@ -418,8 +323,8 @@ export class BillingRepository {
   }
 
   /** Every lot of an account, spent ones included, newest first; `limit` for the admin view. */
-  async listLots(accountId: ObjectId, limit?: number): Promise<CreditLotDocument[]> {
-    const cursor = this.lots.find({ accountId }).sort({ createdAt: -1, _id: -1 });
+  async listLots(accountId: ObjectId, limit?: number, session?: ClientSession): Promise<CreditLotDocument[]> {
+    const cursor = this.lots.find({ accountId }, { session }).sort({ createdAt: -1, _id: -1 });
     return (limit === undefined ? cursor : cursor.limit(limit)).toArray();
   }
 
@@ -460,6 +365,21 @@ export class BillingRepository {
   /** Live (not deleted) grants, oldest first. */
   async listRecurringGrants(accountId: ObjectId): Promise<RecurringGrantDocument[]> {
     return this.recurringGrants.find({ accountId, deletedAt: null }).sort({ createdAt: 1, _id: 1 }).toArray();
+  }
+
+  /** Move a grant to its next run, only if nobody did since `expectedNextRunAt` was read. */
+  async advanceRecurringGrant(
+    grantId: ObjectId,
+    expectedNextRunAt: Date,
+    next: { lastRunAt: Date; nextRunAt: Date },
+    session?: ClientSession,
+  ): Promise<boolean> {
+    const result = await this.recurringGrants.updateOne(
+      { _id: grantId, nextRunAt: expectedNextRunAt },
+      { $set: { ...next, updatedAt: next.lastRunAt } },
+      { session },
+    );
+    return result.matchedCount === 1;
   }
 
   async softDeleteRecurringGrant(grantId: ObjectId, now: Date, session?: ClientSession): Promise<void> {

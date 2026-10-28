@@ -23,7 +23,7 @@ DELETE /api/users/me ──┐                              │
                         │  or admin can override)     │
                         │                             │
                         ▼                             │
-            POST /internal/run-deletions (on call)    │  ← Phase 4: sweep (no scheduler in repo)
+   billing repair job (every 5 min) / POST /internal/run-deletions │  ← Phase 4: sweep
                         │                             │
                         ▼                             │
               userDeletionService.runScheduledDeletions()
@@ -56,7 +56,7 @@ DELETE /api/admin/users/:id?immediate=true ──────────┘  �
 | `POST /api/users/me/restore` | JWT (bypasses soft-delete check) | Cancel a pending deletion within 30 days. |
 | `DELETE /api/admin/users/:id?immediate=true` | `x-admin-key` + signed `x-admin-actor` (`users:delete`) | Run the cascade now (compliance escape hatch). Writes an `adminAudit` row. |
 | `DELETE /api/admin/users/:id` (no `immediate`) | `x-admin-key` + signed `x-admin-actor` (`users:delete`) | Schedule the same soft delete as the user-initiated flow, with the admin stored as its origin. Writes an `adminAudit` row at request time. |
-| `POST /internal/run-deletions` | `x-internal-secret` header | Sweep entrypoint — sweeps `hardDeleteAt <= now` and runs the cascade for each. It runs only when called; this repo configures no scheduler for it (see "Running the sweep"). |
+| `POST /internal/run-deletions` | `x-internal-secret` header | Manual sweep entrypoint — sweeps `hardDeleteAt <= now` and runs the cascade for each. The same sweep runs on a schedule inside vie-api (see "Running the sweep"). |
 | `DELETE /api/admin/videos/:youtubeId` | `x-admin-key` + signed `x-admin-actor` (`videos:purge`) | Not GDPR: the **video** cascade (`VideoCascadeService`), which removes one video from every store for every user. Listed here because it is the only path that deletes the shared rows the user cascade keeps. |
 
 ## Key files
@@ -101,7 +101,7 @@ Each step is wrapped in `runStep`, which catches and records the error as a `war
 | `videoSummaryCache` | Shared cache, keyed by YouTube ID, not user. Deletion would break other users with the same video. Removed only by the video cascade (`DELETE /api/admin/videos/:youtubeId`). **Exception — the dispatch stamp:** `POST /summarize` writes the dispatching user's `userId` and `requestId` onto the row (so the SSE producer can attribute `llm_usage`), overwritten on every dispatch and left in place after the run; cascade step 7 unsets both for the deleted user. |
 | Qdrant `transcript_chunks` | Same — video-scoped, not user-scoped. `user_id` payload is reserved but always `null` today (see `services/summarizer/src/services/vector/qdrant_service.py:153`). When that payload starts being populated for user-generated content, the cascade step is ready to flip from no-op to real delete. The video cascade deletes them by `video_id` through the summarizer's `POST /internal/videos/{id}/purge`. |
 | S3 `videos/{youtubeId}/...` | Same — video-scoped. No user-keyed S3 prefixes today; placeholder hook is wired for the future. The video cascade deletes the whole prefix. |
-| `llm_usage` | The cost ledger. Rows are kept indefinitely — there is **no TTL** (the legacy 90-day index is dropped at boot, see [`llm-cost-model.md`](./llm-cost-model.md#ledger-retention-decided-2026-07-06)). Rows carry the string `user_id` of whoever triggered the call, and the cascade has no `llm_usage` step, so after erasure the rows stay and keep that now-orphaned id (it is not hashed or unset). Deleting them would erase billing history and distort cost reports. If legal needs it gone, unset or hash `user_id` on the user's rows — not done today. |
+| `llm_usage` | The cost ledger. Rows are kept indefinitely — there is **no TTL** (the legacy 90-day index is dropped at boot, see [`llm-cost-model.md`](./llm-cost-model.md#ledger-retention-decided-2026-07-06)). Rows carry the string `user_id` of whoever triggered the call, and the cascade has no `llm_usage` step, so after erasure the rows keep that now-orphaned id until they are 90 days old. Deleting them would erase billing history and distort cost reports. **After 90 days the billing repair job unsets `user_id`** on every row (`PRIVACY.md`: usage analytics older than 90 days carry no personal data); cost, model, timestamp and `request_id` stay. |
 | `shareLikes` / `shareViews` | Already anonymous (IP hashed). |
 | Paddle records | Out of our system — directed at Paddle's own GDPR portal in [`PRIVACY.md`](./PRIVACY.md). |
 
@@ -113,14 +113,16 @@ A previously-issued JWT remains cryptographically valid for its 15-minute TTL ev
 
 ## Running the sweep
 
-The sweep is just an internal HTTP endpoint, and **nothing in this repo calls it**: `scripts/backup-cron/crontab` only runs backups, and [`DEPLOY.md`](./DEPLOY.md) sets up no scheduler. Until a deployment drives the route from its own cron, a self-service deletion stays at the soft-delete stage past its 30-day `hardDeleteAt`; only the admin immediate delete (`?immediate=true`) runs the cascade without it.
+**Scheduled (billing-roles P1.6).** vie-api's billing repair job runs `userDeletionService.runScheduledDeletions()` every `BILLING_REPAIR_INTERVAL_SECONDS` (default 300) under the Redis lock `vie:api:billing-repair`, so a due account is hard-deleted within one interval of its `hardDeleteAt`. The job is on when `BILLING_REPAIR_ENABLED` is (dev default on; the prod compose defaults it off until Mongo runs as a replica set, P6.4 — until then prod still needs the route below to be driven). An admin's soft delete keeps `initiatedBy: 'admin'` when the job runs it; a self-service one is recorded as `'scheduler'`.
+
+The internal route stays for a manual or external run:
 
 ```bash
 curl -X POST -H "x-internal-secret: $INTERNAL_SECRET" \
   http://vie-api:3000/internal/run-deletions
 ```
 
-To schedule it, drive it from any cron source — Kubernetes CronJob, GitHub Actions on a schedule, host crontab, BullMQ if/when we adopt it. Daily at 03:00 UTC is the recommended cadence; running more often is harmless because every step is idempotent and a no-op past the first run.
+Driving it from an outside cron as well is harmless: every step is idempotent and a no-op past the first run.
 
 Example k8s CronJob skeleton (illustrative only; nothing in this repo deploys it):
 

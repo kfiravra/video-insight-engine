@@ -15,6 +15,8 @@ import { AdminAuditRepository } from './repositories/admin-audit.repository.js';
 import { BillingRepository } from './repositories/billing.repository.js';
 import { BillingShadowRepository } from './repositories/billing-shadow.repository.js';
 import { LlmUsageRepository } from './repositories/llm-usage.repository.js';
+import { LlmAlertsRepository } from './repositories/llm-alerts.repository.js';
+import { BillingMaintenanceRepository } from './repositories/billing-maintenance.repository.js';
 
 // Services
 import { AuthService } from './services/auth.service.js';
@@ -38,6 +40,8 @@ import { BillingService } from './services/billing/billing.service.js';
 import { BillingGate } from './services/billing/billing-gate.js';
 import { BillingShadowService } from './services/billing/billing-shadow.service.js';
 import { ShadowRunner } from './services/billing/shadow-runner.js';
+import { BillingRepairService } from './services/billing/billing-repair.service.js';
+import { RedisRepairLock, singleProcessRepairLock } from './services/billing/repair-lock.js';
 import {
   SubmitBurstLimiter,
   noOpSubmitBurstLimiter,
@@ -79,6 +83,7 @@ export interface Container {
   adminSeedService: AdminSeedService;
   billingService: BillingService;
   billingShadowService: BillingShadowService;
+  billingRepairService: BillingRepairService;
 }
 
 export interface CreateContainerOptions {
@@ -153,13 +158,14 @@ export function createContainer(
   const chatFairUse: IChatFairUse = options.redisClient
     ? new ChatFairUseService(options.redisClient, billingService, config.CHAT_FREE_MESSAGES_PER_DAY, logger)
     : noOpChatFairUse;
+  const llmUsageRepository = new LlmUsageRepository(db);
   // Shadow ledger (P1.7): writes beside the old gate, never decides.
   const billingShadowService = new BillingShadowService({
     enabled: config.BILLING_SHADOW_ENABLED,
     gate: new BillingGate(billingService, summarizerClient),
     billing: billingService,
     rows: new BillingShadowRepository(db),
-    llmUsage: new LlmUsageRepository(db),
+    llmUsage: llmUsageRepository,
     dispatchStamps: videoRepository,
     runner: new ShadowRunner(logger),
     logger,
@@ -189,6 +195,19 @@ export function createContainer(
     videoDeletionRepository,
     logger,
   );
+  // Billing repair job (P1.6); the billing-repair plugin schedules it.
+  const billingRepairService = new BillingRepairService({
+    billing: billingService,
+    maintenance: new BillingMaintenanceRepository(db),
+    llmUsage: llmUsageRepository,
+    alerts: new LlmAlertsRepository(db),
+    deletions: userDeletionService,
+    lock: options.redisClient
+      ? new RedisRepairLock(options.redisClient, config.BILLING_REPAIR_INTERVAL_SECONDS, logger)
+      : singleProcessRepairLock,
+    logger,
+    holdMaxAgeHours: config.BILLING_HOLD_MAX_AGE_HOURS,
+  });
   const auditService = new AuditService(adminAuditRepository, logger);
   const adminSeedService = new AdminSeedService(
     config.ADMIN_EMAILS,
@@ -232,6 +251,7 @@ export function createContainer(
     adminSeedService,
     billingService,
     billingShadowService,
+    billingRepairService,
   };
 }
 

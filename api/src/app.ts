@@ -14,6 +14,7 @@ import { websocketPlugin } from './plugins/websocket.js';
 import { tierPlugin } from './plugins/tier.js';
 import { demoGuardPlugin } from './plugins/demo-guard.js';
 import { adminSeedPlugin } from './plugins/admin-seed.js';
+import { billingRepairPlugin } from './plugins/billing-repair.js';
 import { adminAuthPlugin } from './plugins/admin-auth.js';
 import { rabbitmqPlugin } from './plugins/rabbitmq.js';
 import { redisPlugin } from './plugins/redis.js';
@@ -200,6 +201,8 @@ export async function buildApp(options?: BuildAppOptions): Promise<FastifyInstan
   await fastify.register(adminAuthPlugin);
   // ADMIN_EMAILS role reconcile (runs on ready, after the mongodb index hook)
   await fastify.register(adminSeedPlugin);
+  // Billing repair job (on ready) + shadow-ledger drain (on close)
+  await fastify.register(billingRepairPlugin);
 
   // Global error handler. The status/envelope mapping lives in
   // utils/error-envelope.ts so this stays a thin log-then-send: 5xx at

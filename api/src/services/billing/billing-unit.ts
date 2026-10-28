@@ -62,6 +62,11 @@ export class BillingUnits {
   async write<T>(ownerId: string, op: (unit: BillingUnit) => Promise<T>): Promise<UnitOutcome<T>> {
     parseObjectId(ownerId, 'userId');
     const { _id: accountId } = await this.repo.getOrCreateAccount('user', ownerId);
+    return this.writeAccount(accountId, op);
+  }
+
+  /** Like `write`, for an account already known by id (repair job). */
+  async writeAccount<T>(accountId: ObjectId, op: (unit: BillingUnit) => Promise<T>): Promise<UnitOutcome<T>> {
     return this.accountLocks.run(accountId.toHexString(), () =>
       this.repo.withTransaction(async (session) => {
         const account = await this.repo.findAccountById(accountId, session);

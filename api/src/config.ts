@@ -156,6 +156,16 @@ const envSchema = z.object({
   // on, except under NODE_ENV=test, where route tests must not write billing
   // rows; tests that exercise the shadow inject an enabled service.
   BILLING_SHADOW_ENABLED: z.enum(['true', 'false']).optional(),
+  // Billing repair job (P1.6), an in-process interval behind a Redis lock:
+  // settle/release stale holds, expire lots, apply recurring grants, check
+  // projections against the ledger, drop llm_usage.user_id after 90 days,
+  // run the GDPR hard-delete sweep. Same default as the shadow: unset = on,
+  // except under NODE_ENV=test. Needs the replica set (transactions).
+  BILLING_REPAIR_ENABLED: z.enum(['true', 'false']).optional(),
+  BILLING_REPAIR_INTERVAL_SECONDS: z.string().default('300').transform(Number).pipe(z.number().int().min(30)),
+  // A hold older than this whose run is terminal, missing or unstamped is
+  // settled (run completed) or released (anything else) by the repair job.
+  BILLING_HOLD_MAX_AGE_HOURS: z.string().default('3').transform(Number).pipe(z.number().positive()),
   // ─── Idempotency ────────────────────────────────────────────────────
   // NOTE: PIPELINE_VERSION is intentionally absent here — it is single-
   // sourced from pipeline-version.json (see loadPipelineVersion above) and
@@ -321,6 +331,9 @@ export const config = {
   BILLING_SHADOW_ENABLED: parsedConfig.BILLING_SHADOW_ENABLED === undefined
     ? parsedConfig.NODE_ENV !== 'test'
     : parsedConfig.BILLING_SHADOW_ENABLED === 'true',
+  BILLING_REPAIR_ENABLED: parsedConfig.BILLING_REPAIR_ENABLED === undefined
+    ? parsedConfig.NODE_ENV !== 'test'
+    : parsedConfig.BILLING_REPAIR_ENABLED === 'true',
   // Computed rate limits - higher in test mode to avoid interference
   RATE_LIMITS: {
     PLAYLIST_PREVIEW: parsedConfig.NODE_ENV === 'test'

@@ -473,6 +473,20 @@ The vie-admin lifespan **also** drops any legacy 90-day TTL on `llm_usage`
 (`timestamp_1` — it used to recreate one on every boot) and recreates
 `timestamp` as a plain index, so either service booting first heals the ledger.
 
+**The user link is dropped at 90 days (billing-roles P1.6).** Rows stay, but
+vie-api's billing repair job unsets `user_id` on every row whose `timestamp` is
+more than 90 days old (batched, at most 1,000 rows per run, re-runs match
+nothing), which is what `docs/PRIVACY.md` promises. Per-user cost views
+therefore cover the last 90 days; totals, per-model and per-request
+(`request_id`) numbers are unaffected.
+
+**Margin per run.** The minutes ledger records `costUsd = Σ cost_usd WHERE
+request_id = <the run's requestId>` on the run's `debit` entries when it settles
+(and on `release` entries for failed runs), served by the `{request_id: 1,
+timestamp: -1}` index both vie-api and vie-admin build. A run settled late by the
+repair job (its completion relay was lost) gets the same sum. A translation's
+second "completed" settles nothing, so translation spend is not in `costUsd`.
+
 ## Alerting (implemented 2026-07-12)
 
 Four alert types, all real:

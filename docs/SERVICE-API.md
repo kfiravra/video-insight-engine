@@ -385,6 +385,11 @@ SUBMIT_BURST_LIMIT_PER_HOUR=20
 CHAT_FREE_MESSAGES_PER_DAY=50
 # Minutes-ledger shadow writes beside the old gate, never deciding (needs the replica set)
 BILLING_SHADOW_ENABLED=true
+# Billing repair job: stale holds, lot expiry, recurring grants, drift check,
+# llm_usage.user_id after 90 days, GDPR hard-delete sweep (needs the replica set)
+BILLING_REPAIR_ENABLED=true
+BILLING_REPAIR_INTERVAL_SECONDS=300
+BILLING_HOLD_MAX_AGE_HOURS=3
 ```
 
 ---

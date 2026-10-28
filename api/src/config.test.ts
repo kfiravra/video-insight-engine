@@ -203,4 +203,24 @@ describe('config env validation', () => {
       await expect(loadConfig({ BILLING_SHADOW_ENABLED: 'yes' })).rejects.toThrow(/BILLING_SHADOW_ENABLED/);
     });
   });
+
+  describe('billing repair settings', () => {
+    it('should default the repair job off under NODE_ENV=test and on elsewhere', async () => {
+      expect((await loadConfig({})).config.BILLING_REPAIR_ENABLED).toBe(false);
+      expect((await loadConfig({ NODE_ENV: 'development' })).config.BILLING_REPAIR_ENABLED).toBe(true);
+    });
+
+    it('should default to a 5-minute interval and a 3-hour hold age', async () => {
+      const { config } = await loadConfig({});
+      expect([config.BILLING_REPAIR_INTERVAL_SECONDS, config.BILLING_HOLD_MAX_AGE_HOURS]).toEqual([300, 3]);
+    });
+
+    it('should refuse an interval under 30 seconds', async () => {
+      await expect(loadConfig({ BILLING_REPAIR_INTERVAL_SECONDS: '5' })).rejects.toThrow(/BILLING_REPAIR_INTERVAL_SECONDS/);
+    });
+
+    it('should refuse a non-positive hold age', async () => {
+      await expect(loadConfig({ BILLING_HOLD_MAX_AGE_HOURS: '0' })).rejects.toThrow(/BILLING_HOLD_MAX_AGE_HOURS/);
+    });
+  });
 });

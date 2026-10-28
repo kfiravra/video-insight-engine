@@ -326,6 +326,11 @@ services:
       CHAT_FREE_MESSAGES_PER_DAY: ${CHAT_FREE_MESSAGES_PER_DAY:-50}
       # Minutes-ledger shadow writes (never decide); needs the replica set
       BILLING_SHADOW_ENABLED: ${BILLING_SHADOW_ENABLED:-true}
+      # Billing repair job: stale holds, lot expiry, recurring grants, drift check,
+      # llm_usage.user_id after 90 days, GDPR hard-delete sweep (needs the replica set)
+      BILLING_REPAIR_ENABLED: ${BILLING_REPAIR_ENABLED:-true}
+      BILLING_REPAIR_INTERVAL_SECONDS: ${BILLING_REPAIR_INTERVAL_SECONDS:-300}
+      BILLING_HOLD_MAX_AGE_HOURS: ${BILLING_HOLD_MAX_AGE_HOURS:-3}
       # Sentry — empty DSN = SDK no-ops
       SENTRY_DSN: ${SENTRY_DSN:-}
       SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-}

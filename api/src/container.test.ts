@@ -8,6 +8,7 @@ import { IdempotencyRepository } from './repositories/idempotency.repository.js'
 import { VideoService } from './services/video.service.js';
 import { BillingService } from './services/billing/billing.service.js';
 import { BillingRepository } from './repositories/billing.repository.js';
+import { BillingRepairService } from './services/billing/billing-repair.service.js';
 
 /**
  * `Db.collection()` is called in every repository constructor. We hand back
@@ -101,5 +102,6 @@ describe('createContainer', () => {
 
     expect(container.billingService).toBeInstanceOf(BillingService);
     expect(container.billingRepository).toBeInstanceOf(BillingRepository);
+    expect(container.billingRepairService).toBeInstanceOf(BillingRepairService);
   });
 });

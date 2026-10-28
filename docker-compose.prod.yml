@@ -332,6 +332,12 @@ services:
       # Minutes-ledger shadow writes (never decide). Off until the box runs the
       # replica set (P6.4): the ledger needs transactions.
       BILLING_SHADOW_ENABLED: ${BILLING_SHADOW_ENABLED:-false}
+      # Billing repair job: stale holds, lot expiry, recurring grants, drift check,
+      # llm_usage.user_id after 90 days, GDPR hard-delete sweep. Off until the
+      # replica set (P6.4), like the shadow.
+      BILLING_REPAIR_ENABLED: ${BILLING_REPAIR_ENABLED:-false}
+      BILLING_REPAIR_INTERVAL_SECONDS: ${BILLING_REPAIR_INTERVAL_SECONDS:-300}
+      BILLING_HOLD_MAX_AGE_HOURS: ${BILLING_HOLD_MAX_AGE_HOURS:-3}
       # Requests per minute per IP on the public api
       RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-120}
       USER_COST_LIMIT_FREE: ${USER_COST_LIMIT_FREE:-2}

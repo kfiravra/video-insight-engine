@@ -147,6 +147,9 @@ export async function createBillingIndexes(db: Db): Promise<void> {
     { key: { ownerType: 1, ownerId: 1 }, unique: true },
     // settle/release find the account by the run's requestId
     { key: { 'holds.requestId': 1 } },
+    // repair job: stale holds, and the accounts changed since its last drift check
+    { key: { 'holds.createdAt': 1 } },
+    { key: { updatedAt: 1 } },
   ]);
   await db.collection('ledgerEntries').createIndexes([
     { key: { idempotencyKey: 1 }, unique: true },
@@ -159,6 +162,8 @@ export async function createBillingIndexes(db: Db): Promise<void> {
       key: { accountId: 1, expiresAt: 1, createdAt: 1 },
       partialFilterExpression: { minutesRemaining: { $gt: 0 } },
     },
+    // repair job: open lots past their expiry, across accounts
+    { key: { expiresAt: 1 }, partialFilterExpression: { minutesRemaining: { $gt: 0 } } },
   ]);
   await db.collection('recurringGrants').createIndexes([
     { key: { accountId: 1 } },

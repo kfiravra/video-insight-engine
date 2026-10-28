@@ -7,7 +7,9 @@ import { BillingUnits } from './billing-unit.js';
 import { applyHold, applyRelease, applySettle, findHold } from './hold-ops.js';
 import { chargeMinutes } from './minutes.js';
 import { planAvailable } from './plan-cycle.js';
+import { applyLotExpiry, applyRecurringRun, lotExpiryKey, recurringRunAt } from './maintenance-ops.js';
 import { checkProjection } from './projection.js';
+import { StaleAccountVersionError } from '../../repositories/billing.repository.js';
 import { toAllocationLot, toHoldView, toSnapshot, toUsageSummary } from './views.js';
 import type { AccountCaps, AccountDetail, AccountSnapshot, HoldView, PlanId, UsageSummary } from '@vie/types';
 import type { AccountDraft } from './account-draft.js';
@@ -15,6 +17,7 @@ import type { AllocationResult } from './allocation.js';
 import type { AccountDetailOptions, AdminMutationContext, MutationResult } from './billing-admin.js';
 import type { ReleaseReason } from './hold-ops.js';
 import type { ProjectionCheck } from './projection.js';
+import type { ObjectId } from 'mongodb';
 import type { BillingRepository } from '../../repositories/billing.repository.js';
 import type { UserRepository } from '../../repositories/user.repository.js';
 
@@ -176,10 +179,51 @@ export class BillingService {
   /** Rebuild the account's projections from its ledger and list any drift. */
   async verifyAccount(userId: string): Promise<ProjectionCheck> {
     const draft = await this.units.read(userId);
-    const stored = draft.original;
-    const lots = await this.repo.listLots(stored._id);
-    const entries = await this.repo.listAllLedger(stored._id);
-    return checkProjection(stored, lots, entries, draft.now);
+    return this.verifyAccountById(draft.accountId);
+  }
+
+  /** Same, by account id, from one consistent snapshot (the repair job's drift check). */
+  async verifyAccountById(accountId: ObjectId): Promise<ProjectionCheck> {
+    return this.repo.withTransaction(async (session) => {
+      const account = await this.repo.findAccountById(accountId, session);
+      if (!account) return { ok: true, drift: [] };
+      const lots = await this.repo.listLots(accountId, undefined, session);
+      const entries = await this.repo.listAllLedger(accountId, session);
+      return checkProjection(account, lots, entries, this.clock());
+    });
+  }
+
+  // ─── Maintenance (repair job, P1.6) ───
+
+  /** Expire what is left of the account's lots past their expiry (`expire` entries). Returns the minutes expired. */
+  async expireLots(accountId: ObjectId): Promise<number> {
+    const outcome = await this.units.writeAccount(accountId, async ({ draft, session }) => {
+      const keys = draft.lots.map((lot) => lotExpiryKey(lot._id));
+      const done = await this.repo.findLedgerByKeys(keys, session);
+      return applyLotExpiry(draft, new Set(done.map((entry) => entry.idempotencyKey)));
+    });
+    return outcome.value;
+  }
+
+  /**
+   * Grant this month's lot of a due recurring grant (expiring at its next
+   * run) and move the grant on, in one unit. Re-reads the grant inside it, so
+   * a run another process already applied is a no-op. Returns the lot id.
+   */
+  async applyRecurringGrant(accountId: ObjectId, grantId: ObjectId): Promise<string | null> {
+    const outcome = await this.units.writeAccount(accountId, async ({ draft, session }) => {
+      const grant = await this.repo.findRecurringGrant(accountId, grantId, session);
+      if (!grant || !grant.active || grant.deletedAt || grant.nextRunAt > draft.now) return null;
+      const run = recurringRunAt(grant, draft.now);
+      const [done] = await this.repo.findLedgerByKeys([run.idempotencyKey], session);
+      const lotId = done ? null : applyRecurringRun(draft, grant, run);
+      const next = { lastRunAt: run.runAt, nextRunAt: run.expiresAt };
+      if (!(await this.repo.advanceRecurringGrant(grantId, grant.nextRunAt, next, session))) {
+        throw new StaleAccountVersionError('recurring grant changed concurrently');
+      }
+      return lotId ? lotId.toHexString() : null;
+    });
+    return outcome.value;
   }
 
   // ─── Admin (Contract 1) ───

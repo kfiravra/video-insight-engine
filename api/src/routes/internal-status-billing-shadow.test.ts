@@ -25,6 +25,7 @@ describe('POST /internal/status — shadow ledger settle/release', () => {
   /** The test swaps the harness per test; the app keeps one stable shadow object. */
   const shadowProxy = {
     runFinished: (id: string, status: 'completed' | 'failed') => h.shadow.runFinished(id, status),
+    drain: () => h.shadow.drain(),
   } as unknown as BillingShadowService;
 
   const relay = async (status: 'completed' | 'failed') => {

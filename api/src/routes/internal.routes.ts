@@ -269,10 +269,10 @@ export async function internalRoutes(fastify: FastifyInstance) {
   });
 
   // POST /internal/run-deletions — sweep `users.hardDeleteAt <= now()` and
-  // run the GDPR cascade for each. Driven by an external cron (k8s CronJob,
-  // GitHub Actions schedule, host crontab — anything that can curl). Daily
-  // is the recommended cadence; running more often is harmless because
-  // every step is idempotent. See `docs/GDPR.md` for runbook.
+  // run the GDPR cascade for each. The billing repair job runs the same sweep
+  // on its interval (BILLING_REPAIR_ENABLED); this route is the manual /
+  // external-cron entrypoint. Running it more often is harmless because every
+  // step is idempotent. See `docs/GDPR.md` for runbook.
   fastify.post<{
     Body: z.infer<typeof runDeletionsBodySchema>;
   }>('/run-deletions', async (req, reply) => {

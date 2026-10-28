@@ -201,6 +201,13 @@ describe('MongoDB plugin', () => {
       it('should index llm_usage by request_id for the settle cost lookup', async () => {
         expect(await findIndex('llm_usage', { request_id: 1, timestamp: -1 })).toBeDefined();
       });
+
+      it('should index what the repair job scans: hold age, account changes, expired open lots', async () => {
+        expect(await findIndex('billingAccounts', { 'holds.createdAt': 1 })).toBeDefined();
+        expect(await findIndex('billingAccounts', { updatedAt: 1 })).toBeDefined();
+        const expiry = await findIndex('creditLots', { expiresAt: 1 });
+        expect(expiry?.partialFilterExpression).toEqual({ minutesRemaining: { $gt: 0 } });
+      });
     });
 
     describe('adminAudit indexes', () => {

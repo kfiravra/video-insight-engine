@@ -294,6 +294,19 @@ CHAT_FREE_MESSAGES_PER_DAY=50
 # the replica set.
 BILLING_SHADOW_ENABLED=true
 
+# Billing repair job (billing-roles P1.6), in vie-api, every interval behind the
+# Redis lock vie:api:billing-repair (SET NX EX, TTL = the interval):
+#   settle/release holds older than BILLING_HOLD_MAX_AGE_HOURS whose run is
+#   terminal, missing, unstamped or stalled; expire lots past their expiry;
+#   apply due recurring grants (a lot that expires at the next run); check
+#   changed accounts against the ledger (drift → warn + llm_alerts row
+#   `billing_drift`, once per account per 24 h); unset llm_usage.user_id older
+#   than 90 days; run the GDPR hard-delete sweep. Unset = on (off under
+#   NODE_ENV=test); prod compose defaults to false until the replica set.
+BILLING_REPAIR_ENABLED=true
+BILLING_REPAIR_INTERVAL_SECONDS=300
+BILLING_HOLD_MAX_AGE_HOURS=3
+
 # ────────────────────────────────────────────────────
 # Qdrant (Vector DB for RAG)
 # ────────────────────────────────────────────────────
@@ -766,6 +779,8 @@ listed change first:
 | SSE proxy attach (`/api/videos/:id/stream`) | `api/src/routes/stream.routes.ts` | fine per-request, but the LB must not buffer (`X-Accel-Buffering: no`) | any non-buffering LB; no shared state |
 | Summarizer pipeline lock + response cache | Redis (`vie:*`) | already shared via Redis — safe | — |
 | RabbitMQ worker | `vie-summarizer-worker` | safe — competing consumers is the design | just scale the worker |
+| Billing repair job | `api/src/services/billing/billing-repair.service.ts` | safe — one run at a time across processes via the Redis lock `vie:api:billing-repair`; per-account writes are transactions | — |
+| Billing account write queue + shadow runner | `api/src/services/billing/keyed-mutex.ts`, `shadow-runner.ts` | in-process ordering only; other replicas meet as transaction write conflicts (retried) | — |
 | Admin health poller + alert evaluator | `services/admin/src/services/*.py` | N replicas → duplicate health snapshots and duplicate alerts (cooldowns make dupes rare, not impossible) | leader election, or keep admin at 1 replica |
 
 vie-assistant is stateless per-request (state in Mongo/Qdrant) and can scale
