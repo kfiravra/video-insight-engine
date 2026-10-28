@@ -9,6 +9,7 @@ import type {
   UserDeletionDocument,
   DeletionCounts,
   DeletionInitiator,
+  DeletionOrigin,
 } from '../repositories/user-deletion.repository.js';
 import { config } from '../config.js';
 import {
@@ -66,6 +67,12 @@ const SCHEDULER_BATCH_LIMIT = 50;
 
 export interface RequestDeletionOptions {
   graceDays?: number;
+  /**
+   * Who asked, for requests that are not the user's own. Persisted on the
+   * user so the scheduled cascade is recorded under this origin (an admin's
+   * request stays `initiatedBy: 'admin'`) instead of `'scheduler'`.
+   */
+  origin?: DeletionOrigin;
 }
 
 export interface RequestDeletionResult {
@@ -102,7 +109,7 @@ export class UserDeletionService {
     userId: string,
     options: RequestDeletionOptions = {},
   ): Promise<RequestDeletionResult> {
-    const { graceDays = DEFAULT_GRACE_DAYS } = options;
+    const { graceDays = DEFAULT_GRACE_DAYS, origin } = options;
     if (graceDays < 0 || !Number.isFinite(graceDays)) {
       throw new Error(`Invalid graceDays: ${graceDays}`);
     }
@@ -123,7 +130,7 @@ export class UserDeletionService {
 
     const now = this.clock();
     const hardDeleteAt = new Date(now.getTime() + graceDays * 24 * 60 * 60 * 1000);
-    const updated = await this.userRepository.markSoftDeleted(userId, hardDeleteAt, now);
+    const updated = await this.userRepository.markSoftDeleted(userId, hardDeleteAt, now, origin);
     if (!updated) {
       // Someone else flipped the flag between our read and our write — surface
       // the conflict rather than silently overwriting their timestamp.
@@ -303,7 +310,8 @@ export class UserDeletionService {
     for (const candidate of candidates) {
       const userId = candidate._id.toString();
       try {
-        await this.executeHardDelete(userId, { initiatedBy: 'scheduler' });
+        // An admin's soft delete keeps its origin; everything else is the scheduler's.
+        await this.executeHardDelete(userId, candidate.deletionOrigin ?? { initiatedBy: 'scheduler' });
         succeeded++;
       } catch (err) {
         // Log the full error for triage; expose only an opaque code in the

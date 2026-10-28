@@ -1,6 +1,7 @@
 import { Db, ObjectId, Collection } from 'mongodb';
 import { isRole, rolesGrant } from '@vie/types';
 import type { Permission, Role, RoleSource } from '@vie/types';
+import type { DeletionOrigin } from './user-deletion.repository.js';
 
 export interface UserDocument {
   _id: ObjectId;
@@ -50,6 +51,9 @@ export interface UserDocument {
   deletedAt?: Date | null;
   hardDeleteAt?: Date | null;
   legalHold?: boolean;
+  // Who requested the soft delete (set for admin requests), so the sweep that
+  // runs the cascade later can record the admin instead of 'scheduler'.
+  deletionOrigin?: DeletionOrigin | null;
 }
 
 export interface CreateUserData {
@@ -60,10 +64,12 @@ export interface CreateUserData {
 
 /**
  * Slim projection returned by `findExpiredSoftDeletes`. Carries only `_id`
- * so callers cannot accidentally log password hashes or other PII.
+ * and the deletion origin (an operator id and reason, no PII) so callers
+ * cannot accidentally log password hashes or other PII.
  */
 export interface ExpiredSoftDeleteSummary {
   _id: ObjectId;
+  deletionOrigin?: DeletionOrigin | null;
 }
 
 /**
@@ -282,10 +288,11 @@ export class UserRepository {
     userId: string,
     hardDeleteAt: Date,
     deletedAt: Date = new Date(),
+    origin?: DeletionOrigin,
   ): Promise<UserDocument | null> {
     return this.collection.findOneAndUpdate(
       { _id: new ObjectId(userId), deletedAt: { $in: [null, undefined] } },
-      { $set: { deletedAt, hardDeleteAt, updatedAt: deletedAt } },
+      { $set: { deletedAt, hardDeleteAt, updatedAt: deletedAt, ...(origin && { deletionOrigin: origin }) } },
       { returnDocument: 'after' }
     );
   }
@@ -294,16 +301,20 @@ export class UserRepository {
   async clearSoftDelete(userId: string): Promise<UserDocument | null> {
     return this.collection.findOneAndUpdate(
       { _id: new ObjectId(userId) },
-      { $set: { deletedAt: null, hardDeleteAt: null, updatedAt: new Date() } },
+      {
+        $set: { deletedAt: null, hardDeleteAt: null, updatedAt: new Date() },
+        $unset: { deletionOrigin: '' },
+      },
       { returnDocument: 'after' }
     );
   }
 
   /**
    * Users whose hard-delete window has elapsed and who aren't on legal hold.
-   * Projects to `_id` only — the scheduler only needs IDs to feed into the
-   * cascade, and never touching `passwordHash` here eliminates a logging-leak
-   * surface (any downstream `logger.info({ users })` would have dumped them).
+   * Projects to `_id` and `deletionOrigin` only — the scheduler needs the ID to
+   * feed into the cascade and the origin to attribute it, and never touching
+   * `passwordHash` here eliminates a logging-leak surface (any downstream
+   * `logger.info({ users })` would have dumped them).
    */
   async findExpiredSoftDeletes(
     now: Date,
@@ -315,7 +326,7 @@ export class UserRepository {
         hardDeleteAt: { $lte: now },
         legalHold: { $ne: true },
       },
-      { projection: { _id: 1 } },
+      { projection: { _id: 1, deletionOrigin: 1 } },
     );
     const docs = (await cursor.limit(limit).toArray()) as unknown as ExpiredSoftDeleteSummary[];
     return docs;

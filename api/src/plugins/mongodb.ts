@@ -220,6 +220,15 @@ async function mongodb(fastify: FastifyInstance) {
         { key: { completedAt: -1 } },
       ]);
 
+      // adminAudit — append-only admin action log; read by target (an account's
+      // history), by actor, and newest-first for the audit page. Retained
+      // indefinitely (no TTL).
+      await db.collection('adminAudit').createIndexes([
+        { key: { targetId: 1, createdAt: -1 } },
+        { key: { actorId: 1, createdAt: -1 } },
+        { key: { createdAt: -1 } },
+      ]);
+
       // shareLikes indexes
       await db.collection('shareLikes').createIndexes([
         { key: { shareSlug: 1, ipHash: 1 }, unique: true },

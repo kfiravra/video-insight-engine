@@ -158,6 +158,25 @@ describe('MongoDB plugin', () => {
       expect(dedupIndex?.partialFilterExpression).toEqual({ dedupKey: { $exists: true } });
     });
 
+    describe('adminAudit indexes', () => {
+      const hasIndex = async (key: Record<string, number>) => {
+        const indexes = await app.mongo.db.collection('adminAudit').indexes();
+        return indexes.some((idx) => JSON.stringify(idx.key) === JSON.stringify(key));
+      };
+
+      it('should index adminAudit by target, newest first', async () => {
+        expect(await hasIndex({ targetId: 1, createdAt: -1 })).toBe(true);
+      });
+
+      it('should index adminAudit by actor, newest first', async () => {
+        expect(await hasIndex({ actorId: 1, createdAt: -1 })).toBe(true);
+      });
+
+      it('should index adminAudit by createdAt for the unfiltered newest-first page', async () => {
+        expect(await hasIndex({ createdAt: -1 })).toBe(true);
+      });
+    });
+
   });
 
   describe('llm_usage legacy TTL index migration', () => {

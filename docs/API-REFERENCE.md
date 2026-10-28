@@ -1152,11 +1152,11 @@ export async function websocketPlugin(fastify: FastifyInstance) {
 
 ## Admin (x-admin-key)
 
-Static-key endpoints for operators; the admin panel proxies to them. `x-admin-id` is optional operator metadata written to the audit row (not auth).
+Static-key endpoints for operators; the admin panel proxies to them. `x-admin-id` is optional operator metadata written to the audit rows (not auth). Every mutation (`DELETE /api/admin/videos/:youtubeId`, `DELETE /api/admin/users/:id`, `POST /api/admin/queue/replay`) also writes an `adminAudit` row naming the operator, or `system:admin-key` when the header is absent; see [DATA-MODELS.md](./DATA-MODELS.md#adminaudit). A malformed `x-admin-id` is a `400` on all three.
 
 ### DELETE /api/admin/videos/:youtubeId
 
-Removes a video from every store for every user, in this order: summarizer purge (Qdrant `transcript_chunks` by `video_id`, S3 `videos/<id>/` prefix, Redis response + pipeline keys) → Mongo `userVideos`, `shareLikes`, `shareViews`, `agentNotes`, `idempotencyKeys`, then `videoSummaryCache` (all versions) → dispatch-guard keys → `videoDeletions` audit row. A failed purge aborts before any Mongo row is touched (idempotent; retry).
+Removes a video from every store for every user, in this order: summarizer purge (Qdrant `transcript_chunks` by `video_id`, S3 `videos/<id>/` prefix, Redis response + pipeline keys) → Mongo `userVideos`, `shareLikes`, `shareViews`, `agentNotes`, `idempotencyKeys`, then `videoSummaryCache` (all versions) → dispatch-guard keys → `videoDeletions` and `adminAudit` (`videos.purge`) audit rows. A failed purge aborts before any Mongo row is touched (idempotent; retry).
 
 Headers: `x-admin-key` (required), `x-admin-id` (optional, `[A-Za-z0-9._-]{1,64}`). Body (optional): `{ "reason": "..." }`.
 

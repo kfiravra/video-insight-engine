@@ -149,6 +149,11 @@ export interface MockContainer {
   videoCascadeService: {
     deleteVideo: ReturnType<typeof vi.fn>;
   };
+  auditService: {
+    record: ReturnType<typeof vi.fn>;
+    recordBestEffort: ReturnType<typeof vi.fn>;
+    list: ReturnType<typeof vi.fn>;
+  };
 }
 
 export function createMockContainer(): MockContainer {
@@ -332,6 +337,11 @@ export function createMockContainer(): MockContainer {
     },
     videoCascadeService: {
       deleteVideo: vi.fn(),
+    },
+    auditService: {
+      record: vi.fn().mockResolvedValue('audit-id'),
+      recordBestEffort: vi.fn().mockResolvedValue('audit-id'),
+      list: vi.fn().mockResolvedValue([]),
     },
   };
 }

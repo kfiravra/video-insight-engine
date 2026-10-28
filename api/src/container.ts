@@ -11,6 +11,7 @@ import { UserCostRepository } from './repositories/user-cost.repository.js';
 import { IdempotencyRepository } from './repositories/idempotency.repository.js';
 import { UserDeletionRepository } from './repositories/user-deletion.repository.js';
 import { VideoDeletionRepository } from './repositories/video-deletion.repository.js';
+import { AdminAuditRepository } from './repositories/admin-audit.repository.js';
 
 // Services
 import { AuthService } from './services/auth.service.js';
@@ -28,6 +29,7 @@ import { IdempotencyService } from './services/idempotency.service.js';
 import { DispatchGuardService, noOpDispatchGuard, type IDispatchGuard } from './services/dispatch-guard.service.js';
 import { UserDeletionService } from './services/user-deletion.service.js';
 import { VideoCascadeService } from './services/video-cascade.service.js';
+import { AuditService } from './services/audit.service.js';
 import { config } from './config.js';
 
 export interface Container {
@@ -40,6 +42,7 @@ export interface Container {
   idempotencyRepository: IdempotencyRepository;
   userDeletionRepository: UserDeletionRepository;
   videoDeletionRepository: VideoDeletionRepository;
+  adminAuditRepository: AdminAuditRepository;
 
   // Services
   authService: AuthService;
@@ -57,6 +60,7 @@ export interface Container {
   dispatchGuardService: IDispatchGuard;
   userDeletionService: UserDeletionService;
   videoCascadeService: VideoCascadeService;
+  auditService: AuditService;
 }
 
 export interface CreateContainerOptions {
@@ -81,6 +85,7 @@ export function createContainer(
   const idempotencyRepository = new IdempotencyRepository(db);
   const userDeletionRepository = new UserDeletionRepository(db);
   const videoDeletionRepository = new VideoDeletionRepository(db);
+  const adminAuditRepository = new AdminAuditRepository(db);
 
   // Create external clients
   const summarizerClient = new SummarizerClient(logger);
@@ -139,6 +144,7 @@ export function createContainer(
     videoDeletionRepository,
     logger,
   );
+  const auditService = new AuditService(adminAuditRepository, logger);
 
   return {
     // Repositories
@@ -150,6 +156,7 @@ export function createContainer(
     idempotencyRepository,
     userDeletionRepository,
     videoDeletionRepository,
+    adminAuditRepository,
 
     // Services
     authService,
@@ -167,6 +174,7 @@ export function createContainer(
     dispatchGuardService,
     userDeletionService,
     videoCascadeService,
+    auditService,
   };
 }
 

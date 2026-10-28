@@ -79,6 +79,48 @@ describe('admin videos routes', () => {
     });
   });
 
+  it('should audit the purge with the operator, video and reason', async () => {
+    await app.inject({
+      method: 'DELETE',
+      url: `/api/admin/videos/${YT}`,
+      headers: { ...adminHeaders, 'x-admin-id': 'kfir', 'content-type': 'application/json' },
+      payload: { reason: 'duplicate upload' },
+    });
+
+    expect(mockContainer.auditService.recordBestEffort).toHaveBeenCalledWith({
+      actorId: 'kfir',
+      requestId: expect.any(String),
+      ip: expect.any(String),
+      action: 'videos.purge',
+      targetType: 'video',
+      targetId: YT,
+      after: { summaryIds: cascadeResult.summaryIds, counts: cascadeResult.counts },
+      reason: 'duplicate upload',
+    });
+  });
+
+  it('should attribute a purge sent with the bare admin key to system:admin-key', async () => {
+    await app.inject({ method: 'DELETE', url: `/api/admin/videos/${YT}`, headers: adminHeaders });
+
+    expect(mockContainer.auditService.recordBestEffort).toHaveBeenCalledWith(
+      expect.objectContaining({ actorId: 'system:admin-key' }),
+    );
+  });
+
+  it('should not audit a request the admin key rejects', async () => {
+    await app.inject({ method: 'DELETE', url: `/api/admin/videos/${YT}` });
+
+    expect(mockContainer.auditService.recordBestEffort).not.toHaveBeenCalled();
+  });
+
+  it('should not audit a purge that failed before touching any row', async () => {
+    mockContainer.videoCascadeService.deleteVideo.mockRejectedValue(new SummarizerPurgeError('down'));
+
+    await app.inject({ method: 'DELETE', url: `/api/admin/videos/${YT}`, headers: adminHeaders });
+
+    expect(mockContainer.auditService.recordBestEffort).not.toHaveBeenCalled();
+  });
+
   it('should answer 502 when the summarizer purge fails', async () => {
     mockContainer.videoCascadeService.deleteVideo.mockRejectedValue(new SummarizerPurgeError('down'));
 

@@ -54,8 +54,8 @@ DELETE /api/admin/users/:id?immediate=true ──────────┘  �
 |---|---|---|
 | `DELETE /api/users/me` | JWT | Self-service soft delete. Returns 202 + `scheduledHardDeleteAt`. |
 | `POST /api/users/me/restore` | JWT (bypasses soft-delete check) | Cancel a pending deletion within 30 days. |
-| `DELETE /api/admin/users/:id?immediate=true` | `x-admin-key` header | Run the cascade now (compliance escape hatch). |
-| `DELETE /api/admin/users/:id` (no `immediate`) | `x-admin-key` header | Schedule the same soft delete as the user-initiated flow. |
+| `DELETE /api/admin/users/:id?immediate=true` | `x-admin-key` header | Run the cascade now (compliance escape hatch). Writes an `adminAudit` row. |
+| `DELETE /api/admin/users/:id` (no `immediate`) | `x-admin-key` header | Schedule the same soft delete as the user-initiated flow, with the admin stored as its origin. Writes an `adminAudit` row at request time. |
 | `POST /internal/run-deletions` | `x-internal-secret` header | Sweep entrypoint — sweeps `hardDeleteAt <= now` and runs the cascade for each. It runs only when called; this repo configures no scheduler for it (see "Running the sweep"). |
 | `DELETE /api/admin/videos/:youtubeId` | `x-admin-key` header | Not GDPR: the **video** cascade (`VideoCascadeService`), which removes one video from every store for every user. Listed here because it is the only path that deletes the shared rows the user cascade keeps. |
 
@@ -153,11 +153,13 @@ spec:
 
 - `originalUserId` (string form of the deleted ObjectId)
 - `emailHash` — SHA-256 of the lowercased, trimmed email. Never the plaintext.
-- `initiatedBy`: `'self' | 'admin' | 'scheduler'`
+- `initiatedBy`: `'self' | 'admin' | 'scheduler'`. An admin-requested soft delete keeps `'admin'` when the sweep later runs it: the request stores `users.deletionOrigin` (`initiatedBy`, `adminId`, `reason`; an operator id, no PII), the sweep reads it, and a restore (`cancelDeletion`) clears it. A soft delete the user requested themselves has no origin and is recorded as `'scheduler'`.
 - `adminId`, `reason` — populated when `initiatedBy === 'admin'`
 - `counts` — rows deleted per inventory bucket
 - `startedAt`, `completedAt`, `durationMs`
 - `warnings[]` — per-step error messages when the cascade didn't run cleanly
+
+Admin deletions also write an **`adminAudit`** row (see [`SECURITY.md`](./SECURITY.md#roles-and-permissions)), at request time for both modes: action `users.delete`, `targetType: 'user'`, `targetId` the user id, `after.mode` `'immediate'` or `'scheduled'`, the operator (`actorId`, from `x-admin-id`, or `system:admin-key` when absent), the `reason`, request id and client ip. So the soft delete is attributed when it is requested, 30 days before the `userDeletions` row exists. The `adminAudit` row carries the user id but no email.
 
 To prove a specific email was erased: hash the email with the same SHA-256 (lowercase, trim) and look it up in `userDeletions.emailHash`. The match plus the row's `completedAt` is the legal proof.
 

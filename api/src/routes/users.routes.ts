@@ -1,6 +1,8 @@
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { isValidAdminKey, parseAdminIdHeader } from '../utils/admin-auth.js';
+import { auditRequestContext, type AuditRequestContext } from '../utils/audit-context.js';
+import type { Container } from '../container.js';
 
 /**
  * Self-service GDPR Article 17 endpoints.
@@ -71,7 +73,9 @@ export async function userMeRoutes(fastify: FastifyInstance): Promise<void> {
  * and runs the cascade synchronously, returning the audit row.
  *
  * Auth: `x-admin-key` header matching `ADMIN_API_KEY` env (same pattern as
- * `/api/admin/queue/*`). Tier-aware admin role is a future enhancement.
+ * `/api/admin/queue/*`). Both modes write an `adminAudit` row at request time;
+ * a scheduled delete also stores its origin on the user so the later cascade
+ * is recorded as an admin deletion, not a scheduler one.
  */
 const adminDeleteParamsSchema = z.object({
   id: z.string().regex(/^[a-f0-9]{24}$/i, 'id must be a 24-char hex ObjectId'),
@@ -83,9 +87,59 @@ const adminDeleteBodySchema = z
   .object({ reason: z.string().min(1).max(500).optional() })
   .optional();
 
-export async function adminUsersRoutes(fastify: FastifyInstance): Promise<void> {
-  const { userDeletionService } = fastify.container;
+interface AdminDeleteInput {
+  userId: string;
+  adminId: string | null;
+  reason: string | null;
+  auditContext: AuditRequestContext;
+}
 
+async function deleteImmediately(container: Container, input: AdminDeleteInput): Promise<object> {
+  const { userDeletionService, auditService } = container;
+  const audit = await userDeletionService.executeHardDelete(input.userId, {
+    initiatedBy: 'admin',
+    adminId: input.adminId,
+    reason: input.reason,
+  });
+  await auditService.recordBestEffort({
+    ...input.auditContext,
+    action: 'users.delete',
+    targetType: 'user',
+    targetId: audit.originalUserId,
+    after: { mode: 'immediate', userDeletionId: audit._id.toString() },
+    reason: input.reason ?? undefined,
+  });
+  return {
+    userId: audit.originalUserId,
+    completedAt: audit.completedAt.toISOString(),
+    durationMs: audit.durationMs,
+    counts: audit.counts,
+    warnings: audit.warnings ?? [],
+  };
+}
+
+/**
+ * Same soft delete as the user-initiated flow, with the admin stored as its
+ * origin so the scheduler's later cascade names them instead of 'scheduler'.
+ */
+async function scheduleDeletion(container: Container, input: AdminDeleteInput): Promise<object> {
+  const { userDeletionService, auditService } = container;
+  const result = await userDeletionService.requestDeletion(input.userId, {
+    origin: { initiatedBy: 'admin', adminId: input.adminId, reason: input.reason },
+  });
+  const scheduledHardDeleteAt = result.scheduledHardDeleteAt.toISOString();
+  await auditService.recordBestEffort({
+    ...input.auditContext,
+    action: 'users.delete',
+    targetType: 'user',
+    targetId: input.userId.toLowerCase(),
+    after: { mode: 'scheduled', scheduledHardDeleteAt },
+    reason: input.reason ?? undefined,
+  });
+  return { userId: result.userId, scheduledHardDeleteAt, graceDays: result.graceDays };
+}
+
+export async function adminUsersRoutes(fastify: FastifyInstance): Promise<void> {
   fastify.delete('/:id', {
     config: {
       rateLimit: { max: 30, timeWindow: '1 hour' },
@@ -111,31 +165,16 @@ export async function adminUsersRoutes(fastify: FastifyInstance): Promise<void> 
         message: 'Invalid x-admin-id header',
       });
     }
-    const adminId = adminIdHeader.adminId;
+    const input: AdminDeleteInput = {
+      userId: params.id,
+      adminId: adminIdHeader.adminId,
+      reason: body?.reason ?? null,
+      auditContext: auditRequestContext(req, adminIdHeader.adminId),
+    };
 
     if (immediate) {
-      const audit = await userDeletionService.executeHardDelete(params.id, {
-        initiatedBy: 'admin',
-        adminId,
-        reason: body?.reason ?? null,
-      });
-      return reply.send({
-        userId: audit.originalUserId,
-        completedAt: audit.completedAt.toISOString(),
-        durationMs: audit.durationMs,
-        counts: audit.counts,
-        warnings: audit.warnings ?? [],
-      });
+      return reply.send(await deleteImmediately(fastify.container, input));
     }
-
-    // Non-immediate: same flow as the user-initiated delete but recorded as
-    // initiated by an admin (the audit row tracks `initiatedBy` once the
-    // cascade actually fires from the scheduler).
-    const result = await userDeletionService.requestDeletion(params.id);
-    return reply.code(202).send({
-      userId: result.userId,
-      scheduledHardDeleteAt: result.scheduledHardDeleteAt.toISOString(),
-      graceDays: result.graceDays,
-    });
+    return reply.code(202).send(await scheduleDeletion(fastify.container, input));
   });
 }

@@ -272,5 +272,80 @@ describe('admin queue routes', () => {
       expect(res.json()).toEqual({ replayed: 3 });
       expect(channel.ack).toHaveBeenCalledTimes(3);
     });
+
+    it('rejects a malformed x-admin-id before touching the DLQ', async () => {
+      await buildQueueApp(createFakeChannel([fakeDlqMessage({ videoSummaryId: 'a' })]));
+
+      const res = await queueApp.inject({
+        method: 'POST',
+        url: '/api/admin/queue/replay',
+        headers: { ...adminHeaders, 'x-admin-id': 'not valid!' },
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(channel.get).not.toHaveBeenCalled();
+    });
+
+    describe('audit', () => {
+      it('records the replay with the operator, the queue and the replayed count', async () => {
+        await buildQueueApp(createFakeChannel([fakeDlqMessage({ videoSummaryId: 'a' }), fakeDlqMessage({ videoSummaryId: 'b' })]));
+
+        await queueApp.inject({
+          method: 'POST',
+          url: '/api/admin/queue/replay',
+          headers: { ...adminHeaders, 'x-admin-id': 'kfir' },
+        });
+
+        expect(mockContainer.auditService.recordBestEffort).toHaveBeenCalledWith({
+          actorId: 'kfir',
+          requestId: expect.any(String),
+          ip: expect.any(String),
+          action: 'queue.replay',
+          targetType: 'queue',
+          targetId: 'vie.pipeline.dlq',
+          after: { replayed: 2, cap: 100, failed: false },
+        });
+      });
+
+      it('attributes a replay sent with the bare admin key to system:admin-key', async () => {
+        await buildQueueApp(createFakeChannel([]));
+
+        await queueApp.inject({ method: 'POST', url: '/api/admin/queue/replay', headers: adminHeaders });
+
+        expect(mockContainer.auditService.recordBestEffort).toHaveBeenCalledWith(
+          expect.objectContaining({ actorId: 'system:admin-key' }),
+        );
+      });
+
+      it('records a replay that failed part-way, with what was already republished', async () => {
+        const fake = createFakeChannel([fakeDlqMessage({ videoSummaryId: 'a' }), fakeDlqMessage({ videoSummaryId: 'b' })]);
+        fake.waitForConfirms.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('channel closed'));
+        await buildQueueApp(fake);
+
+        await queueApp.inject({ method: 'POST', url: '/api/admin/queue/replay', headers: adminHeaders });
+
+        expect(mockContainer.auditService.recordBestEffort).toHaveBeenCalledWith(
+          expect.objectContaining({ action: 'queue.replay', after: { replayed: 1, cap: 100, failed: true } }),
+        );
+      });
+
+      it('does not record a replay that never reached the DLQ', async () => {
+        await buildQueueApp(createFakeChannel([]), async () => {
+          throw new Error('broker down');
+        });
+
+        await queueApp.inject({ method: 'POST', url: '/api/admin/queue/replay', headers: adminHeaders });
+
+        expect(mockContainer.auditService.recordBestEffort).not.toHaveBeenCalled();
+      });
+
+      it('does not record a replay the admin key rejects', async () => {
+        await buildQueueApp(createFakeChannel([]));
+
+        await queueApp.inject({ method: 'POST', url: '/api/admin/queue/replay' });
+
+        expect(mockContainer.auditService.recordBestEffort).not.toHaveBeenCalled();
+      });
+    });
   });
 });

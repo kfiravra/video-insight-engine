@@ -1,13 +1,14 @@
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { isValidAdminKey, parseAdminIdHeader } from '../../utils/admin-auth.js';
+import { auditRequestContext } from '../../utils/audit-context.js';
 import { youtubeIdSchema } from '../../utils/validation.js';
 
 /**
  * Admin endpoint that removes a video from every store for every user:
  * Mongo summary + references, Qdrant vectors, S3 objects, Redis keys.
  * Guarded by the static admin key; `x-admin-id` is operator metadata for
- * the audit row, not auth.
+ * the audit rows (`videoDeletions` and `adminAudit`), not auth.
  */
 
 const adminVideoParamsSchema = z.object({ youtubeId: youtubeIdSchema });
@@ -16,7 +17,7 @@ const adminVideoBodySchema = z
   .optional();
 
 export async function adminVideosRoutes(fastify: FastifyInstance): Promise<void> {
-  const { videoCascadeService } = fastify.container;
+  const { videoCascadeService, auditService } = fastify.container;
 
   // DELETE /api/admin/videos/:youtubeId
   // A valid admin key (the reconcile script purging orphans in bulk) gets a
@@ -55,6 +56,16 @@ export async function adminVideosRoutes(fastify: FastifyInstance): Promise<void>
         adminId: adminIdHeader.adminId,
         reason: body?.reason ?? null,
       },
+    });
+    // Only a purge that ran is audited; a summarizer failure above aborts
+    // before any row is touched and surfaces as a 502.
+    await auditService.recordBestEffort({
+      ...auditRequestContext(req, adminIdHeader.adminId),
+      action: 'videos.purge',
+      targetType: 'video',
+      targetId: params.youtubeId,
+      after: { summaryIds: result.summaryIds, counts: result.counts, partial: result.partial },
+      reason: body?.reason,
     });
     return reply.code(200).send(result);
   });

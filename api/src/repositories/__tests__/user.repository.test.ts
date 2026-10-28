@@ -335,6 +335,49 @@ describe('UserRepository', () => {
       expect(row.paddleCustomerId).toBeUndefined();
     });
 
+    it('markSoftDeleted should store the deletion origin when one is given', async () => {
+      const user = await repository.create(createUserData());
+      const origin = { initiatedBy: 'admin' as const, adminId: 'op-1', reason: 'GDPR request 4567' };
+
+      const result = await repository.markSoftDeleted(
+        user._id.toString(),
+        new Date('2026-06-19T12:00:00Z'),
+        new Date('2026-05-20T12:00:00Z'),
+        origin,
+      );
+
+      expect(result!.deletionOrigin).toEqual(origin);
+    });
+
+    it('markSoftDeleted should leave deletionOrigin unset for a self-initiated delete', async () => {
+      const user = await repository.create(createUserData());
+
+      const result = await repository.markSoftDeleted(user._id.toString(), new Date('2026-06-19T12:00:00Z'));
+
+      expect(result!.deletionOrigin).toBeUndefined();
+    });
+
+    it('clearSoftDelete should drop the deletion origin with the soft delete', async () => {
+      const user = await repository.create(createUserData());
+      const origin = { initiatedBy: 'admin' as const, adminId: 'op-1', reason: null };
+      await repository.markSoftDeleted(user._id.toString(), new Date('2026-06-01'), new Date(), origin);
+
+      const restored = await repository.clearSoftDelete(user._id.toString());
+
+      expect(restored!.deletionOrigin).toBeUndefined();
+    });
+
+    it('findExpiredSoftDeletes should carry the deletion origin and nothing else', async () => {
+      const user = await repository.create(createUserData());
+      const origin = { initiatedBy: 'admin' as const, adminId: 'op-1', reason: 'duplicate account' };
+      await repository.markSoftDeleted(user._id.toString(), new Date('2026-05-19'), new Date('2026-04-19'), origin);
+
+      const [row] = await repository.findExpiredSoftDeletes(new Date('2026-05-20'));
+
+      expect(Object.keys(row).sort()).toEqual(['_id', 'deletionOrigin']);
+      expect(row.deletionOrigin).toEqual(origin);
+    });
+
     it('hardDelete should remove the user document', async () => {
       const user = await repository.create(createUserData());
 

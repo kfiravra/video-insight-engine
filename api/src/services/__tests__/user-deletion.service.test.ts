@@ -122,6 +122,28 @@ describe('UserDeletionService (integration with in-memory MongoDB)', () => {
     });
   });
 
+  describe('requestDeletion with an origin', () => {
+    const origin = { initiatedBy: 'admin' as const, adminId: 'op-1', reason: 'GDPR request 4567' };
+
+    it('should store the origin on the user', async () => {
+      const user = await insertUser();
+
+      await service.requestDeletion(user._id.toString(), { origin });
+
+      const fresh = await userRepo.findById(user._id.toString());
+      expect(fresh?.deletionOrigin).toEqual(origin);
+    });
+
+    it('should store no origin for a self-initiated request', async () => {
+      const user = await insertUser();
+
+      await service.requestDeletion(user._id.toString());
+
+      const fresh = await userRepo.findById(user._id.toString());
+      expect(fresh?.deletionOrigin).toBeUndefined();
+    });
+  });
+
   describe('requestDeletion for the demo account', () => {
     const DEMO_EMAIL = 'demo@example.com';
     const originalEmail = config.DEMO_USER_EMAIL;
@@ -523,6 +545,43 @@ describe('UserDeletionService (integration with in-memory MongoDB)', () => {
       expect(await userRepo.findById(expired2._id.toString())).toBeNull();
       expect(await userRepo.findById(stillPending._id.toString())).not.toBeNull();
       expect(await userRepo.findById(active._id.toString())).not.toBeNull();
+    });
+
+    it('should record an admin-requested soft delete as admin, not scheduler', async () => {
+      const user = await insertUser({ email: 'adm@x' });
+      await service.requestDeletion(user._id.toString(), {
+        graceDays: 1,
+        origin: { initiatedBy: 'admin', adminId: 'op-1', reason: 'GDPR request 4567' },
+      });
+      frozenNow = new Date(frozenNow.getTime() + 2 * 24 * 60 * 60 * 1000);
+
+      await service.runScheduledDeletions(frozenNow);
+
+      const audit = await deletionRepo.findByOriginalUserId(user._id.toString());
+      expect(audit).toMatchObject({ initiatedBy: 'admin', adminId: 'op-1', reason: 'GDPR request 4567' });
+    });
+
+    it('should record a self-requested soft delete as scheduler', async () => {
+      const user = await insertUser({ email: 'self@x' });
+      await service.requestDeletion(user._id.toString(), { graceDays: 1 });
+      frozenNow = new Date(frozenNow.getTime() + 2 * 24 * 60 * 60 * 1000);
+
+      await service.runScheduledDeletions(frozenNow);
+
+      const audit = await deletionRepo.findByOriginalUserId(user._id.toString());
+      expect(audit).toMatchObject({ initiatedBy: 'scheduler', adminId: null });
+    });
+
+    it('should forget the admin origin when the deletion is cancelled', async () => {
+      const user = await insertUser({ email: 'cancel@x' });
+      await service.requestDeletion(user._id.toString(), {
+        origin: { initiatedBy: 'admin', adminId: 'op-1', reason: null },
+      });
+
+      await service.cancelDeletion(user._id.toString());
+
+      const fresh = await userRepo.findById(user._id.toString());
+      expect(fresh?.deletionOrigin).toBeUndefined();
     });
 
     it('should skip users with legalHold=true', async () => {

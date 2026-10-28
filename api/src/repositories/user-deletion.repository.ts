@@ -19,6 +19,17 @@ export interface DeletionCounts {
 export type DeletionInitiator = 'self' | 'admin' | 'scheduler';
 
 /**
+ * Who asked for a soft delete. Stored on the user until the scheduler runs the
+ * cascade, so the `userDeletions` row can name the admin instead of the
+ * scheduler. Holds no PII: `adminId` is an operator id, never an email.
+ */
+export interface DeletionOrigin {
+  initiatedBy: DeletionInitiator;
+  adminId: string | null;
+  reason: string | null;
+}
+
+/**
  * Audit row for a completed account deletion. Retained indefinitely with
  * **no PII**:
  *  - `emailHash` proves the cascade ran for a given email without storing it.

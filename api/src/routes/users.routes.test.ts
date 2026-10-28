@@ -3,6 +3,7 @@ import { FastifyInstance } from 'fastify';
 import { ObjectId } from 'mongodb';
 import { buildTestApp, createMockContainer, getAuthHeader, type MockContainer, testUser } from '../test/helpers.js';
 import { config } from '../config.js';
+import { UserNotFoundError } from '../utils/errors.js';
 
 describe('user deletion routes', () => {
   let app: FastifyInstance;
@@ -193,6 +194,66 @@ describe('user deletion routes', () => {
       );
     });
 
+    it('should audit an immediate deletion with the operator, target and reason', async () => {
+      mockContainer.userDeletionService.executeHardDelete.mockResolvedValue({
+        _id: new ObjectId(),
+        originalUserId: targetId,
+        counts: {},
+        completedAt: new Date('2026-05-20T12:30:00Z'),
+        durationMs: 5000,
+        warnings: [],
+      });
+
+      await app.inject({
+        method: 'DELETE',
+        url: `/api/admin/users/${targetId}?immediate=true`,
+        headers: { 'x-admin-key': config.ADMIN_API_KEY, 'x-admin-id': 'op-1', 'content-type': 'application/json' },
+        payload: { reason: 'GDPR request 4567' },
+      });
+
+      expect(mockContainer.auditService.recordBestEffort).toHaveBeenCalledWith({
+        actorId: 'op-1',
+        requestId: expect.any(String),
+        ip: expect.any(String),
+        action: 'users.delete',
+        targetType: 'user',
+        targetId,
+        after: { mode: 'immediate', userDeletionId: expect.any(String) },
+        reason: 'GDPR request 4567',
+      });
+    });
+
+    it('should audit under the canonical lowercase id when the request id is uppercase', async () => {
+      mockContainer.userDeletionService.executeHardDelete.mockResolvedValue({
+        _id: new ObjectId(),
+        originalUserId: targetId,
+        counts: {},
+        completedAt: new Date(),
+        durationMs: 1,
+        warnings: [],
+      });
+
+      await app.inject({
+        method: 'DELETE',
+        url: `/api/admin/users/${targetId.toUpperCase()}?immediate=true`,
+        headers: { 'x-admin-key': config.ADMIN_API_KEY },
+      });
+
+      expect(mockContainer.auditService.recordBestEffort).toHaveBeenCalledWith(
+        expect.objectContaining({ targetId }),
+      );
+    });
+
+    it('should not audit a request the admin key rejects', async () => {
+      await app.inject({
+        method: 'DELETE',
+        url: `/api/admin/users/${targetId}?immediate=true`,
+        headers: { 'x-admin-key': 'wrong-key' },
+      });
+
+      expect(mockContainer.auditService.recordBestEffort).not.toHaveBeenCalled();
+    });
+
     it('should fall back to soft delete + 30d when immediate is not set', async () => {
       mockContainer.userDeletionService.requestDeletion.mockResolvedValue({
         userId: targetId,
@@ -212,7 +273,85 @@ describe('user deletion routes', () => {
 
       expect(res.statusCode).toBe(202);
       expect(mockContainer.userDeletionService.executeHardDelete).not.toHaveBeenCalled();
-      expect(mockContainer.userDeletionService.requestDeletion).toHaveBeenCalledWith(targetId);
+      expect(mockContainer.userDeletionService.requestDeletion).toHaveBeenCalledWith(targetId, {
+        origin: { initiatedBy: 'admin', adminId: null, reason: null },
+      });
+    });
+
+    it('should hand the operator and reason to the soft delete as its origin', async () => {
+      mockContainer.userDeletionService.requestDeletion.mockResolvedValue({
+        userId: targetId,
+        scheduledHardDeleteAt: new Date('2026-06-19T12:00:00Z'),
+        graceDays: 30,
+      });
+
+      await app.inject({
+        method: 'DELETE',
+        url: `/api/admin/users/${targetId}`,
+        headers: { 'x-admin-key': config.ADMIN_API_KEY, 'x-admin-id': 'op-2', 'content-type': 'application/json' },
+        payload: { reason: 'duplicate account' },
+      });
+
+      expect(mockContainer.userDeletionService.requestDeletion).toHaveBeenCalledWith(targetId, {
+        origin: { initiatedBy: 'admin', adminId: 'op-2', reason: 'duplicate account' },
+      });
+    });
+
+    it('should audit the soft delete at request time with the operator', async () => {
+      mockContainer.userDeletionService.requestDeletion.mockResolvedValue({
+        userId: targetId,
+        scheduledHardDeleteAt: new Date('2026-06-19T12:00:00Z'),
+        graceDays: 30,
+      });
+
+      await app.inject({
+        method: 'DELETE',
+        url: `/api/admin/users/${targetId}`,
+        headers: { 'x-admin-key': config.ADMIN_API_KEY, 'x-admin-id': 'op-2', 'content-type': 'application/json' },
+        payload: { reason: 'duplicate account' },
+      });
+
+      expect(mockContainer.auditService.recordBestEffort).toHaveBeenCalledWith({
+        actorId: 'op-2',
+        requestId: expect.any(String),
+        ip: expect.any(String),
+        action: 'users.delete',
+        targetType: 'user',
+        targetId,
+        after: { mode: 'scheduled', scheduledHardDeleteAt: '2026-06-19T12:00:00.000Z' },
+        reason: 'duplicate account',
+      });
+    });
+
+    it('should attribute a soft delete sent with the bare admin key to system:admin-key', async () => {
+      mockContainer.userDeletionService.requestDeletion.mockResolvedValue({
+        userId: targetId,
+        scheduledHardDeleteAt: new Date('2026-06-19T12:00:00Z'),
+        graceDays: 30,
+      });
+
+      await app.inject({
+        method: 'DELETE',
+        url: `/api/admin/users/${targetId}`,
+        headers: { 'x-admin-key': config.ADMIN_API_KEY },
+      });
+
+      expect(mockContainer.auditService.recordBestEffort).toHaveBeenCalledWith(
+        expect.objectContaining({ actorId: 'system:admin-key' }),
+      );
+    });
+
+    it('should not audit a soft delete the service refuses', async () => {
+      mockContainer.userDeletionService.requestDeletion.mockRejectedValue(new UserNotFoundError());
+
+      const res = await app.inject({
+        method: 'DELETE',
+        url: `/api/admin/users/${targetId}`,
+        headers: { 'x-admin-key': config.ADMIN_API_KEY },
+      });
+
+      expect(res.statusCode).toBe(404);
+      expect(mockContainer.auditService.recordBestEffort).not.toHaveBeenCalled();
     });
   });
 });
