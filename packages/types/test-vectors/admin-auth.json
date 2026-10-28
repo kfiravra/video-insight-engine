@@ -1,0 +1,215 @@
+{
+  "_comment": "Shared by api (vitest) and services/admin (pytest) so the TypeScript and Python implementations cannot drift. Edit both suites' expectations together.",
+  "actorHeader": {
+    "secret": "golden-session-secret-0123456789abcdef",
+    "maxAgeSeconds": 300,
+    "vectors": [
+      {
+        "name": "mutation with a JSON body",
+        "userId": "64f1c0a2b3d4e5f607182930",
+        "ts": 1790000000,
+        "body": "{\"reason\":\"duplicate upload\"}",
+        "bodySha256": "664c7ee1b256561f3ab80713be618236de693eb867d52a95ad75175371eef5c1",
+        "header": "64f1c0a2b3d4e5f607182930.1790000000.77f49eeac66fec6a641ffef9d35726c088a7ff26797510f43b2ae738630e88c5"
+      },
+      {
+        "name": "GET with no body",
+        "userId": "64f1c0a2b3d4e5f607182930",
+        "ts": 1790000123,
+        "body": "",
+        "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "header": "64f1c0a2b3d4e5f607182930.1790000123.705de5905dffc685e0da39556432dd547c5d8588b1a1ad2414988a278345b832"
+      },
+      {
+        "name": "body with non-ASCII characters",
+        "userId": "0a1b2c3d4e5f60718293a4b5",
+        "ts": 1790000999,
+        "body": "{\"reason\":\"dupliqué ✓\"}",
+        "bodySha256": "64318b3b57c695ef1249fec49de608d0f56783e20a7d8ad21fa320cb120dab33",
+        "header": "0a1b2c3d4e5f60718293a4b5.1790000999.f84f36a2dc4b31ee340184f280eb329c790b9e3ab649688443923edc14c3e272"
+      }
+    ]
+  },
+  "roleRules": [
+    {
+      "name": "no role fields",
+      "user": {},
+      "effectiveRoles": [],
+      "activeAdmin": false
+    },
+    {
+      "name": "legacy role admin, no roles array",
+      "user": {
+        "role": "admin"
+      },
+      "effectiveRoles": [
+        "admin"
+      ],
+      "activeAdmin": true
+    },
+    {
+      "name": "roles admin",
+      "user": {
+        "roles": [
+          "admin"
+        ]
+      },
+      "effectiveRoles": [
+        "admin"
+      ],
+      "activeAdmin": true
+    },
+    {
+      "name": "roles admin with a stored source",
+      "user": {
+        "roles": [
+          "admin"
+        ],
+        "roleSource": "env"
+      },
+      "effectiveRoles": [
+        "admin"
+      ],
+      "activeAdmin": true
+    },
+    {
+      "name": "empty roles overrides a leftover legacy role",
+      "user": {
+        "roles": [],
+        "role": "admin"
+      },
+      "effectiveRoles": [],
+      "activeAdmin": false
+    },
+    {
+      "name": "roles array without admin overrides a legacy role",
+      "user": {
+        "roles": [
+          "support"
+        ],
+        "role": "admin"
+      },
+      "effectiveRoles": [],
+      "activeAdmin": false
+    },
+    {
+      "name": "unknown role values are dropped, admin kept",
+      "user": {
+        "roles": [
+          "owner",
+          "admin"
+        ]
+      },
+      "effectiveRoles": [
+        "admin"
+      ],
+      "activeAdmin": true
+    },
+    {
+      "name": "only unknown role values",
+      "user": {
+        "roles": [
+          "owner"
+        ]
+      },
+      "effectiveRoles": [],
+      "activeAdmin": false
+    },
+    {
+      "name": "a non-string entry in roles is dropped",
+      "user": {
+        "roles": [
+          7,
+          "admin"
+        ]
+      },
+      "effectiveRoles": [
+        "admin"
+      ],
+      "activeAdmin": true
+    },
+    {
+      "name": "roles null falls back to the legacy role",
+      "user": {
+        "roles": null,
+        "role": "admin"
+      },
+      "effectiveRoles": [
+        "admin"
+      ],
+      "activeAdmin": true
+    },
+    {
+      "name": "roles as a plain string is not an array, falls back to legacy",
+      "user": {
+        "roles": "admin",
+        "role": "admin"
+      },
+      "effectiveRoles": [
+        "admin"
+      ],
+      "activeAdmin": true
+    },
+    {
+      "name": "roles as a plain string without a legacy role",
+      "user": {
+        "roles": "admin"
+      },
+      "effectiveRoles": [],
+      "activeAdmin": false
+    },
+    {
+      "name": "legacy role is case sensitive",
+      "user": {
+        "role": "Admin"
+      },
+      "effectiveRoles": [],
+      "activeAdmin": false
+    },
+    {
+      "name": "legacy role of another value",
+      "user": {
+        "role": "user"
+      },
+      "effectiveRoles": [],
+      "activeAdmin": false
+    },
+    {
+      "name": "soft-deleted roles admin",
+      "user": {
+        "roles": [
+          "admin"
+        ],
+        "deletedAt": "2026-05-01T00:00:00.000Z"
+      },
+      "effectiveRoles": [
+        "admin"
+      ],
+      "activeAdmin": false
+    },
+    {
+      "name": "soft-deleted legacy admin",
+      "user": {
+        "role": "admin",
+        "deletedAt": "2026-05-01T00:00:00.000Z"
+      },
+      "effectiveRoles": [
+        "admin"
+      ],
+      "activeAdmin": false
+    },
+    {
+      "name": "deletedAt null does not delete",
+      "user": {
+        "roles": [
+          "admin"
+        ],
+        "deletedAt": null
+      },
+      "effectiveRoles": [
+        "admin"
+      ],
+      "activeAdmin": true
+    }
+  ]
+}

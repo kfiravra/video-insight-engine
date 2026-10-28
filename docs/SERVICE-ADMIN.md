@@ -8,7 +8,7 @@ LLM usage monitoring, system health dashboard, and cost alerting service.
 |----------|-------|
 | Port | 8002 |
 | Framework | FastAPI + React (multi-stage Docker) |
-| Auth | Bearer: `ADMIN_API_KEY` (machine key) or a login session token signed with `ADMIN_SESSION_SECRET` |
+| Auth | Bearer: a login session token naming an active admin (signed with `ADMIN_SESSION_SECRET`), or `ADMIN_API_KEY` (machine key, GET only) |
 | Database | MongoDB (shared with other services) |
 
 ## Architecture
@@ -90,7 +90,9 @@ omits it from `/ready`.
 ### Queue (`/queue/`)
 
 Thin authenticated proxy over vie-api's `/api/admin/queue/*` (`X-Admin-Key` from
-`ADMIN_API_KEY`), backing the DLQ panel on the Health page.
+`ADMIN_API_KEY`, plus a signed `X-Admin-Actor` naming the session's admin), backing
+the DLQ panel on the Health page. `POST /queue/replay` is a mutation, so only a
+named admin session may call it (the machine key gets `403`).
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -98,8 +100,9 @@ Thin authenticated proxy over vie-api's `/api/admin/queue/*` (`X-Admin-Key` from
 | GET | `/queue/dlq` | Peek dead-lettered messages (`limit` 1–100, default 20; non-destructive) |
 | POST | `/queue/replay` | Body `{max: 1–500}` (default 100). Re-publishes up to `max` DLQ messages to `vie.pipeline.jobs`; returns vie-api's `{replayed}` |
 
-Upstream translation: vie-api `401` → `500` ("vie-api rejected admin key" — a
-server-side misconfig, the caller already proved admin); `503` (queue disabled /
+Upstream translation: vie-api `401` → `500` ("vie-api rejected the admin
+credentials" — a server-side misconfig such as `ADMIN_API_KEY` or
+`ADMIN_SESSION_SECRET` differing between the services, the caller already proved admin); `503` (queue disabled /
 no channel) passes through as `503`; other `≥500` → `502`; other `4xx` forwarded
 as-is. The `detail` carries vie-api's JSON envelope `{error, message[, replayed]}`
 unchanged when the body is JSON — a mid-drain `REPLAY_FAILED` keeps its partial
@@ -113,15 +116,17 @@ or failure), since a timeout can arrive after part of the batch was re-published
 ### Videos (`/videos/`)
 
 Thin authenticated proxy over vie-api's `DELETE /api/admin/videos/:youtubeId`
-(`X-Admin-Key` from `ADMIN_API_KEY`), backing the "Delete everywhere" button on
-the video detail page.
+(`X-Admin-Key` from `ADMIN_API_KEY`, plus a signed `X-Admin-Actor` naming the
+session's admin), backing the "Delete everywhere" button on the video detail page.
+Only a named admin session may call it.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| DELETE | `/videos/{youtubeId}` | Body `{reason?, adminId?}` (`adminId` is forwarded as `x-admin-id` for the audit row, self-attested). Runs vie-api's global cascade: summarizer purge (Qdrant points, S3 `videos/<id>/`, Redis keys) then Mongo (`userVideos`, `shareLikes`, `shareViews`, `agentNotes`, `idempotencyKeys`, `videoSummaryCache`) and a `videoDeletions` audit row. Returns vie-api's `{youtubeId, summaryIds, counts, warnings}`. |
+| DELETE | `/videos/{youtubeId}` | Body `{reason?}`; who purged is the session's admin, taken from the signed session, not from the body (a body `adminId` is ignored). Runs vie-api's global cascade: summarizer purge (Qdrant points, S3 `videos/<id>/`, Redis keys) then Mongo (`userVideos`, `shareLikes`, `shareViews`, `agentNotes`, `idempotencyKeys`, `videoSummaryCache`) and the `videoDeletions` and `adminAudit` audit rows. Returns vie-api's `{youtubeId, summaryIds, counts, warnings}`. |
 
 Same upstream translation as the queue proxy (vie-api `401` → `500`, `≥500` →
-`502` with the JSON envelope as `detail`, other `4xx` forwarded). A failed
+`502` with the JSON envelope as `detail`, other `4xx` forwarded; a `403` means vie-api
+found the admin no longer holds `videos:purge`). A failed
 summarizer purge surfaces as `502 SUMMARIZER_PURGE_FAILED` with nothing deleted
 in Mongo, so the operator simply retries. `llm_usage` rows are kept by design,
 so the detail page still shows the cost breakdown afterwards with `video: null`.
@@ -158,10 +163,10 @@ daily aggregates) and `userCostAdjustments` (admin audit log). See
 | GET | `/users/{user_id}/activity?days=30` | User-360: videos generated (`userVideos` join), assistant LLM calls (`llm_usage` where `user_id`), and daily cost timeline — all in one payload |
 | POST | `/users/{user_id}/grant-credit` | Apply a signed adjustment; `amountUsd > 0` grants credit (stored as negative), `< 0` is a manual charge. Validated: `|amountUsd| ≤ 1000`, `reason` 1–500 chars, optional `date` (`YYYY-MM-DD`) |
 
-**Audit caveat:** the admin service authenticates with a shared
-`ADMIN_API_KEY`, so `adminId` in the grant-credit request body is
-self-attested. Acceptable for a single-admin team; swap for per-admin
-credentials if you need a forgery-resistant audit log.
+**Audit caveat:** `adminId` in the grant-credit request body is still
+self-attested; the session now names the real admin (`request.state.actor`), but this
+endpoint does not use it yet. The route is replaced by a proxy to vie-api's billing
+endpoints (billing-roles P2.7), which take the actor from the signed header.
 
 ## Frontend
 
@@ -184,13 +189,29 @@ React SPA served as static files from the same container.
 
 ## Security
 
-- **Two bearer credentials** (`Authorization: Bearer <…>`, checked by `ApiKeyMiddleware` in `src/auth.py`):
+- **Two bearer credentials** (`Authorization: Bearer <…>`, checked by `ApiKeyMiddleware` in `src/auth.py`;
+  the authenticated actor lands on `request.state.actor`, read by routes through `current_actor` /
+  `current_user_actor`):
   - `ADMIN_API_KEY` — the machine key (curl, tooling; also what vie-admin sends vie-api as `X-Admin-Key`).
-  - A session token from `POST /auth/login` (email + bcrypt password, user must have `role: "admin"`):
-    `base64url(email|expiry).hmac_sha256`, 12 h TTL, HMAC-keyed on **`ADMIN_SESSION_SECRET`** — never on
-    `ADMIN_API_KEY`, so holding the machine key does not let anyone mint a session for an arbitrary email.
+    It acts as `AdminActor(kind="machine")` and **may only read**: any method other than `GET` is `403`.
+  - A session token from `POST /auth/login` (email + bcrypt password, user must be an active admin):
+    `base64url(userId|email|expiry).hmac_sha256`, 12 h TTL, HMAC-keyed on **`ADMIN_SESSION_SECRET`** — never on
+    `ADMIN_API_KEY`, so holding the machine key does not let anyone mint a session for an arbitrary user.
     Rotating `ADMIN_SESSION_SECRET` logs every admin out; rotating `ADMIN_API_KEY` leaves sessions alone
-    (it must be rotated on vie-api at the same time).
+    (it must be rotated on vie-api at the same time). `ADMIN_SESSION_SECRET` also signs the `X-Admin-Actor`
+    header sent to vie-api, so it must be the same value on both services (rotate and recreate both).
+- **Live admin check** — the session is not trusted until expiry. On every request the middleware checks
+  that the token's user is still an active admin (`src/roles.py`, cached per user for **60 s** in-process,
+  clock injected in tests): a demoted or soft-deleted admin gets `401` within a minute, and a user who no
+  longer exists likewise. If the users collection cannot be read the check fails closed (`503`). The rule
+  mirrors vie-api's `effectiveRoles`: a `roles` array is authoritative (even empty), and only a user with no
+  `roles` array falls back to the legacy `role: "admin"`; `deletedAt` set means not an admin. Both sides are
+  tested against the same cases in `packages/types/test-vectors/admin-auth.json`. Login applies the same rule.
+- **Actor propagation** — calls to vie-api for a named admin add `X-Admin-Actor: <userId>.<unixTs>.<hmac>`
+  (`src/services/vie_api_client.py`): `hmac = HMAC-SHA256(ADMIN_SESSION_SECRET, userId|unixTs|sha256(body))`
+  over the exact body bytes sent. vie-api accepts it for five minutes and re-checks that the user still holds
+  the permission; the same vectors file pins both implementations.
+- **Logs** carry the user id, never the email (login success/rejection, rejected sessions).
 - **Startup refusal** — the lifespan calls `validate_secrets()` (`src/config.py`) first. Outside a dev
   `ENVIRONMENT` (`""`, `development`, `dev`, `test`, `local`; any other name counts as production) the
   service refuses to start when `ADMIN_API_KEY` or `ADMIN_SESSION_SECRET` is empty or its dev default,
@@ -218,8 +239,9 @@ React SPA served as static files from the same container.
 ENVIRONMENT=
 # Machine key: raw Bearer on vie-admin + X-Admin-Key to vie-api. Required.
 ADMIN_API_KEY=<required>
-# Signs login session tokens. openssl rand -hex 32; must differ from ADMIN_API_KEY;
-# rotating it logs every admin out. Default dev-admin-session-secret-change-me (dev only).
+# Signs login session tokens and the X-Admin-Actor header sent to vie-api (vie-api reads the same
+# value). openssl rand -hex 32; must differ from ADMIN_API_KEY; rotating it logs every admin out and
+# needs vie-api recreated too. Default dev-admin-session-secret-change-me (dev only).
 ADMIN_SESSION_SECRET=<required in production>
 MONGODB_URI=mongodb://vie-mongodb:27017/video-insight-engine
 VIE_API_URL=http://vie-api:3000

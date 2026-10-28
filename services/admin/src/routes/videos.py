@@ -1,22 +1,27 @@
 """Video administration — proxy to vie-api's global video delete.
 
 vie-api owns the cascade (Mongo references, the summarizer purge of Qdrant,
-S3 and Redis, and the audit row). The admin service forwards the call so the
-UI keeps a single base URL and auth model. The proxy helpers are a second
-copy of the ones in queue.py — extract on the third.
+S3 and Redis, and the audit rows). The admin service forwards the call so the
+UI keeps a single base URL and auth model, naming the admin who made it in a
+signed ``X-Admin-Actor`` header (see ``vie_api_client``); there is no
+self-attested admin id in the request. The proxy helpers are a second copy of
+the ones in queue.py — extract on the third.
 """
 
 from __future__ import annotations
 
 import json
+from typing import Annotated
 
 import httpx
 import structlog
-from fastapi import APIRouter, HTTPException, Path
+from fastapi import APIRouter, Depends, HTTPException, Path
 from pydantic import BaseModel, Field
 
+from src.auth import AdminActor, current_user_actor
 from src.config import settings
 from src.routes.usage import invalidate_video_cache
+from src.services.vie_api_client import admin_headers, encode_json_body
 
 logger = structlog.get_logger(__name__)
 
@@ -28,23 +33,9 @@ YOUTUBE_ID_PATTERN = r"^[A-Za-z0-9_-]{11}$"
 
 
 class PurgeVideoRequest(BaseModel):
-    """Operator context forwarded to vie-api's audit row (self-attested)."""
+    """What the operator tells the audit row: why. Who is the session's admin."""
 
     reason: str | None = Field(default=None, min_length=1, max_length=500)
-    adminId: str | None = Field(
-        default=None, min_length=1, max_length=64, pattern=r"^[A-Za-z0-9._-]+$"
-    )
-
-
-def _admin_headers(admin_id: str | None) -> dict[str, str]:
-    headers = {
-        "X-Admin-Key": settings.ADMIN_API_KEY,
-        "Accept": "application/json",
-        "Content-Type": "application/json",
-    }
-    if admin_id:
-        headers["X-Admin-Id"] = admin_id
-    return headers
 
 
 def _upstream_url(youtube_id: str) -> str:
@@ -64,9 +55,10 @@ def _upstream_detail(resp: httpx.Response) -> dict | str:
 
 def _translate_upstream(resp: httpx.Response) -> dict:
     if resp.status_code == 401:
-        # vie-api rejected our admin key — the user already proved admin to
-        # us, so the misconfig is server-side.
-        raise HTTPException(status_code=500, detail="vie-api rejected admin key")
+        # vie-api rejected our key or the signed actor (ADMIN_API_KEY or
+        # ADMIN_SESSION_SECRET differs between the services) — the user already
+        # proved admin to us, so the misconfig is server-side.
+        raise HTTPException(status_code=500, detail="vie-api rejected the admin credentials")
     if resp.status_code == 503:
         # vie-api's own "dependency down" answer — a real state, passed through.
         raise HTTPException(status_code=503, detail=_upstream_detail(resp))
@@ -82,20 +74,20 @@ def _translate_upstream(resp: httpx.Response) -> dict:
 
 @router.delete("/{youtube_id}")
 async def purge_video(
+    actor: Annotated[AdminActor, Depends(current_user_actor)],
     request: PurgeVideoRequest | None = None,
     youtube_id: str = Path(..., pattern=YOUTUBE_ID_PATTERN),
 ) -> dict:
     """Delete a video from every store for every user (vie-api runs the cascade)."""
     body = request or PurgeVideoRequest()
-    logger.info("video_purge_requested", youtube_id=youtube_id, admin_id=body.adminId)
-    payload = {"reason": body.reason} if body.reason else {}
+    logger.info("video_purge_requested", youtube_id=youtube_id, user_id=actor.user_id)
+    # The signature covers these exact bytes, so they are what goes on the wire.
+    content = encode_json_body({"reason": body.reason} if body.reason else {})
+    headers = {**admin_headers(actor, content), "Content-Type": "application/json"}
     try:
         async with httpx.AsyncClient(timeout=_PURGE_TIMEOUT) as client:
             resp = await client.request(
-                "DELETE",
-                _upstream_url(youtube_id),
-                headers=_admin_headers(body.adminId),
-                content=json.dumps(payload),
+                "DELETE", _upstream_url(youtube_id), headers=headers, content=content
             )
     except httpx.TimeoutException as exc:
         # The purge may still be running on vie-api: tell the operator to

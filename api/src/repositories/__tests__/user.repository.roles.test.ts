@@ -1,8 +1,22 @@
+import { readFileSync } from 'node:fs';
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 import { MongoClient, Db, ObjectId } from 'mongodb';
 import { PERMISSIONS, READ_PERMISSIONS } from '@vie/types';
 import { UserRepository, CreateUserData, effectiveRoles } from '../user.repository.js';
+
+interface RoleRuleCase {
+  name: string;
+  user: Record<string, unknown>;
+  effectiveRoles: string[];
+  activeAdmin: boolean;
+}
+
+// Shared with services/admin/tests/test_roles.py: vie-admin's login and session
+// middleware apply the same rule in Python, and both are held to these cases.
+const { roleRules } = JSON.parse(
+  readFileSync(new URL('../../../../packages/types/test-vectors/admin-auth.json', import.meta.url), 'utf8'),
+) as { roleRules: RoleRuleCase[] };
 
 describe('UserRepository roles', () => {
   let mongod: MongoMemoryServer;
@@ -251,5 +265,24 @@ describe('UserRepository roles', () => {
     it('should report false for an unknown user', async () => {
       expect(await repository.setRoles(new ObjectId().toString(), ['admin'], 'env')).toBe(false);
     });
+  });
+
+  describe('shared role rules (also enforced by vie-admin)', () => {
+    it.each(roleRules.map((rule) => [rule.name, rule] as const))(
+      'should resolve effective roles: %s',
+      (_name, rule) => {
+        expect(effectiveRoles(rule.user as Parameters<typeof effectiveRoles>[0])).toEqual(rule.effectiveRoles);
+      },
+    );
+
+    it.each(roleRules.map((rule) => [rule.name, rule] as const))(
+      'should decide admin access from the stored document: %s',
+      async (_name, rule) => {
+        const user = await repository.create(createUserData());
+        await db.collection('users').updateOne({ _id: user._id }, { $set: rule.user });
+
+        expect(await repository.hasPermission(user._id.toString(), 'billing:read')).toBe(rule.activeAdmin);
+      },
+    );
   });
 });

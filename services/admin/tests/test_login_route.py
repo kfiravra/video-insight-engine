@@ -11,7 +11,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import bcrypt
 import pytest
+from bson import ObjectId
 from httpx import ASGITransport, AsyncClient
+from structlog.testing import capture_logs
 
 import src.routes.auth as auth_routes
 from src.auth import (
@@ -22,6 +24,7 @@ from src.auth import (
 from src.config import settings
 from src.main import app
 
+USER_ID = "64f1c0a2b3d4e5f607182930"
 PASSWORD = "Admin123"
 PASSWORD_HASH = bcrypt.hashpw(PASSWORD.encode(), bcrypt.gensalt(rounds=4)).decode()
 
@@ -47,9 +50,10 @@ def _mock_db(user_doc: dict[str, Any] | None) -> MagicMock:
 
 def _admin_user(**overrides: Any) -> dict[str, Any]:
     doc: dict[str, Any] = {
+        "_id": ObjectId(USER_ID),
         "email": "admin@admin.com",
         "passwordHash": PASSWORD_HASH,
-        "role": "admin",
+        "roles": ["admin"],
     }
     doc.update(overrides)
     return doc
@@ -64,24 +68,24 @@ async def _post_login(payload: dict[str, Any]):
 
 
 def test_session_token_round_trip():
-    token = create_session_token("admin@admin.com")
+    token = create_session_token(USER_ID, "admin@admin.com")
     assert verify_session_token(token)
 
 
 def test_session_token_expired():
-    token = create_session_token("admin@admin.com", now=0)
+    token = create_session_token(USER_ID, "admin@admin.com", now=0)
     assert not verify_session_token(token, now=SESSION_TOKEN_TTL_SECONDS + 1)
 
 
 def test_session_token_tampered_signature():
-    token = create_session_token("admin@admin.com")
+    token = create_session_token(USER_ID, "admin@admin.com")
     encoded, _, sig = token.partition(".")
     tampered = f"{encoded}.{'0' * len(sig)}"
     assert not verify_session_token(tampered)
 
 
 def test_session_token_garbage_inputs():
-    for bad in ("", "no-dot", "a.b", "!!!.???", create_session_token("x")[:-5]):
+    for bad in ("", "no-dot", "a.b", "!!!.???", create_session_token(USER_ID, "x")[:-5]):
         assert not verify_session_token(bad)
 
 
@@ -100,7 +104,7 @@ def distinct_secrets(monkeypatch):
 
 def _token_signed_with(secret: str, email: str = "admin@admin.com") -> str:
     """Build a session token by hand, HMAC-keyed on an arbitrary secret."""
-    payload = f"{email}|{int(time.time()) + 3600}"
+    payload = f"{USER_ID}|{email}|{int(time.time()) + 3600}"
     encoded = base64.urlsafe_b64encode(payload.encode()).decode()
     signature = hmac.new(secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
     return f"{encoded}.{signature}"
@@ -117,14 +121,14 @@ def test_token_signed_with_api_key_rejected(distinct_secrets):
 
 
 def test_rotating_session_secret_invalidates_outstanding_tokens(distinct_secrets, monkeypatch):
-    token = create_session_token("admin@admin.com")
+    token = create_session_token(USER_ID, "admin@admin.com")
     monkeypatch.setattr(settings, "ADMIN_SESSION_SECRET", "rotated-" + "c" * 32)
 
     assert not verify_session_token(token)
 
 
 def test_rotating_api_key_keeps_sessions_valid(distinct_secrets, monkeypatch):
-    token = create_session_token("admin@admin.com")
+    token = create_session_token(USER_ID, "admin@admin.com")
     monkeypatch.setattr(settings, "ADMIN_API_KEY", "rotated-" + "d" * 32)
 
     assert verify_session_token(token)
@@ -143,7 +147,8 @@ async def test_login_success_returns_session_token(monkeypatch):
     body = resp.json()
     assert body["email"] == "admin@admin.com"
     assert body["expires_in"] == SESSION_TOKEN_TTL_SECONDS
-    assert verify_session_token(body["token"])
+    claims = verify_session_token(body["token"])
+    assert claims is not None and claims.user_id == USER_ID
 
 
 @pytest.mark.anyio
@@ -166,8 +171,8 @@ async def test_login_unknown_email_rejected(monkeypatch):
 
 @pytest.mark.anyio
 async def test_login_non_admin_user_rejected(monkeypatch):
-    """A valid password is NOT enough — the user must carry role: admin."""
-    monkeypatch.setattr(auth_routes, "get_database", lambda: _mock_db(_admin_user(role="user")))
+    """A valid password is NOT enough — the user must hold the admin role."""
+    monkeypatch.setattr(auth_routes, "get_database", lambda: _mock_db(_admin_user(roles=[])))
 
     resp = await _post_login({"email": "admin@admin.com", "password": PASSWORD})
 
@@ -206,15 +211,60 @@ async def test_login_validates_body():
     assert resp.status_code == 422
 
 
+@pytest.mark.anyio
+async def test_login_accepts_a_legacy_admin_without_a_roles_array(monkeypatch):
+    legacy = _admin_user(role="admin")
+    del legacy["roles"]
+    monkeypatch.setattr(auth_routes, "get_database", lambda: _mock_db(legacy))
+
+    resp = await _post_login({"email": "admin@admin.com", "password": PASSWORD})
+
+    assert resp.status_code == 200
+
+
+@pytest.mark.anyio
+async def test_login_rejects_a_demoted_admin_whose_legacy_role_is_still_stored(monkeypatch):
+    """`roles: []` is authoritative: the leftover `role: admin` must not revive access."""
+    monkeypatch.setattr(
+        auth_routes, "get_database", lambda: _mock_db(_admin_user(roles=[], role="admin"))
+    )
+
+    resp = await _post_login({"email": "admin@admin.com", "password": PASSWORD})
+
+    assert resp.status_code == 401
+
+
+@pytest.mark.anyio
+async def test_login_logs_the_user_id_and_never_the_email(monkeypatch):
+    monkeypatch.setattr(auth_routes, "get_database", lambda: _mock_db(_admin_user()))
+
+    with capture_logs() as logs:
+        await _post_login({"email": "admin@admin.com", "password": PASSWORD})
+        await _post_login({"email": "admin@admin.com", "password": "wrong"})
+
+    assert {entry["event"] for entry in logs} >= {"admin_login_success", "admin_login_rejected"}
+    assert all(entry.get("user_id") == USER_ID for entry in logs)
+    assert "admin@admin.com" not in repr(logs)
+
+
+@pytest.mark.anyio
+async def test_login_does_not_log_the_email_of_an_unknown_account(monkeypatch):
+    monkeypatch.setattr(auth_routes, "get_database", lambda: _mock_db(None))
+
+    with capture_logs() as logs:
+        await _post_login({"email": "ghost@example.com", "password": PASSWORD})
+
+    assert "ghost@example.com" not in repr(logs)
+
+
 # ─── Middleware integration ───
 
 
 @pytest.mark.anyio
-async def test_session_token_accepted_by_middleware():
-    token = create_session_token("admin@admin.com")
+async def test_session_token_accepted_by_middleware(admin_session):
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         try:
-            resp = await client.get("/usage/stats", headers={"Authorization": f"Bearer {token}"})
+            resp = await client.get("/usage/stats", headers=admin_session)
             # Auth passed — may be 500 (no DB in tests) but never 401
             assert resp.status_code != 401
         except RuntimeError as e:
@@ -242,7 +292,7 @@ async def test_raw_api_key_still_accepted_by_middleware(distinct_secrets):
 
 @pytest.mark.anyio
 async def test_expired_session_token_rejected_by_middleware():
-    token = create_session_token("admin@admin.com", now=0)
+    token = create_session_token(USER_ID, "admin@admin.com", now=0)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.get("/usage/stats", headers={"Authorization": f"Bearer {token}"})
     assert resp.status_code == 401

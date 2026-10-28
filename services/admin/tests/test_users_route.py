@@ -64,33 +64,45 @@ async def test_grant_credit_requires_auth():
 
 
 @pytest.mark.anyio
-async def test_grant_credit_rejects_out_of_range_amount():
+async def test_grant_credit_rejects_out_of_range_amount(admin_session):
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post(
             "/users/" + "a" * 24 + "/grant-credit",
-            headers={"Authorization": "Bearer test-admin-key"},
+            headers=admin_session,
             json={"amountUsd": 10_000, "reason": "ok", "adminId": "a" * 24},
         )
     assert resp.status_code == 422
 
 
 @pytest.mark.anyio
-async def test_grant_credit_rejects_empty_reason():
+async def test_grant_credit_rejects_empty_reason(admin_session):
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post(
             "/users/" + "a" * 24 + "/grant-credit",
-            headers={"Authorization": "Bearer test-admin-key"},
+            headers=admin_session,
             json={"amountUsd": 1.0, "reason": "", "adminId": "a" * 24},
         )
     assert resp.status_code == 422
 
 
 @pytest.mark.anyio
-async def test_grant_credit_rejects_invalid_date_format():
+async def test_grant_credit_rejects_invalid_date_format(admin_session):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post(
+            "/users/" + "a" * 24 + "/grant-credit",
+            headers=admin_session,
+            json={"amountUsd": 1.0, "reason": "ok", "adminId": "a" * 24, "date": "2026-1-1"},
+        )
+    assert resp.status_code == 422
+
+
+@pytest.mark.anyio
+async def test_grant_credit_refuses_the_shared_machine_key():
+    """The machine key reads; crediting a user needs a named admin session."""
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post(
             "/users/" + "a" * 24 + "/grant-credit",
             headers={"Authorization": "Bearer test-admin-key"},
-            json={"amountUsd": 1.0, "reason": "ok", "adminId": "a" * 24, "date": "2026-1-1"},
+            json={"amountUsd": 1.0, "reason": "ok", "adminId": "a" * 24},
         )
-    assert resp.status_code == 422
+    assert resp.status_code == 403
