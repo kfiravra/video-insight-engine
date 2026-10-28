@@ -474,7 +474,10 @@ name the user. Per-user and per-request cost views therefore cover the last 90
 days; totals and per-model numbers are unaffected.
 
 **Margin per run.** The minutes ledger records `costUsd = Σ cost_usd WHERE
-request_id = <the run's requestId>` on the run's `debit` entries when it settles
+request_id = <the run's requestId> AND video_summary_id = <its cache row>` (the
+request id is the client's X-Request-ID, which a client may reuse across videos —
+review I4; the repair job falls back to the request id alone when no row was
+stamped) on the run's `debit` entries when it settles
 (and on `release` entries for failed runs), served by the `{request_id: 1,
 timestamp: -1}` index both vie-api and vie-admin build. A run settled late by the
 repair job (its completion relay was lost) gets the same sum. A translation's

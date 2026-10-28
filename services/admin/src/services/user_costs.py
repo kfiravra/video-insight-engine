@@ -14,10 +14,12 @@ and the per-user cost timeline aggregate ``llm_usage`` instead.
   ``llm_usage`` rows those rows win and the history row for that day only
   contributes its credit; the two are never added, so nothing is counted twice.
 
-A user is listed when they have spend in the range, a minutes account
+A user is listed when they exist and have spend in the range, a minutes account
 (``billingAccounts``), or signed up in the range: a new user has neither
 spend nor an account yet, and the admin still has to find them to grant
-minutes. Anyone else is idle and not shown, as before.
+minutes. Anyone else is idle and not shown, as before. An erased user (GDPR
+keeps a tombstone account with ``ownerType: "user"``) has no ``users`` document
+and is not listed.
 """
 
 from __future__ import annotations
@@ -179,9 +181,13 @@ async def plan_ids(db: AsyncIOMotorDatabase) -> dict[str, str]:
 
 
 async def plan_id(db: AsyncIOMotorDatabase, user_id: str) -> str:
-    """The plan of one user, from ``billingAccounts.plan.id``; ``free`` with no account row."""
+    """The plan of one user, from ``billingAccounts.plan.id``; ``free`` with no account row.
+
+    vie-api stores ``ownerId`` as an ObjectId, so the filter must be one: a hex string never
+    matches.
+    """
     account = await db.billingAccounts.find_one(
-        {"ownerType": "user", "ownerId": user_id}, {"plan.id": 1}
+        {"ownerType": "user", "ownerId": ObjectId(user_id)}, {"plan.id": 1}
     )
     return ((account or {}).get("plan") or {}).get("id") or DEFAULT_PLAN
 
@@ -212,13 +218,15 @@ def summarize(days: Mapping[str, DayCost]) -> tuple[float, int, float, int]:
 
 
 async def user_cost_summaries(db: AsyncIOMotorDatabase, days: int) -> list[UserCostSummary]:
-    """Every listed user, highest effective cost first (ties by email, then id)."""
+    """Every listed user that still exists, highest effective cost first (ties: email, id)."""
     by_user, plans = await asyncio.gather(cost_days(db, days), plan_ids(db))
     # A spend row whose id is not a user id (a service or test value) cannot be opened in the UI.
     candidates = {uid for uid in by_user if _HEX_ID.fullmatch(uid)} | set(plans)
     profiles = await _profiles(db, candidates, window_start(days))
     summaries = []
-    for uid in candidates | set(profiles):
+    # `profiles` holds the users that exist; an id with spend or an account but no `users`
+    # document is an erased user (a tombstone), and has nobody to show.
+    for uid in profiles:
         total, videos, credit, active_days = summarize(by_user.get(uid, {}))
         profile = profiles.get(uid) or {}
         summaries.append(

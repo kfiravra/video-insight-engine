@@ -379,6 +379,64 @@ async def test_launch_returns_none_when_transcript_missing():
     assert pipeline_faithfulness._launch_faithfulness_check(ctx) is None
 
 
+async def _drain_cache_hit(entry: dict, sent: list) -> MagicMock:
+    """Run the Redis cache-hit path with the status POST captured; returns the repository."""
+    cached = {
+        "status": "completed",
+        "youtubeId": "yt_cache_hit",
+        "tabs": [{"id": "overview"}],
+        "meta": {"contentTags": ["learning"]},
+    }
+
+    async def fake_get_response(_youtube_id: str) -> dict:
+        return cached
+
+    async def fake_cached_stream(_vsid: str, _cached: dict):
+        yield "data: {}\n\n"
+
+    async def fake_send(video_summary_id, _user_id, status, *_args, **kwargs):
+        sent.append((video_summary_id, status, kwargs.get("cache_hit")))
+
+    repository = MagicMock()
+    with (
+        patch.object(pipeline_runner.response_cache, "get_response", new=fake_get_response),
+        patch.object(pipeline_runner, "_stream_cached_structured", new=fake_cached_stream),
+        patch.object(pipeline_runner, "send_video_status", new=fake_send),
+        patch.object(pipeline_runner.settings, "REDIS_ENABLED", True),
+    ):
+        _ = [
+            ev
+            async for ev in pipeline_runner.stream_summarization(
+                "vsum_ch", entry, repository, MagicMock()
+            )
+        ]
+        for _attempt in range(100):
+            if sent:
+                break
+            await asyncio.sleep(0.01)
+    return repository
+
+
+@pytest.mark.asyncio
+async def test_cache_hit_reports_completed_with_the_cache_hit_flag():
+    """I3: a Redis-served run reports completed (after the save) as a cache hit."""
+    sent: list = []
+
+    repository = await _drain_cache_hit({"youtubeId": "yt_cache_hit", "status": "pending"}, sent)
+
+    assert sent == [("vsum_ch", "completed", True)]
+    repository.save_structured_result.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_cache_hit_on_a_completed_row_reports_nothing():
+    sent: list = []
+
+    await _drain_cache_hit({"youtubeId": "yt_cache_hit", "status": "completed"}, sent)
+
+    assert sent == []
+
+
 @pytest.mark.asyncio
 async def test_stream_sets_attribution_ctxvars_on_cache_hit():
     """Phase 0: the cost-tracking ctxvars (user/video/video_summary/request)

@@ -79,6 +79,24 @@ describe('SubmitBurstLimiter', () => {
       await expect(limiter.consume(USER_ID)).rejects.toThrow(`Try again in ${minutes} min.`);
     });
 
+    it('should carry the seconds left in the window as retryAfterSec', async () => {
+      const limiter = new SubmitBurstLimiter(counterRedis(2700) as unknown as Redis, 1, logger);
+      await limiter.consume(USER_ID);
+
+      const error = await limiter.consume(USER_ID).catch((err: unknown) => err as RateLimitedError);
+
+      expect(error.retryAfterSec).toBe(2700);
+    });
+
+    it('should never send a retryAfterSec below 1', async () => {
+      const limiter = new SubmitBurstLimiter(counterRedis(0) as unknown as Redis, 1, logger);
+      await limiter.consume(USER_ID);
+
+      const error = await limiter.consume(USER_ID).catch((err: unknown) => err as RateLimitedError);
+
+      expect(error.retryAfterSec).toBe(1);
+    });
+
     it('should never mention a daily limit', async () => {
       const limiter = new SubmitBurstLimiter(counterRedis(1800) as unknown as Redis, 1, logger);
       await limiter.consume(USER_ID);

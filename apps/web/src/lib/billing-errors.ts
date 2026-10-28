@@ -11,7 +11,7 @@ export type BillingNotice =
   | { kind: "too_long"; maxMinutes: number | null }
   | { kind: "blocked" }
   | { kind: "too_many_runs"; maxConcurrent: number | null }
-  | { kind: "rate_limited"; message: string | null }
+  | { kind: "rate_limited"; retryAfterSec: number | null }
   | { kind: "chat_limit"; nextAt: string | null };
 
 type Details = Record<string, unknown>;
@@ -28,14 +28,10 @@ function stringField(details: Details, key: string): string | null {
 
 /**
  * The notice for a billing error code and its envelope fields, or null when the
- * code is not a billing refusal. `message` is the envelope's own message, used
- * only for RATE_LIMITED (the server words the burst limit).
+ * code is not a billing refusal. RATE_LIMITED carries `retryAfterSec`; its
+ * message text is never shown (the copy is localised here).
  */
-export function classifyBillingCode(
-  code: string | undefined,
-  details: Details = {},
-  message?: string,
-): BillingNotice | null {
+export function classifyBillingCode(code: string | undefined, details: Details = {}): BillingNotice | null {
   switch (code) {
     case "INSUFFICIENT_MINUTES":
       return {
@@ -51,7 +47,7 @@ export function classifyBillingCode(
     case "TOO_MANY_RUNS":
       return { kind: "too_many_runs", maxConcurrent: numberField(details, "maxConcurrent") };
     case "RATE_LIMITED":
-      return { kind: "rate_limited", message: stringField(details, "message") ?? message ?? null };
+      return { kind: "rate_limited", retryAfterSec: numberField(details, "retryAfterSec") };
     case "CHAT_LIMIT_REACHED":
       return { kind: "chat_limit", nextAt: stringField(details, "nextAt") };
     default:
@@ -62,5 +58,5 @@ export function classifyBillingCode(
 /** The notice for a failed request, or null when it is not a billing refusal. */
 export function classifyBillingError(err: unknown): BillingNotice | null {
   if (!(err instanceof ApiError)) return null;
-  return classifyBillingCode(err.code, err.details, err.message);
+  return classifyBillingCode(err.code, err.details);
 }

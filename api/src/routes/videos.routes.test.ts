@@ -324,7 +324,7 @@ describe('videos routes', () => {
 
       expect(response.statusCode).toBe(201);
       const { requestId: runId } = mockContainer.billingEnforcement.admit.mock.calls[0][0];
-      expect(mockContainer.billingEnforcement.admit).toHaveBeenCalledWith({ requestId: runId, userId: 'test-user-id', youtubeId: 'dQw4w9WgXcQ' });
+      expect(mockContainer.billingEnforcement.admit).toHaveBeenCalledWith({ requestId: runId, userId: 'test-user-id', youtubeId: 'dQw4w9WgXcQ', durationSec: null });
       expect(mockContainer.videoService.createVideo.mock.calls[0][2]).toMatchObject({ billingRunId: runId });
       // A new run keeps its hold: the terminal status settles it.
       expect(mockContainer.billingEnforcement.submitResolved).toHaveBeenCalledWith(runId, 'created');

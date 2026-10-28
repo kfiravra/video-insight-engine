@@ -69,8 +69,12 @@ describe('BillingRepairService (P1.6, real Mongo replica set)', () => {
   describe('stale holds', () => {
     it('should settle a hold whose run completed but whose completion never arrived, with its cost', async () => {
       await holdVideo('req-1', 10);
-      await stampRun('req-1', 'completed');
-      await db().collection('llm_usage').insertOne({ request_id: 'req-1', cost_usd: 0.2, timestamp: clock.now() });
+      const { insertedId } = await stampRun('req-1', 'completed');
+      await db().collection('llm_usage').insertMany([
+        { request_id: 'req-1', video_summary_id: insertedId.toHexString(), cost_usd: 0.2, timestamp: clock.now() },
+        // The same client request id reused on another video is not this run's spend (I4).
+        { request_id: 'req-1', video_summary_id: 'another-video', cost_usd: 1.5, timestamp: clock.now() },
+      ]);
       clock.advance(4 * HOUR_MS);
 
       const report = await run();

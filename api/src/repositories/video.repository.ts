@@ -362,6 +362,20 @@ export class VideoRepository {
   }
 
   /**
+   * A stalled row was re-dispatched (createVideo's stall branch): the new run
+   * owns it, so it reads `pending` with a fresh `updatedAt` — otherwise the
+   * summarizer's stall sweeper would fail it as the dead run's and the new
+   * run's hold with it (I2). Like `incrementRetryCount`, it also clears the
+   * guard-release marker so a FAILED for THIS run can still release.
+   */
+  async markRedispatched(id: string): Promise<void> {
+    await this.cacheCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { status: 'pending', updatedAt: new Date() }, $unset: { dispatchGuardReleasedAt: '' } },
+    );
+  }
+
+  /**
    * Atomically claim the right to release the dispatch guard for a FAILED
    * cache row. Returns `true` exactly once per terminal-failure transition —
    * subsequent duplicate FAILED events from summarizer status-callback
@@ -457,6 +471,19 @@ export class VideoRepository {
 
     const result = await this.cacheCollection.deleteMany({ _id: { $in: toDelete.map(v => v._id) } });
     return result.deletedCount;
+  }
+
+  /**
+   * The video's length in seconds from any completed version, or null. A
+   * submit for a video already summarised reads it here instead of asking the
+   * summarizer's metadata pre-flight (I10): the length never changes.
+   */
+  async findKnownDuration(youtubeId: string): Promise<number | null> {
+    const row = await this.cacheCollection.findOne(
+      { youtubeId, status: 'completed', duration: { $gt: 0 } },
+      { projection: { duration: 1 } },
+    );
+    return row?.duration ?? null;
   }
 
   /** Every version's id and share slug for a video — the global purge's work list. */

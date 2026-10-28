@@ -578,9 +578,25 @@ Import a playlist, creating a folder and adding all videos.
   "totalVideos": 15,
   "cachedCount": 5,
   "processingCount": 10,
-  "failedCount": 0
+  "failedCount": 1,
+  "failedVideos": [
+    { "youtubeId": "abcdefghijk", "title": "Part 2", "position": 2, "error": "INSUFFICIENT_MINUTES" }
+  ],
+  "billing": { "neededMinutes": 340, "availableMinutes": 120, "freeVideoAvailable": false }
 }
 ```
+
+- `failedVideos[].error` is always an error code (`INSUFFICIENT_MINUTES`,
+  `VIDEO_TOO_LONG_FOR_PLAN`, `METADATA_UNAVAILABLE`, …; `INTERNAL_ERROR` for
+  anything unexpected, which the API logs), never a raw message.
+- `folder` is `null` when the import created a folder and no item landed in it
+  (every item refused or failed): the empty folder is removed again. A folder
+  the caller passed as `folderId` is never removed.
+- Items are admitted in order and the import stops at the first one the
+  minutes cannot cover — except a video only paid minutes could pay for while
+  the free video is still open: a later short item can still take the free
+  video, so that refusal does not stop the import. Details in
+  [ERROR-HANDLING.md](./ERROR-HANDLING.md#minutes-gate).
 
 ---
 
@@ -788,7 +804,7 @@ created on this first read).
 ```json
 {
   "plan": { "id": "pro", "periodEnd": "2027-10-28T10:00:00.000Z" },
-  "free": { "available": true, "nextFreeAt": null, "maxVideoMinutes": 30 },
+  "free": { "available": true, "nextFreeAt": null, "maxVideoMinutes": 30, "perWindow": 1 },
   "planMinutes": { "granted": 600, "used": 90, "remaining": 510, "cycleEnd": "2026-11-28T10:00:00.000Z" },
   "credits": {
     "available": 150,
@@ -806,6 +822,9 @@ created on this first read).
 - `plan.id` is `free` or `pro`. `periodEnd` (the end of the Pro term) is null for `free`.
 - `free` is the free video (one per rolling 24 hours, at most `maxVideoMinutes`
   long). While `available` is false, `nextFreeAt` is when the next one opens.
+  `perWindow` is how many free videos the account gets per rolling 24 hours
+  after admin caps: 1 by default, 0 when an admin turned the free video off
+  (then `available` is false and `nextFreeAt` null for good).
 - `planMinutes` is the current monthly cycle: `remaining = granted - used`. All
   zeros on `free`.
 - `credits.lots` lists only spendable lots (not expired, minutes left); `available`
@@ -867,7 +886,7 @@ Common error codes:
 - `404` - Not Found: `SHARE_NOT_FOUND`
 - `409` - Conflict: `ALREADY_SHARED`
 - `422` - Unprocessable: `VIDEO_TOO_LONG_FOR_PLAN` (also returns `maxMinutes`)
-- `429` - Rate Limited: `RATE_LIMITED` (also the shared submit burst limit: 20 submissions per user per hour across `POST /videos`, the assistant's generate route and playlist import), `TOO_MANY_RUNS` (an admin's cap on runs in flight; also returns `maxConcurrent`)
+- `429` - Rate Limited: `RATE_LIMITED` (carries `retryAfterSec`, the whole seconds until the window reopens; also the shared submit burst limit: 20 submissions per user per hour across `POST /videos`, the assistant's generate route and playlist import), `TOO_MANY_RUNS` (an admin's cap on runs in flight; also returns `maxConcurrent`)
 - `500` - Internal Server Error
 - `501` - Not Implemented: `PROVIDER_NOT_CONFIGURED` (no payment provider; nothing returns it yet)
 - `503` - Service Unavailable: `SERVICE_UNAVAILABLE`, `QUEUE_PUBLISH_FAILED`
@@ -1359,6 +1378,12 @@ Progressive summarization via Server-Sent Events.
 The summarization pipeline uses SSE to stream results progressively, allowing the frontend to display content as it becomes available.
 
 **Endpoint:** `GET /api/videos/:videoSummaryId/stream`
+
+Opening the stream never starts a run of a **failed** video: the API answers
+one `{ "event": "error", "code": "VIDEO_FAILED", "message": … }` event (the
+row's stored error message, or "This video failed to process. Retry it to run
+it again.") and ends, and the summarizer only consumes for a failed row. A
+re-run costs minutes, so it goes through `POST /videos` (quoted and held).
 
 ---
 

@@ -5,6 +5,7 @@ import {
   AppError,
   ChatLimitReachedError,
   InsufficientMinutesError,
+  RateLimitedError,
   TooManyRunsError,
   VideoTooLongForPlanError,
 } from './errors.js';
@@ -28,12 +29,20 @@ export interface ErrorEnvelope {
   maxMinutes?: number;
   /** TOO_MANY_RUNS */
   maxConcurrent?: number;
+  /** RATE_LIMITED: whole seconds until the limiter lets the caller back in; clients build their own copy from it. */
+  retryAfterSec?: number;
 }
 
-type BillingFields = Pick<ErrorEnvelope, 'needed' | 'available' | 'nextFreeAt' | 'maxMinutes' | 'maxConcurrent'>;
+type BillingFields = Pick<
+  ErrorEnvelope,
+  'needed' | 'available' | 'nextFreeAt' | 'maxMinutes' | 'maxConcurrent' | 'retryAfterSec'
+>;
 
-/** The minutes gate's numbers, as top-level body fields (the web reads them from the body). */
+/** The minutes gate's numbers and a limiter's wait, as top-level body fields (the web reads them from the body). */
 function billingFields(error: AppError): BillingFields {
+  if (error instanceof RateLimitedError) {
+    return error.retryAfterSec === undefined ? {} : { retryAfterSec: error.retryAfterSec };
+  }
   if (error instanceof InsufficientMinutesError) {
     const { needed, available, nextFreeAt } = error;
     return { needed, available, ...(nextFreeAt && { nextFreeAt }) };
@@ -104,9 +113,15 @@ export function resolveErrorEnvelope(error: HandledError): ResolvedError {
 
   const pluginStatus = pluginStatusCode(error);
   if (pluginStatus !== undefined) {
+    const retryAfterSec = pluginRetryAfterSec(error);
     return {
       statusCode: pluginStatus,
-      body: { error: pluginErrorCode(error), message: error.message, statusCode: pluginStatus },
+      body: {
+        error: pluginErrorCode(error),
+        message: error.message,
+        statusCode: pluginStatus,
+        ...(retryAfterSec !== undefined && { retryAfterSec }),
+      },
     };
   }
 
@@ -122,6 +137,12 @@ export function resolveErrorEnvelope(error: HandledError): ResolvedError {
 function pluginStatusCode(error: HandledError): number | undefined {
   const statusCode = (error as { statusCode?: unknown }).statusCode;
   return typeof statusCode === 'number' && statusCode !== 500 ? statusCode : undefined;
+}
+
+/** The wait a rate-limit builder put on the thrown envelope (`rateLimitedBody`); other plugin errors have none. */
+function pluginRetryAfterSec(error: HandledError): number | undefined {
+  const seconds = (error as { retryAfterSec?: unknown }).retryAfterSec;
+  return typeof seconds === 'number' && Number.isFinite(seconds) ? seconds : undefined;
 }
 
 /**

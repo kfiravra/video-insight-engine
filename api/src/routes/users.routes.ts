@@ -6,9 +6,27 @@ import { ConflictError } from '../utils/errors.js';
 import type { Container } from '../container.js';
 
 /**
+ * Refuse to delete the last active admin: nobody would be left to sign in to the
+ * panel, and boot seeding never creates users to repair it. The same rule guards
+ * `DELETE /api/users/me` and `DELETE /api/admin/users/:id`. A soft-deleted
+ * account is not an active admin, so a repeated request still reaches the
+ * deletion service and gets its own 409 `ACCOUNT_ALREADY_DELETED`.
+ */
+async function assertNotLastActiveAdmin(container: Container, user: UserDocument): Promise<void> {
+  if (user.deletedAt || !effectiveRoles(user).includes('admin')) return;
+  const others = (await container.userRepository.listAdmins()).filter(
+    (admin) => !admin.deletedAt && admin.id !== user._id.toString(),
+  );
+  if (others.length === 0) {
+    throw new ConflictError('LAST_ADMIN', 'This is the last active admin account; make another admin first');
+  }
+}
+
+/**
  * Self-service GDPR Article 17 endpoints.
  *
- *  - DELETE /api/users/me         schedule erasure (30-day grace)
+ *  - DELETE /api/users/me         schedule erasure (30-day grace); the last active
+ *                                 admin is refused (409 `LAST_ADMIN`), as on the admin route
  *  - POST   /api/users/me/restore cancel a pending deletion
  *
  * The cascade itself runs from `userDeletionService` — see
@@ -27,6 +45,10 @@ export async function userMeRoutes(fastify: FastifyInstance): Promise<void> {
       skipSoftDeleteCheck: true,
     },
   }, async (req, reply) => {
+    const user = await fastify.container.userRepository.findById(req.user.userId);
+    // An unknown id is left to the deletion service, which answers 404.
+    if (user) await assertNotLastActiveAdmin(fastify.container, user);
+
     // The origin is kept so the scheduled cascade is recorded as the user's own
     // request ('self') instead of the scheduler's.
     const result = await userDeletionService.requestDeletion(req.user.userId, {
@@ -115,7 +137,8 @@ async function auditAdminDeletionCancelled(
  * `x-admin-actor`; the shared key alone cannot delete. Either mode writes an
  * `adminAudit` row at request time with the account's state before it. The
  * last active admin cannot be deleted (409 `LAST_ADMIN`); an admin may delete
- * themselves only while another active admin remains.
+ * themselves only while another active admin remains, here and on
+ * `DELETE /api/users/me`.
  */
 const adminDeleteParamsSchema = z.object({
   id: z.string().regex(/^[a-f0-9]{24}$/i, 'id must be a 24-char hex ObjectId'),
@@ -147,22 +170,13 @@ function accountSnapshot(user: UserDocument): Record<string, unknown> {
 }
 
 /**
- * Load the account and refuse to delete the last active admin: nobody would be
- * left to sign in to the panel, and boot seeding never creates users to repair
- * it. An unknown id is left to the deletion service, which answers 404.
+ * Load the account, refusing the last active admin, and return its snapshot for
+ * the audit row. An unknown id is left to the deletion service, which answers 404.
  */
 async function loadDeletionTarget(container: Container, userId: string): Promise<Record<string, unknown> | undefined> {
   const user = await container.userRepository.findById(userId);
   if (!user) return undefined;
-  const isActiveAdmin = !user.deletedAt && effectiveRoles(user).includes('admin');
-  if (isActiveAdmin) {
-    const others = (await container.userRepository.listAdmins()).filter(
-      (admin) => !admin.deletedAt && admin.id !== user._id.toString(),
-    );
-    if (others.length === 0) {
-      throw new ConflictError('LAST_ADMIN', 'This is the last active admin account; make another admin first');
-    }
-  }
+  await assertNotLastActiveAdmin(container, user);
   return accountSnapshot(user);
 }
 

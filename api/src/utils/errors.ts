@@ -252,13 +252,6 @@ export class AlreadySharedError extends AppError {
   }
 }
 
-export class ShareNotAllowedError extends AppError {
-  constructor() {
-    super('SHARE_NOT_ALLOWED', 403, 'Sharing is not available on your current tier');
-    this.name = 'ShareNotAllowedError';
-  }
-}
-
 // Override-specific errors
 export class InvalidCategoryError extends AppError {
   constructor(category: string) {
@@ -280,12 +273,17 @@ export class ProviderNotConfiguredError extends AppError {
  * A throttle answered 429: the assistant's own 30/min chat window, or the
  * shared submit burst limit. Same wire shape as the rate-limit plugin's
  * envelope — `RATE_LIMITED`, 429 — so clients keep one code map for all of
- * them; the message says which limit was hit.
+ * them; the message says which limit was hit and `retryAfterSec` (when the
+ * limiter knows it) is what clients localize their own copy from.
  */
 export class RateLimitedError extends AppError {
-  constructor(message = 'Too many messages. Please wait a moment and try again.') {
+  /** Whole seconds until the limiter lets the caller back in; undefined when it cannot tell. */
+  public readonly retryAfterSec?: number;
+
+  constructor(message = 'Too many messages. Please wait a moment and try again.', retryAfterSec?: number) {
     super('RATE_LIMITED', 429, message);
     this.name = 'RateLimitedError';
+    this.retryAfterSec = retryAfterSec;
   }
 }
 

@@ -1,22 +1,13 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
-import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
+import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
+import type { FastifyInstance } from 'fastify';
 import { ObjectId } from 'mongodb';
 
-import { buildApp } from '../../../app.js';
-import type { Container } from '../../../container.js';
 import { config } from '../../../config.js';
-import { createBillingIndexes } from '../../../plugins/mongodb.js';
-import { AdminAuditRepository } from '../../../repositories/admin-audit.repository.js';
-import { BillingRepository, StaleAccountVersionError } from '../../../repositories/billing.repository.js';
-import { UserRepository } from '../../../repositories/user.repository.js';
-import { AuditService } from '../../../services/audit.service.js';
-import { BillingService } from '../../../services/billing/billing.service.js';
 import { addMonthsUtc } from '../../../services/billing/minutes.js';
-import { insertUser } from '../../../services/billing/__tests__/billing-fixtures.js';
-import { adminActorRequest, createMockContainer, TEST_ADMIN_USER_ID, type MockContainer } from '../../../test/helpers.js';
+import { TEST_ADMIN_USER_ID } from '../../../test/helpers.js';
 import { getTestDb } from '../../../test/setup.js';
-
-type Method = 'GET' | 'POST' | 'DELETE';
+import { BASE, useBillingRoutesApp } from './billing-routes.harness.js';
+import type { Method } from './billing-routes.harness.js';
 
 interface MutationRoute {
   name: string;
@@ -43,59 +34,19 @@ const MUTATIONS: MutationRoute[] = [
   },
 ];
 
-const BASE = '/api/admin/billing';
-
-function createLogger() {
-  return { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
-}
-
 describe('admin billing routes', () => {
+  const ctx = useBillingRoutesApp();
+  const { mocks, send, post, auditRows, ledgerFor } = ctx;
   let app: FastifyInstance;
-  let mocks: MockContainer;
-  let logger: ReturnType<typeof createLogger>;
-  let billing: BillingService;
   let userId: string;
 
-  beforeAll(async () => {
-    const db = getTestDb();
-    await createBillingIndexes(db);
-    mocks = createMockContainer();
-    logger = createLogger();
-    const log = logger as unknown as FastifyBaseLogger;
-    billing = new BillingService(new BillingRepository(db), new UserRepository(db), log);
-    const auditService = new AuditService(new AdminAuditRepository(db), log);
-    app = await buildApp({
-      logger: false,
-      container: { ...mocks, billingService: billing, auditService } as unknown as Partial<Container>,
-    });
-    await app.ready();
+  beforeAll(() => {
+    app = ctx.app;
   });
 
-  beforeEach(async () => {
-    mocks.userRepository.hasPermission.mockResolvedValue(true);
-    mocks.adminReplayGuard.claim.mockResolvedValue(true);
-    userId = await insertUser(getTestDb());
+  beforeEach(() => {
+    userId = ctx.userId;
   });
-
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  afterAll(async () => {
-    await app?.close();
-  });
-
-  /** Send `method path` the way vie-admin does: the shared key plus an actor header signed for exactly this request. */
-  async function send(method: Method, path: string, body?: Record<string, unknown>, extraHeaders: Record<string, string> = {}) {
-    const url = `${BASE}${path}`;
-    const request = adminActorRequest(method, url, body);
-    return app.inject({ method, url, headers: { ...request.headers, ...extraHeaders }, payload: request.payload });
-  }
-
-  const post = (path: string, body: Record<string, unknown>, headers: Record<string, string> = {}) =>
-    send('POST', path, body, headers);
-  const auditRows = () => getTestDb().collection('adminAudit').find({}).toArray();
-  const ledgerFor = (auditId: string) => getTestDb().collection('ledgerEntries').find({ 'source.ref': auditId }).toArray();
 
   describe.each(MUTATIONS)('$method $name', (route) => {
     it('should answer 401 without any credentials', async () => {
@@ -456,178 +407,6 @@ describe('admin billing routes', () => {
       const res = await send('DELETE', `/accounts/${userId}/recurring-grants/${new ObjectId().toHexString()}`, { reason: 'x' });
 
       expect(res.statusCode).toBe(404);
-    });
-  });
-
-  describe('retries', () => {
-    const KEY = 'dialog-open-0001';
-    const grant = (key: string, id = userId) =>
-      post(`/accounts/${id}/credits`, { minutes: 30, reason: 'comp' }, { 'idempotency-key': key });
-
-    it('should apply a repeated Idempotency-Key once', async () => {
-      const first = await grant(KEY);
-      const second = await grant(KEY);
-
-      expect(second.json().auditId).toBe(first.json().auditId);
-      expect(second.json().lotId).toBe(first.json().lotId);
-      expect(second.json().after.credits.available).toBe(30);
-    });
-
-    it('should leave one lot, one ledger entry and one audit row after a retry', async () => {
-      const first = await grant(KEY);
-      await grant(KEY);
-
-      expect(await getTestDb().collection('creditLots').countDocuments()).toBe(1);
-      expect(await ledgerFor(first.json().auditId)).toHaveLength(1);
-      expect(await auditRows()).toHaveLength(1);
-    });
-
-    it('should treat a different key as a new grant', async () => {
-      await grant(KEY);
-      const second = await grant('dialog-open-0002');
-
-      expect(second.json().after.credits.available).toBe(60);
-    });
-
-    it('should not let a key leak across users', async () => {
-      const other = await insertUser(getTestDb());
-      await grant(KEY);
-
-      const second = await grant(KEY, other);
-
-      expect(second.json().after.credits.available).toBe(30);
-    });
-
-    it('should not let a key leak across actions', async () => {
-      await grant(KEY);
-
-      const res = await post(`/accounts/${userId}/adjust`, { bucket: 'credit', minutes: 7, reason: 'x' }, { 'idempotency-key': KEY });
-
-      expect(res.json().after.credits.available).toBe(37);
-    });
-
-    it('should give every request its own audit id without a key', async () => {
-      const first = await post(`/accounts/${userId}/credits`, { minutes: 5, reason: 'a' });
-      const second = await post(`/accounts/${userId}/credits`, { minutes: 5, reason: 'b' });
-
-      expect(second.json().auditId).not.toBe(first.json().auditId);
-    });
-
-    describe('a key reused for a different request', () => {
-      const withKey = (path: string, body: Record<string, unknown>) => post(path, body, { 'idempotency-key': KEY });
-
-      it('should refuse different credit minutes with 422 IDEMPOTENCY_KEY_REUSED and grant nothing more', async () => {
-        await withKey(`/accounts/${userId}/credits`, { minutes: 30, reason: 'comp' });
-
-        const second = await withKey(`/accounts/${userId}/credits`, { minutes: 5000, reason: 'comp' });
-
-        expect([second.statusCode, second.json().error]).toEqual([422, 'IDEMPOTENCY_KEY_REUSED']);
-        expect(await getTestDb().collection('creditLots').countDocuments()).toBe(1);
-      });
-
-      it('should refuse a different reason too: the request is not the same', async () => {
-        await withKey(`/accounts/${userId}/credits`, { minutes: 30, reason: 'comp' });
-
-        const second = await withKey(`/accounts/${userId}/credits`, { minutes: 30, reason: 'another story' });
-
-        expect(second.statusCode).toBe(422);
-      });
-
-      it('should refuse a changed cap and leave the first cap in force (setCaps writes no ledger rows)', async () => {
-        await withKey(`/accounts/${userId}/caps`, { blocked: true, reason: 'abuse' });
-
-        const second = await withKey(`/accounts/${userId}/caps`, { blocked: false, reason: 'abuse' });
-
-        const detail = (await send('GET', `/accounts/${userId}`)).json();
-        expect([second.statusCode, detail.account.caps.blocked]).toEqual([422, true]);
-      });
-
-      it('should refuse a different plan and leave the first plan in force', async () => {
-        await withKey(`/accounts/${userId}/plan`, { planId: 'pro', reason: 'comp' });
-
-        const second = await withKey(`/accounts/${userId}/plan`, { planId: 'free', reason: 'comp' });
-
-        const detail = (await send('GET', `/accounts/${userId}`)).json();
-        expect([second.statusCode, detail.account.plan.id]).toEqual([422, 'pro']);
-      });
-
-      it('should write no second audit row for the refused request', async () => {
-        await withKey(`/accounts/${userId}/caps`, { blocked: true, reason: 'abuse' });
-        await withKey(`/accounts/${userId}/caps`, { blocked: false, reason: 'abuse' });
-
-        expect(await auditRows()).toHaveLength(1);
-      });
-
-      it('should still answer an identical retry with the first result', async () => {
-        const first = await withKey(`/accounts/${userId}/caps`, { blocked: true, reason: 'abuse' });
-
-        const retry = await withKey(`/accounts/${userId}/caps`, { blocked: true, reason: 'abuse' });
-
-        expect([retry.statusCode, retry.json().auditId]).toEqual([200, first.json().auditId]);
-      });
-
-      it('should apply a retry whose audit row was never written, once the first attempt\'s ledger entries exist', async () => {
-        vi.spyOn(AdminAuditRepository.prototype, 'insert').mockRejectedValueOnce(new Error('audit down'));
-        await withKey(`/accounts/${userId}/credits`, { minutes: 30, reason: 'comp' });
-
-        const retry = await withKey(`/accounts/${userId}/credits`, { minutes: 30, reason: 'comp' });
-
-        expect(retry.statusCode).toBe(200);
-        expect(await getTestDb().collection('creditLots').countDocuments()).toBe(1);
-        expect(await auditRows()).toHaveLength(1);
-      });
-
-      it('should record a hash of the request on the audit row without exposing it in the audit view', async () => {
-        await withKey(`/accounts/${userId}/credits`, { minutes: 30, reason: 'comp' });
-
-        const [row] = await auditRows();
-        const view = (await app.inject({ method: 'GET', url: '/api/admin/audit', headers: adminActorRequest('GET', '/api/admin/audit').headers })).json();
-        expect(row.requestHash).toMatch(/^[0-9a-f]{64}$/);
-        expect(view.entries[0]).not.toHaveProperty('requestHash');
-      });
-    });
-
-    it('should reject a malformed Idempotency-Key', async () => {
-      const res = await grant('short');
-
-      expect(res.statusCode).toBe(400);
-    });
-  });
-
-  describe('failures', () => {
-    it('should still succeed when the audit write fails, logging the audit id at error', async () => {
-      vi.spyOn(AdminAuditRepository.prototype, 'insert').mockRejectedValueOnce(new Error('audit down'));
-
-      const res = await post(`/accounts/${userId}/credits`, { minutes: 30, reason: 'comp' });
-
-      expect(res.statusCode).toBe(200);
-      expect(logger.error).toHaveBeenCalledWith(
-        expect.objectContaining({ auditId: res.json().auditId, action: 'billing.credits.grant' }),
-        'admin_audit_write_failed',
-      );
-    });
-
-    it('should keep the ledger change when the audit write fails', async () => {
-      vi.spyOn(AdminAuditRepository.prototype, 'insert').mockRejectedValueOnce(new Error('audit down'));
-
-      const res = await post(`/accounts/${userId}/credits`, { minutes: 30, reason: 'comp' });
-
-      expect(await ledgerFor(res.json().auditId)).toHaveLength(1);
-    });
-
-    it('should answer 409 ACCOUNT_BUSY when the transaction retries are exhausted', async () => {
-      vi.spyOn(billing, 'grantLot').mockRejectedValueOnce(new StaleAccountVersionError());
-
-      const res = await post(`/accounts/${userId}/credits`, { minutes: 30, reason: 'comp' });
-
-      expect(res.statusCode).toBe(409);
-      expect(res.json().error).toBe('ACCOUNT_BUSY');
-    });
-
-    it('should not write an audit row for a refused mutation', async () => {
-      await post(`/accounts/${userId}/credits`, { minutes: -1, reason: 'x' });
-
-      expect(await auditRows()).toEqual([]);
     });
   });
 });

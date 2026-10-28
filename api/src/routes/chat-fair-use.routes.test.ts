@@ -9,6 +9,7 @@ import { BillingRepository } from '../repositories/billing.repository.js';
 import { UserRepository } from '../repositories/user.repository.js';
 import { BillingService } from '../services/billing/billing.service.js';
 import { ChatFairUseService } from '../services/chat-fair-use.service.js';
+import { config } from '../config.js';
 import { insertUser, makeClock } from '../services/billing/__tests__/billing-fixtures.js';
 import type { TestClock } from '../services/billing/__tests__/billing-fixtures.js';
 
@@ -240,6 +241,54 @@ describe('free chat fair use on the chat routes', () => {
 
       expect(responses.map((response) => response.statusCode)).toEqual([200, 200, 200]);
     });
+  });
+
+  describe('a request refused for another reason', () => {
+    it('should not count a message whose body is invalid', async () => {
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/videos/${VIDEO_SUMMARY_ID}/chat`,
+        headers: authFor(userId),
+        payload: {},
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect(mockContainer.chatFairUse.consume).not.toHaveBeenCalled();
+    });
+
+    it('should not count a library message whose body is invalid', async () => {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/assistant/library/chat',
+        headers: authFor(userId),
+        payload: { message: '' },
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect(mockContainer.chatFairUse.consume).not.toHaveBeenCalled();
+    });
+
+    it('should not count a message for a video the user cannot open', async () => {
+      mockContainer.videoRepository.userHasAccessToSummary.mockResolvedValue(false);
+
+      const response = await sendVideoChat();
+
+      expect(response.statusCode).toBe(404);
+      expect(mockContainer.chatFairUse.consume).not.toHaveBeenCalled();
+    });
+
+    it('should not count a message the global rate limiter turned away', async () => {
+      const spammer = await insertUser(getTestDb());
+      mockContainer.chatFairUse.consume.mockResolvedValue(undefined);
+      let last = await sendVideoChat(spammer);
+      for (let sent = 1; sent <= config.RATE_LIMIT_MAX; sent += 1) {
+        last = await sendVideoChat(spammer);
+      }
+
+      expect(last.statusCode).toBe(429);
+      expect(last.json()).toMatchObject({ error: 'RATE_LIMITED', retryAfterSec: expect.any(Number) });
+      expect(mockContainer.chatFairUse.consume).toHaveBeenCalledTimes(config.RATE_LIMIT_MAX);
+    }, 60_000);
   });
 
   describe('routes that are not chat messages', () => {

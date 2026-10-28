@@ -12,6 +12,29 @@ export interface RateLimitPluginOptions {
   nameSpace?: string;
 }
 
+/** The RATE_LIMITED envelope every @fastify/rate-limit 429 carries. */
+export interface RateLimitedBody {
+  error: 'RATE_LIMITED';
+  message: string;
+  statusCode: 429;
+  /** Whole seconds until the window reopens (at least 1); clients localize their copy from it. */
+  retryAfterSec: number;
+}
+
+/**
+ * Build the 429 body for an `errorResponseBuilder`. `ttlMs` is the
+ * milliseconds the plugin reports until the window resets (`context.ttl`).
+ * Route-level builders use this too, so no RATE_LIMITED answer lacks the wait.
+ */
+export function rateLimitedBody(message: string, ttlMs: number): RateLimitedBody {
+  return {
+    error: 'RATE_LIMITED',
+    message,
+    statusCode: 429,
+    retryAfterSec: Math.max(1, Math.ceil(ttlMs / 1000)),
+  };
+}
+
 /**
  * Per-user rate-limit key. Runs at `preHandler` (see plugin options below),
  * AFTER the route's own auth preHandlers, so `req.user` is populated for
@@ -97,11 +120,7 @@ async function rateLimitSetup(fastify: FastifyInstance, opts: RateLimitPluginOpt
     // traffic. Matches the dispatch-guard's fail-open contract.
     skipOnError: true,
     ...(redis ? { redis, nameSpace: opts.nameSpace ?? 'vie:api:rate-limit:' } : {}),
-    errorResponseBuilder: () => ({
-      error: 'RATE_LIMITED',
-      message: 'Too many requests',
-      statusCode: 429,
-    }),
+    errorResponseBuilder: (_req, context) => rateLimitedBody('Too many requests', context.ttl),
   });
 }
 

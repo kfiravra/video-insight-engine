@@ -94,12 +94,29 @@ describe('BoardInlinePaste billing refusals', () => {
     expect(await screen.findByTestId('billing-notice')).toHaveTextContent('You already have 2 videos running.');
   });
 
-  it('should show the server message for the burst limit (429)', async () => {
+  it('should say how long to wait when the burst limit sends retryAfterSec (429)', async () => {
+    rejectWith(429, {
+      error: 'RATE_LIMITED',
+      message: 'Up to 20 videos per hour.',
+      statusCode: 429,
+      retryAfterSec: 25 * 60,
+    });
+
+    await submit();
+
+    const notice = await screen.findByTestId('billing-notice');
+    expect(notice).toHaveTextContent("You're adding videos too fast. Try again in 25m.");
+    expect(notice).not.toHaveTextContent('Up to 20 videos per hour');
+  });
+
+  it('should not show the server English message for the burst limit when retryAfterSec is missing (429)', async () => {
     rejectWith(429, { error: 'RATE_LIMITED', message: 'Up to 20 videos per hour.', statusCode: 429 });
 
     await submit();
 
-    expect(await screen.findByTestId('billing-notice')).toHaveTextContent('Up to 20 videos per hour.');
+    expect(await screen.findByTestId('billing-notice')).toHaveTextContent(
+      "You're adding videos too fast. Try again in a moment.",
+    );
   });
 
   it('should keep showing the plain error for a failure that is not a billing refusal', async () => {

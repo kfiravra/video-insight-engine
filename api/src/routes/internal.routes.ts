@@ -13,6 +13,8 @@ const videoStatusSchema = z.object({
     progress: z.number().optional(),
     message: z.string().optional(),
     error: z.string().optional().nullable(),
+    /** `completed` served from the summarizer's response cache: no run happened (I3). */
+    cacheHit: z.boolean().optional(),
   }),
 });
 
@@ -89,7 +91,7 @@ export async function internalRoutes(fastify: FastifyInstance) {
 
     if (event.type === 'video.status') {
       // Update userVideos status to match
-      const { videoSummaryId, status, userId } = event.payload;
+      const { videoSummaryId, status, userId, cacheHit } = event.payload;
 
       await fastify.mongo.db.collection('userVideos').updateMany(
         { videoSummaryId: new ObjectId(videoSummaryId) },
@@ -177,9 +179,10 @@ export async function internalRoutes(fastify: FastifyInstance) {
       }
 
       if (status === 'completed' || status === 'failed') {
-        // Minutes ledger: settle (completed) / release (failed) the run's
-        // hold. Awaited, never throws; a hold it misses is the repair job's.
-        await billingEnforcement.runFinished(videoSummaryId, status);
+        // Minutes ledger: settle (completed) / release (failed, or a cache
+        // hit that ran nothing) the run's hold. Awaited, never throws; a hold
+        // it misses is the repair job's.
+        await billingEnforcement.runFinished(videoSummaryId, status === 'completed' && cacheHit ? 'cached' : status);
         await settleServedVersion(videoRepository, videoSummaryId, status, req.log);
       }
     } else if (event.type === 'expansion.status') {

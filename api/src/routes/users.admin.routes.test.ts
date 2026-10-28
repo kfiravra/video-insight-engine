@@ -197,4 +197,87 @@ describe('admin user deletion route', () => {
       });
     });
   });
+
+  // ─── An admin deleting their own account through the self-service route ──
+
+  describe('DELETE /api/users/me by an admin', () => {
+    // A new user id per test: the route allows 5 deletions an hour per user.
+    let me: string;
+    const deleteMe = async () => {
+      const token = app.jwt.sign({ userId: me, email: `${me}@example.com`, type: 'access' });
+      return app.inject({
+        method: 'DELETE',
+        url: '/api/users/me',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        payload: {},
+      });
+    };
+
+    beforeEach(() => {
+      me = new ObjectId().toString();
+      mockContainer.userDeletionService.requestDeletion.mockResolvedValue({
+        userId: me,
+        scheduledHardDeleteAt: new Date('2026-06-19T12:00:00Z'),
+        graceDays: 30,
+      });
+    });
+
+    it('should refuse the last active admin with 409 LAST_ADMIN, deleting nothing', async () => {
+      mockContainer.userRepository.findById.mockResolvedValue(userDoc(me, { roles: ['admin'], roleSource: 'env' }));
+      mockContainer.userRepository.listAdmins.mockResolvedValue([adminSummary(me)]);
+
+      const res = await deleteMe();
+
+      expect([res.statusCode, res.json().error]).toEqual([409, 'LAST_ADMIN']);
+      expect(mockContainer.userDeletionService.requestDeletion).not.toHaveBeenCalled();
+    });
+
+    it('should recognise a legacy role:admin account as the last admin', async () => {
+      mockContainer.userRepository.findById.mockResolvedValue(userDoc(me, { role: 'admin' }));
+      mockContainer.userRepository.listAdmins.mockResolvedValue([adminSummary(me)]);
+
+      expect((await deleteMe()).statusCode).toBe(409);
+    });
+
+    it('should not count a soft-deleted admin as the one that remains', async () => {
+      mockContainer.userRepository.findById.mockResolvedValue(userDoc(me, { roles: ['admin'] }));
+      mockContainer.userRepository.listAdmins.mockResolvedValue([
+        adminSummary(me),
+        adminSummary(new ObjectId().toString(), new Date()),
+      ]);
+
+      expect((await deleteMe()).statusCode).toBe(409);
+    });
+
+    it('should let an admin delete their account while another active admin remains', async () => {
+      mockContainer.userRepository.findById.mockResolvedValue(userDoc(me, { roles: ['admin'] }));
+      mockContainer.userRepository.listAdmins.mockResolvedValue([adminSummary(me), adminSummary(new ObjectId().toString())]);
+
+      const res = await deleteMe();
+
+      expect(res.statusCode).toBe(202);
+      expect(mockContainer.userDeletionService.requestDeletion).toHaveBeenCalledWith(me, {
+        origin: { initiatedBy: 'self', adminId: null, reason: null },
+      });
+    });
+
+    it('should not look for other admins when the user is not an admin', async () => {
+      mockContainer.userRepository.findById.mockResolvedValue(userDoc(me));
+
+      const res = await deleteMe();
+
+      expect(res.statusCode).toBe(202);
+      expect(mockContainer.userRepository.listAdmins).not.toHaveBeenCalled();
+    });
+
+    it('should leave an already soft-deleted admin to the deletion service, not the guard', async () => {
+      mockContainer.userRepository.findById.mockResolvedValue(userDoc(me, { roles: ['admin'], deletedAt: new Date() }));
+      mockContainer.userRepository.listAdmins.mockResolvedValue([adminSummary(me, new Date())]);
+
+      await deleteMe();
+
+      expect(mockContainer.userDeletionService.requestDeletion).toHaveBeenCalled();
+      expect(mockContainer.userRepository.listAdmins).not.toHaveBeenCalled();
+    });
+  });
 });

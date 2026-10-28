@@ -437,7 +437,7 @@ The per-stage defaults are the pipeline-1min 4.0d model A/B picks, rounds 1 + 2 
 | `ENVIRONMENT` | prod only: `production` | `production` arms the default-`INTERNAL_SECRET` refusal and the SSE soft-fail and keeps `PROMPT_SOURCE=disk` off; dev keeps `config.py`'s `""` (a dev name) |
 | `LOG_FORMAT` | prod only: `json` | `json` = CloudWatch-parseable logs; dev keeps `console` |
 | `API_URL` | prod only: `http://vie-api:3000` | Target of the `/internal/status` callbacks (dev keeps the same `config.py` default) |
-| `MAX_VIDEO_DURATION_MINUTES` / `WHISPER_MAX_DURATION_MINUTES` | prod only: `600` / `600` | Longest accepted video, and longest video allowed onto the paid audio fallback (the server template sets the demo's 30 / 30) |
+| `MAX_VIDEO_DURATION_MINUTES` / `WHISPER_MAX_DURATION_MINUTES` | prod only: `600` / `600` | Longest accepted video, and longest video allowed onto the paid audio fallback. The server template sets `180` / `180` (D2): paid minutes cover videos up to 180 minutes, so a lower cap would let the minutes gate admit a video the summarizer then refuses after the hold. With no row, prod gets the compose default 600 (the summarizer's own default); the minutes gate still caps submits at 180 |
 | `STALL_SWEEP_ENABLED` / `STALL_SWEEP_INTERVAL_SECONDS` / `STALL_THRESHOLD_MINUTES` | `true` / `300` / `30` | Summarizer stall sweeper — fails `processing` rows with no progress + no live producer lock, alerts `pipeline_stalled` |
 
 **Service-level lines (not the anchor)**

@@ -81,7 +81,7 @@ class TestPlanDistributionPipeline:
         lookup = PLAN_DISTRIBUTION_PIPELINE[0]["$lookup"]
 
         assert lookup["from"] == "billingAccounts"
-        assert lookup["let"] == {"uid": {"$toString": "$_id"}}
+        assert lookup["let"] == {"uid": "$_id"}
         conditions = lookup["pipeline"][0]["$match"]["$expr"]["$and"]
         assert {"$eq": ["$ownerType", "user"]} in conditions
         assert {"$eq": ["$ownerId", "$$uid"]} in conditions
@@ -90,6 +90,10 @@ class TestPlanDistributionPipeline:
         group = PLAN_DISTRIBUTION_PIPELINE[1]["$group"]
 
         assert group["_id"] == {"$ifNull": [{"$arrayElemAt": ["$_account.plan.id", 0]}, "free"]}
+
+    def test_should_compare_the_objectid_as_is_not_as_a_string(self):
+        # vie-api stores billingAccounts.ownerId as an ObjectId; a $toString join matches nothing.
+        assert "$toString" not in repr(PLAN_DISTRIBUTION_PIPELINE)
 
     def test_should_not_read_the_old_tier_field(self):
         assert "$tier" not in repr(PLAN_DISTRIBUTION_PIPELINE)

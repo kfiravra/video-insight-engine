@@ -77,6 +77,7 @@ export class SubmitBurstLimiter implements ISubmitBurstLimiter {
 
     throw new RateLimitedError(
       `Too many submissions in the last hour. Try again in ${minutesLeft(hit.secondsLeft)} min.`,
+      Math.max(1, hit.secondsLeft),
     );
   }
 

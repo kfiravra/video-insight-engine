@@ -87,6 +87,17 @@ describe('VideoSubmissionService on the minutes ledger', () => {
   });
 
   describe('admission', () => {
+    it('should skip the metadata pre-flight for a video already summarised, using its stored length (I10)', async () => {
+      const url = freshVideo();
+      const youtubeId = url.split('v=')[1];
+      await getTestDb().collection('videoSummaryCache').insertOne({ youtubeId, status: 'completed', duration: 12 * 60 });
+
+      await service.submit(input({ url }));
+
+      const [hold] = await holds();
+      expect([h.metadata.getVideoMetadata.mock.calls.length, hold.minutes]).toEqual([0, -12]);
+    });
+
     it('should hold before createVideo, keyed on a server id', async () => {
       await submitMinutes(10);
 

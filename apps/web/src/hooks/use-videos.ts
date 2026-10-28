@@ -124,7 +124,8 @@ export function useBulkMoveVideos() {
   });
 }
 
-// Retry/re-summarize a failed video
+// Retry/re-summarize a video. A billed submit like any other: a 402 / 422 / 403 / 429
+// refusal comes back as the mutation's `error` (render it with RetryErrorNotice).
 export function useRetryVideo() {
   const queryClient = useQueryClient();
 
@@ -142,6 +143,8 @@ export function useRetryVideo() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.videos.lists() });
+      // A retry is a billed submit: it holds minutes, so the tile must re-read them.
+      queryClient.invalidateQueries({ queryKey: usageQueryKey });
     },
   });
 }

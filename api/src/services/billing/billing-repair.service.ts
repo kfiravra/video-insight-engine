@@ -111,7 +111,7 @@ export class BillingRepairService {
     const run = hold.youtubeId ? await this.deps.maintenance.findRun(hold.youtubeId, hold.requestId) : null;
     const action = staleHoldAction(run, now, maxAgeMs, hold.createdAt);
     if (action === 'keep') return;
-    const costUsd = await this.deps.llmUsage.sumCostByRequestId(run?.requestId ?? hold.requestId);
+    const costUsd = await this.deps.llmUsage.sumRunCost(run?.requestId ?? hold.requestId, run?._id?.toHexString() ?? null);
     if (action === 'settle') {
       const outcome = await this.deps.billing.settle(hold.requestId, { costUsd });
       if (outcome.status === 'debited') report.holdsSettled++;

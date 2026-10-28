@@ -25,6 +25,10 @@ export interface DurationLabels {
 export interface BillingLabels {
   minutes: PluralForms;
   videos: PluralForms;
+  /** The same nouns after a preposition ("up to {minutes}", "from {total}"). Only Arabic
+   *  differs: its dual takes the oblique case there (دقيقتين), not the nominative (دقيقتان). */
+  minutesOblique: PluralForms;
+  videosOblique: PluralForms;
   duration: DurationLabels;
   // Usage tile
   tileTitle: string;
@@ -36,6 +40,8 @@ export interface BillingLabels {
   freeVideo: string;
   freeVideoReady: string;
   freeVideoNext: string;
+  /** The server says unavailable but the countdown reads zero (a fast clock): about to open. */
+  freeVideoOpeningSoon: string;
   freeVideoUnavailable: string;
   freeVideoUpTo: string;
   planMinutes: string;
@@ -58,8 +64,11 @@ export interface BillingLabels {
   errorTooManyRuns: string;
   errorTooManyRunsUnknown: string;
   errorRateLimited: string;
+  /** {when} is a countdown from the server's `retryAfterSec`. */
+  errorRateLimitedIn: string;
   errorChatLimit: string;
-  errorChatLimitNext: string;
+  /** {time} is a clock time (and date, when not today), so saved chat text stays true. */
+  errorChatLimitAt: string;
   // /settings/billing
   pageTitle: string;
   pageIntro: string;
@@ -67,6 +76,10 @@ export interface BillingLabels {
   planSection: string;
   planTermEnds: string;
   planFreeNote: string;
+  /** The free video is switched off for this account (`free.perWindow` is 0). */
+  planFreeNoteOff: string;
+  /** More than one free video per window; used for counts above 1. */
+  planFreeNoteMany: PluralForms;
   cycleEnds: string;
   minutesSection: string;
   lotsSection: string;
@@ -79,6 +92,8 @@ export interface BillingLabels {
   teamNote: string;
   // Playlist import result
   playlistResult: string;
+  /** The up-front quote for the whole playlist; {needed} and {available} are minutes phrases. */
+  playlistNeeds: string;
   playlistFailedHeading: string;
   playlistDismiss: string;
   failedInsufficient: string;
@@ -86,6 +101,9 @@ export interface BillingLabels {
   failedBlocked: string;
   failedTooManyRuns: string;
   failedRateLimited: string;
+  failedUnreadable: string;
+  /** The stream-error card for a video whose run already failed; Retry starts a new, billed run. */
+  videoFailedRetry: string;
   failedUnknown: string;
 }
 

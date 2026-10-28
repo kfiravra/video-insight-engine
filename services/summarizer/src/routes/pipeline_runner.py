@@ -61,6 +61,22 @@ def _persist_cache_hit(
     repository.save_structured_result(video_summary_id, cached)
 
 
+async def _complete_from_cache(
+    repository: MongoDBVideoRepository, video_summary_id: str, cached: dict[str, Any]
+) -> None:
+    """Save a Redis-served payload on the row, then report it completed.
+
+    The status carries ``cache_hit`` so vie-api gives the run's minutes hold
+    back as a cached serve instead of settling a run that never ran (I3).
+    Sent only after the save, so the API's served-version promote sees the
+    completed row.
+    """
+    await asyncio.to_thread(_persist_cache_hit, repository, video_summary_id, cached)
+    await send_video_status(
+        video_summary_id, None, ProcessingStatus.COMPLETED.value, cache_hit=True
+    )
+
+
 def _resolve_run_attribution(
     entry: dict[str, Any], ctxvars: dict[str, Any]
 ) -> tuple[str | None, str | None]:
@@ -190,13 +206,12 @@ async def stream_summarization(
                     ):
                         logger.info("[pipeline] Redis cache HIT for youtube_id=%s", youtube_id)
                         update_trace_metadata({"cacheHit": True, "cacheSource": "redis"})
-                        # Fire-and-forget DB save — don't block the cache-hit fast path
+                        # Fire-and-forget DB save + completed status — don't block
+                        # the cache-hit fast path
                         if entry.get("status") != ProcessingStatus.COMPLETED.value:
                             _vid_id = video_summary_id  # capture for lambda
                             task = asyncio.create_task(
-                                asyncio.to_thread(
-                                    _persist_cache_hit, repository, video_summary_id, cached
-                                )
+                                _complete_from_cache(repository, video_summary_id, cached)
                             )
                             task.add_done_callback(
                                 lambda t, vid=_vid_id: (

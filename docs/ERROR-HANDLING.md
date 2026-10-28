@@ -62,12 +62,12 @@ See [docs/SECURITY.md](./SECURITY.md#rate-limiting) for implementation.
 
 | Code                  | Status | Message                                       | When                                                                            |
 | --------------------- | ------ | --------------------------------------------- | ------------------------------------------------------------------------------- |
-| `RATE_LIMITED`        | 429    | Too many requests                             | Rate limit exceeded (global plugin, per-route quota, the assistant's chat window, or the submit burst limit — see below) |
+| `RATE_LIMITED`        | 429    | Too many requests                             | Rate limit exceeded (global plugin, per-route quota, the assistant's chat window, or the submit burst limit — see below). Every one except the assistant's own chat window carries `retryAfterSec` (whole seconds, at least 1) in the body |
 | `CHAT_LIMIT_REACHED`  | 429    | Free accounts can send 50 chat messages in 24 hours. More open up as the last 24 hours pass. | A free account used its chat messages for the rolling 24 hours. Response includes `nextAt` (ISO). See below. |
 
-**Submit burst limit.** `POST /api/videos`, the assistant's `POST /internal/assistant/generate` and `POST /api/playlists/import` share one bucket of `SUBMIT_BURST_LIMIT_PER_HOUR` (default 20) submissions per user per fixed hour. Over it, the gateway answers `429 RATE_LIMITED` with "Too many submissions in the last hour. Try again in N min." in the same envelope (N is the time left, rounded up to whole minutes, at least 1; the message never says "daily"). It sets no `Retry-After`. A Redis error fails open with a `submit_burst_check_failed` warning. Details in [SECURITY.md](./SECURITY.md#submit-burst-limit).
+**Submit burst limit.** `POST /api/videos`, the assistant's `POST /internal/assistant/generate` and `POST /api/playlists/import` share one bucket of `SUBMIT_BURST_LIMIT_PER_HOUR` (default 20) submissions per user per fixed hour. Over it, the gateway answers `429 RATE_LIMITED` with "Too many submissions in the last hour. Try again in N min." in the same envelope (N is the time left, rounded up to whole minutes, at least 1; the message never says "daily"). The body also carries `retryAfterSec`, the same wait in whole seconds, which is what clients build their own (localized) copy from; it sets no `Retry-After` header. A Redis error fails open with a `submit_burst_check_failed` warning. Details in [SECURITY.md](./SECURITY.md#submit-burst-limit).
 
-**Free chat fair use.** `POST /api/videos/:videoSummaryId/chat` and `POST /api/assistant/library/chat` share one allowance of `CHAT_FREE_MESSAGES_PER_DAY` (default 50) messages per **free** account in any rolling 24 hours. The 51st gets `429 CHAT_LIMIT_REACHED` in the `{ error, message, statusCode }` envelope plus `nextAt`: the moment the oldest counted message turns 24 hours old and a slot frees. It is not `RATE_LIMITED`, so clients can tell "you are out until `nextAt`" from "slow down". Pro accounts are unlimited, and chat never touches the minutes ledger. A Redis or plan-lookup error fails open (`chat_fair_use_check_failed` / `chat_fair_use_plan_lookup_failed` warnings). A refused message is not counted and does not extend the wait; one that later fails upstream (502) was already counted. Details in [SERVICE-ASSISTANT.md](./SERVICE-ASSISTANT.md#free-account-chat-fair-use).
+**Free chat fair use.** `POST /api/videos/:videoSummaryId/chat` and `POST /api/assistant/library/chat` share one allowance of `CHAT_FREE_MESSAGES_PER_DAY` (default 50) messages per **free** account in any rolling 24 hours. The 51st gets `429 CHAT_LIMIT_REACHED` in the `{ error, message, statusCode }` envelope plus `nextAt`: the moment the oldest counted message turns 24 hours old and a slot frees. It is not `RATE_LIMITED`, so clients can tell "you are out until `nextAt`" from "slow down". Pro accounts are unlimited, and chat never touches the minutes ledger. A Redis or plan-lookup error fails open (`chat_fair_use_check_failed` / `chat_fair_use_plan_lookup_failed` warnings). A refused message is not counted and does not extend the wait; one that later fails upstream (502) was already counted. The count happens in the route handler, after the global rate limiter (which runs last among the preHandlers), body validation and the access check, so a request refused for any of those reasons does not burn a message. Details in [SERVICE-ASSISTANT.md](./SERVICE-ASSISTANT.md#free-account-chat-fair-use).
 
 **Assistant chat.** The assistant service enforces its own 30 chat requests/min per user. When it answers 429 to `POST /api/videos/:id/chat` or `POST /api/assistant/library/chat`, the gateway returns `429 RATE_LIMITED` ("Too many messages. Please wait a moment and try again.") in the same `{ error, message, statusCode }` envelope as the rate-limit plugin — not a 502. Any other non-OK assistant status stays `502 SERVICE_UNAVAILABLE`. The assistant sends no `Retry-After`, so the gateway sets none. The web chat shows the slow-down message for a 429.
 
@@ -101,8 +101,18 @@ as a whole first (the result's `billing: { neededMinutes, availableMinutes,
 freeVideoAvailable }`), then admitted as a prefix: items in order until the
 first one the minutes cannot cover; later items are still served if that costs
 nothing, the rest are listed in `failedVideos` with the code (a too-long item
-or one with no known length is listed and skipped, the rest continue). A run id
-already holding for another user or video answers `409 HOLD_CONFLICT`.
+or one with no known length is listed and skipped, the rest continue). A video
+only paid minutes could cover does not stop the import while the free video is
+still open — a later item of up to 30 minutes can still take it (W2). Every
+`failedVideos[].error` is a code; an unexpected failure is `INTERNAL_ERROR` and
+is logged (`playlist_item_import_failed`). A folder the import created and left
+empty is removed again (`folder: null`). A run id already holding for another
+user or video answers `409 HOLD_CONFLICT`. A guard-held dispatch (another live
+run already owns the row) counts as attached, so its hold goes back at once.
+
+**Stream of a failed video.** `GET /api/videos/:id/stream` on a `failed` row
+answers one SSE `error` event with code `VIDEO_FAILED` and ends; it never
+starts a run (W1). Retry through `POST /api/videos`, which quotes and holds.
 Hold / debit keys: [IDEMPOTENCY.md](./IDEMPOTENCY.md#minutes-ledger-holds).
 
 ### Validation Errors (400)
@@ -120,7 +130,7 @@ Emitted by `/api/admin/*` and `DELETE /api/users/me`; request shapes in [API-REF
 
 | Code                       | Status | When |
 | -------------------------- | ------ | ---- |
-| `LAST_ADMIN`               | 409    | `DELETE /api/admin/users/:id` on the only active admin account (soft-deleted admins do not count). Make another admin first |
+| `LAST_ADMIN`               | 409    | `DELETE /api/admin/users/:id` or `DELETE /api/users/me` on the only active admin account (soft-deleted admins do not count). Make another admin first |
 | `ACCOUNT_BUSY`             | 409    | A minutes-account mutation stayed contended through every transaction retry; retry with the same `Idempotency-Key` |
 | `IDEMPOTENCY_KEY_REUSED`   | 422    | The `Idempotency-Key` of an admin billing mutation was already used for a different request (body, plan, scope or user). Send a new key |
 | `SERVICE_UNAVAILABLE`      | 503    | Replay protection (Redis) is down: an admin mutation is refused rather than let through unprotected. Nothing was applied; retry |
@@ -132,7 +142,7 @@ vie-admin turns a vie-api timeout on a mutation into `504` with "the change may 
 | Code                | Message                                  | When               |
 | ------------------- | ---------------------------------------- | ------------------ |
 | `NO_TRANSCRIPT`     | No transcript available for this video   | Captions disabled  |
-| `VIDEO_TOO_LONG`    | Video exceeds maximum duration           | > `MAX_VIDEO_DURATION_MINUTES` (summarizer; config default 600 min, the `.env` templates set 30) |
+| `VIDEO_TOO_LONG`    | Video exceeds maximum duration           | > `MAX_VIDEO_DURATION_MINUTES` (summarizer; config default 600 min, the `.env` templates set 180 = the paid maximum) |
 | `VIDEO_TOO_SHORT`   | Video too short to summarize             | < 60 seconds       |
 | `VIDEO_UNAVAILABLE` | Video is private or unavailable          | Can't access       |
 | `VIDEO_RESTRICTED`  | Age-restricted video not supported       | Requires auth      |

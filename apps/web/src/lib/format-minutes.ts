@@ -79,6 +79,37 @@ export function formatDurationUntil(
   return parts.join(" ");
 }
 
+/**
+ * A wait of `seconds` as a countdown ("45m", "2h 5m"), in the same units as
+ * `formatDurationUntil`. Returns null for a missing, non-finite or non-positive
+ * wait, so callers can fall back to copy without a time.
+ */
+export function formatDurationSeconds(
+  seconds: number | null | undefined,
+  nowMs: number,
+  language: string,
+  units: DurationLabels,
+): string | null {
+  if (seconds === null || seconds === undefined || !Number.isFinite(seconds) || seconds <= 0) return null;
+  return formatDurationUntil(new Date(nowMs + seconds * 1000).toISOString(), nowMs, language, units);
+}
+
+/**
+ * When something happens, as a clock time ("3:15 PM"), with the date ("Nov 2, 3:15 PM")
+ * when it is not today. Unlike a countdown it stays true in text saved for later.
+ */
+export function formatMoment(iso: string | null | undefined, nowMs: number, language: string): string | null {
+  if (!iso) return null;
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return null;
+  const locale = latinLocale(language);
+  const sameDay = date.toDateString() === new Date(nowMs).toDateString();
+  const options: Intl.DateTimeFormatOptions = sameDay
+    ? { timeStyle: "short" }
+    : { dateStyle: "medium", timeStyle: "short" };
+  return new Intl.DateTimeFormat(locale, options).format(date);
+}
+
 /** "Nov 1, 2026" in the language's date style; "—" for a missing or invalid date. */
 export function formatDate(iso: string | null | undefined, language: string): string {
   if (!iso) return "—";

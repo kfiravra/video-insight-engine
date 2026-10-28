@@ -71,6 +71,17 @@ interface VersionRow {
 
 interface CreatedVersion extends VersionRow {
   userVideoId: string;
+  /** False when the dispatch guard was held: another run owns the row (I1). */
+  dispatched: boolean;
+}
+
+/**
+ * A dispatch the guard refused started no run for this caller — a live run
+ * already owns the row — so the caller is attached to it and its minutes hold
+ * goes back now (I1) instead of after the repair job's max hold age.
+ */
+function attachedUnless(dispatched: boolean): { attached?: true } {
+  return dispatched ? {} : { attached: true };
 }
 
 // Renumbering attempts for an eval run whose version number a concurrent run
@@ -348,7 +359,7 @@ export class VideoService {
       });
 
     const { userId, url, youtubeId, queuePlan, providers, requestId, billingRunId, forceRefresh } = input;
-    await this.dispatchPipeline({
+    const { dispatched } = await this.dispatchPipeline({
       videoSummaryId: row.videoSummaryId,
       youtubeId,
       url,
@@ -360,7 +371,7 @@ export class VideoService {
       billingRunId,
     });
 
-    return { userVideoId, ...row };
+    return { userVideoId, ...row, dispatched };
   }
 
   /** `insertVersion` with its failures mapped to VersionCreationError. */
@@ -432,6 +443,7 @@ export class VideoService {
           },
           cached: false,
           newVersion: true,
+          ...attachedUnless(created.dispatched),
         };
       }
       // A user run on a video with no user versions falls through to the normal flow
@@ -460,7 +472,7 @@ export class VideoService {
           );
 
           refuseRun();
-          await this.dispatchPipeline({
+          const { dispatched } = await this.dispatchPipeline({
             videoSummaryId: summary._id.toString(),
             youtubeId,
             url,
@@ -484,6 +496,7 @@ export class VideoService {
             },
             cached: false,
             regenerating: true,
+            ...attachedUnless(dispatched),
           };
         }
 
@@ -545,7 +558,7 @@ export class VideoService {
         folderId,
       });
 
-      await this.dispatchPipeline({
+      const { dispatched } = await this.dispatchPipeline({
         videoSummaryId: cached._id.toString(),
         youtubeId,
         url,
@@ -565,6 +578,7 @@ export class VideoService {
           status: 'pending',
         },
         cached: false,
+        ...attachedUnless(dispatched),
       };
     }
 
@@ -594,7 +608,7 @@ export class VideoService {
           folderId,
         });
 
-        await this.dispatchPipeline({
+        const { dispatched } = await this.dispatchPipeline({
           videoSummaryId: cached._id.toString(),
           youtubeId,
           url,
@@ -614,6 +628,7 @@ export class VideoService {
           },
           cached: false,
           regenerating: true,
+          ...attachedUnless(dispatched),
         };
       }
 
@@ -677,6 +692,7 @@ export class VideoService {
           status: 'pending',
         },
         cached: false,
+        ...attachedUnless(dispatched),
       };
     }
 
@@ -708,7 +724,7 @@ export class VideoService {
         folderId,
       });
 
-      await this.dispatchPipeline({
+      const { dispatched } = await this.dispatchPipeline({
         videoSummaryId: cached._id.toString(),
         youtubeId,
         url,
@@ -718,6 +734,9 @@ export class VideoService {
         requestId,
         billingRunId,
       });
+      // The row is this run's now: `pending` + a fresh updatedAt, so the
+      // summarizer's stall sweeper does not fail it as the dead run's (I2).
+      if (dispatched) await this.videoRepository.markRedispatched(cached._id.toString());
 
       return {
         video: {
@@ -726,13 +745,14 @@ export class VideoService {
           status: 'pending',
         },
         cached: false,
+        ...attachedUnless(dispatched),
       };
     }
 
-    // `attached: true` tells the route to refund this caller's cost
-    // reservation (they didn't trigger work; the SSE stream will deliver
-    // the producer's events). Same semantic as a cache hit, different label
-    // for observability.
+    // `attached: true` tells the submit path to give this caller's minutes
+    // hold back (they didn't trigger work; the SSE stream will deliver the
+    // producer's events). Same semantic as a cache hit, different label for
+    // observability.
     const userVideo = await this.videoRepository.createUserVideo({
       userId,
       videoSummaryId: cached._id.toString(),

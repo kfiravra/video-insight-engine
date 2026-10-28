@@ -1,5 +1,6 @@
-import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
 import { ObjectId } from 'mongodb';
+import type { Db } from 'mongodb';
 import type { FastifyBaseLogger } from 'fastify';
 import { getTestDb, mockLogger } from '../../api/src/test/setup.js';
 import { createBillingIndexes } from '../../api/src/plugins/mongodb.js';
@@ -8,12 +9,14 @@ import { UserRepository } from '../../api/src/repositories/user.repository.js';
 import { BillingService } from '../../api/src/services/billing/billing.service.js';
 import {
   NoAdminsRemainError,
+  StandaloneMongoError,
   auditIdFor,
   looksLikeProd,
   migrateBilling,
   parseCli,
   unconsumedMinutes,
 } from '../migrate-billing.js';
+import { compareKeepList } from '../migrate-billing-plan.js';
 import type { MigrateOptions, MigrationPlan } from '../migrate-billing.js';
 
 const NOW = new Date('2026-11-02T10:00:00Z');
@@ -28,6 +31,7 @@ const EVAL_B = 'eval-b@example.com';
 const options = (overrides: Partial<MigrateOptions> = {}): MigrateOptions => ({
   dryRun: false,
   adminEmails: [KEEPER],
+  envAdminEmails: [KEEPER],
   demoEmail: DEMO,
   evalEmails: [EVAL_A, EVAL_B],
   day: DAY,
@@ -246,7 +250,7 @@ describe('migrate-billing', () => {
     it('should audit each role change under the migration actor', async () => {
       await migrateBilling(getTestDb(), options());
 
-      const rows = await getTestDb().collection('adminAudit').find({}).toArray();
+      const rows = await getTestDb().collection('adminAudit').find({ action: /^roles\./ }).toArray();
       expect(rows.map((row) => [row.action, row.actorId]).sort()).toEqual([
         ['roles.migration.demote', 'system:migration'],
         ['roles.migration.demote', 'system:migration'],
@@ -303,6 +307,127 @@ describe('migrate-billing', () => {
       const accounts = await getTestDb().collection('billingAccounts').find({}).toArray();
       const drifts = await Promise.all(accounts.map(async (account) => (await billing.verifyAccount(account.ownerId.toHexString())).drift));
       expect(drifts.flat()).toEqual([]);
+    });
+  });
+
+  describe('adminAudit rows', () => {
+    const billingRows = () => getTestDb().collection('adminAudit').find({ action: /^billing\./ }).toArray();
+
+    it('should write one row for every plan, lot and recurring grant step', async () => {
+      await migrateBilling(getTestDb(), options());
+
+      const actions = (await billingRows()).map((row) => row.action).sort();
+      expect(actions).toEqual([
+        ...Array(2).fill('billing.credits.grant'),
+        ...Array(3).fill('billing.plan.set'),
+        ...Array(3).fill('billing.recurring.create'),
+      ].sort());
+    });
+
+    it('should sign every row with the migration actor and the migrated user as target', async () => {
+      await migrateBilling(getTestDb(), options());
+
+      const rows = await billingRows();
+      expect(new Set(rows.map((row) => row.actorId))).toEqual(new Set(['system:migration']));
+      expect(rows.find((row) => row.action === 'billing.plan.set' && row.targetId === ids.pro)).toMatchObject({
+        targetType: 'user',
+        reason: 'migration: pro tier',
+      });
+    });
+
+    it('should use the audit id its ledger entry carries as the row id', async () => {
+      await migrateBilling(getTestDb(), options());
+
+      const lotEntry = await getTestDb().collection('ledgerEntries').findOne({ 'source.ref': auditIdFor(ids.team, 'team-lot') });
+      const row = await getTestDb().collection('adminAudit').findOne({ _id: lotEntry?.auditId });
+      expect(row).toMatchObject({ action: 'billing.credits.grant', targetId: ids.team, reason: 'migration: team tier' });
+    });
+
+    it('should write none on a second run', async () => {
+      await migrateBilling(getTestDb(), options());
+      const before = await getTestDb().collection('adminAudit').countDocuments();
+
+      await migrateBilling(getTestDb(), options());
+
+      expect(await getTestDb().collection('adminAudit').countDocuments()).toBe(before);
+    });
+
+    it('should write none on a dry run', async () => {
+      await migrateBilling(getTestDb(), options({ dryRun: true }));
+
+      expect(await getTestDb().collection('adminAudit').countDocuments()).toBe(0);
+    });
+  });
+
+  describe('recurring grants', () => {
+    const handMadeGrant = (userId: string, active: boolean) =>
+      billing.createRecurringGrant(
+        userId,
+        { minutes: 500, every: 'month', active },
+        { actorId: new ObjectId().toHexString(), reason: 'set by hand', auditId: new ObjectId().toHexString() },
+      );
+
+    it('should not add a second grant to an account that already has an active one', async () => {
+      await handMadeGrant(ids.demo, true);
+
+      await migrateBilling(getTestDb(), options());
+
+      expect((await billing.getAccountDetail(ids.demo)).recurringGrants.map((grant) => grant.minutes)).toEqual([500]);
+    });
+
+    it('should report the active grant it left alone', async () => {
+      await handMadeGrant(ids.demo, true);
+
+      const plan = await migrateBilling(getTestDb(), options({ dryRun: true }));
+
+      expect(plan.skipped).toContainEqual({
+        email: DEMO,
+        why: 'recurring-demo: already has an active recurring grant of 500 minutes/month; not added',
+      });
+    });
+
+    it('should still add its grant next to one that is switched off', async () => {
+      await handMadeGrant(ids.demo, false);
+
+      await migrateBilling(getTestDb(), options());
+
+      expect((await billing.getAccountDetail(ids.demo)).recurringGrants.map((grant) => grant.minutes).sort()).toEqual([300, 500]);
+    });
+
+    it('should give an email on both the demo and the eval list one grant', async () => {
+      const plan = await migrateBilling(getTestDb(), options({ evalEmails: [EVAL_A, DEMO] }));
+
+      expect(plan.evalGrants.map((grant) => grant.email)).toEqual([EVAL_A]);
+      expect((await billing.getAccountDetail(ids.demo)).recurringGrants).toHaveLength(1);
+    });
+
+    it('should say the email on both lists was covered by the demo step', async () => {
+      const plan = await migrateBilling(getTestDb(), options({ dryRun: true, evalEmails: [DEMO] }));
+
+      expect(plan.skipped).toContainEqual({
+        email: DEMO,
+        why: 'recurring-eval: another recurring step of this run already covers it; not added',
+      });
+    });
+  });
+
+  describe('on a standalone Mongo', () => {
+    /** A server with no replica set: hello has no setName, and nothing else may be touched. */
+    function standaloneDb(): { db: Db; collection: ReturnType<typeof vi.fn> } {
+      const collection = vi.fn();
+      const db = { admin: () => ({ command: async () => ({ ok: 1, isWritablePrimary: true }) }), collection };
+      return { db: db as unknown as Db, collection };
+    }
+
+    it.each([true, false])('should refuse with dryRun=%s before reading a single collection', async (dryRun) => {
+      const { db, collection } = standaloneDb();
+
+      await expect(migrateBilling(db, options({ dryRun }))).rejects.toBeInstanceOf(StandaloneMongoError);
+      expect(collection).not.toHaveBeenCalled();
+    });
+
+    it('should name the fix in the message', async () => {
+      await expect(migrateBilling(standaloneDb().db, options())).rejects.toThrow('Convert Mongo to a replica set');
     });
   });
 
@@ -461,5 +586,29 @@ describe('parseCli', () => {
 
   it('should carry --yes-prod', () => {
     expect(parse(['--run', '--yes-prod'])?.yesProd).toBe(true);
+  });
+
+  it('should keep the ADMIN_EMAILS list beside the keep-list even when --admin-emails overrides it', () => {
+    const cli = parse(['--dry-run', '--admin-emails', 'typed@example.com'], { ADMIN_EMAILS: 'Env@Example.com' });
+
+    expect(cli?.options).toMatchObject({ adminEmails: ['typed@example.com'], envAdminEmails: ['env@example.com'] });
+  });
+});
+
+describe('compareKeepList', () => {
+  it('should find no difference between equal lists', () => {
+    expect(compareKeepList(['a@x.com', 'b@x.com'], ['b@x.com', 'a@x.com'])).toEqual({ onlyKept: [], onlyEnv: [], envEmpty: false });
+  });
+
+  it('should name the admin kept here that the next boot would demote', () => {
+    expect(compareKeepList(['a@x.com', 'typo@x.com'], ['a@x.com']).onlyKept).toEqual(['typo@x.com']);
+  });
+
+  it('should name the admin on ADMIN_EMAILS that this script does not keep', () => {
+    expect(compareKeepList(['a@x.com'], ['a@x.com', 'b@x.com']).onlyEnv).toEqual(['b@x.com']);
+  });
+
+  it('should flag an empty ADMIN_EMAILS', () => {
+    expect(compareKeepList(['a@x.com'], []).envEmpty).toBe(true);
   });
 });

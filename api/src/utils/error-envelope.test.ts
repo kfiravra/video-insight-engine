@@ -7,6 +7,7 @@ import {
   InsufficientMinutesError,
   MetadataUnavailableError,
   NotFoundError,
+  RateLimitedError,
   TooManyRunsError,
   VideoTooLongForPlanError,
 } from './errors.js';
@@ -64,6 +65,29 @@ describe('resolveErrorEnvelope', () => {
 
     expect(statusCode).toBe(429);
     expect(body.error).toBe('RATE_LIMITED');
+  });
+
+  it('should carry the wait a rate-limit builder put on the envelope it threw', () => {
+    const error = Object.assign(new Error('Too many requests'), {
+      statusCode: 429,
+      error: 'RATE_LIMITED',
+      retryAfterSec: 42,
+    });
+
+    expect(resolveErrorEnvelope(error).body).toMatchObject({ error: 'RATE_LIMITED', retryAfterSec: 42 });
+  });
+
+  it('should leave retryAfterSec out when a plugin error has none', () => {
+    const error = Object.assign(new Error('Unauthorized'), { statusCode: 401, code: 'FST_JWT_BAD_REQUEST' });
+
+    expect(resolveErrorEnvelope(error).body).not.toHaveProperty('retryAfterSec');
+  });
+
+  it('should send retryAfterSec on a RateLimitedError that knows it, and omit it otherwise', () => {
+    const known = resolveErrorEnvelope(new RateLimitedError('Slow down.', 90)).body;
+    const unknown = resolveErrorEnvelope(new RateLimitedError()).body;
+
+    expect([known.retryAfterSec, 'retryAfterSec' in unknown]).toEqual([90, false]);
   });
 
   it('should fall back to the plugin code when no envelope string exists', () => {

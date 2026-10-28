@@ -20,11 +20,12 @@ class TierItem(BaseModel):
 
 
 # Every user once, grouped by their billing account's plan; no account row means ``free``.
+# vie-api stores ``billingAccounts.ownerId`` as an ObjectId: compared with ``users._id`` as is.
 PLAN_DISTRIBUTION_PIPELINE: list[dict] = [
     {
         "$lookup": {
             "from": "billingAccounts",
-            "let": {"uid": {"$toString": "$_id"}},
+            "let": {"uid": "$_id"},
             "pipeline": [
                 {
                     "$match": {

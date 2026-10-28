@@ -11,6 +11,7 @@ import { UserRepository } from '../../repositories/user.repository.js';
 import { UserDeletionRepository } from '../../repositories/user-deletion.repository.js';
 import { BillingService } from '../billing/billing.service.js';
 import { UserDeletionService, hashEmail } from '../user-deletion.service.js';
+import { auditIdFor } from '../../../../scripts/migrate-billing-plan.js';
 
 /**
  * Compliance-grade end-to-end integration test for the GDPR cascade.
@@ -247,8 +248,9 @@ describe('GDPR cascade deletion — end-to-end integration', () => {
     await billing.grantLot(witness._id.toString(), { minutes: 50 }, ctx(doomedId));
     const accountOf = (owner: ObjectId) => db.collection('billingAccounts').findOne({ ownerType: 'user', ownerId: owner });
     const doomedAccount = await accountOf(doomed._id);
+    // Keys and refs are re-keyed (C1); what each entry did, and by how much, stays.
     const minutesOf = async (accountId: ObjectId) => (await db.collection('ledgerEntries').find({ accountId }).toArray())
-      .map((entry) => [entry.idempotencyKey, entry.minutes]).sort();
+      .map((entry) => [entry.type, entry.bucket, entry.minutes].join(':')).sort();
     const before = { doomed: await minutesOf(doomedAccount!._id), lots: await db.collection('creditLots').countDocuments() };
 
     const audit = await service.executeHardDelete(doomedId, { initiatedBy: 'admin', adminId: 'op-1', reason: 'GDPR' });
@@ -271,6 +273,66 @@ describe('GDPR cascade deletion — end-to-end integration', () => {
     const witnessEntries = await db.collection('ledgerEntries').find({ userId: witness._id }).toArray();
     expect(witnessEntries.map((entry) => [entry.minutes, entry.actorId])).toEqual([[50, ERASED_ACTOR_ID]]);
     expect((await accountOf(witness._id))?.buckets.credit.minutesAvailable).toBe(50);
+  });
+
+  it('leaves no join back to the erased user: neither the migration ids nor the audit trail reach the real id (C1)', async () => {
+    await createBillingIndexes(db);
+    const billing = new BillingService(new BillingRepository(db), userRepo, silentLogger);
+    const [doomed, witness] = await Promise.all(['join-doomed', 'join-witness'].map((name) => userRepo.create({
+      email: `${name}@example.com`, passwordHash: '$2b$10$fake', name,
+    })));
+    const doomedId = doomed._id.toString();
+    const witnessId = witness._id.toString();
+    const migrationCtx = (userId: string, step: string) => ({ actorId: 'system:migration', reason: `migration: ${step}`, auditId: auditIdFor(userId, step) });
+    // The P3.8 migration's steps, each with its derived auditId and adminAudit row (actor system:migration).
+    await billing.setPlan(doomedId, { planId: 'pro' }, migrationCtx(doomedId, 'plan'));
+    await billing.grantLot(doomedId, { minutes: 600 }, migrationCtx(doomedId, 'team-lot'));
+    await billing.createRecurringGrant(doomedId, { minutes: 300, every: 'month', active: true }, migrationCtx(doomedId, 'recurring-demo'));
+    await billing.grantLot(witnessId, { minutes: 50 }, migrationCtx(witnessId, 'team-lot'));
+    const migrationRow = (userId: string, step: string, targetType: 'user' | 'role', action: string) => ({
+      _id: new ObjectId(auditIdFor(userId, step)), actorId: 'system:migration', action, targetType, targetId: userId, createdAt: new Date(),
+    });
+    await db.collection('adminAudit').insertMany([
+      migrationRow(doomedId, 'plan', 'user', 'billing.plan.set'),
+      migrationRow(doomedId, 'team-lot', 'user', 'billing.credits.grant'),
+      migrationRow(doomedId, 'recurring-demo', 'user', 'billing.recurring.create'),
+      { ...migrationRow(doomedId, 'role', 'role', 'roles.migration.promote'), before: { roles: [] }, after: { roles: ['admin'], roleSource: 'env' } },
+      migrationRow(witnessId, 'team-lot', 'user', 'billing.credits.grant'),
+      // An admin route's row carries an AccountSnapshot, whose ownerId is the real id.
+      { _id: new ObjectId(), actorId: witnessId, action: 'billing.caps.set', targetType: 'user', targetId: doomedId, after: { ownerId: doomedId }, createdAt: new Date() },
+      // What the doomed user did as an admin to the witness (I13).
+      { _id: new ObjectId(), actorId: doomedId, actorEmail: 'join-doomed@example.com', ip: '203.0.113.9', action: 'billing.adjust', targetType: 'user', targetId: witnessId, createdAt: new Date() },
+    ]);
+
+    await service.executeHardDelete(doomedId, { initiatedBy: 'admin', adminId: 'op-1', reason: 'GDPR' });
+
+    // 1. Recomputing the migration's ids from the real id (userDeletions keeps it) finds nothing.
+    for (const step of ['plan', 'team-lot', 'recurring-demo', 'role']) {
+      const hex = auditIdFor(doomedId, step);
+      const id = new ObjectId(hex);
+      const found = await Promise.all([
+        db.collection('ledgerEntries').countDocuments({ $or: [{ auditId: id }, { 'source.ref': hex }, { idempotencyKey: { $regex: hex } }] }),
+        db.collection('creditLots').countDocuments({ 'source.ref': hex }),
+        db.collection('recurringGrants').countDocuments({ auditId: id }),
+        db.collection('adminAudit').countDocuments({ _id: id }),
+      ]);
+      expect(found, `step ${step}`).toEqual([0, 0, 0, 0]);
+    }
+    // 2. The audit trail names the real id nowhere (any field, any targetType), nor the erased admin's email or IP.
+    const auditText = JSON.stringify(await db.collection('adminAudit').find({}).toArray());
+    expect([auditText.includes(doomedId), auditText.includes('join-doomed@example.com'), auditText.includes('203.0.113.9')]).toEqual([false, false, false]);
+    // 3. The erased account's own joins still hold — every ledger auditId reaches its re-keyed audit row — but only the tombstone.
+    const account = await db.collection('billingAccounts').findOne({ ownerType: 'user', ownerId: { $nin: [doomed._id, witness._id] } });
+    const auditIds = await db.collection('ledgerEntries').distinct('auditId', { accountId: account?._id, auditId: { $exists: true } });
+    const joined = await db.collection('adminAudit').find({ _id: { $in: auditIds } }).toArray();
+    expect([auditIds.length > 0, joined.length === auditIds.length, joined.every((row) => row.targetId === account?.ownerId.toHexString())])
+      .toEqual([true, true, true]);
+    // 4. A live user's migration step is still found by its derived id, so a rerun stays a no-op for them.
+    expect(await db.collection('ledgerEntries').countDocuments({ 'source.ref': auditIdFor(witnessId, 'team-lot') })).toBeGreaterThan(0);
+    expect(await db.collection('adminAudit').countDocuments({ _id: new ObjectId(auditIdFor(witnessId, 'team-lot')) })).toBe(1);
+    // 5. The witness keeps a record of what the erased admin did, without naming them.
+    const acted = await db.collection('adminAudit').findOne({ action: 'billing.adjust' });
+    expect([acted?.actorId, acted?.targetId, 'actorEmail' in (acted ?? {}), 'ip' in (acted ?? {})]).toEqual([ERASED_ACTOR_ID, witnessId, false, false]);
   });
 
   it('re-runs the billing erasure as a no-op once the user is pseudonymised', async () => {

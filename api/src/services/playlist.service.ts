@@ -11,6 +11,7 @@ import { VideoService } from './video.service.js';
 import { FolderService } from './folder.service.js';
 import { SummarizerClient, type ProviderConfig } from './summarizer-client.js';
 import { LedgerItemImporter } from './playlist-items.js';
+import type { FastifyBaseLogger } from 'fastify';
 import type { LedgerEnforcement } from './billing/ledger-enforcement.js';
 import type { FailedVideoImport, ImportedVideo, ItemImporter, ItemOutcome } from './playlist-items.js';
 
@@ -62,7 +63,8 @@ export interface PlaylistInfo {
 }
 
 export interface PlaylistImportResult {
-  folder: { id: string; name: string };
+  /** The folder the videos went into; null when the import created one and nothing landed in it (I7). */
+  folder: { id: string; name: string } | null;
   videos: ImportedVideo[];
   totalVideos: number;
   cachedCount: number;
@@ -82,6 +84,7 @@ export class PlaylistService {
     private readonly summarizerClient: SummarizerClient,
     // The minutes ledger decides every item (P3.1; the only gate since P3.2).
     private readonly billingEnforcement: LedgerEnforcement,
+    private readonly logger: FastifyBaseLogger,
   ) {}
 
   /**
@@ -148,11 +151,16 @@ export class PlaylistService {
     );
     const folder = await this.resolveFolder(userId, folderId, playlistData.title);
     const importer = new LedgerItemImporter(
-      this.videoService, this.billingEnforcement, { userId, folderId: folder.id, providers }, plan.durationsSec,
+      this.videoService,
+      this.billingEnforcement,
+      { userId, folderId: folder.id, providers, freeVideoAvailable: plan.quote.freeVideoAvailable },
+      plan.durationsSec,
+      this.logger,
     );
     const result = await this.importItems(importer, playlistData.videos);
+    const keptFolder = folderId || result.videos.length > 0 ? folder : await this.dropEmptyFolder(userId, folder);
     return {
-      folder,
+      folder: keptFolder,
       ...result,
       totalVideos: playlistData.total_videos,
       billing: {
@@ -161,6 +169,21 @@ export class PlaylistService {
         freeVideoAvailable: plan.quote.freeVideoAvailable,
       },
     };
+  }
+
+  /**
+   * The import made a folder and no item landed in it (every item refused or
+   * failed): remove it again instead of leaving an empty folder behind (I7).
+   * Returns null when it is gone; a failed delete keeps (and returns) it.
+   */
+  private async dropEmptyFolder(userId: string, folder: { id: string; name: string }): Promise<{ id: string; name: string } | null> {
+    try {
+      await this.folderService.delete(userId, folder.id);
+      return null;
+    } catch (err) {
+      this.logger.warn({ err, userId, folderId: folder.id }, 'playlist_empty_folder_delete_failed');
+      return folder;
+    }
   }
 
   private async resolveFolder(userId: string, folderId: string | undefined, playlistTitle: string): Promise<{ id: string; name: string }> {

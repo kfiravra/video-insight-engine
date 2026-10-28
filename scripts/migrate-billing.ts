@@ -46,7 +46,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { Role } from '@vie/types';
 import type { AuditService } from '../api/src/services/audit.service.js';
 import type { AdminMutationContext, BillingService } from '../api/src/services/billing/billing.service.js';
-import { ACTOR_ID, TERM_MONTHS, auditIdFor, buildPlan, normalizeEmail, utcDayKey } from './migrate-billing-plan.js';
+import { ACTOR_ID, TERM_MONTHS, auditIdFor, buildPlan, compareKeepList, normalizeEmail, utcDayKey } from './migrate-billing-plan.js';
 import type { LotStep, MigrateOptions, MigrationPlan, PlanDeps, RoleStep, Skipped, UserStep } from './migrate-billing-plan.js';
 
 export { auditIdFor, unconsumedMinutes, utcDayKey } from './migrate-billing-plan.js';
@@ -64,6 +64,17 @@ export class NoAdminsRemainError extends Error {
   constructor() {
     super('this would leave zero active admins (is the right email in --admin-emails?); nothing was changed.');
     this.name = 'NoAdminsRemainError';
+  }
+}
+
+/** Raised before anything is read or written when Mongo is a standalone server: the ledger needs transactions. */
+export class StandaloneMongoError extends Error {
+  constructor() {
+    super(
+      'MongoDB is a standalone server (hello has no setName) and the minutes ledger needs a replica set for transactions. ' +
+        'Convert it first (docs/DEPLOY.md "Convert Mongo to a replica set"); nothing was changed.',
+    );
+    this.name = 'StandaloneMongoError';
   }
 }
 
@@ -139,8 +150,30 @@ function adminContext(userId: string, step: string, reason: string): AdminMutati
   return { actorId: ACTOR_ID, reason, auditId: auditIdFor(userId, step) };
 }
 
+/**
+ * The `adminAudit` row of one billing step, written before the step: it is
+ * idempotent by auditId (the same id the ledger entries carry), so a rerun
+ * after a failure in between finds it and repairs the rest. The admin routes
+ * use the same action names.
+ */
+async function auditBillingStep(
+  deps: ApplyDeps,
+  step: { userId: string; step: string; action: string; reason: string; after: Record<string, unknown> },
+): Promise<void> {
+  await deps.audit.record({
+    auditId: auditIdFor(step.userId, step.step),
+    actorId: ACTOR_ID,
+    action: step.action,
+    targetType: 'user',
+    targetId: step.userId,
+    after: step.after,
+    reason: step.reason,
+  });
+}
+
 async function applyProPlans(deps: ApplyDeps, steps: UserStep[], reason: string): Promise<void> {
   for (const { userId } of steps) {
+    await auditBillingStep(deps, { userId, step: 'plan', action: 'billing.plan.set', reason, after: { planId: 'pro' } });
     await deps.billing.setPlan(userId, { planId: 'pro' }, adminContext(userId, 'plan', reason));
   }
 }
@@ -148,12 +181,16 @@ async function applyProPlans(deps: ApplyDeps, steps: UserStep[], reason: string)
 async function applyLots(deps: ApplyDeps, steps: LotStep[], step: string, reason: string): Promise<void> {
   const expiresAt = deps.addMonthsUtc(deps.options.now, TERM_MONTHS);
   for (const { userId, minutes } of steps) {
+    const after = { minutes, expiresAt: expiresAt.toISOString() };
+    await auditBillingStep(deps, { userId, step, action: 'billing.credits.grant', reason, after });
     await deps.billing.grantLot(userId, { minutes, expiresAt }, adminContext(userId, step, reason));
   }
 }
 
 async function applyRecurring(deps: ApplyDeps, steps: LotStep[], step: string, reason: string): Promise<void> {
   for (const { userId, minutes } of steps) {
+    const after = { minutes, every: 'month', active: true };
+    await auditBillingStep(deps, { userId, step, action: 'billing.recurring.create', reason, after });
     await deps.billing.createRecurringGrant(userId, { minutes, every: 'month', active: true }, adminContext(userId, step, reason));
   }
 }
@@ -189,11 +226,22 @@ async function applyPlan(deps: ApplyDeps, plan: MigrationPlan): Promise<void> {
 }
 
 /**
+ * Accounts and roles are written outside any transaction, so on a standalone
+ * server a run would stop part-way at the first ledger transaction. A replica
+ * set member reports its set name in `hello`; check before anything else.
+ */
+async function assertReplicaSet(db: Db): Promise<void> {
+  const hello = await db.admin().command({ hello: 1 });
+  if (typeof hello.setName !== 'string') throw new StandaloneMongoError();
+}
+
+/**
  * Plan the migration from what is in the database now and, unless `dryRun`,
  * apply it. Throws NoAdminsRemainError before writing anything.
  */
 export async function migrateBilling(db: Db, options: MigrateOptions): Promise<MigrationPlan> {
   if (options.adminEmails.length === 0) throw new Error('--admin-emails (or ADMIN_EMAILS) needs at least one email');
+  await assertReplicaSet(db);
   const deps = await createDeps(db, options);
   const plan = await buildPlan(deps);
   if (plan.adminsAfter === 0) throw new NoAdminsRemainError();
@@ -232,11 +280,13 @@ export function parseCli(argv: string[], env: NodeJS.ProcessEnv, now: Date = new
     const day = values.day ?? utcDayKey(now);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return null;
     const demo = normalizeEmail(values['demo-email'] ?? env.DEMO_USER_EMAIL ?? '');
+    const envAdminEmails = splitEmails([env.ADMIN_EMAILS ?? '']);
     return {
       yesProd: values['yes-prod'] === true,
       options: {
         dryRun: values['dry-run'] === true,
-        adminEmails: splitEmails(values['admin-emails'] ?? [env.ADMIN_EMAILS ?? '']),
+        adminEmails: values['admin-emails'] ? splitEmails(values['admin-emails']) : envAdminEmails,
+        envAdminEmails,
         demoEmail: demo.length > 0 ? demo : null,
         evalEmails: splitEmails(values['eval-emails'] ?? []),
         day,
@@ -253,6 +303,24 @@ function printEmails(title: string, steps: UserStep[]): void {
   if (steps.length === 0) return;
   console.log(`\n${title}`);
   for (const { email } of steps) console.log(`  ${email}`);
+}
+
+/**
+ * Kept admins become `roleSource: 'env'`, and vie-api's boot seeding demotes an
+ * `env` admin whose email is not on ADMIN_EMAILS. Show both lists and say so
+ * when they differ.
+ */
+function printKeepList(options: MigrateOptions): void {
+  const { onlyKept, onlyEnv, envEmpty } = compareKeepList(options.adminEmails, options.envAdminEmails);
+  console.log(`\nKeep-list (--admin-emails): ${options.adminEmails.join(', ')}`);
+  console.log(`ADMIN_EMAILS (boot seeding):  ${envEmpty ? '(empty: boot seeding skips an empty list and changes nobody)' : options.envAdminEmails.join(', ')}`);
+  if (onlyKept.length === 0 && onlyEnv.length === 0) {
+    console.log('The two lists match.');
+    return;
+  }
+  console.log('WARNING: the two lists differ.');
+  if (!envEmpty && onlyKept.length > 0) console.log(`  kept here, not on ADMIN_EMAILS (demoted at the next vie-api boot): ${onlyKept.join(', ')}`);
+  if (onlyEnv.length > 0) console.log(`  on ADMIN_EMAILS, not kept here (not promoted by this script; boot seeding promotes them): ${onlyEnv.join(', ')}`);
 }
 
 function printSkipped(skipped: Skipped[]): void {
@@ -285,6 +353,7 @@ function printReport(plan: MigrationPlan, options: MigrateOptions): void {
   printEmails('Admins kept', kept);
   printEmails('Admins demoted', demoted);
   printEmails('Credit lots', plan.creditLots);
+  printKeepList(options);
   printSkipped(plan.skipped);
   console.log(`\nActive admins after: ${plan.adminsAfter}`);
   if (options.dryRun) console.log('Dry run: nothing was written.');

@@ -2,7 +2,7 @@ import { Link } from "react-router-dom";
 import { AlertCircle, Clock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useBillingText } from "@/hooks/use-billing-text";
-import { describeFailedImport, isMinutesFailure } from "@/lib/billing-notice-text";
+import { describeFailedImport, isMinutesFailure, playlistQuoteLine } from "@/lib/billing-notice-text";
 import { fillTemplate } from "@/lib/format-minutes";
 import type { PlaylistImportResult } from "@/api/playlists";
 
@@ -20,6 +20,7 @@ export function PlaylistImportSummary({ result, onDismiss }: PlaylistImportSumma
   const text = useBillingText();
   const { labels } = text;
   const showMinutesLink = result.failedVideos.some(isMinutesFailure);
+  const quote = showMinutesLink ? playlistQuoteLine(result.billing, text) : null;
 
   return (
     <div
@@ -33,9 +34,10 @@ export function PlaylistImportSummary({ result, onDismiss }: PlaylistImportSumma
           <p className="font-medium text-foreground">
             {fillTemplate(labels.playlistResult, {
               added: text.number(result.videos.length),
-              total: text.videos(result.totalVideos),
+              total: text.videosOblique(result.totalVideos),
             })}
           </p>
+          {quote && <p className="mt-0.5 text-xs text-muted-foreground">{quote}</p>}
           <p className="mt-0.5 text-xs text-muted-foreground">{labels.playlistFailedHeading}</p>
           <ul className="mt-2 space-y-1.5">
             {result.failedVideos.map((item) => (

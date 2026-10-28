@@ -233,6 +233,13 @@ keys, so a submission takes at most one hold however it is retried:
   unreachable from a client now that the id is the server's.
 - **Worker retries** re-run the same dispatch, so the same run id; one hold,
   one debit.
+- **No run, no debit.** A dispatch the guard refused (another live run already
+  owns the row) returns `attached`, so the hold goes back at once (review I1).
+  A run the summarizer answered from its Redis response cache reports
+  `completed` with `cacheHit: true` on `POST /internal/status`, and the hold is
+  released as cached instead of settled (I3). A stalled row the API
+  re-dispatches is set back to `pending` with a fresh `updatedAt`, so the
+  summarizer's stall sweeper cannot fail the new run as the dead one (I2).
 
 ## DoS bound
 
@@ -246,4 +253,4 @@ If you need a tighter cap, add a `count({ userId, status: 'pending' })` guard in
 
 ## Frontend behaviour
 
-On `result.duplicate === true`, the frontend shows a subtle sonner toast — *"Already processed — opening existing result"* — and navigates to the existing VideoDetail page. The toast helper lives at `apps/web/src/features/video-output/lib/duplicate-toast.ts` and is invoked from `VideoIntakeForm`, `AddVideoInput`, and `BoardInlinePaste`.
+On `result.duplicate === true`, the frontend shows a subtle sonner toast — *"Already processed — opening existing result"* — and navigates to the existing VideoDetail page. The toast helper lives at `apps/web/src/features/video-output/lib/duplicate-toast.ts` and is invoked from `VideoIntakeForm` and `BoardInlinePaste`.

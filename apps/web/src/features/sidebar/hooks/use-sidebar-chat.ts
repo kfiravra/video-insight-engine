@@ -12,6 +12,7 @@ import {
 import { classifyBillingError } from "@/lib/billing-errors";
 import { describeBillingNotice } from "@/lib/billing-notice-text";
 import { useLabels } from "@/lib/i18n";
+import { usageQueryKey } from "@/hooks/use-usage";
 import { queryKeys } from "@/lib/query-keys";
 import {
   useChatStore,
@@ -44,13 +45,18 @@ const MUTATING_ACTIONS = new Set([
   "organize_library",
 ]);
 
+// Agent actions that start a run, which holds minutes: the usage tile must re-read them.
+const SPENDING_ACTIONS = new Set(["generate_video"]);
+
 const RATE_LIMITED_MESSAGE = "Too many messages. Please wait a moment and try again.";
 const CONNECT_FAILED_MESSAGE = "Failed to connect to assistant. Please try again.";
 
 /**
  * Copy for a request that failed before any SSE event arrived. A used-up free
  * chat allowance (429 CHAT_LIMIT_REACHED) says, in the user's language, when
- * more messages open up, from the `nextAt` the gateway sends.
+ * more messages open up, from the `nextAt` the gateway sends. The message is
+ * saved in the persisted transcript, so it names a clock time, never a
+ * countdown that would be wrong by the time it is read again.
  */
 function requestFailureMessage(err: unknown, billingText: BillingText): string {
   const notice = classifyBillingError(err);
@@ -124,6 +130,8 @@ export function useSidebarChat(options: UseSidebarChatOptions = {}) {
   // Tracks whether the current turn triggered a library-mutating agent action,
   // so we refetch the folder/video trees once at the end (not per tool call).
   const didMutateRef = useRef(false);
+  // Same, for an action that spent minutes (refetch the usage tile once per turn).
+  const didSpendRef = useRef(false);
 
   // Reset on mount, clean up on unmount. Re-setting `true` here is essential:
   // React 19 StrictMode (dev) does mount → unmount → remount, and the cleanup
@@ -240,6 +248,9 @@ export function useSidebarChat(options: UseSidebarChatOptions = {}) {
             if (typeof action === "string" && MUTATING_ACTIONS.has(action)) {
               didMutateRef.current = true;
             }
+            if (typeof action === "string" && SPENDING_ACTIONS.has(action)) {
+              didSpendRef.current = true;
+            }
 
             const step = event.content;
             if (!step) break;
@@ -287,6 +298,10 @@ export function useSidebarChat(options: UseSidebarChatOptions = {}) {
                 queryKey: queryKeys.videos.lists(),
               });
               didMutateRef.current = false;
+            }
+            if (didSpendRef.current) {
+              queryClient.invalidateQueries({ queryKey: usageQueryKey });
+              didSpendRef.current = false;
             }
             break;
         }
@@ -384,6 +399,7 @@ export function useSidebarChat(options: UseSidebarChatOptions = {}) {
   const clearMessages = useCallback(() => {
     abortControllerRef.current?.abort();
     didMutateRef.current = false;
+    didSpendRef.current = false;
     storeClearMessages();
   }, [storeClearMessages]);
 

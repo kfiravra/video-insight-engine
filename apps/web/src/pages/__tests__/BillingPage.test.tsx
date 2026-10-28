@@ -5,7 +5,7 @@ import type { ReactNode } from 'react';
 import type { UsageSummary } from '@vie/types';
 import { BillingPage } from '../BillingPage';
 import * as usageHook from '@/hooks/use-usage';
-import { HOUR, MINUTE, inMs, renderIn, usageSummary } from '@/components/usage/__tests__/usage-fixtures';
+import { HOUR, MINUTE, freeVideo, freeVideoWithoutCount, inMs, renderIn, usageSummary } from '@/components/usage/__tests__/usage-fixtures';
 
 vi.mock('@/components/layout/Layout', () => ({
   Layout: ({ children }: { children: ReactNode }) => <div data-testid="layout">{children}</div>,
@@ -96,7 +96,7 @@ describe('BillingPage', () => {
 
     it('should show when the next free video opens', () => {
       const nextFreeAt = inMs(7 * HOUR + 30 * MINUTE + 30_000);
-      mockUsage(usageSummary({ free: { available: false, nextFreeAt, maxVideoMinutes: 30 } }));
+      mockUsage(usageSummary({ free: freeVideo({ available: false, nextFreeAt }) }));
 
       renderIn(<BillingPage />);
 
@@ -110,6 +110,97 @@ describe('BillingPage', () => {
 
       expect(screen.getByTestId('billing-lots')).toHaveTextContent('No credits yet.');
       expect(screen.getByTestId('billing-holds')).toHaveTextContent('Nothing running right now.');
+    });
+  });
+
+  describe('what the free plan allows', () => {
+    it('should say the free video is turned off, and not promise one a day, when caps switch it off', () => {
+      mockUsage(usageSummary({ free: freeVideo({ available: false, perWindow: 0 }) }));
+
+      renderIn(<BillingPage />);
+
+      const plan = screen.getByTestId('billing-plan');
+      expect(plan).toHaveTextContent('The free video is turned off for this account.');
+      expect(plan).not.toHaveTextContent('One free video every 24 hours.');
+    });
+
+    it('should show no length hint next to a free video that is switched off', () => {
+      mockUsage(usageSummary({ free: freeVideo({ available: false, perWindow: 0 }) }));
+
+      renderIn(<BillingPage />);
+
+      expect(screen.getByTestId('billing-minutes')).not.toHaveTextContent('per video');
+    });
+
+    it('should count the free videos when caps allow more than one', () => {
+      mockUsage(usageSummary({ free: freeVideo({ perWindow: 3 }) }));
+
+      renderIn(<BillingPage />);
+
+      expect(screen.getByTestId('billing-plan')).toHaveTextContent('3 free videos every 24 hours.');
+    });
+
+    it('should keep the standard note for one free video and for a server that does not send the count', () => {
+      mockUsage(usageSummary({ free: freeVideo({ perWindow: 1 }) }));
+      const { unmount } = renderIn(<BillingPage />);
+      const withCount = screen.getByTestId('billing-plan').textContent;
+      unmount();
+
+      mockUsage(usageSummary({ free: freeVideoWithoutCount() }));
+      renderIn(<BillingPage />);
+
+      expect([withCount, screen.getByTestId('billing-plan').textContent]).toEqual([
+        expect.stringContaining('One free video every 24 hours.'),
+        expect.stringContaining('One free video every 24 hours.'),
+      ]);
+    });
+
+    it.each([
+      ['he', 2, 'שני סרטונים חינם כל 24 שעות.'],
+      ['he', 5, '5 סרטונים חינם כל 24 שעות.'],
+      ['ar', 2, 'فيديوهان مجانيان كل 24 ساعة.'],
+      ['ar', 3, '3 فيديوهات مجانية كل 24 ساعة.'],
+      ['ar', 11, '11 فيديو مجاني كل 24 ساعة.'],
+    ])('should count %i free videos in %s with the right plural form', (language, perWindow, expected) => {
+      mockUsage(usageSummary({ free: freeVideo({ perWindow }) }));
+
+      renderIn(<BillingPage />, language);
+
+      expect(screen.getByTestId('billing-plan')).toHaveTextContent(expected);
+    });
+
+    it.each([
+      ['he', 'הסרטון החינמי כבוי עבור החשבון הזה.'],
+      ['ar', 'الفيديو المجاني متوقف لهذا الحساب.'],
+    ])('should say the free video is off in %s', (language, expected) => {
+      mockUsage(usageSummary({ free: freeVideo({ available: false, perWindow: 0 }) }));
+
+      renderIn(<BillingPage />, language);
+
+      expect(screen.getByTestId('billing-plan')).toHaveTextContent(expected);
+    });
+  });
+
+  describe('a failed refresh', () => {
+    it('should keep showing the last summary when a refresh fails', () => {
+      mockUsage(PRO, { isError: true });
+
+      renderIn(<BillingPage />);
+
+      expect(screen.getByTestId('billing-minutes')).toHaveTextContent('412 of 600 minutes left');
+      expect(screen.queryByRole('button', { name: 'Try Again' })).toBeNull();
+    });
+  });
+
+  describe('credit lot expiry wording', () => {
+    it('should say "valid until" in Hebrew, not that the lot expired', () => {
+      mockUsage(usageSummary({ credits: { available: 5, lots: [{ minutes: 5, expiresAt: '2027-03-01T12:00:00.000Z' }] } }));
+
+      renderIn(<BillingPage />, 'he');
+
+      const [row] = within(screen.getByTestId('billing-lots')).getAllByRole('listitem');
+      expect(row.textContent).toContain('בתוקף עד');
+      expect(row.textContent).not.toContain('פג תוקף');
     });
   });
 

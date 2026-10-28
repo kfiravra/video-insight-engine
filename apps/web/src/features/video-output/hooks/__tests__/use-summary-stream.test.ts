@@ -283,6 +283,48 @@ describe("useSummaryStream", () => {
       expect(result.current.error).toBeDefined();
     });
 
+    it("should map the stream of a failed video to Retry copy and keep its code", async () => {
+      const events = [
+        {
+          event: "error",
+          data: {
+            event: "error",
+            message: "KeyError: 'tabs' in extract_batch",
+            code: "VIDEO_FAILED",
+          },
+        },
+      ];
+      server.use(
+        http.get(`${API_URL}/videos/:id/stream`, () => createSSEResponse(events))
+      );
+
+      const { result } = renderHook(() =>
+        useSummaryStream({ videoSummaryId: "video-failed", enabled: true })
+      );
+
+      await waitFor(() => {
+        expect(result.current.phase).toBe("error");
+      });
+      expect(result.current.errorCode).toBe("VIDEO_FAILED");
+      expect(result.current.error).toBe("This video didn't finish processing. Retry starts it again as a new run.");
+    });
+
+    it("should keep no error code when the server sent none", async () => {
+      const events = [{ event: "error", data: { event: "error", message: "Internal error" } }];
+      server.use(
+        http.get(`${API_URL}/videos/:id/stream`, () => createSSEResponse(events))
+      );
+
+      const { result } = renderHook(() =>
+        useSummaryStream({ videoSummaryId: "video-nocode", enabled: true })
+      );
+
+      await waitFor(() => {
+        expect(result.current.phase).toBe("error");
+      });
+      expect(result.current.errorCode).toBeNull();
+    });
+
     it("should track phase changes", async () => {
       const phases: StreamPhase[] = [];
       const events = [

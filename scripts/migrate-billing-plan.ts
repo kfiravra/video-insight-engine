@@ -22,6 +22,8 @@ export interface MigrateOptions {
   dryRun: boolean;
   /** Admins that stay, lowercase. */
   adminEmails: string[];
+  /** What the ADMIN_EMAILS env holds, lowercase: vie-api's boot seeding reconciles `env` admins to it. */
+  envAdminEmails: string[];
   demoEmail: string | null;
   evalEmails: string[];
   /** UTC `YYYY-MM-DD` whose userCostAdjustments convert to a lot. */
@@ -79,6 +81,26 @@ export function normalizeEmail(email: string): string {
 /** A valid ObjectId hex that depends only on the user and the step, so a rerun finds its own work. */
 export function auditIdFor(userId: string, step: string): string {
   return createHash('sha256').update(`migrate-billing:v1:${userId}:${step}`).digest('hex').slice(0, 24);
+}
+
+export interface KeepListComparison {
+  /** Kept here but not on ADMIN_EMAILS: they become `env` admins and the next vie-api boot demotes them. */
+  onlyKept: string[];
+  /** On ADMIN_EMAILS but not kept here: this script does not promote them (boot seeding does). */
+  onlyEnv: string[];
+  /** ADMIN_EMAILS is empty: boot seeding skips an empty list, so it changes nobody. */
+  envEmpty: boolean;
+}
+
+/** How the keep-list differs from ADMIN_EMAILS; both lists are lowercase. */
+export function compareKeepList(keep: string[], env: string[]): KeepListComparison {
+  const kept = new Set(keep);
+  const listed = new Set(env);
+  return {
+    onlyKept: keep.filter((email) => !listed.has(email)),
+    onlyEnv: env.filter((email) => !kept.has(email)),
+    envEmpty: env.length === 0,
+  };
 }
 
 /** `YYYY-MM-DD` of a date in UTC. */
@@ -226,16 +248,44 @@ interface RecurringSpec {
   step: string;
 }
 
-async function planRecurring(deps: PlanDeps, users: UserRow[], spec: RecurringSpec): Promise<{ grants: LotStep[]; skipped: Skipped[] }> {
+/** The account's live, switched-on recurring grant (a hand-made one counts), if it has one. */
+async function activeRecurringGrant(deps: PlanDeps, userId: string): Promise<{ minutes: number } | null> {
+  const account = await deps.repo.findAccount('user', userId);
+  if (!account) return null;
+  const grants = await deps.repo.listRecurringGrants(account._id);
+  return grants.find((grant) => grant.active) ?? null;
+}
+
+/**
+ * `granted` holds the users another recurring step of this run already gives a
+ * grant, so an email on both the demo and the eval list gets one, not two.
+ */
+async function planRecurring(
+  deps: PlanDeps,
+  users: UserRow[],
+  spec: RecurringSpec,
+  granted: Set<string>,
+): Promise<{ grants: LotStep[]; skipped: Skipped[] }> {
   const byEmail = new Map(users.map((user) => [normalizeEmail(user.email), user]));
   const result: { grants: LotStep[]; skipped: Skipped[] } = { grants: [], skipped: [] };
   for (const email of spec.emails) {
     const user = byEmail.get(email);
     if (!user || user.deleted) {
       result.skipped.push({ email, why: `${spec.step}: no active account with this email` });
-    } else if (!(await recurringStepDone(deps, user.id, spec.step))) {
-      result.grants.push({ userId: user.id, email: user.email, minutes: spec.minutes });
+      continue;
     }
+    if (await recurringStepDone(deps, user.id, spec.step)) continue;
+    if (granted.has(user.id)) {
+      result.skipped.push({ email: user.email, why: `${spec.step}: another recurring step of this run already covers it; not added` });
+      continue;
+    }
+    const existing = await activeRecurringGrant(deps, user.id);
+    if (existing) {
+      result.skipped.push({ email: user.email, why: `${spec.step}: already has an active recurring grant of ${existing.minutes} minutes/month; not added` });
+      continue;
+    }
+    granted.add(user.id);
+    result.grants.push({ userId: user.id, email: user.email, minutes: spec.minutes });
   }
   return result;
 }
@@ -247,16 +297,17 @@ export async function buildPlan(deps: PlanDeps): Promise<MigrationPlan> {
   const tiers = await planTiers(deps, users);
   const roles = await planRoles(deps, users);
   const credits = await planCredits(deps, users);
+  const granted = new Set<string>();
   const demo = await planRecurring(deps, users, {
     emails: options.demoEmail ? [options.demoEmail] : [],
     minutes: DEMO_MONTHLY_MINUTES,
     step: 'recurring-demo',
-  });
+  }, granted);
   const evals = await planRecurring(deps, users, {
     emails: options.evalEmails,
     minutes: EVAL_MONTHLY_MINUTES,
     step: 'recurring-eval',
-  });
+  }, granted);
   return {
     accounts: await planAccounts(deps, users),
     pro: tiers.pro,

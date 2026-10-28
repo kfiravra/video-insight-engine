@@ -4,10 +4,11 @@ import { AlertTriangle, ArrowLeft, Loader2 } from "lucide-react";
 import { Layout } from "@/components/layout/Layout";
 import { Button } from "@/components/ui/button";
 import { UsageRows } from "@/components/usage/UsageRows";
-import { useBillingText } from "@/hooks/use-billing-text";
+import { useBillingText, type BillingText } from "@/hooks/use-billing-text";
 import { useMinuteTick } from "@/hooks/use-minute-tick";
 import { useUserUsage } from "@/hooks/use-usage";
-import { fillTemplate } from "@/lib/format-minutes";
+import { fillTemplate, formatPlural } from "@/lib/format-minutes";
+import { freeVideosPerWindow } from "@/lib/free-video";
 import { useLabels } from "@/lib/i18n";
 import type { UsageSummary } from "@vie/types";
 
@@ -26,8 +27,22 @@ function Section({ title, testId, children }: SectionProps) {
   );
 }
 
-function PlanSection({ summary }: { summary: UsageSummary }) {
-  const { labels, date } = useBillingText();
+interface PlanSectionProps {
+  summary: UsageSummary;
+}
+
+/** What the free plan allows right now: off, the one standard video, or several. */
+function freePlanNote(summary: UsageSummary, text: BillingText): string {
+  const perWindow = freeVideosPerWindow(summary.free);
+  const { labels, language } = text;
+  if (perWindow === 0) return labels.planFreeNoteOff;
+  if (perWindow === 1) return labels.planFreeNote;
+  return formatPlural(perWindow, language, labels.planFreeNoteMany);
+}
+
+function PlanSection({ summary }: PlanSectionProps) {
+  const text = useBillingText();
+  const { labels, date } = text;
   const isPro = summary.plan.id === "pro";
   const { periodEnd } = summary.plan;
   const { cycleEnd } = summary.planMinutes;
@@ -41,7 +56,7 @@ function PlanSection({ summary }: { summary: UsageSummary }) {
           {cycleEnd && <li>{fillTemplate(labels.cycleEnds, { date: date(cycleEnd) })}</li>}
         </ul>
       ) : (
-        <p className="text-sm text-muted-foreground">{labels.planFreeNote}</p>
+        <p className="text-sm text-muted-foreground">{freePlanNote(summary, text)}</p>
       )}
       {summary.blocked && (
         <p role="alert" className="text-sm text-destructive">
@@ -52,7 +67,11 @@ function PlanSection({ summary }: { summary: UsageSummary }) {
   );
 }
 
-function LotsSection({ lots }: { lots: UsageSummary["credits"]["lots"] }) {
+interface LotsSectionProps {
+  lots: UsageSummary["credits"]["lots"];
+}
+
+function LotsSection({ lots }: LotsSectionProps) {
   const { labels, minutes, date } = useBillingText();
 
   return (
@@ -75,7 +94,11 @@ function LotsSection({ lots }: { lots: UsageSummary["credits"]["lots"] }) {
   );
 }
 
-function HoldsSection({ holds }: { holds: UsageSummary["holds"] }) {
+interface HoldsSectionProps {
+  holds: UsageSummary["holds"];
+}
+
+function HoldsSection({ holds }: HoldsSectionProps) {
   const { labels, minutes } = useBillingText();
 
   return (
@@ -98,7 +121,11 @@ function HoldsSection({ holds }: { holds: UsageSummary["holds"] }) {
   );
 }
 
-function BillingBody({ summary }: { summary: UsageSummary }) {
+interface BillingBodyProps {
+  summary: UsageSummary;
+}
+
+function BillingBody({ summary }: BillingBodyProps) {
   const { labels } = useBillingText();
   const now = useMinuteTick();
 
@@ -122,7 +149,7 @@ function BillingBody({ summary }: { summary: UsageSummary }) {
 
 /** /settings/billing: the signed-in user's plan, minutes and credit lots. Read-only; no checkout yet. */
 export function BillingPage() {
-  const { data, isLoading, isError, refetch } = useUserUsage();
+  const { data, isError, refetch } = useUserUsage();
   const { labels } = useBillingText();
   const { tryAgain } = useLabels();
 
@@ -143,12 +170,9 @@ export function BillingPage() {
             <p className="type-caption">{labels.pageIntro}</p>
           </div>
 
-          {isLoading ? (
-            <div className="flex items-center gap-2 py-6 text-muted-foreground" role="status" aria-live="polite">
-              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-              <span>{labels.tileLoading}</span>
-            </div>
-          ) : isError || !data ? (
+          {data ? (
+            <BillingBody summary={data} />
+          ) : isError ? (
             <div className="flex items-center gap-3 py-6 text-amber-600 dark:text-amber-400" role="alert">
               <AlertTriangle className="h-4 w-4" aria-hidden="true" />
               <span>{labels.tileError}</span>
@@ -157,7 +181,10 @@ export function BillingPage() {
               </Button>
             </div>
           ) : (
-            <BillingBody summary={data} />
+            <div className="flex items-center gap-2 py-6 text-muted-foreground" role="status" aria-live="polite">
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+              <span>{labels.tileLoading}</span>
+            </div>
           )}
         </div>
       </div>

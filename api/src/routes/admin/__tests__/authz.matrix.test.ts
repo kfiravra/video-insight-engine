@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import net from 'node:net';
 import type { AddressInfo } from 'node:net';
 import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach, vi } from 'vitest';
-import type { FastifyInstance, HTTPMethods, RouteOptions } from 'fastify';
+import type { FastifyInstance, InjectOptions, RouteOptions } from 'fastify';
 import { READ_PERMISSIONS } from '@vie/types';
 import type { Permission } from '@vie/types';
 
@@ -63,7 +63,7 @@ interface RequestPlan {
   headers?: Record<string, string>;
   payload?: string;
   url?: string;
-  method?: HTTPMethods;
+  method?: InjectOptions['method'];
 }
 
 /** Spellings of an admin URL that Fastify routes the same but whose raw text differs. */
@@ -152,7 +152,7 @@ describe('admin authorization matrix', () => {
   ): Promise<string[]> {
     const failures: string[] = [];
     for (const route of routes.filter(only)) {
-      const res = await app.inject({ method: route.method as HTTPMethods, url: route.url, ...request(route) });
+      const res = await app.inject({ method: route.method as InjectOptions['method'], url: route.url, ...request(route) });
       if (!expected(res.statusCode, route)) failures.push(`${label(route)} answered ${res.statusCode}`);
     }
     return failures;

@@ -146,7 +146,12 @@ export function toUsageSummary(account: BillingAccountDocument, lots: CreditLotD
   const usable = spendableLots(lots.map(toAllocationLot), now);
   return {
     plan: { id: account.plan.id, periodEnd: snapshot.plan.periodEnd },
-    free: { available: snapshot.free.available, nextFreeAt: snapshot.free.nextFreeAt, maxVideoMinutes: limits.freeMaxMinutes },
+    free: {
+      available: snapshot.free.available,
+      nextFreeAt: snapshot.free.nextFreeAt,
+      maxVideoMinutes: limits.freeMaxMinutes,
+      perWindow: snapshot.free.perWindow,
+    },
     planMinutes: {
       granted: snapshot.planMinutes.granted,
       used: snapshot.planMinutes.used,

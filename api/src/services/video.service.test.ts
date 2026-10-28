@@ -40,6 +40,7 @@ describe('VideoService', () => {
     stampDispatchContext: ReturnType<typeof vi.fn>;
     findHighestVersion: ReturnType<typeof vi.fn>;
     incrementRetryCount: ReturnType<typeof vi.fn>;
+    markRedispatched: ReturnType<typeof vi.fn>;
     getVersions: ReturnType<typeof vi.fn>;
     pruneVersions: ReturnType<typeof vi.fn>;
     userOwnsVideo: ReturnType<typeof vi.fn>;
@@ -81,6 +82,7 @@ describe('VideoService', () => {
       stampDispatchContext: vi.fn().mockResolvedValue(undefined),
       findHighestVersion: vi.fn(),
       incrementRetryCount: vi.fn(),
+      markRedispatched: vi.fn().mockResolvedValue(undefined),
       getVersions: vi.fn(),
       pruneVersions: vi.fn().mockResolvedValue(0),
       userOwnsVideo: vi.fn(),
@@ -346,6 +348,42 @@ describe('VideoService', () => {
       expect(result.attached).toBe(true);
       expect(result.cached).toBe(false);
       expect(mockSummarizerClient.triggerSummarization).not.toHaveBeenCalled();
+    });
+
+    it('should mark a stalled row pending with a fresh updatedAt once it re-dispatches it (I2)', async () => {
+      const stalledAt = new Date(Date.now() - 31 * 60 * 1000);
+      mockVideoRepository.findUserVideoByYoutubeId.mockResolvedValue(null);
+      mockVideoRepository.upsertCacheByDedupKey.mockResolvedValue(
+        upsertResult(false, { _id: 'stalled-row', youtubeId: 'dQw4w9WgXcQ', status: 'processing', updatedAt: stalledAt }),
+      );
+      mockVideoRepository.createUserVideo.mockResolvedValue({
+        _id: { toString: () => 'uv-stalled' },
+        videoSummaryId: { toString: () => 'stalled-row' },
+        youtubeId: 'dQw4w9WgXcQ',
+        status: 'pending',
+      });
+
+      await videoService.createVideo('user-stall', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', { queuePlan: 'free' });
+
+      expect(mockVideoRepository.markRedispatched).toHaveBeenCalledWith('stalled-row');
+    });
+
+    it('should leave a stalled row alone when another dispatch holds the guard (I2)', async () => {
+      mockDispatchGuard.acquire.mockResolvedValueOnce({ acquired: false, token: null });
+      mockVideoRepository.findUserVideoByYoutubeId.mockResolvedValue(null);
+      mockVideoRepository.upsertCacheByDedupKey.mockResolvedValue(
+        upsertResult(false, { _id: 'stalled-held', youtubeId: 'dQw4w9WgXcQ', status: 'processing', updatedAt: new Date(Date.now() - 31 * 60 * 1000) }),
+      );
+      mockVideoRepository.createUserVideo.mockResolvedValue({
+        _id: { toString: () => 'uv-stalled-held' },
+        videoSummaryId: { toString: () => 'stalled-held' },
+        youtubeId: 'dQw4w9WgXcQ',
+        status: 'pending',
+      });
+
+      const result = await videoService.createVideo('user-stall', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', { queuePlan: 'free' });
+
+      expect([mockVideoRepository.markRedispatched.mock.calls.length, result.attached]).toEqual([0, true]);
     });
 
     it('should dispatch when retrying a failed cached row (wasInsert:false, status:failed)', async () => {
@@ -643,6 +681,24 @@ describe('VideoService', () => {
         );
 
         expect(mockVideoRepository.incrementRetryCount).not.toHaveBeenCalled();
+      });
+
+      it('should report attached when the dispatch guard rejects, so the hold goes back now (I1)', async () => {
+        mockDispatchGuard.acquire.mockResolvedValueOnce({ acquired: false, token: null });
+        mockVideoRepository.findUserVideoByYoutubeId.mockResolvedValue(null);
+        mockVideoRepository.upsertCacheByDedupKey.mockResolvedValue(
+          upsertResult(false, { _id: 'failed-row-held', youtubeId: 'dQw4w9WgXcQ', status: 'failed' }),
+        );
+        mockVideoRepository.createUserVideo.mockResolvedValue({
+          _id: { toString: () => 'uv-held' },
+          videoSummaryId: { toString: () => 'failed-row-held' },
+          youtubeId: 'dQw4w9WgXcQ',
+          status: 'pending',
+        });
+
+        const result = await videoService.createVideo('user-held', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', { queuePlan: 'free' });
+
+        expect(result).toMatchObject({ cached: false, attached: true });
       });
 
       it('DOES increment retryCount when the dispatch actually publishes', async () => {

@@ -1,15 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import {
-  AccountBlockedError,
-  HoldConflictError,
-  HoldFinalizedError,
-  InsufficientMinutesError,
-  MetadataUnavailableError,
-  NotFoundError,
-  TooManyRunsError,
-  VideoTooLongForPlanError,
-} from '../../../utils/errors.js';
-import { POLICY_DELTAS, classifyShadow, errorReason, refusalServesWithoutRun } from '../shadow-policy.js';
+import { POLICY_DELTAS, classifyShadow } from '../shadow-policy.js';
 import type { ShadowFacts } from '../shadow-policy.js';
 
 const ADMIT = { admitted: true, charged: true };
@@ -88,32 +78,5 @@ describe('classifyShadow', () => {
   it('should give every policy delta a decision reference', () => {
     expect(POLICY_DELTAS.every((delta) => delta.policyRef.length > 10)).toBe(true);
     expect(new Set(POLICY_DELTAS.map((delta) => delta.id)).size).toBe(POLICY_DELTAS.length);
-  });
-});
-
-describe('errorReason', () => {
-  it.each([
-    [new InsufficientMinutesError(10, 0, '2026-11-02T10:00:00.000Z'), 'free_window_used'],
-    [new InsufficientMinutesError(45, 0, null), 'needs_paid_minutes'],
-    [new InsufficientMinutesError(10, 0, null), 'free_disabled'],
-    [new VideoTooLongForPlanError(180), 'too_long'],
-    [new AccountBlockedError(), 'blocked'],
-    [new TooManyRunsError(1), 'too_many_runs'],
-    [new MetadataUnavailableError('timeout'), 'metadata_unavailable'],
-    [new HoldFinalizedError(), 'hold_finalized'],
-    [new HoldConflictError(), 'hold_conflict'],
-  ])('should name %s as %s', (err, reason) => {
-    expect(errorReason(err)).toBe(reason);
-  });
-
-  it('should name no reason for an error that is not a ledger decision', () => {
-    expect(errorReason(new NotFoundError('Video'))).toBeNull();
-  });
-});
-
-describe('refusalServesWithoutRun', () => {
-  it('should serve a cached video to an account out of minutes but never to a blocked one', () => {
-    expect([refusalServesWithoutRun(new InsufficientMinutesError(45, 0, null)), refusalServesWithoutRun(new AccountBlockedError())])
-      .toEqual([true, false]);
   });
 });

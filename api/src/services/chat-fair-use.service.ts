@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { FastifyBaseLogger, FastifyRequest } from 'fastify';
+import type { FastifyBaseLogger } from 'fastify';
 import type { Redis } from 'ioredis';
 import type { UsageSummary } from '@vie/types';
 import { ChatLimitReachedError } from '../utils/errors.js';
@@ -126,11 +126,4 @@ export class ChatFairUseService implements IChatFairUse {
     }
     return null;
   }
-}
-
-/** preHandler for the chat-message routes; run it after `fastify.authenticate`. */
-export function chatFairUseHook(guard: IChatFairUse): (req: FastifyRequest) => Promise<void> {
-  return async (req) => {
-    await guard.consume(req.user.userId);
-  };
 }

@@ -25,14 +25,24 @@ export interface FailedVideoImport {
   youtubeId: string;
   title: string;
   position: number;
-  /** The error message, or a stable code such as INSUFFICIENT_MINUTES. */
+  /** A stable code such as INSUFFICIENT_MINUTES or METADATA_UNAVAILABLE, or the error message. */
   error: string;
-  /** The billing error code when the server sends it apart from `error`. */
-  code?: string;
+}
+
+/** The up-front quote for a whole playlist, in minutes. */
+export interface PlaylistQuote {
+  neededMinutes: number;
+  availableMinutes: number;
+  freeVideoAvailable: boolean;
 }
 
 export interface PlaylistImportResult {
-  folder: { id: string; name: string };
+  /**
+   * The folder the videos went into. null when the import created a folder and
+   * nothing landed in it (every item was refused or failed): the server deletes
+   * the empty folder again, so there is nothing to open.
+   */
+  folder: { id: string; name: string } | null;
   videos: Array<{
     id: string;
     videoSummaryId: string;
@@ -46,6 +56,8 @@ export interface PlaylistImportResult {
   processingCount: number;
   failedCount: number;
   failedVideos: FailedVideoImport[];
+  /** Absent on older servers. */
+  billing?: PlaylistQuote;
 }
 
 export interface PlaylistVideoDetail {

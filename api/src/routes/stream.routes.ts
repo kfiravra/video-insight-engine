@@ -20,6 +20,9 @@ interface RelayedEvent {
   duration?: number;
 }
 
+/** What a stream opened on a failed row answers: an error event, never a new run (W1). */
+const FAILED_RUN_MESSAGE = 'This video failed to process. Retry it to run it again.';
+
 interface RelayContext {
   fastify: FastifyInstance;
   req: FastifyRequest;
@@ -100,6 +103,18 @@ export async function streamRoutes(fastify: FastifyInstance) {
     // Set CORS and SSE headers (reply.raw bypasses Fastify CORS plugin)
     setSSECorsHeaders(req, reply);
     setSSEResponseHeaders(reply);
+
+    // Opening the stream of a failed row must not start a new run: the
+    // summarizer would re-run it with no minutes held (W1). A retry goes
+    // through POST /api/videos (or the retry route), which quotes and holds.
+    const row = await videoRepository.findCacheById(videoSummaryId);
+    if (row?.status === 'failed') {
+      const message = row.errorMessage || FAILED_RUN_MESSAGE;
+      reply.raw.write(`data: ${JSON.stringify({ event: 'error', message, code: 'VIDEO_FAILED' })}\n\n`);
+      reply.raw.end();
+      return;
+    }
+
     // Long-lived stream — exempt from the server-wide socket inactivity timeout
     disableSocketInactivityTimeout(req);
 

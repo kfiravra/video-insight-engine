@@ -20,7 +20,9 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { UsageMenuItem } from "@/components/usage/UsageMenuItem";
 import { UsageTile } from "@/components/usage/UsageTile";
+import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { useUIStore } from "@/stores/ui-store";
 import { useAuthStore } from "@/stores/auth-store";
 import { useSidebarToggle } from "@/hooks/use-sidebar-toggle";
@@ -157,8 +159,12 @@ export function AppHeader({ slotRef }: AppHeaderProps) {
                 {user.email && (
                   <p className="text-xs text-muted-foreground truncate">{user.email}</p>
                 )}
-                <UsageTile className="mt-3" />
+                {/* A failing tile must not take the whole user menu down with it. */}
+                <ErrorBoundary fallback={null}>
+                  <UsageTile className="mt-3" />
+                </ErrorBoundary>
               </VieMenuHeader>
+              <UsageMenuItem />
               <VieMenuSeparator />
               <VieMenuItem
                 icon={<Keyboard className="h-4 w-4" />}

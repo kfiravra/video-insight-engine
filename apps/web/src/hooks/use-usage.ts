@@ -1,9 +1,9 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { usageApi, type UsageSummary } from "@/api/usage";
 
 export const usageQueryKey = ["usage", "me"] as const;
 
-export function useUserUsage() {
+export function useUserUsage(): UseQueryResult<UsageSummary> {
   return useQuery<UsageSummary>({
     queryKey: usageQueryKey,
     queryFn: () => usageApi.me(),

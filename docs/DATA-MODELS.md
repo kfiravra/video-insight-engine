@@ -970,9 +970,11 @@ the window; `holds` = runs with a `hold` and neither `debit` nor `release`.
 ## ledgerEntries
 
 Append-only: never updated, never deleted. The one exception is GDPR erasure
-(Q12): `BillingErasureRepository` moves `userId` (and the account's `ownerId`,
-`holds[].userId`) to a fresh tombstone ObjectId and an erased admin's
-`actorId` to `system:erased-user`; amounts, lots and `accountId` stay
+(Q12, C1): `BillingErasureRepository` moves `userId` (and the account's
+`ownerId`, `holds[].userId`) to a fresh tombstone ObjectId, gives the erased
+account's `auditId`, `source.ref` and `idempotencyKey` fresh random values
+(the migration derives audit ids from the user id), and sets an erased
+admin's `actorId` to `system:erased-user`; amounts, lots and `accountId` stay
 ([GDPR.md](./GDPR.md#the-cascade-saga)).
 
 ```javascript
@@ -1150,7 +1152,7 @@ Indexes: `{ youtubeId: 1 }`, `{ completedAt: -1 }`.
 
 ### adminAudit
 
-Append-only log of admin mutations, written by `AuditService.record` (`api/src/services/audit.service.ts`). Retained indefinitely; rows are never updated or deleted. Type: `AdminAudit` / `AdminAuditView` in `packages/types/src/roles.ts`.
+Append-only log of admin mutations, written by `AuditService.record` (`api/src/services/audit.service.ts`). Retained indefinitely; rows are never updated or deleted, except by GDPR erasure: a row about an erased user is re-inserted under a fresh `_id` with `targetId` (and any copy of the id in `before` / `after`) set to the tombstone id, and a row the erased user wrote as an admin gets `actorId: 'system:erased-user'` without `actorEmail` / `ip` ([GDPR.md](./GDPR.md#the-cascade-saga), C1). Type: `AdminAudit` / `AdminAuditView` in `packages/types/src/roles.ts`.
 
 ```typescript
 {

@@ -131,6 +131,33 @@ describe('stream routes', () => {
       });
     });
 
+    describe('failed rows (W1)', () => {
+      it('should answer an error event and never reach the summarizer for a failed row', async () => {
+        mockContainer.videoRepository.findCacheById.mockResolvedValueOnce({ status: 'failed', errorMessage: 'No captions for this video' });
+
+        const response = await app.inject({
+          method: 'GET',
+          url: `/api/videos/${validVideoSummaryId}/stream`,
+          headers: { authorization: authHeader },
+        });
+
+        expect(response.body).toContain('"code":"VIDEO_FAILED"');
+        expect(mockFetch).not.toHaveBeenCalled();
+      });
+
+      it('should fall back to a generic message when the failed row has none', async () => {
+        mockContainer.videoRepository.findCacheById.mockResolvedValueOnce({ status: 'failed' });
+
+        const response = await app.inject({
+          method: 'GET',
+          url: `/api/videos/${validVideoSummaryId}/stream`,
+          headers: { authorization: authHeader },
+        });
+
+        expect(response.body).toContain('Retry it to run it again');
+      });
+    });
+
     describe('parameter validation', () => {
       it('should return 400 for invalid videoSummaryId format', async () => {
         const response = await app.inject({

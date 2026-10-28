@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Check, AlertCircle, RefreshCw, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { getLabels } from '@/lib/i18n';
+import { getLabels, useLabels } from '@/lib/i18n';
 import { Button } from '@/components/ui/button';
 import { EmojiMarker } from '@/components/vie';
 import { DOMAIN_META } from '@/components/vie/cards/domain-meta';
@@ -397,19 +397,27 @@ function StreamVisuals({ frames, totalFrames, thumbnailUrl }: StreamVisualsProps
 
 interface StreamErrorCardProps {
   message?: string | null;
+  /** The server's code for the error. VIDEO_FAILED (the run had already failed) is worded in the page's language. */
+  code?: string | null;
   onRetry?: () => void;
   retrying?: boolean;
 }
 
+/** The gateway's code for opening the stream of a video whose run already failed. */
+const VIDEO_FAILED_CODE = 'VIDEO_FAILED';
+
 /** Mid-stream failure card. Shown when the SSE stream reports an error before
  *  the video record flips to "failed" (which has its own full-page state). */
-export function StreamErrorCard({ message, onRetry, retrying }: StreamErrorCardProps) {
+export function StreamErrorCard({ message, code, onRetry, retrying }: StreamErrorCardProps) {
+  const { billing } = useLabels();
+  const text = code === VIDEO_FAILED_CODE ? billing.videoFailedRetry : message;
+
   return (
     <section className="rounded-2xl border border-border/60 bg-card px-6 py-10 text-center">
       <AlertCircle className="mx-auto h-10 w-10 text-destructive" aria-hidden="true" />
       <h2 className="mt-4 text-lg font-semibold text-foreground">Processing hit a problem</h2>
       <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground text-pretty">
-        {message || 'Something went wrong while processing this video.'}
+        {text || 'Something went wrong while processing this video.'}
       </p>
       {onRetry && (
         <div className="mt-5 flex justify-center">

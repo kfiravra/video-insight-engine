@@ -247,7 +247,31 @@ describe('Rate Limit plugin', () => {
         error: 'RATE_LIMITED',
         message: 'Too many requests',
         statusCode: 429,
+        retryAfterSec: expect.any(Number),
       });
+    });
+
+    it('should tell the client how many whole seconds are left in the window', async () => {
+      const ip = randomIp();
+      for (let i = 0; i < 2; i++) {
+        await app.inject({ method: 'GET', url: '/public-limited', remoteAddress: ip });
+      }
+
+      const response = await app.inject({ method: 'GET', url: '/public-limited', remoteAddress: ip });
+
+      const { retryAfterSec } = response.json();
+      expect(Number.isInteger(retryAfterSec) && retryAfterSec >= 1 && retryAfterSec <= 60).toBe(true);
+    });
+
+    it('should send the same seconds a 24 hour window has left', async () => {
+      const token = bearerFor(app, `retry-after-${randomUUID()}`);
+      for (let i = 0; i < 2; i++) {
+        await app.inject({ method: 'POST', url: '/daily-capped', headers: { authorization: token } });
+      }
+
+      const response = await app.inject({ method: 'POST', url: '/daily-capped', headers: { authorization: token } });
+
+      expect(response.json().retryAfterSec).toBeGreaterThan(23 * 60 * 60);
     });
 
     it('should include a retry-after header when rate limited', async () => {

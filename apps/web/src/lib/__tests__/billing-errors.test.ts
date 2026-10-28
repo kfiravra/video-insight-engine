@@ -55,15 +55,24 @@ describe('classifyBillingCode', () => {
     });
   });
 
-  it('should prefer the body message of RATE_LIMITED, then the envelope message', () => {
-    expect(classifyBillingCode('RATE_LIMITED', { message: 'Max 20 videos per hour' }, 'x')).toEqual({
+  it('should read retryAfterSec from RATE_LIMITED', () => {
+    expect(classifyBillingCode('RATE_LIMITED', { retryAfterSec: 840 })).toEqual({
       kind: 'rate_limited',
-      message: 'Max 20 videos per hour',
+      retryAfterSec: 840,
     });
-    expect(classifyBillingCode('RATE_LIMITED', {}, 'Slow down')).toEqual({
-      kind: 'rate_limited',
-      message: 'Slow down',
-    });
+  });
+
+  it.each([{}, { retryAfterSec: '840' }, { retryAfterSec: Number.NaN }])(
+    'should leave retryAfterSec null when the body has %j',
+    (details) => {
+      expect(classifyBillingCode('RATE_LIMITED', details)).toEqual({ kind: 'rate_limited', retryAfterSec: null });
+    },
+  );
+
+  it('should not carry the server message of RATE_LIMITED, which is English-only', () => {
+    const notice = classifyBillingCode('RATE_LIMITED', { message: 'Max 20 videos per hour', retryAfterSec: 60 });
+
+    expect(notice).not.toHaveProperty('message');
   });
 
   it('should read nextAt from CHAT_LIMIT_REACHED', () => {

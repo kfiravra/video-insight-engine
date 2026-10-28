@@ -14,6 +14,7 @@ import { DegradedNotice } from "@/features/video-output/components/DegradedNotic
 import { VideoPlayerProvider } from "@/features/video-output/contexts/VideoPlayerContext";
 
 import { Confetti } from "@/components/ui/Confetti";
+import { RetryErrorNotice } from "@/components/usage/RetryErrorNotice";
 import { buildSynthesisFromMeta } from "@/features/video-output/lib/synthesis-utils";
 import { shouldOpenStreamForStatus } from "@/features/video-output/lib/streaming/should-open-stream";
 import { resolveDisplayTabs } from "@/features/video-output/lib/streaming/resolve-display-tabs";
@@ -30,6 +31,8 @@ export function VideoDetailPage() {
   const navigate = useNavigate();
   const { data, isLoading, error, refetch } = useVideo(id ?? "");
   const retryVideo = useRetryVideo();
+  // True while the Retry on the stream-error card checks what state the video is in.
+  const [checkingStream, setCheckingStream] = useState(false);
 
   // Extract data safely (may be undefined during loading/error)
   const video = data ?? null;
@@ -100,6 +103,7 @@ export function VideoDetailPage() {
     frames: streamFrames,
     warnings: streamWarnings,
     error: streamError,
+    errorCode: streamErrorCode,
     confettiCount,
     degraded: streamDegraded,
     stop: stopStream,
@@ -114,6 +118,27 @@ export function VideoDetailPage() {
     onComplete: handleStreamSettled,
     onError: handleStreamSettled,
   });
+
+  // Retry on the stream-error card. A stream that stopped is either a dropped
+  // connection to a run that is still going (reattach: no new charge, the hold
+  // is already in place) or a run that failed. Re-opening the stream of a failed
+  // video would run it again with no hold, so a failed video goes through the
+  // billed submit instead, and a refusal shows like any other retry's. If the
+  // state cannot be read (the connection is down), reattach; the stream
+  // reports its own error again if it is still down.
+  const handleStreamRetry = async () => {
+    setCheckingStream(true);
+    try {
+      const { data: fresh } = await refetch();
+      if (fresh?.status === "failed") {
+        handleRetry();
+      } else if (fresh?.status !== "completed") {
+        retryStream();
+      }
+    } finally {
+      setCheckingStream(false);
+    }
+  };
 
   // Cancel handler — flags the id as user-cancelled (so revisits show Resume
   // instead of re-attaching), aborts the local stream, and routes back to the
@@ -360,6 +385,7 @@ export function VideoDetailPage() {
               </Button>
             </Link>
           </div>
+          <RetryErrorNotice error={retryVideo.error} className="mt-4 text-center" />
         </div>
       </Layout>
     );
@@ -440,6 +466,7 @@ export function VideoDetailPage() {
     <ErrorBoundary key={id} fallback={errorFallback}>
       <VideoPlayerProvider>
         <Layout>
+          <RetryErrorNotice error={retryVideo.error} className="mx-auto max-w-2xl px-4" />
           {isDegraded && !isStreaming && (
             <DegradedNotice
               onRetry={handleRetry}
@@ -470,9 +497,11 @@ export function VideoDetailPage() {
             thumbnailUrl={mergedVideo.thumbnailUrl ?? undefined}
             warnings={streamWarnings}
             streamError={phase === "error" ? streamError : null}
-            // A stream error (often a dropped connection) reattaches: the run
-            // keeps going server-side and the stream replays from its start.
-            onRetryStream={retryStream}
+            streamErrorCode={phase === "error" ? streamErrorCode : null}
+            // A stream error (often a dropped connection) reattaches to a run that
+            // is still going; a failed video is retried through the billed submit.
+            onRetryStream={handleStreamRetry}
+            retryingStream={checkingStream || retryVideo.isPending}
             onCancelStream={isStreaming ? handleCancelStream : undefined}
             languageToggle={
               canToggleLanguage && sourceLanguage ? (

@@ -3,7 +3,7 @@ import { screen, within } from '@testing-library/react';
 import type { UsageSummary } from '@vie/types';
 import { UsageTile } from '../UsageTile';
 import * as usageHook from '@/hooks/use-usage';
-import { HOUR, MINUTE, inMs, renderIn, usageSummary } from './usage-fixtures';
+import { HOUR, MINUTE, freeVideo, freeVideoWithoutCount, inMs, renderIn, usageSummary } from './usage-fixtures';
 
 let usageSpy: ReturnType<typeof vi.spyOn> | undefined;
 
@@ -35,7 +35,7 @@ describe('UsageTile', () => {
       expect(screen.getByRole('status')).toHaveTextContent(/loading your minutes/i);
     });
 
-    it('should explain that minutes could not be loaded when the query fails', () => {
+    it('should explain that minutes could not be loaded when the query fails and there is nothing to show', () => {
       mockUsage(undefined, { isError: true });
 
       renderIn(<UsageTile />);
@@ -58,7 +58,7 @@ describe('UsageTile', () => {
 
     it('should show when the next free video opens once it is used', () => {
       const nextFreeAt = inMs(7 * HOUR + 30 * MINUTE + 30_000);
-      mockUsage(usageSummary({ free: { available: false, nextFreeAt, maxVideoMinutes: 30 } }));
+      mockUsage(usageSummary({ free: freeVideo({ available: false, nextFreeAt }) }));
 
       renderIn(<UsageTile />);
 
@@ -66,7 +66,7 @@ describe('UsageTile', () => {
     });
 
     it('should show the free video as not available when no slot ever opens', () => {
-      mockUsage(usageSummary({ free: { available: false, nextFreeAt: null, maxVideoMinutes: 30 } }));
+      mockUsage(usageSummary({ free: freeVideo({ available: false }) }));
 
       renderIn(<UsageTile />);
 
@@ -152,15 +152,67 @@ describe('UsageTile', () => {
     });
   });
 
-  describe('billing link and money', () => {
-    it('should link to the billing settings page', () => {
-      mockUsage(usageSummary());
+  describe('free video switched off', () => {
+    it('should say not available and name no length when caps turn the free video off', () => {
+      mockUsage(usageSummary({ free: freeVideo({ available: false, perWindow: 0 }) }));
 
       renderIn(<UsageTile />);
 
-      expect(screen.getByTestId('usage-tile-link')).toHaveAttribute('href', '/settings/billing');
+      const row = screen.getByTestId('usage-free-video');
+      expect(row).toHaveTextContent('not available');
+      expect(row).not.toHaveTextContent('per video');
     });
 
+    it('should still name the length for a free video that is used up, not switched off', () => {
+      const nextFreeAt = inMs(2 * HOUR + 30_000);
+      mockUsage(usageSummary({ free: freeVideo({ available: false, nextFreeAt, perWindow: 1 }) }));
+
+      renderIn(<UsageTile />);
+
+      expect(screen.getByTestId('usage-free-video')).toHaveTextContent('Up to 30 minutes per video');
+    });
+
+    it('should treat a server that does not send perWindow as the standard free video', () => {
+      mockUsage(usageSummary({ free: freeVideoWithoutCount() }));
+
+      renderIn(<UsageTile />);
+
+      expect(screen.getByTestId('usage-free-video')).toHaveTextContent('Up to 30 minutes per video');
+    });
+
+    it('should show the free video ready when several are allowed and one is open', () => {
+      mockUsage(usageSummary({ free: freeVideo({ perWindow: 3 }) }));
+
+      renderIn(<UsageTile />);
+
+      expect(screen.getByTestId('usage-free-video')).toHaveTextContent('ready');
+    });
+  });
+
+  describe('a countdown that has run out before the server agrees', () => {
+    it('should say opening shortly, not ready, when the server still says unavailable', () => {
+      mockUsage(usageSummary({ free: freeVideo({ available: false, nextFreeAt: inMs(-MINUTE), perWindow: 1 }) }));
+
+      renderIn(<UsageTile />);
+
+      const row = screen.getByTestId('usage-free-video');
+      expect(row).toHaveTextContent('opening shortly');
+      expect(row).not.toHaveTextContent('ready');
+    });
+  });
+
+  describe('a failed refresh', () => {
+    it('should keep showing the last summary when a refresh fails', () => {
+      mockUsage(PRO, { isError: true });
+
+      renderIn(<UsageTile />);
+
+      expect(screen.getByTestId('usage-plan-minutes')).toHaveTextContent('412 of 600 minutes left');
+      expect(screen.queryByRole('alert')).toBeNull();
+    });
+  });
+
+  describe('money and the menu', () => {
     it.each([
       ['free', usageSummary()],
       ['pro', PRO],
@@ -170,6 +222,14 @@ describe('UsageTile', () => {
       renderIn(<UsageTile />);
 
       expect(screen.getByTestId('usage-tile').textContent).not.toContain('$');
+    });
+
+    it('should leave the link to the billing page to the menu item, not a link inside the tile', () => {
+      mockUsage(usageSummary());
+
+      renderIn(<UsageTile />);
+
+      expect(screen.queryByRole('link')).toBeNull();
     });
   });
 
@@ -216,13 +276,21 @@ describe('UsageTile', () => {
     it('should word the countdown to the next free video in Arabic', () => {
       mockUsage(
         usageSummary({
-          free: { available: false, nextFreeAt: inMs(2 * HOUR + 30_000), maxVideoMinutes: 30 },
+          free: freeVideo({ available: false, nextFreeAt: inMs(2 * HOUR + 30_000) }),
         }),
       );
 
       renderIn(<UsageTile />, 'ar');
 
       expect(screen.getByTestId('usage-free-video')).toHaveTextContent('بعد 2 س');
+    });
+
+    it('should put the Arabic dual in the oblique case after "up to" in the length hint', () => {
+      mockUsage(usageSummary({ free: freeVideo({ maxVideoMinutes: 2, perWindow: 1 }) }));
+
+      renderIn(<UsageTile />, 'ar');
+
+      expect(screen.getByTestId('usage-free-video')).toHaveTextContent('حتى دقيقتين لكل فيديو');
     });
 
     it('should render inside a right-to-left container', () => {

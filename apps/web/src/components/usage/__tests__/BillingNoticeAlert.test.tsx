@@ -36,24 +36,36 @@ describe('BillingNoticeAlert', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('You already have videos running.');
   });
 
-  it('should show the server message for the burst rate limit', () => {
-    renderIn(<BillingNoticeAlert notice={{ kind: 'rate_limited', message: 'Up to 20 videos per hour.' }} />);
+  it('should say how long to wait when the burst limit sends retryAfterSec', () => {
+    renderIn(<BillingNoticeAlert notice={{ kind: 'rate_limited', retryAfterSec: 14 * 60 }} />);
 
-    expect(screen.getByRole('alert')).toHaveTextContent('Up to 20 videos per hour.');
+    expect(screen.getByRole('alert')).toHaveTextContent("You're adding videos too fast. Try again in 14m.");
   });
 
-  it('should fall back to a local sentence when the burst limit has no message', () => {
-    renderIn(<BillingNoticeAlert notice={{ kind: 'rate_limited', message: null }} />);
+  it('should fall back to a sentence without a time when retryAfterSec is not sent', () => {
+    renderIn(<BillingNoticeAlert notice={{ kind: 'rate_limited', retryAfterSec: null }} />);
 
-    expect(screen.getByRole('alert')).toHaveTextContent("You're adding videos too fast.");
+    expect(screen.getByRole('alert')).toHaveTextContent("You're adding videos too fast. Try again in a moment.");
   });
 
-  it('should say when more chat messages open up', () => {
+  it('should say the rate-limit wait in Hebrew', () => {
+    renderIn(<BillingNoticeAlert notice={{ kind: 'rate_limited', retryAfterSec: 2 * 3600 }} />, 'he');
+
+    expect(screen.getByRole('alert')).toHaveTextContent('אתם מוסיפים סרטונים מהר מדי. נסו שוב בעוד 2 שע׳.');
+  });
+
+  it('should say the rate-limit wait in Arabic', () => {
+    renderIn(<BillingNoticeAlert notice={{ kind: 'rate_limited', retryAfterSec: 2 * 3600 }} />, 'ar');
+
+    expect(screen.getByRole('alert')).toHaveTextContent('تضيف الفيديوهات بسرعة كبيرة. حاول مجددًا بعد 2 س.');
+  });
+
+  it('should say at what time more chat messages open up, not a countdown', () => {
     renderIn(<BillingNoticeAlert notice={{ kind: 'chat_limit', nextAt: inMs(3 * HOUR + 30_000) }} />);
 
-    expect(screen.getByRole('alert')).toHaveTextContent(
-      "You've used your free chat messages for now. More open up in 3h.",
-    );
+    const alert = screen.getByRole('alert');
+    expect(alert.textContent).toMatch(/^You've used your free chat messages for now\. More open up at .*\d/);
+    expect(alert.textContent).not.toMatch(/ in \d/);
   });
 
   it('should translate a plain refusal into Hebrew', () => {

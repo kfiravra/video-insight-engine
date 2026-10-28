@@ -7,7 +7,8 @@
  */
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest';
 import { ObjectId } from 'mongodb';
-import { getTestDb } from '../../test/setup.js';
+import type { FastifyBaseLogger } from 'fastify';
+import { getTestDb, mockLogger } from '../../test/setup.js';
 import { createBillingIndexes } from '../../plugins/mongodb.js';
 import { AccountBlockedError, RunNotAllowedError } from '../../utils/errors.js';
 import { PlaylistService } from '../playlist.service.js';
@@ -37,7 +38,7 @@ describe('PlaylistService on the minutes ledger', () => {
   let userId: string;
   let service: PlaylistService;
   let createVideo: ReturnType<typeof vi.fn>;
-  let folders: { create: ReturnType<typeof vi.fn>; getById: ReturnType<typeof vi.fn> };
+  let folders: { create: ReturnType<typeof vi.fn>; getById: ReturnType<typeof vi.fn>; delete: ReturnType<typeof vi.fn> };
 
   const holds = () => getTestDb().collection('ledgerEntries').find({ type: 'hold' }).toArray();
   const created = (overrides: Record<string, unknown> = {}) => ({
@@ -68,12 +69,13 @@ describe('PlaylistService on the minutes ledger', () => {
       if (options.serveOnly) throw new RunNotAllowedError();
       return created();
     });
-    folders = { create: vi.fn().mockResolvedValue({ id: 'folder-1', name: 'P' }), getById: vi.fn() };
+    folders = { create: vi.fn().mockResolvedValue({ id: 'folder-1', name: 'P' }), getById: vi.fn(), delete: vi.fn().mockResolvedValue(undefined) };
     service = new PlaylistService(
       { createVideo } as unknown as VideoService,
       folders as unknown as FolderService,
       {} as unknown as SummarizerClient,
       makeEnforcement(getTestDb(), h),
+      mockLogger as unknown as FastifyBaseLogger,
     );
   });
 
@@ -86,6 +88,26 @@ describe('PlaylistService on the minutes ledger', () => {
     expect(result.failedVideos.map((f) => f.error)).toEqual(['INSUFFICIENT_MINUTES', 'INSUFFICIENT_MINUTES', 'INSUFFICIENT_MINUTES']);
     expect(result.billing).toMatchObject({ neededMinutes: 340, availableMinutes: 0 });
     expect(await holds()).toHaveLength(1); // only the free video spent before the import
+  });
+
+  it('should not stop at a long item while the free video is still open, so a later short item gets it (W2)', async () => {
+    useExtract([45, 10, 45, 10]);
+
+    const result = await service.import(userId, PLAYLIST_URL);
+
+    expect(result.videos.map((v) => v.position)).toEqual([2]);
+    expect(result.failedVideos.map((f) => [f.position, f.error])).toEqual([
+      [1, 'INSUFFICIENT_MINUTES'], [3, 'INSUFFICIENT_MINUTES'], [4, 'INSUFFICIENT_MINUTES'],
+    ]);
+  });
+
+  it('should remove the folder it made when nothing could be imported (I7)', async () => {
+    await spendFreeVideo();
+    useExtract([60]);
+
+    const result = await service.import(userId, PLAYLIST_URL);
+
+    expect([result.folder, folders.delete.mock.calls.length]).toEqual([null, 1]);
   });
 
   it('should still serve a cached item after the minutes ran out (C1 / Q6)', async () => {

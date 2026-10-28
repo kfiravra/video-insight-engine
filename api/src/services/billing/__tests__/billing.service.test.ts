@@ -65,7 +65,12 @@ describe('BillingService (runs, real Mongo replica set)', () => {
       await holdVideo('req-1', 10);
 
       const summary = await service.summary(userId);
-      expect(summary.free).toEqual({ available: false, nextFreeAt: '2026-11-02T10:00:00.000Z', maxVideoMinutes: 30 });
+      expect(summary.free).toEqual({
+        available: false,
+        nextFreeAt: '2026-11-02T10:00:00.000Z',
+        maxVideoMinutes: 30,
+        perWindow: 1,
+      });
       expect(summary.holds).toEqual([{ youtubeId: 'dQw4w9WgXcQ', minutes: 10 }]);
       await expectConsistent();
     });

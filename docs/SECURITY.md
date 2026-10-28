@@ -291,10 +291,20 @@ the per-route 24 h `VIDEO_DAILY_LIMIT` limiter, removed with the dollar gate
 ```json
 {
   "error": "RATE_LIMITED",
-  "message": "Too many requests. Try again in 3600 seconds.",
-  "retryAfter": 3600
+  "message": "Too many requests",
+  "statusCode": 429,
+  "retryAfterSec": 42
 }
 ```
+
+`retryAfterSec` is the whole seconds (at least 1) until the window reopens. Every
+limiter that answers `RATE_LIMITED` sends it: the global limiter and the per-route
+quotas (`@fastify/rate-limit`, from the plugin's own reset time, via
+`rateLimitedBody` in `api/src/plugins/rate-limit.ts`) and the submit burst limit
+(the seconds left in its hour). The web app builds its localized copy from this
+number, not from the English `message`. The only exception is the assistant's own
+30/min chat window, which reports no wait. The playlist import quota is a 24 hour
+window and its message says only "Too many playlist imports. Try again later."
 
 Headers:
 
@@ -587,8 +597,9 @@ client-ip header is trusted because it would be unsigned.
 **Guard rails on the admin account itself.** Deleting an account that holds the admin
 role is refused with `409 LAST_ADMIN` when it is the last active admin (soft-deleted
 accounts do not count); an admin may delete their own account only while another
-active admin remains. This does not cover a user deleting their own account through
-`DELETE /api/users/me`, which is not an admin route.
+active admin remains. The same rule guards a user deleting their own account through
+`DELETE /api/users/me`, so the last admin cannot lock the panel out by self-service
+erasure either.
 
 **Reusing an `Idempotency-Key`.** The key makes a retry of the same request a no-op,
 and the same key with a different request (another body, plan or user) is refused

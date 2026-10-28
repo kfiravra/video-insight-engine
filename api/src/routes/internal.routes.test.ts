@@ -223,6 +223,21 @@ describe('internal routes', () => {
         expect(mockContainer.billingEnforcement.runFinished).toHaveBeenCalledWith(videoSummaryId, 'completed');
       });
 
+      it('should release a cache-hit completion as cached, not settle it (I3)', async () => {
+        const videoSummaryId = new ObjectId().toHexString();
+        app.mongo.db.collection = vi.fn().mockReturnValue({ updateMany: vi.fn().mockResolvedValue({ modifiedCount: 1 }) });
+        app.broadcast = vi.fn();
+
+        await app.inject({
+          method: 'POST',
+          url: '/internal/status',
+          headers: { 'content-type': 'application/json', 'x-internal-secret': INTERNAL_SECRET },
+          payload: { type: 'video.status', payload: { videoSummaryId, userId: 'u-cache', status: 'completed', cacheHit: true } },
+        });
+
+        expect(mockContainer.billingEnforcement.runFinished).toHaveBeenCalledWith(videoSummaryId, 'cached');
+      });
+
       it('should release the run\'s hold when a video FAILS', async () => {
         const videoSummaryId = new ObjectId().toHexString();
         const userId = 'failed-user-456';

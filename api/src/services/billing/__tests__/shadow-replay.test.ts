@@ -14,7 +14,8 @@ import type { FastifyInstance } from 'fastify';
 import { buildTestApp, createMockContainer } from '../../../test/helpers.js';
 import { getTestDb } from '../../../test/setup.js';
 import { createBillingIndexes } from '../../../plugins/mongodb.js';
-import { POLICY_DELTAS, classifyShadow, errorReason } from '../shadow-policy.js';
+import { refusalReason } from '../billing-errors.js';
+import { POLICY_DELTAS, classifyShadow } from '../shadow-policy.js';
 import { ReplayHarness } from './shadow-replay.harness.js';
 import { REPLAY_SCENARIOS } from './shadow-replay.scenarios.js';
 import type { BillingShadow } from '@vie/types';
@@ -36,7 +37,7 @@ function policyRefOf(policy: PolicyId | undefined): string | undefined {
 
 /** The ledger's side: its entries plus the submit's refusal. */
 function newDecisionOf(result: RunResult): { admitted: boolean; charged: boolean; reason?: string } {
-  const reason = errorReason(result.error);
+  const reason = refusalReason(result.error);
   return { ...result.ledger, ...(reason && { reason }) };
 }
 

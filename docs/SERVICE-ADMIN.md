@@ -170,9 +170,12 @@ A run is counted per distinct summarizer `request_id`; assistant chat adds cost,
 - `creditAdjustmentUsd`, the retired dollar credit, exists only there, and the Adjustments tab reads `userCostAdjustments`;
 - a day that has no attributed `llm_usage` rows keeps the history row's cost and video count, which covers the time before a run streamed over HTTP was attributed to its user. A day that has attributed rows takes its cost from them and only the credit from history, so nothing is counted twice.
 
-A user is listed when they have spend in the range, a minutes account (`billingAccounts`), or
+A user is listed when they still exist and have spend in the range, a minutes account (`billingAccounts`), or
 signed up in the range (a new user has neither yet, and the admin must still find them to grant
-minutes). The **Plan** column is `billingAccounts.plan.id`, `free` when the user has no account row.
+minutes). An erased user is not listed: GDPR keeps a tombstone account (`ownerType: "user"`) but deletes the
+`users` document. The **Plan** column is `billingAccounts.plan.id`, `free` when the user has no account row;
+vie-api stores `billingAccounts.ownerId` as an ObjectId, so the reads and the `/tiers/distribution` `$lookup`
+compare it as one (a hex string matches nothing).
 
 | Method | Path | Description |
 |--------|------|-------------|

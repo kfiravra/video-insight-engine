@@ -88,12 +88,15 @@ export class ReplayHarness {
       logger,
       this.enforcement,
     );
-    const folders = { create: vi.fn().mockResolvedValue({ id: 'folder-replay', name: 'Replay' }), getById: vi.fn() };
+    const folders = {
+      create: vi.fn().mockResolvedValue({ id: 'folder-replay', name: 'Replay' }), getById: vi.fn(), delete: vi.fn().mockResolvedValue(undefined),
+    };
     this.playlists = new PlaylistService(
       videoService,
       folders as unknown as FolderService,
       {} as unknown as SummarizerClient,
       this.enforcement,
+      logger,
     );
   }
 
@@ -224,7 +227,9 @@ export class ReplayHarness {
     const requestId = state.requestIds.get(run);
     if (!videoSummaryId || !requestId) throw new Error(`${state.scenario}: run ${run} was never dispatched`);
     if (costUsd > 0) {
-      await this.db.collection('llm_usage').insertOne({ request_id: requestId, user_id: state.userId, cost_usd: costUsd, timestamp: new Date() });
+      await this.db.collection('llm_usage').insertOne({
+        request_id: requestId, video_summary_id: videoSummaryId, user_id: state.userId, cost_usd: costUsd, timestamp: new Date(),
+      });
     }
     const response = await app.inject({
       method: 'POST',

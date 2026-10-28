@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { AppError, RunNotAllowedError } from '../utils/errors.js';
 import { submitOutcome } from './billing/run-stamp.js';
-import { refusalServesWithoutRun } from './billing/shadow-policy.js';
+import { refusalReason, refusalServesWithoutRun } from './billing/billing-errors.js';
 import { queuePlanOf, type QueuePlan } from './queue-topology.js';
+import type { FastifyBaseLogger } from 'fastify';
 import type { LedgerEnforcement } from './billing/ledger-enforcement.js';
 import type { ProviderConfig } from './summarizer-client.js';
 import type { VideoService } from './video.service.js';
@@ -31,6 +32,7 @@ export interface FailedVideoImport {
   youtubeId: string;
   title: string;
   position: number;
+  /** An error code (`INSUFFICIENT_MINUTES`, `METADATA_UNAVAILABLE`, …; `INTERNAL_ERROR` for anything unexpected), never a raw message (I5). */
   error: string;
 }
 
@@ -47,6 +49,8 @@ export interface ItemImportContext {
   userId: string;
   folderId: string;
   providers?: ProviderConfig;
+  /** The up-front quote's free video: open when the import starts. */
+  freeVideoAvailable: boolean;
 }
 
 export interface ItemImporter {
@@ -59,6 +63,11 @@ export interface ItemImporter {
 const STOPPING_CODES = new Set(['INSUFFICIENT_MINUTES', 'TOO_MANY_RUNS', 'ACCOUNT_BLOCKED']);
 /** …of which these still let a later item through when it costs nothing (a blocked account gets nothing). */
 const SERVEABLE_STOP_CODES = new Set(['INSUFFICIENT_MINUTES', 'TOO_MANY_RUNS']);
+
+/** The code a playlist item failure is reported with (I5): the domain code, or INTERNAL_ERROR. */
+function failureCode(err: unknown): string {
+  return err instanceof AppError ? err.code : 'INTERNAL_ERROR';
+}
 
 function failed(item: PlaylistItem, error: string, stopsImport = false): ItemOutcome {
   return { kind: 'failed', failure: { youtubeId: item.video_id, title: item.title, position: item.position, error }, stopsImport };
@@ -84,13 +93,23 @@ function imported(item: PlaylistItem, result: CreateVideoResult): ItemOutcome {
 
 /** Quote + hold per item (its own server run id); give back on cached / attached / error. */
 export class LedgerItemImporter implements ItemImporter {
+  /**
+   * Whether a later item could still get the free video. Starts from the
+   * quote and closes when an item takes it — one slot per window assumed, so
+   * an admin's `freeVideosPerDay > 1` can only make the import stop sooner.
+   */
+  private freeVideoOpen: boolean;
+
   constructor(
     private readonly videoService: VideoService,
     private readonly enforcement: LedgerEnforcement,
     private readonly ctx: ItemImportContext,
     /** Per item, the length the up-front quote resolved (null = the pre-flight could not tell). */
     private readonly durationsSec: Array<number | null>,
-  ) {}
+    private readonly logger: FastifyBaseLogger,
+  ) {
+    this.freeVideoOpen = ctx.freeVideoAvailable;
+  }
 
   async import(item: PlaylistItem, index: number): Promise<ItemOutcome> {
     const durationSec = this.durationsSec[index];
@@ -100,9 +119,10 @@ export class LedgerItemImporter implements ItemImporter {
     try {
       const hold = await this.enforcement.admit({ requestId: runId, userId: this.ctx.userId, youtubeId: item.video_id, durationSec });
       queuePlan = queuePlanOf(hold.split);
+      if (hold.split.free > 0) this.freeVideoOpen = false;
     } catch (err) {
       if (!(err instanceof AppError)) throw err;
-      const stops = STOPPING_CODES.has(err.code);
+      const stops = this.stopsImport(err);
       return refusalServesWithoutRun(err) ? this.serveFree(item, err.code, stops) : failed(item, err.code, stops);
     }
     let result: CreateVideoResult;
@@ -110,10 +130,26 @@ export class LedgerItemImporter implements ItemImporter {
       result = await this.createVideo(item, { requestId: runId, billingRunId: runId, queuePlan });
     } catch (err) {
       await this.enforcement.submitFailed(runId);
-      return failed(item, err instanceof Error ? err.message : String(err));
+      return this.failedWith(item, err);
     }
     await this.enforcement.submitResolved(runId, submitOutcome(result));
     return imported(item, result);
+  }
+
+  /**
+   * A refusal later items cannot do better on stops the import — except a
+   * video only paid minutes could cover while the free video is still open:
+   * a later short item can still take it (W2).
+   */
+  private stopsImport(err: AppError): boolean {
+    if (!STOPPING_CODES.has(err.code)) return false;
+    return !(refusalReason(err) === 'needs_paid_minutes' && this.freeVideoOpen);
+  }
+
+  /** An unexpected item failure: logged with its error, reported by code only (I5). */
+  private failedWith(item: PlaylistItem, err: unknown): ItemOutcome {
+    this.logger.warn({ err, youtubeId: item.video_id, userId: this.ctx.userId }, 'playlist_item_import_failed');
+    return failed(item, failureCode(err));
   }
 
   /** After the import stopped, an item already in the library, completed, or running still comes free (Q6). */
@@ -130,7 +166,7 @@ export class LedgerItemImporter implements ItemImporter {
       return stopsImport && served.kind === 'imported' ? { ...served, stopsImport: error } : served;
     } catch (err) {
       if (err instanceof RunNotAllowedError) return failed(item, error, stopsImport);
-      return failed(item, err instanceof Error ? err.message : String(err));
+      return this.failedWith(item, err);
     }
   }
 

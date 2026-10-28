@@ -1,14 +1,5 @@
-import { FREE_VIDEO } from '@vie/types';
-import {
-  AccountBlockedError,
-  HoldConflictError,
-  HoldFinalizedError,
-  InsufficientMinutesError,
-  MetadataUnavailableError,
-  TooManyRunsError,
-  VideoTooLongForPlanError,
-} from '../../utils/errors.js';
 import type { BillingShadowDecision, BillingShadowPath } from '@vie/types';
+import type { RefusalReason } from './billing-errors.js';
 
 // Contract 4: the old dollar gate and the minutes ledger disagree on purpose
 // in some places. Every intended difference is one row of POLICY_DELTAS with
@@ -21,34 +12,12 @@ import type { BillingShadowDecision, BillingShadowPath } from '@vie/types';
 // length is its own class `metadata_unavailable` (W1) — counted and reported
 // by the gate, because during a YouTube block it would refuse every submit.
 
-/** Why the ledger refused (or could not decide) — `newDecision.reason`; the last two occur only in recorded shadow rows. */
-export type ShadowReason =
-  | 'free_window_used'
-  | 'needs_paid_minutes'
-  | 'free_disabled'
-  | 'too_long'
-  | 'blocked'
-  | 'too_many_runs'
-  | 'metadata_unavailable'
-  | 'hold_finalized'
-  | 'hold_conflict'
-  | 'submit_error'
-  | 'shadow_error';
-
 /**
- * Refusals that still let a video be served when serving it costs nothing —
- * already in the library, a completed row, or a live run to attach to (Q6).
- * Only a run needs minutes; a blocked account is refused outright. Read by
- * the enforcement path (serve-only createVideo).
+ * Why the ledger refused (or could not decide) — `newDecision.reason`: the
+ * submit paths' vocabulary (billing-errors.ts `refusalReason`), plus two that
+ * occur only in recorded shadow rows.
  */
-export const SERVES_WITHOUT_RUN: ReadonlySet<string> = new Set<ShadowReason>([
-  'free_window_used',
-  'needs_paid_minutes',
-  'free_disabled',
-  'too_long',
-  'too_many_runs',
-  'metadata_unavailable',
-]);
+export type ShadowReason = RefusalReason | 'submit_error' | 'shadow_error';
 
 export interface ShadowFacts {
   path: BillingShadowPath;
@@ -137,26 +106,4 @@ export function classifyShadow(facts: ShadowFacts): ShadowClassification {
   if (newDecision.reason === 'metadata_unavailable') return { classification: 'metadata_unavailable' };
   const delta = POLICY_DELTAS.find((candidate) => candidate.applies(facts));
   return delta ? { classification: 'policy_delta', policyRef: delta.policyRef } : { classification: 'disagree' };
-}
-
-/** The ledger's refusal named from a thrown error (in the policy table's vocabulary); null when it is not a decision. */
-export function errorReason(err: unknown): ShadowReason | null {
-  if (err instanceof MetadataUnavailableError) return 'metadata_unavailable';
-  if (err instanceof HoldFinalizedError) return 'hold_finalized';
-  if (err instanceof HoldConflictError) return 'hold_conflict';
-  if (err instanceof AccountBlockedError) return 'blocked';
-  if (err instanceof TooManyRunsError) return 'too_many_runs';
-  if (err instanceof VideoTooLongForPlanError) return 'too_long';
-  if (err instanceof InsufficientMinutesError) {
-    if (err.nextFreeAt) return 'free_window_used';
-    // A video that fits the free limit and still found no slot: the free video is switched off.
-    return err.needed > FREE_VIDEO.maxVideoMinutes ? 'needs_paid_minutes' : 'free_disabled';
-  }
-  return null;
-}
-
-/** True when the ledger's refusal `err` still lets a cached / attachable video be served (Q6). */
-export function refusalServesWithoutRun(err: unknown): boolean {
-  const reason = errorReason(err);
-  return reason !== null && SERVES_WITHOUT_RUN.has(reason);
 }

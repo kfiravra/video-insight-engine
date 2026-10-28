@@ -15,7 +15,8 @@ import { DeleteVideoDialog } from "@/features/sidebar/dialogs/DeleteVideoDialog"
 import { cn } from "@/lib/utils";
 
 import { SIDEBAR_LAYOUT } from "@/features/sidebar/lib/layout-constants";
-import { useMoveVideo, useDeleteVideo, useRetryVideo } from "@/hooks/use-videos";
+import { useMoveVideo, useDeleteVideo } from "@/hooks/use-videos";
+import { useResummarize } from "@/features/sidebar/hooks/use-resummarize";
 import { useSidebarTextClasses } from "@/features/sidebar/hooks/use-sidebar-text-size";
 import { useLongPress } from "@/features/sidebar/hooks/use-long-press";
 import { useIsTruncated } from "@/hooks/use-is-truncated";
@@ -33,7 +34,7 @@ interface VideoItemProps {
 export const VideoItem = memo(function VideoItem({ video, level, folders = [] }: VideoItemProps) {
   const moveVideo = useMoveVideo();
   const deleteVideo = useDeleteVideo();
-  const retryVideo = useRetryVideo();
+  const { resummarize, isPending: isRetrying } = useResummarize();
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const textClasses = useSidebarTextClasses();
   const titleRef = useRef<HTMLAnchorElement>(null);
@@ -117,10 +118,7 @@ export const VideoItem = memo(function VideoItem({ video, level, folders = [] }:
     });
   };
 
-  const handleResummarize = () => {
-    if (!video.youtubeId) return;
-    retryVideo.mutate({ youtubeId: video.youtubeId, folderId: video.folderId });
-  };
+  const handleResummarize = () => resummarize(video);
 
   // Handle click - supports Shift+Click and Ctrl+Click for selection
   const handleClick = useCallback(
@@ -259,7 +257,7 @@ export const VideoItem = memo(function VideoItem({ video, level, folders = [] }:
                 onMoveToFolder={handleMoveToFolder}
                 onDelete={() => setShowDeleteDialog(true)}
                 onResummarize={handleResummarize}
-                isRetrying={retryVideo.isPending}
+                isRetrying={isRetrying}
               />
             </div>
 

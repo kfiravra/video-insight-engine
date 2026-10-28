@@ -67,7 +67,8 @@ def user_doc(user: str, email: str | None, name: str | None = None) -> dict[str,
 
 
 def account_row(user: str, plan: str | None) -> dict[str, Any]:
-    return {"ownerId": user, "plan": {"id": plan} if plan else {}}
+    """A billingAccounts row as vie-api writes it: ``ownerId`` is an ObjectId, not a hex string."""
+    return {"ownerId": ObjectId(user), "plan": {"id": plan} if plan else {}}
 
 
 # ─── The window ───
@@ -213,8 +214,16 @@ class TestPlans:
         assert await plan_id(db, ALICE) == "pro"
         assert db.billingAccounts.find_one.call_args.args[0] == {
             "ownerType": "user",
-            "ownerId": ALICE,
+            "ownerId": ObjectId(ALICE),
         }
+
+    @pytest.mark.anyio
+    async def test_should_filter_the_account_by_an_objectid_never_a_hex_string(self) -> None:
+        db = fake_db(account=None)
+
+        await plan_id(db, ALICE)
+
+        assert isinstance(db.billingAccounts.find_one.call_args.args[0]["ownerId"], ObjectId)
 
     @pytest.mark.anyio
     async def test_should_fall_back_to_free_when_the_user_has_no_account_row(self) -> None:
@@ -300,18 +309,27 @@ class TestUserCostSummaries:
     @pytest.mark.anyio
     async def test_should_not_list_spend_attributed_to_an_id_that_is_not_a_user_id(self) -> None:
         db = fake_db(
-            usage_rows=[usage("not-a-user-id", "2026-10-28", 5.0), usage(ALICE, "2026-10-28", 0.1)]
+            usage_rows=[usage("not-a-user-id", "2026-10-28", 5.0), usage(ALICE, "2026-10-28", 0.1)],
+            users=[user_doc(ALICE, "a@x")],
         )
 
         assert [row.user_id for row in await user_cost_summaries(db, 7)] == [ALICE]
 
     @pytest.mark.anyio
-    async def test_should_keep_a_user_whose_record_is_gone_with_no_email(self) -> None:
+    async def test_should_not_list_an_erased_user_whose_record_is_gone(self) -> None:
         db = fake_db(usage_rows=[usage(ALICE, "2026-10-28", 0.1)], users=[])
 
-        [row] = await user_cost_summaries(db, 7)
+        assert await user_cost_summaries(db, 7) == []
 
-        assert (row.user_id, row.email, row.name) == (ALICE, None, None)
+    @pytest.mark.anyio
+    async def test_should_not_list_the_tombstone_account_of_an_erased_user(self) -> None:
+        # GDPR keeps the billing account (ownerType "user") after the users document is deleted.
+        db = fake_db(
+            accounts=[account_row(ALICE, "pro"), account_row(BOB, "free")],
+            users=[user_doc(BOB, "bob@example.com")],
+        )
+
+        assert [row.user_id for row in await user_cost_summaries(db, 7)] == [BOB]
 
     @pytest.mark.anyio
     async def test_should_sort_by_effective_cost_highest_first(self) -> None:

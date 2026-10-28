@@ -7,6 +7,8 @@ import type {
 
 /** The fields of a `videoSummaryCache` row the stale-hold rule reads. */
 export interface RunState {
+  /** The row: a settle counts only its llm_usage (I4). Absent on rows built by tests. */
+  _id?: ObjectId;
   status: 'pending' | 'processing' | 'completed' | 'failed';
   updatedAt: Date;
   /** The dispatch's request id — the key of the run's llm_usage rows. */
@@ -45,7 +47,7 @@ export class BillingMaintenanceRepository {
   async findRun(youtubeId: string, runId: string): Promise<RunState | null> {
     return this.videoCache.findOne(
       { youtubeId, $or: [{ billingRunId: runId }, { requestId: runId }] },
-      { projection: { _id: 0, status: 1, updatedAt: 1, requestId: 1 } },
+      { projection: { _id: 1, status: 1, updatedAt: 1, requestId: 1 } },
     );
   }
 

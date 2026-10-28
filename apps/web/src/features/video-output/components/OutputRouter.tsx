@@ -59,7 +59,10 @@ interface OutputRouterProps {
    *  with a retry affordance renders — instead of the generic "extraction
    *  incomplete" message before any tab, above the tabs once some landed. */
   streamError?: string | null;
-  /** Reattach to the stream (the run keeps going server-side). */
+  /** The server's code for `streamError`; VIDEO_FAILED gets copy about starting a new run. */
+  streamErrorCode?: string | null;
+  /** Retry from the error card: the page decides between reattaching to a run that is
+   *  still going and starting a new, billed one for a video that failed. */
   onRetryStream?: () => void;
   retryingStream?: boolean;
   /** Abort the in-flight stream. When provided, the streaming placeholder
@@ -138,6 +141,7 @@ export function OutputRouter({
   thumbnailUrl,
   warnings,
   streamError,
+  streamErrorCode,
   onRetryStream,
   retryingStream,
   onCancelStream,
@@ -256,7 +260,12 @@ export function OutputRouter({
             {/* A stream that failed after tabs landed (a dropped connection
                 mid-run) keeps the tabs and says so, with a way back in. */}
             {hasData && !isStreaming && streamError && (
-              <StreamErrorCard message={streamError} onRetry={onRetryStream} retrying={retryingStream} />
+              <StreamErrorCard
+                message={streamError}
+                code={streamErrorCode}
+                onRetry={onRetryStream}
+                retrying={retryingStream}
+              />
             )}
             {hasData ? (
               <TabPanel
@@ -287,6 +296,7 @@ export function OutputRouter({
             ) : streamError ? (
               <StreamErrorCard
                 message={streamError}
+                code={streamErrorCode}
                 onRetry={onRetryStream}
                 retrying={retryingStream}
               />

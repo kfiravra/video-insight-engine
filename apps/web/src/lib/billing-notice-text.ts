@@ -1,7 +1,7 @@
 import { fillTemplate } from "@/lib/format-minutes";
 import type { BillingText } from "@/hooks/use-billing-text";
-import { classifyBillingCode, type BillingNotice } from "@/lib/billing-errors";
-import type { FailedVideoImport } from "@/api/playlists";
+import { classifyBillingCode, classifyBillingError, type BillingNotice } from "@/lib/billing-errors";
+import type { FailedVideoImport, PlaylistQuote } from "@/api/playlists";
 
 type MinutesNotice = Extract<BillingNotice, { kind: "insufficient" | "too_long" }>;
 
@@ -21,7 +21,7 @@ export function minutesCalloutLines(notice: MinutesNotice, text: BillingText, no
     const title =
       notice.maxMinutes === null
         ? labels.calloutTooLongUnknown
-        : fillTemplate(labels.calloutTooLong, { max: text.minutes(notice.maxMinutes) });
+        : fillTemplate(labels.calloutTooLong, { max: text.minutesOblique(notice.maxMinutes) });
     return { title, detail: null };
   }
 
@@ -29,7 +29,7 @@ export function minutesCalloutLines(notice: MinutesNotice, text: BillingText, no
     notice.needed === null || notice.available === null
       ? labels.calloutNeedsUnknown
       : fillTemplate(labels.calloutNeeds, {
-          needed: text.minutes(notice.needed),
+          needed: text.minutesOblique(notice.needed),
           available: text.minutes(notice.available),
         });
   // A next-free time means the video fits the free video, which is already used.
@@ -55,13 +55,17 @@ export function describeBillingNotice(notice: BillingNotice, text: BillingText, 
       return notice.maxConcurrent === null
         ? labels.errorTooManyRunsUnknown
         : fillTemplate(labels.errorTooManyRuns, { running: text.videos(notice.maxConcurrent) });
-    case "rate_limited":
-      return notice.message ?? labels.errorRateLimited;
+    case "rate_limited": {
+      const when = text.untilSeconds(notice.retryAfterSec, nowMs);
+      return when === null ? labels.errorRateLimited : fillTemplate(labels.errorRateLimitedIn, { when });
+    }
     case "chat_limit": {
-      const when = text.until(notice.nextAt, nowMs);
+      // A clock time, not a countdown: this sentence is saved in the chat transcript.
+      const upcoming = notice.nextAt !== null && Date.parse(notice.nextAt) > nowMs;
+      const time = upcoming ? text.moment(notice.nextAt, nowMs) : null;
       return joinSentences(
         labels.errorChatLimit,
-        when === null ? null : fillTemplate(labels.errorChatLimitNext, { when }),
+        time === null ? null : fillTemplate(labels.errorChatLimitAt, { time }),
       );
     }
   }
@@ -70,11 +74,14 @@ export function describeBillingNotice(notice: BillingNotice, text: BillingText, 
 /** A stable machine code such as FOO_BAR, as opposed to a sentence. */
 const CODE_PATTERN = /^[A-Z][A-Z0-9]*(_[A-Z0-9]+)+$/;
 
-/** Why one playlist item was not added: the billing refusal in the user's language, else the server's message. */
+/** Codes for an item whose length or hold could not be settled: the video could not be read. */
+const UNREADABLE_CODES = new Set(["METADATA_UNAVAILABLE", "HOLD_CONFLICT"]);
+
+/** Why one playlist item was not added: the refusal in the user's language, else the server's message. */
 export function describeFailedImport(item: FailedVideoImport, text: BillingText): string {
   const { labels } = text;
-  const notice = classifyBillingCode(item.code ?? item.error);
-  switch (notice?.kind) {
+  if (UNREADABLE_CODES.has(item.error)) return labels.failedUnreadable;
+  switch (classifyBillingCode(item.error)?.kind) {
     case "insufficient":
       return labels.failedInsufficient;
     case "too_long":
@@ -92,6 +99,24 @@ export function describeFailedImport(item: FailedVideoImport, text: BillingText)
 
 /** True when the item failed because of the user's minutes, so the result can point at /settings/billing. */
 export function isMinutesFailure(item: FailedVideoImport): boolean {
-  const kind = classifyBillingCode(item.code ?? item.error)?.kind;
+  const kind = classifyBillingCode(item.error)?.kind;
   return kind === "insufficient" || kind === "too_long";
+}
+
+/** "The whole playlist needs 340 minutes; you have 120 minutes." — only when the quote shows a shortfall. */
+export function playlistQuoteLine(billing: PlaylistQuote | undefined, text: BillingText): string | null {
+  if (!billing || billing.neededMinutes <= billing.availableMinutes) return null;
+  return fillTemplate(text.labels.playlistNeeds, {
+    needed: text.minutesOblique(billing.neededMinutes),
+    available: text.minutes(billing.availableMinutes),
+  });
+}
+
+export const RETRY_FAILED_MESSAGE = "Couldn't retry this video. Try again in a moment.";
+
+/** One line saying why a retry / re-summarize was refused: a billing refusal in the user's language, else the error's message. */
+export function describeRetryFailure(error: unknown, text: BillingText, nowMs: number): string {
+  const notice = classifyBillingError(error);
+  if (notice) return describeBillingNotice(notice, text, nowMs);
+  return error instanceof Error && error.message ? error.message : RETRY_FAILED_MESSAGE;
 }

@@ -2,7 +2,9 @@ import { describe, it, expect } from 'vitest';
 import {
   fillTemplate,
   formatDate,
+  formatDurationSeconds,
   formatDurationUntil,
+  formatMoment,
   formatMinutes,
   formatNumber,
   formatPlural,
@@ -111,5 +113,52 @@ describe('formatDate', () => {
 
   it.each([null, undefined, '', 'not a date'])('should print a dash for %s', (value) => {
     expect(formatDate(value, 'en')).toBe('—');
+  });
+});
+
+describe('formatDurationSeconds', () => {
+  const en = getLabels('en').billing.duration;
+
+  it.each([
+    [45 * 60, '45m'],
+    [2 * 3600, '2h'],
+    [2 * 3600 + 5 * 60, '2h 5m'],
+    [90_000, '1d 1h'],
+  ])('should format a wait of %i seconds as "%s"', (seconds, expected) => {
+    expect(formatDurationSeconds(seconds, NOW, 'en', en)).toBe(expected);
+  });
+
+  it('should round a wait under a minute up to one minute', () => {
+    expect(formatDurationSeconds(20, NOW, 'en', en)).toBe('1m');
+  });
+
+  it.each([null, undefined, 0, -5, Number.NaN, Number.POSITIVE_INFINITY])('should return null for %s', (seconds) => {
+    expect(formatDurationSeconds(seconds, NOW, 'en', en)).toBeNull();
+  });
+
+  it('should use the language unit templates', () => {
+    expect(formatDurationSeconds(2 * 3600, NOW, 'ar', getLabels('ar').billing.duration)).toBe('2 س');
+  });
+});
+
+describe('formatMoment', () => {
+  // Local times, so "same day" holds in whatever time zone the tests run in.
+  const now = new Date(2026, 9, 28, 10, 0).getTime();
+
+  it('should give only the clock time for a moment later today', () => {
+    expect(formatMoment(new Date(2026, 9, 28, 15, 15).toISOString(), now, 'en')).toBe('3:15 PM');
+  });
+
+  it('should add the date for a moment on another day', () => {
+    expect(formatMoment(new Date(2026, 10, 2, 15, 15).toISOString(), now, 'en')).toBe('Nov 2, 2026, 3:15 PM');
+  });
+
+  it.each([null, undefined, '', 'not a date'])('should return null for %s', (value) => {
+    expect(formatMoment(value, now, 'en')).toBeNull();
+  });
+
+  it.each(['he', 'ar'])('should use Latin digits in %s', (language) => {
+    expect(formatMoment(new Date(2026, 9, 28, 15, 15).toISOString(), now, language)).toMatch(/15|3/);
+    expect(formatMoment(new Date(2026, 9, 28, 15, 15).toISOString(), now, language)).not.toMatch(/[٠-٩]/);
   });
 });

@@ -55,18 +55,20 @@ export class LedgerEnforcement {
 
   /**
    * Terminal status of a dispatched run: completed → settle with the run's
-   * LLM $, failed → release. Never throws — the status relay must not fail
-   * on it; a hold left open is settled or released by the repair job.
+   * LLM $, failed → release, cached (the summarizer answered from its
+   * response cache, no run happened — I3) → release like a cached submit.
+   * Never throws — the status relay must not fail on it; a hold left open is
+   * settled or released by the repair job.
    */
-  async runFinished(videoSummaryId: string, status: 'completed' | 'failed'): Promise<void> {
+  async runFinished(videoSummaryId: string, outcome: 'completed' | 'failed' | 'cached'): Promise<void> {
     try {
       const run = stampedRun(await this.deps.dispatchStamps.findCacheById(videoSummaryId));
       if (!run) return;
-      const costUsd = await this.deps.llmUsage.sumCostByRequestId(run.costRequestId);
-      if (status === 'completed') await this.deps.billing.settle(run.runId, { costUsd });
-      else await this.deps.billing.release(run.runId, 'failed', { costUsd });
+      const costUsd = await this.deps.llmUsage.sumRunCost(run.costRequestId, videoSummaryId);
+      if (outcome === 'completed') await this.deps.billing.settle(run.runId, { costUsd });
+      else await this.deps.billing.release(run.runId, outcome, { costUsd });
     } catch (err) {
-      this.deps.logger.warn({ err, videoSummaryId, status }, 'billing_run_finish_failed');
+      this.deps.logger.warn({ err, videoSummaryId, outcome }, 'billing_run_finish_failed');
     }
   }
 

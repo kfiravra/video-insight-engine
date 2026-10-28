@@ -9,6 +9,7 @@ import { sha256Hex, signActorHeader } from '../utils/admin-actor.js';
 export interface MockContainer {
   videoRepository: {
     findCacheKeysByYoutubeId: ReturnType<typeof vi.fn>;
+    findKnownDuration: ReturnType<typeof vi.fn>;
     userHasAccessToSummary: ReturnType<typeof vi.fn>;
     userOwnsVideo: ReturnType<typeof vi.fn>;
     findUserVideo: ReturnType<typeof vi.fn>;
@@ -159,6 +160,8 @@ export function createMockContainer(): MockContainer {
   return {
     videoRepository: {
       findCacheKeysByYoutubeId: vi.fn().mockResolvedValue([]),
+      // Default: no completed version knows the length, so submits ask the pre-flight.
+      findKnownDuration: vi.fn().mockResolvedValue(null),
       userHasAccessToSummary: vi.fn().mockResolvedValue(true),
       userOwnsVideo: vi.fn().mockResolvedValue(true),
       findUserVideo: vi.fn(),

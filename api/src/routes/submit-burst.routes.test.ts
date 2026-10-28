@@ -138,6 +138,7 @@ describe('submit burst limit on the submit routes', () => {
         error: 'RATE_LIMITED',
         message: 'Too many submissions in the last hour. Try again in 45 min.',
         statusCode: 429,
+        retryAfterSec: 2700,
       });
     });
 

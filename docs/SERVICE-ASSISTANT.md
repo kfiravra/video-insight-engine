@@ -334,10 +334,13 @@ with per-endpoint fallbacks): `/chat` + `/library/chat` 30/min, `/action`
 
 The assistant knows nothing about plans. The gateway (vie-api) caps chat for
 **free** accounts before it forwards a message: `POST /api/videos/:videoSummaryId/chat`
-and `POST /api/assistant/library/chat` carry the `chatFairUseHook` preHandler
-(`api/src/services/chat-fair-use.service.ts`), one shared allowance of
+and `POST /api/assistant/library/chat` call `chatFairUse.consume`
+(`api/src/services/chat-fair-use.service.ts`) in the handler, one shared allowance of
 `CHAT_FREE_MESSAGES_PER_DAY` (default 50, `0` = off) messages in any rolling
-24 hours (Q7, D6).
+24 hours (Q7, D6). It is counted after the global rate limiter, body validation and
+the access check, not in a preHandler: the rate limiter runs last among the
+preHandlers, so a preHandler count would burn a message on a request the limiter
+then turns away.
 
 - The plan comes from `BillingService.summary(userId).plan.id`. Only `free` is
   counted; Pro is unlimited and never touches Redis. Chat cost is not charged

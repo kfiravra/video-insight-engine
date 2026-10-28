@@ -4,6 +4,7 @@ import { Db, ObjectId, Collection } from 'mongodb';
 interface LlmUsageDocument {
   _id: ObjectId;
   request_id?: string | null;
+  video_summary_id?: string | null;
   cost_usd?: number | null;
   user_id?: string | null;
   timestamp?: Date;
@@ -23,11 +24,18 @@ export class LlmUsageRepository {
     this.collection = db.collection('llm_usage');
   }
 
-  /** Σ `cost_usd` of every LLM call made for `requestId` (0 when none). */
-  async sumCostByRequestId(requestId: string): Promise<number> {
+  /**
+   * Σ `cost_usd` of every LLM call a run made (0 when none): its `requestId`
+   * and, when known, its cache row. The request id is the client's
+   * X-Request-ID, which a client may reuse across videos (I4), so a run with
+   * a known row counts only that row's calls; the summarizer stamps
+   * `video_summary_id` on every pipeline row.
+   */
+  async sumRunCost(requestId: string, videoSummaryId: string | null): Promise<number> {
+    const match = videoSummaryId ? { request_id: requestId, video_summary_id: videoSummaryId } : { request_id: requestId };
     const [row] = await this.collection
       .aggregate<{ total: number }>([
-        { $match: { request_id: requestId } },
+        { $match: match },
         { $group: { _id: null, total: { $sum: { $ifNull: ['$cost_usd', 0] } } } },
       ])
       .toArray();

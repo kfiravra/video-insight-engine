@@ -9,7 +9,7 @@ import { createTestQueryClient } from '@/test/test-utils';
 import { useAuthStore } from '@/stores/auth-store';
 import { setAccessToken } from '@/api/client';
 import { useUserUsage } from '../use-usage';
-import { useAddVideo } from '../use-videos';
+import { useAddVideo, useRetryVideo } from '../use-videos';
 import { usePlaylistImport } from '../use-playlists';
 import { usageSummary } from '@/components/usage/__tests__/usage-fixtures';
 
@@ -72,7 +72,7 @@ describe('useUserUsage', () => {
     server.use(
       http.post(`${API_URL}/playlists/import`, () =>
         HttpResponse.json({
-          folder: { id: 'f1', name: 'P' },
+          folder: null,
           videos: [],
           totalVideos: 0,
           cachedCount: 0,
@@ -88,5 +88,37 @@ describe('useUserUsage', () => {
     await act(() => result.current.imp.mutateAsync({ url: 'https://www.youtube.com/playlist?list=PL1' }));
 
     await waitFor(() => expect(reads.urls).toHaveLength(2));
+  });
+
+  it('should read the usage again after a retry, which is a billed submit', async () => {
+    const reads = trackUsageReads();
+    server.use(
+      http.post(`${API_URL}/videos`, () =>
+        HttpResponse.json({ video: createMockVideo({ id: 'video-2' }), cached: false }),
+      ),
+    );
+    const { result } = renderHook(() => ({ usage: useUserUsage(), retry: useRetryVideo() }), { wrapper });
+    await waitFor(() => expect(result.current.usage.data).toBeDefined());
+
+    await act(() => result.current.retry.mutateAsync({ youtubeId: 'dQw4w9WgXcQ', folderId: null }));
+
+    await waitFor(() => expect(reads.urls).toHaveLength(2));
+  });
+
+  it('should not read the usage again when a retry is refused', async () => {
+    const reads = trackUsageReads();
+    server.use(
+      http.post(`${API_URL}/videos`, () =>
+        HttpResponse.json({ error: 'INSUFFICIENT_MINUTES', message: 'x', statusCode: 402 }, { status: 402 }),
+      ),
+    );
+    const { result } = renderHook(() => ({ usage: useUserUsage(), retry: useRetryVideo() }), { wrapper });
+    await waitFor(() => expect(result.current.usage.data).toBeDefined());
+
+    await act(async () => {
+      await result.current.retry.mutateAsync({ youtubeId: 'dQw4w9WgXcQ' }).catch(() => undefined);
+    });
+
+    expect(reads.urls).toHaveLength(1);
   });
 });

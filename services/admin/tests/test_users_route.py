@@ -419,7 +419,7 @@ async def test_user_costs_list_keeps_its_response_shape_with_plan_in_place_of_ti
 async def test_user_costs_list_shows_the_account_plan_and_free_without_an_account(users_db):
     users_db(
         usage_rows=[_usage(USER_ID, "2026-10-28", 0.2), _usage(BOB_ID, "2026-10-28", 0.1)],
-        accounts=[{"ownerId": USER_ID, "plan": {"id": "pro"}}],
+        accounts=[{"ownerId": ObjectId(USER_ID), "plan": {"id": "pro"}}],
         users=[_person(USER_ID, "a@example.com"), _person(BOB_ID, "b@example.com")],
     )
 

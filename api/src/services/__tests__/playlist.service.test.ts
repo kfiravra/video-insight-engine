@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { ObjectId } from 'mongodb';
+import type { FastifyBaseLogger } from 'fastify';
+import { mockLogger } from '../../test/setup.js';
 import { PlaylistService } from '../playlist.service.js';
 import type { VideoService } from '../video.service.js';
 import type { FolderService, FolderResponse } from '../folder.service.js';
@@ -91,6 +93,7 @@ describe('PlaylistService', () => {
   let mockFolderService: {
     getById: ReturnType<typeof vi.fn>;
     create: ReturnType<typeof vi.fn>;
+    delete: ReturnType<typeof vi.fn>;
   };
   let mockSummarizerClient: Record<string, unknown>;
   /** The minutes ledger, admitting everything; playlist.enforce.test.ts runs the real one. */
@@ -109,6 +112,7 @@ describe('PlaylistService', () => {
     mockFolderService = {
       getById: vi.fn(),
       create: vi.fn(),
+      delete: vi.fn().mockResolvedValue(undefined),
     };
 
     mockSummarizerClient = {};
@@ -128,6 +132,7 @@ describe('PlaylistService', () => {
       mockFolderService as unknown as FolderService,
       mockSummarizerClient as unknown as SummarizerClient,
       mockEnforcement as unknown as LedgerEnforcement,
+      mockLogger as unknown as FastifyBaseLogger,
     );
 
     // Reset fetch mock
@@ -276,7 +281,7 @@ describe('PlaylistService', () => {
         name: 'Test Playlist',
           });
       expect(mockVideoService.createVideo).toHaveBeenCalledTimes(2);
-      expect(result.folder.id).toBe('folder123');
+      expect(result.folder?.id).toBe('folder123');
       expect(result.videos).toHaveLength(2);
       expect(result.totalVideos).toBe(2);
       expect(result.processingCount).toBe(2);
@@ -305,7 +310,7 @@ describe('PlaylistService', () => {
 
       expect(mockFolderService.getById).toHaveBeenCalledWith(userId, folderId);
       expect(mockFolderService.create).not.toHaveBeenCalled();
-      expect(result.folder.id).toBe(folderId);
+      expect(result.folder?.id).toBe(folderId);
     });
 
     it('should throw FolderNotFoundError when provided folder does not exist', async () => {
@@ -383,7 +388,8 @@ describe('PlaylistService', () => {
         youtubeId: 'video2',
         title: 'Video 2',
         position: 2,
-        error: 'Failed to process video',
+        // A code, never the raw message (I5).
+        error: 'INTERNAL_ERROR',
       });
     });
 
@@ -565,7 +571,7 @@ describe('PlaylistService', () => {
         failed: result.failedVideos.map(failed => [failed.youtubeId, failed.error]),
         imported: result.videos.map(video => video.youtubeId),
       }).toEqual({
-        failed: [['video1', 'Failed to process video']],
+        failed: [['video1', 'INTERNAL_ERROR']],
         imported: ['video2', 'video3'],
       });
     });
@@ -601,6 +607,39 @@ describe('PlaylistService', () => {
       await playlistService.import(userId, PLAYLIST_URL);
 
       expect(mockVideoService.createVideo.mock.calls.map((call) => call[2].queuePlan)).toEqual(['free', 'paid']);
+    });
+
+    it('should log an unexpected item failure and report a domain code as-is (I5)', async () => {
+      const { VideoNotFoundError } = await import('../../utils/errors.js');
+      useVideos(2);
+      mockVideoService.createVideo
+        .mockRejectedValueOnce(new Error('mongo: connection reset'))
+        .mockRejectedValueOnce(new VideoNotFoundError());
+
+      const result = await playlistService.import(userId, PLAYLIST_URL);
+
+      expect(result.failedVideos.map((failed) => failed.error)).toEqual(['INTERNAL_ERROR', 'VIDEO_NOT_FOUND']);
+      expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ youtubeId: 'video1' }), 'playlist_item_import_failed');
+    });
+
+    it('should delete the folder it created when no item landed in it (I7)', async () => {
+      useVideos(1);
+      mockVideoService.createVideo.mockRejectedValueOnce(new Error('boom'));
+
+      const result = await playlistService.import(userId, PLAYLIST_URL);
+
+      expect([result.folder, mockFolderService.delete.mock.calls.length]).toEqual([null, 1]);
+    });
+
+    it('should never delete a folder the caller chose, even when nothing landed in it (I7)', async () => {
+      useVideos(1);
+      const folderId = new ObjectId().toHexString();
+      mockFolderService.getById.mockResolvedValue(createFolderResponse({ id: folderId }));
+      mockVideoService.createVideo.mockRejectedValueOnce(new Error('boom'));
+
+      const result = await playlistService.import(userId, PLAYLIST_URL, folderId);
+
+      expect([result.folder?.id, mockFolderService.delete.mock.calls.length]).toEqual([folderId, 0]);
     });
 
     it('should report the up-front quote with the result', async () => {

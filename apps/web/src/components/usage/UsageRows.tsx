@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { useBillingText } from "@/hooks/use-billing-text";
 import { fillTemplate } from "@/lib/format-minutes";
+import { freeVideosPerWindow } from "@/lib/free-video";
 import { cn } from "@/lib/utils";
 import type { UsageSummary } from "@vie/types";
 import type { BillingText } from "@/hooks/use-billing-text";
@@ -34,11 +35,19 @@ function UsageRow({ label, value, hint, tone = "default", testId }: UsageRowProp
 
 function freeVideoValue(free: UsageSummary["free"], text: BillingText, nowMs: number): string {
   const { labels } = text;
+  if (freeVideosPerWindow(free) === 0) return labels.freeVideoUnavailable;
   if (free.available) return labels.freeVideoReady;
   if (!free.nextFreeAt) return labels.freeVideoUnavailable;
   const when = text.until(free.nextFreeAt, nowMs);
-  // The window has just closed; the next refetch will say "ready".
-  return when === null ? labels.freeVideoReady : fillTemplate(labels.freeVideoNext, { when });
+  // The server still says unavailable but the countdown has run out (our clock is ahead
+  // of the server's): it is about to open, not open now.
+  return when === null ? labels.freeVideoOpeningSoon : fillTemplate(labels.freeVideoNext, { when });
+}
+
+/** "Up to 30 minutes per video" — nothing to say about the length of a free video that is switched off. */
+function freeVideoHint(free: UsageSummary["free"], text: BillingText): string | undefined {
+  if (freeVideosPerWindow(free) === 0) return undefined;
+  return fillTemplate(text.labels.freeVideoUpTo, { minutes: text.minutesOblique(free.maxVideoMinutes) });
 }
 
 function earliestExpiry(lots: UsageSummary["credits"]["lots"]): string | null {
@@ -62,7 +71,10 @@ function PlanMinutesRow({ summary, nowMs }: PlanMinutesRowProps) {
     <div data-testid="usage-plan-minutes">
       <UsageRow
         label={labels.planMinutes}
-        value={fillTemplate(labels.planMinutesLeft, { left: text.number(remaining), total: text.minutes(granted) })}
+        value={fillTemplate(labels.planMinutesLeft, {
+          left: text.number(remaining),
+          total: text.minutesOblique(granted),
+        })}
         hint={when === null ? undefined : fillTemplate(labels.planMinutesResets, { when })}
       />
       <div
@@ -98,8 +110,8 @@ export function UsageRows({ summary, nowMs, className }: UsageRowsProps) {
       <UsageRow
         label={labels.freeVideo}
         value={freeVideoValue(free, text, nowMs)}
-        tone={free.available ? "good" : "default"}
-        hint={fillTemplate(labels.freeVideoUpTo, { minutes: text.minutes(free.maxVideoMinutes) })}
+        tone={free.available && freeVideosPerWindow(free) > 0 ? "good" : "default"}
+        hint={freeVideoHint(free, text)}
         testId="usage-free-video"
       />
       {summary.plan.id === "pro" && <PlanMinutesRow summary={summary} nowMs={nowMs} />}

@@ -97,7 +97,7 @@ describe('GET /api/users/me/usage', () => {
       expect(statusCode).toBe(200);
       expect(body).toEqual({
         plan: { id: 'free', periodEnd: null },
-        free: { available: true, nextFreeAt: null, maxVideoMinutes: 30 },
+        free: { available: true, nextFreeAt: null, maxVideoMinutes: 30, perWindow: 1 },
         planMinutes: { granted: 0, used: 0, remaining: 0, cycleEnd: null },
         credits: { available: 0, lots: [] },
         holds: [],
@@ -144,6 +144,14 @@ describe('GET /api/users/me/usage', () => {
       const { body } = await getUsage();
 
       expect(body.holds).toEqual([{ youtubeId: 'dQw4w9WgXcQ', minutes: 12 }]);
+    });
+
+    it('should show zero free videos per window when an admin turned the free video off (W3)', async () => {
+      await service.setCaps(userId, { freeVideosPerDay: 0 }, ctx());
+
+      const { body } = await getUsage();
+
+      expect(body.free).toEqual({ available: false, nextFreeAt: null, maxVideoMinutes: 30, perWindow: 0 });
     });
 
     it('should flag a blocked account', async () => {

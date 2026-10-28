@@ -35,8 +35,10 @@ describe('LedgerEnforcement.runFinished', () => {
     userId = await insertUser(getTestDb());
     await h.gate.admit({ requestId: 'run-1', userId, youtubeId: 'dQw4w9WgXcQ', durationSec: 600 });
     await getTestDb().collection('llm_usage').insertMany([
-      { request_id: 'client-req-1', cost_usd: 0.25 },
-      { request_id: 'run-1', cost_usd: 99 },
+      { request_id: 'client-req-1', video_summary_id: 'vs-1', cost_usd: 0.25 },
+      { request_id: 'run-1', video_summary_id: 'vs-1', cost_usd: 99 },
+      // The client reused its X-Request-ID on another video: not this run's spend (I4).
+      { request_id: 'client-req-1', video_summary_id: 'vs-other', cost_usd: 1.5 },
     ]);
   });
 
@@ -55,6 +57,15 @@ describe('LedgerEnforcement.runFinished', () => {
     await enforcement.runFinished('vs-1', 'failed');
 
     expect((await h.billing.summary(userId)).free.available).toBe(true);
+  });
+
+  it('should release a run the summarizer answered from its response cache, with no debit (I3)', async () => {
+    const enforcement = makeEnforcement(getTestDb(), h, { findCacheById: async () => stamp });
+
+    await enforcement.runFinished('vs-1', 'cached');
+
+    const entries = await getTestDb().collection('ledgerEntries').find({ 'source.ref': 'run-1' }).toArray();
+    expect([entries.some((e) => e.type === 'debit'), (await h.billing.summary(userId)).free.available]).toEqual([false, true]);
   });
 
   it('should log instead of throwing when the ledger fails, so the status relay never fails', async () => {

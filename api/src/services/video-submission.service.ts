@@ -6,7 +6,7 @@ import { VideoRepository } from '../repositories/video.repository.js';
 import { extractYoutubeId } from '../utils/youtube.js';
 import { RunNotAllowedError } from '../utils/errors.js';
 import { submitOutcome } from './billing/run-stamp.js';
-import { refusalServesWithoutRun } from './billing/shadow-policy.js';
+import { refusalServesWithoutRun } from './billing/billing-errors.js';
 import { queuePlanOf, type QueuePlan } from './queue-topology.js';
 import type { ProviderConfig } from './summarizer-client.js';
 import type { GateSubmission } from './billing/billing-gate.js';
@@ -109,7 +109,7 @@ export class VideoSubmissionService {
    * serve-only. Any other refusal unwinds the hash and propagates.
    */
   private async admit(input: SubmitVideoInput, hash: string | null): Promise<SubmitBilling> {
-    const run = this.billingRun(input);
+    const run = await this.billingRun(input);
     if (!run) return { run, queuePlan: 'free' };
     try {
       const hold = await this.billing.admit(run);
@@ -154,12 +154,14 @@ export class VideoSubmissionService {
    * The ledger's run for this submit, keyed by a fresh server id (P3.1): a
    * client reusing X-Request-ID can never collide with a finished run, and an
    * Idempotency-Key replay never reaches here. Null without a video id
-   * (createVideo then rejects the URL).
+   * (createVideo then rejects the URL). A video already summarised brings
+   * its length, so a cached submit skips the metadata pre-flight (I10).
    */
-  private billingRun(input: SubmitVideoInput): GateSubmission | null {
+  private async billingRun(input: SubmitVideoInput): Promise<GateSubmission | null> {
     const youtubeId = extractYoutubeId(input.url);
     if (!youtubeId) return null;
-    return { requestId: randomUUID(), userId: input.userId, youtubeId };
+    const durationSec = await this.videoRepository.findKnownDuration(youtubeId);
+    return { requestId: randomUUID(), userId: input.userId, youtubeId, durationSec };
   }
 
   /**

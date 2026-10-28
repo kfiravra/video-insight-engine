@@ -325,7 +325,13 @@ export interface AccountDetail {
 /** What a user sees about their own minutes — no dollar field anywhere. */
 export interface UsageSummary {
   plan: { id: PlanId; periodEnd: string | null };
-  free: { available: boolean; nextFreeAt: string | null; maxVideoMinutes: number };
+  free: {
+    available: boolean;
+    nextFreeAt: string | null;
+    maxVideoMinutes: number;
+    /** Free videos per rolling 24 h after admin caps: 1 by default, 0 when an admin turned the free video off. */
+    perWindow: number;
+  };
   planMinutes: { granted: number; used: number; remaining: number; cycleEnd: string | null };
   credits: { available: number; lots: Array<{ minutes: number; expiresAt: string | null }> };
   holds: Array<{ youtubeId: string | null; minutes: number }>;

@@ -162,7 +162,7 @@ export function createContainer(
   const billingEnforcement = new LedgerEnforcement({
     billing: billingService, gate: billingGate, llmUsage: llmUsageRepository, dispatchStamps: videoRepository, logger,
   });
-  const playlistService = new PlaylistService(videoService, folderService, summarizerClient, billingEnforcement);
+  const playlistService = new PlaylistService(videoService, folderService, summarizerClient, billingEnforcement, logger);
   const shareService = new ShareService(shareRepository, videoRepository, logger);
   const ogImageService = new OgImageService(logger);
   const userDeletionService = new UserDeletionService(

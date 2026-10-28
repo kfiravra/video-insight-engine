@@ -98,7 +98,19 @@ describe('MinutesCallout', () => {
     it('should write the shortfall in Arabic with dual and few forms', () => {
       renderIn(<MinutesCallout notice={insufficient({ needed: 3, available: 2 })} />, 'ar');
 
-      expect(screen.getByRole('alert')).toHaveTextContent('يحتاج هذا الفيديو إلى 3 دقائق ولديك دقيقتان متاحة.');
+      expect(screen.getByRole('alert')).toHaveTextContent('يحتاج هذا الفيديو إلى 3 دقائق ولديك دقيقتان للاستخدام.');
+    });
+
+    it('should put the Arabic dual in the oblique case after a preposition and the nominative after "you have"', () => {
+      renderIn(<MinutesCallout notice={insufficient({ needed: 2, available: 2 })} />, 'ar');
+
+      expect(screen.getByRole('alert')).toHaveTextContent('إلى دقيقتين ولديك دقيقتان للاستخدام');
+    });
+
+    it('should put the Arabic dual in the oblique case after "up to"', () => {
+      renderIn(<MinutesCallout notice={{ kind: 'too_long', maxMinutes: 2 }} />, 'ar');
+
+      expect(screen.getByRole('alert')).toHaveTextContent('حتى دقيقتين');
     });
 
     it('should word the video length limit in Arabic', () => {

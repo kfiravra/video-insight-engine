@@ -52,7 +52,7 @@ interface VideoIntakeFormProps {
 
 /**
  * Hero entry form — the Generate page's primary surface.
- * Distinct from the sidebar's compact AddVideoInput: glass surface, focus-glow,
+ * Distinct from the Board page's compact BoardInlinePaste: glass surface, focus-glow,
  * larger controls, prominent Summarize CTA. Shares tokens, not markup.
  */
 export function VideoIntakeForm({ className, initialUrl }: VideoIntakeFormProps) {
@@ -94,6 +94,8 @@ export function VideoIntakeForm({ className, initialUrl }: VideoIntakeFormProps)
     e.preventDefault();
     const trimmed = url.trim();
     if (!trimmed) return;
+    // A new attempt starts clean: no earlier refusal, error or import summary survives it.
+    setBillingNotice(null);
     setImportResult(null);
 
     // Source of truth: derive mode from the URL at submit time, not state.
@@ -111,7 +113,6 @@ export function VideoIntakeForm({ className, initialUrl }: VideoIntakeFormProps)
       }
       try {
         setError(null);
-        setBillingNotice(null);
         const result = await addVideo.mutateAsync({
           url: trimmed,
           folderId: selectedFolderId ?? undefined,
@@ -154,6 +155,11 @@ export function VideoIntakeForm({ className, initialUrl }: VideoIntakeFormProps)
         const preview = await previewMutation.mutateAsync({ url: trimmed });
         setPlaylistPreview(preview);
       } catch (err) {
+        const notice = classifyBillingError(err);
+        if (notice) {
+          setBillingNotice(notice);
+          return;
+        }
         setError(
           err instanceof Error
             ? err.message
@@ -165,6 +171,9 @@ export function VideoIntakeForm({ className, initialUrl }: VideoIntakeFormProps)
 
   const handleImportPlaylist = async () => {
     if (!playlistPreview) return;
+    setError(null);
+    setBillingNotice(null);
+    setImportResult(null);
     try {
       const result = await importMutation.mutateAsync({
         url: url.trim(),
@@ -188,6 +197,7 @@ export function VideoIntakeForm({ className, initialUrl }: VideoIntakeFormProps)
   const handleSampleClick = () => {
     setUrl(SAMPLE_VIDEO.url);
     setError(null);
+    setBillingNotice(null);
     setMode('video');
     inputRef.current?.focus();
     requestAnimationFrame(() => {
@@ -226,6 +236,7 @@ export function VideoIntakeForm({ className, initialUrl }: VideoIntakeFormProps)
                 // submission derives mode fresh from the URL at submit time.
                 if (next.trim()) setMode((prev) => detectMode(next.trim(), prev));
                 if (error) setError(null);
+                if (billingNotice) setBillingNotice(null);
               }}
               placeholder="Paste a YouTube video or playlist URL…"
               aria-label="YouTube URL"
@@ -287,7 +298,7 @@ export function VideoIntakeForm({ className, initialUrl }: VideoIntakeFormProps)
       {billingNotice && <BillingNoticeAlert notice={billingNotice} className="text-center" />}
 
       {/* Error */}
-      {error && !billingNotice && (
+      {error && (
         <p
           id="intake-error"
           role="alert"

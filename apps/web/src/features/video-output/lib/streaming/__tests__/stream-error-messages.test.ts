@@ -39,4 +39,22 @@ describe("getUserFriendlyError", () => {
       "Something went wrong while processing this video. Please try again.",
     );
   });
+
+  describe("a video whose run already failed (VIDEO_FAILED)", () => {
+    it("says the video did not finish and that Retry starts a new run", () => {
+      expect(getUserFriendlyError("Pipeline failed", "VIDEO_FAILED")).toBe(
+        "This video didn't finish processing. Retry starts it again as a new run.",
+      );
+    });
+
+    it("never shows the stored raw message or the code", () => {
+      const message = getUserFriendlyError("KeyError: 'tabs' in extract_batch (video_summary 6650)", "VIDEO_FAILED");
+
+      expect(message).not.toMatch(/KeyError|extract_batch|VIDEO_FAILED/);
+    });
+
+    it("prefers the code over a stored message that matches a pattern", () => {
+      expect(getUserFriendlyError("request timed out", "VIDEO_FAILED")).toMatch(/Retry starts it again/);
+    });
+  });
 });

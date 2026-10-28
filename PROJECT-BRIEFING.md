@@ -402,7 +402,7 @@ Every API request gets a UUID v4 on `x-request-id` (regex-validated `^[A-Za-z0-9
 
 ### Error handling model
 Canonical `{error, message, details, statusCode}` envelope, one shared code set.
-- **Validation/edge:** `INVALID_URL`, `NO_TRANSCRIPT` (422), `VIDEO_TOO_LONG` (> `MAX_VIDEO_DURATION_MINUTES`: config default 600, the `.env` templates set 30; checked by the summarizer's metadata phase), `VIDEO_TOO_SHORT` (<60s), `VIDEO_UNAVAILABLE`, `VIDEO_RESTRICTED`, `LIVE_STREAM`.
+- **Validation/edge:** `INVALID_URL`, `NO_TRANSCRIPT` (422), `VIDEO_TOO_LONG` (> `MAX_VIDEO_DURATION_MINUTES`: config default 600, the `.env` templates set 180; checked by the summarizer's metadata phase), `VIDEO_TOO_SHORT` (<60s), `VIDEO_UNAVAILABLE`, `VIDEO_RESTRICTED`, `LIVE_STREAM`.
 - **Server:** `LLM_ERROR`, `DATABASE_ERROR`, `SUMMARIZER_ERROR`.
 - **Automatic retry:** max 3, backoff `[5,15,60]s`, retryable = `LLM_ERROR, DATABASE_ERROR, NETWORK_ERROR, RATE_LIMITED`.
 - **Manual retry** (`POST /api/videos/:id/retry`): only if `failed` + retryable + within 24h. Non-retryable: `INVALID_URL, VIDEO_TOO_LONG, VIDEO_TOO_SHORT, NO_TRANSCRIPT, VIDEO_RESTRICTED, LIVE_STREAM`.

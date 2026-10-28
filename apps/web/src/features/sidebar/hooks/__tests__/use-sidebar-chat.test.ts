@@ -205,6 +205,57 @@ describe("useSidebarChat", () => {
     });
   });
 
+  describe("usage refresh after the agent spends minutes", () => {
+    function runTurn(action: string) {
+      const { queryClient, wrapper } = makeWrapper();
+      const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+      const { result } = renderHook(() => useSidebarChat(), { wrapper });
+      act(() => {
+        result.current.sendMessage("summarize that video");
+      });
+      const handleEvent = mockedSendLibraryMessage.mock.calls[0][2] as (event: AssistantChatEvent) => void;
+      act(() => {
+        handleEvent({ type: "tool", content: "Started", metadata: { status: "done", action } });
+        handleEvent({ type: "done" });
+      });
+      return invalidateSpy;
+    }
+
+    it("should re-read the usage tile when the agent starts a video", () => {
+      const invalidateSpy = runTurn("generate_video");
+
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["usage", "me"] });
+    });
+
+    it("should leave the usage tile alone for an action that costs no minutes", () => {
+      const invalidateSpy = runTurn("create_folder");
+
+      expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: ["usage", "me"] });
+    });
+
+    it("should refresh the usage once per turn, not once per tool call", () => {
+      const { queryClient, wrapper } = makeWrapper();
+      const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+      const { result } = renderHook(() => useSidebarChat(), { wrapper });
+      act(() => {
+        result.current.sendMessage("summarize both");
+      });
+      const handleEvent = mockedSendLibraryMessage.mock.calls[0][2] as (event: AssistantChatEvent) => void;
+
+      act(() => {
+        handleEvent({ type: "tool", content: "A", metadata: { status: "done", action: "generate_video" } });
+        handleEvent({ type: "tool", content: "B", metadata: { status: "done", action: "generate_video" } });
+        handleEvent({ type: "done" });
+      });
+
+      const usageCalls = invalidateSpy.mock.calls.filter(([filters]) => {
+        const key = (filters as { queryKey?: readonly string[] } | undefined)?.queryKey;
+        return key?.[0] === "usage";
+      });
+      expect(usageCalls).toHaveLength(1);
+    });
+  });
+
   describe("sendMessage streams every message through the agent", () => {
     it("should stream an action-like phrase as a normal chat turn", () => {
       const { wrapper } = makeWrapper();
@@ -600,25 +651,34 @@ describe("useSidebarChat", () => {
         mockedSendLibraryMessage.mockRejectedValueOnce(limitReached);
       }
 
-      const inThreeHours = () => new Date(Date.now() + THREE_HOURS_MS + 30_000).toISOString();
+      const inThreeHours = () => new Date(Date.now() + THREE_HOURS_MS).toISOString();
 
       it.each([
         ["single-video", { videoSummaryId: "vid-123" }],
         ["library", {}],
-      ])("should say when more messages open up when the %s chat hits the limit", async (_name, options) => {
+      ])("should say at what time more messages open up when the %s chat hits the limit", async (_name, options) => {
         rejectWithChatLimit(inThreeHours());
 
         const reply = await sendAndGetAssistantReply(options);
 
-        expect(reply).toBe("You've used your free chat messages for now. More open up in 3h.");
+        expect(reply).toMatch(/^You've used your free chat messages for now\. More open up at .*\d/);
       });
 
-      it("should count down in minutes when the next message is under an hour away", async () => {
-        rejectWithChatLimit(new Date(Date.now() + 45 * 60_000 + 30_000).toISOString());
+      it("should save a clock time in the transcript, never a countdown that would go stale", async () => {
+        rejectWithChatLimit(inThreeHours());
 
         const reply = await sendAndGetAssistantReply({});
 
-        expect(reply).toBe("You've used your free chat messages for now. More open up in 45m.");
+        expect(reply).not.toMatch(/ in \d+\s?[hm]/);
+        expect(useChatStore.getState().messages.find((m) => m.role === "assistant")?.content).toBe(reply);
+      });
+
+      it("should name the date when the next message opens on another day", async () => {
+        rejectWithChatLimit(new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString());
+
+        const reply = await sendAndGetAssistantReply({});
+
+        expect(reply).toMatch(/More open up at [A-Z][a-z]{2} \d{1,2}, \d{4}/);
       });
 
       it("should say only that the messages are used up when the gateway sends no nextAt", async () => {
@@ -642,7 +702,7 @@ describe("useSidebarChat", () => {
 
         const reply = await sendAndGetAssistantReply({}, "he");
 
-        expect(reply).toBe("ניצלתם את הודעות הצ׳אט החינמיות לעת עתה. הודעות נוספות ייפתחו בעוד 3 שע׳.");
+        expect(reply).toMatch(/^ניצלתם את הודעות הצ׳אט החינמיות לעת עתה\. הודעות נוספות ייפתחו ב־/);
       });
 
       it("should say it in Arabic under an Arabic direction context", async () => {
@@ -650,7 +710,7 @@ describe("useSidebarChat", () => {
 
         const reply = await sendAndGetAssistantReply({}, "ar");
 
-        expect(reply).toBe("لقد استخدمت رسائل الدردشة المجانية حاليًا. ستتوفر رسائل أخرى بعد 3 س.");
+        expect(reply).toMatch(/^لقد استخدمت رسائل الدردشة المجانية حاليًا\. ستتوفر رسائل أخرى في /);
       });
 
       it("should put the chat into the error state", async () => {
