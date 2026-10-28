@@ -357,3 +357,28 @@ export class SummarizerPurgeError extends AppError {
     this.name = 'SummarizerPurgeError';
   }
 }
+
+/** Why the pre-flight metadata call failed; `not_found` will not heal on a retry. */
+export type MetadataUnavailableReason = 'not_found' | 'timeout' | 'upstream';
+
+const METADATA_UNAVAILABLE_MESSAGES: Record<MetadataUnavailableReason, string> = {
+  not_found: "We couldn't find this video. Check the link and that the video is public.",
+  timeout: 'Looking up the video took too long. Please try again.',
+  upstream: 'Video details are temporarily unavailable. Please try again.',
+};
+
+/**
+ * The summarizer could not give the duration/title of a video before submit
+ * (unknown video, YouTube rate limit, summarizer down, slow). A billing quote
+ * built on it must fail closed when enforcing and open in shadow mode; the
+ * caller decides, `reason` says whether retrying can help.
+ */
+export class MetadataUnavailableError extends AppError {
+  public readonly reason: MetadataUnavailableReason;
+
+  constructor(reason: MetadataUnavailableReason) {
+    super('METADATA_UNAVAILABLE', reason === 'not_found' ? 404 : 503, METADATA_UNAVAILABLE_MESSAGES[reason]);
+    this.name = 'MetadataUnavailableError';
+    this.reason = reason;
+  }
+}

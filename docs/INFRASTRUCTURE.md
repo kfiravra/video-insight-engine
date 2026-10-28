@@ -32,6 +32,8 @@ Process once, reuse forever. Three layers absorb identical work across users so 
 | L2    | MongoDB | `youtubeId` field     | Persistent video summary + assembled tabs |
 | L3    | S3      | `youtube_id` prefix   | Extracted scene frames (skip re-extraction) |
 
+The api also keeps `vie:api:video-meta:<youtubeId>` (24 h TTL): the title, channel, duration and thumbnail that `GET /video/metadata` on the summarizer returned, so a pre-flight quote does not re-ask YouTube. Only successes are cached, and a Redis error just skips the cache.
+
 ### Shared vs per-user
 
 System caches are shared across users (same video → same summary). User data is **never** cached at the system level.

@@ -90,7 +90,7 @@ export function createContainer(
   const adminAuditRepository = new AdminAuditRepository(db);
 
   // Create external clients
-  const summarizerClient = new SummarizerClient(logger);
+  const summarizerClient = new SummarizerClient(logger, options.redisClient);
   const assistantClient = new AssistantClient(logger);
 
   // Queue publisher — falls back to a stub supplier in tests / pre-plugin paths.

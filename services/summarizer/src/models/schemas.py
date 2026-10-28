@@ -144,3 +144,17 @@ class PlaylistExtractResponse(BaseModel):
     thumbnail_url: str | None = None
     total_videos: int
     videos: list[PlaylistVideoInfo]
+
+
+# ─────────────────────────────────────────────────────
+# Pre-flight Video Metadata (GET /video/metadata)
+# ─────────────────────────────────────────────────────
+
+
+class VideoMetadataResponse(BaseModel):
+    """What the API needs to quote a video before submitting it: no captions, no LLM."""
+    youtubeId: str
+    title: str
+    channel: str
+    duration: int  # seconds, always > 0
+    thumbnailUrl: str | None = None

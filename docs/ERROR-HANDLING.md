@@ -101,6 +101,7 @@ See [docs/SECURITY.md](./SECURITY.md#rate-limiting) for implementation.
 | `INTERNAL_ERROR`      | Something went wrong            | Unexpected error      |
 | `SERVICE_UNAVAILABLE` | Service temporarily unavailable | Dependency down       |
 | `SUMMARIZER_PURGE_FAILED` | Video purge failed | Summarizer could not purge Qdrant/S3/Redis; nothing deleted in Mongo — retry the admin delete |
+| `METADATA_UNAVAILABLE` | Video details are temporarily unavailable | The pre-flight metadata call (`SummarizerClient.getVideoMetadata`) failed: `404` when the video is unknown or private (`reason: not_found`), `503` on a 15 s timeout or any other failure (`reason: timeout` / `upstream`). Never cached. A billing quote built on it fails closed when enforcing and open in shadow mode |
 | `LLM_ERROR`           | AI service error                | Claude API failed     |
 | `DATABASE_ERROR`      | Database error                  | MongoDB failed        |
 | `SUMMARIZER_ERROR`    | Summarizer service error        | Summarizer unreachable |

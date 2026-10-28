@@ -1,7 +1,12 @@
 import type { FastifyBaseLogger } from 'fastify';
+import type { Redis } from 'ioredis';
 import { z } from 'zod';
 import { config } from '../config.js';
-import { SummarizerPurgeError } from '../utils/errors.js';
+import {
+  MetadataUnavailableError,
+  SummarizerPurgeError,
+  type MetadataUnavailableReason,
+} from '../utils/errors.js';
 
 export type Provider = 'anthropic' | 'openai' | 'gemini';
 
@@ -38,6 +43,24 @@ export interface PurgeVideoResult {
   warnings: string[];
 }
 
+/** Pre-flight facts about one video, from the summarizer's yt-dlp metadata call. */
+export interface VideoMetadata {
+  youtubeId: string;
+  title: string;
+  channel: string;
+  /** Seconds, always > 0. */
+  duration: number;
+  thumbnailUrl: string | null;
+}
+
+const videoMetadataSchema = z.object({
+  youtubeId: z.string(),
+  title: z.string(),
+  channel: z.string(),
+  duration: z.number().int().positive(),
+  thumbnailUrl: z.string().nullable().default(null),
+});
+
 const purgeResultSchema = z.object({
   qdrantPoints: z.number().int().nonnegative(),
   s3Objects: z.number().int().nonnegative(),
@@ -48,6 +71,9 @@ const purgeResultSchema = z.object({
 const SUMMARIZER_TIMEOUT_MS = 10000; // 10 seconds
 // S3 listing + batched deletes for a long video can take a while.
 const PURGE_TIMEOUT_MS = 60000;
+// yt-dlp through the proxy exits can spend its 15 s rotation budget on a blocked exit.
+const METADATA_TIMEOUT_MS = 15000;
+const METADATA_CACHE_TTL_SECONDS = 24 * 60 * 60;
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 1000;
 
@@ -70,12 +96,25 @@ async function fetchWithTimeout(
   }
 }
 
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 async function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+/** Redis key of a video's cached metadata. */
+export function videoMetaCacheKey(youtubeId: string): string {
+  return `vie:api:video-meta:${youtubeId}`;
+}
+
 export class SummarizerClient {
-  constructor(private readonly logger: FastifyBaseLogger) {}
+  /** `redis` is optional: without it every metadata call goes to the summarizer. */
+  constructor(
+    private readonly logger: FastifyBaseLogger,
+    private readonly redis?: Redis,
+  ) {}
 
   triggerSummarization(request: SummarizeRequest): void {
     // The header is the propagation channel; strip requestId from the body so
@@ -169,5 +208,94 @@ export class SummarizerClient {
     }
     this.logger.info({ youtubeId: request.youtubeId, ...parsed.data }, 'video_purge_completed');
     return parsed.data;
+  }
+
+  /**
+   * Duration, title, channel and thumbnail of a video before any submit — no
+   * captions, no LLM. Cached 24 h in Redis (a Redis failure only costs the
+   * cache). Throws MetadataUnavailableError on a 404, a timeout (15 s) or any
+   * other failure; failures are never cached.
+   */
+  async getVideoMetadata(youtubeId: string): Promise<VideoMetadata> {
+    const cached = await this.readMetadataCache(youtubeId);
+    if (cached) return cached;
+
+    const metadata = await this.fetchVideoMetadata(youtubeId);
+    await this.writeMetadataCache(metadata);
+    return metadata;
+  }
+
+  private async readMetadataCache(youtubeId: string): Promise<VideoMetadata | null> {
+    if (!this.redis) return null;
+    try {
+      const raw = await this.redis.get(videoMetaCacheKey(youtubeId));
+      if (raw === null) return null;
+      const parsed = videoMetadataSchema.safeParse(JSON.parse(raw));
+      if (parsed.success) return parsed.data;
+      this.logger.warn({ youtubeId }, 'video_meta_cache_entry_invalid');
+    } catch (err) {
+      this.logger.warn({ youtubeId, error: errorMessage(err) }, 'video_meta_cache_read_failed');
+    }
+    return null;
+  }
+
+  private async writeMetadataCache(metadata: VideoMetadata): Promise<void> {
+    if (!this.redis) return;
+    try {
+      await this.redis.set(
+        videoMetaCacheKey(metadata.youtubeId),
+        JSON.stringify(metadata),
+        'EX',
+        METADATA_CACHE_TTL_SECONDS,
+      );
+    } catch (err) {
+      this.logger.warn(
+        { youtubeId: metadata.youtubeId, error: errorMessage(err) },
+        'video_meta_cache_write_failed',
+      );
+    }
+  }
+
+  private async fetchVideoMetadata(youtubeId: string): Promise<VideoMetadata> {
+    const query = new URLSearchParams({ youtubeId });
+    let response: Response;
+    try {
+      response = await fetchWithTimeout(
+        `${config.SUMMARIZER_URL}/video/metadata?${query}`,
+        { method: 'GET', headers: { 'X-Internal-Secret': config.INTERNAL_SECRET } },
+        METADATA_TIMEOUT_MS,
+      );
+    } catch (err) {
+      const reason = err instanceof Error && err.name === 'AbortError' ? 'timeout' : 'upstream';
+      throw this.metadataFailure(youtubeId, reason, errorMessage(err));
+    }
+    if (!response.ok) {
+      const reason = response.status === 404 ? 'not_found' : 'upstream';
+      throw this.metadataFailure(youtubeId, reason, `summarizer returned ${response.status}`);
+    }
+    return this.parseMetadata(youtubeId, response);
+  }
+
+  private async parseMetadata(youtubeId: string, response: Response): Promise<VideoMetadata> {
+    let payload: unknown;
+    try {
+      payload = await response.json();
+    } catch {
+      throw this.metadataFailure(youtubeId, 'upstream', 'non-JSON body');
+    }
+    const parsed = videoMetadataSchema.safeParse(payload);
+    if (!parsed.success) {
+      throw this.metadataFailure(youtubeId, 'upstream', 'unexpected payload');
+    }
+    return parsed.data;
+  }
+
+  private metadataFailure(
+    youtubeId: string,
+    reason: MetadataUnavailableReason,
+    detail: string,
+  ): MetadataUnavailableError {
+    this.logger.warn({ youtubeId, reason, detail }, 'video_metadata_unavailable');
+    return new MetadataUnavailableError(reason);
   }
 }
