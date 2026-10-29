@@ -171,18 +171,18 @@ fastify.post("/logout", async (req, reply) => {
 
 ### Demo Account (Read-Mostly)
 
-Every demo visitor ([DEPLOY.md](./DEPLOY.md#demo-mode)) holds a token for one shared account, so anything that mutates its library or spends its budget would hit every other visitor. The shared account is therefore read-mostly: the actions below return 403 `DEMO_RESTRICTED` and the underlying service is never called.
+Every demo visitor ([DEPLOY.md](./DEPLOY.md#demo-mode)) holds a token for one shared account, so whatever one visitor changes, every other visitor sees. Its videos behave like any user's: a visitor may delete or move them. A delete is user scope: it removes the account's `userVideos` row, idempotency keys and notes, and never the shared summary in `videoSummaryCache`. Everything else that would change the account for everyone or spend its budget on a forced re-run is refused: the actions below return 403 `DEMO_RESTRICTED` and the underlying service is never called.
 
 | Refused for the demo account | Routes |
 |------------------------------|--------|
-| Delete or move a video, change its category | `DELETE /videos/:id`, `PATCH /videos/:id/move`, `PATCH /videos/:id/override-category` |
+| Change a video's category | `PATCH /videos/:id/override-category` |
 | Rename, move or delete a folder | `PATCH /folders/:id`, `DELETE /folders/:id` |
-| Force a paid re-run or choose providers | `POST /videos` and `POST /playlists/import` with `providers`; `POST /videos` with `bypassCache: true` or `cold: true` |
-| Library-rewriting assistant actions | `POST /assistant/action` with `organize_library`, `rename_folder`, `move_folder`, `delete_folder`, `move_video`; and the matching `/internal/assistant/*` callbacks (`PATCH`/`DELETE` folders, `PATCH` video move) |
+| Force a paid re-run or choose providers | `POST /videos` and `POST /playlists/import` with `providers`; `POST /videos` with `bypassCache: true`, `updateToLatest: true` or `cold: true` |
+| Folder-rewriting assistant actions | `POST /assistant/action` with `rename_folder`, `move_folder`, `delete_folder`; and the matching `/internal/assistant/*` callbacks (`PATCH`/`DELETE` folders) |
 | Change the account's `displayName` or `username` | `PATCH /users/me/preferences` |
 | Schedule the account's deletion | `DELETE /users/me` |
 
-Still allowed: reading the library, creating folders, a plain `POST /videos` or playlist import, share links (additive and idempotent), notes, chat, and the theme preference.
+Still allowed: reading the library, deleting and moving videos (`DELETE /videos/:id`, `PATCH /videos/:id/move`, the assistant's `move_video` and `organize_library` actions and the internal video-move callback), creating folders, a plain `POST /videos` or playlist import, share links (additive and idempotent), notes, chat, and the theme preference.
 
 The account is identified **by user id, not by the JWT `email` claim**. The claim is optional, and the assistant's `/internal/assistant/*` callbacks carry only an `X-User-Id`. `plugins/demo-guard.ts` resolves the id once from `DEMO_USER_EMAIL` and caches it (10 min when found, 60 s when missing, so an account created after boot is picked up); a blank `DEMO_USER_EMAIL` disables the guard with no database call. Routes opt in with `preHandler: [fastify.authenticate, fastify.requireNotDemo]` (or `authenticateInternal`); handlers that refuse only some bodies call `await fastify.requireNotDemo(req)` after parsing. A lookup failure fails the request rather than letting the demo account through. Non-demo users are unaffected on every route.
 

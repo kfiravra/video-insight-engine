@@ -134,7 +134,7 @@ export async function internalAssistantRoutes(fastify: FastifyInstance): Promise
     Params: z.infer<typeof idParamSchema>;
     Body: z.infer<typeof moveVideoSchema>;
   }>('/videos/:id/move', {
-    preHandler: [fastify.authenticateInternal, fastify.requireNotDemo],
+    preHandler: [fastify.authenticateInternal],
   }, async (req) => {
     const { id } = idParamSchema.parse(req.params);
     const { folderId } = moveVideoSchema.parse(req.body);

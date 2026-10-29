@@ -537,7 +537,7 @@ eval user; everyone else sees the user-version pool only.
 
 Remove video from user's library.
 
-**Demo account:** `403 DEMO_RESTRICTED` for the shared demo account, here and on `PATCH /videos/:id/move`.
+**Demo account:** allowed like any user, here and on `PATCH /videos/:id/move`; the delete is user scope, so the shared summary stays.
 
 **Note:** Removes the caller's `userVideos` row, the idempotency keys that completed against it and, unless the caller still holds the video in another folder, their own assistant notes for it. The shared summary, vectors and frames stay (see `DELETE /api/admin/videos/:youtubeId`). `404 VIDEO_NOT_FOUND` when the row is not the caller's.
 
@@ -932,7 +932,7 @@ Common error codes:
 - `400` - Bad Request (validation), `INVALID_CATEGORY`
 - `401` - Unauthorized
 - `402` - Payment Required: `INSUFFICIENT_MINUTES` (the minutes cannot cover the video; also returns `needed`, `available`, `nextFreeAt?`)
-- `403` - Forbidden: `REGISTRATION_CLOSED`, `DEMO_DISABLED`, `DEMO_RESTRICTED` (the shared demo account may not mutate the library or force paid runs; see SECURITY.md), `COLD_RUN_FORBIDDEN`, `ACCOUNT_DELETION_PENDING`, `ACCOUNT_BLOCKED` (an admin blocked the account's submits)
+- `403` - Forbidden: `REGISTRATION_CLOSED`, `DEMO_DISABLED`, `DEMO_RESTRICTED` (the shared demo account may not change its folders, a video's category or its profile, or force paid runs; see SECURITY.md), `COLD_RUN_FORBIDDEN`, `ACCOUNT_DELETION_PENDING`, `ACCOUNT_BLOCKED` (an admin blocked the account's submits)
 - `404` - Not Found: `SHARE_NOT_FOUND`
 - `409` - Conflict: `ALREADY_SHARED`
 - `422` - Unprocessable: `VIDEO_TOO_LONG_FOR_PLAN` (also returns `maxMinutes`)
@@ -1371,7 +1371,7 @@ library-scoped actions). When `video_id` is given (a `videoSummaryId`, or a
 (eval runs included) can be loaded as action context. A `youtubeId` resolves to the
 served version, never an eval row.
 
-**Demo account:** `403 DEMO_RESTRICTED` for the shared demo account on `organize_library`, `rename_folder`, `move_folder`, `delete_folder` and `move_video`, before the assistant is called.
+**Demo account:** `403 DEMO_RESTRICTED` for the shared demo account on `rename_folder`, `move_folder` and `delete_folder`, before the assistant is called. `move_video` and `organize_library` (which only creates folders and moves videos) are allowed.
 
 ---
 
@@ -1401,7 +1401,7 @@ user-JWT** — authenticated by the `authenticateInternal` preHandler
 (`X-Internal-Secret` + `X-User-Id`, constant-time secret comparison). All work is
 scoped to `X-User-Id`; a body-supplied userId is never trusted.
 
-**Demo account:** `PATCH`/`DELETE /internal/assistant/folders/:id` and `PATCH /internal/assistant/videos/:id/move` return `403 DEMO_RESTRICTED` when `X-User-Id` is the shared demo account.
+**Demo account:** `PATCH`/`DELETE /internal/assistant/folders/:id` return `403 DEMO_RESTRICTED` when `X-User-Id` is the shared demo account. `PATCH /internal/assistant/videos/:id/move` is allowed.
 
 | Method & path | Purpose |
 |---|---|
