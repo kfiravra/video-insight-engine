@@ -18,7 +18,7 @@
  *   Local (from the repo root; the api workspace has the drivers):
  *     pnpm --filter @vie/api exec tsx ../scripts/create-user.ts <email> <password> [name] [--reset-password]
  *
- * Env: MONGODB_URI (default mongodb://localhost:27017/video-insight-engine).
+ * Env: MONGODB_URI (default mongodb://localhost:27017/video-insight-engine?directConnection=true).
  */
 
 import { resolve } from 'node:path';
@@ -122,7 +122,7 @@ async function main(argv: string[]): Promise<void> {
     return;
   }
 
-  const client = new MongoClient(process.env.MONGODB_URI || 'mongodb://localhost:27017/video-insight-engine');
+  const client = new MongoClient(process.env.MONGODB_URI || 'mongodb://localhost:27017/video-insight-engine?directConnection=true');
   try {
     await client.connect();
     const outcome = await upsertUser(client.db(), args);

@@ -8,7 +8,7 @@ Usage: python scripts/cleanup_db.py
 
 from pymongo import MongoClient
 
-MONGODB_URI = "mongodb://localhost:27017/video-insight-engine"
+MONGODB_URI = "mongodb://localhost:27017/video-insight-engine?directConnection=true"
 
 
 def main() -> None:

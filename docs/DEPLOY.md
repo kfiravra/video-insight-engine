@@ -176,6 +176,18 @@ The first deploy after the change logs every admin out once, because older sessi
 
 Then edit `.env` and set both required provider keys, `ANTHROPIC_API_KEY` and `OPENAI_API_KEY`, plus any optional one (`GEMINI_API_KEY`). The OpenAI key is required since the pipeline-1min 4.0d model picks: description analysis and the output / title / RAG-text translation default to `openai/gpt-6-luna`, the quiz (only with `QUIZ_V2_ENABLED=false`) to `openai/gpt-4o-mini`, and the template sets `LLM_FAST_PROVIDER=openai` (the synthesis fallback, chapter detection and the faithfulness judge on gpt-4o-mini); it also enables the Whisper audio fallback. Compose passes the key through as optional, so `dc config -q` does not catch a missing one: without it those calls fail (fast-tier calls never fall back to another provider): pipeline runs lose the description analysis, translation, the synthesis fallback, AI chapter detection and the faithfulness judge (hero / quiz calls included), and vie-assistant loses its chat (the template sets `LLM_CHAT_MODEL=openai/gpt-4o-mini`) and its quiz tool (the fast tier). The OpenAI project behind the key must have access to `gpt-6-luna` and `gpt-4o-mini`. Check that `S3_BUCKET` names the bucket and `AWS_REGION` is the region the check in section a printed. Leave `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` unset, because the instance role supplies credentials.
 
+**Mongo keyfile.** vie-mongodb runs as a single-node replica set, and a replica set with authentication needs a keyfile. Create it once, before the first `dc up`. If the file does not exist, `dc up` fails creating vie-mongodb (`bind source path does not exist`); the compose file never lets Docker create a directory there.
+
+```bash
+sudo install -d -m 0700 /opt/vie/secrets
+openssl rand -base64 756 | sudo tee /opt/vie/secrets/mongo-keyfile > /dev/null
+sudo chmod 0400 /opt/vie/secrets/mongo-keyfile
+sudo chown 999:999 /opt/vie/secrets/mongo-keyfile   # uid of the mongodb user in the mongo:7 image
+sudo ls -ln /opt/vie/secrets/mongo-keyfile          # -r-------- 1 999 999 ...
+```
+
+`.env.production.example` already sets `MONGO_KEYFILE_PATH=/opt/vie/secrets/mongo-keyfile`; change the row if you keep the file elsewhere. mongod rejects a keyfile that is group- or world-readable or that uid 999 cannot read. Nothing but this one member uses the key, so there is nothing to back up: to replace it, write a new file the same way and run `dc up -d --force-recreate vie-mongodb`. Compose stops at variable substitution while the `MONGO_KEYFILE_PATH` row is missing, like `ADMIN_SESSION_SECRET`. A host that already runs Mongo as a standalone is converted with "Convert Mongo to a replica set" below, not by this paragraph alone.
+
 Validate and start:
 
 ```bash
@@ -185,6 +197,79 @@ dc ps               # wait until every long-running service shows (healthy)
 ```
 
 `vie-langfuse-init` is a one-shot job, so it shows as exited.
+
+### Convert Mongo to a replica set
+
+vie-mongodb runs as a single-node replica set (`rs0`) so the billing ledger can use multi-document transactions. This change merges and deploys on its own, before the billing PR; the billing PR assumes the set is live, so do not merge it until step 4 has passed. On an existing host the merge does the conversion: the deploy workflow runs `dc up -d --build`, which recreates vie-mongodb on the same data volume with `--replSet rs0 --keyFile`, and its healthcheck runs `rs.initiate` on the first probe. Expect Mongo to be unavailable for under a minute. The existing root user and every collection stay in the volume. Do steps 1 and 2 **before** the merge: with the new compose file a missing `MONGO_KEYFILE_PATH` row stops every `dc` command, and a missing keyfile stops vie-mongodb from being created. A fresh host needs none of this: it creates the keyfile above and the first `dc up` initiates the set on the empty volume.
+
+**1. Back up the standalone, copy it off the box, record counts (before the merge).** The nightly sidecar from section f is the tool; replace `BUCKET` as there. The counts are what steps 4 and 5 compare against.
+
+```bash
+cd ~/video-insight-engine
+docker exec vie-backup-cron sh -c 'cd /repo && QDRANT_URL=http://vie-qdrant:6333 ./scripts/backup.sh'
+B=$(ls -d backups/[0-9]*Z | sort | tail -1); echo "$B"       # keep this folder until step 5 passes
+aws s3 sync --region eu-north-1 --only-show-errors backups s3://BUCKET/backups/
+aws s3 ls --region eu-north-1 "s3://BUCKET/$B/"             # the mongo archive and manifest.json
+docker exec vie-mongodb sh -c 'mongosh --quiet -u "$MONGO_INITDB_ROOT_USERNAME" -p "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin --eval "const d = db.getSiblingDB(\"video-insight-engine\"); printjson({ videoSummaryCache: d.videoSummaryCache.countDocuments(), users: d.users.countDocuments(), userVideos: d.userVideos.countDocuments() })"' | tee ~/mongo-counts-before.txt
+```
+
+`mongodump` reads the collections one after another while the app keeps writing, so a count taken right after can be a few documents higher than the archive; on this box that is usually zero.
+
+**2. Create the keyfile and the `.env` row (before the merge).** The pre-merge compose file ignores the row.
+
+```bash
+sudo install -d -m 0700 /opt/vie/secrets
+openssl rand -base64 756 | sudo tee /opt/vie/secrets/mongo-keyfile > /dev/null
+sudo chmod 0400 /opt/vie/secrets/mongo-keyfile && sudo chown 999:999 /opt/vie/secrets/mongo-keyfile
+grep -q '^MONGO_KEYFILE_PATH=' .env || printf '\nMONGO_KEYFILE_PATH=/opt/vie/secrets/mongo-keyfile\n' >> .env
+sudo stat -c '%F %a %u:%g' "$(grep '^MONGO_KEYFILE_PATH=' .env | cut -d= -f2-)"   # must print exactly: regular file 400 999:999
+```
+
+The compose file mounts the keyfile with `create_host_path: false`: if the path is missing, the deploy fails at container creation ("bind source path does not exist") and the running standalone Mongo is left alone, instead of Docker creating a root-owned directory there and mongod crash-looping on it. Compose cannot check the mode or owner, so the `stat` line is the check for those. Anything other than `regular file 400 999:999` (a directory, mode 600, owner root) makes mongod refuse to start.
+
+**3. Merge, and initiate.** Merge the PR and watch the deploy: `dc ps vie-mongodb` reads `(health: starting)` until the node is PRIMARY, then `(healthy)`, and the services that wait on it start after that. The healthcheck runs `rs.initiate` on its first probe, so nothing else is needed. If the container stays unhealthy, `docker logs vie-mongodb` names the cause (a keyfile with the wrong mode or owner is the usual one). To initiate by hand, run this; it is safe to repeat and prints `already initiated` once the set exists. The root credentials come from the container's own environment, so nothing secret is typed or printed:
+
+```bash
+docker exec vie-mongodb sh -c 'mongosh --quiet -u "$MONGO_INITDB_ROOT_USERNAME" -p "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin --eval "try { rs.status(); print(\"already initiated\") } catch (e) { if (e.codeName !== \"NotYetInitialized\") throw e; printjson(rs.initiate({ _id: \"rs0\", members: [{ _id: 0, host: \"vie-mongodb:27017\" }] })) }"'
+```
+
+**4. Verify the set and the data, then restart the old clients.** Expect `ok: 1`, one member that is `PRIMARY`, the set named `rs0` with the member host `vie-mongodb:27017`, and the same counts as in step 1 (higher only by what the app wrote since).
+
+```bash
+docker exec vie-mongodb sh -c 'mongosh --quiet -u "$MONGO_INITDB_ROOT_USERNAME" -p "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin --eval "const s = rs.status(), c = rs.conf(), d = db.getSiblingDB(\"video-insight-engine\"); printjson({ ok: s.ok, members: s.members.map(m => ({ name: m.name, state: m.stateStr })), setName: c._id, memberHost: c.members[0].host, videoSummaryCache: d.videoSummaryCache.countDocuments(), users: d.users.countDocuments(), userVideos: d.userVideos.countDocuments() })"'
+cat ~/mongo-counts-before.txt
+```
+
+A container created after vie-mongodb opened its connections to the replica set; one created before it still holds connections to the old standalone server. The deploy recreates only what changed, and this change touches only vie-mongodb, so expect every client below to be listed. Their URIs did not change, so a restart is enough, but restart only the ones created before vie-mongodb, and when no video is processing: `vie-summarizer-worker` ends the pipeline runs it has in flight. Pick them by creation time (a container list that is empty must not reach `dc restart`, which with no names restarts everything):
+
+```bash
+mongo_up=$(docker inspect -f '{{.Created}}' vie-mongodb)
+OLD=$(for c in vie-api vie-summarizer vie-summarizer-worker vie-assistant vie-admin; do
+  [[ "$(docker inspect -f '{{.Created}}' "$c")" < "$mongo_up" ]] && echo "$c"
+done)
+echo "created before vie-mongodb: ${OLD:-none}"
+[ -n "$OLD" ] && dc restart $OLD
+dc ps    # every long-running service (healthy)
+```
+
+**5. Restore check into a scratch container.** Prove that the step 1 archive restores and that its counts match. It needs only that archive, so run it before the merge if you want the backup proven before the risky step. The scratch container is a plain `mongo:7` on the default bridge network (not `vie-network`) with no published port, and `restore.sh` talks to it through `docker exec`. The archive and manifest are copied into a folder of their own because `restore.sh` has no Mongo-only switch: with a `qdrant-*.snapshot` in the folder it would upload it to `QDRANT_URL` and overwrite the live collections.
+
+```bash
+B=backups/<timestamp from step 1>
+rm -rf /tmp/mongo-only && mkdir -p /tmp/mongo-only
+cp "$B"/manifest.json "$B"/mongo-*.archive.gz /tmp/mongo-only/
+docker run -d --name vie-mongo-scratch mongo:7 --wiredTigerCacheSizeGB 0.25
+for i in $(seq 1 30); do docker exec vie-mongo-scratch mongosh --quiet --eval 'db.runCommand({ ping: 1 }).ok' 2>/dev/null | grep -qx 1 && break; sleep 2; done
+MONGO_CONTAINER=vie-mongo-scratch ./scripts/restore.sh /tmp/mongo-only   # prints per-collection counts
+docker rm -fv vie-mongo-scratch && rm -rf /tmp/mongo-only                # -v also removes the image's anonymous data volumes
+docker ps -aq --filter name=vie-mongo-scratch                            # prints nothing
+```
+
+Compare the printed `videoSummaryCache`, `users` and `userVideos` with `~/mongo-counts-before.txt`; they are equal unless the app wrote between the dump and the count. Keep the step 1 folder and the S3 copy until this passes.
+
+`scripts/backup.sh` and `scripts/restore.sh` need no change on a replica set (tested with auth and a keyfile): both run `mongodump` and `mongorestore` inside the vie-mongodb container through `docker exec`, with the root credentials from its own environment, and connect to `localhost:27017` there, which is a direct connection. Nothing on the host connects to Mongo, so the nightly sidecar and the S3 sync keep working as they are.
+
+**Rollback.** Revert the merge on `main` (`git revert -m 1 <merge commit>` on a branch, PR, merge): the deploy workflow redeploys the previous compose file by itself. Do not `git checkout <sha>` on the box, because the next deploy's `git pull --ff-only` would then fail. That compose file has no `--replSet` or `--keyFile`, so the same volume starts as a standalone with its data and root user. The replica-set config stays in the `local` database (`local.system.replset` and the 1 GB `oplog.rs`), unused by a standalone and not part of a `mongodump` of `video-insight-engine`. A later re-merge starts as `PRIMARY` from that stored config without a new `rs.initiate`. Checked on 2026-10-28 with a local `mongod` 7.0.24 on the same data directory, auth on: standalone, replica set with a keyfile, standalone again, replica set again; every document and the root user survived, writes worked in each mode, and writes made while standalone were still there after the second conversion. The keyfile and the `.env` row can stay; the old compose ignores them. Do not roll this back once the billing PR is live: the ledger needs the set.
 
 ## e. First login and first video
 

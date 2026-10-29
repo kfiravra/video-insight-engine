@@ -17,7 +17,7 @@
  *   Local (from the repo root; the api workspace has the drivers):
  *     pnpm --filter @vie/api exec tsx ../scripts/demote-admins.ts --keep <email,…> [--dry-run]
  *
- * Env: MONGODB_URI (default mongodb://localhost:27017/video-insight-engine).
+ * Env: MONGODB_URI (default mongodb://localhost:27017/video-insight-engine?directConnection=true).
  */
 
 import { resolve } from 'node:path';
@@ -121,7 +121,7 @@ async function main(argv: string[]): Promise<void> {
     return;
   }
 
-  const client = new MongoClient(process.env.MONGODB_URI || 'mongodb://localhost:27017/video-insight-engine');
+  const client = new MongoClient(process.env.MONGODB_URI || 'mongodb://localhost:27017/video-insight-engine?directConnection=true');
   try {
     await client.connect();
     printReport(await demoteAdmins(client.db(), input), input.dryRun);
